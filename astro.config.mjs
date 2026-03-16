@@ -1,9 +1,11 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import vercel from '@astrojs/vercel';
 
 // https://astro.build/config
 export default defineConfig({
+    site: 'https://docs-gilt-eta.vercel.app/', // TODO: switch to hegel.dev
 	integrations: [
 		starlight({
 			title: 'My Docs',
@@ -23,4 +25,7 @@ export default defineConfig({
 			],
 		}),
 	],
+    adapter: vercel({
+        webAnalytics: { enabled: true },
+    }),
 });
