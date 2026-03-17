@@ -1,0 +1,10 @@
+{
+    "trailingSlash": true,
+    "redirects": [
+        {
+            "source": "/go/hegel/",
+            "destination": "/go/hegel.html",
+            "permanent": true
+        }
+    ]
+}
