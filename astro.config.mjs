@@ -6,7 +6,7 @@ import vercel from '@astrojs/vercel';
 
 // https://astro.build/config
 export default defineConfig({
-    site: 'https://docs-gilt-eta.vercel.app/', // TODO: switch to hegel.dev
+    site: 'https://hegel.dev',
 	integrations: [
 		starlight({
 			title: 'Hegel',
