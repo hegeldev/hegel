@@ -9,21 +9,46 @@ export default defineConfig({
     site: 'https://docs-gilt-eta.vercel.app/', // TODO: switch to hegel.dev
 	integrations: [
 		starlight({
-			title: 'My Docs',
-			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/withastro/starlight' }],
+			title: 'Hegel',
+			favicon: '/favicon.jpg',
+			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/hegeldev' }],
 			sidebar: [
 				{
-					label: 'Guides',
+					label: 'Introduction',
 					items: [
-						// Each item here is one entry in the navigation menu.
-						{ label: 'Example Guide', slug: 'guides/example' },
+						{ slug: 'intro/getting-started' },
+					],
+				},
+				{
+					label: 'Libraries',
+					items: [
+						{ label: 'hegel-rust', link: 'https://github.com/hegeldev/hegel-rust', attrs: { target: '_blank', class: 'external-link' } },
+					],
+				},
+				// re-enable once we actually have content here!
+				//
+				// {
+				// 	label: 'How-to guides',
+				// 	autogenerate: { directory: 'how-to' },
+				// },
+				{
+					label: 'Explanation',
+					items: [
+						{ slug: 'explanation/how-hegel-works' },
+						{ slug: 'explanation/why-use-hegel' },
 					],
 				},
 				{
 					label: 'Reference',
-					autogenerate: { directory: 'reference' },
+					items: [
+						{ slug: 'reference/installation' },
+					],
+				},
+				{
+					slug: 'compatibility',
 				},
 			],
+            customCss: ['./src/styles/style.css'],
             plugins: [ starlightThemeRapide() ],
 		}),
 	],

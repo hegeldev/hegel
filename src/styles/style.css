@@ -1,0 +1,32 @@
+:root {
+  /* default is 18.75rem:
+  https://github.com/withastro/starlight/blob/main/packages/starlight/style/props.css */
+  --sl-sidebar-width: 18.75rem;
+  /* default is 45rem */
+  --sl-content-width: 45rem;
+  /* default is (TODO) */
+  --sl-color-text: black;
+  /* default is 1.8 */
+  --sl-line-height: 1.7;
+}
+
+/* more understated admonitions. I prefer using admonitions for information I want the
+user to be able to intentionally decide to skip, and this smaller padding / font sizes
+communicates this better than the default.*/
+.starlight-aside {
+  /* default: 1rem */
+  padding: 0.5rem 0.75rem;
+  /* default: 1em, I think */
+  font-size: 0.85em;
+}
+
+
+.external-link::after {
+  content: '';
+  display: inline-block;
+  width: 0.75em;
+  height: 0.75em;
+  margin-left: 0.25em;
+  background-color: currentColor;
+  mask: url('../assets/external-link.svg') no-repeat center / contain;
+}
