@@ -4,10 +4,12 @@
   --sl-sidebar-width: 18.75rem;
   /* default is 45rem */
   --sl-content-width: 45rem;
-  /* default is (TODO) */
-  --sl-color-text: black;
   /* default is 1.8 */
   --sl-line-height: 1.7;
+}
+
+:root[data-theme='light'] {
+  --sl-color-text: black;
 }
 
 /* more understated admonitions. I prefer using admonitions for information I want the
