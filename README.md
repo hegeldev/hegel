@@ -1,6 +1,6 @@
-# Docs
+# Website
 
-Hegel's website, including documentation.
+Source code for httpe://hegel.dev.
 
 ## Developing
 
