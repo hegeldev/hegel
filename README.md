@@ -1,6 +1,6 @@
 # Website
 
-Source code for httpe://hegel.dev.
+Source code for https://hegel.dev.
 
 ## Developing
 
