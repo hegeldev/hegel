@@ -13,6 +13,6 @@ Well, if you've already got great property-based tests that you're happy with, y
 
 If, on the other hand, you'd like to get started on some green field property-based testing, we think Hegel is a great place to do it. It inherits a lot of power from its Hypothesis core, and we've made it as easy to use as possible.
 
-Right now, Hegel is more or less a "developer preview". We expect the underlying logic to be pretty rock solid, because Hypothesis is pretty rock solid. but there are definitely going to be some rough edges in how we interact with it. We're pretty happy with the API but expect we've not got it 100% right.
+Right now, Hegel is more or less a "developer preview". We expect the underlying logic to be pretty rock solid, because Hypothesis is pretty rock solid. But there are definitely going to be some rough edges in how we interact with it. We're pretty happy with the API but expect we've not got it 100% right.
 
 We still think it's worth your time to give it a try. If this is your first time using property-based testing on a project, you'll almost certainly find bugs if you use it - hopefully *mostly* in your code - and that's useful even if you ultimately don't decide to adopt it until it's more stable. If you do, let us know how it goes!

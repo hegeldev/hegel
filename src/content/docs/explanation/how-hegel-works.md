@@ -37,4 +37,4 @@ When this test runs:
 
 The transport layer of the protocol is currently unix sockets, but the protocol is agnostic to the particular choice of transport layer and this could in principle be swapped for something else.
 
-We have glossed over some subtlety here. For example, `tc.asume()` and `generator.filter()` can reject test cases during the test, which needs to be communicated back to the server. And the server needs the ability to communicate errors to the client, for example in the case of a flaky test or an invalid generator definition.
+We have glossed over some subtlety here. For example, `tc.assume()` and `generator.filter()` can reject test cases during the test, which needs to be communicated back to the server. And the server needs the ability to communicate errors to the client, for example in the case of a flaky test or an invalid generator definition.
