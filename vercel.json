@@ -1,5 +1,5 @@
 {
-    "trailingSlash": true,
+    "trailingSlash": false,
     "redirects": [
         {
             "source": "/go/hegel/",

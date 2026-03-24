@@ -21,7 +21,7 @@ At runtime, the first time a Hegel test is run in a test suite, each Hegel libra
 Each Hegel library uses the following steps to resolve the `hegel-core` path:
 
 - If the `HEGEL_SERVER_COMMAND` environment variable is set, use that path.
-- Otherwise, the library expects `uv` to be on the PATH.
+- Otherwise, the library expects [`uv`](https://github.com/astral-sh/uv) to be on the PATH.
   - If `uv` is not on the PATH, the library errors with a message about possible next steps, including how to install `uv` and directing you to this page.
   - If `uv` is on the PATH, the library uses `uv` to install `hegel-core==$VERSION` into a virtual environment located in `.hegel/venv`. `$VERSION` is determined by the version of the Hegel library you have installed, as each Hegel library pins to an exact `hegel-core` version in its source[^1]. It also writes `.hegel/venv/hegel-version`, a text file containing `$VERSION` as ASCII text.
   - If `.hegel/venv` already exists, the Hegel library checks `.hegel/venv/hegel-version`. If that version is different than its pinned `$VERSION`, it re-creates `.hegel/venv` with `hegel-core==$VERSION`.
@@ -46,5 +46,14 @@ hegel = "hegel.__main__:main"
 ```
 
 Note that if you set `HEGEL_SERVER_COMMAND`, you are responsible for ensuring that your Hegel library version is compatible with that `hegel-core` version.
+
+## Troubleshooting
+
+If you run into installation issues, for example a version mismatch on disk, you can delete `.hegel/venv` to force a fresh install.
+
+:::note
+Manually removing this directory shouldn't ever be necessary. If you run into an issue and need to do this, *please* open an issue on the appropriate Hegel library repository so we can fix it for everyone.
+:::
+
 
 [^1]: Note that there is no correspondence between `hegel-core` version numbers and Hegel library version numbers.
