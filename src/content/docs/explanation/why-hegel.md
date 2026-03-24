@@ -1,5 +1,5 @@
 ---
-title: Why use Hegel?
+title: Why Hegel?
 ---
 
 Hegel is an attempt to bring the power of property-based testing in Hypothesis to every language.
