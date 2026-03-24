@@ -7,6 +7,7 @@ import vercel from '@astrojs/vercel';
 // https://astro.build/config
 export default defineConfig({
     site: 'https://hegel.dev',
+    trailingSlash: 'never',
 	integrations: [
 		starlight({
 			title: 'Hegel',
@@ -23,6 +24,7 @@ export default defineConfig({
 					label: 'Libraries',
 					items: [
 						{ label: 'hegel-rust', link: 'https://github.com/hegeldev/hegel-rust', attrs: { target: '_blank', class: 'external-link' } },
+						{ label: 'hegel-core', link: 'https://github.com/hegeldev/hegel-core', attrs: { target: '_blank', class: 'external-link' } },
 					],
 				},
 				// re-enable once we actually have content here!
