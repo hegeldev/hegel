@@ -1,8 +1,80 @@
 ---
-const { text } = Astro.props;
-const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const html = escaped
-  .replace(/packet:([a-z_]+)/g, '<a href="#packet-$1">$1</a>')
-  .replace(/section:([a-z_-]+)\[([^\]]+)\]/g, '<a href="#$1">$2</a>');
+const { steps } = Astro.props;
+
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function processStep(step) {
+  const idCol = (' ' + (step.id ?? '')).padEnd(4);
+  const isRight = step.from === 'client';
+  const arrowPrefix = isRight ? `|---[${step.stream}]-- ` : `|<--[${step.stream}]-- `;
+  const arrowSuffix = isRight ? '&gt;|' : '|';
+  const suffixDisplayWidth = isRight ? 2 : 1; // >| = 2 chars, | = 1 char
+
+  let displayLabel, htmlLabel;
+  if (step.packet) {
+    displayLabel = step.packet;
+    htmlLabel = `<a href="#packet-${step.packet}">${escapeHtml(step.packet)}</a>`;
+  } else if (step.section) {
+    displayLabel = step.label;
+    htmlLabel = `<a href="#${step.section}">${escapeHtml(step.label)}</a>`;
+  } else {
+    displayLabel = step.label;
+    htmlLabel = escapeHtml(step.label);
+  }
+
+  const prefixWidth = idCol.length + arrowPrefix.length + displayLabel.length + 1; // +1 trailing space
+  return { idCol, arrowPrefix, arrowSuffix, suffixDisplayWidth, displayLabel, htmlLabel, prefixWidth };
+}
+
+// Process all arrow steps
+const arrows = steps.filter(s => typeof s === 'object' && 'from' in s).map(processStep);
+
+// Compute total width: each arrow needs at least 3 dashes
+const totalWidth = Math.max(...arrows.map(a => a.prefixWidth + 3 + a.suffixDisplayWidth));
+
+// Build lines
+const headerLine = 'Client' + ' '.repeat(totalWidth - 12) + 'Server';
+const gapLine = '    |' + ' '.repeat(totalWidth - 6) + '|';
+
+const outputLines = [headerLine, gapLine];
+
+let arrowIdx = 0;
+for (const step of steps) {
+  if (step === 'gap') {
+    outputLines.push(gapLine);
+  } else if (typeof step === 'object' && 'repeat' in step) {
+    const inner = '       ... ' + step.repeat;
+    const padded = inner.padEnd(totalWidth - 6);
+    outputLines.push('    :' + padded + ':');
+  } else {
+    const a = arrows[arrowIdx++];
+    const dashes = totalWidth - a.prefixWidth - a.suffixDisplayWidth;
+    const line = escapeHtml(a.idCol) + escapeHtml(a.arrowPrefix) + a.htmlLabel + ' ' + '-'.repeat(dashes) + a.arrowSuffix;
+    outputLines.push(line);
+  }
+}
+
+outputLines.push(gapLine);
+const html = outputLines.join('\n');
 ---
 <pre class="protocol-diagram" set:html={html} />
+
+<style>
+  .protocol-diagram {
+    padding: 1em;
+    overflow-x: auto;
+    background: var(--astro-code-color-background);
+    border-radius: 0.5rem;
+    font-family: var(--__sl-font-mono);
+  }
+  .protocol-diagram :global(a) {
+    color: var(--sl-color-text-accent);
+    text-decoration: underline;
+    text-decoration-color: transparent;
+  }
+  .protocol-diagram :global(a):hover {
+    text-decoration-color: var(--sl-color-text-accent);
+  }
+</style>

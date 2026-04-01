@@ -63,11 +63,10 @@ The protocol is agnostic of the transport layer used to send and receive <Packet
 
 After the <Connection>connection</Connection> has been established, the <Client>client</Client> is expected to initiate a handshake over that connection. A handshake must be initiated before any other communication. A handshake must not be initiated more than once per connection.
 
-<SequenceDiagram text={`Client                                           Server
-    |                                               |
- 1  |---[control]-- packet:handshake --------------------->|
- 1R |<--[control]-- packet:handshake_reply ----------------|
-    |                                               |`} />
+<SequenceDiagram steps={[
+  { from: "client", stream: "control", packet: "handshake", id: "1" },
+  { from: "server", stream: "control", packet: "handshake_reply", id: "1R" },
+]} />
 
 <PacketTable name="handshake" isReply={false} encoding="ASCII" payload={<><code>hegel_handshake_start</code></>} />
 
@@ -77,11 +76,10 @@ After the <Connection>connection</Connection> has been established, the <Client>
 
 After completing the handshake, the <Client>client</Client> may at any time choose to start a <TestRun>test run</TestRun>.
 
-<SequenceDiagram text={`Client                                           Server
-    |                                               |
- 1  |---[control]-- packet:run_test ---------------------->|
- 1R |<--[control]-- packet:run_test_reply -----------------|
-    |                                               |`} />
+<SequenceDiagram steps={[
+  { from: "client", stream: "control", packet: "run_test", id: "1" },
+  { from: "server", stream: "control", packet: "run_test_reply", id: "1R" },
+]} />
 
 <PacketTable name="run_test" isReply={false} encoding="CBOR" fields={[
   { name: "command", description: <><code>"run_test"</code></>, type: "text", required: true },
@@ -100,21 +98,21 @@ After completing the handshake, the <Client>client</Client> may at any time choo
 
 Once a <TestRun>test run</TestRun> has been started, the <Server>server</Server> initiates the execution of <TestCase>test cases</TestCase>. The <Client>client</Client> uses the <Stream>stream</Stream> established in the <PacketRef name="run_test" /> <Packet>packet</Packet> for packets related to this test run.
 
-<SequenceDiagram text={`Client                                           Server
-    |                                               |
- 1  |<--[S1]-- packet:test_case ---------------------------|
- 1R |---[S1]-- packet:test_case_reply -------------------->|
-    |                                               |
- 2  |---[S2]-- section:test-case-commands[command] ---------------------------->|
- 2R |<--[S2]-- (command reply, if appropriate) -----|
-    |---[S2]-- ... -------------------------------->|
-    |                                               |
- 3  |---[S2]-- packet:mark_complete ---------------------->|
- 3R |<--[S2]-- packet:mark_complete_reply -----------------|
-    |                                               |
- 4  |---[S2]-- packet:stream_close ----------------------->|
-    |                                               |
-    :       ... repeat for each test case           :`} />
+<SequenceDiagram steps={[
+  { from: "server", stream: "S1", packet: "test_case", id: "1" },
+  { from: "client", stream: "S1", packet: "test_case_reply", id: "1R" },
+  "gap",
+  { from: "client", stream: "S2", section: "test-case-commands", label: "command", id: "2" },
+  { from: "server", stream: "S2", label: "(command reply, if appropriate)", id: "2R" },
+  { from: "client", stream: "S2", label: "..." },
+  "gap",
+  { from: "client", stream: "S2", packet: "mark_complete", id: "3" },
+  { from: "server", stream: "S2", packet: "mark_complete_reply", id: "3R" },
+  "gap",
+  { from: "client", stream: "S2", packet: "stream_close", id: "4" },
+  "gap",
+  { repeat: "repeat for each test case" },
+]} />
 
 In the <PacketRef name="test_case" /> <Packet>packet</Packet>, it establishes a new <Stream>stream</Stream> (S2) which is used for packets for this <TestCase>test case</TestCase>.
 
@@ -305,11 +303,10 @@ Consume and return a variable from a pool.
 
 After all <TestCase>test cases</TestCase> have been executed and shrinking is complete, the <Server>server</Server> sends a `test_done` event on the test <Stream>stream</Stream>.
 
-<SequenceDiagram text={`Client                                           Server
-    |                                               |
- 1  |<--[S1]-- packet:test_done ---------------------------|
- 1R |---[S1]-- packet:test_done_reply -------------------->|
-    |                                               |`} />
+<SequenceDiagram steps={[
+  { from: "server", stream: "S1", packet: "test_done", id: "1" },
+  { from: "client", stream: "S1", packet: "test_done_reply", id: "1R" },
+]} />
 
 <PacketTable name="test_done" isReply={false} encoding="CBOR" fields={[
   { name: "event", description: <><code>"test_done"</code></>, type: "text", required: true },
@@ -613,20 +610,6 @@ a.def-link {
 }
 a.def-link:hover {
   text-decoration-color: var(--sl-color-gray-2);
-}
-.protocol-diagram {
-  padding: 1em;
-  overflow-x: auto;
-  background: var(--astro-code-color-background);
-  border-radius: 0.5rem;
-}
-.protocol-diagram a {
-  color: var(--sl-color-text-accent);
-  text-decoration: underline;
-  text-decoration-color: transparent;
-}
-.protocol-diagram a:hover {
-  text-decoration-color: var(--sl-color-text-accent);
 }
 .packet-table {
   border-collapse: collapse;
