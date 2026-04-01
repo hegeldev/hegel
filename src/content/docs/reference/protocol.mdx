@@ -209,13 +209,12 @@ Create a new collection with the specified name. Collections are used for the si
 
 <PacketTable name="new_collection" isReply={false} encoding="CBOR" fields={[
   { name: "command", description: <><code>"new_collection"</code></>, type: "text", required: true },
-  { name: "collection_name", description: <>A base name for the collection.</>, type: "text", default: <><code>"collection"</code></> },
   { name: "min_size", description: <>Minimum number of elements.</>, type: "integer", default: <code>0</code> },
   { name: "max_size", description: <>Maximum number of elements.</>, type: "integer | null", default: <>unbounded</> },
 ]} />
 
 <PacketTable name="new_collection_reply" isReply={true} encoding="CBOR" fields={[
-  { name: "result", description: <>The collection name (e.g. <code>"list_0"</code>).</>, type: "text", required: true },
+  { name: "result", description: <>The collection id as an integer.</>, type: "text", required: true },
 ]} />
 
 #### collection_more
@@ -224,7 +223,7 @@ Ask whether the collection should produce another element.
 
 <PacketTable name="collection_more" isReply={false} encoding="CBOR" fields={[
   { name: "command", description: <><code>"collection_more"</code></>, type: "text", required: true },
-  { name: "collection_name", description: <>The collection name.</>, type: "text", required: true },
+  { name: "collection_id", description: <>The collection id.</>, type: "text", required: true },
 ]} />
 
 <PacketTable name="collection_more_reply" isReply={true} encoding="CBOR" fields={[
@@ -237,7 +236,7 @@ Reject the most recently produced element.
 
 <PacketTable name="collection_reject" isReply={false} encoding="CBOR" fields={[
   { name: "command", description: <><code>"collection_reject"</code></>, type: "text", required: true },
-  { name: "collection_name", description: <>The server-assigned collection name.</>, type: "text", required: true },
+  { name: "collection_id", description: <>The collection id.</>, type: "text", required: true },
   { name: "why", description: <>Reason for the rejection.</>, type: "text" },
 ]} />
 
