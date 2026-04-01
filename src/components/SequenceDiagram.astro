@@ -1,0 +1,8 @@
+---
+const { text } = Astro.props;
+const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const html = escaped
+  .replace(/packet:([a-z_]+)/g, '<a href="#packet-$1">$1</a>')
+  .replace(/section:([a-z_-]+)\[([^\]]+)\]/g, '<a href="#$1">$2</a>');
+---
+<pre class="protocol-diagram" set:html={html} />

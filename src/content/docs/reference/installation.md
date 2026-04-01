@@ -6,8 +6,6 @@ title: Installation reference
 You may have been directed to this page by an error during the installation of a Hegel library. If that is you, and any part of how we install Hegel or the tradeoffs we made is still confusing or misleading after reading this page, *please* [open an issue against hegeldev/website](https://github.com/hegeldev/website/issues/new) so we can improve it for everyone.
 :::
 
-<!-- (TODO lots of stuff to say here, including venvs, HEGEL_SERVER_COMMAND, version pinning, etc) -->
-
 The [hegel-core](https://github.com/hegeldev/hegel-core) server uses [Hypothesis](https://github.com/hypothesisworks/hypothesis) as the underlying library providing data generation, shrinking, and so on. Every Hegel library, regardless of language, therefore has an implicit dependency on Python.
 
 :::note

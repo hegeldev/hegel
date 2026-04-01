@@ -1,0 +1,736 @@
+---
+title: Protocol reference
+---
+
+import SequenceDiagram from '../../../components/SequenceDiagram.astro';
+
+This is an RFC-style reference for the Hegel protocol. It is intended to be detailed enough that you could implement a compatible Hegel <Server>server</Server> or <Client>client</Client> only by referencing this document.
+
+## Terminology
+
+* <span id="def-server">Server</span>: The server process, implementing the core functionality of a property-based testing library. [Hegel-core](https://github.com/hegeldev/hegel-core) is an example of a server.
+* <span id="def-client">Client</span>: The client library, implementing the user interface of a property-based testing library. [Hegel-rust](https://github.com/hegeldev/hegel-rust) is an example of a client.
+* <span id="def-packet">Packet</span>: The unit of data sent in the protocol. A packet is always associated with a <Stream>stream</Stream>.
+* <span id="def-request-packet">Request packet</span>: A <Packet>packet</Packet> with the reply bit set to 0. All packets are either request packets or reply packets. Note that not every request packet expects a <ReplyPacket>reply packet</ReplyPacket> in response.
+* <span id="def-reply-packet">Reply packet</span>: A <Packet>packet</Packet> with the reply bit set to 1. Each reply packet is associated with a specific <RequestPacket>request packet</RequestPacket>. All packets are either request packets or reply packets.
+* <span id="def-stream">Stream</span>: A virtual stream used to associate logically-related <Packet>packets</Packet> together.
+* <span id="def-control-stream">Control stream</span>: The <Stream>stream</Stream> used for high-level packets, for example because no other stream has been established yet. The control stream has id `0`.
+* <span id="def-test-case">Test case</span>: A single execution of the test function with a concrete set of values.
+* <span id="def-test-run">Test run</span>: The full lifecycle of a test function, including executing multiple <TestCase>test cases</TestCase> and shrinking any failures.
+* <span id="def-connection">Connection</span>: A generic connection allowing packets to be sent between a client and a server. The protocol is agnostic to the details of this connection and does not specify what transport layer it uses or how it is established. Connections are intended to be created once per process and shared between test runs, though this is not a requirement.
+
+## Wire specification
+
+### Packet
+
+A <Packet>packet</Packet> consists of a 20-byte header, a variable-length payload, and a 1-byte terminator.
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      Magic (0x4845474C)                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      Checksum (CRS32)                         |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      Stream id                             |S|
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|R|                    Message id                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      Payload length                           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      Payload (variable length)                |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|  Term. (0x0A) |
++-+-+-+-+-+-+-+-+
+```
+
+The first five fields comprise the header. Each field is an unsigned 32-bit big-endian integer:
+
+- Magic: The constant `0x4845474C`. This is ASCII for "HEGL".
+- Checksum: Defined as `crS32(H)`, where `H` is the packet with the terminator removed and the checksum field set to 0.
+- Stream ID: The <Stream>stream</Stream> this packet is associated with. The S (source) bit is 1 for streams created by the <Client>client</Client>, and 0 for streams created by the <Server>server</Server>[^1].
+- Message ID: The id of the message associated with this packet. The R (reply) bit is set iff this packet is a reply to a <RequestPacket>request packet</RequestPacket>. The message id of a <ReplyPacket>reply packet</ReplyPacket> is the same as the message id of the corresponding <RequestPacket>request packet</RequestPacket>, but with the R bit set[^2].
+- Payload length: The length of the payload, in bytes.
+
+The header is followed by the variable-length payload field, and then a single terminator byte (0x0A).
+
+## Test lifecycle
+
+The protocol is agnostic of the transport layer used to send and receive <Packet>packets</Packet>. We will assume here that a <Connection>connection</Connection> has been established between the <Server>server</Server> and the <Client>client</Client> and do not specify how that connection is established.
+
+### Handshake
+
+After the <Connection>connection</Connection> has been established, the <Client>client</Client> is expected to initiate a handshake over that connection. A handshake must be initiated before any other communication. A handshake must not be initiated more than once per connection.
+
+<SequenceDiagram text={`Client                                           Server
+    |                                               |
+ 1  |---[control]-- packet:handshake --------------------->|
+ 1R |<--[control]-- packet:handshake_reply ----------------|
+    |                                               |`} />
+
+<PacketTable name="handshake" isReply={false} encoding="ASCII" payload={<><code>hegel_handshake_start</code></>} />
+
+<PacketTable name="handshake_reply" isReply={true} encoding="ASCII" payload={<>The ASCII string <code>{"Hegel/{version}"}</code>, where <code>{"version"}</code> is the protocol version.</>} />
+
+### Test run
+
+After completing the handshake, the <Client>client</Client> may at any time choose to start a <TestRun>test run</TestRun>.
+
+<SequenceDiagram text={`Client                                           Server
+    |                                               |
+ 1  |---[control]-- packet:run_test ---------------------->|
+ 1R |<--[control]-- packet:run_test_reply -----------------|
+    |                                               |`} />
+
+<PacketTable name="run_test" isReply={false} encoding="CBOR" fields={[
+  { name: "command", description: <><code>"run_test"</code></>, type: "text", required: true },
+  { name: "stream_id", description: <>A new <Stream>stream</Stream> id chosen by the <Client>client</Client> that will be used for this <TestRun>test run</TestRun>. Note that because the client is creating this stream, <code>stream_id</code> must have its <code>|S|</code> bit set to <code>1</code>, i.e. must be odd.</>, type: "integer", required: true },
+  { name: "test_cases", description: <>The maximum number of <TestCase>test cases</TestCase> to execute.</>, type: "integer", required: true },
+  { name: "seed", description: <>Random seed.</>, type: "integer" },
+  { name: "derandomize", description: <>If <code>true</code>, and <code>seed</code> is not set, derive a deterministic seed from <code>database_key</code>.</>, type: "boolean", default: <code>false</code> },
+  { name: "database_key", description: <>Stable database key for this test.</>, type: "bytes" },
+  { name: "database", description: <>Path to the test case database directory, or <code>null</code> to disable the database.</>, type: "text | null" },
+  { name: "suppress_health_check", description: <>Array of health check names to suppress. Valid names are <code>"test_cases_too_large"</code>, <code>"filter_too_much"</code>, <code>"too_slow"</code>, and <code>"large_initial_test_case"</code>.</>, type: "text[]", default: <code>[]</code> },
+]} />
+
+<PacketTable name="run_test_reply" isReply={true} encoding="CBOR" payload={<><code>true</code></>} />
+
+#### Test cases
+
+Once a <TestRun>test run</TestRun> has been started, the <Server>server</Server> initiates the execution of <TestCase>test cases</TestCase>. The <Client>client</Client> uses the <Stream>stream</Stream> established in the <PacketRef name="run_test" /> <Packet>packet</Packet> for packets related to this test run.
+
+<SequenceDiagram text={`Client                                           Server
+    |                                               |
+ 1  |<--[S1]-- packet:test_case ---------------------------|
+ 1R |---[S1]-- packet:test_case_reply -------------------->|
+    |                                               |
+ 2  |---[S2]-- section:test-case-commands[command] ---------------------------->|
+ 2R |<--[S2]-- (command reply, if appropriate) -----|
+    |---[S2]-- ... -------------------------------->|
+    |                                               |
+ 3  |---[S2]-- packet:mark_complete ---------------------->|
+ 3R |<--[S2]-- packet:mark_complete_reply -----------------|
+    |                                               |
+ 4  |---[S2]-- packet:stream_close ----------------------->|
+    |                                               |
+    :       ... repeat for each test case           :`} />
+
+In the <PacketRef name="test_case" /> <Packet>packet</Packet>, it establishes a new <Stream>stream</Stream> (S2) which is used for packets for this <TestCase>test case</TestCase>.
+
+<PacketTable name="test_case" isReply={false} encoding="CBOR" fields={[
+  { name: "event", description: <><code>"test_case"</code></>, type: "text", required: true },
+  { name: "stream_id", description: <>The <Stream>stream</Stream> id for this <TestCase>test case</TestCase>.</>, type: "integer", required: true },
+  { name: "is_final", description: <><code>false</code> during normal execution, <code>true</code> during <SectionRef id="final-replays">final replays</SectionRef>.</>, type: "boolean", required: true },
+]} />
+
+<PacketTable name="test_case_reply" isReply={true} encoding="CBOR" payload={<><code>null</code></>} />
+
+During the <TestCase>test case</TestCase>, the <Client>client</Client> may send <SectionRef id="test-case-commands">test case commands</SectionRef> to the <Server>server</Server>. These command <Packet>packets</Packet> form the main interaction between the client and the server during the test case and are used to request generated values, mark spans of choices, etc.
+
+After some number of <TestCase>test cases</TestCase>, the <Client>client</Client> will consider the <TestRun>test run</TestRun> to be over. This might be because we hit the `test_cases` setting on the client, or because a test case found an error in the test function. Whenever the client decides the test run is finished, it sends a <PacketRef name="mark_complete" /> command on the test case <Stream>stream</Stream> with information describing the status of the test case.
+
+<PacketTable name="mark_complete" isReply={false} encoding="CBOR" fields={[
+  { name: "command", description: <><code>"mark_complete"</code></>, type: "text", required: true },
+  { name: "status", description: <><code>"VALID"</code> (test case passed), <code>"INVALID"</code> (test case rejected, for example by via <code>assume(false)</code>), or <code>"INTERESTING"</code> (test case failed).</>, type: "text", required: true },
+  { name: "origin", description: <>Description of the failure location. Should be set when status is <code>"INTERESTING"</code>.</>, type: "text" },
+]} />
+
+<PacketTable name="mark_complete_reply" isReply={true} encoding="CBOR" fields={[
+  { name: "result", description: <><code>null</code></>, type: "null", required: true },
+]} />
+
+
+### Test case commands
+
+All commands are <RequestPacket>request packets</RequestPacket> sent by the <Client>client</Client> on the test case <Stream>stream</Stream>. The server replies with the corresponding reply packet.
+
+Instead of the documented reply packets below, the <Server>server</Server> might also return <PacketRef name="command_error_reply" /> to any command.
+
+<PacketTable name="command_error_reply" isReply={true} encoding="CBOR" fields={[
+  { name: "error", description: <>The error message.</>, type: "text", required: true },
+  { name: "type", description: <>The error type (for example, <code>"ValueError"</code>).</>, type: "text", required: true },
+]} />
+
+#### generate
+
+Generate a value from a <SectionRef id="schemas">schema</SectionRef>.
+
+<PacketTable name="generate" isReply={false} encoding="CBOR" fields={[
+  { name: "command", description: <><code>"generate"</code></>, type: "text", required: true },
+  { name: "schema", description: <>A generator <SectionRef id="schemas">schema</SectionRef>.</>, type: "map", required: true },
+]} />
+
+<PacketTable name="generate_reply" isReply={true} encoding="CBOR" fields={[
+  { name: "result", description: <>The generated value.</>, type: "any", required: true },
+]} />
+
+#### start_span
+
+Mark the start of a span of choices.
+
+<PacketTable name="start_span" isReply={false} encoding="CBOR" fields={[
+  { name: "command", description: <><code>"start_span"</code></>, type: "text", required: true },
+  { name: "label", description: <>Identifies the span type.</>, type: "integer", default: <code>0</code> },
+]} />
+
+<PacketTable name="start_span_reply" isReply={true} encoding="CBOR" fields={[
+  { name: "result", description: <><code>null</code></>, type: "null", required: true },
+]} />
+
+#### stop_span
+
+Mark the end of a span of choices.
+
+<PacketTable name="stop_span" isReply={false} encoding="CBOR" fields={[
+  { name: "command", description: <><code>"stop_span"</code></>, type: "text", required: true },
+  { name: "discard", description: <>If <code>true</code>, this span is excluded from shrinking.</>, type: "boolean", default: <code>false</code> },
+]} />
+
+<PacketTable name="stop_span_reply" isReply={true} encoding="CBOR" fields={[
+  { name: "result", description: <><code>null</code></>, type: "null", required: true },
+]} />
+
+#### target
+
+Record an observation for targeted property-based testing.
+
+<PacketTable name="target" isReply={false} encoding="CBOR" fields={[
+  { name: "command", description: <><code>"target"</code></>, type: "text", required: true },
+  { name: "value", description: <>The observation value.</>, type: "float", required: true },
+  { name: "label", description: <>Identifies the observation.</>, type: "integer", required: true },
+]} />
+
+<PacketTable name="target_reply" isReply={true} encoding="CBOR" fields={[
+  { name: "result", description: <><code>null</code></>, type: "null", required: true },
+]} />
+
+#### new_collection
+
+Create a new collection with the specified name. Collections are used for the sizing of variable-length collections.
+
+<PacketTable name="new_collection" isReply={false} encoding="CBOR" fields={[
+  { name: "command", description: <><code>"new_collection"</code></>, type: "text", required: true },
+  { name: "collection_name", description: <>A base name for the collection.</>, type: "text", default: <><code>"collection"</code></> },
+  { name: "min_size", description: <>Minimum number of elements.</>, type: "integer", default: <code>0</code> },
+  { name: "max_size", description: <>Maximum number of elements.</>, type: "integer | null", default: <>unbounded</> },
+]} />
+
+<PacketTable name="new_collection_reply" isReply={true} encoding="CBOR" fields={[
+  { name: "result", description: <>The collection name (e.g. <code>"list_0"</code>).</>, type: "text", required: true },
+]} />
+
+#### collection_more
+
+Ask whether the collection should produce another element.
+
+<PacketTable name="collection_more" isReply={false} encoding="CBOR" fields={[
+  { name: "command", description: <><code>"collection_more"</code></>, type: "text", required: true },
+  { name: "collection_name", description: <>The collection name.</>, type: "text", required: true },
+]} />
+
+<PacketTable name="collection_more_reply" isReply={true} encoding="CBOR" fields={[
+  { name: "result", description: <><code>true</code> if another element should be produced, <code>false</code> if the collection is done.</>, type: "boolean", required: true },
+]} />
+
+#### collection_reject
+
+Reject the most recently produced element.
+
+<PacketTable name="collection_reject" isReply={false} encoding="CBOR" fields={[
+  { name: "command", description: <><code>"collection_reject"</code></>, type: "text", required: true },
+  { name: "collection_name", description: <>The server-assigned collection name.</>, type: "text", required: true },
+  { name: "why", description: <>Reason for the rejection.</>, type: "text" },
+]} />
+
+<PacketTable name="collection_reject_reply" isReply={true} encoding="CBOR" fields={[
+  { name: "result", description: <><code>null</code></>, type: "null", required: true },
+]} />
+
+#### new_pool
+
+Create a new variable pool. Intended for use in stateful testing.
+
+<PacketTable name="new_pool" isReply={false} encoding="CBOR" fields={[
+  { name: "command", description: <><code>"new_pool"</code></>, type: "text", required: true },
+]} />
+
+<PacketTable name="new_pool_reply" isReply={true} encoding="CBOR" fields={[
+  { name: "result", description: <>The pool id (0-indexed).</>, type: "integer", required: true },
+]} />
+
+#### pool_add
+
+Add a new variable to a pool.
+
+<PacketTable name="pool_add" isReply={false} encoding="CBOR" fields={[
+  { name: "command", description: <><code>"pool_add"</code></>, type: "text", required: true },
+  { name: "pool_id", description: <>The pool to add to.</>, type: "integer", required: true },
+]} />
+
+<PacketTable name="pool_add_reply" isReply={true} encoding="CBOR" fields={[
+  { name: "result", description: <>The variable id.</>, type: "integer", required: true },
+]} />
+
+#### pool_generate
+
+Draw a variable from a pool. The <Server>server</Server> selects which variable to return.
+
+<PacketTable name="pool_generate" isReply={false} encoding="CBOR" fields={[
+  { name: "command", description: <><code>"pool_generate"</code></>, type: "text", required: true },
+  { name: "pool_id", description: <>The pool to draw from.</>, type: "integer", required: true },
+  { name: "consume", description: <>If <code>true</code>, the variable is removed from the pool after being returned.</>, type: "boolean", default: <code>false</code> },
+]} />
+
+<PacketTable name="pool_generate_reply" isReply={true} encoding="CBOR" fields={[
+  { name: "result", description: <>The variable id. If the pool is empty, the <Server>server</Server> marks the <TestCase>test case</TestCase> as invalid.</>, type: "integer", required: true },
+]} />
+
+#### pool_consume
+
+Consume and return a variable from a pool.
+
+<PacketTable name="pool_consume" isReply={false} encoding="CBOR" fields={[
+  { name: "command", description: <><code>"pool_consume"</code></>, type: "text", required: true },
+  { name: "pool_id", description: <>The pool containing the variable.</>, type: "integer", required: true },
+  { name: "variable_id", description: <>The variable to consume.</>, type: "integer", required: true },
+]} />
+
+<PacketTable name="pool_consume_reply" isReply={true} encoding="CBOR" fields={[
+  { name: "result", description: <><code>null</code></>, type: "null", required: true },
+]} />
+
+
+### Completing a test run
+
+After all <TestCase>test cases</TestCase> have been executed and shrinking is complete, the <Server>server</Server> sends a `test_done` event on the test <Stream>stream</Stream>.
+
+<SequenceDiagram text={`Client                                           Server
+    |                                               |
+ 1  |<--[S1]-- packet:test_done ---------------------------|
+ 1R |---[S1]-- packet:test_done_reply -------------------->|
+    |                                               |`} />
+
+<PacketTable name="test_done" isReply={false} encoding="CBOR" fields={[
+  { name: "event", description: <><code>"test_done"</code></>, type: "text", required: true },
+  { name: "results.passed", description: <>Whether the test passed.</>, type: "boolean", required: true },
+  { name: "results.test_cases", description: <>Total number of <TestCase>test cases</TestCase> executed.</>, type: "integer", required: true },
+  { name: "results.valid_test_cases", description: <>Number of valid <TestCase>test cases</TestCase>.</>, type: "integer", required: true },
+  { name: "results.invalid_test_cases", description: <>Number of invalid <TestCase>test cases</TestCase>.</>, type: "integer", required: true },
+  { name: "results.interesting_test_cases", description: <>Number of interesting (failing) <TestCase>test cases</TestCase>.</>, type: "integer", required: true },
+  { name: "results.seed", description: <>The random seed that was used, as a string.</>, type: "text", required: true },
+  { name: "results.flaky", description: <>Present if the test was detected to be flaky.</>, type: "text" },
+  { name: "results.health_check_failure", description: <>Present if a health check failed.</>, type: "text" },
+  { name: "results.error", description: <>Present if there was an error (e.g. an unknown health check name).</>, type: "text" },
+]} />
+
+<PacketTable name="test_done_reply" isReply={true} encoding="CBOR" payload={<><code>true</code></>} />
+
+#### Final replays
+
+After `test_done`, the <Server>server</Server> sends a `test_case` packet with `is_final` set to `true` for each interesting <TestCase>test case</TestCase>. The intent is for the client to use this to replay the minimal failing test case. Each final replay follows the standard <SectionRef id="test-cases">test case</SectionRef> flow.
+
+### Stream close
+
+For clarity at runtime, stream can be marked as closed when they are no longer needed.
+
+<PacketTable name="stream_close" isReply={false} encoding="raw" payload={<>The single byte <code>0xFE</code>. The message id is fixed to <code>(1 &lt;&lt; 31) - 1</code>. <code>0xFE</code> is chosen to be invalid CBOR, so it cannot be confused with a normal payload.</>} />
+
+## Schemas
+
+Fields in **bold** are required.
+
+Some fields list their type as `schema`. This means it accepts any generator schema. For example, `{"type": "integer"}` is a valid schema, so `{"type": "one_of", "generators": [{"type": "integer"}]}` is as well.
+
+<SchemaTable schemas={[
+  {
+    name: "constant",
+    description: <>Generate <code>value</code>.</>,
+    fields: [
+      { name: "value", description: <>The value to return.</>, type: "any", required: true },
+    ],
+  },
+  {
+    name: "sampled_from",
+    description: <>Generate one of <code>values</code>.</>,
+    fields: [
+      { name: "values", description: <>Array of concrete values to sample from. Must be non-empty</>, type: "any[]", required: true },
+    ],
+  },
+  {
+    name: "one_of",
+    description: <>Generate a value drawn from one of <code>generators</code>.</>,
+    fields: [
+      { name: "generators", description: <>Array of generators. Must be non-empty.</>, type: "schema[]", required: true },
+    ],
+  },
+  {
+    name: "null",
+    description: <>Generate <code>null</code>.</>,
+  },
+  {
+    name: "boolean",
+    description: <>Generate either <code>true</code> or <code>false</code>.</>,
+  },
+  {
+    name: "integer",
+    description: <>Generate an integer.</>,
+    fields: [
+      { name: "min_value", description: <>Minimum value, inclusive.</>, type: "integer", default: "unbounded" },
+      { name: "max_value", description: <>Maximum value, inclusive.</>, type: "integer", default: "unbounded" },
+    ],
+  },
+  {
+    name: "float",
+    description: <>Generate a float.</>,
+    fields: [
+      { name: "min_value", description: <>Minimum value.</>, type: "float", default: "unbounded" },
+      { name: "max_value", description: <>Maximum value.</>, type: "float", default: "unbounded" },
+      { name: "allow_nan", description: <>Whether <code>NaN</code> can be generated.</>, type: "boolean", default: <><code>true</code> if neither <code>min_value</code> nor <code>max_value</code> is set, <code>false</code> otherwise</> },
+      { name: "allow_infinity", description: <>Whether <code>+Infinity</code> and <code>-Infinity</code> can be generated.</>, type: "boolean", default: <><code>true</code> if either <code>min_value</code> or <code>max_value</code> is unset, <code>false</code> otherwise</> },
+      { name: "width", description: <>Float width. Either <code>32</code> or <code>64</code>.</>, type: "integer", default: <code>64</code> },
+      { name: "exclude_min", description: <>Exclude the minimum value.</>, type: "boolean", default: <code>false</code> },
+      { name: "exclude_max", description: <>Exclude the maximum value.</>, type: "boolean", default: <code>false</code> },
+    ],
+  },
+  {
+    name: "string",
+    description: <>Generate a Unicode string. Returned as a custom CBOR tag 6, with a payload equivalent to the UTF-8 representation of the string except that surrogate code points are allowed. </>,
+    fields: [
+      { name: "min_size", description: <>Minimum length, in the number of code points.</>, type: "integer", default: <code>0</code> },
+      { name: "max_size", description: <>Maximum length, in the number of code points.</>, type: "integer", default: "unbounded" },
+    ],
+  },
+  {
+    name: "binary",
+    description: <>Generate a byte string.</>,
+    fields: [
+      { name: "min_size", description: <>Minimum length, in bytes.</>, type: "integer", default: <code>0</code> },
+      { name: "max_size", description: <>Maximum length, in bytes.</>, type: "integer", default: "unbounded" },
+    ],
+  },
+  {
+    name: "regex",
+    description: <>Generate a string matching the <code>pattern</code> regular expression.</>,
+    fields: [
+      { name: "pattern", description: <>The regular expression to match.</>, type: "string", required: true },
+      { name: "fullmatch", description: <>If <code>true</code>, <code>pattern</code> must match the entire string. If <code>false</code>, <code>pattern</code> may match a substring.</>, type: "boolean", default: <code>false</code> },
+    ],
+  },
+  {
+    name: "list",
+    description: <>Generate a list of values from the <code>elements</code> generator.</>,
+    fields: [
+      { name: "elements", description: <>The elements generator.</>, type: "schema", required: true },
+      { name: "min_size", description: <>Minimum number of elements.</>, type: "integer", default: <code>0</code> },
+      { name: "max_size", description: <>Maximum number of elements.</>, type: "integer", default: "unbounded" },
+      { name: "unique", description: <>If <code>true</code>, all generated list elements will be distinct.</>, type: "boolean", default: <code>false</code> },
+    ],
+  },
+  {
+    name: "dict",
+    description: <>Generate a map with keys drawn from <code>keys</code> and values drawn from <code>values</code>. Returns in the format <code>[[key1, value1], ...]</code>.</>,
+    fields: [
+      { name: "keys", description: <>The keys generator.</>, type: "schema", required: true },
+      { name: "values", description: <>The values generator.</>, type: "schema", required: true },
+      { name: "min_size", description: <>Minimum number of map entries.</>, type: "integer", default: <code>0</code> },
+      { name: "max_size", description: <>Maximum number of map entries.</>, type: "integer", default: "unbounded" },
+    ],
+  },
+  {
+    name: "tuple",
+    description: <>Generate a fixed-length array, where each element is drawn from the corresponding generator at that position.</>,
+    fields: [
+      { name: "elements", description: <>A list of generators of the same length as the desired tuple.</>, type: "schema[]", required: true },
+    ],
+  },
+  {
+    name: "email",
+    description: <>Generate an email address string, according to <a href="https://datatracker.ietf.org/doc/html/rfc5322#section-3.4.1"><code>RFC 5322 Section 3.4.1</code></a>.</>,
+  },
+  {
+    name: "url",
+    description: <>Generate an http/https URL string, according to <a href="https://datatracker.ietf.org/doc/html/rfS3986.html"><code>RFC 3986</code></a>.</>,
+  },
+  {
+    name: "domain",
+    description: <>Generate a fully qualified domain name string, according to <a href="https://datatracker.ietf.org/doc/html/rfS1035"><code>RFC 1035</code></a>.</>,
+    fields: [
+      { name: "max_length", description: <>Maximum length of the domain name.</>, type: "integer", default: <code>255</code> },
+    ],
+  },
+  {
+    name: "ipv4",
+    description: <>Generate an IPv4 address string.</>,
+  },
+  {
+    name: "ipv6",
+    description: <>Generate an IPv6 address string.</>,
+  },
+  {
+    name: "date",
+    description: <>Generate an ISO 8601 date string. For example: <code>"2024-03-15"</code>.</>,
+  },
+  {
+    name: "time",
+    description: <>Generate an ISO 8601 time string. For example: <code>"14:30:00"</code>.</>,
+  },
+  {
+    name: "datetime",
+    description: <>Generate an ISO 8601 datetime string. For example: <code>"2024-03-15T14:30:00"</code>.</>,
+  },
+]} />
+
+export const Server = ({children}) => <a href="#def-server" class="def-link">{children}</a>;
+export const Client = ({children}) => <a href="#def-client" class="def-link">{children}</a>;
+export const Packet = ({children}) => <a href="#def-packet" class="def-link">{children}</a>;
+export const RequestPacket = ({children}) => <a href="#def-request-packet" class="def-link">{children}</a>;
+export const ReplyPacket = ({children}) => <a href="#def-reply-packet" class="def-link">{children}</a>;
+export const Stream = ({children}) => <a href="#def-stream" class="def-link">{children}</a>;
+export const ControlStream = ({children}) => <a href="#def-control-stream" class="def-link">{children}</a>;
+export const TestCase = ({children}) => <a href="#def-test-case" class="def-link">{children}</a>;
+export const TestRun = ({children}) => <a href="#def-test-run" class="def-link">{children}</a>;
+export const Connection = ({children}) => <a href="#def-connection" class="def-link">{children}</a>;
+export const PacketRef = ({name}) => <a href={`#packet-${name}`} class="def-link"><code>{name}</code></a>;
+export const SectionRef = ({id, children}) => <a href={`#${id}`} class="def-link">{children}</a>;
+
+export function PacketTable({ name, isReply, encoding, fields, payload }) {
+  const fieldRowCount = (f) => 2 + (f.default !== undefined ? 1 : 0) + (f.required ? 1 : 0);
+  const totalFieldRows = fields ? fields.reduce((n, f) => n + fieldRowCount(f), 0) : 0;
+  const table = (
+    <table class="packet-table" id={name ? `packet-${name}` : undefined}>
+      {isReply !== undefined && (
+        <tr>
+          <td class="packet-label">reply bit</td>
+          <td colspan="3"><code>{isReply ? 1 : 0}</code></td>
+        </tr>
+      )}
+      {encoding && (
+        <tr>
+          <td class="packet-label">encoding</td>
+          <td colspan="3">{encoding}</td>
+        </tr>
+      )}
+      {payload !== undefined && (
+        <tr>
+          <td class="packet-label">payload</td>
+          <td colspan="3">{payload}</td>
+        </tr>
+      )}
+      {fields && fields.map((field, i) => (
+        <>
+          <tr>
+            {i === 0 && <td rowspan={totalFieldRows} class="packet-label">fields</td>}
+            <td rowspan={fieldRowCount(field)} class={`field-name${field.required ? ' field-required' : ''}`}>{field.name}</td>
+            <td colspan="2">{field.description}</td>
+          </tr>
+          <tr class="field-meta">
+            <td>type</td>
+            <td><code>{field.type}</code></td>
+          </tr>
+          {field.default !== undefined && (
+            <tr class="field-meta">
+              <td>default</td>
+              <td>{field.default}</td>
+            </tr>
+          )}
+          {field.required && (
+            <tr class="field-meta">
+              <td>required</td>
+              <td>yes</td>
+            </tr>
+          )}
+        </>
+      ))}
+    </table>
+  );
+  if (!name) return table;
+  return (
+    <details class="packet-details">
+      <summary>
+        <code class="packet-summary-name">{name}</code>
+      </summary>
+      {table}
+    </details>
+  );
+}
+
+export function SchemaTable({schemas}) {
+  const fieldRowCount = (f) => 2 + (f.default !== undefined ? 1 : 0) + (f.required ? 1 : 0);
+  const schemaRowCount = (s) => 1 + (s.fields ? s.fields.reduce((n, f) => n + fieldRowCount(f), 0) : 0);
+  for (const schema of schemas) {
+    for (const field of schema.fields ?? []) {
+      if (field.required === undefined && field.default === undefined) {
+        throw new Error(`Field "${field.name}" in schema "${schema.name}" must set either "required" or "default"`);
+      }
+    }
+  }
+  return (
+    <table class="schema-table">
+      {schemas.map((schema) => (
+        <>
+          <tr>
+            <td rowspan={schemaRowCount(schema)} class="schema-name">{schema.name}</td>
+            <td colspan="3">{schema.description}</td>
+          </tr>
+          {schema.fields?.map((field) => (
+            <>
+              <tr>
+                <td rowspan={fieldRowCount(field)} class={`field-name${field.required ? ' field-required' : ''}`}>{field.name}</td>
+                <td colspan="2">{field.description}</td>
+              </tr>
+              <tr class="field-meta">
+                <td>type</td>
+                <td><code>{field.type}</code></td>
+              </tr>
+              {field.default !== undefined && (
+                <tr class="field-meta">
+                  <td>default</td>
+                  <td>{field.default}</td>
+                </tr>
+              )}
+              {field.required && (
+                <tr class="field-meta">
+                  <td>required</td>
+                  <td>yes</td>
+                </tr>
+              )}
+            </>
+          ))}
+        </>
+      ))}
+    </table>
+  );
+}
+
+<style>
+{`
+a.def-link {
+  color: inherit;
+  text-decoration: underline dotted;
+  text-decoration-color: var(--sl-color-gray-4);
+  text-underline-offset: 2px;
+}
+a.def-link:hover {
+  text-decoration-color: var(--sl-color-gray-2);
+}
+.protocol-diagram {
+  padding: 1em;
+  overflow-x: auto;
+  background: var(--astro-code-color-background);
+  border-radius: 0.5rem;
+}
+.protocol-diagram a {
+  color: var(--sl-color-text-accent);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+}
+.protocol-diagram a:hover {
+  text-decoration-color: var(--sl-color-text-accent);
+}
+.packet-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.packet-table td {
+  vertical-align: top;
+  padding: 0.4em 0.6em;
+  border: 1px solid var(--sl-color-gray-5);
+}
+.packet-table .packet-label {
+  font-weight: bold;
+  white-space: nowrap;
+}
+.packet-details {
+  margin: 1em 0;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+.packet-details summary {
+  cursor: pointer;
+  padding: 0.5em 0.75em;
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  user-select: none;
+}
+.packet-details summary:hover {
+  background: var(--sl-color-gray-6);
+}
+.packet-summary-name {
+  font-weight: bold;
+}
+.packet-details .packet-table {
+  border-top: 1px solid var(--sl-color-gray-5);
+}
+.packet-details .packet-table td:first-child {
+  border-left: none;
+}
+.packet-details .packet-table td:last-child {
+  border-right: none;
+}
+.packet-details .packet-table tr:last-child td {
+  border-bottom: none;
+}
+.packet-table .field-name {
+  white-space: nowrap;
+  font-size: 0.9em;
+}
+.packet-table .field-name.field-required {
+  font-weight: bold;
+}
+.packet-table .field-meta td {
+  font-size: 0.85em;
+  color: var(--sl-color-gray-3);
+}
+.schema-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.schema-table td {
+  vertical-align: top;
+  padding: 0.4em 0.6em;
+  border: 1px solid var(--sl-color-gray-5);
+}
+.schema-table .schema-name {
+  font-weight: bold;
+  white-space: nowrap;
+}
+.schema-table .field-name {
+  white-space: nowrap;
+  font-size: 0.9em;
+}
+.schema-table .field-name.field-required {
+  font-weight: bold;
+}
+.schema-table .field-meta td {
+  font-size: 0.85em;
+  color: var(--sl-color-gray-3);
+}
+`}
+</style>
+
+## Appendix
+
+### Reading sequence diagrams
+
+We use the following conventions for the sequence diagrams in this document:
+
+```
+Client                                           Server
+    |                                               |
+ 1  |---[S1]-- a ---------------------------------->|
+ 1R |<--[S1]-- a_reply -----------------------------|
+    |                                               |
+ 2  |<--[S2]-- b -----------------------------------|
+ 2R |---[S2]-- b_reply ---------------------------->|
+    |                                               |
+```
+
+Each named arrow `--[C]-- name -->` represents a <Packet>packet</Packet>, associated with <Stream>stream</Stream> `C`, being sent from either the <Client>client</Client> to the <Server>server</Server> (`-->`) or the server to the client (`<--`). `name` is purely illustrative and is not part of the spec.
+
+Each <Packet>packet</Packet> is associated with an auto-incrementing number on the left. `n` indicates a <RequestPacket>request packet</RequestPacket>, and `nR` indicates a <ReplyPacket>reply packet</ReplyPacket> responding to packet `n`. Not all request packets expect a reply packet. These packet numbers are illustrative and not part of the spec, except for where they associate a specific request packet with a specific reply packet.
+
+[^1]: The benefit of the S bit is to allow both the <Client>client</Client> and <Server>server</Server> to create <Stream>streams</Stream> without coordinating with each other.
+[^2]: The benefit of the message id is to support out-of-order replies that are associated with the same <Stream>stream</Stream>.
