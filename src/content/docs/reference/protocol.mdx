@@ -15,7 +15,7 @@ This is an RFC-style reference for the Hegel protocol. It is intended to be deta
 * <span id="def-reply-packet">Reply packet</span>: A <Packet>packet</Packet> with the reply bit set to 1. Each reply packet is associated with a specific <RequestPacket>request packet</RequestPacket>. All packets are either request packets or reply packets.
 * <span id="def-stream">Stream</span>: A virtual stream used to associate logically-related <Packet>packets</Packet> together.
 * <span id="def-control-stream">Control stream</span>: The <Stream>stream</Stream> used for high-level packets, for example because no other stream has been established yet. The control stream has id `0`.
-* <span id="def-test-case">Test case</span>: A single execution of the test function with a concrete set of values.
+* <span id="def-test-case">Test case</span>: A single execution of the test function with the concrete set of values that were generated for it during its execution.
 * <span id="def-test-run">Test run</span>: The full lifecycle of a test function, including executing multiple <TestCase>test cases</TestCase> and shrinking any failures.
 * <span id="def-connection">Connection</span>: A generic connection allowing packets to be sent between a client and a server. The protocol is agnostic to the details of this connection and does not specify what transport layer it uses or how it is established. Connections are intended to be created once per process and shared between test runs, though this is not a requirement.
 
@@ -55,6 +55,8 @@ The first five fields comprise the header. Each field is an unsigned 32-bit big-
 
 The header is followed by the variable-length payload field, and then a single terminator byte (0x0A).
 
+Payloads are encoded as either raw bytes, ASCII, or [CBOR](https://cbor.io/) (Concise Binary Object Representation), as indicated by the encoding field in the packet tables below.
+
 ## Test lifecycle
 
 The protocol is agnostic of the transport layer used to send and receive <Packet>packets</Packet>. We will assume here that a <Connection>connection</Connection> has been established between the <Server>server</Server> and the <Client>client</Client> and do not specify how that connection is established.
@@ -70,7 +72,7 @@ After the <Connection>connection</Connection> has been established, the <Client>
 
 <PacketTable name="handshake" isReply={false} encoding="ASCII" payload={<><code>hegel_handshake_start</code></>} />
 
-<PacketTable name="handshake_reply" isReply={true} encoding="ASCII" payload={<>The ASCII string <code>{"Hegel/{version}"}</code>, where <code>{"version"}</code> is the protocol version.</>} />
+<PacketTable name="handshake_reply" isReply={true} encoding="ASCII" payload={<><code>{"Hegel/{version}"}</code>, where <code>{"version"}</code> is the protocol version.</>} />
 
 ### Test run
 
@@ -124,7 +126,7 @@ In the <PacketRef name="test_case" /> <Packet>packet</Packet>, it establishes a 
 
 <PacketTable name="test_case_reply" isReply={true} encoding="CBOR" payload={<><code>null</code></>} />
 
-During the <TestCase>test case</TestCase>, the <Client>client</Client> may send <SectionRef id="test-case-commands">test case commands</SectionRef> to the <Server>server</Server>. These command <Packet>packets</Packet> form the main interaction between the client and the server during the test case and are used to request generated values, mark spans of choices, etc.
+During the execution of the <TestCase>test case</TestCase>, the <Client>client</Client> may send <SectionRef id="test-case-commands">test case commands</SectionRef> to the <Server>server</Server>. These command <Packet>packets</Packet> form the main interaction between the client and the server during the test case and are used to request generated values, mark spans of choices, etc.
 
 After some number of <TestCase>test cases</TestCase>, the <Client>client</Client> will consider the <TestRun>test run</TestRun> to be over. This might be because we hit the `test_cases` setting on the client, or because a test case found an error in the test function. Whenever the client decides the test run is finished, it sends a <PacketRef name="mark_complete" /> command on the test case <Stream>stream</Stream> with information describing the status of the test case.
 
@@ -205,7 +207,7 @@ Record an observation for targeted property-based testing.
 
 #### new_collection
 
-Create a new collection with the specified name. Collections are used for the sizing of variable-length collections.
+Create a new collection. Collections are used for the sizing of variable-length collections.
 
 <PacketTable name="new_collection" isReply={false} encoding="CBOR" fields={[
   { name: "command", description: <><code>"new_collection"</code></>, type: "text", required: true },
@@ -232,7 +234,7 @@ Ask whether the collection should produce another element.
 
 #### collection_reject
 
-Reject the most recently produced element.
+Indicate that the most recently produced element was not added to the collection.
 
 <PacketTable name="collection_reject" isReply={false} encoding="CBOR" fields={[
   { name: "command", description: <><code>"collection_reject"</code></>, type: "text", required: true },
@@ -246,7 +248,7 @@ Reject the most recently produced element.
 
 #### new_pool
 
-Create a new variable pool. Intended for use in stateful testing.
+Create a new variable pool, which is a collection of identifiers intended to point to values that were generated or otherwise produced during testing. This is primarily useful for stateful testing, but can be used in normal tests too.
 
 <PacketTable name="new_pool" isReply={false} encoding="CBOR" fields={[
   { name: "command", description: <><code>"new_pool"</code></>, type: "text", required: true },
@@ -283,20 +285,6 @@ Draw a variable from a pool. The <Server>server</Server> selects which variable 
   { name: "result", description: <>The variable id. If the pool is empty, the <Server>server</Server> marks the <TestCase>test case</TestCase> as invalid.</>, type: "integer", required: true },
 ]} />
 
-#### pool_consume
-
-Consume and return a variable from a pool.
-
-<PacketTable name="pool_consume" isReply={false} encoding="CBOR" fields={[
-  { name: "command", description: <><code>"pool_consume"</code></>, type: "text", required: true },
-  { name: "pool_id", description: <>The pool containing the variable.</>, type: "integer", required: true },
-  { name: "variable_id", description: <>The variable to consume.</>, type: "integer", required: true },
-]} />
-
-<PacketTable name="pool_consume_reply" isReply={true} encoding="CBOR" fields={[
-  { name: "result", description: <><code>null</code></>, type: "null", required: true },
-]} />
-
 
 ### Completing a test run
 
@@ -317,7 +305,7 @@ After all <TestCase>test cases</TestCase> have been executed and shrinking is co
   { name: "results.seed", description: <>The random seed that was used, as a string.</>, type: "text", required: true },
   { name: "results.flaky", description: <>Present if the test was detected to be flaky.</>, type: "text" },
   { name: "results.health_check_failure", description: <>Present if a health check failed.</>, type: "text" },
-  { name: "results.error", description: <>Present if there was an error (e.g. an unknown health check name).</>, type: "text" },
+  { name: "results.error", description: <>Present if there was an error. This could be a usage error (e.g. invalid arguments) or indicate a server bug (e.g. unexpected exception raised).</>, type: "text" },
 ]} />
 
 <PacketTable name="test_done_reply" isReply={true} encoding="CBOR" payload={<><code>true</code></>} />
@@ -407,7 +395,7 @@ Some fields list their type as `schema`. This means it accepts any generator sch
   },
   {
     name: "regex",
-    description: <>Generate a string matching the <code>pattern</code> regular expression.</>,
+    description: <>Generate a string that matches the given <code>pattern</code> regular expression.</>,
     fields: [
       { name: "pattern", description: <>The regular expression to match.</>, type: "string", required: true },
       { name: "fullmatch", description: <>If <code>true</code>, <code>pattern</code> must match the entire string. If <code>false</code>, <code>pattern</code> may match a substring.</>, type: "boolean", default: <code>false</code> },
