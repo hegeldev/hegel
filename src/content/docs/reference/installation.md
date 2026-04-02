@@ -14,21 +14,20 @@ We recognize this is less than ideal for a number of reasons and will make some 
 Our current long-term plan to eliminate this dependency on Python is to rewrite Hypothesis in rust and provide per-language bindings. However, we aren't promising this will happen or committing to any timelines.
 :::
 
-At runtime, the first time a Hegel test is run in a test suite, each Hegel library spawns the `hegel-core` server as a subprocess. It does so by invoking the executable entrypoint provided by the `hegel-core` Python package.
+At runtime, the first time a Hegel test is run in a test suite, each Hegel library spawns the `hegel-core` server as a subprocess.
 
-Each Hegel library uses the following steps to resolve the `hegel-core` path:
+Each Hegel library uses the following steps to run `hegel-core`:
 
-- If the `HEGEL_SERVER_COMMAND` environment variable is set, use that path.
-- Otherwise, the library expects [`uv`](https://docs.astral.sh/uv/) to be on the PATH.
-  - If `uv` is not on the PATH, the library errors with a message about possible next steps, including how to install `uv` and directing you to this page.
-  - If `uv` is on the PATH, the library uses `uv` to install `hegel-core==$VERSION` into a virtual environment located in `.hegel/venv`. `$VERSION` is determined by the version of the Hegel library you have installed, as each Hegel library pins to an exact `hegel-core` version in its source[^1]. It also writes `.hegel/venv/hegel-version`, a text file containing `$VERSION` as ASCII text.
-  - If `.hegel/venv` already exists, the Hegel library checks `.hegel/venv/hegel-version`. If that version is different than its pinned `$VERSION`, it re-creates `.hegel/venv` with `hegel-core==$VERSION`.
+- If the `HEGEL_SERVER_COMMAND` environment variable is set, use that command directly.
+- Otherwise, the library uses [`uv tool run`](https://docs.astral.sh/uv/reference/cli/#uv-tool-run) to run `hegel-core` with a specific version that the library has been tested with.
+- The first time this is run, it will install a virtualenv in `~/.cache/uv` (or `$XDG_CACHE_HOME/uv` if set), after which that will be reused until the needed version changes. `uv` will be found as follows:
+  - If `uv` is already on the PATH, it uses that.
+  - If `uv` is not on the PATH, the library automatically downloads a private copy of `uv` to `~/.cache/hegel/uv` (or `$XDG_CACHE_HOME/hegel/uv` if set). This copy is not added to your PATH.
+  - The library then uses `uv tool run` to run `hegel-core==$VERSION`, where `$VERSION` is determined by the version of the Hegel library you have installed, as each Hegel library pins to an exact `hegel-core` version in its source[^1].
 
 Some practical implications of this:
-- The installation through the `uv` path happens at runtime. If your tests must run in a sandboxed environment without network access, consider using `HEGEL_SERVER_COMMAND`.
-- If you upgrade your Hegel library, and the Hegel library happened to bump its `hegel-core` version, your first test run afterwards will be slow as it upgrades the local `hegel-core` library.
-
-Hegel libraries log the installation of the venv and `hegel-core` to `.hegel/venv/install.log`, which might help you narrow down any issues.
+- The download of `uv` (if needed) and the first run of `hegel-core` happen at runtime. If your tests must run in a sandboxed environment without network access, consider using `HEGEL_SERVER_COMMAND`.
+- If you upgrade your Hegel library, and the Hegel library happened to bump its `hegel-core` version, your first test run afterwards may be slow as `uv` fetches the new version.
 
 ## Installing hegel-core manually
 
@@ -43,15 +42,12 @@ For knowledgeable Python users, it may be useful to know that Hegel defines its 
 hegel = "hegel.__main__:main"
 ```
 
-Note that if you set `HEGEL_SERVER_COMMAND`, you are responsible for ensuring that your Hegel library version is compatible with that `hegel-core` version.
+Note that if you set `HEGEL_SERVER_COMMAND`, you are responsible for ensuring that your Hegel library version is compatible with that `hegel-core` version. We do our best to give informative errors where this is not the case, but there are a lot of possible combinations of this and ways things can go wrong, and only the most common have been tested for.
 
 ## Troubleshooting
 
-If you run into installation issues, for example a version mismatch on disk, you can delete `.hegel/venv` to force a fresh install.
+This process should ideally be transparent to you. If it breaks without giving a very clear error message about what you need to do to fix it, that's a bug and we'd appreciate it if you reported it.
 
-:::note
-Manually removing this directory shouldn't ever be necessary. If you run into an issue and need to do this, *please* open an issue on the appropriate Hegel library repository so we can fix it for everyone.
-:::
-
+The most useful source of information is that `hegel-core` server's `stderr` is piped to `.hegel/server.log` and should contain any errors that occurred during installation, but any information you can give us about the environment that triggered the problems would be appreciated.
 
 [^1]: Note that there is no correspondence between `hegel-core` version numbers and Hegel library version numbers.
