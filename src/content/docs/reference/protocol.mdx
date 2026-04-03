@@ -317,7 +317,7 @@ After `test_done`, the <Server>server</Server> sends a `test_case` packet with `
 
 For clarity at runtime, stream can be marked as closed when they are no longer needed.
 
-<PacketTable name="stream_close" isReply={false} encoding="raw" payload={<>The single byte <code>0xFE</code>. The message id is fixed to <code>(1 &lt;&lt; 31) - 1</code>. <code>0xFE</code> is chosen to be invalid CBOR, so it cannot be confused with a normal payload.</>} />
+<PacketTable name="stream_close" isReply={false} encoding="raw" payload={<>The single byte <code>0xFE</code>. The message id of this packet is always <code>(1 &lt;&lt; 31) - 1</code>.</>} />
 
 ## Schemas
 
