@@ -8,7 +8,7 @@ import vercel from '@astrojs/vercel';
 export default defineConfig({
     site: 'https://hegel.dev',
     markdown: {
-		// disable smart quotes, among other "features" I'm not a fan
+		// disable smart quotes, among other "features" I'm (Liam) not a fan
 		// of: https://daringfireball.net/projects/smartypants/
         smartypants: false,
     },

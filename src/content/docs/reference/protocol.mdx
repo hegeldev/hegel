@@ -8,16 +8,16 @@ This is an RFC-style reference for the Hegel protocol. It is intended to be deta
 
 ## Terminology
 
-* <span id="def-server">Server</span>: The server process, implementing the core functionality of a property-based testing library. [Hegel-core](https://github.com/hegeldev/hegel-core) is an example of a server.
-* <span id="def-client">Client</span>: The client library, implementing the user interface of a property-based testing library. [Hegel-rust](https://github.com/hegeldev/hegel-rust) is an example of a client.
-* <span id="def-packet">Packet</span>: The unit of data sent in the protocol. A packet is always associated with a <Stream>stream</Stream>.
-* <span id="def-request-packet">Request packet</span>: A <Packet>packet</Packet> with the reply bit set to 0. All packets are either request packets or reply packets. Note that not every request packet expects a <ReplyPacket>reply packet</ReplyPacket> in response.
-* <span id="def-reply-packet">Reply packet</span>: A <Packet>packet</Packet> with the reply bit set to 1. Each reply packet is associated with a specific <RequestPacket>request packet</RequestPacket>. All packets are either request packets or reply packets.
-* <span id="def-stream">Stream</span>: A virtual stream used to associate logically-related <Packet>packets</Packet> together.
-* <span id="def-control-stream">Control stream</span>: The <Stream>stream</Stream> used for high-level packets, for example because no other stream has been established yet. The control stream has id `0`.
-* <span id="def-test-case">Test case</span>: A single execution of the test function with the concrete set of values that were generated for it during its execution.
-* <span id="def-test-run">Test run</span>: The full lifecycle of a test function, including executing multiple <TestCase>test cases</TestCase> and shrinking any failures.
-* <span id="def-connection">Connection</span>: A generic connection allowing packets to be sent between a client and a server. The protocol is agnostic to the details of this connection and does not specify what transport layer it uses or how it is established. Connections are intended to be created once per process and shared between test runs, though this is not a requirement.
+* <strong><span id="def-server">Server</span></strong>: The server process, implementing the core functionality of a property-based testing library. [Hegel-core](https://github.com/hegeldev/hegel-core) is an example of a server.
+* <strong><span id="def-client">Client</span></strong>: The client library, implementing the user interface of a property-based testing library. [Hegel-rust](https://github.com/hegeldev/hegel-rust) is an example of a client.
+* <strong><span id="def-packet">Packet</span></strong>: The unit of data sent in the protocol. A packet is always associated with a <Stream>stream</Stream>.
+* <strong><span id="def-request-packet">Request packet</span></strong>: A <Packet>packet</Packet> with the reply bit set to 0. All packets are either request packets or reply packets. Note that not every request packet expects a <ReplyPacket>reply packet</ReplyPacket> in response.
+* <strong><span id="def-reply-packet">Reply packet</span></strong>: A <Packet>packet</Packet> with the reply bit set to 1. Each reply packet is associated with a specific <RequestPacket>request packet</RequestPacket>. All packets are either request packets or reply packets.
+* <strong><span id="def-stream">Stream</span></strong>: A virtual stream used to associate logically-related <Packet>packets</Packet> together.
+* <strong><span id="def-control-stream">Control stream</span></strong>: The <Stream>stream</Stream> used for high-level packets, for example because no other stream has been established yet. The control stream has id `0`.
+* <strong><span id="def-test-case">Test case</span></strong>: A single execution of the test function with the concrete set of values that were generated for it during its execution.
+* <strong><span id="def-test-run">Test run</span></strong>: The full lifecycle of a test function, including executing multiple <TestCase>test cases</TestCase> and shrinking any failures.
+* <strong><span id="def-connection">Connection</span></strong>: A generic connection allowing packets to be sent between a client and a server. The protocol is agnostic to the details of this connection and does not specify what transport layer it uses or how it is established. Connections are intended to be created once per process and shared between test runs, though this is not a requirement. A single test run uses the same connection for all its test cases. Multiple test runs are permitted in parallel on a single connection.
 
 ## Wire specification
 
