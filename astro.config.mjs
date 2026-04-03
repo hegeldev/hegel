@@ -33,6 +33,7 @@ export default defineConfig({
 					label: 'Libraries',
 					items: [
 						{ label: 'hegel-rust', link: 'https://github.com/hegeldev/hegel-rust', attrs: { target: '_blank', class: 'external-link' } },
+						{ label: 'hegel-go', link: 'https://github.com/hegeldev/hegel-go', attrs: { target: '_blank', class: 'external-link' } },
 						{ label: 'hegel-core', link: 'https://github.com/hegeldev/hegel-core', attrs: { target: '_blank', class: 'external-link' } },
 					],
 				},
