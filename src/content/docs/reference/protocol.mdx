@@ -13,7 +13,7 @@ This is an RFC-style reference for the Hegel protocol. It is intended to be deta
 * <strong><span id="def-packet">Packet</span></strong>: The unit of data sent in the protocol. A packet is always associated with a <Stream>stream</Stream>.
 * <strong><span id="def-request-packet">Request packet</span></strong>: A <Packet>packet</Packet> with the reply bit set to 0. All packets are either request packets or reply packets. Note that not every request packet expects a <ReplyPacket>reply packet</ReplyPacket> in response.
 * <strong><span id="def-reply-packet">Reply packet</span></strong>: A <Packet>packet</Packet> with the reply bit set to 1. Each reply packet is associated with a specific <RequestPacket>request packet</RequestPacket>. All packets are either request packets or reply packets.
-* <strong><span id="def-stream">Stream</span></strong>: A virtual stream used to associate logically-related <Packet>packets</Packet> together.
+* <strong><span id="def-stream">Stream</span></strong>: A unique identifier used to associate logically-related <Packet>packets</Packet> together. All <Packet>packets</Packet> are associated with a stream.
 * <strong><span id="def-control-stream">Control stream</span></strong>: The <Stream>stream</Stream> used for high-level packets, for example because no other stream has been established yet. The control stream has id `0`.
 * <strong><span id="def-test-case">Test case</span></strong>: A single execution of the test function with the concrete set of values that were generated for it during its execution.
 * <strong><span id="def-test-run">Test run</span></strong>: The full lifecycle of a test function, including executing multiple <TestCase>test cases</TestCase> and shrinking any failures.
@@ -126,9 +126,9 @@ In the <PacketRef name="test_case" /> <Packet>packet</Packet>, it establishes a 
 
 <PacketTable name="test_case_reply" isReply={true} encoding="CBOR" payload={<><code>null</code></>} />
 
-During the execution of the <TestCase>test case</TestCase>, the <Client>client</Client> may send <SectionRef id="test-case-commands">test case commands</SectionRef> to the <Server>server</Server>. These command <Packet>packets</Packet> form the main interaction between the client and the server during the test case and are used to request generated values, mark spans of choices, etc.
+During the <TestCase>test case</TestCase>, the <Client>client</Client> may send <SectionRef id="test-case-commands">test case commands</SectionRef> to the <Server>server</Server>. These command <Packet>packets</Packet> form the main interaction between the client and the server during the test case and are used to request generated values, mark spans of choices, etc.
 
-After some number of <TestCase>test cases</TestCase>, the <Client>client</Client> will consider the <TestRun>test run</TestRun> to be over. This might be because we hit the `test_cases` setting on the client, or because a test case found an error in the test function. Whenever the client decides the test run is finished, it sends a <PacketRef name="mark_complete" /> command on the test case <Stream>stream</Stream> with information describing the status of the test case.
+After some number of <TestCase>test cases</TestCase>, the <Server>server</Server> will consider the <TestRun>test run</TestRun> to be over. This might be because we hit the `test_cases` setting (communicated in the initial <PacketRef name="run_test" /> packet), or because a test case found an error in the test function. Whenever the server decides the test run is finished, it sends a <PacketRef name="mark_complete" /> command on the test case <Stream>stream</Stream> with information describing the status of the test case.
 
 <PacketTable name="mark_complete" isReply={false} encoding="CBOR" fields={[
   { name: "command", description: <><code>"mark_complete"</code></>, type: "text", required: true },
