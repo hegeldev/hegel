@@ -1,10 +1,4 @@
 {
-    "trailingSlash": false,
-    "redirects": [
-        {
-            "source": "/go/hegel/",
-            "destination": "/go/hegel.html",
-            "permanent": true
-        }
-    ]
+    "cleanUrls": true,
+    "trailingSlash": false
 }
