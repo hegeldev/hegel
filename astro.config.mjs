@@ -7,6 +7,11 @@ import vercel from '@astrojs/vercel';
 // https://astro.build/config
 export default defineConfig({
     site: 'https://hegel.dev',
+    markdown: {
+		// Liam: disable smart quotes, among other "features" I'm not a fan
+		// of: https://daringfireball.net/projects/smartypants/
+        smartypants: false,
+    },
     trailingSlash: 'never',
 	integrations: [
 		starlight({
@@ -48,6 +53,7 @@ export default defineConfig({
 					label: 'Reference',
 					items: [
 						{ slug: 'reference/installation' },
+						{ slug: 'reference/protocol' },
 					],
 				},
 				{
