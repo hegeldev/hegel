@@ -23,8 +23,12 @@ def main():
         return
 
     versions[protocol_version] = new_version
-    # Sort by protocol version (numeric)
-    sorted_versions = dict(sorted(versions.items(), key=lambda kv: float(kv[0])))
+    # Sort by protocol version (major.minor numeric comparison)
+    def version_key(kv):
+        parts = kv[0].split(".")
+        return (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+
+    sorted_versions = dict(sorted(versions.items(), key=version_key))
     versions_path.write_text(json.dumps(sorted_versions, indent=2) + "\n")
 
     git("config", "user.name", "hegel-release[bot]")

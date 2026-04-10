@@ -378,7 +378,7 @@ Some fields list their type as `schema`. This means it accepts any generator sch
   },
   {
     name: "string",
-    description: <>Generate a Unicode string. Returned as a custom CBOR tag 6, with a payload equivalent to the UTF-8 representation of the string except that surrogate code points are allowed. </>,
+    description: <>Generate a Unicode string. Returned as a custom CBOR tag 91, with a payload equivalent to the UTF-8 representation of the string except that surrogate code points are allowed. </>,
     fields: [
       { name: "min_size", description: <>Minimum length, in the number of code points.</>, type: "integer", default: <code>0</code> },
       { name: "max_size", description: <>Maximum length, in the number of code points.</>, type: "integer", default: "unbounded" },
