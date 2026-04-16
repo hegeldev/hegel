@@ -11,7 +11,7 @@ Some of why Hypothesis is the most widely used library of this sort is because i
 The main ones are:
 
 * Hypothesis has a great library of high-quality generators, and flexible tools for building on them.
-* Hypothesis has "internal shrinking", which means that it will basically always give you a high-quality and readable final example. It avoids many of the pitfalls of shrinking in other property-based testing libraries, such as producing invalid test cases, requiring manually writing shrinkers, and poor quality out-of-the-box shrinking.<sup class='aside-link'>4</sup>
+* Hypothesis has "internal shrinking", which means that it will basically always give you a high-quality and readable final example. It avoids many of the pitfalls of shrinking in other property-based testing libraries, such as producing invalid test cases, requiring manually writing shrinkers, and poor quality out-of-the-box shrinking.
 * Hypothesis has a test database, which means that when a test fails, if you rerun it it will automatically fail fast in the same way.
 
 All of these benefits follow from the underlying model of Hypothesis, which is relatively simple, but the reality is that the real competitive advantage of Hypothesis is that the Hypothesis developers (including those of us involved in Hegel) put an unreasonable amount of work into it. As a result, not many other libraries come close, because most people are only willing to put a reasonable amount of work in. Go's [Rapid library](https://github.com/flyingmutant/rapid) is probably the most credible port we've seen, but most of the other libraries that claim to be Hypothesis inspired didn't adopt the core model, and as a result don't get the benefits of it.
