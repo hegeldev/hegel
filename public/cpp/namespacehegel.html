@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.3.3</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.3.4</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -261,9 +261,9 @@ Functions</h2></td></tr>
 <div class="line"><span class="keywordtype">int</span> main() {</div>
 <div class="line">    <a class="code hl_function" href="#a755f2d4625b841cf26b08961bc265305">hegel::test</a>([](<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc) {</div>
 <div class="line">        <span class="keyword">namespace </span>gs = <a class="code hl_namespace" href="namespacehegel_1_1generators.html">hegel::generators</a>;</div>
-<div class="line">        <span class="keyword">auto</span> x = tc.<a class="code hl_function" href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">draw</a>(gs::integers&lt;int&gt;({.min_value = 0,</div>
-<div class="line">.max_value = 100})); <span class="keyword">auto</span> y = tc.<a class="code hl_function" href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">draw</a>(gs::integers&lt;int&gt;({.min_value =</div>
-<div class="line">0, .max_value = 100}));</div>
+<div class="line">        <span class="keyword">auto</span> x = tc.<a class="code hl_function" href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">draw</a>(gs::integers&lt;int&gt;({.min_value = 0, .max_value =</div>
+<div class="line">100})); <span class="keyword">auto</span> y = tc.<a class="code hl_function" href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">draw</a>(gs::integers&lt;int&gt;({.min_value = 0, .max_value =</div>
+<div class="line">100}));</div>
 <div class="line"> </div>
 <div class="line">        <span class="comment">// Property: x + y &gt;= x (true for non-negative integers)</span></div>
 <div class="line">        <span class="keywordflow">if</span> (x + y &lt; x) {</div>
@@ -274,7 +274,7 @@ Functions</h2></td></tr>
 <div class="line">    <span class="keywordflow">return</span> 0;</div>
 <div class="line">}</div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:34</div></div>
-<div class="ttc" id="aclasshegel_1_1TestCase_html_affbc292ad2e6f4027b2402200cbc1d1c"><div class="ttname"><a href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">hegel::TestCase::draw</a></div><div class="ttdeci">T draw(const generators::Generator&lt; T &gt; &amp;gen) const</div><div class="ttdoc">Draw a random value from a generator.</div><div class="ttdef"><b>Definition</b> core.h:377</div></div>
+<div class="ttc" id="aclasshegel_1_1TestCase_html_affbc292ad2e6f4027b2402200cbc1d1c"><div class="ttname"><a href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">hegel::TestCase::draw</a></div><div class="ttdeci">T draw(const generators::Generator&lt; T &gt; &amp;gen) const</div><div class="ttdoc">Draw a random value from a generator.</div><div class="ttdef"><b>Definition</b> core.h:371</div></div>
 <div class="ttc" id="anamespacehegel_1_1generators_html"><div class="ttname"><a href="namespacehegel_1_1generators.html">hegel::generators</a></div><div class="ttdoc">Hegel generators.</div><div class="ttdef"><b>Definition</b> core.h:16</div></div>
 <div class="ttc" id="anamespacehegel_html_a755f2d4625b841cf26b08961bc265305"><div class="ttname"><a href="#a755f2d4625b841cf26b08961bc265305">hegel::test</a></div><div class="ttdeci">void test(const std::function&lt; void(TestCase &amp;)&gt; &amp;test_fn, const Settings &amp;settings={})</div><div class="ttdoc">Run a Hegel test.</div></div>
 </div><!-- fragment --><dl class="params"><dt>Parameters</dt><dd>

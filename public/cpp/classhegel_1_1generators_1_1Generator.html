@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.3.3</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.3.4</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -144,8 +144,8 @@ class hegel::generators::Generator&lt; T &gt;</div><p>The base class of all gene
 <div class="line">        });</div>
 <div class="line">});</div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:34</div></div>
-<div class="ttc" id="aclasshegel_1_1TestCase_html_affbc292ad2e6f4027b2402200cbc1d1c"><div class="ttname"><a href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">hegel::TestCase::draw</a></div><div class="ttdeci">T draw(const generators::Generator&lt; T &gt; &amp;gen) const</div><div class="ttdoc">Draw a random value from a generator.</div><div class="ttdef"><b>Definition</b> core.h:377</div></div>
-<div class="ttc" id="aclasshegel_1_1generators_1_1Generator_html_ad9e5e2b18ed5ee073093abe815e7255a"><div class="ttname"><a href="#ad9e5e2b18ed5ee073093abe815e7255a">hegel::generators::Generator::flat_map</a></div><div class="ttdeci">std::invoke_result_t&lt; F, T &gt; flat_map(F &amp;&amp;f) const</div><div class="ttdoc">Chain generators for dependent generation.</div><div class="ttdef"><b>Definition</b> core.h:234</div></div>
+<div class="ttc" id="aclasshegel_1_1TestCase_html_affbc292ad2e6f4027b2402200cbc1d1c"><div class="ttname"><a href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">hegel::TestCase::draw</a></div><div class="ttdeci">T draw(const generators::Generator&lt; T &gt; &amp;gen) const</div><div class="ttdoc">Draw a random value from a generator.</div><div class="ttdef"><b>Definition</b> core.h:371</div></div>
+<div class="ttc" id="aclasshegel_1_1generators_1_1Generator_html_ad9e5e2b18ed5ee073093abe815e7255a"><div class="ttname"><a href="#ad9e5e2b18ed5ee073093abe815e7255a">hegel::generators::Generator::flat_map</a></div><div class="ttdeci">std::invoke_result_t&lt; F, T &gt; flat_map(F &amp;&amp;f) const</div><div class="ttdoc">Chain generators for dependent generation.</div><div class="ttdef"><b>Definition</b> core.h:228</div></div>
 <div class="ttc" id="anamespacehegel_1_1generators_html"><div class="ttname"><a href="namespacehegel_1_1generators.html">hegel::generators</a></div><div class="ttdoc">Hegel generators.</div><div class="ttdef"><b>Definition</b> core.h:16</div></div>
 <div class="ttc" id="anamespacehegel_html_a755f2d4625b841cf26b08961bc265305"><div class="ttname"><a href="namespacehegel.html#a755f2d4625b841cf26b08961bc265305">hegel::test</a></div><div class="ttdeci">void test(const std::function&lt; void(TestCase &amp;)&gt; &amp;test_fn, const Settings &amp;settings={})</div><div class="ttdoc">Run a Hegel test.</div></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
@@ -183,20 +183,19 @@ template&lt;typename T&gt; </div>
 <p>Filter generated values by a predicate. </p>
 <p>Creates a <a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator</a> that only produces values satisfying the predicate. The new <a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator</a> has the same type as this <a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator</a>.</p>
 <p>So for example, if you want sorted lists of length N, you should generate sorted lists of length N, not generate random lists and filter by a predicate of 'length == N &amp;&amp; is_sorted'. (Although the latter is logically correct, it would be a performance nightmare, so Hegel doesn't let you do it that way.)</p>
-<div class="fragment"><div class="line"><a class="code hl_class" href="classhegel_1_1generators_1_1Generator.html">Generator&lt;int&gt;</a> even =                                  <span class="comment">// Return type</span></div>
-<div class="line">is same as input type gs::integers&lt;int&gt;({.min_value = 0, .max_value =</div>
-<div class="line">100})  <span class="comment">// Input type = Generator&lt;int&gt; .filter(</span></div>
-<div class="line">        [](<span class="keywordtype">int</span> x) { <span class="keywordflow">return</span> x % 2 == 0; }               <span class="comment">// bool</span></div>
-<div class="line">predicate(<span class="keywordtype">int</span> x)</div>
-<div class="line">    );</div>
-<div class="ttc" id="aclasshegel_1_1generators_1_1Generator_html"><div class="ttname"><a href="classhegel_1_1generators_1_1Generator.html">hegel::generators::Generator</a></div><div class="ttdoc">The base class of all generators.</div><div class="ttdef"><b>Definition</b> core.h:157</div></div>
+<p>For example, if you want sorted lists of length N, you should generate lists of length N and sort them, not generate random lists and filter by a predicate of 'length == N &amp;&amp; is_sorted'.</p>
+<div class="fragment"><div class="line"><span class="keyword">auto</span> even = <a class="code hl_function" href="namespacehegel_1_1generators.html#a1a5884107bb1ae52569d7e2fbb6a960d">integers&lt;int&gt;</a>({.min_value = 0, .max_value = 100})</div>
+<div class="line">    .<a class="code hl_function" href="#a97c49fc816022dfba31410095849c2ab">filter</a>([](<span class="keywordtype">int</span> x) { <span class="keywordflow">return</span> x % 2 == 0; });</div>
+<div class="line"><span class="comment">// even is Generator&lt;int&gt;</span></div>
+<div class="ttc" id="aclasshegel_1_1generators_1_1Generator_html_a97c49fc816022dfba31410095849c2ab"><div class="ttname"><a href="#a97c49fc816022dfba31410095849c2ab">hegel::generators::Generator::filter</a></div><div class="ttdeci">Generator&lt; T &gt; filter(std::function&lt; bool(const T &amp;)&gt; pred) const</div><div class="ttdoc">Filter generated values by a predicate.</div><div class="ttdef"><b>Definition</b> core.h:269</div></div>
+<div class="ttc" id="anamespacehegel_1_1generators_html_a1a5884107bb1ae52569d7e2fbb6a960d"><div class="ttname"><a href="namespacehegel_1_1generators.html#a1a5884107bb1ae52569d7e2fbb6a960d">hegel::generators::integers</a></div><div class="ttdeci">Generator&lt; T &gt; integers(IntegersParams&lt; T &gt; params={})</div><div class="ttdoc">Generate random integers. For a given integral type T, produces values in the range [std::numeric_lim...</div><div class="ttdef"><b>Definition</b> numeric.h:146</div></div>
 </div><!-- fragment --><dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
-    <tr><td class="paramname">pred</td><td>Predicate that values must satisfy. Signature: bool pred(T value) </td></tr>
+    <tr><td class="paramname">pred</td><td>Predicate that values must satisfy </td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd><a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator</a>&lt;T&gt; producing only values satisfying pred </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd><a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator&lt;T&gt;</a> producing only values satisfying pred </dd></dl>
 
 </div>
 </div>
@@ -228,17 +227,14 @@ template&lt;typename F&gt; </div>
 </div><div class="memdoc">
 
 <p>Chain generators for dependent generation. </p>
-<p>Given a <a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator</a>&lt;T&gt; and a function from T -&gt; <a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator</a>&lt;S&gt;, creates a <a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator</a>&lt;S&gt;. Useful when generation parameters depend on previously generated values.</p>
-<div class="fragment"><div class="line"><a class="code hl_class" href="classhegel_1_1generators_1_1Generator.html">Generator&lt;std::string&gt;</a> sized_string =                     <span class="comment">// Result</span></div>
-<div class="line">type <a class="code hl_class" href="classhegel_1_1generators_1_1Generator.html">Generator&lt;std::string&gt;</a> gs::integers&lt;size_t&gt;({.min_value = 1,</div>
-<div class="line">.max_value = 10})   <span class="comment">// Input type Generator&lt;size_t&gt; .flat_map(</span></div>
-<div class="line">        [](<span class="keywordtype">size_t</span> len) {                                  <span class="comment">//</span></div>
-<div class="line">transformation <a class="code hl_class" href="classhegel_1_1generators_1_1Generator.html">Generator&lt;std::string&gt;</a> f(<span class="keywordtype">size_t</span> len) <span class="keywordflow">return</span> gs::text({</div>
-<div class="line"><span class="comment">// gs::text() return type is Generator&lt;std::string&gt; .min_size = len,</span></div>
-<div class="line"><span class="comment">// Constructor parameters to gs::text() depend on the value *len*</span></div>
-<div class="line">.max_size = len</div>
-<div class="line">            });</div>
-<div class="line">    });</div>
+<p>Given a <a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator</a>&lt;T&gt; and a function T -&gt; <a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator</a>&lt;S&gt;, creates a <a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator</a>&lt;S&gt;. Useful when generation parameters depend on previously generated values.</p>
+<div class="fragment"><div class="line"><span class="keyword">auto</span> sized_string =</div>
+<div class="line">    <a class="code hl_function" href="namespacehegel_1_1generators.html#a1a5884107bb1ae52569d7e2fbb6a960d">integers&lt;size_t&gt;</a>({.min_value = 1, .max_value = 10})</div>
+<div class="line">        .<a class="code hl_function" href="#ad9e5e2b18ed5ee073093abe815e7255a">flat_map</a>([](<span class="keywordtype">size_t</span> len) {</div>
+<div class="line">            <span class="keywordflow">return</span> <a class="code hl_function" href="namespacehegel_1_1generators.html#a30040fbe3713538d54cf079060a3ff9f">text</a>({.min_size = len, .max_size = len});</div>
+<div class="line">        });</div>
+<div class="line"><span class="comment">// sized_string is Generator&lt;std::string&gt;</span></div>
+<div class="ttc" id="anamespacehegel_1_1generators_html_a30040fbe3713538d54cf079060a3ff9f"><div class="ttname"><a href="namespacehegel_1_1generators.html#a30040fbe3713538d54cf079060a3ff9f">hegel::generators::text</a></div><div class="ttdeci">Generator&lt; std::string &gt; text(TextParams params={})</div><div class="ttdoc">Generate random text strings.</div></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
     <tr><td class="paramname">F</td><td>Function type (T -&gt; <a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator</a>&lt;S&gt;) </td></tr>
@@ -285,15 +281,13 @@ template&lt;typename F&gt; </div>
 
 <p>*&zwj;/ </p>
 <p>Transform generated values with a function.</p>
-<p>Given a <a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator</a>&lt;T&gt; and a function from T -&gt; S, creates a <a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator</a>&lt;S&gt;.</p>
+<p>Given a <a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator</a>&lt;T&gt; and a function T -&gt; S, creates a <a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator</a>&lt;S&gt;.</p>
 <p>This works by generating values from the <a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator</a>&lt;T&gt; and applying a transformation to each value.</p>
-<p>Here's an example of how you'd use this: </p><div class="fragment"><div class="line"><a class="code hl_class" href="classhegel_1_1generators_1_1Generator.html">Generator&lt;double&gt;</a> halved =                           <span class="comment">// Result type</span></div>
-<div class="line"><a class="code hl_class" href="classhegel_1_1generators_1_1Generator.html">Generator&lt;double&gt;</a> gs::integers&lt;int&gt;() <span class="comment">// Input type Generator&lt;int&gt;</span></div>
-<div class="line">.<a class="code hl_function" href="#a2ef439895b517f4f7c28314536c98e92">map</a>(</div>
-<div class="line">            [](<span class="keywordtype">int</span> x) { <span class="keywordflow">return</span> double(x) / 2.0; }    <span class="comment">//</span></div>
-<div class="line">transformation: <span class="keywordtype">double</span> f(<span class="keywordtype">int</span> x)</div>
-<div class="line">        );</div>
-<div class="ttc" id="aclasshegel_1_1generators_1_1Generator_html_a2ef439895b517f4f7c28314536c98e92"><div class="ttname"><a href="#a2ef439895b517f4f7c28314536c98e92">hegel::generators::Generator::map</a></div><div class="ttdeci">Generator&lt; std::invoke_result_t&lt; F, T &gt; &gt; map(F f) const</div><div class="ttdoc">*‍/</div><div class="ttdef"><b>Definition</b> core.h:202</div></div>
+<p>Here's an example of how you'd use this:</p>
+<div class="fragment"><div class="line"><span class="keyword">auto</span> halved = <a class="code hl_function" href="namespacehegel_1_1generators.html#a1a5884107bb1ae52569d7e2fbb6a960d">integers&lt;int&gt;</a>().map(</div>
+<div class="line">    [](<span class="keywordtype">int</span> x) { <span class="keywordflow">return</span> double(x) / 2.0; }</div>
+<div class="line">);</div>
+<div class="line"><span class="comment">// halved is Generator&lt;double&gt;</span></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
     <tr><td class="paramname">F</td><td>Function type (T -&gt; S) </td></tr>
