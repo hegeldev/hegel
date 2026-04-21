@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.3.3</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.3.4</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -121,42 +121,42 @@ $(function(){initNavTree('builds_8h_source.html','',''); });
 <div class="line"><a id="l00053" name="l00053"></a><span class="lineno">   53</span>    };</div>
 </div>
 <div class="line"><a id="l00054" name="l00054"></a><span class="lineno">   54</span></div>
-<div class="line"><a id="l00071" name="l00071"></a><span class="lineno">   71</span>    <span class="keyword">template</span> &lt;auto MemberPtr, <span class="keyword">typename</span> Gen&gt;</div>
-<div class="foldopen" id="foldopen00072" data-start="{" data-end="}">
-<div class="line"><a id="l00072" name="l00072"></a><span class="lineno"><a class="line" href="namespacehegel_1_1generators.html#a3e8aade9ced0c8c3384bd27ac5eb118a">   72</a></span>    <a class="code hl_struct" href="structhegel_1_1generators_1_1Field.html">Field&lt;MemberPtr, Gen&gt;</a> <a class="code hl_function" href="namespacehegel_1_1generators.html#a3e8aade9ced0c8c3384bd27ac5eb118a">field</a>(Gen gen) {</div>
-<div class="line"><a id="l00073" name="l00073"></a><span class="lineno">   73</span>        <span class="keywordflow">return</span> <a class="code hl_struct" href="structhegel_1_1generators_1_1Field.html">Field&lt;MemberPtr, Gen&gt;</a>{std::move(gen)};</div>
-<div class="line"><a id="l00074" name="l00074"></a><span class="lineno">   74</span>    }</div>
+<div class="line"><a id="l00072" name="l00072"></a><span class="lineno">   72</span>    <span class="keyword">template</span> &lt;auto MemberPtr, <span class="keyword">typename</span> Gen&gt;</div>
+<div class="foldopen" id="foldopen00073" data-start="{" data-end="}">
+<div class="line"><a id="l00073" name="l00073"></a><span class="lineno"><a class="line" href="namespacehegel_1_1generators.html#a3e8aade9ced0c8c3384bd27ac5eb118a">   73</a></span>    <a class="code hl_struct" href="structhegel_1_1generators_1_1Field.html">Field&lt;MemberPtr, Gen&gt;</a> <a class="code hl_function" href="namespacehegel_1_1generators.html#a3e8aade9ced0c8c3384bd27ac5eb118a">field</a>(Gen gen) {</div>
+<div class="line"><a id="l00074" name="l00074"></a><span class="lineno">   74</span>        <span class="keywordflow">return</span> <a class="code hl_struct" href="structhegel_1_1generators_1_1Field.html">Field&lt;MemberPtr, Gen&gt;</a>{std::move(gen)};</div>
+<div class="line"><a id="l00075" name="l00075"></a><span class="lineno">   75</span>    }</div>
 </div>
-<div class="line"><a id="l00075" name="l00075"></a><span class="lineno">   75</span></div>
-<div class="line"><a id="l00100" name="l00100"></a><span class="lineno">  100</span>    <span class="keyword">template</span> &lt;<span class="keyword">typename</span> T, <span class="keyword">typename</span>... Fields&gt;</div>
-<div class="foldopen" id="foldopen00101" data-start="{" data-end="}">
-<div class="line"><a id="l00101" name="l00101"></a><span class="lineno"><a class="line" href="namespacehegel_1_1generators.html#ae0fd07c548bdf89717dfaaba7b3fbc53">  101</a></span>    <a class="code hl_class" href="classhegel_1_1generators_1_1Generator.html">Generator&lt;T&gt;</a> <a class="code hl_function" href="namespacehegel_1_1generators.html#ae0fd07c548bdf89717dfaaba7b3fbc53">builds_agg</a>(Fields... fields) {</div>
-<div class="line"><a id="l00102" name="l00102"></a><span class="lineno">  102</span>        <span class="keyword">auto</span> gen_tuple = std::make_tuple(std::move(fields)...);</div>
-<div class="line"><a id="l00103" name="l00103"></a><span class="lineno">  103</span> </div>
-<div class="line"><a id="l00104" name="l00104"></a><span class="lineno">  104</span>        <span class="keywordflow">return</span> <a class="code hl_function" href="namespacehegel_1_1generators.html#a5bc654cad6e70c607310306aec1b185b">compose</a>([gen_tuple](<span class="keyword">const</span> <a class="code hl_class" href="classhegel_1_1TestCase.html">TestCase</a>&amp; tc) <span class="keyword">mutable</span> -&gt; T {</div>
-<div class="line"><a id="l00105" name="l00105"></a><span class="lineno">  105</span>            T result{};</div>
-<div class="line"><a id="l00106" name="l00106"></a><span class="lineno">  106</span>            std::apply(</div>
-<div class="line"><a id="l00107" name="l00107"></a><span class="lineno">  107</span>                [&amp;result, &amp;tc](<span class="keyword">auto</span>&amp;... fs) {</div>
-<div class="line"><a id="l00108" name="l00108"></a><span class="lineno">  108</span>                    ((result.*</div>
-<div class="line"><a id="l00109" name="l00109"></a><span class="lineno">  109</span>                          (std::remove_reference_t&lt;<span class="keyword">decltype</span>(fs)&gt;::member_ptr) =</div>
-<div class="line"><a id="l00110" name="l00110"></a><span class="lineno">  110</span>                          fs.generator.do_draw(tc)),</div>
-<div class="line"><a id="l00111" name="l00111"></a><span class="lineno">  111</span>                     ...);</div>
-<div class="line"><a id="l00112" name="l00112"></a><span class="lineno">  112</span>                },</div>
-<div class="line"><a id="l00113" name="l00113"></a><span class="lineno">  113</span>                gen_tuple);</div>
-<div class="line"><a id="l00114" name="l00114"></a><span class="lineno">  114</span>            <span class="keywordflow">return</span> result;</div>
-<div class="line"><a id="l00115" name="l00115"></a><span class="lineno">  115</span>        });</div>
-<div class="line"><a id="l00116" name="l00116"></a><span class="lineno">  116</span>    }</div>
+<div class="line"><a id="l00076" name="l00076"></a><span class="lineno">   76</span></div>
+<div class="line"><a id="l00101" name="l00101"></a><span class="lineno">  101</span>    <span class="keyword">template</span> &lt;<span class="keyword">typename</span> T, <span class="keyword">typename</span>... Fields&gt;</div>
+<div class="foldopen" id="foldopen00102" data-start="{" data-end="}">
+<div class="line"><a id="l00102" name="l00102"></a><span class="lineno"><a class="line" href="namespacehegel_1_1generators.html#ae0fd07c548bdf89717dfaaba7b3fbc53">  102</a></span>    <a class="code hl_class" href="classhegel_1_1generators_1_1Generator.html">Generator&lt;T&gt;</a> <a class="code hl_function" href="namespacehegel_1_1generators.html#ae0fd07c548bdf89717dfaaba7b3fbc53">builds_agg</a>(Fields... fields) {</div>
+<div class="line"><a id="l00103" name="l00103"></a><span class="lineno">  103</span>        <span class="keyword">auto</span> gen_tuple = std::make_tuple(std::move(fields)...);</div>
+<div class="line"><a id="l00104" name="l00104"></a><span class="lineno">  104</span> </div>
+<div class="line"><a id="l00105" name="l00105"></a><span class="lineno">  105</span>        <span class="keywordflow">return</span> <a class="code hl_function" href="namespacehegel_1_1generators.html#a5bc654cad6e70c607310306aec1b185b">compose</a>([gen_tuple](<span class="keyword">const</span> <a class="code hl_class" href="classhegel_1_1TestCase.html">TestCase</a>&amp; tc) <span class="keyword">mutable</span> -&gt; T {</div>
+<div class="line"><a id="l00106" name="l00106"></a><span class="lineno">  106</span>            T result{};</div>
+<div class="line"><a id="l00107" name="l00107"></a><span class="lineno">  107</span>            std::apply(</div>
+<div class="line"><a id="l00108" name="l00108"></a><span class="lineno">  108</span>                [&amp;result, &amp;tc](<span class="keyword">auto</span>&amp;... fs) {</div>
+<div class="line"><a id="l00109" name="l00109"></a><span class="lineno">  109</span>                    ((result.*</div>
+<div class="line"><a id="l00110" name="l00110"></a><span class="lineno">  110</span>                          (std::remove_reference_t&lt;<span class="keyword">decltype</span>(fs)&gt;::member_ptr) =</div>
+<div class="line"><a id="l00111" name="l00111"></a><span class="lineno">  111</span>                          fs.generator.do_draw(tc)),</div>
+<div class="line"><a id="l00112" name="l00112"></a><span class="lineno">  112</span>                     ...);</div>
+<div class="line"><a id="l00113" name="l00113"></a><span class="lineno">  113</span>                },</div>
+<div class="line"><a id="l00114" name="l00114"></a><span class="lineno">  114</span>                gen_tuple);</div>
+<div class="line"><a id="l00115" name="l00115"></a><span class="lineno">  115</span>            <span class="keywordflow">return</span> result;</div>
+<div class="line"><a id="l00116" name="l00116"></a><span class="lineno">  116</span>        });</div>
+<div class="line"><a id="l00117" name="l00117"></a><span class="lineno">  117</span>    }</div>
 </div>
-<div class="line"><a id="l00117" name="l00117"></a><span class="lineno">  117</span></div>
-<div class="line"><a id="l00119" name="l00119"></a><span class="lineno">  119</span> </div>
-<div class="line"><a id="l00120" name="l00120"></a><span class="lineno">  120</span>} <span class="comment">// namespace hegel::generators</span></div>
+<div class="line"><a id="l00118" name="l00118"></a><span class="lineno">  118</span></div>
+<div class="line"><a id="l00120" name="l00120"></a><span class="lineno">  120</span> </div>
+<div class="line"><a id="l00121" name="l00121"></a><span class="lineno">  121</span>} <span class="comment">// namespace hegel::generators</span></div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:34</div></div>
 <div class="ttc" id="aclasshegel_1_1generators_1_1Generator_html"><div class="ttname"><a href="classhegel_1_1generators_1_1Generator.html">hegel::generators::Generator</a></div><div class="ttdoc">The base class of all generators.</div><div class="ttdef"><b>Definition</b> core.h:157</div></div>
 <div class="ttc" id="anamespacehegel_1_1generators_html"><div class="ttname"><a href="namespacehegel_1_1generators.html">hegel::generators</a></div><div class="ttdoc">Hegel generators.</div><div class="ttdef"><b>Definition</b> core.h:16</div></div>
 <div class="ttc" id="anamespacehegel_1_1generators_html_a15a47f0f153b5d726264302ee7a84ee7"><div class="ttname"><a href="namespacehegel_1_1generators.html#a15a47f0f153b5d726264302ee7a84ee7">hegel::generators::builds</a></div><div class="ttdeci">Generator&lt; T &gt; builds(Gens... gens)</div><div class="ttdoc">Construct objects using positional constructor arguments.</div><div class="ttdef"><b>Definition</b> builds.h:35</div></div>
-<div class="ttc" id="anamespacehegel_1_1generators_html_a3e8aade9ced0c8c3384bd27ac5eb118a"><div class="ttname"><a href="namespacehegel_1_1generators.html#a3e8aade9ced0c8c3384bd27ac5eb118a">hegel::generators::field</a></div><div class="ttdeci">Field&lt; MemberPtr, Gen &gt; field(Gen gen)</div><div class="ttdoc">Create a field specification for builds_agg().</div><div class="ttdef"><b>Definition</b> builds.h:72</div></div>
-<div class="ttc" id="anamespacehegel_1_1generators_html_a5bc654cad6e70c607310306aec1b185b"><div class="ttname"><a href="namespacehegel_1_1generators.html#a5bc654cad6e70c607310306aec1b185b">hegel::generators::compose</a></div><div class="ttdeci">auto compose(F &amp;&amp;fn)</div><div class="ttdoc">*‍/</div><div class="ttdef"><b>Definition</b> core.h:366</div></div>
-<div class="ttc" id="anamespacehegel_1_1generators_html_ae0fd07c548bdf89717dfaaba7b3fbc53"><div class="ttname"><a href="namespacehegel_1_1generators.html#ae0fd07c548bdf89717dfaaba7b3fbc53">hegel::generators::builds_agg</a></div><div class="ttdeci">Generator&lt; T &gt; builds_agg(Fields... fields)</div><div class="ttdoc">Construct aggregates using named field initialization.</div><div class="ttdef"><b>Definition</b> builds.h:101</div></div>
+<div class="ttc" id="anamespacehegel_1_1generators_html_a3e8aade9ced0c8c3384bd27ac5eb118a"><div class="ttname"><a href="namespacehegel_1_1generators.html#a3e8aade9ced0c8c3384bd27ac5eb118a">hegel::generators::field</a></div><div class="ttdeci">Field&lt; MemberPtr, Gen &gt; field(Gen gen)</div><div class="ttdoc">Create a field specification for builds_agg().</div><div class="ttdef"><b>Definition</b> builds.h:73</div></div>
+<div class="ttc" id="anamespacehegel_1_1generators_html_a5bc654cad6e70c607310306aec1b185b"><div class="ttname"><a href="namespacehegel_1_1generators.html#a5bc654cad6e70c607310306aec1b185b">hegel::generators::compose</a></div><div class="ttdeci">auto compose(F &amp;&amp;fn)</div><div class="ttdoc">*‍/</div><div class="ttdef"><b>Definition</b> core.h:360</div></div>
+<div class="ttc" id="anamespacehegel_1_1generators_html_ae0fd07c548bdf89717dfaaba7b3fbc53"><div class="ttname"><a href="namespacehegel_1_1generators.html#ae0fd07c548bdf89717dfaaba7b3fbc53">hegel::generators::builds_agg</a></div><div class="ttdeci">Generator&lt; T &gt; builds_agg(Fields... fields)</div><div class="ttdoc">Construct aggregates using named field initialization.</div><div class="ttdef"><b>Definition</b> builds.h:102</div></div>
 <div class="ttc" id="astructhegel_1_1generators_1_1Field_html"><div class="ttname"><a href="structhegel_1_1generators_1_1Field.html">hegel::generators::Field</a></div><div class="ttdoc">Helper for named field initialization in builds_agg().</div><div class="ttdef"><b>Definition</b> builds.h:50</div></div>
 <div class="ttc" id="astructhegel_1_1generators_1_1Field_html_a6fa7591ecac5567a0ce862ee6c650643"><div class="ttname"><a href="structhegel_1_1generators_1_1Field.html#a6fa7591ecac5567a0ce862ee6c650643">hegel::generators::Field::member_ptr</a></div><div class="ttdeci">static constexpr auto member_ptr</div><div class="ttdoc">The member pointer.</div><div class="ttdef"><b>Definition</b> builds.h:51</div></div>
 <div class="ttc" id="astructhegel_1_1generators_1_1Field_html_ac1305910417290eb01d5509e52989ba5"><div class="ttname"><a href="structhegel_1_1generators_1_1Field.html#ac1305910417290eb01d5509e52989ba5">hegel::generators::Field::generator</a></div><div class="ttdeci">Gen generator</div><div class="ttdoc">Generator for the field value.</div><div class="ttdef"><b>Definition</b> builds.h:52</div></div>

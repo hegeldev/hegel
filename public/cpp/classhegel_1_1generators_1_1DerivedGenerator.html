@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.3.3</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.3.4</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -131,8 +131,8 @@ class hegel::generators::DerivedGenerator&lt; T &gt;</div><p>A <a class="el" hre
 <p>Behaves exactly like a <a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator&lt;T&gt;</a> (it publicly derives from one), but additionally exposes an <a class="el" href="#a8dd934c6e010d393cfcaada89e6dd04d" title="Override default per-field generators.">override()</a> method for supplying per-field generator overrides on struct types.</p>
 <div class="fragment"><div class="line"><span class="keyword">auto</span> gen = <a class="code hl_function" href="namespacehegel_1_1generators.html#ad9b81c483bbe307a0e598693a55cc6d5">default_generator&lt;Rectangle&gt;</a>()</div>
 <div class="line">    .override(<a class="code hl_function" href="namespacehegel_1_1generators.html#a3e8aade9ced0c8c3384bd27ac5eb118a">field&lt;&amp;Rectangle::width&gt;</a>(<a class="code hl_function" href="namespacehegel_1_1generators.html#a1a5884107bb1ae52569d7e2fbb6a960d">integers&lt;int&gt;</a>({.min_value = 1})));</div>
-<div class="ttc" id="anamespacehegel_1_1generators_html_a1a5884107bb1ae52569d7e2fbb6a960d"><div class="ttname"><a href="namespacehegel_1_1generators.html#a1a5884107bb1ae52569d7e2fbb6a960d">hegel::generators::integers</a></div><div class="ttdeci">Generator&lt; T &gt; integers(IntegersParams&lt; T &gt; params={})</div><div class="ttdoc">Generate random integers.</div><div class="ttdef"><b>Definition</b> numeric.h:144</div></div>
-<div class="ttc" id="anamespacehegel_1_1generators_html_a3e8aade9ced0c8c3384bd27ac5eb118a"><div class="ttname"><a href="namespacehegel_1_1generators.html#a3e8aade9ced0c8c3384bd27ac5eb118a">hegel::generators::field</a></div><div class="ttdeci">Field&lt; MemberPtr, Gen &gt; field(Gen gen)</div><div class="ttdoc">Create a field specification for builds_agg().</div><div class="ttdef"><b>Definition</b> builds.h:72</div></div>
+<div class="ttc" id="anamespacehegel_1_1generators_html_a1a5884107bb1ae52569d7e2fbb6a960d"><div class="ttname"><a href="namespacehegel_1_1generators.html#a1a5884107bb1ae52569d7e2fbb6a960d">hegel::generators::integers</a></div><div class="ttdeci">Generator&lt; T &gt; integers(IntegersParams&lt; T &gt; params={})</div><div class="ttdoc">Generate random integers. For a given integral type T, produces values in the range [std::numeric_lim...</div><div class="ttdef"><b>Definition</b> numeric.h:146</div></div>
+<div class="ttc" id="anamespacehegel_1_1generators_html_a3e8aade9ced0c8c3384bd27ac5eb118a"><div class="ttname"><a href="namespacehegel_1_1generators.html#a3e8aade9ced0c8c3384bd27ac5eb118a">hegel::generators::field</a></div><div class="ttdeci">Field&lt; MemberPtr, Gen &gt; field(Gen gen)</div><div class="ttdoc">Create a field specification for builds_agg().</div><div class="ttdef"><b>Definition</b> builds.h:73</div></div>
 <div class="ttc" id="anamespacehegel_1_1generators_html_ad9b81c483bbe307a0e598693a55cc6d5"><div class="ttname"><a href="namespacehegel_1_1generators.html#ad9b81c483bbe307a0e598693a55cc6d5">hegel::generators::default_generator</a></div><div class="ttdeci">DerivedGenerator&lt; T &gt; default_generator()</div><div class="ttdoc">Create a default generator for type T.</div><div class="ttdef"><b>Definition</b> default.h:283</div></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
