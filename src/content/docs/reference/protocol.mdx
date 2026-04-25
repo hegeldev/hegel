@@ -26,8 +26,8 @@ This is an RFC-style reference for the Hegel protocol. It is intended to be deta
 A <Packet>packet</Packet> consists of a 20-byte header, a variable-length payload, and a 1-byte terminator.
 
 ```
- 0               1               2               3               
- 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 
+ 0               1               2               3
+ 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                      Magic (0x4845474C)                       |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -128,7 +128,7 @@ In the <PacketRef name="test_case" /> <Packet>packet</Packet>, it establishes a 
 
 During the <TestCase>test case</TestCase>, the <Client>client</Client> may send <SectionRef id="test-case-commands">test case commands</SectionRef> to the <Server>server</Server>. These command <Packet>packets</Packet> form the main interaction between the client and the server during the test case and are used to request generated values, mark spans of choices, etc.
 
-After some number of <TestCase>test cases</TestCase>, the <Server>server</Server> will consider the <TestRun>test run</TestRun> to be over. This might be because we hit the `test_cases` setting (communicated in the initial <PacketRef name="run_test" /> packet), or because a test case found an error in the test function. Whenever the server decides the test run is finished, it sends a <PacketRef name="mark_complete" /> command on the test case <Stream>stream</Stream> with information describing the status of the test case.
+When the <Client>client</Client> decides the <TestCase>test case</TestCase> is complete , it sends a <PacketRef name="mark_complete" /> command on the test case <Stream>stream</Stream> with information describing the final status of the test case. The <Server>server</Server> replies with a <PacketRef name="mark_complete_reply" /> packet.
 
 <PacketTable name="mark_complete" isReply={false} encoding="CBOR" fields={[
   { name: "command", description: <><code>"mark_complete"</code></>, type: "text", required: true },
@@ -287,7 +287,9 @@ Draw a variable from a pool. The <Server>server</Server> selects which variable 
 
 ### Completing a test run
 
-After all <TestCase>test cases</TestCase> have been executed and shrinking is complete, the <Server>server</Server> sends a `test_done` event on the test <Stream>stream</Stream>.
+After some number of <TestCase>test cases</TestCase>, the <Server>server</Server> will consider the <TestRun>test run</TestRun> to be over. This might be because we hit the `test_cases` setting (communicated in the initial <PacketRef name="run_test" /> packet), or because a test case found an error in the test function.
+
+When the server decides the test run is finished, it sends a <PacketRef name="test_done" /> packet on the test <Stream>stream</Stream>.
 
 <SequenceDiagram steps={[
   { from: "server", stream: "S1", packet: "test_done", id: "1" },
@@ -311,7 +313,7 @@ After all <TestCase>test cases</TestCase> have been executed and shrinking is co
 
 #### Final replays
 
-After `test_done`, the <Server>server</Server> sends a `test_case` packet with `is_final` set to `true` for each interesting <TestCase>test case</TestCase>. The intent is for the client to use this to replay the minimal failing test case. Each final replay follows the standard <SectionRef id="test-cases">test case</SectionRef> flow.
+After the <PacketRef name="test_done" /> packet, the <Server>server</Server> sends a <PacketRef name="test_case" /> packet with `is_final` set to `true` for each interesting <TestCase>test case</TestCase>. The intent is for the client to use this to replay the minimal failing test case. Each final replay follows the <SectionRef id="test-cases">standard test case flow</SectionRef>.
 
 ### Stream close
 
