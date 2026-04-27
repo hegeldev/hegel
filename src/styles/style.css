@@ -23,6 +23,25 @@ communicates this better than the default.*/
 }
 
 
+/* tighter code blocks */
+.expressive-code pre > code {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  padding-block: 0;
+  tab-size: 4;
+}
+@media (max-width: 768px) {
+  .expressive-code pre > code {
+    tab-size: 2;
+  }
+}
+.expressive-code pre {
+  padding-block: 0.7rem;
+}
+.expressive-code .ec-line .code {
+  padding-inline: 0.6rem;
+}
+
 .external-link::after {
   content: '';
   display: inline-block;

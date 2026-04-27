@@ -65,6 +65,9 @@ export default defineConfig({
 			],
             customCss: ['./src/styles/style.css'],
             plugins: [ starlightThemeRapide() ],
+            // Preserve literal tab characters in our code blocks so that our
+            // css rule for tab sizes can collapse them on mobile. Default is 2
+            expressiveCode: { tabWidth: 0 },
 		}),
 	],
     adapter: vercel({
