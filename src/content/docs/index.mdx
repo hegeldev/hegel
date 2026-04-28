@@ -35,7 +35,7 @@ fn test_respects_lru_capacity(tc: TestCase) {
 	let mut cache = MyLRUCache::<String, i64>::new(capacity);
 
 	let entries = tc.draw(
-	  gs::vecs(gs::tuples!(gs::text(), gs::integers::<i64>()))
+	    gs::vecs(gs::tuples!(gs::text(), gs::integers::<i64>()))
 	);
 	for (key, value) in entries {
 		cache.put(key, value);
@@ -106,10 +106,10 @@ test(
 		const cache = new MyLRUCache<string, number>(capacity);
 
 		const entries = tc.draw(
-		  gs.arrays(gs.tuples(gs.text(), gs.integers())),
+		    gs.arrays(gs.tuples(gs.text(), gs.integers())),
 		);
 		for (const [key, value] of entries) {
-		  cache.put(key, value);
+		    cache.put(key, value);
 		}
 
 		expect(cache.size()).toBeLessThanOrEqual(capacity);
