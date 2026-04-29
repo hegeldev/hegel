@@ -344,7 +344,7 @@ Some fields list their type as `schema`. This means it accepts any generator sch
   },
   {
     name: "one_of",
-    description: <>Generate a value drawn from one of <code>generators</code>.</>,
+    description: <>Generate a value drawn from one of <code>generators</code>. Returned as a 2-element list <code>[index, value]</code>, where <code>index</code> is the 0-based index into <code>generators</code> and <code>value</code> is the value drawn from <code>generators[index]</code>.</>,
     fields: [
       { name: "generators", description: <>Array of generators. Must be non-empty.</>, type: "schema[]", required: true },
     ],
