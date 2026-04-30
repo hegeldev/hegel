@@ -336,22 +336,11 @@ Some fields list their type as `schema`. This means it accepts any generator sch
     ],
   },
   {
-    name: "sampled_from",
-    description: <>Generate one of <code>values</code>.</>,
-    fields: [
-      { name: "values", description: <>Array of concrete values to sample from. Must be non-empty</>, type: "any[]", required: true },
-    ],
-  },
-  {
     name: "one_of",
     description: <>Generate a value drawn from one of <code>generators</code>. Returned as a 2-element list <code>[index, value]</code>, where <code>index</code> is the 0-based index into <code>generators</code> and <code>value</code> is the value drawn from <code>generators[index]</code>.</>,
     fields: [
       { name: "generators", description: <>Array of generators. Must be non-empty.</>, type: "schema[]", required: true },
     ],
-  },
-  {
-    name: "null",
-    description: <>Generate <code>null</code>.</>,
   },
   {
     name: "boolean",
@@ -445,12 +434,11 @@ Some fields list their type as `schema`. This means it accepts any generator sch
     ],
   },
   {
-    name: "ipv4",
-    description: <>Generate an IPv4 address string.</>,
-  },
-  {
-    name: "ipv6",
-    description: <>Generate an IPv6 address string.</>,
+    name: "ip_addresses",
+    description: <>Generate an IP address string. Set <code>version</code> to <code>4</code> for IPv4 (dotted decimal) or <code>6</code> for IPv6 (colon-separated hexadecimal). To generate either, wrap two <code>ip_addresses</code> schemas in a <code>one_of</code>.</>,
+    fields: [
+      { name: "version", description: <>The IP version. Must be <code>4</code> or <code>6</code>.</>, type: "integer", required: true },
+    ],
   },
   {
     name: "date",
