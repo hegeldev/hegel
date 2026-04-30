@@ -434,8 +434,8 @@ Some fields list their type as `schema`. This means it accepts any generator sch
     ],
   },
   {
-    name: "ip_addresses",
-    description: <>Generate an IP address string. Set <code>version</code> to <code>4</code> for IPv4 (dotted decimal) or <code>6</code> for IPv6 (colon-separated hexadecimal). To generate either, wrap two <code>ip_addresses</code> schemas in a <code>one_of</code>.</>,
+    name: "ip_address",
+    description: <>Generate an IP address string. Set <code>version</code> to <code>4</code> for IPv4 (dotted decimal) or <code>6</code> for IPv6 (colon-separated hexadecimal). To generate either, wrap two <code>ip_address</code> schemas in a <code>one_of</code>.</>,
     fields: [
       { name: "version", description: <>The IP version. Must be <code>4</code> or <code>6</code>.</>, type: "integer", required: true },
     ],
