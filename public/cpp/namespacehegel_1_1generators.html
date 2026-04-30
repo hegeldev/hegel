@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.3.7</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.3.8</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -997,7 +997,7 @@ template&lt;typename T&gt; </div>
 <p>Randomly produces either a value from the given generator or std::nullopt.</p>
 <div class="fragment"><div class="line"><span class="keyword">auto</span> maybe_int = <a class="code hl_function" href="#a933cb3225567b3ced57c430cedde9843">optional</a>(<a class="code hl_function" href="#a1a5884107bb1ae52569d7e2fbb6a960d">integers&lt;int&gt;</a>());</div>
 <div class="line"><span class="comment">// Returns std::optional&lt;int&gt;, may be nullopt</span></div>
-<div class="ttc" id="anamespacehegel_1_1generators_html_a933cb3225567b3ced57c430cedde9843"><div class="ttname"><a href="#a933cb3225567b3ced57c430cedde9843">hegel::generators::optional</a></div><div class="ttdeci">Generator&lt; std::optional&lt; T &gt; &gt; optional(Generator&lt; T &gt; gen)</div><div class="ttdoc">Generate optional values (present or absent).</div><div class="ttdef"><b>Definition</b> combinators.h:376</div></div>
+<div class="ttc" id="anamespacehegel_1_1generators_html_a933cb3225567b3ced57c430cedde9843"><div class="ttname"><a href="#a933cb3225567b3ced57c430cedde9843">hegel::generators::optional</a></div><div class="ttdeci">Generator&lt; std::optional&lt; T &gt; &gt; optional(Generator&lt; T &gt; gen)</div><div class="ttdoc">Generate optional values (present or absent).</div><div class="ttdef"><b>Definition</b> combinators.h:377</div></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
     <tr><td class="paramname">T</td><td>Value type </td></tr>
@@ -1323,7 +1323,7 @@ template&lt;typename... Ts&gt; </div>
 <p>Each generator produces one possible variant alternative.</p>
 <div class="fragment"><div class="line"><span class="keyword">auto</span> value = <a class="code hl_function" href="#a6d34a61e01a22263e07a4843090b823f">variant</a>(<a class="code hl_function" href="#a1a5884107bb1ae52569d7e2fbb6a960d">integers&lt;int&gt;</a>(), <a class="code hl_function" href="#a30040fbe3713538d54cf079060a3ff9f">text</a>(), <a class="code hl_function" href="#a6a990b3c0d7b4489f3d5258268d630ac">booleans</a>());</div>
 <div class="line"><span class="comment">// Returns std::variant&lt;int, std::string, bool&gt;</span></div>
-<div class="ttc" id="anamespacehegel_1_1generators_html_a6d34a61e01a22263e07a4843090b823f"><div class="ttname"><a href="#a6d34a61e01a22263e07a4843090b823f">hegel::generators::variant</a></div><div class="ttdeci">Generator&lt; std::variant&lt; Ts... &gt; &gt; variant(Generator&lt; Ts &gt;... gens)</div><div class="ttdoc">Generate std::variant from heterogeneous generators.</div><div class="ttdef"><b>Definition</b> combinators.h:355</div></div>
+<div class="ttc" id="anamespacehegel_1_1generators_html_a6d34a61e01a22263e07a4843090b823f"><div class="ttname"><a href="#a6d34a61e01a22263e07a4843090b823f">hegel::generators::variant</a></div><div class="ttdeci">Generator&lt; std::variant&lt; Ts... &gt; &gt; variant(Generator&lt; Ts &gt;... gens)</div><div class="ttdoc">Generate std::variant from heterogeneous generators.</div><div class="ttdef"><b>Definition</b> combinators.h:356</div></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
     <tr><td class="paramname">Ts</td><td>Variant alternative types </td></tr>
