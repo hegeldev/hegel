@@ -369,10 +369,17 @@ Some fields list their type as `schema`. This means it accepts any generator sch
   },
   {
     name: "string",
-    description: <>Generate a Unicode string. Returned as a custom CBOR tag 91, with a payload equivalent to the UTF-8 representation of the string except that surrogate code points are allowed. </>,
+    description: <>Generate a Unicode string. Returned as a custom CBOR tag 91, with a payload equivalent to the UTF-8 representation of the string except that surrogate code points are allowed. To exclude surrogates from generated strings, set <code>exclude_categories</code> to <code>["Cs"]</code>.</>,
     fields: [
       { name: "min_size", description: <>Minimum length, in the number of code points.</>, type: "integer", default: <code>0</code> },
       { name: "max_size", description: <>Maximum length, in the number of code points.</>, type: "integer", default: "unbounded" },
+      { name: "min_codepoint", description: <>Minimum Unicode codepoint, inclusive.</>, type: "integer", default: "unbounded" },
+      { name: "max_codepoint", description: <>Maximum Unicode codepoint, inclusive.</>, type: "integer", default: "unbounded" },
+      { name: "categories", description: <>Restrict generated characters to the given <a href="https://en.wikipedia.org/wiki/Unicode_character_property#General_Category">Unicode general categories</a>. Each entry is either a one-letter major category (e.g. <code>"L"</code> for any letter) or a two-letter category (e.g. <code>"Lu"</code> for uppercase letters, <code>"Nd"</code> for decimal digits). Mutually exclusive with <code>exclude_categories</code>.</>, type: "text[]", default: "no restriction" },
+      { name: "exclude_categories", description: <>Exclude characters in the given Unicode general categories. Uses the same category names as <code>categories</code>. Mutually exclusive with <code>categories</code>.</>, type: "text[]", default: "no restriction" },
+      { name: "include_characters", description: <>Characters that should always be allowed, even if they would otherwise be excluded by the other filters. Must be combined with at least one other filter (<code>min_codepoint</code>, <code>max_codepoint</code>, <code>categories</code>, <code>exclude_categories</code>, or <code>codec</code>).</>, type: "text", default: "no restriction" },
+      { name: "exclude_characters", description: <>Characters that should never be generated.</>, type: "text", default: "no restriction" },
+      { name: "codec", description: <>If set, only characters encodable in the given codec will be generated. The set of accepted codec names is server-defined; the reference Python server accepts any name from Python's <a href="https://docs.python.org/3/library/codecs.html#standard-encodings"><code>codecs</code></a> module (for example <code>"ascii"</code>, <code>"utf-8"</code>, or <code>"latin-1"</code>).</>, type: "text", default: "no restriction" },
     ],
   },
   {
@@ -389,6 +396,7 @@ Some fields list their type as `schema`. This means it accepts any generator sch
     fields: [
       { name: "pattern", description: <>The regular expression to match.</>, type: "string", required: true },
       { name: "fullmatch", description: <>If <code>true</code>, <code>pattern</code> must match the entire string. If <code>false</code>, <code>pattern</code> may match a substring.</>, type: "boolean", default: <code>false</code> },
+      { name: "alphabet", description: <>Constrain which characters may appear in the generated string. The value is an object with the same character-filtering fields as the <code>string</code> schema: <code>min_codepoint</code>, <code>max_codepoint</code>, <code>categories</code>, <code>exclude_categories</code>, <code>include_characters</code>, <code>exclude_characters</code>, and <code>codec</code>.</>, type: "object", default: <>equivalent to <code>{`{"codec": "utf-8"}`}</code> — surrogates are excluded by default for <code>regex</code>, unlike for <code>string</code></> },
     ],
   },
   {
