@@ -412,7 +412,21 @@ Some fields list their type as `schema`. This means it accepts any generator sch
     fields: [
       { name: "pattern", description: <>The regular expression to match.</>, type: "string", required: true },
       { name: "fullmatch", description: <>If <code>true</code>, <code>pattern</code> must match the entire string. If <code>false</code>, <code>pattern</code> may match a substring.</>, type: "boolean", default: <code>false</code> },
-      { name: "alphabet", description: <>Constrain which characters may appear in the generated string. The value is an object with the same character-filtering fields as the <code>string</code> schema: <code>min_codepoint</code>, <code>max_codepoint</code>, <code>categories</code>, <code>exclude_categories</code>, <code>include_characters</code>, <code>exclude_characters</code>, and <code>codec</code>.</>, type: "object", default: <>equivalent to <code>{`{"codec": "utf-8"}`}</code> — surrogates are excluded by default for <code>regex</code>, unlike for <code>string</code></> },
+      {
+        name: "alphabet",
+        description: <>These fields have the same meaning as the corresponding fields in <SchemaRef name="string" />. The only difference is the default: if <code>alphabet</code> is not passed, it defaults here to <code>{`{"codec": "utf-8"}`}</code>.</>,
+        type: "object",
+        default: <>Defaults to <code>{`{"codec": "utf-8"}`}</code>.</>,
+        fields: [
+          { name: "min_codepoint", description: <>Same meaning as <SchemaRef name="string" field="min_codepoint" /> in <SchemaRef name="string" />.</>, type: "integer", default: "unbounded" },
+          { name: "max_codepoint", description: <>Same meaning as <SchemaRef name="string" field="max_codepoint" /> in <SchemaRef name="string" />.</>, type: "integer", default: "unbounded" },
+          { name: "categories", description: <>Same meaning as <SchemaRef name="string" field="categories" /> in <SchemaRef name="string" />.</>, type: "text[]", default: "no restriction" },
+          { name: "exclude_categories", description: <>Same meaning as <SchemaRef name="string" field="exclude_categories" /> in <SchemaRef name="string" />.</>, type: "text[]", default: "no restriction" },
+          { name: "include_characters", description: <>Same meaning as <SchemaRef name="string" field="include_characters" /> in <SchemaRef name="string" />.</>, type: "text", default: "no restriction" },
+          { name: "exclude_characters", description: <>Same meaning as <SchemaRef name="string" field="exclude_characters" /> in <SchemaRef name="string" />.</>, type: "text", default: "no restriction" },
+          { name: "codec", description: <>Same meaning as <SchemaRef name="string" field="codec" /> in <SchemaRef name="string" />.</>, type: "text", default: "no restriction" },
+        ],
+      },
     ],
   },
   {
@@ -491,6 +505,9 @@ export const TestRun = ({children}) => <a href="#def-test-run" class="def-link">
 export const Connection = ({children}) => <a href="#def-connection" class="def-link">{children}</a>;
 export const PacketRef = ({name}) => <a href={`#packet-${name}`} class="def-link"><code>{name}</code></a>;
 export const SectionRef = ({id, children}) => <a href={`#${id}`} class="def-link">{children}</a>;
+export const SchemaRef = ({name, field}) => (
+  <a href={field ? `#schema-${name}-${field}` : `#schema-${name}`} class="def-link"><code>{field ?? name}</code></a>
+);
 
 export function PacketTable({ name, isReply, encoding, fields, payload }) {
   const fieldRowCount = (f) => 2 + (f.default !== undefined ? 1 : 0) + (f.required ? 1 : 0);
@@ -554,47 +571,72 @@ export function PacketTable({ name, isReply, encoding, fields, payload }) {
 }
 
 export function SchemaTable({schemas}) {
-  const fieldRowCount = (f) => 2 + (f.default !== undefined ? 1 : 0) + (f.required ? 1 : 0);
-  const schemaRowCount = (s) => 1 + (s.fields ? s.fields.reduce((n, f) => n + fieldRowCount(f), 0) : 0);
-  for (const schema of schemas) {
-    for (const field of schema.fields ?? []) {
-      if (field.required === undefined && field.default === undefined) {
-        throw new Error(`Field "${field.name}" in schema "${schema.name}" must set either "required" or "default"`);
-      }
+  const fieldRowCount = (f) =>
+    2 + (f.default !== undefined ? 1 : 0) + (f.required ? 1 : 0) + (f.fields ? 1 : 0);
+  const schemaRowCount = (s) =>
+    1 + (s.fields?.reduce((n, f) => n + fieldRowCount(f), 0) ?? 0);
+
+  function validate(field, schemaName) {
+    if (field.required === undefined && field.default === undefined) {
+      throw new Error(`Field "${field.name}" in schema "${schemaName}" must set either "required" or "default"`);
     }
+    for (const sub of field.fields ?? []) validate(sub, schemaName);
   }
+  for (const schema of schemas) {
+    for (const field of schema.fields ?? []) validate(field, schema.name);
+  }
+
+  function renderField(field, schemaName) {
+    return (
+      <>
+        <tr>
+          <td
+            rowspan={fieldRowCount(field)}
+            class={`field-name${field.required ? ' field-required' : ''}`}
+            id={`schema-${schemaName}-${field.name}`}
+          >
+            {field.name}
+          </td>
+          <td colspan="2">{field.description}</td>
+        </tr>
+        <tr class="field-meta">
+          <td>type</td>
+          <td><code>{field.type}</code></td>
+        </tr>
+        {field.default !== undefined && (
+          <tr class="field-meta">
+            <td>default</td>
+            <td>{field.default}</td>
+          </tr>
+        )}
+        {field.required && (
+          <tr class="field-meta">
+            <td>required</td>
+            <td>yes</td>
+          </tr>
+        )}
+        {field.fields && (
+          <tr>
+            <td colspan="2" class="nested-cell">
+              <table class="schema-table nested">
+                {field.fields.map((sub) => renderField(sub, schemaName))}
+              </table>
+            </td>
+          </tr>
+        )}
+      </>
+    );
+  }
+
   return (
     <table class="schema-table">
       {schemas.map((schema) => (
         <>
           <tr>
-            <td rowspan={schemaRowCount(schema)} class="schema-name">{schema.name}</td>
+            <td rowspan={schemaRowCount(schema)} class="schema-name" id={`schema-${schema.name}`}>{schema.name}</td>
             <td colspan="3">{schema.description}</td>
           </tr>
-          {schema.fields?.map((field) => (
-            <>
-              <tr>
-                <td rowspan={fieldRowCount(field)} class={`field-name${field.required ? ' field-required' : ''}`}>{field.name}</td>
-                <td colspan="2">{field.description}</td>
-              </tr>
-              <tr class="field-meta">
-                <td>type</td>
-                <td><code>{field.type}</code></td>
-              </tr>
-              {field.default !== undefined && (
-                <tr class="field-meta">
-                  <td>default</td>
-                  <td>{field.default}</td>
-                </tr>
-              )}
-              {field.required && (
-                <tr class="field-meta">
-                  <td>required</td>
-                  <td>yes</td>
-                </tr>
-              )}
-            </>
-          ))}
+          {schema.fields?.map((f) => renderField(f, schema.name))}
         </>
       ))}
     </table>
@@ -691,6 +733,26 @@ a.def-link:hover {
 .schema-table .field-meta td {
   font-size: 0.85em;
   color: var(--sl-color-gray-3);
+}
+/* Make the description/value column claim leftover horizontal space so a
+ * nested table actually fills its parent cell instead of collapsing to
+ * content width. */
+.schema-table td:last-child {
+  width: 100%;
+}
+/* Nested table fills its containing td.
+ * Explicit bg here is essential: the parent tr might be a 2n row and
+ * inherit Starlight's gray-7 zebra; without overriding here, that stripe
+ * leaks into every row of the nested table and erases its own stripes. */
+.schema-table .nested-cell {
+  padding: 0;
+  background: var(--sl-color-bg);
+}
+.schema-table.nested {
+  width: 100%;
+  min-width: 100%;
+  box-sizing: border-box;
+  margin: 0;
 }
 `}
 </style>
