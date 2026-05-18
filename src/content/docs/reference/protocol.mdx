@@ -92,6 +92,9 @@ After completing the handshake, the <Client>client</Client> may at any time choo
   { name: "database_key", description: <>Stable database key for this test.</>, type: "bytes" },
   { name: "database", description: <>Path to the test case database directory, or <code>null</code> to disable the database.</>, type: "text | null" },
   { name: "suppress_health_check", description: <>Array of health check names to suppress. Valid names are <code>"test_cases_too_large"</code>, <code>"filter_too_much"</code>, <code>"too_slow"</code>, and <code>"large_initial_test_case"</code>.</>, type: "text[]", default: <code>[]</code> },
+  { name: "phases", description: <>Only run the given phases. Valid phases are <code>"generate"</code>, <code>"shrink"</code>, <code>"reuse"</code>, <code>"target"</code>, <code>"explicit"</code>, and <code>"explain"</code>.</>, type: "text[]", default: "all phases" },
+  { name: "report_multiple_failures", description: <>If <code>true</code>, the <Server>server</Server> will report all the distinct bugs it finds during a <TestRun>test run</TestRun>. Otherwise, the server will report only the bug with the simplest failing test case.</>, type: "boolean", default: <code>true</code> },
+  { name: "failure_blob", description: <>If set, the <Server>server</Server> runs exactly one test case, corresponding to the test case encoded in this blob. The standard phases are skipped. The blob here corresponds to the blob returned by <code>test_done.results.failure_blobs</code>.</>, type: "bytes" },
 ]} />
 
 <PacketTable name="run_test_reply" isReply={true} encoding="CBOR" payload={<><code>true</code></>} />
@@ -304,6 +307,7 @@ When the server decides the test run is finished, it sends a <PacketRef name="te
   { name: "results.invalid_test_cases", description: <>Number of invalid <TestCase>test cases</TestCase>.</>, type: "integer", required: true },
   { name: "results.interesting_test_cases", description: <>Number of interesting (failing) <TestCase>test cases</TestCase>.</>, type: "integer", required: true },
   { name: "results.seed", description: <>The random seed that was used, as a string.</>, type: "text", required: true },
+  { name: "results.failure_blobs", description: <>One entry per interesting <TestCase>test case</TestCase>, in the same order as the failures are reported. Each entry encodes its failing test case as an opaque blob of bytes. A blob can be sent as <PacketRef name="run_test" /><code>.failure_blob</code> to replay that specific failure.</>, type: "bytes[]", required: true },
   { name: "results.flaky", description: <>Present if the test was detected to be flaky.</>, type: "text" },
   { name: "results.health_check_failure", description: <>Present if a health check failed.</>, type: "text" },
   { name: "results.error", description: <>Present if there was an error. This could be a usage error (e.g. invalid arguments) or indicate a server bug (e.g. unexpected exception raised).</>, type: "text" },
@@ -345,6 +349,9 @@ Some fields list their type as `schema`. This means it accepts any generator sch
   {
     name: "boolean",
     description: <>Generate either <code>true</code> or <code>false</code>.</>,
+    fields: [
+      { name: "p", description: <>Probability of generating <code>true</code>. Must be in the range <code>[0, 1]</code>.</>, type: "float", default: <code>0.5</code> },
+    ],
   },
   {
     name: "integer",
@@ -365,6 +372,33 @@ Some fields list their type as `schema`. This means it accepts any generator sch
       { name: "width", description: <>Float width. Either <code>32</code> or <code>64</code>.</>, type: "integer", default: <code>64</code> },
       { name: "exclude_min", description: <>Exclude the minimum value.</>, type: "boolean", default: <code>false</code> },
       { name: "exclude_max", description: <>Exclude the maximum value.</>, type: "boolean", default: <code>false</code> },
+    ],
+  },
+  {
+    name: "fraction",
+    description: <>Generate a rational number.
+    <br/><br/>
+    Returned as a 2-element array <code>[numerator, denominator]</code>, where both elements are integers and <code>denominator &gt; 0</code>.</>,
+    fields: [
+      { name: "min_value", description: <>Minimum value, inclusive.</>, type: "integer | float", default: "unbounded" },
+      { name: "max_value", description: <>Maximum value, inclusive.</>, type: "integer | float", default: "unbounded" },
+      { name: "max_denominator", description: <>Maximum denominator. Must be positive.</>, type: "integer", default: "unbounded" },
+    ],
+  },
+  {
+    name: "complex",
+    description: <>Generate a complex number.
+    <br/><br/>
+    Returned as a 2-element array <code>[real, imaginary]</code>, where both elements are floats.</>,
+    fields: [
+      { name: "min_magnitude", description: <>Minimum magnitude (<code>abs(z)</code>) of generated values.</>, type: "float", default: <code>0</code> },
+      { name: "max_magnitude", description: <>Maximum magnitude (<code>abs(z)</code>) of generated values.</>, type: "float", default: "unbounded" },
+      { name: "allow_nan", description: <>Whether <code>NaN</code> can be generated. Applies to both the real and imaginary part.</>, type: "boolean", default: <><code>true</code> if <code>min_magnitude</code> is <code>0</code> and <code>max_magnitude</code> is unset, <code>false</code> otherwise</> },
+      { name: "allow_infinity", description: <>Whether <code>+Infinity</code> and <code>-Infinity</code> can be generated. Applies to both the real and imaginary part.</>, type: "boolean", default: <><code>true</code> if <code>max_magnitude</code> is unset, <code>false</code> otherwise</> },
+      { name: "allow_subnormal", description: <>Whether subnormal numbers can be generated. Applies to both the real and imaginary part.</>, type: "boolean", default: <code>true</code> },
+      { name: "width", description: <>Total width of the complex number in bits. One of <code>32</code>, <code>64</code>, or <code>128</code>.
+      <br/><br/>
+      For example, <code>width=128</code> indicates both the real and imaginary parts are 64-bit.</>, type: "integer", default: <code>128</code> },
     ],
   },
   {
@@ -489,6 +523,13 @@ Some fields list their type as `schema`. This means it accepts any generator sch
   {
     name: "datetime",
     description: <>Generate an ISO 8601 datetime string. For example: <code>"2024-03-15T14:30:00"</code>.</>,
+  },
+  {
+    name: "uuid",
+    description: <>Generate a UUID string. For example: <code>"550e8400-e29b-41d4-a716-446655440000"</code>.</>,
+    fields: [
+      { name: "version", description: <>If set, generates a UUID of the corresponding RFC 4122 version. Must be one of <code>1</code>, <code>2</code>, <code>3</code>, <code>4</code>, <code>5</code>.</>, type: "integer", default: "any version" },
+    ],
   },
 ]} />
 
