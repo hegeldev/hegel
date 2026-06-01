@@ -14,3 +14,4 @@ There are a number of open-source libraries for Hegel. These libraries are maint
 
 * Hegel-zig: https://github.com/nickmonad/hegel-zig
 * Hegel-java: https://github.com/aaronjeline/hegel-java
+* Hegel-haskell: https://github.com/lambdamechanic/hegel-haskell
