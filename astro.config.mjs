@@ -39,6 +39,7 @@ export default defineConfig({
 						{ label: 'hegel-go', link: 'https://github.com/hegeldev/hegel-go', attrs: { target: '_blank', class: 'external-link' } },
 						{ label: 'hegel-cpp', link: 'https://github.com/hegeldev/hegel-cpp', attrs: { target: '_blank', class: 'external-link' } },
 						{ label: 'hegel-typescript', link: 'https://github.com/hegeldev/hegel-typescript', attrs: { target: '_blank', class: 'external-link' } },
+						{ label: 'hegel-java', link: 'https://github.com/hegeldev/hegel-java', attrs: { target: '_blank', class: 'external-link' } },
 						{ label: 'hegel-core', link: 'https://github.com/hegeldev/hegel-core', attrs: { target: '_blank', class: 'external-link' } },
 					],
 				},
