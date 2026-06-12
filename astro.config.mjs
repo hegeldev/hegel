@@ -4,9 +4,13 @@ import starlight from '@astrojs/starlight';
 import starlightThemeRapide from 'starlight-theme-rapide';
 import vercel from '@astrojs/vercel';
 
+const site = 'https://hegel.dev';
+// Link embed (Discord etc) thumbnail. Must be referenced by absolute URL.
+const ogImage = `${site}/hedgel-opengraph.jpg`;
+
 // https://astro.build/config
 export default defineConfig({
-    site: 'https://hegel.dev',
+    site,
     markdown: {
 		// Liam: disable smart quotes, among other "features" I'm not a fan
 		// of: https://daringfireball.net/projects/smartypants/
@@ -16,10 +20,18 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'Hegel',
+			description: 'A universal property-based testing protocol and family of libraries, built on Hypothesis',
 			favicon: '/favicon.ico',
 			head: [
 				{ tag: 'link', attrs: { rel: 'icon', type: 'image/png', sizes: '96x96', href: '/favicon-96x96.png' } },
 				{ tag: 'link', attrs: { rel: 'apple-touch-icon', sizes: '180x180', href: '/apple-touch-icon.png' } },
+				{ tag: 'meta', attrs: { name: 'twitter:card', content: 'summary' } },
+				{ tag: 'meta', attrs: { property: 'og:image', content: ogImage } },
+				{ tag: 'meta', attrs: { property: 'og:image:width', content: '512' } },
+				{ tag: 'meta', attrs: { property: 'og:image:height', content: '512' } },
+				{ tag: 'meta', attrs: { property: 'og:image:alt', content: 'Hedgel, the Hegel mascot.' } },
+				{ tag: 'meta', attrs: { name: 'twitter:image', content: ogImage } },
+				{ tag: 'meta', attrs: { name: 'theme-color', content: '#8b6f4e' } },
 			],
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/hegeldev' },
