@@ -117,6 +117,30 @@ test(
 );
 ```
   </TabItem>
+  <TabItem label="Java">
+```java
+import static dev.hegel.Generators.*;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import dev.hegel.HegelTest;
+import dev.hegel.TestCase;
+
+class LRUCacheTest {
+	@HegelTest
+	void respectsLRUCapacity(TestCase tc) {
+		int capacity = tc.draw(integers().min(0));
+		var cache = new MyLRUCache<String, Integer>(capacity);
+
+		var entries = tc.draw(lists(tuples(text(), integers())));
+		for (var entry : entries) {
+			cache.put(entry.value1(), entry.value2());
+		}
+
+		assertTrue(cache.size() <= capacity);
+	}
+}
+```
+  </TabItem>
 </Tabs>
 
 <CardGrid>
