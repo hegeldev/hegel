@@ -31,8 +31,10 @@ var NAVTREE =
       [ "Use generators", "index.html#use_generators", null ],
       [ "Debug your failing test cases", "index.html#debug_failing", null ],
       [ "Change the number of test cases", "index.html#change_test_cases", null ],
+      [ "Use hegel::test() directly", "index.html#plain_function", null ],
       [ "Learning more", "index.html#learning_more", null ]
     ] ],
+    [ "Topics", "topics.html", "topics" ],
     [ "Namespaces", "namespaces.html", [
       [ "Namespace List", "namespaces.html", "namespaces_dup" ],
       [ "Namespace Members", "namespacemembers.html", [
@@ -49,6 +51,7 @@ var NAVTREE =
         [ "All", "functions.html", null ],
         [ "Functions", "functions_func.html", null ],
         [ "Variables", "functions_vars.html", null ],
+        [ "Typedefs", "functions_type.html", null ],
         [ "Enumerations", "functions_enum.html", null ]
       ] ]
     ] ]
@@ -57,7 +60,8 @@ var NAVTREE =
 
 var NAVTREEINDEX =
 [
-"annotated.html"
+"annotated.html",
+"structhegel_1_1generators_1_1VectorsParams.html#a3265bc3851847621b7134ee4ffb27e02"
 ];
 
 var SYNCONMSG = 'click to disable panel synchronization';

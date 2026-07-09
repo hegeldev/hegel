@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.3.9</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.6.2</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -108,7 +108,7 @@ Classes</h2></td></tr>
 <tr class="memitem:Database" id="r_Database"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1Database.html">Database</a></td></tr>
 <tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Configure the Hegel database.  <a href="classhegel_1_1Database.html#details">More...</a><br /></td></tr>
 <tr class="memitem:Settings" id="r_Settings"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structhegel_1_1Settings.html">Settings</a></td></tr>
-<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Configuration options for <a class="el" href="#a755f2d4625b841cf26b08961bc265305" title="Run a Hegel test.">hegel::test()</a>.  <a href="structhegel_1_1Settings.html#details">More...</a><br /></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Configuration options for <a class="el" href="#ae3451b81e2687429b3285266fb5890e6" title="Run a Hegel test.">hegel::test()</a>.  <a href="structhegel_1_1Settings.html#details">More...</a><br /></td></tr>
 <tr class="memitem:TestCase" id="r_TestCase"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1TestCase.html">TestCase</a></td></tr>
 <tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handle to the currently-executing test case.  <a href="classhegel_1_1TestCase.html#details">More...</a><br /></td></tr>
 </table><table class="memberdecls">
@@ -126,19 +126,74 @@ Enumerations</h2></td></tr>
 , <a class="el" href="#a98e2c0a6bc324370d8fb109cd3a2c71daa057e626223174c2433962916cbfaca0">LargeInitialTestCase</a>
  }</td></tr>
 <tr class="memdesc:a98e2c0a6bc324370d8fb109cd3a2c71d"><td class="mdescLeft">&#160;</td><td class="mdescRight">Health checks.  <a href="#a98e2c0a6bc324370d8fb109cd3a2c71d">More...</a><br /></td></tr>
+<tr class="memitem:aee0a47457861d4028b314d518cd50b6a" id="r_aee0a47457861d4028b314d518cd50b6a"><td class="memItemLeft" align="right" valign="top">enum class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aee0a47457861d4028b314d518cd50b6a">Phase</a> { <br />
+&#160;&#160;<a class="el" href="#aee0a47457861d4028b314d518cd50b6aa9d71760e2dd451db2df354d0fd29cd7f">Explicit</a>
+, <a class="el" href="#aee0a47457861d4028b314d518cd50b6aae5c303d82e8b702ccaba9f2b4bbe4c80">Reuse</a>
+, <a class="el" href="#aee0a47457861d4028b314d518cd50b6aa32b919d18cfaca89383f6000dcc9c031">Generate</a>
+, <a class="el" href="#aee0a47457861d4028b314d518cd50b6aac41a31890959544c6523af684561abe5">Target</a>
+, <br />
+&#160;&#160;<a class="el" href="#aee0a47457861d4028b314d518cd50b6aa1bb54971ab41a5a931b23159019fd73f">Shrink</a>
+<br />
+ }</td></tr>
+<tr class="memdesc:aee0a47457861d4028b314d518cd50b6a"><td class="mdescLeft">&#160;</td><td class="mdescRight">Phases of a property-test run.  <a href="#aee0a47457861d4028b314d518cd50b6a">More...</a><br /></td></tr>
+<tr class="memitem:a76460adf8877112c3cc69bff0a21dcdd" id="r_a76460adf8877112c3cc69bff0a21dcdd"><td class="memItemLeft" align="right" valign="top">enum class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a76460adf8877112c3cc69bff0a21dcdd">Mode</a> { <a class="el" href="#a76460adf8877112c3cc69bff0a21dcddac75e7027f34f603c0e19218d27e1011f">TestRun</a>
+, <a class="el" href="#a76460adf8877112c3cc69bff0a21dcddab43f392f591f68ed58330cfb1a45c2c1">SingleTestCase</a>
+ }</td></tr>
+<tr class="memdesc:a76460adf8877112c3cc69bff0a21dcdd"><td class="mdescLeft">&#160;</td><td class="mdescRight">How much of a run the engine performs.  <a href="#a76460adf8877112c3cc69bff0a21dcdd">More...</a><br /></td></tr>
+<tr class="memitem:a887e0714b99c358aa474848809bca688" id="r_a887e0714b99c358aa474848809bca688"><td class="memItemLeft" align="right" valign="top">enum class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a887e0714b99c358aa474848809bca688">Backend</a> { <a class="el" href="#a887e0714b99c358aa474848809bca688a06b9281e396db002010bde1de57262eb">Auto</a>
+, <a class="el" href="#a887e0714b99c358aa474848809bca688a7a1920d61156abc05a60135aefe8bc67">Default</a>
+, <a class="el" href="#a887e0714b99c358aa474848809bca688a27584154da40f4f2174d452ef7de4a75">Urandom</a>
+ }</td></tr>
+<tr class="memdesc:a887e0714b99c358aa474848809bca688"><td class="mdescLeft">&#160;</td><td class="mdescRight">Source of randomness the engine draws from.  <a href="#a887e0714b99c358aa474848809bca688">More...</a><br /></td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-func-members" class="groupheader"><a id="func-members" name="func-members"></a>
 Functions</h2></td></tr>
-<tr class="memitem:a755f2d4625b841cf26b08961bc265305" id="r_a755f2d4625b841cf26b08961bc265305"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a755f2d4625b841cf26b08961bc265305">test</a> (const std::function&lt; void(<a class="el" href="classhegel_1_1TestCase.html">TestCase</a> &amp;)&gt; &amp;test_fn, const <a class="el" href="structhegel_1_1Settings.html">Settings</a> &amp;settings={})</td></tr>
-<tr class="memdesc:a755f2d4625b841cf26b08961bc265305"><td class="mdescLeft">&#160;</td><td class="mdescRight">Run a Hegel test.  <br /></td></tr>
+<tr class="memitem:ae3451b81e2687429b3285266fb5890e6" id="r_ae3451b81e2687429b3285266fb5890e6"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ae3451b81e2687429b3285266fb5890e6">test</a> (const std::function&lt; void(<a class="el" href="classhegel_1_1TestCase.html">TestCase</a> &amp;)&gt; &amp;test_fn, const <a class="el" href="structhegel_1_1Settings.html">Settings</a> &amp;settings={}, const std::vector&lt; std::string &gt; &amp;failure_blobs={})</td></tr>
+<tr class="memdesc:ae3451b81e2687429b3285266fb5890e6"><td class="mdescLeft">&#160;</td><td class="mdescRight">Run a Hegel test.  <br /></td></tr>
+<tr class="memitem:a4acc0cd11933b07d15879fd4704dbc80" id="r_a4acc0cd11933b07d15879fd4704dbc80"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a4acc0cd11933b07d15879fd4704dbc80">run_all_tests</a> ()</td></tr>
+<tr class="memdesc:a4acc0cd11933b07d15879fd4704dbc80"><td class="mdescLeft">&#160;</td><td class="mdescRight">Run every test defined with <a class="el" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a> in this binary.  <br /></td></tr>
 <tr class="memitem:a780357870820e4a63477d63cb6caf493" id="r_a780357870820e4a63477d63cb6caf493"><td class="memItemLeft" align="right" valign="top">const char *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a780357870820e4a63477d63cb6caf493">verbosity_to_string</a> (<a class="el" href="#aa5d3c97b2de55ed337e5bf3a9bc92eb8">Verbosity</a> v)</td></tr>
 <tr class="memdesc:a780357870820e4a63477d63cb6caf493"><td class="mdescLeft">&#160;</td><td class="mdescRight">Convert <a class="el" href="#aa5d3c97b2de55ed337e5bf3a9bc92eb8" title="Verbosity levels.">Verbosity</a> enum to command-line string.  <br /></td></tr>
 <tr class="memitem:aa41250f9093b4a936eacea2ded150e78" id="r_aa41250f9093b4a936eacea2ded150e78"><td class="memItemLeft" align="right" valign="top">std::vector&lt; <a class="el" href="#a98e2c0a6bc324370d8fb109cd3a2c71d">HealthCheck</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aa41250f9093b4a936eacea2ded150e78">all_health_checks</a> ()</td></tr>
 <tr class="memdesc:aa41250f9093b4a936eacea2ded150e78"><td class="mdescLeft">&#160;</td><td class="mdescRight">All health checks, suitable for full suppression.  <br /></td></tr>
+<tr class="memitem:ae35e7e1ec4100f295b39e3987cda114a" id="r_ae35e7e1ec4100f295b39e3987cda114a"><td class="memItemLeft" align="right" valign="top">std::vector&lt; <a class="el" href="#aee0a47457861d4028b314d518cd50b6a">Phase</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ae35e7e1ec4100f295b39e3987cda114a">all_phases</a> ()</td></tr>
+<tr class="memdesc:ae35e7e1ec4100f295b39e3987cda114a"><td class="mdescLeft">&#160;</td><td class="mdescRight">All phases, the default for <a class="el" href="structhegel_1_1Settings.html#a30e6653ea59ceb8e3e79e33e6b0e7408">Settings::phases</a>.  <br /></td></tr>
 </table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
 <div class="textblock"><p>Main namespace. </p>
 </div><a name="doc-enum-members" id="doc-enum-members"></a><h2 id="header-doc-enum-members" class="groupheader">Enumeration Type Documentation</h2>
+<a id="a887e0714b99c358aa474848809bca688" name="a887e0714b99c358aa474848809bca688"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a887e0714b99c358aa474848809bca688">&#9670;&#160;</a></span>Backend</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">enum class <a class="el" href="#a887e0714b99c358aa474848809bca688">hegel::Backend</a></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel strong">strong</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>Source of randomness the engine draws from. </p>
+<table class="fieldtable">
+<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="a887e0714b99c358aa474848809bca688a06b9281e396db002010bde1de57262eb" name="a887e0714b99c358aa474848809bca688a06b9281e396db002010bde1de57262eb"></a>Auto&#160;</td><td class="fielddoc"><p>Choose automatically (the default): Urandom when running inside Antithesis, Default otherwise. </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a887e0714b99c358aa474848809bca688a7a1920d61156abc05a60135aefe8bc67" name="a887e0714b99c358aa474848809bca688a7a1920d61156abc05a60135aefe8bc67"></a>Default&#160;</td><td class="fielddoc"><p>Expand a single seeded PRNG. Runs are reproducible from the seed and shrinking / replay work as usual. </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a887e0714b99c358aa474848809bca688a27584154da40f4f2174d452ef7de4a75" name="a887e0714b99c358aa474848809bca688a27584154da40f4f2174d452ef7de4a75"></a>Urandom&#160;</td><td class="fielddoc"><p>Read fresh entropy from <span class="tt">/dev/urandom</span> on every draw. Intended for running under Antithesis; you almost certainly don't want it otherwise. </p>
+</td></tr>
+</table>
+
+</div>
+</div>
 <a id="a98e2c0a6bc324370d8fb109cd3a2c71d" name="a98e2c0a6bc324370d8fb109cd3a2c71d"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a98e2c0a6bc324370d8fb109cd3a2c71d">&#9670;&#160;</a></span>HealthCheck</h2>
 
@@ -173,6 +228,72 @@ Functions</h2></td></tr>
 
 </div>
 </div>
+<a id="a76460adf8877112c3cc69bff0a21dcdd" name="a76460adf8877112c3cc69bff0a21dcdd"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a76460adf8877112c3cc69bff0a21dcdd">&#9670;&#160;</a></span>Mode</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">enum class <a class="el" href="#a76460adf8877112c3cc69bff0a21dcdd">hegel::Mode</a></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel strong">strong</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>How much of a run the engine performs. </p>
+<table class="fieldtable">
+<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="a76460adf8877112c3cc69bff0a21dcddac75e7027f34f603c0e19218d27e1011f" name="a76460adf8877112c3cc69bff0a21dcddac75e7027f34f603c0e19218d27e1011f"></a>TestRun&#160;</td><td class="fielddoc"><p>Full property-test run. The default. </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a76460adf8877112c3cc69bff0a21dcddab43f392f591f68ed58330cfb1a45c2c1" name="a76460adf8877112c3cc69bff0a21dcddab43f392f591f68ed58330cfb1a45c2c1"></a>SingleTestCase&#160;</td><td class="fielddoc"><p>Produce exactly one test case and stop, with no shrinking. Useful for exploratory probes. </p>
+</td></tr>
+</table>
+
+</div>
+</div>
+<a id="aee0a47457861d4028b314d518cd50b6a" name="aee0a47457861d4028b314d518cd50b6a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aee0a47457861d4028b314d518cd50b6a">&#9670;&#160;</a></span>Phase</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">enum class <a class="el" href="#aee0a47457861d4028b314d518cd50b6a">hegel::Phase</a></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel strong">strong</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>Phases of a property-test run. </p>
+<table class="fieldtable">
+<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="aee0a47457861d4028b314d518cd50b6aa9d71760e2dd451db2df354d0fd29cd7f" name="aee0a47457861d4028b314d518cd50b6aa9d71760e2dd451db2df354d0fd29cd7f"></a>Explicit&#160;</td><td class="fielddoc"><p>Run hard-coded explicit examples. </p>
+</td></tr>
+<tr><td class="fieldname"><a id="aee0a47457861d4028b314d518cd50b6aae5c303d82e8b702ccaba9f2b4bbe4c80" name="aee0a47457861d4028b314d518cd50b6aae5c303d82e8b702ccaba9f2b4bbe4c80"></a>Reuse&#160;</td><td class="fielddoc"><p>Replay counterexamples persisted in the database. </p>
+</td></tr>
+<tr><td class="fieldname"><a id="aee0a47457861d4028b314d518cd50b6aa32b919d18cfaca89383f6000dcc9c031" name="aee0a47457861d4028b314d518cd50b6aa32b919d18cfaca89383f6000dcc9c031"></a>Generate&#160;</td><td class="fielddoc"><p>Randomly generate fresh test cases. </p>
+</td></tr>
+<tr><td class="fieldname"><a id="aee0a47457861d4028b314d518cd50b6aac41a31890959544c6523af684561abe5" name="aee0a47457861d4028b314d518cd50b6aac41a31890959544c6523af684561abe5"></a>Target&#160;</td><td class="fielddoc"><p>Hill-climb toward observed target scores. </p>
+</td></tr>
+<tr><td class="fieldname"><a id="aee0a47457861d4028b314d518cd50b6aa1bb54971ab41a5a931b23159019fd73f" name="aee0a47457861d4028b314d518cd50b6aa1bb54971ab41a5a931b23159019fd73f"></a>Shrink&#160;</td><td class="fielddoc"><p>Shrink failing examples toward minimal counterexamples. </p>
+</td></tr>
+</table>
+
+</div>
+</div>
 <a id="aa5d3c97b2de55ed337e5bf3a9bc92eb8" name="aa5d3c97b2de55ed337e5bf3a9bc92eb8"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#aa5d3c97b2de55ed337e5bf3a9bc92eb8">&#9670;&#160;</a></span>Verbosity</h2>
 
@@ -201,7 +322,7 @@ Functions</h2></td></tr>
 </td></tr>
 <tr><td class="fieldname"><a id="aa5d3c97b2de55ed337e5bf3a9bc92eb8ad4a9fa383ab700c5bdd6f31cf7df0faf" name="aa5d3c97b2de55ed337e5bf3a9bc92eb8ad4a9fa383ab700c5bdd6f31cf7df0faf"></a>Verbose&#160;</td><td class="fielddoc"><p>More detailed output. </p>
 </td></tr>
-<tr><td class="fieldname"><a id="aa5d3c97b2de55ed337e5bf3a9bc92eb8aa603905470e2a5b8c13e96b579ef0dba" name="aa5d3c97b2de55ed337e5bf3a9bc92eb8aa603905470e2a5b8c13e96b579ef0dba"></a>Debug&#160;</td><td class="fielddoc"><p>Maximum verbosity + request/response logging. </p>
+<tr><td class="fieldname"><a id="aa5d3c97b2de55ed337e5bf3a9bc92eb8aa603905470e2a5b8c13e96b579ef0dba" name="aa5d3c97b2de55ed337e5bf3a9bc92eb8aa603905470e2a5b8c13e96b579ef0dba"></a>Debug&#160;</td><td class="fielddoc"><p>Maximum verbosity + engine-side shrinker tracing. </p>
 </td></tr>
 </table>
 
@@ -236,8 +357,61 @@ Functions</h2></td></tr>
 
 </div>
 </div>
-<a id="a755f2d4625b841cf26b08961bc265305" name="a755f2d4625b841cf26b08961bc265305"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a755f2d4625b841cf26b08961bc265305">&#9670;&#160;</a></span>test()</h2>
+<a id="ae35e7e1ec4100f295b39e3987cda114a" name="ae35e7e1ec4100f295b39e3987cda114a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ae35e7e1ec4100f295b39e3987cda114a">&#9670;&#160;</a></span>all_phases()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::vector&lt; <a class="el" href="#aee0a47457861d4028b314d518cd50b6a">Phase</a> &gt; hegel::all_phases </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"><em></em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>All phases, the default for <a class="el" href="structhegel_1_1Settings.html#a30e6653ea59ceb8e3e79e33e6b0e7408">Settings::phases</a>. </p>
+<dl class="section return"><dt>Returns</dt><dd>A vector containing every <a class="el" href="#aee0a47457861d4028b314d518cd50b6a" title="Phases of a property-test run.">Phase</a> variant. </dd></dl>
+
+</div>
+</div>
+<a id="a4acc0cd11933b07d15879fd4704dbc80" name="a4acc0cd11933b07d15879fd4704dbc80"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a4acc0cd11933b07d15879fd4704dbc80">&#9670;&#160;</a></span>run_all_tests()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int hegel::run_all_tests </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"><em></em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Run every test defined with <a class="el" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a> in this binary. </p>
+<p>Each test runs with its inline settings.</p>
+<div class="fragment"><div class="line"><span class="keywordtype">int</span> main() {</div>
+<div class="line">    <span class="keywordflow">return</span> <a class="code hl_function" href="#a4acc0cd11933b07d15879fd4704dbc80">hegel::run_all_tests</a>();</div>
+<div class="line">}</div>
+<div class="ttc" id="anamespacehegel_html_a4acc0cd11933b07d15879fd4704dbc80"><div class="ttname"><a href="#a4acc0cd11933b07d15879fd4704dbc80">hegel::run_all_tests</a></div><div class="ttdeci">int run_all_tests()</div><div class="ttdoc">Run every test defined with HEGEL_TEST in this binary.</div></div>
+</div><!-- fragment --><dl class="section return"><dt>Returns</dt><dd>0 if every test passed, 1 otherwise </dd></dl>
+
+</div>
+</div>
+<a id="ae3451b81e2687429b3285266fb5890e6" name="ae3451b81e2687429b3285266fb5890e6"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ae3451b81e2687429b3285266fb5890e6">&#9670;&#160;</a></span>test()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -250,16 +424,22 @@ Functions</h2></td></tr>
         <tr>
           <td class="paramkey"></td>
           <td></td>
-          <td class="paramtype">const <a class="el" href="structhegel_1_1Settings.html">Settings</a> &amp;</td>          <td class="paramname"><span class="paramname"><em>settings</em></span><span class="paramdefsep"> = </span><span class="paramdefval">{}</span>&#160;)</td>
+          <td class="paramtype">const <a class="el" href="structhegel_1_1Settings.html">Settings</a> &amp;</td>          <td class="paramname"><span class="paramname"><em>settings</em></span><span class="paramdefsep"> = </span><span class="paramdefval">{}</span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const std::vector&lt; std::string &gt; &amp;</td>          <td class="paramname"><span class="paramname"><em>failure_blobs</em></span><span class="paramdefsep"> = </span><span class="paramdefval">{}</span>&#160;)</td>
         </tr>
       </table>
 </div><div class="memdoc">
 
 <p>Run a Hegel test. </p>
+<p>This is the underlying entry point that <a class="el" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a> (the recommended way to define a test) expands to. Call it directly when a macro doesn't fit, e.g. to run a lambda or another callable built at runtime. In that case, set <a class="el" href="structhegel_1_1Settings.html#a30f1d654505c64bbe59624bc30dbc18c">Settings::database_key</a> yourself if you want failures persisted to the example database and replayed across runs.</p>
 <div class="fragment"><div class="line"><span class="preprocessor">#include &quot;hegel/hegel.h&quot;</span></div>
 <div class="line"> </div>
 <div class="line"><span class="keywordtype">int</span> main() {</div>
-<div class="line">    <a class="code hl_function" href="#a755f2d4625b841cf26b08961bc265305">hegel::test</a>([](<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc) {</div>
+<div class="line">    <a class="code hl_function" href="#ae3451b81e2687429b3285266fb5890e6">hegel::test</a>([](<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc) {</div>
 <div class="line">        <span class="keyword">namespace </span>gs = <a class="code hl_namespace" href="namespacehegel_1_1generators.html">hegel::generators</a>;</div>
 <div class="line">        <span class="keyword">auto</span> x = tc.<a class="code hl_function" href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">draw</a>(gs::integers&lt;int&gt;({.min_value = 0, .max_value =</div>
 <div class="line">100})); <span class="keyword">auto</span> y = tc.<a class="code hl_function" href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">draw</a>(gs::integers&lt;int&gt;({.min_value = 0, .max_value =</div>
@@ -274,13 +454,14 @@ Functions</h2></td></tr>
 <div class="line">    <span class="keywordflow">return</span> 0;</div>
 <div class="line">}</div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:34</div></div>
-<div class="ttc" id="aclasshegel_1_1TestCase_html_affbc292ad2e6f4027b2402200cbc1d1c"><div class="ttname"><a href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">hegel::TestCase::draw</a></div><div class="ttdeci">T draw(const generators::Generator&lt; T &gt; &amp;gen) const</div><div class="ttdoc">Draw a random value from a generator.</div><div class="ttdef"><b>Definition</b> core.h:371</div></div>
+<div class="ttc" id="aclasshegel_1_1TestCase_html_affbc292ad2e6f4027b2402200cbc1d1c"><div class="ttname"><a href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">hegel::TestCase::draw</a></div><div class="ttdeci">T draw(const generators::Generator&lt; T &gt; &amp;gen) const</div><div class="ttdoc">Draw a random value from a generator.</div><div class="ttdef"><b>Definition</b> core.h:263</div></div>
 <div class="ttc" id="anamespacehegel_1_1generators_html"><div class="ttname"><a href="namespacehegel_1_1generators.html">hegel::generators</a></div><div class="ttdoc">Hegel generators.</div><div class="ttdef"><b>Definition</b> core.h:16</div></div>
-<div class="ttc" id="anamespacehegel_html_a755f2d4625b841cf26b08961bc265305"><div class="ttname"><a href="#a755f2d4625b841cf26b08961bc265305">hegel::test</a></div><div class="ttdeci">void test(const std::function&lt; void(TestCase &amp;)&gt; &amp;test_fn, const Settings &amp;settings={})</div><div class="ttdoc">Run a Hegel test.</div></div>
+<div class="ttc" id="anamespacehegel_html_ae3451b81e2687429b3285266fb5890e6"><div class="ttname"><a href="#ae3451b81e2687429b3285266fb5890e6">hegel::test</a></div><div class="ttdeci">void test(const std::function&lt; void(TestCase &amp;)&gt; &amp;test_fn, const Settings &amp;settings={}, const std::vector&lt; std::string &gt; &amp;failure_blobs={})</div><div class="ttdoc">Run a Hegel test.</div></div>
 </div><!-- fragment --><dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
     <tr><td class="paramname">test_fn</td><td>The test function to run repeatedly. Receives a <a class="el" href="classhegel_1_1TestCase.html" title="Handle to the currently-executing test case.">TestCase</a> which it uses to draw values, make assumptions, and record notes. </td></tr>
     <tr><td class="paramname">settings</td><td>Configuration settings (test count, debug mode, etc.) </td></tr>
+    <tr><td class="paramname">failure_blobs</td><td>The base64 blobs encoding the engine choices that led to failures. Multiple blobs can be passed in for bookkeeping, but only the first one is run. </td></tr>
   </table>
   </dd>
 </dl>

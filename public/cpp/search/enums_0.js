@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['healthcheck_0',['HealthCheck',['../namespacehegel.html#a98e2c0a6bc324370d8fb109cd3a2c71d',1,'hegel']]]
+  ['backend_0',['Backend',['../namespacehegel.html#a887e0714b99c358aa474848809bca688',1,'hegel']]]
 ];

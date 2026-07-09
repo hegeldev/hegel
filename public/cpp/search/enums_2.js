@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['verbosity_0',['Verbosity',['../namespacehegel.html#aa5d3c97b2de55ed337e5bf3a9bc92eb8',1,'hegel']]]
+  ['kind_0',['Kind',['../classhegel_1_1Database.html#ace5961c34d3d89ef5ef59f60f1363b70',1,'hegel::Database']]]
 ];

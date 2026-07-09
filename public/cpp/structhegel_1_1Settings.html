@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.3.9</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.6.2</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -95,7 +95,7 @@ $(function(){initNavTree('structhegel_1_1Settings.html','','structhegel_1_1Setti
 </div><!--header-->
 <div class="contents">
 
-<p>Configuration options for <a class="el" href="namespacehegel.html#a755f2d4625b841cf26b08961bc265305" title="Run a Hegel test.">hegel::test()</a>.  
+<p>Configuration options for <a class="el" href="namespacehegel.html#ae3451b81e2687429b3285266fb5890e6" title="Run a Hegel test.">hegel::test()</a>.  
  <a href="#details">More...</a></p>
 
 <p><code>#include &lt;<a class="el" href="settings_8h_source.html">settings.h</a>&gt;</code></p>
@@ -111,15 +111,38 @@ std::optional&lt; uint64_t &gt;&#160;</td><td class="memItemRight" valign="botto
 <tr class="memitem:a29a9dde11122aa2a79941dfcfa6f6fae" id="r_a29a9dde11122aa2a79941dfcfa6f6fae"><td class="memItemLeft" align="right" valign="top"><a id="a29a9dde11122aa2a79941dfcfa6f6fae" name="a29a9dde11122aa2a79941dfcfa6f6fae"></a>
 std::optional&lt; uint64_t &gt;&#160;</td><td class="memItemRight" valign="bottom"><b>seed</b></td></tr>
 <tr class="memdesc:a29a9dde11122aa2a79941dfcfa6f6fae"><td class="mdescLeft">&#160;</td><td class="mdescRight">Explicit seed for the test. <br /></td></tr>
-<tr class="memitem:a0896b073ca6424ac89612eba5356d86b" id="r_a0896b073ca6424ac89612eba5356d86b"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a0896b073ca6424ac89612eba5356d86b">derandomize</a> = false</td></tr>
-<tr class="memitem:aaf5e3db526f4e7c051644a6d28d5c53d" id="r_aaf5e3db526f4e7c051644a6d28d5c53d"><td class="memItemLeft" align="right" valign="top"><a class="el" href="classhegel_1_1Database.html">Database</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aaf5e3db526f4e7c051644a6d28d5c53d">database</a> = <a class="el" href="classhegel_1_1Database.html#ae9ee13f9c4c96b7466fd5b2187b3b84c">Database::unset</a>()</td></tr>
+<tr class="memitem:a0896b073ca6424ac89612eba5356d86b" id="r_a0896b073ca6424ac89612eba5356d86b"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a0896b073ca6424ac89612eba5356d86b">derandomize</a> = internal::in_ci()</td></tr>
+<tr class="memitem:ad3e01a504ec505a4b403b5c09932271b" id="r_ad3e01a504ec505a4b403b5c09932271b"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ad3e01a504ec505a4b403b5c09932271b">report_multiple_failures</a> = false</td></tr>
+<tr class="memitem:a159c2ab2f567c872a6f0b7f403ff180e" id="r_a159c2ab2f567c872a6f0b7f403ff180e"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a159c2ab2f567c872a6f0b7f403ff180e">print_blob</a> = false</td></tr>
+<tr class="memitem:aaf5e3db526f4e7c051644a6d28d5c53d" id="r_aaf5e3db526f4e7c051644a6d28d5c53d"><td class="memItemLeft" align="right" valign="top"><a class="el" href="classhegel_1_1Database.html">Database</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aaf5e3db526f4e7c051644a6d28d5c53d">database</a></td></tr>
+<tr class="memitem:a30f1d654505c64bbe59624bc30dbc18c" id="r_a30f1d654505c64bbe59624bc30dbc18c"><td class="memItemLeft" align="right" valign="top">std::optional&lt; std::string &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a30f1d654505c64bbe59624bc30dbc18c">database_key</a></td></tr>
 <tr class="memitem:ac78c4a0ae269f598b13c1d0c09f99214" id="r_ac78c4a0ae269f598b13c1d0c09f99214"><td class="memItemLeft" align="right" valign="top"><a id="ac78c4a0ae269f598b13c1d0c09f99214" name="ac78c4a0ae269f598b13c1d0c09f99214"></a>
 std::vector&lt; <a class="el" href="namespacehegel.html#a98e2c0a6bc324370d8fb109cd3a2c71d">HealthCheck</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><b>suppress_health_check</b></td></tr>
 <tr class="memdesc:ac78c4a0ae269f598b13c1d0c09f99214"><td class="mdescLeft">&#160;</td><td class="mdescRight">Health checks to suppress for this test. <br /></td></tr>
+<tr class="memitem:a30e6653ea59ceb8e3e79e33e6b0e7408" id="r_a30e6653ea59ceb8e3e79e33e6b0e7408"><td class="memItemLeft" align="right" valign="top">std::vector&lt; <a class="el" href="namespacehegel.html#aee0a47457861d4028b314d518cd50b6a">Phase</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a30e6653ea59ceb8e3e79e33e6b0e7408">phases</a> = <a class="el" href="namespacehegel.html#ae35e7e1ec4100f295b39e3987cda114a">all_phases</a>()</td></tr>
+<tr class="memitem:a07cda060e164464aad6ab36d16bbeea0" id="r_a07cda060e164464aad6ab36d16bbeea0"><td class="memItemLeft" align="right" valign="top"><a id="a07cda060e164464aad6ab36d16bbeea0" name="a07cda060e164464aad6ab36d16bbeea0"></a>
+<a class="el" href="namespacehegel.html#a76460adf8877112c3cc69bff0a21dcdd">Mode</a>&#160;</td><td class="memItemRight" valign="bottom"><b>mode</b> = <a class="el" href="namespacehegel.html#a76460adf8877112c3cc69bff0a21dcddac75e7027f34f603c0e19218d27e1011f">Mode::TestRun</a></td></tr>
+<tr class="memdesc:a07cda060e164464aad6ab36d16bbeea0"><td class="mdescLeft">&#160;</td><td class="mdescRight">How much of a run to perform. Defaults to <a class="el" href="namespacehegel.html#a76460adf8877112c3cc69bff0a21dcddac75e7027f34f603c0e19218d27e1011f" title="Full property-test run. The default.">Mode::TestRun</a>. <br /></td></tr>
+<tr class="memitem:a1a678c2dca9417303744c5495898942f" id="r_a1a678c2dca9417303744c5495898942f"><td class="memItemLeft" align="right" valign="top"><a class="el" href="namespacehegel.html#a887e0714b99c358aa474848809bca688">Backend</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a1a678c2dca9417303744c5495898942f">backend</a> = <a class="el" href="namespacehegel.html#a887e0714b99c358aa474848809bca688a06b9281e396db002010bde1de57262eb">Backend::Auto</a></td></tr>
 </table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>Configuration options for <a class="el" href="namespacehegel.html#a755f2d4625b841cf26b08961bc265305" title="Run a Hegel test.">hegel::test()</a>. </p>
+<div class="textblock"><p>Configuration options for <a class="el" href="namespacehegel.html#ae3451b81e2687429b3285266fb5890e6" title="Run a Hegel test.">hegel::test()</a>. </p>
 </div><a name="doc-variable-members" id="doc-variable-members"></a><h2 id="header-doc-variable-members" class="groupheader">Member Data Documentation</h2>
+<a id="a1a678c2dca9417303744c5495898942f" name="a1a678c2dca9417303744c5495898942f"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a1a678c2dca9417303744c5495898942f">&#9670;&#160;</a></span>backend</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="namespacehegel.html#a887e0714b99c358aa474848809bca688">Backend</a> hegel::Settings::backend = <a class="el" href="namespacehegel.html#a887e0714b99c358aa474848809bca688a06b9281e396db002010bde1de57262eb">Backend::Auto</a></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<p>Randomness backend. Defaults to <a class="el" href="namespacehegel.html#a887e0714b99c358aa474848809bca688a06b9281e396db002010bde1de57262eb">Backend::Auto</a>; picking an explicit backend overrides the automatic detection. </p>
+
+</div>
+</div>
 <a id="aaf5e3db526f4e7c051644a6d28d5c53d" name="aaf5e3db526f4e7c051644a6d28d5c53d"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#aaf5e3db526f4e7c051644a6d28d5c53d">&#9670;&#160;</a></span>database</h2>
 
@@ -127,11 +150,30 @@ std::vector&lt; <a class="el" href="namespacehegel.html#a98e2c0a6bc324370d8fb109
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname"><a class="el" href="classhegel_1_1Database.html">Database</a> hegel::Settings::database = <a class="el" href="classhegel_1_1Database.html#ae9ee13f9c4c96b7466fd5b2187b3b84c">Database::unset</a>()</td>
+          <td class="memname"><a class="el" href="classhegel_1_1Database.html">Database</a> hegel::Settings::database</td>
         </tr>
       </table>
 </div><div class="memdoc">
-<p>Configure the Hegel database. See <a class="el" href="classhegel_1_1Database.html" title="Configure the Hegel database.">Database</a>. Defaults to a database at <span class="tt">.<a class="el" href="namespacehegel.html" title="Main namespace.">hegel</a></span>. </p>
+<b>Initial value:</b><div class="fragment"><div class="line">=</div>
+<div class="line">            internal::in_ci() ? <a class="code hl_function" href="classhegel_1_1Database.html#a117dd4e9d11f8bdb8012f1152fdbfd6e">Database::disabled</a>() : <a class="code hl_class" href="classhegel_1_1Database.html">Database</a>::unset()</div>
+<div class="ttc" id="aclasshegel_1_1Database_html"><div class="ttname"><a href="classhegel_1_1Database.html">hegel::Database</a></div><div class="ttdoc">Configure the Hegel database.</div><div class="ttdef"><b>Definition</b> settings.h:121</div></div>
+<div class="ttc" id="aclasshegel_1_1Database_html_a117dd4e9d11f8bdb8012f1152fdbfd6e"><div class="ttname"><a href="classhegel_1_1Database.html#a117dd4e9d11f8bdb8012f1152fdbfd6e">hegel::Database::disabled</a></div><div class="ttdeci">static Database disabled()</div><div class="ttdef"><b>Definition</b> settings.h:137</div></div>
+</div><!-- fragment --><p>Configure the Hegel database. See <a class="el" href="classhegel_1_1Database.html" title="Configure the Hegel database.">Database</a>. Defaults to a database at <span class="tt">.<a class="el" href="namespacehegel.html" title="Main namespace.">hegel</a></span>, or disabled when a CI environment is detected. </p>
+
+</div>
+</div>
+<a id="a30f1d654505c64bbe59624bc30dbc18c" name="a30f1d654505c64bbe59624bc30dbc18c"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a30f1d654505c64bbe59624bc30dbc18c">&#9670;&#160;</a></span>database_key</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::optional&lt;std::string&gt; hegel::Settings::database_key</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<p>Key scoping the examples stored in and replayed from the database. Unset (the default) disables persistence and Reuse-phase replay. </p>
 
 </div>
 </div>
@@ -142,11 +184,56 @@ std::vector&lt; <a class="el" href="namespacehegel.html#a98e2c0a6bc324370d8fb109
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">bool hegel::Settings::derandomize = false</td>
+          <td class="memname">bool hegel::Settings::derandomize = internal::in_ci()</td>
         </tr>
       </table>
 </div><div class="memdoc">
-<p>If true, use a deterministic RNG, making the test deterministic across executions. </p>
+<p>If true, use a deterministic RNG, making the test deterministic across executions. Defaults to true when a CI environment is detected, false otherwise. </p>
+
+</div>
+</div>
+<a id="a30e6653ea59ceb8e3e79e33e6b0e7408" name="a30e6653ea59ceb8e3e79e33e6b0e7408"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a30e6653ea59ceb8e3e79e33e6b0e7408">&#9670;&#160;</a></span>phases</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::vector&lt;<a class="el" href="namespacehegel.html#aee0a47457861d4028b314d518cd50b6a">Phase</a>&gt; hegel::Settings::phases = <a class="el" href="namespacehegel.html#ae35e7e1ec4100f295b39e3987cda114a">all_phases</a>()</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<p>Phases to run. Defaults to all phases; phases left out are disabled (e.g. drop <a class="el" href="namespacehegel.html#aee0a47457861d4028b314d518cd50b6aa1bb54971ab41a5a931b23159019fd73f" title="Shrink failing examples toward minimal counterexamples.">Phase::Shrink</a> to keep failing examples unshrunk). An empty vector produces a run that does nothing. </p>
+
+</div>
+</div>
+<a id="a159c2ab2f567c872a6f0b7f403ff180e" name="a159c2ab2f567c872a6f0b7f403ff180e"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a159c2ab2f567c872a6f0b7f403ff180e">&#9670;&#160;</a></span>print_blob</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool hegel::Settings::print_blob = false</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<p>If true, print the base64 blob encoding the engine choices that led to a failure. </p>
+
+</div>
+</div>
+<a id="ad3e01a504ec505a4b403b5c09932271b" name="ad3e01a504ec505a4b403b5c09932271b"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad3e01a504ec505a4b403b5c09932271b">&#9670;&#160;</a></span>report_multiple_failures</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool hegel::Settings::report_multiple_failures = false</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<p>If true, keep generating after the first failure to surface additional distinct bugs, and report all of them. If false (the default), stop the run at the first failing example. </p>
 
 </div>
 </div>

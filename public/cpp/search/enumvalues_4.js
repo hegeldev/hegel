@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['path_0',['Path',['../classhegel_1_1Database.html#ace5961c34d3d89ef5ef59f60f1363b70aac70412e939d72a9234cdebb1af5867b',1,'hegel::Database']]]
+  ['generate_0',['Generate',['../namespacehegel.html#aee0a47457861d4028b314d518cd50b6aa32b919d18cfaca89383f6000dcc9c031',1,'hegel']]]
 ];

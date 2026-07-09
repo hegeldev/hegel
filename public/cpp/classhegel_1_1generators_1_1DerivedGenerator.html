@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.3.9</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.6.2</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -105,8 +105,7 @@ Inheritance diagram for hegel::generators::DerivedGenerator&lt; T &gt;:</div>
  <div class="center">
   <img src="classhegel_1_1generators_1_1DerivedGenerator.png" usemap="#hegel_3A_3Agenerators_3A_3ADerivedGenerator_3C_20T_20_3E_map" alt=""/>
   <map id="hegel_3A_3Agenerators_3A_3ADerivedGenerator_3C_20T_20_3E_map" name="hegel_3A_3Agenerators_3A_3ADerivedGenerator_3C_20T_20_3E_map">
-<area href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators." alt="hegel::generators::Generator&lt; T &gt;" shape="rect" coords="0,56,249,80"/>
-<area href="structhegel_1_1generators_1_1IGenerator.html" title="*‍/" alt="hegel::generators::IGenerator&lt; T &gt;" shape="rect" coords="0,0,249,24"/>
+<area href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators." alt="hegel::generators::Generator&lt; T &gt;" shape="rect" coords="0,0,249,24"/>
   </map>
 </div></div>
 <table class="memberdecls">
@@ -116,24 +115,31 @@ Public Member Functions</h2></td></tr>
 <tr class="memitem:a8dd934c6e010d393cfcaada89e6dd04d template"><td class="memItemLeft" align="right" valign="top"><a class="el" href="classhegel_1_1generators_1_1DerivedGenerator.html">DerivedGenerator</a>&lt; T &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a8dd934c6e010d393cfcaada89e6dd04d">override</a> (Fields... fields) const</td></tr>
 <tr class="memdesc:a8dd934c6e010d393cfcaada89e6dd04d"><td class="mdescLeft">&#160;</td><td class="mdescRight">Override default per-field generators.  <br /></td></tr>
 <tr class="inherit_header pub_methods_classhegel_1_1generators_1_1Generator"><td colspan="2" onclick="javascript:dynsection.toggleInherit('pub_methods_classhegel_1_1generators_1_1Generator')"><span class="dynarrow"><span class="arrowhead closed"></span></span>Public Member Functions inherited from <a class="el" href="classhegel_1_1generators_1_1Generator.html">hegel::generators::Generator&lt; T &gt;</a></td></tr>
-<tr class="memitem:a2ef439895b517f4f7c28314536c98e92 inherit pub_methods_classhegel_1_1generators_1_1Generator" id="r_a2ef439895b517f4f7c28314536c98e92"><td class="memTemplParams" colspan="2">template&lt;typename F&gt; </td></tr>
-<tr class="memitem:a2ef439895b517f4f7c28314536c98e92 inherit pub_methods_classhegel_1_1generators_1_1Generator template"><td class="memItemLeft" align="right" valign="top"><a class="el" href="classhegel_1_1generators_1_1Generator.html">Generator</a>&lt; std::invoke_result_t&lt; F, T &gt; &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1generators_1_1Generator.html#a2ef439895b517f4f7c28314536c98e92">map</a> (F f) const</td></tr>
-<tr class="memdesc:a2ef439895b517f4f7c28314536c98e92 inherit pub_methods_classhegel_1_1generators_1_1Generator"><td class="mdescLeft">&#160;</td><td class="mdescRight">*&zwj;/  <br /></td></tr>
+<tr class="memitem:a150ffe0062cfdf8e362e1af66f7aed3a inherit pub_methods_classhegel_1_1generators_1_1Generator" id="r_a150ffe0062cfdf8e362e1af66f7aed3a"><td class="memTemplParams" colspan="2">template&lt;typename F&gt; </td></tr>
+<tr class="memitem:a150ffe0062cfdf8e362e1af66f7aed3a inherit pub_methods_classhegel_1_1generators_1_1Generator template"><td class="memItemLeft" align="right" valign="top"><a class="el" href="classhegel_1_1generators_1_1Generator.html">Generator</a>&lt; std::invoke_result_t&lt; F, T &gt; &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1generators_1_1Generator.html#a150ffe0062cfdf8e362e1af66f7aed3a">map</a> (F &amp;&amp;f) const</td></tr>
+<tr class="memdesc:a150ffe0062cfdf8e362e1af66f7aed3a inherit pub_methods_classhegel_1_1generators_1_1Generator"><td class="mdescLeft">&#160;</td><td class="mdescRight">Transform generated values with a function.  <br /></td></tr>
 <tr class="memitem:ad9e5e2b18ed5ee073093abe815e7255a inherit pub_methods_classhegel_1_1generators_1_1Generator" id="r_ad9e5e2b18ed5ee073093abe815e7255a"><td class="memTemplParams" colspan="2">template&lt;typename F&gt; </td></tr>
 <tr class="memitem:ad9e5e2b18ed5ee073093abe815e7255a inherit pub_methods_classhegel_1_1generators_1_1Generator template"><td class="memItemLeft" align="right" valign="top">std::invoke_result_t&lt; F, T &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1generators_1_1Generator.html#ad9e5e2b18ed5ee073093abe815e7255a">flat_map</a> (F &amp;&amp;f) const</td></tr>
 <tr class="memdesc:ad9e5e2b18ed5ee073093abe815e7255a inherit pub_methods_classhegel_1_1generators_1_1Generator"><td class="mdescLeft">&#160;</td><td class="mdescRight">Chain generators for dependent generation.  <br /></td></tr>
 <tr class="memitem:a97c49fc816022dfba31410095849c2ab inherit pub_methods_classhegel_1_1generators_1_1Generator" id="r_a97c49fc816022dfba31410095849c2ab"><td class="memItemLeft" align="right" valign="top"><a class="el" href="classhegel_1_1generators_1_1Generator.html">Generator</a>&lt; T &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1generators_1_1Generator.html#a97c49fc816022dfba31410095849c2ab">filter</a> (std::function&lt; bool(const T &amp;)&gt; pred) const</td></tr>
 <tr class="memdesc:a97c49fc816022dfba31410095849c2ab inherit pub_methods_classhegel_1_1generators_1_1Generator"><td class="mdescLeft">&#160;</td><td class="mdescRight">Filter generated values by a predicate.  <br /></td></tr>
+</table><table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 id="header-inherited" class="groupheader"><a id="inherited" name="inherited"></a>
+Additional Inherited Members</h2></td></tr>
+<tr class="inherit_header pub_types_classhegel_1_1generators_1_1Generator"><td colspan="2" onclick="javascript:dynsection.toggleInherit('pub_types_classhegel_1_1generators_1_1Generator')"><span class="dynarrow"><span class="arrowhead closed"></span></span>Public Types inherited from <a class="el" href="classhegel_1_1generators_1_1Generator.html">hegel::generators::Generator&lt; T &gt;</a></td></tr>
+<tr class="memitem:ae57339c44a6b29805622edba851a7e0a inherit pub_types_classhegel_1_1generators_1_1Generator" id="r_ae57339c44a6b29805622edba851a7e0a"><td class="memItemLeft" align="right" valign="top">
+using&#160;</td><td class="memItemRight" valign="bottom"><b>value_type</b> = T</td></tr>
+<tr class="memdesc:ae57339c44a6b29805622edba851a7e0a inherit pub_types_classhegel_1_1generators_1_1Generator"><td class="mdescLeft">&#160;</td><td class="mdescRight">The type of value this generator produces. <br /></td></tr>
 </table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
 <div class="textblock"><div class="compoundTemplParams">template&lt;typename T&gt;<br />
 class hegel::generators::DerivedGenerator&lt; T &gt;</div><p>A <a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator</a> produced by <a class="el" href="namespacehegel_1_1generators.html#ad9b81c483bbe307a0e598693a55cc6d5" title="Create a default generator for type T.">default_generator&lt;T&gt;()</a>. </p>
 <p>Behaves exactly like a <a class="el" href="classhegel_1_1generators_1_1Generator.html" title="The base class of all generators.">Generator&lt;T&gt;</a> (it publicly derives from one), but additionally exposes an <a class="el" href="#a8dd934c6e010d393cfcaada89e6dd04d" title="Override default per-field generators.">override()</a> method for supplying per-field generator overrides on struct types.</p>
 <div class="fragment"><div class="line"><span class="keyword">auto</span> gen = <a class="code hl_function" href="namespacehegel_1_1generators.html#ad9b81c483bbe307a0e598693a55cc6d5">default_generator&lt;Rectangle&gt;</a>()</div>
-<div class="line">    .override(<a class="code hl_function" href="namespacehegel_1_1generators.html#a3e8aade9ced0c8c3384bd27ac5eb118a">field&lt;&amp;Rectangle::width&gt;</a>(<a class="code hl_function" href="namespacehegel_1_1generators.html#a1a5884107bb1ae52569d7e2fbb6a960d">integers&lt;int&gt;</a>({.min_value = 1})));</div>
-<div class="ttc" id="anamespacehegel_1_1generators_html_a1a5884107bb1ae52569d7e2fbb6a960d"><div class="ttname"><a href="namespacehegel_1_1generators.html#a1a5884107bb1ae52569d7e2fbb6a960d">hegel::generators::integers</a></div><div class="ttdeci">Generator&lt; T &gt; integers(IntegersParams&lt; T &gt; params={})</div><div class="ttdoc">Generate random integers. For a given integral type T, produces values in the range [std::numeric_lim...</div><div class="ttdef"><b>Definition</b> numeric.h:146</div></div>
+<div class="line">    .override(<a class="code hl_function" href="namespacehegel_1_1generators.html#a3e8aade9ced0c8c3384bd27ac5eb118a">field&lt;&amp;Rectangle::width&gt;</a>(<a class="code hl_function" href="namespacehegel_1_1generators.html#a5322064873484cb69432cc31c4cd4c24">integers&lt;int&gt;</a>({.min_value = 1})));</div>
 <div class="ttc" id="anamespacehegel_1_1generators_html_a3e8aade9ced0c8c3384bd27ac5eb118a"><div class="ttname"><a href="namespacehegel_1_1generators.html#a3e8aade9ced0c8c3384bd27ac5eb118a">hegel::generators::field</a></div><div class="ttdeci">Field&lt; MemberPtr, Gen &gt; field(Gen gen)</div><div class="ttdoc">Create a field specification for builds_agg().</div><div class="ttdef"><b>Definition</b> builds.h:73</div></div>
-<div class="ttc" id="anamespacehegel_1_1generators_html_ad9b81c483bbe307a0e598693a55cc6d5"><div class="ttname"><a href="namespacehegel_1_1generators.html#ad9b81c483bbe307a0e598693a55cc6d5">hegel::generators::default_generator</a></div><div class="ttdeci">DerivedGenerator&lt; T &gt; default_generator()</div><div class="ttdoc">Create a default generator for type T.</div><div class="ttdef"><b>Definition</b> default.h:283</div></div>
+<div class="ttc" id="anamespacehegel_1_1generators_html_a5322064873484cb69432cc31c4cd4c24"><div class="ttname"><a href="namespacehegel_1_1generators.html#a5322064873484cb69432cc31c4cd4c24">hegel::generators::integers</a></div><div class="ttdeci">Generator&lt; T &gt; integers(IntegersParams&lt; T &gt; params={})</div><div class="ttdoc">Generate random integers. For a given integral type T, produces values in the range [std::numeric_lim...</div><div class="ttdef"><b>Definition</b> numeric.h:159</div></div>
+<div class="ttc" id="anamespacehegel_1_1generators_html_ad9b81c483bbe307a0e598693a55cc6d5"><div class="ttname"><a href="namespacehegel_1_1generators.html#ad9b81c483bbe307a0e598693a55cc6d5">hegel::generators::default_generator</a></div><div class="ttdeci">DerivedGenerator&lt; T &gt; default_generator()</div><div class="ttdoc">Create a default generator for type T.</div><div class="ttdef"><b>Definition</b> default.h:290</div></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
     <tr><td class="paramname">T</td><td>The type produced by the generator </td></tr>
@@ -172,7 +178,7 @@ template&lt;typename... Fields&gt; </div>
 <p>Each field specification (from <span class="tt"><a class="el" href="namespacehegel_1_1generators.html#a3e8aade9ced0c8c3384bd27ac5eb118a" title="Create a field specification for builds_agg().">field</a>&lt;&amp;T::member&gt;(gen)</span>) replaces the default generator for that member. Other fields keep the defaults from <a class="el" href="namespacehegel_1_1generators.html#ad9b81c483bbe307a0e598693a55cc6d5" title="Create a default generator for type T.">default_generator&lt;T&gt;()</a>.</p>
 <div class="fragment"><div class="line"><span class="keyword">auto</span> gen = <a class="code hl_function" href="namespacehegel_1_1generators.html#ad9b81c483bbe307a0e598693a55cc6d5">default_generator&lt;Person&gt;</a>()</div>
 <div class="line">    .override(<a class="code hl_function" href="namespacehegel_1_1generators.html#a3e8aade9ced0c8c3384bd27ac5eb118a">field&lt;&amp;Person::age&gt;</a>(</div>
-<div class="line">        <a class="code hl_function" href="namespacehegel_1_1generators.html#a1a5884107bb1ae52569d7e2fbb6a960d">integers&lt;int&gt;</a>({.min_value = 0, .max_value = 120})));</div>
+<div class="line">        <a class="code hl_function" href="namespacehegel_1_1generators.html#a5322064873484cb69432cc31c4cd4c24">integers&lt;int&gt;</a>({.min_value = 0, .max_value = 120})));</div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
     <tr><td class="paramname">Fields</td><td><a class="el" href="structhegel_1_1generators_1_1Field.html" title="Helper for named field initialization in builds_agg().">Field</a> specification types (from <a class="el" href="namespacehegel_1_1generators.html#a3e8aade9ced0c8c3384bd27ac5eb118a" title="Create a field specification for builds_agg().">field&lt;&gt;()</a>) </td></tr>
