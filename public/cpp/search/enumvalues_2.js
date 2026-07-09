@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['largeinitialtestcase_0',['LargeInitialTestCase',['../namespacehegel.html#a98e2c0a6bc324370d8fb109cd3a2c71daa057e626223174c2433962916cbfaca0',1,'hegel']]]
+  ['explicit_0',['Explicit',['../namespacehegel.html#aee0a47457861d4028b314d518cd50b6aa9d71760e2dd451db2df354d0fd29cd7f',1,'hegel']]]
 ];

@@ -1,6 +1,5 @@
 var namespacehegel_1_1generators =
 [
-    [ "BasicGenerator", "structhegel_1_1generators_1_1BasicGenerator.html", null ],
     [ "CompositeGenerator", "classhegel_1_1generators_1_1CompositeGenerator.html", null ],
     [ "MappedGenerator", "classhegel_1_1generators_1_1MappedGenerator.html", null ],
     [ "IGenerator", "structhegel_1_1generators_1_1IGenerator.html", null ],
@@ -31,9 +30,9 @@ var namespacehegel_1_1generators =
     [ "domains", "namespacehegel_1_1generators.html#a44c2eca11652cec3572acf05ef80b7c8", null ],
     [ "emails", "namespacehegel_1_1generators.html#a71da4f340c78ea238ebb779b63c25cef", null ],
     [ "field", "namespacehegel_1_1generators.html#a3e8aade9ced0c8c3384bd27ac5eb118a", null ],
-    [ "floats", "namespacehegel_1_1generators.html#a9ac48d937dc7ac74bb28517da0c12214", null ],
+    [ "floats", "namespacehegel_1_1generators.html#a77ac35c8e508df091c6fac9eb63f017b", null ],
     [ "from_regex", "namespacehegel_1_1generators.html#adff59a9a4fe46c41c45833d46f231232", null ],
-    [ "integers", "namespacehegel_1_1generators.html#a1a5884107bb1ae52569d7e2fbb6a960d", null ],
+    [ "integers", "namespacehegel_1_1generators.html#a5322064873484cb69432cc31c4cd4c24", null ],
     [ "ip_addresses", "namespacehegel_1_1generators.html#a7552419069a9972156e36b50b567f14c", null ],
     [ "just", "namespacehegel_1_1generators.html#abd4bf881f13b834674df2fe62628516d", null ],
     [ "just", "namespacehegel_1_1generators.html#a13820865170eecddb4fec2c076910f1a", null ],
@@ -46,7 +45,7 @@ var namespacehegel_1_1generators =
     [ "sampled_from", "namespacehegel_1_1generators.html#a788de991af116b143c91dd957a3ba554", null ],
     [ "sampled_from", "namespacehegel_1_1generators.html#a4ee8e66e6d2d475e4e18281583519d64", null ],
     [ "sets", "namespacehegel_1_1generators.html#ad1f5a16efc6325220f75c55e7bdea606", null ],
-    [ "text", "namespacehegel_1_1generators.html#a30040fbe3713538d54cf079060a3ff9f", null ],
+    [ "text", "namespacehegel_1_1generators.html#ac9a358a586db20a210121e5b5126d52a", null ],
     [ "times", "namespacehegel_1_1generators.html#a5e39d59edcff5ecd4cc124bf7a8a2321", null ],
     [ "tuples", "namespacehegel_1_1generators.html#a0b4c05fc108c0ea5c87d78362983a5fa", null ],
     [ "urls", "namespacehegel_1_1generators.html#ae6252253ffdee63df2e4ba93142188de", null ],

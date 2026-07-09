@@ -1,4 +1,5 @@
 var searchData=
 [
-  ['test_5fcases_0',['test_cases',['../structhegel_1_1Settings.html#a73a0b3f269878772d6f8ce346e51191e',1,'hegel::Settings']]]
+  ['phases_0',['phases',['../structhegel_1_1Settings.html#a30e6653ea59ceb8e3e79e33e6b0e7408',1,'hegel::Settings']]],
+  ['print_5fblob_1',['print_blob',['../structhegel_1_1Settings.html#a159c2ab2f567c872a6f0b7f403ff180e',1,'hegel::Settings']]]
 ];

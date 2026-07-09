@@ -2,7 +2,6 @@ var annotated_dup =
 [
     [ "hegel", "namespacehegel.html", [
       [ "generators", "namespacehegel_1_1generators.html", [
-        [ "BasicGenerator", "structhegel_1_1generators_1_1BasicGenerator.html", null ],
         [ "CompositeGenerator", "classhegel_1_1generators_1_1CompositeGenerator.html", null ],
         [ "MappedGenerator", "classhegel_1_1generators_1_1MappedGenerator.html", null ],
         [ "IGenerator", "structhegel_1_1generators_1_1IGenerator.html", null ],
