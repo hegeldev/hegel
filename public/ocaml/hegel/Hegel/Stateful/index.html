@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+<base href="/ocaml/hegel/Hegel/Stateful/"><title>Stateful (hegel.Hegel.Stateful)</title><meta charset="utf-8"/><link rel="stylesheet" href="../../../odoc.support/odoc.css"/><meta name="generator" content="odoc 3.2.1"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><script src="../../../odoc.support/highlight.pack.js"></script><script>hljs.initHighlightingOnLoad();</script></head><body class="odoc"><nav class="odoc-nav"><a href="../index.html">Up</a> – <a href="../../../index.html">Index</a> &#x00BB; <a href="../../index.html">hegel</a> &#x00BB; <a href="../index.html">Hegel</a> &#x00BB; Stateful</nav><header class="odoc-preamble"><h1>Module <code><span>Hegel.Stateful</span></code></h1><p>Stateful property-based testing.</p></header><div class="odoc-tocs"><nav class="odoc-toc odoc-local-toc"><ul><li><a href="#introduction">Introduction</a></li><li><a href="#submodules">Submodules</a></li><li><a href="#running-stateful-tests">Running stateful tests</a></li></ul></nav></div><div class="odoc-content"><h3 id="introduction"><a href="#introduction" class="anchor"></a>Introduction</h3><p>A stateful test exercises a system through a sequence of randomly chosen actions (&quot;rules&quot;) applied to a state. Rules are constructed with <a href="Rule/index.html#val-create"><code>Rule.create</code></a> from a <code>name</code> and a <code>step</code> function that performs one application of the rule, drawing any arguments it needs from the test case and returning the new state. Invariants are <code>'state -&gt; unit</code> functions evaluated before any step is run and after every successful step.</p><p>To run a state machine, call <a href="#val-run"><code>run</code></a> inside a Hegel test. Examples in this documentation assume <code>open Hegel</code>.</p><p>Example: an integer stack.</p><pre class="language-ocaml"><code>let push =
+  Stateful.Rule.create ~name:&quot;push&quot; ~step:(fun tc stack -&gt;
+      let n =
+        draw tc (Generators.integers ~min_value:0 ~max_value:100 ())
+      in
+      n :: stack)
+
+let pop =
+  Stateful.Rule.create ~name:&quot;pop&quot; ~step:(fun tc stack -&gt;
+      assume tc (not (List.is_empty stack));
+      List.tl stack)
+
+let%hegel_test test_integer_stack tc =
+  Stateful.run ~init:[] ~rules:[ push; pop ] tc</code></pre><h3 id="submodules"><a href="#submodules" class="anchor"></a>Submodules</h3><div class="odoc-spec"><div class="spec module anchored" id="module-Pool"><a href="#module-Pool" class="anchor"></a><code><span><span class="keyword">module</span> <a href="Pool/index.html">Pool</a></span><span> : <span class="keyword">sig</span> ... <span class="keyword">end</span></span></code></div></div><div class="odoc-spec"><div class="spec module anchored" id="module-Rule"><a href="#module-Rule" class="anchor"></a><code><span><span class="keyword">module</span> <a href="Rule/index.html">Rule</a></span><span> : <span class="keyword">sig</span> ... <span class="keyword">end</span></span></code></div></div><h3 id="running-stateful-tests"><a href="#running-stateful-tests" class="anchor"></a>Running stateful tests</h3><div class="odoc-spec"><div class="spec value anchored" id="val-run"><a href="#val-run" class="anchor"></a><code><span><span class="keyword">val</span> run : 
+  <span><span class="label">init</span>:<span class="type-var">'state</span> <span class="arrow">&#45;&gt;</span></span>
+  <span><span class="label">rules</span>:<span><span><span class="type-var">'state</span> <a href="Rule/index.html#type-t">Rule.t</a></span> list</span> <span class="arrow">&#45;&gt;</span></span>
+  <span><span class="optlabel">?invariants</span>:<span><span>(<span><span class="type-var">'state</span> <span class="arrow">&#45;&gt;</span></span> unit)</span> list</span> <span class="arrow">&#45;&gt;</span></span>
+  <span><a href="../index.html#type-test_case">test_case</a> <span class="arrow">&#45;&gt;</span></span>
+  unit</span></code></div><div class="spec-doc"><p>Executes a stateful test by repeatedly applying randomly chosen <code>rules</code> to a state threaded from <code>init</code>, checking each of the <code>invariants</code> before the first step and after every successful step. Raises <code>Invalid_argument</code> if <code>rules</code> is empty.</p></div></div></div></body></html>
