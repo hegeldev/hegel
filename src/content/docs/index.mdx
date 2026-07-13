@@ -145,6 +145,24 @@ class LRUCacheTest {
 }
 ```
   </TabItem>
+  <TabItem label="OCaml">
+```ocaml
+open Hegel
+open Hegel.Generators
+
+let%hegel_test respects_lru_capacity tc =
+	let capacity = draw tc (integers ~min_value:0 ()) in
+	let cache = MyLRUCache.create capacity in
+
+	let entries =
+		draw tc (lists (tuples2 (text ()) (integers ())) ())
+	in
+	List.iter (fun (key, value) -> MyLRUCache.put cache key value) entries;
+
+	assert (MyLRUCache.size cache <= capacity)
+;;
+```
+  </TabItem>
 </Tabs>
 
 <CardGrid>
