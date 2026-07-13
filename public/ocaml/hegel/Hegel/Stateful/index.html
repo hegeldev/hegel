@@ -12,10 +12,22 @@ let pop =
       assume tc (not (List.is_empty stack));
       List.tl stack)
 
-let%hegel_test test_integer_stack tc =
-  Stateful.run ~init:[] ~rules:[ push; pop ] tc</code></pre><h3 id="submodules"><a href="#submodules" class="anchor"></a>Submodules</h3><div class="odoc-spec"><div class="spec module anchored" id="module-Pool"><a href="#module-Pool" class="anchor"></a><code><span><span class="keyword">module</span> <a href="Pool/index.html">Pool</a></span><span> : <span class="keyword">sig</span> ... <span class="keyword">end</span></span></code></div></div><div class="odoc-spec"><div class="spec module anchored" id="module-Rule"><a href="#module-Rule" class="anchor"></a><code><span><span class="keyword">module</span> <a href="Rule/index.html">Rule</a></span><span> : <span class="keyword">sig</span> ... <span class="keyword">end</span></span></code></div></div><h3 id="running-stateful-tests"><a href="#running-stateful-tests" class="anchor"></a>Running stateful tests</h3><div class="odoc-spec"><div class="spec value anchored" id="val-run"><a href="#val-run" class="anchor"></a><code><span><span class="keyword">val</span> run : 
+let%hegel_test integer_stack tc =
+  Stateful.run
+    ~init:[]
+    ~rules:[ push; pop ]
+    ~sexp_of_state:(Core.List.sexp_of_t Core.Int.sexp_of_t)
+    tc</code></pre><p>Passing <code>?sexp_of_state</code> makes a failing sequence print the model state after each step, so you can see how it evolved; see <a href="#val-run"><code>run</code></a>.</p><h3 id="submodules"><a href="#submodules" class="anchor"></a>Submodules</h3><div class="odoc-spec"><div class="spec module anchored" id="module-Pool"><a href="#module-Pool" class="anchor"></a><code><span><span class="keyword">module</span> <a href="Pool/index.html">Pool</a></span><span> : <span class="keyword">sig</span> ... <span class="keyword">end</span></span></code></div></div><div class="odoc-spec"><div class="spec module anchored" id="module-Rule"><a href="#module-Rule" class="anchor"></a><code><span><span class="keyword">module</span> <a href="Rule/index.html">Rule</a></span><span> : <span class="keyword">sig</span> ... <span class="keyword">end</span></span></code></div></div><h3 id="running-stateful-tests"><a href="#running-stateful-tests" class="anchor"></a>Running stateful tests</h3><div class="odoc-spec"><div class="spec value anchored" id="val-run"><a href="#val-run" class="anchor"></a><code><span><span class="keyword">val</span> run : 
   <span><span class="label">init</span>:<span class="type-var">'state</span> <span class="arrow">&#45;&gt;</span></span>
   <span><span class="label">rules</span>:<span><span><span class="type-var">'state</span> <a href="Rule/index.html#type-t">Rule.t</a></span> list</span> <span class="arrow">&#45;&gt;</span></span>
   <span><span class="optlabel">?invariants</span>:<span><span>(<span><span class="type-var">'state</span> <span class="arrow">&#45;&gt;</span></span> unit)</span> list</span> <span class="arrow">&#45;&gt;</span></span>
+  <span><span class="optlabel">?sexp_of_state</span>:<span>(<span><span class="type-var">'state</span> <span class="arrow">&#45;&gt;</span></span> <span class="xref-unresolved">Core</span>.Sexp.t)</span> <span class="arrow">&#45;&gt;</span></span>
   <span><a href="../index.html#type-test_case">test_case</a> <span class="arrow">&#45;&gt;</span></span>
-  unit</span></code></div><div class="spec-doc"><p>Executes a stateful test by repeatedly applying randomly chosen <code>rules</code> to a state threaded from <code>init</code>, checking each of the <code>invariants</code> before the first step and after every successful step. Raises <code>Invalid_argument</code> if <code>rules</code> is empty.</p></div></div></div></body></html>
+  unit</span></code></div><div class="spec-doc"><p>Executes a stateful test by repeatedly applying randomly chosen <code>rules</code> to a state threaded from <code>init</code>, checking each of the <code>invariants</code> before the first step and after every successful step. Raises <code>Invalid_argument</code> if <code>rules</code> is empty.</p><p>On a failing replay, each applied rule prints as <code>Step N: &lt;name&gt;</code>, with the values the rule draws nested under it. When <code>sexp_of_state</code> is supplied, the model state also prints as <code>state = &lt;value&gt;</code> after the initial state and after every step. An invariant that is violated prints <code>Invariant N violated after step M</code> or <code>Invariant N violated in the initial state</code>, where <code>N</code> is the invariant's index in <code>invariants</code>.</p><pre>  state = 0
+  Step 1: add
+    draw_1 = 3
+  state = 3
+  Step 2: add
+    draw_2 = 7
+  state = 10
+  Invariant 0 violated after step 2.</pre></div></div></div></body></html>
