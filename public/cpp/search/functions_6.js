@@ -1,5 +1,4 @@
 var searchData=
 [
-  ['integers_0',['integers',['../namespacehegel_1_1generators.html#a5322064873484cb69432cc31c4cd4c24',1,'hegel::generators']]],
-  ['ip_5faddresses_1',['ip_addresses',['../namespacehegel_1_1generators.html#a7552419069a9972156e36b50b567f14c',1,'hegel::generators']]]
+  ['generator_0',['generator',['../classhegel_1_1generators_1_1DeferredGeneratorDefinition.html#a051f81946a22c118b25274aae1b13180',1,'hegel::generators::DeferredGeneratorDefinition']]]
 ];

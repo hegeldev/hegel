@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.6.2</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.7.3</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -142,8 +142,8 @@ Macros</h2></td></tr>
 <div class="line"><a class="code hl_define" href="#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a>(addition_commutes)(<a class="code hl_namespace" href="namespacehegel.html">hegel</a>::TestCase&amp; tc) {</div>
 <div class="line">    <span class="comment">// ...</span></div>
 <div class="line">}</div>
-<div class="ttc" id="agroup__test__macros_html_ga169f32a3b09c62f6b25e6c9217c46ca0"><div class="ttname"><a href="#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a></div><div class="ttdeci">#define HEGEL_TEST(name,...)</div><div class="ttdoc">Define a Hegel property test.</div><div class="ttdef"><b>Definition</b> hegel.h:390</div></div>
-<div class="ttc" id="agroup__test__macros_html_ga999f42b20aca6caffe4f89a6767ec847"><div class="ttname"><a href="#ga999f42b20aca6caffe4f89a6767ec847">HEGEL_REPRODUCE_FAILURE</a></div><div class="ttdeci">#define HEGEL_REPRODUCE_FAILURE(name, blob,...)</div><div class="ttdoc">Replay a failing example for a HEGEL_TEST from its blob.</div><div class="ttdef"><b>Definition</b> hegel.h:425</div></div>
+<div class="ttc" id="agroup__test__macros_html_ga169f32a3b09c62f6b25e6c9217c46ca0"><div class="ttname"><a href="#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a></div><div class="ttdeci">#define HEGEL_TEST(name,...)</div><div class="ttdoc">Define a Hegel property test.</div><div class="ttdef"><b>Definition</b> hegel.h:391</div></div>
+<div class="ttc" id="agroup__test__macros_html_ga999f42b20aca6caffe4f89a6767ec847"><div class="ttname"><a href="#ga999f42b20aca6caffe4f89a6767ec847">HEGEL_REPRODUCE_FAILURE</a></div><div class="ttdeci">#define HEGEL_REPRODUCE_FAILURE(name, blob,...)</div><div class="ttdoc">Replay a failing example for a HEGEL_TEST from its blob.</div><div class="ttdef"><b>Definition</b> hegel.h:426</div></div>
 <div class="ttc" id="anamespacehegel_html"><div class="ttname"><a href="namespacehegel.html">hegel</a></div><div class="ttdoc">Main namespace.</div><div class="ttdef"><b>Definition</b> config.h:29</div></div>
 </div><!-- fragment --><dl class="section see"><dt>See also</dt><dd><a class="el" href="#ga169f32a3b09c62f6b25e6c9217c46ca0" title="Define a Hegel property test.">HEGEL_TEST</a> </dd></dl>
 
@@ -180,7 +180,7 @@ Macros</h2></td></tr>
 <div class="line">    [[maybe_unused]] <span class="keyword">static</span> <span class="keyword">const</span> <span class="keywordtype">bool</span> hegel_test_registered_##name =          \</div>
 <div class="line">        ::hegel::internal::register_test(__FILE__ <span class="stringliteral">&quot;::&quot;</span> #name, [] { name(); }); \</div>
 <div class="line">    <span class="keyword">static</span> <span class="keywordtype">void</span> hegel_test_body_##name</div>
-<div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:34</div></div>
+<div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:35</div></div>
 <div class="ttc" id="astructhegel_1_1Settings_html"><div class="ttname"><a href="structhegel_1_1Settings.html">hegel::Settings</a></div><div class="ttdoc">Configuration options for hegel::test().</div><div class="ttdef"><b>Definition</b> settings.h:198</div></div>
 </div><!-- fragment -->
 <p>Define a Hegel property test. </p>

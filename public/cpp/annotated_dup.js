@@ -10,9 +10,11 @@ var annotated_dup =
         [ "VectorsParams", "structhegel_1_1generators_1_1VectorsParams.html", "structhegel_1_1generators_1_1VectorsParams" ],
         [ "SetsParams", "structhegel_1_1generators_1_1SetsParams.html", "structhegel_1_1generators_1_1SetsParams" ],
         [ "MapsParams", "structhegel_1_1generators_1_1MapsParams.html", "structhegel_1_1generators_1_1MapsParams" ],
+        [ "DeferredGeneratorDefinition", "classhegel_1_1generators_1_1DeferredGeneratorDefinition.html", "classhegel_1_1generators_1_1DeferredGeneratorDefinition" ],
         [ "DerivedGenerator", "classhegel_1_1generators_1_1DerivedGenerator.html", "classhegel_1_1generators_1_1DerivedGenerator" ],
         [ "DomainsParams", "structhegel_1_1generators_1_1DomainsParams.html", "structhegel_1_1generators_1_1DomainsParams" ],
         [ "IpAddressesParams", "structhegel_1_1generators_1_1IpAddressesParams.html", "structhegel_1_1generators_1_1IpAddressesParams" ],
+        [ "UuidsParams", "structhegel_1_1generators_1_1UuidsParams.html", "structhegel_1_1generators_1_1UuidsParams" ],
         [ "IntegersParams", "structhegel_1_1generators_1_1IntegersParams.html", "structhegel_1_1generators_1_1IntegersParams" ],
         [ "FloatsParams", "structhegel_1_1generators_1_1FloatsParams.html", "structhegel_1_1generators_1_1FloatsParams" ],
         [ "RandomsParams", "structhegel_1_1generators_1_1RandomsParams.html", "structhegel_1_1generators_1_1RandomsParams" ],
@@ -20,6 +22,10 @@ var annotated_dup =
         [ "TextParams", "structhegel_1_1generators_1_1TextParams.html", "structhegel_1_1generators_1_1TextParams" ],
         [ "CharactersParams", "structhegel_1_1generators_1_1CharactersParams.html", "structhegel_1_1generators_1_1CharactersParams" ],
         [ "BinaryParams", "structhegel_1_1generators_1_1BinaryParams.html", "structhegel_1_1generators_1_1BinaryParams" ]
+      ] ],
+      [ "stateful", "namespacehegel_1_1stateful.html", [
+        [ "VariablesGenerator", "classhegel_1_1stateful_1_1VariablesGenerator.html", null ],
+        [ "Pool", "classhegel_1_1stateful_1_1Pool.html", "classhegel_1_1stateful_1_1Pool" ]
       ] ],
       [ "Database", "classhegel_1_1Database.html", "classhegel_1_1Database" ],
       [ "Settings", "structhegel_1_1Settings.html", "structhegel_1_1Settings" ],

@@ -10,5 +10,5 @@ var searchData=
   ['floats_7',['floats',['../namespacehegel_1_1generators.html#a77ac35c8e508df091c6fac9eb63f017b',1,'hegel::generators']]],
   ['floatsparams_8',['FloatsParams',['../structhegel_1_1generators_1_1FloatsParams.html',1,'hegel::generators']]],
   ['from_5fpath_9',['from_path',['../classhegel_1_1Database.html#ab1f19a54769acbef2a467923c3b142e7',1,'hegel::Database']]],
-  ['from_5fregex_10',['from_regex',['../namespacehegel_1_1generators.html#adff59a9a4fe46c41c45833d46f231232',1,'hegel::generators']]]
+  ['from_5fregex_10',['from_regex',['../namespacehegel_1_1generators.html#aa60e2999d939e4f9037fe9d7900802e3',1,'hegel::generators']]]
 ];
