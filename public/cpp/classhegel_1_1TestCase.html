@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.6.2</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.7.3</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -115,6 +115,12 @@ TestCase &amp;&#160;</td><td class="memItemRight" valign="bottom"><b>operator=</
 <tr class="memdesc:affbc292ad2e6f4027b2402200cbc1d1c"><td class="mdescLeft">&#160;</td><td class="mdescRight">Draw a random value from a generator.  <br /></td></tr>
 <tr class="memitem:a6d236ee8958c93211e0f4384cf8f3b56" id="r_a6d236ee8958c93211e0f4384cf8f3b56"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a6d236ee8958c93211e0f4384cf8f3b56">assume</a> (bool condition) const</td></tr>
 <tr class="memdesc:a6d236ee8958c93211e0f4384cf8f3b56"><td class="mdescLeft">&#160;</td><td class="mdescRight">Reject the current test case if <code class="param">condition</code> is false.  <br /></td></tr>
+<tr class="memitem:a6a2e1ba4aa346b12ce297b53f89adc5e" id="r_a6a2e1ba4aa346b12ce297b53f89adc5e"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a6a2e1ba4aa346b12ce297b53f89adc5e">reject</a> () const</td></tr>
+<tr class="memdesc:a6a2e1ba4aa346b12ce297b53f89adc5e"><td class="mdescLeft">&#160;</td><td class="mdescRight">Reject the current test case unconditionally.  <br /></td></tr>
+<tr class="memitem:a8c1f59e3686176b2d9109d923c59b874" id="r_a8c1f59e3686176b2d9109d923c59b874"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a8c1f59e3686176b2d9109d923c59b874">target</a> (double score, std::string_view label=&quot;&quot;) const</td></tr>
+<tr class="memdesc:a8c1f59e3686176b2d9109d923c59b874"><td class="mdescLeft">&#160;</td><td class="mdescRight">Record a score for the engine's targeted-search phase to maximize.  <br /></td></tr>
+<tr class="memitem:a3b781af65985fa75fe789017fa4631be" id="r_a3b781af65985fa75fe789017fa4631be"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a3b781af65985fa75fe789017fa4631be">repeat</a> (const std::function&lt; void()&gt; &amp;body) const</td></tr>
+<tr class="memdesc:a3b781af65985fa75fe789017fa4631be"><td class="mdescLeft">&#160;</td><td class="mdescRight">Run <code class="param">body</code> in an engine-managed loop.  <br /></td></tr>
 <tr class="memitem:af99d2d48131f6dc6417e4bef489844b9" id="r_af99d2d48131f6dc6417e4bef489844b9"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#af99d2d48131f6dc6417e4bef489844b9">note</a> (std::string_view message) const</td></tr>
 <tr class="memdesc:af99d2d48131f6dc6417e4bef489844b9"><td class="mdescLeft">&#160;</td><td class="mdescRight">Record a message that will be printed on the final replay of a failing test case.  <br /></td></tr>
 </table>
@@ -128,7 +134,7 @@ TestCase &amp;&#160;</td><td class="memItemRight" valign="bottom"><b>operator=</
 <div class="line">    tc.<a class="code hl_function" href="#a6d236ee8958c93211e0f4384cf8f3b56">assume</a>(x != 0);</div>
 <div class="line">    tc.<a class="code hl_function" href="#af99d2d48131f6dc6417e4bef489844b9">note</a>(<span class="stringliteral">&quot;x = &quot;</span> + std::to_string(x));</div>
 <div class="line">});</div>
-<div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:34</div></div>
+<div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:35</div></div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html_a6d236ee8958c93211e0f4384cf8f3b56"><div class="ttname"><a href="#a6d236ee8958c93211e0f4384cf8f3b56">hegel::TestCase::assume</a></div><div class="ttdeci">void assume(bool condition) const</div><div class="ttdoc">Reject the current test case if condition is false.</div></div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html_af99d2d48131f6dc6417e4bef489844b9"><div class="ttname"><a href="#af99d2d48131f6dc6417e4bef489844b9">hegel::TestCase::note</a></div><div class="ttdeci">void note(std::string_view message) const</div><div class="ttdoc">Record a message that will be printed on the final replay of a failing test case.</div></div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html_affbc292ad2e6f4027b2402200cbc1d1c"><div class="ttname"><a href="#affbc292ad2e6f4027b2402200cbc1d1c">hegel::TestCase::draw</a></div><div class="ttdeci">T draw(const generators::Generator&lt; T &gt; &amp;gen) const</div><div class="ttdoc">Draw a random value from a generator.</div><div class="ttdef"><b>Definition</b> core.h:263</div></div>
@@ -219,6 +225,93 @@ template&lt;typename T&gt; </div>
   </dd>
 </dl>
 
+</div>
+</div>
+<a id="a6a2e1ba4aa346b12ce297b53f89adc5e" name="a6a2e1ba4aa346b12ce297b53f89adc5e"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a6a2e1ba4aa346b12ce297b53f89adc5e">&#9670;&#160;</a></span>reject()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void hegel::TestCase::reject </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"><em></em></span></td><td>)</td>
+          <td> const</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Reject the current test case unconditionally. </p>
+<p>Equivalent to <code>assume(false)</code>, but marked <code></code>[[noreturn]] so code after the call is statically known to be unreachable.</p>
+<div class="fragment"><div class="line"><span class="keyword">auto</span> n = tc.draw(gs::integers&lt;int&gt;());</div>
+<div class="line"><span class="keywordtype">unsigned</span> u = n &gt;= 0 ? <span class="keyword">static_cast&lt;</span><span class="keywordtype">unsigned</span><span class="keyword">&gt;</span>(n) : tc.<a class="code hl_function" href="#a6a2e1ba4aa346b12ce297b53f89adc5e">reject</a>();</div>
+<div class="ttc" id="aclasshegel_1_1TestCase_html_a6a2e1ba4aa346b12ce297b53f89adc5e"><div class="ttname"><a href="#a6a2e1ba4aa346b12ce297b53f89adc5e">hegel::TestCase::reject</a></div><div class="ttdeci">void reject() const</div><div class="ttdoc">Reject the current test case unconditionally.</div></div>
+</div><!-- fragment --> 
+</div>
+</div>
+<a id="a3b781af65985fa75fe789017fa4631be" name="a3b781af65985fa75fe789017fa4631be"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a3b781af65985fa75fe789017fa4631be">&#9670;&#160;</a></span>repeat()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void hegel::TestCase::repeat </td>
+          <td>(</td>
+          <td class="paramtype">const std::function&lt; void()&gt; &amp;</td>          <td class="paramname"><span class="paramname"><em>body</em></span></td><td>)</td>
+          <td> const</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Run <code class="param">body</code> in an engine-managed loop. </p>
+<p>The engine decides how many iterations to run, exploring and shrinking the count like any other drawn quantity. Control returns to the caller once the loop completes. A rejected iteration (via <code>assume</code> / <code>reject</code>) is discarded and the loop continues; any other exception propagates out as a failure.</p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">body</td><td>Callable invoked once per iteration.</td></tr>
+  </table>
+  </dd>
+</dl>
+<div class="fragment"><div class="line"><span class="keywordtype">int</span> total = 0;</div>
+<div class="line">tc.repeat([&amp;] {</div>
+<div class="line">    total += tc.draw(gs::integers&lt;int&gt;({.min_value = 0}));</div>
+<div class="line">    <span class="keywordflow">if</span> (total &lt; 0) <span class="keywordflow">throw</span> std::runtime_error(<span class="stringliteral">&quot;overflow&quot;</span>);</div>
+<div class="line">});</div>
+</div><!-- fragment --> 
+</div>
+</div>
+<a id="a8c1f59e3686176b2d9109d923c59b874" name="a8c1f59e3686176b2d9109d923c59b874"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a8c1f59e3686176b2d9109d923c59b874">&#9670;&#160;</a></span>target()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void hegel::TestCase::target </td>
+          <td>(</td>
+          <td class="paramtype">double</td>          <td class="paramname"><span class="paramname"><em>score</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">std::string_view</td>          <td class="paramname"><span class="paramname"><em>label</em></span><span class="paramdefsep"> = </span><span class="paramdefval">&quot;&quot;</span>&#160;) const</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Record a score for the engine's targeted-search phase to maximize. </p>
+<p>Higher scores are treated as "more interesting." The engine biases later test cases toward inputs that produced higher scores under the same <code class="param">label</code>. Has no effect unless the Target phase is enabled.</p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">score</td><td>The observation to maximize. Must be finite. </td></tr>
+    <tr><td class="paramname">label</td><td>Distinguishes independent targeting goals. Each label may be recorded at most once per test case.</td></tr>
+  </table>
+  </dd>
+</dl>
+<div class="fragment"><div class="line"><span class="keyword">auto</span> n = tc.draw(gs::integers&lt;int&gt;({.min_value = 0}));</div>
+<div class="line">tc.target(<span class="keyword">static_cast&lt;</span><span class="keywordtype">double</span><span class="keyword">&gt;</span>(n));</div>
+</div><!-- fragment --> 
 </div>
 </div>
 <hr/>The documentation for this class was generated from the following files:<ul>

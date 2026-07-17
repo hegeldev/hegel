@@ -1,6 +1,7 @@
 var namespacehegel =
 [
     [ "generators", "namespacehegel_1_1generators.html", "namespacehegel_1_1generators" ],
+    [ "stateful", "namespacehegel_1_1stateful.html", "namespacehegel_1_1stateful" ],
     [ "Database", "classhegel_1_1Database.html", "classhegel_1_1Database" ],
     [ "Settings", "structhegel_1_1Settings.html", "structhegel_1_1Settings" ],
     [ "TestCase", "classhegel_1_1TestCase.html", "classhegel_1_1TestCase" ],

@@ -1,4 +1,5 @@
 var searchData=
 [
-  ['vectorsparams_0',['VectorsParams',['../structhegel_1_1generators_1_1VectorsParams.html',1,'hegel::generators']]]
+  ['testcase_0',['TestCase',['../classhegel_1_1TestCase.html',1,'hegel']]],
+  ['textparams_1',['TextParams',['../structhegel_1_1generators_1_1TextParams.html',1,'hegel::generators']]]
 ];

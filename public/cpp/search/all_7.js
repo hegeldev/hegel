@@ -4,8 +4,9 @@ var searchData=
   ['hegel_1',['Hegel',['../index.html',1,'Hegel'],['../index.html#install',1,'Install Hegel']]],
   ['hegel_2',['hegel',['../namespacehegel.html',1,'']]],
   ['hegel_3a_3agenerators_3',['generators',['../namespacehegel_1_1generators.html',1,'hegel']]],
-  ['hegel_3a_3atest_20directly_4',['Use hegel::test() directly',['../index.html#plain_function',1,'']]],
-  ['hegel_5freproduce_5ffailure_5',['HEGEL_REPRODUCE_FAILURE',['../group__test__macros.html#ga999f42b20aca6caffe4f89a6767ec847',1,'hegel.h']]],
-  ['hegel_5ftest_6',['HEGEL_TEST',['../group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0',1,'hegel.h']]],
-  ['hegelrandom_7',['HegelRandom',['../classhegel_1_1generators_1_1HegelRandom.html',1,'hegel::generators']]]
+  ['hegel_3a_3astateful_4',['stateful',['../namespacehegel_1_1stateful.html',1,'hegel']]],
+  ['hegel_3a_3atest_20directly_5',['Use hegel::test() directly',['../index.html#plain_function',1,'']]],
+  ['hegel_5freproduce_5ffailure_6',['HEGEL_REPRODUCE_FAILURE',['../group__test__macros.html#ga999f42b20aca6caffe4f89a6767ec847',1,'hegel.h']]],
+  ['hegel_5ftest_7',['HEGEL_TEST',['../group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0',1,'hegel.h']]],
+  ['hegelrandom_8',['HegelRandom',['../classhegel_1_1generators_1_1HegelRandom.html',1,'hegel::generators']]]
 ];
