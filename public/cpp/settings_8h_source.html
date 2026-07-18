@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.7.3</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.7.4</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -285,9 +285,11 @@ $(function(){initNavTree('settings_8h_source.html','',''); });
 <div class="line"><a id="l00240" name="l00240"></a><span class="lineno"><a class="line" href="structhegel_1_1Settings.html#a07cda060e164464aad6ab36d16bbeea0">  240</a></span>        <a class="code hl_enumeration" href="namespacehegel.html#a76460adf8877112c3cc69bff0a21dcdd">Mode</a> <a class="code hl_variable" href="structhegel_1_1Settings.html#a07cda060e164464aad6ab36d16bbeea0">mode</a> = <a class="code hl_enumvalue" href="namespacehegel.html#a76460adf8877112c3cc69bff0a21dcddac75e7027f34f603c0e19218d27e1011f">Mode::TestRun</a>;</div>
 <div class="line"><a id="l00241" name="l00241"></a><span class="lineno">  241</span></div>
 <div class="line"><a id="l00244" name="l00244"></a><span class="lineno"><a class="line" href="structhegel_1_1Settings.html#a1a678c2dca9417303744c5495898942f">  244</a></span>        <a class="code hl_enumeration" href="namespacehegel.html#a887e0714b99c358aa474848809bca688">Backend</a> <a class="code hl_variable" href="structhegel_1_1Settings.html#a1a678c2dca9417303744c5495898942f">backend</a> = <a class="code hl_enumvalue" href="namespacehegel.html#a887e0714b99c358aa474848809bca688a06b9281e396db002010bde1de57262eb">Backend::Auto</a>;</div>
-<div class="line"><a id="l00245" name="l00245"></a><span class="lineno">  245</span>    };</div>
+<div class="line"><a id="l00245" name="l00245"></a><span class="lineno">  245</span></div>
+<div class="line"><a id="l00247" name="l00247"></a><span class="lineno"><a class="line" href="structhegel_1_1Settings.html#a6492c6dff0a55d51dd5ce3836657e0dc">  247</a></span>        int64_t <a class="code hl_variable" href="structhegel_1_1Settings.html#a6492c6dff0a55d51dd5ce3836657e0dc">stateful_step_count</a> = 50;</div>
+<div class="line"><a id="l00248" name="l00248"></a><span class="lineno">  248</span>    };</div>
 </div>
-<div class="line"><a id="l00246" name="l00246"></a><span class="lineno">  246</span>} <span class="comment">// namespace hegel</span></div>
+<div class="line"><a id="l00249" name="l00249"></a><span class="lineno">  249</span>} <span class="comment">// namespace hegel</span></div>
 <div class="ttc" id="aclasshegel_1_1Database_html"><div class="ttname"><a href="classhegel_1_1Database.html">hegel::Database</a></div><div class="ttdoc">Configure the Hegel database.</div><div class="ttdef"><b>Definition</b> settings.h:121</div></div>
 <div class="ttc" id="aclasshegel_1_1Database_html_a117dd4e9d11f8bdb8012f1152fdbfd6e"><div class="ttname"><a href="classhegel_1_1Database.html#a117dd4e9d11f8bdb8012f1152fdbfd6e">hegel::Database::disabled</a></div><div class="ttdeci">static Database disabled()</div><div class="ttdef"><b>Definition</b> settings.h:137</div></div>
 <div class="ttc" id="aclasshegel_1_1Database_html_ab1f19a54769acbef2a467923c3b142e7"><div class="ttname"><a href="classhegel_1_1Database.html#ab1f19a54769acbef2a467923c3b142e7">hegel::Database::from_path</a></div><div class="ttdeci">static Database from_path(std::string path)</div><div class="ttdef"><b>Definition</b> settings.h:142</div></div>
@@ -331,6 +333,7 @@ $(function(){initNavTree('settings_8h_source.html','',''); });
 <div class="ttc" id="astructhegel_1_1Settings_html_a29a9dde11122aa2a79941dfcfa6f6fae"><div class="ttname"><a href="structhegel_1_1Settings.html#a29a9dde11122aa2a79941dfcfa6f6fae">hegel::Settings::seed</a></div><div class="ttdeci">std::optional&lt; uint64_t &gt; seed</div><div class="ttdoc">Explicit seed for the test.</div><div class="ttdef"><b>Definition</b> settings.h:206</div></div>
 <div class="ttc" id="astructhegel_1_1Settings_html_a30e6653ea59ceb8e3e79e33e6b0e7408"><div class="ttname"><a href="structhegel_1_1Settings.html#a30e6653ea59ceb8e3e79e33e6b0e7408">hegel::Settings::phases</a></div><div class="ttdeci">std::vector&lt; Phase &gt; phases</div><div class="ttdef"><b>Definition</b> settings.h:237</div></div>
 <div class="ttc" id="astructhegel_1_1Settings_html_a30f1d654505c64bbe59624bc30dbc18c"><div class="ttname"><a href="structhegel_1_1Settings.html#a30f1d654505c64bbe59624bc30dbc18c">hegel::Settings::database_key</a></div><div class="ttdeci">std::optional&lt; std::string &gt; database_key</div><div class="ttdef"><b>Definition</b> settings.h:229</div></div>
+<div class="ttc" id="astructhegel_1_1Settings_html_a6492c6dff0a55d51dd5ce3836657e0dc"><div class="ttname"><a href="structhegel_1_1Settings.html#a6492c6dff0a55d51dd5ce3836657e0dc">hegel::Settings::stateful_step_count</a></div><div class="ttdeci">int64_t stateful_step_count</div><div class="ttdoc">The maximum number of steps a stateful run attempts.</div><div class="ttdef"><b>Definition</b> settings.h:247</div></div>
 <div class="ttc" id="astructhegel_1_1Settings_html_a73a0b3f269878772d6f8ce346e51191e"><div class="ttname"><a href="structhegel_1_1Settings.html#a73a0b3f269878772d6f8ce346e51191e">hegel::Settings::test_cases</a></div><div class="ttdeci">std::optional&lt; uint64_t &gt; test_cases</div><div class="ttdoc">Number of test cases to run. Defaults to 100.</div><div class="ttdef"><b>Definition</b> settings.h:200</div></div>
 <div class="ttc" id="astructhegel_1_1Settings_html_aa978222fb198dda0df73e0b2890cc696"><div class="ttname"><a href="structhegel_1_1Settings.html#aa978222fb198dda0df73e0b2890cc696">hegel::Settings::verbosity</a></div><div class="ttdeci">Verbosity verbosity</div><div class="ttdoc">Verbosity level. Defaults to Verbosity::Normal.</div><div class="ttdef"><b>Definition</b> settings.h:203</div></div>
 <div class="ttc" id="astructhegel_1_1Settings_html_aaf5e3db526f4e7c051644a6d28d5c53d"><div class="ttname"><a href="structhegel_1_1Settings.html#aaf5e3db526f4e7c051644a6d28d5c53d">hegel::Settings::database</a></div><div class="ttdeci">Database database</div><div class="ttdef"><b>Definition</b> settings.h:224</div></div>
