@@ -1,7 +1,7 @@
 var searchData=
 [
   ['v_0',['v',['../structhegel_1_1generators_1_1IpAddressesParams.html#abefa5c696a35a38d6e97e4182abbfb6e',1,'hegel::generators::IpAddressesParams']]],
-  ['value_5ftype_1',['value_type',['../classhegel_1_1generators_1_1Generator.html#ae57339c44a6b29805622edba851a7e0a',1,'hegel::generators::Generator']]],
+  ['value_5ftype_1',['value_type',['../classhegel_1_1generators_1_1Generator.html#ae57339c44a6b29805622edba851a7e0a',1,'hegel::generators::Generator::value_type'],['../classhegel_1_1stateful_1_1Generator.html#ae57339c44a6b29805622edba851a7e0a',1,'hegel::stateful::Generator::value_type']]],
   ['values_5fconsumed_2',['values_consumed',['../namespacehegel_1_1stateful.html#a8b12a09dddc6e5b719b502327e092fcb',1,'hegel::stateful']]],
   ['values_5freusable_3',['values_reusable',['../namespacehegel_1_1stateful.html#ae3b1766584156ee28d941439f7e7dad8',1,'hegel::stateful']]],
   ['variablesgenerator_4',['VariablesGenerator',['../classhegel_1_1stateful_1_1VariablesGenerator.html',1,'hegel::stateful']]],

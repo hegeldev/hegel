@@ -10,5 +10,8 @@ var searchData=
   ['singletestcase_7',['SingleTestCase',['../namespacehegel.html#a76460adf8877112c3cc69bff0a21dcddab43f392f591f68ed58330cfb1a45c2c1',1,'hegel']]],
   ['size_8',['size',['../classhegel_1_1stateful_1_1Pool.html#a274b8f1051f1d21b4585516ad48d0a0c',1,'hegel::stateful::Pool']]],
   ['started_9',['Getting started',['../index.html#getting_started',1,'']]],
-  ['suppress_5fhealth_5fcheck_10',['suppress_health_check',['../structhegel_1_1Settings.html#ac78c4a0ae269f598b13c1d0c09f99214',1,'hegel::Settings']]]
+  ['stateful_5fstep_5fcount_10',['stateful_step_count',['../structhegel_1_1Settings.html#a6492c6dff0a55d51dd5ce3836657e0dc',1,'hegel::Settings']]],
+  ['statemachine_11',['StateMachine',['../classhegel_1_1stateful_1_1StateMachine.html',1,'hegel::stateful']]],
+  ['step_12',['step',['../classhegel_1_1stateful_1_1Rule.html#aa5f2af586c295f594c51cd0d34ace90f',1,'hegel::stateful::Rule']]],
+  ['suppress_5fhealth_5fcheck_13',['suppress_health_check',['../structhegel_1_1Settings.html#ac78c4a0ae269f598b13c1d0c09f99214',1,'hegel::Settings']]]
 ];
