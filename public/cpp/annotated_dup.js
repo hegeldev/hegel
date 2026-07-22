@@ -34,6 +34,7 @@ var annotated_dup =
       ] ],
       [ "Database", "classhegel_1_1Database.html", "classhegel_1_1Database" ],
       [ "Settings", "structhegel_1_1Settings.html", "structhegel_1_1Settings" ],
-      [ "TestCase", "classhegel_1_1TestCase.html", "classhegel_1_1TestCase" ]
+      [ "TestCase", "classhegel_1_1TestCase.html", "classhegel_1_1TestCase" ],
+      [ "Worker", "classhegel_1_1Worker.html", "classhegel_1_1Worker" ]
     ] ]
 ];

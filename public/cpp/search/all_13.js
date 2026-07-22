@@ -6,7 +6,7 @@ var searchData=
   ['test_20cases_3',['test cases',['../index.html#change_test_cases',1,'Change the number of test cases'],['../index.html#debug_failing',1,'Debug your failing test cases']]],
   ['test_20definition_20macros_4',['Test definition macros',['../group__test__macros.html',1,'']]],
   ['test_5fcases_5',['test_cases',['../structhegel_1_1Settings.html#a73a0b3f269878772d6f8ce346e51191e',1,'hegel::Settings']]],
-  ['testcase_6',['TestCase',['../classhegel_1_1TestCase.html',1,'hegel']]],
+  ['testcase_6',['TestCase',['../classhegel_1_1TestCase.html',1,'hegel::TestCase'],['../classhegel_1_1TestCase.html#abd7495c6a99ded2686611a10706f5204',1,'hegel::TestCase::TestCase()']]],
   ['testcasestoolarge_7',['TestCasesTooLarge',['../namespacehegel.html#a98e2c0a6bc324370d8fb109cd3a2c71da3f27234a3a1dcb8a808efcb61cf83870',1,'hegel']]],
   ['testrun_8',['TestRun',['../namespacehegel.html#a76460adf8877112c3cc69bff0a21dcddac75e7027f34f603c0e19218d27e1011f',1,'hegel']]],
   ['text_9',['text',['../namespacehegel_1_1generators.html#ac9a358a586db20a210121e5b5126d52a',1,'hegel::generators']]],

@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.7.4</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.7.5</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -113,6 +113,8 @@ Classes</h2></td></tr>
 <tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Configuration options for <a class="el" href="#ae3451b81e2687429b3285266fb5890e6" title="Run a Hegel test.">hegel::test()</a>.  <a href="structhegel_1_1Settings.html#details">More...</a><br /></td></tr>
 <tr class="memitem:TestCase" id="r_TestCase"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1TestCase.html">TestCase</a></td></tr>
 <tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handle to the currently-executing test case.  <a href="classhegel_1_1TestCase.html#details">More...</a><br /></td></tr>
+<tr class="memitem:Worker" id="r_Worker"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1Worker.html">Worker</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handle to a worker started by <a class="el" href="classhegel_1_1TestCase.html#a1a8b9f6edbc13b63349561dc7111e849" title="Run fn on a clone of this test case in a new thread.">TestCase::spawn()</a>.  <a href="classhegel_1_1Worker.html#details">More...</a><br /></td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-enum-members" class="groupheader"><a id="enum-members" name="enum-members"></a>
 Enumerations</h2></td></tr>
@@ -455,7 +457,7 @@ Functions</h2></td></tr>
 <div class="line"> </div>
 <div class="line">    <span class="keywordflow">return</span> 0;</div>
 <div class="line">}</div>
-<div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:35</div></div>
+<div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:40</div></div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html_affbc292ad2e6f4027b2402200cbc1d1c"><div class="ttname"><a href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">hegel::TestCase::draw</a></div><div class="ttdeci">T draw(const generators::Generator&lt; T &gt; &amp;gen) const</div><div class="ttdoc">Draw a random value from a generator.</div><div class="ttdef"><b>Definition</b> core.h:263</div></div>
 <div class="ttc" id="anamespacehegel_1_1generators_html"><div class="ttname"><a href="namespacehegel_1_1generators.html">hegel::generators</a></div><div class="ttdoc">Hegel generators.</div><div class="ttdef"><b>Definition</b> core.h:16</div></div>
 <div class="ttc" id="anamespacehegel_html_ae3451b81e2687429b3285266fb5890e6"><div class="ttname"><a href="#ae3451b81e2687429b3285266fb5890e6">hegel::test</a></div><div class="ttdeci">void test(const std::function&lt; void(TestCase &amp;)&gt; &amp;test_fn, const Settings &amp;settings={}, const std::vector&lt; std::string &gt; &amp;failure_blobs={})</div><div class="ttdoc">Run a Hegel test.</div></div>

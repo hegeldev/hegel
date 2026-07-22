@@ -32,5 +32,6 @@ var hierarchy =
     [ "hegel::generators::TextParams", "structhegel_1_1generators_1_1TextParams.html", null ],
     [ "hegel::generators::UuidsParams", "structhegel_1_1generators_1_1UuidsParams.html", null ],
     [ "hegel::stateful::VariablesGenerator&lt; T &gt;", "classhegel_1_1stateful_1_1VariablesGenerator.html", null ],
-    [ "hegel::generators::VectorsParams", "structhegel_1_1generators_1_1VectorsParams.html", null ]
+    [ "hegel::generators::VectorsParams", "structhegel_1_1generators_1_1VectorsParams.html", null ],
+    [ "hegel::Worker&lt; T &gt;", "classhegel_1_1Worker.html", null ]
 ];

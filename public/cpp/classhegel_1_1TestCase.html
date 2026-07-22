@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.7.4</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.7.5</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -106,10 +106,11 @@ Public Member Functions</h2></td></tr>
 &#160;</td><td class="memItemRight" valign="bottom"><b>TestCase</b> (const TestCase &amp;)=delete</td></tr>
 <tr class="memitem:acf7276804c5993c1305a170b1d33ca74" id="r_acf7276804c5993c1305a170b1d33ca74"><td class="memItemLeft" align="right" valign="top"><a id="acf7276804c5993c1305a170b1d33ca74" name="acf7276804c5993c1305a170b1d33ca74"></a>
 TestCase &amp;&#160;</td><td class="memItemRight" valign="bottom"><b>operator=</b> (const TestCase &amp;)=delete</td></tr>
-<tr class="memitem:ab88e0ec091978972a1334cd4717cfd78" id="r_ab88e0ec091978972a1334cd4717cfd78"><td class="memItemLeft" align="right" valign="top"><a id="ab88e0ec091978972a1334cd4717cfd78" name="ab88e0ec091978972a1334cd4717cfd78"></a>
-&#160;</td><td class="memItemRight" valign="bottom"><b>TestCase</b> (TestCase &amp;&amp;)=delete</td></tr>
-<tr class="memitem:a21b5b32fa6dac3ad6c2fdf9719eadfaa" id="r_a21b5b32fa6dac3ad6c2fdf9719eadfaa"><td class="memItemLeft" align="right" valign="top"><a id="a21b5b32fa6dac3ad6c2fdf9719eadfaa" name="a21b5b32fa6dac3ad6c2fdf9719eadfaa"></a>
-TestCase &amp;&#160;</td><td class="memItemRight" valign="bottom"><b>operator=</b> (TestCase &amp;&amp;)=delete</td></tr>
+<tr class="memitem:abd7495c6a99ded2686611a10706f5204" id="r_abd7495c6a99ded2686611a10706f5204"><td class="memItemLeft" align="right" valign="top"><a id="abd7495c6a99ded2686611a10706f5204" name="abd7495c6a99ded2686611a10706f5204"></a>
+&#160;</td><td class="memItemRight" valign="bottom"><b>TestCase</b> (TestCase &amp;&amp;) noexcept</td></tr>
+<tr class="memdesc:abd7495c6a99ded2686611a10706f5204"><td class="mdescLeft">&#160;</td><td class="mdescRight">Move-constructs, transferring ownership of the underlying handle. <br /></td></tr>
+<tr class="memitem:a0121ef9cd61fbc66486d83547e388fab" id="r_a0121ef9cd61fbc66486d83547e388fab"><td class="memItemLeft" align="right" valign="top">TestCase &amp;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a0121ef9cd61fbc66486d83547e388fab">operator=</a> (TestCase &amp;&amp;) noexcept</td></tr>
+<tr class="memdesc:a0121ef9cd61fbc66486d83547e388fab"><td class="mdescLeft">&#160;</td><td class="mdescRight">Move-assigns, transferring ownership of the underlying handle.  <br /></td></tr>
 <tr class="memitem:affbc292ad2e6f4027b2402200cbc1d1c" id="r_affbc292ad2e6f4027b2402200cbc1d1c"><td class="memTemplParams" colspan="2">template&lt;typename T&gt; </td></tr>
 <tr class="memitem:affbc292ad2e6f4027b2402200cbc1d1c template"><td class="memItemLeft" align="right" valign="top">T&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#affbc292ad2e6f4027b2402200cbc1d1c">draw</a> (const <a class="el" href="classhegel_1_1generators_1_1Generator.html">generators::Generator</a>&lt; T &gt; &amp;gen) const</td></tr>
 <tr class="memdesc:affbc292ad2e6f4027b2402200cbc1d1c"><td class="mdescLeft">&#160;</td><td class="mdescRight">Draw a random value from a generator.  <br /></td></tr>
@@ -123,18 +124,23 @@ TestCase &amp;&#160;</td><td class="memItemRight" valign="bottom"><b>operator=</
 <tr class="memdesc:a3b781af65985fa75fe789017fa4631be"><td class="mdescLeft">&#160;</td><td class="mdescRight">Run <code class="param">body</code> in an engine-managed loop.  <br /></td></tr>
 <tr class="memitem:af99d2d48131f6dc6417e4bef489844b9" id="r_af99d2d48131f6dc6417e4bef489844b9"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#af99d2d48131f6dc6417e4bef489844b9">note</a> (std::string_view message) const</td></tr>
 <tr class="memdesc:af99d2d48131f6dc6417e4bef489844b9"><td class="mdescLeft">&#160;</td><td class="mdescRight">Record a message that will be printed on the final replay of a failing test case.  <br /></td></tr>
+<tr class="memitem:abc9001045b8732d648f7292547671040" id="r_abc9001045b8732d648f7292547671040"><td class="memItemLeft" align="right" valign="top">TestCase&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#abc9001045b8732d648f7292547671040">clone</a> () const</td></tr>
+<tr class="memdesc:abc9001045b8732d648f7292547671040"><td class="mdescLeft">&#160;</td><td class="mdescRight">Creates a clone of this test case with an independent choice sequence forked from this test case.  <br /></td></tr>
+<tr class="memitem:a1a8b9f6edbc13b63349561dc7111e849" id="r_a1a8b9f6edbc13b63349561dc7111e849"><td class="memTemplParams" colspan="2">template&lt;typename F&gt; </td></tr>
+<tr class="memitem:a1a8b9f6edbc13b63349561dc7111e849 template"><td class="memItemLeft" align="right" valign="top">auto&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a1a8b9f6edbc13b63349561dc7111e849">spawn</a> (F fn) const</td></tr>
+<tr class="memdesc:a1a8b9f6edbc13b63349561dc7111e849"><td class="mdescLeft">&#160;</td><td class="mdescRight">Run <code class="param">fn</code> on a clone of this test case in a new thread.  <br /></td></tr>
 </table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
 <div class="textblock"><p>Handle to the currently-executing test case. </p>
 <p>A <code><a class="el" href="classhegel_1_1TestCase.html" title="Handle to the currently-executing test case.">TestCase</a></code> is passed as the sole argument to the callback given to <a class="el" href="namespacehegel.html#ae3451b81e2687429b3285266fb5890e6" title="Run a Hegel test.">hegel::test()</a>. It is the main way a test definition interacts with Hegel.</p>
-<p><code><a class="el" href="classhegel_1_1TestCase.html" title="Handle to the currently-executing test case.">TestCase</a></code> is a non-owning handle into state managed by the Hegel runner. It is neither copyable nor movable, and must not outlive the test-case callback.</p>
+<p><code><a class="el" href="classhegel_1_1TestCase.html" title="Handle to the currently-executing test case.">TestCase</a></code> owns its underlying libhegel handle and is move-only (not copyable). The callback receives it by reference; a <code><a class="el" href="#abc9001045b8732d648f7292547671040" title="Creates a clone of this test case with an independent choice sequence forked from this test case.">clone()</a></code> returns a fresh owning <code><a class="el" href="classhegel_1_1TestCase.html" title="Handle to the currently-executing test case.">TestCase</a></code>. It must not outlive the test-case callback.</p>
 <div class="fragment"><div class="line"><a class="code hl_function" href="namespacehegel.html#ae3451b81e2687429b3285266fb5890e6">hegel::test</a>([](<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc) {</div>
 <div class="line">    <span class="keyword">namespace </span>gs = <a class="code hl_namespace" href="namespacehegel_1_1generators.html">hegel::generators</a>;</div>
 <div class="line">    <span class="keyword">auto</span> x = tc.<a class="code hl_function" href="#affbc292ad2e6f4027b2402200cbc1d1c">draw</a>(gs::integers&lt;int&gt;({.min_value = 0}));</div>
 <div class="line">    tc.<a class="code hl_function" href="#a6d236ee8958c93211e0f4384cf8f3b56">assume</a>(x != 0);</div>
 <div class="line">    tc.<a class="code hl_function" href="#af99d2d48131f6dc6417e4bef489844b9">note</a>(<span class="stringliteral">&quot;x = &quot;</span> + std::to_string(x));</div>
 <div class="line">});</div>
-<div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:35</div></div>
+<div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:40</div></div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html_a6d236ee8958c93211e0f4384cf8f3b56"><div class="ttname"><a href="#a6d236ee8958c93211e0f4384cf8f3b56">hegel::TestCase::assume</a></div><div class="ttdeci">void assume(bool condition) const</div><div class="ttdoc">Reject the current test case if condition is false.</div></div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html_af99d2d48131f6dc6417e4bef489844b9"><div class="ttname"><a href="#af99d2d48131f6dc6417e4bef489844b9">hegel::TestCase::note</a></div><div class="ttdeci">void note(std::string_view message) const</div><div class="ttdoc">Record a message that will be printed on the final replay of a failing test case.</div></div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html_affbc292ad2e6f4027b2402200cbc1d1c"><div class="ttname"><a href="#affbc292ad2e6f4027b2402200cbc1d1c">hegel::TestCase::draw</a></div><div class="ttdeci">T draw(const generators::Generator&lt; T &gt; &amp;gen) const</div><div class="ttdoc">Draw a random value from a generator.</div><div class="ttdef"><b>Definition</b> core.h:263</div></div>
@@ -166,6 +172,30 @@ TestCase &amp;&#160;</td><td class="memItemRight" valign="bottom"><b>operator=</
   </dd>
 </dl>
 
+</div>
+</div>
+<a id="abc9001045b8732d648f7292547671040" name="abc9001045b8732d648f7292547671040"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#abc9001045b8732d648f7292547671040">&#9670;&#160;</a></span>clone()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">TestCase hegel::TestCase::clone </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"><em></em></span></td><td>)</td>
+          <td> const</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Creates a clone of this test case with an independent choice sequence forked from this test case. </p>
+<p>The returned <code><a class="el" href="classhegel_1_1TestCase.html" title="Handle to the currently-executing test case.">TestCase</a></code> draws from its own choice sequence but shares this case's outcome and budget. A single test case must not be drawn from concurrently, so give each thread its own clone.</p>
+<dl class="section return"><dt>Returns</dt><dd>A <code><a class="el" href="classhegel_1_1TestCase.html" title="Handle to the currently-executing test case.">TestCase</a></code>.</dd></dl>
+<div class="fragment"><div class="line"><span class="keyword">auto</span> worker = tc.clone();</div>
+<div class="line"><span class="keyword">auto</span> a = worker.draw(gs::integers&lt;int&gt;());</div>
+<div class="line"><span class="keyword">auto</span> b = tc.draw(gs::integers&lt;int&gt;());</div>
+</div><!-- fragment --> 
 </div>
 </div>
 <a id="affbc292ad2e6f4027b2402200cbc1d1c" name="affbc292ad2e6f4027b2402200cbc1d1c"></a>
@@ -227,6 +257,34 @@ template&lt;typename T&gt; </div>
 
 </div>
 </div>
+<a id="a0121ef9cd61fbc66486d83547e388fab" name="a0121ef9cd61fbc66486d83547e388fab"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a0121ef9cd61fbc66486d83547e388fab">&#9670;&#160;</a></span>operator=()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">TestCase &amp; hegel::TestCase::operator= </td>
+          <td>(</td>
+          <td class="paramtype">TestCase &amp;&amp;</td>          <td class="paramname"><span class="paramname"><em></em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel noexcept">noexcept</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>Move-assigns, transferring ownership of the underlying handle. </p>
+<dl class="section return"><dt>Returns</dt><dd>Reference to this test case. </dd></dl>
+
+</div>
+</div>
 <a id="a6a2e1ba4aa346b12ce297b53f89adc5e" name="a6a2e1ba4aa346b12ce297b53f89adc5e"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a6a2e1ba4aa346b12ce297b53f89adc5e">&#9670;&#160;</a></span>reject()</h2>
 
@@ -278,6 +336,46 @@ template&lt;typename T&gt; </div>
 <div class="line">    total += tc.draw(gs::integers&lt;int&gt;({.min_value = 0}));</div>
 <div class="line">    <span class="keywordflow">if</span> (total &lt; 0) <span class="keywordflow">throw</span> std::runtime_error(<span class="stringliteral">&quot;overflow&quot;</span>);</div>
 <div class="line">});</div>
+</div><!-- fragment --> 
+</div>
+</div>
+<a id="a1a8b9f6edbc13b63349561dc7111e849" name="a1a8b9f6edbc13b63349561dc7111e849"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a1a8b9f6edbc13b63349561dc7111e849">&#9670;&#160;</a></span>spawn()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<div class="memtemplate">
+template&lt;typename F&gt; </div>
+      <table class="memname">
+        <tr>
+          <td class="memname">auto hegel::TestCase::spawn </td>
+          <td>(</td>
+          <td class="paramtype">F</td>          <td class="paramname"><span class="paramname"><em>fn</em></span></td><td>)</td>
+          <td> const</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Run <code class="param">fn</code> on a clone of this test case in a new thread. </p>
+<p>Clones this test case on the calling thread, then invokes <code class="param">fn</code> with the clone (as a <code><a class="el" href="classhegel_1_1TestCase.html" title="Handle to the currently-executing test case.">TestCase</a>&amp;</code>) on a <code>std::thread</code>. The returned <code><a class="el" href="classhegel_1_1Worker.html" title="Handle to a worker started by TestCase::spawn().">Worker</a></code> awaits it. <code><a class="el" href="classhegel_1_1Worker.html#a8c3d55b49642d140d8f60473841fda47" title="Await the worker and return its result.">Worker::join()</a></code> returns <code class="param">fn's</code> result and re-raises any exception it threw. Join every worker before the test body returns.</p>
+<dl class="tparams"><dt>Template Parameters</dt><dd>
+  <table class="tparams">
+    <tr><td class="paramname">F</td><td>Callable invocable as <code>fn(TestCase&amp;)</code>. </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">fn</td><td>The work to run on the cloned stream. </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>Returns</dt><dd>A <code><a class="el" href="classhegel_1_1Worker.html" title="Handle to a worker started by TestCase::spawn().">Worker</a></code> handle to the running thread.</dd></dl>
+<div class="fragment"><div class="line"><span class="keyword">auto</span> w = tc.spawn([](<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; c) {</div>
+<div class="line">    <span class="keywordflow">return</span> c.<a class="code hl_function" href="#affbc292ad2e6f4027b2402200cbc1d1c">draw</a>(gs::integers&lt;int&gt;());</div>
+<div class="line">});</div>
+<div class="line"><span class="keyword">auto</span> mine = tc.draw(gs::integers&lt;int&gt;());</div>
+<div class="line"><span class="keyword">auto</span> theirs = w.join();</div>
 </div><!-- fragment --> 
 </div>
 </div>

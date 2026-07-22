@@ -5,6 +5,7 @@ var namespacehegel =
     [ "Database", "classhegel_1_1Database.html", "classhegel_1_1Database" ],
     [ "Settings", "structhegel_1_1Settings.html", "structhegel_1_1Settings" ],
     [ "TestCase", "classhegel_1_1TestCase.html", "classhegel_1_1TestCase" ],
+    [ "Worker", "classhegel_1_1Worker.html", "classhegel_1_1Worker" ],
     [ "Backend", "namespacehegel.html#a887e0714b99c358aa474848809bca688", [
       [ "Auto", "namespacehegel.html#a887e0714b99c358aa474848809bca688a06b9281e396db002010bde1de57262eb", null ],
       [ "Default", "namespacehegel.html#a887e0714b99c358aa474848809bca688a7a1920d61156abc05a60135aefe8bc67", null ],

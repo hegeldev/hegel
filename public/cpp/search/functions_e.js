@@ -4,5 +4,6 @@ var searchData=
   ['set_1',['set',['../classhegel_1_1generators_1_1DeferredGeneratorDefinition.html#a4999280bb4d736606ab7962c418ce72e',1,'hegel::generators::DeferredGeneratorDefinition']]],
   ['sets_2',['sets',['../namespacehegel_1_1generators.html#ad1f5a16efc6325220f75c55e7bdea606',1,'hegel::generators']]],
   ['size_3',['size',['../classhegel_1_1stateful_1_1Pool.html#a274b8f1051f1d21b4585516ad48d0a0c',1,'hegel::stateful::Pool']]],
-  ['step_4',['step',['../classhegel_1_1stateful_1_1Rule.html#aa5f2af586c295f594c51cd0d34ace90f',1,'hegel::stateful::Rule']]]
+  ['spawn_4',['spawn',['../classhegel_1_1TestCase.html#a1a8b9f6edbc13b63349561dc7111e849',1,'hegel::TestCase']]],
+  ['step_5',['step',['../classhegel_1_1stateful_1_1Rule.html#aa5f2af586c295f594c51cd0d34ace90f',1,'hegel::stateful::Rule']]]
 ];

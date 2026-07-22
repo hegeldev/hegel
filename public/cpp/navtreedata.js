@@ -61,7 +61,7 @@ var NAVTREE =
 var NAVTREEINDEX =
 [
 "annotated.html",
-"structhegel_1_1generators_1_1FloatsParams.html#abf3e237d6e9bae7bcb2ef0d0514c9ad1"
+"structhegel_1_1generators_1_1CharactersParams.html#afd6a364a0da8f6ee297bc0faf37b60ce"
 ];
 
 var SYNCONMSG = 'click to disable panel synchronization';
