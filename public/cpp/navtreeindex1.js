@@ -1,5 +1,8 @@
 var NAVTREEINDEX1 =
 {
+"structhegel_1_1generators_1_1CharactersParams.html#afd3e4b77b20e66f57f5e79c1b4a4ae47":[2,0,0,0,18,3],
+"structhegel_1_1generators_1_1CharactersParams.html#afd3e4b77b20e66f57f5e79c1b4a4ae47":[3,0,0,0,18,3],
+"structhegel_1_1generators_1_1CharactersParams.html#afd6a364a0da8f6ee297bc0faf37b60ce":[2,0,0,0,18,2],
 "structhegel_1_1generators_1_1CharactersParams.html#afd6a364a0da8f6ee297bc0faf37b60ce":[3,0,0,0,18,2],
 "structhegel_1_1generators_1_1DomainsParams.html":[2,0,0,0,10],
 "structhegel_1_1generators_1_1DomainsParams.html":[3,0,0,0,10],

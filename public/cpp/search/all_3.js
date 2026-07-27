@@ -19,5 +19,5 @@ var searchData=
   ['disabled_16',['disabled',['../classhegel_1_1Database.html#a117dd4e9d11f8bdb8012f1152fdbfd6e',1,'hegel::Database']]],
   ['domains_17',['domains',['../namespacehegel_1_1generators.html#a44c2eca11652cec3572acf05ef80b7c8',1,'hegel::generators']]],
   ['domainsparams_18',['DomainsParams',['../structhegel_1_1generators_1_1DomainsParams.html',1,'hegel::generators']]],
-  ['draw_19',['draw',['../classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c',1,'hegel::TestCase']]]
+  ['draw_19',['draw',['../classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c',1,'hegel::TestCase::draw(const generators::Generator&lt; T &gt; &amp;gen) const'],['../classhegel_1_1TestCase.html#a97699abf34955986035feacf11dd9f49',1,'hegel::TestCase::draw(std::string_view name, const generators::Generator&lt; T &gt; &amp;gen, bool repeatable=false) const']]]
 ];

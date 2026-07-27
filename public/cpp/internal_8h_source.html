@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.7.5</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.8.0</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -100,56 +100,56 @@ $(function(){initNavTree('internal_8h_source.html','',''); });
 <div class="line"><a id="l00004" name="l00004"></a><span class="lineno">    4</span><span class="preprocessor">#include &lt;exception&gt;</span></div>
 <div class="line"><a id="l00005" name="l00005"></a><span class="lineno">    5</span><span class="preprocessor">#include &lt;optional&gt;</span></div>
 <div class="line"><a id="l00006" name="l00006"></a><span class="lineno">    6</span><span class="preprocessor">#include &lt;string&gt;</span></div>
-<div class="line"><a id="l00007" name="l00007"></a><span class="lineno">    7</span><span class="preprocessor">#include &lt;vector&gt;</span></div>
-<div class="line"><a id="l00008" name="l00008"></a><span class="lineno">    8</span> </div>
-<div class="line"><a id="l00009" name="l00009"></a><span class="lineno">    9</span><span class="keyword">namespace </span><a class="code hl_namespace" href="namespacehegel.html">hegel</a> {</div>
-<div class="line"><a id="l00010" name="l00010"></a><span class="lineno">   10</span>    <span class="keyword">class </span><a class="code hl_class" href="classhegel_1_1TestCase.html">TestCase</a>;</div>
-<div class="line"><a id="l00011" name="l00011"></a><span class="lineno">   11</span>}</div>
-<div class="line"><a id="l00012" name="l00012"></a><span class="lineno">   12</span></div>
-<div class="line"><a id="l00016" name="l00016"></a><span class="lineno">   16</span><span class="keyword">namespace </span>hegel::internal {</div>
-<div class="line"><a id="l00018" name="l00018"></a><span class="lineno">   18</span> </div>
-<div class="line"><a id="l00019" name="l00019"></a><span class="lineno">   19</span>    <span class="comment">/* Typed draw primitives over libhegel&#39;s C ABI. Declared here (rather</span></div>
-<div class="line"><a id="l00020" name="l00020"></a><span class="lineno">   20</span><span class="comment">     * than in a private header) because the generator templates in the</span></div>
-<div class="line"><a id="l00021" name="l00021"></a><span class="lineno">   21</span><span class="comment">     * public headers call them from their do_draw implementations. Each</span></div>
-<div class="line"><a id="l00022" name="l00022"></a><span class="lineno">   22</span><span class="comment">     * throws HegelStopTest when the engine&#39;s choice budget is exhausted,</span></div>
-<div class="line"><a id="l00023" name="l00023"></a><span class="lineno">   23</span><span class="comment">     * HegelReject when the draw rejects itself, and std::runtime_error on</span></div>
-<div class="line"><a id="l00024" name="l00024"></a><span class="lineno">   24</span><span class="comment">     * any other engine failure.</span></div>
-<div class="line"><a id="l00025" name="l00025"></a><span class="lineno">   25</span><span class="comment">     */</span></div>
-<div class="line"><a id="l00026" name="l00026"></a><span class="lineno">   26</span> </div>
-<div class="line"><a id="l00027" name="l00027"></a><span class="lineno">   27</span>    <span class="comment">// Span labels understood by the engine&#39;s shrinker. Values mirror the</span></div>
-<div class="line"><a id="l00028" name="l00028"></a><span class="lineno">   28</span>    <span class="comment">// C ABI&#39;s hegel_label_t (static_asserted in src/engine.cpp).</span></div>
-<div class="line"><a id="l00029" name="l00029"></a><span class="lineno">   29</span>    <span class="keyword">enum class</span> SpanLabel : uint64_t {</div>
-<div class="line"><a id="l00030" name="l00030"></a><span class="lineno">   30</span>        List = 1,</div>
-<div class="line"><a id="l00031" name="l00031"></a><span class="lineno">   31</span>        ListElement = 2,</div>
-<div class="line"><a id="l00032" name="l00032"></a><span class="lineno">   32</span>        Set = 3,</div>
-<div class="line"><a id="l00033" name="l00033"></a><span class="lineno">   33</span>        SetElement = 4,</div>
-<div class="line"><a id="l00034" name="l00034"></a><span class="lineno">   34</span>        Map = 5,</div>
-<div class="line"><a id="l00035" name="l00035"></a><span class="lineno">   35</span>        MapEntry = 6,</div>
-<div class="line"><a id="l00036" name="l00036"></a><span class="lineno">   36</span>        Tuple = 7,</div>
-<div class="line"><a id="l00037" name="l00037"></a><span class="lineno">   37</span>        OneOf = 8,</div>
-<div class="line"><a id="l00038" name="l00038"></a><span class="lineno">   38</span>        Optional = 9,</div>
-<div class="line"><a id="l00039" name="l00039"></a><span class="lineno">   39</span>        FlatMap = 11,</div>
-<div class="line"><a id="l00040" name="l00040"></a><span class="lineno">   40</span>        Filter = 12,</div>
-<div class="line"><a id="l00041" name="l00041"></a><span class="lineno">   41</span>        Mapped = 13,</div>
-<div class="line"><a id="l00042" name="l00042"></a><span class="lineno">   42</span>        SampledFrom = 14,</div>
-<div class="line"><a id="l00043" name="l00043"></a><span class="lineno">   43</span>        EnumVariant = 15,</div>
-<div class="line"><a id="l00044" name="l00044"></a><span class="lineno">   44</span>        StatefulRule = 1000</div>
-<div class="line"><a id="l00045" name="l00045"></a><span class="lineno">   45</span>    };</div>
-<div class="line"><a id="l00046" name="l00046"></a><span class="lineno">   46</span> </div>
-<div class="line"><a id="l00047" name="l00047"></a><span class="lineno">   47</span>    <span class="comment">// Open / close a labeled span around a group of draws so the shrinker</span></div>
-<div class="line"><a id="l00048" name="l00048"></a><span class="lineno">   48</span>    <span class="comment">// can treat them as a unit. stop_span(tc, true) marks the span rejected</span></div>
-<div class="line"><a id="l00049" name="l00049"></a><span class="lineno">   49</span>    <span class="comment">// (e.g. a filter predicate failed) so the engine retries from before it.</span></div>
-<div class="line"><a id="l00050" name="l00050"></a><span class="lineno">   50</span>    <span class="keywordtype">void</span> start_span(<span class="keyword">const</span> TestCase&amp; tc, SpanLabel label);</div>
-<div class="line"><a id="l00051" name="l00051"></a><span class="lineno">   51</span>    <span class="keywordtype">void</span> stop_span(<span class="keyword">const</span> TestCase&amp; tc, <span class="keywordtype">bool</span> discard = <span class="keyword">false</span>);</div>
-<div class="line"><a id="l00052" name="l00052"></a><span class="lineno">   52</span> </div>
-<div class="line"><a id="l00053" name="l00053"></a><span class="lineno">   53</span>    int64_t draw_integer(<span class="keyword">const</span> TestCase&amp; tc, int64_t min_value,</div>
-<div class="line"><a id="l00054" name="l00054"></a><span class="lineno">   54</span>                         int64_t max_value);</div>
-<div class="line"><a id="l00055" name="l00055"></a><span class="lineno">   55</span>    <span class="comment">// Uses the engine&#39;s big-integer draw when the range exceeds int64_t.</span></div>
-<div class="line"><a id="l00056" name="l00056"></a><span class="lineno">   56</span>    uint64_t draw_integer_unsigned(<span class="keyword">const</span> TestCase&amp; tc, uint64_t min_value,</div>
-<div class="line"><a id="l00057" name="l00057"></a><span class="lineno">   57</span>                                   uint64_t max_value);</div>
-<div class="line"><a id="l00058" name="l00058"></a><span class="lineno">   58</span>    <span class="keywordtype">bool</span> draw_boolean(<span class="keyword">const</span> TestCase&amp; tc, <span class="keywordtype">double</span> p,</div>
-<div class="line"><a id="l00059" name="l00059"></a><span class="lineno">   59</span>                      std::optional&lt;bool&gt; forced = std::nullopt,</div>
-<div class="line"><a id="l00060" name="l00060"></a><span class="lineno">   60</span>                      <span class="keywordtype">bool</span> silent = <span class="keyword">false</span>);</div>
+<div class="line"><a id="l00007" name="l00007"></a><span class="lineno">    7</span><span class="preprocessor">#include &lt;string_view&gt;</span></div>
+<div class="line"><a id="l00008" name="l00008"></a><span class="lineno">    8</span><span class="preprocessor">#include &lt;vector&gt;</span></div>
+<div class="line"><a id="l00009" name="l00009"></a><span class="lineno">    9</span> </div>
+<div class="line"><a id="l00010" name="l00010"></a><span class="lineno">   10</span><span class="keyword">namespace </span><a class="code hl_namespace" href="namespacehegel.html">hegel</a> {</div>
+<div class="line"><a id="l00011" name="l00011"></a><span class="lineno">   11</span>    <span class="keyword">class </span><a class="code hl_class" href="classhegel_1_1TestCase.html">TestCase</a>;</div>
+<div class="line"><a id="l00012" name="l00012"></a><span class="lineno">   12</span>}</div>
+<div class="line"><a id="l00013" name="l00013"></a><span class="lineno">   13</span></div>
+<div class="line"><a id="l00017" name="l00017"></a><span class="lineno">   17</span><span class="keyword">namespace </span>hegel::internal {</div>
+<div class="line"><a id="l00019" name="l00019"></a><span class="lineno">   19</span> </div>
+<div class="line"><a id="l00020" name="l00020"></a><span class="lineno">   20</span>    <span class="comment">/* Typed draw primitives over libhegel&#39;s C ABI. Declared here (rather</span></div>
+<div class="line"><a id="l00021" name="l00021"></a><span class="lineno">   21</span><span class="comment">     * than in a private header) because the generator templates in the</span></div>
+<div class="line"><a id="l00022" name="l00022"></a><span class="lineno">   22</span><span class="comment">     * public headers call them from their do_draw implementations. Each</span></div>
+<div class="line"><a id="l00023" name="l00023"></a><span class="lineno">   23</span><span class="comment">     * throws HegelStopTest when the engine&#39;s choice budget is exhausted,</span></div>
+<div class="line"><a id="l00024" name="l00024"></a><span class="lineno">   24</span><span class="comment">     * HegelReject when the draw rejects itself, and std::runtime_error on</span></div>
+<div class="line"><a id="l00025" name="l00025"></a><span class="lineno">   25</span><span class="comment">     * any other engine failure.</span></div>
+<div class="line"><a id="l00026" name="l00026"></a><span class="lineno">   26</span><span class="comment">     */</span></div>
+<div class="line"><a id="l00027" name="l00027"></a><span class="lineno">   27</span> </div>
+<div class="line"><a id="l00028" name="l00028"></a><span class="lineno">   28</span>    <span class="comment">// Span labels understood by the engine&#39;s shrinker. Values mirror the</span></div>
+<div class="line"><a id="l00029" name="l00029"></a><span class="lineno">   29</span>    <span class="comment">// C ABI&#39;s hegel_label_t (static_asserted in src/engine.cpp).</span></div>
+<div class="line"><a id="l00030" name="l00030"></a><span class="lineno">   30</span>    <span class="keyword">enum class</span> SpanLabel : uint64_t {</div>
+<div class="line"><a id="l00031" name="l00031"></a><span class="lineno">   31</span>        List = 1,</div>
+<div class="line"><a id="l00032" name="l00032"></a><span class="lineno">   32</span>        ListElement = 2,</div>
+<div class="line"><a id="l00033" name="l00033"></a><span class="lineno">   33</span>        Set = 3,</div>
+<div class="line"><a id="l00034" name="l00034"></a><span class="lineno">   34</span>        SetElement = 4,</div>
+<div class="line"><a id="l00035" name="l00035"></a><span class="lineno">   35</span>        Map = 5,</div>
+<div class="line"><a id="l00036" name="l00036"></a><span class="lineno">   36</span>        MapEntry = 6,</div>
+<div class="line"><a id="l00037" name="l00037"></a><span class="lineno">   37</span>        Tuple = 7,</div>
+<div class="line"><a id="l00038" name="l00038"></a><span class="lineno">   38</span>        OneOf = 8,</div>
+<div class="line"><a id="l00039" name="l00039"></a><span class="lineno">   39</span>        Optional = 9,</div>
+<div class="line"><a id="l00040" name="l00040"></a><span class="lineno">   40</span>        FlatMap = 11,</div>
+<div class="line"><a id="l00041" name="l00041"></a><span class="lineno">   41</span>        Filter = 12,</div>
+<div class="line"><a id="l00042" name="l00042"></a><span class="lineno">   42</span>        Mapped = 13,</div>
+<div class="line"><a id="l00043" name="l00043"></a><span class="lineno">   43</span>        SampledFrom = 14,</div>
+<div class="line"><a id="l00044" name="l00044"></a><span class="lineno">   44</span>        EnumVariant = 15,</div>
+<div class="line"><a id="l00045" name="l00045"></a><span class="lineno">   45</span>        StatefulRule = 1000</div>
+<div class="line"><a id="l00046" name="l00046"></a><span class="lineno">   46</span>    };</div>
+<div class="line"><a id="l00047" name="l00047"></a><span class="lineno">   47</span> </div>
+<div class="line"><a id="l00048" name="l00048"></a><span class="lineno">   48</span>    <span class="comment">// Open / close a labeled span around a group of draws so the shrinker</span></div>
+<div class="line"><a id="l00049" name="l00049"></a><span class="lineno">   49</span>    <span class="comment">// can treat them as a unit. stop_span(tc, true) marks the span rejected</span></div>
+<div class="line"><a id="l00050" name="l00050"></a><span class="lineno">   50</span>    <span class="comment">// (e.g. a filter predicate failed) so the engine retries from before it.</span></div>
+<div class="line"><a id="l00051" name="l00051"></a><span class="lineno">   51</span>    <span class="keywordtype">void</span> start_span(<span class="keyword">const</span> TestCase&amp; tc, SpanLabel label);</div>
+<div class="line"><a id="l00052" name="l00052"></a><span class="lineno">   52</span>    <span class="keywordtype">void</span> stop_span(<span class="keyword">const</span> TestCase&amp; tc, <span class="keywordtype">bool</span> discard = <span class="keyword">false</span>);</div>
+<div class="line"><a id="l00053" name="l00053"></a><span class="lineno">   53</span> </div>
+<div class="line"><a id="l00054" name="l00054"></a><span class="lineno">   54</span>    int64_t draw_integer(<span class="keyword">const</span> TestCase&amp; tc, int64_t min_value,</div>
+<div class="line"><a id="l00055" name="l00055"></a><span class="lineno">   55</span>                         int64_t max_value);</div>
+<div class="line"><a id="l00056" name="l00056"></a><span class="lineno">   56</span>    <span class="comment">// Uses the engine&#39;s big-integer draw when the range exceeds int64_t.</span></div>
+<div class="line"><a id="l00057" name="l00057"></a><span class="lineno">   57</span>    uint64_t draw_integer_unsigned(<span class="keyword">const</span> TestCase&amp; tc, uint64_t min_value,</div>
+<div class="line"><a id="l00058" name="l00058"></a><span class="lineno">   58</span>                                   uint64_t max_value);</div>
+<div class="line"><a id="l00059" name="l00059"></a><span class="lineno">   59</span>    <span class="keywordtype">bool</span> draw_boolean(<span class="keyword">const</span> TestCase&amp; tc, <span class="keywordtype">double</span> p,</div>
+<div class="line"><a id="l00060" name="l00060"></a><span class="lineno">   60</span>                      std::optional&lt;bool&gt; forced = std::nullopt);</div>
 <div class="line"><a id="l00061" name="l00061"></a><span class="lineno">   61</span>    <span class="keywordtype">double</span> draw_float(<span class="keyword">const</span> TestCase&amp; tc, uint32_t width, <span class="keywordtype">double</span> min_value,</div>
 <div class="line"><a id="l00062" name="l00062"></a><span class="lineno">   62</span>                      <span class="keywordtype">double</span> max_value, <span class="keywordtype">bool</span> allow_nan, <span class="keywordtype">bool</span> allow_infinity,</div>
 <div class="line"><a id="l00063" name="l00063"></a><span class="lineno">   63</span>                      <span class="keywordtype">bool</span> exclude_min, <span class="keywordtype">bool</span> exclude_max,</div>
@@ -187,32 +187,50 @@ $(function(){initNavTree('internal_8h_source.html','',''); });
 <div class="line"><a id="l00095" name="l00095"></a><span class="lineno">   95</span>      <span class="keyword">private</span>:</div>
 <div class="line"><a id="l00096" name="l00096"></a><span class="lineno">   96</span>        <span class="keyword">const</span> TestCase&amp; tc_;</div>
 <div class="line"><a id="l00097" name="l00097"></a><span class="lineno">   97</span>    };</div>
-<div class="line"><a id="l00098" name="l00098"></a><span class="lineno">   98</span>    <span class="comment">/* Exception thrown when a test case is rejected and should be</span></div>
-<div class="line"><a id="l00099" name="l00099"></a><span class="lineno">   99</span><span class="comment">     * discarded (e.g. by `TestCase::assume(false)`, an exhausted</span></div>
-<div class="line"><a id="l00100" name="l00100"></a><span class="lineno">  100</span><span class="comment">     * `filter()`, or an `UnsatisfiedAssumption` from the engine).</span></div>
-<div class="line"><a id="l00101" name="l00101"></a><span class="lineno">  101</span><span class="comment">     * The runner records the case as INVALID and continues.</span></div>
-<div class="line"><a id="l00102" name="l00102"></a><span class="lineno">  102</span><span class="comment">     */</span></div>
-<div class="line"><a id="l00103" name="l00103"></a><span class="lineno">  103</span>    <span class="keyword">class </span>HegelReject : <span class="keyword">public</span> std::exception {</div>
-<div class="line"><a id="l00104" name="l00104"></a><span class="lineno">  104</span>      <span class="keyword">public</span>:</div>
-<div class="line"><a id="l00105" name="l00105"></a><span class="lineno">  105</span>        <span class="keyword">const</span> <span class="keywordtype">char</span>* what() const noexcept<span class="keyword"> override </span>{</div>
-<div class="line"><a id="l00106" name="l00106"></a><span class="lineno">  106</span>            <span class="keywordflow">return</span> <span class="stringliteral">&quot;test case rejected&quot;</span>;</div>
-<div class="line"><a id="l00107" name="l00107"></a><span class="lineno">  107</span>        }</div>
-<div class="line"><a id="l00108" name="l00108"></a><span class="lineno">  108</span>    };</div>
-<div class="line"><a id="l00109" name="l00109"></a><span class="lineno">  109</span> </div>
-<div class="line"><a id="l00110" name="l00110"></a><span class="lineno">  110</span>    <span class="comment">/* Exception thrown when the backend tells us to abandon the current</span></div>
-<div class="line"><a id="l00111" name="l00111"></a><span class="lineno">  111</span><span class="comment">     * test iteration entirely (StopTest, Overflow, FlakyStrategyDefinition,</span></div>
-<div class="line"><a id="l00112" name="l00112"></a><span class="lineno">  112</span><span class="comment">     * FlakyReplay). The runner unwinds the test body and skips</span></div>
-<div class="line"><a id="l00113" name="l00113"></a><span class="lineno">  113</span><span class="comment">     * `mark_complete` — the engine already knows the iteration is over.</span></div>
-<div class="line"><a id="l00114" name="l00114"></a><span class="lineno">  114</span><span class="comment">     */</span></div>
-<div class="line"><a id="l00115" name="l00115"></a><span class="lineno">  115</span>    <span class="keyword">class </span>HegelStopTest : <span class="keyword">public</span> std::exception {</div>
-<div class="line"><a id="l00116" name="l00116"></a><span class="lineno">  116</span>      <span class="keyword">public</span>:</div>
-<div class="line"><a id="l00117" name="l00117"></a><span class="lineno">  117</span>        <span class="keyword">const</span> <span class="keywordtype">char</span>* what() const noexcept<span class="keyword"> override </span>{</div>
-<div class="line"><a id="l00118" name="l00118"></a><span class="lineno">  118</span>            <span class="keywordflow">return</span> <span class="stringliteral">&quot;test case stopped by backend&quot;</span>;</div>
-<div class="line"><a id="l00119" name="l00119"></a><span class="lineno">  119</span>        }</div>
-<div class="line"><a id="l00120" name="l00120"></a><span class="lineno">  120</span>    };</div>
-<div class="line"><a id="l00121" name="l00121"></a><span class="lineno">  121</span> </div>
-<div class="line"><a id="l00122" name="l00122"></a><span class="lineno">  122</span>} <span class="comment">// namespace hegel::internal</span></div>
-<div class="line"><a id="l00123" name="l00123"></a><span class="lineno">  123</span></div>
+<div class="line"><a id="l00098" name="l00098"></a><span class="lineno">   98</span> </div>
+<div class="line"><a id="l00099" name="l00099"></a><span class="lineno">   99</span>    <span class="keyword">class </span>DrawLogScope {</div>
+<div class="line"><a id="l00100" name="l00100"></a><span class="lineno">  100</span>      <span class="keyword">public</span>:</div>
+<div class="line"><a id="l00101" name="l00101"></a><span class="lineno">  101</span>        DrawLogScope(<span class="keyword">const</span> TestCase&amp; tc, std::string_view name,</div>
+<div class="line"><a id="l00102" name="l00102"></a><span class="lineno">  102</span>                     <span class="keywordtype">bool</span> repeatable);</div>
+<div class="line"><a id="l00103" name="l00103"></a><span class="lineno">  103</span>        ~DrawLogScope();</div>
+<div class="line"><a id="l00104" name="l00104"></a><span class="lineno">  104</span>        DrawLogScope(<span class="keyword">const</span> DrawLogScope&amp;) = <span class="keyword">delete</span>;</div>
+<div class="line"><a id="l00105" name="l00105"></a><span class="lineno">  105</span>        DrawLogScope&amp; operator=(<span class="keyword">const</span> DrawLogScope&amp;) = <span class="keyword">delete</span>;</div>
+<div class="line"><a id="l00106" name="l00106"></a><span class="lineno">  106</span> </div>
+<div class="line"><a id="l00107" name="l00107"></a><span class="lineno">  107</span>        <span class="keywordtype">bool</span> should_log() <span class="keyword">const</span>;</div>
+<div class="line"><a id="l00108" name="l00108"></a><span class="lineno">  108</span> </div>
+<div class="line"><a id="l00109" name="l00109"></a><span class="lineno">  109</span>        <span class="keywordtype">void</span> log(<span class="keyword">const</span> std::string&amp; rendered) <span class="keyword">const</span>;</div>
+<div class="line"><a id="l00110" name="l00110"></a><span class="lineno">  110</span> </div>
+<div class="line"><a id="l00111" name="l00111"></a><span class="lineno">  111</span>      <span class="keyword">private</span>:</div>
+<div class="line"><a id="l00112" name="l00112"></a><span class="lineno">  112</span>        <span class="keyword">const</span> TestCase&amp; tc_;</div>
+<div class="line"><a id="l00113" name="l00113"></a><span class="lineno">  113</span>        <span class="keywordtype">bool</span> outermost_;</div>
+<div class="line"><a id="l00114" name="l00114"></a><span class="lineno">  114</span>        std::string display_;</div>
+<div class="line"><a id="l00115" name="l00115"></a><span class="lineno">  115</span>    };</div>
+<div class="line"><a id="l00116" name="l00116"></a><span class="lineno">  116</span>    <span class="comment">/* Exception thrown when a test case is rejected and should be</span></div>
+<div class="line"><a id="l00117" name="l00117"></a><span class="lineno">  117</span><span class="comment">     * discarded (e.g. by `TestCase::assume(false)`, an exhausted</span></div>
+<div class="line"><a id="l00118" name="l00118"></a><span class="lineno">  118</span><span class="comment">     * `filter()`, or an `UnsatisfiedAssumption` from the engine).</span></div>
+<div class="line"><a id="l00119" name="l00119"></a><span class="lineno">  119</span><span class="comment">     * The runner records the case as INVALID and continues.</span></div>
+<div class="line"><a id="l00120" name="l00120"></a><span class="lineno">  120</span><span class="comment">     */</span></div>
+<div class="line"><a id="l00121" name="l00121"></a><span class="lineno">  121</span>    <span class="keyword">class </span>HegelReject : <span class="keyword">public</span> std::exception {</div>
+<div class="line"><a id="l00122" name="l00122"></a><span class="lineno">  122</span>      <span class="keyword">public</span>:</div>
+<div class="line"><a id="l00123" name="l00123"></a><span class="lineno">  123</span>        <span class="keyword">const</span> <span class="keywordtype">char</span>* what() const noexcept<span class="keyword"> override </span>{</div>
+<div class="line"><a id="l00124" name="l00124"></a><span class="lineno">  124</span>            <span class="keywordflow">return</span> <span class="stringliteral">&quot;test case rejected&quot;</span>;</div>
+<div class="line"><a id="l00125" name="l00125"></a><span class="lineno">  125</span>        }</div>
+<div class="line"><a id="l00126" name="l00126"></a><span class="lineno">  126</span>    };</div>
+<div class="line"><a id="l00127" name="l00127"></a><span class="lineno">  127</span> </div>
+<div class="line"><a id="l00128" name="l00128"></a><span class="lineno">  128</span>    <span class="comment">/* Exception thrown when the backend tells us to abandon the current</span></div>
+<div class="line"><a id="l00129" name="l00129"></a><span class="lineno">  129</span><span class="comment">     * test iteration entirely (StopTest, Overflow, FlakyStrategyDefinition,</span></div>
+<div class="line"><a id="l00130" name="l00130"></a><span class="lineno">  130</span><span class="comment">     * FlakyReplay). The runner unwinds the test body and skips</span></div>
+<div class="line"><a id="l00131" name="l00131"></a><span class="lineno">  131</span><span class="comment">     * `mark_complete` — the engine already knows the iteration is over.</span></div>
+<div class="line"><a id="l00132" name="l00132"></a><span class="lineno">  132</span><span class="comment">     */</span></div>
+<div class="line"><a id="l00133" name="l00133"></a><span class="lineno">  133</span>    <span class="keyword">class </span>HegelStopTest : <span class="keyword">public</span> std::exception {</div>
+<div class="line"><a id="l00134" name="l00134"></a><span class="lineno">  134</span>      <span class="keyword">public</span>:</div>
+<div class="line"><a id="l00135" name="l00135"></a><span class="lineno">  135</span>        <span class="keyword">const</span> <span class="keywordtype">char</span>* what() const noexcept<span class="keyword"> override </span>{</div>
+<div class="line"><a id="l00136" name="l00136"></a><span class="lineno">  136</span>            <span class="keywordflow">return</span> <span class="stringliteral">&quot;test case stopped by backend&quot;</span>;</div>
+<div class="line"><a id="l00137" name="l00137"></a><span class="lineno">  137</span>        }</div>
+<div class="line"><a id="l00138" name="l00138"></a><span class="lineno">  138</span>    };</div>
+<div class="line"><a id="l00139" name="l00139"></a><span class="lineno">  139</span> </div>
+<div class="line"><a id="l00140" name="l00140"></a><span class="lineno">  140</span>} <span class="comment">// namespace hegel::internal</span></div>
+<div class="line"><a id="l00141" name="l00141"></a><span class="lineno">  141</span></div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:40</div></div>
 <div class="ttc" id="anamespacehegel_html"><div class="ttname"><a href="namespacehegel.html">hegel</a></div><div class="ttdoc">Main namespace.</div><div class="ttdef"><b>Definition</b> config.h:29</div></div>
 </div><!-- fragment --></div><!-- contents -->

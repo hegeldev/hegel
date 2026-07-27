@@ -4,6 +4,7 @@ var classhegel_1_1TestCase =
     [ "assume", "classhegel_1_1TestCase.html#a6d236ee8958c93211e0f4384cf8f3b56", null ],
     [ "clone", "classhegel_1_1TestCase.html#abc9001045b8732d648f7292547671040", null ],
     [ "draw", "classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c", null ],
+    [ "draw", "classhegel_1_1TestCase.html#a97699abf34955986035feacf11dd9f49", null ],
     [ "note", "classhegel_1_1TestCase.html#af99d2d48131f6dc6417e4bef489844b9", null ],
     [ "operator=", "classhegel_1_1TestCase.html#a0121ef9cd61fbc66486d83547e388fab", null ],
     [ "reject", "classhegel_1_1TestCase.html#a6a2e1ba4aa346b12ce297b53f89adc5e", null ],

@@ -6,5 +6,5 @@ var searchData=
   ['deferred_3',['deferred',['../namespacehegel_1_1generators.html#a2dd354803a168e4c434727b15d879c82',1,'hegel::generators']]],
   ['disabled_4',['disabled',['../classhegel_1_1Database.html#a117dd4e9d11f8bdb8012f1152fdbfd6e',1,'hegel::Database']]],
   ['domains_5',['domains',['../namespacehegel_1_1generators.html#a44c2eca11652cec3572acf05ef80b7c8',1,'hegel::generators']]],
-  ['draw_6',['draw',['../classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c',1,'hegel::TestCase']]]
+  ['draw_6',['draw',['../classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c',1,'hegel::TestCase::draw(const generators::Generator&lt; T &gt; &amp;gen) const'],['../classhegel_1_1TestCase.html#a97699abf34955986035feacf11dd9f49',1,'hegel::TestCase::draw(std::string_view name, const generators::Generator&lt; T &gt; &amp;gen, bool repeatable=false) const']]]
 ];
