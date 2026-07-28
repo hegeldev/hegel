@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.8.0</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.9.0</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -122,14 +122,17 @@ class&#160;</td><td class="memItemRight" valign="bottom"><b>VariablesGenerator&l
 <div class="textblock"><div class="compoundTemplParams">template&lt;typename T&gt;<br />
 class hegel::stateful::Pool&lt; T &gt;</div><p>A pool of previously generated values. A pool lets data flow from one rule to another, so a rule can act on a handle or identifier that an earlier rule produced rather than on a freshly drawn value. </p>
 <p>Create one with its constructor and populate it with <a class="el" href="#afd290f34285cb45a4498f1d85ad92387">add</a>. To draw from the pool, use the generators <a class="el" href="namespacehegel_1_1stateful.html#ae3b1766584156ee28d941439f7e7dad8">values_reusable</a> (returns a value without removing it) and <a class="el" href="namespacehegel_1_1stateful.html#a8b12a09dddc6e5b719b502327e092fcb">values_consumed</a> (removes and returns a value).</p>
-<p>A <a class="el" href="classhegel_1_1stateful_1_1Pool.html">Pool</a> is neither copyable nor movable. A state that embeds a pool is passed to <a class="el" href="namespacehegel_1_1stateful.html#a1321af6051de607b9b5cba9c71bf5725">run</a> by reference and never copied.</p>
+<p>A <a class="el" href="classhegel_1_1stateful_1_1Pool.html">Pool</a> is neither copyable nor movable. A state that embeds a pool is passed to <a class="el" href="namespacehegel_1_1stateful.html#aff08b4715a4d979864ad0c960bd9cd34">run</a> by reference and never copied.</p>
 <p>Example: a resource allocator. The <code>alloc</code> rule creates a fresh resource and deposits it in the pool. The <code>free</code> rule draws one of those resource back out and releases it.</p>
-<div class="fragment"><div class="line"><span class="keyword">struct </span>Allocator : <a class="code hl_class" href="classhegel_1_1stateful_1_1StateMachine.html">hegel::stateful::StateMachine</a>&lt;Allocator&gt; {</div>
-<div class="line">    std::set&lt;int&gt; live;</div>
+<div class="fragment"><div class="line"><span class="keyword">struct </span>Allocator</div>
+<div class="line">    : <a class="code hl_class" href="classhegel_1_1stateful_1_1StateMachine.html">hegel::stateful::StateMachine</a>&lt;Allocator, std::set&lt;int&gt;&gt; {</div>
+<div class="line">    <span class="comment">// The pool is tied to a test case and cannot be copied, so it is</span></div>
+<div class="line">    <span class="comment">// a member of the machine rather than part of the state.</span></div>
 <div class="line">    <a class="code hl_class" href="classhegel_1_1stateful_1_1Pool.html">hegel::stateful::Pool&lt;int&gt;</a> handles;</div>
 <div class="line">    <span class="keywordtype">int</span> next_handle = 0;</div>
 <div class="line"> </div>
-<div class="line">    <span class="keyword">explicit</span> Allocator(<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc) : handles(tc) {}</div>
+<div class="line">    <span class="keyword">explicit</span> Allocator(<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc)</div>
+<div class="line">        : <a class="code hl_class" href="classhegel_1_1stateful_1_1StateMachine.html">StateMachine</a>({.initial_state = {}}), handles(tc) {}</div>
 <div class="line"> </div>
 <div class="line">    std::vector&lt;hegel::stateful::Rule&lt;Allocator&gt;&gt; rules() {</div>
 <div class="line">        <span class="keywordflow">return</span> {</div>
@@ -137,14 +140,14 @@ class hegel::stateful::Pool&lt; T &gt;</div><p>A pool of previously generated va
 <div class="line">                <span class="stringliteral">&quot;alloc&quot;</span>, [](<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp;, Allocator&amp; m) {</div>
 <div class="line">                    <span class="keywordtype">int</span> h = m.next_handle++;</div>
 <div class="line">                    m.handles.add(h);</div>
-<div class="line">                    m.live.insert(h);</div>
+<div class="line">                    m.state.insert(h);</div>
 <div class="line">                }),</div>
-<div class="line">            <a class="code hl_class" href="classhegel_1_1stateful_1_1Rule.html">hegel::stateful::Rule&lt;Allocator&gt;</a>(</div>
-<div class="line">                <span class="stringliteral">&quot;free&quot;</span>, [](<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc, Allocator&amp; m) {</div>
+<div class="line">            hegel::stateful::Rule&lt;Allocator&gt;(</div>
+<div class="line">                <span class="stringliteral">&quot;free&quot;</span>, [](hegel::TestCase&amp; tc, Allocator&amp; m) {</div>
 <div class="line">                    <span class="comment">// draws a handle a prior alloc put in the pool</span></div>
 <div class="line">                    <a class="code hl_define" href="group__test__macros.html#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a>(tc, h,</div>
 <div class="line">                        <a class="code hl_function" href="namespacehegel_1_1stateful.html#a8b12a09dddc6e5b719b502327e092fcb">hegel::stateful::values_consumed</a>(m.handles));</div>
-<div class="line">                    m.live.erase(h);</div>
+<div class="line">                    m.state.erase(h);</div>
 <div class="line">                }),</div>
 <div class="line">        };</div>
 <div class="line">    }</div>
@@ -152,16 +155,16 @@ class hegel::stateful::Pool&lt; T &gt;</div><p>A pool of previously generated va
 <div class="line"> </div>
 <div class="line"><a class="code hl_define" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a>(allocator_state_machine)(hegel::TestCase&amp; tc) {</div>
 <div class="line">    Allocator machine(tc);</div>
-<div class="line">    <a class="code hl_function" href="namespacehegel_1_1stateful.html#a1321af6051de607b9b5cba9c71bf5725">hegel::stateful::run</a>(machine, tc);</div>
+<div class="line">    <a class="code hl_function" href="namespacehegel_1_1stateful.html#aff08b4715a4d979864ad0c960bd9cd34">hegel::stateful::run</a>(machine, tc);</div>
 <div class="line">}</div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:40</div></div>
-<div class="ttc" id="aclasshegel_1_1stateful_1_1Pool_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1Pool.html">hegel::stateful::Pool</a></div><div class="ttdoc">A pool of previously generated values. A pool lets data flow from one rule to another,...</div><div class="ttdef"><b>Definition</b> stateful.h:119</div></div>
-<div class="ttc" id="aclasshegel_1_1stateful_1_1Rule_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1Rule.html">hegel::stateful::Rule</a></div><div class="ttdoc">A rule is one possible action in a stateful test.</div><div class="ttdef"><b>Definition</b> stateful.h:287</div></div>
-<div class="ttc" id="aclasshegel_1_1stateful_1_1StateMachine_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1StateMachine.html">hegel::stateful::StateMachine</a></div><div class="ttdoc">Base class for a state machine. Consists of the state, the rules, and the invariants that act on it.</div><div class="ttdef"><b>Definition</b> stateful.h:377</div></div>
-<div class="ttc" id="agroup__test__macros_html_ga169f32a3b09c62f6b25e6c9217c46ca0"><div class="ttname"><a href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a></div><div class="ttdeci">#define HEGEL_TEST(name,...)</div><div class="ttdoc">Define a Hegel property test.</div><div class="ttdef"><b>Definition</b> hegel.h:398</div></div>
-<div class="ttc" id="agroup__test__macros_html_gac0d1517e8a68a6b701c6e77fd1cd19cc"><div class="ttname"><a href="group__test__macros.html#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a></div><div class="ttdeci">#define HEGEL_DRAW(tc, var,...)</div><div class="ttdoc">Draw a value into a named local variable.</div><div class="ttdef"><b>Definition</b> hegel.h:439</div></div>
-<div class="ttc" id="anamespacehegel_1_1stateful_html_a1321af6051de607b9b5cba9c71bf5725"><div class="ttname"><a href="namespacehegel_1_1stateful.html#a1321af6051de607b9b5cba9c71bf5725">hegel::stateful::run</a></div><div class="ttdeci">void run(M &amp;machine, TestCase &amp;tc)</div><div class="ttdoc">Executes a stateful test by repeatedly applying randomly chosen rules from machine to it and checking...</div><div class="ttdef"><b>Definition</b> stateful.h:429</div></div>
-<div class="ttc" id="anamespacehegel_1_1stateful_html_a8b12a09dddc6e5b719b502327e092fcb"><div class="ttname"><a href="namespacehegel_1_1stateful.html#a8b12a09dddc6e5b719b502327e092fcb">hegel::stateful::values_consumed</a></div><div class="ttdeci">Generator&lt; T &gt; values_consumed(Pool&lt; T &gt; &amp;p)</div><div class="ttdoc">Returns a value from the pool and removes it.</div><div class="ttdef"><b>Definition</b> stateful.h:241</div></div>
+<div class="ttc" id="aclasshegel_1_1stateful_1_1Pool_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1Pool.html">hegel::stateful::Pool</a></div><div class="ttdoc">A pool of previously generated values. A pool lets data flow from one rule to another,...</div><div class="ttdef"><b>Definition</b> stateful.h:123</div></div>
+<div class="ttc" id="aclasshegel_1_1stateful_1_1Rule_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1Rule.html">hegel::stateful::Rule</a></div><div class="ttdoc">A rule is one possible action in a stateful test.</div><div class="ttdef"><b>Definition</b> stateful.h:291</div></div>
+<div class="ttc" id="aclasshegel_1_1stateful_1_1StateMachine_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1StateMachine.html">hegel::stateful::StateMachine</a></div><div class="ttdoc">Base class for a state machine. Holds the state and declares the rules and the invariants that act on...</div><div class="ttdef"><b>Definition</b> stateful.h:408</div></div>
+<div class="ttc" id="agroup__test__macros_html_ga169f32a3b09c62f6b25e6c9217c46ca0"><div class="ttname"><a href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a></div><div class="ttdeci">#define HEGEL_TEST(name,...)</div><div class="ttdoc">Define a Hegel property test.</div><div class="ttdef"><b>Definition</b> hegel.h:529</div></div>
+<div class="ttc" id="agroup__test__macros_html_gac0d1517e8a68a6b701c6e77fd1cd19cc"><div class="ttname"><a href="group__test__macros.html#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a></div><div class="ttdeci">#define HEGEL_DRAW(tc, var,...)</div><div class="ttdoc">Draw a value into a named local variable.</div><div class="ttdef"><b>Definition</b> hegel.h:571</div></div>
+<div class="ttc" id="anamespacehegel_1_1stateful_html_a8b12a09dddc6e5b719b502327e092fcb"><div class="ttname"><a href="namespacehegel_1_1stateful.html#a8b12a09dddc6e5b719b502327e092fcb">hegel::stateful::values_consumed</a></div><div class="ttdeci">Generator&lt; T &gt; values_consumed(Pool&lt; T &gt; &amp;p)</div><div class="ttdoc">Returns a value from the pool and removes it.</div><div class="ttdef"><b>Definition</b> stateful.h:245</div></div>
+<div class="ttc" id="anamespacehegel_1_1stateful_html_aff08b4715a4d979864ad0c960bd9cd34"><div class="ttname"><a href="namespacehegel_1_1stateful.html#aff08b4715a4d979864ad0c960bd9cd34">hegel::stateful::run</a></div><div class="ttdeci">void run(M &amp;machine, TestCase &amp;tc, const RunParams &amp;params={})</div><div class="ttdoc">Executes a stateful test by repeatedly applying randomly chosen rules from machine to it and checking...</div><div class="ttdef"><b>Definition</b> stateful.h:510</div></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
     <tr><td class="paramname">T</td><td>The type of variables in the pool. </td></tr>

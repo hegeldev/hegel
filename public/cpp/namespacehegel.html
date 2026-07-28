@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.8.0</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.9.0</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -107,6 +107,8 @@ Namespaces</h2></td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-nested-classes" class="groupheader"><a id="nested-classes" name="nested-classes"></a>
 Classes</h2></td></tr>
+<tr class="memitem:TestLocation" id="r_TestLocation"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structhegel_1_1TestLocation.html">TestLocation</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Where a test is defined.  <a href="structhegel_1_1TestLocation.html#details">More...</a><br /></td></tr>
 <tr class="memitem:Database" id="r_Database"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1Database.html">Database</a></td></tr>
 <tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Configure the Hegel database.  <a href="classhegel_1_1Database.html#details">More...</a><br /></td></tr>
 <tr class="memitem:Settings" id="r_Settings"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structhegel_1_1Settings.html">Settings</a></td></tr>
@@ -154,6 +156,8 @@ Enumerations</h2></td></tr>
 Functions</h2></td></tr>
 <tr class="memitem:ae3451b81e2687429b3285266fb5890e6" id="r_ae3451b81e2687429b3285266fb5890e6"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ae3451b81e2687429b3285266fb5890e6">test</a> (const std::function&lt; void(<a class="el" href="classhegel_1_1TestCase.html">TestCase</a> &amp;)&gt; &amp;test_fn, const <a class="el" href="structhegel_1_1Settings.html">Settings</a> &amp;settings={}, const std::vector&lt; std::string &gt; &amp;failure_blobs={})</td></tr>
 <tr class="memdesc:ae3451b81e2687429b3285266fb5890e6"><td class="mdescLeft">&#160;</td><td class="mdescRight">Run a Hegel test.  <br /></td></tr>
+<tr class="memitem:aeb68de1001e0f02e1870ac6b961c3ca1" id="r_aeb68de1001e0f02e1870ac6b961c3ca1"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aeb68de1001e0f02e1870ac6b961c3ca1">test</a> (const std::function&lt; void(<a class="el" href="classhegel_1_1TestCase.html">TestCase</a> &amp;)&gt; &amp;test_fn, const <a class="el" href="structhegel_1_1TestLocation.html">TestLocation</a> &amp;location, const <a class="el" href="structhegel_1_1Settings.html">Settings</a> &amp;settings={}, const std::vector&lt; std::string &gt; &amp;failure_blobs={})</td></tr>
+<tr class="memdesc:aeb68de1001e0f02e1870ac6b961c3ca1"><td class="mdescLeft">&#160;</td><td class="mdescRight">Run a Hegel test that names itself in its failure report.  <br /></td></tr>
 <tr class="memitem:a4acc0cd11933b07d15879fd4704dbc80" id="r_a4acc0cd11933b07d15879fd4704dbc80"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a4acc0cd11933b07d15879fd4704dbc80">run_all_tests</a> ()</td></tr>
 <tr class="memdesc:a4acc0cd11933b07d15879fd4704dbc80"><td class="mdescLeft">&#160;</td><td class="mdescRight">Run every test defined with <a class="el" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a> in this binary.  <br /></td></tr>
 <tr class="memitem:a780357870820e4a63477d63cb6caf493" id="r_a780357870820e4a63477d63cb6caf493"><td class="memItemLeft" align="right" valign="top">const char *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a780357870820e4a63477d63cb6caf493">verbosity_to_string</a> (<a class="el" href="#aa5d3c97b2de55ed337e5bf3a9bc92eb8">Verbosity</a> v)</td></tr>
@@ -415,7 +419,7 @@ Functions</h2></td></tr>
 </div>
 </div>
 <a id="ae3451b81e2687429b3285266fb5890e6" name="ae3451b81e2687429b3285266fb5890e6"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ae3451b81e2687429b3285266fb5890e6">&#9670;&#160;</a></span>test()</h2>
+<h2 class="memtitle"><span class="permalink"><a href="#ae3451b81e2687429b3285266fb5890e6">&#9670;&#160;</a></span>test() <span class="overload">[1/2]</span></h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -476,6 +480,57 @@ Functions</h2></td></tr>
   </dd>
 </dl>
 <dl class="section see"><dt>See also</dt><dd><a class="el" href="structhegel_1_1Settings.html" title="Configuration options for hegel::test().">Settings</a> for configuration settings </dd></dl>
+
+</div>
+</div>
+<a id="aeb68de1001e0f02e1870ac6b961c3ca1" name="aeb68de1001e0f02e1870ac6b961c3ca1"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aeb68de1001e0f02e1870ac6b961c3ca1">&#9670;&#160;</a></span>test() <span class="overload">[2/2]</span></h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void hegel::test </td>
+          <td>(</td>
+          <td class="paramtype">const std::function&lt; void(<a class="el" href="classhegel_1_1TestCase.html">TestCase</a> &amp;)&gt; &amp;</td>          <td class="paramname"><span class="paramname"><em>test_fn</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const <a class="el" href="structhegel_1_1TestLocation.html">TestLocation</a> &amp;</td>          <td class="paramname"><span class="paramname"><em>location</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const <a class="el" href="structhegel_1_1Settings.html">Settings</a> &amp;</td>          <td class="paramname"><span class="paramname"><em>settings</em></span><span class="paramdefsep"> = </span><span class="paramdefval">{}</span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const std::vector&lt; std::string &gt; &amp;</td>          <td class="paramname"><span class="paramname"><em>failure_blobs</em></span><span class="paramdefsep"> = </span><span class="paramdefval">{}</span>&#160;)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Run a Hegel test that names itself in its failure report. </p>
+<p>Behaves like the overload above. The failure report's header names <code class="param">location's</code> test and source line instead of reading <span class="tt">--- Failure ---</span>.</p>
+<div class="fragment"><div class="line"><a class="code hl_function" href="#ae3451b81e2687429b3285266fb5890e6">hegel::test</a>(my_body, {<span class="stringliteral">&quot;my_property&quot;</span>, __FILE__, __LINE__},</div>
+<div class="line">            {.test_cases = 500});</div>
+</div><!-- fragment --><dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">test_fn</td><td>The test function to run repeatedly. </td></tr>
+    <tr><td class="paramname">location</td><td>Where the test is defined. </td></tr>
+    <tr><td class="paramname">settings</td><td>Configuration settings (test count, debug mode, etc.) </td></tr>
+    <tr><td class="paramname">failure_blobs</td><td>The base64 blobs encoding the engine choices that led to failures. Multiple blobs can be passed in for bookkeeping, but only the first one is run. </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="exception"><dt>Exceptions</dt><dd>
+  <table class="exception">
+    <tr><td class="paramname">std::runtime_error</td><td>if any test case fails </td></tr>
+  </table>
+  </dd>
+</dl>
 
 </div>
 </div>

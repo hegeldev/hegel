@@ -28,10 +28,13 @@ var annotated_dup =
         [ "Pool", "classhegel_1_1stateful_1_1Pool.html", "classhegel_1_1stateful_1_1Pool" ],
         [ "Rule", "classhegel_1_1stateful_1_1Rule.html", "classhegel_1_1stateful_1_1Rule" ],
         [ "Invariant", "classhegel_1_1stateful_1_1Invariant.html", "classhegel_1_1stateful_1_1Invariant" ],
+        [ "StateMachineParams", "structhegel_1_1stateful_1_1StateMachineParams.html", "structhegel_1_1stateful_1_1StateMachineParams" ],
         [ "StateMachine", "classhegel_1_1stateful_1_1StateMachine.html", "classhegel_1_1stateful_1_1StateMachine" ],
+        [ "RunParams", "structhegel_1_1stateful_1_1RunParams.html", "structhegel_1_1stateful_1_1RunParams" ],
         [ "Generator", "classhegel_1_1stateful_1_1Generator.html", "classhegel_1_1stateful_1_1Generator" ],
         [ "IGenerator", "structhegel_1_1stateful_1_1IGenerator.html", null ]
       ] ],
+      [ "TestLocation", "structhegel_1_1TestLocation.html", "structhegel_1_1TestLocation" ],
       [ "Database", "classhegel_1_1Database.html", "classhegel_1_1Database" ],
       [ "Settings", "structhegel_1_1Settings.html", "structhegel_1_1Settings" ],
       [ "TestCase", "classhegel_1_1TestCase.html", "classhegel_1_1TestCase" ],

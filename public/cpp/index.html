@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.8.0</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.9.0</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -105,7 +105,7 @@ Install Hegel</h2>
 <div class="line">FetchContent_Declare(</div>
 <div class="line">    hegel</div>
 <div class="line">    GIT_REPOSITORY https://github.com/hegeldev/hegel-cpp.git</div>
-<div class="line">    GIT_TAG v0.8.0</div>
+<div class="line">    GIT_TAG v0.9.0</div>
 <div class="line">)</div>
 <div class="line">FetchContent_MakeAvailable(hegel)</div>
 <div class="line"> </div>
@@ -130,8 +130,8 @@ Write your first test</h2>
 <div class="line">    <span class="keywordflow">return</span> <a class="code hl_function" href="namespacehegel.html#a4acc0cd11933b07d15879fd4704dbc80">hegel::run_all_tests</a>();</div>
 <div class="line">}</div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:40</div></div>
-<div class="ttc" id="agroup__test__macros_html_ga169f32a3b09c62f6b25e6c9217c46ca0"><div class="ttname"><a href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a></div><div class="ttdeci">#define HEGEL_TEST(name,...)</div><div class="ttdoc">Define a Hegel property test.</div><div class="ttdef"><b>Definition</b> hegel.h:398</div></div>
-<div class="ttc" id="agroup__test__macros_html_gac0d1517e8a68a6b701c6e77fd1cd19cc"><div class="ttname"><a href="group__test__macros.html#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a></div><div class="ttdeci">#define HEGEL_DRAW(tc, var,...)</div><div class="ttdoc">Draw a value into a named local variable.</div><div class="ttdef"><b>Definition</b> hegel.h:439</div></div>
+<div class="ttc" id="agroup__test__macros_html_ga169f32a3b09c62f6b25e6c9217c46ca0"><div class="ttname"><a href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a></div><div class="ttdeci">#define HEGEL_TEST(name,...)</div><div class="ttdoc">Define a Hegel property test.</div><div class="ttdef"><b>Definition</b> hegel.h:529</div></div>
+<div class="ttc" id="agroup__test__macros_html_gac0d1517e8a68a6b701c6e77fd1cd19cc"><div class="ttname"><a href="group__test__macros.html#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a></div><div class="ttdeci">#define HEGEL_DRAW(tc, var,...)</div><div class="ttdoc">Draw a value into a named local variable.</div><div class="ttdef"><b>Definition</b> hegel.h:571</div></div>
 <div class="ttc" id="anamespacehegel_1_1generators_html"><div class="ttname"><a href="namespacehegel_1_1generators.html">hegel::generators</a></div><div class="ttdoc">Hegel generators.</div><div class="ttdef"><b>Definition</b> core.h:17</div></div>
 <div class="ttc" id="anamespacehegel_html_a4acc0cd11933b07d15879fd4704dbc80"><div class="ttname"><a href="namespacehegel.html#a4acc0cd11933b07d15879fd4704dbc80">hegel::run_all_tests</a></div><div class="ttdeci">int run_all_tests()</div><div class="ttdoc">Run every test defined with HEGEL_TEST in this binary.</div></div>
 </div><!-- fragment --><p>Now build and run the test. You should see that this test passes.</p>
@@ -145,7 +145,16 @@ Write your first test</h2>
 <div class="line">        <span class="keywordflow">throw</span> std::runtime_error(<span class="stringliteral">&quot;n should be below 50&quot;</span>);</div>
 <div class="line">    }</div>
 <div class="line">}</div>
-</div><!-- fragment --><p>This test asserts that any integer is less than 50, which is obviously incorrect. Hegel will find a test case that makes this assertion fail, and then shrink it to find the smallest counterexample. The replay prints <span class="tt">auto n = 50;</span>.</p>
+</div><!-- fragment --><p>This test asserts that any integer is less than 50, which is obviously incorrect. Hegel will find a test case that makes this assertion fail, and then shrink it to find the smallest counterexample. It reports:</p>
+<div class="fragment"><div class="line">--- Failure: below_50 (my_test.cpp:3) ----------------------------------</div>
+<div class="line">Falsified after 3 test cases (0 discarded):</div>
+<div class="line"> </div>
+<div class="line">  auto n = 50;</div>
+<div class="line"> </div>
+<div class="line">Exception: std::runtime_error: n should be below 50</div>
+<div class="line">rerun with: <a class="code hl_define" href="group__test__macros.html#ga999f42b20aca6caffe4f89a6767ec847">HEGEL_REPRODUCE_FAILURE</a>(below_50, <span class="stringliteral">&quot;AAEAAAAACgEAAAAy&quot;</span>)</div>
+<div class="ttc" id="agroup__test__macros_html_ga999f42b20aca6caffe4f89a6767ec847"><div class="ttname"><a href="group__test__macros.html#ga999f42b20aca6caffe4f89a6767ec847">HEGEL_REPRODUCE_FAILURE</a></div><div class="ttdeci">#define HEGEL_REPRODUCE_FAILURE(name, blob,...)</div><div class="ttdoc">Replay a failing example for a HEGEL_TEST from its blob.</div><div class="ttdef"><b>Definition</b> hegel.h:703</div></div>
+</div><!-- fragment --><p>The header names the test and where it is defined, the count says how many cases it took to find the failure, and the falsifying value(s). The last line replays that exact failure. See <a class="el" href="group__test__macros.html#ga999f42b20aca6caffe4f89a6767ec847">HEGEL_REPRODUCE_FAILURE</a>.</p>
 <p>To fix this test, you can constrain the integers you generate with the <span class="tt">min_value</span> and <span class="tt">max_value</span> parameters:</p>
 <div class="fragment"><div class="line"><a class="code hl_define" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a>(below_50)(<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc) {</div>
 <div class="line">    <a class="code hl_define" href="group__test__macros.html#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a>(tc, n, gs::integers&lt;int&gt;({.min_value = 0, .max_value = 49}));</div>
@@ -209,20 +218,64 @@ Use generators</h2>
 <div class="line">    <a class="code hl_define" href="group__test__macros.html#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a>(tc, p, gs::default_generator&lt;Person&gt;());</div>
 <div class="line">}</div>
 </div><!-- fragment --><p>Call <span class="tt">.override(...)</span> on the returned generator to customize individual fields (see <a class="el" href="classhegel_1_1generators_1_1DerivedGenerator.html#a8dd934c6e010d393cfcaada89e6dd04d">override</a>).</p>
+<h2 class="doxsection"><a class="anchor" id="checking_properties"></a>
+Check properties</h2>
+<p>Hegel has three macros for stating what must hold.</p>
+<p><a class="el" href="group__test__macros.html#ga9664ba563cfe0505b97a51be41359e38">HEGEL_REQUIRE_EQUAL</a> states that two values are equal:</p>
+<div class="fragment"><div class="line"><a class="code hl_define" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a>(addition_commutes)(<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc) {</div>
+<div class="line">    <a class="code hl_define" href="group__test__macros.html#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a>(tc, x, gs::integers&lt;int&gt;());</div>
+<div class="line">    <a class="code hl_define" href="group__test__macros.html#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a>(tc, y, gs::integers&lt;int&gt;());</div>
+<div class="line">    <a class="code hl_define" href="group__test__macros.html#ga9664ba563cfe0505b97a51be41359e38">HEGEL_REQUIRE_EQUAL</a>(tc, x + y, y + x);</div>
+<div class="line">}</div>
+<div class="ttc" id="agroup__test__macros_html_ga9664ba563cfe0505b97a51be41359e38"><div class="ttname"><a href="group__test__macros.html#ga9664ba563cfe0505b97a51be41359e38">HEGEL_REQUIRE_EQUAL</a></div><div class="ttdeci">#define HEGEL_REQUIRE_EQUAL(tc,...)</div><div class="ttdoc">Fail the current test case unless two values are equal.</div><div class="ttdef"><b>Definition</b> hegel.h:675</div></div>
+</div><!-- fragment --><p>The report shows a difference of the two values, down to the part that changed, rather than only reporting that they differ.</p>
+<p><a class="el" href="group__test__macros.html#ga341861757b3a51b0830f84f300153a2e">HEGEL_REQUIRE</a> states a condition, with a message the report prints:</p>
+<div class="fragment"><div class="line"><a class="code hl_define" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a>(running_sum_stays_positive)(<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc) {</div>
+<div class="line">    <a class="code hl_define" href="group__test__macros.html#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a>(tc, l, gs::vectors(gs::integers&lt;int&gt;()));</div>
+<div class="line">    <a class="code hl_define" href="group__test__macros.html#ga341861757b3a51b0830f84f300153a2e">HEGEL_REQUIRE</a>(tc, lowest_running_sum(l) &gt;= 0,</div>
+<div class="line">                  <span class="stringliteral">&quot;running sum went negative&quot;</span>);</div>
+<div class="line">}</div>
+<div class="ttc" id="agroup__test__macros_html_ga341861757b3a51b0830f84f300153a2e"><div class="ttname"><a href="group__test__macros.html#ga341861757b3a51b0830f84f300153a2e">HEGEL_REQUIRE</a></div><div class="ttdeci">#define HEGEL_REQUIRE(tc,...)</div><div class="ttdoc">Fail the current test case unless condition holds.</div><div class="ttdef"><b>Definition</b> hegel.h:640</div></div>
+</div><!-- fragment --><div class="fragment"><div class="line">--- Failure: running_sum_stays_positive (my_test.cpp:17) ---------------</div>
+<div class="line">Falsified after 2 test cases (0 discarded):</div>
+<div class="line"> </div>
+<div class="line">  auto l = std::vector&lt;int&gt;{-1};</div>
+<div class="line"> </div>
+<div class="line">Exception: running sum went negative</div>
+<div class="line">rerun with: <a class="code hl_define" href="group__test__macros.html#ga999f42b20aca6caffe4f89a6767ec847">HEGEL_REPRODUCE_FAILURE</a>(running_sum_stays_positive,</div>
+<div class="line"><span class="stringliteral">&quot;AAMAAAABAQAKAQAAAP8BAA==&quot;</span>)</div>
+</div><!-- fragment --><p><a class="el" href="group__test__macros.html#ga003ff8ba5fa4155a4f191e6d8005043f">HEGEL_FAIL</a> fails outright, where there is no condition to write, such as an unreachable branch, or a step that cannot go on:</p>
+<div class="fragment"><div class="line"><a class="code hl_define" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a>(parses_its_own_output)(<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc) {</div>
+<div class="line">    <a class="code hl_define" href="group__test__macros.html#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a>(tc, n, gs::integers&lt;int&gt;({.min_value = 0}));</div>
+<div class="line">    std::optional&lt;int&gt; parsed = parse(render(n));</div>
+<div class="line">    <span class="keywordflow">if</span> (!parsed) {</div>
+<div class="line">        <a class="code hl_define" href="group__test__macros.html#ga003ff8ba5fa4155a4f191e6d8005043f">HEGEL_FAIL</a>(tc, <span class="stringliteral">&quot;rendered value did not parse back&quot;</span>);</div>
+<div class="line">    }</div>
+<div class="line">    <a class="code hl_define" href="group__test__macros.html#ga9664ba563cfe0505b97a51be41359e38">HEGEL_REQUIRE_EQUAL</a>(tc, *parsed, n);</div>
+<div class="line">}</div>
+<div class="ttc" id="agroup__test__macros_html_ga003ff8ba5fa4155a4f191e6d8005043f"><div class="ttname"><a href="group__test__macros.html#ga003ff8ba5fa4155a4f191e6d8005043f">HEGEL_FAIL</a></div><div class="ttdeci">#define HEGEL_FAIL(tc,...)</div><div class="ttdoc">Fail the current test case with message.</div><div class="ttdef"><b>Definition</b> hegel.h:620</div></div>
+</div><!-- fragment --><div class="fragment"><div class="line">--- Failure: parses_its_own_output (my_test.cpp:23) --------------------</div>
+<div class="line">Falsified after 2 test cases (0 discarded):</div>
+<div class="line"> </div>
+<div class="line">  auto n = 1000;</div>
+<div class="line"> </div>
+<div class="line">Exception: rendered value did not parse back</div>
+<div class="line">rerun with: <a class="code hl_define" href="group__test__macros.html#ga999f42b20aca6caffe4f89a6767ec847">HEGEL_REPRODUCE_FAILURE</a>(parses_its_own_output,</div>
+<div class="line"><span class="stringliteral">&quot;AAEAAAAACgIAAADoAw==&quot;</span>)</div>
+</div><!-- fragment --><p><a class="el" href="group__test__macros.html#ga003ff8ba5fa4155a4f191e6d8005043f">HEGEL_FAIL</a> does not return, so the branch above needs no value and the code after it may use <code>parsed</code>.</p>
+<p>Prefer these macros over a raw <code>throw</code>. Hegel groups counterexamples by origin to tell one bug from another, and a raw throw carries no source position. Every throw of one type therefore shares an origin and reports as a single bug. Each of invocation of these macros count as a different origin, so failures on different lines stay distinct under Settings::report_multiple_failures.</p>
 <h2 class="doxsection"><a class="anchor" id="debug_failing"></a>
 Debug your failing test cases</h2>
-<p>Use <a class="el" href="classhegel_1_1TestCase.html#af99d2d48131f6dc6417e4bef489844b9">TestCase::note</a> to attach debug information:</p>
+<p>Drawn values print automatically in the failure report (<span class="tt">auto x = ...;</span>). Use <a class="el" href="classhegel_1_1TestCase.html#af99d2d48131f6dc6417e4bef489844b9">TestCase::note</a> to add whatever context the values alone do not show:</p>
 <div class="fragment"><div class="line"><a class="code hl_define" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a>(addition_commutes)(<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc) {</div>
 <div class="line">    <a class="code hl_define" href="group__test__macros.html#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a>(tc, x, gs::integers&lt;int&gt;());</div>
 <div class="line">    <a class="code hl_define" href="group__test__macros.html#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a>(tc, y, gs::integers&lt;int&gt;());</div>
 <div class="line">    tc.<a class="code hl_function" href="classhegel_1_1TestCase.html#af99d2d48131f6dc6417e4bef489844b9">note</a>(<span class="stringliteral">&quot;x + y = &quot;</span> + std::to_string(x + y) +</div>
 <div class="line">            <span class="stringliteral">&quot;, y + x = &quot;</span> + std::to_string(y + x));</div>
-<div class="line">    <span class="keywordflow">if</span> (x + y != y + x) {</div>
-<div class="line">        <span class="keywordflow">throw</span> std::runtime_error(<span class="stringliteral">&quot;addition is not commutative&quot;</span>);</div>
-<div class="line">    }</div>
+<div class="line">    <a class="code hl_define" href="group__test__macros.html#ga9664ba563cfe0505b97a51be41359e38">HEGEL_REQUIRE_EQUAL</a>(tc, x + y, y + x);</div>
 <div class="line">}</div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html_af99d2d48131f6dc6417e4bef489844b9"><div class="ttname"><a href="classhegel_1_1TestCase.html#af99d2d48131f6dc6417e4bef489844b9">hegel::TestCase::note</a></div><div class="ttdeci">void note(std::string_view message) const</div><div class="ttdoc">Record a message that will be printed on the final replay of a failing test case.</div></div>
-</div><!-- fragment --><p>Drawn values print automatically on that replay (<span class="tt">auto x = ...;</span>). Notes add whatever extra context the values alone do not show.</p>
+</div><!-- fragment --><p>Notes and drawn values print on the failing replay only. Raise Settings::verbosity to Verbosity::Verbose to see them for every case.</p>
 <h2 class="doxsection"><a class="anchor" id="change_test_cases"></a>
 Change the number of test cases</h2>
 <p>By default Hegel runs 100 test cases. To override this, write a <a class="el" href="structhegel_1_1Settings.html">Settings</a> initializer after the test name:</p>

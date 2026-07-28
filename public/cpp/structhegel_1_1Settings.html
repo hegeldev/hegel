@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.8.0</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.9.0</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -113,7 +113,7 @@ std::optional&lt; uint64_t &gt;&#160;</td><td class="memItemRight" valign="botto
 <tr class="memdesc:a29a9dde11122aa2a79941dfcfa6f6fae"><td class="mdescLeft">&#160;</td><td class="mdescRight">Explicit seed for the test. <br /></td></tr>
 <tr class="memitem:a0896b073ca6424ac89612eba5356d86b" id="r_a0896b073ca6424ac89612eba5356d86b"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a0896b073ca6424ac89612eba5356d86b">derandomize</a> = internal::in_ci()</td></tr>
 <tr class="memitem:ad3e01a504ec505a4b403b5c09932271b" id="r_ad3e01a504ec505a4b403b5c09932271b"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ad3e01a504ec505a4b403b5c09932271b">report_multiple_failures</a> = false</td></tr>
-<tr class="memitem:a159c2ab2f567c872a6f0b7f403ff180e" id="r_a159c2ab2f567c872a6f0b7f403ff180e"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a159c2ab2f567c872a6f0b7f403ff180e">print_blob</a> = false</td></tr>
+<tr class="memitem:a159c2ab2f567c872a6f0b7f403ff180e" id="r_a159c2ab2f567c872a6f0b7f403ff180e"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a159c2ab2f567c872a6f0b7f403ff180e">print_blob</a> = true</td></tr>
 <tr class="memitem:aaf5e3db526f4e7c051644a6d28d5c53d" id="r_aaf5e3db526f4e7c051644a6d28d5c53d"><td class="memItemLeft" align="right" valign="top"><a class="el" href="classhegel_1_1Database.html">Database</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aaf5e3db526f4e7c051644a6d28d5c53d">database</a></td></tr>
 <tr class="memitem:a30f1d654505c64bbe59624bc30dbc18c" id="r_a30f1d654505c64bbe59624bc30dbc18c"><td class="memItemLeft" align="right" valign="top">std::optional&lt; std::string &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a30f1d654505c64bbe59624bc30dbc18c">database_key</a></td></tr>
 <tr class="memitem:ac78c4a0ae269f598b13c1d0c09f99214" id="r_ac78c4a0ae269f598b13c1d0c09f99214"><td class="memItemLeft" align="right" valign="top"><a id="ac78c4a0ae269f598b13c1d0c09f99214" name="ac78c4a0ae269f598b13c1d0c09f99214"></a>
@@ -217,11 +217,11 @@ int64_t&#160;</td><td class="memItemRight" valign="bottom"><b>stateful_step_coun
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">bool hegel::Settings::print_blob = false</td>
+          <td class="memname">bool hegel::Settings::print_blob = true</td>
         </tr>
       </table>
 </div><div class="memdoc">
-<p>If true, print the base64 blob encoding the engine choices that led to a failure. </p>
+<p>If true (the default), a failure report ends with a <span class="tt">rerun with:</span> line holding the base64 blob that replays the failure. </p>
 
 </div>
 </div>

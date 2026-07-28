@@ -6,7 +6,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.15.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Hegel: hegel::stateful::StateMachine&lt; Derived &gt; Class Template Reference</title>
+<title>Hegel: hegel::stateful::StateMachine&lt; Derived, State &gt; Class Template Reference</title>
 <link href="tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="jquery.js"></script>
 <script type="text/javascript" src="dynsections.js"></script>
@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.8.0</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.9.0</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -91,46 +91,109 @@ $(function(){initNavTree('classhegel_1_1stateful_1_1StateMachine.html','','class
 </div>
 
 <div class="header">
-  <div class="headertitle"><div class="title">hegel::stateful::StateMachine&lt; Derived &gt; Class Template Reference</div></div>
+  <div class="headertitle"><div class="title">hegel::stateful::StateMachine&lt; Derived, State &gt; Class Template Reference</div></div>
 </div><!--header-->
 <div class="contents">
 
-<p>Base class for a state machine. Consists of the state, the rules, and the invariants that act on it.  
+<p>Base class for a state machine. Holds the state and declares the rules and the invariants that act on it.  
  <a href="#details">More...</a></p>
 
 <p><code>#include &lt;<a class="el" href="stateful_8h_source.html">stateful.h</a>&gt;</code></p>
 <table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 id="header-pub-types" class="groupheader"><a id="pub-types" name="pub-types"></a>
+Public Types</h2></td></tr>
+<tr class="memitem:a8dad964767a501c24e79e2b227b96ddc" id="r_a8dad964767a501c24e79e2b227b96ddc"><td class="memItemLeft" align="right" valign="top"><a id="a8dad964767a501c24e79e2b227b96ddc" name="a8dad964767a501c24e79e2b227b96ddc"></a>
+using&#160;</td><td class="memItemRight" valign="bottom"><b>state_type</b> = State</td></tr>
+<tr class="memdesc:a8dad964767a501c24e79e2b227b96ddc"><td class="mdescLeft">&#160;</td><td class="mdescRight">The type of the state the rules act on. <br /></td></tr>
+</table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-pub-methods" class="groupheader"><a id="pub-methods" name="pub-methods"></a>
 Public Member Functions</h2></td></tr>
-<tr class="memitem:a2b1d3014566584923a0d5f7514c25f61" id="r_a2b1d3014566584923a0d5f7514c25f61"><td class="memItemLeft" align="right" valign="top">std::vector&lt; <a class="el" href="classhegel_1_1stateful_1_1Invariant.html">Invariant</a>&lt; Derived &gt; &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a2b1d3014566584923a0d5f7514c25f61">invariants</a> ()</td></tr>
-<tr class="memdesc:a2b1d3014566584923a0d5f7514c25f61"><td class="mdescLeft">&#160;</td><td class="mdescRight">Invariants checked before the first step and after every valid step. Override to add them. Defaults to none.  <br /></td></tr>
+<tr class="memitem:aa523c97a9af27366374ad2ca7b56affb" id="r_aa523c97a9af27366374ad2ca7b56affb"><td class="memItemLeft" align="right" valign="top">&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aa523c97a9af27366374ad2ca7b56affb">StateMachine</a> (<a class="el" href="structhegel_1_1stateful_1_1StateMachineParams.html">StateMachineParams</a>&lt; State &gt; params)</td></tr>
+<tr class="memdesc:aa523c97a9af27366374ad2ca7b56affb"><td class="mdescLeft">&#160;</td><td class="mdescRight">Builds a machine holding the given initial state.  <br /></td></tr>
+<tr class="memitem:a343cc01c3f9618bafcfe6b82c9b4e3cc" id="r_a343cc01c3f9618bafcfe6b82c9b4e3cc"><td class="memItemLeft" align="right" valign="top">std::vector&lt; <a class="el" href="classhegel_1_1stateful_1_1Invariant.html">Invariant</a>&lt; Derived &gt; &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a343cc01c3f9618bafcfe6b82c9b4e3cc">invariants</a> ()</td></tr>
+<tr class="memdesc:a343cc01c3f9618bafcfe6b82c9b4e3cc"><td class="mdescLeft">&#160;</td><td class="mdescRight">Invariants checked before the first step and after every valid step. Override to add them. Defaults to none.  <br /></td></tr>
+</table><table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 id="header-pub-attribs" class="groupheader"><a id="pub-attribs" name="pub-attribs"></a>
+Public Attributes</h2></td></tr>
+<tr class="memitem:a772e643626d6d0b86b0525af47762491" id="r_a772e643626d6d0b86b0525af47762491"><td class="memItemLeft" align="right" valign="top">State&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a772e643626d6d0b86b0525af47762491">state</a></td></tr>
 </table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
-<div class="textblock"><div class="compoundTemplParams">template&lt;typename Derived&gt;<br />
-class hegel::stateful::StateMachine&lt; Derived &gt;</div><p>Base class for a state machine. Consists of the state, the rules, and the invariants that act on it. </p>
-<p>Derive from it with the deriving type as <code class="param">Derived</code> and define</p>
+<div class="textblock"><div class="compoundTemplParams">template&lt;typename Derived, typename State&gt;<br />
+class hegel::stateful::StateMachine&lt; Derived, State &gt;</div><p>Base class for a state machine. Holds the state and declares the rules and the invariants that act on it. </p>
+<p>Derive from it with the deriving type as <code class="param">Derived</code> and the state's type as <code class="param">State</code>, pass the initial state to this constructor, and define</p>
 <div class="fragment"><div class="line">std::vector&lt;Rule&lt;Derived&gt;&gt; rules();</div>
-</div><!-- fragment --><p>returning the actions the test may apply. Optionally override <a class="el" href="#a2b1d3014566584923a0d5f7514c25f61">invariants</a> to add predicates checked before the first step and after every valid step. The deriving object holds the state. Its rules mutate it in place. Pass an instance to <a class="el" href="namespacehegel_1_1stateful.html#a1321af6051de607b9b5cba9c71bf5725">run</a>.</p>
+</div><!-- fragment --><p>returning the actions the test may apply. Optionally override <a class="el" href="#a343cc01c3f9618bafcfe6b82c9b4e3cc">invariants</a> to add predicates checked before the first step and after every valid step. Rules mutate <a class="el" href="#a772e643626d6d0b86b0525af47762491">state</a> in place. Pass an instance to <a class="el" href="namespacehegel_1_1stateful.html#aff08b4715a4d979864ad0c960bd9cd34">run</a>.</p>
+<div class="fragment"><div class="line"><span class="keyword">struct </span>Counter : <a class="code hl_class" href="classhegel_1_1stateful_1_1StateMachine.html">hegel::stateful::StateMachine</a>&lt;Counter, int&gt; {</div>
+<div class="line">    Counter() : <a class="code hl_function" href="#aa523c97a9af27366374ad2ca7b56affb">StateMachine</a>({.initial_state = 0}) {}</div>
+<div class="line"> </div>
+<div class="line">    std::vector&lt;hegel::stateful::Rule&lt;Counter&gt;&gt; rules() {</div>
+<div class="line">        <span class="keywordflow">return</span> {<a class="code hl_class" href="classhegel_1_1stateful_1_1Rule.html">hegel::stateful::Rule&lt;Counter&gt;</a>(</div>
+<div class="line">            <span class="stringliteral">&quot;inc&quot;</span>, [](<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp;, Counter&amp; m) { m.state++; })};</div>
+<div class="line">    }</div>
+<div class="line">};</div>
+<div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:40</div></div>
+<div class="ttc" id="aclasshegel_1_1stateful_1_1Rule_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1Rule.html">hegel::stateful::Rule</a></div><div class="ttdoc">A rule is one possible action in a stateful test.</div><div class="ttdef"><b>Definition</b> stateful.h:291</div></div>
+<div class="ttc" id="aclasshegel_1_1stateful_1_1StateMachine_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1StateMachine.html">hegel::stateful::StateMachine</a></div><div class="ttdoc">Base class for a state machine. Holds the state and declares the rules and the invariants that act on...</div><div class="ttdef"><b>Definition</b> stateful.h:408</div></div>
+<div class="ttc" id="aclasshegel_1_1stateful_1_1StateMachine_html_aa523c97a9af27366374ad2ca7b56affb"><div class="ttname"><a href="#aa523c97a9af27366374ad2ca7b56affb">hegel::stateful::StateMachine::StateMachine</a></div><div class="ttdeci">StateMachine(StateMachineParams&lt; State &gt; params)</div><div class="ttdoc">Builds a machine holding the given initial state.</div><div class="ttdef"><b>Definition</b> stateful.h:421</div></div>
+</div><!-- fragment --><p>A machine may hold members besides the state, for anything the state's type cannot carry. A <a class="el" href="classhegel_1_1stateful_1_1Pool.html">Pool</a>, for instance, is tied to a test case and is neither copyable nor movable.</p>
 <dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
     <tr><td class="paramname">Derived</td><td>The deriving state-machine type </td></tr>
+    <tr><td class="paramname">State</td><td>The type of the state the rules act on </td></tr>
   </table>
   </dd>
 </dl>
-</div><a name="doc-func-members" id="doc-func-members"></a><h2 id="header-doc-func-members" class="groupheader">Member Function Documentation</h2>
-<a id="a2b1d3014566584923a0d5f7514c25f61" name="a2b1d3014566584923a0d5f7514c25f61"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a2b1d3014566584923a0d5f7514c25f61">&#9670;&#160;</a></span>invariants()</h2>
+</div><a name="doc-constructors" id="doc-constructors"></a><h2 id="header-doc-constructors" class="groupheader">Constructor &amp; Destructor Documentation</h2>
+<a id="aa523c97a9af27366374ad2ca7b56affb" name="aa523c97a9af27366374ad2ca7b56affb"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aa523c97a9af27366374ad2ca7b56affb">&#9670;&#160;</a></span>StateMachine()</h2>
 
 <div class="memitem">
 <div class="memproto">
 <div class="memtemplate">
-template&lt;typename Derived&gt; </div>
+template&lt;typename Derived, typename State&gt; </div>
 <table class="mlabels">
   <tr>
   <td class="mlabels-left">
       <table class="memname">
         <tr>
-          <td class="memname">std::vector&lt; <a class="el" href="classhegel_1_1stateful_1_1Invariant.html">Invariant</a>&lt; Derived &gt; &gt; <a class="el" href="classhegel_1_1stateful_1_1StateMachine.html">hegel::stateful::StateMachine</a>&lt; Derived &gt;::invariants </td>
+          <td class="memname"><a class="el" href="classhegel_1_1stateful_1_1StateMachine.html">hegel::stateful::StateMachine</a>&lt; Derived, State &gt;::StateMachine </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="structhegel_1_1stateful_1_1StateMachineParams.html">StateMachineParams</a>&lt; State &gt;</td>          <td class="paramname"><span class="paramname"><em>params</em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel explicit">explicit</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>Builds a machine holding the given initial state. </p>
+<div class="fragment"><div class="line">Counter() : <a class="code hl_function" href="#aa523c97a9af27366374ad2ca7b56affb">StateMachine</a>({.initial_state = 0}) {}</div>
+</div><!-- fragment --><dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">params</td><td>The initial state. See <a class="el" href="structhegel_1_1stateful_1_1StateMachineParams.html" title="Arguments for the StateMachine constructor.">StateMachineParams</a>. </td></tr>
+  </table>
+  </dd>
+</dl>
+
+</div>
+</div>
+<a name="doc-func-members" id="doc-func-members"></a><h2 id="header-doc-func-members" class="groupheader">Member Function Documentation</h2>
+<a id="a343cc01c3f9618bafcfe6b82c9b4e3cc" name="a343cc01c3f9618bafcfe6b82c9b4e3cc"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a343cc01c3f9618bafcfe6b82c9b4e3cc">&#9670;&#160;</a></span>invariants()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<div class="memtemplate">
+template&lt;typename Derived, typename State&gt; </div>
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::vector&lt; <a class="el" href="classhegel_1_1stateful_1_1Invariant.html">Invariant</a>&lt; Derived &gt; &gt; <a class="el" href="classhegel_1_1stateful_1_1StateMachine.html">hegel::stateful::StateMachine</a>&lt; Derived, State &gt;::invariants </td>
           <td>(</td>
           <td class="paramname"><span class="paramname"><em></em></span></td><td>)</td>
           <td></td>
@@ -145,6 +208,24 @@ template&lt;typename Derived&gt; </div>
 
 <p>Invariants checked before the first step and after every valid step. Override to add them. Defaults to none. </p>
 <dl class="section return"><dt>Returns</dt><dd>const std::vector&lt;Invariant&lt;Derived&gt;&gt;&amp; </dd></dl>
+
+</div>
+</div>
+<a name="doc-variable-members" id="doc-variable-members"></a><h2 id="header-doc-variable-members" class="groupheader">Member Data Documentation</h2>
+<a id="a772e643626d6d0b86b0525af47762491" name="a772e643626d6d0b86b0525af47762491"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a772e643626d6d0b86b0525af47762491">&#9670;&#160;</a></span>state</h2>
+
+<div class="memitem">
+<div class="memproto">
+<div class="memtemplate">
+template&lt;typename Derived, typename State&gt; </div>
+      <table class="memname">
+        <tr>
+          <td class="memname">State <a class="el" href="classhegel_1_1stateful_1_1StateMachine.html">hegel::stateful::StateMachine</a>&lt; Derived, State &gt;::state</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<p>The state the rules act on. Rules mutate it in place, and a failing run prints it. See <a class="el" href="structhegel_1_1stateful_1_1RunParams.html#a0aabafe75799eb0778e7867bf795e73a">RunParams::print_state</a>. </p>
 
 </div>
 </div>

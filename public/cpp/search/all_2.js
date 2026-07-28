@@ -5,8 +5,9 @@ var searchData=
   ['change_20the_20number_20of_20test_20cases_2',['Change the number of test cases',['../index.html#change_test_cases',1,'']]],
   ['characters_3',['characters',['../namespacehegel_1_1generators.html#a468ddf9429a0ce76d987f785b0e2afb6',1,'hegel::generators']]],
   ['charactersparams_4',['CharactersParams',['../structhegel_1_1generators_1_1CharactersParams.html',1,'hegel::generators']]],
-  ['clone_5',['clone',['../classhegel_1_1TestCase.html#abc9001045b8732d648f7292547671040',1,'hegel::TestCase']]],
-  ['codec_6',['codec',['../structhegel_1_1generators_1_1TextParams.html#a3c48bfe9d7925c67da2df921dbabbe3d',1,'hegel::generators::TextParams::codec'],['../structhegel_1_1generators_1_1CharactersParams.html#aae37aa9aa2e6421447fa0a040464ebf6',1,'hegel::generators::CharactersParams::codec']]],
-  ['compose_7',['compose',['../namespacehegel_1_1generators.html#a5bc654cad6e70c607310306aec1b185b',1,'hegel::generators']]],
-  ['compositegenerator_8',['CompositeGenerator',['../classhegel_1_1generators_1_1CompositeGenerator.html',1,'hegel::generators']]]
+  ['check_20properties_5',['Check properties',['../index.html#checking_properties',1,'']]],
+  ['clone_6',['clone',['../classhegel_1_1TestCase.html#abc9001045b8732d648f7292547671040',1,'hegel::TestCase']]],
+  ['codec_7',['codec',['../structhegel_1_1generators_1_1TextParams.html#a3c48bfe9d7925c67da2df921dbabbe3d',1,'hegel::generators::TextParams::codec'],['../structhegel_1_1generators_1_1CharactersParams.html#aae37aa9aa2e6421447fa0a040464ebf6',1,'hegel::generators::CharactersParams::codec']]],
+  ['compose_8',['compose',['../namespacehegel_1_1generators.html#a5bc654cad6e70c607310306aec1b185b',1,'hegel::generators']]],
+  ['compositegenerator_9',['CompositeGenerator',['../classhegel_1_1generators_1_1CompositeGenerator.html',1,'hegel::generators']]]
 ];

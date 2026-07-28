@@ -1,4 +1,5 @@
 var searchData=
 [
-  ['write_20your_20first_20test_0',['Write your first test',['../index.html#first_test',1,'']]]
+  ['use_20generators_0',['Use generators',['../index.html#use_generators',1,'']]],
+  ['use_20hegel_3a_3atest_20directly_1',['Use hegel::test() directly',['../index.html#plain_function',1,'']]]
 ];

@@ -11,8 +11,11 @@ var searchData=
   ['size_8',['size',['../classhegel_1_1stateful_1_1Pool.html#a274b8f1051f1d21b4585516ad48d0a0c',1,'hegel::stateful::Pool']]],
   ['spawn_9',['spawn',['../classhegel_1_1TestCase.html#a1a8b9f6edbc13b63349561dc7111e849',1,'hegel::TestCase']]],
   ['started_10',['Getting started',['../index.html#getting_started',1,'']]],
-  ['stateful_5fstep_5fcount_11',['stateful_step_count',['../structhegel_1_1Settings.html#a6492c6dff0a55d51dd5ce3836657e0dc',1,'hegel::Settings']]],
-  ['statemachine_12',['StateMachine',['../classhegel_1_1stateful_1_1StateMachine.html',1,'hegel::stateful']]],
-  ['step_13',['step',['../classhegel_1_1stateful_1_1Rule.html#aa5f2af586c295f594c51cd0d34ace90f',1,'hegel::stateful::Rule']]],
-  ['suppress_5fhealth_5fcheck_14',['suppress_health_check',['../structhegel_1_1Settings.html#ac78c4a0ae269f598b13c1d0c09f99214',1,'hegel::Settings']]]
+  ['state_11',['state',['../classhegel_1_1stateful_1_1StateMachine.html#a772e643626d6d0b86b0525af47762491',1,'hegel::stateful::StateMachine']]],
+  ['state_5ftype_12',['state_type',['../classhegel_1_1stateful_1_1StateMachine.html#a8dad964767a501c24e79e2b227b96ddc',1,'hegel::stateful::StateMachine']]],
+  ['stateful_5fstep_5fcount_13',['stateful_step_count',['../structhegel_1_1Settings.html#a6492c6dff0a55d51dd5ce3836657e0dc',1,'hegel::Settings']]],
+  ['statemachine_14',['StateMachine',['../classhegel_1_1stateful_1_1StateMachine.html',1,'hegel::stateful::StateMachine&lt; Derived, State &gt;'],['../classhegel_1_1stateful_1_1StateMachine.html#aa523c97a9af27366374ad2ca7b56affb',1,'hegel::stateful::StateMachine::StateMachine()']]],
+  ['statemachineparams_15',['StateMachineParams',['../structhegel_1_1stateful_1_1StateMachineParams.html',1,'hegel::stateful']]],
+  ['step_16',['step',['../classhegel_1_1stateful_1_1Rule.html#aa5f2af586c295f594c51cd0d34ace90f',1,'hegel::stateful::Rule']]],
+  ['suppress_5fhealth_5fcheck_17',['suppress_health_check',['../structhegel_1_1Settings.html#ac78c4a0ae269f598b13c1d0c09f99214',1,'hegel::Settings']]]
 ];
