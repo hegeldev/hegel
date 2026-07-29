@@ -58,7 +58,6 @@ export default defineConfig({
 						{ label: 'hegel-typescript', link: 'https://github.com/hegeldev/hegel-typescript', attrs: { target: '_blank', class: 'external-link' } },
 						{ label: 'hegel-java', link: 'https://github.com/hegeldev/hegel-java', attrs: { target: '_blank', class: 'external-link' } },
 						{ label: 'hegel-ocaml', link: 'https://github.com/hegeldev/hegel-ocaml', attrs: { target: '_blank', class: 'external-link' } },
-						{ label: 'libhegel (engine)', link: 'https://github.com/hegeldev/hegel-rust/tree/main/hegel-c', attrs: { target: '_blank', class: 'external-link' } },
 					],
 				},
 				// re-enable once we actually have content here!
@@ -77,8 +76,7 @@ export default defineConfig({
 				{
 					label: 'Reference',
 					items: [
-						{ slug: 'reference/installation' },
-						{ slug: 'reference/libhegel' },
+												{ slug: 'reference/libhegel' },
 					],
 				},
 				{
