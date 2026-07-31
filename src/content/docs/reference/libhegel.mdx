@@ -62,7 +62,7 @@ Release every pointer returned by these functions with its matching free:
 | `hegel_generate_bytes` | `hegel_generate_bytes_result_free` |
 | `hegel_generate_string` | `hegel_generate_string_result_free` |
 
-Every *other* pointer libhegel hands back is a borrowed string. The caller must not free it, and it is valid only until a documented point. Strings read off a result or failure snapshot live until that snapshot's free; <Fn name="hegel_context_last_error" /> is invalidated by the next call on that context.
+Every other pointer libhegel hands back is a borrowed string. The caller must not free it, and it is valid only until a documented point. <Fn name="hegel_context_last_error" /> is invalidated by the next call on that context.
 
 ## Settings
 
@@ -80,54 +80,54 @@ A configured handle may be shared across threads, but do not call setters concur
   returns={<><code>HEGEL_OK</code>.</>} />
 
 <FnTable name="hegel_settings_set_test_cases" signature="hegel_result_t hegel_settings_set_test_cases(hegel_context_t *ctx, hegel_settings_t *s, uint64_t n)"
-  params={[{name: "n", description: <>Maximum number of <em>valid</em> test cases to run before declaring the property held. Default 100. Cases rejected by an assumption don't count against this budget, but see <code>HEGEL_HC_FILTER_TOO_MUCH</code> for the limit on consecutive rejections.</>}]}
+  params={[{name: "n", description: <>Maximum number of valid test cases to run before declaring the property held. 100 by default. Cases rejected by an assumption do not count against this budget.</>}]}
   returns={<><code>HEGEL_OK</code> on success.</>} />
 
 <FnTable name="hegel_settings_set_mode" signature="hegel_result_t hegel_settings_set_mode(hegel_context_t *ctx, hegel_settings_t *s, uint32_t mode)"
-  params={[{name: "mode", description: <>A <SectionRef id="mode"><code>hegel_mode_t</code></SectionRef> value: a full run loop, or a single test case with no shrinking.</>}]}
-  returns={<><code>HEGEL_OK</code>, or <code>HEGEL_E_INVALID_ARG</code> for an out-of-range value.</>}
-  notes={<>The enum-valued setters take <code>uint32_t</code> rather than the enum type so that an out-of-range value from a miscast argument is a reportable error instead of undefined behavior.</>} />
+  params={[{name: "mode", description: <>A full run loop or a single test case with no shrinking. See <SectionRef id="mode"><code>hegel_mode_t</code></SectionRef>.</>}]}
+  returns={<><code>HEGEL_OK</code> or <code>HEGEL_E_INVALID_ARG</code> for an out-of-range value.</>}
+  notes={<>The enum-valued setters take <code>uint32_t</code> rather than the enum type so that an out-of-range value is an error instead of undefined behavior.</>} />
 
 <FnTable name="hegel_settings_set_seed" signature="hegel_result_t hegel_settings_set_seed(hegel_context_t *ctx, hegel_settings_t *s, uint64_t seed, bool has_seed)"
   params={[
     {name: "seed", description: <>The RNG seed to initialize generation with.</>},
-    {name: "has_seed", description: <>When <code>false</code> (the default), the engine picks a fresh random seed at run start and <code>seed</code> is ignored.</>},
+    {name: "has_seed", description: <>When <code>false</code> (the default), the engine picks a fresh random seed at run start.</>},
   ]}
   returns={<><code>HEGEL_OK</code> on success.</>} />
 
 <FnTable name="hegel_settings_set_derandomize" signature="hegel_result_t hegel_settings_set_derandomize(hegel_context_t *ctx, hegel_settings_t *s, bool derandomize)"
-  params={[{name: "derandomize", description: <>Derive the seed from a stable hash of the database key instead of fresh randomness, when no explicit seed is set.</>}]}
+  params={[{name: "derandomize", description: <>Derive the seed from a stable hash of the database key instead of fresh randomness when no explicit seed is set.</>}]}
   returns={<><code>HEGEL_OK</code> on success.</>}
   notes={<>Useful in CI, where you want repeated runs of one test to be deterministic but different tests to still see different inputs.</>} />
 
 <FnTable name="hegel_settings_set_database" signature="hegel_result_t hegel_settings_set_database(hegel_context_t *ctx, hegel_settings_t *s, const char *database)"
-  params={[{name: "database", description: <>NULL leaves the current value (default <code>.hegel/examples/</code> next to the cwd); <code>""</code> disables the database entirely, making the replay phase a no-op and not persisting discovered failures; anything else is used as the database root directory, created lazily.</>}]}
+  params={[{name: "database", description: <>NULL sets it to the default: <code>./.hegel/examples/</code>. <code>""</code> disables the database entirely. Discovered failures will not be stored. Anything else is used as the database root directory. The directory will be created if it does not already exist.</>}]}
   returns={<><code>HEGEL_OK</code> on success.</>} />
 
 <FnTable name="hegel_settings_set_database_key" signature="hegel_result_t hegel_settings_set_database_key(hegel_context_t *ctx, hegel_settings_t *s, const char *key)"
-  params={[{name: "key", description: <>Scopes stored and replayed examples for this run. NULL clears it (the default).</>}]}
+  params={[{name: "key", description: <>Scopes stored and replayed examples. NULL clears it (the default).</>}]}
   returns={<><code>HEGEL_OK</code> on success.</>} />
 
 <FnTable name="hegel_settings_set_phases" signature="hegel_result_t hegel_settings_set_phases(hegel_context_t *ctx, hegel_settings_t *s, uint32_t phases)"
-  params={[{name: "phases", description: <>A bitwise OR of <SectionRef id="phases"><code>hegel_phase_t</code></SectionRef> values. Phases not included are disabled. The default is <code>HEGEL_PHASE_ALL</code>; passing 0 produces a run that does nothing.</>}]}
+  params={[{name: "phases", description: <>A bitwise OR of <SectionRef id="phases"><code>hegel_phase_t</code></SectionRef> values to toggle phases. The default is <code>HEGEL_PHASE_ALL</code></>}]}
   returns={<><code>HEGEL_OK</code> on success.</>} />
 
 <FnTable name="hegel_settings_set_suppress_health_check" signature="hegel_result_t hegel_settings_set_suppress_health_check(hegel_context_t *ctx, hegel_settings_t *s, uint32_t checks)"
-  params={[{name: "checks", description: <>A bitwise OR of <SectionRef id="health-checks"><code>hegel_health_check_t</code></SectionRef> values naming the checks to <em>disable</em>. Each call replaces the full set, so passing 0 clears any previous suppression.</>}]}
+  params={[{name: "checks", description: <>A bitwise OR of <SectionRef id="health-checks"><code>hegel_health_check_t</code></SectionRef> values naming the checks to toggle. Each call overwrites the previous suppressions.</>}]}
   returns={<><code>HEGEL_OK</code> on success.</>} />
 
 <FnTable name="hegel_settings_set_report_multiple_failures" signature="hegel_result_t hegel_settings_set_report_multiple_failures(hegel_context_t *ctx, hegel_settings_t *s, bool yes)"
-  params={[{name: "yes", description: <>When <code>true</code>, the engine keeps generating after the first failure to surface additional <em>distinct</em> bugs (different origins), and the final result lists all of them. When <code>false</code>, the run stops after the first failing example.</>}]}
+  params={[{name: "yes", description: <>When <code>true</code>, the engine keeps generating after the first failure to surface additional distinct bugs. Failures from different locations in the program are considered distinct bugs. The final result lists all of them. When <code>false</code>, the run stops after the first failing example.</>}]}
   returns={<><code>HEGEL_OK</code> on success.</>} />
 
 <FnTable name="hegel_settings_set_verbosity" signature="hegel_result_t hegel_settings_set_verbosity(hegel_context_t *ctx, hegel_settings_t *s, uint32_t v)"
-  params={[{name: "v", description: <>A <SectionRef id="verbosity"><code>hegel_verbosity_t</code></SectionRef> value. Controls how much the engine emits; where it goes is set per run by the output callback.</>}]}
+  params={[{name: "v", description: <>Controls the output verbosity. See <SectionRef id="mode"><code>hegel_verbosity_t</code></SectionRef>.</>}]}
   returns={<><code>HEGEL_OK</code>, or <code>HEGEL_E_INVALID_ARG</code> for an out-of-range value.</>} />
 
 <FnTable name="hegel_settings_set_backend" signature="hegel_result_t hegel_settings_set_backend(hegel_context_t *ctx, hegel_settings_t *s, uint32_t backend)"
   params={[{name: "backend", description: <>A <SectionRef id="backend"><code>hegel_backend_t</code></SectionRef> value selecting the source of randomness.</>}]}
   returns={<><code>HEGEL_OK</code>, or <code>HEGEL_E_INVALID_ARG</code> for an out-of-range value.</>}
-  notes={<>Pinning is one-way: once an explicit backend has been set on a handle there is no way to return it to <code>HEGEL_BACKEND_AUTO</code>.</>} />
+  notes={<>Once an explicit backend has been set on a handle there is no way to change it within a run.</>} />
 
 ## Run lifecycle
 
@@ -618,14 +618,14 @@ Each kind of handle has its own threading contract:
 
 <EnumTable values={[
   {name: "HEGEL_OK", value: "0", description: <>Success.</>},
-  {name: "HEGEL_E_STOP_TEST", value: "-1", description: <>The engine has exhausted its choice budget for this test case and wants the caller to abort the body and return. Treat the same as a validly-completed test case.</>},
+  {name: "HEGEL_E_STOP_TEST", value: "-1", description: <>The engine has exhausted its choice budget for this test case and wants the caller to abort the body and return. Treat the same as a valid completed test case.</>},
   {name: "HEGEL_E_ASSUME", value: "-2", description: <>An <code>assume</code> / <code>reject</code> precondition failed. The current test case is invalid and should be discarded.</>},
   {name: "HEGEL_E_BACKEND", value: "-3", description: <>The underlying engine reported an error. See <Fn name="hegel_context_last_error" />.</>},
   {name: "HEGEL_E_INVALID_HANDLE", value: "-4", description: <>A handle pointer was NULL where it must be non-NULL.</>},
   {name: "HEGEL_E_INVALID_ARG", value: "-5", description: <>An argument other than a handle was invalid: NULL where a value was required, inverted bounds, a non-UTF-8 string, and so on.</>},
   {name: "HEGEL_E_ALREADY_COMPLETE", value: "-6", description: <><Fn name="hegel_mark_complete" /> (or a primitive on the same handle) was called for a test case that has already been completed.</>},
   {name: "HEGEL_E_NOT_COMPLETE", value: "-7", description: <>Something was read before it was ready: <Fn name="hegel_next_test_case" /> without first completing the previous test case, or <Fn name="hegel_run_result" /> before the run finished.</>},
-  {name: "HEGEL_E_INTERNAL", value: "-8", description: <>An internal invariant failed inside libhegel. Should not happen in practice; please file a bug.</>},
+  {name: "HEGEL_E_INTERNAL", value: "-8", description: <>An internal invariant failed inside libhegel. Should not happen in practice. Please <a href="https://github.com/hegeldev/hegel-rust/issues">file a bug</a>.</>},
   {name: "HEGEL_E_CONCURRENT_USE", value: "-9", description: <>A single test-case handle was used from two threads at once. Clone the handle instead.</>},
 ]} />
 
@@ -635,16 +635,16 @@ Passed to <Fn name="hegel_mark_complete" />.
 
 <EnumTable values={[
   {name: "HEGEL_STATUS_VALID", value: "0", description: <>The test body ran to completion without finding an interesting outcome, so the property held.</>},
-  {name: "HEGEL_STATUS_INVALID", value: "1", description: <>An assumption rejected this draw; discard it without counting it against the test-cases budget.</>},
+  {name: "HEGEL_STATUS_INVALID", value: "1", description: <>An assumption was violated in this test case.</>},
   {name: "HEGEL_STATUS_OVERRUN", value: "2", description: <>The engine ran out of choice budget mid test case, typically because a draw returned <code>HEGEL_E_STOP_TEST</code>. Treat the case as inconclusive.</>},
-  {name: "HEGEL_STATUS_INTERESTING", value: "3", description: <>The property failed and this draw is a candidate counterexample. Pass a stable origin string.</>},
+  {name: "HEGEL_STATUS_INTERESTING", value: "3", description: <>The property failed and this draw is a candidate counterexample.</>},
 ]} />
 
 ### Run status
 
 <EnumTable values={[
   {name: "HEGEL_RUN_STATUS_PASSED", value: "0", description: <>The property held across every generated test case.</>},
-  {name: "HEGEL_RUN_STATUS_FAILED", value: "1", description: <>The property failed; inspect each distinct counterexample.</>},
+  {name: "HEGEL_RUN_STATUS_FAILED", value: "1", description: <>The property failed. Inspect each distinct counterexample.</>},
   {name: "HEGEL_RUN_STATUS_ERROR", value: "2", description: <>The run itself failed and produced no verdict on the property. There are no failures to inspect; read the message with <Fn name="hegel_run_result_error" />.</>},
 ]} />
 
