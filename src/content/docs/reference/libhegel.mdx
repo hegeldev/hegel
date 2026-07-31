@@ -571,19 +571,19 @@ A failed run produced counterexamples to the property. An errored run produced n
   returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_INVALID_HANDLE</code> for a NULL <code>f</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_blob</code>.</>} />
 
 <FnTable name="hegel_run_result_free" signature="hegel_result_t hegel_run_result_free(hegel_context_t *ctx, hegel_run_result_t *r)"
-  params={[{name: "r", description: <>The snapshot to release, along with the strings read off it. Safe to call with NULL.</>}]}
+  params={[{name: "r", description: <>The snapshot to release and the strings read off it. Safe to call with NULL.</>}]}
   returns={<><code>HEGEL_OK</code>.</>}
-  notes={<>Must be called exactly once per snapshot; freeing the same snapshot twice is undefined behavior.</>} />
+  notes={<>Must be called exactly once per snapshot.</>} />
 
 <FnTable name="hegel_failure_free" signature="hegel_result_t hegel_failure_free(hegel_context_t *ctx, hegel_failure_t *f)"
-  params={[{name: "f", description: <>The snapshot to release, along with the strings read off it. Safe to call with NULL.</>}]}
+  params={[{name: "f", description: <>The snapshot to release and the strings read off it. Safe to call with NULL.</>}]}
   returns={<><code>HEGEL_OK</code>.</>} />
 
 ## Replaying a blob
 
-Replaying a <Def id="blob">reproduce blob</Def> is how a library performs the final replay of a counterexample: re-running the minimal failing test case so it can display the drawn values and re-raise the test's own failure.
+A library uses a <Def id="blob">reproduce blob</Def> to replay of a counterexample. It reruns the minimal failing test case so it can display the drawn values and re-raise the test's own failure.
 
-There is no run handle and no engine run involved. The caller drives the returned test case with the usual per-test-case primitives, concludes it with <Fn name="hegel_mark_complete" />, and decides for itself whether the blob reproduced the failure (the property failed again) or is stale (it passed). Replay several blobs by calling this once per blob.
+There is no run handle and no engine run involved. The caller drives the returned test case with the usual per-test-case primitives, concludes it with <Fn name="hegel_mark_complete" />, and decides for itself whether the blob reproduced the failure (the property failed again) or is stale/flaky (it passed).
 
 <FnTable name="hegel_test_case_from_blob" signature={`hegel_result_t hegel_test_case_from_blob(hegel_context_t *ctx,
                                            const hegel_settings_t *s,
@@ -593,11 +593,11 @@ There is no run handle and no engine run involved. The caller drives the returne
                                            hegel_test_case_t **out_test_case)`}
   params={[
     {name: "blob", description: <>A base64 blob from <Fn name="hegel_failure_reproduction_blob" />.</>},
-    {name: "callback / user_data", description: <>Where this replay's output goes, with the same contract as <Fn name="hegel_run_start" />. At debug verbosity the blob is decoded with a trace line, emitted synchronously during this call. The callback is only ever invoked on this thread and need not outlive the call.</>},
-    {name: "out_test_case", description: <>Receives a caller-owned test-case handle, released like any other with <Fn name="hegel_test_case_free" />.</>},
+    {name: "callback / user_data", description: <>Where this replay's output goes, with the same contract as <Fn name="hegel_run_start" />. At debug verbosity the blob is decoded with a trace line. The callback is only ever invoked on this thread and need not outlive the call.</>},
+    {name: "out_test_case", description: <>Receives a caller-owned test-case handle. Released like any other with <Fn name="hegel_test_case_free" />.</>},
   ]}
   returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_INVALID_HANDLE</code> for a NULL <code>s</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_test_case</code>, a NULL <code>blob</code>, or a blob that is not valid (corrupt, non-UTF-8, or from an incompatible Hegel version).</>}
-  notes={<>A blob whose choices no longer match the caller's generators surfaces as <code>HEGEL_E_STOP_TEST</code> from the draw that overruns.</>} />
+  notes={<>A blob whose choices no longer match the caller's generators returns <code>HEGEL_E_STOP_TEST</code> from the draw that overruns.</>} />
 
 ## Threading
 
@@ -605,8 +605,8 @@ Each kind of handle has its own threading contract:
 
 - A context must not be used concurrently from multiple threads. Each fallible call overwrites its stored message, so sharing one across threads is a data race.
 - A settings handle may be shared across threads once configured, but each setter call requires exclusive access.
-- A run handle must only be used from one thread at a time. Calling <Fn name="hegel_next_test_case" />, <Fn name="hegel_run_result" />, or <Fn name="hegel_run_free" /> concurrently on the same run is undefined behavior. In particular, do not free a run from a garbage-collector finalizer thread while another thread may still be using it.
-- A test-case handle may be driven by at most one thread at a time, but unlike a run it detects misuse: concurrent operations may return `HEGEL_E_CONCURRENT_USE`. To generate from several threads, <Fn name="hegel_test_case_clone" /> the handle and give each thread its own clone.
+- A run handle must only be used from one thread at a time. Calling <Fn name="hegel_next_test_case" />, <Fn name="hegel_run_result" />, or <Fn name="hegel_run_free" /> concurrently on the same run is undefined behavior. Do not free a run from a garbage-collector finalizer thread while another thread may still be using it.
+- A test-case handle may be driven by at most one thread at a time. Concurrent operations on it returns `HEGEL_E_CONCURRENT_USE`. To generate from several threads, <Fn name="hegel_test_case_clone" /> the handle and give each thread its own clone.
 
 ## Appendix
 
