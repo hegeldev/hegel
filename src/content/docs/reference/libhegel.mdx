@@ -159,9 +159,9 @@ The run handle owns the suspended run loop as a future, and each <Fn name="hegel
 <FnTable name="hegel_run_result" signature={`hegel_result_t hegel_run_result(hegel_context_t *ctx,
                                   hegel_run_t *run,
                                   hegel_run_result_t **out_result)`}
-  params={[{name: "out_result", description: <>Receives a caller-owned snapshot of the finished run's result.</>}]}
+  params={[{name: "out_result", description: <>Receives a caller-owned copy of the finished run's result.</>}]}
   returns={<><code>HEGEL_OK</code>, or <code>HEGEL_E_NOT_COMPLETE</code> if the run hasn't finished yet.</>}
-  notes={<>Each call writes a fresh snapshot, freed separately. Snapshots stay valid after <Fn name="hegel_run_free" />.</>} />
+  notes={<>Each call produces a copy, freed separately. It stays valid after <Fn name="hegel_run_free" />.</>} />
 
 <FnTable name="hegel_run_free" signature="hegel_result_t hegel_run_free(hegel_context_t *ctx, hegel_run_t *run)"
   params={[{name: "run", description: <>The run to free. Safe to call with NULL.</>}]}
@@ -526,7 +526,7 @@ For stateful testing `libhegel` picks which rule runs next and the caller runs i
 
 ## Results and failures
 
-A result snapshot is the outcome of a finished run. It stays valid after <Fn name="hegel_run_free" />, and is released separately.
+A run result is the outcome of a finished run, returned as a caller-owned copy. It stays valid after <Fn name="hegel_run_free" />, and is released separately.
 
 A failed run produced counterexamples to the property. An errored run produced no verdict on the property at all, so it has no failures to inspect. A run errors on a failed health check, a nondeterministic test, or a panic inside `libhegel`.
 
@@ -539,7 +539,7 @@ A failed run produced counterexamples to the property. An errored run produced n
 <FnTable name="hegel_run_result_error" signature={`hegel_result_t hegel_run_result_error(hegel_context_t *ctx,
                                         const hegel_run_result_t *r,
                                         const char **out_error)`}
-  params={[{name: "out_error", description: <>Receives the run-level error message when the run errored, or NULL when it completed normally. Owned by the snapshot and valid until <Fn name="hegel_run_result_free" />.</>}]}
+  params={[{name: "out_error", description: <>Receives the run-level error message when the run errored, or NULL when it completed normally. Owned by the run result and valid until <Fn name="hegel_run_result_free" />.</>}]}
   returns={<><code>HEGEL_OK</code>.</>} />
 
 <FnTable name="hegel_run_result_failure_count" signature={`hegel_result_t hegel_run_result_failure_count(hegel_context_t *ctx,
@@ -554,7 +554,7 @@ A failed run produced counterexamples to the property. An errored run produced n
                                           hegel_failure_t **out_failure)`}
   params={[
     {name: "index", description: <>0-based; must be less than the failure count.</>},
-    {name: "out_failure", description: <>Receives a caller-owned failure snapshot, independent of the result and run it came from.</>},
+    {name: "out_failure", description: <>Receives a caller-owned copy of the failure.</>},
   ]}
   returns={<><code>HEGEL_OK</code>.</>} />
 
@@ -571,12 +571,12 @@ A failed run produced counterexamples to the property. An errored run produced n
   returns={<><code>HEGEL_OK</code>.</>} />
 
 <FnTable name="hegel_run_result_free" signature="hegel_result_t hegel_run_result_free(hegel_context_t *ctx, hegel_run_result_t *r)"
-  params={[{name: "r", description: <>The snapshot to release and the strings read off it. Safe to call with NULL.</>}]}
+  params={[{name: "r", description: <>The run result to free and the strings read off it. Safe to call with NULL.</>}]}
   returns={<><code>HEGEL_OK</code>.</>}
-  notes={<>Must be called exactly once per snapshot.</>} />
+  notes={<>Must be called exactly once per run result.</>} />
 
 <FnTable name="hegel_failure_free" signature="hegel_result_t hegel_failure_free(hegel_context_t *ctx, hegel_failure_t *f)"
-  params={[{name: "f", description: <>The snapshot to release and the strings read off it. Safe to call with NULL.</>}]}
+  params={[{name: "f", description: <>The failure to free and the strings read off it. Safe to call with NULL.</>}]}
   returns={<><code>HEGEL_OK</code>.</>} />
 
 ## Replaying a blob
