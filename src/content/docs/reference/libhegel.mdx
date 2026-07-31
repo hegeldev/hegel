@@ -10,14 +10,14 @@ The canonical definition of the ABI is the header `hegel-c/include/hegel.h` in [
 
 ## Terminology
 
-* <strong><span id="def-engine">Engine</span></strong>: `libhegel` itself. It owns generation, shrinking, the example database, and the decision of what to run next.
-* <strong><span id="def-library">Library</span></strong>: the language-specific frontend that calls the <Def id="engine">engine</Def>. Sometimes called the *caller* below, since from the engine's point of view it is whatever is making the calls.
-* <strong><span id="def-context">Context</span></strong>: holds the diagnostic message of a failed call. Passed as the first argument to nearly every function.
-* <strong><span id="def-run">Run</span></strong>: the full lifecycle of one property test, including executing many <Def id="test-case">test cases</Def> and shrinking any failures.
-* <strong><span id="def-test-case">Test case</span></strong>: a single execution of the test function and the concrete values generated for it.
-* <strong><span id="def-family">Family</span></strong>: a <Def id="test-case">test case</Def> handle and all clones descended from it. Handles in a family are independent views onto one shared underlying test case, but each handle has its own choice sequence.
-* <strong><span id="def-span">Span</span></strong>: a labeled grouping of draws that tells the shrinker which draws belong to one unit.
-* <strong><span id="def-blob">Reproduce blob / Failure blob</span></strong>: a base64 string encoding a test case's choice sequence, which can be replayed later to reproduce it exactly. It is only guaranteed to reproduce the failure in the version of Hegel in which it was generated.
+* <span id="def-engine">Engine</span>: `libhegel` itself. It owns generation, shrinking, the example database, and the decision of what to run next.
+* <span id="def-library">Library</span>: the language-specific frontend that calls the <Def id="engine">engine</Def>. Sometimes called the caller below, since from the engine's point of view it is whatever is making the calls.
+* <span id="def-context">Context</span>: holds the diagnostic message of a failed call. Passed as the first argument to nearly every function.
+* <span id="def-run">Run</span>: the full lifecycle of one property test, including executing many <Def id="test-case">test cases</Def> and shrinking any failures.
+* <span id="def-test-case">Test case</span>: a single execution of the test function and the concrete values generated for it.
+* <span id="def-family">Family</span>: a <Def id="test-case">test case</Def> handle and all clones descended from it. Handles in a family are independent views onto one shared underlying test case, but each handle has its own choice sequence.
+* <span id="def-span">Span</span>: a labeled grouping of draws that tells the shrinker which draws belong to one unit.
+* <span id="def-blob">Reproduce blob / Failure blob</span>: a base64 string encoding a test case's choice sequence, which can be replayed later to reproduce it exactly. It is only guaranteed to reproduce the failure in the version of Hegel in which it was generated.
 
 ## Calling convention
 
@@ -44,7 +44,7 @@ A `NULL` context is always allowed and opts out of error messages. The call stil
 
 ## Ownership
 
-Pointers you pass *into* a libhegel function are always owned by the caller. libhegel reads them during the call and copies whatever it needs to keep, so you may free or reuse the memory as soon as the call returns. Run results own their data and are independent of the run they came from.
+Pointers you pass into a libhegel function are always owned by the caller. libhegel reads them during the call and copies whatever it needs to keep, so you may free or reuse the memory as soon as the call returns. Run results own their data and are independent of the run they came from.
 
 Release every pointer returned by these functions with its matching free:
 
@@ -131,7 +131,7 @@ A configured handle may be shared across threads, but do not call setters concur
 
 ## Run lifecycle
 
-The caller starts a run, repeatedly asks for the next test case and reports its outcome, and finally reads the aggregate result.
+The caller starts a run, repeatedly asks for the next test case, reports its outcome, and reads the run result after all test cases have been run.
 
 The run handle owns the suspended engine as a future, and each <Fn name="hegel_next_test_case" /> call resumes it on the calling thread until it returns the next test case or finishes.
 
@@ -141,48 +141,48 @@ The run handle owns the suspended engine as a future, and each <Fn name="hegel_n
                                  void *user_data,
                                  hegel_run_t **out_run)`}
   params={[
-    {name: "settings", description: <>The settings for this run. Snapshotted during the call, so the caller need not keep the handle alive.</>},
-    {name: "callback", description: <>Where the engine's output for this run goes. Each line is delivered to it, once per line, NUL-terminated UTF-8 of <code>len</code> bytes without a trailing newline, in a buffer owned by libhegel and valid only for the duration of the call. NULL leaves output on stderr.</>},
+    {name: "settings", description: <>The settings for this run. The caller can free the settings after passing them in since the engine copies the memory.</>},
+    {name: "callback", description: <>Where the engine's output for this run goes. NULL leaves output on stderr.</>},
     {name: "user_data", description: <>Passed through to <code>callback</code> verbatim. Ignored when <code>callback</code> is NULL.</>},
     {name: "out_run", description: <>Receives the run handle.</>},
   ]}
   returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_run</code>, or <code>HEGEL_E_INVALID_HANDLE</code> for NULL <code>settings</code>.</>}
-  notes={<>This only builds the run: no test case is generated until the first <Fn name="hegel_next_test_case" /> call. The engine emits while it runs inside that call, so the callback is invoked on whichever thread makes it, and both the callback and whatever <code>user_data</code> points to must stay valid until the run has been freed. Because it runs inside <Fn name="hegel_next_test_case" />, the callback must not call back into libhegel on the same run.</>} />
+  notes={<>This only builds the run. No test case is generated until the first <Fn name="hegel_next_test_case" /> call. The engine emits while it runs inside that call, so the callback is invoked on whichever thread makes it. Because it runs inside <Fn name="hegel_next_test_case" />, the callback must not call back into libhegel on the same run.</>} />
 
 <FnTable name="hegel_next_test_case" signature={`hegel_result_t hegel_next_test_case(hegel_context_t *ctx,
                                       hegel_run_t *run,
                                       hegel_test_case_t **out_test_case)`}
   params={[{name: "out_test_case", description: <>Receives a handle for the next test case, or NULL once the run is finished.</>}]}
   returns={<><code>HEGEL_OK</code>, including at normal completion, where <code>*out_test_case</code> is NULL and you should call <Fn name="hegel_run_result" />. <code>HEGEL_E_NOT_COMPLETE</code> if the previous test case was not marked complete, <code>HEGEL_E_INVALID_HANDLE</code> for a NULL <code>run</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_test_case</code>.</>}
-  notes={<>The handle is owned by the caller and must be released with <Fn name="hegel_test_case_free" />; the run keeps its own internal reference, so freeing yours never disturbs it. All engine work between test cases happens inside this call, so it may take a while when the engine has exploring to do.</>} />
+  notes={<>The handle is owned by the caller and must be released with <Fn name="hegel_test_case_free" />.</>} />
 
 <FnTable name="hegel_run_result" signature={`hegel_result_t hegel_run_result(hegel_context_t *ctx,
                                   hegel_run_t *run,
                                   hegel_run_result_t **out_result)`}
-  params={[{name: "out_result", description: <>Receives a caller-owned snapshot of the finished run's aggregate result.</>}]}
+  params={[{name: "out_result", description: <>Receives a caller-owned snapshot of the finished run's result.</>}]}
   returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_NOT_COMPLETE</code> if the run hasn't finished yet, <code>HEGEL_E_INVALID_HANDLE</code> for a NULL <code>run</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_result</code>.</>}
   notes={<>Each call writes a fresh snapshot, freed separately. Snapshots stay valid after <Fn name="hegel_run_free" />.</>} />
 
 <FnTable name="hegel_run_free" signature="hegel_result_t hegel_run_free(hegel_context_t *ctx, hegel_run_t *run)"
   params={[{name: "run", description: <>The run to free. Safe to call with NULL.</>}]}
   returns={<><code>HEGEL_OK</code>.</>}
-  notes={<>If the caller exited its loop early, any in-flight test case is marked complete and the rest of the exploration is dropped. The engine was suspended waiting for the next <Fn name="hegel_next_test_case" /> call, so there is nothing to wind down. Result and failure snapshots are independent of the run and stay valid.</>} />
+  notes={<>If the caller exited its loop early, any in-flight test case is marked complete and the rest of the exploration is dropped.</>} />
 
 ## Test cases
 
 A test-case handle is what a test body draws from. The caller drives it with the per-test-case primitives, concludes it with <Fn name="hegel_mark_complete" />, and releases it with <Fn name="hegel_test_case_free" />.
 
 <FnTable name="hegel_test_case_free" signature="hegel_result_t hegel_test_case_free(hegel_context_t *ctx, hegel_test_case_t *tc)"
-  params={[{name: "tc", description: <>Any test-case handle, whatever its origin. Safe to call with NULL, and safe whether or not the case was marked complete.</>}]}
+  params={[{name: "tc", description: <>Any test-case handle. Safe to call with NULL.</>}]}
   returns={<><code>HEGEL_OK</code>.</>}
-  notes={<>Each handle holds one reference to the shared test case; the underlying data source is released once the last reference is gone. Each handle must be freed exactly once. <strong>Freeing is not completing</strong>: a run-owned test case still needs <Fn name="hegel_mark_complete" /> from some handle in its <Def id="family">family</Def> before the run can advance, so conclude every case before dropping your last handle to it.</>} />
+  notes={<>Each handle holds one reference to the shared test case. The underlying data source is released once the last reference is gone. Each handle must be freed exactly once. A run-owned test case still needs <Fn name="hegel_mark_complete" /> from some handle in its <Def id="family">family</Def> before the run can advance, so make every test case complete before freeing your last handle to it.</>} />
 
 <FnTable name="hegel_test_case_clone" signature={`hegel_result_t hegel_test_case_clone(hegel_context_t *ctx,
                                        const hegel_test_case_t *tc,
                                        hegel_test_case_t **out_test_case)`}
-  params={[{name: "out_test_case", description: <>Receives a new handle onto an <em>independent stream</em> of the same test case.</>}]}
+  params={[{name: "out_test_case", description: <>Receives a new handle onto an independent stream of the same test case.</>}]}
   returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_CONCURRENT_USE</code> if another thread is mid-operation on the source handle, <code>HEGEL_E_ALREADY_COMPLETE</code> once the family has completed, <code>HEGEL_E_INVALID_HANDLE</code> for a NULL <code>tc</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_test_case</code>.</>}
-  notes={<>The clone shares the test case's outcome and budgets but generates from its own choice sequence, so a clone and its source can be driven concurrently from different threads while staying deterministic under replay. Collections, pools, and state machines remain shared across the family, so ids from one handle work on any other. Driving one of those shared objects from two streams at once makes the affected values scheduling-dependent. Cloning is itself a stream operation: it occupies one choice position on the source handle's stream.</>} />
+  notes={<>The clone shares the test case's outcome and budgets but generates from its own choice sequence, so a clone and its source can be driven concurrently from different threads while staying deterministic under replay. Collections, pools, and state machines remain shared across the family, but do not use shared objects from two streams since it makes tests flaky. Cloning itself is a choice on the source handle's stream.</>} />
 
 <FnTable name="hegel_mark_complete" signature={`hegel_result_t hegel_mark_complete(hegel_context_t *ctx,
                                      hegel_test_case_t *tc,
@@ -190,18 +190,16 @@ A test-case handle is what a test body draws from. The caller drives it with the
                                      const char *origin)`}
   params={[
     {name: "status", description: <>A <SectionRef id="test-case-status"><code>hegel_status_t</code></SectionRef> value describing how the test case ended.</>},
-    {name: "origin", description: <>Used only when <code>status</code> is <code>HEGEL_STATUS_INTERESTING</code>; NULL otherwise. Identifies <em>which bug</em> this failure is.</>},
+    {name: "origin", description: <>Identifies the origin of a failure. Used only when <code>status</code> is <code>HEGEL_STATUS_INTERESTING</code>; NULL otherwise. </>},
   ]}
-  returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_ALREADY_COMPLETE</code> if called twice on the <em>same</em> handle, <code>HEGEL_E_INVALID_HANDLE</code> for a NULL <code>tc</code>, or <code>HEGEL_E_INVALID_ARG</code> for a non-UTF-8 <code>origin</code>.</>}
-  notes={<>Completion is <strong>first-caller-wins and family-wide</strong>: the first call anywhere in the family records the outcome, and a later call on a <em>different</em> handle is a safe no-op, so two clones racing to complete do not error. This function never returns <code>HEGEL_E_CONCURRENT_USE</code>: if another thread is mid-operation on the handle it waits, then completes.</>} />
+  returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_ALREADY_COMPLETE</code> if called twice on the same handle, <code>HEGEL_E_INVALID_HANDLE</code> for a NULL <code>tc</code>, or <code>HEGEL_E_INVALID_ARG</code> for a non-UTF-8 <code>origin</code>.</>}
+  notes={<>Completion is first-caller-wins and family-wide: the first call anywhere in the family records the outcome, and a later call on a different handle is a safe no-op, so two clones racing to complete do not error. This function never returns <code>HEGEL_E_CONCURRENT_USE</code>: if another thread is mid-operation on the handle it waits, then completes.</>} />
 
 ### Choosing an origin string
 
-The engine groups failures by their `origin`, so the string you pass to <Fn name="hegel_mark_complete" /> decides how well the shrinker works. Two failures with identical origins are the same bug and get shrunk together. Each new origin is a new bug, and the shrink budget is *partitioned* across them.
+The engine groups failures by their `origin`. Two failures with identical origins are the same bug and get shrunk together. Each new origin is a new bug, and the shrink budget is partitioned across them.
 
-A library that recovers from a host-language exception to report a failure **must not** pass the recovered exception value, or its string form, as the origin if that value depends on the failing draw. Every distinct draw would then look like a fresh bug and the shrinker would never converge.
-
-Derive the origin from the *location* of the failing assertion. The conventional shape is `"Panic at <file>:<line>"`.
+A library must pass a stable value for the origin, such as the location of the failing assertion.
 
 ## Draws
 
@@ -214,8 +212,8 @@ Every draw takes a test-case handle and writes its value through an out-paramete
                                         bool has_forced,
                                         bool *out_value)`}
   params={[
-    {name: "p", description: <>Probability of drawing <code>true</code>. Must be in <code>[0.0, 1.0]</code>. <code>p = 0.0</code> always yields <code>false</code> and <code>p = 1.0</code> always yields <code>true</code>, without consuming entropy.</>},
-    {name: "forced / has_forced", description: <>When <code>has_forced</code> is set, the result is forced to <code>forced</code>: the engine still records the choice so replay and shrinking stay aligned, but consumes no entropy and the shrinker will not flip it.</>},
+    {name: "p", description: <>Probability of drawing <code>true</code>. Must be in <code>[0.0, 1.0]</code>. <code>p = 0.0</code> always yields <code>false</code> and <code>p = 1.0</code> always yields <code>true</code> without consuming entropy.</>},
+    {name: "forced / has_forced", description: <>When <code>has_forced</code> is set, the result is forced to <code>forced</code>. The engine still records the choice so replay and shrinking stay aligned, but consumes no entropy and the shrinker will not flip it.</>},
   ]}
   returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_STOP_TEST</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_value</code>, a <code>p</code> outside <code>[0.0, 1.0]</code> (including NaN), or a contradictory forced value.</>} />
 
@@ -237,7 +235,7 @@ Every draw takes a test-case handle and writes its value through an out-paramete
                                             size_t out_value_cap,
                                             size_t *out_value_len)`}
   params={[
-    {name: "min_value / max_value", description: <>Inclusive bounds as two's-complement <strong>little-endian</strong> signed byte buffers. That is the natural encoding of Go's <code>math/big</code> <code>FillBytes</code> reversed, or Rust's <code>i128::to_le_bytes</code>. Both required and must be non-empty.</>},
+    {name: "min_value / max_value", description: <>Inclusive bounds as two's-complement little-endian signed byte buffers. Both required and must be non-empty.</>},
     {name: "out_value", description: <>Receives the drawn value's two's-complement little-endian bytes. The engine sign-fills the rest of the buffer up to <code>out_value_cap</code>, so reading the whole buffer as a fixed-width integer also yields the drawn value with no sign extension needed.</>},
     {name: "out_value_len", description: <>Receives the value's minimal length. Passing <code>out_value_cap &gt;= max(min_value_len, max_value_len)</code> always succeeds.</>},
   ]}
@@ -256,14 +254,14 @@ Every draw takes a test-case handle and writes its value through an out-paramete
                                       double smallest_nonzero_magnitude,
                                       double *out_value)`}
   params={[
-    {name: "width", description: <>32 or 64. Width-32 bounds must be exactly representable as <code>float</code>, and finite width-32 results are exactly representable as <code>float</code>.</>},
+    {name: "width", description: <>32 or 64. 32 bit bounds must be exactly representable as <code>float</code>, and finite 32 bit results are exactly representable as <code>float</code>.</>},
     {name: "min_value / max_value", description: <>Inclusive bounds. Pass <code>-INFINITY</code> / <code>INFINITY</code> for unbounded ends.</>},
     {name: "allow_nan", description: <>NaN is drawn only when this is set.</>},
-    {name: "allow_infinity", description: <>Infinities are drawn only when this is set <em>and</em> the relevant endpoint is unbounded.</>},
+    {name: "allow_infinity", description: <>Infinities are drawn only when this is set and the corresponding endpoint is unbounded.</>},
     {name: "exclude_min / exclude_max", description: <>Make the corresponding bound exclusive by stepping it to the next representable value at the requested width.</>},
     {name: "smallest_nonzero_magnitude", description: <>Nonzero magnitudes below this are never drawn. Must be positive and finite; pass <code>5e-324</code> (width 64) or the smallest <code>float</code> subnormal (width 32) for no restriction.</>},
   ]}
-  returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_STOP_TEST</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_value</code>, an unsupported width, NaN bounds, width-32 bounds not exactly representable as <code>float</code>, an invalid <code>smallest_nonzero_magnitude</code>, or an empty range.</>} />
+  returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_STOP_TEST</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_value</code>, an unsupported width, NaN bounds, 32 bit bounds not exactly representable as <code>float</code>, an invalid <code>smallest_nonzero_magnitude</code>, or an empty range.</>} />
 
 <FnTable name="hegel_generate_bytes" signature={`hegel_result_t hegel_generate_bytes(hegel_context_t *ctx,
                                       hegel_test_case_t *tc,
@@ -272,7 +270,7 @@ Every draw takes a test-case handle and writes its value through an out-paramete
                                       hegel_generate_bytes_result_t *out_result)`}
   params={[
     {name: "min_size / max_size", description: <>Inclusive length bounds.</>},
-    {name: "out_result", description: <>Receives an engine-allocated <code>{"{uint8_t *data; size_t len;}"}</code> the caller owns. <code>data</code> is never NULL after a successful draw, even for <code>len == 0</code>. Release with <Fn name="hegel_generate_bytes_result_free" />.</>},
+    {name: "out_result", description: <>Receives an engine-allocated <code>{"{uint8_t *data; size_t len;}"}</code> the caller owns. <code>data</code> is never NULL after a successful draw. Release with <Fn name="hegel_generate_bytes_result_free" />.</>},
   ]}
   returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_STOP_TEST</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_result</code> or <code>min_size &gt; max_size</code>.</>} />
 
@@ -280,11 +278,9 @@ Every draw takes a test-case handle and writes its value through an out-paramete
                                                   hegel_generate_bytes_result_t *result)`}
   params={[{name: "result", description: <>Released and reset to <code>{"{NULL, 0}"}</code>. Safe to call with NULL or an already-freed (zeroed) struct.</>}]}
   returns={<><code>HEGEL_OK</code>.</>}
-  notes={<>Freeing the buffer through any other allocator is undefined behavior.</>} />
+  notes={<>Freeing the buffer any other way is undefined behavior.</>} />
 
 ### Strings
-
-String draws are two-step: build an immutable *string generator* describing the alphabet and shape, then draw through it. Every parameter is validated at construction, so a bad alphabet or pattern is reported at the point of the mistake rather than mid-draw. A generator may be shared freely across test cases and threads.
 
 <FnTable name="hegel_string_generator_text" signature={`hegel_result_t hegel_string_generator_text(hegel_context_t *ctx,
                                              uint64_t min_size,
@@ -305,9 +301,9 @@ String draws are two-step: build an immutable *string generator* describing the 
     {name: "min_size / max_size", description: <>Inclusive length bounds, in characters.</>},
     {name: "codec", description: <>The alphabet's starting range: <code>"ascii"</code>, <code>"latin-1"</code> / <code>"iso-8859-1"</code>, or <code>"utf-8"</code> / NULL for all of Unicode.</>},
     {name: "min_codepoint / max_codepoint", description: <>Intersected with the codec's range. Pass <code>0</code> and <code>UINT32_MAX</code> for no constraint. Surrogates are always removed.</>},
-    {name: "categories", description: <>Restricts to the union of the named Unicode general categories. NULL means no restriction; a non-NULL empty list means an empty alphabet.</>},
+    {name: "categories", description: <>Restricts to the union of the named Unicode general categories. NULL means no restriction. A non-NULL empty list means an empty alphabet.</>},
     {name: "exclude_categories", description: <>Removes the named categories.</>},
-    {name: "include_characters / exclude_characters", description: <>UTF-8 buffers (pointer plus byte length) of individual characters unioned in, then removed, last. Length-delimited rather than NUL-terminated because U+0000 is a valid character to include or exclude.</>},
+    {name: "include_characters / exclude_characters", description: <>UTF-8 buffers (pointer plus byte length) of individual characters. Characters in <code>include_characters</code> are included first, then characters in <code>exclude_characters</code> are removed.</>},
   ]}
   returns={<><code>HEGEL_OK</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_generator</code>, <code>min_size &gt; max_size</code>, an unknown codec or category, non-UTF-8 string arguments, include/exclude conflicts, or constraints that leave no characters while <code>max_size &gt; 0</code>.</>} />
 
@@ -318,8 +314,8 @@ String draws are two-step: build an immutable *string generator* describing the 
                                               hegel_string_generator_t **out_generator)`}
   params={[
     {name: "pattern", description: <>The pattern to match, in Python <code>re</code> syntax.</>},
-    {name: "fullmatch", description: <>When true the whole string matches the pattern; otherwise the match may be padded on either side.</>},
-    {name: "alphabet", description: <>Optional (NULL for none). Must be a <em>text</em> generator; its character set constrains the padding and wildcard characters.</>},
+    {name: "fullmatch", description: <>When true, the whole string must match the pattern. Otherwise, the match may be padded on either side.</>},
+    {name: "alphabet", description: <>Optional (NULL for none). Must be a text generator. Its character set constrains the padding and wildcard characters.</>},
   ]}
   returns={<><code>HEGEL_OK</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_generator</code>, a NULL / non-UTF-8 / invalid <code>pattern</code>, or an <code>alphabet</code> that is not a text generator.</>} />
 
@@ -334,7 +330,7 @@ String draws are two-step: build an immutable *string generator* describing the 
 <FnTable name="hegel_string_generator_domain" signature={`hegel_result_t hegel_string_generator_domain(hegel_context_t *ctx,
                                                uint64_t max_length,
                                                hegel_string_generator_t **out_generator)`}
-  params={[{name: "max_length", description: <>Total length of the fully-qualified domain name, in <code>4..=255</code> (RFC 1035 §2.3.4 allows 255).</>}]}
+  params={[{name: "max_length", description: <>Total length of the fully-qualified domain name, in <code>4..=255</code>.</>}]}
   returns={<><code>HEGEL_OK</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_generator</code> or a <code>max_length</code> that leaves no eligible top-level domains.</>} />
 
 <FnTable name="hegel_string_generator_free" signature={`hegel_result_t hegel_string_generator_free(hegel_context_t *ctx,
@@ -349,9 +345,9 @@ String draws are two-step: build an immutable *string generator* describing the 
                                        hegel_generate_string_result_t *out_result)`}
   params={[
     {name: "generator", description: <>A generator built by one of the constructors above.</>},
-    {name: "out_result", description: <>Receives an engine-allocated <code>{"{char *data; size_t len;}"}</code> the caller owns. <strong>Not NUL-terminated</strong>, and it may contain interior NUL bytes since the drawn alphabet can include U+0000, so always use <code>len</code>. Release with <Fn name="hegel_generate_string_result_free" />.</>},
+    {name: "out_result", description: <>Receives an engine-allocated <code>{"{char *data; size_t len;}"}</code> the caller owns. Not NUL-terminated, and it may contain interior NUL bytes since the drawn alphabet can include U+0000, so always use <code>len</code>. Release with <Fn name="hegel_generate_string_result_free" />.</>},
   ]}
-  returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_STOP_TEST</code>, <code>HEGEL_E_ASSUME</code> when the draw rejected itself (for example an email exceeding the RFC length cap; discard the test case as invalid), <code>HEGEL_E_INVALID_HANDLE</code> for a NULL <code>tc</code> or <code>generator</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_result</code>.</>} />
+  returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_STOP_TEST</code>, <code>HEGEL_E_ASSUME</code> when the draw rejected itself (for example an email exceeding the RFC length cap), <code>HEGEL_E_INVALID_HANDLE</code> for a NULL <code>tc</code> or <code>generator</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_result</code>.</>} />
 
 <FnTable name="hegel_generate_string_result_free" signature={`hegel_result_t hegel_generate_string_result_free(hegel_context_t *ctx,
                                                    hegel_generate_string_result_t *result)`}
@@ -360,7 +356,7 @@ String draws are two-step: build an immutable *string generator* describing the 
 
 ### Dates, times, and identifiers
 
-These draws return small fixed-shape structs rather than strings, so a binding can build its language's native type without going through a text format.
+These draws return small fixed-shape structs:
 
 ```c
 typedef struct { int32_t year; uint8_t month; uint8_t day; } hegel_date_t;
@@ -373,9 +369,9 @@ typedef struct { hegel_date_t date; hegel_time_t time; } hegel_datetime_t;
                                      hegel_date_t min_value,
                                      hegel_date_t max_value,
                                      hegel_date_t *out_value)`}
-  params={[{name: "min_value / max_value", description: <>Inclusive bounds, as proleptic Gregorian dates with <code>year</code> in <code>[-999999, 999999]</code>. Pass <code>{"{1, 1, 1}"}</code> and <code>{"{9999, 12, 31}"}</code> for the conventional full range.</>}]}
+  params={[{name: "min_value / max_value", description: <>Inclusive bounds, as proleptic Gregorian dates with <code>year</code> in <code>[-999999, 999999]</code>. Pass <code>{"{1, 1, 1}"}</code> and <code>{"{9999, 12, 31}"}</code> for the full range.</>}]}
   returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_STOP_TEST</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_value</code>, an invalid calendar date in either bound, or <code>min_value &gt; max_value</code>.</>}
-  notes={<>Shrinks toward 2000-01-01, or the nearest bound when that is out of range.</>} />
+  notes={<>Shrinks toward 2000-01-01 or the nearest bound when that is out of range.</>} />
 
 <FnTable name="hegel_generate_time" signature={`hegel_result_t hegel_generate_time(hegel_context_t *ctx,
                                      hegel_test_case_t *tc,
@@ -393,7 +389,7 @@ typedef struct { hegel_date_t date; hegel_time_t time; } hegel_datetime_t;
                                          hegel_datetime_t *out_value)`}
   params={[{name: "min_value / max_value", description: <>Inclusive bounds on a naive datetime (no timezone).</>}]}
   returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_STOP_TEST</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_value</code>, an invalid date or time in either bound, or <code>min_value &gt; max_value</code>.</>}
-  notes={<>Shrinks toward 2000-01-01T00:00:00 clamped into range: a bounded date draw, then a time draw whose bounds tighten to the endpoint times when the drawn date lands on a boundary date.</>} />
+  notes={<>Shrinks toward 2000-01-01T00:00:00 or the nearest bound when that is out of range.</>} />
 
 <FnTable name="hegel_generate_uuid" signature={`hegel_result_t hegel_generate_uuid(hegel_context_t *ctx,
                                      hegel_test_case_t *tc,
@@ -402,41 +398,41 @@ typedef struct { hegel_date_t date; hegel_time_t time; } hegel_datetime_t;
                                      uint8_t *out_bytes)`}
   params={[
     {name: "version / has_version", description: <>When <code>has_version</code> is set, the RFC 4122 version nibble is forced to <code>version</code> (0..=15, conventionally 1..=5) and the variant nibble to the RFC 4122 variant. Without a version the 128 bits are uniform, except that the nil UUID is never produced.</>},
-    {name: "out_bytes", description: <>Receives 16 big-endian bytes. Must have room for 16.</>},
+    {name: "out_bytes", description: <>Receives 16 big-endian bytes.</>},
   ]}
   returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_STOP_TEST</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_bytes</code> or a <code>version &gt; 15</code>.</>} />
 
 <FnTable name="hegel_generate_ipv4" signature="hegel_result_t hegel_generate_ipv4(hegel_context_t *ctx, hegel_test_case_t *tc, uint8_t *out_bytes)"
-  params={[{name: "out_bytes", description: <>Receives the address's 4 network-order bytes. Must have room for 4.</>}]}
+  params={[{name: "out_bytes", description: <>Receives the address's 4 network-order bytes.</>}]}
   returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_STOP_TEST</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_bytes</code>.</>}
   notes={<>Half the draws are uniform over the whole address space and half are biased into the IANA special-purpose ranges (loopback, private, documentation, …).</>} />
 
 <FnTable name="hegel_generate_ipv6" signature="hegel_result_t hegel_generate_ipv6(hegel_context_t *ctx, hegel_test_case_t *tc, uint8_t *out_bytes)"
-  params={[{name: "out_bytes", description: <>Receives the address's 16 network-order bytes. Must have room for 16.</>}]}
+  params={[{name: "out_bytes", description: <>Receives the address's 16 network-order bytes.</>}]}
   returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_STOP_TEST</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_bytes</code>.</>}
   notes={<>Same special-range biasing as <Fn name="hegel_generate_ipv4" />.</>} />
 
 ## Structure
 
-These primitives tell the engine how the values from individual draws are grouped, so the shrinker can reason about the structures a library builds out of them.
+These primitives tell the engine how the values from individual draws are grouped, so the shrinker make smarter decisions.
 
 ### Spans
 
-A <Def id="span">span</Def> groups a set of draws so the shrinker can treat them as a unit. It can then shorten a list instead of deleting choices from the middle of a single element. Libraries wrap each compound generator in a span.
+A <Def id="span">span</Def> groups a set of draws so the shrinker can treat them as a unit. Libraries should wrap each compound generator in a span.
 
 <FnTable name="hegel_start_span" signature="hegel_result_t hegel_start_span(hegel_context_t *ctx, hegel_test_case_t *tc, uint64_t label)"
-  params={[{name: "label", description: <>Identifies what kind of structure this span groups, so the shrinker can pick appropriate moves. The well-known values are the <code>hegel_label_t</code> constants in <code>hegel.h</code>, but the type is <code>uint64_t</code> rather than the enum because the label space is open: any stable <code>u64</code> works, and the engine treats unrecognized labels as opaque grouping keys.</>}]}
+  params={[{name: "label", description: <>Identifies what kind of structure this span groups. The engine-reserved values are the <code>hegel_label_t</code> constants in <code>hegel.h</code>. Libraries may use any stable <code>u64</code> to define their own spans.</>}]}
   returns={<><code>HEGEL_OK</code> on success.</>}
   notes={<>Pair with exactly one <Fn name="hegel_stop_span" /> call.</>} />
 
 <FnTable name="hegel_stop_span" signature="hegel_result_t hegel_stop_span(hegel_context_t *ctx, hegel_test_case_t *tc, bool discard)"
-  params={[{name: "discard", description: <>Pass <code>true</code> to mark the span rejected (a <code>filter</code> predicate didn't hold, say) so the engine retries from before the span opened.</>}]}
+  params={[{name: "discard", description: <>Pass <code>true</code> to mark the span rejected (e.g. a <code>filter</code> predicate didn't hold) so the engine retries from before the span opened.</>}]}
   returns={<><code>HEGEL_OK</code> on success.</>}
   notes={<>Closes the most recently opened span.</>} />
 
 ### Collections
 
-For variable-length values, the engine decides how many elements to produce rather than the library drawing a length up front. The caller loops on <Fn name="hegel_collection_more" />, drawing one element per `true`.
+For variable-length values, the engine decides how many elements to produce. The caller loops on <Fn name="hegel_collection_more" />, drawing one element per returned `true`.
 
 <FnTable name="hegel_new_collection" signature={`hegel_result_t hegel_new_collection(hegel_context_t *ctx,
                                       hegel_test_case_t *tc,
@@ -445,7 +441,7 @@ For variable-length values, the engine decides how many elements to produce rath
                                       int64_t *out_collection_id)`}
   params={[
     {name: "min_size / max_size", description: <>Inclusive size bounds. Pass <code>UINT64_MAX</code> as <code>max_size</code> for no upper bound.</>},
-    {name: "out_collection_id", description: <>Receives an opaque id to pass to the calls below.</>},
+    {name: "out_collection_id", description: <>Receives an id to pass to the calls below.</>},
   ]}
   returns={<><code>HEGEL_OK</code> on success.</>} />
 
@@ -453,7 +449,7 @@ For variable-length values, the engine decides how many elements to produce rath
                                        hegel_test_case_t *tc,
                                        int64_t collection_id,
                                        bool *out_more)`}
-  params={[{name: "out_more", description: <>Receives whether the engine wants another element. Call in a loop until it is <code>false</code>, drawing the next element each time.</>}]}
+  params={[{name: "out_more", description: <>Receives whether the engine wants another element. Call in a loop until it is <code>false</code> and draw the next element in each loop iteration.</>}]}
   returns={<><code>HEGEL_OK</code> on success.</>} />
 
 <FnTable name="hegel_collection_reject" signature={`hegel_result_t hegel_collection_reject(hegel_context_t *ctx,
@@ -462,14 +458,14 @@ For variable-length values, the engine decides how many elements to produce rath
                                          const char *why)`}
   params={[{name: "why", description: <>Optional human-readable rejection reason (NULL is allowed). Validated but currently unused, reserved for future rejection diagnostics.</>}]}
   returns={<><code>HEGEL_OK</code> on success.</>}
-  notes={<>Tells the engine the last element it produced is not acceptable (a duplicate in a set, say) so it should try a different one.</>} />
+  notes={<>Tells the engine the last element it produced is invalid.</>} />
 
 ### Variable pools
 
-A *pool* tracks a set of opaque variable ids the engine can draw from and shrink over: the primitive behind stateful testing, where a rule needs to act on some previously-created value. The caller keeps its own mapping from variable id to the value it generated.
+A pool tracks a set of variable ids the engine can draw from and shrink over. It is mostly used for stateful testing, where a rule needs to act on some previously generated value. The caller keeps its own mapping from variable id to the value it generated.
 
 <FnTable name="hegel_new_pool" signature="hegel_result_t hegel_new_pool(hegel_context_t *ctx, hegel_test_case_t *tc, int64_t *out_pool_id)"
-  params={[{name: "out_pool_id", description: <>Receives an opaque pool id, valid on this test case.</>}]}
+  params={[{name: "out_pool_id", description: <>Receives a pool id valid for this test case.</>}]}
   returns={<><code>HEGEL_OK</code> on success.</>} />
 
 <FnTable name="hegel_pool_add" signature={`hegel_result_t hegel_pool_add(hegel_context_t *ctx,
@@ -485,14 +481,14 @@ A *pool* tracks a set of opaque variable ids the engine can draw from and shrink
                                      bool consume,
                                      int64_t *out_variable_id)`}
   params={[
-    {name: "consume", description: <>When <code>true</code> the drawn variable is removed from the pool, modeling a destructive action; when <code>false</code> it stays available.</>},
-    {name: "out_variable_id", description: <>Receives the variable id the engine chose. Letting the engine choose is what lets it shrink <em>which</em> variable a rule acts on.</>},
+    {name: "consume", description: <>When <code>true</code> the drawn variable is removed from the pool. When <code>false</code> it is not removed.</>},
+    {name: "out_variable_id", description: <>Receives the variable id the engine chose.</>},
   ]}
-  returns={<><code>HEGEL_OK</code>, or <code>HEGEL_E_ASSUME</code> if the pool has no active variables. Treat that like any other failed assumption: recover and continue (as stateful testing does, by skipping the action), or give up on the case and mark it invalid.</>} />
+  returns={<><code>HEGEL_OK</code>, or <code>HEGEL_E_ASSUME</code> if the pool has no variables.</>} />
 
 ### State machines
 
-For rule-based stateful testing the engine picks which rule runs next and the caller runs it. That includes swarm testing: each test case enables a random subset of rules and selection draws only from that subset, with the restriction shrinking away in minimal counterexamples.
+For rule-based stateful testing the engine picks which rule runs next and the caller runs it. Each test case enables a random subset of rules and selection draws only from that subset.
 
 <FnTable name="hegel_new_state_machine" signature={`hegel_result_t hegel_new_state_machine(hegel_context_t *ctx,
                                          hegel_test_case_t *tc,
@@ -504,7 +500,7 @@ For rule-based stateful testing the engine picks which rule runs next and the ca
   params={[
     {name: "rule_names / num_rules", description: <>NUL-terminated UTF-8 names, one per rule. Must be non-empty.</>},
     {name: "invariant_names / num_invariants", description: <>NUL-terminated UTF-8 names, one per invariant.</>},
-    {name: "out_state_machine_id", description: <>Receives an opaque id, valid on this test case.</>},
+    {name: "out_state_machine_id", description: <>Receives an id, valid for this test case.</>},
   ]}
   returns={<><code>HEGEL_OK</code>, or <code>HEGEL_E_INVALID_ARG</code> if <code>num_rules</code> is zero, or on null / non-UTF-8 names.</>} />
 
@@ -522,7 +518,7 @@ For rule-based stateful testing the engine picks which rule runs next and the ca
                               double value,
                               const char *label)`}
   params={[
-    {name: "value", description: <>A numeric observation. Higher is "more interesting"; the engine biases later test cases toward inputs that produced higher observations under the same label.</>},
+    {name: "value", description: <>A numeric observation. Higher is "more interesting." The engine biases later test cases toward inputs that produced higher observations under the same label.</>},
     {name: "label", description: <>Non-NULL, valid UTF-8. Each label may be recorded at most once per test case.</>},
   ]}
   returns={<><code>HEGEL_OK</code>, or <code>HEGEL_E_INVALID_ARG</code> if <code>value</code> is not finite, or if <code>label</code> has already been observed on this test case.</>}
@@ -530,9 +526,9 @@ For rule-based stateful testing the engine picks which rule runs next and the ca
 
 ## Results and failures
 
-A result snapshot is the aggregate outcome of a finished run. It is independent of the run: it stays valid after <Fn name="hegel_run_free" />, and is released separately.
+A result snapshot is the outcome of a finished run. It stays valid after <Fn name="hegel_run_free" />, and is released separately.
 
-A *failed* run produced counterexamples to the property. An *errored* run produced no verdict on the property at all, so it has no failures to inspect; a run errors on a failed health check, a nondeterministic test, or an engine panic.
+A failed run produced counterexamples to the property. An errored run produced no verdict on the property at all, so it has no failures to inspect. A run errors on a failed health check, a nondeterministic test, or an engine panic.
 
 <FnTable name="hegel_run_result_status" signature={`hegel_result_t hegel_run_result_status(hegel_context_t *ctx,
                                          const hegel_run_result_t *r,
@@ -549,7 +545,7 @@ A *failed* run produced counterexamples to the property. An *errored* run produc
 <FnTable name="hegel_run_result_failure_count" signature={`hegel_result_t hegel_run_result_failure_count(hegel_context_t *ctx,
                                                 const hegel_run_result_t *r,
                                                 size_t *out_count)`}
-  params={[{name: "out_count", description: <>Receives the number of <em>distinct</em> failures, by origin, that the run surfaced.</>}]}
+  params={[{name: "out_count", description: <>Receives the number of distinct failures, by origin, that the run surfaced.</>}]}
   returns={<><code>HEGEL_OK</code>, <code>HEGEL_E_INVALID_HANDLE</code> for a NULL <code>r</code>, or <code>HEGEL_E_INVALID_ARG</code> for a NULL <code>out_count</code>.</>} />
 
 <FnTable name="hegel_run_result_failure" signature={`hegel_result_t hegel_run_result_failure(hegel_context_t *ctx,
@@ -585,7 +581,7 @@ A *failed* run produced counterexamples to the property. An *errored* run produc
 
 ## Replaying a blob
 
-Replaying a <Def id="blob">reproduce blob</Def> is how a library performs the *final replay* of a counterexample: re-running the minimal failing test case so it can display the drawn values and re-raise the test's own failure.
+Replaying a <Def id="blob">reproduce blob</Def> is how a library performs the final replay of a counterexample: re-running the minimal failing test case so it can display the drawn values and re-raise the test's own failure.
 
 There is no run handle and no engine run involved. The caller drives the returned test case with the usual per-test-case primitives, concludes it with <Fn name="hegel_mark_complete" />, and decides for itself whether the blob reproduced the failure (the property failed again) or is stale (it passed). Replay several blobs by calling this once per blob.
 
@@ -607,10 +603,10 @@ There is no run handle and no engine run involved. The caller drives the returne
 
 Each kind of handle has its own threading contract:
 
-- A **context** must not be used concurrently from multiple threads. Each fallible call overwrites its stored message, so sharing one across threads is a data race.
-- A **settings** handle may be shared across threads once configured, but each setter call requires exclusive access.
-- A **run** handle must only be used from one thread at a time. Calling <Fn name="hegel_next_test_case" />, <Fn name="hegel_run_result" />, or <Fn name="hegel_run_free" /> concurrently on the same run is undefined behavior. In particular, do not free a run from a garbage-collector finalizer thread while another thread may still be using it.
-- A **test-case** handle may be driven by at most one thread at a time, but unlike a run it *detects* misuse: concurrent operations may return `HEGEL_E_CONCURRENT_USE`. To generate from several threads, <Fn name="hegel_test_case_clone" /> the handle and give each thread its own clone.
+- A context must not be used concurrently from multiple threads. Each fallible call overwrites its stored message, so sharing one across threads is a data race.
+- A settings handle may be shared across threads once configured, but each setter call requires exclusive access.
+- A run handle must only be used from one thread at a time. Calling <Fn name="hegel_next_test_case" />, <Fn name="hegel_run_result" />, or <Fn name="hegel_run_free" /> concurrently on the same run is undefined behavior. In particular, do not free a run from a garbage-collector finalizer thread while another thread may still be using it.
+- A test-case handle may be driven by at most one thread at a time, but unlike a run it detects misuse: concurrent operations may return `HEGEL_E_CONCURRENT_USE`. To generate from several threads, <Fn name="hegel_test_case_clone" /> the handle and give each thread its own clone.
 
 ## Appendix
 
@@ -663,7 +659,7 @@ A bitwise OR of these is passed to <Fn name="hegel_settings_set_phases" />. The 
 
 ### Health checks
 
-A bitwise OR of these is passed to <Fn name="hegel_settings_set_suppress_health_check" />, naming the checks to *disable*. The default is all enabled; suppress a check only when you understand why it is firing and accept the behavior.
+A bitwise OR of these is passed to <Fn name="hegel_settings_set_suppress_health_check" />, naming the checks to disable. The default is all enabled; suppress a check only when you understand why it is firing and accept the behavior.
 
 <EnumTable values={[
   {name: "HEGEL_HC_FILTER_TOO_MUCH", value: "1 << 0", description: <>Aborts the run if too many draws are rejected by assumptions. Default threshold: 200 in a row with no valid case.</>},
