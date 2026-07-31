@@ -27,8 +27,8 @@ Our first stable release will be `1.0.0`.
 
 Every Hegel library runs the [libhegel](https://github.com/hegeldev/hegel-rust/tree/main/hegel-c) engine in-process.
 
-Prebuilt `libhegel` binaries are published for `linux/amd64`, `linux/arm64`, `darwin/arm64`, `windows/amd64`, and `windows/arm64`. Intel macOS (`darwin/amd64`) is **not** published. Build the engine from source if you need it.
+Prebuilt `libhegel` binaries are published for `linux/amd64`, `linux/arm64`, `darwin/arm64`, `windows/amd64`, and `windows/arm64`. Intel macOS (`darwin/amd64`) is **not** published. Build `libhegel` from source if you need it.
 
 - **Linux** (amd64 and arm64) and **macOS on Apple Silicon** are fully supported across the Hegel libraries.
 - **Windows** (amd64 and arm64) is supported by [hegel-go](https://github.com/hegeldev/hegel-go), [hegel-typescript](https://github.com/hegeldev/hegel-typescript), and [hegel-cpp](https://github.com/hegeldev/hegel-cpp). [hegel-rust](https://github.com/hegeldev/hegel-rust) supports it too, though that support is still somewhat experimental. [hegel-java](https://github.com/hegeldev/hegel-java) and [hegel-ocaml](https://github.com/hegeldev/hegel-ocaml) currently work on Linux and macOS only.
-- **Intel macOS** has no published engine binary. Libraries that let you point at your own build (via `HEGEL_LIBHEGEL_PATH`, or `-DHEGEL_LIBHEGEL_LIBRARY` for hegel-cpp) will work against a locally built `libhegel.dylib`.
+- **Intel macOS** has no published `libhegel` binary. Libraries that let you point at your own build (via `HEGEL_LIBHEGEL_PATH`, or `-DHEGEL_LIBHEGEL_LIBRARY` for hegel-cpp) will work against a locally built `libhegel.dylib`.

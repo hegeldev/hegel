@@ -12,7 +12,7 @@ Many of the hardest parts of writing a PBT library can in principle be reused. B
 
 Hegel is the realization of this idea.
 
-Hegel is several things. It is `libhegel`, a property-based testing engine written in Rust and shipped as a native library. It is also a family of libraries, one per language, that run that engine in-process to get test data.
+Hegel is several things. It is a protocol for communicating between a PBT server (written once) and a PBT library (written for each language). It is also an implementation of this server and libraries in a number of languages.
 
 When we say "Hegel", we might mean any or all of these things. Your interest in Hegel will therefore determine which you might want to read further about:
 
