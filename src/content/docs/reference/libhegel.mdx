@@ -299,7 +299,7 @@ Every draw takes a test-case handle and writes its value through an out-paramete
                                              hegel_string_generator_t **out_generator)`}
   params={[
     {name: "min_size / max_size", description: <>Inclusive length bounds, in characters.</>},
-    {name: "codec", description: <>The alphabet's starting range: <code>"ascii"</code>, <code>"latin-1"</code> / <code>"iso-8859-1"</code>, or <code>"utf-8"</code> / NULL for all of Unicode.</>},
+    {name: "codec", description: <>The alphabet's starting range: <code>"ascii"</code>, <code>"latin-1"</code> / <code>"iso-8859-1"</code>, or <code>"utf-8"</code> / NULL for Unicode.</>},
     {name: "min_codepoint / max_codepoint", description: <>Intersected with the codec's range. Pass <code>0</code> and <code>UINT32_MAX</code> for no constraint. Surrogates are always removed.</>},
     {name: "categories", description: <>Restricts to the union of the named Unicode general categories. NULL means no restriction. A non-NULL empty list means an empty alphabet.</>},
     {name: "exclude_categories", description: <>Removes the named categories.</>},

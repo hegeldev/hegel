@@ -2,7 +2,7 @@
 title: How Hegel works
 ---
 
-Hegel splits a property-based testing library into two parts:
+At the highest level, Hegel splits a property-based testing library into two parts:
 
 - `libhegel` implements the core of property-based testing, including data generation, shrinking, the example database, and so on. It is written in Rust.
 - The library implements the user-facing syntax of properties and generators for a particular language. It asks `libhegel` for generated data as your test runs.
@@ -19,16 +19,15 @@ fn test_a(tc: TestCase) {
 }
 ```
 
-When this test runs:
+When this test runs, `hegel-rust`:
 
-- `hegel-rust` builds a settings handle describing how the test should run. It then calls `hegel_run_start` to create a run.
-- `hegel-rust` calls `hegel_next_test_case` to ask `libhegel` for a test case.
-- `hegel-rust` executes `test_a`. When `tc.draw` is called, `hegel-rust` calls the typed draw primitive for the generator. Here, that is `hegel_generate_integer` with `min_value = 100`. `libhegel` returns some value in the range `[100, i32::MAX]`.
+- Builds a settings handle describing how the test should run. It then calls `hegel_run_start` to create a run.
+- Calls `hegel_next_test_case` to ask `libhegel` for a test case.
+- Executes `test_a`. When `tc.draw` is called, `hegel-rust` calls the typed draw primitive for the generator. Here, that is `hegel_generate_integer` with `min_value = 100`. `libhegel` returns some value in the range `[100, i32::MAX]`.
 - The test case finishes. `hegel-rust` reports the outcome with `hegel_mark_complete`. It is valid if the body ran to completion, interesting if the property failed, invalid if the test case was rejected, or overran if too much data was generated.
-- If the test failed, `libhegel` shrinks the counterexample.
-- Once `libhegel` has run 100 valid test cases and finished shrinking, `hegel_next_test_case` returns NULL. 
--`hegel-rust` reads `hegel_run_result` to replay and output the failure.
+- If no failure is found after 100 valid test cases, `hegel_next_test_case` returns `NULL` and the test finishes.
+- If the test finds a failure, `hegel-rust` communicates this to `libhegel`, and `libhegel` shrinks the failing test case. `hegel-rust` replays the failure and displays it to the user.
 
-`hegel-rust` wraps a draw from a composite generator in a span (`hegel_start_span` / `hegel_stop_span`), so the shrinker can shrink the sub-draws together. For collections, it uses `libhegel`'s collection primitives for variable-length values. `libhegel` decides how many elements a collection, such as a vector, should have.
+We have glossed over some subtlety here. For example, `tc.assume()` and `generator.filter()` can reject test cases during the test, which needs to be communicated back to `libhegel`. And `libhegel` needs the ability to communicate errors to `hegel-rust`, for example in the case of a flaky test or an invalid generator definition.
 
 For the full details, see the [libhegel reference](/reference/libhegel).
