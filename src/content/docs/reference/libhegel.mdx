@@ -83,6 +83,10 @@ A configured handle may be shared across threads, but do not call setters concur
   params={[{name: "n", description: <>Maximum number of valid test cases to run before declaring the property held. 100 by default. Cases rejected by an assumption do not count against this budget.</>}]}
   returns={<><code>HEGEL_OK</code>.</>} />
 
+<FnTable name="hegel_settings_set_stateful_step_count" signature="hegel_result_t hegel_settings_set_stateful_step_count(hegel_context_t *ctx, hegel_settings_t *s, int64_t n)"
+  params={[{name: "n", description: <>Target number of steps to run per stateful test case. Each stateful case runs at least one step and at most <code>n</code>. The default is 50. <code>n</code> must be at least 1.</>}]}
+  returns={<><code>HEGEL_OK</code>.</>} />
+
 <FnTable name="hegel_settings_set_mode" signature="hegel_result_t hegel_settings_set_mode(hegel_context_t *ctx, hegel_settings_t *s, uint32_t mode)"
   params={[{name: "mode", description: <>A full run loop or a single test case with no shrinking. See <SectionRef id="mode"><code>hegel_mode_t</code></SectionRef>.</>}]}
   returns={<><code>HEGEL_OK</code>.</>}
