@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.11.0</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.11.1</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -124,9 +124,7 @@ std::vector&lt; <a class="el" href="namespacehegel.html#a98e2c0a6bc324370d8fb109
 <a class="el" href="namespacehegel.html#a76460adf8877112c3cc69bff0a21dcdd">Mode</a>&#160;</td><td class="memItemRight" valign="bottom"><b>mode</b> = <a class="el" href="namespacehegel.html#a76460adf8877112c3cc69bff0a21dcddac75e7027f34f603c0e19218d27e1011f">Mode::TestRun</a></td></tr>
 <tr class="memdesc:a07cda060e164464aad6ab36d16bbeea0"><td class="mdescLeft">&#160;</td><td class="mdescRight">How much of a run to perform. Defaults to <a class="el" href="namespacehegel.html#a76460adf8877112c3cc69bff0a21dcddac75e7027f34f603c0e19218d27e1011f" title="Full property-test run. The default.">Mode::TestRun</a>. <br /></td></tr>
 <tr class="memitem:a1a678c2dca9417303744c5495898942f" id="r_a1a678c2dca9417303744c5495898942f"><td class="memItemLeft" align="right" valign="top"><a class="el" href="namespacehegel.html#a887e0714b99c358aa474848809bca688">Backend</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a1a678c2dca9417303744c5495898942f">backend</a> = <a class="el" href="namespacehegel.html#a887e0714b99c358aa474848809bca688a06b9281e396db002010bde1de57262eb">Backend::Auto</a></td></tr>
-<tr class="memitem:a6492c6dff0a55d51dd5ce3836657e0dc" id="r_a6492c6dff0a55d51dd5ce3836657e0dc"><td class="memItemLeft" align="right" valign="top"><a id="a6492c6dff0a55d51dd5ce3836657e0dc" name="a6492c6dff0a55d51dd5ce3836657e0dc"></a>
-int64_t&#160;</td><td class="memItemRight" valign="bottom"><b>stateful_step_count</b> = 50</td></tr>
-<tr class="memdesc:a6492c6dff0a55d51dd5ce3836657e0dc"><td class="mdescLeft">&#160;</td><td class="mdescRight">The maximum number of steps a stateful run attempts. <br /></td></tr>
+<tr class="memitem:a6492c6dff0a55d51dd5ce3836657e0dc" id="r_a6492c6dff0a55d51dd5ce3836657e0dc"><td class="memItemLeft" align="right" valign="top">int64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a6492c6dff0a55d51dd5ce3836657e0dc">stateful_step_count</a> = 50</td></tr>
 </table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
 <div class="textblock"><p>Configuration options for <a class="el" href="namespacehegel.html#a8297e7dfc6b7c1088c84b50b8ba4d996" title="Run a Hegel test.">hegel::test()</a>. </p>
@@ -237,6 +235,21 @@ int64_t&#160;</td><td class="memItemRight" valign="bottom"><b>stateful_step_coun
       </table>
 </div><div class="memdoc">
 <p>If true, keep generating after the first failure to surface additional distinct bugs, and report all of them. If false (the default), stop the run at the first failing example. </p>
+
+</div>
+</div>
+<a id="a6492c6dff0a55d51dd5ce3836657e0dc" name="a6492c6dff0a55d51dd5ce3836657e0dc"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a6492c6dff0a55d51dd5ce3836657e0dc">&#9670;&#160;</a></span>stateful_step_count</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int64_t hegel::Settings::stateful_step_count = 50</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<p>The maximum number of steps a stateful test case attempts. Each case runs at least one step and at most this many. Must be at least 1. </p>
 
 </div>
 </div>
