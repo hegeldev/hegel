@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['more_0',['Learning more',['../index.html#learning_more',1,'']]]
+  ['learning_20more_0',['Learning more',['../index.html#learning_more',1,'']]]
 ];

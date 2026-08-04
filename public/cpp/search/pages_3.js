@@ -1,5 +1,6 @@
 var searchData=
 [
-  ['generators_0',['Use generators',['../index.html#use_generators',1,'']]],
-  ['getting_20started_1',['Getting started',['../index.html#getting_started',1,'']]]
+  ['failing_20test_20cases_0',['Debug your failing test cases',['../index.html#debug_failing',1,'']]],
+  ['first_20test_1',['Write your first test',['../index.html#first_test',1,'']]],
+  ['frameworks_2',['Hegel and test frameworks',['../index.html#use_gtest',1,'']]]
 ];

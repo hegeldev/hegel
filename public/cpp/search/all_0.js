@@ -6,7 +6,8 @@ var searchData=
   ['allow_5finfinity_3',['allow_infinity',['../structhegel_1_1generators_1_1FloatsParams.html#ae4185bbc60dab18c7b354a388587b10f',1,'hegel::generators::FloatsParams']]],
   ['allow_5fnan_4',['allow_nan',['../structhegel_1_1generators_1_1FloatsParams.html#acd08cc71aeb6807f30675094e64b2fd7',1,'hegel::generators::FloatsParams']]],
   ['alphabet_5',['alphabet',['../structhegel_1_1generators_1_1TextParams.html#ae0fbea6c0ae75aee5d836e6cfe70fbc3',1,'hegel::generators::TextParams']]],
-  ['arrays_6',['arrays',['../namespacehegel_1_1generators.html#ac1a72b31ee1b8b1d326ac45677d22969',1,'hegel::generators']]],
-  ['assume_7',['assume',['../classhegel_1_1TestCase.html#a6d236ee8958c93211e0f4384cf8f3b56',1,'hegel::TestCase']]],
-  ['auto_8',['Auto',['../namespacehegel.html#a887e0714b99c358aa474848809bca688a06b9281e396db002010bde1de57262eb',1,'hegel']]]
+  ['and_20test_20frameworks_6',['Hegel and test frameworks',['../index.html#use_gtest',1,'']]],
+  ['arrays_7',['arrays',['../namespacehegel_1_1generators.html#ac1a72b31ee1b8b1d326ac45677d22969',1,'hegel::generators']]],
+  ['assume_8',['assume',['../classhegel_1_1TestCase.html#a6d236ee8958c93211e0f4384cf8f3b56',1,'hegel::TestCase']]],
+  ['auto_9',['Auto',['../namespacehegel.html#a887e0714b99c358aa474848809bca688a06b9281e396db002010bde1de57262eb',1,'hegel']]]
 ];

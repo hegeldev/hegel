@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['number_20of_20test_20cases_0',['Change the number of test cases',['../index.html#change_test_cases',1,'']]]
+  ['more_0',['Learning more',['../index.html#learning_more',1,'']]]
 ];

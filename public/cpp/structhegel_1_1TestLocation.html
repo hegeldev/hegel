@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.10.0</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.11.0</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -114,7 +114,7 @@ int&#160;</td><td class="memItemRight" valign="bottom"><b>line</b> = 0</td></tr>
 </table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
 <div class="textblock"><p>Where a test is defined. </p>
-<p>A failure report names the test and its source line in its header: <span class="tt">--- Failure: my_property (tests/example.cpp:42) ---</span>. <a class="el" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a> fills this in from the test's name and position. A caller of <a class="el" href="namespacehegel.html#ae3451b81e2687429b3285266fb5890e6" title="Run a Hegel test.">hegel::test()</a> supplies it to get the same header. </p>
+<p>A failure report names the test and its source line in its header: <span class="tt">--- Failure: my_property (tests/example.cpp:42) ---</span>. <a class="el" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a> fills this in from the test's name and position. A property inside a GoogleTest test fills this in from that test's name and the line of the <a class="el" href="namespacehegel.html#a8297e7dfc6b7c1088c84b50b8ba4d996" title="Run a Hegel test.">hegel::test()</a> call. </p>
 </div><hr/>The documentation for this struct was generated from the following file:<ul>
 <li>include/hegel/<a class="el" href="hegel_8h_source.html">hegel.h</a></li>
 </ul>

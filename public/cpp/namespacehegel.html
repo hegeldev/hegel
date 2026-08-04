@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.10.0</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.11.0</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -107,12 +107,16 @@ Namespaces</h2></td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-nested-classes" class="groupheader"><a id="nested-classes" name="nested-classes"></a>
 Classes</h2></td></tr>
+<tr class="memitem:GTestFailure" id="r_GTestFailure"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1GTestFailure.html">GTestFailure</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">The exception the GoogleTest integration raises for a test case that fails an assertion.  <a href="classhegel_1_1GTestFailure.html#details">More...</a><br /></td></tr>
+<tr class="memitem:FailureOrigin" id="r_FailureOrigin"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1FailureOrigin.html">FailureOrigin</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Interface for an exception that names its own failure origin.  <a href="classhegel_1_1FailureOrigin.html#details">More...</a><br /></td></tr>
 <tr class="memitem:TestLocation" id="r_TestLocation"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structhegel_1_1TestLocation.html">TestLocation</a></td></tr>
 <tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Where a test is defined.  <a href="structhegel_1_1TestLocation.html#details">More...</a><br /></td></tr>
 <tr class="memitem:Database" id="r_Database"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1Database.html">Database</a></td></tr>
 <tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Configure the Hegel database.  <a href="classhegel_1_1Database.html#details">More...</a><br /></td></tr>
 <tr class="memitem:Settings" id="r_Settings"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structhegel_1_1Settings.html">Settings</a></td></tr>
-<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Configuration options for <a class="el" href="#ae3451b81e2687429b3285266fb5890e6" title="Run a Hegel test.">hegel::test()</a>.  <a href="structhegel_1_1Settings.html#details">More...</a><br /></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Configuration options for <a class="el" href="#a8297e7dfc6b7c1088c84b50b8ba4d996" title="Run a Hegel test.">hegel::test()</a>.  <a href="structhegel_1_1Settings.html#details">More...</a><br /></td></tr>
 <tr class="memitem:TestCase" id="r_TestCase"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1TestCase.html">TestCase</a></td></tr>
 <tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handle to the currently-executing test case.  <a href="classhegel_1_1TestCase.html#details">More...</a><br /></td></tr>
 <tr class="memitem:Worker" id="r_Worker"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1Worker.html">Worker</a></td></tr>
@@ -154,12 +158,10 @@ Enumerations</h2></td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-func-members" class="groupheader"><a id="func-members" name="func-members"></a>
 Functions</h2></td></tr>
-<tr class="memitem:ae3451b81e2687429b3285266fb5890e6" id="r_ae3451b81e2687429b3285266fb5890e6"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ae3451b81e2687429b3285266fb5890e6">test</a> (const std::function&lt; void(<a class="el" href="classhegel_1_1TestCase.html">TestCase</a> &amp;)&gt; &amp;test_fn, const <a class="el" href="structhegel_1_1Settings.html">Settings</a> &amp;settings={}, const std::vector&lt; std::string &gt; &amp;failure_blobs={})</td></tr>
-<tr class="memdesc:ae3451b81e2687429b3285266fb5890e6"><td class="mdescLeft">&#160;</td><td class="mdescRight">Run a Hegel test.  <br /></td></tr>
+<tr class="memitem:a8297e7dfc6b7c1088c84b50b8ba4d996" id="r_a8297e7dfc6b7c1088c84b50b8ba4d996"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a8297e7dfc6b7c1088c84b50b8ba4d996">test</a> (const std::function&lt; void(<a class="el" href="classhegel_1_1TestCase.html">TestCase</a> &amp;)&gt; &amp;test_fn, const <a class="el" href="structhegel_1_1Settings.html">Settings</a> &amp;settings={}, const std::vector&lt; std::string &gt; &amp;failure_blobs={}, const char *caller_file=HEGEL_CALLER_FILE, const char *caller_function=HEGEL_CALLER_FUNCTION, int caller_line=HEGEL_CALLER_LINE)</td></tr>
+<tr class="memdesc:a8297e7dfc6b7c1088c84b50b8ba4d996"><td class="mdescLeft">&#160;</td><td class="mdescRight">Run a Hegel test.  <br /></td></tr>
 <tr class="memitem:aeb68de1001e0f02e1870ac6b961c3ca1" id="r_aeb68de1001e0f02e1870ac6b961c3ca1"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aeb68de1001e0f02e1870ac6b961c3ca1">test</a> (const std::function&lt; void(<a class="el" href="classhegel_1_1TestCase.html">TestCase</a> &amp;)&gt; &amp;test_fn, const <a class="el" href="structhegel_1_1TestLocation.html">TestLocation</a> &amp;location, const <a class="el" href="structhegel_1_1Settings.html">Settings</a> &amp;settings={}, const std::vector&lt; std::string &gt; &amp;failure_blobs={})</td></tr>
 <tr class="memdesc:aeb68de1001e0f02e1870ac6b961c3ca1"><td class="mdescLeft">&#160;</td><td class="mdescRight">Run a Hegel test that names itself in its failure report.  <br /></td></tr>
-<tr class="memitem:a4acc0cd11933b07d15879fd4704dbc80" id="r_a4acc0cd11933b07d15879fd4704dbc80"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a4acc0cd11933b07d15879fd4704dbc80">run_all_tests</a> ()</td></tr>
-<tr class="memdesc:a4acc0cd11933b07d15879fd4704dbc80"><td class="mdescLeft">&#160;</td><td class="mdescRight">Run every test defined with <a class="el" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a> in this binary.  <br /></td></tr>
 <tr class="memitem:a780357870820e4a63477d63cb6caf493" id="r_a780357870820e4a63477d63cb6caf493"><td class="memItemLeft" align="right" valign="top">const char *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a780357870820e4a63477d63cb6caf493">verbosity_to_string</a> (<a class="el" href="#aa5d3c97b2de55ed337e5bf3a9bc92eb8">Verbosity</a> v)</td></tr>
 <tr class="memdesc:a780357870820e4a63477d63cb6caf493"><td class="mdescLeft">&#160;</td><td class="mdescRight">Convert <a class="el" href="#aa5d3c97b2de55ed337e5bf3a9bc92eb8" title="Verbosity levels.">Verbosity</a> enum to command-line string.  <br /></td></tr>
 <tr class="memitem:aa41250f9093b4a936eacea2ded150e78" id="r_aa41250f9093b4a936eacea2ded150e78"><td class="memItemLeft" align="right" valign="top">std::vector&lt; <a class="el" href="#a98e2c0a6bc324370d8fb109cd3a2c71d">HealthCheck</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aa41250f9093b4a936eacea2ded150e78">all_health_checks</a> ()</td></tr>
@@ -393,33 +395,8 @@ Functions</h2></td></tr>
 
 </div>
 </div>
-<a id="a4acc0cd11933b07d15879fd4704dbc80" name="a4acc0cd11933b07d15879fd4704dbc80"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a4acc0cd11933b07d15879fd4704dbc80">&#9670;&#160;</a></span>run_all_tests()</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">int hegel::run_all_tests </td>
-          <td>(</td>
-          <td class="paramname"><span class="paramname"><em></em></span></td><td>)</td>
-          <td></td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p>Run every test defined with <a class="el" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a> in this binary. </p>
-<p>Each test runs with its inline settings.</p>
-<div class="fragment"><div class="line"><span class="keywordtype">int</span> main() {</div>
-<div class="line">    <span class="keywordflow">return</span> <a class="code hl_function" href="#a4acc0cd11933b07d15879fd4704dbc80">hegel::run_all_tests</a>();</div>
-<div class="line">}</div>
-<div class="ttc" id="anamespacehegel_html_a4acc0cd11933b07d15879fd4704dbc80"><div class="ttname"><a href="#a4acc0cd11933b07d15879fd4704dbc80">hegel::run_all_tests</a></div><div class="ttdeci">int run_all_tests()</div><div class="ttdoc">Run every test defined with HEGEL_TEST in this binary.</div></div>
-</div><!-- fragment --><dl class="section return"><dt>Returns</dt><dd>0 if every test passed, 1 otherwise </dd></dl>
-
-</div>
-</div>
-<a id="ae3451b81e2687429b3285266fb5890e6" name="ae3451b81e2687429b3285266fb5890e6"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ae3451b81e2687429b3285266fb5890e6">&#9670;&#160;</a></span>test() <span class="overload">[1/2]</span></h2>
+<a id="a8297e7dfc6b7c1088c84b50b8ba4d996" name="a8297e7dfc6b7c1088c84b50b8ba4d996"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a8297e7dfc6b7c1088c84b50b8ba4d996">&#9670;&#160;</a></span>test() <span class="overload">[1/2]</span></h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -437,17 +414,34 @@ Functions</h2></td></tr>
         <tr>
           <td class="paramkey"></td>
           <td></td>
-          <td class="paramtype">const std::vector&lt; std::string &gt; &amp;</td>          <td class="paramname"><span class="paramname"><em>failure_blobs</em></span><span class="paramdefsep"> = </span><span class="paramdefval">{}</span>&#160;)</td>
+          <td class="paramtype">const std::vector&lt; std::string &gt; &amp;</td>          <td class="paramname"><span class="paramname"><em>failure_blobs</em></span><span class="paramdefsep"> = </span><span class="paramdefval">{}</span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const char *</td>          <td class="paramname"><span class="paramname"><em>caller_file</em></span><span class="paramdefsep"> = </span><span class="paramdefval">HEGEL_CALLER_FILE</span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const char *</td>          <td class="paramname"><span class="paramname"><em>caller_function</em></span><span class="paramdefsep"> = </span><span class="paramdefval">HEGEL_CALLER_FUNCTION</span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int</td>          <td class="paramname"><span class="paramname"><em>caller_line</em></span><span class="paramdefsep"> = </span><span class="paramdefval">HEGEL_CALLER_LINE</span>&#160;)</td>
         </tr>
       </table>
 </div><div class="memdoc">
 
 <p>Run a Hegel test. </p>
-<p>This is the underlying entry point that <a class="el" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a> (the recommended way to define a test) expands to. Call it directly when a macro doesn't fit, e.g. to run a lambda or another callable built at runtime. In that case, set <a class="el" href="structhegel_1_1Settings.html#a30f1d654505c64bbe59624bc30dbc18c">Settings::database_key</a> yourself if you want failures persisted to the example database and replayed across runs.</p>
+<p>This is the underlying entry point that <a class="el" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a> expands to.</p>
+<p><a class="el" href="structhegel_1_1Settings.html#a30f1d654505c64bbe59624bc30dbc18c">Settings::database_key</a> defaults to <span class="tt">"&lt;file&gt;::&lt;name&gt;"</span>, where the file is the one holding the call and the name is the enclosing GoogleTest test (<span class="tt">Suite.Name</span>) or, outside a test framework, the enclosing function.</p>
+<p>Inside a GoogleTest test the failure report's header names that test and the line of the call. Outside one it reads <span class="tt">--- Failure ---</span>. Pass a <a class="el" href="structhegel_1_1TestLocation.html" title="Where a test is defined.">TestLocation</a> to the overload below to name it yourself.</p>
 <div class="fragment"><div class="line"><span class="preprocessor">#include &quot;hegel/hegel.h&quot;</span></div>
 <div class="line"> </div>
 <div class="line"><span class="keywordtype">int</span> main() {</div>
-<div class="line">    <a class="code hl_function" href="#ae3451b81e2687429b3285266fb5890e6">hegel::test</a>([](<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc) {</div>
+<div class="line">    <a class="code hl_function" href="#a8297e7dfc6b7c1088c84b50b8ba4d996">hegel::test</a>([](<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc) {</div>
 <div class="line">        <span class="keyword">namespace </span>gs = <a class="code hl_namespace" href="namespacehegel_1_1generators.html">hegel::generators</a>;</div>
 <div class="line">        <span class="keyword">auto</span> x = tc.<a class="code hl_function" href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">draw</a>(gs::integers&lt;int&gt;({.min_value = 0, .max_value =</div>
 <div class="line">100})); <span class="keyword">auto</span> y = tc.<a class="code hl_function" href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">draw</a>(gs::integers&lt;int&gt;({.min_value = 0, .max_value =</div>
@@ -464,12 +458,15 @@ Functions</h2></td></tr>
 <div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:40</div></div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html_affbc292ad2e6f4027b2402200cbc1d1c"><div class="ttname"><a href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">hegel::TestCase::draw</a></div><div class="ttdeci">T draw(const generators::Generator&lt; T &gt; &amp;gen) const</div><div class="ttdoc">Draw a random value from a generator.</div><div class="ttdef"><b>Definition</b> core.h:264</div></div>
 <div class="ttc" id="anamespacehegel_1_1generators_html"><div class="ttname"><a href="namespacehegel_1_1generators.html">hegel::generators</a></div><div class="ttdoc">Hegel generators.</div><div class="ttdef"><b>Definition</b> core.h:17</div></div>
-<div class="ttc" id="anamespacehegel_html_ae3451b81e2687429b3285266fb5890e6"><div class="ttname"><a href="#ae3451b81e2687429b3285266fb5890e6">hegel::test</a></div><div class="ttdeci">void test(const std::function&lt; void(TestCase &amp;)&gt; &amp;test_fn, const Settings &amp;settings={}, const std::vector&lt; std::string &gt; &amp;failure_blobs={})</div><div class="ttdoc">Run a Hegel test.</div></div>
+<div class="ttc" id="anamespacehegel_html_a8297e7dfc6b7c1088c84b50b8ba4d996"><div class="ttname"><a href="#a8297e7dfc6b7c1088c84b50b8ba4d996">hegel::test</a></div><div class="ttdeci">void test(const std::function&lt; void(TestCase &amp;)&gt; &amp;test_fn, const Settings &amp;settings={}, const std::vector&lt; std::string &gt; &amp;failure_blobs={}, const char *caller_file=HEGEL_CALLER_FILE, const char *caller_function=HEGEL_CALLER_FUNCTION, int caller_line=HEGEL_CALLER_LINE)</div><div class="ttdoc">Run a Hegel test.</div></div>
 </div><!-- fragment --><dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
     <tr><td class="paramname">test_fn</td><td>The test function to run repeatedly. Receives a <a class="el" href="classhegel_1_1TestCase.html" title="Handle to the currently-executing test case.">TestCase</a> which it uses to draw values, make assumptions, and record notes. </td></tr>
     <tr><td class="paramname">settings</td><td>Configuration settings (test count, debug mode, etc.) </td></tr>
     <tr><td class="paramname">failure_blobs</td><td>The base64 blobs encoding the engine choices that led to failures. Multiple blobs can be passed in for bookkeeping, but only the first one is run. </td></tr>
+    <tr><td class="paramname">caller_file</td><td>Filled in by the compiler with the file of the call. </td></tr>
+    <tr><td class="paramname">caller_function</td><td>Filled in by the compiler with the function holding the call. </td></tr>
+    <tr><td class="paramname">caller_line</td><td>Filled in by the compiler with the line of the call. </td></tr>
   </table>
   </dd>
 </dl>
@@ -513,8 +510,8 @@ Functions</h2></td></tr>
 </div><div class="memdoc">
 
 <p>Run a Hegel test that names itself in its failure report. </p>
-<p>Behaves like the overload above. The failure report's header names <code class="param">location's</code> test and source line instead of reading <span class="tt">--- Failure ---</span>.</p>
-<div class="fragment"><div class="line"><a class="code hl_function" href="#ae3451b81e2687429b3285266fb5890e6">hegel::test</a>(my_body, {<span class="stringliteral">&quot;my_property&quot;</span>, __FILE__, __LINE__},</div>
+<p>Behaves like the overload above. The failure report's header names <code class="param">location's</code> test and source line instead of reading <span class="tt">--- Failure ---</span>, and <a class="el" href="structhegel_1_1Settings.html#a30f1d654505c64bbe59624bc30dbc18c">Settings::database_key</a> defaults to the location's file and name.</p>
+<div class="fragment"><div class="line"><a class="code hl_function" href="#a8297e7dfc6b7c1088c84b50b8ba4d996">hegel::test</a>(my_body, {<span class="stringliteral">&quot;my_property&quot;</span>, __FILE__, __LINE__},</div>
 <div class="line">            {.test_cases = 500});</div>
 </div><!-- fragment --><dl class="params"><dt>Parameters</dt><dd>
   <table class="params">

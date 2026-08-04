@@ -6,6 +6,9 @@ var hierarchy =
     [ "hegel::Database", "classhegel_1_1Database.html", null ],
     [ "hegel::generators::DeferredGeneratorDefinition&lt; T &gt;", "classhegel_1_1generators_1_1DeferredGeneratorDefinition.html", null ],
     [ "hegel::generators::DomainsParams", "structhegel_1_1generators_1_1DomainsParams.html", null ],
+    [ "hegel::FailureOrigin", "classhegel_1_1FailureOrigin.html", [
+      [ "hegel::GTestFailure", "classhegel_1_1GTestFailure.html", null ]
+    ] ],
     [ "hegel::generators::Field&lt; MemberPtr, Gen &gt;", "structhegel_1_1generators_1_1Field.html", null ],
     [ "hegel::generators::FloatsParams&lt; T &gt;", "structhegel_1_1generators_1_1FloatsParams.html", null ],
     [ "hegel::generators::Generator&lt; T &gt;", "classhegel_1_1generators_1_1Generator.html", [
@@ -26,6 +29,9 @@ var hierarchy =
     [ "hegel::generators::RandomsParams", "structhegel_1_1generators_1_1RandomsParams.html", null ],
     [ "hegel::stateful::Rule&lt; T &gt;", "classhegel_1_1stateful_1_1Rule.html", null ],
     [ "hegel::stateful::RunParams", "structhegel_1_1stateful_1_1RunParams.html", null ],
+    [ "std::runtime_error", null, [
+      [ "hegel::GTestFailure", "classhegel_1_1GTestFailure.html", null ]
+    ] ],
     [ "hegel::generators::SetsParams", "structhegel_1_1generators_1_1SetsParams.html", null ],
     [ "hegel::Settings", "structhegel_1_1Settings.html", null ],
     [ "hegel::stateful::StateMachine&lt; Derived, State &gt;", "classhegel_1_1stateful_1_1StateMachine.html", null ],

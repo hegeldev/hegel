@@ -1,5 +1,5 @@
 var searchData=
 [
-  ['hegel_0',['Hegel',['../index.html',1,'Hegel'],['../index.html#install',1,'Install Hegel']]],
-  ['hegel_3a_3atest_20directly_1',['Use hegel::test() directly',['../index.html#plain_function',1,'']]]
+  ['generators_0',['Use generators',['../index.html#use_generators',1,'']]],
+  ['getting_20started_1',['Getting started',['../index.html#getting_started',1,'']]]
 ];

@@ -2,6 +2,8 @@ var namespacehegel =
 [
     [ "generators", "namespacehegel_1_1generators.html", "namespacehegel_1_1generators" ],
     [ "stateful", "namespacehegel_1_1stateful.html", "namespacehegel_1_1stateful" ],
+    [ "GTestFailure", "classhegel_1_1GTestFailure.html", "classhegel_1_1GTestFailure" ],
+    [ "FailureOrigin", "classhegel_1_1FailureOrigin.html", "classhegel_1_1FailureOrigin" ],
     [ "TestLocation", "structhegel_1_1TestLocation.html", "structhegel_1_1TestLocation" ],
     [ "Database", "classhegel_1_1Database.html", "classhegel_1_1Database" ],
     [ "Settings", "structhegel_1_1Settings.html", "structhegel_1_1Settings" ],
@@ -37,8 +39,7 @@ var namespacehegel =
     ] ],
     [ "all_health_checks", "namespacehegel.html#aa41250f9093b4a936eacea2ded150e78", null ],
     [ "all_phases", "namespacehegel.html#ae35e7e1ec4100f295b39e3987cda114a", null ],
-    [ "run_all_tests", "namespacehegel.html#a4acc0cd11933b07d15879fd4704dbc80", null ],
-    [ "test", "namespacehegel.html#ae3451b81e2687429b3285266fb5890e6", null ],
+    [ "test", "namespacehegel.html#a8297e7dfc6b7c1088c84b50b8ba4d996", null ],
     [ "test", "namespacehegel.html#aeb68de1001e0f02e1870ac6b961c3ca1", null ],
     [ "verbosity_to_string", "namespacehegel.html#a780357870820e4a63477d63cb6caf493", null ]
 ];

@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['properties_0',['Check properties',['../index.html#checking_properties',1,'']]]
+  ['of_20test_20cases_0',['Change the number of test cases',['../index.html#change_test_cases',1,'']]]
 ];

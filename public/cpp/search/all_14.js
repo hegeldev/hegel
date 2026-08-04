@@ -6,8 +6,7 @@ var searchData=
   ['urandom_3',['Urandom',['../namespacehegel.html#a887e0714b99c358aa474848809bca688a27584154da40f4f2174d452ef7de4a75',1,'hegel']]],
   ['urls_4',['urls',['../namespacehegel_1_1generators.html#ae6252253ffdee63df2e4ba93142188de',1,'hegel::generators']]],
   ['use_20generators_5',['Use generators',['../index.html#use_generators',1,'']]],
-  ['use_20hegel_3a_3atest_20directly_6',['Use hegel::test() directly',['../index.html#plain_function',1,'']]],
-  ['use_5ftrue_5frandom_7',['use_true_random',['../structhegel_1_1generators_1_1RandomsParams.html#a475e7cfdc53f4e61e8aa92fadcdf57e4',1,'hegel::generators::RandomsParams']]],
-  ['uuids_8',['uuids',['../namespacehegel_1_1generators.html#a45f3f1a47b06ea2ea632c1002b2bb009',1,'hegel::generators']]],
-  ['uuidsparams_9',['UuidsParams',['../structhegel_1_1generators_1_1UuidsParams.html',1,'hegel::generators']]]
+  ['use_5ftrue_5frandom_6',['use_true_random',['../structhegel_1_1generators_1_1RandomsParams.html#a475e7cfdc53f4e61e8aa92fadcdf57e4',1,'hegel::generators::RandomsParams']]],
+  ['uuids_7',['uuids',['../namespacehegel_1_1generators.html#a45f3f1a47b06ea2ea632c1002b2bb009',1,'hegel::generators']]],
+  ['uuidsparams_8',['UuidsParams',['../structhegel_1_1generators_1_1UuidsParams.html',1,'hegel::generators']]]
 ];

@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.10.0</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.11.0</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -102,112 +102,12 @@ $(function(){initNavTree('group__test__macros.html','',''); });
 Macros</h2></td></tr>
 <tr class="memitem:ga169f32a3b09c62f6b25e6c9217c46ca0" id="r_ga169f32a3b09c62f6b25e6c9217c46ca0"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a>(name, ...)</td></tr>
 <tr class="memdesc:ga169f32a3b09c62f6b25e6c9217c46ca0"><td class="mdescLeft">&#160;</td><td class="mdescRight">Define a Hegel property test.  <br /></td></tr>
-<tr class="memitem:gac0d1517e8a68a6b701c6e77fd1cd19cc" id="r_gac0d1517e8a68a6b701c6e77fd1cd19cc"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a>(tc,  var, ...)</td></tr>
-<tr class="memdesc:gac0d1517e8a68a6b701c6e77fd1cd19cc"><td class="mdescLeft">&#160;</td><td class="mdescRight">Draw a value into a named local variable.  <br /></td></tr>
-<tr class="memitem:ga003ff8ba5fa4155a4f191e6d8005043f" id="r_ga003ff8ba5fa4155a4f191e6d8005043f"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ga003ff8ba5fa4155a4f191e6d8005043f">HEGEL_FAIL</a>(tc, ...)</td></tr>
-<tr class="memdesc:ga003ff8ba5fa4155a4f191e6d8005043f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Fail the current test case with <code class="param">message</code>.  <br /></td></tr>
-<tr class="memitem:ga341861757b3a51b0830f84f300153a2e" id="r_ga341861757b3a51b0830f84f300153a2e"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ga341861757b3a51b0830f84f300153a2e">HEGEL_REQUIRE</a>(tc, ...)</td></tr>
-<tr class="memdesc:ga341861757b3a51b0830f84f300153a2e"><td class="mdescLeft">&#160;</td><td class="mdescRight">Fail the current test case unless <code class="param">condition</code> holds.  <br /></td></tr>
-<tr class="memitem:ga9664ba563cfe0505b97a51be41359e38" id="r_ga9664ba563cfe0505b97a51be41359e38"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ga9664ba563cfe0505b97a51be41359e38">HEGEL_REQUIRE_EQUAL</a>(tc, ...)</td></tr>
-<tr class="memdesc:ga9664ba563cfe0505b97a51be41359e38"><td class="mdescLeft">&#160;</td><td class="mdescRight">Fail the current test case unless two values are equal.  <br /></td></tr>
 <tr class="memitem:ga999f42b20aca6caffe4f89a6767ec847" id="r_ga999f42b20aca6caffe4f89a6767ec847"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ga999f42b20aca6caffe4f89a6767ec847">HEGEL_REPRODUCE_FAILURE</a>(name,  blob, ...)</td></tr>
 <tr class="memdesc:ga999f42b20aca6caffe4f89a6767ec847"><td class="mdescLeft">&#160;</td><td class="mdescRight">Replay a failing example for a <a class="el" href="#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a> from its blob.  <br /></td></tr>
 </table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
 <p>Macros for defining Hegel property tests. </p>
 <a name="doc-define-members" id="doc-define-members"></a><h2 id="header-doc-define-members" class="groupheader">Macro Definition Documentation</h2>
-<a id="gac0d1517e8a68a6b701c6e77fd1cd19cc" name="gac0d1517e8a68a6b701c6e77fd1cd19cc"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#gac0d1517e8a68a6b701c6e77fd1cd19cc">&#9670;&#160;</a></span>HEGEL_DRAW</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define HEGEL_DRAW</td>
-          <td>(</td>
-          <td class="paramtype"></td>          <td class="paramname"><span class="paramname"><em>tc</em></span>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype"></td>          <td class="paramname"><span class="paramname"><em>var</em></span>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype"></td>          <td class="paramname"><span class="paramname"><em></em></span>...&#160;)</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line"><span class="keyword">auto</span> var = (tc).draw(#var, (__VA_ARGS__))</div>
-</div><!-- fragment -->
-<p>Draw a value into a named local variable. </p>
-<p>Expands to <span class="tt">auto var = tc.draw("var", gen)</span>, so failure output prints the draw under the variable's own name:</p>
-<div class="fragment"><div class="line"><a class="code hl_define" href="#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a>(addition_commutes)(<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc) {</div>
-<div class="line">    <a class="code hl_define" href="#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a>(tc, x, gs::integers&lt;int&gt;());</div>
-<div class="line">    <a class="code hl_define" href="#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a>(tc, y, gs::integers&lt;int&gt;());</div>
-<div class="line">    <span class="keywordflow">if</span> (x + y != y + x) <span class="keywordflow">throw</span> std::runtime_error(<span class="stringliteral">&quot;not commutative&quot;</span>);</div>
-<div class="line">}</div>
-<div class="line"><span class="comment">// replay output: auto x = 10;</span></div>
-<div class="line"><span class="comment">//                auto y = 3;</span></div>
-<div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:40</div></div>
-<div class="ttc" id="agroup__test__macros_html_ga169f32a3b09c62f6b25e6c9217c46ca0"><div class="ttname"><a href="#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a></div><div class="ttdeci">#define HEGEL_TEST(name,...)</div><div class="ttdoc">Define a Hegel property test.</div><div class="ttdef"><b>Definition</b> hegel.h:534</div></div>
-<div class="ttc" id="agroup__test__macros_html_gac0d1517e8a68a6b701c6e77fd1cd19cc"><div class="ttname"><a href="#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a></div><div class="ttdeci">#define HEGEL_DRAW(tc, var,...)</div><div class="ttdoc">Draw a value into a named local variable.</div><div class="ttdef"><b>Definition</b> hegel.h:576</div></div>
-</div><!-- fragment --><p>Prefer this macro over a plain <a class="el" href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">TestCase::draw</a>() for every draw bound to a variable, since it includes the variable name in the counterexample printing.</p>
-<p>The name prints bare on every use. To number repeated draws instead (<span class="tt">var_1</span>, <span class="tt">var_2</span>, ...), call <span class="tt">tc.draw("name", gen, true)</span>.</p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">tc</td><td>The current <a class="el" href="classhegel_1_1TestCase.html" title="Handle to the currently-executing test case.">hegel::TestCase</a>. </td></tr>
-    <tr><td class="paramname">var</td><td>Name of the local variable to declare. </td></tr>
-    <tr><td class="paramname">...</td><td>The generator expression to draw from. </td></tr>
-  </table>
-  </dd>
-</dl>
-
-</div>
-</div>
-<a id="ga003ff8ba5fa4155a4f191e6d8005043f" name="ga003ff8ba5fa4155a4f191e6d8005043f"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ga003ff8ba5fa4155a4f191e6d8005043f">&#9670;&#160;</a></span>HEGEL_FAIL</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define HEGEL_FAIL</td>
-          <td>(</td>
-          <td class="paramtype"></td>          <td class="paramname"><span class="paramname"><em>tc</em></span>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype"></td>          <td class="paramname"><span class="paramname"><em></em></span>...&#160;)</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">    ::hegel::internal::fail_impl((tc), HEGEL_INTERNAL_ORIGIN __VA_OPT__(, )    \</div>
-<div class="line">                                           __VA_ARGS__)</div>
-</div><!-- fragment -->
-<p>Fail the current test case with <code class="param">message</code>. </p>
-<div class="fragment"><div class="line"><a class="code hl_define" href="#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a>(parser_accepts_its_own_output)(<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc) {</div>
-<div class="line">    <a class="code hl_define" href="#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a>(tc, doc, document_generator());</div>
-<div class="line">    <span class="keyword">auto</span> reparsed = parse(render(doc));</div>
-<div class="line">    <span class="keywordflow">if</span> (!reparsed) {</div>
-<div class="line">        <a class="code hl_define" href="#ga003ff8ba5fa4155a4f191e6d8005043f">HEGEL_FAIL</a>(tc, <span class="stringliteral">&quot;rendered document did not parse back&quot;</span>);</div>
-<div class="line">    }</div>
-<div class="line">}</div>
-<div class="ttc" id="agroup__test__macros_html_ga003ff8ba5fa4155a4f191e6d8005043f"><div class="ttname"><a href="#ga003ff8ba5fa4155a4f191e6d8005043f">HEGEL_FAIL</a></div><div class="ttdeci">#define HEGEL_FAIL(tc,...)</div><div class="ttdoc">Fail the current test case with message.</div><div class="ttdef"><b>Definition</b> hegel.h:625</div></div>
-</div><!-- fragment --><p>The macro does not return.</p>
-<p>Prefer this over a raw <code>throw</code>. Hegel groups counterexamples by origin to tell one bug from another, and a raw throw carries no source position. Every throw of one type therefore shares an origin and reports as a single bug. Each <code>HEGEL_FAIL</code> counts as a different origin, so failures on different lines stay distinct under Settings::report_multiple_failures.</p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">tc</td><td>The current <a class="el" href="classhegel_1_1TestCase.html" title="Handle to the currently-executing test case.">hegel::TestCase</a>. </td></tr>
-    <tr><td class="paramname">...</td><td>The optional failure message. Without one the report reads <span class="tt">fail: test case failed</span>. </td></tr>
-  </table>
-  </dd>
-</dl>
-
-</div>
-</div>
 <a id="ga999f42b20aca6caffe4f89a6767ec847" name="ga999f42b20aca6caffe4f89a6767ec847"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#ga999f42b20aca6caffe4f89a6767ec847">&#9670;&#160;</a></span>HEGEL_REPRODUCE_FAILURE</h2>
 
@@ -237,128 +137,16 @@ Macros</h2></td></tr>
 </div><!-- fragment -->
 <p>Replay a failing example for a <a class="el" href="#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a> from its blob. </p>
 <div class="fragment"><div class="line">rerun with: <a class="code hl_define" href="#ga999f42b20aca6caffe4f89a6767ec847">HEGEL_REPRODUCE_FAILURE</a>(addition_commutes, <span class="stringliteral">&quot;AAEAAAAACgEAAAAA&quot;</span>)</div>
-<div class="ttc" id="agroup__test__macros_html_ga999f42b20aca6caffe4f89a6767ec847"><div class="ttname"><a href="#ga999f42b20aca6caffe4f89a6767ec847">HEGEL_REPRODUCE_FAILURE</a></div><div class="ttdeci">#define HEGEL_REPRODUCE_FAILURE(name, blob,...)</div><div class="ttdoc">Replay a failing example for a HEGEL_TEST from its blob.</div><div class="ttdef"><b>Definition</b> hegel.h:749</div></div>
+<div class="ttc" id="agroup__test__macros_html_ga999f42b20aca6caffe4f89a6767ec847"><div class="ttname"><a href="#ga999f42b20aca6caffe4f89a6767ec847">HEGEL_REPRODUCE_FAILURE</a></div><div class="ttdeci">#define HEGEL_REPRODUCE_FAILURE(name, blob,...)</div><div class="ttdoc">Replay a failing example for a HEGEL_TEST from its blob.</div><div class="ttdef"><b>Definition</b> hegel.h:613</div></div>
 </div><!-- fragment --><p>Place it above the matching HEGEL_TEST, keyed by the same name. The test then replays that example instead of generating new cases. Delete the annotation to return to a normal run. Settings::print_blob controls whether the report prints the line.</p>
 <p>At least one blob is required. Additional blobs are accepted for bookkeeping, but only the first is replayed.</p>
 <div class="fragment"><div class="line"><a class="code hl_define" href="#ga999f42b20aca6caffe4f89a6767ec847">HEGEL_REPRODUCE_FAILURE</a>(addition_commutes, <span class="stringliteral">&quot;AAEAAAAACgEAAAAA&quot;</span>)</div>
 <div class="line"><a class="code hl_define" href="#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a>(addition_commutes)(<a class="code hl_namespace" href="namespacehegel.html">hegel</a>::TestCase&amp; tc) {</div>
 <div class="line">    <span class="comment">// ...</span></div>
 <div class="line">}</div>
+<div class="ttc" id="agroup__test__macros_html_ga169f32a3b09c62f6b25e6c9217c46ca0"><div class="ttname"><a href="#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a></div><div class="ttdeci">#define HEGEL_TEST(name,...)</div><div class="ttdoc">Define a Hegel property test.</div><div class="ttdef"><b>Definition</b> hegel.h:575</div></div>
 <div class="ttc" id="anamespacehegel_html"><div class="ttname"><a href="namespacehegel.html">hegel</a></div><div class="ttdoc">Main namespace.</div><div class="ttdef"><b>Definition</b> config.h:29</div></div>
 </div><!-- fragment --><dl class="section see"><dt>See also</dt><dd><a class="el" href="#ga169f32a3b09c62f6b25e6c9217c46ca0" title="Define a Hegel property test.">HEGEL_TEST</a> </dd></dl>
-
-</div>
-</div>
-<a id="ga341861757b3a51b0830f84f300153a2e" name="ga341861757b3a51b0830f84f300153a2e"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ga341861757b3a51b0830f84f300153a2e">&#9670;&#160;</a></span>HEGEL_REQUIRE</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define HEGEL_REQUIRE</td>
-          <td>(</td>
-          <td class="paramtype"></td>          <td class="paramname"><span class="paramname"><em>tc</em></span>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype"></td>          <td class="paramname"><span class="paramname"><em></em></span>...&#160;)</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">    ::hegel::internal::require_impl((tc), HEGEL_INTERNAL_ORIGIN, __VA_ARGS__)</div>
-</div><!-- fragment -->
-<p>Fail the current test case unless <code class="param">condition</code> holds. </p>
-<div class="fragment"><div class="line"><a class="code hl_define" href="#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a>(sum_stays_positive)(<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc) {</div>
-<div class="line">    <a class="code hl_define" href="#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a>(tc, l, gs::vectors(gs::integers&lt;int&gt;({.min_value = 0})));</div>
-<div class="line">    <a class="code hl_define" href="#ga341861757b3a51b0830f84f300153a2e">HEGEL_REQUIRE</a>(tc, running_sum(l) &gt;= 0, <span class="stringliteral">&quot;sum must stay non-negative&quot;</span>);</div>
-<div class="line">}</div>
-<div class="ttc" id="agroup__test__macros_html_ga341861757b3a51b0830f84f300153a2e"><div class="ttname"><a href="#ga341861757b3a51b0830f84f300153a2e">HEGEL_REQUIRE</a></div><div class="ttdeci">#define HEGEL_REQUIRE(tc,...)</div><div class="ttdoc">Fail the current test case unless condition holds.</div><div class="ttdef"><b>Definition</b> hegel.h:645</div></div>
-</div><!-- fragment --><p>The report prints the message in its <span class="tt">Exception:</span> line. Without one it reads <span class="tt">require: condition was false</span>.</p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">tc</td><td>The current <a class="el" href="classhegel_1_1TestCase.html" title="Handle to the currently-executing test case.">hegel::TestCase</a>. </td></tr>
-    <tr><td class="paramname">...</td><td>The condition, and an optional message. </td></tr>
-  </table>
-  </dd>
-</dl>
-
-</div>
-</div>
-<a id="ga9664ba563cfe0505b97a51be41359e38" name="ga9664ba563cfe0505b97a51be41359e38"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ga9664ba563cfe0505b97a51be41359e38">&#9670;&#160;</a></span>HEGEL_REQUIRE_EQUAL</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define HEGEL_REQUIRE_EQUAL</td>
-          <td>(</td>
-          <td class="paramtype"></td>          <td class="paramname"><span class="paramname"><em>tc</em></span>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype"></td>          <td class="paramname"><span class="paramname"><em></em></span>...&#160;)</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">    ::hegel::internal::require_equal_impl((tc), HEGEL_INTERNAL_ORIGIN,         \</div>
-<div class="line">                                          __VA_ARGS__)</div>
-</div><!-- fragment -->
-<p>Fail the current test case unless two values are equal. </p>
-<div class="fragment"><div class="line"><a class="code hl_define" href="#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a>(addition_commutes)(<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc) {</div>
-<div class="line">    <a class="code hl_define" href="#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a>(tc, x, gs::integers&lt;int&gt;());</div>
-<div class="line">    <a class="code hl_define" href="#gac0d1517e8a68a6b701c6e77fd1cd19cc">HEGEL_DRAW</a>(tc, y, gs::integers&lt;int&gt;());</div>
-<div class="line">    <a class="code hl_define" href="#ga9664ba563cfe0505b97a51be41359e38">HEGEL_REQUIRE_EQUAL</a>(tc, x + y, y + x);</div>
-<div class="line">}</div>
-<div class="ttc" id="agroup__test__macros_html_ga9664ba563cfe0505b97a51be41359e38"><div class="ttname"><a href="#ga9664ba563cfe0505b97a51be41359e38">HEGEL_REQUIRE_EQUAL</a></div><div class="ttdeci">#define HEGEL_REQUIRE_EQUAL(tc,...)</div><div class="ttdoc">Fail the current test case unless two values are equal.</div><div class="ttdef"><b>Definition</b> hegel.h:721</div></div>
-</div><!-- fragment --><p>Prefer this over <a class="el" href="#ga341861757b3a51b0830f84f300153a2e">HEGEL_REQUIRE</a> for an equality property. The report says how the two values differ.</p>
-<div class="fragment"><div class="line">require_equal: values differ (- lhs / + rhs):</div>
-<div class="line">  Team{</div>
-<div class="line">    .name = std::string(<span class="stringliteral">&quot;a&quot;</span>),</div>
-<div class="line">    .scores = std::vector&lt;int&gt;{</div>
-<div class="line">      1,</div>
-<div class="line">-     2,</div>
-<div class="line">+     9,</div>
-<div class="line">      3,</div>
-<div class="line">    },</div>
-<div class="line">  }</div>
-</div><!-- fragment --><p>The values are compared as Hegel renders them for the report.</p>
-<p>Hegel must also be able to render the type. A type it cannot render does not compile:</p>
-<div class="fragment"><div class="line">error: <span class="keyword">static</span> assertion failed: <a class="code hl_define" href="#ga9664ba563cfe0505b97a51be41359e38">HEGEL_REQUIRE_EQUAL</a> needs a type Hegel can</div>
-<div class="line">render. Give it an <span class="keyword">operator</span>&lt;&lt;, or compare its parts instead.</div>
-</div><!-- fragment --><p>Hegel renders these types on its own:</p>
-<ul>
-<li>the arithmetic types (<code>bool</code>, the character types, the integer types, the floating-point types) and enumerations</li>
-<li><code>std::string</code> </li>
-<li><code>std::optional</code>, <code>std::pair</code>, <code>std::tuple</code>, <code>std::variant</code> and <code>std::monostate</code> </li>
-<li><code>std::vector</code>, <code>std::set</code>, <code>std::map</code> and <code>std::array</code> </li>
-<li>any nesting of the types above</li>
-<li>aggregate structs, through reflection. This needs a build with <span class="tt">HEGEL_REFLECTION</span> on, which is the default. Without reflection an aggregate struct is subject to the rule below.</li>
-</ul>
-<p>A type that is not in that list needs an <code>operator&lt;&lt;</code> that writes it to a <code>std::ostream:</code> </p>
-<div class="fragment"><div class="line"><span class="keyword">class </span>Point {</div>
-<div class="line">  <span class="keyword">public</span>:</div>
-<div class="line">    Point(<span class="keywordtype">int</span> x, <span class="keywordtype">int</span> y) : x_(x), y_(y) {}</div>
-<div class="line"> </div>
-<div class="line">    <span class="keyword">friend</span> std::ostream&amp; operator&lt;&lt;(std::ostream&amp; os, <span class="keyword">const</span> Point&amp; p) {</div>
-<div class="line">        <span class="keywordflow">return</span> os &lt;&lt; <span class="stringliteral">&quot;Point(&quot;</span> &lt;&lt; p.x_ &lt;&lt; <span class="stringliteral">&quot;, &quot;</span> &lt;&lt; p.y_ &lt;&lt; <span class="stringliteral">&quot;)&quot;</span>;</div>
-<div class="line">    }</div>
-<div class="line"> </div>
-<div class="line">  <span class="keyword">private</span>:</div>
-<div class="line">    <span class="keywordtype">int</span> x_;</div>
-<div class="line">    <span class="keywordtype">int</span> y_;</div>
-<div class="line">};</div>
-</div><!-- fragment --><p>Where a type cannot get an <code>operator&lt;&lt;</code>, compare its parts instead.</p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">tc</td><td>The current <a class="el" href="classhegel_1_1TestCase.html" title="Handle to the currently-executing test case.">hegel::TestCase</a>. </td></tr>
-    <tr><td class="paramname">...</td><td>The two values to compare and an optional message. </td></tr>
-  </table>
-  </dd>
-</dl>
 
 </div>
 </div>
@@ -391,16 +179,15 @@ Macros</h2></td></tr>
 <div class="line">            <a class="code hl_struct" href="structhegel_1_1TestLocation.html">::hegel::TestLocation</a>{#name, __FILE__, __LINE__}, settings,        \</div>
 <div class="line">            ::hegel::internal::reproduce_blobs_for(__FILE__ <span class="stringliteral">&quot;::&quot;</span> #name));      \</div>
 <div class="line">    }                                                                          \</div>
-<div class="line">    [[maybe_unused]] <span class="keyword">static</span> <span class="keyword">const</span> <span class="keywordtype">bool</span> hegel_test_registered_##name =          \</div>
-<div class="line">        ::hegel::internal::register_test(__FILE__ <span class="stringliteral">&quot;::&quot;</span> #name, [] { name(); }); \</div>
 <div class="line">    <span class="keyword">static</span> <span class="keywordtype">void</span> hegel_test_body_##name</div>
+<div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:40</div></div>
 <div class="ttc" id="astructhegel_1_1Settings_html"><div class="ttname"><a href="structhegel_1_1Settings.html">hegel::Settings</a></div><div class="ttdoc">Configuration options for hegel::test().</div><div class="ttdef"><b>Definition</b> settings.h:198</div></div>
-<div class="ttc" id="astructhegel_1_1TestLocation_html"><div class="ttname"><a href="structhegel_1_1TestLocation.html">hegel::TestLocation</a></div><div class="ttdoc">Where a test is defined.</div><div class="ttdef"><b>Definition</b> hegel.h:383</div></div>
+<div class="ttc" id="astructhegel_1_1TestLocation_html"><div class="ttname"><a href="structhegel_1_1TestLocation.html">hegel::TestLocation</a></div><div class="ttdoc">Where a test is defined.</div><div class="ttdef"><b>Definition</b> hegel.h:415</div></div>
 </div><!-- fragment -->
 <p>Define a Hegel property test. </p>
-<p>It expands to a function <span class="tt">name(<a class="el" href="structhegel_1_1Settings.html" title="Configuration options for hegel::test().">hegel::Settings</a> = ...)</span> that runs that body via <a class="el" href="namespacehegel.html#ae3451b81e2687429b3285266fb5890e6" title="Run a Hegel test.">hegel::test()</a> with Settings::database_key defaulted to <span class="tt">"file.cpp::name"</span> so counterexamples persisted to the database are scoped to this test and replayed on later runs. A database_key set explicitly in the Settings overrides the derived one.</p>
+<p>It expands to a function <span class="tt">name(<a class="el" href="structhegel_1_1Settings.html" title="Configuration options for hegel::test().">hegel::Settings</a> = ...)</span> that runs that body via <a class="el" href="namespacehegel.html#a8297e7dfc6b7c1088c84b50b8ba4d996" title="Run a Hegel test.">hegel::test()</a> with Settings::database_key defaulted to <span class="tt">"file.cpp::name"</span> so counterexamples persisted to the database are scoped to this test and replayed on later runs. A database_key set explicitly in the Settings overrides the derived one.</p>
 <p>Settings for the test are written inline after the name. They become the function's default argument, and settings passed at the call site replace them entirely.</p>
-<p>The test is also registered with the test runtime, so all Hegel tests within a translation unit can be run with <a class="el" href="namespacehegel.html#a4acc0cd11933b07d15879fd4704dbc80" title="Run every test defined with HEGEL_TEST in this binary.">hegel::run_all_tests()</a>.</p>
+<p>With a test framework, write the property inside one of its tests and call <a class="el" href="namespacehegel.html#a8297e7dfc6b7c1088c84b50b8ba4d996" title="Run a Hegel test.">hegel::test()</a> instead. If you use HEGEL_TEST, it must be used outside of the test framework's test macro/function then call the named Hegel test.</p>
 <div class="fragment"><div class="line"><a class="code hl_define" href="#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a>(addition_commutes, {.test_cases = 500})(<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc) {</div>
 <div class="line">    <span class="keyword">namespace </span>gs = <a class="code hl_namespace" href="namespacehegel_1_1generators.html">hegel::generators</a>;</div>
 <div class="line">    <span class="keywordtype">int</span> x = tc.<a class="code hl_function" href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">draw</a>(gs::integers&lt;int&gt;());</div>
@@ -410,9 +197,11 @@ Macros</h2></td></tr>
 <div class="line">    }</div>
 <div class="line">}</div>
 <div class="line"> </div>
-<div class="line"><span class="comment">// invoke from main() or any test framework:</span></div>
-<div class="line">addition_commutes();                  <span class="comment">// runs with .test_cases = 500</span></div>
-<div class="line">addition_commutes({.test_cases = 5}); <span class="comment">// call-site Settings take over</span></div>
+<div class="line"><span class="keywordtype">int</span> main() {</div>
+<div class="line">    addition_commutes();                  <span class="comment">// runs with .test_cases = 500</span></div>
+<div class="line">    addition_commutes({.test_cases = 5}); <span class="comment">// call-site Settings take over</span></div>
+<div class="line">    <span class="keywordflow">return</span> 0;</div>
+<div class="line">}</div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html_affbc292ad2e6f4027b2402200cbc1d1c"><div class="ttname"><a href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">hegel::TestCase::draw</a></div><div class="ttdeci">T draw(const generators::Generator&lt; T &gt; &amp;gen) const</div><div class="ttdoc">Draw a random value from a generator.</div><div class="ttdef"><b>Definition</b> core.h:264</div></div>
 <div class="ttc" id="anamespacehegel_1_1generators_html"><div class="ttname"><a href="namespacehegel_1_1generators.html">hegel::generators</a></div><div class="ttdoc">Hegel generators.</div><div class="ttdef"><b>Definition</b> core.h:17</div></div>
 </div><!-- fragment --><dl class="section see"><dt>See also</dt><dd><a class="el" href="#ga999f42b20aca6caffe4f89a6767ec847" title="Replay a failing example for a HEGEL_TEST from its blob.">HEGEL_REPRODUCE_FAILURE</a> to replay a specific failing example. </dd></dl>

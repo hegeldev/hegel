@@ -8,6 +8,5 @@ var searchData=
   ['reuse_5',['Reuse',['../namespacehegel.html#aee0a47457861d4028b314d518cd50b6aae5c303d82e8b702ccaba9f2b4bbe4c80',1,'hegel']]],
   ['rule_6',['Rule',['../classhegel_1_1stateful_1_1Rule.html',1,'hegel::stateful::Rule&lt; T &gt;'],['../classhegel_1_1stateful_1_1Rule.html#a4e1acde2a637dd54270917f0b90a5c91',1,'hegel::stateful::Rule::Rule()']]],
   ['run_7',['run',['../namespacehegel_1_1stateful.html#aff08b4715a4d979864ad0c960bd9cd34',1,'hegel::stateful']]],
-  ['run_5fall_5ftests_8',['run_all_tests',['../namespacehegel.html#a4acc0cd11933b07d15879fd4704dbc80',1,'hegel']]],
-  ['runparams_9',['RunParams',['../structhegel_1_1stateful_1_1RunParams.html',1,'hegel::stateful']]]
+  ['runparams_8',['RunParams',['../structhegel_1_1stateful_1_1RunParams.html',1,'hegel::stateful']]]
 ];

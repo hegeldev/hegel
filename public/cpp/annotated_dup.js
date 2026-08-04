@@ -34,6 +34,8 @@ var annotated_dup =
         [ "Generator", "classhegel_1_1stateful_1_1Generator.html", "classhegel_1_1stateful_1_1Generator" ],
         [ "IGenerator", "structhegel_1_1stateful_1_1IGenerator.html", null ]
       ] ],
+      [ "GTestFailure", "classhegel_1_1GTestFailure.html", "classhegel_1_1GTestFailure" ],
+      [ "FailureOrigin", "classhegel_1_1FailureOrigin.html", "classhegel_1_1FailureOrigin" ],
       [ "TestLocation", "structhegel_1_1TestLocation.html", "structhegel_1_1TestLocation" ],
       [ "Database", "classhegel_1_1Database.html", "classhegel_1_1Database" ],
       [ "Settings", "structhegel_1_1Settings.html", "structhegel_1_1Settings" ],

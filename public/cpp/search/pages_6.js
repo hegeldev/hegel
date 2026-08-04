@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['learning_20more_0',['Learning more',['../index.html#learning_more',1,'']]]
+  ['install_20hegel_0',['Install Hegel',['../index.html#install',1,'']]]
 ];

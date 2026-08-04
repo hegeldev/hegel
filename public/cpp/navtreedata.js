@@ -32,7 +32,7 @@ var NAVTREE =
       [ "Check properties", "index.html#checking_properties", null ],
       [ "Debug your failing test cases", "index.html#debug_failing", null ],
       [ "Change the number of test cases", "index.html#change_test_cases", null ],
-      [ "Use hegel::test() directly", "index.html#plain_function", null ],
+      [ "Hegel and test frameworks", "index.html#use_gtest", null ],
       [ "Learning more", "index.html#learning_more", null ]
     ] ],
     [ "Topics", "topics.html", "topics" ],
@@ -62,7 +62,7 @@ var NAVTREE =
 var NAVTREEINDEX =
 [
 "annotated.html",
-"structhegel_1_1TestLocation.html#a150026c921658781acc0d73629b35f7f"
+"structhegel_1_1Settings.html#ad3e01a504ec505a4b403b5c09932271b"
 ];
 
 var SYNCONMSG = 'click to disable panel synchronization';

@@ -1,6 +1,15 @@
 var NAVTREEINDEX1 =
 {
-"structhegel_1_1TestLocation.html#a150026c921658781acc0d73629b35f7f":[3,0,0,2,0],
+"structhegel_1_1Settings.html#ad3e01a504ec505a4b403b5c09932271b":[2,0,0,6,7],
+"structhegel_1_1Settings.html#ad3e01a504ec505a4b403b5c09932271b":[3,0,0,6,7],
+"structhegel_1_1TestLocation.html":[2,0,0,4],
+"structhegel_1_1TestLocation.html":[3,0,0,4],
+"structhegel_1_1TestLocation.html#a047c34610ce7b2cdfca8f92ea458ab10":[2,0,0,4,1],
+"structhegel_1_1TestLocation.html#a047c34610ce7b2cdfca8f92ea458ab10":[3,0,0,4,1],
+"structhegel_1_1TestLocation.html#a11652ef7e698d5cb54e6e459b4e804c2":[2,0,0,4,2],
+"structhegel_1_1TestLocation.html#a11652ef7e698d5cb54e6e459b4e804c2":[3,0,0,4,2],
+"structhegel_1_1TestLocation.html#a150026c921658781acc0d73629b35f7f":[2,0,0,4,0],
+"structhegel_1_1TestLocation.html#a150026c921658781acc0d73629b35f7f":[3,0,0,4,0],
 "structhegel_1_1generators_1_1BinaryParams.html":[2,0,0,0,19],
 "structhegel_1_1generators_1_1BinaryParams.html":[3,0,0,0,19],
 "structhegel_1_1generators_1_1BinaryParams.html#a75f7674b1932838a544230461b2645ac":[2,0,0,0,19,1],
