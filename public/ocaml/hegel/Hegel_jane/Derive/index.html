@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+<base href="/ocaml/hegel/Hegel_jane/Derive/"><title>Derive (hegel.Hegel_jane.Derive)</title><meta charset="utf-8"/><link rel="stylesheet" href="../../../odoc.support/odoc.css"/><meta name="generator" content="odoc 3.2.1"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><script src="../../../odoc.support/highlight.pack.js"></script><script>hljs.initHighlightingOnLoad();</script></head><body class="odoc"><nav class="odoc-nav"><a href="../index.html">Up</a> – <a href="../../../index.html">Index</a> &#x00BB; <a href="../../index.html">hegel</a> &#x00BB; <a href="../index.html">Hegel_jane</a> &#x00BB; Derive</nav><header class="odoc-preamble"><h1>Module <code><span>Hegel_jane.Derive</span></code></h1><p>Auxiliary submodule for <code>@@deriving hegel_generator</code> for <code>Core</code> generators.</p><p>This module enables the generator deriver to use generators for <code>Core</code> types such as <code>Date.t</code> and <code>Time_ns.Span.t</code>. <code>open Hegel_jane.Derive</code> is required for <code>@@deriving hegel_generator</code> to use generators for <code>Core</code> types.</p><pre class="language-ocaml"><code>  open! Core
+  open Hegel_jane.Derive
+
+  type event =
+    { id : int
+    ; day : Date.t
+    ; elapsed : Time_ns.Span.t
+    }
+  [@@deriving hegel_generator]</code></pre><p>Use <code>Core</code>-typed fields with their short paths (for example, <code>Date.t</code> instead of <code>Core.Date.t</code>).</p><pre class="language-ocaml"><code>  type good = { day : Date.t } [@@deriving hegel_generator]
+
+  (* Does not compile: [Core.Date] has no [hegel_generator]. *)
+  type bad = { day : Core.Date.t } [@@deriving hegel_generator]</code></pre><p>To keep a <code>Core</code>-qualified type, set its generator directly:</p><pre class="language-ocaml"><code>  type pinned =
+    { day : (Core.Date.t[@hegel.generator Hegel_jane.dates ()]) }
+  [@@deriving hegel_generator]</code></pre></header><div class="odoc-content"></div></body></html>

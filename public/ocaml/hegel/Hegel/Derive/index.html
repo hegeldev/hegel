@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+<base href="/ocaml/hegel/Hegel/Derive/"><title>Derive (hegel.Hegel.Derive)</title><meta charset="utf-8"/><link rel="stylesheet" href="../../../odoc.support/odoc.css"/><meta name="generator" content="odoc 3.2.1"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><script src="../../../odoc.support/highlight.pack.js"></script><script>hljs.initHighlightingOnLoad();</script></head><body class="odoc"><nav class="odoc-nav"><a href="../index.html">Up</a> – <a href="../../../index.html">Index</a> &#x00BB; <a href="../../index.html">hegel</a> &#x00BB; <a href="../index.html">Hegel</a> &#x00BB; Derive</nav><header class="odoc-preamble"><h1>Module <code><span>Hegel.Derive</span></code></h1><p>Auxiliary submodule for <code>@@deriving hegel_generator</code>.</p><p>The type <code>foo</code> resolves to <code>hegel_generator_foo</code>, and the type <code>t</code> in a module <code>M</code> resolves to <code>M.hegel_generator</code>.</p><p><code>open Hegel</code> is required in each file that uses <code>@@deriving hegel_generator</code>:</p><pre class="language-ocaml"><code>  open Hegel
+
+  type point =
+    { x : int
+    ; y : int
+    }
+  [@@deriving hegel_generator]</code></pre><p>A different module in scope can shadow these names to change the defaults. For example, <code>Hegel_jane.Derive</code> resolves the same names to <code>Core</code>-typed generators.</p></header><div class="odoc-tocs"><nav class="odoc-toc odoc-local-toc"><ul><li><a href="#extend-the-defaults">Extend the defaults</a></li></ul></nav></div><div class="odoc-content"><h3 id="extend-the-defaults"><a href="#extend-the-defaults" class="anchor"></a>Extend the defaults</h3><p>Use <code>@@deriving hegel_generator</code> for types defined in your project. For external types and modules, define a module including the type, a <code>hegel_generator</code>, and a <code>sexp_of_t</code>.</p><pre class="language-ocaml"><code>  module M_Wrapper = struct
+    include External_M
+
+    let hegel_generator =
+      Generators.map
+        External_M.f
+        (Generators.integers ~min_value:0 ~max_value:1_000_000 ())
+      |&gt; with_printer (fun m -&gt;
+        Sexplib0.Sexp.Atom (External_M.to_string m))
+
+    let sexp_of_t t = Sexplib0.Sexp.Atom (External_M.to_string t)
+  end
+
+  type my_type =
+    { x : M_Wrapper.t
+    ; y : string
+    }
+  [@@deriving hegel_generator]</code></pre></div></body></html>
