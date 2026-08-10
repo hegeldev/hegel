@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.11.1</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.11.2</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -269,7 +269,7 @@ template&lt;typename T, size_t N&gt; </div>
 <div class="line">255}));</div>
 <div class="line"><span class="comment">// Draws std::array&lt;int, 3&gt;</span></div>
 <div class="ttc" id="anamespacehegel_1_1generators_html_a5322064873484cb69432cc31c4cd4c24"><div class="ttname"><a href="#a5322064873484cb69432cc31c4cd4c24">hegel::generators::integers</a></div><div class="ttdeci">Generator&lt; T &gt; integers(IntegersParams&lt; T &gt; params={})</div><div class="ttdoc">Generate random integers. For a given integral type T, produces values in the range [std::numeric_lim...</div><div class="ttdef"><b>Definition</b> numeric.h:159</div></div>
-<div class="ttc" id="anamespacehegel_1_1generators_html_ac1a72b31ee1b8b1d326ac45677d22969"><div class="ttname"><a href="#ac1a72b31ee1b8b1d326ac45677d22969">hegel::generators::arrays</a></div><div class="ttdeci">Generator&lt; std::array&lt; T, N &gt; &gt; arrays(Generator&lt; T &gt; element)</div><div class="ttdoc">Generate fixed-size arrays.</div><div class="ttdef"><b>Definition</b> collections.h:372</div></div>
+<div class="ttc" id="anamespacehegel_1_1generators_html_ac1a72b31ee1b8b1d326ac45677d22969"><div class="ttname"><a href="#ac1a72b31ee1b8b1d326ac45677d22969">hegel::generators::arrays</a></div><div class="ttdeci">Generator&lt; std::array&lt; T, N &gt; &gt; arrays(Generator&lt; T &gt; element)</div><div class="ttdoc">Generate fixed-size arrays.</div><div class="ttdef"><b>Definition</b> collections.h:371</div></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
     <tr><td class="paramname">T</td><td>Element type </td></tr>
@@ -964,7 +964,7 @@ template&lt;typename K, typename V&gt; </div>
 <div class="line"><span class="keyword">auto</span> bounded = <a class="code hl_function" href="#aede84ee30ac9e531f53b964d526a40f3">maps</a>(<a class="code hl_function" href="#ac9a358a586db20a210121e5b5126d52a">text</a>(), <a class="code hl_function" href="#a5322064873484cb69432cc31c4cd4c24">integers&lt;int&gt;</a>(), {.min_size = 1,</div>
 <div class="line">.max_size = 3});</div>
 <div class="ttc" id="anamespacehegel_1_1generators_html_ac9a358a586db20a210121e5b5126d52a"><div class="ttname"><a href="#ac9a358a586db20a210121e5b5126d52a">hegel::generators::text</a></div><div class="ttdeci">Generator&lt; std::string &gt; text(const TextParams &amp;params={})</div><div class="ttdoc">Generate random text strings.</div></div>
-<div class="ttc" id="anamespacehegel_1_1generators_html_aede84ee30ac9e531f53b964d526a40f3"><div class="ttname"><a href="#aede84ee30ac9e531f53b964d526a40f3">hegel::generators::maps</a></div><div class="ttdeci">Generator&lt; std::map&lt; K, V &gt; &gt; maps(Generator&lt; K &gt; keys, Generator&lt; V &gt; values, MapsParams params={})</div><div class="ttdoc">Generate maps with configurable key and value types.</div><div class="ttdef"><b>Definition</b> collections.h:259</div></div>
+<div class="ttc" id="anamespacehegel_1_1generators_html_aede84ee30ac9e531f53b964d526a40f3"><div class="ttname"><a href="#aede84ee30ac9e531f53b964d526a40f3">hegel::generators::maps</a></div><div class="ttdeci">Generator&lt; std::map&lt; K, V &gt; &gt; maps(Generator&lt; K &gt; keys, Generator&lt; V &gt; values, MapsParams params={})</div><div class="ttdoc">Generate maps with configurable key and value types.</div><div class="ttdef"><b>Definition</b> collections.h:258</div></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
     <tr><td class="paramname">K</td><td>Key type </td></tr>
@@ -1259,7 +1259,7 @@ template&lt;typename T&gt; </div>
 <p>Generate sets with elements from another generator. </p>
 <div class="fragment"><div class="line"><span class="keyword">auto</span> int_set = <a class="code hl_function" href="#ad1f5a16efc6325220f75c55e7bdea606">sets</a>(<a class="code hl_function" href="#a5322064873484cb69432cc31c4cd4c24">integers&lt;int&gt;</a>());</div>
 <div class="line"><span class="keyword">auto</span> bounded = <a class="code hl_function" href="#ad1f5a16efc6325220f75c55e7bdea606">sets</a>(<a class="code hl_function" href="#a5322064873484cb69432cc31c4cd4c24">integers&lt;int&gt;</a>(), {.min_size = 1, .max_size = 5});</div>
-<div class="ttc" id="anamespacehegel_1_1generators_html_ad1f5a16efc6325220f75c55e7bdea606"><div class="ttname"><a href="#ad1f5a16efc6325220f75c55e7bdea606">hegel::generators::sets</a></div><div class="ttdeci">Generator&lt; std::set&lt; T &gt; &gt; sets(Generator&lt; T &gt; elements, SetsParams params={})</div><div class="ttdoc">Generate sets with elements from another generator.</div><div class="ttdef"><b>Definition</b> collections.h:231</div></div>
+<div class="ttc" id="anamespacehegel_1_1generators_html_ad1f5a16efc6325220f75c55e7bdea606"><div class="ttname"><a href="#ad1f5a16efc6325220f75c55e7bdea606">hegel::generators::sets</a></div><div class="ttdeci">Generator&lt; std::set&lt; T &gt; &gt; sets(Generator&lt; T &gt; elements, SetsParams params={})</div><div class="ttdoc">Generate sets with elements from another generator.</div><div class="ttdef"><b>Definition</b> collections.h:230</div></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
     <tr><td class="paramname">T</td><td>Element type (must be comparable) </td></tr>
@@ -1345,7 +1345,7 @@ template&lt;typename... Ts&gt; </div>
 <p>Each generator produces one element of the resulting tuple.</p>
 <div class="fragment"><div class="line"><span class="keyword">auto</span> pair = <a class="code hl_function" href="#a0b4c05fc108c0ea5c87d78362983a5fa">tuples</a>(<a class="code hl_function" href="#a5322064873484cb69432cc31c4cd4c24">integers&lt;int&gt;</a>(), <a class="code hl_function" href="#ac9a358a586db20a210121e5b5126d52a">text</a>());</div>
 <div class="line"><span class="keyword">auto</span> triple = <a class="code hl_function" href="#a0b4c05fc108c0ea5c87d78362983a5fa">tuples</a>(<a class="code hl_function" href="#a6a990b3c0d7b4489f3d5258268d630ac">booleans</a>(), <a class="code hl_function" href="#a5322064873484cb69432cc31c4cd4c24">integers&lt;int&gt;</a>(), <a class="code hl_function" href="#a77ac35c8e508df091c6fac9eb63f017b">floats&lt;double&gt;</a>());</div>
-<div class="ttc" id="anamespacehegel_1_1generators_html_a0b4c05fc108c0ea5c87d78362983a5fa"><div class="ttname"><a href="#a0b4c05fc108c0ea5c87d78362983a5fa">hegel::generators::tuples</a></div><div class="ttdeci">Generator&lt; std::tuple&lt; Ts... &gt; &gt; tuples(Generator&lt; Ts &gt;... gens)</div><div class="ttdoc">Generate tuples from multiple generators.</div><div class="ttdef"><b>Definition</b> collections.h:315</div></div>
+<div class="ttc" id="anamespacehegel_1_1generators_html_a0b4c05fc108c0ea5c87d78362983a5fa"><div class="ttname"><a href="#a0b4c05fc108c0ea5c87d78362983a5fa">hegel::generators::tuples</a></div><div class="ttdeci">Generator&lt; std::tuple&lt; Ts... &gt; &gt; tuples(Generator&lt; Ts &gt;... gens)</div><div class="ttdoc">Generate tuples from multiple generators.</div><div class="ttdef"><b>Definition</b> collections.h:314</div></div>
 <div class="ttc" id="anamespacehegel_1_1generators_html_a6a990b3c0d7b4489f3d5258268d630ac"><div class="ttname"><a href="#a6a990b3c0d7b4489f3d5258268d630ac">hegel::generators::booleans</a></div><div class="ttdeci">Generator&lt; bool &gt; booleans()</div><div class="ttdoc">Generate random boolean values.</div></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
@@ -1474,7 +1474,7 @@ template&lt;typename T&gt; </div>
 <div class="fragment"><div class="line"><span class="keyword">auto</span> int_vec = <a class="code hl_function" href="#a3c573a52533dd87bd01533761bf5ab8d">vectors</a>(<a class="code hl_function" href="#a5322064873484cb69432cc31c4cd4c24">integers&lt;int&gt;</a>());</div>
 <div class="line"><span class="keyword">auto</span> bounded = <a class="code hl_function" href="#a3c573a52533dd87bd01533761bf5ab8d">vectors</a>(<a class="code hl_function" href="#a5322064873484cb69432cc31c4cd4c24">integers&lt;int&gt;</a>(), {.min_size = 1, .max_size = 10});</div>
 <div class="line"><span class="keyword">auto</span> unique_vec = <a class="code hl_function" href="#a3c573a52533dd87bd01533761bf5ab8d">vectors</a>(<a class="code hl_function" href="#a5322064873484cb69432cc31c4cd4c24">integers&lt;int&gt;</a>(), {.unique = <span class="keyword">true</span>});</div>
-<div class="ttc" id="anamespacehegel_1_1generators_html_a3c573a52533dd87bd01533761bf5ab8d"><div class="ttname"><a href="#a3c573a52533dd87bd01533761bf5ab8d">hegel::generators::vectors</a></div><div class="ttdeci">Generator&lt; std::vector&lt; T &gt; &gt; vectors(Generator&lt; T &gt; elements, VectorsParams params={})</div><div class="ttdoc">Generate vectors with elements from another generator.</div><div class="ttdef"><b>Definition</b> collections.h:211</div></div>
+<div class="ttc" id="anamespacehegel_1_1generators_html_a3c573a52533dd87bd01533761bf5ab8d"><div class="ttname"><a href="#a3c573a52533dd87bd01533761bf5ab8d">hegel::generators::vectors</a></div><div class="ttdeci">Generator&lt; std::vector&lt; T &gt; &gt; vectors(Generator&lt; T &gt; elements, VectorsParams params={})</div><div class="ttdoc">Generate vectors with elements from another generator.</div><div class="ttdef"><b>Definition</b> collections.h:210</div></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
     <tr><td class="paramname">T</td><td>Element type </td></tr>
