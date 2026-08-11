@@ -441,7 +441,7 @@ A <Def id="span">span</Def> groups a set of draws so the shrinker can treat them
 
 For variable-length values, `libhegel` decides how many elements to produce. The caller loops on <Fn name="hegel_collection_more" />, drawing one element per returned `true`.
 
-A collection handle is independent of a test case and run. Free it with <Fn name="hegel_collection_free" />. Using a collection from multiple threads at once returns `HEGEL_E_CONCURRENT_USE`.
+A collection handle is independent of the test case and run. Using a collection from multiple threads at once returns `HEGEL_E_CONCURRENT_USE`.
 
 <FnTable name="hegel_new_collection" signature={`hegel_result_t hegel_new_collection(hegel_context_t *ctx,
                                       hegel_test_case_t *tc,
@@ -478,7 +478,7 @@ A collection handle is independent of a test case and run. Free it with <Fn name
 
 A pool tracks a set of variable ids `libhegel` can draw from and shrink over. It is mostly used for stateful testing, where a rule needs to act on some previously generated value. The caller keeps its own mapping from variable id to the value it generated.
 
-A pool handle is independent of the test case and run. Free it with <Fn name="hegel_pool_free" /> exactly once. It is safe for multiple threads to share a pool.
+A pool handle is independent of the test case and run. It is safe for multiple threads to share a pool.
 
 <FnTable name="hegel_new_pool" signature="hegel_result_t hegel_new_pool(hegel_context_t *ctx, hegel_test_case_t *tc, hegel_pool_t **out_pool)"
   params={[{name: "out_pool", description: <>Receives a caller-owned handle to pass to the calls below me. Release it with <Fn name="hegel_pool_free" />.</>}]}
@@ -511,7 +511,7 @@ A pool handle is independent of the test case and run. Free it with <Fn name="he
 
 For stateful testing `libhegel` picks which rule runs next and the caller runs it. Each test case enables a random subset of rules and selection draws only from that subset.
 
-A state-machine handle is independent of the test case and run. Free it with <Fn name="hegel_state_machine_free" /> exactly once. It is safe for multiple threads to share a state machine.
+A state-machine handle is independent of the test case and run. It is safe for multiple threads to share a state machine.
 
 <FnTable name="hegel_new_state_machine" signature={`hegel_result_t hegel_new_state_machine(hegel_context_t *ctx,
                                          hegel_test_case_t *tc,
