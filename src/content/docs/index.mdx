@@ -92,7 +92,9 @@ int main() {
 			cache.put(key, value);
 		}
 
-		assert(cache.size() <= capacity);
+		if (cache.size() > capacity) {
+			throw std::runtime_error("cache size exceeded capacity");
+		}
 	});
 }
 ```
@@ -148,7 +150,6 @@ class LRUCacheTest {
   <TabItem label="OCaml">
 ```ocaml
 open Hegel
-open Hegel.Generators
 
 let%hegel_test respects_lru_capacity tc =
 	let capacity = draw tc (integers ~min_value:0 ()) in
