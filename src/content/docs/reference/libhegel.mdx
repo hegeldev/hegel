@@ -511,7 +511,7 @@ A pool handle is independent of the test case and run. It is safe for multiple t
 
 For stateful testing `libhegel` picks which rule runs next and the caller runs it. Each test case enables a random subset of rules and selection draws only from that subset.
 
-A state-machine handle is independent of the test case and run. It is safe for multiple threads to share a state machine.
+A state machine handle is independent of the test case and run. It is safe for multiple threads to share a state machine.
 
 <FnTable name="hegel_new_state_machine" signature={`hegel_result_t hegel_new_state_machine(hegel_context_t *ctx,
                                          hegel_test_case_t *tc,
