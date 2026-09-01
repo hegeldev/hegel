@@ -183,9 +183,9 @@ constexpr const char *&#160;</td><td class="memItemRight" valign="bottom"><b>ano
 <div class="line">}</div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html_a6d236ee8958c93211e0f4384cf8f3b56"><div class="ttname"><a href="classhegel_1_1TestCase.html#a6d236ee8958c93211e0f4384cf8f3b56">hegel::TestCase::assume</a></div><div class="ttdeci">void assume(bool condition) const</div><div class="ttdoc">Reject the current test case if condition is false.</div></div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html_affbc292ad2e6f4027b2402200cbc1d1c"><div class="ttname"><a href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">hegel::TestCase::draw</a></div><div class="ttdeci">T draw(const generators::Generator&lt; T &gt; &amp;gen) const</div><div class="ttdoc">Draw a random value from a generator.</div><div class="ttdef"><b>Definition</b> core.h:264</div></div>
-<div class="ttc" id="aclasshegel_1_1stateful_1_1StateMachine_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1StateMachine.html">hegel::stateful::StateMachine</a></div><div class="ttdoc">Base class for a state machine. Holds the state and declares the rules and the invariants that act on...</div><div class="ttdef"><b>Definition</b> stateful.h:672</div></div>
+<div class="ttc" id="aclasshegel_1_1stateful_1_1StateMachine_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1StateMachine.html">hegel::stateful::StateMachine</a></div><div class="ttdoc">Base class for a state machine. Holds the state and declares the rules and the invariants that act on...</div><div class="ttdef"><b>Definition</b> stateful.h:739</div></div>
 <div class="ttc" id="agroup__test__macros_html_ga169f32a3b09c62f6b25e6c9217c46ca0"><div class="ttname"><a href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a></div><div class="ttdeci">#define HEGEL_TEST(name,...)</div><div class="ttdoc">Define a Hegel property test.</div><div class="ttdef"><b>Definition</b> hegel.h:575</div></div>
-<div class="ttc" id="anamespacehegel_1_1stateful_html_aff08b4715a4d979864ad0c960bd9cd34"><div class="ttname"><a href="#aff08b4715a4d979864ad0c960bd9cd34">hegel::stateful::run</a></div><div class="ttdeci">void run(M &amp;machine, TestCase &amp;tc, const RunParams &amp;params={})</div><div class="ttdoc">Executes a stateful test by repeatedly applying randomly chosen rules from machine to it....</div><div class="ttdef"><b>Definition</b> stateful.h:1068</div></div>
+<div class="ttc" id="anamespacehegel_1_1stateful_html_aff08b4715a4d979864ad0c960bd9cd34"><div class="ttname"><a href="#aff08b4715a4d979864ad0c960bd9cd34">hegel::stateful::run</a></div><div class="ttdeci">void run(M &amp;machine, TestCase &amp;tc, const RunParams &amp;params={})</div><div class="ttdoc">Executes a stateful test by repeatedly applying randomly chosen rules from machine to it....</div><div class="ttdef"><b>Definition</b> stateful.h:1135</div></div>
 </div><!-- fragment --> </div><a name="doc-func-members" id="doc-func-members"></a><h2 id="header-doc-func-members" class="groupheader">Function Documentation</h2>
 <a id="aff08b4715a4d979864ad0c960bd9cd34" name="aff08b4715a4d979864ad0c960bd9cd34"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#aff08b4715a4d979864ad0c960bd9cd34">&#9670;&#160;</a></span>run()</h2>
@@ -218,7 +218,7 @@ template&lt;typename M&gt; </div>
 <div class="fragment"><div class="line">Step 1: add</div>
 <div class="line">Step 2: add</div>
 <div class="line"><a class="code hl_class" href="classhegel_1_1stateful_1_1Invariant.html">Invariant</a> nonneg violated after step 2</div>
-<div class="ttc" id="aclasshegel_1_1stateful_1_1Invariant_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1Invariant.html">hegel::stateful::Invariant</a></div><div class="ttdoc">An invariant is a predicate that must hold at any point in the stateful test. They are evaluated in f...</div><div class="ttdef"><b>Definition</b> stateful.h:595</div></div>
+<div class="ttc" id="aclasshegel_1_1stateful_1_1Invariant_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1Invariant.html">hegel::stateful::Invariant</a></div><div class="ttdoc">An invariant is a predicate that must hold at any point in the stateful test. They are evaluated in f...</div><div class="ttdef"><b>Definition</b> stateful.h:662</div></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
     <tr><td class="paramname">M</td><td>The state-machine type, deriving from <a class="el" href="classhegel_1_1stateful_1_1StateMachine.html">StateMachine</a> </td></tr>
@@ -362,8 +362,8 @@ template&lt;typename T&gt; </div>
 <div class="line">       assert(original_set == returned_set);</div>
 <div class="line">   }</div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:40</div></div>
-<div class="ttc" id="aclasshegel_1_1stateful_1_1Pool_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1Pool.html">hegel::stateful::Pool</a></div><div class="ttdoc">A pool of previously generated values. A pool lets data flow from one rule to another,...</div><div class="ttdef"><b>Definition</b> stateful.h:262</div></div>
-<div class="ttc" id="anamespacehegel_1_1stateful_html_a8b12a09dddc6e5b719b502327e092fcb"><div class="ttname"><a href="#a8b12a09dddc6e5b719b502327e092fcb">hegel::stateful::values_consumed</a></div><div class="ttdeci">Generator&lt; T &gt; values_consumed(Pool&lt; T &gt; &amp;p)</div><div class="ttdoc">Returns a value from the pool and removes it.</div><div class="ttdef"><b>Definition</b> stateful.h:382</div></div>
+<div class="ttc" id="aclasshegel_1_1stateful_1_1Pool_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1Pool.html">hegel::stateful::Pool</a></div><div class="ttdoc">A pool of previously generated values. A pool lets data flow from one rule to another,...</div><div class="ttdef"><b>Definition</b> stateful.h:329</div></div>
+<div class="ttc" id="anamespacehegel_1_1stateful_html_a8b12a09dddc6e5b719b502327e092fcb"><div class="ttname"><a href="#a8b12a09dddc6e5b719b502327e092fcb">hegel::stateful::values_consumed</a></div><div class="ttdeci">Generator&lt; T &gt; values_consumed(Pool&lt; T &gt; &amp;p)</div><div class="ttdoc">Returns a value from the pool and removes it.</div><div class="ttdef"><b>Definition</b> stateful.h:449</div></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
     <tr><td class="paramname">T</td><td>Element type </td></tr>
@@ -450,7 +450,7 @@ template&lt;typename T&gt; </div>
 <div class="line"> </div>
 <div class="line">       assert(pool.size() == original_set.size());</div>
 <div class="line">   }</div>
-<div class="ttc" id="anamespacehegel_1_1stateful_html_ae3b1766584156ee28d941439f7e7dad8"><div class="ttname"><a href="#ae3b1766584156ee28d941439f7e7dad8">hegel::stateful::values_reusable</a></div><div class="ttdeci">Generator&lt; T &gt; values_reusable(Pool&lt; T &gt; &amp;p)</div><div class="ttdoc">Returns a value from the pool without removing it.</div><div class="ttdef"><b>Definition</b> stateful.h:413</div></div>
+<div class="ttc" id="anamespacehegel_1_1stateful_html_ae3b1766584156ee28d941439f7e7dad8"><div class="ttname"><a href="#ae3b1766584156ee28d941439f7e7dad8">hegel::stateful::values_reusable</a></div><div class="ttdeci">Generator&lt; T &gt; values_reusable(Pool&lt; T &gt; &amp;p)</div><div class="ttdoc">Returns a value from the pool without removing it.</div><div class="ttdef"><b>Definition</b> stateful.h:480</div></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
     <tr><td class="paramname">T</td><td>Element type </td></tr>
