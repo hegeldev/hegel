@@ -14,5 +14,7 @@ var searchData=
   ['floatsparams_11',['FloatsParams',['../structhegel_1_1generators_1_1FloatsParams.html',1,'hegel::generators']]],
   ['frameworks_12',['Hegel and test frameworks',['../index.html#use_gtest',1,'']]],
   ['from_5fpath_13',['from_path',['../classhegel_1_1Database.html#ab1f19a54769acbef2a467923c3b142e7',1,'hegel::Database']]],
-  ['from_5fregex_14',['from_regex',['../namespacehegel_1_1generators.html#aa60e2999d939e4f9037fe9d7900802e3',1,'hegel::generators']]]
+  ['from_5fregex_14',['from_regex',['../namespacehegel_1_1generators.html#aa60e2999d939e4f9037fe9d7900802e3',1,'hegel::generators']]],
+  ['function_15',['Function',['../classhegel_1_1stateful_1_1ConcurrentRule.html#a1a6313a1281ca96041c621b6fafae444',1,'hegel::stateful::ConcurrentRule']]],
+  ['function_16',['function',['../classhegel_1_1stateful_1_1ConcurrentRule.html#a97f7a2d788fc600ba184af45f90b929b',1,'hegel::stateful::ConcurrentRule']]]
 ];

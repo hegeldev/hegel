@@ -62,6 +62,7 @@ var menudata={children:[
 {text:"t",url:"namespacemembers_func.html#index_t"},
 {text:"u",url:"namespacemembers_func.html#index_u"},
 {text:"v",url:"namespacemembers_func.html#index_v"}]},
+{text:"Variables",url:"namespacemembers_vars.html"},
 {text:"Enumerations",url:"namespacemembers_enum.html"}]}]},
 {text:"Classes",url:"annotated.html",children:[
 {text:"Class List",url:"annotated.html"},
@@ -94,6 +95,7 @@ var menudata={children:[
 {text:"a",url:"functions_func.html#index_a"},
 {text:"c",url:"functions_func.html#index_c"},
 {text:"d",url:"functions_func.html#index_d"},
+{text:"e",url:"functions_func.html#index_e"},
 {text:"f",url:"functions_func.html#index_f"},
 {text:"g",url:"functions_func.html#index_g"},
 {text:"i",url:"functions_func.html#index_i"},

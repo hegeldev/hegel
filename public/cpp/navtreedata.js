@@ -41,6 +41,7 @@ var NAVTREE =
       [ "Namespace Members", "namespacemembers.html", [
         [ "All", "namespacemembers.html", null ],
         [ "Functions", "namespacemembers_func.html", null ],
+        [ "Variables", "namespacemembers_vars.html", null ],
         [ "Enumerations", "namespacemembers_enum.html", null ]
       ] ]
     ] ],
@@ -62,7 +63,7 @@ var NAVTREE =
 var NAVTREEINDEX =
 [
 "annotated.html",
-"structhegel_1_1Settings.html#ad3e01a504ec505a4b403b5c09932271b"
+"namespacehegel_1_1stateful.html#aff08b4715a4d979864ad0c960bd9cd34"
 ];
 
 var SYNCONMSG = 'click to disable panel synchronization';

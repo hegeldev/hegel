@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.11.4</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.11.5</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -101,12 +101,18 @@ $(function(){initNavTree('namespacehegel_1_1stateful.html','',''); });
 <tr class="heading"><td colspan="2"><h2 id="header-nested-classes" class="groupheader"><a id="nested-classes" name="nested-classes"></a>
 Classes</h2></td></tr>
 <tr class="memitem:VariablesGenerator" id="r_VariablesGenerator"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1stateful_1_1VariablesGenerator.html">VariablesGenerator</a></td></tr>
+<tr class="memitem:Invariant" id="r_Invariant"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1stateful_1_1Invariant.html">Invariant</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">An invariant is a predicate that must hold at any point in the stateful test. They are evaluated in full on the initial and final state and sampled at intermediate join points. The invariant function should throw when the invariant is violated.  <a href="classhegel_1_1stateful_1_1Invariant.html#details">More...</a><br /></td></tr>
+<tr class="memitem:ConcurrentRule" id="r_ConcurrentRule"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1stateful_1_1ConcurrentRule.html">ConcurrentRule</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">An action that a worker can apply to a concurrent state machine.  <a href="classhegel_1_1stateful_1_1ConcurrentRule.html#details">More...</a><br /></td></tr>
+<tr class="memitem:ConcurrentStateMachine" id="r_ConcurrentStateMachine"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1stateful_1_1ConcurrentStateMachine.html">ConcurrentStateMachine</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Base class for a concurrent state machine.  <a href="classhegel_1_1stateful_1_1ConcurrentStateMachine.html#details">More...</a><br /></td></tr>
 <tr class="memitem:Pool" id="r_Pool"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1stateful_1_1Pool.html">Pool</a></td></tr>
 <tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">A pool of previously generated values. A pool lets data flow from one rule to another, so a rule can act on a handle or identifier that an earlier rule produced rather than on a freshly drawn value.  <a href="classhegel_1_1stateful_1_1Pool.html#details">More...</a><br /></td></tr>
+<tr class="memitem:ConcurrentPool" id="r_ConcurrentPool"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1stateful_1_1ConcurrentPool.html">ConcurrentPool</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">A pool of values that concurrent workers can share.  <a href="classhegel_1_1stateful_1_1ConcurrentPool.html#details">More...</a><br /></td></tr>
 <tr class="memitem:Rule" id="r_Rule"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1stateful_1_1Rule.html">Rule</a></td></tr>
 <tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">A rule is one possible action in a stateful test.  <a href="classhegel_1_1stateful_1_1Rule.html#details">More...</a><br /></td></tr>
-<tr class="memitem:Invariant" id="r_Invariant"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1stateful_1_1Invariant.html">Invariant</a></td></tr>
-<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">An invariant is a predicate that must hold at any point in the stateful test. They are evaluated on the initial state and after every valid step. The invariant function should throw when the invariant is violated.  <a href="classhegel_1_1stateful_1_1Invariant.html#details">More...</a><br /></td></tr>
 <tr class="memitem:StateMachineParams" id="r_StateMachineParams"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structhegel_1_1stateful_1_1StateMachineParams.html">StateMachineParams</a></td></tr>
 <tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Arguments for the <a class="el" href="classhegel_1_1stateful_1_1StateMachine.html">StateMachine</a> constructor.  <a href="structhegel_1_1stateful_1_1StateMachineParams.html#details">More...</a><br /></td></tr>
 <tr class="memitem:StateMachine" id="r_StateMachine"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classhegel_1_1stateful_1_1StateMachine.html">StateMachine</a></td></tr>
@@ -127,13 +133,28 @@ Functions</h2></td></tr>
 <tr class="memitem:ae3b1766584156ee28d941439f7e7dad8" id="r_ae3b1766584156ee28d941439f7e7dad8"><td class="memTemplParams" colspan="2">template&lt;typename T&gt; </td></tr>
 <tr class="memitem:ae3b1766584156ee28d941439f7e7dad8 template"><td class="memItemLeft" align="right" valign="top"><a class="el" href="classhegel_1_1generators_1_1Generator.html">Generator</a>&lt; T &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ae3b1766584156ee28d941439f7e7dad8">values_reusable</a> (<a class="el" href="classhegel_1_1stateful_1_1Pool.html">Pool</a>&lt; T &gt; &amp;p)</td></tr>
 <tr class="memdesc:ae3b1766584156ee28d941439f7e7dad8"><td class="mdescLeft">&#160;</td><td class="mdescRight">Returns a value from the pool without removing it.  <br /></td></tr>
+<tr class="memitem:acaf197544ad1a4197e98321f04583f98" id="r_acaf197544ad1a4197e98321f04583f98"><td class="memTemplParams" colspan="2">template&lt;typename T&gt; </td></tr>
+<tr class="memitem:acaf197544ad1a4197e98321f04583f98 template"><td class="memItemLeft" align="right" valign="top"><a class="el" href="classhegel_1_1generators_1_1Generator.html">Generator</a>&lt; T &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#acaf197544ad1a4197e98321f04583f98">values_consumed</a> (<a class="el" href="classhegel_1_1stateful_1_1ConcurrentPool.html">ConcurrentPool</a>&lt; T &gt; &amp;pool)</td></tr>
+<tr class="memdesc:acaf197544ad1a4197e98321f04583f98"><td class="mdescLeft">&#160;</td><td class="mdescRight">Returns a value from a concurrent pool and removes it.  <br /></td></tr>
+<tr class="memitem:adfce47f648e47ce900fbaf270aa0fc1a" id="r_adfce47f648e47ce900fbaf270aa0fc1a"><td class="memTemplParams" colspan="2">template&lt;typename T&gt; </td></tr>
+<tr class="memitem:adfce47f648e47ce900fbaf270aa0fc1a template"><td class="memItemLeft" align="right" valign="top"><a class="el" href="classhegel_1_1generators_1_1Generator.html">Generator</a>&lt; T &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#adfce47f648e47ce900fbaf270aa0fc1a">values_reusable</a> (<a class="el" href="classhegel_1_1stateful_1_1ConcurrentPool.html">ConcurrentPool</a>&lt; T &gt; &amp;pool)</td></tr>
+<tr class="memdesc:adfce47f648e47ce900fbaf270aa0fc1a"><td class="mdescLeft">&#160;</td><td class="mdescRight">Returns a copy of a value from a concurrent pool.  <br /></td></tr>
+<tr class="memitem:a1e56ae67b2bb4c8baf6377dbbc7500db" id="r_a1e56ae67b2bb4c8baf6377dbbc7500db"><td class="memTemplParams" colspan="2">template&lt;typename M&gt; </td></tr>
+<tr class="memitem:a1e56ae67b2bb4c8baf6377dbbc7500db template"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a1e56ae67b2bb4c8baf6377dbbc7500db">run_concurrent</a> (M &amp;machine, <a class="el" href="classhegel_1_1TestCase.html">TestCase</a> &amp;tc, int64_t min_concurrency, int64_t max_concurrency)</td></tr>
+<tr class="memdesc:a1e56ae67b2bb4c8baf6377dbbc7500db"><td class="mdescLeft">&#160;</td><td class="mdescRight">Executes a concurrent stateful test with rules from <code class="param">machine</code>.  <br /></td></tr>
 <tr class="memitem:aff08b4715a4d979864ad0c960bd9cd34" id="r_aff08b4715a4d979864ad0c960bd9cd34"><td class="memTemplParams" colspan="2">template&lt;typename M&gt; </td></tr>
 <tr class="memitem:aff08b4715a4d979864ad0c960bd9cd34 template"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aff08b4715a4d979864ad0c960bd9cd34">run</a> (M &amp;machine, <a class="el" href="classhegel_1_1TestCase.html">TestCase</a> &amp;tc, const <a class="el" href="structhegel_1_1stateful_1_1RunParams.html">RunParams</a> &amp;params={})</td></tr>
-<tr class="memdesc:aff08b4715a4d979864ad0c960bd9cd34"><td class="mdescLeft">&#160;</td><td class="mdescRight">Executes a stateful test by repeatedly applying randomly chosen rules from <code class="param">machine</code> to it and checking <code class="param">machine's</code> invariants before the first step and after every valid step. Rules mutate <code class="param">machine</code> in place. Raises <code class="param">std::invalid_argument</code> if the machine declares no rules.  <br /></td></tr>
+<tr class="memdesc:aff08b4715a4d979864ad0c960bd9cd34"><td class="mdescLeft">&#160;</td><td class="mdescRight">Executes a stateful test by repeatedly applying randomly chosen rules from <code class="param">machine</code> to it. Invariants run in full before the first step and after the final step. Between steps, each invariant is sampled independently. Rules mutate <code class="param">machine</code> in place. Raises <code class="param">std::invalid_argument</code> if the machine declares no rules.  <br /></td></tr>
+</table><table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 id="header-var-members" class="groupheader"><a id="var-members" name="var-members"></a>
+Variables</h2></td></tr>
+<tr class="memitem:aeb35e3b6f52e8aff4f8471f1333faf37" id="r_aeb35e3b6f52e8aff4f8471f1333faf37"><td class="memItemLeft" align="right" valign="top"><a id="aeb35e3b6f52e8aff4f8471f1333faf37" name="aeb35e3b6f52e8aff4f8471f1333faf37"></a>
+constexpr const char *&#160;</td><td class="memItemRight" valign="bottom"><b>anonymous_group</b> = &quot;&lt;anonymous&gt;&quot;</td></tr>
+<tr class="memdesc:aeb35e3b6f52e8aff4f8471f1333faf37"><td class="mdescLeft">&#160;</td><td class="mdescRight">The group name for rules that do not specify a group. <br /></td></tr>
 </table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
 <div class="textblock"><p>Stateful (model-based) property testing. </p>
-<p>A stateful test exercises a system through a sequence of randomly chosen actions ("rules") applied to a state machine. Derive a machine from <a class="el" href="classhegel_1_1stateful_1_1StateMachine.html">StateMachine</a> and define its <code>rules()</code>. Each <a class="el" href="classhegel_1_1stateful_1_1Rule.html">Rule</a> is a name and a step function that performs one application of the rule, drawing any arguments it needs from the test case and mutating the machine. Invariants are predicates on the machine evaluated before any step is run and after every successful step. An invariant must throw when violated.</p>
+<p>A stateful test exercises a system through a sequence of randomly chosen actions ("rules") applied to a state machine. Derive a machine from <a class="el" href="classhegel_1_1stateful_1_1StateMachine.html">StateMachine</a> and define its <code>rules()</code>. Each <a class="el" href="classhegel_1_1stateful_1_1Rule.html">Rule</a> is a name and a step function that performs one application of the rule, drawing any arguments it needs from the test case and mutating the machine. Invariants are predicates on the machine evaluated in full before any step and after the final step, and sampled at intermediate join points. An invariant must throw when violated.</p>
 <p>To run a state machine, pass an instance to <a class="el" href="#aff08b4715a4d979864ad0c960bd9cd34">run</a> inside a <a class="el" href="namespacehegel.html#a8297e7dfc6b7c1088c84b50b8ba4d996">hegel::test</a>. Examples in this documentation assume the alias <span class="tt">namespace gs = <a class="el" href="namespacehegel_1_1generators.html" title="Hegel generators.">hegel::generators</a>;</span>.</p>
 <p>Example: an integer stack.</p>
 <div class="fragment"><div class="line"><span class="keyword">struct </span>IntegerStack</div>
@@ -162,9 +183,9 @@ Functions</h2></td></tr>
 <div class="line">}</div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html_a6d236ee8958c93211e0f4384cf8f3b56"><div class="ttname"><a href="classhegel_1_1TestCase.html#a6d236ee8958c93211e0f4384cf8f3b56">hegel::TestCase::assume</a></div><div class="ttdeci">void assume(bool condition) const</div><div class="ttdoc">Reject the current test case if condition is false.</div></div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html_affbc292ad2e6f4027b2402200cbc1d1c"><div class="ttname"><a href="classhegel_1_1TestCase.html#affbc292ad2e6f4027b2402200cbc1d1c">hegel::TestCase::draw</a></div><div class="ttdeci">T draw(const generators::Generator&lt; T &gt; &amp;gen) const</div><div class="ttdoc">Draw a random value from a generator.</div><div class="ttdef"><b>Definition</b> core.h:264</div></div>
-<div class="ttc" id="aclasshegel_1_1stateful_1_1StateMachine_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1StateMachine.html">hegel::stateful::StateMachine</a></div><div class="ttdoc">Base class for a state machine. Holds the state and declares the rules and the invariants that act on...</div><div class="ttdef"><b>Definition</b> stateful.h:406</div></div>
+<div class="ttc" id="aclasshegel_1_1stateful_1_1StateMachine_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1StateMachine.html">hegel::stateful::StateMachine</a></div><div class="ttdoc">Base class for a state machine. Holds the state and declares the rules and the invariants that act on...</div><div class="ttdef"><b>Definition</b> stateful.h:672</div></div>
 <div class="ttc" id="agroup__test__macros_html_ga169f32a3b09c62f6b25e6c9217c46ca0"><div class="ttname"><a href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a></div><div class="ttdeci">#define HEGEL_TEST(name,...)</div><div class="ttdoc">Define a Hegel property test.</div><div class="ttdef"><b>Definition</b> hegel.h:575</div></div>
-<div class="ttc" id="anamespacehegel_1_1stateful_html_aff08b4715a4d979864ad0c960bd9cd34"><div class="ttname"><a href="#aff08b4715a4d979864ad0c960bd9cd34">hegel::stateful::run</a></div><div class="ttdeci">void run(M &amp;machine, TestCase &amp;tc, const RunParams &amp;params={})</div><div class="ttdoc">Executes a stateful test by repeatedly applying randomly chosen rules from machine to it and checking...</div><div class="ttdef"><b>Definition</b> stateful.h:508</div></div>
+<div class="ttc" id="anamespacehegel_1_1stateful_html_aff08b4715a4d979864ad0c960bd9cd34"><div class="ttname"><a href="#aff08b4715a4d979864ad0c960bd9cd34">hegel::stateful::run</a></div><div class="ttdeci">void run(M &amp;machine, TestCase &amp;tc, const RunParams &amp;params={})</div><div class="ttdoc">Executes a stateful test by repeatedly applying randomly chosen rules from machine to it....</div><div class="ttdef"><b>Definition</b> stateful.h:1068</div></div>
 </div><!-- fragment --> </div><a name="doc-func-members" id="doc-func-members"></a><h2 id="header-doc-func-members" class="groupheader">Function Documentation</h2>
 <a id="aff08b4715a4d979864ad0c960bd9cd34" name="aff08b4715a4d979864ad0c960bd9cd34"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#aff08b4715a4d979864ad0c960bd9cd34">&#9670;&#160;</a></span>run()</h2>
@@ -192,12 +213,12 @@ template&lt;typename M&gt; </div>
       </table>
 </div><div class="memdoc">
 
-<p>Executes a stateful test by repeatedly applying randomly chosen rules from <code class="param">machine</code> to it and checking <code class="param">machine's</code> invariants before the first step and after every valid step. Rules mutate <code class="param">machine</code> in place. Raises <code class="param">std::invalid_argument</code> if the machine declares no rules. </p>
-<p>On a failing replay, each applied rule prints as <code>"Step N: &lt;name&gt;"</code>. A violated invariant prints <code>"Invariant &lt;name&gt; violated after step M"</code> or <code>"Invariant &lt;name&gt; violated in the initial state"</code>.</p>
+<p>Executes a stateful test by repeatedly applying randomly chosen rules from <code class="param">machine</code> to it. Invariants run in full before the first step and after the final step. Between steps, each invariant is sampled independently. Rules mutate <code class="param">machine</code> in place. Raises <code class="param">std::invalid_argument</code> if the machine declares no rules. </p>
+<p>On a failing replay, each applied rule prints as <code>"Step N: &lt;name&gt;"</code>. A violated invariant identifies whether it was observed after a step or in the initial or final state.</p>
 <div class="fragment"><div class="line">Step 1: add</div>
 <div class="line">Step 2: add</div>
 <div class="line"><a class="code hl_class" href="classhegel_1_1stateful_1_1Invariant.html">Invariant</a> nonneg violated after step 2</div>
-<div class="ttc" id="aclasshegel_1_1stateful_1_1Invariant_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1Invariant.html">hegel::stateful::Invariant</a></div><div class="ttdoc">An invariant is a predicate that must hold at any point in the stateful test. They are evaluated on t...</div><div class="ttdef"><b>Definition</b> stateful.h:329</div></div>
+<div class="ttc" id="aclasshegel_1_1stateful_1_1Invariant_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1Invariant.html">hegel::stateful::Invariant</a></div><div class="ttdoc">An invariant is a predicate that must hold at any point in the stateful test. They are evaluated in f...</div><div class="ttdef"><b>Definition</b> stateful.h:595</div></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
     <tr><td class="paramname">M</td><td>The state-machine type, deriving from <a class="el" href="classhegel_1_1stateful_1_1StateMachine.html">StateMachine</a> </td></tr>
@@ -215,8 +236,97 @@ template&lt;typename M&gt; </div>
 
 </div>
 </div>
+<a id="a1e56ae67b2bb4c8baf6377dbbc7500db" name="a1e56ae67b2bb4c8baf6377dbbc7500db"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a1e56ae67b2bb4c8baf6377dbbc7500db">&#9670;&#160;</a></span>run_concurrent()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<div class="memtemplate">
+template&lt;typename M&gt; </div>
+      <table class="memname">
+        <tr>
+          <td class="memname">void hegel::stateful::run_concurrent </td>
+          <td>(</td>
+          <td class="paramtype">M &amp;</td>          <td class="paramname"><span class="paramname"><em>machine</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype"><a class="el" href="classhegel_1_1TestCase.html">TestCase</a> &amp;</td>          <td class="paramname"><span class="paramname"><em>tc</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int64_t</td>          <td class="paramname"><span class="paramname"><em>min_concurrency</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int64_t</td>          <td class="paramname"><span class="paramname"><em>max_concurrency</em></span>&#160;)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Executes a concurrent stateful test with rules from <code class="param">machine</code>. </p>
+<p>The runner selects a concurrency level from <code class="param">min_concurrency</code> through <code class="param">max_concurrency</code>. Execution proceeds in rounds. For each round, libhegel picks a random concurrency group. Every worker thread then runs a short (possibly empty) random sequence of rules from only that group concurrently with the other workers. The runner waits for all workers to finish before it starts the next round.</p>
+<p>All invariants run before the first round and after the final round. Between rounds, the runner samples each invariant independently.</p>
+<p>Raises <code>std::invalid_argument</code> if the machine declares no rules or if the concurrency bounds are invalid.</p>
+<p>On a failing replay, the output shows the concurrency level, each round, the active group, and the rules that each worker applies, but the falsifying test case is not shrunk since the failure may be dependent on thread scheduling.</p>
+<dl class="tparams"><dt>Template Parameters</dt><dd>
+  <table class="tparams">
+    <tr><td class="paramname">M</td><td>The state-machine type, deriving from <a class="el" href="classhegel_1_1stateful_1_1ConcurrentStateMachine.html">ConcurrentStateMachine</a> </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">machine</td><td>The state machine that the workers share </td></tr>
+    <tr><td class="paramname">tc</td><td>The test case object </td></tr>
+    <tr><td class="paramname">min_concurrency</td><td>The minimum number of workers </td></tr>
+    <tr><td class="paramname">max_concurrency</td><td>The maximum number of workers </td></tr>
+  </table>
+  </dd>
+</dl>
+
+</div>
+</div>
+<a id="acaf197544ad1a4197e98321f04583f98" name="acaf197544ad1a4197e98321f04583f98"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#acaf197544ad1a4197e98321f04583f98">&#9670;&#160;</a></span>values_consumed() <span class="overload">[1/2]</span></h2>
+
+<div class="memitem">
+<div class="memproto">
+<div class="memtemplate">
+template&lt;typename T&gt; </div>
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="classhegel_1_1generators_1_1Generator.html">Generator</a>&lt; T &gt; hegel::stateful::values_consumed </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="classhegel_1_1stateful_1_1ConcurrentPool.html">ConcurrentPool</a>&lt; T &gt; &amp;</td>          <td class="paramname"><span class="paramname"><em>pool</em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Returns a value from a concurrent pool and removes it. </p>
+<p>The draw rejects the test case if the pool is empty.</p>
+<dl class="tparams"><dt>Template Parameters</dt><dd>
+  <table class="tparams">
+    <tr><td class="paramname">T</td><td>The type of the values in the pool </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">pool</td><td>The pool to draw from </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>Returns</dt><dd>A generator that consumes values from the pool </dd></dl>
+
+</div>
+</div>
 <a id="a8b12a09dddc6e5b719b502327e092fcb" name="a8b12a09dddc6e5b719b502327e092fcb"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a8b12a09dddc6e5b719b502327e092fcb">&#9670;&#160;</a></span>values_consumed()</h2>
+<h2 class="memtitle"><span class="permalink"><a href="#a8b12a09dddc6e5b719b502327e092fcb">&#9670;&#160;</a></span>values_consumed() <span class="overload">[2/2]</span></h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -252,8 +362,8 @@ template&lt;typename T&gt; </div>
 <div class="line">       assert(original_set == returned_set);</div>
 <div class="line">   }</div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:40</div></div>
-<div class="ttc" id="aclasshegel_1_1stateful_1_1Pool_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1Pool.html">hegel::stateful::Pool</a></div><div class="ttdoc">A pool of previously generated values. A pool lets data flow from one rule to another,...</div><div class="ttdef"><b>Definition</b> stateful.h:122</div></div>
-<div class="ttc" id="anamespacehegel_1_1stateful_html_a8b12a09dddc6e5b719b502327e092fcb"><div class="ttname"><a href="#a8b12a09dddc6e5b719b502327e092fcb">hegel::stateful::values_consumed</a></div><div class="ttdeci">Generator&lt; T &gt; values_consumed(Pool&lt; T &gt; &amp;p)</div><div class="ttdoc">Returns a value from the pool and removes it.</div><div class="ttdef"><b>Definition</b> stateful.h:242</div></div>
+<div class="ttc" id="aclasshegel_1_1stateful_1_1Pool_html"><div class="ttname"><a href="classhegel_1_1stateful_1_1Pool.html">hegel::stateful::Pool</a></div><div class="ttdoc">A pool of previously generated values. A pool lets data flow from one rule to another,...</div><div class="ttdef"><b>Definition</b> stateful.h:262</div></div>
+<div class="ttc" id="anamespacehegel_1_1stateful_html_a8b12a09dddc6e5b719b502327e092fcb"><div class="ttname"><a href="#a8b12a09dddc6e5b719b502327e092fcb">hegel::stateful::values_consumed</a></div><div class="ttdeci">Generator&lt; T &gt; values_consumed(Pool&lt; T &gt; &amp;p)</div><div class="ttdoc">Returns a value from the pool and removes it.</div><div class="ttdef"><b>Definition</b> stateful.h:382</div></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
     <tr><td class="paramname">T</td><td>Element type </td></tr>
@@ -270,8 +380,43 @@ template&lt;typename T&gt; </div>
 
 </div>
 </div>
+<a id="adfce47f648e47ce900fbaf270aa0fc1a" name="adfce47f648e47ce900fbaf270aa0fc1a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#adfce47f648e47ce900fbaf270aa0fc1a">&#9670;&#160;</a></span>values_reusable() <span class="overload">[1/2]</span></h2>
+
+<div class="memitem">
+<div class="memproto">
+<div class="memtemplate">
+template&lt;typename T&gt; </div>
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="classhegel_1_1generators_1_1Generator.html">Generator</a>&lt; T &gt; hegel::stateful::values_reusable </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="classhegel_1_1stateful_1_1ConcurrentPool.html">ConcurrentPool</a>&lt; T &gt; &amp;</td>          <td class="paramname"><span class="paramname"><em>pool</em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Returns a copy of a value from a concurrent pool. </p>
+<p>The draw does not remove the value. It rejects the test case if the pool is empty.</p>
+<dl class="tparams"><dt>Template Parameters</dt><dd>
+  <table class="tparams">
+    <tr><td class="paramname">T</td><td>The type of the values in the pool </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">pool</td><td>The pool to draw from </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>Returns</dt><dd>A generator that reuses values from the pool </dd></dl>
+
+</div>
+</div>
 <a id="ae3b1766584156ee28d941439f7e7dad8" name="ae3b1766584156ee28d941439f7e7dad8"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ae3b1766584156ee28d941439f7e7dad8">&#9670;&#160;</a></span>values_reusable()</h2>
+<h2 class="memtitle"><span class="permalink"><a href="#ae3b1766584156ee28d941439f7e7dad8">&#9670;&#160;</a></span>values_reusable() <span class="overload">[2/2]</span></h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -305,7 +450,7 @@ template&lt;typename T&gt; </div>
 <div class="line"> </div>
 <div class="line">       assert(pool.size() == original_set.size());</div>
 <div class="line">   }</div>
-<div class="ttc" id="anamespacehegel_1_1stateful_html_ae3b1766584156ee28d941439f7e7dad8"><div class="ttname"><a href="#ae3b1766584156ee28d941439f7e7dad8">hegel::stateful::values_reusable</a></div><div class="ttdeci">Generator&lt; T &gt; values_reusable(Pool&lt; T &gt; &amp;p)</div><div class="ttdoc">Returns a value from the pool without removing it.</div><div class="ttdef"><b>Definition</b> stateful.h:273</div></div>
+<div class="ttc" id="anamespacehegel_1_1stateful_html_ae3b1766584156ee28d941439f7e7dad8"><div class="ttname"><a href="#ae3b1766584156ee28d941439f7e7dad8">hegel::stateful::values_reusable</a></div><div class="ttdeci">Generator&lt; T &gt; values_reusable(Pool&lt; T &gt; &amp;p)</div><div class="ttdoc">Returns a value from the pool without removing it.</div><div class="ttdef"><b>Definition</b> stateful.h:413</div></div>
 </div><!-- fragment --><dl class="tparams"><dt>Template Parameters</dt><dd>
   <table class="tparams">
     <tr><td class="paramname">T</td><td>Element type </td></tr>

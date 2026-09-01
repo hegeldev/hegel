@@ -2,8 +2,8 @@ var searchData=
 [
   ['v_0',['v',['../structhegel_1_1generators_1_1IpAddressesParams.html#abefa5c696a35a38d6e97e4182abbfb6e',1,'hegel::generators::IpAddressesParams']]],
   ['value_5ftype_1',['value_type',['../classhegel_1_1generators_1_1Generator.html#ae57339c44a6b29805622edba851a7e0a',1,'hegel::generators::Generator::value_type'],['../classhegel_1_1stateful_1_1Generator.html#ae57339c44a6b29805622edba851a7e0a',1,'hegel::stateful::Generator::value_type']]],
-  ['values_5fconsumed_2',['values_consumed',['../namespacehegel_1_1stateful.html#a8b12a09dddc6e5b719b502327e092fcb',1,'hegel::stateful']]],
-  ['values_5freusable_3',['values_reusable',['../namespacehegel_1_1stateful.html#ae3b1766584156ee28d941439f7e7dad8',1,'hegel::stateful']]],
+  ['values_5fconsumed_2',['values_consumed',['../namespacehegel_1_1stateful.html#a8b12a09dddc6e5b719b502327e092fcb',1,'hegel::stateful::values_consumed(Pool&lt; T &gt; &amp;p)'],['../namespacehegel_1_1stateful.html#acaf197544ad1a4197e98321f04583f98',1,'hegel::stateful::values_consumed(ConcurrentPool&lt; T &gt; &amp;pool)']]],
+  ['values_5freusable_3',['values_reusable',['../namespacehegel_1_1stateful.html#ae3b1766584156ee28d941439f7e7dad8',1,'hegel::stateful::values_reusable(Pool&lt; T &gt; &amp;p)'],['../namespacehegel_1_1stateful.html#adfce47f648e47ce900fbaf270aa0fc1a',1,'hegel::stateful::values_reusable(ConcurrentPool&lt; T &gt; &amp;pool)']]],
   ['variablesgenerator_4',['VariablesGenerator',['../classhegel_1_1stateful_1_1VariablesGenerator.html',1,'hegel::stateful']]],
   ['variant_5',['variant',['../namespacehegel_1_1generators.html#a6d34a61e01a22263e07a4843090b823f',1,'hegel::generators']]],
   ['vectors_6',['vectors',['../namespacehegel_1_1generators.html#a3c573a52533dd87bd01533761bf5ab8d',1,'hegel::generators']]],
