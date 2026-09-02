@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['phase_0',['Phase',['../namespacehegel.html#aee0a47457861d4028b314d518cd50b6a',1,'hegel']]]
+  ['verbosity_0',['Verbosity',['../namespacehegel.html#aa5d3c97b2de55ed337e5bf3a9bc92eb8',1,'hegel']]]
 ];

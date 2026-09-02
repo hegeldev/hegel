@@ -20,10 +20,6 @@ var namespacehegel =
       [ "TestCasesTooLarge", "namespacehegel.html#a98e2c0a6bc324370d8fb109cd3a2c71da3f27234a3a1dcb8a808efcb61cf83870", null ],
       [ "LargeInitialTestCase", "namespacehegel.html#a98e2c0a6bc324370d8fb109cd3a2c71daa057e626223174c2433962916cbfaca0", null ]
     ] ],
-    [ "Mode", "namespacehegel.html#a76460adf8877112c3cc69bff0a21dcdd", [
-      [ "TestRun", "namespacehegel.html#a76460adf8877112c3cc69bff0a21dcddac75e7027f34f603c0e19218d27e1011f", null ],
-      [ "SingleTestCase", "namespacehegel.html#a76460adf8877112c3cc69bff0a21dcddab43f392f591f68ed58330cfb1a45c2c1", null ]
-    ] ],
     [ "Phase", "namespacehegel.html#aee0a47457861d4028b314d518cd50b6a", [
       [ "Explicit", "namespacehegel.html#aee0a47457861d4028b314d518cd50b6aa9d71760e2dd451db2df354d0fd29cd7f", null ],
       [ "Reuse", "namespacehegel.html#aee0a47457861d4028b314d518cd50b6aae5c303d82e8b702ccaba9f2b4bbe4c80", null ],

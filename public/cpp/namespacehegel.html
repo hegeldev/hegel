@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.11.6</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.12.0</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -146,10 +146,6 @@ Enumerations</h2></td></tr>
 <br />
  }</td></tr>
 <tr class="memdesc:aee0a47457861d4028b314d518cd50b6a"><td class="mdescLeft">&#160;</td><td class="mdescRight">Phases of a property-test run.  <a href="#aee0a47457861d4028b314d518cd50b6a">More...</a><br /></td></tr>
-<tr class="memitem:a76460adf8877112c3cc69bff0a21dcdd" id="r_a76460adf8877112c3cc69bff0a21dcdd"><td class="memItemLeft" align="right" valign="top">enum class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a76460adf8877112c3cc69bff0a21dcdd">Mode</a> { <a class="el" href="#a76460adf8877112c3cc69bff0a21dcddac75e7027f34f603c0e19218d27e1011f">TestRun</a>
-, <a class="el" href="#a76460adf8877112c3cc69bff0a21dcddab43f392f591f68ed58330cfb1a45c2c1">SingleTestCase</a>
- }</td></tr>
-<tr class="memdesc:a76460adf8877112c3cc69bff0a21dcdd"><td class="mdescLeft">&#160;</td><td class="mdescRight">How much of a run the engine performs.  <a href="#a76460adf8877112c3cc69bff0a21dcdd">More...</a><br /></td></tr>
 <tr class="memitem:a887e0714b99c358aa474848809bca688" id="r_a887e0714b99c358aa474848809bca688"><td class="memItemLeft" align="right" valign="top">enum class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a887e0714b99c358aa474848809bca688">Backend</a> { <a class="el" href="#a887e0714b99c358aa474848809bca688a06b9281e396db002010bde1de57262eb">Auto</a>
 , <a class="el" href="#a887e0714b99c358aa474848809bca688a7a1920d61156abc05a60135aefe8bc67">Default</a>
 , <a class="el" href="#a887e0714b99c358aa474848809bca688a27584154da40f4f2174d452ef7de4a75">Urandom</a>
@@ -233,36 +229,6 @@ Functions</h2></td></tr>
 <tr><td class="fieldname"><a id="a98e2c0a6bc324370d8fb109cd3a2c71da3f27234a3a1dcb8a808efcb61cf83870" name="a98e2c0a6bc324370d8fb109cd3a2c71da3f27234a3a1dcb8a808efcb61cf83870"></a>TestCasesTooLarge&#160;</td><td class="fielddoc"><p>Generated test cases are too large. </p>
 </td></tr>
 <tr><td class="fieldname"><a id="a98e2c0a6bc324370d8fb109cd3a2c71daa057e626223174c2433962916cbfaca0" name="a98e2c0a6bc324370d8fb109cd3a2c71daa057e626223174c2433962916cbfaca0"></a>LargeInitialTestCase&#160;</td><td class="fielddoc"><p>First generated test case is unusually large. </p>
-</td></tr>
-</table>
-
-</div>
-</div>
-<a id="a76460adf8877112c3cc69bff0a21dcdd" name="a76460adf8877112c3cc69bff0a21dcdd"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a76460adf8877112c3cc69bff0a21dcdd">&#9670;&#160;</a></span>Mode</h2>
-
-<div class="memitem">
-<div class="memproto">
-<table class="mlabels">
-  <tr>
-  <td class="mlabels-left">
-      <table class="memname">
-        <tr>
-          <td class="memname">enum class <a class="el" href="#a76460adf8877112c3cc69bff0a21dcdd">hegel::Mode</a></td>
-        </tr>
-      </table>
-  </td>
-  <td class="mlabels-right">
-<span class="mlabels"><span class="mlabel strong">strong</span></span>  </td>
-  </tr>
-</table>
-</div><div class="memdoc">
-
-<p>How much of a run the engine performs. </p>
-<table class="fieldtable">
-<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="a76460adf8877112c3cc69bff0a21dcddac75e7027f34f603c0e19218d27e1011f" name="a76460adf8877112c3cc69bff0a21dcddac75e7027f34f603c0e19218d27e1011f"></a>TestRun&#160;</td><td class="fielddoc"><p>Full property-test run. The default. </p>
-</td></tr>
-<tr><td class="fieldname"><a id="a76460adf8877112c3cc69bff0a21dcddab43f392f591f68ed58330cfb1a45c2c1" name="a76460adf8877112c3cc69bff0a21dcddab43f392f591f68ed58330cfb1a45c2c1"></a>SingleTestCase&#160;</td><td class="fielddoc"><p>Produce exactly one test case and stop, with no shrinking. Useful for exploratory probes. </p>
 </td></tr>
 </table>
 

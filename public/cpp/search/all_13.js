@@ -10,11 +10,10 @@ var searchData=
   ['testcase_7',['TestCase',['../classhegel_1_1TestCase.html',1,'hegel::TestCase'],['../classhegel_1_1TestCase.html#abd7495c6a99ded2686611a10706f5204',1,'hegel::TestCase::TestCase()']]],
   ['testcasestoolarge_8',['TestCasesTooLarge',['../namespacehegel.html#a98e2c0a6bc324370d8fb109cd3a2c71da3f27234a3a1dcb8a808efcb61cf83870',1,'hegel']]],
   ['testlocation_9',['TestLocation',['../structhegel_1_1TestLocation.html',1,'hegel']]],
-  ['testrun_10',['TestRun',['../namespacehegel.html#a76460adf8877112c3cc69bff0a21dcddac75e7027f34f603c0e19218d27e1011f',1,'hegel']]],
-  ['text_11',['text',['../namespacehegel_1_1generators.html#ac9a358a586db20a210121e5b5126d52a',1,'hegel::generators']]],
-  ['textparams_12',['TextParams',['../structhegel_1_1generators_1_1TextParams.html',1,'hegel::generators']]],
-  ['the_20number_20of_20test_20cases_13',['Change the number of test cases',['../index.html#change_test_cases',1,'']]],
-  ['times_14',['times',['../namespacehegel_1_1generators.html#a5e39d59edcff5ecd4cc124bf7a8a2321',1,'hegel::generators']]],
-  ['tooslow_15',['TooSlow',['../namespacehegel.html#a98e2c0a6bc324370d8fb109cd3a2c71da7d02020399c3a285c8dafd26cc67ee2f',1,'hegel']]],
-  ['tuples_16',['tuples',['../namespacehegel_1_1generators.html#a0b4c05fc108c0ea5c87d78362983a5fa',1,'hegel::generators']]]
+  ['text_10',['text',['../namespacehegel_1_1generators.html#ac9a358a586db20a210121e5b5126d52a',1,'hegel::generators']]],
+  ['textparams_11',['TextParams',['../structhegel_1_1generators_1_1TextParams.html',1,'hegel::generators']]],
+  ['the_20number_20of_20test_20cases_12',['Change the number of test cases',['../index.html#change_test_cases',1,'']]],
+  ['times_13',['times',['../namespacehegel_1_1generators.html#a5e39d59edcff5ecd4cc124bf7a8a2321',1,'hegel::generators']]],
+  ['tooslow_14',['TooSlow',['../namespacehegel.html#a98e2c0a6bc324370d8fb109cd3a2c71da7d02020399c3a285c8dafd26cc67ee2f',1,'hegel']]],
+  ['tuples_15',['tuples',['../namespacehegel_1_1generators.html#a0b4c05fc108c0ea5c87d78362983a5fa',1,'hegel::generators']]]
 ];

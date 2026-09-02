@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.11.6</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.12.0</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -120,9 +120,6 @@ std::optional&lt; uint64_t &gt;&#160;</td><td class="memItemRight" valign="botto
 std::vector&lt; <a class="el" href="namespacehegel.html#a98e2c0a6bc324370d8fb109cd3a2c71d">HealthCheck</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><b>suppress_health_check</b></td></tr>
 <tr class="memdesc:ac78c4a0ae269f598b13c1d0c09f99214"><td class="mdescLeft">&#160;</td><td class="mdescRight">Health checks to suppress for this test. <br /></td></tr>
 <tr class="memitem:a30e6653ea59ceb8e3e79e33e6b0e7408" id="r_a30e6653ea59ceb8e3e79e33e6b0e7408"><td class="memItemLeft" align="right" valign="top">std::vector&lt; <a class="el" href="namespacehegel.html#aee0a47457861d4028b314d518cd50b6a">Phase</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a30e6653ea59ceb8e3e79e33e6b0e7408">phases</a> = <a class="el" href="namespacehegel.html#ae35e7e1ec4100f295b39e3987cda114a">all_phases</a>()</td></tr>
-<tr class="memitem:a07cda060e164464aad6ab36d16bbeea0" id="r_a07cda060e164464aad6ab36d16bbeea0"><td class="memItemLeft" align="right" valign="top"><a id="a07cda060e164464aad6ab36d16bbeea0" name="a07cda060e164464aad6ab36d16bbeea0"></a>
-<a class="el" href="namespacehegel.html#a76460adf8877112c3cc69bff0a21dcdd">Mode</a>&#160;</td><td class="memItemRight" valign="bottom"><b>mode</b> = <a class="el" href="namespacehegel.html#a76460adf8877112c3cc69bff0a21dcddac75e7027f34f603c0e19218d27e1011f">Mode::TestRun</a></td></tr>
-<tr class="memdesc:a07cda060e164464aad6ab36d16bbeea0"><td class="mdescLeft">&#160;</td><td class="mdescRight">How much of a run to perform. Defaults to <a class="el" href="namespacehegel.html#a76460adf8877112c3cc69bff0a21dcddac75e7027f34f603c0e19218d27e1011f" title="Full property-test run. The default.">Mode::TestRun</a>. <br /></td></tr>
 <tr class="memitem:a1a678c2dca9417303744c5495898942f" id="r_a1a678c2dca9417303744c5495898942f"><td class="memItemLeft" align="right" valign="top"><a class="el" href="namespacehegel.html#a887e0714b99c358aa474848809bca688">Backend</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a1a678c2dca9417303744c5495898942f">backend</a> = <a class="el" href="namespacehegel.html#a887e0714b99c358aa474848809bca688a06b9281e396db002010bde1de57262eb">Backend::Auto</a></td></tr>
 <tr class="memitem:a6492c6dff0a55d51dd5ce3836657e0dc" id="r_a6492c6dff0a55d51dd5ce3836657e0dc"><td class="memItemLeft" align="right" valign="top">int64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a6492c6dff0a55d51dd5ce3836657e0dc">stateful_step_count</a> = 50</td></tr>
 </table>
@@ -157,8 +154,8 @@ std::vector&lt; <a class="el" href="namespacehegel.html#a98e2c0a6bc324370d8fb109
 </div><div class="memdoc">
 <b>Initial value:</b><div class="fragment"><div class="line">=</div>
 <div class="line">            internal::in_ci() ? <a class="code hl_function" href="classhegel_1_1Database.html#a117dd4e9d11f8bdb8012f1152fdbfd6e">Database::disabled</a>() : <a class="code hl_class" href="classhegel_1_1Database.html">Database</a>::unset()</div>
-<div class="ttc" id="aclasshegel_1_1Database_html"><div class="ttname"><a href="classhegel_1_1Database.html">hegel::Database</a></div><div class="ttdoc">Configure the Hegel database.</div><div class="ttdef"><b>Definition</b> settings.h:121</div></div>
-<div class="ttc" id="aclasshegel_1_1Database_html_a117dd4e9d11f8bdb8012f1152fdbfd6e"><div class="ttname"><a href="classhegel_1_1Database.html#a117dd4e9d11f8bdb8012f1152fdbfd6e">hegel::Database::disabled</a></div><div class="ttdeci">static Database disabled()</div><div class="ttdef"><b>Definition</b> settings.h:137</div></div>
+<div class="ttc" id="aclasshegel_1_1Database_html"><div class="ttname"><a href="classhegel_1_1Database.html">hegel::Database</a></div><div class="ttdoc">Configure the Hegel database.</div><div class="ttdef"><b>Definition</b> settings.h:112</div></div>
+<div class="ttc" id="aclasshegel_1_1Database_html_a117dd4e9d11f8bdb8012f1152fdbfd6e"><div class="ttname"><a href="classhegel_1_1Database.html#a117dd4e9d11f8bdb8012f1152fdbfd6e">hegel::Database::disabled</a></div><div class="ttdeci">static Database disabled()</div><div class="ttdef"><b>Definition</b> settings.h:128</div></div>
 </div><!-- fragment --><p>Configure the Hegel database. See <a class="el" href="classhegel_1_1Database.html" title="Configure the Hegel database.">Database</a>. Defaults to a database at <span class="tt">.<a class="el" href="namespacehegel.html" title="Main namespace.">hegel</a></span>, or disabled when a CI environment is detected. </p>
 
 </div>
