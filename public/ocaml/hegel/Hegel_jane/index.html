@@ -1,17 +1,17 @@
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml"><head>
-<base href="/ocaml/hegel/Hegel_jane/"><title>Hegel_jane (hegel.Hegel_jane)</title><meta charset="utf-8"/><link rel="stylesheet" href="../../odoc.support/odoc.css"/><meta name="generator" content="odoc 3.2.1"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><script src="../../odoc.support/highlight.pack.js"></script><script>hljs.initHighlightingOnLoad();</script></head><body class="odoc"><nav class="odoc-nav"><a href="../index.html">Up</a> – <a href="../../index.html">Index</a> &#x00BB; <a href="../index.html">hegel</a> &#x00BB; Hegel_jane</nav><header class="odoc-preamble"><h1>Module <code><span>Hegel_jane</span></code></h1><p>Jane Street <code>Core</code> companion library for Hegel (<code>hegel.jane</code>).</p><p>It requires the <code>core</code> and <code>sexp_diff</code> opam packages. Each typed generator draws through the corresponding <code>hegel</code> generator and converts the result.</p><p>To use <code>hegel.jane</code>, add <code>hegel.jane</code> and <code>core</code> to your dune <code>libraries</code>:</p><pre class="language-ocaml"><code>  (test
-   (name my_tests)
-   (libraries hegel hegel.jane core alcotest)
-   (preprocess (pps ppx_hegel_test)))</code></pre><p>Then draw <code>Core</code> values directly:</p><pre class="language-ocaml"><code>  open Hegel
+<base href="/ocaml/hegel/Hegel_jane/"><title>Hegel_jane (hegel.Hegel_jane)</title><meta charset="utf-8"/><link rel="stylesheet" href="../../odoc.support/odoc.css"/><meta name="generator" content="odoc 3.2.1"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><script src="../../odoc.support/highlight.pack.js"></script><script>hljs.initHighlightingOnLoad();</script></head><body class="odoc"><nav class="odoc-nav"><a href="../index.html">Up</a> – <a href="../../index.html">Index</a> &#x00BB; <a href="../index.html">hegel</a> &#x00BB; Hegel_jane</nav><header class="odoc-preamble"><h1>Module <code><span>Hegel_jane</span></code></h1><p>Jane Street <code>Core</code> companion library for Hegel (<code>hegel.jane</code>).</p><p>It requires the <code>core</code> and <code>sexp_diff</code> opam packages. Each typed generator draws through the corresponding <code>hegel</code> generator and converts the result.</p><p>To use <code>hegel.jane</code>, add <code>hegel.jane</code> and <code>core</code> to your dune <code>libraries</code>:</p><pre class="language-ocaml"><code>test
+  (name my_tests)
+  (libraries hegel hegel.jane core alcotest)
+  (preprocess (pps ppx_hegel_test))</code></pre><p>Then draw <code>Core</code> values directly:</p><pre class="language-ocaml"><code>open Hegel
 
-  (* Optional: show a structural [sexp_diff] on [require_equal] failures. *)
-  let () = Hegel_jane.set_sexp_diff ()
+(* Optional: show a structural [sexp_diff] on [require_equal] failures. *)
+let () = Hegel_jane.set_sexp_diff ()
 
-  let%hegel_test dates_are_in_range tc =
-    let d = draw tc (Hegel_jane.dates ()) in
-    assert (Core.Date.year d &gt;= 1 &amp;&amp; Core.Date.year d &lt;= 9999)
-  ;;</code></pre></header><div class="odoc-content"><div class="odoc-spec"><div class="spec value anchored" id="val-dates"><a href="#val-dates" class="anchor"></a><code><span><span class="keyword">val</span> dates : 
+let%hegel_test dates_are_in_range tc =
+  let d = draw tc (Hegel_jane.dates ()) in
+  assert (Core.Date.year d &gt;= 1 &amp;&amp; Core.Date.year d &lt;= 9999)
+;;</code></pre></header><div class="odoc-content"><div class="odoc-spec"><div class="spec value anchored" id="val-dates"><a href="#val-dates" class="anchor"></a><code><span><span class="keyword">val</span> dates : 
   <span><span class="optlabel">?min_date</span>:<span class="xref-unresolved">Core</span>.Date.t <span class="arrow">&#45;&gt;</span></span>
   <span><span class="optlabel">?max_date</span>:<span class="xref-unresolved">Core</span>.Date.t <span class="arrow">&#45;&gt;</span></span>
   <span>unit <span class="arrow">&#45;&gt;</span></span>
