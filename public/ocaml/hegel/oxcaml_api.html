@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+<base href="/ocaml/hegel/"><title>oxcaml_api (hegel.oxcaml_api)</title><meta charset="utf-8"/><link rel="stylesheet" href="../odoc.support/odoc.css"/><meta name="generator" content="odoc 3.2.1"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><script src="../odoc.support/highlight.pack.js"></script><script>hljs.initHighlightingOnLoad();</script></head><body class="odoc"><nav class="odoc-nav"><a href="index.html">Up</a> – <a href="../index.html">Index</a> &#x00BB; <a href="index.html">hegel</a> &#x00BB; oxcaml_api</nav><header class="odoc-preamble"><h1 id="mode-annotated-api"><a href="#mode-annotated-api" class="anchor"></a>Mode-annotated API</h1><p>This page lists every public signature that has a mode in OxCaml.</p></header><div class="odoc-tocs"><nav class="odoc-toc odoc-local-toc"><ul><li><a href="#module-level-defaults">Module-level defaults</a></li><li><a href="#hegel">Hegel</a></li><li><a href="#hegel.generators">Hegel.Generators</a></li><li><a href="#hegel.stateful">Hegel.Stateful</a></li><li><a href="#hegel.concurrency">Hegel.Concurrency</a></li><li><a href="#hegel_jane_concurrent">Hegel_jane_concurrent</a></li></ul></nav></div><div class="odoc-content"><h2 id="module-level-defaults"><a href="#module-level-defaults" class="anchor"></a>Module-level defaults</h2><p>These modules declare <code>@@ portable</code> as their default: <a href="Hegel/index.html"><code>Hegel</code></a>, <a href="Hegel/Generators/index.html"><code>Hegel.Generators</code></a>, <a href="Hegel/Derive/index.html"><code>Hegel.Derive</code></a>, <a href="Hegel/Settings/index.html"><code>Hegel.Settings</code></a>, <a href="Hegel_jane/index.html"><code>Hegel_jane</code></a>, <a href="hegel_jane_concurrent.html" title="hegel_jane_concurrent"><code>Hegel_jane_concurrent</code></a>, and the <a href="Hegel/Stateful/index.html"><code>Hegel.Stateful</code></a> submodules <a href="Hegel/Stateful/Pool/index.html"><code>Hegel.Stateful.Pool</code></a>, <a href="Hegel/Stateful/Rule/index.html"><code>Hegel.Stateful.Rule</code></a>, <a href="Hegel/Stateful/Invariant/index.html"><code>Hegel.Stateful.Invariant</code></a>, and <a href="Hegel/Stateful/Concurrent_rule/index.html"><code>Hegel.Stateful.Concurrent_rule</code></a>. The <a href="Hegel/Stateful/index.html"><code>Hegel.Stateful</code></a> runners (<a href="Hegel/Stateful/index.html#val-run"><code>Hegel.Stateful.run</code></a>, <a href="Hegel/Stateful/index.html#val-run_concurrent"><code>Hegel.Stateful.run_concurrent</code></a>) are not portable.</p><h2 id="hegel"><a href="#hegel" class="anchor"></a>Hegel</h2><p><a href="Hegel/index.html#type-test_case"><code>Hegel.test_case</code></a></p><pre class="language-ocaml"><code>type test_case : value mod portable contended</code></pre><p><a href="Hegel/index.html#val-with_printer"><code>Hegel.with_printer</code></a></p><pre class="language-ocaml"><code>val with_printer
+  :  ('a -&gt; Sexplib0.Sexp.t) @ portable
+  -&gt; ('a, 'p) generator
+  -&gt; ('a, printable) generator</code></pre><h2 id="hegel.generators"><a href="#hegel.generators" class="anchor"></a>Hegel.Generators</h2><p><a href="Hegel/Generators/index.html#type-generator"><code>Hegel.Generators.generator</code></a></p><pre class="language-ocaml"><code>type ('a, 'p) generator : value mod portable contended</code></pre><p><a href="Hegel/Generators/index.html#val-just"><code>Hegel.Generators.just</code></a></p><pre class="language-ocaml"><code>val just : ('a : value mod portable contended). 'a -&gt; ('a, unprintable) generator</code></pre><p><a href="Hegel/Generators/index.html#val-sampled_from"><code>Hegel.Generators.sampled_from</code></a></p><pre class="language-ocaml"><code>val sampled_from
+  : ('a : value mod portable contended). 'a list -&gt; ('a, unprintable) generator</code></pre><p><a href="Hegel/Generators/index.html#val-map"><code>Hegel.Generators.map</code></a></p><pre class="language-ocaml"><code>val map : ('a -&gt; 'b) @ portable -&gt; ('a, 'p) generator -&gt; ('b, unprintable) generator</code></pre><p><a href="Hegel/Generators/index.html#val-flat_map"><code>Hegel.Generators.flat_map</code></a></p><pre class="language-ocaml"><code>val flat_map
+  :  ('a -&gt; ('b, 'q) generator) @ portable
+  -&gt; ('a, 'p) generator
+  -&gt; ('b, unprintable) generator</code></pre><p><a href="Hegel/Generators/index.html#val-filter"><code>Hegel.Generators.filter</code></a></p><pre class="language-ocaml"><code>val filter : ('a -&gt; bool) @ portable -&gt; ('a, 'p) generator -&gt; ('a, 'p) generator</code></pre><p><a href="Hegel/Generators/index.html#val-composite"><code>Hegel.Generators.composite</code></a></p><pre class="language-ocaml"><code>val composite : (test_case -&gt; 'a) @ portable -&gt; ('a, unprintable) generator</code></pre><p><a href="Hegel/Generators/index.html#val-make_characters"><code>Hegel.Generators.make_characters</code></a></p><pre class="language-ocaml"><code>val make_characters
+  :  of_char:(char -&gt; 'a) @ portable
+  -&gt; sexp_of:('a -&gt; Sexplib0.Sexp.t) @ portable
+  -&gt; unit
+  -&gt; ('a, printable) generator</code></pre><p><a href="Hegel/Generators/index.html#val-make_hash_tables"><code>Hegel.Generators.make_hash_tables</code></a></p><pre class="language-ocaml"><code>val make_hash_tables
+  :  of_pairs:(('a * 'b) list -&gt; 't) @ portable
+  -&gt; sexp_of_t:
+       (('a -&gt; Sexplib0.Sexp.t) -&gt; ('b -&gt; Sexplib0.Sexp.t) -&gt; 't -&gt; Sexplib0.Sexp.t)
+       @ portable
+  -&gt; ('a, printable) generator
+  -&gt; ('b, printable) generator
+  -&gt; ?min_size:int
+  -&gt; ?max_size:int
+  -&gt; unit
+  -&gt; ('t, printable) generator</code></pre><p><a href="Hegel/Generators/index.html#val-make_dates"><code>Hegel.Generators.make_dates</code></a></p><pre class="language-ocaml"><code>val make_dates
+  :  of_date:(date -&gt; 'a) @ portable
+  -&gt; sexp_of:('a -&gt; Sexplib0.Sexp.t) @ portable
+  -&gt; ?min_date:date
+  -&gt; ?max_date:date
+  -&gt; unit
+  -&gt; ('a, printable) generator</code></pre><p><a href="Hegel/Generators/index.html#val-make_times"><code>Hegel.Generators.make_times</code></a></p><pre class="language-ocaml"><code>val make_times
+  :  of_time:(time -&gt; 'a) @ portable
+  -&gt; sexp_of:('a -&gt; Sexplib0.Sexp.t) @ portable
+  -&gt; ?min_time:time
+  -&gt; ?max_time:time
+  -&gt; unit
+  -&gt; ('a, printable) generator</code></pre><p><a href="Hegel/Generators/index.html#val-make_datetimes"><code>Hegel.Generators.make_datetimes</code></a></p><pre class="language-ocaml"><code>val make_datetimes
+  :  of_datetime:(date * time -&gt; 'a) @ portable
+  -&gt; sexp_of:('a -&gt; Sexplib0.Sexp.t) @ portable
+  -&gt; ?min_datetime:date * time
+  -&gt; ?max_datetime:date * time
+  -&gt; unit
+  -&gt; ('a, printable) generator</code></pre><p><a href="Hegel/Generators/index.html#val-functions"><code>Hegel.Generators.functions</code></a></p><pre class="language-ocaml"><code>val functions
+  :  ?name:string
+  -&gt; ?sexp_of_arg:('a -&gt; Sexplib0.Sexp.t) @ portable
+  -&gt; returns:('b, _) generator
+  -&gt; unit
+  -&gt; ('a -&gt; 'b, unprintable) generator</code></pre><p><a href="Hegel/Generators/index.html#val-functions2"><code>Hegel.Generators.functions2</code></a></p><pre class="language-ocaml"><code>val functions2
+  :  ?name:string
+  -&gt; ?sexp_of_arg1:('a -&gt; Sexplib0.Sexp.t) @ portable
+  -&gt; ?sexp_of_arg2:('b -&gt; Sexplib0.Sexp.t) @ portable
+  -&gt; returns:('c, _) generator
+  -&gt; unit
+  -&gt; ('a -&gt; 'b -&gt; 'c, unprintable) generator</code></pre><p><a href="Hegel/Generators/index.html#val-functions3"><code>Hegel.Generators.functions3</code></a></p><pre class="language-ocaml"><code>val functions3
+  :  ?name:string
+  -&gt; ?sexp_of_arg1:('a -&gt; Sexplib0.Sexp.t) @ portable
+  -&gt; ?sexp_of_arg2:('b -&gt; Sexplib0.Sexp.t) @ portable
+  -&gt; ?sexp_of_arg3:('c -&gt; Sexplib0.Sexp.t) @ portable
+  -&gt; returns:('d, _) generator
+  -&gt; unit
+  -&gt; ('a -&gt; 'b -&gt; 'c -&gt; 'd, unprintable) generator</code></pre><h2 id="hegel.stateful"><a href="#hegel.stateful" class="anchor"></a>Hegel.Stateful</h2><p><a href="Hegel/Stateful/Pool/index.html#type-t"><code>Hegel.Stateful.Pool.t</code></a></p><pre class="language-ocaml"><code>type ('a : value mod portable contended) t : value mod portable contended</code></pre><p><a href="Hegel/Stateful/Pool/index.html#val-create"><code>Hegel.Stateful.Pool.create</code></a></p><pre class="language-ocaml"><code>val create : ?clone:('a -&gt; 'a) @ portable -&gt; test_case -&gt; 'a t</code></pre><p><a href="Hegel/Stateful/Concurrent_rule/index.html#type-t"><code>Hegel.Stateful.Concurrent_rule.t</code></a></p><pre class="language-ocaml"><code>type 'state t : value mod portable contended</code></pre><p><a href="Hegel/Stateful/Concurrent_rule/index.html#val-create"><code>Hegel.Stateful.Concurrent_rule.create</code></a></p><pre class="language-ocaml"><code>val create
+  :  ?group:string
+  -&gt; name:string
+  -&gt; step:(test_case -&gt; 'state @ contended -&gt; unit) @ portable
+  -&gt; unit
+  -&gt; 'state t</code></pre><p><a href="Hegel/Stateful/index.html#val-run_concurrent"><code>Hegel.Stateful.run_concurrent</code></a></p><pre class="language-ocaml"><code>val run_concurrent
+  :  ?concurrency:Concurrency.t @ local
+  -&gt; ?min_concurrency:int
+  -&gt; ?max_concurrency:int
+  -&gt; ?step_count:int
+  -&gt; ?sexp_of_state:('state -&gt; Sexplib0.Sexp.t)
+  -&gt; test_case
+  -&gt; (module Concurrent_state_machine with type state = 'state)
+  -&gt; init:'state @ portable
+  -&gt; unit</code></pre><h2 id="hegel.concurrency"><a href="#hegel.concurrency" class="anchor"></a>Hegel.Concurrency</h2><p><a href="Hegel/Concurrency/index.html#type-t"><code>Hegel.Concurrency.t</code></a></p><pre class="language-ocaml"><code>type t =
+  { spawn_join_n :
+      n:int -&gt; (f:(int -&gt; outcome) @ portable -&gt; outcome list @ contended) @ local
+  }</code></pre><h2 id="hegel_jane_concurrent"><a href="#hegel_jane_concurrent" class="anchor"></a>Hegel_jane_concurrent</h2><p><a href="hegel_jane_concurrent.html" title="hegel_jane_concurrent"><code>of_concurrent</code></a></p><pre class="language-ocaml"><code>val of_concurrent : _ Concurrent.t @ local -&gt; Hegel.Concurrency.t @ local</code></pre></div></body></html>

@@ -1,39 +1,170 @@
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml"><head>
-<base href="/ocaml/hegel/Hegel/Stateful/"><title>Stateful (hegel.Hegel.Stateful)</title><meta charset="utf-8"/><link rel="stylesheet" href="../../../odoc.support/odoc.css"/><meta name="generator" content="odoc 3.2.1"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><script src="../../../odoc.support/highlight.pack.js"></script><script>hljs.initHighlightingOnLoad();</script></head><body class="odoc"><nav class="odoc-nav"><a href="../index.html">Up</a> – <a href="../../../index.html">Index</a> &#x00BB; <a href="../../index.html">hegel</a> &#x00BB; <a href="../index.html">Hegel</a> &#x00BB; Stateful</nav><header class="odoc-preamble"><h1>Module <code><span>Hegel.Stateful</span></code></h1><p>Stateful property-based testing.</p></header><div class="odoc-tocs"><nav class="odoc-toc odoc-local-toc"><ul><li><a href="#introduction">Introduction</a></li><li><a href="#submodules">Submodules</a></li><li><a href="#running-stateful-tests">Running stateful tests</a></li></ul></nav></div><div class="odoc-content"><h3 id="introduction"><a href="#introduction" class="anchor"></a>Introduction</h3><p>A stateful test applies a random sequence of rules to a state. A rule is a <code>step</code> function that takes the test case and the current state, draws whatever data it needs, and returns the new state. An invariant is a property that must always hold after each step.</p><p>With the <code>ppx_hegel_test</code> PPX, a state machine is a module written as <code>module%hegel_state_machine M = struct … end</code>. Mark rules with <code>[@@rule]</code> and invariants with <code>[@@invariant]</code> or <code>[@@invariant always_check]</code>. The PPX generates the <code>run</code> function for the state machine. If the module defines <code>sexp_of_state</code> (e.g. <code>type state = … [@@deriving sexp_of]</code>) <code>run</code> uses it to print the state after each step.</p><p>Without the PPX, create rules with <a href="Rule/index.html#val-create"><code>Rule.create</code></a> and the invariants with <a href="Invariant/index.html#val-create"><code>Invariant.create</code></a>, put them in a module of type <a href="module-type-State_machine/index.html"><code>State_machine</code></a>, and pass that to <a href="#val-run"><code>run</code></a>.</p><p>Every invariant is checked on the initial and final states. Between steps, invariants are sampled unless marked <code>always_check</code>.</p><p>Examples in this documentation assume <code>open Hegel</code>.</p><p>Example: an integer stack.</p><pre class="language-ocaml"><code>module%hegel_state_machine Stack = struct
-  type state = int list [@@deriving sexp_of]
+<base href="/ocaml/hegel/Hegel/Stateful/"><title>Stateful (hegel.Hegel.Stateful)</title><meta charset="utf-8"/><link rel="stylesheet" href="../../../odoc.support/odoc.css"/><meta name="generator" content="odoc 3.2.1"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><script src="../../../odoc.support/highlight.pack.js"></script><script>hljs.initHighlightingOnLoad();</script></head><body class="odoc"><nav class="odoc-nav"><a href="../index.html">Up</a> – <a href="../../../index.html">Index</a> &#x00BB; <a href="../../index.html">hegel</a> &#x00BB; <a href="../index.html">Hegel</a> &#x00BB; Stateful</nav><header class="odoc-preamble"><h1>Module <code><span>Hegel.Stateful</span></code></h1><p>Stateful property-based testing.</p></header><div class="odoc-tocs"><nav class="odoc-toc odoc-local-toc"><ul><li><a href="#introduction">Introduction</a></li><li><a href="#concurrent-stateful-testing">Concurrent stateful testing</a><ul><li><a href="#oxcaml">OxCaml</a></li></ul></li><li><a href="#submodules">Submodules</a></li><li><a href="#running-stateful-tests">Running stateful tests</a></li></ul></nav></div><div class="odoc-content"><h3 id="introduction"><a href="#introduction" class="anchor"></a>Introduction</h3><p>A stateful test applies a random sequence of rules to a state. A rule is a <code>step</code> function that takes the test case and the state, draws whatever data it needs, and updates the state in place. An invariant is a property that must hold after each step.</p><p>With the <code>ppx_hegel_test</code> PPX, a state machine is a module written as <code>module%hegel_state_machine M = struct … end</code>. Mark rules with <code>[@@rule]</code> and invariants with <code>[@@invariant]</code> or <code>[@@invariant always_check]</code>. The PPX generates the <code>run</code> function for the state machine. If the module defines <code>sexp_of_state</code>, <code>run</code> uses it to print the state after each step.</p><p>Without the PPX, create rules with <a href="Rule/index.html#val-create"><code>Rule.create</code></a> and the invariants with <a href="Invariant/index.html#val-create"><code>Invariant.create</code></a>, put them in a module of type <a href="module-type-State_machine/index.html"><code>State_machine</code></a>, and pass that to <a href="#val-run"><code>run</code></a>.</p><p>Every invariant is checked on the initial and final states. Between steps, invariants are sampled unless marked <code>always_check</code>.</p><p>Examples in this documentation assume <code>open Hegel</code>.</p><p>Example: an integer stack.</p><pre class="language-ocaml"><code>module%hegel_state_machine Stack = struct
+  type state = int list ref
+
+  let sexp_of_state stack = sexp_of_list sexp_of_int !stack
 
   let push tc stack =
     let n = draw tc (integers ~min_value:0 ~max_value:100 ()) in
-    n :: stack
+    stack := n :: !stack
   [@@rule]
   ;;
 
   let pop tc stack =
-    assume tc (not (List.is_empty stack));
-    List.tl stack
+    match !stack with
+    | [] -&gt; assume tc false
+    | _ :: rest -&gt; stack := rest
   [@@rule]
   ;;
 
   let short tc stack =
-    note tc (Printf.sprintf &quot;%d elements&quot; (List.length stack));
-    assert (List.length stack &lt; 10)
+    note tc (Printf.sprintf &quot;%d elements&quot; (List.length !stack));
+    assert (List.length !stack &lt; 10)
   [@@invariant always_check]
   ;;
 end
 
-let%hegel_test integer_stack tc = Stack.run tc ~init:[]</code></pre><h3 id="submodules"><a href="#submodules" class="anchor"></a>Submodules</h3><div class="odoc-spec"><div class="spec module anchored" id="module-Pool"><a href="#module-Pool" class="anchor"></a><code><span><span class="keyword">module</span> <a href="Pool/index.html">Pool</a></span><span> : <span class="keyword">sig</span> ... <span class="keyword">end</span></span></code></div></div><div class="odoc-spec"><div class="spec module anchored" id="module-Rule"><a href="#module-Rule" class="anchor"></a><code><span><span class="keyword">module</span> <a href="Rule/index.html">Rule</a></span><span> : <span class="keyword">sig</span> ... <span class="keyword">end</span></span></code></div></div><div class="odoc-spec"><div class="spec module anchored" id="module-Invariant"><a href="#module-Invariant" class="anchor"></a><code><span><span class="keyword">module</span> <a href="Invariant/index.html">Invariant</a></span><span> : <span class="keyword">sig</span> ... <span class="keyword">end</span></span></code></div></div><h3 id="running-stateful-tests"><a href="#running-stateful-tests" class="anchor"></a>Running stateful tests</h3><div class="odoc-spec"><div class="spec module-type anchored" id="module-type-State_machine"><a href="#module-type-State_machine" class="anchor"></a><code><span><span class="keyword">module</span> <span class="keyword">type</span> <a href="module-type-State_machine/index.html">State_machine</a></span><span> = <span class="keyword">sig</span> ... <span class="keyword">end</span></span></code></div><div class="spec-doc"><p>A state machine.</p></div></div><div class="odoc-spec"><div class="spec value anchored" id="val-run"><a href="#val-run" class="anchor"></a><code><span><span class="keyword">val</span> run : 
+let%hegel_test integer_stack tc = Stack.run tc ~init:(ref [])</code></pre><h3 id="concurrent-stateful-testing"><a href="#concurrent-stateful-testing" class="anchor"></a>Concurrent stateful testing</h3><p><a href="#val-run_concurrent"><code>run_concurrent</code></a> with <code>max_concurrency &gt; 1</code> runs rules on several workers concurrently. libhegel draws the number of workers in <code>[min_concurrency, max_concurrency]</code>. Rules belong to a group, and only rules in the same group may run concurrently. Rules without a group all belong to the <code>&lt;anonymous&gt;</code> group.</p><p>A round is a step of a concurrent test. Each round selects one rule group, and each worker runs a sequence of rules from that group. Invariants run after all workers finish the round.</p><p>How the workers run is a <a href="../Concurrency/index.html#type-t"><code>Concurrency.t</code></a>. The default implementation is <a href="../Concurrency/index.html#val-threads"><code>Concurrency.threads</code></a>, which puts workers on systhreads. See <a href="../Concurrency/index.html"><code>Concurrency</code></a> for more details.</p><p>With the <code>ppx_hegel_test</code> PPX, a concurrent state machine is a module written as <code>module%hegel_concurrent_state_machine M = struct … end</code>. Mark rules with <code>[@@rule]</code> for the <code>&lt;anonymous&gt;</code> group or <code>[@@rule &quot;&lt;group&gt;&quot;]</code> for a specific group. Mark invariants with <code>[@@invariant]</code> or <code>[@@invariant always_check]</code>. The PPX generates the <code>run</code> function for the state machine. If the module defines <code>sexp_of_state</code>, <code>run</code> uses it to print the state after each step.</p><p>The example store below has a bug. The store locks individual reads and writes, but releases the lock between reading a counter and writing its incremented value. Two workers can therefore overwrite each other's updates.</p><pre class="language-ocaml"><code>module Store = struct
+  type t =
+    { lock : Mutex.t
+    ; values : (int, int) Hashtbl.t
+    }
+
+  let create () = { lock = Mutex.create (); values = Hashtbl.create 4 }
+
+  let get store key =
+    Mutex.protect store.lock (fun () -&gt; Hashtbl.find_opt store.values key)
+  ;;
+
+  let put store key value =
+    Mutex.protect store.lock (fun () -&gt; Hashtbl.replace store.values key value)
+  ;;
+
+  let put_if_absent store key =
+    Mutex.protect store.lock (fun () -&gt;
+      if Hashtbl.mem store.values key
+      then false
+      else (
+        Hashtbl.add store.values key 0;
+        true))
+  ;;
+
+  let increment store key =
+    let value = Option.value (get store key) ~default:0 in
+    put store key (value + 1)
+  ;;
+
+  let snapshot store = Mutex.protect store.lock (fun () -&gt; Hashtbl.copy store.values)
+end
+
+module%hegel_concurrent_state_machine Key_value_store = struct
+  type state =
+    { store : Store.t
+    ; keys : int Stateful.Pool.t
+    ; increments : int Atomic.t
+    }
+
+  let register tc state =
+    let key = draw tc (integers ~min_value:0 ~max_value:3 ()) in
+    if Store.put_if_absent state.store key then Stateful.Pool.add state.keys tc key
+  [@@rule &quot;operations&quot;]
+  ;;
+
+  let increment tc state =
+    let key = draw_silent tc (Stateful.Pool.values_reusable state.keys) in
+    Store.increment state.store key;
+    Atomic.incr state.increments
+  [@@rule &quot;operations&quot;]
+  ;;
+
+  let read tc state =
+    let key = draw_silent tc (Stateful.Pool.values_reusable state.keys) in
+    match Store.get state.store key with
+    | Some value -&gt; note tc (Printf.sprintf &quot;read %d -&gt; %d&quot; key value)
+    | None -&gt; note tc (Printf.sprintf &quot;key %d is absent&quot; key)
+  [@@rule &quot;operations&quot;]
+  ;;
+
+  let snapshot tc state =
+    let count = Hashtbl.length (Store.snapshot state.store) in
+    note tc (Printf.sprintf &quot;snapshot holds %d keys&quot; count)
+  [@@rule &quot;snapshot&quot;]
+  ;;
+
+  let no_lost_updates _tc state =
+    let stored =
+      Hashtbl.fold (fun _ value total -&gt; total + value) (Store.snapshot state.store) 0
+    in
+    let performed = Atomic.get state.increments in
+    if stored &lt;&gt; performed
+    then
+      failwith
+        (Printf.sprintf
+           &quot;increments were lost: store sums to %d after %d increments&quot;
+           stored
+           performed)
+  [@@invariant always_check]
+  ;;
+end
+
+let%hegel_test concurrent_store tc =
+  let init : Key_value_store.state =
+    { store = Store.create ()
+    ; keys = Stateful.Pool.create tc
+    ; increments = Atomic.make 0
+    }
+  in
+  Key_value_store.run tc ~init ~max_concurrency:4
+;;</code></pre><p>The <code>operations</code> group allows registration, increments, and reads to overlap. The <code>snapshot</code> group runs separately. The invariant compares stored values with an atomic count of completed increments.</p><p>With <code>max_concurrency &gt; 1</code>, failures are reported without shrinking, replay, database persistence, or reproduction blobs.</p><p>In the failure output, each rule execution is labeled with its worker and the time in milliseconds since the test case began to aid debugging.</p><pre>--- Failure: concurrent_store (...) -------------------------
+
+Concurrency level: 4
+---------------- Round 1: group &quot;operations&quot; ----------------
+[worker 2 +0.238ms] Rule: register
+[worker 2 +0.246ms]   key = 0
+...
+[worker 2 +0.261ms] Rule: read
+[worker 2 +0.263ms]   read 2 -&gt; 0
+...
+[worker 3 +0.223ms] Rule: increment
+...
+---------------- Round 2: group &quot;snapshot&quot; ------------------
+[worker 0 +0.363ms] Rule: snapshot
+[worker 0 +0.365ms]   snapshot holds 3 keys
+...
+---------------- Round 3: group &quot;operations&quot; ----------------
+[worker 0 +0.486ms] Rule: increment
+...
+[worker 1 +0.464ms] Rule: register
+[worker 1 +0.468ms]   key = 1
+...
+[worker 2 +0.509ms] Rule: increment
+...
+[worker 3 +0.479ms] Rule: increment
+Invariant no_lost_updates violated after round 3.
+
+Exception: Failure(&quot;increments were lost: store sums to 11 after 12 increments&quot;)</pre><h4 id="oxcaml"><a href="#oxcaml" class="anchor"></a>OxCaml</h4><p>On OxCaml this library is mode-checked. <a href="../../oxcaml_api.html" title="oxcaml_api">Mode-annotated API</a> lists every public signature that has a mode.</p><p><a href="Concurrent_rule/index.html#val-create"><code>Concurrent_rule.create</code></a>'s <code>step</code> is <code>@@ portable</code> and receives the state <code>@ contended</code>, and <a href="#val-run_concurrent"><code>run_concurrent</code></a> takes <code>~init</code> <code>@ portable</code>.</p><p><code>map</code>, <code>filter</code>, <code>composite</code>, and <code>with_printer</code> take portable functions. The element types of <code>just</code>, <code>sampled_from</code>, and <a href="Pool/index.html#type-t"><code>Pool.t</code></a> cross modes (<code>value mod portable contended</code>). Generators derived with <code>Hegel_jane.Derive</code> are portable.</p><p>The <code>?concurrency</code> capability is <code>@ local</code>. Also, see <a href="../../hegel_jane_concurrent.html" title="hegel_jane_concurrent">hegel.jane.concurrent</a>.</p><h3 id="submodules"><a href="#submodules" class="anchor"></a>Submodules</h3><div class="odoc-spec"><div class="spec module anchored" id="module-Pool"><a href="#module-Pool" class="anchor"></a><code><span><span class="keyword">module</span> <a href="Pool/index.html">Pool</a></span><span> : <span class="keyword">sig</span> ... <span class="keyword">end</span></span></code></div><div class="spec-doc"><p>A pool of previously generated values.</p></div></div><div class="odoc-spec"><div class="spec module anchored" id="module-Rule"><a href="#module-Rule" class="anchor"></a><code><span><span class="keyword">module</span> <a href="Rule/index.html">Rule</a></span><span> : <span class="keyword">sig</span> ... <span class="keyword">end</span></span></code></div><div class="spec-doc"><p>One possible action in a sequential stateful test.</p></div></div><div class="odoc-spec"><div class="spec module anchored" id="module-Invariant"><a href="#module-Invariant" class="anchor"></a><code><span><span class="keyword">module</span> <a href="Invariant/index.html">Invariant</a></span><span> : <span class="keyword">sig</span> ... <span class="keyword">end</span></span></code></div><div class="spec-doc"><p>A property that must always be true in a stateful test.</p></div></div><div class="odoc-spec"><div class="spec module anchored" id="module-Concurrent_rule"><a href="#module-Concurrent_rule" class="anchor"></a><code><span><span class="keyword">module</span> <a href="Concurrent_rule/index.html">Concurrent_rule</a></span><span> : <span class="keyword">sig</span> ... <span class="keyword">end</span></span></code></div><div class="spec-doc"><p>One possible action in a concurrent stateful test.</p></div></div><h3 id="running-stateful-tests"><a href="#running-stateful-tests" class="anchor"></a>Running stateful tests</h3><div class="odoc-spec"><div class="spec module-type anchored" id="module-type-State_machine"><a href="#module-type-State_machine" class="anchor"></a><code><span><span class="keyword">module</span> <span class="keyword">type</span> <a href="module-type-State_machine/index.html">State_machine</a></span><span> = <span class="keyword">sig</span> ... <span class="keyword">end</span></span></code></div><div class="spec-doc"><p>A sequential state machine.</p></div></div><div class="odoc-spec"><div class="spec value anchored" id="val-run"><a href="#val-run" class="anchor"></a><code><span><span class="keyword">val</span> run : 
   <span><span class="optlabel">?step_count</span>:int <span class="arrow">&#45;&gt;</span></span>
   <span><span class="optlabel">?sexp_of_state</span>:<span>(<span><span class="type-var">'state</span> <span class="arrow">&#45;&gt;</span></span> <span class="xref-unresolved">Sexplib0</span>.Sexp.t)</span> <span class="arrow">&#45;&gt;</span></span>
   <span><a href="../index.html#type-test_case">test_case</a> <span class="arrow">&#45;&gt;</span></span>
   <span><span>(<span class="keyword">module</span> <a href="module-type-State_machine/index.html">State_machine</a> <span class="keyword">with</span> <span class="keyword">type</span> <a href="module-type-State_machine/index.html#type-state">state</a> = <span class="type-var">'state</span>)</span> <span class="arrow">&#45;&gt;</span></span>
   <span><span class="label">init</span>:<span class="type-var">'state</span> <span class="arrow">&#45;&gt;</span></span>
-  unit</span></code></div><div class="spec-doc"><p><code>run tc (module M) ~init</code> executes a stateful test by repeatedly applying randomly chosen rules of <code>M</code> starting from the <code>init</code> state. Every invariant is checked on the initial and the final state. After a step, invariants are randomly sampled unless they were created with <code>always_check:true</code>. Raises <code>Hegel.Usage_error</code> if <code>M</code> has no rules or <code>step_count</code> is below 1. <code>step_count</code> defaults to 50. Each case runs at least one step and at most <code>step_count</code>.</p><pre class="language-ocaml"><code>let%hegel_test counter tc = Stateful.run tc (module Counter) ~init:0 ~step_count:200</code></pre><p>A <code>module%hegel_state_machine M</code> has an <code>M.run tc ~init</code>, which calls this function on <code>M</code>.</p><p>On a failing replay, each applied rule prints as <code>Step N: &lt;name&gt;</code>, with the printed draws and notes nested under it. When <code>sexp_of_state</code> is supplied, the model state is also printed after the initial state and after every step.</p><pre>  state = 0
-  Checking invariants on the initial state.
+  unit</span></code></div><div class="spec-doc"><p><code>run tc (module M) ~init</code> executes a stateful test by applying randomly chosen rules of <code>M</code> to the <code>init</code> state. Every invariant is checked on the initial and the final state. After a step, invariants are randomly sampled unless they were created with <code>always_check:true</code>. Raises <code>Hegel.Usage_error</code> if <code>M</code> has no rules or <code>step_count</code> is below 1. <code>step_count</code> defaults to 50. Each case runs at least one step and at most <code>step_count</code>.</p><pre class="language-ocaml"><code>let%hegel_test counter tc =
+  Stateful.run tc (module Counter) ~init:(ref 0) ~step_count:200
+;;</code></pre><p>A <code>module%hegel_state_machine M</code> has an <code>M.run tc ~init</code>, which calls this function on <code>M</code>.</p><p>On a failing replay, each applied rule prints as <code>Step N: &lt;name&gt;</code>, with the printed draws and notes nested under it. When <code>sexp_of_state</code> is supplied, the state is also printed after the initial state and after every step.</p><pre>  state = 0
   Step 1: add
-    n = 3
+    by = 3
   state = 3
   Step 2: add
-    n = 7
+    by = 7
   state = 10
-  Invariant my_invariant violated after step 2.</pre></div></div></div></body></html>
+  Invariant small violated after step 2.</pre></div></div><div class="odoc-spec"><div class="spec module-type anchored" id="module-type-Concurrent_state_machine"><a href="#module-type-Concurrent_state_machine" class="anchor"></a><code><span><span class="keyword">module</span> <span class="keyword">type</span> <a href="module-type-Concurrent_state_machine/index.html">Concurrent_state_machine</a></span><span> = <span class="keyword">sig</span> ... <span class="keyword">end</span></span></code></div><div class="spec-doc"><p>A state machine whose rules may run concurrently.</p></div></div><p><code>run_concurrent ?concurrency ?step_count ?sexp_of_state tc (module M) ~init ?min_concurrency ?max_concurrency</code> executes a state machine with N workers, where N is in <code>[min_concurrency, max_concurrency]</code>. <code>min_concurrency</code> defaults to 1 and <code>max_concurrency</code> to <code>min_concurrency</code>.</p><p>If <code>sexp_of_state</code> is provided, the state is printed before the first round and after each completed round.</p><p><code>step_count</code> defaults to 50 and bounds the number of rounds per test case. Each worker may execute multiple rules in a round.</p><p>A <code>max_concurrency</code> greater than one makes the run nondeterministic. libhegel consequently reports a failure without replaying, shrinking or producing a failure blob.</p><p><code>concurrency</code> runs each round's workers. See <a href="../Concurrency/index.html"><code>Concurrency</code></a>. It defaults to <a href="../Concurrency/index.html#val-threads"><code>Concurrency.threads</code></a>, which puts workers on systhreads.</p><p>Raises <code>Hegel.Usage_error</code> if <code>M</code> has no rules, <code>step_count</code> is below 1, or the bounds do not satisfy <code>1 &lt;= min_concurrency &lt;= max_concurrency</code>.</p><div class="odoc-spec"><div class="spec value anchored" id="val-run_concurrent"><a href="#val-run_concurrent" class="anchor"></a><code><span><span class="keyword">val</span> run_concurrent : 
+  <span><span class="optlabel">?concurrency</span>:<a href="../Concurrency/index.html#type-t">Concurrency.t</a> <span class="arrow">&#45;&gt;</span></span>
+  <span><span class="optlabel">?min_concurrency</span>:int <span class="arrow">&#45;&gt;</span></span>
+  <span><span class="optlabel">?max_concurrency</span>:int <span class="arrow">&#45;&gt;</span></span>
+  <span><span class="optlabel">?step_count</span>:int <span class="arrow">&#45;&gt;</span></span>
+  <span><span class="optlabel">?sexp_of_state</span>:<span>(<span><span class="type-var">'state</span> <span class="arrow">&#45;&gt;</span></span> <span class="xref-unresolved">Sexplib0</span>.Sexp.t)</span> <span class="arrow">&#45;&gt;</span></span>
+  <span><a href="../index.html#type-test_case">test_case</a> <span class="arrow">&#45;&gt;</span></span>
+  <span><span>(<span class="keyword">module</span> <a href="module-type-Concurrent_state_machine/index.html">Concurrent_state_machine</a> <span class="keyword">with</span> <span class="keyword">type</span> <a href="module-type-Concurrent_state_machine/index.html#type-state">state</a> = <span class="type-var">'state</span>)</span> <span class="arrow">&#45;&gt;</span></span>
+  <span><span class="label">init</span>:<span class="type-var">'state</span> <span class="arrow">&#45;&gt;</span></span>
+  unit</span></code></div></div></div></body></html>
