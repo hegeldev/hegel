@@ -7,7 +7,7 @@
     n := !n + draw ~label:&quot;by&quot; tc (integers ~min_value:1 ~max_value:10 ())
   ;;
 
-  let rules = [ Stateful.Rule.create ~name:&quot;add&quot; ~step:add ]
+  let rules = [ Stateful.Rule.create ~name:&quot;add&quot; ~step:add () ]
 
   let invariants =
     [ Stateful.Invariant.create ~name:&quot;small&quot; ~inv:(fun _tc n -&gt; assert (!n &lt; 100)) ()

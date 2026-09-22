@@ -57,21 +57,23 @@
   -&gt; ?sexp_of_arg3:('c -&gt; Sexplib0.Sexp.t) @ portable
   -&gt; returns:('d, _) generator
   -&gt; unit
-  -&gt; ('a -&gt; 'b -&gt; 'c -&gt; 'd, unprintable) generator</code></pre><h2 id="hegel.stateful"><a href="#hegel.stateful" class="anchor"></a>Hegel.Stateful</h2><p><a href="Hegel/Stateful/Pool/index.html#type-t"><code>Hegel.Stateful.Pool.t</code></a></p><pre class="language-ocaml"><code>type ('a : value mod portable contended) t : value mod portable contended</code></pre><p><a href="Hegel/Stateful/Pool/index.html#val-create"><code>Hegel.Stateful.Pool.create</code></a></p><pre class="language-ocaml"><code>val create : ?clone:('a -&gt; 'a) @ portable -&gt; test_case -&gt; 'a t</code></pre><p><a href="Hegel/Stateful/Concurrent_rule/index.html#type-t"><code>Hegel.Stateful.Concurrent_rule.t</code></a></p><pre class="language-ocaml"><code>type 'state t : value mod portable contended</code></pre><p><a href="Hegel/Stateful/Concurrent_rule/index.html#val-create"><code>Hegel.Stateful.Concurrent_rule.create</code></a></p><pre class="language-ocaml"><code>val create
+  -&gt; ('a -&gt; 'b -&gt; 'c -&gt; 'd, unprintable) generator</code></pre><h2 id="hegel.stateful"><a href="#hegel.stateful" class="anchor"></a>Hegel.Stateful</h2><p><a href="Hegel/Stateful/Pool/index.html#type-t"><code>Hegel.Stateful.Pool.t</code></a></p><pre class="language-ocaml"><code>type ('a : value mod portable contended) t : value mod portable contended</code></pre><p><a href="Hegel/Stateful/Pool/index.html#val-create"><code>Hegel.Stateful.Pool.create</code></a></p><pre class="language-ocaml"><code>val create : ?clone:('a -&gt; 'a) @ portable -&gt; test_case -&gt; 'a t</code></pre><p><a href="Hegel/Stateful/Concurrent_rule/index.html#type-t"><code>Hegel.Stateful.Concurrent_rule.t</code></a></p><pre class="language-ocaml"><code>type ('ctx, 'state) t : value mod portable contended</code></pre><p><a href="Hegel/Stateful/Concurrent_rule/index.html#val-create"><code>Hegel.Stateful.Concurrent_rule.create</code></a></p><pre class="language-ocaml"><code>val create
   :  ?group:string
+  -&gt; ?weight:float
   -&gt; name:string
-  -&gt; step:(test_case -&gt; 'state @ contended -&gt; unit) @ portable
+  -&gt; step:(test_case -&gt; 'ctx @ local -&gt; 'state @ contended -&gt; unit) @ portable
   -&gt; unit
-  -&gt; 'state t</code></pre><p><a href="Hegel/Stateful/index.html#val-run_concurrent"><code>Hegel.Stateful.run_concurrent</code></a></p><pre class="language-ocaml"><code>val run_concurrent
-  :  ?concurrency:Concurrency.t @ local
+  -&gt; ('ctx, 'state) t</code></pre><p><a href="Hegel/Stateful/index.html#val-run_concurrent"><code>Hegel.Stateful.run_concurrent</code></a></p><pre class="language-ocaml"><code>val run_concurrent
+  :  concurrency:'ctx Concurrency.t @ local
   -&gt; ?min_concurrency:int
   -&gt; ?max_concurrency:int
   -&gt; ?step_count:int
   -&gt; ?sexp_of_state:('state -&gt; Sexplib0.Sexp.t)
   -&gt; test_case
-  -&gt; (module Concurrent_state_machine with type state = 'state)
+  -&gt; (module Concurrent_state_machine with type ctx = 'ctx and type state = 'state)
   -&gt; init:'state @ portable
-  -&gt; unit</code></pre><h2 id="hegel.concurrency"><a href="#hegel.concurrency" class="anchor"></a>Hegel.Concurrency</h2><p><a href="Hegel/Concurrency/index.html#type-t"><code>Hegel.Concurrency.t</code></a></p><pre class="language-ocaml"><code>type t =
+  -&gt; unit</code></pre><h2 id="hegel.concurrency"><a href="#hegel.concurrency" class="anchor"></a>Hegel.Concurrency</h2><p><a href="Hegel/Concurrency/index.html#type-t"><code>Hegel.Concurrency.t</code></a></p><pre class="language-ocaml"><code>type 'ctx t =
   { spawn_join_n :
-      n:int -&gt; (f:(int -&gt; outcome) @ portable -&gt; outcome list @ contended) @ local
-  }</code></pre><h2 id="hegel_jane_concurrent"><a href="#hegel_jane_concurrent" class="anchor"></a>Hegel_jane_concurrent</h2><p><a href="hegel_jane_concurrent.html" title="hegel_jane_concurrent"><code>of_concurrent</code></a></p><pre class="language-ocaml"><code>val of_concurrent : _ Concurrent.t @ local -&gt; Hegel.Concurrency.t @ local</code></pre></div></body></html>
+      n:int
+      -&gt; (f:('ctx @ local -&gt; int -&gt; outcome) @ portable -&gt; outcome list @ contended) @ local
+  }</code></pre><h2 id="hegel_jane_concurrent"><a href="#hegel_jane_concurrent" class="anchor"></a>Hegel_jane_concurrent</h2><p><a href="hegel_jane_concurrent.html" title="hegel_jane_concurrent"><code>of_concurrent</code></a></p><pre class="language-ocaml"><code>val of_concurrent : 'a Concurrent.t @ local -&gt; 'a ctx Hegel.Concurrency.t @ local</code></pre></div></body></html>

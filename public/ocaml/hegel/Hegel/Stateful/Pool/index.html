@@ -6,17 +6,23 @@
   }
 
 let alloc =
-  Stateful.Rule.create ~name:&quot;alloc&quot; ~step:(fun tc state -&gt;
-    let h = fresh_handle () in
-    Stateful.Pool.add state.handles tc h;
-    state.live &lt;- h :: state.live)
+  Stateful.Rule.create
+    ~name:&quot;alloc&quot;
+    ~step:(fun tc state -&gt;
+      let h = fresh_handle () in
+      Stateful.Pool.add state.handles tc h;
+      state.live &lt;- h :: state.live)
+    ()
 ;;
 
 let free =
-  Stateful.Rule.create ~name:&quot;free&quot; ~step:(fun tc state -&gt;
-    (* draws a handle a prior [alloc] put in the pool *)
-    let h = draw_silent tc (Stateful.Pool.values_consumed state.handles) in
-    release h;
-    state.live &lt;- List.filter (fun x -&gt; x &lt;&gt; h) state.live)
+  Stateful.Rule.create
+    ~name:&quot;free&quot;
+    ~step:(fun tc state -&gt;
+      (* draws a handle a prior [alloc] put in the pool *)
+      let h = draw_silent tc (Stateful.Pool.values_consumed state.handles) in
+      release h;
+      state.live &lt;- List.filter (fun x -&gt; x &lt;&gt; h) state.live)
+    ()
 ;;</code></pre></header><div class="odoc-content"><div class="odoc-spec"><div class="spec type anchored" id="type-t"><a href="#type-t" class="anchor"></a><code><span><span class="keyword">type</span> <span>'a t</span></span></code></div></div><div class="odoc-spec"><div class="spec value anchored" id="val-create"><a href="#val-create" class="anchor"></a><code><span><span class="keyword">val</span> create : <span><span class="optlabel">?clone</span>:<span>(<span><span class="type-var">'a</span> <span class="arrow">&#45;&gt;</span></span> <span class="type-var">'a</span>)</span> <span class="arrow">&#45;&gt;</span></span> <span><a href="../../index.html#type-test_case">test_case</a> <span class="arrow">&#45;&gt;</span></span> <span><span class="type-var">'a</span> <a href="#type-t">t</a></span></span></code></div><div class="spec-doc"><p>Creates an empty pool. Pools are tied to a test case. Do not reuse one across test cases. Drawn mutable values are shared by default. Pass a copying function for independent mutable values. Consumed draws return the stored value directly. <code>clone</code> must not call back into the same pool.</p></div></div><div class="odoc-spec"><div class="spec value anchored" id="val-add"><a href="#val-add" class="anchor"></a><code><span><span class="keyword">val</span> add : <span><span><span class="type-var">'a</span> <a href="#type-t">t</a></span> <span class="arrow">&#45;&gt;</span></span> <span><a href="../../index.html#type-test_case">test_case</a> <span class="arrow">&#45;&gt;</span></span> <span><span class="type-var">'a</span> <span class="arrow">&#45;&gt;</span></span> unit</span></code></div><div class="spec-doc"><p><code>add pool tc value</code> records <code>value</code> in <code>pool</code>.</p><pre class="language-ocaml"><code>let n = draw tc (integers ~min_value:0 ~max_value:100 ()) in
 Stateful.Pool.add pool tc n</code></pre></div></div><div class="odoc-spec"><div class="spec value anchored" id="val-size"><a href="#val-size" class="anchor"></a><code><span><span class="keyword">val</span> size : <span><span><span class="type-var">_</span> <a href="#type-t">t</a></span> <span class="arrow">&#45;&gt;</span></span> int</span></code></div><div class="spec-doc"><p>Returns the number of values in the pool.</p><pre class="language-ocaml"><code>assume tc (Stateful.Pool.size pool &gt; 0)</code></pre></div></div><div class="odoc-spec"><div class="spec value anchored" id="val-values_reusable"><a href="#val-values_reusable" class="anchor"></a><code><span><span class="keyword">val</span> values_reusable : <span><span><span class="type-var">'a</span> <a href="#type-t">t</a></span> <span class="arrow">&#45;&gt;</span></span> <span><span>(<span class="type-var">'a</span>, <a href="../../Generators/index.html#type-unprintable">Generators.unprintable</a>)</span> <a href="../../Generators/index.html#type-generator">Generators.generator</a></span></span></code></div><div class="spec-doc"><p>Draws a value without removing it. A draw from an empty pool rejects the current rule.</p><pre class="language-ocaml"><code>let existing = draw_silent tc (Stateful.Pool.values_reusable pool)</code></pre></div></div><div class="odoc-spec"><div class="spec value anchored" id="val-values_consumed"><a href="#val-values_consumed" class="anchor"></a><code><span><span class="keyword">val</span> values_consumed : <span><span><span class="type-var">'a</span> <a href="#type-t">t</a></span> <span class="arrow">&#45;&gt;</span></span> <span><span>(<span class="type-var">'a</span>, <a href="../../Generators/index.html#type-unprintable">Generators.unprintable</a>)</span> <a href="../../Generators/index.html#type-generator">Generators.generator</a></span></span></code></div><div class="spec-doc"><p>Draws and removes a value. A draw from an empty pool rejects the current rule.</p><pre class="language-ocaml"><code>let taken = draw_silent tc (Stateful.Pool.values_consumed pool)</code></pre></div></div></div></body></html>
