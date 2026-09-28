@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.13.0</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.13.1</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -105,7 +105,7 @@ Install Hegel</h2>
 <div class="line">FetchContent_Declare(</div>
 <div class="line">    hegel</div>
 <div class="line">    GIT_REPOSITORY https://github.com/hegeldev/hegel-cpp.git</div>
-<div class="line">    GIT_TAG v0.13.0</div>
+<div class="line">    GIT_TAG v0.13.1</div>
 <div class="line">)</div>
 <div class="line">FetchContent_MakeAvailable(hegel)</div>
 <div class="line"> </div>
@@ -283,7 +283,7 @@ Hegel and test frameworks</h2>
 <div class="line"> </div>
 <div class="line">Exception: <a class="code hl_class" href="classhegel_1_1GTestFailure.html">hegel::GTestFailure</a>: arithmetic_test.cpp:11: Expected: (x + y) ==</div>
 <div class="line">(y + x), actual: 51 vs 0</div>
-<div class="ttc" id="aclasshegel_1_1GTestFailure_html"><div class="ttname"><a href="classhegel_1_1GTestFailure.html">hegel::GTestFailure</a></div><div class="ttdoc">The exception the GoogleTest integration raises for a test case that fails an assertion.</div><div class="ttdef"><b>Definition</b> gtest.h:51</div></div>
+<div class="ttc" id="aclasshegel_1_1GTestFailure_html"><div class="ttname"><a href="classhegel_1_1GTestFailure.html">hegel::GTestFailure</a></div><div class="ttdoc">The exception the GoogleTest integration raises for a test case that fails an assertion.</div><div class="ttdef"><b>Definition</b> gtest.h:54</div></div>
 </div><!-- fragment --><p>Outside a test framework, use <a class="el" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a>, since it derives the database key and test location for you. <a class="el" href="namespacehegel.html#a8297e7dfc6b7c1088c84b50b8ba4d996" title="Run a Hegel test.">hegel::test()</a> can still be used, but you will have to set Settings::database_key yourself if you want failures persisted to the example database. You will also have to pass in TestLocation to see test location information in the failure output.</p>
 <h2 class="doxsection"><a class="anchor" id="learning_more"></a>
 Learning more</h2>
