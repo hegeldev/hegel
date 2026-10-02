@@ -8,12 +8,12 @@
   let%hegel_test commutative_addition tc =
     let a = draw tc (integers ~min_value:(-1000) ~max_value:1000 ()) in
     let b = draw tc (integers ~min_value:(-1000) ~max_value:1000 ()) in
-    require_equal tc [%sexp_of: int] (a + b) (b + a)
+    require tc (a + b = b + a)
 
   let () =
     Alcotest.run
       &quot;my_tests&quot;
-      [ &quot;properties&quot;, [ Alcotest.test_case &quot;commutative addition&quot; `Quick commutative_addition ] ]</code></pre><p>We check the property with <a href="#val-require_equal"><code>require_equal</code></a> rather than <code>assert (a + b = b + a)</code>. It takes a printer for the values and, when they differ, shows a structural diff of the two sides in the failure report instead of a bare &quot;assertion failed&quot;. Use <a href="#val-require"><code>require</code></a> for a boolean check with a custom message. An <code>assert</code> can be used as well, but it does not provide as much information as <a href="#val-require_equal"><code>require_equal</code></a> and <a href="#val-require"><code>require</code></a>.</p><p>Run <code>dune runtest</code>. You should see Alcotest report the test as passing. Hegel generates up to 100 random input pairs and reports the minimal counterexample if it finds one. When a test fails, Hegel prints each value you drew from the failing case, named after the <code>let</code> binding it was bound to (<code>a = …</code>, <code>b = …</code>).</p><p>The rest of the examples in the documentation assume you have <code>open Hegel</code> at the top of the test file like in the example above.</p><p>Next, let's try a test that fails.</p><pre class="language-ocaml"><code>  let%hegel_test every_int_is_small tc =
+      [ &quot;properties&quot;, [ Alcotest.test_case &quot;commutative addition&quot; `Quick commutative_addition ] ]</code></pre><p>We check the property with <a href="#val-require"><code>require</code></a> rather than <code>assert (a + b = b + a)</code>. <a href="#val-require"><code>require</code></a> takes an optional <code>~msg</code> for the failure report. An <code>assert</code> can be used as well.</p><p>Run <code>dune runtest</code>. You should see Alcotest report the test as passing. Hegel generates up to 100 random input pairs and reports the minimal counterexample if it finds one. When a test fails, Hegel prints each value you drew from the failing case, named after the <code>let</code> binding it was bound to (<code>a = …</code>, <code>b = …</code>).</p><p>The rest of the examples in the documentation assume you have <code>open Hegel</code> at the top of the test file like in the example above.</p><p>Next, let's try a test that fails.</p><pre class="language-ocaml"><code>  let%hegel_test every_int_is_small tc =
     let n = draw tc (integers ()) in
     assert (n &lt; 50)</code></pre><p>This test asserts that any integer is less than 50, which is obviously incorrect. Hegel finds a test case that makes the assertion fail, then shrinks it to the smallest counterexample (<code>n = 50</code>). The final replay prints the drawn values, the exception, and a <code>rerun with:</code> line that replays the exact case:</p><pre>  --- Failure: every_int_is_small (my_tests.ml:3) ------------------
 
@@ -87,15 +87,15 @@
   [@@deriving hegel_generator]</code></pre><p>The <code>conn</code> field prints as <code>&lt;opaque&gt;</code>.</p><h4 id="changing-test-settings"><a href="#changing-test-settings" class="anchor"></a>Changing test settings</h4><p>To override the default settings, attach a <code>[@@settings ...]</code> attribute:</p><pre class="language-ocaml"><code>  let%hegel_test commutative_addition tc =
     let a = draw tc (integers ()) in
     let b = draw tc (integers ()) in
-    require_equal tc [%sexp_of: int] (a + b) (b + a)
+    require tc (a + b = b + a)
   [@@settings Settings.create ~test_cases:500 ()]</code></pre><p>This increases the number of test cases run from 100 to 500.</p><p>Settings can be changed with record update syntax.</p><pre class="language-ocaml"><code>  let%hegel_test commutative_addition tc =
     let a = draw tc (integers ()) in
     let b = draw tc (integers ()) in
-    require_equal tc [%sexp_of: int] (a + b) (b + a)
+    require tc (a + b = b + a)
   [@@settings { (Settings.create ~test_cases:500 ()) with verbosity = Settings.Verbose }]</code></pre><h4 id="debugging-failing-test-cases"><a href="#debugging-failing-test-cases" class="anchor"></a>Debugging failing test cases</h4><p>Use <a href="#val-note"><code>note</code></a> to attach debug information:</p><pre class="language-ocaml"><code>  let%hegel_test every_int_is_small tc =
     let n = draw tc (integers ()) in
     note tc (Printf.sprintf &quot;n is %d&quot; n);
-    assert (n &lt; 50)</code></pre><p>A failing run prints a framed report: the shrunk counterexample's draws and notes, the exception, and a copy-pasteable <code>rerun with:</code> line whose base64 blob encodes the choice sequence that caused the failure (disable it with <code>print_blob = false</code>). On a terminal the report headers (and <a href="#val-require_equal"><code>require_equal</code></a> diffs) print in color; set <code>HEGEL_COLOR</code> to <code>1</code> or <code>0</code> to force colors on or off.</p><p>For an equality property, prefer <a href="#val-require_equal"><code>require_equal</code></a> over <code>assert (x = y)</code>: it adds a structural diff of the two values to this report, so you see exactly how they differ. <a href="#val-require"><code>require</code></a> is the message-carrying boolean variant.</p><pre class="language-ocaml"><code>  let%hegel_test every_int_is_small tc =
+    assert (n &lt; 50)</code></pre><p>A failing run prints a framed report: the shrunk counterexample's draws and notes, the exception, and a copy-pasteable <code>rerun with:</code> line whose base64 blob encodes the choice sequence that caused the failure (disable it with <code>print_blob = false</code>). On a terminal the report headers print in color. Set <code>HEGEL_COLOR</code> to <code>1</code> or <code>0</code> to force colors on or off.</p><pre class="language-ocaml"><code>  let%hegel_test every_int_is_small tc =
     let n = draw tc (integers ()) in
     assert (n &lt; 50)</code></pre><pre>  --- Failure: every_int_is_small (my_tests.ml:3) ------------------
 
@@ -149,19 +149,7 @@
     note tc (Printf.sprintf &quot;n is %d&quot; n);
     assert (n &lt; 100)</code></pre></div></div><div class="odoc-spec"><div class="spec value anchored" id="val-require"><a href="#val-require" class="anchor"></a><code><span><span class="keyword">val</span> require : <span><a href="#type-test_case">test_case</a> <span class="arrow">&#45;&gt;</span></span> <span><span class="optlabel">?msg</span>:string <span class="arrow">&#45;&gt;</span></span> <span>bool <span class="arrow">&#45;&gt;</span></span> unit</span></code></div><div class="spec-doc"><p><code>require tc ?msg condition</code> fails the current test case when <code>condition</code> is <code>false</code> by raising <code>Failure msg</code> (<code>msg</code> defaults to a generic message).</p><pre class="language-ocaml"><code>  let%hegel_test balanced tc =
     let l = draw tc (lists (integers ()) ()) in
-    require tc ~msg:&quot;sum must stay non-negative&quot; (running_sum l &gt;= 0)</code></pre></div></div><div class="odoc-spec"><div class="spec value anchored" id="val-require_equal"><a href="#val-require_equal" class="anchor"></a><code><span><span class="keyword">val</span> require_equal : 
-  <span><a href="#type-test_case">test_case</a> <span class="arrow">&#45;&gt;</span></span>
-  <span><span class="optlabel">?msg</span>:string <span class="arrow">&#45;&gt;</span></span>
-  <span><span>(<span><span class="type-var">'a</span> <span class="arrow">&#45;&gt;</span></span> <span class="xref-unresolved">Sexplib0</span>.Sexp.t)</span> <span class="arrow">&#45;&gt;</span></span>
-  <span><span class="type-var">'a</span> <span class="arrow">&#45;&gt;</span></span>
-  <span><span class="type-var">'a</span> <span class="arrow">&#45;&gt;</span></span>
-  unit</span></code></div><div class="spec-doc"><p><code>require_equal tc ?msg sexp_of lhs rhs</code> fails the current test case when the two values render to different sexps under <code>sexp_of</code>. With the optional <code>hegel.jane</code> library's structural diff set (<a href="../Hegel_jane/index.html#val-set_sexp_diff"><code>Hegel_jane.set_sexp_diff</code></a>), a <code>sexp_diff</code> two-column diff is printed.</p><pre class="language-ocaml"><code>  let%hegel_test sort_is_stable tc =
-    let l = draw tc (lists (integers ()) ()) in
-    require_equal
-      tc
-      [%sexp_of: int list]
-      (List.sort compare l)
-      (stable_sort l)</code></pre></div></div><div class="odoc-spec"><div class="spec value anchored" id="val-with_printer"><a href="#val-with_printer" class="anchor"></a><code><span><span class="keyword">val</span> with_printer : 
+    require tc ~msg:&quot;sum must stay non-negative&quot; (running_sum l &gt;= 0)</code></pre></div></div><div class="odoc-spec"><div class="spec value anchored" id="val-with_printer"><a href="#val-with_printer" class="anchor"></a><code><span><span class="keyword">val</span> with_printer : 
   <span><span>(<span><span class="type-var">'a</span> <span class="arrow">&#45;&gt;</span></span> <span class="xref-unresolved">Sexplib0</span>.Sexp.t)</span> <span class="arrow">&#45;&gt;</span></span>
   <span><span><span>(<span class="type-var">'a</span>, <span class="type-var">'p</span>)</span> <a href="Generators/index.html#type-generator">Generators.generator</a></span> <span class="arrow">&#45;&gt;</span></span>
   <span><span>(<span class="type-var">'a</span>, <a href="Generators/index.html#type-printable">Generators.printable</a>)</span> <a href="Generators/index.html#type-generator">Generators.generator</a></span></span></code></div><div class="spec-doc"><p><code>with_printer sexp_of gen</code> attaches (or replaces) <code>gen</code>'s printer, yielding a printable generator that <a href="#val-draw"><code>draw</code></a> accepts. This is how a <code>map</code>/<code>flat_map</code>/<code>sampled_from</code>/<code>just</code> result is made drawable with <a href="#val-draw"><code>draw</code></a>.</p><pre class="language-ocaml"><code>  let%hegel_test with_printer_example tc =
