@@ -105,8 +105,7 @@ import { test, expect } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
 
-test(
-	"MyLRUCache respects capacity",
+test("MyLRUCache respects capacity", () => {
 	hegel.test((tc) => {
 		const capacity = tc.draw(gs.integers({ minValue: 0 }));
 		const cache = new MyLRUCache<string, number>(capacity);
@@ -119,8 +118,8 @@ test(
 		}
 
 		expect(cache.size()).toBeLessThanOrEqual(capacity);
-	}),
-);
+	});
+});
 ```
   </TabItem>
   <TabItem label="Java">
