@@ -1,0 +1,17 @@
+/target
+/.venv
+/dist
+__pycache__/
+*.py[cod]
+*.so
+/.hegel
+/.hypothesis
+/.coverage
+/.coverage.*
+/htmlcov
+/.mypy_cache
+/.ruff_cache
+/.pytest_cache
+*.egg-info
+/python/hegel/_native.*.so
+/python/hegel/_native.pyd
