@@ -1,0 +1,340 @@
+//! Direct-equivalent tests for `src/native/lark/builder.rs`.
+
+use super::*;
+use crate::native::lark::ast::Pattern;
+use alloc::vec;
+
+/// An in-memory import source: grammar texts by path.
+struct Sources(Vec<(&'static str, &'static str)>);
+
+impl ImportSource for Sources {
+    fn load(&self, base_path: Option<&str>, grammar_path: &str) -> Option<(String, String)> {
+        let full = match base_path {
+            Some(base) if !base.is_empty() => format!("{base}/{grammar_path}"),
+            _ => grammar_path.to_string(),
+        };
+        self.0
+            .iter()
+            .find(|(p, _)| *p == full)
+            .map(|(p, text)| (p.to_string(), text.to_string()))
+    }
+}
+
+fn build(text: &str) -> BuiltGrammar {
+    load_grammar(text, None, &NoImports).unwrap()
+}
+
+fn build_with(text: &str, sources: &Sources) -> GrammarResult<BuiltGrammar> {
+    load_grammar(text, Some("main.lark"), sources)
+}
+
+fn err(text: &str) -> String {
+    load_grammar(text, None, &NoImports).unwrap_err().message
+}
+
+fn rule_names(built: &BuiltGrammar) -> Vec<&str> {
+    built.rule_defs.iter().map(|r| r.0.as_str()).collect()
+}
+
+fn term_names(built: &BuiltGrammar) -> Vec<&str> {
+    built.term_defs.iter().map(|t| t.0.as_str()).collect()
+}
+
+fn term_body<'b>(built: &'b BuiltGrammar, name: &str) -> &'b Expr {
+    built
+        .term_defs
+        .iter()
+        .find(|t| t.0 == name)
+        .unwrap()
+        .1
+        .as_ref()
+        .unwrap()
+}
+
+fn alt(items: Vec<Expr>) -> Alternative {
+    Alternative { items, alias: None }
+}
+
+#[test]
+fn definitions_in_order_with_options() {
+    let built = build("start: a\n?a.2: \"x\"\nA.3: \"y\"\n%declare B");
+    assert_eq!(rule_names(&built), vec!["start", "a"]);
+    assert_eq!(term_names(&built), vec!["A", "B"]);
+    let a = &built.rule_defs[1];
+    assert_eq!(a.3.priority, Some(2));
+    assert!(a.3.modifiers.expand1);
+    assert_eq!(built.term_defs[0].2, 3);
+    assert_eq!(built.term_defs[1].1, None);
+}
+
+#[test]
+fn duplicate_definitions() {
+    assert!(err("a: \"x\"\na: \"y\"").contains("Rule 'a' defined more than once"));
+    assert!(err("A: \"x\"\nA: \"y\"").contains("Terminal 'A' defined more than once"));
+    assert!(err("A: \"x\"\n%declare A").contains("Terminal 'A' defined more than once"));
+}
+
+#[test]
+fn override_and_extend() {
+    let built = build(
+        "start: a\na: \"x\"\n%override a: \"y\"\n%extend a: \"z\"\nA: \"1\"\n%extend A: \"2\"",
+    );
+    let a = &built.rule_defs[1].2;
+    assert_eq!(
+        a,
+        &Expr::Alternatives(vec![
+            alt(vec![Expr::Alternatives(vec![alt(vec![Expr::Literal(
+                Pattern::str("z")
+            )])])]),
+            alt(vec![Expr::Literal(Pattern::str("y"))]),
+        ])
+    );
+    assert_eq!(
+        term_body(&built, "A"),
+        &Expr::Alternatives(vec![
+            alt(vec![Expr::Alternatives(vec![alt(vec![Expr::Literal(
+                Pattern::str("2")
+            )])])]),
+            alt(vec![Expr::Literal(Pattern::str("1"))]),
+        ])
+    );
+}
+
+#[test]
+fn override_and_extend_errors() {
+    assert!(err("%override a: \"x\"").contains("Cannot override a nonexisting rule a"));
+    assert!(err("%override A: \"x\"").contains("Cannot override a nonexisting terminal A"));
+    assert!(err("%extend a: \"x\"").contains("Can't extend rule a as it wasn't defined before"));
+    assert!(
+        err("a: \"x\"\n%extend A: \"y\"")
+            .contains("Can't extend terminal A as it wasn't defined before")
+    );
+    assert!(err("A: \"x\"\n%extend A: \"y\"\n%extend a: \"z\"").contains("Can't extend rule a"));
+    assert!(
+        err("t{x}: x\n%extend t{y}: y").contains("Cannot extend rule with different parameters: t")
+    );
+    assert!(
+        err("%declare A\n%extend A: \"y\"").contains("Can't extend terminal A - it is abstract.")
+    );
+}
+
+#[test]
+fn extend_mismatched_kind_through_imports() {
+    let sources = Sources(vec![("other.lark", "a: \"x\"\n")]);
+    let result = build_with("%import other.a\n%extend a: \"y\"\nstart: a", &sources);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn declare_rejects_rule_names() {
+    assert!(
+        err("start: \"a\"\n%declare a")
+            .contains("Expecting terminal name to follow %declare, but got rule name 'a'")
+    );
+}
+
+#[test]
+fn double_underscore_names_cannot_be_written() {
+    assert!(err("%import common.INT -> __x\nstart: __x").contains("Expecting a name"));
+    assert!(err("__x: \"a\"").contains("Expecting a name"));
+}
+
+#[test]
+fn ignore_by_name_and_by_expression() {
+    let built =
+        build("start: \"a\"\nWS: \" \"\n%ignore WS\n%ignore \"\\t\" | /#.*/\n%ignore \"x\" -> y");
+    assert_eq!(built.ignore, vec!["WS", "__IGNORE_1", "__IGNORE_2"]);
+    assert_eq!(term_names(&built), vec!["WS", "__IGNORE_1", "__IGNORE_2"]);
+}
+
+#[test]
+fn undefined_ignore() {
+    assert!(
+        err("start: \"a\"\n%ignore WS")
+            .contains("Terminals {'WS'} were marked to ignore but were not defined!")
+    );
+}
+
+#[test]
+fn undefined_symbols() {
+    assert!(err("start: b").contains("Rule 'b' used but not defined (in rule start)"));
+    assert!(err("start: B").contains("Terminal 'B' used but not defined (in rule start)"));
+    assert!(err("start: t{\"a\"}").contains("Template 't' used but not defined (in rule start)"));
+    assert!(err("start: t{\"a\", \"b\"}\nt{x}: x").contains(
+        "Wrong number of template arguments used for t (expected 1, got 2) (in rule start)"
+    ));
+}
+
+#[test]
+fn template_parameter_errors() {
+    assert!(
+        err("start: \"a\"\nt{start}: start")
+            .contains("Template Parameter conflicts with rule start (in template t)")
+    );
+    assert!(err("t{x, x}: x").contains("Duplicate Template Parameter x (in template t)"));
+}
+
+#[test]
+fn template_parameters_are_not_undefined_symbols() {
+    let built = build("start: t{\"a\"}\nt{x}: x u{x}\nu{y}: y");
+    assert_eq!(rule_names(&built), vec!["start", "t", "u"]);
+}
+
+#[test]
+fn terminals_inline_their_references() {
+    let built = build("start: C\nA: \"a\"\nB: A \"b\"\nC: B | A");
+    assert_eq!(
+        term_body(&built, "B"),
+        &Expr::Alternatives(vec![alt(vec![
+            Expr::Alternatives(vec![alt(vec![Expr::Literal(Pattern::str("a"))])]),
+            Expr::Literal(Pattern::str("b")),
+        ])])
+    );
+    let c = term_body(&built, "C");
+    let Expr::Alternatives(alts) = c else {
+        unreachable!()
+    };
+    assert_eq!(alts.len(), 2);
+}
+
+#[test]
+fn terminal_reference_errors() {
+    assert!(
+        err("start: A\nA: \"a\" start")
+            .contains("Rules aren't allowed inside terminals (start in A)")
+    );
+    assert!(err("start: A\nA: \"a\" B").contains("Terminal used but not defined: B"));
+    assert!(err("start: A\nA: \"a\" A").contains("Recursion in terminal 'A'"));
+    assert!(err("start: A\nA: \"a\" B\nB: \"b\" A").contains("Recursion in terminal"));
+    assert!(err("start: A\nA: \"a\" B\n%declare B").contains("uses declared terminal B"));
+}
+
+#[test]
+fn imports_from_bundled_grammars() {
+    let built = build("start: INT WS\n%import common.INT\n%import common.WS");
+    assert_eq!(term_names(&built), vec!["INT", "WS"]);
+    let built = build("start: SIGNED_NUMBER\n%import common.SIGNED_NUMBER");
+    assert_eq!(term_names(&built), vec!["SIGNED_NUMBER"]);
+    assert!(
+        err("start: \"a\"\n%import nonexistent.X")
+            .contains("Could not find grammar `nonexistent.lark` to import")
+    );
+}
+
+#[test]
+fn imports_mangle_dependencies_and_keep_only_what_is_needed() {
+    let sources = Sources(vec![(
+        "lib.lark",
+        "a: b _c D\nb: \"b\"\n_c: \"c\"\nD: E \"d\"\nE: \"e\"\nunused: \"u\"\n%ignore \" \"\n",
+    )]);
+    let built = build_with("%import lib.a\nstart: a", &sources).unwrap();
+    assert_eq!(rule_names(&built), vec!["a", "lib__b", "_lib__c", "start"]);
+    assert_eq!(term_names(&built), vec!["lib__D"]);
+    assert!(built.ignore.is_empty());
+}
+
+#[test]
+fn import_forms() {
+    let sources = Sources(vec![("dir/lib.lark", "a: B\nB: \"b\"\nC: \"c\"\n")]);
+    let built = build_with(
+        "%import dir.lib (a, C)\n%import dir.lib.B -> BEE\nstart: a C BEE",
+        &sources,
+    )
+    .unwrap();
+    assert_eq!(rule_names(&built), vec!["a", "start"]);
+    assert_eq!(term_names(&built), vec!["BEE", "C"]);
+}
+
+#[test]
+fn relative_imports_resolve_against_the_importing_file() {
+    let sources = Sources(vec![
+        ("sub/main.lark", "%import .lib.a\nstart: a\n"),
+        ("sub/lib.lark", "a: \"a\"\n"),
+    ]);
+    let built = load_grammar("%import .lib.a\nstart: a", Some("sub/main.lark"), &sources).unwrap();
+    assert_eq!(rule_names(&built), vec!["a", "start"]);
+    let built = load_grammar(
+        "%import .lib.a\nstart: a",
+        Some("main.lark"),
+        &Sources(vec![("lib.lark", "a: \"a\"\n")]),
+    )
+    .unwrap();
+    assert_eq!(rule_names(&built), vec!["a", "start"]);
+    assert!(
+        load_grammar(
+            "%import .common.INT\nstart: INT",
+            Some("main.lark"),
+            &NoImports
+        )
+        .unwrap_err()
+        .message
+        .contains("Could not find grammar `common.lark`")
+    );
+}
+
+#[test]
+fn nested_imports_compose_mangles() {
+    let sources = Sources(vec![
+        ("outer.lark", "%import inner.x\na: x y\ny: \"y\"\n"),
+        ("inner.lark", "x: z\nz: \"z\"\n"),
+    ]);
+    let built = build_with("%import outer.a\nstart: a", &sources).unwrap();
+    assert_eq!(
+        rule_names(&built),
+        vec!["outer__x", "outer__inner__z", "a", "outer__y", "start"]
+    );
+}
+
+#[test]
+fn import_conflicts() {
+    let sources = Sources(vec![
+        ("lib.lark", "a: \"a\"\n"),
+        ("lib2.lark", "a: \"b\"\n"),
+    ]);
+    assert!(
+        build_with("%import lib.a\n%import lib2.a\nstart: a", &sources)
+            .unwrap_err()
+            .message
+            .contains("Cannot import 'a' from 'lib2.lark': Symbol already defined.")
+    );
+    assert!(
+        build_with("a: \"x\"\n%import lib.a\nstart: a", &sources)
+            .unwrap_err()
+            .message
+            .contains("Rule 'a' defined more than once")
+    );
+}
+
+#[test]
+fn imported_declare_and_override_are_mangled() {
+    let sources = Sources(vec![(
+        "lib.lark",
+        "a: B\n%declare B\nc: \"c\"\n%override c: \"d\"\n",
+    )]);
+    let built = build_with("%import lib (a, c)\nstart: a c", &sources).unwrap();
+    assert_eq!(term_names(&built), vec!["lib__B"]);
+    assert_eq!(built.term_defs[0].1, None);
+}
+
+#[test]
+fn mangle_rules() {
+    let mangle = Mangle {
+        prefix: "a__b".to_string(),
+        aliases: vec![("X".to_string(), "Y".to_string())],
+        base: Some(Box::new(Mangle {
+            prefix: "outer".to_string(),
+            aliases: Vec::new(),
+            base: None,
+        })),
+    };
+    assert_eq!(mangle.apply("X"), "outer__Y");
+    assert_eq!(mangle.apply("z"), "outer__a__b__z");
+    assert_eq!(mangle.apply("_z"), "_outer__a__b__z");
+}
+
+#[test]
+fn find_used_symbols_includes_templates_and_arguments() {
+    let built = build("start: t{A, b} c\nt{x, y}: x y\nA: \"a\"\nb: \"b\"\nc: \"c\"");
+    let symbols = find_used_symbols(&built.rule_defs[0].2);
+    assert_eq!(symbols, vec!["t", "A", "b", "c"]);
+}

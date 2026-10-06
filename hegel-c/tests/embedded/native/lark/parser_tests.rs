@@ -1,0 +1,357 @@
+//! Direct-equivalent tests for `src/native/lark/parser.rs`.
+
+use super::*;
+use alloc::string::ToString;
+use alloc::vec;
+
+fn parse(text: &str) -> Vec<Statement> {
+    parse_grammar(text).unwrap()
+}
+
+fn err(text: &str) -> String {
+    parse_grammar(text).unwrap_err().message
+}
+
+fn rule_sym(name: &str) -> Expr {
+    Expr::Symbol(Symbol::Rule(name.to_string()))
+}
+
+fn term_sym(name: &str) -> Expr {
+    Expr::Symbol(Symbol::Terminal(name.to_string()))
+}
+
+fn lit(s: &str) -> Expr {
+    Expr::Literal(Pattern::str(s))
+}
+
+fn alt(items: Vec<Expr>) -> Alternative {
+    Alternative { items, alias: None }
+}
+
+fn alts(alternatives: Vec<Alternative>) -> Expr {
+    Expr::Alternatives(alternatives)
+}
+
+fn repeat(inner: Expr, min: u32, max: Option<u32>) -> Expr {
+    Expr::Repeat {
+        inner: Box::new(inner),
+        min,
+        max,
+    }
+}
+
+fn single_rule(text: &str) -> RuleDef {
+    match parse(text).remove(0) {
+        Statement::Define(Definition::Rule(rule)) => rule,
+        other => panic!("expected a rule, got {other:?}"),
+    }
+}
+
+fn single_term(text: &str) -> TermDef {
+    match parse(text).remove(0) {
+        Statement::Define(Definition::Terminal(term)) => term,
+        other => panic!("expected a terminal, got {other:?}"),
+    }
+}
+
+#[test]
+fn rule_with_sequence_and_alternatives() {
+    let rule = single_rule("start: a B \"c\" | d\n  | /e/i");
+    assert_eq!(rule.name, "start");
+    assert_eq!(
+        rule.body,
+        alts(vec![
+            alt(vec![rule_sym("a"), term_sym("B"), lit("c")]),
+            alt(vec![rule_sym("d")]),
+            alt(vec![Expr::Literal(Pattern::re("e").with_flags("i"))]),
+        ])
+    );
+    assert_eq!(rule.modifiers, RuleModifiers::default());
+    assert_eq!(rule.priority, None);
+    assert!(rule.params.is_empty());
+}
+
+#[test]
+fn empty_alternatives() {
+    let rule = single_rule("a: | \"x\" |");
+    assert_eq!(
+        rule.body,
+        alts(vec![alt(vec![]), alt(vec![lit("x")]), alt(vec![])])
+    );
+    assert!(single_rule("a:").body.is_single_empty());
+}
+
+#[test]
+fn modifiers_priority_and_params() {
+    let rule = single_rule("?!tmpl{a, b}.3: a b");
+    assert_eq!(rule.name, "tmpl");
+    assert_eq!(rule.params, vec!["a".to_string(), "b".to_string()]);
+    assert_eq!(rule.priority, Some(3));
+    assert!(rule.modifiers.expand1);
+    assert!(rule.modifiers.keep_all_tokens);
+}
+
+#[test]
+fn inlined_rule_cannot_expand() {
+    assert!(err("?_a: b").contains("Inlined rules (_rule) cannot use the ?rule modifier."));
+}
+
+#[test]
+fn operators() {
+    let rule = single_rule("a: b? c* d+ e~2 f~1..3 [g] (h | i)");
+    assert_eq!(
+        rule.body,
+        alts(vec![alt(vec![
+            repeat(rule_sym("b"), 0, Some(1)),
+            repeat(rule_sym("c"), 0, None),
+            repeat(rule_sym("d"), 1, None),
+            repeat(rule_sym("e"), 2, Some(2)),
+            repeat(rule_sym("f"), 1, Some(3)),
+            repeat(alts(vec![alt(vec![rule_sym("g")])]), 0, Some(1)),
+            alts(vec![alt(vec![rule_sym("h")]), alt(vec![rule_sym("i")])]),
+        ])])
+    );
+}
+
+#[test]
+fn bad_repeat_ranges() {
+    assert!(err("a: b~3..2").contains("Bad Range"));
+    assert!(err("a: b~-1").contains("Bad Range"));
+    assert!(err("a: b~2000000").contains("Bad Range"));
+    assert!(err("a: b~x").contains("Expecting a number after '~'"));
+}
+
+#[test]
+fn aliases() {
+    let rule = single_rule("a: b -> first\n  | c d -> second\n  | e");
+    let aliases: Vec<Option<String>> = match rule.body {
+        Expr::Alternatives(alts) => alts.into_iter().map(|a| a.alias).collect(),
+        _ => unreachable!(),
+    };
+    assert_eq!(
+        aliases,
+        vec![Some("first".to_string()), Some("second".to_string()), None]
+    );
+}
+
+#[test]
+fn alias_must_be_a_rule_name() {
+    assert!(err("a: b -> C").contains("Alias expects lowercase name"));
+    assert!(err("a: -> \"a\"").contains("Alias expects lowercase name"));
+}
+
+#[test]
+fn templates_and_ranges() {
+    let rule = single_rule("a: sep{b, \"x\"} \"a\"..\"z\"");
+    assert_eq!(
+        rule.body,
+        alts(vec![alt(vec![
+            Expr::Template {
+                name: "sep".to_string(),
+                args: vec![rule_sym("b"), lit("x")],
+            },
+            Expr::Literal(Pattern::re("[a-z]")),
+        ])])
+    );
+}
+
+#[test]
+fn template_argument_errors() {
+    assert!(err("a: sep{}").contains("Expecting a value"));
+    assert!(err("a: sep{b").contains("Expecting '}'"));
+    assert!(err("a: sep{(b)}").contains("Expecting a value"));
+    assert!(err("tmpl{A}: A").contains("Expecting a template parameter name"));
+    assert!(err("tmpl{a: a").contains("Expecting '}'"));
+}
+
+#[test]
+fn range_needs_a_second_string() {
+    assert!(err("a: \"a\"..b").contains("Expecting a string literal after '..'"));
+}
+
+#[test]
+fn terminal_definitions() {
+    let term = single_term("A.2: \"a\" | /b/");
+    assert_eq!(term.name, "A");
+    assert_eq!(term.priority, 2);
+    assert_eq!(
+        term.body,
+        alts(vec![
+            alt(vec![lit("a")]),
+            alt(vec![Expr::Literal(Pattern::re("b"))])
+        ])
+    );
+    assert_eq!(single_term("A: \"a\"").priority, 0);
+}
+
+#[test]
+fn terminal_name_with_dot() {
+    assert!(err("A.B: \"a\"").contains("Terminal names cannot contain dots"));
+}
+
+#[test]
+fn priority_needs_a_number() {
+    assert!(err("a.x: b").contains("Expecting a priority number"));
+}
+
+#[test]
+fn missing_colon() {
+    for text in ["a\n", "A\n", "a->\n", "A->\n", "a A\n"] {
+        assert!(
+            err(text).contains("Expecting rule or terminal definition (missing colon)"),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn unexpected_colon() {
+    for text in ["a::\n", "a: b:\n", "a: B:\n", "a: \"a\":\n"] {
+        assert!(err(text).contains("Unexpected colon"), "{text:?}");
+    }
+}
+
+#[test]
+fn misplaced_operators() {
+    for text in [
+        "a: b??",
+        "a: b(?)",
+        "a:+\n",
+        "a:?\n",
+        "a:*\n",
+        "a:|*\n",
+        "a: b ~ 1 ~ 2",
+    ] {
+        assert!(err(text).contains("Misplaced operator"), "{text:?}");
+    }
+}
+
+#[test]
+fn parentheses_errors() {
+    assert!(err("a: (\n").contains("Unclosed parenthesis"));
+    assert!(err("a: [b\n").contains("Unclosed parenthesis"));
+    for text in ["a: )\n", "a: [)\n", "a: (]\n", "a: b)\n"] {
+        assert!(
+            err(text).contains("Unmatched closing parenthesis"),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn other_statement_errors() {
+    assert!(err("a: 1\n").contains("Incorrect type of value"));
+    assert!(
+        err("a:a\n()\n").contains("Expecting option (\"|\") or a new rule or terminal definition")
+    );
+    assert!(err("\"a\"\n").contains("Expecting rule or terminal definition"));
+    assert!(err("/a/\n").contains("Expecting rule or terminal definition"));
+    assert!(err("| a\n").contains("Expecting rule or terminal definition"));
+    assert!(err("%import \"a\"\n").contains("%import expects a name"));
+    assert!(err("%ignore %import\n").contains("%ignore expects a value"));
+    assert!(err("a: b c, d").contains("Incorrect type of value"));
+    assert!(err("%override 3").contains("Expecting rule or terminal definition"));
+    assert!(err("%declare\n").contains("%declare expects at least one name"));
+    assert!(err("+").contains("Misplaced operator"));
+}
+
+#[test]
+fn error_messages_carry_position_and_line() {
+    let message = err("start: a\nb: c:\n");
+    assert!(
+        message.contains("Unexpected colon, at line 2 column 5"),
+        "{message}"
+    );
+    assert!(message.ends_with("b: c:"), "{message}");
+}
+
+#[test]
+fn directives() {
+    let statements = parse(
+        "%ignore WS\n%ignore \" \" | /\\t/\n%declare A _B\n%import common.INT\n%import common.WS -> SPACE\n%import .rel.path (a, B)\n%override a: b\n%extend A: \"c\"",
+    );
+    assert_eq!(
+        statements[0],
+        Statement::Ignore(alts(vec![alt(vec![term_sym("WS")])]))
+    );
+    assert_eq!(
+        statements[1],
+        Statement::Ignore(alts(vec![
+            alt(vec![lit(" ")]),
+            alt(vec![Expr::Literal(Pattern::re("\t"))])
+        ]))
+    );
+    assert_eq!(
+        statements[2],
+        Statement::Declare(vec![
+            Symbol::Terminal("A".to_string()),
+            Symbol::Terminal("_B".to_string())
+        ])
+    );
+    assert_eq!(
+        statements[3],
+        Statement::Import(ImportStmt {
+            path: vec!["common".to_string()],
+            relative: false,
+            names: ImportNames::Single {
+                name: "INT".to_string(),
+                alias: None
+            },
+        })
+    );
+    assert_eq!(
+        statements[4],
+        Statement::Import(ImportStmt {
+            path: vec!["common".to_string()],
+            relative: false,
+            names: ImportNames::Single {
+                name: "WS".to_string(),
+                alias: Some("SPACE".to_string())
+            },
+        })
+    );
+    assert_eq!(
+        statements[5],
+        Statement::Import(ImportStmt {
+            path: vec!["rel".to_string(), "path".to_string()],
+            relative: true,
+            names: ImportNames::Multi(vec!["a".to_string(), "B".to_string()]),
+        })
+    );
+    assert!(matches!(&statements[6], Statement::Override(Definition::Rule(r)) if r.name == "a"));
+    assert!(matches!(&statements[7], Statement::Extend(Definition::Terminal(t)) if t.name == "A"));
+}
+
+#[test]
+fn declare_accepts_rule_names_for_the_builder_to_reject() {
+    assert_eq!(
+        parse("%declare a")[0],
+        Statement::Declare(vec![Symbol::Rule("a".to_string())])
+    );
+}
+
+#[test]
+fn import_errors() {
+    assert!(err("%import common\n").contains("Nothing was imported from grammar `common`"));
+    assert!(err("%import common.\n").contains("Expecting a name"));
+    assert!(err("%import common (A\n").contains("Unclosed parenthesis"));
+    assert!(err("%import common (A, 1)\n").contains("Expecting a name"));
+    assert!(err("%import common.A -> \n").contains("Expecting a name"));
+}
+
+#[test]
+fn blank_lines_and_comments_between_statements() {
+    let statements = parse("\n\n// c\na: b\n\n# d\n\nA: \"a\"\n\n");
+    assert_eq!(statements.len(), 2);
+}
+
+#[test]
+fn literal_helper_wraps_a_pattern() {
+    assert_eq!(literal(Pattern::str("x")), lit("x"));
+}
+
+#[test]
+fn escape_errors_surface_from_the_parser() {
+    assert!(err("a: \"\"").contains("Empty terminals are not allowed"));
+    assert!(err("a: /a\nb/").contains("verbose"));
+}

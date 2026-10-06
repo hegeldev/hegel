@@ -1,16 +1,16 @@
-//! Port of CPython's `Lib/re/` parser.
+//! Port of CPython's `Lib/re/`.
 //!
-//! This module mirrors the public shape of CPython's `_parser.py` /
+//! [`parser`] mirrors the public shape of CPython's `_parser.py` /
 //! `_constants.py` closely enough that
 //! `hypothesis.strategies._internal.regex` can be ported without papering
-//! over Python-vs-Rust regex semantic differences. Only the parser is
-//! ported; matching/execution remains delegated to the `regex` crate at
-//! test-runtime — test generation only needs to *produce* matching
-//! strings, not match them.
-//!
-//! Vendored sources for cross-reference live under
-//! `resources/cpython/Lib/re/`.
+//! over Python-vs-Rust regex semantic differences; the regex string
+//! generator walks its AST. [`matcher`] is a backtracking matcher over the
+//! same AST with CPython's search order, for the places that must know
+//! where CPython's `re` would end a match (checking that a generated
+//! terminal lexes back to itself, simulating a lexer at token boundaries).
 
 pub mod casefold;
 pub mod constants;
+pub mod matcher;
 pub mod parser;
+pub mod width;

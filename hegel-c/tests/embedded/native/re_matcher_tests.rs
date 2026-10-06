@@ -1,0 +1,505 @@
+//! Direct-equivalent tests for `src/native/re/matcher.rs`.
+//!
+//! Every expected end position and fullmatch verdict below was produced by
+//! running CPython 3.14's `re.compile(pattern).match(text, pos)` /
+//! `.fullmatch(text)` on the same inputs and transcribing the results, so
+//! the tests check agreement with CPython's engine rather than with the
+//! matcher's own reading of the semantics.
+
+use super::*;
+use crate::native::re::parser::parse_pattern;
+use alloc::string::String;
+use alloc::vec;
+
+fn chars(text: &str) -> Vec<char> {
+    text.chars().collect()
+}
+
+fn end(pattern: &str, text: &str, pos: usize) -> Option<usize> {
+    let parsed = parse_pattern(pattern, 0).unwrap();
+    Matcher::new(&parsed).match_at(&chars(text), pos).unwrap()
+}
+
+fn full(pattern: &str, text: &str) -> bool {
+    let parsed = parse_pattern(pattern, 0).unwrap();
+    Matcher::new(&parsed).fullmatch(&chars(text)).unwrap()
+}
+
+/// Checks `match_at` and `fullmatch` against one CPython observation.
+fn check(pattern: &str, text: &str, pos: usize, expected_end: Option<usize>, expected_full: bool) {
+    assert_eq!(
+        end(pattern, text, pos),
+        expected_end,
+        "match end of {pattern:?} on {text:?} at {pos}"
+    );
+    if pos == 0 {
+        assert_eq!(
+            full(pattern, text),
+            expected_full,
+            "fullmatch of {pattern:?} on {text:?}"
+        );
+    }
+}
+
+#[test]
+fn alternation_is_leftmost_first_not_longest() {
+    check("a|ab", "ab", 0, Some(1), true);
+    check("(a|ab)c", "abc", 0, Some(3), true);
+    check("(?>a|ab)c", "abc", 0, None, false);
+    check("(a|ab)(c|bcd)(d*)", "abcd", 0, Some(4), true);
+    check("(?i)(?:a|ab)(?:c|bcd)(?:d*)", "abcd", 0, Some(4), true);
+    check("(a)|(b)", "b", 0, Some(1), true);
+    check("a(?!)|b", "b", 0, Some(1), true);
+}
+
+#[test]
+fn greedy_and_lazy_single_character_repeats() {
+    check("a*b", "aaab", 0, Some(4), true);
+    check("a*", "aaa", 0, Some(3), true);
+    check("a*?", "aaa", 0, Some(0), true);
+    check("a*?b", "aaab", 0, Some(4), true);
+    check("a{2,3}", "aaaa", 0, Some(3), false);
+    check("a{2,3}?", "aaaa", 0, Some(2), false);
+    check("a{0,2}", "aaa", 0, Some(2), false);
+    check("a{3}", "aa", 0, None, false);
+    check("a??b", "ab", 0, Some(2), true);
+    check("a??", "a", 0, Some(0), true);
+    check("x*?y", "xxy", 0, Some(3), true);
+    check(".*?b", "aab", 0, Some(3), true);
+    check("[a-c]+?c", "abc", 0, Some(3), true);
+    check("[a-c]+", "abcd", 0, Some(3), false);
+    check("[a-c]{2,}?", "abcd", 0, Some(2), false);
+    check("[a-c]{2}", "ab", 0, Some(2), true);
+    check("[a-c]{3}", "ab", 0, None, false);
+    check("(?i)[a-c]*", "ABCd", 0, Some(3), false);
+}
+
+#[test]
+fn greedy_and_lazy_compound_repeats() {
+    check("(ab)*", "ababa", 0, Some(4), false);
+    check("(?:ab)*?a", "aba", 0, Some(1), true);
+    check("(?:ab){2}", "ababab", 0, Some(4), false);
+    check("(?:ab){2}", "ab", 0, None, false);
+    check("(?:ab){2,}?", "ababab", 0, Some(4), true);
+    check("(?:ab){1,2}?c", "ababc", 0, Some(5), true);
+    check("(?:ab){1}?ab", "abab", 0, Some(4), true);
+    check("(?:ab)??ab", "ab", 0, Some(2), true);
+    check("(?i)(?:ab)*", "ABab", 0, Some(4), true);
+    check("(a|b)*c", "ababc", 0, Some(5), true);
+}
+
+#[test]
+fn repeats_of_unit_sequence_alternations() {
+    check("(?:a|b)*c", "ababc", 0, Some(5), true);
+    check("(?:a|[0-9]|.)+?b", "a1xb", 0, Some(4), true);
+    check("(?:(?i:a)|b){2,3}", "AbA", 0, Some(3), true);
+    check("(?:a|(?:b|c))*", "abcx", 0, Some(3), false);
+    check("(?:a|ab)*c", "abc", 0, Some(3), true);
+    check("(?:ab|a)*?c", "abac", 0, Some(4), true);
+    check("(?:a|)*?b", "aab", 0, Some(3), true);
+    check("(?:ab|cd){2,3}?e", "abcdabe", 0, Some(7), true);
+    check("(?:ab|a){3}", "aab", 0, None, false);
+    check("(?:ab|a){1,2}b", "aab", 0, Some(3), true);
+    check("(?i)(?:AB|a)*", "abAB", 0, Some(4), true);
+    check("(?:a|ab)*?c", "abc", 0, Some(3), true);
+    check("(?:ab|a)*c", "aabc", 0, Some(4), true);
+    check("(?:ab|a){2}?", "aab", 0, Some(3), true);
+    check("(?:a|)*b", "b", 0, Some(1), true);
+    check("(?:a|){2}b", "b", 0, Some(1), true);
+    check("(?:a|){2}?b", "b", 0, Some(1), true);
+    check("(?:xy|x)*?yz", "xyz", 0, Some(3), true);
+    check("(?:ab|a)*?", "aab", 0, Some(0), true);
+    check("(?:ab|a)+?b", "abb", 0, Some(3), true);
+    check("(?:ab|a){1,1}?c", "abc", 0, Some(3), true);
+    check("(?:ab){0}c", "c", 0, Some(1), true);
+    check("(?:ab|a){0,1}ab", "ab", 0, Some(2), true);
+}
+
+#[test]
+fn empty_match_repeats_terminate() {
+    check("(a*)*", "aaa", 0, Some(3), true);
+    check("(a*)*b", "aaab", 0, Some(4), true);
+    check("(a*)+", "", 0, Some(0), true);
+    check("(a*)*", "b", 0, Some(0), false);
+    check("(?:a|)*b", "aab", 0, Some(3), true);
+    check("(?:)*", "x", 0, Some(0), false);
+    check("(?:a*?)*", "aa", 0, Some(0), true);
+    check("(a*?)*?b", "ab", 0, Some(2), true);
+    check("(?:a*)*+b", "aab", 0, Some(3), true);
+}
+
+#[test]
+fn possessive_and_atomic_never_give_back() {
+    check("a*+a", "aaa", 0, None, false);
+    check("a*a", "aaa", 0, Some(3), true);
+    check("a*+", "aaa", 0, Some(3), true);
+    check("(?:ab)*+ab", "abab", 0, None, false);
+    check("(?>a*)a", "aaa", 0, None, false);
+    check("(?:ab){2,}+", "ab", 0, None, false);
+    check("(?:ab){1,2}+ab", "ababab", 0, Some(6), true);
+    check("(?>(a))\\1", "aa", 0, Some(2), true);
+    check("(?>ab)c", "abd", 0, None, false);
+    check("(?>x)", "y", 0, None, false);
+}
+
+#[test]
+fn backreferences() {
+    check("(a+)\\1", "aaaa", 0, Some(4), true);
+    check("(a+)\\1", "aaa", 0, Some(2), false);
+    check("(a)|b\\1", "b", 0, None, false);
+    check("(?P<x>a)(?P=x)", "aa", 0, Some(2), true);
+    check("(?i)(a)\\1", "aA", 0, Some(2), true);
+    check("(?i)(a)\\1", "ab", 0, None, false);
+    check("(?ai)(a)\\1", "aA", 0, Some(2), true);
+    check("(?i)(k)\\1", "k\u{212a}", 0, Some(2), true);
+    check("(a)(b)?\\2", "a", 0, None, false);
+    check("(?:(a)|b)*\\1", "aba", 0, Some(3), true);
+    check("(?:(a)|b)*\\1", "ba", 0, None, false);
+    check("(ab)\\1", "aba", 0, None, false);
+}
+
+#[test]
+fn conditional_groups() {
+    check("(a)?(?(1)b|c)", "ab", 0, Some(2), true);
+    check("(a)?(?(1)b|c)", "c", 0, Some(1), true);
+    check("(a)?(?(1)b|c)", "ac", 0, None, false);
+    check("(a)?(?(1)b)", "ab", 0, Some(2), true);
+    check("(a)?(?(1)b)", "x", 0, Some(0), false);
+    check("(a)(b)?(?(2)x|y)", "ay", 0, Some(2), true);
+}
+
+#[test]
+fn lookahead() {
+    check("a(?=b)", "ab", 0, Some(1), false);
+    check("a(?=b)", "ac", 0, None, false);
+    check("a(?!b)", "ac", 0, Some(1), false);
+    check("a(?!b)", "ab", 0, None, false);
+    check("(?=(a+))a", "aaa", 0, Some(1), false);
+    check("(?=(a))\\1", "a", 0, Some(1), true);
+    check("(?!(a)b)(?(1)x|a)", "ac", 0, Some(1), false);
+    check("(?!)", "a", 0, None, false);
+    check("(?=a)b", "a", 0, None, false);
+}
+
+#[test]
+fn lookbehind() {
+    check("(?<=a)b", "ab", 1, Some(2), true);
+    check("(?<=a)b", "ab", 0, None, false);
+    check("(?<=a)b", "b", 0, None, false);
+    check("(?<!a)b", "cb", 1, Some(2), true);
+    check("(?<!a)b", "ab", 1, None, false);
+    check("(?<=(a))b", "ab", 1, Some(2), true);
+    check("(?<=ab)c", "abc", 2, Some(3), true);
+    check("(?<!ab)c", "xbc", 2, Some(3), true);
+    check("(?<!ab)c", "abc", 2, None, false);
+    check("(?<=ab|cd)e", "cde", 2, Some(3), true);
+    check("(?<=(?:ab){2})c", "ababc", 4, Some(5), true);
+    check("(?<=(?>ab))c", "abc", 2, Some(3), true);
+    check("(?<=a\\b)c", "a c", 2, None, false);
+    check("(?<=^ab)c", "abc", 2, Some(3), true);
+    check("(?<=[^a])b", "cb", 1, Some(2), true);
+    check("(?<=(?!x)a)b", "ab", 1, Some(2), true);
+    check("(a)(?<=\\1)b", "ab", 0, Some(2), true);
+    check("(a)(?<=(?(1)a|b))b", "ab", 0, Some(2), true);
+    check("(ab)(c)?(?<=\\2)d", "abd", 0, None, false);
+}
+
+#[test]
+fn variable_width_lookbehind_accepts_any_of_its_widths() {
+    check("(?<=a|bc)d", "bcd", 2, Some(3), false);
+    check("(?<=a|bc)d", "ad", 1, Some(2), false);
+    check("(?<!a|bc)d", "bcd", 2, None, false);
+    check("(?<!a|bc)d", "xd", 1, Some(2), false);
+    check("(?<=a+)d", "aaad", 3, Some(4), false);
+    check("(?<=(?:ab){1,2}|x)d", "ababd", 4, Some(5), false);
+}
+
+#[test]
+fn word_boundaries() {
+    check("\\bfoo\\b", "foo", 0, Some(3), true);
+    check("foo\\b", "foobar", 0, None, false);
+    check("\\Bo", "fo", 1, Some(2), true);
+    check("\\Ba", "a", 0, None, false);
+    check("(?a)\\b\u{e9}", "\u{e9}", 0, None, false);
+    check("\\b\u{e9}", "\u{e9}", 0, Some(1), true);
+    check("a\\b", "a", 0, Some(1), true);
+    check("\\b", "", 0, None, false);
+    check("\\B", "", 0, Some(0), true);
+    check("\\B", " ", 0, Some(0), false);
+    check("(?a)\\B", "\u{e9}", 0, Some(0), false);
+}
+
+#[test]
+fn anchors_with_and_without_multiline() {
+    check("(?m)^b", "a\nb", 2, Some(3), true);
+    check("^b", "a\nb", 2, None, false);
+    check("(?m)a$", "a\nb", 0, Some(1), false);
+    check("a$", "a\nb", 0, None, false);
+    check("a$", "a\n", 0, Some(1), false);
+    check("a\\Z", "a\n", 0, None, false);
+    check("\\Aa", "aa", 1, None, false);
+    check("(?m)a$", "a", 0, Some(1), true);
+    check("\\Z", "", 0, Some(0), true);
+    check("(?m)^", "", 0, Some(0), true);
+    check("$", "", 0, Some(0), true);
+    check("^a", "ba", 1, None, false);
+    check("(?m)^a", "ba", 1, None, false);
+    check("(?m)$", "a\nb", 1, Some(1), false);
+}
+
+#[test]
+fn ignorecase_literals() {
+    check("(?i)abc", "ABC", 0, Some(3), true);
+    check("(?i)k", "\u{212a}", 0, Some(1), true);
+    check("(?i)s", "\u{17f}", 0, Some(1), true);
+    check("(?i)\u{df}", "\u{1e9e}", 0, Some(1), true);
+    check("(?i)1", "1", 0, Some(1), true);
+    check("(?i)\u{130}", "i", 0, Some(1), true);
+    check("(?i)i", "\u{130}", 0, Some(1), true);
+    check("(?i)\u{131}", "i", 0, Some(1), true);
+    check("(?i)\u{1c6}", "\u{1c5}", 0, Some(1), true);
+    check("(?ai)k", "K", 0, Some(1), true);
+    check("(?ai)k", "\u{212a}", 0, None, false);
+    check("(?ai)\u{e9}", "\u{c9}", 0, None, false);
+    check("(?i)(?-i:a)", "A", 0, None, false);
+    check("(?i)(?-i:a)a", "aA", 0, Some(2), true);
+    check("(?i)(?a:k)", "K", 0, Some(1), true);
+    check("(?i)a", "b", 0, None, false);
+}
+
+#[test]
+fn ignorecase_sets() {
+    check("(?i)[a-z]+", "AbC", 0, Some(3), true);
+    check("(?i)[^k]", "\u{212a}", 0, None, false);
+    check("(?i)[s]", "\u{17f}", 0, Some(1), true);
+    check("(?i)[a-z]", "K", 0, Some(1), true);
+    check("(?i)[K]", "k", 0, Some(1), true);
+    check("(?i)[^a-z]", "K", 0, None, false);
+    check("(?i)[\u{3a9}]", "\u{3c9}", 0, Some(1), true);
+    check("(?i)[^_]", "_", 0, None, false);
+    check("(?ai)[a-z]", "\u{212a}", 0, None, false);
+    check("(?ai)[A-Z]", "k", 0, Some(1), true);
+    check("(?i)[a-z]", "\u{17f}", 0, Some(1), true);
+    check("(?i)[\u{17f}]", "s", 0, Some(1), true);
+    check("(?i)[\u{1c6}]", "\u{1c5}", 0, Some(1), true);
+    check("(?i)[\u{1c4}-\u{1c4}]", "\u{1c5}", 0, Some(1), true);
+    check("(?i)[\u{e0}-\u{ff}]", "\u{c0}", 0, Some(1), true);
+    check("(?i)[A-Z]", "k", 0, Some(1), true);
+    check("(?i)[A-Z]", "\u{212a}", 0, Some(1), true);
+    check("(?i)[^A-Z]", "\u{212a}", 0, None, false);
+    check("(?i)[^a]", "A", 0, None, false);
+    check("(?i)[^A]", "a", 0, None, false);
+    check("(?i)[i]", "\u{130}", 0, Some(1), true);
+    check("(?i)[\u{131}]", "I", 0, Some(1), true);
+    check("(?i)[\\u212a]", "k", 0, Some(1), true);
+    check("(?i)[^\\d]", "5", 0, None, false);
+    check("(?i)[\\d]", "5", 0, Some(1), true);
+    check("(?i)[^a-z\\d]", "5", 0, None, false);
+    check("(?i)[^\\W]", "\u{c9}", 0, Some(1), true);
+    check("(?i)[b-d]", "a", 0, None, false);
+}
+
+#[test]
+fn plain_sets_and_negated_literals() {
+    check("[^a]", "b", 0, Some(1), true);
+    check("[^a]", "\n", 0, Some(1), true);
+    check("[^a]", "a", 0, None, false);
+    check("[\\u00e9]", "\u{e9}", 0, Some(1), true);
+    check("[a-c]", "b", 0, Some(1), true);
+    check("[a-c]", "d", 0, None, false);
+    check("\\101", "A", 0, Some(1), true);
+    check("(?x) a b # c", "ab", 0, Some(2), true);
+}
+
+#[test]
+fn dot_and_dotall() {
+    check(".", "\n", 0, None, false);
+    check("(?s).", "\n", 0, Some(1), true);
+    check("(?s:.)", "\n", 0, Some(1), true);
+    check(".", "a", 0, Some(1), true);
+}
+
+#[test]
+fn categories_unicode_and_ascii() {
+    check("\\w", "\u{e9}", 0, Some(1), true);
+    check("(?a)\\w", "\u{e9}", 0, None, false);
+    check("\\d", "\u{663}", 0, Some(1), true);
+    check("(?a)\\d", "\u{663}", 0, None, false);
+    check("\\s", "\u{a0}", 0, Some(1), true);
+    check("(?a)\\s", "\u{a0}", 0, None, false);
+    check("\\W", "\u{e9}", 0, None, false);
+    check("\\D", "5", 0, None, false);
+    check("\\S", " ", 0, None, false);
+    check("[^\\W]", "\u{e9}", 0, Some(1), true);
+    check("[\\d]", "\u{663}", 0, Some(1), true);
+    check("(?a)[\\w]", "\u{e9}", 0, None, false);
+    check("(?a)[\\s]", " ", 0, Some(1), true);
+    check("(?a)[\\d]", "5", 0, Some(1), true);
+    check("(?a)(?u:\\w)", "\u{e9}", 0, Some(1), true);
+    check("\\s", "\u{1c}", 0, Some(1), true);
+    check("(?a)\\S", "\u{a0}", 0, Some(1), true);
+    check("(?a)\\D", "\u{663}", 0, Some(1), true);
+    check("(?a)\\W", "\u{e9}", 0, Some(1), true);
+    check("\\w", "_", 0, Some(1), true);
+    check("(?a)\\w", "_", 0, Some(1), true);
+}
+
+#[test]
+fn start_position_and_empty_inputs() {
+    check("b", "ab", 1, Some(2), true);
+    check("b", "ab", 5, None, false);
+    check("", "", 0, Some(0), true);
+    check("a", "", 0, None, false);
+    assert!(!full("a*", "aab"));
+    assert!(full("a|ab", "ab"));
+}
+
+#[test]
+fn step_limit_fires_on_catastrophic_backtracking() {
+    let parsed = parse_pattern("(a*)*b", 0).unwrap();
+    let text = chars(&"a".repeat(30));
+    let matcher = Matcher::new(&parsed).with_limits(10_000, DEFAULT_DEPTH_LIMIT);
+    assert_eq!(matcher.match_at(&text, 0), Err(MatchError::StepLimit));
+    assert_eq!(matcher.fullmatch(&text), Err(MatchError::StepLimit));
+}
+
+#[test]
+fn depth_limit_fires_on_long_repeats_of_capturing_items() {
+    let parsed = parse_pattern("(?:(a)b)*", 0).unwrap();
+    let text = chars(&"ab".repeat(100));
+    let matcher = Matcher::new(&parsed).with_limits(DEFAULT_STEP_LIMIT, 10);
+    assert_eq!(matcher.match_at(&text, 0), Err(MatchError::DepthLimit));
+    let relaxed = Matcher::new(&parsed);
+    assert_eq!(relaxed.match_at(&text, 0), Ok(Some(200)));
+    let long = chars(&"ab".repeat(2000));
+    assert_eq!(relaxed.match_at(&long, 0), Err(MatchError::DepthLimit));
+    let lazy = parse_pattern("(?:(a)b)*?$", 0).unwrap();
+    assert_eq!(
+        Matcher::new(&lazy).match_at(&long, 0),
+        Err(MatchError::DepthLimit)
+    );
+}
+
+#[test]
+fn default_limits_handle_long_unit_sequence_repeats() {
+    let parsed = parse_pattern("\"(?:\\\\.|[^\"\\\\])*\"", 0).unwrap();
+    let mut text = String::from("\"");
+    text.push_str(&"x\\\"".repeat(2000));
+    text.push('"');
+    let text = chars(&text);
+    assert_eq!(
+        Matcher::new(&parsed).match_at(&text, 0),
+        Ok(Some(text.len()))
+    );
+    let lazy = parse_pattern("\"(?:\\\\.|[^\"])*?\"", 0).unwrap();
+    assert_eq!(Matcher::new(&lazy).match_at(&text, 0), Ok(Some(text.len())));
+    let units = parse_pattern("(?:ab)*", 0).unwrap();
+    let long = chars(&"ab".repeat(5000));
+    assert_eq!(Matcher::new(&units).match_at(&long, 0), Ok(Some(10_000)));
+    let single = parse_pattern("[ab]*?$", 0).unwrap();
+    assert_eq!(Matcher::new(&single).match_at(&long, 0), Ok(Some(10_000)));
+}
+
+#[test]
+fn errors_display() {
+    assert_eq!(
+        alloc::format!("{}", MatchError::StepLimit),
+        "regex match exceeded its step limit"
+    );
+    assert_eq!(
+        alloc::format!("{}", MatchError::DepthLimit),
+        "regex match exceeded its nesting depth limit"
+    );
+}
+
+#[test]
+fn case_folding_helpers_match_cpython() {
+    assert_eq!(fold('\u{130}', true), 'i');
+    assert_eq!(fold('A', true), 'a');
+    assert_eq!(fold('\u{c9}', false), '\u{c9}');
+    assert!(is_cased('\u{df}', true));
+    assert!(is_cased('\u{1e9e}', true));
+    assert!(!is_cased('1', true));
+    assert!(!is_cased('\u{e9}', false));
+    assert!(is_cased('a', false));
+    assert_eq!(unfold('k'), &['K', '\u{212a}']);
+    assert_eq!(unfold('1'), &[] as &[char]);
+    assert!(unfold('\u{1c6}').contains(&'\u{1c5}'));
+    assert_eq!(extra_cases('s'), &['\u{17f}']);
+    assert_eq!(extra_cases('a'), &[] as &[char]);
+}
+
+#[test]
+fn width_of_patterns() {
+    let widths = |pattern: &str| {
+        let parsed = parse_pattern(pattern, 0).unwrap();
+        Matcher::new(&parsed).width(&parsed.pattern)
+    };
+    assert_eq!(widths("abc"), (3, 3));
+    assert_eq!(widths("a|bc"), (1, 2));
+    assert_eq!(widths("(ab)*"), (0, usize::MAX));
+    assert_eq!(widths("(?:ab){2,3}"), (4, 6));
+    assert_eq!(widths("(?>ab)"), (2, 2));
+    assert_eq!(widths("(a)\\1"), (2, 2));
+    assert_eq!(widths("(a)?(?(1)bc|d)"), (1, 3));
+    assert_eq!(widths("(a)?(?(1)bc)"), (0, 3));
+    assert_eq!(widths("^$\\b(?=a)(?!b)"), (0, 0));
+    assert_eq!(widths("a*+"), (0, usize::MAX));
+    assert_eq!(widths("(a)(?:b)?\\1"), (2, 3));
+}
+
+#[test]
+fn find_group_searches_every_construct() {
+    let parsed = parse_pattern("(?:x|(a))(?>(b))(c)*(?(1)(d)|(e))(?=(f))(?!(g))\\1", 0).unwrap();
+    let pattern = &parsed.pattern;
+    for g in 1..=7 {
+        assert!(find_group(pattern, g).is_some(), "group {g}");
+    }
+    assert!(find_group(pattern, 8).is_none());
+    let lookbehind = parse_pattern("(?<=(a))b", 0).unwrap();
+    assert!(find_group(&lookbehind.pattern, 1).is_some());
+    let conditional = parse_pattern("(a)?(?(1)b|(c))", 0).unwrap();
+    assert!(find_group(&conditional.pattern, 2).is_some());
+}
+
+#[test]
+fn match_end_prefers_first_successful_alternative_with_fullmatch_backtracking() {
+    let parsed = parse_pattern("(?:a|ab)(?:c|bcd)", 0).unwrap();
+    let matcher = Matcher::new(&parsed);
+    assert_eq!(matcher.match_at(&chars("abcd"), 0), Ok(Some(4)));
+    assert!(matcher.fullmatch(&chars("abcd")).unwrap());
+    assert!(matcher.fullmatch(&chars("abc")).unwrap());
+    assert!(!matcher.fullmatch(&chars("abce")).unwrap());
+    assert_eq!(matcher.match_at(&chars("abce"), 0), Ok(Some(3)));
+}
+
+#[test]
+fn units_in_sequences() {
+    check("a.c", "abc", 0, Some(3), true);
+    check("a.c", "ab", 0, None, false);
+    check("[^x]y", "ay", 0, Some(2), true);
+    check("a[^x]", "a", 0, None, false);
+    let items = vec![SetItem::Literal(0x61)];
+    assert!(unit_matches(UnitOp::In(&items), 'a', 0));
+    assert!(!unit_matches(UnitOp::NotLiteral(0x61), 'a', 0));
+}
+
+#[test]
+fn unit_alternatives_recognises_only_unit_sequences() {
+    let shapes = |pattern: &str| {
+        let parsed = parse_pattern(pattern, 0).unwrap();
+        let mut out = Vec::new();
+        let ok = unit_alternatives(&parsed.pattern, parsed.flags, &mut out);
+        (ok, out.iter().map(Vec::len).collect::<Vec<_>>())
+    };
+    assert_eq!(shapes("ab"), (true, vec![2]));
+    assert_eq!(shapes("(?:ab|c|)"), (true, vec![2, 1, 0]));
+    assert_eq!(shapes("(?:(?:ab)|(?:cd|e))"), (true, vec![2, 2, 1]));
+    assert!(!shapes("(a)b").0);
+    assert!(!shapes("a(?:b|cd)").0);
+    assert!(!shapes("(?:a|(b))").0);
+    assert!(!shapes("a*").0);
+    assert!(single_unit(&parse_pattern("(?:(?:a))", 0).unwrap().pattern, 0).is_some());
+    assert!(single_unit(&parse_pattern("(a)", 0).unwrap().pattern, 0).is_none());
+    assert!(single_unit(&parse_pattern("ab", 0).unwrap().pattern, 0).is_none());
+}
