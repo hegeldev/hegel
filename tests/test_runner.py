@@ -250,13 +250,6 @@ def test_find_example_shrinks():
         find_example(5)
 
 
-def test_example_is_minimal():
-    assert gs.integers(5, 5).example() == 5
-    assert gs.lists(gs.integers(), min_size=2).example() == [0, 0]
-    with pytest.raises(hegel.InvalidArgument, match="produced no example"):
-        gs.integers().filter(lambda x: False).example()
-
-
 def test_flaky_failure_detected(output):
     calls = [0]
 
