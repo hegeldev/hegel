@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import datetime as dt
 import decimal
 import fractions as _fractions
@@ -11,14 +12,17 @@ import math
 import random as _random
 import struct
 import sys
+import textwrap
 import time
+import typing
+import warnings
 from collections.abc import Callable, Hashable, Iterable, Sequence
 from typing import Any, Protocol, TypeVar
 
 from hegel import generators as gs
 from hegel.generators.base import Generator
 from hegel.hypothesis.control import current_build_context, currently_in_test_context
-from hegel.hypothesis.errors import InvalidArgument
+from hegel.hypothesis.errors import HypothesisWarning, InvalidArgument
 from hegel.hypothesis.strategies._base import (
     InvalidStrategy,
     SearchStrategy,
@@ -27,6 +31,7 @@ from hegel.hypothesis.strategies._base import (
     check_valid_interval,
     check_valid_sizes,
 )
+from hegel.hypothesis.utils.deprecation import note_deprecation
 from hegel.test_case import TestCase
 
 __all__ = [
@@ -969,16 +974,28 @@ def composite(f: Callable[..., Ex]) -> Callable[..., SearchStrategy[Ex]]:
         raise InvalidArgument(f"composite() takes a function, not {f!r}")
     signature = inspect.signature(f)
     params = list(signature.parameters.values())
-    if not params or params[0].kind not in (
-        params[0].POSITIONAL_ONLY,
-        params[0].POSITIONAL_OR_KEYWORD,
-    ):
+    if not params or "POSITIONAL" not in params[0].kind.name:
         raise InvalidArgument(
             "Functions wrapped with composite must take at least one "
             f"positional argument. {f!r} does not"
         )
     if params[0].default is not params[0].empty:
         raise InvalidArgument("A default value for initial argument will never be used")
+    if not (f is typing._overload_dummy or _first_param_referenced(f, params[0].name)):
+        note_deprecation(
+            "There is no reason to use @st.composite on a function which "
+            "does not call the provided draw() function internally.",
+            since="2022-07-17",
+            has_codemod=False,
+        )
+    if getattr(signature.return_annotation, "__origin__", None) is SearchStrategy:
+        ret_repr = repr(signature.return_annotation).replace("hegel.hypothesis.strategies.", "st.")
+        warnings.warn(
+            f"Return-type annotation is `{ret_repr}`, but the decorated "
+            "function should return a value (not a strategy)",
+            HypothesisWarning,
+            stacklevel=2,
+        )
 
     @functools.wraps(f)
     def tc_function(tc: TestCase, *args: Any, **kwargs: Any) -> Ex:
@@ -986,8 +1003,31 @@ def composite(f: Callable[..., Ex]) -> Callable[..., SearchStrategy[Ex]]:
 
     tc_function.__signature__ = signature  # type: ignore[attr-defined]
     accept = gs.composite(tc_function)
-    accept.__signature__ = signature.replace(parameters=params[1:])  # type: ignore[attr-defined]
-    return accept
+    # A function taking only *args receives draw as its first element.
+    outer_params = params if params[0].kind is params[0].VAR_POSITIONAL else params[1:]
+    outer_signature = signature.replace(parameters=outer_params)
+
+    @functools.wraps(f)
+    def checked(*args: Any, **kwargs: Any) -> SearchStrategy[Ex]:
+        # Fail now, as calling the function would, rather than when drawn.
+        outer_signature.bind(*args, **kwargs)
+        return accept(*args, **kwargs)
+
+    checked.__dict__.update(getattr(accept, "__dict__", {}))
+    checked.__signature__ = outer_signature  # type: ignore[attr-defined]
+    return checked
+
+
+def _first_param_referenced(f: Any, name: str) -> bool:
+    """Whether ``f``'s body reads the parameter ``name`` (the draw function)."""
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(f)))
+    except Exception:  # noqa: BLE001
+        return True
+    return any(
+        isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Load)
+        for node in ast.walk(tree)
+    )
 
 
 def shared(base: SearchStrategy[Ex], *, key: Hashable = None) -> SearchStrategy[Ex]:

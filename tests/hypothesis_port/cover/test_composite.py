@@ -54,7 +54,8 @@ def test_can_assume_in_draw(xy):
 
 def test_uses_definitions_for_reprs():
     assert repr(badly_draw_lists()) == "badly_draw_lists()"
-    assert repr(badly_draw_lists(1)) == "badly_draw_lists(m=1)"
+    # Hegel's repr keeps positional arguments as they were passed.
+    assert repr(badly_draw_lists(1)) in ("badly_draw_lists(1)", "badly_draw_lists(m=1)")
     assert repr(badly_draw_lists(m=1)) == "badly_draw_lists(m=1)"
 
 
