@@ -12,11 +12,10 @@ from hegel.runner import (
     RunOutput,
     _location_of,
     _user_location,
-    find_example,
     with_output_override,
 )
 from hegel.settings import Phase, Verbosity
-from tests.helpers import failing, notes, run_test
+from tests.helpers import failing, find_example, notes, run_test
 
 
 def test_passing_test_runs_configured_number_of_cases():
@@ -245,11 +244,17 @@ def test_find_example_shrinks():
     assert find_example(gs.integers(), lambda x: x > 100) == 101
     assert find_example(gs.lists(gs.integers()), lambda xs: len(xs) >= 2) == [0, 0]
     assert find_example(gs.just(3)) == 3
-    assert gs.integers(5, 5).example() == 5
     with pytest.raises(hegel.InvalidArgument):
         find_example(gs.integers(), lambda x: False)
     with pytest.raises(hegel.InvalidArgument):
         find_example(5)
+
+
+def test_example_is_minimal():
+    assert gs.integers(5, 5).example() == 5
+    assert gs.lists(gs.integers(), min_size=2).example() == [0, 0]
+    with pytest.raises(hegel.InvalidArgument, match="produced no example"):
+        gs.integers().filter(lambda x: False).example()
 
 
 def test_flaky_failure_detected(output):

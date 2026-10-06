@@ -8,7 +8,7 @@ import pytest
 
 import hegel
 from hegel import generators as gs
-from tests.helpers import notes, run_test
+from tests.helpers import find_example, notes, run_test
 
 
 def test_generator_compat_methods():
@@ -107,10 +107,10 @@ class _EmptyNow(gs.Generator[int]):
 
 
 def test_lists_of_a_currently_empty_generator():
-    assert hegel.find_example(gs.lists(_EmptyNow(True))) == []
-    assert len(hegel.find_example(gs.lists(_EmptyNow(False), min_size=1))) >= 1
+    assert find_example(gs.lists(_EmptyNow(True))) == []
+    assert len(find_example(gs.lists(_EmptyNow(False), min_size=1))) >= 1
     with pytest.raises(hegel.Unsatisfiable):
-        hegel.find_example(gs.lists(_EmptyNow(True), min_size=1))
+        find_example(gs.lists(_EmptyNow(True), min_size=1))
 
 
 def test_from_type_honours_an_explicit_signature_without_self():
@@ -125,7 +125,7 @@ def test_from_type_honours_an_explicit_signature_without_self():
         def __init__(self, **kwargs: int) -> None:
             self.n = kwargs["n"]
 
-    value = hegel.find_example(gs.from_type(Model))
+    value = find_example(gs.from_type(Model))
     assert isinstance(value.n, int)
 
 
@@ -134,7 +134,7 @@ def test_from_type_ignores_variadic_parameters():
         def __init__(self, x: int, *args: str, **kwargs: str) -> None:
             self.x = x
 
-    assert isinstance(hegel.find_example(gs.from_type(Variadic)).x, int)
+    assert isinstance(find_example(gs.from_type(Variadic)).x, int)
 
 
 def test_from_type_keeps_an_explicit_signature_without_self():
@@ -146,7 +146,7 @@ def test_from_type_keeps_an_explicit_signature_without_self():
         def __init__(self, **kwargs: int) -> None:
             self.n = kwargs["n"]
 
-    assert isinstance(hegel.find_example(gs.from_type(Model)).n, int)
+    assert isinstance(find_example(gs.from_type(Model)).n, int)
 
 
 def test_from_type_requires_annotations_for_required_arguments():
@@ -162,13 +162,13 @@ def test_builds_skips_non_type_annotations_on_required_arguments():
     def target(x: 1):  # type: ignore[valid-type]
         return x
 
-    assert hegel.find_example(gs.builds(target, x=gs.just(2))) == 2
+    assert find_example(gs.builds(target, x=gs.just(2))) == 2
     with pytest.raises(TypeError):
-        hegel.find_example(gs.builds(target))
+        find_example(gs.builds(target))
 
 
 def test_builds_skips_non_type_annotations():
     def target(x: 1 = 0):  # type: ignore[valid-type]
         return x
 
-    assert hegel.find_example(gs.builds(target)) == 0
+    assert find_example(gs.builds(target)) == 0

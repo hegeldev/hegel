@@ -7,7 +7,7 @@ import pytest
 
 import hegel
 from hegel import generators as gs
-from tests.helpers import failing, run_test
+from tests.helpers import failing, find_example, run_test
 
 
 def check_all(generator, predicate, *, test_cases=50):
@@ -22,8 +22,8 @@ def test_dates():
     check_all(gs.dates(), lambda d: isinstance(d, dt.date) and not isinstance(d, dt.datetime))
     lo, hi = dt.date(2020, 2, 28), dt.date(2020, 3, 1)
     check_all(gs.dates(lo, hi), lambda d: lo <= d <= hi)
-    assert hegel.find_example(gs.dates()) == dt.date(2000, 1, 1)
-    assert hegel.find_example(gs.dates(min_value=dt.date(2021, 5, 5))) == dt.date(2021, 5, 5)
+    assert find_example(gs.dates()) == dt.date(2000, 1, 1)
+    assert find_example(gs.dates(min_value=dt.date(2021, 5, 5))) == dt.date(2021, 5, 5)
     assert repr(gs.dates(lo, hi)) == f"dates(min_value={lo!r}, max_value={hi!r})"
     with pytest.raises(hegel.InvalidArgument):
         gs.dates(hi, lo)
@@ -38,7 +38,7 @@ def test_times():
     lo, hi = dt.time(1, 2, 3, 4), dt.time(1, 2, 3, 9)
     check_all(gs.times(lo, hi), lambda t: lo <= t <= hi)
     check_all(gs.times(timezones=gs.just(dt.UTC)), lambda t: t.tzinfo is dt.UTC)
-    assert hegel.find_example(gs.times()) == dt.time(0, 0)
+    assert find_example(gs.times()) == dt.time(0, 0)
     assert repr(gs.times(lo, hi)) == f"times(min_value={lo!r}, max_value={hi!r})"
     with pytest.raises(hegel.InvalidArgument):
         gs.times(hi, lo)
@@ -58,7 +58,7 @@ def test_datetimes():
         gs.datetimes(timezones=gs.timezones()), lambda d: isinstance(d.tzinfo, zoneinfo.ZoneInfo)
     )
     check_all(gs.datetimes(timezones=gs.none()), lambda d: d.tzinfo is None)
-    assert hegel.find_example(gs.datetimes()) == dt.datetime(2000, 1, 1)
+    assert find_example(gs.datetimes()) == dt.datetime(2000, 1, 1)
     assert repr(gs.datetimes(lo, hi)) == f"datetimes(min_value={lo!r}, max_value={hi!r})"
     with pytest.raises(hegel.InvalidArgument):
         gs.datetimes(hi, lo)
@@ -99,7 +99,7 @@ def test_timedeltas():
     check_all(gs.timedeltas(), lambda d: isinstance(d, dt.timedelta))
     lo, hi = dt.timedelta(seconds=-1), dt.timedelta(seconds=1)
     check_all(gs.timedeltas(lo, hi), lambda d: lo <= d <= hi)
-    assert hegel.find_example(gs.timedeltas()) == dt.timedelta(0)
+    assert find_example(gs.timedeltas()) == dt.timedelta(0)
     assert repr(gs.timedeltas(lo, hi)) == f"timedeltas(min_value={lo!r}, max_value={hi!r})"
     with pytest.raises(hegel.InvalidArgument):
         gs.timedeltas(hi, lo)
@@ -110,4 +110,4 @@ def test_timedeltas():
 def test_timezones():
     check_all(gs.timezones(), lambda z: isinstance(z, zoneinfo.ZoneInfo))
     check_all(gs.timezones(no_cache=True), lambda z: isinstance(z, zoneinfo.ZoneInfo))
-    assert str(hegel.find_example(gs.timezones())) == "UTC"
+    assert str(find_example(gs.timezones())) == "UTC"

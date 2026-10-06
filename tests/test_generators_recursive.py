@@ -7,7 +7,7 @@ import pytest
 import hegel
 from hegel import generators as gs
 from hegel.generators.recursive import DEFERRED_LABEL, Deferred
-from tests.helpers import failing, notes, run_test
+from tests.helpers import failing, find_example, notes, run_test
 
 
 def check_all(generator, predicate, *, test_cases=50):
@@ -71,8 +71,8 @@ def test_recursive_respects_limits():
 
 
 def test_recursive_shrinks_and_prints():
-    assert hegel.find_example(json, lambda v: isinstance(v, list) and v) == [None]
-    assert hegel.find_example(json, lambda v: depth(v) >= 2) == [[]]
+    assert find_example(json, lambda v: isinstance(v, list) and v) == [None]
+    assert find_example(json, lambda v: depth(v) >= 2) == [[]]
 
     def body(tc):
         v = tc.draw(gs.recursive(gs.just(1), lambda c: gs.lists(c, min_size=2, max_size=2)))
@@ -117,7 +117,7 @@ def test_deferred_self_reference():
     assert tree.label == tree.label
     assert tree.label != DEFERRED_LABEL
     assert repr(tree) == "one_of(integers(), tuples(..., ...))"
-    assert hegel.find_example(tree, lambda v: isinstance(v, tuple)) == (0, 0)
+    assert find_example(tree, lambda v: isinstance(v, tuple)) == (0, 0)
 
     def body(tc):
         v = tc.draw(tree)
@@ -134,11 +134,11 @@ def test_deferred_label_of_direct_cycle_and_errors():
     broken = gs.deferred(lambda: 1 / 0)
     assert broken.label == DEFERRED_LABEL
     with pytest.raises(ZeroDivisionError):
-        hegel.find_example(broken)
+        find_example(broken)
     not_generator = gs.deferred(lambda: 5)
     assert not_generator.label == DEFERRED_LABEL
     with pytest.raises(hegel.InvalidArgument):
-        hegel.find_example(not_generator)
+        find_example(not_generator)
     with pytest.raises(hegel.InvalidArgument):
         gs.deferred(5)
 

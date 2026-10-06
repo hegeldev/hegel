@@ -10,7 +10,7 @@ import pytest
 import hegel
 from hegel import generators as gs
 from hegel.generators.strings import Characters, CharacterSpec, Text, TextFromAlphabet
-from tests.helpers import run_test
+from tests.helpers import find_example, run_test
 
 
 def check_all(generator, predicate, *, test_cases=50):
@@ -27,8 +27,8 @@ def test_text_defaults():
     check_all(gs.text(min_size=3, max_size=5), lambda s: 3 <= len(s) <= 5)
     check_all(gs.text(min_size=150), lambda s: 150 <= len(s) <= 250, test_cases=5)
     assert repr(gs.text()) == "text(min_size=0, max_size=100)"
-    assert hegel.find_example(gs.text()) == ""
-    assert hegel.find_example(gs.text(min_size=1)) == "0"
+    assert find_example(gs.text()) == ""
+    assert find_example(gs.text(min_size=1)) == "0"
 
 
 def test_text_filters():
@@ -107,7 +107,7 @@ def test_characters():
     check_all(gs.characters(codec="latin-1"), lambda c: ord(c) < 256)
     check_all(gs.characters(codec="iso-8859-1"), lambda c: ord(c) < 256)
     check_all(gs.characters(codec="utf-8"), lambda c: len(c.encode("utf-8")) <= 4)
-    assert hegel.find_example(gs.characters()) == "0"
+    assert find_example(gs.characters()) == "0"
 
 
 @pytest.mark.xfail(
@@ -159,7 +159,7 @@ def test_binary():
     check_all(gs.binary(), lambda b: isinstance(b, bytes) and len(b) <= 100)
     check_all(gs.binary(min_size=2, max_size=3), lambda b: 2 <= len(b) <= 3)
     assert repr(gs.binary()) == "binary(min_size=0, max_size=100)"
-    assert hegel.find_example(gs.binary(min_size=2)) == b"\x00\x00"
+    assert find_example(gs.binary(min_size=2)) == b"\x00\x00"
     with pytest.raises(hegel.InvalidArgument):
         gs.binary(min_size=2, max_size=1)
 

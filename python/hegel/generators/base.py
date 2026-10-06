@@ -23,6 +23,12 @@ __all__ = [
 ]
 
 T = TypeVar("T")
+
+
+class _ExampleFound(Exception):
+    """Stops the search behind ``Generator.example`` once a value is drawn."""
+
+
 U = TypeVar("U")
 
 NOOP_PRINTER = PrettyPrinter.noop()
@@ -97,9 +103,28 @@ class Generator(Generic[T]):
     def example(self, tc: TestCase | None = None) -> T:
         """Draw one example from this generator, for interactive
         exploration. Not for use inside tests."""
-        from hegel.runner import find_example
+        from hegel.runner import run, with_output_override
+        from hegel.settings import HealthCheck, Phase, Settings, Verbosity
 
-        return find_example(self)
+        found: list[T] = []
+
+        def body(case: TestCase) -> None:
+            found.append(case.draw_silent(self))
+            raise _ExampleFound()
+
+        settings = Settings(
+            database="",
+            verbosity=Verbosity.quiet,
+            phases=[Phase.generate, Phase.shrink],
+            print_blob=False,
+            suppress_health_check=HealthCheck.all(),
+        )
+        try:
+            with with_output_override(lambda line: None):
+                run(body, settings)
+        except _ExampleFound:
+            return found[-1]
+        raise InvalidArgument(f"{self!r} produced no example")
 
     def validate(self) -> None:
         """Check the generator's arguments; Hegel generators validate on

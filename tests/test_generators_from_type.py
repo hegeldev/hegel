@@ -17,7 +17,7 @@ import pytest
 import hegel
 from hegel import generators as gs
 from hegel.generators.from_type import infer_missing_arguments
-from tests.helpers import run_test
+from tests.helpers import find_example, run_test
 
 
 def check_all(generator, predicate, *, test_cases=30):
@@ -212,8 +212,8 @@ class Node:
 
 def test_from_type_resolves_self_referential_optional_arguments():
     check_all(gs.from_type(Node), lambda v: isinstance(v, Node))
-    assert hegel.find_example(gs.from_type(Node), lambda n: True).child is None
-    assert hegel.find_example(gs.from_type(Node), lambda n: n.child is not None).child.child is None
+    assert find_example(gs.from_type(Node), lambda n: True).child is None
+    assert find_example(gs.from_type(Node), lambda n: n.child is not None).child.child is None
 
 
 BoundToNode = typing.TypeVar("BoundToNode", bound="Node")

@@ -32,7 +32,6 @@ from hegel.generators import Generator, composite
 from hegel.pretty import PrettyPrinter, pretty_print, pretty_repr
 from hegel.runner import (
     explicit_test_case,
-    find_example,
     reproduce_failure,
     run,
     test,
@@ -82,7 +81,6 @@ __all__ = [
     "composite",
     "engine_version",
     "explicit_test_case",
-    "find_example",
     "generators",
     "invariant",
     "pretty_print",

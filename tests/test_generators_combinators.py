@@ -9,7 +9,7 @@ from hegel import generators as gs
 from hegel.generators.base import Filtered, FlatMapped, Generator, Mapped
 from hegel.generators.combinators import Nothing, OneOf, as_generator
 from hegel.pretty import PrettyPrinter
-from tests.helpers import failing, notes, run_test
+from tests.helpers import failing, find_example, notes, run_test
 
 
 class Colour(enum.Enum):
@@ -59,11 +59,11 @@ def test_sampled_from():
     check_all(gs.sampled_from(Colour), lambda v: isinstance(v, Colour))
     check_all(gs.sampled_from(Perm), lambda v: isinstance(v, Perm) and v.value != 0)
     assert (
-        hegel.find_example(gs.sampled_from(Perm), lambda p: p == Perm.read | Perm.write)
+        find_example(gs.sampled_from(Perm), lambda p: p == Perm.read | Perm.write)
         == Perm.read | Perm.write
     )
     assert repr(gs.sampled_from((1, 2))) == "sampled_from([1, 2])"
-    assert hegel.find_example(gs.sampled_from([3, 2, 1])) == 3
+    assert find_example(gs.sampled_from([3, 2, 1])) == 3
     with pytest.raises(hegel.InvalidArgument):
         gs.sampled_from([])
     with pytest.raises(hegel.InvalidArgument):
@@ -81,7 +81,7 @@ def test_one_of():
     assert gs.one_of(gs.just(1)) is not None and not isinstance(gs.one_of(gs.just(1)), OneOf)
     assert isinstance(gs.one_of(gs.nothing(), gs.nothing()), Nothing)
     assert repr(gs.one_of(gs.just(1), gs.just(2))) == "one_of(just(1), just(2))"
-    assert hegel.find_example(gs.one_of(gs.just(2), gs.just(1))) == 2
+    assert find_example(gs.one_of(gs.just(2), gs.just(1))) == 2
     with pytest.raises(hegel.InvalidArgument):
         gs.one_of()
     with pytest.raises(hegel.InvalidArgument):
@@ -99,8 +99,8 @@ def test_one_of_prints_chosen_branch():
 def test_optional():
     check_all(gs.optional(gs.integers()), lambda v: v is None or isinstance(v, int))
     assert repr(gs.optional(gs.just(1))) == "optional(just(1))"
-    assert hegel.find_example(gs.optional(gs.integers())) is None
-    assert hegel.find_example(gs.optional(gs.integers()), lambda v: v is not None) == 0
+    assert find_example(gs.optional(gs.integers())) is None
+    assert find_example(gs.optional(gs.integers()), lambda v: v is not None) == 0
 
     def body(tc):
         value = tc.draw(gs.optional(gs.just([1])))
@@ -130,7 +130,7 @@ def test_map_flat_map_filter():
     assert isinstance(gs.integers().filter(bool), Filtered)
     assert repr(gs.integers().filter(bool)) == "integers().filter(bool)"
     assert "lambda" in repr(gs.integers().filter(lambda x: x))
-    assert hegel.find_example(gs.integers().filter(lambda x: x > 5)) == 6
+    assert find_example(gs.integers().filter(lambda x: x > 5)) == 6
 
 
 def test_filter_prints_only_accepted_value():
@@ -225,7 +225,7 @@ def test_chained_filters_combine_into_one():
     assert isinstance(g, Filtered)
     assert not isinstance(g.source, Filtered)
     assert repr(g) == "integers(min_value=0, max_value=100).filter(<lambda>).filter(<lambda>)"
-    assert hegel.find_example(g, lambda x: x > 0) == 6
+    assert find_example(g, lambda x: x > 0) == 6
 
 
 def test_filtered_samples_narrow_the_elements():
@@ -234,11 +234,11 @@ def test_filtered_samples_narrow_the_elements():
         if i != 41:
             g = g.filter(lambda x, i=i: x != i)
     assert "filter" in repr(g)
-    assert hegel.find_example(g) == 41
-    assert hegel.find_example(gs.sampled_from(range(60)).filter(lambda x: x > 50)) == 51
+    assert find_example(g) == 41
+    assert find_example(gs.sampled_from(range(60)).filter(lambda x: x > 50)) == 51
     empty = gs.sampled_from([1, 2]).filter(lambda x: x > 5)
     with pytest.raises(hegel.InvalidArgument, match="Could not find"):
-        hegel.find_example(empty)
+        find_example(empty)
 
 
 def test_emptiness_propagates_through_wrappers_and_collections():

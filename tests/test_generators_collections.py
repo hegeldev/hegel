@@ -4,7 +4,7 @@ import pytest
 
 import hegel
 from hegel import generators as gs
-from tests.helpers import failing, notes, run_test
+from tests.helpers import failing, find_example, notes, run_test
 
 
 def check_all(generator, predicate, *, test_cases=50):
@@ -31,8 +31,8 @@ def test_lists():
         lambda ps: len({p[0] for p in ps}) == len(ps) == len({p[1] for p in ps}),
     )
     assert repr(gs.lists(gs.just(1))) == "lists(just(1), min_size=0, max_size=None)"
-    assert hegel.find_example(gs.lists(gs.integers()), lambda xs: len(xs) > 2) == [0, 0, 0]
-    assert hegel.find_example(gs.lists(gs.integers(0, 3), unique=True, min_size=3)) == [0, 1, 2]
+    assert find_example(gs.lists(gs.integers()), lambda xs: len(xs) > 2) == [0, 0, 0]
+    assert find_example(gs.lists(gs.integers(0, 3), unique=True, min_size=3)) == [0, 1, 2]
 
 
 def test_lists_errors():
@@ -70,7 +70,7 @@ def test_sets_and_frozensets():
     )
     assert repr(gs.sets(gs.just(1))) == "sets(just(1), min_size=0, max_size=None)"
     assert repr(gs.frozensets(gs.just(1))) == "frozensets(just(1), min_size=0, max_size=None)"
-    assert hegel.find_example(gs.sets(gs.integers(), min_size=2)) == {0, 1}
+    assert find_example(gs.sets(gs.integers(), min_size=2)) == {0, 1}
     with pytest.raises(hegel.InvalidArgument):
         gs.sets(gs.integers(), min_size=2, max_size=1)
     with pytest.raises(hegel.InvalidArgument):
@@ -109,7 +109,7 @@ def test_dicts():
         repr(gs.dicts(gs.just(1), gs.just(2)))
         == "dicts(just(1), just(2), min_size=0, max_size=None)"
     )
-    assert hegel.find_example(gs.dicts(gs.integers(), gs.integers(), min_size=2)) == {0: 0, 1: 0}
+    assert find_example(gs.dicts(gs.integers(), gs.integers(), min_size=2)) == {0: 0, 1: 0}
     with pytest.raises(hegel.InvalidArgument):
         gs.dicts(gs.integers(), gs.integers(), min_size=2, max_size=1)
 
@@ -130,10 +130,8 @@ def test_fixed_dicts():
         lambda d: set(d) in ({"a"}, {"a", "b"}),
     )
     check_all(gs.fixed_dicts({}, optional={"b": gs.booleans()}), lambda d: set(d) <= {"b"})
-    assert hegel.find_example(gs.fixed_dicts({1: gs.integers()}, optional={2: gs.integers()})) == {
-        1: 0
-    }
-    assert hegel.find_example(
+    assert find_example(gs.fixed_dicts({1: gs.integers()}, optional={2: gs.integers()})) == {1: 0}
+    assert find_example(
         gs.fixed_dicts({1: gs.integers()}, optional={2: gs.integers()}), lambda d: 2 in d
     ) == {1: 0, 2: 0}
     with pytest.raises(hegel.InvalidArgument):
@@ -150,7 +148,7 @@ def test_tuples():
     check_all(gs.tuples(gs.integers(), gs.text()), lambda t: len(t) == 2 and isinstance(t[1], str))
     check_all(gs.tuples(), lambda t: t == ())
     assert repr(gs.tuples(gs.just(1), gs.just(2))) == "tuples(just(1), just(2))"
-    assert hegel.find_example(gs.tuples(gs.integers(), gs.booleans())) == (0, False)
+    assert find_example(gs.tuples(gs.integers(), gs.booleans())) == (0, False)
 
     def body(tc):
         single = tc.draw(gs.tuples(gs.just(1)))
@@ -169,7 +167,7 @@ def test_subsequences():
     check_all(gs.subsequences(range(5), min_size=2, max_size=3), lambda xs: 2 <= len(xs) <= 3)
     check_all(gs.subsequences([1, 2], max_size=10), lambda xs: len(xs) <= 2)
     check_all(gs.subsequences([]), lambda xs: xs == [])
-    assert hegel.find_example(gs.subsequences([3, 1, 2]), lambda xs: len(xs) == 2) == [3, 1]
+    assert find_example(gs.subsequences([3, 1, 2]), lambda xs: len(xs) == 2) == [3, 1]
     with pytest.raises(hegel.InvalidArgument):
         gs.subsequences([1], min_size=2, max_size=1)
 
@@ -182,8 +180,8 @@ def test_subsequences():
 def test_permutations():
     check_all(gs.permutations([1, 2, 3]), lambda xs: sorted(xs) == [1, 2, 3])
     check_all(gs.permutations([]), lambda xs: xs == [])
-    assert hegel.find_example(gs.permutations([3, 1, 2])) == [3, 1, 2]
-    assert hegel.find_example(gs.permutations([1, 2, 3]), lambda xs: xs[0] != 1) == [2, 1, 3]
+    assert find_example(gs.permutations([3, 1, 2])) == [3, 1, 2]
+    assert find_example(gs.permutations([1, 2, 3]), lambda xs: xs[0] != 1) == [2, 1, 3]
 
 
 def test_samples():
@@ -195,7 +193,7 @@ def test_samples():
         gs.samples([1, 2, 3], replacement=False, min_size=1, max_size=10),
         lambda xs: 1 <= len(xs) <= 3,
     )
-    assert hegel.find_example(gs.samples([2, 1], min_size=2)) == [2, 2]
+    assert find_example(gs.samples([2, 1], min_size=2)) == [2, 2]
     with pytest.raises(hegel.InvalidArgument):
         gs.samples([1], min_size=2, max_size=1)
 

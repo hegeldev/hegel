@@ -29,13 +29,12 @@ from hegel.errors import (
     Unsatisfiable,
 )
 from hegel.explicit import NO_HANDLE, ExplicitCase, ExplicitTestCase
-from hegel.settings import HealthCheck, Phase, Settings, TestLocation, Verbosity
+from hegel.settings import Phase, Settings, TestLocation, Verbosity
 from hegel.test_case import OutputSink, TestCase
 
 __all__ = [
     "RunOutput",
     "explicit_test_case",
-    "find_example",
     "reproduce_failure",
     "run",
     "test",
@@ -503,42 +502,3 @@ def reproduce_failure(blob: str) -> Callable[[T], T]:
         return fn
 
     return decorate
-
-
-def find_example(generator: Any, condition: Callable[[Any], bool] | None = None) -> Any:
-    """Find a minimal value from ``generator`` satisfying ``condition`` (any
-    value when no condition is given), outside of any test. The search
-    runs like a test whose failure is finding the value, so the result is
-    shrunk."""
-    from hegel.generators.combinators import as_generator
-
-    generator = as_generator(generator)
-    found: list[Any] = []
-
-    def body(tc: TestCase) -> None:
-        value = tc.draw_silent(generator)
-        if condition is not None and not condition(value):
-            tc.reject()
-        found.append(value)
-        raise _Found()
-
-    try:
-        with with_output_override(lambda line: None):
-            run(
-                body,
-                Settings(
-                    database="",
-                    verbosity=Verbosity.quiet,
-                    phases=[Phase.generate, Phase.shrink],
-                    test_cases=1000,
-                    print_blob=False,
-                    suppress_health_check=HealthCheck.all(),
-                ),
-            )
-    except _Found:
-        return found[-1]
-    raise InvalidArgument("Could not find an example satisfying the condition")
-
-
-class _Found(Exception):
-    pass

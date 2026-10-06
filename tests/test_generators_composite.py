@@ -7,7 +7,7 @@ import pytest
 
 import hegel
 from hegel import generators as gs
-from tests.helpers import failing, notes, run_test
+from tests.helpers import failing, find_example, notes, run_test
 
 
 def check_all(generator, predicate, *, test_cases=50):
@@ -45,7 +45,7 @@ def test_composite():
     assert list(inspect.signature(ordered_pair).parameters) == ["limit"]
     assert repr(ordered_pair(3)) == "ordered_pair(3)"
     assert repr(ordered_pair(limit=3)) == "ordered_pair(limit=3)"
-    assert hegel.find_example(ordered_pair(), lambda p: p[1] > 0) == (0, 1)
+    assert find_example(ordered_pair(), lambda p: p[1] > 0) == (0, 1)
     with pytest.raises(hegel.InvalidArgument):
         hegel.composite(5)
     with pytest.raises(hegel.InvalidArgument):
@@ -79,7 +79,7 @@ def test_builds():
     )
     check_all(gs.builds(lambda: 5), lambda v: v == 5)
     assert repr(gs.builds(Point, gs.just(1), y=gs.just(2))) == "builds('Point', just(1), y=just(2))"
-    assert hegel.find_example(gs.builds(Point)) == Point(0, 0)
+    assert find_example(gs.builds(Point)) == Point(0, 0)
     with pytest.raises(hegel.InvalidArgument):
         gs.builds(5)
     with pytest.raises(hegel.InvalidArgument):
@@ -101,5 +101,5 @@ def test_builds_prints_as_call():
 
 
 def test_builds_without_signature():
-    assert hegel.find_example(gs.builds(int)) == 0
+    assert find_example(gs.builds(int)) == 0
     check_all(gs.builds(dict), lambda d: d == {})

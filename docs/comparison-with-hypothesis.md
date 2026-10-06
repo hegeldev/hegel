@@ -18,7 +18,7 @@ along the way.
 | `@settings(...)`, profiles | `@hegel.test(...)` keywords, `hegel.Settings` profiles | Engine profiles `default`, `ci` and `workload` exist. |
 | `RuleBasedStateMachine`, `Bundle` | `hegel.StateMachine`, `hegel.Machine`, `hegel.Pool` | Rules take the test case and draw their own arguments. |
 | `data()` | the test case itself | Interactive draws are the normal way to draw. |
-| `find(strategy, condition)` | `hegel.find_example(generator, condition)` | Both shrink. |
+| `find(strategy, condition)` | none; write a test | `hegel.hypothesis.find` exists for compatibility only. |
 
 ## Hegel has, Hypothesis lacks
 

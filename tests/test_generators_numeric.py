@@ -8,7 +8,7 @@ import pytest
 import hegel
 from hegel import generators as gs
 from hegel.generators.numeric import UNBOUNDED_MAGNITUDE, Booleans, Integers
-from tests.helpers import failing, notes, run_test
+from tests.helpers import failing, find_example, notes, run_test
 
 
 def check_all(generator, predicate, *, test_cases=50):
@@ -48,10 +48,10 @@ def test_integer_bounds_beyond_unbounded_magnitude():
 
 
 def test_integers_shrink_toward_zero_and_bounds():
-    assert hegel.find_example(gs.integers(), lambda x: x < -10) == -11
-    assert hegel.find_example(gs.integers(5, 100)) == 5
-    assert hegel.find_example(gs.integers(-100, -5)) == -5
-    assert hegel.find_example(gs.integers(2**70, 2**71)) == 2**70
+    assert find_example(gs.integers(), lambda x: x < -10) == -11
+    assert find_example(gs.integers(5, 100)) == 5
+    assert find_example(gs.integers(-100, -5)) == -5
+    assert find_example(gs.integers(2**70, 2**71)) == 2**70
 
 
 def test_booleans():
@@ -60,8 +60,8 @@ def test_booleans():
     check_all(gs.weighted_booleans(0), lambda b: b is False)
     assert repr(gs.booleans()) == "booleans()"
     assert repr(gs.weighted_booleans(0.25)) == "weighted_booleans(0.25)"
-    assert hegel.find_example(gs.booleans()) is False
-    assert hegel.find_example(gs.booleans(), lambda b: b) is True
+    assert find_example(gs.booleans()) is False
+    assert find_example(gs.booleans(), lambda b: b) is True
     with pytest.raises(hegel.InvalidArgument):
         Booleans(1.5)
 
@@ -106,9 +106,9 @@ def test_floats_width_32():
 
 
 def test_floats_shrink_to_simple_values():
-    assert hegel.find_example(gs.floats(), lambda x: x > 1.5) == 2.0
-    assert hegel.find_example(gs.floats(allow_nan=False, allow_infinity=False)) == 0.0
-    assert math.isnan(hegel.find_example(gs.floats(), math.isnan))
+    assert find_example(gs.floats(), lambda x: x > 1.5) == 2.0
+    assert find_example(gs.floats(allow_nan=False, allow_infinity=False)) == 0.0
+    assert math.isnan(find_example(gs.floats(), math.isnan))
 
 
 @pytest.mark.parametrize(
