@@ -370,6 +370,10 @@ class settings(metaclass=settingsMeta):
             raise InvalidArgument(f"Profile {name!r} is not registered") from None
 
     @staticmethod
+    def get_current_profile_name() -> str:
+        return settings._current_profile
+
+    @staticmethod
     def load_profile(name: str) -> None:
         """Make the named profile the default for tests without their own."""
         _check_type(str, name, "name")

@@ -76,6 +76,14 @@ class Lists(Generator[list[T]]):
 
     def _draw(self, tc: TestCase, printer: PrettyPrinter) -> list[T]:
         printer.begin_group(1, "[")
+        currently_empty = getattr(self.elements, "is_currently_empty", None)
+        if currently_empty is not None and currently_empty(tc):
+            # The element generator has no values right now (a stateful
+            # bundle nothing has been added to): only the empty list exists.
+            if self.min_size > 0:
+                tc.reject()
+            printer.end_group("]")
+            return []
         collection = Collection(tc, self.min_size, self.max_size)
         result: list[T] = []
         seen: list[set[Hashable]] = [set() for _ in (self.unique_by or ())]
