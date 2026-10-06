@@ -246,7 +246,7 @@ def _run_sequential(
             break
         round_rejected = False
         while (rule_index := machine.next_rule(tc._handle, 0)) is not None:
-            if not 0 <= rule_index < len(rules):
+            if not 0 <= rule_index < len(rules):  # nocov
                 raise InternalError(
                     f"state_machine_next_rule returned out-of-range rule index {rule_index}"
                 )
@@ -303,11 +303,11 @@ def _worker_round(worker: int, tc: TestCase, rules: list[Rule], machine: NativeM
     while True:
         try:
             rule_index = machine.next_rule(tc._handle, worker)
-            if rule_index is not None and not 0 <= rule_index < len(rules):
+            if rule_index is not None and not 0 <= rule_index < len(rules):  # nocov
                 raise InternalError(
                     f"state_machine_next_rule returned out-of-range rule index {rule_index}"
                 )
-        except BaseException as exception:
+        except BaseException as exception:  # nocov - the engine abandoned the case
             return _classify(exception)
         if rule_index is None:
             return _Event("done")
@@ -321,7 +321,7 @@ def _worker_round(worker: int, tc: TestCase, rules: list[Rule], machine: NativeM
             if event.kind == "invalid":
                 try:
                     machine.rule_rejected(tc._handle, worker)
-                except BaseException as rejected:
+                except BaseException as rejected:  # nocov - the engine abandoned the case
                     tc.note("}")
                     return _classify(rejected)
                 tc.child(2).note("Rule stopped early due to violated assumption.")
@@ -430,12 +430,12 @@ def _run_concurrent(
     threads: list[threading.Thread] = []
     for worker in range(concurrency):
         rounds: queue.Queue[TestCase | None] = queue.Queue()
-        events: queue.Queue[_Event] = queue.Queue()
+        outcomes: queue.Queue[_Event] = queue.Queue()
         round_queues.append(rounds)
-        event_queues.append(events)
+        event_queues.append(outcomes)
         thread = threading.Thread(
             target=_worker_loop,
-            args=(worker, rules, machine, rounds, events),
+            args=(worker, rules, machine, rounds, outcomes),
             name=f"hegel-worker-{worker}",
             daemon=True,
         )
@@ -444,7 +444,7 @@ def _run_concurrent(
     try:
         round_number = 0
         while (group := machine.next_group(tc._handle)) is not None:
-            if not 0 <= group < len(group_names):
+            if not 0 <= group < len(group_names):  # nocov
                 raise InternalError(f"state_machine_next_group returned unknown group id {group}")
             round_number += 1
             name = group_names[group]
@@ -453,7 +453,7 @@ def _run_concurrent(
                 worker_tc = tc.clone()
                 worker_tc._set_worker(worker)
                 rounds.put(worker_tc)
-            events = []
+            events: list[_Event] = []
             for worker, event_queue in enumerate(event_queues):
                 if not threads[worker].is_alive() and event_queue.empty():  # nocov
                     events.append(_Event("died"))
@@ -617,10 +617,10 @@ def _instantiate(cls: type[StateMachine], tc: TestCase) -> StateMachine:
     import inspect
 
     try:
-        parameters = inspect.signature(cls).parameters
+        takes_tc = bool(inspect.signature(cls).parameters)
     except (TypeError, ValueError):  # nocov
-        parameters = {}
-    if parameters:
+        takes_tc = False
+    if takes_tc:
         return cls(tc)  # type: ignore[call-arg]
     return cls()
 

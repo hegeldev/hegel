@@ -25,6 +25,7 @@ from hegel.errors import (
     MultipleFailures,
     RunError,
     StopTest,
+    Unsatisfiable,
 )
 from hegel.explicit import ExplicitCase
 from hegel.generators import Generator, composite
@@ -92,6 +93,7 @@ __all__ = [
     "run_state_machine",
     "state_machine_test",
     "test",
+    "Unsatisfiable",
     "with_output_override",
 ]
 

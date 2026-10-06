@@ -67,6 +67,8 @@ class Backend(enum.Enum):
 class TestLocation:
     """Where a test is defined, recorded in the database and statistics."""
 
+    __test__ = False  # not a pytest test class
+
     file: str
     begin_line: int
     class_name: str = ""

@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import ipaddress
 import uuid as _uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 from hegel import _native
 from hegel.errors import InvalidArgument
 from hegel.generators.base import Generator, label_from_name
-from hegel.generators.combinators import SampledFrom, as_generator
 
 if TYPE_CHECKING:
     from hegel.test_case import TestCase
@@ -119,11 +118,13 @@ def _alphabet_spec(alphabet: Any) -> CharacterSpec | Generator[str]:
         return alphabet.spec
     if isinstance(alphabet, Generator):
         return alphabet
-    chars = "".join(alphabet)
-    for char in chars:
-        if len(char) != 1:
-            raise InvalidArgument(f"alphabet must contain single characters, got {char!r}")
-    return CharacterSpec(categories=[], include_characters=chars)
+    items = list(alphabet)
+    for item in items:
+        if not isinstance(item, str) or len(item) != 1:
+            raise InvalidArgument(f"alphabet must contain single characters, got {item!r}")
+    if not items:
+        raise InvalidArgument("alphabet must not be empty")
+    return CharacterSpec(categories=[], include_characters="".join(items))
 
 
 class Text(Generator[str]):
@@ -313,9 +314,10 @@ def from_regex(regex: Any, *, fullmatch: bool = False, alphabet: Any = None) -> 
     pattern = getattr(regex, "pattern", regex)
     if isinstance(pattern, bytes):
         pattern = pattern.decode("latin-1")
-        return Regex(pattern, bool(fullmatch), alphabet or characters(max_codepoint=255)).map(
-            lambda s: s.encode("latin-1")
+        latin: Generator[Any] = Regex(
+            pattern, bool(fullmatch), alphabet or characters(max_codepoint=255)
         )
+        return latin.map(lambda s: s.encode("latin-1"))
     if not isinstance(pattern, str):
         raise InvalidArgument(f"regex={regex!r} must be a string or compiled pattern")
     return Regex(pattern, bool(fullmatch), alphabet)
@@ -433,7 +435,3 @@ def uuids(*, version: int | None = None, allow_nil: bool = False) -> Generator[_
     if version is not None and version not in (1, 2, 3, 4, 5):
         raise InvalidArgument(f"version={version!r} must be between 1 and 5")
     return Uuids(version, bool(allow_nil))
-
-
-def sampled_characters(chars: Sequence[str]) -> Generator[str]:
-    return as_generator(SampledFrom(list(chars)))

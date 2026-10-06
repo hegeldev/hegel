@@ -171,7 +171,7 @@ class Optional(Generator[Any]):
         self.inner = inner
         self.label = combine_labels([OPTIONAL_LABEL, inner.label])
 
-    def _draw(self, tc: TestCase, printer: PrettyPrinter) -> T | None:
+    def _draw(self, tc: TestCase, printer: PrettyPrinter) -> Any:
         if tc.generate_boolean(0.5):
             return tc.draw_and_print(self.inner, printer)
         pretty_print(None, printer)

@@ -65,15 +65,12 @@ def pytest_configure(config: Any) -> None:
     Settings.set_default_profile("pytest")
 
 
-@pytest.hookimpl(hookwrapper=True)
-def pytest_collection_modifyitems(items: list[Any]) -> Any:
-    yield
-    for item in items:
-        test = getattr(item, "obj", None)
-        if getattr(test, "is_hegel_test", False):
-            item.add_marker(pytest.mark.hegel)
-        if getattr(test, "is_hypothesis_test", False):
-            item.add_marker(pytest.mark.hypothesis)
+def pytest_itemcollected(item: Any) -> None:
+    test = getattr(item, "obj", None)
+    if getattr(test, "is_hegel_test", False):
+        item.add_marker(pytest.mark.hegel)
+    if getattr(test, "is_hypothesis_test", False):
+        item.add_marker(pytest.mark.hypothesis)
 
 
 def _configure_hypothesis(config: Any) -> None:

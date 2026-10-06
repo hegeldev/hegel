@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import reprlib
 import threading
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
-from hegel.errors import AssumeFailed, InvalidArgument, RetrySignal
+from hegel.errors import InvalidArgument, RetrySignal
 from hegel.generators.base import NOOP_PRINTER, Generator, combine_labels, label_from_name
 from hegel.generators.combinators import as_generator
 from hegel.pretty import PrettyPrinter
@@ -86,10 +87,8 @@ class Recursive(Generator[T]):
                 speculation.abort()
                 try:
                     recursion.retry(tc._handle)
-                except AssumeFailed:
+                finally:
                     tc._reset_open_spans_to(base_depth)
-                    raise
-                tc._reset_open_spans_to(base_depth)
                 continue
             except BaseException:
                 speculation.abort()
@@ -142,11 +141,10 @@ class Deferred(Generator[T]):
         self._lock = threading.RLock()
 
     def _get(self) -> Generator[T]:
-        if self._generator is None:
-            with self._lock:
-                if self._generator is None:
-                    self._generator = as_generator(self.definition())
-        return self._generator
+        with self._lock:
+            if self._generator is None:
+                self._generator = as_generator(self.definition())
+            return self._generator
 
     @property  # type: ignore[override]
     def label(self) -> int:
@@ -180,6 +178,7 @@ class Deferred(Generator[T]):
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> T:
         return self._get().do_draw_and_print(tc, printer)
 
+    @reprlib.recursive_repr(fillvalue="...")
     def __repr__(self) -> str:
         if self._generator is None:
             return f"deferred({getattr(self.definition, '__name__', self.definition)!r})"
@@ -192,7 +191,3 @@ def deferred(definition: Callable[[], Generator[T]]) -> Generator[T]:
     if not callable(definition):
         raise InvalidArgument("deferred() takes a zero-argument function returning a generator")
     return Deferred(definition)
-
-
-def _unused(value: Any) -> Any:  # nocov
-    return value

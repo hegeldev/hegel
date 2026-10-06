@@ -9,9 +9,9 @@ import os
 import sys
 import threading
 import traceback
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, NoReturn, TypeVar
 
 from hegel import _native
 from hegel.errors import (
@@ -26,9 +26,10 @@ from hegel.errors import (
     MultipleFailures,
     RunError,
     StopTest,
+    Unsatisfiable,
 )
 from hegel.explicit import NO_HANDLE, ExplicitCase, ExplicitTestCase
-from hegel.settings import Phase, Settings, TestLocation, Verbosity
+from hegel.settings import HealthCheck, Phase, Settings, TestLocation, Verbosity
 from hegel.test_case import OutputSink, TestCase
 
 __all__ = [
@@ -67,7 +68,10 @@ class RunOutput:
         (self.sink or _stderr_line)(message)
 
     def block(self, text: str) -> None:
-        for line in text.rstrip("\n").split("\n"):
+        self.lines(text.rstrip("\n").split("\n"))
+
+    def lines(self, lines: Iterable[str]) -> None:
+        for line in lines:
             self.line(line)
 
     def resolved_sink(self) -> OutputSink:
@@ -198,8 +202,7 @@ def _drive(
     stash: tuple[list[str], str | None, BaseException] | None = None
 
     def flush() -> None:
-        for line in run.drain_output():
-            output.line(line)
+        output.lines(run.drain_output())
 
     while True:
         handle = run.next_test_case()
@@ -231,16 +234,17 @@ def _drive(
             raise FailedHealthCheck(message)
         if message.startswith("Flaky test detected"):
             raise Flaky(message)
+        if message.startswith("Unsatisfiable"):
+            raise Unsatisfiable(message)
         raise RunError(message)
     if status == _native.RUN_STATUS_FAILED_NONDETERMINISTIC:
         if stash is None:
             raise InternalError("a failed nondeterministic run has no stashed failure")
-        lines, diagnostic, exception = stash
-        for line in lines:
-            output.line(line)
+        stashed_lines, diagnostic, exception = stash
+        output.lines(stashed_lines)
         if diagnostic is not None:
             output.block(diagnostic)
-        _annotate(exception, lines, None)
+        _annotate(exception, stashed_lines, None)
         raise exception
     count = result.failure_count()
     multiple = count > 1
@@ -269,7 +273,8 @@ def _drive(
         exceptions.append(outcome.exception)
     if multiple:
         raise MultipleFailures(
-            f"Property-based test failed with {count} distinct failures.", exceptions
+            f"Property-based test failed with {count} distinct failures.",
+            exceptions,  # type: ignore[arg-type]
         )
     raise exceptions[0]
 
@@ -297,11 +302,9 @@ def _replay_blob(
     case_sink: OutputSink | None,
 ) -> _CaseOutcome:
     handle = _native.TestCase.from_blob(native_settings, blob)
-    for line in handle.drain_output():
-        output.line(line)
+    output.lines(handle.drain_output())
     outcome = _run_test_case(handle, test_fn, True, verbosity, output, case_sink)
-    for line in handle.drain_output():
-        output.line(line)
+    output.lines(handle.drain_output())
     return outcome
 
 
@@ -311,7 +314,7 @@ def _drive_blob_replay(
     database_key: str | None,
     test_location: TestLocation | None,
     blob: str,
-) -> None:
+) -> NoReturn:
     output = RunOutput.resolve()
     native_settings = settings._build(database_key, test_location)
     lines: list[str] = []
@@ -342,8 +345,7 @@ def _run_explicit(
         raise
     except BaseException as exception:
         output.line(f"Explicit test case {case!r} failed:")
-        for line in explicit.lines:
-            output.line(line)
+        output.lines(explicit.lines)
         output.block(_format_exception(exception))
         _annotate(exception, explicit.lines, None)
         raise
@@ -375,7 +377,6 @@ def run(
     )
     if reproduce_blob is not None:
         _drive_blob_replay(test_fn, resolved, database_key, test_location, reproduce_blob)
-        return
     if Phase.explicit in resolved.phases:
         output = RunOutput.resolve()
         for case in explicit_cases:
@@ -425,11 +426,14 @@ def test(
         location = _location_of(inner)
         database_key = _database_key_of(inner)
         base_settings = settings
+        # A method takes the test case after ``self``.
+        tc_index = 1 if parameters[0].name in ("self", "cls") and len(parameters) > 1 else 0
 
         @functools.wraps(inner)
         def wrapper(*args: Any, **kwargs: Any) -> None:
+            leading, rest = args[:tc_index], args[tc_index:]
             run(
-                lambda tc: inner(tc, *args, **kwargs),
+                lambda tc: inner(*leading, tc, *rest, **kwargs),
                 base_settings,
                 database_key=database_key,
                 test_location=location,
@@ -438,7 +442,8 @@ def test(
                 **overrides,
             )
 
-        wrapper.__signature__ = signature.replace(parameters=parameters[1:])  # type: ignore[attr-defined]
+        remaining = parameters[:tc_index] + parameters[tc_index + 1 :]
+        wrapper.__signature__ = signature.replace(parameters=remaining)  # type: ignore[attr-defined]
         wrapper.hegel_inner_test = inner  # type: ignore[attr-defined]
         wrapper.hegel_explicit_cases = list(getattr(inner, "hegel_explicit_cases", []))  # type: ignore[attr-defined]
         wrapper.hegel_reproduce_blob = getattr(inner, "hegel_reproduce_blob", None)  # type: ignore[attr-defined]
@@ -509,6 +514,7 @@ def find_example(generator: Any, condition: Callable[[Any], bool] | None = None)
                     phases=[Phase.generate, Phase.shrink],
                     test_cases=1000,
                     print_blob=False,
+                    suppress_health_check=HealthCheck.all(),
                 ),
             )
     except _Found:

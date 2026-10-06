@@ -22,6 +22,10 @@ T = TypeVar("T")
 
 OutputSink = Callable[[str], None]
 
+# Deeper nesting than this ends the test case as too large, well before
+# Python's own recursion limit would turn it into a RecursionError.
+MAX_DRAW_DEPTH = 100
+
 MIN_DATE = (1, 1, 1)
 MAX_DATE = (9999, 12, 31)
 MIDNIGHT = (0, 0, 0, 0)
@@ -44,7 +48,7 @@ class _Global:
         self, emit: bool, sink: OutputSink | None, explicit: Any, is_final: bool = False
     ) -> None:
         self.emit = emit
-        self.sink = sink if emit else _discard
+        self.sink: OutputSink = sink if (emit and sink is not None) else _discard
         self.explicit = explicit
         self.is_final = is_final
         self.hypothesis_shared: dict[Any, Any] | None = None
@@ -71,6 +75,8 @@ class TestCase:
     time. For another thread, :meth:`clone` a handle with an independent
     choice stream.
     """
+
+    __test__ = False  # not a pytest test class
 
     __slots__ = (
         "_draw_state",
@@ -196,6 +202,10 @@ class TestCase:
     def note(self, message: str) -> None:
         """Record a message shown with the drawn values of a failing test
         case (or in verbose mode)."""
+        explicit = self._global.explicit
+        if explicit is not None:
+            explicit.note(str(message))
+            return
         if not self._global.emit:
             return
         explicit = self._global.explicit
@@ -313,7 +323,10 @@ class TestCase:
 
     def start_span(self, label: int) -> None:
         """Open a span labelled ``label`` grouping the draws until the
-        matching :meth:`stop_span`."""
+        matching :meth:`stop_span`. Nesting deeper than ``MAX_DRAW_DEPTH``
+        abandons the test case as too large."""
+        if self._span_depth >= MAX_DRAW_DEPTH:
+            raise StopTest(f"draws nested more than {MAX_DRAW_DEPTH} deep")
         self._span_depth += 1
         try:
             self._handle.start_span(label)

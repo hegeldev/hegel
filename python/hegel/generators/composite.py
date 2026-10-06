@@ -86,8 +86,8 @@ class Builds(Generator[T]):
         )
 
     def _draw(self, tc: TestCase, printer: PrettyPrinter) -> T:
-        name = getattr(self.target, "__qualname__", None) or getattr(
-            self.target, "__name__", "builds"
+        name = str(
+            getattr(self.target, "__qualname__", None) or getattr(self.target, "__name__", "builds")
         )
         printer.begin_group(len(name) + 1, name + "(")
         first = True
