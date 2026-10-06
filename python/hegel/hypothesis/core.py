@@ -877,8 +877,11 @@ def find(
     if random is not None:
         native = native.replace(seed=random.getrandbits(64), database="")
     try:
-        with with_output_override(lambda line: None):
+        if settings.verbosity >= Verbosity.verbose:
             hegel_run(body, native, database_key=None)
+        else:
+            with with_output_override(lambda line: None):
+                hegel_run(body, native, database_key=None)
     except _Found:
         return found[-1]
     except FailedHealthCheck as error:
