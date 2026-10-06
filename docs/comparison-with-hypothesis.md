@@ -90,12 +90,18 @@ Different because the engine behaves differently:
   distribution is weighted toward boundaries. `integers(0, 1e100)` draws
   many more huge values than Hypothesis does.
 - A skipped test ends the run before anything is saved to the database.
-- Strategies validate their arguments eagerly at construction rather than
-  when the test first runs, and strategy objects are not cached by
-  argument. `.example()` is deterministic and allowed inside tests.
-- `sampled_from(Flag)` yields only the named members, and the repr of a
-  `sampled_from` of an enum lists the members. `sets(sampled_from(...),
+- Strategy objects are not cached by argument, and `.example()` is
+  deterministic and allowed inside tests.
+- The repr of a `sampled_from` of an enum lists the members, and
+  `characters()` reprs without its arguments. `sets(sampled_from(...),
   min_size=n)` does not sample without replacement.
+- `randoms()` yields seeded `random.Random` subclasses rather than values
+  drawn from the test data, so exact boundary results cannot be targeted,
+  and `random_module()` draws its seed.
+- `datetimes()` and `times()` reject timezone-aware bounds and never set
+  `fold`; there is no targeting of DST folds, gaps or leap seconds.
+- `from_regex` depends on the engine's regex generator; see
+  `docs/engine-issues.md` for where it departs from Python's `re`.
 - Deeply self-referential `recursive(deferred(...))` strategies hit Python's
   recursion limit.
 
@@ -110,8 +116,12 @@ Not available:
 - `register_random`: Hegel does not manage the state of external PRNGs.
 - `hypothesis.statistics` and `hypothesis.internal.*`: there is no
   statistics collector or import-time side-effect tracking.
-- `from_type` of `ForwardRef`s and `Callable[...]`, and `characters(codec=...)`
-  beyond ascii, latin-1 and utf-8.
+- `from_type` of most of what Hypothesis's type lookup covers beyond value
+  types, generics, enums, dataclasses, TypedDicts, protocols' registered
+  implementations and annotated constructors: builtins without annotations
+  (exceptions, `range`, `slice`, ...), typing special forms such as
+  `Callable[...]`, `Type[...]` and `Final`, and forward references found in
+  caller frames. `characters(codec=...)` beyond ascii, latin-1 and utf-8.
 - Hypothesis's typed `SearchStrategy` protocol: `hegel.hypothesis` strategies
   are Hegel generators (`SearchStrategy` is an alias of `hegel.generators.Generator`),
   so `.do_draw` receives a `TestCase` rather than `ConjectureData`.
