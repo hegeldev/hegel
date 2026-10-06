@@ -364,6 +364,11 @@ class settings(metaclass=settingsMeta):
             settings._profiles[name] = settings(base, **kwargs)
 
     @staticmethod
+    def get_current_profile_name() -> str:
+        """The name of the current settings profile."""
+        return settings._current_profile
+
+    @staticmethod
     def get_profile(name: str) -> settings:
         _check_type(str, name, "name")
         try:

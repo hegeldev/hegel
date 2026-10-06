@@ -62,10 +62,13 @@ def minimal(
 def find_any(definition, condition=lambda _: True, settings=None):
     # If nested within an existing @given
     if currently_in_test_context():
+        # Hypothesis's loop ends when the test case overruns its (small)
+        # buffer; Hegel's buffer is far larger, so cap the attempts instead.
         tc = current_build_context().tc
-        while True:
+        for _ in range(1000):
             if condition(s := tc.draw_silent(definition)):
                 return s
+        tc.reject()
 
     # If top-level
     settings = settings or Settings.default

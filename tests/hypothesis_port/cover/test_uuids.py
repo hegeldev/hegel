@@ -15,7 +15,11 @@ import pytest
 from hegel.hypothesis import strategies as st
 from hegel.hypothesis.errors import InvalidArgument
 
-from tests.hypothesis_port.common.debug import assert_no_examples, check_can_generate_examples, find_any
+from tests.hypothesis_port.common.debug import (
+    assert_no_examples,
+    check_can_generate_examples,
+    find_any,
+)
 
 
 def test_no_nil_uuid_by_default():

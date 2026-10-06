@@ -15,7 +15,7 @@ import pytest
 
 from hegel.hypothesis import HealthCheck, assume, given, reject, settings
 from hegel.hypothesis.errors import InvalidArgument
-from hegel.hypothesis.internal.floats import next_down, next_up
+from tests.hypothesis_port.common.compat import next_down, next_up
 from hegel.hypothesis.strategies import (
     booleans,
     data,
@@ -98,9 +98,7 @@ def test_fuzz_decimals_bounds(data):
     ctx = decimal.Context(prec=data.draw(integers(1, 100), label="precision"))
     try:
         with decimal.localcontext(ctx):
-            strat = decimals(
-                low, high, allow_nan=False, allow_infinity=False, places=places
-            )
+            strat = decimals(low, high, allow_nan=False, allow_infinity=False, places=places)
             val = data.draw(strat, label="value")
     except InvalidArgument:
         reject()  # decimals too close for given places
@@ -113,9 +111,7 @@ def test_fuzz_decimals_bounds(data):
 
 
 def test_all_decimals_can_be_exact_floats():
-    find_any(
-        decimals(), lambda x: assume(x.is_finite()) and decimal.Decimal(float(x)) == x
-    )
+    find_any(decimals(), lambda x: assume(x.is_finite()) and decimal.Decimal(float(x)) == x)
 
 
 @given(fractions(), fractions(), fractions())
@@ -170,11 +166,7 @@ def test_issue_725_regression(x):
 def test_issue_4651_regression(x):
     # Bounds with more fractional digits than `places` must not push the
     # integer bounds out of range via rounding in the conversion.
-    assert (
-        decimal.Decimal(f"0.{'0' * 63}1")
-        <= x
-        <= decimal.Decimal(f"{'9' * 64}.{'9' * 64}")
-    )
+    assert decimal.Decimal(f"0.{'0' * 63}1") <= x <= decimal.Decimal(f"{'9' * 64}.{'9' * 64}")
 
 
 @given(decimals(min_value="0.1", max_value="0.3"))

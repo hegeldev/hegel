@@ -42,10 +42,12 @@ def test_step_stays_within_bounds(size):
     assert_all_examples(
         st.slices(size),
         lambda x: (
-            x.indices(size)[0] + x.indices(size)[2] <= size
-            and x.indices(size)[0] + x.indices(size)[2] >= -size
-        )
-        or x.start % size == x.stop % size,
+            (
+                x.indices(size)[0] + x.indices(size)[2] <= size
+                and x.indices(size)[0] + x.indices(size)[2] >= -size
+            )
+            or x.start % size == x.stop % size
+        ),
     )
 
 
@@ -81,9 +83,7 @@ def test_stop_will_equal_size(size):
 
 @pytest.mark.parametrize("size", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
 def test_start_will_equal_size(size):
-    find_any(
-        st.slices(size), lambda x: x.start == size - 1, settings(max_examples=10**6)
-    )
+    find_any(st.slices(size), lambda x: x.start == size - 1, settings(max_examples=10**6))
 
 
 @given(st.integers(1, 1000))
@@ -99,6 +99,4 @@ def test_start_will_equal_stop(size):
 
 
 def test_size_is_equal_0():
-    assert_all_examples(
-        st.slices(0), lambda x: x.step != 0 and x.start is None and x.stop is None
-    )
+    assert_all_examples(st.slices(0), lambda x: x.step != 0 and x.start is None and x.stop is None)

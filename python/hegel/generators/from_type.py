@@ -65,6 +65,20 @@ def _complex() -> Generator[complex]:
     return tuples(floats(), floats()).map(lambda p: complex(p[0], p[1]))
 
 
+def _networks(version: int) -> Generator[Any]:
+    bits = 32 if version == 4 else 128
+    network = ipaddress.IPv4Network if version == 4 else ipaddress.IPv6Network
+    return tuples(ip_addresses(v=version), integers(0, bits)).map(
+        lambda p: network((p[0], p[1]), strict=False)
+    )
+
+
+def _interfaces(version: int) -> Generator[Any]:
+    bits = 32 if version == 4 else 128
+    interface = ipaddress.IPv4Interface if version == 4 else ipaddress.IPv6Interface
+    return tuples(ip_addresses(v=version), integers(0, bits)).map(lambda p: interface(p))
+
+
 _BUILTINS: dict[Any, Callable[[], Generator[Any]]] = {
     type(None): none,
     bool: booleans,
@@ -83,6 +97,10 @@ _BUILTINS: dict[Any, Callable[[], Generator[Any]]] = {
     uuid.UUID: uuids,
     ipaddress.IPv4Address: lambda: ip_addresses(v=4),
     ipaddress.IPv6Address: lambda: ip_addresses(v=6),
+    ipaddress.IPv4Network: lambda: _networks(4),
+    ipaddress.IPv6Network: lambda: _networks(6),
+    ipaddress.IPv4Interface: lambda: _interfaces(4),
+    ipaddress.IPv6Interface: lambda: _interfaces(6),
     object: lambda: one_of(none(), booleans(), integers(), floats(), text(), binary()),
     typing.Any: lambda: one_of(none(), booleans(), integers(), floats(), text(), binary()),
 }

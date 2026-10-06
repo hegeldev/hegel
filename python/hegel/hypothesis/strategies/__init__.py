@@ -2,23 +2,27 @@
 
 from __future__ import annotations
 
+import codecs
 import datetime as dt
 import decimal
 import fractions as _fractions
 import functools
 import inspect
+import ipaddress
 import math
 import random as _random
 import struct
 import sys
+import warnings
 from collections.abc import Callable, Hashable, Iterable, Sequence
 from typing import Any, Protocol, TypeVar
 
 from hegel import generators as gs
 from hegel.generators.base import Generator
-from hegel.generators.combinators import Just, Nothing, OneOf
+from hegel.generators.combinators import Just, Nothing, OneOf, SampledFrom
+from hegel.generators.strings import Characters
 from hegel.hypothesis.control import current_build_context, currently_in_test_context
-from hegel.hypothesis.errors import InvalidArgument
+from hegel.hypothesis.errors import HypothesisWarning, InvalidArgument
 from hegel.hypothesis.strategies._base import (
     NOTHING,
     LazyStrategy,
@@ -112,15 +116,67 @@ def _passthrough(name: str, function: Any) -> Any:
 just = _passthrough("just", gs.just)
 booleans = _passthrough("booleans", gs.booleans)
 binary = _passthrough("binary", gs.binary)
-uuids = _passthrough("uuids", gs.uuids)
-ip_addresses = _passthrough("ip_addresses", gs.ip_addresses)
-tuples = _passthrough("tuples", gs.tuples)
-permutations = _passthrough("permutations", gs.permutations)
 builds = _passthrough("builds", gs.builds)
 timezones = _passthrough("timezones", gs.timezones)
 timedeltas = _passthrough("timedeltas", gs.timedeltas)
 dates = _passthrough("dates", gs.dates)
 deferred = gs.deferred
+
+
+@defines_strategy
+def uuids(*, version: int | None = None, allow_nil: bool = False) -> SearchStrategy[Any]:
+    """UUIDs, of any RFC 4122 version or the given one."""
+    if version not in (None, 1, 2, 3, 4, 5):
+        raise InvalidArgument(
+            f"version={version!r}, but version must be in (None, 1, 2, 3, 4, 5) "
+            "to pass to the uuid.UUID constructor."
+        )
+    if not isinstance(allow_nil, bool):
+        raise InvalidArgument(
+            f"Expected bool but got allow_nil={allow_nil!r} (type={type(allow_nil).__name__})"
+        )
+    if allow_nil and version is not None:
+        raise InvalidArgument("The nil UUID is not of any version")
+    return gs.uuids(version=version, allow_nil=allow_nil)
+
+
+@defines_strategy
+def tuples(*args: SearchStrategy[Any]) -> SearchStrategy[tuple[Any, ...]]:
+    """Tuples with one element drawn from each of the given strategies."""
+    for arg in args:
+        check_strategy(arg)
+    return gs.tuples(*args)
+
+
+@defines_strategy
+def ip_addresses(*, v: int | None = None, network: Any = None) -> SearchStrategy[Any]:
+    """IP addresses: either version (``v=4`` or ``v=6`` to pick), or those
+    within ``network``."""
+    if v is not None:
+        check_type(int, v, "v")
+        if v not in (4, 6):
+            raise InvalidArgument(f"v={v!r}, but only v=4 or v=6 are valid")
+    if network is None:
+        return gs.ip_addresses(v=v)
+    check_type((str, ipaddress.IPv4Network, ipaddress.IPv6Network), network, "network")
+    if isinstance(network, str):
+        try:
+            network = ipaddress.ip_network(network)
+        except ValueError as err:
+            raise InvalidArgument(f"network={network!r} is not a valid network: {err}") from None
+    if v is not None and v != network.version:
+        raise InvalidArgument(f"v={v!r} is incompatible with network={network!r}")
+    return gs.ip_addresses(network=network)
+
+
+@defines_strategy
+def permutations(values: Sequence[T]) -> SearchStrategy[list[T]]:
+    """Permutations of ``values``, which must be a sequence."""
+    if not isinstance(values, Sequence):
+        raise InvalidArgument(
+            f"Expected Sequence but got values={values!r} (type={type(values).__name__})"
+        )
+    return gs.permutations(values)
 
 
 def none() -> SearchStrategy[None]:
@@ -164,6 +220,59 @@ def _to_int(value: Any, name: str, rounding: Callable[[Any], int]) -> int:
     return rounding(value)
 
 
+_FLOAT_FORMATS = {16: ("<e", "<H"), 32: ("<f", "<I"), 64: ("<d", "<Q")}
+_SMALLEST_NORMALS = {16: 2.0**-14, 32: 2.0**-126, 64: sys.float_info.min}
+_F16_MAX = 65504.0
+
+
+def _float_of(x: Any, width: int) -> float:
+    """Round ``x`` to a float of the given width (raising OverflowError when
+    it does not fit, like the struct module does)."""
+    if width == 64:
+        return float(x)
+    fmt, _ = _FLOAT_FORMATS[width]
+    return struct.unpack(fmt, struct.pack(fmt, float(x)))[0]
+
+
+def _is_negative(value: float) -> bool:
+    return math.copysign(1.0, value) < 0
+
+
+def _next_up(value: float, width: int) -> float:
+    if math.isnan(value) or (math.isinf(value) and value > 0):
+        return value
+    if value == 0.0 and _is_negative(value):
+        return 0.0
+    fmt, bits = _FLOAT_FORMATS[width]
+    n = struct.unpack(bits, struct.pack(fmt, value))[0]
+    n += 1 if value >= 0 else -1
+    return struct.unpack(fmt, struct.pack(bits, n))[0]
+
+
+def _next_down(value: float, width: int) -> float:
+    return -_next_up(-value, width)
+
+
+def _next_down_normal(value: float, width: int, *, allow_subnormal: bool) -> float:
+    value = _next_down(value, width)
+    if not allow_subnormal and 0 < abs(value) < _SMALLEST_NORMALS[width]:
+        return 0.0 if value > 0 else -_SMALLEST_NORMALS[width]
+    return value
+
+
+def _next_up_normal(value: float, width: int, *, allow_subnormal: bool) -> float:
+    return -_next_down_normal(-value, width, allow_subnormal=allow_subnormal)
+
+
+def _check_float_bound(name: str, value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, (int, float, decimal.Decimal, _fractions.Fraction)):
+        raise InvalidArgument(f"{name}={value!r} must be a real number or None")
+    if math.isnan(value):
+        raise InvalidArgument(f"Invalid end point {name}={value!r}")
+
+
 @defines_strategy
 def floats(
     min_value: float | None = None,
@@ -176,20 +285,124 @@ def floats(
     exclude_min: bool = False,
     exclude_max: bool = False,
 ) -> SearchStrategy[float]:
-    """Floats of the given width (16, 32 or 64 bits)."""
+    """Floats of the given width (16, 32 or 64 bits), validated and with
+    exclusive bounds resolved the way Hypothesis does it."""
+    for name, flag in (("exclude_min", exclude_min), ("exclude_max", exclude_max)):
+        if not isinstance(flag, bool):
+            raise InvalidArgument(
+                f"Expected bool but got {name}={flag!r} (type={type(flag).__name__})"
+            )
+    if allow_nan is None:
+        allow_nan = min_value is None and max_value is None
+    elif allow_nan and (min_value is not None or max_value is not None):
+        raise InvalidArgument(f"Cannot have allow_nan={allow_nan!r}, with min_value or max_value")
     if width not in (16, 32, 64):
         raise InvalidArgument(
             f"Got width={width!r}, but the only valid values are the integers 16, 32, and 64."
         )
-    for name, value in (("min_value", min_value), ("max_value", max_value)):
-        if value is not None and not isinstance(
-            value, (int, float, decimal.Decimal, _fractions.Fraction)
-        ):
-            raise InvalidArgument(f"{name}={value!r} must be a real number or None")
+    width = int(width)
+    _check_float_bound("min_value", min_value)
+    _check_float_bound("max_value", max_value)
+
+    min_arg, max_arg = min_value, max_value
     if min_value is not None:
-        min_value = float(min_value)
+        min_value = _float_of(min_value, width)
+        if min_value != min_arg:
+            raise InvalidArgument(
+                f"min_value={min_arg!r} cannot be exactly represented as a float "
+                f"of width {width} - use min_value={min_value!r} instead."
+            )
     if max_value is not None:
-        max_value = float(max_value)
+        max_value = _float_of(max_value, width)
+        if max_value != max_arg:
+            raise InvalidArgument(
+                f"max_value={max_arg!r} cannot be exactly represented as a float "
+                f"of width {width} - use max_value={max_value!r} instead."
+            )
+
+    if exclude_min and (min_value is None or min_value == math.inf):
+        raise InvalidArgument(f"Cannot exclude min_value={min_value!r}")
+    if exclude_max and (max_value is None or max_value == -math.inf):
+        raise InvalidArgument(f"Cannot exclude max_value={max_value!r}")
+
+    assumed_allow_subnormal = allow_subnormal is None or allow_subnormal
+    if min_value is not None and exclude_min:
+        min_value = _next_up_normal(min_value, width, allow_subnormal=assumed_allow_subnormal)
+        if min_value == min_arg:  # -0.0 -> 0.0: step past both zeros
+            min_value = _next_up_normal(min_value, width, allow_subnormal=assumed_allow_subnormal)
+    if max_value is not None and exclude_max:
+        max_value = _next_down_normal(max_value, width, allow_subnormal=assumed_allow_subnormal)
+        if max_value == max_arg:
+            max_value = _next_down_normal(max_value, width, allow_subnormal=assumed_allow_subnormal)
+
+    if min_value == -math.inf:
+        min_value = None
+    if max_value == math.inf:
+        max_value = None
+
+    bad_zero_bounds = (
+        min_value == max_value == 0
+        and _is_negative(max_value)  # type: ignore[arg-type]
+        and not _is_negative(min_value)  # type: ignore[arg-type]
+    )
+    if (
+        min_value is not None
+        and max_value is not None
+        and (min_value > max_value or bad_zero_bounds)
+    ):
+        msg = (
+            f"There are no {width}-bit floating-point values between "
+            f"min_value={min_arg!r} and max_value={max_arg!r}"
+        )
+        if exclude_min or exclude_max:
+            msg += f", exclude_min={exclude_min!r} and exclude_max={exclude_max!r}"
+        raise InvalidArgument(msg)
+
+    if allow_infinity is None:
+        allow_infinity = min_value is None or max_value is None
+    elif allow_infinity:
+        if min_value is not None and max_value is not None:
+            raise InvalidArgument(
+                f"Cannot have allow_infinity={allow_infinity!r}, with both min_value and max_value"
+            )
+    elif min_value == math.inf:
+        if min_arg == math.inf:
+            raise InvalidArgument("allow_infinity=False excludes min_value=inf")
+        raise InvalidArgument(
+            f"exclude_min=True turns min_value={min_arg!r} into inf, but allow_infinity=False"
+        )
+    elif max_value == -math.inf:
+        if max_arg == -math.inf:
+            raise InvalidArgument("allow_infinity=False excludes max_value=-inf")
+        raise InvalidArgument(
+            f"exclude_max=True turns max_value={max_arg!r} into -inf, but allow_infinity=False"
+        )
+
+    smallest_normal = _SMALLEST_NORMALS[width]
+    if allow_subnormal is None:
+        if min_value is not None and max_value is not None:
+            if min_value == max_value:
+                allow_subnormal = -smallest_normal < min_value < smallest_normal
+            else:
+                allow_subnormal = min_value < smallest_normal and max_value > -smallest_normal
+        elif min_value is not None:
+            allow_subnormal = min_value < smallest_normal
+        elif max_value is not None:
+            allow_subnormal = max_value > -smallest_normal
+        else:
+            allow_subnormal = True
+    if allow_subnormal:
+        if min_value is not None and min_value >= smallest_normal:
+            raise InvalidArgument(
+                f"allow_subnormal=True, but minimum value {min_value} excludes values "
+                f"below float{width}'s smallest positive normal {smallest_normal}"
+            )
+        if max_value is not None and max_value <= -smallest_normal:
+            raise InvalidArgument(
+                f"allow_subnormal=True, but maximum value {max_value} excludes values "
+                f"above float{width}'s smallest negative normal {-smallest_normal}"
+            )
+
     if width == 16:
         return _Float16(
             min_value,
@@ -197,8 +410,6 @@ def floats(
             allow_nan=allow_nan,
             allow_infinity=allow_infinity,
             allow_subnormal=allow_subnormal,
-            exclude_min=exclude_min,
-            exclude_max=exclude_max,
         )
     return gs.floats(
         min_value,
@@ -207,13 +418,7 @@ def floats(
         allow_infinity=allow_infinity,
         allow_subnormal=allow_subnormal,
         width=width,
-        exclude_min=exclude_min,
-        exclude_max=exclude_max,
     )
-
-
-_F16_MAX = 65504.0
-_F16_SMALLEST_SUBNORMAL = 2.0**-24
 
 
 def _to_f16(value: float) -> float:
@@ -222,68 +427,34 @@ def _to_f16(value: float) -> float:
 
 class _Float16(Generator[float]):
     """16-bit floats, drawn as 32-bit floats and rounded to the nearest
-    representable 16-bit value (re-drawing when that leaves the bounds)."""
+    representable 16-bit value (re-drawing when that leaves the bounds).
+    The bounds have already been validated and made inclusive."""
 
     def __init__(
         self,
         min_value: float | None,
         max_value: float | None,
         *,
-        allow_nan: bool | None,
-        allow_infinity: bool | None,
-        allow_subnormal: bool | None,
-        exclude_min: bool,
-        exclude_max: bool,
+        allow_nan: bool,
+        allow_infinity: bool,
+        allow_subnormal: bool,
     ) -> None:
-        for name, value in (("min_value", min_value), ("max_value", max_value)):
-            if (
-                value is not None
-                and not math.isnan(value)
-                and abs(value) > _F16_MAX
-                and not math.isinf(value)
-            ):
-                raise InvalidArgument(f"{name}={value!r} is not representable as a 16-bit float")
         self.min_value = min_value
         self.max_value = max_value
-        self.exclude_min = exclude_min
-        self.exclude_max = exclude_max
+        self.allow_nan = allow_nan
+        self.allow_infinity = allow_infinity
         self.allow_subnormal = allow_subnormal
-        lo = -_F16_MAX if min_value is None else min_value
-        hi = _F16_MAX if max_value is None else max_value
-        inner_min = None if min_value is None else max(min_value, -_F16_MAX)
-        inner_max = None if max_value is None else min(max_value, _F16_MAX)
-        if min_value is None and max_value is None:
-            self.inner = gs.floats(
-                -_F16_MAX,
-                _F16_MAX,
-                allow_nan=False,
-                allow_infinity=False,
-                allow_subnormal=allow_subnormal,
-                width=32,
-            )
+        self.lo = -_F16_MAX if min_value is None else max(min_value, -_F16_MAX)
+        self.hi = _F16_MAX if max_value is None else min(max_value, _F16_MAX)
+        self.inner: Generator[float]
+        if self.lo > self.hi:  # an infinite bound: only that infinity remains
+            self.inner = gs.just(min_value if min_value == math.inf else max_value)
         else:
+            # 16-bit subnormals are normal 32-bit floats, so let the inner
+            # generator infer its own subnormal handling from the bounds.
             self.inner = gs.floats(
-                inner_min,
-                inner_max,
-                allow_nan=False,
-                allow_infinity=False,
-                allow_subnormal=allow_subnormal,
-                width=32,
-                exclude_min=exclude_min,
-                exclude_max=exclude_max,
+                self.lo, self.hi, allow_nan=False, allow_infinity=False, width=32
             )
-        unbounded = min_value is None or max_value is None
-        self.allow_nan = unbounded if allow_nan is None else allow_nan
-        if self.allow_nan and not unbounded:
-            raise InvalidArgument(
-                f"Cannot have allow_nan={allow_nan!r}, with min_value or max_value"
-            )
-        self.allow_infinity = unbounded if allow_infinity is None else allow_infinity
-        if self.allow_infinity and not unbounded:
-            raise InvalidArgument(
-                "Cannot have allow_infinity=True, with both min_value and max_value"
-            )
-        self.lo, self.hi = lo, hi
         self.label = self.inner.label
 
     def do_draw(self, tc: TestCase) -> float:
@@ -299,15 +470,13 @@ class _Float16(Generator[float]):
                     if self.min_value is None:
                         choices.append(-math.inf)
                 return tc.draw_silent(gs.sampled_from(choices))
+        if self.lo > self.hi:
+            return tc.draw_silent(self.inner)
         for _ in range(3):
             value = _to_f16(tc.draw_silent(self.inner))
-            if self.allow_subnormal is False and 0 < abs(value) < 2.0**-14:
+            if not self.allow_subnormal and 0 < abs(value) < 2.0**-14:
                 continue
             if value < self.lo or value > self.hi:
-                continue
-            if self.exclude_min and value == self.lo:
-                continue
-            if self.exclude_max and value == self.hi:
                 continue
             return value
         tc.reject()
@@ -337,7 +506,7 @@ def sampled_from(elements: Any) -> SearchStrategy[Any]:
         except TypeError:
             raise InvalidArgument(f"Cannot sample from {elements!r}, not an iterable") from None
     if not elements:
-        return gs.nothing()
+        raise InvalidArgument("Cannot sample from a length-zero sequence.")
     return gs.sampled_from(elements)
 
 
@@ -397,22 +566,37 @@ def lists(
     min_size, max_size = int(min_size), None if max_size is None else int(max_size)
     if max_size == 0:
         return just([])
-    if _check_nonempty_elements("lists", elements, min_size):
+    if _check_nonempty_elements("lists", elements, min_size, max_size):
         return just([])
+    if unique or unique_by is not None:
+        inner = unwrap_strategies(elements)
+        if isinstance(inner, SampledFrom) and min_size > len(inner.elements):
+            raise InvalidArgument(
+                f"Cannot create a collection of min_size={min_size!r} unique elements with "
+                f"values drawn from only {len(inner.elements)} distinct elements"
+            )
     return gs.lists(
         elements, min_size=min_size, max_size=max_size, unique=unique, unique_by=unique_by
     )
 
 
-def _check_nonempty_elements(name: str, elements: Any, min_size: int) -> bool:
+def _check_nonempty_elements(
+    name: str, elements: Any, min_size: int, max_size: int | None = None
+) -> bool:
     """Whether ``elements`` is empty; an error when the collection must
-    then be non-empty."""
+    then be non-empty (or, as in Hypothesis, when a positive max_size was
+    asked for)."""
     if not getattr(elements, "is_empty", False):
         return False
     if min_size > 0:
         raise InvalidArgument(
             f"Cannot create non-empty {name} with elements drawn from the strategy "
             f"{elements!r} because it has no values."
+        )
+    if max_size is not None and max_size > 0:
+        raise InvalidArgument(
+            f"Cannot create a collection of max_size={max_size!r}, because no elements "
+            f"can be drawn from the element strategy {elements!r}"
         )
     return True
 
@@ -425,7 +609,7 @@ def sets(
     check_valid_sizes(min_size, max_size)
     if max_size == 0:
         return just(set())
-    if _check_nonempty_elements("sets", elements, int(min_size)):
+    if _check_nonempty_elements("sets", elements, int(min_size), max_size):
         return just(set())
     return gs.sets(
         elements, min_size=int(min_size), max_size=None if max_size is None else int(max_size)
@@ -440,7 +624,7 @@ def frozensets(
     check_valid_sizes(min_size, max_size)
     if max_size == 0:
         return just(frozenset())
-    if _check_nonempty_elements("frozensets", elements, int(min_size)):
+    if _check_nonempty_elements("frozensets", elements, int(min_size), max_size):
         return just(frozenset())
     return gs.frozensets(
         elements, min_size=int(min_size), max_size=None if max_size is None else int(max_size)
@@ -516,9 +700,9 @@ def dictionaries(
     check_valid_sizes(min_size, max_size)
     if max_size == 0:
         return just(dict_class())
-    if _check_nonempty_elements("dictionaries", keys, int(min_size)) or _check_nonempty_elements(
-        "dictionaries", values, int(min_size)
-    ):
+    if _check_nonempty_elements(
+        "dictionaries", keys, int(min_size), max_size
+    ) or _check_nonempty_elements("dictionaries", values, int(min_size), max_size):
         return just(dict_class())
     strategy = gs.dicts(
         keys, values, min_size=int(min_size), max_size=None if max_size is None else int(max_size)
@@ -586,6 +770,26 @@ def characters(
                 f"Characters {sorted(overlap)!r} are present in both "
                 "include_characters and exclude_characters"
             )
+    if (
+        min_codepoint is None
+        and max_codepoint is None
+        and categories is None
+        and exclude_categories is None
+        and include_characters is not None
+        and codec is None
+    ):
+        raise InvalidArgument(
+            "Nothing is excluded by other arguments, so passing only "
+            f"include_characters={include_characters!r} would have no effect.  "
+            f"Also pass categories=(), or use sampled_from({include_characters!r}) instead."
+        )
+    if codec is not None:
+        check_type(str, codec, "codec")
+        try:
+            canonical = codecs.lookup(codec).name
+        except LookupError:
+            raise InvalidArgument(f"codec={codec!r} is not a valid codec name") from None
+        codec = {"iso8859-1": "latin-1"}.get(canonical, canonical)
     return gs.characters(
         codec=codec,
         min_codepoint=min_codepoint,
@@ -595,6 +799,41 @@ def characters(
         include_characters=include_characters,
         exclude_characters=exclude_characters,
     )
+
+
+def _resolve_alphabet(alphabet: Any) -> Generator[str] | None:
+    """Resolve the ``alphabet=`` argument of text() and from_regex() to a
+    characters() generator when it is statically known (a collection of
+    characters, or a sampled_from/characters strategy), ``NOTHING`` when
+    it has no characters, or None when only drawing from it can tell."""
+    if not isinstance(alphabet, Generator):
+        if isinstance(alphabet, (bytes, dict)):
+            raise InvalidArgument(
+                f"alphabet={alphabet!r} must be a collection of characters, or a "
+                "strategy generating single characters"
+            )
+        try:
+            chars = list(alphabet)
+        except TypeError:
+            raise InvalidArgument(
+                f"alphabet={alphabet!r} must be a collection of characters, or a "
+                "strategy generating single characters"
+            ) from None
+        bad = [c for c in chars if not isinstance(c, str) or len(c) != 1]
+        if bad:
+            raise InvalidArgument(
+                "The following elements in alphabet are not of length one, which leads "
+                f"to violation of size constraints: {bad!r}"
+            )
+        if not chars:
+            return NOTHING
+        return gs.characters(categories=[], include_characters="".join(dict.fromkeys(chars)))
+    inner = unwrap_strategies(alphabet)
+    if isinstance(inner, Characters):
+        return inner
+    if isinstance(inner, SampledFrom):
+        return _resolve_alphabet(list(inner.elements))
+    return None
 
 
 @defines_strategy
@@ -614,27 +853,17 @@ def text(
         return just("")
     if alphabet is not_set:
         return gs.text(min_size=min_size, max_size=max_size, codec="utf-8")
-    if isinstance(alphabet, Generator):
-        return gs.text(alphabet, min_size=min_size, max_size=max_size)
-    if isinstance(alphabet, str):
-        chars = list(alphabet)
-    else:
-        try:
-            chars = list(alphabet)
-        except TypeError:
-            raise InvalidArgument(
-                f"alphabet={alphabet!r} must be a strategy or a collection of characters"
-            ) from None
-    for c in chars:
-        if not isinstance(c, str) or len(c) != 1:
-            bad = [c for c in chars if not isinstance(c, str) or len(c) != 1]
-            raise InvalidArgument(
-                "The following elements in alphabet are not of length one, which leads to "
-                f"violation of size constraints: {bad!r}"
-            )
-    if not chars:
-        return just("") if min_size == 0 else gs.nothing()
-    return gs.text("".join(dict.fromkeys(chars)), min_size=min_size, max_size=max_size)
+    resolved = _resolve_alphabet(alphabet)
+    if resolved is None:
+        return gs.text(unwrap_strategies(alphabet), min_size=min_size, max_size=max_size)
+    if isinstance(resolved, Nothing):
+        if min_size == 0:
+            return just("")
+        raise InvalidArgument(
+            "Cannot create non-empty lists with elements drawn from strategy "
+            f"{alphabet!r} because it has no values."
+        )
+    return gs.text(resolved, min_size=min_size, max_size=max_size)
 
 
 @defines_strategy
@@ -642,8 +871,20 @@ def from_regex(
     regex: Any, *, fullmatch: bool = False, alphabet: Any = None
 ) -> SearchStrategy[str | bytes]:
     check_type(bool, fullmatch, "fullmatch")
-    if alphabet is not None and not isinstance(alphabet, Generator):
-        alphabet = characters(whitelist_characters=list(alphabet), categories=())
+    if alphabet is not None:
+        check_type((str, Sequence, set, frozenset, Generator), alphabet, "alphabet")
+        if isinstance(getattr(regex, "pattern", regex), bytes):
+            raise InvalidArgument("alphabet= is not supported for bytestrings")
+        resolved = _resolve_alphabet(alphabet)
+        if resolved is None:
+            raise InvalidArgument(
+                f"alphabet={alphabet!r} must be a collection of characters, or a "
+                "strategy for which the set of characters is known in advance "
+                "(characters() or sampled_from())"
+            )
+        if isinstance(resolved, Nothing):
+            return NOTHING
+        alphabet = resolved
     return gs.from_regex(regex, fullmatch=fullmatch, alphabet=alphabet)
 
 
@@ -667,13 +908,21 @@ def emails(*, domains: SearchStrategy[str] | None = None) -> SearchStrategy[str]
 # -- numbers ------------------------------------------------------------------
 
 
-def _to_decimal(value: Any, name: str) -> decimal.Decimal | None:
+def _to_decimal(value: Any, name: str, places: int | None = None) -> decimal.Decimal | None:
     if value is None:
         return None
     if isinstance(value, bool):
         raise InvalidArgument(f"{name}={value!r} must be a number, not bool")
+    if isinstance(value, _fractions.Fraction):
+        converted = decimal.Context(prec=places).divide(value.numerator, value.denominator)
+        if converted != value:
+            raise InvalidArgument(
+                f"{value!r} cannot be exactly represented as a decimal with places={places!r}"
+            )
+        return converted
     try:
-        return decimal.Decimal(value)
+        with decimal.localcontext(decimal.Context()):  # default traps enabled
+            return decimal.Decimal(value)
     except (TypeError, ValueError, decimal.InvalidOperation):
         raise InvalidArgument(f"{name}={value!r} cannot be converted to a Decimal") from None
 
@@ -688,16 +937,29 @@ def decimals(
     places: int | None = None,
 ) -> SearchStrategy[decimal.Decimal]:
     """Decimal numbers, optionally bounded and with a fixed number of
-    decimal places."""
+    decimal places. All arithmetic is done exactly, independent of the
+    caller's decimal context."""
     if places is not None:
         if isinstance(places, bool) or not isinstance(places, int) or places < 0:
             raise InvalidArgument(f"places={places!r} must be a non-negative integer")
-    lo = _to_decimal(min_value, "min_value")
-    hi = _to_decimal(max_value, "max_value")
+    lo = _to_decimal(min_value, "min_value", places)
+    hi = _to_decimal(max_value, "max_value", places)
     if lo is not None and lo.is_nan():
         raise InvalidArgument(f"min_value={min_value!r} may not be NaN")
     if hi is not None and hi.is_nan():
         raise InvalidArgument(f"max_value={max_value!r} may not be NaN")
+    if lo is not None and lo.is_infinite():
+        if lo > 0:
+            raise InvalidArgument(f"Invalid min_value={min_value!r}")
+        if allow_infinity is False:
+            raise InvalidArgument(f"allow_infinity=False, but min_value={min_value!r}")
+        lo = None
+    if hi is not None and hi.is_infinite():
+        if hi < 0:
+            raise InvalidArgument(f"Invalid max_value={max_value!r}")
+        if allow_infinity is False:
+            raise InvalidArgument(f"allow_infinity=False, but max_value={max_value!r}")
+        hi = None
     if lo is not None and hi is not None and lo > hi:
         raise InvalidArgument(f"Cannot have max_value={max_value!r} < min_value={min_value!r}")
     unbounded = lo is None or hi is None
@@ -708,31 +970,37 @@ def decimals(
     if allow_infinity is None:
         allow_infinity = unbounded
     elif allow_infinity and not unbounded:
-        raise InvalidArgument("Cannot allow_infinity=True with both min_value and max_value")
+        raise InvalidArgument("Cannot allow infinity between finite bounds")
 
     if places is not None:
-        factor = decimal.Decimal(10) ** places
-        int_lo = None if lo is None else math.ceil(lo * factor)
-        int_hi = None if hi is None else math.floor(hi * factor)
+        scale = 10**places
+        int_lo = None if lo is None else math.ceil(_fractions.Fraction(lo) * scale)
+        int_hi = None if hi is None else math.floor(_fractions.Fraction(hi) * scale)
         if int_lo is not None and int_hi is not None and int_lo > int_hi:
             raise InvalidArgument(
                 f"There are no decimals with {places} places between min_value={min_value!r} "
                 f"and max_value={max_value!r}"
             )
-        finite: SearchStrategy[decimal.Decimal] = integers(int_lo, int_hi).map(
-            lambda n: decimal.Decimal(n).scaleb(-places)
-        )
+
+        def int_to_decimal(n: int) -> decimal.Decimal:
+            return decimal.Decimal(f"{n}E-{places}")  # exact in every context
+
+        finite: SearchStrategy[decimal.Decimal] = integers(int_lo, int_hi).map(int_to_decimal)
     else:
 
         def fraction_to_decimal(f: _fractions.Fraction) -> decimal.Decimal:
-            with decimal.localcontext(decimal.Context(prec=max(28, 60))):
-                return decimal.Decimal(f.numerator) / f.denominator
+            precision = math.ceil(math.log10(abs(f.numerator) or 1) + math.log10(f.denominator)) + 1
+            return decimal.Context(prec=precision or 1).divide(
+                decimal.Decimal(f.numerator), f.denominator
+            )
 
         finite = fractions(lo, hi).map(fraction_to_decimal)
-        if lo is not None or hi is not None:
-            finite = finite.filter(lambda d: (lo is None or d >= lo) and (hi is None or d <= hi))
-    options = [finite]
     specials: list[decimal.Decimal] = []
+    if allow_infinity:
+        if hi is None:
+            specials.append(decimal.Decimal("Infinity"))
+        if lo is None:
+            specials.append(decimal.Decimal("-Infinity"))
     if allow_nan:
         specials += [
             decimal.Decimal("NaN"),
@@ -740,14 +1008,9 @@ def decimals(
             decimal.Decimal("sNaN"),
             decimal.Decimal("-sNaN"),
         ]
-    if allow_infinity:
-        if hi is None:
-            specials.append(decimal.Decimal("Infinity"))
-        if lo is None:
-            specials.append(decimal.Decimal("-Infinity"))
     if specials:
-        options.append(gs.sampled_from(specials))
-    return gs.one_of(*options) if len(options) > 1 else finite
+        return gs.one_of(finite, gs.sampled_from(specials))
+    return finite
 
 
 @defines_strategy
@@ -825,6 +1088,11 @@ def complex_numbers(
         or min_magnitude < 0
     ):
         raise InvalidArgument(f"min_magnitude={min_magnitude!r} must be a non-negative number")
+    for name, value in (("min_magnitude", min_magnitude), ("max_magnitude", max_magnitude)):
+        if isinstance(value, float) and math.isnan(value):
+            raise InvalidArgument(f"Invalid end point {name}={value!r}")
+    if max_magnitude == math.inf:
+        max_magnitude = None
     if max_magnitude is not None:
         if (
             isinstance(max_magnitude, bool)
@@ -1093,8 +1361,19 @@ class _Shared(Generator[Any]):
         store = _per_case_store(tc)
         key = self._cache_key()
         if key not in store:
-            store[key] = tc.draw_silent(self.base)
-        return store[key]
+            store[key] = (tc.draw_silent(self.base), self)
+        else:
+            _, other = store[key]
+            if self.base.label != other.base.label:
+                warnings.warn(
+                    f"Different strategies are shared under key={self.key!r}. This"
+                    " risks drawing values that are not valid for the strategy,"
+                    " or that have a narrower range than expected."
+                    f" Conflicting strategies: ({self!r}, {other!r}).",
+                    HypothesisWarning,
+                    stacklevel=1,
+                )
+        return store[key][0]
 
     def __repr__(self) -> str:
         return f"shared({self.base!r}, key={self.key!r})"
@@ -1112,32 +1391,37 @@ def _per_case_store(tc: TestCase) -> dict[Any, Any]:
 
 @defines_strategy
 def slices(size: int) -> SearchStrategy[slice]:
-    """Slices usable on a sequence of ``size`` elements."""
+    """Slices usable on a sequence of ``size`` elements, drawn the way
+    Hypothesis draws them so that they shrink toward ``slice(None)``."""
     if isinstance(size, bool) or not isinstance(size, int) or size < 0:
         raise InvalidArgument(f"size={size!r} must be a non-negative integer")
-    if size == 0:
-        step = integers().filter(lambda n: n != 0)
-        return gs.composite(lambda tc: slice(None, None, tc.draw_silent(step)))()
 
     def build(tc: TestCase) -> slice:
-        min_start = tc.draw_silent(integers(0, size))
-        max_start = tc.draw_silent(integers(min_start, size))
-        start = tc.draw_silent(integers(min_start, max_start))
-        stop = tc.draw_silent(integers(0, size))
-        step = tc.draw_silent(integers(1, size))
-        if tc.draw_silent(booleans()):
-            step = -step
-            start, stop = stop, start
-        if tc.draw_silent(booleans()) and start == 0:
-            start_opt: int | None = None
+        draw = tc.draw_silent
+        if size == 0:
+            return slice(None, None, draw(none() | integers().filter(bool)))
+        # For slices start is inclusive and stop is exclusive
+        start = draw(integers(0, size - 1) | none())
+        stop = draw(integers(0, size) | none())
+        # Limit step size to be reasonable
+        if start is None and stop is None:
+            max_step = size
+        elif start is None:
+            max_step = stop
+        elif stop is None:
+            max_step = start
         else:
-            start_opt = start
-        if tc.draw_silent(booleans()) and (stop == size if step > 0 else stop == 0):
-            stop_opt: int | None = None
-        else:
-            stop_opt = stop
-        step_opt = None if step == 1 and tc.draw_silent(booleans()) else step
-        return slice(start_opt, stop_opt, step_opt)
+            max_step = abs(start - stop)
+        step = draw(integers(1, max_step or 1))
+        if (draw(booleans()) and start == stop) or (stop or 0) < (start or 0):
+            step *= -1
+        if draw(booleans()) and start is not None:
+            start -= size
+        if draw(booleans()) and stop is not None:
+            stop -= size
+        if (not draw(booleans())) and step == 1:
+            step = None  # type: ignore[assignment]
+        return slice(start, stop, step)
 
     return gs.composite(build)()
 

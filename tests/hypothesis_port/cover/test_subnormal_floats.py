@@ -13,11 +13,15 @@ from sys import float_info
 import pytest
 
 from hegel.hypothesis.errors import InvalidArgument
-from hegel.hypothesis.internal.floats import next_down, next_up
+from tests.hypothesis_port.common.compat import next_down, next_up
 from hegel.hypothesis.strategies import floats
-from hegel.hypothesis.strategies._internal.numbers import next_down_normal, next_up_normal
+from tests.hypothesis_port.common.compat import next_down_normal, next_up_normal
 
-from tests.hypothesis_port.common.debug import assert_no_examples, check_can_generate_examples, find_any
+from tests.hypothesis_port.common.debug import (
+    assert_no_examples,
+    check_can_generate_examples,
+    find_any,
+)
 from tests.hypothesis_port.common.utils import PYTHON_FTZ
 
 pytestmark = [pytest.mark.skipif(PYTHON_FTZ, reason="broken by unsafe compiler flags")]

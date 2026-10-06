@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from hegel.generators.base import Generator
@@ -43,7 +44,7 @@ def check_valid_size(value: Any, name: str) -> None:
     if value is None:
         return
     if isinstance(value, bool) or not isinstance(value, int):
-        if isinstance(value, float) and value == int(value):
+        if isinstance(value, float) and math.isfinite(value) and value == int(value):
             return
         raise InvalidArgument(f"{name}={value!r} must be an integer")
     if value < 0:
@@ -209,9 +210,13 @@ def defines_strategy(function: Any) -> Any:
     """Make a strategy-returning function lazy: calling it returns a
     :class:`LazyStrategy` that builds the real strategy on first draw."""
     import functools
+    import inspect
+
+    signature = inspect.signature(function)
 
     @functools.wraps(function)
     def accept(*args: Any, **kwargs: Any) -> LazyStrategy:
+        signature.bind(*args, **kwargs)  # a TypeError for bad arguments, eagerly
         return LazyStrategy(function, args, kwargs)
 
     return accept

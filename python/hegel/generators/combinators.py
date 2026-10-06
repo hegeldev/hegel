@@ -130,7 +130,17 @@ class Lists_of_flags(Generator[Any]):
 class OneOf(Generator[Any]):
     def __init__(self, generators: list[Generator[Any]]) -> None:
         self.generators = generators
-        self.label = combine_labels([ONE_OF_LABEL, combine_labels(g.label for g in generators)])
+        self._label: int | None = None
+
+    @property
+    def label(self) -> int:  # type: ignore[override]
+        # Computed on first use so that ``a | b`` never forces lazily
+        # validated operands at definition time.
+        if self._label is None:
+            self._label = combine_labels(
+                [ONE_OF_LABEL, combine_labels(g.label for g in self.generators)]
+            )
+        return self._label
 
     def _draw(self, tc: TestCase, printer: PrettyPrinter | None) -> Any:
         index = tc.generate_integer(0, len(self.generators) - 1)

@@ -16,7 +16,7 @@ import pytest
 
 from hegel.hypothesis import assume, given, strategies as st
 from hegel.hypothesis.errors import InvalidArgument
-from hegel.hypothesis.internal.floats import (
+from tests.hypothesis_port.common.compat import (
     float_of,
     float_to_int,
     int_to_float,
