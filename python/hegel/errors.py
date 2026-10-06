@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from hegel._native import (
     AssumeFailed,
     BackendError,
@@ -62,5 +64,19 @@ class DidNotReproduce(HegelError):
     """A ``reproduce_failure`` blob no longer reproduces a failure."""
 
 
-class MultipleFailures(ExceptionGroup):  # type: ignore[type-arg]
-    """A run found several distinct failures (``report_multiple_failures``)."""
+class MultipleFailures(BaseExceptionGroup):  # type: ignore[type-arg]
+    """A run found several distinct failures (``report_multiple_failures``).
+
+    Like the built-in exception groups, an instance whose failures are all
+    :class:`Exception` s is itself an :class:`ExceptionGroup`, so
+    ``except Exception`` catches it; one with a :class:`BaseException`
+    among them is only a :class:`BaseExceptionGroup`."""
+
+    def __new__(cls, message: str, exceptions: Any) -> MultipleFailures:
+        if cls is MultipleFailures and all(isinstance(e, Exception) for e in exceptions):
+            cls = _MultipleExceptions
+        return super().__new__(cls, message, exceptions)  # type: ignore[no-any-return]
+
+
+class _MultipleExceptions(MultipleFailures, ExceptionGroup):  # type: ignore[misc]
+    pass

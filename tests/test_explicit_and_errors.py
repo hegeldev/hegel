@@ -85,3 +85,12 @@ def test_explicit_only_named_values_unused():
     with pytest.raises(hegel.InvalidArgument) as info:
         explicit.check_consumed()
     assert "positional" not in str(info.value)
+
+
+def test_multiple_failures_is_an_exception_group_only_of_exceptions():
+    exceptions = hegel.MultipleFailures("two", [KeyError(), ValueError()])
+    assert isinstance(exceptions, ExceptionGroup)
+    assert isinstance(exceptions, Exception)
+    mixed = hegel.MultipleFailures("two", [KeyboardInterrupt(), ValueError()])
+    assert isinstance(mixed, hegel.MultipleFailures)
+    assert not isinstance(mixed, Exception)

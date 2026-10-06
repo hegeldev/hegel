@@ -32,6 +32,7 @@ from hegel.settings import Phase, Settings, TestLocation, Verbosity
 from hegel.test_case import OutputSink, TestCase
 
 __all__ = [
+    "default_reproducer",
     "explicit_test_case",
     "reproduce_failure",
     "run",
@@ -93,7 +94,7 @@ class _CaseOutcome:
     status: int
     origin: str | None
     exception: BaseException | None
-    diagnostic: str | None
+    stamped: bool
 
 
 def _user_location(exception: BaseException) -> str:
@@ -125,16 +126,15 @@ def _run_test_case(
     The engine stamps the cases a failure report can be built from (the
     final replay of each failure it is about to report, confirmation
     replays, and generation cases under nondeterministic handling); a
-    stamped case emits its draws and notes and, if it fails, carries its
-    rendered traceback for the deferred report. Other cases run silently
-    unless the run is verbose.
+    stamped case records its draws and notes for the report. Other cases
+    run silently unless the run is verbose.
     """
     verbose = verbosity in (Verbosity.verbose, Verbosity.debug)
     quiet = verbosity is Verbosity.quiet
     stamped = handle.should_capture()
     should_emit = (stamped and not quiet) or verbose
     tc = TestCase(handle, should_emit, case_sink or output.resolved_sink(), is_final=stamped)
-    outcome = _CaseOutcome(_native.STATUS_VALID, None, None, None)
+    outcome = _CaseOutcome(_native.STATUS_VALID, None, None, stamped)
     try:
         _check_not_awaitable(test_fn(tc))
     except (AssumeFailed, LoopDone) as signal:
@@ -153,11 +153,7 @@ def _run_test_case(
         outcome.status = _native.STATUS_INTERESTING
         outcome.origin = f"{type(exception).__qualname__} at {_user_location(exception)}"
         outcome.exception = exception
-        if stamped and not quiet:
-            outcome.diagnostic = _format_exception(exception)
-            if verbose:
-                output.block(outcome.diagnostic)
-        elif verbose:
+        if verbose:
             output.block(_format_exception(exception))
     tc._emit_rendered_output()
     if verbose:
@@ -206,11 +202,14 @@ def _stop_reason(outcome: _CaseOutcome) -> str:
     return f"Test case failed: {outcome.origin}"
 
 
-def _reproducer_line(settings: Settings, blob: str | None) -> str | None:
-    if not settings.print_blob or blob is None:
-        return None
+Reproducer = Callable[[str], str]
+
+
+def default_reproducer(blob: str) -> str:
+    """How a failure report says to replay a failure: with the
+    :func:`reproduce_failure` decorator."""
     return (
-        "\nTo reproduce this failure, decorate the test (above @hegel.test) with:\n"
+        "To reproduce this failure, add this decorator below @hegel.test:\n"
         f'    @hegel.reproduce_failure("{blob}")'
     )
 
@@ -224,27 +223,39 @@ def _annotate(
     if caveat is not None:
         notes.append(caveat)
     if reproducer is not None:
-        notes.append(reproducer.strip("\n"))
+        notes.append(reproducer)
     for note in notes:
         exception.add_note(note)
+
+
+def _trim_traceback(exception: BaseException) -> None:
+    """Drop the leading frames of Hegel's own (the runner calling the test)
+    from ``exception``'s traceback, so it starts in the user's code. A
+    traceback with no frame outside Hegel (an error in Hegel itself) is
+    left whole."""
+    tb = exception.__traceback__
+    while tb is not None and _inside_hegel(tb.tb_frame.f_code.co_filename):
+        tb = tb.tb_next
+    if tb is not None:
+        exception.__traceback__ = tb
 
 
 @dataclass
 class _Captured:
     """One origin's failure report material, captured as the case ran:
-    its buffered draw and note lines (empty under quiet verbosity), its
-    rendered traceback (only for a stamped case), and the exception to
-    re-raise. Captures are ranked so that an unstamped shrink probe's bare
-    capture cannot replace a stamped one, while at equal rank the newest
-    wins: final replay over confirmation over discovery."""
+    its buffered draw and note lines (empty under quiet verbosity), whether
+    the engine stamped the case, and the exception to re-raise. Captures
+    are ranked so that an unstamped shrink probe's bare capture cannot
+    replace a stamped one, while at equal rank the newest wins: final
+    replay over confirmation over discovery."""
 
     lines: list[str]
-    diagnostic: str | None
+    stamped: bool
     exception: BaseException
 
     @property
     def rank(self) -> int:
-        if self.diagnostic is not None:
+        if self.stamped:
             return 2
         return 1 if self.lines else 0
 
@@ -254,11 +265,13 @@ def _drive(
     settings: Settings,
     database_key: str | None,
     test_location: TestLocation | None,
+    reproducer: Reproducer,
 ) -> None:
+    __tracebackhide__ = True
     output = RunOutput.resolve()
     native_settings = settings._build(database_key, test_location)
     run = _native.Run.start(native_settings)
-    _drive_run(run, test_fn, settings, output, None)
+    _drive_run(run, test_fn, settings, output, reproducer, None)
 
 
 def _drive_blob_replay(
@@ -266,11 +279,13 @@ def _drive_blob_replay(
     settings: Settings,
     database_key: str | None,
     test_location: TestLocation | None,
+    reproducer: Reproducer,
     blob: str,
 ) -> None:
     """Replay a reproduce blob: the engine replays it until a replay fails,
     under a bounded budget, and a run with no failures means the blob did
     not reproduce."""
+    __tracebackhide__ = True
     output = RunOutput.resolve()
     native_settings = settings._build(database_key, test_location)
     run = _native.Run.start_blob(native_settings, blob)
@@ -279,6 +294,7 @@ def _drive_blob_replay(
         test_fn,
         settings,
         output,
+        reproducer,
         "reproduce_failure: the supplied failure blob did not reproduce a failure. "
         "The failure may have been fixed, or, for a nondeterministic blob, it may not "
         "have recurred within the replay budget (a bug failing 10% of the time escapes "
@@ -287,19 +303,39 @@ def _drive_blob_replay(
     )
 
 
+# The engine reports why a run failed only as a message (libhegel has no
+# error kinds: see docs/engine-issues.md), so the exception to raise is
+# chosen by how the message starts.
+_RUN_ERROR_PREFIXES: tuple[tuple[tuple[str, ...], type[RunError]], ...] = (
+    (("FailedHealthCheck:",), FailedHealthCheck),
+    (("Flaky test detected", "Your data generation is non-deterministic"), Flaky),
+    (("Unsatisfiable",), Unsatisfiable),
+)
+
+
+def _run_error(message: str) -> RunError:
+    for prefixes, kind in _RUN_ERROR_PREFIXES:
+        if message.startswith(prefixes):
+            return kind(message)
+    return RunError(message)
+
+
 def _drive_run(
     run: _native.Run,
     test_fn: Callable[[TestCase], Any],
     settings: Settings,
     output: RunOutput,
+    reproducer: Reproducer,
     stale_message: str | None,
 ) -> None:
     """Pull every test case off ``run``, capturing report material per
     failure origin, then act on the verdict. The engine owns the whole
     exploration, the final replay of each reported failure included, so
     the report is assembled from the freshest stamped capture of each
-    origin. A passing run returns, unless ``stale_message`` is set (a blob
-    replay), where a pass means the blob did not reproduce."""
+    origin, and attached to the exception re-raised as notes. A passing
+    run returns, unless ``stale_message`` is set (a blob replay), where a
+    pass means the blob did not reproduce."""
+    __tracebackhide__ = True
     verbosity = settings.verbosity
     quiet = verbosity is Verbosity.quiet
     verbose = verbosity in (Verbosity.verbose, Verbosity.debug)
@@ -325,7 +361,7 @@ def _drive_run(
         outcome = _run_test_case(handle, test_fn, verbosity, output, case_sink)
         flush()
         if outcome.status == _native.STATUS_INTERESTING and outcome.exception is not None:
-            report = _Captured(buffer, outcome.diagnostic, outcome.exception)
+            report = _Captured(buffer, outcome.stamped, outcome.exception)
             origin = outcome.origin or ""
             stored = captured.get(origin)
             if stored is None or report.rank >= stored.rank:
@@ -339,39 +375,19 @@ def _drive_run(
             raise DidNotReproduce(stale_message)
         return
     if status == _native.RUN_STATUS_ERROR:
-        message = result.error() or "the run failed with an unknown error"
-        if message.startswith("FailedHealthCheck:"):
-            raise FailedHealthCheck(message)
-        if message.startswith(("Flaky test detected", "Your data generation is non-deterministic")):
-            raise Flaky(message)
-        if message.startswith("Unsatisfiable"):
-            raise Unsatisfiable(message)
-        raise RunError(message)
+        raise _run_error(result.error() or "the run failed with an unknown error")
     count = result.failure_count()
-    multiple = count > 1
-    if multiple and not quiet:
-        output.line(f"Property-based test failed with {count} distinct failures.")
     exceptions: list[BaseException] = []
     for index in range(count):
-        if multiple and not quiet:
-            output.line("")
         origin, blob, caveat = result.failure(index)
         if origin not in captured:
             raise InternalError(f"failure {index} ({origin}) was never seen by the test")
         report = captured.pop(origin)
-        output.lines(report.lines)
-        if report.diagnostic is not None:
-            output.block(report.diagnostic)
-        if quiet:
-            caveat = None
-        elif caveat is not None:
-            output.line(f"note: {caveat}")
-        reproducer = _reproducer_line(settings, blob)
-        if reproducer is not None:
-            output.block(reproducer + "\n")
-        _annotate(report.exception, report.lines, caveat, reproducer)
+        note = reproducer(blob) if settings.print_blob and blob is not None else None
+        _annotate(report.exception, report.lines, None if quiet else caveat, note)
+        _trim_traceback(report.exception)
         exceptions.append(report.exception)
-    if multiple:
+    if count > 1:
         raise MultipleFailures(
             f"Property-based test failed with {count} distinct failures.",
             exceptions,  # type: ignore[arg-type]
@@ -391,10 +407,8 @@ def _run_explicit(
     except (KeyboardInterrupt, SystemExit, InvalidArgument, InternalError):
         raise
     except BaseException as exception:
-        output.line(f"Explicit test case {case!r} failed:")
-        output.lines(explicit.lines)
-        output.block(_format_exception(exception))
         _annotate(exception, explicit.lines, None, None)
+        _trim_traceback(exception)
         raise
     explicit.check_consumed()
 
@@ -407,15 +421,20 @@ def run(
     test_location: TestLocation | None = None,
     explicit_cases: Iterator[ExplicitCase] | list[ExplicitCase] | tuple[ExplicitCase, ...] = (),
     reproduce_blob: str | None = None,
+    reproducer: Reproducer = default_reproducer,
     **overrides: Any,
 ) -> None:
     """Run ``test_fn`` as a property test: it is called once per test
     case with a :class:`TestCase`, and the first exception it raises (other
-    than a rejected assumption) is a failure, reported after shrinking.
+    than a rejected assumption) is a failure, reported after shrinking:
+    the drawn values, any caveat, and how to reproduce it are added to the
+    exception as notes.
 
     ``settings`` (with ``overrides`` applied) configures the run.
     ``explicit_cases`` run first, with their given values; ``reproduce_blob``
     replays one previously reported failure instead of generating.
+    ``reproducer`` words the note saying how to replay a failure, given
+    its blob.
     """
     __tracebackhide__ = True
     if not callable(test_fn):
@@ -426,12 +445,14 @@ def run(
     _running.depth = getattr(_running, "depth", 0) + 1
     try:
         if reproduce_blob is not None:
-            _drive_blob_replay(test_fn, resolved, database_key, test_location, reproduce_blob)
+            _drive_blob_replay(
+                test_fn, resolved, database_key, test_location, reproducer, reproduce_blob
+            )
         if Phase.explicit in resolved.phases:
             output = RunOutput.resolve()
             for case in explicit_cases:
                 _run_explicit(test_fn, case, output)
-        _drive(test_fn, resolved, database_key, test_location)
+        _drive(test_fn, resolved, database_key, test_location, reproducer)
     finally:
         _running.depth -= 1
 
@@ -486,6 +507,7 @@ def test(
             raise InvalidArgument(f"{inner.__name__} must take the test case as its first argument")
         location = _location_of(inner)
         database_key = _database_key_of(inner)
+        reproducer = getattr(inner, "hegel_reproducer", default_reproducer)
         base_settings = settings
         # A method takes the test case after ``self``.
         tc_index = 1 if parameters[0].name in ("self", "cls") and len(parameters) > 1 else 0
@@ -513,6 +535,7 @@ def test(
                 test_location=location,
                 explicit_cases=list(wrapper.hegel_explicit_cases),  # type: ignore[attr-defined]
                 reproduce_blob=wrapper.hegel_reproduce_blob,  # type: ignore[attr-defined]
+                reproducer=reproducer,
                 **overrides,
             )
 

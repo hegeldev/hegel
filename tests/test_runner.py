@@ -75,10 +75,21 @@ def test_failure_is_shrunk_and_annotated(output):
     with pytest.raises(AssertionError) as info:
         test_it()
     assert notes(info.value)[0] == "Falsifying example:\nxs = [3]"
-    assert notes(info.value)[1].startswith("To reproduce this failure")
-    assert "xs = [3]" in output.text
-    assert "AssertionError" in output.text
-    assert '@hegel.reproduce_failure("' in output.text
+    assert notes(info.value)[1].startswith(
+        "To reproduce this failure, add this decorator below @hegel.test:\n"
+        '    @hegel.reproduce_failure("'
+    )
+    # The report travels with the exception, so nothing else is printed.
+    assert output.lines == []
+    # The traceback of the failing call is trimmed to start in the test,
+    # not in Hegel's runner calling it.
+    frames = []
+    tb = info.value.__traceback__
+    while tb is not None:
+        frames.append(tb.tb_frame.f_code.co_name)
+        tb = tb.tb_next
+    assert frames[-1] == "test_it"
+    assert "_run_test_case" not in frames
 
 
 def test_reproduce_failure_replays_blob(output):
@@ -165,8 +176,7 @@ def test_explicit_test_case_failure_reports_values(output):
     with pytest.raises(AssertionError) as info:
         test_it()
     assert notes(info.value) == ["Falsifying example:\nx = 7\nline"]
-    assert "Explicit test case explicit_test_case(x=7) failed:" in output.lines
-    assert "x = 7" in output.lines
+    assert output.lines == []
 
 
 def test_explicit_test_case_errors():
@@ -260,8 +270,7 @@ def test_unconfirmed_failure_is_reported_with_a_caveat(output):
 
     error = failing(body)
     assert any(note.startswith("unconfirmed failure") for note in notes(error))
-    assert any(line.startswith("note: unconfirmed failure") for line in output.lines)
-    assert "reproduce_failure" not in "\n".join(output.lines)
+    assert not any("reproduce_failure" in note for note in notes(error))
 
 
 def test_nondeterminism_strictness_error_aborts_the_run(output):
@@ -313,7 +322,8 @@ def test_multiple_failures(output):
     error = failing(body, hegel.MultipleFailures, report_multiple_failures=True, test_cases=300)
     assert {type(e) for e in error.exceptions} == {ValueError, AssertionError}
     assert all(notes(e)[0].startswith("Falsifying example:") for e in error.exceptions)
-    assert "Property-based test failed with 2 distinct failures." in output.lines
+    assert str(error).startswith("Property-based test failed with 2 distinct failures.")
+    assert output.lines == []
 
 
 def test_verbosity_verbose_prints_every_case(output):
@@ -377,11 +387,42 @@ def test_quiet_multiple_failures(output):
 def test_output_defaults_to_stderr(capsys):
     def body(tc):
         tc.note("to stderr")
+
+    hegel.run(body, test_cases=1, verbosity=Verbosity.verbose)
+    assert "to stderr" in capsys.readouterr().err
+
+
+def test_a_failure_prints_nothing_beyond_its_exception(capsys):
+    def body(tc):
+        tc.note("only in the notes")
         raise ValueError
 
-    with pytest.raises(ValueError):
-        hegel.run(body)
-    assert "to stderr" in capsys.readouterr().err
+    with pytest.raises(ValueError) as info:
+        hegel.run(body, database="")
+    assert capsys.readouterr().err == ""
+    assert "only in the notes" in notes(info.value)[0]
+
+
+def test_a_failure_inside_hegel_keeps_its_whole_traceback():
+    error = ValueError()
+    error.__traceback__ = None
+    hegel.runner._trim_traceback(error)
+    assert error.__traceback__ is None
+
+    def body(tc):
+        tc.draw(gs.integers().map(lambda x: 1 / 0))
+
+    exception = failing(body, ZeroDivisionError)
+    assert exception.__traceback__ is not None
+
+
+def test_a_reproducer_can_be_reworded():
+    def body(tc):
+        tc.draw(gs.integers())
+        raise ValueError
+
+    error = failing(body, ValueError, print_blob=True, reproducer=lambda blob: f"replay {blob}")
+    assert notes(error)[-1].startswith("replay ")
 
 
 def test_output_override_is_per_thread():

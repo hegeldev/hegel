@@ -664,6 +664,10 @@ def state_machine_test(machine: type[StateMachine], **settings: Any) -> Callable
     run_machine.__name__ = f"test_{machine.__name__}"
     run_machine.__qualname__ = run_machine.__name__
     run_machine.__module__ = machine.__module__
+    run_machine.hegel_reproducer = lambda blob: (  # type: ignore[attr-defined]
+        "To reproduce this failure, wrap the state machine test:\n"
+        f'    hegel.reproduce_failure("{blob}")(hegel.state_machine_test({machine.__name__}))'
+    )
     return test(**settings)(run_machine) if settings else test(run_machine)
 
 

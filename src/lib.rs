@@ -26,38 +26,39 @@ pub(crate) use settings::Settings;
 pub(crate) use strings::StringGenerator;
 pub(crate) use test_case::{Collection, Pool, Recursion, Run, RunResult, StateMachine, TestCase};
 
+// Defined here, but exported (and so named) from hegel.errors.
 create_exception!(
-    hegel._native,
+    hegel.errors,
     HegelError,
     PyException,
     "Base class for Hegel errors."
 );
 create_exception!(
-    hegel._native,
+    hegel.errors,
     InvalidArgument,
     HegelError,
     "An argument passed to Hegel was invalid."
 );
 create_exception!(
-    hegel._native,
+    hegel.errors,
     BackendError,
     HegelError,
     "The Hegel engine reported an error."
 );
 create_exception!(
-    hegel._native,
+    hegel.errors,
     InternalError,
     HegelError,
     "An internal error in Hegel. Please report this as a bug."
 );
 create_exception!(
-    hegel._native,
+    hegel.errors,
     StopTest,
     PyBaseException,
     "Control flow: the engine abandoned the current test case."
 );
 create_exception!(
-    hegel._native,
+    hegel.errors,
     AssumeFailed,
     PyBaseException,
     "Control flow: the current test case was rejected by an assumption."

@@ -96,7 +96,6 @@ def test_note_assume_reject(output):
     error = failing(body)
     assert all(x % 2 == 0 for x in seen)
     assert notes(error)[0] == "Falsifying example:\nx = 2\nx is 2"
-    assert "x is 2" in output.text
 
 
 def test_target_event_and_event_value(output):
@@ -337,3 +336,36 @@ def test_per_case_state_is_shared_by_every_handle_onto_a_test_case():
 
     run_test(body, test_cases=2, database="")
     assert len(seen) == 2 and seen[0] is not seen[1]
+
+
+def test_a_draw_that_raises_reports_what_was_drawn_inside_it():
+    @gs.composite
+    def failing_composite(tc):
+        inner = tc.draw(gs.integers(0, 10))
+        tc.draw(gs.booleans())
+        tc.draw(gs.just(1), name="named")
+        if inner > 5:
+            raise KeyError(inner)
+        return inner
+
+    def body(tc):
+        tc.draw(gs.integers(0, 3), name="first")
+        tc.draw(failing_composite())
+
+    lines = notes(failing(body, KeyError))[0].splitlines()
+    assert lines == [
+        "Falsifying example:",
+        "first_1 = 0",
+        "draw_1 = <KeyError raised while drawing from failing_composite()>",
+        "  inner = 6",
+        "  draw = False",
+        "  named = 1",
+    ]
+
+
+def test_a_rejected_draw_reports_nothing():
+    def body(tc):
+        tc.draw(gs.integers(0, 10).filter(lambda x: x > 100))
+
+    with pytest.raises(hegel.FailedHealthCheck):
+        hegel.run(body, database="")
