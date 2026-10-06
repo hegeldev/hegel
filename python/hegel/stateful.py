@@ -236,7 +236,7 @@ def _run_sequential(
     )
     if invariants and print_steps:
         tc.note("Checking invariants on the initial state.")
-    _check_invariants(tc, invariants, None)
+    _check_invariants(tc, invariants, None, print_steps)
     steps_attempted = 0
     note = tc.note if print_steps else _silent
     while True:

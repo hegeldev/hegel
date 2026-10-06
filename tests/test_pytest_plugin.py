@@ -58,3 +58,56 @@ hegel.Settings.register_profile("mine", test_cases=7)
     result = pytester.runpytest("-s", "-k", "profile_seed", "--hegel-verbosity=debug")
     result.assert_outcomes(passed=1)
     result.stdout.fnmatch_lines(["*VERBOSITY debug*"])
+
+
+HYPOTHESIS_FILE = """
+from hegel.hypothesis import given, settings, strategies as st
+
+@given(st.integers())
+def test_hypothesis_style(x):
+    print("SEED", getattr(test_hypothesis_style, "_hypothesis_internal_use_seed", None))
+    print("PROFILE", settings.default.max_examples, settings.default.verbosity.name)
+"""
+
+
+def test_plugin_hypothesis_options(pytester: pytest.Pytester):
+    pytester.makepyfile(HYPOTHESIS_FILE)
+    pytester.makefile(
+        ".py",
+        conftest="""
+from hegel.hypothesis import settings
+settings.register_profile("mine", max_examples=3)
+""",
+    )
+    result = pytester.runpytest("-v", "-m", "hypothesis")
+    result.assert_outcomes(passed=1)
+    result = pytester.runpytest(
+        "-s",
+        "--hypothesis-profile=mine",
+        "--hypothesis-seed=5",
+        "--hypothesis-verbosity=quiet",
+    )
+    result.assert_outcomes(passed=1)
+    result.stdout.fnmatch_lines(["*SEED 5*", "*PROFILE 3 quiet*"])
+    result = pytester.runpytest("-s", "--hypothesis-verbosity=normal")
+    result.assert_outcomes(passed=1)
+    result.stdout.fnmatch_lines(["*SEED None*", "*PROFILE 100 normal*"])
+    result = pytester.runpytest("-s", "--hypothesis-profile=mine")
+    result.assert_outcomes(passed=1)
+    result.stdout.fnmatch_lines(["*SEED None*", "*PROFILE 3 normal*"])
+
+
+def test_plugin_seed_option_keeps_an_explicit_seed(pytester: pytest.Pytester):
+    pytester.makepyfile(
+        """
+from hegel.hypothesis import given, seed, strategies as st
+
+@seed(7)
+@given(st.integers())
+def test_seeded(x):
+    print("SEED", test_seeded._hypothesis_internal_use_seed)
+"""
+    )
+    result = pytester.runpytest("-s", "--hypothesis-seed=5")
+    result.assert_outcomes(passed=1)
+    result.stdout.fnmatch_lines(["*SEED 7*"])

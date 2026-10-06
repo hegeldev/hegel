@@ -1,0 +1,86 @@
+"""The small hooks the core keeps for the hegel.hypothesis layer."""
+
+from __future__ import annotations
+
+import hegel
+from hegel import generators as gs
+from tests.helpers import notes, run_test
+
+
+def test_generator_compat_methods():
+    g = gs.integers()
+    g.validate()
+    assert g.is_empty is False
+    assert gs.nothing().is_empty is True
+    assert gs.Generator.flatmap is gs.Generator.flat_map
+
+
+def test_is_final_is_set_on_the_final_replay_and_explicit_cases():
+    seen: list[bool] = []
+
+    def body(tc: hegel.TestCase) -> None:
+        seen.append(tc.is_final)
+        x = tc.draw(gs.integers(0, 10))
+        assert x < 5
+
+    exception = None
+    try:
+        run_test(body, database="")
+    except AssertionError as error:
+        exception = error
+    assert exception is not None
+    assert seen[-1] is True
+    assert seen[0] is False
+
+    seen.clear()
+    hegel.run(
+        body,
+        database="",
+        explicit_cases=[hegel.ExplicitCase((), {"x": 1})],
+        phases=[hegel.Phase.explicit],
+    )
+    assert seen == [True]
+
+
+def test_machine_without_step_output():
+    def body(tc: hegel.TestCase) -> None:
+        machine = hegel.Machine(tc)
+        machine._print_steps = False
+        count = [0]
+
+        def step(tc: hegel.TestCase) -> None:
+            count[0] += 1
+            tc.assume(tc.draw(gs.booleans()))
+            tc.note(f"step {count[0]}")
+            assert count[0] < 3
+
+        machine.rule("step", step)
+        machine.invariant("inv", lambda tc: None)
+        machine.steps(5)
+        machine.run()
+
+    try:
+        run_test(body, database="")
+    except AssertionError as error:
+        text = "\n".join(notes(error))
+    else:
+        raise AssertionError("expected a failure")
+    assert "Step 1" not in text
+    assert "Checking invariants" not in text
+    assert "step 3" in text
+
+
+def test_machine_without_step_output_reports_invariant_failures():
+    def body(tc: hegel.TestCase) -> None:
+        machine = hegel.Machine(tc)
+        machine._print_steps = False
+        machine.rule("step", lambda tc: None)
+        machine.invariant("inv", lambda tc: (_ for _ in ()).throw(ValueError("bad")))
+        machine.run()
+
+    try:
+        run_test(body, database="")
+    except ValueError as error:
+        assert "Invariant inv failed" not in "\n".join(notes(error))
+    else:
+        raise AssertionError("expected a failure")

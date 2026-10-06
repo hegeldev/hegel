@@ -89,11 +89,10 @@ def _configure_hypothesis(config: Any) -> None:
     if seed is not None:
         overrides["database"] = None
         overrides["derandomize"] = False
+        config._hegel_hypothesis_seed = int(seed)
     if overrides:
         settings.register_profile("hegel-pytest", settings.default, **overrides)
         settings.load_profile("hegel-pytest")
-    if seed is not None:
-        config._hegel_hypothesis_seed = int(seed)
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -104,5 +103,5 @@ def pytest_runtest_call(item: Any) -> Any:
         from hegel.hypothesis import seed as seed_test
 
         if getattr(test, "_hypothesis_internal_use_seed", None) is None:
-            seed_test(seed)(test)
+            seed_test(seed)(test)  # type: ignore[type-var]
     yield

@@ -208,10 +208,6 @@ class TestCase:
             return
         if not self._global.emit:
             return
-        explicit = self._global.explicit
-        if explicit is not None:
-            explicit.note(str(message))
-            return
         self._handle.note(str(message))
 
     def target(self, score: float, label: str = "") -> None:
