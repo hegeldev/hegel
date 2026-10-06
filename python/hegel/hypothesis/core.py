@@ -7,6 +7,7 @@ import functools
 import gc
 import hashlib
 import inspect
+import re
 import threading
 import time
 import unittest
@@ -307,17 +308,62 @@ def _gc_cumulative_time() -> float:
     return _gc_state["total"]
 
 
+running_under_pytest = False
+global_force_seed: Hashable | None = None
+
+
+class _Outcomes:
+    """The last outcomes of the test body, for explaining a flaky result."""
+
+    def __init__(self) -> None:
+        self.last_failure: BaseException | None = None
+        self.previous_failure: BaseException | None = None
+        self.last_was_failure = False
+
+    def record(self, error: BaseException | None) -> None:
+        if error is None:
+            self.last_was_failure = False
+            return
+        self.previous_failure = self.last_failure
+        self.last_failure = error
+        self.last_was_failure = True
+
+
 def _flaky_failure(
     error: Flaky,
-    failure: BaseException | None,
+    name: str,
+    outcomes: _Outcomes,
     timing: list[float | None],
     deadline: float | None,
 ) -> BaseException:
     """The Flaky error from the engine as Hypothesis's FlakyFailure group
-    around the failure that did not reproduce, noting deadline timings."""
+    around the failure(s) involved, noting deadline timings."""
+    failure = outcomes.last_failure
     if failure is None:
         return error
-    group = FlakyFailure(str(error), [failure])
+    if outcomes.last_was_failure and outcomes.previous_failure is not None:
+        previous = outcomes.previous_failure
+        involved = [previous, failure]
+        message = (
+            "Inconsistent results from replaying a failing test case!\n"
+            f"  last: {type(previous).__name__}\n  this: {type(failure).__name__}"
+        )
+    else:
+        involved = [failure]
+        message = (
+            f"Hypothesis {name} produces unreliable results: Failed on the first call "
+            "but did not on a subsequent one"
+        )
+    # An exception group cannot hold BaseExceptions such as Hegel's
+    # UnsatisfiedAssumption; those are described in a note instead.
+    nested = [e for e in involved if isinstance(e, Exception)]
+    if not nested:
+        return error
+    group = FlakyFailure(message, nested)
+    for e in involved:
+        if not isinstance(e, Exception):
+            group.add_note(f"One of the runs raised {type(e).__name__}: {e}")
+    group.add_note(str(error))
     if isinstance(failure, DeadlineExceeded) and deadline is not None and timing[1] is not None:
         group.add_note(
             "Unreliable test timing! On an initial run, this test took "
@@ -558,7 +604,7 @@ def _run_given(
     print_args = getattr(wrapped_test, "_hypothesis_internal_print_given_args", True)
     executed = [False]
     valid = [False]
-    last_failure: list[BaseException | None] = [None]
+    outcomes = _Outcomes()
     timing: list[float | None] = [None, None]
 
     def body(tc: TestCase) -> None:
@@ -575,7 +621,8 @@ def _run_given(
             ex = current_example[0]
             try:
                 result = inner(*arguments, **kwargs, **drawn)
-            except UnsatisfiedAssumption:
+            except UnsatisfiedAssumption as error:
+                outcomes.record(error)
                 tc.reject()
             except BaseException as error:
                 valid[0] = True
@@ -583,7 +630,7 @@ def _run_given(
                     if isinstance(error, ex.raises):
                         return
                     raise
-                last_failure[0] = error
+                outcomes.record(error)
                 raise
             valid[0] = True
             # Time in garbage collection and in data.draw() does not count.
@@ -614,18 +661,30 @@ def _run_given(
                 if elapsed > allowed:
                     error = DeadlineExceeded(elapsed, deadline)
                     timing[0] = elapsed
-                    last_failure[0] = error
+                    outcomes.record(error)
                     raise error
                 if timing[0] is not None:
                     timing[1] = elapsed
+            outcomes.record(None)
 
     native = test_settings.to_hegel()
     seed_value = getattr(wrapped_test, "_hypothesis_internal_use_seed", None)
+    if seed_value is None:
+        seed_value = global_force_seed
     if seed_value is not None:
         native = native.replace(seed=_seed_to_int(seed_value), database="")
     reproduce = getattr(wrapped_test, "_hypothesis_internal_use_reproduce_failure", None)
     blob = None
     if reproduce is not None:
+        from hegel.hypothesis import __version__
+
+        if reproduce[0] != __version__:
+            raise InvalidArgument(
+                "Attempting to reproduce a failure from a different version of "
+                f"Hypothesis. This failure is from {reproduce[0]}, but you are "
+                f"currently running {__version__!r}. Please change your Hypothesis "
+                "version to work with this example."
+            )
         blob = reproduce[1]
         if isinstance(blob, bytes):
             blob = blob.decode("ascii")
@@ -675,13 +734,13 @@ def _run_given(
         if failures:
             _raise_explicit_failures(failures, simplify=not verbose)
         if blob is not None:
-            hegel_run(
+            _run_rewriting_reproducer(
                 body, native, database_key=database_key, test_location=location, reproduce_blob=blob
             )
             return
         if not any(p in test_settings.phases for p in (Phase.reuse, Phase.generate)):
             return
-        hegel_run(body, native, database_key=database_key, test_location=location)
+        _run_rewriting_reproducer(body, native, database_key=database_key, test_location=location)
 
     try:
         with local_settings(test_settings):
@@ -697,7 +756,7 @@ def _run_given(
                 "every possible input, and all of them failed a .filter() or assume()"
             ) from None
         if isinstance(error, Flaky):
-            raise _flaky_failure(error, last_failure[0], timing, deadline) from error
+            raise _flaky_failure(error, inner.__name__, outcomes, timing, deadline) from error
         if isinstance(error, FailedHealthCheck):
             raise
         if str(error).startswith("Unsatisfiable"):
@@ -710,6 +769,29 @@ def _run_given(
             f"Unable to satisfy assumptions of {inner.__name__}. Every test case failed a "
             ".filter() or assume() (or none was generated)."
         )
+
+
+_HEGEL_REPRODUCER = re.compile(r'@hegel\.reproduce_failure\("([^"]*)"\)')
+
+
+def _run_rewriting_reproducer(*args: Any, **kwargs: Any) -> None:
+    """Run the engine, rewriting the reproducer note on a failure into the
+    Hypothesis form ``@reproduce_failure(version, blob)``."""
+    try:
+        hegel_run(*args, **kwargs)
+    except BaseException as error:
+        notes = getattr(error, "__notes__", None)
+        if notes:
+            from hegel.hypothesis import __version__
+
+            def rewrite(match: re.Match[str]) -> str:
+                return f"@reproduce_failure({__version__!r}, {match.group(1).encode('ascii')!r})"
+
+            error.__notes__ = [
+                _HEGEL_REPRODUCER.sub(rewrite, note).replace("above @hegel.test", "above @given")
+                for note in notes
+            ]
+        raise
 
 
 def _raise_explicit_failures(failures: list[tuple[str, BaseException]], *, simplify: bool) -> None:

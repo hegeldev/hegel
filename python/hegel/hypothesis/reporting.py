@@ -10,13 +10,24 @@ from typing import Any
 
 from hegel.runner import with_output_override
 
-__all__ = ["base_report", "current_reporter", "default", "report", "with_reporter"]
+__all__ = [
+    "base_report",
+    "current_reporter",
+    "debug_report",
+    "default",
+    "report",
+    "verbose_report",
+    "with_reporter",
+]
 
 _local = threading.local()
 
 
 def default(value: object) -> None:
-    print(value)  # noqa: T201
+    try:
+        print(value)  # noqa: T201
+    except UnicodeEncodeError:
+        print(str(value).encode("utf-8"))  # noqa: T201
 
 
 def current_reporter() -> Callable[[object], Any]:
@@ -39,3 +50,19 @@ def report(text: str) -> None:
 
 
 base_report = report
+
+
+def verbose_report(text: str) -> None:
+    """Report ``text`` when the current settings are verbose or debug."""
+    from hegel.hypothesis._settings import Verbosity, settings
+
+    if settings.default.verbosity >= Verbosity.verbose:
+        report(text)
+
+
+def debug_report(text: str) -> None:
+    """Report ``text`` when the current settings are debug."""
+    from hegel.hypothesis._settings import Verbosity, settings
+
+    if settings.default.verbosity >= Verbosity.debug:
+        report(text)
