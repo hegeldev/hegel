@@ -207,3 +207,14 @@ def test_generator_base_class():
         assert gs.just(1).do_draw_and_print(tc, printer) == 1
 
     run_test(body, test_cases=1)
+
+
+def test_print_with_is_skipped_for_silent_printers():
+    calls = []
+    printed = gs.just(1).print_with(lambda value, printer: calls.append(value))
+
+    def body(tc):
+        assert printed.do_draw_and_print(tc, PrettyPrinter.noop()) == 1
+
+    run_test(body, test_cases=1)
+    assert calls == []

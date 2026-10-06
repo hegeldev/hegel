@@ -193,22 +193,12 @@ def _print_mapping(items: Any, printer: PrettyPrinter, open: str, close: str) ->
     printer.end_group(close)
 
 
-def _print_call(
-    name: str, args: list[Any], kwargs: list[tuple[str, Any]], printer: PrettyPrinter
-) -> None:
+def _print_call(name: str, kwargs: list[tuple[str, Any]], printer: PrettyPrinter) -> None:
     printer.begin_group(len(name) + 1, name + "(")
-    first = True
-    for arg in args:
-        if not first:
+    for index, (key, value) in enumerate(kwargs):
+        if index > 0:
             printer.text(",")
             printer.breakable(" ")
-        first = False
-        pretty_print(arg, printer)
-    for key, value in kwargs:
-        if not first:
-            printer.text(",")
-            printer.breakable(" ")
-        first = False
         printer.text(key + "=")
         pretty_print(value, printer)
     printer.end_group(")")
@@ -255,7 +245,7 @@ def pretty_print(value: Any, printer: PrettyPrinter) -> None:
         fields = [
             (f.name, getattr(value, f.name)) for f in dataclasses.fields(value) if f.repr and f.init
         ]
-        _print_call(cls.__qualname__, [], fields, printer)
+        _print_call(cls.__qualname__, fields, printer)
     elif isinstance(value, enum.Enum):
         printer.text(f"{cls.__qualname__}.{value.name}")
     else:

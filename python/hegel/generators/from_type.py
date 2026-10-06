@@ -172,8 +172,6 @@ def from_type(type_: Any) -> Generator[Any]:
         raise InvalidArgument(f"from_type({type_!r}): not a type")
     if issubclass(type_, enum.Enum):
         return sampled_from(type_)
-    if issubclass(type_, bool):
-        return booleans()
     if dataclasses.is_dataclass(type_):
         from hegel.generators.composite import builds
 

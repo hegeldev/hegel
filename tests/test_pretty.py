@@ -95,6 +95,7 @@ def test_document_operations():
     printer = document.printer
     assert printer.should_print
     printer.text("line one\nline two")
+    printer.text("\n\n")
     printer.comment("note")
     printer.hard_break()
     printer.begin_group(2, "[")

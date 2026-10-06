@@ -35,6 +35,15 @@ def output() -> Iterator[Output]:
 def _quiet_default_profile() -> Iterator[None]:
     """Keep the test-suite's own runs away from the example database and
     the engine's environment-dependent default profile."""
-    hegel.Settings.register_profile("hegel-tests", database="", test_cases=30, print_blob=False)
+    hegel.Settings.register_profile(
+        "hegel-tests",
+        hegel.Settings.from_profile("development"),
+        database="",
+        test_cases=30,
+        print_blob=False,
+        verbosity=hegel.Verbosity.normal,
+        seed=None,
+        derandomize=False,
+    )
     hegel.Settings.set_default_profile("hegel-tests")
     yield

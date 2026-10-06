@@ -48,6 +48,7 @@ def test_text_filters():
         gs.text(categories=[], include_characters="ab", min_size=1), lambda s: set(s) <= set("ab")
     )
     check_all(gs.text(exclude_characters="a", codec="ascii"), lambda s: "a" not in s)
+    check_all(gs.text(exclude_categories=["Cs"], min_size=1), lambda s: len(s) >= 1)
     with pytest.raises(hegel.InvalidArgument, match="No valid characters"):
         gs.text(categories=["Cs"])
 

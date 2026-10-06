@@ -510,3 +510,74 @@ def test_sys_exit_propagates():
 
     with pytest.raises(SystemExit):
         hegel.run(body)
+
+
+class _FakeResult:
+    def __init__(self, status, error=None, failures=()):
+        self._status = status
+        self._error = error
+        self._failures = list(failures)
+
+    def status(self):
+        return self._status
+
+    def error(self):
+        return self._error
+
+    def failure_count(self):
+        return len(self._failures)
+
+    def failure(self, index):
+        return self._failures[index]
+
+
+class _FakeRun:
+    def __init__(self, result):
+        self._result = result
+
+    def next_test_case(self):
+        return None
+
+    def drain_output(self):
+        return ["engine line"]
+
+    def result(self):
+        return self._result
+
+
+@pytest.mark.parametrize(
+    "result, exception, match",
+    [
+        (_FakeResult(hegel._native.RUN_STATUS_ERROR, "Something odd"), hegel.RunError, "odd"),
+        (_FakeResult(hegel._native.RUN_STATUS_ERROR), hegel.RunError, "unknown error"),
+        (
+            _FakeResult(hegel._native.RUN_STATUS_FAILED_NONDETERMINISTIC),
+            hegel.InternalError,
+            "no stashed failure",
+        ),
+        (
+            _FakeResult(hegel._native.RUN_STATUS_FAILED, failures=[("origin", None)]),
+            hegel.InternalError,
+            "no reproduction blob",
+        ),
+    ],
+)
+def test_unexpected_engine_results(monkeypatch, output, result, exception, match):
+    monkeypatch.setattr(hegel._native.Run, "start", staticmethod(lambda settings: _FakeRun(result)))
+    with pytest.raises(exception, match=match):
+        hegel.run(lambda tc: None)
+    assert "engine line" in output.lines
+
+
+def test_explicit_test_case_below_test_decorator():
+    seen = []
+
+    @hegel.test(test_cases=1)
+    @hegel.explicit_test_case(1)
+    @hegel.explicit_test_case(2)
+    def test_it(tc):
+        seen.append(tc.draw(gs.integers(5, 9)))
+
+    assert [c.args for c in test_it.hegel_explicit_cases] == [(1,), (2,)]
+    test_it()
+    assert seen[:2] == [1, 2]

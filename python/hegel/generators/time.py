@@ -197,8 +197,6 @@ def timezones(*, no_cache: bool = False) -> Generator[dt.tzinfo]:
         keys = []
     if not keys:
         return just(dt.UTC)  # nocov
-    if "UTC" in keys:
-        keys.remove("UTC")
-        keys.insert(0, "UTC")
+    keys = ["UTC", *(key for key in keys if key != "UTC")]
     factory = zoneinfo.ZoneInfo.no_cache if no_cache else zoneinfo.ZoneInfo
     return sampled_from(keys).map(factory)

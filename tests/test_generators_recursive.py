@@ -154,3 +154,10 @@ def test_deferred_mutual_recursion_and_threads():
     for t in threads:
         t.join()
     assert len(set(labels)) == 1
+
+
+def test_recursive_branches_can_draw_subtrees_silently():
+    nested = gs.recursive(gs.integers(), lambda c: gs.lists(c, min_size=1).map(tuple))
+    check_all(nested, lambda v: isinstance(v, (int, tuple)), test_cases=100)
+    wrapped = gs.recursive(gs.integers(), lambda c: c.map(lambda v: [v]))
+    check_all(wrapped, lambda v: isinstance(v, (int, list)), test_cases=100)

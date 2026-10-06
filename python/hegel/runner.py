@@ -9,9 +9,9 @@ import os
 import sys
 import threading
 import traceback
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, NoReturn, TypeVar
 
 from hegel import _native
 from hegel.errors import (
@@ -68,7 +68,10 @@ class RunOutput:
         (self.sink or _stderr_line)(message)
 
     def block(self, text: str) -> None:
-        for line in text.rstrip("\n").split("\n"):
+        self.lines(text.rstrip("\n").split("\n"))
+
+    def lines(self, lines: Iterable[str]) -> None:
+        for line in lines:
             self.line(line)
 
     def resolved_sink(self) -> OutputSink:
@@ -199,8 +202,7 @@ def _drive(
     stash: tuple[list[str], str | None, BaseException] | None = None
 
     def flush() -> None:
-        for line in run.drain_output():
-            output.line(line)
+        output.lines(run.drain_output())
 
     while True:
         handle = run.next_test_case()
@@ -239,8 +241,7 @@ def _drive(
         if stash is None:
             raise InternalError("a failed nondeterministic run has no stashed failure")
         stashed_lines, diagnostic, exception = stash
-        for line in stashed_lines:
-            output.line(line)
+        output.lines(stashed_lines)
         if diagnostic is not None:
             output.block(diagnostic)
         _annotate(exception, stashed_lines, None)
@@ -301,11 +302,9 @@ def _replay_blob(
     case_sink: OutputSink | None,
 ) -> _CaseOutcome:
     handle = _native.TestCase.from_blob(native_settings, blob)
-    for line in handle.drain_output():
-        output.line(line)
+    output.lines(handle.drain_output())
     outcome = _run_test_case(handle, test_fn, True, verbosity, output, case_sink)
-    for line in handle.drain_output():
-        output.line(line)
+    output.lines(handle.drain_output())
     return outcome
 
 
@@ -315,7 +314,7 @@ def _drive_blob_replay(
     database_key: str | None,
     test_location: TestLocation | None,
     blob: str,
-) -> None:
+) -> NoReturn:
     output = RunOutput.resolve()
     native_settings = settings._build(database_key, test_location)
     lines: list[str] = []
@@ -346,8 +345,7 @@ def _run_explicit(
         raise
     except BaseException as exception:
         output.line(f"Explicit test case {case!r} failed:")
-        for line in explicit.lines:
-            output.line(line)
+        output.lines(explicit.lines)
         output.block(_format_exception(exception))
         _annotate(exception, explicit.lines, None)
         raise
@@ -379,7 +377,6 @@ def run(
     )
     if reproduce_blob is not None:
         _drive_blob_replay(test_fn, resolved, database_key, test_location, reproduce_blob)
-        return
     if Phase.explicit in resolved.phases:
         output = RunOutput.resolve()
         for case in explicit_cases:
