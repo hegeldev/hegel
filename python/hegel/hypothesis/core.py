@@ -588,6 +588,29 @@ def _check_fixtures(inner: Any, kwargs: dict[str, Any], test_settings: Settings)
             )
 
 
+def _executor(runner: Any) -> Callable[[Callable[[], Any]], Any]:
+    """How to call the test body: through ``runner.execute_example`` or
+    between ``setup_example`` and ``teardown_example`` when the test's
+    instance defines them, as in Hypothesis."""
+    execute_example = getattr(runner, "execute_example", None)
+    if execute_example is not None:
+        return execute_example
+    if hasattr(runner, "setup_example") or hasattr(runner, "teardown_example"):
+        setup = getattr(runner, "setup_example", None) or (lambda: None)
+        teardown = getattr(runner, "teardown_example", None) or (lambda token: None)
+
+        def execute(function: Callable[[], Any]) -> Any:
+            token = None
+            try:
+                token = setup()
+                return function()
+            finally:
+                teardown(token)
+
+        return execute
+    return lambda function: function()
+
+
 def _run_given(
     inner: Any,
     wrapped_test: Any,
@@ -606,25 +629,32 @@ def _run_given(
     valid = [False]
     outcomes = _Outcomes()
     timing: list[float | None] = [None, None]
+    execute = _executor(selfy)
 
     def body(tc: TestCase) -> None:
         executed[0] = True
         with BuildContext(tc, is_final=tc.is_final, runner=selfy) as context:
-            drawn = {}
-            for name, strategy in given_kwargs.items():
-                try:
-                    if print_args:
-                        drawn[name] = tc.draw(strategy, name=name)
-                    else:
-                        drawn[name] = tc.draw_silent(strategy)
-                except Exception as error:
-                    error.add_note(f"while generating {name!r} from {strategy!r}")
-                    raise
-            started = time.perf_counter()
+            started: list[float] = []
+
+            def run() -> Any:
+                # Drawn under the executor too, so setup_example precedes it.
+                drawn = {}
+                for name, strategy in given_kwargs.items():
+                    try:
+                        if print_args:
+                            drawn[name] = tc.draw(strategy, name=name)
+                        else:
+                            drawn[name] = tc.draw_silent(strategy)
+                    except Exception as error:
+                        error.add_note(f"while generating {name!r} from {strategy!r}")
+                        raise
+                started.append(time.perf_counter())
+                return inner(*arguments, **kwargs, **drawn)
+
             gc_started = _gc_cumulative_time()
             ex = current_example[0]
             try:
-                result = inner(*arguments, **kwargs, **drawn)
+                result = execute(run)
             except UnsatisfiedAssumption as error:
                 outcomes.record(error)
                 tc.reject()
@@ -639,8 +669,7 @@ def _run_given(
             valid[0] = True
             # Time in garbage collection and in data.draw() does not count.
             elapsed = (
-                time.perf_counter()
-                - started
+                (time.perf_counter() - started[0] if started else 0.0)
                 - (_gc_cumulative_time() - gc_started)
                 - context.draw_time
             )
