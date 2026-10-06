@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import importlib
 import inspect
+import sys
 
 import pytest
 
@@ -164,3 +166,33 @@ def test_builds_skips_non_type_annotations():
         return x
 
     assert find_example(gs.builds(target)) == 0
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        "array_api",
+        "cli",
+        "codemods",
+        "dateutil",
+        "django",
+        "dpcontracts",
+        "ghostwriter",
+        "lark",
+        "numpy",
+        "pandas",
+        "pytz",
+        "redis",
+    ],
+)
+def test_hypothesis_extras_say_they_are_unavailable(module):
+    sys.modules.pop(f"hegel.hypothesis.extra.{module}", None)
+    with pytest.raises(ModuleNotFoundError, match="does not provide hypothesis.extra"):
+        importlib.import_module(f"hegel.hypothesis.extra.{module}")
+    with pytest.raises(ModuleNotFoundError, match="does not provide hypothesis.extra"):
+        exec(f"from hegel.hypothesis.extra import {module}", {})
+
+
+def test_hypothesis_statistics_says_it_is_unavailable():
+    with pytest.raises(ModuleNotFoundError, match="does not provide hypothesis.statistics"):
+        importlib.import_module("hegel.hypothesis.statistics")
