@@ -15,12 +15,18 @@ build-release:
 test *ARGS:
     uv run pytest {{ARGS}}
 
+# The package's own test suite.
 check-tests:
-    uv run pytest -q
+    uv run pytest -q tests --ignore=tests/hypothesis_port
 
+# The package's own test suite, requiring complete line coverage.
 check-coverage:
     uv run coverage run -m pytest -q tests --ignore=tests/hypothesis_port
     uv run coverage report
+
+# The Hypothesis test suite, ported to run on hegel.hypothesis.
+check-hypothesis-port:
+    uv run pytest -q tests/hypothesis_port -p no:cacheprovider
 
 format:
     uv run ruff format python tests
@@ -38,4 +44,4 @@ check-lint:
 check-types:
     uv run mypy python/hegel
 
-check: check-format check-lint check-tests check-coverage
+check: check-format check-lint check-types check-coverage check-hypothesis-port
