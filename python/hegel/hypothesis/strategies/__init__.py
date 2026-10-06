@@ -36,7 +36,7 @@ from typing import Any, Protocol, TypeVar
 from hegel import generators as gs
 from hegel._draw_names import DrawName
 from hegel.generators.base import Generator
-from hegel.generators.combinators import Just, Nothing, SampledFrom
+from hegel.generators.combinators import Just, Nothing, OneOf, SampledFrom
 from hegel.generators.recursive import Deferred
 from hegel.generators.strings import Characters
 from hegel.hypothesis.control import current_build_context, currently_in_test_context
@@ -986,39 +986,82 @@ def characters(
     )
 
 
+def _alphabet_characters(alphabet: Any) -> list[str] | None:
+    """The characters of an alphabet given as a collection, or as a
+    strategy that can only draw from a known set (just, sampled_from, and
+    unions of them), or None for any other strategy."""
+    if isinstance(alphabet, SearchStrategy):
+        alphabet = unwrap_strategies(alphabet)
+    if isinstance(alphabet, Just):
+        return _check_characters([alphabet.value])
+    if isinstance(alphabet, SampledFrom):
+        return _check_characters(list(alphabet.elements))
+    if isinstance(alphabet, OneOf):
+        branches = [_alphabet_characters(g) for g in alphabet.generators]
+        if any(branch is None for branch in branches):
+            return None
+        return [c for branch in branches for c in branch]  # type: ignore[union-attr]
+    if isinstance(alphabet, Generator):
+        return None
+    if isinstance(alphabet, (bytes, dict)):
+        raise InvalidArgument(
+            f"alphabet={alphabet!r} must be a collection of characters, or a "
+            "strategy generating single characters"
+        )
+    try:
+        chars = list(alphabet)
+    except TypeError:
+        raise InvalidArgument(
+            f"alphabet={alphabet!r} must be a collection of characters, or a "
+            "strategy generating single characters"
+        ) from None
+    if isinstance(alphabet, str) and len(alphabet) > 1:
+        try:
+            codecs.lookup(alphabet)
+        except LookupError:
+            pass
+        else:
+            warnings.warn(
+                f"alphabet={alphabet!r} is the name of a codec: it looks like you are "
+                "trying to use the codec, but this alphabet is the characters "
+                f"{sorted(set(alphabet))!r}. Use characters(codec={alphabet!r}) for the "
+                "characters the codec can encode.",
+                HypothesisWarning,
+                stacklevel=4,
+            )
+    return _check_characters(chars)
+
+
+def _check_characters(chars: list[Any]) -> list[str]:
+    not_strings = [c for c in chars if not isinstance(c, str)]
+    if not_strings:
+        raise InvalidArgument(
+            f"The following elements in alphabet are not unicode strings: {not_strings!r}"
+        )
+    bad = [c for c in chars if len(c) != 1]
+    if bad:
+        raise InvalidArgument(
+            "The following elements in alphabet are not of length one, which leads "
+            f"to violation of size constraints: {bad!r}"
+        )
+    return chars
+
+
 def _resolve_alphabet(alphabet: Any) -> Generator[str] | None:
     """Resolve the ``alphabet=`` argument of text() and from_regex() to a
     characters() generator when it is statically known (a collection of
-    characters, or a sampled_from/characters strategy), ``NOTHING`` when
-    it has no characters, or None when only drawing from it can tell."""
-    if not isinstance(alphabet, SearchStrategy):
-        if isinstance(alphabet, (bytes, dict)):
-            raise InvalidArgument(
-                f"alphabet={alphabet!r} must be a collection of characters, or a "
-                "strategy generating single characters"
-            )
-        try:
-            chars = list(alphabet)
-        except TypeError:
-            raise InvalidArgument(
-                f"alphabet={alphabet!r} must be a collection of characters, or a "
-                "strategy generating single characters"
-            ) from None
-        bad = [c for c in chars if not isinstance(c, str) or len(c) != 1]
-        if bad:
-            raise InvalidArgument(
-                "The following elements in alphabet are not of length one, which leads "
-                f"to violation of size constraints: {bad!r}"
-            )
-        if not chars:
-            return gs.nothing()
-        return gs.characters(categories=[], include_characters="".join(dict.fromkeys(chars)))
-    inner = unwrap_strategies(alphabet)
+    characters, or a just/sampled_from/characters strategy or a union of
+    them), ``NOTHING`` when it has no characters, or None when only drawing
+    from it can tell."""
+    inner = unwrap_strategies(alphabet) if isinstance(alphabet, SearchStrategy) else alphabet
     if isinstance(inner, Characters):
         return inner
-    if isinstance(inner, SampledFrom):
-        return _resolve_alphabet(list(inner.elements))
-    return None
+    chars = _alphabet_characters(alphabet)
+    if chars is None:
+        return None
+    if not chars:
+        return gs.nothing()
+    return gs.characters(categories=[], include_characters="".join(dict.fromkeys(chars)))
 
 
 @defines_strategy

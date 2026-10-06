@@ -158,10 +158,6 @@ def test_matching(category, predicate, invert, is_unicode):
     ],
 )
 @pytest.mark.parametrize("encode", [None, False, True])
-@pytest.mark.xfail(
-    strict=False,
-    reason="Hegel's from_regex does not yet support this construct (re.ASCII/IGNORECASE/DOTALL/MULTILINE flags, bytes character classes, alphabet checks, lookaheads)",
-)
 def test_can_generate(pattern, encode):
     alphabet = st.characters(max_codepoint=1000) if encode is None else None
     if encode:
@@ -181,10 +177,6 @@ def test_can_generate(pattern, encode):
         re.compile("\\A[ab]\\Z", re.IGNORECASE),
         "(?i)\\A[ab]\\Z",
     ],
-)
-@pytest.mark.xfail(
-    strict=False,
-    reason="Hegel's from_regex does not yet support this construct (re.ASCII/IGNORECASE/DOTALL/MULTILINE flags, bytes character classes, alphabet checks, lookaheads)",
 )
 def test_literals_with_ignorecase(pattern):
     strategy = st.from_regex(pattern)
@@ -208,19 +200,11 @@ def test_any_doesnt_generate_newline():
 
 
 @pytest.mark.parametrize("pattern", [re.compile("\\A.\\Z", re.DOTALL), "(?s)\\A.\\Z"])
-@pytest.mark.xfail(
-    strict=False,
-    reason="Hegel's from_regex does not yet support this construct (re.ASCII/IGNORECASE/DOTALL/MULTILINE flags, bytes character classes, alphabet checks, lookaheads)",
-)
 def test_any_with_dotall_generate_newline(pattern):
     find_any(st.from_regex(pattern), lambda s: s == "\n", settings(max_examples=10**6))
 
 
 @pytest.mark.parametrize("pattern", [re.compile(b"\\A.\\Z", re.DOTALL), b"(?s)\\A.\\Z"])
-@pytest.mark.xfail(
-    strict=False,
-    reason="Hegel's from_regex does not yet support this construct (re.ASCII/IGNORECASE/DOTALL/MULTILINE flags, bytes character classes, alphabet checks, lookaheads)",
-)
 def test_any_with_dotall_generate_newline_binary(pattern):
     find_any(st.from_regex(pattern), lambda s: s == b"\n", settings(max_examples=10**6))
 
@@ -235,10 +219,6 @@ def test_any_with_dotall_generate_newline_binary(pattern):
 )
 @pytest.mark.parametrize("is_unicode", [False, True])
 @pytest.mark.parametrize("invert", [False, True])
-@pytest.mark.xfail(
-    strict=False,
-    reason="Hegel's from_regex does not yet support this construct (re.ASCII/IGNORECASE/DOTALL/MULTILINE flags, bytes character classes, alphabet checks, lookaheads)",
-)
 def test_groups(pattern, is_unicode, invert):
     # Under re.ASCII, the positive categories \d \s \w match only ascii
     # characters, and the negative categories \D \S \W match everything else.
@@ -271,7 +251,7 @@ def test_groups(pattern, is_unicode, invert):
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel's from_regex does not yet support this construct (re.ASCII/IGNORECASE/DOTALL/MULTILINE flags, bytes character classes, alphabet checks, lookaheads)",
+    reason="Engine: libhegel generates for a pattern no string can match, rather than reporting it empty (docs/engine-issues.md)",
 )
 def test_caret_in_the_middle_does_not_generate_anything():
     r = re.compile("a^b")
@@ -299,7 +279,7 @@ def test_groupref_exists():
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel's from_regex does not yet support this construct (re.ASCII/IGNORECASE/DOTALL/MULTILINE flags, bytes character classes, alphabet checks, lookaheads)",
+    reason="Engine: libhegel generates for a pattern no string can match, rather than reporting it empty (docs/engine-issues.md)",
 )
 def test_impossible_negative_lookahead():
     assert_no_examples(st.from_regex("(?!foo)foo"))
@@ -472,10 +452,6 @@ def test_issue_992_regression(data):
         (re.compile(b"[ab]", re.IGNORECASE), b"A"),
     ],
 )
-@pytest.mark.xfail(
-    strict=False,
-    reason="Hegel's from_regex does not yet support this construct (re.ASCII/IGNORECASE/DOTALL/MULTILINE flags, bytes character classes, alphabet checks, lookaheads)",
-)
 def test_fullmatch_generates_example(pattern, matching_str):
     find_any(
         st.from_regex(pattern, fullmatch=True),
@@ -536,10 +512,6 @@ def test_internals_can_disable_newline_from_dollar_for_jsonschema():
 
 
 @given(st.from_regex(r"[^.].*", alphabet=st.sampled_from("abc") | st.just(".")))
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel's from_regex does not yet support this construct (re.ASCII/IGNORECASE/DOTALL/MULTILINE flags, bytes character classes, alphabet checks, lookaheads)",
-)
 def test_can_pass_union_for_alphabet(_):
     pass
 
@@ -564,17 +536,13 @@ def test_can_pass_collections_for_alphabet(alphabet):
 )
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel's from_regex does not yet support this construct (re.ASCII/IGNORECASE/DOTALL/MULTILINE flags, bytes character classes, alphabet checks, lookaheads)",
+    reason="Engine: libhegel doesn't report a character class with no characters in the alphabet (docs/engine-issues.md)",
 )
 def test_charsets_which_match_nothing_in_the_alphabet(pattern, alphabet):
     with pytest.raises(InvalidArgument, match="specified alphabet"):
         st.from_regex(pattern, alphabet=alphabet).validate()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel's from_regex does not yet support this construct (re.ASCII/IGNORECASE/DOTALL/MULTILINE flags, bytes character classes, alphabet checks, lookaheads)",
-)
 def test_charset_matching_nothing_only_rules_out_its_own_branch():
     assert_all_examples(
         st.from_regex("[^a]|a", alphabet=st.just("a"), fullmatch=True),
@@ -660,19 +628,11 @@ def test_negated_class_with_members_outside_alphabet():
         (st.just("a") | st.integers(), "must be a collection of characters"),
     ],
 )
-@pytest.mark.xfail(
-    strict=False,
-    reason="Hegel's from_regex does not yet support this construct (re.ASCII/IGNORECASE/DOTALL/MULTILINE flags, bytes character classes, alphabet checks, lookaheads)",
-)
 def test_invalid_alphabets(alphabet, error_part):
     with pytest.raises(InvalidArgument, match=error_part):
         st.from_regex(r".", alphabet=alphabet).validate()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel does not warn when the alphabet cannot be encoded by the pattern's codec",
-)
 def test_alphabet_codec_warning():
     with pytest.warns(HypothesisWarning, match="trying to use the codec"):
         st.from_regex(r".", alphabet="ascii").validate()
