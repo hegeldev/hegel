@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "hegel"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Property-based testing for Python, built on the Hegel engine."
 readme = "README.md"
 license = { text = "MIT" }
