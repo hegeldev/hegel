@@ -55,7 +55,24 @@ _POINTLESS_DECORATORS = [
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_call(item: Any) -> Any:
     obj = getattr(item, "obj", None)
-    if obj is not None and not getattr(obj, "is_hypothesis_test", False):
+    if obj is not None and getattr(obj, "is_hypothesis_test", False):
+        if item.get_closest_marker("parametrize") is not None:
+            # pytest makes a new class instance per parametrization, which
+            # would look like differing executors; see Hypothesis issue 3733.
+            from hegel.hypothesis._settings import HealthCheck
+            from hegel.hypothesis._settings import settings as Settings
+
+            fn = getattr(obj, "__func__", obj)
+            current = getattr(fn, "_hypothesis_internal_use_settings", None) or Settings.default
+            if HealthCheck.differing_executors not in current.suppress_health_check:
+                fn._hypothesis_internal_use_settings = Settings(
+                    current,
+                    suppress_health_check=[
+                        *current.suppress_health_check,
+                        HealthCheck.differing_executors,
+                    ],
+                )
+    elif obj is not None:
         # Hypothesis's decorators do nothing without @given, so refuse them.
         for name, attribute in _POINTLESS_DECORATORS:
             if getattr(obj, attribute, None):
