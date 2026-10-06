@@ -67,15 +67,21 @@ impl Settings {
     }
 
     fn set_report_multiple_failures(&self, value: bool) -> PyResult<()> {
-        with_ctx(|ctx| check(unsafe { c::hegel_settings_set_report_multiple_failures(ctx, self.raw.0, value) }))
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_settings_set_report_multiple_failures(ctx, self.raw.0, value) })
+        })
     }
 
     fn set_show_statistics(&self, value: bool) -> PyResult<()> {
-        with_ctx(|ctx| check(unsafe { c::hegel_settings_set_show_statistics(ctx, self.raw.0, value) }))
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_settings_set_show_statistics(ctx, self.raw.0, value) })
+        })
     }
 
     fn set_unbounded_choices(&self, value: bool) -> PyResult<()> {
-        with_ctx(|ctx| check(unsafe { c::hegel_settings_set_unbounded_choices(ctx, self.raw.0, value) }))
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_settings_set_unbounded_choices(ctx, self.raw.0, value) })
+        })
     }
 
     fn set_phases(&self, value: u32) -> PyResult<()> {
@@ -83,13 +89,14 @@ impl Settings {
     }
 
     fn set_suppress_health_check(&self, value: u32) -> PyResult<()> {
-        with_ctx(|ctx| check(unsafe { c::hegel_settings_set_suppress_health_check(ctx, self.raw.0, value) }))
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_settings_set_suppress_health_check(ctx, self.raw.0, value) })
+        })
     }
 
     fn set_print_blob(&self, value: bool) -> PyResult<()> {
         with_ctx(|ctx| check(unsafe { c::hegel_settings_set_print_blob(ctx, self.raw.0, value) }))
     }
-
 
     #[pyo3(signature = (seed))]
     fn set_seed(&self, seed: Option<u64>) -> PyResult<()> {
@@ -142,13 +149,17 @@ impl Settings {
 
     fn get_test_cases(&self) -> PyResult<u64> {
         let mut out: u64 = 0;
-        with_ctx(|ctx| check(unsafe { c::hegel_settings_get_test_cases(ctx, self.raw.0, &mut out) }))?;
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_settings_get_test_cases(ctx, self.raw.0, &mut out) })
+        })?;
         Ok(out)
     }
 
     fn get_derandomize(&self) -> PyResult<bool> {
         let mut out: bool = false;
-        with_ctx(|ctx| check(unsafe { c::hegel_settings_get_derandomize(ctx, self.raw.0, &mut out) }))?;
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_settings_get_derandomize(ctx, self.raw.0, &mut out) })
+        })?;
         Ok(out)
     }
 
@@ -160,38 +171,51 @@ impl Settings {
 
     fn get_print_blob(&self) -> PyResult<bool> {
         let mut out: bool = false;
-        with_ctx(|ctx| check(unsafe { c::hegel_settings_get_print_blob(ctx, self.raw.0, &mut out) }))?;
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_settings_get_print_blob(ctx, self.raw.0, &mut out) })
+        })?;
         Ok(out)
     }
 
     fn get_report_multiple_failures(&self) -> PyResult<bool> {
         let mut out: bool = false;
-        with_ctx(|ctx| check(unsafe { c::hegel_settings_get_report_multiple_failures(ctx, self.raw.0, &mut out) }))?;
+        with_ctx(|ctx| {
+            check(unsafe {
+                c::hegel_settings_get_report_multiple_failures(ctx, self.raw.0, &mut out)
+            })
+        })?;
         Ok(out)
     }
 
     fn get_show_statistics(&self) -> PyResult<bool> {
         let mut out: bool = false;
-        with_ctx(|ctx| check(unsafe { c::hegel_settings_get_show_statistics(ctx, self.raw.0, &mut out) }))?;
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_settings_get_show_statistics(ctx, self.raw.0, &mut out) })
+        })?;
         Ok(out)
     }
 
     fn get_suppress_health_check(&self) -> PyResult<u32> {
         let mut out: u32 = 0;
-        with_ctx(|ctx| check(unsafe { c::hegel_settings_get_suppress_health_check(ctx, self.raw.0, &mut out) }))?;
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_settings_get_suppress_health_check(ctx, self.raw.0, &mut out) })
+        })?;
         Ok(out)
     }
 
     fn get_unbounded_choices(&self) -> PyResult<bool> {
         let mut out: bool = false;
-        with_ctx(|ctx| check(unsafe { c::hegel_settings_get_unbounded_choices(ctx, self.raw.0, &mut out) }))?;
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_settings_get_unbounded_choices(ctx, self.raw.0, &mut out) })
+        })?;
         Ok(out)
     }
 
-
     fn get_verbosity(&self) -> PyResult<u32> {
         let mut out = c::hegel_verbosity_t::HEGEL_VERBOSITY_NORMAL;
-        with_ctx(|ctx| check(unsafe { c::hegel_settings_get_verbosity(ctx, self.raw.0, &mut out) }))?;
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_settings_get_verbosity(ctx, self.raw.0, &mut out) })
+        })?;
         Ok(out as u32)
     }
 

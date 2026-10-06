@@ -26,7 +26,12 @@ pub(crate) use settings::Settings;
 pub(crate) use strings::StringGenerator;
 pub(crate) use test_case::{Collection, Pool, Recursion, Run, RunResult, StateMachine, TestCase};
 
-create_exception!(hegel._native, HegelError, PyException, "Base class for Hegel errors.");
+create_exception!(
+    hegel._native,
+    HegelError,
+    PyException,
+    "Base class for Hegel errors."
+);
 create_exception!(
     hegel._native,
     InvalidArgument,
@@ -260,8 +265,14 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("STATE_MACHINE_DONE", c::HEGEL_STATE_MACHINE_DONE)?;
     m.add("RESULT_OK", Rc::HEGEL_OK as i32)?;
     m.add("STATUS_VALID", c::hegel_status_t::HEGEL_STATUS_VALID as u32)?;
-    m.add("STATUS_INVALID", c::hegel_status_t::HEGEL_STATUS_INVALID as u32)?;
-    m.add("STATUS_OVERRUN", c::hegel_status_t::HEGEL_STATUS_OVERRUN as u32)?;
+    m.add(
+        "STATUS_INVALID",
+        c::hegel_status_t::HEGEL_STATUS_INVALID as u32,
+    )?;
+    m.add(
+        "STATUS_OVERRUN",
+        c::hegel_status_t::HEGEL_STATUS_OVERRUN as u32,
+    )?;
     m.add(
         "STATUS_INTERESTING",
         c::hegel_status_t::HEGEL_STATUS_INTERESTING as u32,
@@ -282,15 +293,39 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         "RUN_STATUS_FAILED_NONDETERMINISTIC",
         c::hegel_run_status_t::HEGEL_RUN_STATUS_FAILED_NONDETERMINISTIC as u32,
     )?;
-    m.add("VERBOSITY_QUIET", c::hegel_verbosity_t::HEGEL_VERBOSITY_QUIET as u32)?;
-    m.add("VERBOSITY_NORMAL", c::hegel_verbosity_t::HEGEL_VERBOSITY_NORMAL as u32)?;
-    m.add("VERBOSITY_VERBOSE", c::hegel_verbosity_t::HEGEL_VERBOSITY_VERBOSE as u32)?;
-    m.add("VERBOSITY_DEBUG", c::hegel_verbosity_t::HEGEL_VERBOSITY_DEBUG as u32)?;
-    m.add("BACKEND_DEFAULT", c::hegel_backend_t::HEGEL_BACKEND_DEFAULT as u32)?;
-    m.add("BACKEND_URANDOM", c::hegel_backend_t::HEGEL_BACKEND_URANDOM as u32)?;
-    m.add("PHASE_EXPLICIT", c::hegel_phase_t::HEGEL_PHASE_EXPLICIT as u32)?;
+    m.add(
+        "VERBOSITY_QUIET",
+        c::hegel_verbosity_t::HEGEL_VERBOSITY_QUIET as u32,
+    )?;
+    m.add(
+        "VERBOSITY_NORMAL",
+        c::hegel_verbosity_t::HEGEL_VERBOSITY_NORMAL as u32,
+    )?;
+    m.add(
+        "VERBOSITY_VERBOSE",
+        c::hegel_verbosity_t::HEGEL_VERBOSITY_VERBOSE as u32,
+    )?;
+    m.add(
+        "VERBOSITY_DEBUG",
+        c::hegel_verbosity_t::HEGEL_VERBOSITY_DEBUG as u32,
+    )?;
+    m.add(
+        "BACKEND_DEFAULT",
+        c::hegel_backend_t::HEGEL_BACKEND_DEFAULT as u32,
+    )?;
+    m.add(
+        "BACKEND_URANDOM",
+        c::hegel_backend_t::HEGEL_BACKEND_URANDOM as u32,
+    )?;
+    m.add(
+        "PHASE_EXPLICIT",
+        c::hegel_phase_t::HEGEL_PHASE_EXPLICIT as u32,
+    )?;
     m.add("PHASE_REUSE", c::hegel_phase_t::HEGEL_PHASE_REUSE as u32)?;
-    m.add("PHASE_GENERATE", c::hegel_phase_t::HEGEL_PHASE_GENERATE as u32)?;
+    m.add(
+        "PHASE_GENERATE",
+        c::hegel_phase_t::HEGEL_PHASE_GENERATE as u32,
+    )?;
     m.add("PHASE_TARGET", c::hegel_phase_t::HEGEL_PHASE_TARGET as u32)?;
     m.add("PHASE_SHRINK", c::hegel_phase_t::HEGEL_PHASE_SHRINK as u32)?;
     m.add("PHASE_ALL", c::hegel_phase_t::HEGEL_PHASE_ALL as u32)?;
@@ -298,7 +333,10 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         "HC_FILTER_TOO_MUCH",
         c::hegel_health_check_t::HEGEL_HC_FILTER_TOO_MUCH as u32,
     )?;
-    m.add("HC_TOO_SLOW", c::hegel_health_check_t::HEGEL_HC_TOO_SLOW as u32)?;
+    m.add(
+        "HC_TOO_SLOW",
+        c::hegel_health_check_t::HEGEL_HC_TOO_SLOW as u32,
+    )?;
     m.add(
         "HC_TEST_CASES_TOO_LARGE",
         c::hegel_health_check_t::HEGEL_HC_TEST_CASES_TOO_LARGE as u32,

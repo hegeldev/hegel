@@ -46,8 +46,9 @@ pub(crate) fn with_options<R>(
     with_ctx(|ctx| {
         let mut options: *mut c::HegelPrinterOptions = ptr::null_mut();
         check(unsafe { c::hegel_printer_options_new(ctx, &mut options) })?;
-        let result = check(unsafe { c::hegel_printer_options_set_max_width(ctx, options, max_width) })
-            .and_then(|()| f(ctx, options));
+        let result =
+            check(unsafe { c::hegel_printer_options_set_max_width(ctx, options, max_width) })
+                .and_then(|()| f(ctx, options));
         let _ = unsafe { c::hegel_printer_options_free(ctx, options) };
         result
     })
@@ -65,7 +66,9 @@ impl Printer {
     }
 
     fn text(&self, s: &str) -> PyResult<()> {
-        with_ctx(|ctx| tolerate(unsafe { c::hegel_printer_text(ctx, self.raw.0, s.as_ptr(), s.len()) }))
+        with_ctx(|ctx| {
+            tolerate(unsafe { c::hegel_printer_text(ctx, self.raw.0, s.as_ptr(), s.len()) })
+        })
     }
 
     fn if_break(&self, s: &str) -> PyResult<()> {
@@ -76,7 +79,9 @@ impl Printer {
 
     fn breakable(&self, sep: &str) -> PyResult<()> {
         with_ctx(|ctx| {
-            tolerate(unsafe { c::hegel_printer_breakable(ctx, self.raw.0, sep.as_ptr(), sep.len()) })
+            tolerate(unsafe {
+                c::hegel_printer_breakable(ctx, self.raw.0, sep.as_ptr(), sep.len())
+            })
         })
     }
 

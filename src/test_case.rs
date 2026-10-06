@@ -132,8 +132,15 @@ impl RunResult {
             let mut origin: *const c_char = ptr::null();
             let mut blob: *const c_char = ptr::null();
             let result = check(unsafe { c::hegel_failure_origin(ctx, f, &mut origin) })
-                .and_then(|()| check(unsafe { c::hegel_failure_reproduction_blob(ctx, f, &mut blob) }))
-                .map(|()| (cstr_to_string(origin).unwrap_or_default(), cstr_to_string(blob)));
+                .and_then(|()| {
+                    check(unsafe { c::hegel_failure_reproduction_blob(ctx, f, &mut blob) })
+                })
+                .map(|()| {
+                    (
+                        cstr_to_string(origin).unwrap_or_default(),
+                        cstr_to_string(blob),
+                    )
+                });
             let _ = unsafe { c::hegel_failure_free(ctx, f) };
             result
         })
@@ -259,7 +266,9 @@ impl TestCase {
     /// nested block indented `indent` further.
     fn block(&self, indent: u64) -> PyResult<TestCase> {
         let mut raw: *mut c::HegelTestCase = ptr::null_mut();
-        with_ctx(|ctx| check(unsafe { c::hegel_test_case_block(ctx, self.tc(), indent, &mut raw) }))?;
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_test_case_block(ctx, self.tc(), indent, &mut raw) })
+        })?;
         Ok(TestCase {
             raw: SendPtr(raw),
             output: self.output.clone(),
@@ -267,7 +276,9 @@ impl TestCase {
     }
 
     fn set_worker(&self, worker_index: i64) -> PyResult<()> {
-        with_ctx(|ctx| check(unsafe { c::hegel_test_case_set_worker(ctx, self.tc(), worker_index) }))
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_test_case_set_worker(ctx, self.tc(), worker_index) })
+        })
     }
 
     fn is_nondeterministic(&self) -> PyResult<bool> {
@@ -281,10 +292,13 @@ impl TestCase {
     #[pyo3(signature = (status, origin))]
     fn mark_complete(&self, py: Python<'_>, status: u32, origin: Option<&str>) -> PyResult<()> {
         let c_origin = origin.map(cstring);
-        let origin_ptr = SendPtr(c_origin.as_ref().map_or(ptr::null(), |s| s.as_ptr()) as *mut c_char);
+        let origin_ptr =
+            SendPtr(c_origin.as_ref().map_or(ptr::null(), |s| s.as_ptr()) as *mut c_char);
         let tc = self.raw;
         let rc = py.detach(move || {
-            with_ctx(|ctx| unsafe { c::hegel_mark_complete(ctx, tc.get(), status, origin_ptr.get()) })
+            with_ctx(|ctx| unsafe {
+                c::hegel_mark_complete(ctx, tc.get(), status, origin_ptr.get())
+            })
         });
         check(rc)
     }
@@ -386,7 +400,9 @@ impl TestCase {
             len: 0,
         };
         let bytes = with_ctx(|ctx| {
-            check(unsafe { c::hegel_generate_bytes(ctx, self.tc(), min_size, max_size, &mut result) })?;
+            check(unsafe {
+                c::hegel_generate_bytes(ctx, self.tc(), min_size, max_size, &mut result)
+            })?;
             // SAFETY: on success data points to len bytes owned by us until
             // released with the matching free.
             let bytes = unsafe { std::slice::from_raw_parts(result.data, result.len) }.to_vec();
@@ -408,7 +424,9 @@ impl TestCase {
             len: 0,
         };
         let bytes = with_ctx(|ctx| {
-            check(unsafe { c::hegel_generate_string(ctx, self.tc(), generator.raw(), &mut result) })?;
+            check(unsafe {
+                c::hegel_generate_string(ctx, self.tc(), generator.raw(), &mut result)
+            })?;
             // SAFETY: as for generate_bytes.
             let bytes = unsafe { std::slice::from_raw_parts(result.data as *const u8, result.len) }
                 .to_vec();
@@ -418,7 +436,11 @@ impl TestCase {
         Ok(PyBytes::new(py, &bytes))
     }
 
-    fn generate_date(&self, min_value: (i32, u8, u8), max_value: (i32, u8, u8)) -> PyResult<(i32, u8, u8)> {
+    fn generate_date(
+        &self,
+        min_value: (i32, u8, u8),
+        max_value: (i32, u8, u8),
+    ) -> PyResult<(i32, u8, u8)> {
         let mut out = date_to_c(min_value);
         with_ctx(|ctx| {
             check(unsafe {
@@ -454,7 +476,11 @@ impl TestCase {
         Ok(time_from_c(out))
     }
 
-    fn generate_datetime(&self, min_value: PyDateTime, max_value: PyDateTime) -> PyResult<PyDateTime> {
+    fn generate_datetime(
+        &self,
+        min_value: PyDateTime,
+        max_value: PyDateTime,
+    ) -> PyResult<PyDateTime> {
         let mut out = datetime_to_c(min_value);
         with_ctx(|ctx| {
             check(unsafe {
@@ -471,7 +497,11 @@ impl TestCase {
     }
 
     #[pyo3(signature = (version))]
-    fn generate_uuid<'py>(&self, py: Python<'py>, version: Option<u8>) -> PyResult<Bound<'py, PyBytes>> {
+    fn generate_uuid<'py>(
+        &self,
+        py: Python<'py>,
+        version: Option<u8>,
+    ) -> PyResult<Bound<'py, PyBytes>> {
         let mut out = [0u8; 16];
         with_ctx(|ctx| {
             check(unsafe {
@@ -527,12 +557,12 @@ impl TestCase {
     /// Append whole lines of text to this handle's print region. A dead
     /// region (the document was already read) is a silent no-op.
     fn note(&self, text: &str) -> PyResult<()> {
-        with_ctx(|ctx| {
-            match unsafe { c::hegel_note(ctx, self.tc(), text.as_ptr(), text.len()) } {
+        with_ctx(
+            |ctx| match unsafe { c::hegel_note(ctx, self.tc(), text.as_ptr(), text.len()) } {
                 Rc::HEGEL_E_INVALID_HANDLE => Ok(()),
                 rc => check(rc),
-            }
-        })
+            },
+        )
     }
 
     /// A printer onto this handle's region of the test case's document.
@@ -564,7 +594,9 @@ impl TestCase {
     fn new_recursion(&self, max_depth: u64, max_leaves: u64) -> PyResult<Recursion> {
         let mut raw: *mut c::HegelRecursion = ptr::null_mut();
         with_ctx(|ctx| {
-            check(unsafe { c::hegel_new_recursion(ctx, self.tc(), max_depth, max_leaves, &mut raw) })
+            check(unsafe {
+                c::hegel_new_recursion(ctx, self.tc(), max_depth, max_leaves, &mut raw)
+            })
         })?;
         Ok(Recursion { raw: SendPtr(raw) })
     }
@@ -637,7 +669,9 @@ impl Drop for Collection {
 impl Collection {
     fn more(&self, tc: &TestCase) -> PyResult<bool> {
         let mut out = false;
-        with_ctx(|ctx| check(unsafe { c::hegel_collection_more(ctx, tc.tc(), self.raw.0, &mut out) }))?;
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_collection_more(ctx, tc.tc(), self.raw.0, &mut out) })
+        })?;
         Ok(out)
     }
 

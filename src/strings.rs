@@ -121,7 +121,9 @@ impl StringGenerator {
     #[staticmethod]
     fn domain(max_length: u64) -> PyResult<Self> {
         let mut raw: *mut c::HegelStringGenerator = ptr::null_mut();
-        with_ctx(|ctx| check(unsafe { c::hegel_string_generator_domain(ctx, max_length, &mut raw) }))?;
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_string_generator_domain(ctx, max_length, &mut raw) })
+        })?;
         Ok(StringGenerator { raw: SendPtr(raw) })
     }
 }
