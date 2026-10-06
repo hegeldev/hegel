@@ -14,6 +14,7 @@ import threading
 import time
 import types
 import unittest
+import unittest.mock
 import warnings
 from collections.abc import Callable, Hashable
 from typing import Any, TypeVar
@@ -181,6 +182,22 @@ def _seed_to_int(value: Hashable) -> int:
         return value % (1 << 64)
     digest = hashlib.sha256(repr(value).encode("utf-8", "surrogatepass")).digest()
     return int.from_bytes(digest[:8], "little")
+
+
+def _get_signature(test: Any) -> inspect.Signature:
+    """Like inspect.signature, but a function decorated with unittest.mock.patch
+    is treated as ``(*args, **kwargs)``, as Hypothesis does: the mocks are
+    added positionally by the patch wrapper, not by the caller."""
+    patches = getattr(test, "patchings", None)
+    if isinstance(patches, list) and all(isinstance(p, unittest.mock._patch) for p in patches):
+        return inspect.Signature(
+            [
+                inspect.Parameter("args", inspect.Parameter.VAR_POSITIONAL),
+                inspect.Parameter("keywargs", inspect.Parameter.VAR_KEYWORD),
+            ],
+            return_annotation=None,
+        )
+    return inspect.signature(test)
 
 
 def _invalid(message: str, *, exc: type[Exception], test: Any, given_kwargs: Any) -> Any:
@@ -498,7 +515,7 @@ def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], 
             raise InvalidArgument("@given cannot be applied to a class")
         given_arguments = tuple(_given_arguments)
         given_kwargs = dict(_given_kwargs)
-        original_sig = inspect.signature(test)
+        original_sig = _get_signature(test)
         if given_arguments == (Ellipsis,) and not given_kwargs:
             given_kwargs = {
                 p.name: Ellipsis
