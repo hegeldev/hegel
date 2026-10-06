@@ -11,6 +11,7 @@ import math
 import random as _random
 import struct
 import sys
+import time
 from collections.abc import Callable, Hashable, Iterable, Sequence
 from typing import Any, Protocol, TypeVar
 
@@ -900,7 +901,15 @@ class DataObject:
         check_strategy(strategy, "strategy")
         self.count += 1
         name = None if label is None else str(label)
-        return self._tc.draw(strategy, name=name)
+        from hegel.hypothesis.control import _current_build_context
+
+        started = time.perf_counter()
+        try:
+            return self._tc.draw(strategy, name=name)
+        finally:
+            context = _current_build_context.value
+            if context is not None:
+                context.draw_time += time.perf_counter() - started
 
     @property
     def conjecture_data(self) -> TestCase:

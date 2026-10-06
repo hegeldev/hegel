@@ -44,6 +44,7 @@ class BuildContext:
         self.shared: dict[Any, Any] = {}
         self.random_seeds: list[int] = []
         self.known_object_printers: dict[int, str] = {}
+        self.draw_time = 0.0  # seconds spent in data.draw(), outside deadlines
 
     def __enter__(self) -> BuildContext:
         _stack().append(self)

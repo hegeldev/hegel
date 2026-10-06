@@ -4,6 +4,7 @@ tests on Hegel."""
 from __future__ import annotations
 
 import functools
+import gc
 import hashlib
 import inspect
 import threading
@@ -20,6 +21,7 @@ from hegel.hypothesis.control import BuildContext, currently_in_test_context
 from hegel.hypothesis.errors import (
     DeadlineExceeded,
     FailedHealthCheck,
+    FlakyFailure,
     HypothesisWarning,
     InvalidArgument,
     NoSuchExample,
@@ -285,6 +287,49 @@ class _XfailPassed(AssertionError):
     pass
 
 
+_gc_state = {"start": 0.0, "total": 0.0}
+
+
+def _gc_callback(phase: str, info: dict[str, Any]) -> None:
+    now = time.perf_counter()
+    if phase == "start":
+        _gc_state["start"] = now
+    else:
+        _gc_state["total"] += now - _gc_state["start"]
+
+
+if hasattr(gc, "callbacks"):  # CPython
+    gc.callbacks.append(_gc_callback)
+
+
+def _gc_cumulative_time() -> float:
+    """Seconds spent in garbage collection so far, excluded from deadlines."""
+    return _gc_state["total"]
+
+
+def _flaky_failure(
+    error: Flaky,
+    failure: BaseException | None,
+    timing: list[float | None],
+    deadline: float | None,
+) -> BaseException:
+    """The Flaky error from the engine as Hypothesis's FlakyFailure group
+    around the failure that did not reproduce, noting deadline timings."""
+    if failure is None:
+        return error
+    group = FlakyFailure(str(error), [failure])
+    if isinstance(failure, DeadlineExceeded) and deadline is not None and timing[1] is not None:
+        group.add_note(
+            "Unreliable test timing! On an initial run, this test took "
+            f"{failure.runtime * 1000:.2f}ms, which exceeded the deadline of "
+            f"{deadline * 1000:.2f}ms, but on a subsequent run it took "
+            f"{timing[1] * 1000:.2f}ms, which did not. If you expect this sort of "
+            "variability in your test timings, consider turning deadlines off for "
+            "this test by setting deadline=None."
+        )
+    return group
+
+
 def _fail_health_check(test_settings: Settings, message: str, check: HealthCheck) -> None:
     """Raise FailedHealthCheck for ``check`` unless the settings suppress it."""
     __tracebackhide__ = True
@@ -310,7 +355,7 @@ def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], 
             "@settings(suppress_health_check=[HealthCheck.nested_given]) on the "
             "outer @given. See "
             "https://hypothesis.readthedocs.io/en/latest/reference/api.html"
-                    "#hypothesis.HealthCheck "
+            "#hypothesis.HealthCheck "
             "for details.",
             HealthCheck.nested_given,
         )
@@ -513,6 +558,8 @@ def _run_given(
     print_args = getattr(wrapped_test, "_hypothesis_internal_print_given_args", True)
     executed = [False]
     valid = [False]
+    last_failure: list[BaseException | None] = [None]
+    timing: list[float | None] = [None, None]
 
     def body(tc: TestCase) -> None:
         executed[0] = True
@@ -524,6 +571,7 @@ def _run_given(
             else:
                 drawn = {name: tc.draw_silent(strategy) for name, strategy in given_kwargs.items()}
             started = time.perf_counter()
+            gc_started = _gc_cumulative_time()
             ex = current_example[0]
             try:
                 result = inner(*arguments, **kwargs, **drawn)
@@ -535,9 +583,16 @@ def _run_given(
                     if isinstance(error, ex.raises):
                         return
                     raise
+                last_failure[0] = error
                 raise
             valid[0] = True
-            elapsed = time.perf_counter() - started
+            # Time in garbage collection and in data.draw() does not count.
+            elapsed = (
+                time.perf_counter()
+                - started
+                - (_gc_cumulative_time() - gc_started)
+                - context.draw_time
+            )
             if ex is not None and ex.xfail:
                 raise _XfailPassed(
                     f"Expected an exception from @example({_format_example(ex)}), but no "
@@ -553,9 +608,16 @@ def _run_given(
                     "suppress_health_check settings for this test."
                 )
             if deadline is not None:
-                allowed = deadline * (1.25 if context.is_final else 1.0)
+                # Only clear deadline failures count while generating and
+                # shrinking; the final replay is held to the deadline itself.
+                allowed = deadline if context.is_final else deadline * 1.25
                 if elapsed > allowed:
-                    raise DeadlineExceeded(elapsed, deadline)
+                    error = DeadlineExceeded(elapsed, deadline)
+                    timing[0] = elapsed
+                    last_failure[0] = error
+                    raise error
+                if timing[0] is not None:
+                    timing[1] = elapsed
 
     native = test_settings.to_hegel()
     seed_value = getattr(wrapped_test, "_hypothesis_internal_use_seed", None)
@@ -634,7 +696,9 @@ def _run_given(
                 f"Unable to satisfy assumptions of {inner.__name__}. Hypothesis tried "
                 "every possible input, and all of them failed a .filter() or assume()"
             ) from None
-        if isinstance(error, (FailedHealthCheck, Flaky)):
+        if isinstance(error, Flaky):
+            raise _flaky_failure(error, last_failure[0], timing, deadline) from error
+        if isinstance(error, FailedHealthCheck):
             raise
         if str(error).startswith("Unsatisfiable"):
             raise Unsatisfiable(str(error)) from None
