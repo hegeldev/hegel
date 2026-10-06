@@ -9,11 +9,14 @@
 //! repetition operators are kept as repetition nodes rather than desugared
 //! into recursive rules, so the generator can size them directly.
 
+pub mod analysis;
 pub mod ast;
 pub mod builder;
 pub mod compile;
 pub mod escape;
+pub mod generate;
 pub mod lexer;
+pub mod lexsim;
 pub mod parser;
 
 use alloc::string::String;

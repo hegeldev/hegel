@@ -187,15 +187,27 @@ fn generate_regex_attempt(
             }
         }
         for pending in &state.pending_lookaheads {
-            if match_seq(
-                &pending.pattern.data,
-                pending.char_pos,
-                &final_chars,
-                pending.flags,
-                &pending.groups,
-            )
-            .is_some()
-            {
+            let matches = if pending.direction >= 0 {
+                match_seq(
+                    &pending.pattern.data,
+                    pending.char_pos,
+                    &final_chars,
+                    pending.flags,
+                    &pending.groups,
+                )
+                .is_some()
+            } else {
+                (0..=pending.char_pos).any(|start| {
+                    match_seq(
+                        &pending.pattern.data,
+                        start,
+                        &final_chars,
+                        pending.flags,
+                        &pending.groups,
+                    ) == Some(pending.char_pos)
+                })
+            };
+            if matches {
                 return Ok(None);
             }
         }
@@ -249,10 +261,11 @@ struct GenState<'a> {
     pending_anchors: Vec<PendingAnchor>,
     /// Positive lookaround assertions deferred in fullmatch mode.
     pending_asserts: Vec<PendingAssertNot>,
-    /// Negative-lookahead assertions recorded during generation. Each entry
+    /// Negative lookaround assertions recorded during generation. Each entry
     /// captures the assertion body, the active flags, and a snapshot of the
     /// groups at the point of the assertion. We check them against the final
-    /// output string in [`generate_regex`].
+    /// output string in [`generate_regex`], so a candidate that violates one
+    /// is redrawn like any other failed deferred check.
     pending_lookaheads: Vec<PendingAssertNot>,
     /// Set when the pattern contains an atomic group or possessive repeat,
     /// whose generated output must be re-validated against the whole pattern.
@@ -508,25 +521,13 @@ fn generate_op(
             }
         }
         OpCode::AssertNot { direction, p } => {
-            if *direction < 0 {
-                let out_chars: Vec<char> = out.chars().collect();
-                let end = out_chars.len();
-                for start in 0..=end {
-                    if match_seq(&p.data, start, &out_chars, state.flags, &state.groups)
-                        == Some(end)
-                    {
-                        return Err(mark_invalid(ntc));
-                    }
-                }
-            } else {
-                state.pending_lookaheads.push(PendingAssertNot {
-                    char_pos: out.chars().count(),
-                    direction: *direction,
-                    pattern: p.clone(),
-                    flags: state.flags,
-                    groups: state.groups.clone(),
-                });
-            }
+            state.pending_lookaheads.push(PendingAssertNot {
+                char_pos: out.chars().count(),
+                direction: *direction,
+                pattern: p.clone(),
+                flags: state.flags,
+                groups: state.groups.clone(),
+            });
         }
         OpCode::Failure => {
             return Err(mark_invalid(ntc));

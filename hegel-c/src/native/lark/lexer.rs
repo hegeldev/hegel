@@ -243,9 +243,8 @@ impl<'a> Scanner<'a> {
                 }
                 Some('\\') => {
                     body.push(self.advance());
-                    match self.peek(0) {
-                        Some('"' | '\\') => body.push(self.advance()),
-                        _ => {}
+                    if let Some('"' | '\\') = self.peek(0) {
+                        body.push(self.advance());
                     }
                 }
                 Some('"') => {
@@ -272,9 +271,8 @@ impl<'a> Scanner<'a> {
                 None => return Err(self.error(pos, "Unterminated regular expression")),
                 Some('\\') => {
                     body.push(self.advance());
-                    match self.peek(0) {
-                        Some('/' | '\\') => body.push(self.advance()),
-                        _ => {}
+                    if let Some('/' | '\\') = self.peek(0) {
+                        body.push(self.advance());
                     }
                 }
                 Some('/') => {

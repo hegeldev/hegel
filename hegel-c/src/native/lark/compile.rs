@@ -422,10 +422,9 @@ impl Compiler {
         };
         let mut alternatives = Vec::with_capacity(alts.len());
         for alt in alts {
-            if alt.alias.is_some() && name.starts_with('_') {
+            if let (Some(alias), true) = (&alt.alias, name.starts_with('_')) {
                 return Err(GrammarError::new(format!(
-                    "Rule {name} is marked for expansion (it starts with an underscore) and isn't allowed to have aliases (alias={})",
-                    alt.alias.as_ref().unwrap()
+                    "Rule {name} is marked for expansion (it starts with an underscore) and isn't allowed to have aliases (alias={alias})"
                 )));
             }
             alternatives.push(self.prepare_sequence(name, &alt.items)?);

@@ -1338,6 +1338,34 @@ fn generate_regex_fullmatch_lookbehind_is_validated_against_the_final_string() {
 }
 
 #[test]
+fn generate_regex_retries_a_failed_negative_lookbehind_within_the_test_case() {
+    use crate::native::rng::EngineRng;
+    let re = CompiledRegex::compile(r"[ab]*(?<!a)c", None).unwrap();
+    let mut produced = 0;
+    for seed in 0..200 {
+        let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+        if let Ok(s) = generate_regex(&mut ntc, &re, true) {
+            produced += 1;
+            assert!(!s.ends_with("ac"), "{s:?} violates the lookbehind");
+        }
+    }
+    assert!(
+        produced > 190,
+        "a candidate ending in `a` must be redrawn, not fail the test case: {produced}/200"
+    );
+
+    let re = CompiledRegex::compile(r"a(?<!a)c", None).unwrap();
+    for seed in 0..10 {
+        let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+        assert!(
+            generate_regex(&mut ntc, &re, true).is_err(),
+            "a negative lookbehind that always matches can never hold"
+        );
+        assert_eq!(ntc.status(), Some(Status::Invalid));
+    }
+}
+
+#[test]
 fn generate_regex_end_anchor_with_no_newline_in_alphabet_does_not_pad() {
     use crate::native::rng::EngineRng;
     let alphabet = Some(IntervalSet::new(vec![('a' as u32, 'b' as u32)]).unwrap());
