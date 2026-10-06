@@ -610,12 +610,16 @@ def _run_given(
     def body(tc: TestCase) -> None:
         executed[0] = True
         with BuildContext(tc, is_final=tc.is_final, runner=selfy) as context:
-            if print_args:
-                drawn = {
-                    name: tc.draw(strategy, name=name) for name, strategy in given_kwargs.items()
-                }
-            else:
-                drawn = {name: tc.draw_silent(strategy) for name, strategy in given_kwargs.items()}
+            drawn = {}
+            for name, strategy in given_kwargs.items():
+                try:
+                    if print_args:
+                        drawn[name] = tc.draw(strategy, name=name)
+                    else:
+                        drawn[name] = tc.draw_silent(strategy)
+                except Exception as error:
+                    error.add_note(f"while generating {name!r} from {strategy!r}")
+                    raise
             started = time.perf_counter()
             gc_started = _gc_cumulative_time()
             ex = current_example[0]
