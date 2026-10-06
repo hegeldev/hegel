@@ -68,6 +68,8 @@ class TestCase:
     choice stream.
     """
 
+    __test__ = False  # not a pytest test class
+
     __slots__ = (
         "_draw_state",
         "_global",
@@ -191,6 +193,10 @@ class TestCase:
     def note(self, message: str) -> None:
         """Record a message shown with the drawn values of a failing test
         case (or in verbose mode)."""
+        explicit = self._global.explicit
+        if explicit is not None:
+            explicit.note(str(message))
+            return
         if not self._global.emit:
             return
         self._handle.note(str(message))

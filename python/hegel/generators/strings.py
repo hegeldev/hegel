@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import ipaddress
 import uuid as _uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 from hegel import _native
 from hegel.errors import InvalidArgument
 from hegel.generators.base import Generator, label_from_name
-from hegel.generators.combinators import SampledFrom, as_generator
 
 if TYPE_CHECKING:
     from hegel.test_case import TestCase
@@ -434,7 +433,3 @@ def uuids(*, version: int | None = None, allow_nil: bool = False) -> Generator[_
     if version is not None and version not in (1, 2, 3, 4, 5):
         raise InvalidArgument(f"version={version!r} must be between 1 and 5")
     return Uuids(version, bool(allow_nil))
-
-
-def sampled_characters(chars: Sequence[str]) -> Generator[str]:
-    return as_generator(SampledFrom(list(chars)))

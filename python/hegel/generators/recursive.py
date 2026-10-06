@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from hegel.errors import AssumeFailed, InvalidArgument, RetrySignal
 from hegel.generators.base import NOOP_PRINTER, Generator, combine_labels, label_from_name
@@ -192,7 +192,3 @@ def deferred(definition: Callable[[], Generator[T]]) -> Generator[T]:
     if not callable(definition):
         raise InvalidArgument("deferred() takes a zero-argument function returning a generator")
     return Deferred(definition)
-
-
-def _unused(value: Any) -> Any:  # nocov
-    return value

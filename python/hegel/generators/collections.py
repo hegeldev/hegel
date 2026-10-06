@@ -174,10 +174,7 @@ class Sets(Generator[Any]):
         return self._draw(tc, NOOP_PRINTER)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> Any:
-        if self.max_size == 0 or not self.frozen and False:  # nocov
-            pass
-        value = self._draw(tc, printer)
-        return value
+        return self._draw(tc, printer)
 
     def __repr__(self) -> str:
         name = "frozensets" if self.frozen else "sets"

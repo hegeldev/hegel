@@ -28,7 +28,7 @@ from hegel.errors import (
     StopTest,
 )
 from hegel.explicit import NO_HANDLE, ExplicitCase, ExplicitTestCase
-from hegel.settings import Phase, Settings, TestLocation, Verbosity
+from hegel.settings import HealthCheck, Phase, Settings, TestLocation, Verbosity
 from hegel.test_case import OutputSink, TestCase
 
 __all__ = [
@@ -426,11 +426,14 @@ def test(
         location = _location_of(inner)
         database_key = _database_key_of(inner)
         base_settings = settings
+        # A method takes the test case after ``self``.
+        tc_index = 1 if parameters[0].name in ("self", "cls") and len(parameters) > 1 else 0
 
         @functools.wraps(inner)
         def wrapper(*args: Any, **kwargs: Any) -> None:
+            leading, rest = args[:tc_index], args[tc_index:]
             run(
-                lambda tc: inner(tc, *args, **kwargs),
+                lambda tc: inner(*leading, tc, *rest, **kwargs),
                 base_settings,
                 database_key=database_key,
                 test_location=location,
@@ -439,7 +442,8 @@ def test(
                 **overrides,
             )
 
-        wrapper.__signature__ = signature.replace(parameters=parameters[1:])  # type: ignore[attr-defined]
+        remaining = parameters[:tc_index] + parameters[tc_index + 1 :]
+        wrapper.__signature__ = signature.replace(parameters=remaining)  # type: ignore[attr-defined]
         wrapper.hegel_inner_test = inner  # type: ignore[attr-defined]
         wrapper.hegel_explicit_cases = list(getattr(inner, "hegel_explicit_cases", []))  # type: ignore[attr-defined]
         wrapper.hegel_reproduce_blob = getattr(inner, "hegel_reproduce_blob", None)  # type: ignore[attr-defined]
@@ -510,6 +514,7 @@ def find_example(generator: Any, condition: Callable[[Any], bool] | None = None)
                     phases=[Phase.generate, Phase.shrink],
                     test_cases=1000,
                     print_blob=False,
+                    suppress_health_check=HealthCheck.all(),
                 ),
             )
     except _Found:
