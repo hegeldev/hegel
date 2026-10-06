@@ -70,8 +70,9 @@ Different because the engine behaves differently:
 
 - The failing example is printed as `name = value` lines rather than a call,
   verbose output says `Running test case` rather than `Trying example`, and
-  `note()` output follows the test's own output instead of interleaving with
-  it. See "Output format" below.
+  the drawn values and `note()` lines form one document that the binding
+  renders after the final replay, in draw order, so they do not interleave
+  with anything the test itself prints to stdout. See "Output format" below.
 - Reproduce blobs are opaque engine blobs, printed as
   `@reproduce_failure('<version>', b'...')` in the exception note and as
   `@hegel.reproduce_failure("...")` on stdout. No `@seed(...)` hint is

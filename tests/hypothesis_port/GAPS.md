@@ -169,8 +169,10 @@ test_asyncio.
 - Hypothesis logs `Trying example: ...`; Hegel's verbose output says
   `Running test case` / `Test case passed` / `Starting phase: Generate` and
   `Trying explicit example: ...` for explicit examples. (Engine output.)
-- Notes made with `note()` are emitted after the test body's own output and
-  only in the falsifying report, never interleaved with it. (Engine.)
+- Notes made with `note()` are in order with the draws inside the rendered
+  document, but the binding renders that document after the final replay, so
+  it does not interleave with the test's own `print()` output. (Binding;
+  Hegel's engine holds the document and the client reads it back.)
 - The reproducer note is rewritten to `@reproduce_failure('<version>', b'...')`
   for tests, but stdout keeps Hegel's `@hegel.reproduce_failure("blob")` form,
   and the blob is an opaque engine blob rather than an encoded choice
