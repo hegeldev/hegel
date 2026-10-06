@@ -43,5 +43,14 @@ than worked around in the bindings, so they can be fixed in the engine.
   the time (`tests/hypothesis_port/nocover/test_integer_ranges.py`).
 - Identical inputs are generated repeatedly; there is no duplicate suppression
   (`tests/hypothesis_port/nocover/test_duplication.py`).
-- A `wide | just(needle)` strategy shrinks to the needle rather than the
-  minimal wide value (`tests/hypothesis_port/quality/test_widening_shrinks.py`).
+- No widening of `one_of` branches. For `integers() | sampled_from([4991,
+  4999])` and a predicate the sampled values satisfy, Hypothesis rewrites the
+  choices from the sampled branch, `(1, 1)`, into the wide branch carrying the
+  same value, `(0, 4999)`, then shrinks on to `4990`. That is a shortlex
+  improvement in Hypothesis's typed choice sequence, where a `text()` or
+  `integers()` draw is one choice. Hegel shrinks within the sampled branch and
+  reports `4991`. Whether widening would be an improvement in Hegel depends on
+  how libhegel encodes a string or integer draw: if a draw is several choices,
+  the wide form is longer and the engine's answer is the shortlex minimum.
+  (`tests/hypothesis_port/quality/test_widening_shrinks.py`; a `just()`
+  branch never widens in Hypothesis either, as its encoding is shorter.)

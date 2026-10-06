@@ -85,9 +85,10 @@ Different because the engine behaves differently:
 - A finite search space is not detected as exhausted early; the engine runs
   up to `max_examples` and does not suppress duplicate inputs. There is no
   shrinking time limit.
-- Shrinking differs in places: a `wide | just(needle)` strategy shrinks to the
-  needle rather than the minimal wide value, and the bounded integer
-  distribution is weighted toward boundaries. `integers(0, 1e100)` draws
+- Shrinking differs in places: Hegel does not rewrite a `sampled_from` branch
+  of a `one_of` into the wide branch (Hypothesis's widening pass; see
+  `docs/engine-issues.md`), and the bounded integer distribution is weighted
+  toward boundaries. `integers(0, 1e100)` draws
   many more huge values than Hypothesis does.
 - A skipped test ends the run before anything is saved to the database.
 - Strategy objects are not cached by argument, and `.example()` is
