@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import os
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 from hegel import _native
+from hegel.errors import InvalidArgument
+
+E = TypeVar("E", bound=enum.Enum)
 
 __all__ = [
     "Backend",
@@ -99,26 +103,38 @@ def _unflags(cls: type[enum.Enum], mask: int) -> frozenset[Any]:
     return frozenset(member for member in cls if mask & int(member.value))
 
 
-_FIELDS = (
-    "test_cases",
-    "verbosity",
-    "seed",
-    "derandomize",
-    "database",
-    "suppress_health_check",
-    "phases",
-    "report_multiple_failures",
-    "show_statistics",
-    "print_blob",
-    "backend",
-    "nondeterminism_strictness",
-)
-
-
-def _coerce_members(cls: type[enum.Enum], value: Any) -> frozenset[Any]:
+def _coerce_member(cls: type[E], field: str, value: Any) -> E:
+    """``value`` as a member of ``cls``: a member, or a member's name."""
     if isinstance(value, cls):
-        return frozenset([value])
-    return frozenset(cls(v) if not isinstance(v, cls) else v for v in value)
+        return value
+    if isinstance(value, str) and value in cls.__members__:
+        return cls[value]
+    choices = ", ".join(f"{cls.__name__}.{name}" for name in cls.__members__)
+    raise InvalidArgument(f"{field}={value!r} must be one of {choices}")
+
+
+def _coerce_members(cls: type[E], field: str, value: Any) -> frozenset[E]:
+    if isinstance(value, (cls, str)):
+        return frozenset([_coerce_member(cls, field, value)])
+    try:
+        values = list(value)
+    except TypeError:
+        raise InvalidArgument(
+            f"{field}={value!r} must be a collection of {cls.__name__} values"
+        ) from None
+    return frozenset(_coerce_member(cls, field, v) for v in values)
+
+
+def _check_bool(field: str, value: Any) -> bool:
+    if not isinstance(value, bool):
+        raise InvalidArgument(f"{field}={value!r} must be True or False")
+    return value
+
+
+def _check_int(field: str, value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise InvalidArgument(f"{field}={value!r} must be an integer")
+    return value
 
 
 @dataclass(frozen=True)
@@ -131,22 +147,29 @@ class Settings:
     Antithesis, ``ci`` on a CI server, ``development`` otherwise), with any
     keyword arguments overriding individual fields.
 
-    ``database`` is ``None`` for the engine default directory, ``""`` to
-    disable the database, or a directory path.
+    ``database`` is ``None`` for the engine's default directory
+    (``.hegel/examples``), a directory path, or ``""`` (or ``False``) to
+    disable the database. Note that ``None`` does not disable it, unlike in
+    the Rust library and Hypothesis.
+
+    Enum-valued fields take members (``HealthCheck.filter_too_much``) or
+    their names (``"filter_too_much"``).
     """
 
-    test_cases: int = 100
-    verbosity: Verbosity = Verbosity.normal
-    seed: int | None = None
-    derandomize: bool = False
-    database: str | None = None
-    suppress_health_check: frozenset[HealthCheck] = frozenset()
-    phases: frozenset[Phase] = Phase.all()
-    report_multiple_failures: bool = False
-    show_statistics: bool = False
-    print_blob: bool = False
-    backend: Backend = Backend.default
-    nondeterminism_strictness: NondeterminismStrictness = NondeterminismStrictness.quiet
+    # Every field is filled in by __init__, from the default profile or the
+    # parent settings: these declarations give the fields and types only.
+    test_cases: int
+    verbosity: Verbosity
+    seed: int | None
+    derandomize: bool
+    database: str | None
+    suppress_health_check: frozenset[HealthCheck]
+    phases: frozenset[Phase]
+    report_multiple_failures: bool
+    show_statistics: bool
+    print_blob: bool
+    backend: Backend
+    nondeterminism_strictness: NondeterminismStrictness
 
     def __init__(self, parent: Settings | None = None, **overrides: Any) -> None:
         base = _from_native(_native.Settings.new()) if parent is None else parent
@@ -170,16 +193,16 @@ class Settings:
         _native.register_profile(name, Settings(base, **overrides)._build())
 
     @staticmethod
-    def set_default_profile(name: str) -> None:
-        """Make the named profile the one ``Settings()`` resolves."""
-        _native.set_default_profile(name)
-
-    @staticmethod
-    def load_profile(name: str) -> None:
-        """Alias for :meth:`set_default_profile`."""
+    def set_default_profile(name: str | None) -> None:
+        """Make the named (already registered) profile the one
+        ``Settings()`` resolves, for the whole process. ``None`` restores
+        the engine's own choice (see :class:`Settings`)."""
+        if name is not None:
+            _native.Settings.for_profile(name)  # raises for an unknown profile
         _native.set_default_profile(name)
 
     def replace(self, **overrides: Any) -> Settings:
+        """A copy of these settings with ``overrides`` applied."""
         return Settings(self, **overrides)
 
     def _build(
@@ -215,39 +238,46 @@ class Settings:
 
 
 def _assign(settings: Settings, values: dict[str, Any]) -> None:
-    test_cases = int(values["test_cases"])
+    test_cases = _check_int("test_cases", values["test_cases"])
     if test_cases < 0:
-        raise _native.InvalidArgument("test_cases must be non-negative")
+        raise InvalidArgument(f"test_cases={test_cases} must be non-negative")
     seed = values["seed"]
     if seed is not None:
-        seed = int(seed) & ((1 << 64) - 1)
+        seed = _check_int("seed", seed) & ((1 << 64) - 1)
     database = values["database"]
     if database is False:
         database = ""
+    elif isinstance(database, (str, os.PathLike)):
+        database = os.fspath(database)
     elif database is not None:
-        database = str(database)
-    object.__setattr__(settings, "test_cases", test_cases)
-    object.__setattr__(settings, "verbosity", Verbosity(values["verbosity"]))
-    object.__setattr__(settings, "seed", seed)
-    object.__setattr__(settings, "derandomize", bool(values["derandomize"]))
-    object.__setattr__(settings, "database", database)
-    object.__setattr__(
-        settings,
-        "suppress_health_check",
-        _coerce_members(HealthCheck, values["suppress_health_check"]),
-    )
-    object.__setattr__(settings, "phases", _coerce_members(Phase, values["phases"]))
-    object.__setattr__(
-        settings, "report_multiple_failures", bool(values["report_multiple_failures"])
-    )
-    object.__setattr__(settings, "show_statistics", bool(values["show_statistics"]))
-    object.__setattr__(settings, "print_blob", bool(values["print_blob"]))
-    object.__setattr__(settings, "backend", Backend(values["backend"]))
-    object.__setattr__(
-        settings,
-        "nondeterminism_strictness",
-        NondeterminismStrictness(values["nondeterminism_strictness"]),
-    )
+        raise InvalidArgument(
+            f"database={database!r} must be a directory path, None for the default, "
+            'or "" to disable the database'
+        )
+    checked = {
+        "test_cases": test_cases,
+        "verbosity": _coerce_member(Verbosity, "verbosity", values["verbosity"]),
+        "seed": seed,
+        "derandomize": _check_bool("derandomize", values["derandomize"]),
+        "database": database,
+        "suppress_health_check": _coerce_members(
+            HealthCheck, "suppress_health_check", values["suppress_health_check"]
+        ),
+        "phases": _coerce_members(Phase, "phases", values["phases"]),
+        "report_multiple_failures": _check_bool(
+            "report_multiple_failures", values["report_multiple_failures"]
+        ),
+        "show_statistics": _check_bool("show_statistics", values["show_statistics"]),
+        "print_blob": _check_bool("print_blob", values["print_blob"]),
+        "backend": _coerce_member(Backend, "backend", values["backend"]),
+        "nondeterminism_strictness": _coerce_member(
+            NondeterminismStrictness,
+            "nondeterminism_strictness",
+            values["nondeterminism_strictness"],
+        ),
+    }
+    for name, value in checked.items():
+        object.__setattr__(settings, name, value)
 
 
 def _from_native(native: _native.Settings) -> Settings:
@@ -274,5 +304,4 @@ def _from_native(native: _native.Settings) -> Settings:
     return settings
 
 
-def settings_fields() -> tuple[str, ...]:
-    return tuple(f.name for f in dataclasses.fields(Settings))
+_FIELDS = tuple(field.name for field in dataclasses.fields(Settings))

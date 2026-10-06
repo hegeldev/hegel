@@ -27,7 +27,8 @@ class Counter(hegel.StateMachine):
 
     @hegel.rule()
     def incr(self, tc):
-        self.count += tc.draw(gs.integers(1, 10))
+        step = tc.draw(gs.integers(1, 10))
+        self.count += step
 
     @hegel.rule(weight=0.5, group="decr")
     def decr(self, tc):
@@ -69,9 +70,9 @@ def test_sequential_machine_runs_and_shrinks():
     text = notes(info.value)[0]
     assert "Checking invariants on the initial state." in text
     assert "Step 1: incr {" in text
-    assert "  count = " in text
+    assert "  step = " in text
     assert "Invariant small failed:" in text
-    increments = [int(line.split("= ")[1]) for line in text.splitlines() if "count = " in line]
+    increments = [int(line.split("= ")[1]) for line in text.splitlines() if "step = " in line]
     assert sum(increments) == 15  # shrunk to exactly the boundary
     assert all(i.torn_down for i in instances)
 
@@ -534,3 +535,35 @@ def test_concurrent_failure_in_quiet_mode(output):
         hegel.state_machine_test(Bank, test_cases=300, verbosity=hegel.Verbosity.quiet)()
     assert notes(info.value) == []
     assert output.lines == []
+
+
+def test_rules_and_invariants_must_take_the_test_case():
+    with pytest.raises(InvalidArgument, match=r"rule r must take .*def r\(self, tc\)"):
+
+        @hegel.rule()
+        def r(self):
+            pass
+
+    with pytest.raises(InvalidArgument, match="invariant i must take"):
+
+        @hegel.invariant()
+        def i(self, tc, extra):
+            pass
+
+    with pytest.raises(InvalidArgument, match="rule a is async"):
+
+        @hegel.rule()
+        async def a(self, tc):
+            pass
+
+    with pytest.raises(InvalidArgument, match="must decorate a method"):
+        hegel.rule()(5)
+
+
+def test_machine_constructor_takes_nothing_or_the_test_case():
+    class TakesTwo(hegel.StateMachine):
+        def __init__(self, a, b):
+            pass
+
+    with pytest.raises(InvalidArgument, match="must take no arguments, or only the test case"):
+        hegel.run(lambda tc: hegel.run_state_machine(tc, TakesTwo), database="")

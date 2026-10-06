@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 import hegel
@@ -11,7 +13,6 @@ from hegel.settings import (
     Settings,
     TestLocation,
     Verbosity,
-    settings_fields,
 )
 
 
@@ -36,14 +37,10 @@ def test_coercions():
     settings = Settings(
         seed=-1,
         database=False,
-        phases=[Phase.generate, 16],
+        phases=[Phase.generate, Phase.shrink],
         suppress_health_check=HealthCheck.too_slow,
-        verbosity=2,
-        backend=2,
-        derandomize=1,
-        report_multiple_failures=1,
-        show_statistics=1,
-        print_blob=1,
+        verbosity=Verbosity.verbose,
+        backend=Backend.urandom,
     )
     assert settings.seed == (1 << 64) - 1
     assert settings.database == ""
@@ -51,10 +48,6 @@ def test_coercions():
     assert settings.suppress_health_check == frozenset({HealthCheck.too_slow})
     assert settings.verbosity is Verbosity.verbose
     assert settings.backend is Backend.urandom
-    assert settings.derandomize is True
-    assert settings.report_multiple_failures is True
-    assert settings.show_statistics is True
-    assert settings.print_blob is True
     assert Settings(database="/tmp/x").database == "/tmp/x"
 
 
@@ -73,12 +66,61 @@ def test_profiles():
     Settings.register_profile("custom2", Settings.from_profile("custom"), seed=1)
     custom2 = Settings.from_profile("custom2")
     assert custom2.test_cases == 11 and custom2.seed == 1 and custom2.derandomize
-    Settings.load_profile("custom2")
+    Settings.set_default_profile("custom2")
     assert Settings().seed == 1
     Settings.set_default_profile("hegel-tests")
     assert Settings().seed is None
     with pytest.raises(hegel.InvalidArgument):
         Settings.from_profile("no-such-profile")
+
+
+def test_setting_an_unknown_default_profile_fails_and_changes_nothing():
+    with pytest.raises(hegel.InvalidArgument, match="unknown settings profile"):
+        Settings.set_default_profile("no-such-profile")
+    assert Settings().test_cases == Settings.from_profile("hegel-tests").test_cases
+
+
+def test_clearing_the_default_profile_restores_the_engine_choice():
+    Settings.register_profile("cleared", test_cases=3)
+    Settings.set_default_profile("cleared")
+    try:
+        Settings.set_default_profile(None)
+        assert Settings().test_cases != 3
+    finally:
+        Settings.set_default_profile("hegel-tests")
+
+
+@pytest.mark.parametrize(
+    "overrides, match",
+    [
+        ({"test_cases": "10"}, "test_cases='10' must be an integer"),
+        ({"test_cases": True}, "test_cases=True must be an integer"),
+        ({"test_cases": -1}, "test_cases=-1 must be non-negative"),
+        ({"seed": 1.5}, "seed=1.5 must be an integer"),
+        ({"derandomize": 1}, "derandomize=1 must be True or False"),
+        ({"database": 3}, "database=3 must be a directory path"),
+        ({"verbosity": "loud"}, "verbosity='loud' must be one of Verbosity.quiet"),
+        ({"phases": 3}, "phases=3 must be a collection of Phase values"),
+        ({"suppress_health_check": ["nope"]}, "suppress_health_check='nope' must be one of"),
+    ],
+)
+def test_invalid_settings_values(overrides, match):
+    with pytest.raises(hegel.InvalidArgument, match=match):
+        Settings(**overrides)
+
+
+def test_enum_fields_take_member_names_and_paths_are_accepted(tmp_path):
+    settings = Settings(
+        verbosity="quiet",
+        suppress_health_check="filter_too_much",
+        phases=["generate", Phase.shrink],
+        database=tmp_path,
+    )
+    assert settings.verbosity is Verbosity.quiet
+    assert settings.suppress_health_check == {HealthCheck.filter_too_much}
+    assert settings.phases == {Phase.generate, Phase.shrink}
+    assert settings.database == str(tmp_path)
+    assert Settings(database=False).database == ""
 
 
 def test_builtin_profiles():
@@ -113,13 +155,12 @@ def test_build_round_trips_every_field():
     assert native.get_show_statistics()
     assert native.get_print_blob()
     assert native.get_backend() == _native.BACKEND_URANDOM
-    assert native.get_unbounded_choices() is False
 
 
 def test_enum_helpers_and_fields():
     assert Phase.all() == frozenset(Phase)
     assert HealthCheck.all() == frozenset(HealthCheck)
-    assert set(settings_fields()) == {
+    assert {field.name for field in dataclasses.fields(Settings)} == {
         "test_cases",
         "verbosity",
         "seed",

@@ -18,4 +18,3 @@ def test_combine_labels_matches_engine():
 def test_engine_version():
     assert hegel.engine_version() == _native.version()
     assert hegel.__version__
-    assert _native.string_from_engine_bytes(b"abc") == b"abc"

@@ -11,7 +11,7 @@ use num_bigint::BigInt;
 use pyo3::create_exception;
 use pyo3::exceptions::{PyBaseException, PyException};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyModule};
+use pyo3::types::PyModule;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::ptr;
 use std::sync::{Arc, Mutex};
@@ -118,6 +118,14 @@ pub(crate) fn check(rc: Rc) -> PyResult<()> {
         Rc::HEGEL_E_RETRY => Err(RetrySignal::new_err(())),
         Rc::HEGEL_E_INVALID_ARG => Err(InvalidArgument::new_err(last_error())),
         Rc::HEGEL_E_BACKEND => Err(BackendError::new_err(last_error())),
+        // A test body can't see its own test case finish, so this means a
+        // TestCase (or a pool or collection holding one) outlived its test.
+        Rc::HEGEL_E_ALREADY_COMPLETE => Err(InvalidArgument::new_err(
+            "this test case has already finished: a TestCase can only be used while \
+             the test body it was passed to is running. Was it kept for later, or \
+             used from a thread that outlived the test? Join any thread that draws \
+             before the test returns.",
+        )),
         other => Err(InternalError::new_err(format!(
             "libhegel returned {other:?}: {}",
             last_error()
@@ -219,9 +227,11 @@ fn label_combine(labels: Vec<u64>) -> PyResult<u64> {
 }
 
 #[pyfunction]
-fn set_default_profile(name: &str) -> PyResult<()> {
-    let c_name = cstring(name);
-    with_ctx(|ctx| check(unsafe { c::hegel_set_default_profile(ctx, c_name.as_ptr()) }))
+#[pyo3(signature = (name))]
+fn set_default_profile(name: Option<&str>) -> PyResult<()> {
+    let c_name = name.map(cstring);
+    let ptr = c_name.as_ref().map_or(std::ptr::null(), |n| n.as_ptr());
+    with_ctx(|ctx| check(unsafe { c::hegel_set_default_profile(ctx, ptr) }))
 }
 
 #[pyfunction]
@@ -230,11 +240,6 @@ fn register_profile(name: &str, settings: &Settings) -> PyResult<()> {
     with_ctx(|ctx| {
         check(unsafe { c::hegel_settings_register_profile(ctx, c_name.as_ptr(), settings.raw()) })
     })
-}
-
-#[pyfunction]
-fn string_from_engine_bytes<'py>(py: Python<'py>, data: &[u8]) -> Bound<'py, PyBytes> {
-    PyBytes::new(py, data)
 }
 
 #[pymodule]
@@ -261,9 +266,6 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(label_combine, m)?)?;
     m.add_function(wrap_pyfunction!(set_default_profile, m)?)?;
     m.add_function(wrap_pyfunction!(register_profile, m)?)?;
-    m.add_function(wrap_pyfunction!(string_from_engine_bytes, m)?)?;
-    m.add("STATE_MACHINE_DONE", c::HEGEL_STATE_MACHINE_DONE)?;
-    m.add("RESULT_OK", Rc::HEGEL_OK as i32)?;
     m.add("STATUS_VALID", c::hegel_status_t::HEGEL_STATUS_VALID as u32)?;
     m.add(
         "STATUS_INVALID",
@@ -336,7 +338,6 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     m.add("PHASE_TARGET", c::hegel_phase_t::HEGEL_PHASE_TARGET as u32)?;
     m.add("PHASE_SHRINK", c::hegel_phase_t::HEGEL_PHASE_SHRINK as u32)?;
-    m.add("PHASE_ALL", c::hegel_phase_t::HEGEL_PHASE_ALL as u32)?;
     m.add(
         "HC_FILTER_TOO_MUCH",
         c::hegel_health_check_t::HEGEL_HC_FILTER_TOO_MUCH as u32,

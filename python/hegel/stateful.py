@@ -3,6 +3,7 @@ concurrently, and pools of values shared between their rules."""
 
 from __future__ import annotations
 
+import inspect
 import queue
 import threading
 from collections.abc import Callable
@@ -472,6 +473,24 @@ def _run_concurrent(
 # -- class-based machines ---------------------------------------------------
 
 
+def _check_step_method(kind: str, method: Callable[..., Any]) -> None:
+    """A rule or invariant method must be synchronous and take the
+    instance and the test case."""
+    if not callable(method):
+        raise InvalidArgument(f"@hegel.{kind} must decorate a method, not {method!r}")
+    name = getattr(method, "__name__", repr(method))
+    if inspect.iscoroutinefunction(method):
+        raise InvalidArgument(f"{kind} {name} is async, and Hegel does not run async steps")
+    try:
+        inspect.signature(method).bind(None, None)
+    except TypeError:
+        raise InvalidArgument(
+            f"{kind} {name} must take the instance and the test case: def {name}(self, tc)"
+        ) from None
+    except ValueError:  # nocov - a builtin without a signature
+        pass
+
+
 def rule(
     fn: Callable[..., Any] | None = None,
     *,
@@ -483,6 +502,7 @@ def rule(
     test case: ``def push(self, tc)``."""
 
     def decorate(method: Callable[..., Any]) -> Callable[..., Any]:
+        _check_step_method("rule", method)
         method._hegel_rule = {  # type: ignore[attr-defined]
             "group": group,
             "weight": _check_weight(name or method.__name__, weight),
@@ -496,9 +516,13 @@ def rule(
 def invariant(
     fn: Callable[..., Any] | None = None, *, always_run: bool = False, name: str | None = None
 ) -> Any:
-    """Mark a :class:`StateMachine` method as an invariant."""
+    """Mark a :class:`StateMachine` method as an invariant, checked after
+    every step. The method takes the test case: ``def valid(self, tc)``.
+    With ``always_run`` it is checked even after a step the engine
+    discards."""
 
     def decorate(method: Callable[..., Any]) -> Callable[..., Any]:
+        _check_step_method("invariant", method)
         method._hegel_invariant = {  # type: ignore[attr-defined]
             "always_run": bool(always_run),
             "name": name or method.__name__,
@@ -515,7 +539,9 @@ class StateMachine:
     :func:`invariant`; each takes the test case for its step. The class
     attributes ``steps``, ``min_concurrency`` and ``max_concurrency``
     configure the run; with ``max_concurrency > 1`` the rules run on
-    worker threads against the shared instance.
+    worker threads against the shared instance. A fresh instance is made
+    for every test case: ``__init__`` takes either no arguments or just the
+    test case, to draw the initial state from.
 
     ::
 
@@ -525,7 +551,8 @@ class StateMachine:
 
             @hegel.rule()
             def incr(self, tc):
-                self.count += tc.draw(gs.integers(min_value=1, max_value=10))
+                n = tc.draw(gs.integers(min_value=1, max_value=10))
+                self.count += n
 
             @hegel.invariant()
             def non_negative(self, tc):
@@ -612,15 +639,19 @@ def _apply_overrides(machine: Machine, overrides: dict[str, Any]) -> None:
 
 
 def _instantiate(cls: type[StateMachine], tc: TestCase) -> StateMachine:
-    import inspect
-
     try:
-        takes_tc = bool(inspect.signature(cls).parameters)
+        signature = inspect.signature(cls)
     except (TypeError, ValueError):  # nocov
-        takes_tc = False
-    if takes_tc:
-        return cls(tc)  # type: ignore[call-arg]
-    return cls()
+        return cls()
+    if not signature.parameters:
+        return cls()
+    try:
+        signature.bind(tc)
+    except TypeError:
+        raise InvalidArgument(
+            f"{cls.__name__}.__init__ must take no arguments, or only the test case"
+        ) from None
+    return cls(tc)  # type: ignore[call-arg]
 
 
 def state_machine_test(machine: type[StateMachine], **settings: Any) -> Callable[..., None]:

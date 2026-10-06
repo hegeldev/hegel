@@ -191,7 +191,7 @@ def test_explicit_test_case_errors():
     def unnamed(tc):
         tc.draw(gs.integers())
 
-    with pytest.raises(hegel.InvalidArgument, match="an unnamed draw"):
+    with pytest.raises(hegel.InvalidArgument, match="has no value for draw 'draw_1'"):
         unnamed()
 
     @hegel.explicit_test_case(1)
@@ -618,3 +618,81 @@ def test_skip_exceptions_without_pytest(monkeypatch):
     assert pytest.skip.Exception in _skip_exceptions()
     monkeypatch.delitem(sys.modules, "_pytest.outcomes")
     assert _skip_exceptions() == (unittest.SkipTest,)
+
+
+def test_async_tests_are_rejected():
+    with pytest.raises(hegel.InvalidArgument, match="is async"):
+
+        @hegel.test
+        async def test_coroutine(tc):
+            raise AssertionError
+
+    with pytest.raises(hegel.InvalidArgument, match="is async"):
+
+        @hegel.test
+        async def test_async_generator(tc):
+            yield
+
+    async def body(tc):
+        raise AssertionError
+
+    with pytest.raises(hegel.InvalidArgument, match="returned an awaitable"):
+        hegel.run(body, database="")
+    with pytest.raises(hegel.InvalidArgument, match="returned an awaitable"):
+        hegel.run(body, explicit_cases=[hegel.ExplicitCase((), {})], database="")
+
+    class Awaitable:
+        def __await__(self):
+            yield
+
+    with pytest.raises(hegel.InvalidArgument, match="returned an awaitable"):
+        hegel.run(lambda tc: Awaitable(), database="")
+
+
+def test_arguments_that_do_not_fit_fail_before_the_run():
+    calls = []
+
+    @hegel.test
+    def test_it(tc, x):
+        calls.append(x)
+
+    with pytest.raises(TypeError, match="missing a required argument: 'x'"):
+        test_it()
+    assert calls == []
+
+
+def test_calling_a_hegel_test_inside_another_is_an_error():
+    @hegel.test(test_cases=1)
+    def inner(tc):
+        pass
+
+    def outer(tc):
+        inner()
+
+    with pytest.raises(hegel.InvalidArgument, match="called from inside another Hegel test"):
+        hegel.run(outer, database="")
+    inner()  # fine once the outer run is over
+
+
+def test_using_a_test_case_after_its_test_is_an_error():
+    kept = []
+
+    def body(tc):
+        kept.append(tc)
+
+    run_test(body, test_cases=1, database="")
+    with pytest.raises(hegel.InvalidArgument, match="this test case has already finished"):
+        kept[0].draw(gs.integers())
+
+
+def test_drawing_from_something_other_than_a_generator_is_an_error():
+    def from_int(tc):
+        tc.draw(5)
+
+    def from_function(tc):
+        tc.draw(gs.integers)
+
+    with pytest.raises(hegel.InvalidArgument, match="takes a generator, but got 5 of type int$"):
+        hegel.run(from_int, database="")
+    with pytest.raises(hegel.InvalidArgument, match="Did you forget to call it"):
+        hegel.run(from_function, database="")

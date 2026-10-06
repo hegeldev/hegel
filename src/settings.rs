@@ -86,12 +86,6 @@ impl Settings {
         })
     }
 
-    fn set_unbounded_choices(&self, value: bool) -> PyResult<()> {
-        with_ctx(|ctx| {
-            check(unsafe { c::hegel_settings_set_unbounded_choices(ctx, self.raw.0, value) })
-        })
-    }
-
     fn set_phases(&self, value: u32) -> PyResult<()> {
         with_ctx(|ctx| check(unsafe { c::hegel_settings_set_phases(ctx, self.raw.0, value) }))
     }
@@ -207,14 +201,6 @@ impl Settings {
         let mut out: u32 = 0;
         with_ctx(|ctx| {
             check(unsafe { c::hegel_settings_get_suppress_health_check(ctx, self.raw.0, &mut out) })
-        })?;
-        Ok(out)
-    }
-
-    fn get_unbounded_choices(&self) -> PyResult<bool> {
-        let mut out: bool = false;
-        with_ctx(|ctx| {
-            check(unsafe { c::hegel_settings_get_unbounded_choices(ctx, self.raw.0, &mut out) })
         })?;
         Ok(out)
     }

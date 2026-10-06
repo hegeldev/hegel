@@ -43,6 +43,7 @@ T = TypeVar("T")
 
 _HEGEL_DIR = os.path.dirname(os.path.abspath(__file__))
 _output_override = threading.local()
+_running = threading.local()
 
 
 def _stderr_line(line: str) -> None:
@@ -135,7 +136,7 @@ def _run_test_case(
     tc = TestCase(handle, should_emit, case_sink or output.resolved_sink(), is_final=stamped)
     outcome = _CaseOutcome(_native.STATUS_VALID, None, None, None)
     try:
-        test_fn(tc)
+        _check_not_awaitable(test_fn(tc))
     except (AssumeFailed, LoopDone) as signal:
         if isinstance(signal, AssumeFailed):
             outcome.status = _native.STATUS_INVALID
@@ -163,6 +164,20 @@ def _run_test_case(
         output.line(_stop_reason(outcome))
     handle.mark_complete(outcome.status, outcome.origin)
     return outcome
+
+
+def _check_not_awaitable(result: object) -> None:
+    """Fail a test function that returned a coroutine (an ``async def``
+    test, say): its body never ran, so it would otherwise pass."""
+    if inspect.isawaitable(result):
+        close = getattr(result, "close", None)
+        if close is not None:
+            close()
+        raise InvalidArgument(
+            "The test function returned an awaitable, so its body never ran: Hegel does "
+            "not run async tests. Make the test synchronous, running the async code "
+            "under test with asyncio.run()."
+        )
 
 
 def _skip_exceptions() -> tuple[type[BaseException], ...]:
@@ -370,7 +385,7 @@ def _run_explicit(
     explicit = ExplicitTestCase(case)
     tc = TestCase(NO_HANDLE, True, output.resolved_sink(), explicit, is_final=True)
     try:
-        test_fn(tc)
+        _check_not_awaitable(test_fn(tc))
     except LoopDone:
         pass
     except (KeyboardInterrupt, SystemExit, InvalidArgument, InternalError):
@@ -402,18 +417,27 @@ def run(
     ``explicit_cases`` run first, with their given values; ``reproduce_blob``
     replays one previously reported failure instead of generating.
     """
+    __tracebackhide__ = True
     if not callable(test_fn):
         raise InvalidArgument("run() takes a test function")
     resolved = (
         Settings(settings, **overrides) if (settings is not None or overrides) else Settings()
     )
-    if reproduce_blob is not None:
-        _drive_blob_replay(test_fn, resolved, database_key, test_location, reproduce_blob)
-    if Phase.explicit in resolved.phases:
-        output = RunOutput.resolve()
-        for case in explicit_cases:
-            _run_explicit(test_fn, case, output)
-    _drive(test_fn, resolved, database_key, test_location)
+    _running.depth = getattr(_running, "depth", 0) + 1
+    try:
+        if reproduce_blob is not None:
+            _drive_blob_replay(test_fn, resolved, database_key, test_location, reproduce_blob)
+        if Phase.explicit in resolved.phases:
+            output = RunOutput.resolve()
+            for case in explicit_cases:
+                _run_explicit(test_fn, case, output)
+        _drive(test_fn, resolved, database_key, test_location)
+    finally:
+        _running.depth -= 1
+
+
+def _inside_a_run() -> bool:
+    return getattr(_running, "depth", 0) > 0
 
 
 def _location_of(fn: Callable[..., Any]) -> TestLocation | None:
@@ -451,6 +475,11 @@ def test(
     def decorate(inner: Callable[..., Any]) -> Callable[..., Any]:
         if not callable(inner):
             raise InvalidArgument("@hegel.test must decorate a function")
+        if inspect.iscoroutinefunction(inner) or inspect.isasyncgenfunction(inner):
+            raise InvalidArgument(
+                f"{inner.__name__} is async, and Hegel does not run async tests. Make it "
+                "synchronous, running the async code under test with asyncio.run()."
+            )
         signature = inspect.signature(inner)
         parameters = list(signature.parameters.values())
         if not parameters:
@@ -461,8 +490,21 @@ def test(
         # A method takes the test case after ``self``.
         tc_index = 1 if parameters[0].name in ("self", "cls") and len(parameters) > 1 else 0
 
+        remaining = parameters[:tc_index] + parameters[tc_index + 1 :]
+        outer_signature = signature.replace(parameters=remaining)
+
         @functools.wraps(inner)
         def wrapper(*args: Any, **kwargs: Any) -> None:
+            __tracebackhide__ = True
+            if _inside_a_run():
+                raise InvalidArgument(
+                    f"{inner.__name__} is a Hegel test, called from inside another Hegel "
+                    "test. Draw what it needs in the outer test instead, or move its body "
+                    "into a helper function taking the test case."
+                )
+            # Arguments that don't fit are the caller's mistake, not a failure
+            # for the engine to shrink.
+            outer_signature.bind(*args, **kwargs)
             leading, rest = args[:tc_index], args[tc_index:]
             run(
                 lambda tc: inner(*leading, tc, *rest, **kwargs),
@@ -474,8 +516,7 @@ def test(
                 **overrides,
             )
 
-        remaining = parameters[:tc_index] + parameters[tc_index + 1 :]
-        wrapper.__signature__ = signature.replace(parameters=remaining)  # type: ignore[attr-defined]
+        wrapper.__signature__ = outer_signature  # type: ignore[attr-defined]
         wrapper.hegel_inner_test = inner  # type: ignore[attr-defined]
         wrapper.hegel_explicit_cases = list(getattr(inner, "hegel_explicit_cases", []))  # type: ignore[attr-defined]
         wrapper.hegel_reproduce_blob = getattr(inner, "hegel_reproduce_blob", None)  # type: ignore[attr-defined]
