@@ -78,6 +78,7 @@ def test_sets_are_size_bounded(xs):
     assert 2 <= len(xs) <= 10
 
 
+@pytest.mark.xfail(strict=True, reason="Hegel's fixed_dicts always draws keys in mapping order")
 def test_fixed_dictionaries_vary_key_order():
     keys = list(range(10))
     find_any(

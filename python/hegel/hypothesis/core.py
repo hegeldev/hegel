@@ -10,7 +10,7 @@ import time
 from collections.abc import Callable, Hashable
 from typing import Any, TypeVar
 
-from hegel.errors import HegelError
+from hegel.errors import HegelError, RunError
 from hegel.explicit import ExplicitCase
 from hegel.hypothesis._settings import HealthCheck, Phase, Verbosity
 from hegel.hypothesis._settings import settings as Settings
@@ -18,6 +18,7 @@ from hegel.hypothesis.control import BuildContext
 from hegel.hypothesis.errors import (
     DeadlineExceeded,
     FailedHealthCheck,
+    Flaky,
     InvalidArgument,
     NoSuchExample,
     Unsatisfiable,
@@ -524,11 +525,18 @@ def _run_given(
             return
         hegel_run(body, native, database_key=database_key, test_location=location)
 
-    if test_settings.verbosity == Verbosity.quiet:
-        with with_output_override(lambda line: None):
+    try:
+        if test_settings.verbosity == Verbosity.quiet:
+            with with_output_override(lambda line: None):
+                run_cases()
+        else:
             run_cases()
-    else:
-        run_cases()
+    except RunError as error:
+        if isinstance(error, (FailedHealthCheck, Flaky)):
+            raise
+        if str(error).startswith("Unsatisfiable"):
+            raise Unsatisfiable(str(error)) from None
+        raise
 
 
 def _format_example(ex: Example) -> str:

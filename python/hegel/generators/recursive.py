@@ -106,6 +106,10 @@ class Recursive(Generator[T]):
     def __repr__(self) -> str:
         return f"recursive({self.leaf!r}, {getattr(self.branch, '__name__', self.branch)!r})"
 
+    @property
+    def is_empty(self) -> bool:
+        return self.leaf.is_empty
+
 
 def recursive(
     leaf: Generator[T],

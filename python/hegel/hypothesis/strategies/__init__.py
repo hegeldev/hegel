@@ -16,14 +16,19 @@ from typing import Any, Protocol, TypeVar
 
 from hegel import generators as gs
 from hegel.generators.base import Generator
+from hegel.generators.combinators import Just, Nothing, OneOf
 from hegel.hypothesis.control import current_build_context, currently_in_test_context
 from hegel.hypothesis.errors import InvalidArgument
 from hegel.hypothesis.strategies._base import (
+    NOTHING,
+    LazyStrategy,
     SearchStrategy,
     check_strategy,
     check_type,
     check_valid_interval,
     check_valid_sizes,
+    defines_strategy,
+    unwrap_strategies,
 )
 from hegel.test_case import TestCase
 
@@ -92,22 +97,43 @@ not_set: Any = _NotSet()
 
 # -- simple pass-throughs ---------------------------------------------------
 
-just = gs.just
-none = gs.none
-nothing = gs.nothing
-booleans = gs.booleans
-binary = gs.binary
-uuids = gs.uuids
-ip_addresses = gs.ip_addresses
-tuples = gs.tuples
-permutations = gs.permutations
+
+def _passthrough(name: str, function: Any) -> Any:
+    def call(*args: Any, **kwargs: Any) -> Any:
+        return function(*args, **kwargs)
+
+    call.__name__ = name
+    call.__qualname__ = name
+    call.__doc__ = function.__doc__
+    call.__wrapped__ = function
+    return defines_strategy(call)
+
+
+just = _passthrough("just", gs.just)
+booleans = _passthrough("booleans", gs.booleans)
+binary = _passthrough("binary", gs.binary)
+uuids = _passthrough("uuids", gs.uuids)
+ip_addresses = _passthrough("ip_addresses", gs.ip_addresses)
+tuples = _passthrough("tuples", gs.tuples)
+permutations = _passthrough("permutations", gs.permutations)
+builds = _passthrough("builds", gs.builds)
+timezones = _passthrough("timezones", gs.timezones)
+timedeltas = _passthrough("timedeltas", gs.timedeltas)
+dates = _passthrough("dates", gs.dates)
 deferred = gs.deferred
-builds = gs.builds
-timezones = gs.timezones
-timedeltas = gs.timedeltas
-dates = gs.dates
 
 
+def none() -> SearchStrategy[None]:
+    """Just ``None``."""
+    return just(None)
+
+
+def nothing() -> SearchStrategy[Any]:
+    """A strategy with no values: every draw rejects the test case."""
+    return NOTHING
+
+
+@defines_strategy
 def integers(min_value: int | None = None, max_value: int | None = None) -> SearchStrategy[int]:
     """Integers, optionally bounded (inclusive)."""
     for name, value in (("min_value", min_value), ("max_value", max_value)):
@@ -138,6 +164,7 @@ def _to_int(value: Any, name: str, rounding: Callable[[Any], int]) -> int:
     return rounding(value)
 
 
+@defines_strategy
 def floats(
     min_value: float | None = None,
     max_value: float | None = None,
@@ -290,6 +317,7 @@ class _Float16(Generator[float]):
         return f"floats(min_value={self.min_value!r}, max_value={self.max_value!r}, width=16)"
 
 
+@defines_strategy
 def sampled_from(elements: Any) -> SearchStrategy[Any]:
     """One of the given values (a sequence, or an Enum class)."""
     if isinstance(elements, (set, frozenset)):
@@ -325,15 +353,27 @@ def one_of(*args: Any) -> SearchStrategy[Any]:
         except TypeError:
             check_strategy(args[0])
     for arg in args:
-        check_strategy(arg)
+        if not isinstance(arg, Generator):
+            raise InvalidArgument(
+                f"Expected a SearchStrategy but got {arg!r} (type={type(arg).__name__}). "
+                f"Did you mean st.sampled_from({list(args)!r})?"
+            )
     if not args:
-        return gs.nothing()
-    return gs.one_of(*args)
+        return NOTHING
+    if len(args) == 1:
+        return args[0]
+    live = [arg for arg in args if not isinstance(arg, Nothing)]
+    if not live:
+        return NOTHING
+    if len(live) == 1:
+        return live[0]
+    return OneOf(live)
 
 
 # -- collections -------------------------------------------------------------
 
 
+@defines_strategy
 def lists(
     elements: SearchStrategy[Ex],
     *,
@@ -357,16 +397,27 @@ def lists(
     min_size, max_size = int(min_size), None if max_size is None else int(max_size)
     if max_size == 0:
         return just([])
-    if unique or unique_by is not None:
-        if getattr(elements, "is_empty", False):
-            return just([]) if min_size == 0 else gs.nothing()
-    elif getattr(elements, "is_empty", False) and min_size > 0:
-        return gs.nothing()
+    if _check_nonempty_elements("lists", elements, min_size):
+        return just([])
     return gs.lists(
         elements, min_size=min_size, max_size=max_size, unique=unique, unique_by=unique_by
     )
 
 
+def _check_nonempty_elements(name: str, elements: Any, min_size: int) -> bool:
+    """Whether ``elements`` is empty; an error when the collection must
+    then be non-empty."""
+    if not getattr(elements, "is_empty", False):
+        return False
+    if min_size > 0:
+        raise InvalidArgument(
+            f"Cannot create non-empty {name} with elements drawn from the strategy "
+            f"{elements!r} because it has no values."
+        )
+    return True
+
+
+@defines_strategy
 def sets(
     elements: SearchStrategy[Ex], *, min_size: int = 0, max_size: int | None = None
 ) -> SearchStrategy[set[Ex]]:
@@ -374,11 +425,14 @@ def sets(
     check_valid_sizes(min_size, max_size)
     if max_size == 0:
         return just(set())
+    if _check_nonempty_elements("sets", elements, int(min_size)):
+        return just(set())
     return gs.sets(
         elements, min_size=int(min_size), max_size=None if max_size is None else int(max_size)
     )
 
 
+@defines_strategy
 def frozensets(
     elements: SearchStrategy[Ex], *, min_size: int = 0, max_size: int | None = None
 ) -> SearchStrategy[frozenset[Ex]]:
@@ -386,11 +440,14 @@ def frozensets(
     check_valid_sizes(min_size, max_size)
     if max_size == 0:
         return just(frozenset())
+    if _check_nonempty_elements("frozensets", elements, int(min_size)):
+        return just(frozenset())
     return gs.frozensets(
         elements, min_size=int(min_size), max_size=None if max_size is None else int(max_size)
     )
 
 
+@defines_strategy
 def iterables(
     elements: SearchStrategy[Ex],
     *,
@@ -419,6 +476,7 @@ class _PrettyIter:
         return f"iter({self._values!r})"
 
 
+@defines_strategy
 def fixed_dictionaries(
     mapping: dict[Any, SearchStrategy[Any]],
     *,
@@ -444,6 +502,7 @@ def fixed_dictionaries(
     return gs.fixed_dicts(mapping, optional=optional)
 
 
+@defines_strategy
 def dictionaries(
     keys: SearchStrategy[Any],
     values: SearchStrategy[Any],
@@ -457,6 +516,10 @@ def dictionaries(
     check_valid_sizes(min_size, max_size)
     if max_size == 0:
         return just(dict_class())
+    if _check_nonempty_elements("dictionaries", keys, int(min_size)) or _check_nonempty_elements(
+        "dictionaries", values, int(min_size)
+    ):
+        return just(dict_class())
     strategy = gs.dicts(
         keys, values, min_size=int(min_size), max_size=None if max_size is None else int(max_size)
     )
@@ -468,6 +531,7 @@ def dictionaries(
 # -- text -----------------------------------------------------------------------
 
 
+@defines_strategy
 def characters(
     *,
     codec: str | None = None,
@@ -533,6 +597,7 @@ def characters(
     )
 
 
+@defines_strategy
 def text(
     alphabet: Any = not_set,
     *,
@@ -572,6 +637,7 @@ def text(
     return gs.text("".join(dict.fromkeys(chars)), min_size=min_size, max_size=max_size)
 
 
+@defines_strategy
 def from_regex(
     regex: Any, *, fullmatch: bool = False, alphabet: Any = None
 ) -> SearchStrategy[str | bytes]:
@@ -581,6 +647,7 @@ def from_regex(
     return gs.from_regex(regex, fullmatch=fullmatch, alphabet=alphabet)
 
 
+@defines_strategy
 def emails(*, domains: SearchStrategy[str] | None = None) -> SearchStrategy[str]:
     if domains is None:
         return gs.emails()
@@ -611,6 +678,7 @@ def _to_decimal(value: Any, name: str) -> decimal.Decimal | None:
         raise InvalidArgument(f"{name}={value!r} cannot be converted to a Decimal") from None
 
 
+@defines_strategy
 def decimals(
     min_value: Any = None,
     max_value: Any = None,
@@ -682,6 +750,7 @@ def decimals(
     return gs.one_of(*options) if len(options) > 1 else finite
 
 
+@defines_strategy
 def fractions(
     min_value: Any = None, max_value: Any = None, *, max_denominator: int | None = None
 ) -> SearchStrategy[_fractions.Fraction]:
@@ -734,6 +803,7 @@ def _to_fraction(value: Any, name: str) -> _fractions.Fraction | None:
         raise InvalidArgument(f"{name}={value!r} cannot be converted to a Fraction") from None
 
 
+@defines_strategy
 def complex_numbers(
     *,
     min_magnitude: float = 0,
@@ -811,6 +881,7 @@ def complex_numbers(
 # -- time -------------------------------------------------------------------------
 
 
+@defines_strategy
 def times(
     min_value: dt.time = dt.time.min, max_value: dt.time = dt.time.max, *, timezones: Any = None
 ) -> SearchStrategy[dt.time]:
@@ -822,6 +893,7 @@ def times(
     return gs.times(min_value, max_value, timezones=timezones)
 
 
+@defines_strategy
 def datetimes(
     min_value: dt.datetime = dt.datetime.min,
     max_value: dt.datetime = dt.datetime.max,
@@ -843,9 +915,14 @@ def datetimes(
 
 
 def _is_none_strategy(strategy: Generator[Any]) -> bool:
-    return isinstance(strategy, gs.Just) and strategy.value is None
+    try:
+        strategy = unwrap_strategies(strategy)
+    except InvalidArgument:
+        return False
+    return isinstance(strategy, Just) and strategy.value is None
 
 
+@defines_strategy
 def timezone_keys(*, allow_prefix: bool = True) -> SearchStrategy[str]:
     """IANA time zone keys available on this system."""
     import zoneinfo
@@ -863,6 +940,7 @@ def timezone_keys(*, allow_prefix: bool = True) -> SearchStrategy[str]:
 # -- structural -------------------------------------------------------------------
 
 
+@defines_strategy
 def recursive(
     base: SearchStrategy[Ex],
     extend: Callable[[SearchStrategy[Any]], SearchStrategy[T]],
@@ -876,11 +954,29 @@ def recursive(
     if isinstance(max_leaves, bool) or not isinstance(max_leaves, int) or max_leaves < 1:
         raise InvalidArgument(f"max_leaves={max_leaves!r} must be a positive integer")
     if min_leaves is not None:
-        if isinstance(min_leaves, bool) or not isinstance(min_leaves, int) or min_leaves < 0:
-            raise InvalidArgument(f"min_leaves={min_leaves!r} must be a non-negative integer")
+        if isinstance(min_leaves, bool) or not isinstance(min_leaves, int) or min_leaves < 1:
+            raise InvalidArgument(f"min_leaves={min_leaves!r} must be a positive integer")
         if min_leaves > max_leaves:
             raise InvalidArgument(f"min_leaves={min_leaves!r} > max_leaves={max_leaves!r}")
+    probe = extend(base)
+    if probe is base:
+        import warnings
+
+        from hegel.hypothesis.errors import HypothesisWarning
+
+        warnings.warn(
+            f"extend={_describe_function(extend)} is a no-op, so recursive() will only "
+            "ever generate values from the base strategy",
+            HypothesisWarning,
+            stacklevel=2,
+        )
     return gs.recursive(base, extend, max_leaves=max_leaves)
+
+
+def _describe_function(f: Any) -> str:
+    from hegel.hypothesis.strategies._base import _describe
+
+    return _describe(f)
 
 
 class DataObject:
@@ -922,6 +1018,7 @@ def _root(tc: TestCase) -> TestCase:
     return tc
 
 
+@defines_strategy
 def data() -> SearchStrategy[DataObject]:
     return _Data()
 
@@ -964,11 +1061,17 @@ def composite(f: Callable[..., Ex]) -> Callable[..., SearchStrategy[Ex]]:
         return f(_draw_fn(tc), *args, **kwargs)
 
     tc_function.__signature__ = signature  # type: ignore[attr-defined]
-    accept = gs.composite(tc_function)
+    build = gs.composite(tc_function)
+
+    @functools.wraps(f)
+    def accept(*args: Any, **kwargs: Any) -> SearchStrategy[Ex]:
+        return LazyStrategy(build, args, kwargs, name=getattr(f, "__name__", "composite"))
+
     accept.__signature__ = signature.replace(parameters=params[1:])  # type: ignore[attr-defined]
     return accept
 
 
+@defines_strategy
 def shared(base: SearchStrategy[Ex], *, key: Hashable = None) -> SearchStrategy[Ex]:
     """One value per test case, drawn the first time it is needed and
     reused by every ``shared`` strategy with the same key (or the same
@@ -1007,6 +1110,7 @@ def _per_case_store(tc: TestCase) -> dict[Any, Any]:
     return store
 
 
+@defines_strategy
 def slices(size: int) -> SearchStrategy[slice]:
     """Slices usable on a sequence of ``size`` elements."""
     if isinstance(size, bool) or not isinstance(size, int) or size < 0:
@@ -1038,6 +1142,7 @@ def slices(size: int) -> SearchStrategy[slice]:
     return gs.composite(build)()
 
 
+@defines_strategy
 def randoms(
     *, note_method_calls: bool = False, use_true_random: bool = False
 ) -> SearchStrategy[_random.Random]:
@@ -1066,6 +1171,7 @@ class _RandomSeeder:
         return f"RandomSeeder({self.seed!r})"
 
 
+@defines_strategy
 def random_module() -> SearchStrategy[_RandomSeeder]:
     """Seed the global ``random`` module for the test case, restoring its
     state afterwards."""
@@ -1083,6 +1189,7 @@ def random_module() -> SearchStrategy[_RandomSeeder]:
     return gs.composite(seed_random)()
 
 
+@defines_strategy
 def runner(*, default: Any = not_set) -> SearchStrategy[Any]:
     """The test runner (``self`` of a test method), or ``default``."""
 
@@ -1100,6 +1207,7 @@ def runner(*, default: Any = not_set) -> SearchStrategy[Any]:
     return gs.composite(get_runner)()
 
 
+@defines_strategy
 def functions(
     *,
     like: Callable[..., Any] = lambda: None,
@@ -1180,6 +1288,7 @@ def register_type_strategy(
     gs.register_type_generator(custom_type, strategy)
 
 
+@defines_strategy
 def from_type(thing: Any) -> SearchStrategy[Any]:
     """A strategy for instances of ``thing``, from its annotations or the
     registered strategy for it."""

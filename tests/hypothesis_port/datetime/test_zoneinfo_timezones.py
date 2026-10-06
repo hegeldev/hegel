@@ -1,0 +1,302 @@
+# This file is part of Hypothesis, which may be found at
+# https://github.com/HypothesisWorks/hypothesis/
+#
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
+#
+# This Source Code Form is subject to the terms of the Mozilla Public License,
+# v. 2.0. If a copy of the MPL was not distributed with this file, You can
+# obtain one at https://mozilla.org/MPL/2.0/.
+
+import datetime as dt
+import operator
+import platform
+import zoneinfo
+from functools import partial
+
+import pytest
+
+from hegel.hypothesis import given, settings, strategies as st
+from hegel.hypothesis.errors import InvalidArgument
+from hegel.hypothesis.internal.conjecture.data import ConjectureData
+from hegel.hypothesis.strategies._internal.datetime import (
+    DatetimeStrategy,
+    _ambiguous,
+    _instant,
+    _interesting_instants,
+    _probe_transitions,
+    _transitions,
+    datetime_does_not_exist,
+)
+from hegel.hypothesis.strategies._internal.lazy import unwrap_strategies
+
+from tests.hypothesis_port.common.debug import (
+    assert_all_examples,
+    assert_no_examples,
+    find_any,
+    minimal,
+)
+
+
+def test_utc_is_minimal():
+    assert minimal(st.timezones()) is zoneinfo.ZoneInfo("UTC")
+
+
+@settings(max_examples=25)
+@given(
+    st.datetimes(timezones=st.timezones())
+    .filter(partial(operator.le, dt.datetime(2020, 1, 1, tzinfo=dt.timezone.utc)))
+    .filter(partial(operator.ge, dt.datetime(2020, 4, 1, tzinfo=dt.timezone.utc)))
+)
+def test_aware_datetimes_filter_rewriting_narrows_arbitrary_timezones(value):
+    # A three-month window in a twenty-thousand-year range would fail the
+    # filter_too_much health check without rewriting.
+    assert dt.datetime(2020, 1, 1, tzinfo=dt.timezone.utc) <= value
+    assert value <= dt.datetime(2020, 4, 1, tzinfo=dt.timezone.utc)
+
+
+def test_aware_datetimes_filter_rewriting_uses_instant_semantics():
+    # A predicate comparing values which share the bound's tzinfo object uses
+    # fold-ignoring wall-clock order, while the rewritten bounds order values
+    # by the moment they refer to, matching the strategy's semantics for aware
+    # bounds.  These differ only for ambiguous wall times inside a DST fold:
+    tz = zoneinfo.ZoneInfo("America/New_York")
+    bound = dt.datetime(2020, 11, 1, 1, 30, tzinfo=tz)  # EDT; 1-2am repeats
+    inside = dt.datetime(2020, 11, 1, 1, 0, fold=1, tzinfo=tz)  # EST, so a
+    # later instant than the bound, despite the earlier wall-clock reading
+    predicate = partial(operator.le, bound)
+    assert not predicate(inside)
+    s = unwrap_strategies(st.datetimes(timezones=st.just(tz))).filter(predicate)
+    assert isinstance(s, DatetimeStrategy)
+    assert s.in_bounds(inside)
+
+
+def test_can_generate_non_utc():
+    find_any(
+        st.datetimes(timezones=st.timezones()).filter(lambda d: d.tzinfo.key != "UTC")
+    )
+
+
+@given(st.data(), st.datetimes(), st.datetimes())
+def test_datetimes_stay_within_naive_bounds(data, lo, hi):
+    if lo > hi:
+        lo, hi = hi, lo
+    out = data.draw(st.datetimes(lo, hi, timezones=st.timezones()))
+    assert lo <= out.replace(tzinfo=None) <= hi
+
+
+@given(
+    st.data(),
+    st.datetimes(timezones=st.timezones()),
+    st.datetimes(timezones=st.timezones()),
+)
+def test_datetimes_stay_within_aware_bounds(data, lo, hi):
+    if _instant(lo) > _instant(hi):
+        lo, hi = hi, lo
+    # timezones defaults to st.timezones() when the bounds are aware
+    out = data.draw(st.datetimes(lo, hi))
+    assert isinstance(out.tzinfo, zoneinfo.ZoneInfo)
+    assert _instant(lo) <= _instant(out) <= _instant(hi)
+
+
+@given(
+    st.datetimes(
+        min_value=dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc), allow_imaginary=False
+    )
+)
+def test_allow_imaginary_is_not_an_error_for_aware_bounds(d):
+    pass
+
+
+# America/New_York fell back from 02:00 EDT to 01:00 EST on 2020-11-01, and
+# Europe/Dublin - which has a negative DST offset - from 02:00 UTC+1 to 01:00 GMT
+# on 2020-10-25; in both, wall times between 01:00 and 02:00 are ambiguous.
+FALL_BACK_DAYS = [
+    ("America/New_York", dt.date(2020, 11, 1)),
+    ("Europe/Dublin", dt.date(2020, 10, 25)),
+]
+
+
+def at(day, hour, minute=0, *, key, fold=0):
+    tzinfo = zoneinfo.ZoneInfo(key)
+    return dt.datetime.combine(day, dt.time(hour, minute, fold=fold), tzinfo=tzinfo)
+
+
+@pytest.mark.parametrize("key, day", FALL_BACK_DAYS)
+def test_bounds_at_either_side_of_a_fold(key, day):
+    lo = at(day, 1, 30, key=key, fold=1)
+    hi = at(day, 3, key=key)
+    # Wall times up to an hour after lo are ambiguous: with fold=0 they would
+    # be moments before it, so the strategy must constrain the fold to 1.
+    assert_all_examples(
+        st.datetimes(lo, hi, timezones=st.just(lo.tzinfo)),
+        lambda d: _instant(lo) <= _instant(d) <= _instant(hi),
+    )
+    lo2 = at(day, 0, key=key)
+    hi2 = at(day, 1, 45, key=key, fold=0)
+    assert_all_examples(
+        st.datetimes(lo2, hi2, timezones=st.just(lo.tzinfo)),
+        lambda d: _instant(lo2) <= _instant(d) <= _instant(hi2),
+    )
+
+
+@pytest.mark.parametrize("key, day", FALL_BACK_DAYS)
+def test_fold_bound_with_long_interval(key, day):
+    # Intervals of more than a day are drawn as local wall times, rejecting
+    # the rare draw of an ambiguous time beside a bound with the out-of-bounds
+    # fold - rather than the draw-in-UTC approach for shorter intervals.
+    lo = at(day, 1, 30, key=key, fold=1)
+    hi = at(day + dt.timedelta(days=3), 3, key=key)
+    assert_all_examples(
+        st.datetimes(lo, hi, timezones=st.just(lo.tzinfo)),
+        lambda d: _instant(lo) <= _instant(d) <= _instant(hi),
+        settings=settings(max_examples=300),
+    )
+
+
+@pytest.mark.parametrize("key, day", FALL_BACK_DAYS)
+def test_bounds_inside_a_fold(key, day):
+    lo = at(day, 1, 55, key=key, fold=0)
+    hi = at(day, 1, 5, key=key, fold=1)
+    # ...so lo is an earlier moment than hi, but a later wall-clock time!
+    assert _instant(lo) < _instant(hi)
+    assert lo.replace(tzinfo=None) > hi.replace(tzinfo=None)
+    strategy = st.datetimes(lo, hi, timezones=st.just(lo.tzinfo))
+    assert_all_examples(strategy, lambda d: _instant(lo) <= _instant(d) <= _instant(hi))
+    find_any(strategy, lambda d: d.fold == 0)
+    find_any(strategy, lambda d: d.fold == 1)
+
+
+@pytest.mark.parametrize("key, day", FALL_BACK_DAYS)
+def test_fold_inverted_bounds_are_invalid(key, day):
+    # fold=1 is the later moment, so these bounds are ordered by wall clock time, but not
+    # by UTC (_instant) time. This ordering should be rejected.
+    lo = at(day, 1, 45, key=key, fold=1)
+    hi = at(day, 1, 50, key=key, fold=0)
+    assert lo.replace(tzinfo=None) < hi.replace(tzinfo=None)
+    assert _instant(hi) < _instant(lo)
+    with pytest.raises(InvalidArgument):
+        st.datetimes(lo, hi, timezones=st.just(lo.tzinfo)).validate()
+
+
+@pytest.mark.parametrize("key, day", FALL_BACK_DAYS)
+def test_equal_bounds_at_ambiguous_moment_preserves_fold(key, day):
+    dt = at(day, 1, 30, key=key, fold=1)
+    assert_all_examples(
+        st.datetimes(dt, dt, timezones=st.just(dt.tzinfo)),
+        lambda d: _instant(d) == _instant(dt) and d.fold == 1,
+    )
+
+
+@pytest.mark.parametrize("kwargs", [{"no_cache": 1}])
+def test_timezones_argument_validation(kwargs):
+    with pytest.raises(InvalidArgument):
+        st.timezones(**kwargs).validate()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        # {"allow_alias": 1},
+        # {"allow_deprecated": 1},
+        {"allow_prefix": 1},
+    ],
+)
+def test_timezone_keys_argument_validation(kwargs):
+    with pytest.raises(InvalidArgument):
+        st.timezone_keys(**kwargs).validate()
+
+
+@pytest.mark.xfail(strict=False, reason="newly failing on GitHub Actions")
+@pytest.mark.skipif(platform.system() != "Linux", reason="platform-specific")
+def test_can_generate_prefixes_if_allowed_and_available():
+    """
+    This is actually kinda fiddly: we may generate timezone keys with the
+    "posix/" or "right/" prefix if-and-only-if they are present on the filesystem.
+
+    This immediately rules out Windows (which uses the tzdata package instead),
+    along with OSX (which doesn't seem to have prefixed keys).  We believe that
+    they are present on at least most Linux distros, but have not done exhaustive
+    testing.
+
+    It's fine to just patch this test out if it fails - passing in the
+    Hypothesis CI demonstrates that the feature works on *some* systems.
+    """
+    find_any(st.timezone_keys(), lambda s: s.startswith("posix/"))
+    find_any(st.timezone_keys(), lambda s: s.startswith("right/"))
+
+
+def test_can_disallow_prefixes():
+    assert_no_examples(
+        st.timezone_keys(allow_prefix=False),
+        lambda s: s.startswith(("posix/", "right/")),
+    )
+
+
+def test_probed_transitions_include_known_dst_change():
+    # 2007-03-11 02:00 EST sprang forward to 03:00 EDT, i.e. 07:00 UTC
+    tz = zoneinfo.ZoneInfo("America/New_York")
+    assert dt.datetime(2007, 3, 11, 7) in _transitions(tz)
+
+
+def test_interesting_instants_beyond_the_scan_range():
+    # Recurring DST rules continue indefinitely, so windows wholly beyond
+    # the usual scan range are probed directly instead.
+    lo, hi = dt.datetime(6000, 1, 1), dt.datetime(6002, 1, 1)
+    instants, nearest = _interesting_instants(
+        zoneinfo.ZoneInfo("America/New_York"), lo, hi
+    )
+    assert instants
+    assert all(lo <= t <= hi for t in instants)
+    assert nearest == 0
+
+
+def test_generates_imaginary_datetimes():
+    tz = zoneinfo.ZoneInfo("America/New_York")
+    find_any(st.datetimes(timezones=st.just(tz)), datetime_does_not_exist)
+
+
+@pytest.mark.parametrize("fold", [0, 1])
+def test_generates_ambiguous_datetimes_in_both_folds(fold):
+    tz = zoneinfo.ZoneInfo("America/New_York")
+    find_any(
+        st.datetimes(timezones=st.just(tz)),
+        lambda x: x.fold == fold and _ambiguous(x.replace(tzinfo=None), tz),
+    )
+
+
+def test_probing_finds_transitions_a_week_apart():
+    # Brazil moved the start of DST forward by one week in October 2000
+    found = _probe_transitions(
+        zoneinfo.ZoneInfo("America/Noronha"),
+        dt.datetime(2000, 9, 1),
+        dt.datetime(2000, 11, 1),
+    )
+    assert found == (dt.datetime(2000, 10, 8, 2), dt.datetime(2000, 10, 15, 1))
+
+
+def test_probing_a_misaligned_window_still_finds_transitions():
+    # Windows whose endpoints are not whole seconds exercise the bisection
+    # guard for sub-second intervals straddling a whole second
+    transition = dt.datetime(2007, 3, 11, 7)  # 02:00 EST -> 03:00 EDT
+    lo = transition - dt.timedelta(seconds=1) + dt.timedelta(microseconds=1)
+    for hi in [
+        lo + dt.timedelta(seconds=1, microseconds=500000),
+        transition + dt.timedelta(hours=1),
+    ]:
+        found = _probe_transitions(zoneinfo.ZoneInfo("America/New_York"), lo, hi)
+        assert len(found) == 1
+        assert abs(found[0] - transition) <= dt.timedelta(seconds=1)
+
+
+def test_tricky_draw_falls_back_for_utc_frame_bounds():
+    # Bounds inside the same DST fold have no wall-clock drawing window, so a
+    # tricky draw falls back to the ordinary draw-in-UTC-and-convert path.
+    tz = zoneinfo.ZoneInfo("America/New_York")
+    lo = dt.datetime(2020, 11, 1, 1, 59, tzinfo=tz, fold=0)
+    hi = dt.datetime(2020, 11, 1, 1, 1, tzinfo=tz, fold=1)
+    strategy = unwrap_strategies(st.datetimes(lo, hi, timezones=st.just(tz)))
+    # tricky selector, then the UTC wall time 2020-11-01 05:59:30 and fold
+    data = ConjectureData.for_choices((True, 2020, 11, 1, 5, 59, 30, 0, 0))
+    value = strategy.do_draw(data)
+    assert _instant(lo) <= _instant(value) <= _instant(hi)

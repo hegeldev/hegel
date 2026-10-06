@@ -81,6 +81,10 @@ class SampledFrom(Generator[T]):
         index = tc.generate_integer(0, len(self.elements) - 1)
         return self.elements[index]
 
+    @property
+    def is_empty(self) -> bool:
+        return not self.elements
+
     def __repr__(self) -> str:
         return f"sampled_from({list(self.elements)!r})"
 
@@ -139,6 +143,10 @@ class OneOf(Generator[Any]):
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> Any:
         return self._draw(tc, printer)
+
+    @property
+    def is_empty(self) -> bool:
+        return all(g.is_empty for g in self.generators)
 
     def __repr__(self) -> str:
         return "one_of(" + ", ".join(repr(g) for g in self.generators) + ")"

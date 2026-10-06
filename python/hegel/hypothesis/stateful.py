@@ -211,7 +211,7 @@ def _convert_targets(targets: Any, target: Any) -> tuple[str, ...]:
     for t in targets:
         if not isinstance(t, Bundle):
             msg = "Got invalid target %r of type %r, but all targets must be Bundles."
-            if isinstance(t, gs.OneOf):
+            if isinstance(t, OneOf):
                 msg += (
                     "\nIt looks like you passed `one_of(a, b)` or `a | b` as "
                     "a target.  You should instead pass `targets=(a, b)` to "
