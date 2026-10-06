@@ -97,9 +97,8 @@ impl CachedRun {
 
 /// What [`ExecCache::record`] observed about one conclusion.
 pub(crate) struct Recorded {
-    /// The fingerprint had been executed before.
-    pub(crate) duplicate: bool,
-    /// It had, and concluded with a different status or origin.
+    /// The fingerprint had been executed before, and concluded with a
+    /// different status or origin.
     pub(crate) verdict_mismatch: bool,
     /// On a verdict mismatch, the failure the two conclusions disagree
     /// about: the origin of whichever of them was interesting.
@@ -126,8 +125,8 @@ impl ExecCache {
 
     /// Record one executed conclusion under its serialized-values `key`,
     /// keeping a full serving entry only when `keep_full` (the generation
-    /// phase keeps digests only: its duplicates must execute — they are the
-    /// duplicate-stop signal — so serving entries would go unread).
+    /// phase keeps digests only: it never serves a repeat, so serving
+    /// entries would go unread).
     pub(crate) fn record(
         &mut self,
         key: Vec<u8>,
@@ -140,7 +139,6 @@ impl ExecCache {
         let digest = Digest::of(&key);
         let recorded = match self.verdicts.get(&digest) {
             Some(v) => Recorded {
-                duplicate: true,
                 verdict_mismatch: v.status != status || v.origin.as_deref() != origin,
                 mismatched_origin: v.origin.clone().or_else(|| origin.map(String::from)),
             },
@@ -153,7 +151,6 @@ impl ExecCache {
                     },
                 );
                 Recorded {
-                    duplicate: false,
                     verdict_mismatch: false,
                     mismatched_origin: None,
                 }

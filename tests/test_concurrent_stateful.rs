@@ -391,9 +391,10 @@ fn a_panic_that_loses_to_an_engine_side_conclusion_is_discarded() {
             )
             .run();
     });
+    let message = result.unwrap_err().downcast::<String>().unwrap();
     assert!(
-        result.is_ok(),
-        "the engine concluded every case invalid, so the run must pass"
+        message.starts_with("Unsatisfiable"),
+        "the engine concluded every case invalid, so the run is Unsatisfiable: {message}"
     );
     let text = lines.join("\n");
     assert!(
@@ -507,6 +508,7 @@ fn test_concurrent_pool_add_reuse_and_consume(tc: TestCase) {
 }
 
 #[hegel::test(suppress_health_check = [HealthCheck::FilterTooMuch])]
+#[should_panic(expected = "Unsatisfiable")]
 fn test_concurrent_pool_empty_draws_reject(tc: TestCase) {
     let pool: ConcurrentPool<i64> = concurrent_pool(&tc);
     let consume: bool = tc.draw_silent(gs::booleans());

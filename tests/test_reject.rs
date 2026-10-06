@@ -4,6 +4,7 @@ use hegel::generators as gs;
 use hegel::{HealthCheck, TestCase};
 
 #[hegel::test(suppress_health_check = HealthCheck::all())]
+#[should_panic(expected = "Unsatisfiable")]
 fn test_does_not_hang_on_reject(tc: TestCase) {
     tc.draw(gs::integers::<i32>());
     tc.reject();

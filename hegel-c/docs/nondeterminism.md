@@ -72,8 +72,7 @@ structural drift between executions with a position-naming diagnostic.
 
 Once flipped: the execution cache stops recording and serving (serving
 the first recorded verdict is exactly the bias the multi-run machinery
-exists to avoid), the consecutive-duplicate stop is off, and targeting
-switches to a measured race (below). Every replay executes the body.
+exists to avoid), and targeting switches to a measured race (below). Every replay executes the body.
 
 ## The counterexample
 

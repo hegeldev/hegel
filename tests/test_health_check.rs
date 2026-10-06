@@ -4,18 +4,17 @@ use hegel::HealthCheck;
 use hegel::TestCase;
 use hegel::generators as gs;
 
-/// Macro-form suppression: with `tc.assume(n == 42)` rejecting
-/// ~99.99% of an `i32` range, FilterTooMuch *would* fire if not
-/// suppressed (see `filter_too_much_detected` above for the
-/// without-suppression failure shape).  This test pairs with that
-/// one to confirm `#[hegel::test(suppress_health_check =
-/// [HealthCheck::FilterTooMuch])]` actually applies the suppression
-/// — the body's panic-free completion under heavy filtering is the
-/// behavioural claim.
+/// Macro-form suppression: with `tc.assume(n % 20 == 0)` rejecting
+/// ~95% of the range, FilterTooMuch *would* fire if not suppressed
+/// (see `filter_too_much_detected` below for the without-suppression
+/// failure shape).  This test pairs with that one to confirm
+/// `#[hegel::test(suppress_health_check = [HealthCheck::FilterTooMuch])]`
+/// actually applies the suppression — the body's panic-free completion
+/// under heavy filtering is the behavioural claim.
 #[hegel::test(suppress_health_check = [HealthCheck::FilterTooMuch])]
 fn test_filter_too_much_suppressed(tc: TestCase) {
     let n: i32 = tc.draw(gs::integers::<i32>().min_value(0).max_value(1_000_000));
-    tc.assume(n == 42);
+    tc.assume(n % 20 == 0);
 }
 
 /// Macro-form suppression with the multi-element array syntax:
@@ -26,7 +25,7 @@ fn test_filter_too_much_suppressed(tc: TestCase) {
 #[hegel::test(suppress_health_check = [HealthCheck::FilterTooMuch, HealthCheck::TooSlow])]
 fn test_suppress_multiple(tc: TestCase) {
     let n: i32 = tc.draw(gs::integers::<i32>().min_value(0).max_value(1_000_000));
-    tc.assume(n == 42);
+    tc.assume(n % 20 == 0);
     std::thread::sleep(std::time::Duration::from_millis(10));
 }
 
@@ -37,7 +36,7 @@ fn test_suppress_multiple(tc: TestCase) {
 #[hegel::test(suppress_health_check = HealthCheck::all())]
 fn test_suppress_all(tc: TestCase) {
     let n: i32 = tc.draw(gs::integers::<i32>().min_value(0).max_value(1_000_000));
-    tc.assume(n == 42);
+    tc.assume(n % 20 == 0);
     std::thread::sleep(std::time::Duration::from_millis(10));
 }
 
@@ -90,24 +89,30 @@ mod health_checks {
     /// of the rejection rate. Hypothesis instead stops once the invalid budget
     /// `INVALID_THRESHOLD_BASE + INVALID_PER_VALID * valid` is exceeded — for a
     /// run that never produces a valid example that is `458 + 0`, so the run
-    /// gives up after exactly 459 cases. This pins the ported behaviour.
+    /// gives up after exactly 459 cases and, having no valid example, is
+    /// Unsatisfiable. This pins the ported behaviour.
     #[test]
     fn always_reject_with_suppression_stops_at_invalid_budget() {
         let count = Arc::new(AtomicUsize::new(0));
         let c = Arc::clone(&count);
-        Hegel::new(move |tc: TestCase| {
-            c.fetch_add(1, Ordering::SeqCst);
-            let _: i64 = tc.draw(gs::integers::<i64>());
-            tc.reject();
-        })
-        .settings(
-            Settings::new()
-                .test_cases(100)
-                .database(None)
-                .derandomize(true)
-                .suppress_health_check([HealthCheck::FilterTooMuch]),
-        )
-        .run();
+        crate::common::utils::expect_panic(
+            || {
+                Hegel::new(move |tc: TestCase| {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    let _: i64 = tc.draw(gs::integers::<i64>());
+                    tc.reject();
+                })
+                .settings(
+                    Settings::new()
+                        .test_cases(100)
+                        .database(None)
+                        .derandomize(true)
+                        .suppress_health_check([HealthCheck::FilterTooMuch]),
+                )
+                .run();
+            },
+            "Unsatisfiable",
+        );
 
         let n = count.load(Ordering::SeqCst);
         assert_eq!(
