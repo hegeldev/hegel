@@ -6,6 +6,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import inspect
+import threading
 import time
 import unittest
 from collections.abc import Callable, Hashable
@@ -15,7 +16,7 @@ from hegel.errors import Flaky, RunError
 from hegel.explicit import ExplicitCase
 from hegel.hypothesis._settings import HealthCheck, Phase, Verbosity, local_settings
 from hegel.hypothesis._settings import settings as Settings
-from hegel.hypothesis.control import BuildContext
+from hegel.hypothesis.control import BuildContext, currently_in_test_context
 from hegel.hypothesis.errors import (
     DeadlineExceeded,
     FailedHealthCheck,
@@ -284,8 +285,35 @@ class _XfailPassed(AssertionError):
     pass
 
 
+def _fail_health_check(test_settings: Settings, message: str, check: HealthCheck) -> None:
+    """Raise FailedHealthCheck for ``check`` unless the settings suppress it."""
+    __tracebackhide__ = True
+    if check in test_settings.suppress_health_check:
+        return
+    raise FailedHealthCheck(message)
+
+
+_NOT_SEEN = object()
+
+
 def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], TestFunc]:
     """Turn a function taking strategies' values into a Hegel test."""
+    if currently_in_test_context():
+        _fail_health_check(
+            Settings.default,
+            "Nesting @given tests results in quadratic generation and shrinking "
+            "behavior, and can usually be more cleanly expressed by replacing the "
+            "inner function with an st.data() parameter on the outer @given."
+            "\n\n"
+            "If it is difficult or impossible to refactor this test to remove the "
+            "nested @given, you can disable this health check with "
+            "@settings(suppress_health_check=[HealthCheck.nested_given]) on the "
+            "outer @given. See "
+            "https://hypothesis.readthedocs.io/en/latest/reference/api.html"
+                    "#hypothesis.HealthCheck "
+            "for details.",
+            HealthCheck.nested_given,
+        )
 
     def run_test_as_given(test: Any) -> Any:
         if inspect.isclass(test):
@@ -341,6 +369,8 @@ def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], 
         ordered += [k for k in given_kwargs if k not in ordered]
         given_kwargs = {k: given_kwargs[k] for k in ordered}
 
+        executors_seen = threading.local()
+
         @functools.wraps(test)
         def wrapped_test(*arguments: Any, **kwargs: Any) -> Any:
             __tracebackhide__ = True
@@ -377,6 +407,32 @@ def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], 
                 selfy = kwargs.get(posnames[0], arguments[0] if arguments else None)
             elif arguments:
                 selfy = arguments[0]
+            # Check selfy really is self (not e.g. a mock) before health-checking
+            # that the method is always called on the same instance.
+            cur_self = selfy if getattr(type(selfy), test.__name__, None) is wrapped_test else None
+            prev_self = getattr(executors_seen, "prev_self", _NOT_SEEN)
+            if prev_self is _NOT_SEEN:
+                executors_seen.prev_self = cur_self
+            elif cur_self is not prev_self:
+                _fail_health_check(
+                    test_settings,
+                    f"The method {test.__qualname__} was called from multiple "
+                    "different executors. This may lead to flaky tests and "
+                    "nonreproducible errors when replaying from database."
+                    "\n\n"
+                    "Unlike most health checks, HealthCheck.differing_executors "
+                    "warns about a correctness issue with your test. We "
+                    "therefore recommend fixing the underlying issue, rather "
+                    "than suppressing this health check. However, if you are "
+                    "confident this health check can be safely disabled, you can "
+                    "do so with "
+                    "@settings(suppress_health_check=[HealthCheck.differing_executors]). "
+                    "See "
+                    "https://hypothesis.readthedocs.io/en/latest/reference/api.html"
+                    "#hypothesis.HealthCheck "
+                    "for details.",
+                    HealthCheck.differing_executors,
+                )
             _check_fixtures(inner, kwargs, test_settings)
             explicit = _explicit_cases(wrapped_test, original_sig, given_kwargs)
             _run_given(
