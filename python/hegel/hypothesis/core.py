@@ -8,6 +8,7 @@ import functools
 import gc
 import hashlib
 import inspect
+import os
 import re
 import threading
 import time
@@ -200,6 +201,34 @@ def _invalid(message: str, *, exc: type[Exception], test: Any, given_kwargs: Any
     wrapped_test.is_hypothesis_test = True  # type: ignore[attr-defined]
     wrapped_test.hypothesis = HypothesisHandle(test, given_kwargs, lambda: wrapped_test)  # type: ignore[attr-defined]
     return wrapped_test
+
+
+_HEGEL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _trim_traceback(tb: types.TracebackType | None) -> types.TracebackType | None:
+    """Drop Hegel's own frames from a traceback, keeping the wrapper's and one
+    more, so the user sees their test; disabled by HYPOTHESIS_NO_TRACEBACK_TRIM."""
+    if tb is None or os.environ.get("HYPOTHESIS_NO_TRACEBACK_TRIM"):
+        return tb
+    entries = []
+    while tb is not None:
+        entries.append(tb)
+        tb = tb.tb_next
+    kept = []
+    internal = 0
+    for entry in entries:
+        filename = os.path.abspath(entry.tb_frame.f_code.co_filename)
+        if filename.startswith(_HEGEL_DIR + os.sep):
+            # The @given wrapper's own frame (the head) plus one more.
+            internal += 1
+            if internal > 2:
+                continue
+        kept.append(entry)
+    trimmed: types.TracebackType | None = None
+    for entry in reversed(kept):
+        trimmed = types.TracebackType(trimmed, entry.tb_frame, entry.tb_lasti, entry.tb_lineno)
+    return trimmed
 
 
 def _normalise_arguments(
@@ -597,16 +626,21 @@ def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], 
             arguments, kwargs = _normalise_arguments(new_signature, arguments, kwargs)
             _check_fixtures(inner, kwargs, test_settings)
             explicit = _explicit_cases(wrapped_test, original_sig, given_kwargs)
-            _run_given(
-                inner,
-                wrapped_test,
-                given_kwargs,
-                arguments,
-                kwargs,
-                selfy,
-                test_settings,
-                explicit,
-            )
+            try:
+                _run_given(
+                    inner,
+                    wrapped_test,
+                    given_kwargs,
+                    arguments,
+                    kwargs,
+                    selfy,
+                    test_settings,
+                    explicit,
+                )
+            except BaseException as error:
+                if test_settings.verbosity < Verbosity.debug:
+                    error.__traceback__ = _trim_traceback(error.__traceback__)
+                raise
 
         wrapped_test.is_hypothesis_test = True  # type: ignore[attr-defined]
         wrapped_test.hypothesis = HypothesisHandle(test, given_kwargs, lambda: wrapped_test)  # type: ignore[attr-defined]
