@@ -45,9 +45,10 @@ class Phase(IntEnum):
 
 
 class HealthCheckMeta(EnumMeta):
-    def __iter__(self) -> Iterator[HealthCheck]:
+    def __iter__(self) -> Iterator[Any]:
         deprecated = (HealthCheck.return_value, HealthCheck.not_a_test_method)
-        return iter(x for x in super().__iter__() if x not in deprecated)
+        members: list[Any] = list(super().__iter__())
+        return iter(x for x in members if x not in deprecated)
 
 
 @unique

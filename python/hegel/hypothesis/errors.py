@@ -80,7 +80,7 @@ class FlakyStrategyDefinition(Flaky):
 
 
 class FlakyFailure(ExceptionGroup, Flaky):  # type: ignore[type-arg]
-    def derive(self, excs: Any) -> FlakyFailure:
+    def derive(self, excs: Any) -> FlakyFailure:  # type: ignore[override]
         # Keep the type through .split() and .subgroup().
         return FlakyFailure(self.message, excs)
 

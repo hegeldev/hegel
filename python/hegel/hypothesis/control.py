@@ -65,8 +65,8 @@ class BuildContext:
         for task in reversed(tasks):
             try:
                 task()
-            except BaseException as error:  # noqa: BLE001
-                errors.append(error)
+            except BaseException as failure:  # noqa: BLE001
+                errors.append(failure)
         if errors:
             error = errors[0] if len(errors) == 1 else BaseExceptionGroup("Cleanup failed", errors)
             raise error from cause
@@ -109,7 +109,7 @@ def current_build_context() -> BuildContext:
 
 def _current_tc(what: str) -> TestCase:
     stack = _stack()
-    if not stack:
+    if not stack or stack[-1].tc is None:
         raise InvalidArgument(f"Cannot {what} outside of a test")
     return stack[-1].tc
 

@@ -663,17 +663,17 @@ def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], 
 
         wrapped_test.is_hypothesis_test = True  # type: ignore[attr-defined]
         wrapped_test.hypothesis = HypothesisHandle(test, given_kwargs, lambda: wrapped_test)  # type: ignore[attr-defined]
-        wrapped_test.hypothesis_explicit_examples = getattr(
+        wrapped_test.hypothesis_explicit_examples = getattr(  # type: ignore[attr-defined]
             test, "hypothesis_explicit_examples", []
-        )  # type: ignore[attr-defined]
-        wrapped_test._hypothesis_internal_use_settings = getattr(
+        )
+        wrapped_test._hypothesis_internal_use_settings = getattr(  # type: ignore[attr-defined]
             test, "_hypothesis_internal_use_settings", None
-        )  # type: ignore[attr-defined]
+        )
         if getattr(test, "_hypothesis_internal_settings_applied", False):
             wrapped_test._hypothesis_internal_settings_applied = True  # type: ignore[attr-defined]
-        wrapped_test._hypothesis_internal_use_seed = getattr(
+        wrapped_test._hypothesis_internal_use_seed = getattr(  # type: ignore[attr-defined]
             test, "_hypothesis_internal_use_seed", None
-        )  # type: ignore[attr-defined]
+        )
         wrapped_test._hypothesis_internal_use_reproduce_failure = getattr(  # type: ignore[attr-defined]
             test, "_hypothesis_internal_use_reproduce_failure", None
         )
@@ -784,7 +784,7 @@ def _run_given(
                 tc.reject()
             except BaseException as error:
                 valid[0] = True
-                if ex is not None and ex.xfail:
+                if ex is not None and case is not None and ex.xfail:
                     if isinstance(error, ex.raises):
                         if not isinstance(error, Exception):
                             raise InvalidArgument(
@@ -803,7 +803,7 @@ def _run_given(
                 - (_gc_cumulative_time() - gc_started)
                 - context.draw_time
             )
-            if ex is not None and ex.xfail:
+            if ex is not None and case is not None and ex.xfail:
                 raise _XfailPassed(_xfail_passed_message(ex, case))
             if result is not None and check_return:
                 raise FailedHealthCheck(
@@ -819,10 +819,10 @@ def _run_given(
                 # shrinking; the final replay is held to the deadline itself.
                 allowed = deadline if context.is_final else deadline * 1.25
                 if elapsed > allowed:
-                    error = DeadlineExceeded(elapsed, deadline)
+                    exceeded = DeadlineExceeded(elapsed, deadline)
                     timing[0] = elapsed
-                    outcomes.record(error)
-                    raise error
+                    outcomes.record(exceeded)
+                    raise exceeded
                 if timing[0] is not None:
                     timing[1] = elapsed
             outcomes.record(None)
