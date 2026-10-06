@@ -35,7 +35,6 @@ __all__ = [
     "InvalidArgument",
     "InvalidDefinition",
     "InvalidState",
-    "MultipleFailures",
     "NoSuchExample",
     "NonInteractiveExampleWarning",
     "NonRoundTrippableCharactersWarning",
@@ -154,4 +153,14 @@ class BackendCannotProceed(HypothesisException):
 
 
 # Hypothesis reports several distinct failures as an exception group.
-MultipleFailures = BaseExceptionGroup
+def __getattr__(name: str) -> Any:
+    if name == "MultipleFailures":
+        import warnings
+
+        warnings.warn(
+            "MultipleFailures is deprecated; use `except BaseExceptionGroup` instead",
+            HypothesisDeprecationWarning,
+            stacklevel=2,
+        )
+        return BaseExceptionGroup
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
