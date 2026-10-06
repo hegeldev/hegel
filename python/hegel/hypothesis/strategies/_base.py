@@ -29,12 +29,15 @@ def check_strategy(arg: object, name: str = "") -> None:
         hint = ""
         if callable(arg) and getattr(arg, "__module__", "").startswith("hegel.hypothesis"):
             hint = ", but did you mean to call it?"
+        elif isinstance(arg, (list, tuple)):
+            hint = ", but did you mean a strategy such as st.sampled_from?"
         raise InvalidArgument(
             f"Expected a SearchStrategy but got {prefix}{arg!r} (type={type(arg).__name__}){hint}"
         )
 
 
 def check_type(typ: type | tuple[type, ...], arg: object, name: str = "") -> None:
+    assert typ is not Generator, "use check_strategy instead"
     if not isinstance(arg, typ):
         if isinstance(typ, tuple):
             typ_string = "one of " + ", ".join(t.__name__ for t in typ)

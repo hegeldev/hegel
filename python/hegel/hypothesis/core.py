@@ -187,9 +187,47 @@ def _invalid(message: str, *, exc: type[Exception], test: Any, given_kwargs: Any
     def wrapped_test(*arguments: Any, **kwargs: Any) -> Any:  # nocov
         raise exc(message)
 
+    # Hide the given arguments from test runners so they do not look like
+    # fixtures; the error is raised when the test is called.
+    try:
+        sig = inspect.signature(test)
+        wrapped_test.__signature__ = sig.replace(  # type: ignore[attr-defined]
+            parameters=[p for p in sig.parameters.values() if p.name not in given_kwargs],
+            return_annotation=None,
+        )
+    except (TypeError, ValueError):
+        pass
     wrapped_test.is_hypothesis_test = True  # type: ignore[attr-defined]
     wrapped_test.hypothesis = HypothesisHandle(test, given_kwargs, lambda: wrapped_test)  # type: ignore[attr-defined]
     return wrapped_test
+
+
+def _normalise_arguments(
+    signature: inspect.Signature, arguments: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """Bind the caller's arguments to the test's signature without its given
+    parameters, passing by keyword where possible so that drawn values can
+    fill the gaps (e.g. ``@given(y=...)`` on ``f(x, y, z)`` called as ``f(1, 2)``)."""
+    bound = signature.bind(*arguments, **kwargs)
+    params = list(signature.parameters.values())
+    has_varargs = any(p.kind is p.VAR_POSITIONAL and bound.arguments.get(p.name) for p in params)
+    positional: list[Any] = []
+    keyword: dict[str, Any] = {}
+    for param in params:
+        if param.name not in bound.arguments:
+            continue
+        value = bound.arguments[param.name]
+        if param.kind is param.VAR_POSITIONAL:
+            positional.extend(value)
+        elif param.kind is param.VAR_KEYWORD:
+            keyword.update(value)
+        elif param.kind is param.POSITIONAL_ONLY or (
+            has_varargs and param.kind is param.POSITIONAL_OR_KEYWORD
+        ):
+            positional.append(value)
+        else:
+            keyword[param.name] = value
+    return tuple(positional), keyword
 
 
 def _is_invalid_test(
@@ -200,11 +238,13 @@ def _is_invalid_test(
 ) -> Any:
     from hegel.hypothesis._settings import all_settings
 
-    invalid = functools.partial(_invalid, exc=InvalidArgument, test=test, given_kwargs=given_kwargs)
-    if not (given_arguments or given_kwargs):
-        return invalid("given must be called with at least one argument")
     params = list(original_sig.parameters.values())
     pos_params = [p for p in params if p.kind is p.POSITIONAL_OR_KEYWORD]
+    # Positional strategies would have filled the positional parameters.
+    hidden = given_kwargs if given_kwargs else {p.name: None for p in pos_params}
+    invalid = functools.partial(_invalid, exc=InvalidArgument, test=test, given_kwargs=hidden)
+    if not (given_arguments or given_kwargs):
+        return invalid("given must be called with at least one argument")
     kwonly_params = [p for p in params if p.kind is p.KEYWORD_ONLY]
     if given_arguments and params != pos_params:
         return invalid(
@@ -554,6 +594,7 @@ def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], 
                     "for details.",
                     HealthCheck.differing_executors,
                 )
+            arguments, kwargs = _normalise_arguments(new_signature, arguments, kwargs)
             _check_fixtures(inner, kwargs, test_settings)
             explicit = _explicit_cases(wrapped_test, original_sig, given_kwargs)
             _run_given(
