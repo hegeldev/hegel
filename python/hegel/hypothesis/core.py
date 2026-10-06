@@ -3,6 +3,7 @@ tests on Hegel."""
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import gc
 import hashlib
@@ -10,7 +11,9 @@ import inspect
 import re
 import threading
 import time
+import types
 import unittest
+import warnings
 from collections.abc import Callable, Hashable
 from typing import Any, TypeVar
 
@@ -387,6 +390,21 @@ def _fail_health_check(test_settings: Settings, message: str, check: HealthCheck
 _NOT_SEEN = object()
 
 
+@contextlib.contextmanager
+def _fake_subTest(self: Any, msg: Any = None, **__: Any) -> Any:
+    """Replaces unittest's subTest while a @given test runs: per-test-case
+    reporting would otherwise show every failing example as a separate
+    failing test."""
+    warnings.warn(
+        "subTest per-test-case reporting interacts badly with Hypothesis "
+        "trying hundreds of test cases, so we disable it for the duration of "
+        "any test that uses `@given`.",
+        HypothesisWarning,
+        stacklevel=2,
+    )
+    yield
+
+
 def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], TestFunc]:
     """Turn a function taking strategies' values into a Hegel test."""
     if currently_in_test_context():
@@ -498,6 +516,14 @@ def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], 
                 selfy = kwargs.get(posnames[0], arguments[0] if arguments else None)
             elif arguments:
                 selfy = arguments[0]
+            if isinstance(selfy, unittest.TestCase) and test.__name__ in dir(unittest.TestCase):
+                _fail_health_check(
+                    test_settings,
+                    f"You have applied @given to the method {test.__name__}, which is "
+                    "used by the unittest runner but is not itself a test. "
+                    "This is not useful in any way.",
+                    HealthCheck.not_a_test_method,
+                )
             # Check selfy really is self (not e.g. a mock) before health-checking
             # that the method is always called on the same instance.
             cur_self = selfy if getattr(type(selfy), test.__name__, None) is wrapped_test else None
@@ -776,7 +802,7 @@ def _run_given(
         _run_rewriting_reproducer(body, native, database_key=database_key, test_location=location)
 
     try:
-        with local_settings(test_settings):
+        with local_settings(test_settings), _patched_subtest(selfy):
             if test_settings.verbosity == Verbosity.quiet:
                 with with_output_override(lambda line: None):
                     run_cases()
@@ -825,6 +851,19 @@ def _run_rewriting_reproducer(*args: Any, **kwargs: Any) -> None:
                 for note in notes
             ]
         raise
+
+
+@contextlib.contextmanager
+def _patched_subtest(runner: Any) -> Any:
+    if isinstance(runner, unittest.TestCase) and hasattr(runner, "subTest"):
+        original = runner.subTest
+        runner.subTest = types.MethodType(_fake_subTest, runner)  # type: ignore[method-assign]
+        try:
+            yield
+        finally:
+            runner.subTest = original  # type: ignore[method-assign]
+    else:
+        yield
 
 
 def _raise_explicit_failures(failures: list[tuple[str, BaseException]], *, simplify: bool) -> None:
