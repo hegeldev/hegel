@@ -114,7 +114,7 @@ CASES = [
     (collections.abc.Iterator[int], lambda v: iter(v) is not None),
     (collections.abc.Collection[int], lambda v: iter(v) is not None),
     (tuple, lambda v: isinstance(v, tuple)),
-    (tuple, lambda v: isinstance(v, tuple)),
+    (typing.Tuple, lambda v: isinstance(v, tuple)),  # noqa: UP006
     (tuple[int, ...], lambda v: isinstance(v, tuple) and all(isinstance(x, int) for x in v)),
     (tuple[int, str], lambda v: len(v) == 2 and isinstance(v[1], str)),
     (tuple[int, str], lambda v: len(v) == 2),
