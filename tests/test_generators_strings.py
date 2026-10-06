@@ -110,6 +110,23 @@ def test_characters():
     assert hegel.find_example(gs.characters()) == "0"
 
 
+def test_from_regex_with_literal_nul():
+    check_all(gs.from_regex("a\x00b"), lambda s: "a\x00b" in s)
+    check_all(gs.from_regex("[\x00]", fullmatch=True), lambda s: s == "\x00")
+
+
+def test_from_regex_honours_compiled_flags():
+    check_all(
+        gs.from_regex(re.compile("ab", re.IGNORECASE), fullmatch=True), lambda s: s.lower() == "ab"
+    )
+    check_all(
+        gs.from_regex(re.compile(b"\\w", re.ASCII), fullmatch=True),
+        lambda s: s.isalnum() or s == b"_",
+    )
+    check_all(gs.from_regex(re.compile(" a b ", re.VERBOSE), fullmatch=True), lambda s: s == "ab")
+    check_all(gs.from_regex(re.compile("^a$", re.MULTILINE)), lambda s: re.search("^a$", s, re.M))
+
+
 def test_from_regex():
     check_all(gs.from_regex(r"\d+"), lambda s: re.search(r"\d+", s))
     check_all(

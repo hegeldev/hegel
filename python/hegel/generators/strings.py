@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 import uuid as _uuid
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
@@ -297,7 +298,10 @@ class Regex(Generator[str]):
                     "from_regex alphabet must be a string of characters or characters()"
                 )
             alphabet_handle = spec.build(0, 0)
-        self._handle = _native.StringGenerator.regex(pattern, fullmatch, alphabet_handle)
+        # The engine takes a NUL-terminated pattern, so spell literal NULs
+        # as the escape the regex parser accepts.
+        escaped = pattern.replace("\x00", "\\x00")
+        self._handle = _native.StringGenerator.regex(escaped, fullmatch, alphabet_handle)
         self.label = REGEX_LABEL
 
     def do_draw(self, tc: TestCase) -> str:
@@ -312,15 +316,32 @@ def from_regex(regex: Any, *, fullmatch: bool = False, alphabet: Any = None) -> 
     pattern). With ``fullmatch`` the whole string matches; otherwise the
     string merely contains a match, as ``re.search`` would find."""
     pattern = getattr(regex, "pattern", regex)
+    flags = getattr(regex, "flags", 0)
     if isinstance(pattern, bytes):
-        pattern = pattern.decode("latin-1")
+        # Bytes patterns are ASCII-only for \\w and friends, as in Python.
+        pattern = _inline_flags(flags | re.ASCII) + pattern.decode("latin-1")
         latin: Generator[Any] = Regex(
             pattern, bool(fullmatch), alphabet or characters(max_codepoint=255)
         )
         return latin.map(lambda s: s.encode("latin-1"))
     if not isinstance(pattern, str):
         raise InvalidArgument(f"regex={regex!r} must be a string or compiled pattern")
-    return Regex(pattern, bool(fullmatch), alphabet)
+    return Regex(_inline_flags(flags) + pattern, bool(fullmatch), alphabet)
+
+
+_INLINE_FLAGS = [
+    (re.ASCII, "a"),
+    (re.IGNORECASE, "i"),
+    (re.MULTILINE, "m"),
+    (re.DOTALL, "s"),
+    (re.VERBOSE, "x"),
+]
+
+
+def _inline_flags(flags: int) -> str:
+    """A compiled pattern's flags as the inline prefix the engine understands."""
+    letters = "".join(letter for flag, letter in _INLINE_FLAGS if flags & flag)
+    return f"(?{letters})" if letters else ""
 
 
 class Binary(Generator[bytes]):

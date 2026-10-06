@@ -119,14 +119,19 @@ def test_repeat_runs_body_and_reports_repetitions():
 
 def test_repeat_with_assumption_and_control_signals():
     def body(tc):
+        calls = 0
+
         def step():
-            x = tc.draw(gs.integers(0, 1))
-            tc.assume(x == 0)
+            nonlocal calls
+            calls += 1
+            tc.draw(gs.integers(0, 1))
+            # A failed assumption ends only this repetition, not the case.
+            tc.assume(calls > 1)
             raise LoopDone()
 
         tc.repeat(step)
 
-    run_test(body, test_cases=5)
+    run_test(body, test_cases=20)
 
     def invalid(tc):
         def step():
@@ -214,7 +219,7 @@ def test_primitive_draws():
         with pytest.raises(hegel.InvalidArgument):
             tc.generate_integer(2, 1)
 
-    run_test(body, test_cases=5)
+    run_test(body, test_cases=20)
 
 
 def test_collection_protocol():
