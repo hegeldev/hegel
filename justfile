@@ -200,6 +200,15 @@ lint: check-lint
 miri: check-miri
 check: check-lint check-tests check-tests-all-features
 
+# Parse strings generated from the fixture grammars with Lark itself
+# (needs uv, which fetches the pinned lark).
+check-lark:
+    scripts/check-lark.py
+
+# Regenerate the `.expected` files for the Lark fixture grammars from Lark.
+lark-fixtures:
+    scripts/gen-lark-fixtures.py
+
 # Run cargo-insta, installing it first if it's missing. Pinned to the same
 # version as the `insta` dev-dependency so snapshot format stays consistent.
 INSTA_VERSION := "1.47.2"

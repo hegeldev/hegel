@@ -698,69 +698,54 @@ fn fixture_grammars_generate() {
     }
 }
 
+/// Writes the corpus `scripts/check-lark.py` parses with Lark: for each
+/// fixture grammar named in `HEGEL_LARK_CORPUS_GRAMMARS`, one JSON string
+/// per line of `HEGEL_LARK_CORPUS_N` generated strings, in
+/// `HEGEL_LARK_CORPUS_DIR/<grammar>.jsonl`. The start rule is the first
+/// one the grammar's `.expected` file names.
 #[test]
 #[ignore]
-fn experiment() {
-    let name = std::env::var("LARK_GRAMMAR").unwrap_or_else(|_| "json".to_string());
-    let start = std::env::var("LARK_START").unwrap_or_else(|_| "start".to_string());
-    let n: usize = std::env::var("LARK_N")
+fn write_corpus() {
+    let dir = std::env::var("HEGEL_LARK_CORPUS_DIR").unwrap();
+    let grammars = std::env::var("HEGEL_LARK_CORPUS_GRAMMARS").unwrap();
+    let n: u64 = std::env::var("HEGEL_LARK_CORPUS_N")
         .map(|s| s.parse().unwrap())
-        .unwrap_or(200);
-    let max_size: u64 = std::env::var("LARK_MAX")
-        .map(|s| s.parse().unwrap())
-        .unwrap_or(DEFAULT_MAX_SIZE);
-    let out = std::env::var("LARK_OUT").unwrap();
-    let explicit = std::env::var("LARK_EXPLICIT")
-        .map(|v| {
-            v.split(',')
-                .map(|pair| {
-                    let (name, text) = pair.split_once('=').unwrap();
-                    let text = text.replace("\\n", "\n");
-                    let pattern = crate::native::lark::escape::re_escape(&text);
-                    (
-                        name.to_string(),
-                        Arc::new(StringSpec::regex(&pattern, true, None).unwrap()),
-                    )
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let spec = fixture_spec(&name, &start, max_size, explicit);
-    let mut sizes = vec![];
-    let mut invalid = 0;
-    let mut lines = String::new();
-    let started = std::time::Instant::now();
-    for seed in 0..n as u64 {
-        let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
-        match generate_grammar(&mut ntc, &spec) {
-            Ok(s) => {
-                sizes.push(s.chars().count());
-                lines.push_str(&serde_json::to_string(&s).unwrap());
-                lines.push('\n');
-            }
-            Err(e) => {
-                invalid += 1;
-                std::eprintln!("seed {seed}: {e:?} status {:?}", ntc.status());
+        .unwrap_or(100);
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/lark");
+    for name in grammars.split(',').filter(|name| !name.is_empty()) {
+        let expected = std::fs::read_to_string(fixtures.join(format!("{name}.expected"))).unwrap();
+        let start = expected
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("start "))
+            .and_then(|starts| starts.split_whitespace().next())
+            .unwrap();
+        let spec = fixture_spec(name, start, DEFAULT_MAX_SIZE, vec![]);
+        let mut lines = String::new();
+        let mut sizes = vec![];
+        let mut invalid = 0;
+        let started = std::time::Instant::now();
+        for seed in 0..n {
+            let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+            match generate_grammar(&mut ntc, &spec) {
+                Ok(s) => {
+                    sizes.push(s.chars().count());
+                    lines.push_str(&serde_json::to_string(&s).unwrap());
+                    lines.push('\n');
+                }
+                Err(_) => invalid += 1,
             }
         }
+        std::fs::write(Path::new(&dir).join(format!("{name}.jsonl")), lines).unwrap();
+        sizes.sort_unstable();
+        std::eprintln!(
+            "{name}: {} strings, {invalid} invalid, median {} chars, max {} chars, {:?} per string",
+            sizes.len(),
+            sizes.get(sizes.len() / 2).copied().unwrap_or(0),
+            sizes.last().copied().unwrap_or(0),
+            started.elapsed() / n as u32
+        );
     }
-    let elapsed = started.elapsed();
-    std::fs::write(&out, lines).unwrap();
-    sizes.sort_unstable();
-    let pct = |p: f64| sizes[((sizes.len() - 1) as f64 * p) as usize];
-    std::eprintln!(
-        "{name}: n={} invalid={invalid} min={} p10={} p25={} p50={} p75={} p90={} max={} mean={:.1} time/case={:?}",
-        sizes.len(),
-        sizes[0],
-        pct(0.1),
-        pct(0.25),
-        pct(0.5),
-        pct(0.75),
-        pct(0.9),
-        sizes[sizes.len() - 1],
-        sizes.iter().sum::<usize>() as f64 / sizes.len() as f64,
-        elapsed / n as u32
-    );
 }
 
 #[test]
