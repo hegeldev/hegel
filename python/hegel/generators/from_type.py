@@ -183,25 +183,78 @@ def from_type(type_: Any) -> Generator[Any]:
         optional = {k: from_type(v) for k, v in hints.items() if k not in required}
         return fixed_dicts(mapping, optional=optional).map(type_)
     try:
-        signature = inspect.signature(type_)
+        signature = _signature(type_)
     except (TypeError, ValueError):
         raise InvalidArgument(
             f"Cannot infer a generator for {type_!r}: no usable signature"
         ) from None
     from hegel.generators.composite import builds
 
+    hints = _type_hints(type_)
+    optional: dict[str, Generator[Any]] = {}
     for parameter in signature.parameters.values():
-        if parameter.default is inspect.Parameter.empty and parameter.kind in (
+        if parameter.kind not in (
             inspect.Parameter.POSITIONAL_ONLY,
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
             inspect.Parameter.KEYWORD_ONLY,
         ):
-            if parameter.annotation is inspect.Parameter.empty:
+            continue
+        annotation = hints.get(parameter.name, parameter.annotation)
+        if parameter.default is inspect.Parameter.empty:
+            if annotation is inspect.Parameter.empty:
                 raise InvalidArgument(
                     f"Cannot infer a generator for {type_!r}: required argument "
                     f"{parameter.name!r} has no type annotation"
                 )
-    return builds(type_)
+        elif (
+            annotation is not inspect.Parameter.empty
+            and parameter.kind is not inspect.Parameter.POSITIONAL_ONLY
+        ):
+            # Unlike builds(), from_type() asks for arbitrary instances, so
+            # annotated optional arguments are either defaulted or generated.
+            optional[parameter.name] = one_of(just(parameter.default), from_type(annotation))
+    return builds(type_, **optional)
+
+
+def _signature(target: Any) -> inspect.Signature:
+    """``inspect.signature``, minus a spurious ``self`` from a class's explicit
+    ``__signature__`` (as pydantic-style code generation sets it)."""
+    signature = inspect.signature(target)
+    if isinstance(target, type) and isinstance(
+        getattr(target, "__signature__", None), inspect.Signature
+    ):
+        parameters = list(signature.parameters.values())
+        if (
+            parameters
+            and parameters[0].name == "self"
+            and parameters[0].default is inspect.Parameter.empty
+            and parameters[0].kind.name.startswith("POSITIONAL_")
+        ):
+            signature = signature.replace(parameters=parameters[1:])
+    return signature
+
+
+def _type_hints(target: Any) -> dict[str, Any]:
+    """Resolved annotations of ``target``: for a class, its own annotations
+    overlaid with those of ``__init__``."""
+    hints: dict[str, Any] = {}
+    sources = [target, target.__init__] if isinstance(target, type) else [target]
+    for source in sources:
+        try:
+            hints.update(typing.get_type_hints(source))
+        except Exception:
+            pass
+    hints.pop("return", None)
+    return hints
+
+
+def _looks_like_a_type(annotation: Any) -> bool:
+    return (
+        isinstance(annotation, (type, typing.TypeVar, typing.NewType, typing.ForwardRef))
+        or typing.get_origin(annotation) is not None
+        or annotation is typing.Any
+        or isinstance(annotation, typing._SpecialForm)  # noqa: SLF001
+    )
 
 
 def infer_missing_arguments(
@@ -210,13 +263,10 @@ def infer_missing_arguments(
     """Fill in generators for required parameters of ``target`` that have
     type annotations and were not supplied."""
     try:
-        signature = inspect.signature(target)
+        signature = _signature(target)
     except (TypeError, ValueError):
         return kwargs
-    try:
-        hints = typing.get_type_hints(target.__init__ if isinstance(target, type) else target)  # type: ignore[misc]
-    except Exception:
-        hints = {}
+    hints = _type_hints(target)
     result = dict(kwargs)
     parameters = list(signature.parameters.values())
     for index, parameter in enumerate(parameters):
@@ -238,5 +288,8 @@ def infer_missing_arguments(
                 f"Cannot infer a generator for parameter {parameter.name!r} of "
                 f"{target!r}: its annotation {annotation!r} could not be resolved"
             )
+        if not _looks_like_a_type(annotation):
+            # Not a type (e.g. ``x: 1``); leave it for the caller to supply.
+            continue
         result[parameter.name] = from_type(annotation)
     return result

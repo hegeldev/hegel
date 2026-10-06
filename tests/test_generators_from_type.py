@@ -129,7 +129,7 @@ CASES = [
     (Point, lambda v: isinstance(v, Point) and isinstance(v.y, float)),
     (Movie, lambda v: set(v) == {"title", "year"}),
     (PartialMovie, lambda v: set(v) <= {"title"}),
-    (Annotated, lambda v: isinstance(v, Annotated) and v.count == 0),
+    (Annotated, lambda v: isinstance(v, Annotated) and isinstance(v.count, int)),
     (T, lambda v: True),
     (Bound, lambda v: isinstance(v, int)),
     (Constrained, lambda v: isinstance(v, (int, str))),

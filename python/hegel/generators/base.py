@@ -231,4 +231,4 @@ class Filtered(Generator[T]):
 
 
 def _name(f: Any) -> str:
-    return getattr(f, "__qualname__", None) or getattr(f, "__name__", None) or repr(f)
+    return getattr(f, "__name__", None) or getattr(f, "__qualname__", None) or repr(f)

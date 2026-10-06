@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Generic, TypeVar
 
 from hegel import generators as gs
+from hegel.generators.combinators import OneOf
 from hegel.hypothesis._settings import HealthCheck
 from hegel.hypothesis._settings import settings as Settings
 from hegel.hypothesis.control import BuildContext, current_build_context, currently_in_test_context
@@ -93,7 +94,23 @@ class Rule:
     bundles: tuple[Bundle, ...] = field(init=False)
 
     def __post_init__(self) -> None:
-        self.bundles = tuple(v for _, v in sorted(self.arguments.items()) if isinstance(v, Bundle))
+        bundles = []
+        arguments = {}
+        for k, v in self.arguments.items():
+            if isinstance(v, Bundle):
+                bundles.append(v)
+                # A bundle whose only transformations are filters hands the
+                # rule the stored value, so the step can print its name.
+                draw_references = all(name == "filter" for name, _ in v._transformations)
+                v = Bundle(
+                    v.name,
+                    consume=v.consume,
+                    draw_references=draw_references,
+                    transformations=v._transformations,
+                )
+            arguments[k] = v
+        self.arguments = arguments
+        self.bundles = tuple(bundles)
 
     def __repr__(self) -> str:
         return f"Rule(targets={self.targets!r}, function={self.function!r})"
@@ -138,17 +155,20 @@ class Bundle(SearchStrategy[Ex]):
         bundle = machine.bundle(self.name)
         if not bundle:
             raise UnsatisfiedAssumption()
-        candidates = list(enumerate(bundle))[::-1]
-        for _attempt in range(3):
-            position, reference = tc.draw_silent(gs.sampled_from(candidates))
-            value = machine.names_to_values[reference.name]
-            result = self._transform(value)
-            if result is _REJECTED:
-                continue
-            if self.consume:
-                bundle.pop(position)
-            return reference if self.draw_references else result
-        raise UnsatisfiedAssumption()
+        # Only the values passing the filters are candidates, as in
+        # Hypothesis, so a filtered bundle never rejects a test case while
+        # it holds a matching value.
+        candidates = []
+        for position, reference in reversed(list(enumerate(bundle))):
+            result = self._transform(machine.names_to_values[reference.name])
+            if result is not _REJECTED:
+                candidates.append((position, reference, result))
+        if not candidates:
+            raise UnsatisfiedAssumption()
+        position, reference, result = tc.draw_silent(gs.sampled_from(candidates))
+        if self.consume:
+            bundle.pop(position)
+        return reference if self.draw_references else result
 
     def _transform(self, value: Any) -> Any:
         for kind, f in self._transformations:
@@ -182,7 +202,7 @@ class Bundle(SearchStrategy[Ex]):
         )
         return self._base_repr() + transforms
 
-    def is_currently_empty(self) -> bool:
+    def is_currently_empty(self, tc: TestCase | None = None) -> bool:
         return not self._machine().bundle(self.name)
 
     def __hash__(self) -> int:
@@ -190,6 +210,12 @@ class Bundle(SearchStrategy[Ex]):
 
 
 _REJECTED = object()
+
+
+class _AbortCase(BaseException):
+    """The current test case is invalid (an assumption failed inside a
+    step); raised through Hegel's machine runner, which only treats
+    AssumeFailed as "skip this rule"."""
 
 
 def consumes(bundle: Bundle[Ex]) -> SearchStrategy[Ex]:
@@ -211,7 +237,7 @@ def _convert_targets(targets: Any, target: Any) -> tuple[str, ...]:
     for t in targets:
         if not isinstance(t, Bundle):
             msg = "Got invalid target %r of type %r, but all targets must be Bundles."
-            if isinstance(t, gs.OneOf):
+            if isinstance(t, OneOf):
                 msg += (
                     "\nIt looks like you passed `one_of(a, b)` or `a | b` as "
                     "a target.  You should instead pass `targets=(a, b)` to "
@@ -264,8 +290,13 @@ def rule(
         new_rule = Rule(
             targets=converted_targets, arguments=kwargs, function=f, preconditions=preconditions
         )
-        setattr(f, RULE_MARKER, new_rule)
-        return f
+
+        @functools.wraps(f)
+        def rule_wrapper(*args: Any, **kwargs: Any) -> Any:
+            return f(*args, **kwargs)
+
+        setattr(rule_wrapper, RULE_MARKER, new_rule)
+        return rule_wrapper
 
     return accept
 
@@ -309,8 +340,13 @@ def initialize(
         new_rule = Rule(
             targets=converted_targets, arguments=kwargs, function=f, preconditions=preconditions
         )
-        setattr(f, INITIALIZE_RULE_MARKER, new_rule)
-        return f
+
+        @functools.wraps(f)
+        def rule_wrapper(*args: Any, **kwargs: Any) -> Any:
+            return f(*args, **kwargs)
+
+        setattr(rule_wrapper, INITIALIZE_RULE_MARKER, new_rule)
+        return rule_wrapper
 
     return accept
 
@@ -376,12 +412,16 @@ def invariant(*, check_during_init: bool = False) -> Callable[[Any], Any]:
                 "twice, which is not allowed."
             )
         preconditions = getattr(f, PRECONDITIONS_MARKER, ())
-        setattr(
-            f,
-            INVARIANT_MARKER,
-            Invariant(function=f, preconditions=preconditions, check_during_init=check_during_init),
+        invar = Invariant(
+            function=f, preconditions=preconditions, check_during_init=check_during_init
         )
-        return f
+
+        @functools.wraps(f)
+        def invariant_wrapper(*args: Any, **kwargs: Any) -> Any:
+            return f(*args, **kwargs)
+
+        setattr(invariant_wrapper, INVARIANT_MARKER, invar)
+        return invariant_wrapper
 
     return accept
 
@@ -443,6 +483,24 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
             return "[" + ", ".join(item.name for item in value) + "]"
         if not _is_singleton(value) and id(value) in self._value_names:
             return self._value_names[id(value)]
+        if type(value) in (list, tuple, set, frozenset) and any(
+            not _is_singleton(item) and id(item) in self._value_names for item in value
+        ):
+            parts = [self._pretty_print(item) for item in value]
+            if type(value) is list:
+                return "[" + ", ".join(parts) + "]"
+            if type(value) is tuple:
+                return "(" + ", ".join(parts) + ("," if len(parts) == 1 else "") + ")"
+            if type(value) is set:
+                return "{" + ", ".join(parts) + "}"
+            return "frozenset({" + ", ".join(parts) + "})"
+        if type(value) is dict and any(
+            not _is_singleton(item) and id(item) in self._value_names for item in value.values()
+        ):
+            items = ", ".join(
+                f"{self._pretty_print(k)}: {self._pretty_print(v)}" for k, v in value.items()
+            )
+            return "{" + items + "}"
         return pretty_repr(value)
 
     def __repr__(self) -> str:
@@ -575,7 +633,12 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
         )
 
     def _draw_arguments(self, tc: TestCase, r: Rule) -> dict[str, Any]:
-        return {k: tc.draw_silent(v) for k, v in r.arguments.items()}
+        try:
+            return {k: tc.draw_silent(v) for k, v in r.arguments.items()}
+        except UnsatisfiedAssumption:
+            # Hypothesis abandons the whole test case when a rule's
+            # arguments cannot be drawn (an empty bundle, say).
+            raise _AbortCase() from None
 
     def _execute_rule(
         self,
@@ -598,7 +661,12 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
                     resolved[k] = [self.names_to_values[item.name] for item in v]
                 else:
                     resolved[k] = v
-            result = r.function(self, **resolved)
+            try:
+                result = r.function(self, **resolved)
+            except UnsatisfiedAssumption:
+                # assume() inside a rule abandons the whole test case, as in
+                # Hypothesis, rather than skipping just this rule.
+                raise _AbortCase() from None
             if r.targets:
                 if isinstance(result, MultipleResults):
                     self._add_results_to_targets(r.targets, result.values)
@@ -616,6 +684,12 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
             output(self._repr_step(r, data_to_print, result))
 
     def _run(self, tc: TestCase, settings: Settings) -> None:
+        try:
+            self._run_steps(tc, settings)
+        except _AbortCase:
+            raise UnsatisfiedAssumption() from None
+
+    def _run_steps(self, tc: TestCase, settings: Settings) -> None:
         output = tc.note
         with BuildContext(tc, is_final=tc.is_final, runner=self):
             try:
@@ -629,8 +703,14 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
                     self.check_invariants(settings, output)
                 machine = Machine(tc)
                 machine._print_steps = False
+                names: dict[str, int] = {}
                 for r in self.rules:
-                    machine.rule(r.function.__name__, self._rule_runner(r, settings, output))
+                    # Hegel needs distinct rule names; one function may back
+                    # several Hypothesis rules.
+                    base = r.function.__name__
+                    names[base] = names.get(base, 0) + 1
+                    name = base if names[base] == 1 else f"{base}#{names[base]}"
+                    machine.rule(name, self._rule_runner(r, settings, output))
                 # Hegel checks invariants on the initial state itself; the
                 # ones after initialize rules were already checked above.
                 initial = [True]

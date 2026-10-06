@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import inspect
+
+import pytest
+
 import hegel
 from hegel import generators as gs
 from tests.helpers import notes, run_test
@@ -84,3 +88,87 @@ def test_machine_without_step_output_reports_invariant_failures():
         assert "Invariant inv failed" not in "\n".join(notes(error))
     else:
         raise AssertionError("expected a failure")
+
+
+class _EmptyNow(gs.Generator[int]):
+    """A generator that can report having no values right now, as a
+    stateful bundle does."""
+
+    label = gs.integers().label
+
+    def __init__(self, empty: bool) -> None:
+        self.empty = empty
+
+    def is_currently_empty(self, tc: hegel.TestCase) -> bool:
+        return self.empty
+
+    def do_draw(self, tc: hegel.TestCase) -> int:
+        return tc.draw_silent(gs.integers(0, 3))
+
+
+def test_lists_of_a_currently_empty_generator():
+    assert hegel.find_example(gs.lists(_EmptyNow(True))) == []
+    assert len(hegel.find_example(gs.lists(_EmptyNow(False), min_size=1))) >= 1
+    with pytest.raises(hegel.Unsatisfiable):
+        hegel.find_example(gs.lists(_EmptyNow(True), min_size=1))
+
+
+def test_from_type_honours_an_explicit_signature_without_self():
+    class Model:
+        __signature__ = inspect.Signature(
+            [
+                inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+                inspect.Parameter("n", inspect.Parameter.KEYWORD_ONLY, annotation=int),
+            ]
+        )
+
+        def __init__(self, **kwargs: int) -> None:
+            self.n = kwargs["n"]
+
+    value = hegel.find_example(gs.from_type(Model))
+    assert isinstance(value.n, int)
+
+
+def test_from_type_ignores_variadic_parameters():
+    class Variadic:
+        def __init__(self, x: int, *args: str, **kwargs: str) -> None:
+            self.x = x
+
+    assert isinstance(hegel.find_example(gs.from_type(Variadic)).x, int)
+
+
+def test_from_type_keeps_an_explicit_signature_without_self():
+    class Model:
+        __signature__ = inspect.Signature(
+            [inspect.Parameter("n", inspect.Parameter.KEYWORD_ONLY, annotation=int)]
+        )
+
+        def __init__(self, **kwargs: int) -> None:
+            self.n = kwargs["n"]
+
+    assert isinstance(hegel.find_example(gs.from_type(Model)).n, int)
+
+
+def test_from_type_requires_annotations_for_required_arguments():
+    class Needs:
+        def __init__(self, x, *args, **kwargs):
+            self.x = x
+
+    with pytest.raises(hegel.InvalidArgument, match="x"):
+        gs.from_type(Needs)
+
+
+def test_builds_skips_non_type_annotations_on_required_arguments():
+    def target(x: 1):  # type: ignore[valid-type]
+        return x
+
+    assert hegel.find_example(gs.builds(target, x=gs.just(2))) == 2
+    with pytest.raises(TypeError):
+        hegel.find_example(gs.builds(target))
+
+
+def test_builds_skips_non_type_annotations():
+    def target(x: 1 = 0):  # type: ignore[valid-type]
+        return x
+
+    assert hegel.find_example(gs.builds(target)) == 0
