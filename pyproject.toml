@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "hegel"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Property-based testing for Python, built on the Hegel engine."
 readme = "README.md"
 license = { text = "MIT" }
@@ -15,9 +15,18 @@ classifiers = [
   "Framework :: Pytest",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: Implementation :: CPython",
   "Programming Language :: Rust",
   "Topic :: Software Development :: Testing",
+  "Typing :: Typed",
 ]
 dependencies = []
 
@@ -32,6 +41,13 @@ hegel = "hegel.pytest_plugin"
 python-source = "python"
 module-name = "hegel._native"
 features = ["pyo3/extension-module"]
+# Repository tooling that has no business in the source distribution. The
+# .cargo config only points cargo at the dev virtualenv; maturin sets
+# PYO3_PYTHON itself when building.
+exclude = [
+  { path = ".github/**", format = "sdist" },
+  { path = ".cargo/**", format = "sdist" },
+]
 
 [dependency-groups]
 dev = [

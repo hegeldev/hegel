@@ -11,6 +11,8 @@ A test takes a :class:`TestCase` and draws values from generators::
         assert sorted(xs) == sorted(sorted(xs))
 """
 
+from importlib import metadata as _metadata
+
 from hegel import generators
 from hegel._native import version as _version
 from hegel.errors import (
@@ -58,7 +60,10 @@ from hegel.stateful import (
 )
 from hegel.test_case import Collection, TestCase
 
-__version__ = "0.1.0"
+try:
+    __version__ = _metadata.version("hegel")
+except _metadata.PackageNotFoundError:  # nocov
+    __version__ = "0+unknown"
 __all__ = [
     "AssumeFailed",
     "Backend",

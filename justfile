@@ -44,4 +44,8 @@ check-lint:
 check-types:
     uv run mypy python/hegel
 
-check: check-format check-lint check-types check-coverage check-hypothesis-port
+# Unit tests for the release automation in .github/scripts.
+check-release-script:
+    uv run python .github/scripts/test_release.py
+
+check: check-format check-lint check-types check-release-script check-coverage check-hypothesis-port
