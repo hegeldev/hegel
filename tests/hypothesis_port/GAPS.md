@@ -3,7 +3,7 @@
 Each entry: the Hypothesis behaviour, what Hegel does instead, and whether
 the gap is in the compatibility layer (fixable here) or in the engine.
 
-## Stateful, nocover and quality (agent C)
+## Stateful, nocover and quality
 
 Files: `cover/test_stateful.py`, `nocover/*.py`, `quality/*.py`.
 
@@ -24,9 +24,10 @@ Files: `cover/test_stateful.py`, `nocover/*.py`, `quality/*.py`.
   example:\n..."` where Hypothesis attaches `"Failing test case:"` followed by
   one note per line. Tests use a `_notes()` helper that flattens the note.
   Compat layer; left as is.
-- **Flaky errors.** Hegel raises `hegel.errors.Flaky` with no
-  `FlakyStrategyDefinition`/`FlakyFailure` subclass and no "precondition
-  changed" note. Engine; xfailed (`test_flaky_precondition_error_message`).
+- **Flaky errors.** The compat layer raises `FlakyFailure`,
+  `FlakyReplay` and `FlakyStrategyDefinition` where it can tell them apart,
+  but there is no "precondition changed" note. Engine; xfailed
+  (`test_flaky_precondition_error_message`).
 - **`stateful_step_count` / `_min_steps`.** Hegel has no minimum step count.
   Engine; xfailed (`test_min_steps_argument`).
 - **Shrinker tie-break.** `just([]) | lists(bundle)` shrinks to the
@@ -67,7 +68,8 @@ Remaining gaps (xfailed, strict unless noted):
   `test_argument_validation.py`/`test_threading.py` build the strategy inside
   the `raises` block). Compat layer by design.
 - **No `Unsatisfiable` when every example is rejected** and health checks are
-  suppressed; Hegel passes silently. Engine
+  suppressed: a run whose first twenty or so cases are all rejected ends
+  quietly as passed. Engine; see `docs/engine-issues.md`
   (`test_given_error_conditions.py`, `test_testdecorators.py`).
 - **`lists(nothing(), min_size=1)`** is reported as Unsatisfiable at run time
   rather than InvalidArgument.
@@ -76,8 +78,8 @@ Remaining gaps (xfailed, strict unless noted):
   (`test_duplication.py`). Engine.
 - **No `data_too_large`/`large_base_example` health checks**
   (`test_health_checks.py`). Engine.
-- **Targeting**: `target()` is accepted but no "Highest target score" is
-  reported and generation is not steered toward the threshold
+- **Targeting**: `target()` steers generation, but only from halfway through
+  the budget, and no "Highest target score" is reported
   (`test_targeting.py`, `quality/test_targeting_quality.py`). Engine.
 - **Interesting origin**: failures are distinguished by exception type and
   location only, not by the cause chain (`test_interesting_origin.py`).
@@ -141,7 +143,7 @@ Dropped as internals: `test_discovery_ability.py`, `test_poisoned_lists.py`,
 - Everything else in `test_shrink_quality.py` (84 tests), `test_float_shrinking.py`
   and `test_integers.py` passes unchanged.
 
-## Core and settings (agent B)
+## Core and settings
 
 Files: test_core, test_testdecorators, test_given_error_conditions,
 test_explicit_examples, test_example, test_find, test_control, test_settings,
@@ -191,7 +193,8 @@ test_asyncio.
   running up to `max_examples`, and an exhausted space surfaces as a health
   check failure rather than silently stopping. (Engine.)
 - When every input is rejected and `filter_too_much` is suppressed, the test
-  passes silently instead of raising `Unsatisfiable`. (Engine.)
+  can pass quietly instead of raising `Unsatisfiable`. (Engine; see
+  `docs/engine-issues.md`.)
 - `deadline` is enforced in the Python layer: 1.25x the deadline while
   generating and shrinking, the deadline itself on the final replay, with
   garbage-collection time and `data.draw()` time excluded. Hegel re-executes
@@ -234,13 +237,14 @@ test_asyncio.
 - `.example()` is minimal and deterministic, with no "non-interactive use"
   warning and no refusal inside a test. (Compat layer.)
 - Strategy objects are not cached by argument, so identity tests are xfail.
-- No statistics collector (`hegel.hypothesis.statistics`), no import-time
+- No statistics collector (`hegel.hypothesis.statistics` raises
+  `ModuleNotFoundError`), no import-time
   side-effect tracking (`_hypothesis_globals`), and no
   `hypothesis.internal.compat` helpers: those modules' tests are skipped.
 - `RuleBasedStateMachine` does not note the `draw` made inside a rule, so the
-  stateful flakiness test is xfail (the stateful agent's area).
+  stateful flakiness test is xfail.
 
-## Strategies (agent A)
+## Strategies
 
 Files ported: test_direct_strategies, test_simple_collections, test_simple_strings,
 test_simple_characters, test_numerics, test_float_nastiness, test_subnormal_floats,
@@ -257,7 +261,7 @@ define_function_signature.
 
 - **from_type coverage (engine/compat).** Hypothesis resolves every builtin type
   (exceptions, range, slice, memoryview, ...), typing special forms (Final, Annotated
-  metadata, Callable[..., X], Type[...], Protocols, ItemsView/KeysView, re.Pattern,
+  metadata, Callable[..., X], Protocols, ItemsView/KeysView, re.Pattern,
   TypeVar factories, NewType conditionally) and forward references found in caller
   frames. Hegel's from_type knows builtin value types, generics it has a generator
   for, enums, dataclasses, TypedDicts and annotated constructors; everything else
@@ -268,23 +272,22 @@ define_function_signature.
 - **Resolved strategies are cached (compat).** `from_type(Abstract)` keeps the strategy
   it first resolved, so registering/unregistering a subclass afterwards has no effect,
   and `repr(from_type(int))` is `from_type(<class 'int'>)` rather than `integers()`.
-- **Timezone-aware datetime bounds (engine).** Hypothesis accepts aware `min_value` /
-  `max_value` and compares them as instants, targets DST folds/gaps and leap seconds
-  ("tricky" draws), and generates `fold=1`. Hegel's datetimes()/times() reject aware
-  bounds and never set fold. `dates(x, x)`/`timedeltas(x, x)` do not return the bound
+- **Tricky datetimes (engine).** Hypothesis upweights DST folds/gaps, leap seconds and
+  the 2038 rollover ("tricky" draws), and generates `fold=1`. Hegel's
+  datetimes()/times() do neither. `dates(x, x)`/`timedeltas(x, x)` do not return the bound
   object itself, and timedeltas shrink by component rather than to whole days.
-- **from_regex flags and classes (engine).** re.ASCII, re.IGNORECASE on classes,
-  re.DOTALL, re.MULTILINE insertion around ^/$, bytes `\w`/`\s`/`\d` classes,
-  negative lookaheads, inline-flag scoping and alphabet-incompatible charsets are not
-  honoured by Hegel's regex generator; the alphabet is also not checked against the
-  pattern's codec (no warning).
+- **from_regex (engine).** Flags, bytes classes, lookaheads and alphabets pass the
+  ported tests. Patterns that can match nothing (`a^b`, `(?!foo)foo`) and character
+  classes with nothing in the alphabet are not reported up front, and the failing
+  example prints as `name = value` lines; see `docs/engine-issues.md`.
 - **randoms() (engine).** Hegel returns seeded `random.Random` subclasses
   (`HypothesisRandom` / `TrueRandom` with `note_method_calls`), not Hypothesis's
   ArtificialRandom whose method results are drawn from the test data. Exact boundary
   values (random() == 0, betavariate == 1, randrange(100, step=3)) cannot be targeted,
   and `random_module()` draws its seed so two draws can coincide after shrinking.
-- **register_random is a no-op (engine).** Hegel does not manage registered PRNG state
-  across test cases; only argument validation is kept.
+- **register_random (compat).** Implemented in Python as in Hypothesis: registered
+  PRNGs (and the global `random`, and NumPy's if imported) are seeded per test case and
+  restored afterwards.
 - **sampled_from(...).filter() (engine, fixed on main).** Tests relying on the filtered
   sample searching untried elements are lenient xfails pending the merge of
   `FilteredSample`; `sampled_from(dataclass)` gives no "annotations" hint.

@@ -19,6 +19,7 @@ along the way.
 | `RuleBasedStateMachine`, `Bundle` | `hegel.StateMachine`, `hegel.Machine`, `hegel.Pool` | Rules take the test case and draw their own arguments. |
 | `data()` | the test case itself | Interactive draws are the normal way to draw. |
 | `find(strategy, condition)` | none; write a test | `hegel.hypothesis.find` exists for compatibility only. |
+| `from_regex(pattern)` matches anywhere | `gs.from_regex(pattern)` matches the whole string | Hegel defaults to `fullmatch=True`, as the Rust library does; `hegel.hypothesis` keeps Hypothesis's `False`. |
 
 ## Hegel has, Hypothesis lacks
 
@@ -50,6 +51,8 @@ Emulated in `hegel.hypothesis` (the Hegel API itself does not offer them):
   `differing_executors` and `not_a_test_method`: checked in Python.
   `data_too_large` and `large_base_example` are accepted and never fire.
 - `floats(width=16)`: drawn as 32-bit floats rounded to 16-bit values.
+- `register_random` and the seeding of the global `random` (and NumPy's, if
+  imported) per test case: done in Python, as Hypothesis does.
 - `shared`, `runner`, `slices`, `functions`, `randoms`, `random_module`,
   `decimals`, `fractions`, `complex_numbers`, `timezone_keys`: built from
   Hegel generators in Python.
@@ -80,8 +83,10 @@ Different because the engine behaves differently:
 - Reproduce blobs are opaque engine blobs, printed as
   `@reproduce_failure('<version>', b'...')` in the exception note and as
   `@hegel.reproduce_failure("...")` on stdout. No `@seed(...)` hint is
-  printed, and no `Highest target score` line: `target()` is accepted but
-  generation is not steered by it.
+  printed, and no `Highest target score` line.
+- `target()` steers generation, but the engine only starts targeting halfway
+  through the run's budget, so a target-driven failure takes more test cases
+  to find than in Hypothesis (see `docs/engine-issues.md`).
 - Failures are told apart by exception type and location, not by the cause
   chain. After a flaky failure the run aborts with `Flaky` rather than
   reporting it alongside other bugs, and non-deterministic data generation
@@ -96,18 +101,21 @@ Different because the engine behaves differently:
   toward boundaries. `integers(0, 1e100)` draws
   many more huge values than Hypothesis does.
 - A skipped test ends the run before anything is saved to the database.
-- Strategy objects are not cached by argument, and `.example()` is
-  deterministic and allowed inside tests.
+- Strategy objects are not cached by argument, and `.example()` returns the
+  strategy's minimal value (deterministically) rather than a random one, and
+  is allowed inside tests.
 - The repr of a `sampled_from` of an enum lists the members, and
   `characters()` reprs without its arguments. `sets(sampled_from(...),
   min_size=n)` does not sample without replacement.
 - `randoms()` yields seeded `random.Random` subclasses rather than values
   drawn from the test data, so exact boundary results cannot be targeted,
   and `random_module()` draws its seed.
-- `datetimes()` and `times()` reject timezone-aware bounds and never set
-  `fold`; there is no targeting of DST folds, gaps or leap seconds.
+- `datetimes()` and `times()` never set `fold`, and there is no targeting of
+  DST folds, gaps or leap seconds.
 - `from_regex` depends on the engine's regex generator; see
-  `docs/engine-issues.md` for where it departs from Python's `re`.
+  `docs/engine-issues.md` for where it departs from Python's `re`. Patterns
+  that can match nothing, and character classes with nothing in the
+  alphabet, are not reported up front.
 - Deeply self-referential `recursive(deferred(...))` strategies hit Python's
   recursion limit.
 
@@ -118,15 +126,15 @@ Not available:
   (`crosshair`, ...), `fuzz_one_input`, observability callbacks and the
   `HYPOTHESIS_EXPERIMENTAL_OBSERVABILITY` output.
 - The `hypothesis.extra` packages (numpy, pandas, django, pytz, dateutil,
-  lark, redis, ...), the ghostwriter and the CLI.
-- `register_random`: Hegel does not manage the state of external PRNGs.
-- `hypothesis.statistics` and `hypothesis.internal.*`: there is no
-  statistics collector or import-time side-effect tracking.
+  lark, redis, ...), the ghostwriter, the CLI and `hypothesis.statistics`.
+  Importing one raises `ModuleNotFoundError` saying it is not provided.
+- `hypothesis.internal.*`: there is no import-time side-effect tracking.
+- `_min_steps` for state machines: the engine has no minimum step count.
 - `from_type` of most of what Hypothesis's type lookup covers beyond value
   types, generics, enums, dataclasses, TypedDicts, protocols' registered
   implementations and annotated constructors: builtins without annotations
   (exceptions, `range`, `slice`, ...), typing special forms such as
-  `Callable[...]`, `Type[...]` and `Final`, and forward references found in
+  `Callable[...]` and `Final`, and forward references found in
   caller frames. `characters(codec=...)` beyond ascii, latin-1 and utf-8.
 - Hypothesis's `SearchStrategy` internals: a `hegel.hypothesis` strategy wraps
   a Hegel generator (its `generator` attribute), and a subclass's `do_draw`

@@ -47,6 +47,36 @@ Falsifying example:
 xs = [0, 0]
 ```
 
+### Draw names
+
+A draw assigned to a plain variable (`xs = tc.draw(...)`) is printed under that
+name. A draw made in a loop, or assigned to a name that is assigned more than once
+in the test, is numbered (`x_1`, `x_2`, ...), and a draw that is not assigned to a
+variable is printed as `draw_1`, `draw_2`, and so on, as in the Rust library:
+
+```python
+@hegel.test
+def test_totals(tc):
+    n = tc.draw(gs.integers(0, 10))
+    for _ in range(n):
+        x = tc.draw(gs.integers())
+    total = tc.draw(gs.integers()) + tc.draw(gs.integers())
+    ...
+```
+
+```
+Falsifying example:
+n = 2
+x_1 = 0
+x_2 = 0
+draw_1 = 0
+draw_2 = 0
+```
+
+`tc.draw(generator, name="...")` gives a draw an explicit (always numbered) name,
+and `tc.draw_silent(generator)` draws without printing. Draws made inside a
+`composite` generator are not printed separately.
+
 ### Generators
 
 `hegel.generators` provides generators for integers, floats, booleans, text
@@ -64,13 +94,37 @@ def sorted_pairs(tc, limit):
     return (a, b)
 ```
 
-### Settings
+### Test case methods
 
-`@hegel.test(test_cases=1000, seed=42)` sets options for one test;
-`hegel.Settings.register_profile("ci", derandomize=True)` and
-`hegel.Settings.load_profile("ci")` set them globally. Settings cover the number of
-test cases, verbosity, seeding and derandomization, the example database, phases,
-health checks, multiple-failure reporting and the random backend.
+Besides `draw`, a test case has `assume(condition)` and `reject()` to discard the
+current input, `note(message)` to add a line to the failure report,
+`target(score, label)` to steer generation toward higher scores,
+`event(label)` and `event_value(label, value)` for the run's statistics, and
+`repeat(body)`, which runs `body` an engine-chosen number of times and then ends
+the test case.
+
+### Configuration
+
+`@hegel.test(test_cases=1000, seed=42)` sets options for one test. Settings cover
+the number of test cases, verbosity, seeding and derandomization, the example
+database, phases, health checks, multiple-failure reporting and the random backend.
+
+Settings start from a profile. The engine provides `development` (the default
+locally), `ci` (chosen automatically on a CI server) and `workload` (under
+Antithesis); a project can pick one in a `hegel.toml` file or with the
+`HEGEL_DEFAULT_PROFILE` environment variable. Your own profiles are registered
+in Python:
+
+```python
+hegel.Settings.register_profile("thorough", test_cases=10_000)
+hegel.Settings.set_default_profile("thorough")
+```
+
+Failing examples are saved in `.hegel/examples` and replayed first on the next run.
+`database="path"` keeps them elsewhere, and `database=""` turns the database off.
+
+Under pytest, `--hegel-profile`, `--hegel-seed`, `--hegel-verbosity`,
+`--hegel-derandomize` and `--hegel-database` adjust every Hegel test in the run.
 
 ### Explicit test cases and reproduction
 
@@ -83,7 +137,7 @@ def test_no_duplicates(tc):
 ```
 
 A failure report ends with a `@hegel.reproduce_failure("...")` line; add that
-decorator above `@hegel.test` to replay exactly that failure.
+decorator below `@hegel.test` to replay exactly that failure.
 
 ### Stateful testing
 
@@ -94,7 +148,8 @@ class Counter(hegel.StateMachine):
 
     @hegel.rule()
     def increment(self, tc):
-        self.count += tc.draw(gs.integers(1, 10))
+        n = tc.draw(gs.integers(1, 10))
+        self.count += n
 
     @hegel.invariant()
     def non_negative(self, tc):
@@ -104,10 +159,32 @@ class Counter(hegel.StateMachine):
 test_counter = hegel.state_machine_test(Counter)
 ```
 
+Rules and invariants take the test case and draw their own values. The machine's
+constructor takes either no arguments or the test case.
+
+`hegel.Pool` holds values that rules produce for later rules to use, with
+generators that draw a value and leave it in the pool or take it out:
+
+```python
+class Files(hegel.StateMachine):
+    def __init__(self, tc):
+        self.handles = hegel.Pool(tc)
+
+    @hegel.rule()
+    def open(self, tc):
+        name = tc.draw(gs.text(min_size=1))
+        self.handles.add(open_file(name))
+
+    @hegel.rule()
+    def close(self, tc):
+        handle = tc.draw(self.handles.values_consumed())
+        handle.close()
+```
+
 Setting `max_concurrency` above 1 on the class runs the rules from several threads
 at once, in rounds grouped by the rules' `group`, with Hegel choosing the
-concurrency level and attributing the output to each worker. `hegel.Pool` and
-`hegel.ConcurrentPool` hold values rules produce for later rules to consume.
+concurrency level and attributing the output to each worker; `hegel.ConcurrentPool`
+is the pool to share between them.
 
 ## Hypothesis on Hegel
 

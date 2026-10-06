@@ -188,7 +188,7 @@ def test_generates_leap_second_adjacent_times():
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+    reason="Hegel's datetimes() does not upweight tricky instants (DST folds and gaps, leap seconds, the 2038 rollover) or set fold",
 )
 def test_generates_unix_rollover_adjacent_times():
     find_any(datetimes(), lambda x: x.date() == dt.date(2038, 1, 19))
@@ -238,7 +238,7 @@ class _LateShiftTimezone(dt.tzinfo):
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+    reason="Hegel's datetimes() does not upweight tricky instants (DST folds and gaps, leap seconds, the 2038 rollover) or set fold",
 )
 def test_tricky_draws_near_datetime_max_stay_in_bounds():
     # The sole interesting instant is two days before datetime.max, so the
@@ -307,7 +307,7 @@ def test_mixing_aware_and_naive_bounds_is_invalid(aware_arg):
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+    reason="Hegel's datetimes() does not upweight tricky instants (DST folds and gaps, leap seconds, the 2038 rollover) or set fold",
 )
 def test_aware_bounds_are_compared_as_moments_in_time():
     lo = dt.datetime(2000, 1, 1, 12, tzinfo=UTC)
@@ -331,7 +331,7 @@ def test_aware_bounds_with_none_from_timezones_strategy_is_invalid():
 )
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+    reason="Hegel's datetimes() does not upweight tricky instants (DST folds and gaps, leap seconds, the 2038 rollover) or set fold",
 )
 def test_datetimes_stay_within_aware_bounds(data, lo, hi):
     if lo > hi:
@@ -344,7 +344,7 @@ def test_datetimes_stay_within_aware_bounds(data, lo, hi):
 @given(datetimes(min_value=dt.datetime(2000, 1, 1, tzinfo=UTC), timezones=st.just(UTC)))
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+    reason="Hegel's datetimes() does not upweight tricky instants (DST folds and gaps, leap seconds, the 2038 rollover) or set fold",
 )
 def test_single_aware_bound_min(d):
     assert d >= dt.datetime(2000, 1, 1, tzinfo=UTC)
@@ -353,7 +353,7 @@ def test_single_aware_bound_min(d):
 @given(datetimes(max_value=dt.datetime(2000, 1, 1, tzinfo=UTC), timezones=st.just(UTC)))
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+    reason="Hegel's datetimes() does not upweight tricky instants (DST folds and gaps, leap seconds, the 2038 rollover) or set fold",
 )
 def test_single_aware_bound_max(d):
     assert d <= dt.datetime(2000, 1, 1, tzinfo=UTC)
@@ -361,7 +361,7 @@ def test_single_aware_bound_max(d):
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+    reason="Hegel's datetimes() does not upweight tricky instants (DST folds and gaps, leap seconds, the 2038 rollover) or set fold",
 )
 def test_shrinks_to_aware_min_bound():
     lo = dt.datetime(2024, 3, 4, 5, 6, tzinfo=UTC)
@@ -370,7 +370,7 @@ def test_shrinks_to_aware_min_bound():
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+    reason="Hegel's datetimes() does not upweight tricky instants (DST folds and gaps, leap seconds, the 2038 rollover) or set fold",
 )
 def test_bounds_unrepresentable_in_timezone_are_rejected():
     lo = dt.datetime.max.replace(tzinfo=UTC) - dt.timedelta(hours=1)
@@ -388,7 +388,7 @@ def test_bounds_unrepresentable_in_timezone_are_rejected():
 )
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+    reason="Hegel's datetimes() does not upweight tricky instants (DST folds and gaps, leap seconds, the 2038 rollover) or set fold",
 )
 def test_extreme_aware_bounds_are_clamped_per_timezone(d):
     # Each of these timezones can represent only some moments between the
@@ -412,7 +412,7 @@ class EternalFold(dt.tzinfo):
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+    reason="Hegel's datetimes() does not upweight tricky instants (DST folds and gaps, leap seconds, the 2038 rollover) or set fold",
 )
 def test_pathological_timezone_may_leave_no_valid_fold():
     # With an interval of more than a day we draw local wall times; every wall
@@ -430,7 +430,7 @@ def test_pathological_timezone_may_leave_no_valid_fold():
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+    reason="Hegel's datetimes() does not upweight tricky instants (DST folds and gaps, leap seconds, the 2038 rollover) or set fold",
 )
 def test_pathological_timezone_inverted_bounds_draw_via_utc():
     tz = EternalFold()
@@ -447,7 +447,7 @@ def test_pathological_timezone_inverted_bounds_draw_via_utc():
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+    reason="Hegel's datetimes() does not upweight tricky instants (DST folds and gaps, leap seconds, the 2038 rollover) or set fold",
 )
 def test_pathological_timezone_bounds_unrepresentable_in_utc():
     # Wall-clock-inverted bounds near datetime.min, whose moments precede it.
@@ -461,7 +461,7 @@ def test_pathological_timezone_bounds_unrepresentable_in_utc():
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+    reason="Hegel's datetimes() does not upweight tricky instants (DST folds and gaps, leap seconds, the 2038 rollover) or set fold",
 )
 def test_pathological_timezone_unrepresentable_moments_are_rejected():
     # Near datetime.max, some of the moments between these bounds have no
@@ -478,7 +478,7 @@ def test_pathological_timezone_unrepresentable_moments_are_rejected():
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+    reason="Hegel's datetimes() does not upweight tricky instants (DST folds and gaps, leap seconds, the 2038 rollover) or set fold",
 )
 def test_pathological_timezone_single_bound_near_extreme():
     tz = EternalFold()
