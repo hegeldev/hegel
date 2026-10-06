@@ -49,9 +49,12 @@ Emulated in `hegel.hypothesis` (the Hegel API itself does not offer them):
 - `shared`, `runner`, `slices`, `functions`, `randoms`, `random_module`,
   `decimals`, `fractions`, `complex_numbers`, `timezone_keys`: built from
   Hegel generators in Python.
-- `Bundle`: a Python list sampled by index, rather than Hegel's engine pool,
-  so `.filter`/`.map` and `consumes` keep Hypothesis's semantics exactly.
-  Rule-level `assume()` aborts the whole test case, as in Hypothesis.
+- `Bundle`: one of Hegel's engine-managed pools per bundle, so the engine
+  chooses and shrinks which value a rule gets (toward the first value
+  added, where Hypothesis prefers the most recent). `.filter` retries a
+  few times, putting back a consumed value the filter rejects, and a rule
+  whose arguments cannot be drawn is skipped rather than aborting the case.
+  `assume()` inside a rule body aborts the whole test case, as in Hypothesis.
 - `InMemoryExampleDatabase`: a temporary directory, since Hegel's database is
   always on disk. `ReadOnlyDatabase` shares the wrapped database's directory
   and does not block writes. There is no key/value database API

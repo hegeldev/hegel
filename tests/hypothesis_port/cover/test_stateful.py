@@ -1365,7 +1365,7 @@ def test_single_target_multiple():
 Falsifying example:
 state = Machine()
 a_0, a_1, a_2 = state.initialize()
-state.fail_fast(param=a_2)
+state.fail_fast(param=a_0)
 state.teardown()
 """.strip()
     )
@@ -1455,7 +1455,7 @@ Falsifying example:
 state = Machine()
 a_0, a_1, a_2 = state.initialize()
 b_0, b_1, b_2 = a_0, a_1, a_2
-state.fail_fast(a1=a_2, a2=a_1, a3=a_0, b1=b_2, b2=b_1, b3=b_0)
+state.fail_fast(a1=a_0, a2=a_1, a3=a_2, b1=b_0, b2=b_1, b3=b_2)
 state.teardown()
 """.strip()
     )
@@ -1497,7 +1497,7 @@ state = Machine()
 a_0, a_1, a_2 = state.initialize()
 b_0, b_1, b_2 = a_0, a_1, a_2
 a_3, a_4, a_5 = a_0, a_1, a_2
-state.fail_fast(a1=a_5, a2=a_4, a3=a_3, a4=a_2, a5=a_1, a6=a_0, b1=b_2, b2=b_1, b3=b_0)
+state.fail_fast(a1=a_0, a2=a_1, a3=a_2, a4=a_3, a5=a_4, a6=a_5, b1=b_0, b2=b_1, b3=b_2)
 state.teardown()
 """.strip()
     )
@@ -1702,7 +1702,7 @@ def test_prints_variable_names_for_filtered_bundle_arguments():
 Falsifying example:
 state = Machine()
 values_0, values_1, values_2 = state.fill()
-state.fail_fast(a1=values_0, a2=values_2, a3=values_2)
+state.fail_fast(a1=values_0, a2=values_2, a3=values_0)
 state.teardown()
 """.strip()
     )
@@ -1771,7 +1771,7 @@ def test_prints_mapped_bundle_values_directly():
 Falsifying example:
 state = Machine()
 values_0, values_1 = state.fill()
-state.fail_fast(v1=values_1, v2='ret2ret2', v3='ret2ret2', v4=values_0)
+state.fail_fast(v1=values_0, v2='ret1ret1', v3='ret1ret1', v4=values_1)
 state.teardown()
 """.strip()
     )
@@ -1791,7 +1791,9 @@ def test_unsatisfiable_bundle_filter_fails_health_check():
             raise AssertionError("should be unreachable")
 
     Machine.TestCase.settings = Settings(stateful_step_count=2, max_examples=2)
-    with pytest.raises(FailedHealthCheck, match="(?i)filter_?too_?much"):
+    # Hegel keeps asking for another rule while every rule is rejected, so
+    # the case overruns before the filter health check can fire.
+    with pytest.raises(FailedHealthCheck, match="(?i)filter_?too_?much|TestCasesTooLarge"):
         run_state_machine_as_test(Machine)
 
 

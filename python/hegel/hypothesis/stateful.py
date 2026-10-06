@@ -25,7 +25,7 @@ from hegel.hypothesis.errors import (
 from hegel.hypothesis.strategies import SearchStrategy, check_strategy
 from hegel.hypothesis.strategies import data as data_strategy
 from hegel.pretty import pretty_repr
-from hegel.stateful import Machine
+from hegel.stateful import Machine, Pool
 from hegel.test_case import TestCase
 from hegel.test_case import TestCase as HegelTestCase
 
@@ -126,7 +126,10 @@ class Invariant:
 
 class Bundle(SearchStrategy[Ex]):
     """A strategy whose values are the results rules have returned into
-    it; drawing picks one (and removes it if ``consume`` is set)."""
+    it; drawing picks one (and removes it if ``consume`` is set).
+
+    Each bundle is one of Hegel's engine-managed pools, so which value a
+    rule gets is chosen and shrunk by the engine."""
 
     def __init__(
         self,
@@ -153,23 +156,22 @@ class Bundle(SearchStrategy[Ex]):
 
     def do_draw(self, tc: TestCase) -> Any:
         machine = self._machine()
-        bundle = machine.bundle(self.name)
-        if not bundle:
+        pool = machine._pool(self.name, tc)
+        if pool.is_empty:
             raise UnsatisfiedAssumption()
-        # Only the values passing the filters are candidates, as in
-        # Hypothesis, so a filtered bundle never rejects a test case while
-        # it holds a matching value.
-        candidates = []
-        for position, reference in reversed(list(enumerate(bundle))):
+        values = pool.values_consumed() if self.consume else pool.values_reusable()
+        attempts = _FILTER_ATTEMPTS if self._transformations else 1
+        for _ in range(attempts):
+            reference = tc.draw_silent(values)
             result = self._transform(machine.names_to_values[reference.name])
             if result is not _REJECTED:
-                candidates.append((position, reference, result))
-        if not candidates:
-            raise UnsatisfiedAssumption()
-        position, reference, result = tc.draw_silent(gs.sampled_from(candidates))
-        if self.consume:
-            bundle.pop(position)
-        return reference if self.draw_references else result
+                if self.consume:
+                    machine._consumed_this_step.append((self.name, reference))
+                return reference if self.draw_references else result
+            if self.consume:
+                # The filter rejected it, so it stays available.
+                pool.add(reference, tc)
+        raise UnsatisfiedAssumption()
 
     def _transform(self, value: Any) -> Any:
         for kind, f in self._transformations:
@@ -211,6 +213,9 @@ class Bundle(SearchStrategy[Ex]):
 
 
 _REJECTED = object()
+
+
+_FILTER_ATTEMPTS = 3
 
 
 class _AbortCase(BaseException):
@@ -467,7 +472,9 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
         self.rules = setup_state.rules
         self.invariants = setup_state.invariants
         self._initialize_rules_to_run = setup_state.initializers.copy()
-        self.bundles: dict[str, list[VarReference]] = {}
+        self._pools: dict[str, Pool] = {}
+        self._tc: HegelTestCase | None = None
+        self._consumed_this_step: list[tuple[str, VarReference]] = []
         self.names_counters: dict[str, int] = {}
         self.names_list: list[str] = []
         self.names_to_values: dict[str, Any] = {}
@@ -504,6 +511,11 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
             return "{" + items + "}"
         return pretty_repr(value)
 
+    @property
+    def bundles(self) -> dict[str, list[VarReference]]:
+        """The references each bundle currently holds."""
+        return {name: self.bundle(name) for name in self._pools}
+
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.bundles!r})"
 
@@ -518,7 +530,19 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
         return self.names_list[len(self.names_list) - n :]
 
     def bundle(self, name: str) -> list[VarReference]:
-        return self.bundles.setdefault(name, [])
+        pool = self._pools.get(name)
+        return list(pool._values.values()) if pool is not None else []
+
+    def _pool(self, name: str, tc: HegelTestCase) -> Pool:
+        try:
+            return self._pools[name]
+        except KeyError:
+            if self._tc is None:
+                raise InvalidArgument(
+                    f"Cannot use Bundle({name!r}) before the state machine runs"
+                ) from None
+            pool = self._pools[name] = Pool(self._tc)
+            return pool
 
     @classmethod
     def setup_state(cls) -> _SetupState:
@@ -577,14 +601,16 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
         output_line = f"{output_assignment}state.{r.function.__name__}({args})"
         return "\n".join([output_line, *extra_assignment_lines])
 
-    def _add_results_to_targets(self, targets: Iterable[str], results: Iterable[Any]) -> None:
+    def _add_results_to_targets(
+        self, tc: HegelTestCase, targets: Iterable[str], results: Iterable[Any]
+    ) -> None:
         for target in targets:
             for result in results:
                 name = self._new_name(target)
                 if not _is_singleton(result):
                     self._value_names.setdefault(id(result), name)
                 self.names_to_values[name] = result
-                self.bundles.setdefault(target, []).append(VarReference(name))
+                self._pool(target, tc).add(VarReference(name), tc)
 
     def check_invariants(self, settings: Settings, output: Callable[[str], None]) -> None:
         for invar in self.invariants:
@@ -634,12 +660,15 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
         )
 
     def _draw_arguments(self, tc: HegelTestCase, r: Rule) -> dict[str, Any]:
+        self._consumed_this_step = []
         try:
             return {k: tc.draw_silent(v) for k, v in r.arguments.items()}
         except UnsatisfiedAssumption:
-            # Hypothesis abandons the whole test case when a rule's
-            # arguments cannot be drawn (an empty bundle, say).
-            raise _AbortCase() from None
+            # The rule is skipped (Hegel's machine picks another), so values
+            # its arguments consumed go back into their bundles.
+            for name, reference in self._consumed_this_step:
+                self._pool(name, tc).add(reference, tc)
+            raise
 
     def _execute_rule(
         self,
@@ -670,9 +699,9 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
                 raise _AbortCase() from None
             if r.targets:
                 if isinstance(result, MultipleResults):
-                    self._add_results_to_targets(r.targets, result.values)
+                    self._add_results_to_targets(tc, r.targets, result.values)
                 else:
-                    self._add_results_to_targets(r.targets, [result])
+                    self._add_results_to_targets(tc, r.targets, [result])
             elif (
                 result is not None
                 and HealthCheck.return_value not in settings.suppress_health_check
@@ -692,6 +721,7 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
 
     def _run_steps(self, tc: HegelTestCase, settings: Settings) -> None:
         output = tc.note
+        self._tc = tc
         with BuildContext(tc, is_final=tc.is_final, runner=self):
             try:
                 output(f"state = {type(self).__name__}()")
