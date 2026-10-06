@@ -3,6 +3,8 @@ describe the same event."""
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from hegel.errors import (
     AssumeFailed,
     DidNotReproduce,
@@ -124,7 +126,11 @@ class Frozen(HypothesisException):
 class DeadlineExceeded(HypothesisException):
     """A test case took longer than the configured deadline."""
 
-    def __init__(self, runtime: float, deadline: float) -> None:
+    def __init__(self, runtime: float | timedelta, deadline: float | timedelta) -> None:
+        if isinstance(runtime, timedelta):
+            runtime = runtime.total_seconds()
+        if isinstance(deadline, timedelta):
+            deadline = deadline.total_seconds()
         super().__init__(
             f"Test took {runtime * 1000:.2f}ms, which exceeds the deadline of "
             f"{deadline * 1000:.2f}ms"
