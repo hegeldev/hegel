@@ -36,19 +36,64 @@ to `hegel.hypothesis`.
 
 Emulated in `hegel.hypothesis` (the Hegel API itself does not offer them):
 
-- `deadline`: enforced in Python per test case (with Hypothesis's 1.25x
-  allowance on the final replay); Hegel's engine has no deadline concept.
-- `HealthCheck.return_value`, `function_scoped_fixture`: checked in Python.
-  `not_a_test_method`, `differing_executors` and `nested_given` are accepted
-  and ignored.
+- `deadline`: enforced in Python per test case, with Hypothesis's 1.25x
+  allowance while generating and shrinking and the deadline itself on the
+  final replay; garbage-collection and `data.draw()` time are excluded.
+  Hegel's engine has no deadline concept, and `HealthCheck.too_slow` counts
+  engine time only, so slow Python-side strategy work does not trigger it.
+- `HealthCheck.return_value`, `function_scoped_fixture`, `nested_given`,
+  `differing_executors` and `not_a_test_method`: checked in Python.
+  `data_too_large` and `large_base_example` are accepted and never fire.
 - `floats(width=16)`: drawn as 32-bit floats rounded to 16-bit values.
 - `shared`, `runner`, `slices`, `functions`, `randoms`, `random_module`,
   `decimals`, `fractions`, `complex_numbers`, `timezone_keys`: built from
   Hegel generators in Python.
 - `Bundle`: a Python list sampled by index, rather than Hegel's engine pool,
   so `.filter`/`.map` and `consumes` keep Hypothesis's semantics exactly.
+  Rule-level `assume()` aborts the whole test case, as in Hypothesis.
 - `InMemoryExampleDatabase`: a temporary directory, since Hegel's database is
-  always on disk.
+  always on disk. `ReadOnlyDatabase` shares the wrapped database's directory
+  and does not block writes. There is no key/value database API
+  (`save`/`fetch`/`move`), no `.pareto` or secondary keys, and no
+  `hypothesis.configuration` home directory.
+- `UnsatisfiedAssumption` is Hegel's `AssumeFailed`, a `BaseException`, so a
+  flaky assumption is described in a note rather than nested in a
+  `FlakyFailure` group.
+- `find()` reports a search space filtered out by a health check as
+  `NoSuchExample`.
+
+Different because the engine behaves differently:
+
+- The failing example is printed as `name = value` lines rather than a call,
+  verbose output says `Running test case` rather than `Trying example`, and
+  `note()` output follows the test's own output instead of interleaving with
+  it. See "Output format" below.
+- Reproduce blobs are opaque engine blobs, printed as
+  `@reproduce_failure('<version>', b'...')` in the exception note and as
+  `@hegel.reproduce_failure("...")` on stdout. No `@seed(...)` hint is
+  printed, and no `Highest target score` line: `target()` is accepted but
+  generation is not steered by it.
+- Failures are told apart by exception type and location, not by the cause
+  chain. After a flaky failure the run aborts with `Flaky` rather than
+  reporting it alongside other bugs, and non-deterministic data generation
+  is reported as `FlakyStrategyDefinition` only where the compat layer sees
+  the engine's error.
+- A finite search space is not detected as exhausted early; the engine runs
+  up to `max_examples` and does not suppress duplicate inputs. There is no
+  shrinking time limit.
+- Shrinking differs in places: a `wide | just(needle)` strategy shrinks to the
+  needle rather than the minimal wide value, and the bounded integer
+  distribution is weighted toward boundaries. `integers(0, 1e100)` draws
+  many more huge values than Hypothesis does.
+- A skipped test ends the run before anything is saved to the database.
+- Strategies validate their arguments eagerly at construction rather than
+  when the test first runs, and strategy objects are not cached by
+  argument. `.example()` is deterministic and allowed inside tests.
+- `sampled_from(Flag)` yields only the named members, and the repr of a
+  `sampled_from` of an enum lists the members. `sets(sampled_from(...),
+  min_size=n)` does not sample without replacement.
+- Deeply self-referential `recursive(deferred(...))` strategies hit Python's
+  recursion limit.
 
 Not available:
 
@@ -59,14 +104,18 @@ Not available:
 - The `hypothesis.extra` packages (numpy, pandas, django, pytz, dateutil,
   lark, redis, ...), the ghostwriter and the CLI.
 - `register_random`: Hegel does not manage the state of external PRNGs.
-- `recursive(min_leaves=...)`, `characters()` deprecation aliases emit no
-  deprecation warnings, `settings.get_current_profile_name`.
+- `hypothesis.statistics` and `hypothesis.internal.*`: there is no
+  statistics collector or import-time side-effect tracking.
+- `from_type` of `ForwardRef`s and `Callable[...]`, and `characters(codec=...)`
+  beyond ascii, latin-1 and utf-8.
 - Hypothesis's typed `SearchStrategy` protocol: `hegel.hypothesis` strategies
   are Hegel generators (`SearchStrategy` is an alias of `hegel.generators.Generator`),
   so `.do_draw` receives a `TestCase` rather than `ConjectureData`.
+  `InvalidArgument` is not a `TypeError` subclass.
 - The pytest plugin's `--hypothesis-show-statistics`, `--hypothesis-explain`
   and statistics in the terminal summary. `--hypothesis-seed`,
-  `--hypothesis-profile` and `--hypothesis-verbosity` are supported.
+  `--hypothesis-profile` and `--hypothesis-verbosity` are supported, as is
+  the "pointless decorator" check for `@example`/`@settings` without `@given`.
 
 ## Output format
 
