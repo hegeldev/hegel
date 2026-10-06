@@ -218,3 +218,24 @@ def test_print_with_is_skipped_for_silent_printers():
 
     run_test(body, test_cases=1)
     assert calls == []
+
+
+def test_chained_filters_combine_into_one():
+    g = gs.integers(0, 100).filter(lambda x: x % 2 == 0).filter(lambda x: x % 3 == 0)
+    assert isinstance(g, Filtered)
+    assert not isinstance(g.source, Filtered)
+    assert "<lambda> and <lambda>" == g.predicate.__name__
+    assert hegel.find_example(g, lambda x: x > 0) == 6
+
+
+def test_filtered_samples_narrow_the_elements():
+    g = gs.sampled_from(range(60))
+    for i in range(60):
+        if i != 41:
+            g = g.filter(lambda x, i=i: x != i)
+    assert "filter" in repr(g)
+    assert hegel.find_example(g) == 41
+    assert hegel.find_example(gs.sampled_from(range(60)).filter(lambda x: x > 50)) == 51
+    empty = gs.sampled_from([1, 2]).filter(lambda x: x > 5)
+    with pytest.raises(hegel.InvalidArgument, match="Could not find"):
+        hegel.find_example(empty)

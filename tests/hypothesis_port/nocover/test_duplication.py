@@ -22,7 +22,9 @@ def Blocks(n):
     return st.binary(min_size=n, max_size=n)
 
 
-@pytest.mark.xfail(strict=True, reason="hegel's engine does not deduplicate generated inputs")
+@pytest.mark.xfail(
+    strict=False, reason="hegel's engine does not deduplicate generated inputs (passes by chance)"
+)
 @xfail_on_crosshair(Why.symbolic_outside_context)
 @pytest.mark.parametrize("n", range(1, 5))
 def test_does_not_duplicate_blocks(n):

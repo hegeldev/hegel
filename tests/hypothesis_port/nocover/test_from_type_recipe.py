@@ -32,7 +32,6 @@ def everything_except(excluded_types):
     )
 
 
-@pytest.mark.xfail(strict=True, reason="hegel from_type(type) cannot generate type objects")
 @given(
     excluded_types=st.lists(st.sampled_from(TYPES), min_size=1, max_size=3, unique=True).map(tuple),
     data=st.data(),
@@ -42,6 +41,5 @@ def test_recipe_for_everything_except(excluded_types, data):
     assert not isinstance(value, excluded_types)
 
 
-@pytest.mark.xfail(strict=True, reason="hegel from_type(type) cannot generate type objects")
 def test_issue_4144_regression():
     find_any(everything_except(()), lambda t: t is not type)

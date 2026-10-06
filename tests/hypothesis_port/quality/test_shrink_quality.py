@@ -385,10 +385,6 @@ def test_sum_of_pair_separated_float():
     assert minimal(separated_sum(), lambda x: sum(x) > 1000) == (1, 1000)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel deferred()/one_of self-reference recurses without bound (RecursionError)",
-)
 def test_calculator_benchmark():
     """This test comes from
     https://github.com/jlink/shrinking-challenge/blob/main/challenges/calculator.md,

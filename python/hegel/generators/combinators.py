@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from hegel.errors import InvalidArgument
-from hegel.generators.base import NOOP_PRINTER, Generator, combine_labels, label_from_name
+from hegel.generators.base import (
+    FILTER_LABEL,
+    NOOP_PRINTER,
+    Generator,
+    combine_labels,
+    label_from_name,
+)
 from hegel.pretty import PrettyPrinter, pretty_print
 
 if TYPE_CHECKING:
@@ -81,8 +87,53 @@ class SampledFrom(Generator[T]):
         index = tc.generate_integer(0, len(self.elements) - 1)
         return self.elements[index]
 
+    def filter(self, predicate: Callable[[T], bool]) -> Generator[T]:
+        """Filtering a sample narrows the elements rather than retrying
+        draws, so even a predicate that accepts one element in thousands
+        finds it."""
+        return FilteredSample(self, [predicate])
+
     def __repr__(self) -> str:
         return f"sampled_from({list(self.elements)!r})"
+
+
+FILTERED_SAMPLE_ATTEMPTS = 3
+
+
+class FilteredSample(Generator[T]):
+    """``sampled_from(...).filter(...)``: a few random draws, then the
+    untried elements in an engine-chosen order until one is accepted, so
+    a predicate accepting one element in thousands still finds it."""
+
+    def __init__(self, source: SampledFrom[T], predicates: list[Callable[[T], bool]]) -> None:
+        self.source = source
+        self.predicates = predicates
+        self.label = combine_labels([FILTER_LABEL, source.label])
+
+    def filter(self, predicate: Callable[[T], bool]) -> Generator[T]:
+        return FilteredSample(self.source, [*self.predicates, predicate])
+
+    def _accepts(self, element: T) -> bool:
+        return all(p(element) for p in self.predicates)
+
+    def do_draw(self, tc: TestCase) -> T:
+        elements = self.source.elements
+        for _ in range(FILTERED_SAMPLE_ATTEMPTS):
+            element = tc.draw_silent(self.source)
+            if self._accepts(element):
+                return element
+        remaining = list(range(len(elements)))
+        while remaining:
+            index = remaining.pop(tc.generate_integer(0, len(remaining) - 1))
+            element = elements[index]
+            if self._accepts(element):
+                return element
+        tc.reject()
+        raise AssertionError("unreachable")  # nocov
+
+    def __repr__(self) -> str:
+        names = ", ".join(getattr(p, "__name__", repr(p)) for p in self.predicates)
+        return f"{self.source!r}.filter({names})"
 
 
 def sampled_from(elements: Any) -> Generator[Any]:

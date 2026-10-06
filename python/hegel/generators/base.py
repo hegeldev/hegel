@@ -114,6 +114,10 @@ class Generator(Generic[T]):
         return f"{type(self).__name__}()"
 
 
+def _fn_name(f: Any) -> str:
+    return getattr(f, "__name__", repr(f))
+
+
 class Mapped(Generator[U]):
     def __init__(self, source: Generator[T], f: Callable[[T], U]) -> None:
         self.source = source
@@ -197,6 +201,17 @@ class Filtered(Generator[T]):
         self.source = source
         self.predicate = predicate
         self.label = combine_labels([FILTER_LABEL, source.label])
+
+    def filter(self, predicate: Callable[[T], bool]) -> Generator[T]:
+        """Chained filters combine into one, so a long chain costs one span
+        and one set of attempts rather than nesting a draw per filter."""
+        first = self.predicate
+
+        def both(value: T) -> bool:
+            return bool(first(value)) and bool(predicate(value))
+
+        both.__name__ = f"{_fn_name(first)} and {_fn_name(predicate)}"
+        return Filtered(self.source, both)
 
     def _draw(self, tc: TestCase, printer: PrettyPrinter, silent: bool) -> T:
         for _ in range(3):
