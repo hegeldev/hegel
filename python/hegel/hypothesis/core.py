@@ -556,6 +556,8 @@ def find(
         with with_output_override(lambda line: None):
             return find_example(specifier, condition)
     except HegelError as error:
-        if "Could not find" in str(error):
+        # Hypothesis's find() suppresses health checks; a filtered-out search
+        # space is reported as NoSuchExample.
+        if "Could not find" in str(error) or isinstance(error, FailedHealthCheck):
             raise NoSuchExample(condition) from None
         raise
