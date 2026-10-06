@@ -4,6 +4,7 @@ describe the same event."""
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 from hegel.errors import (
     AssumeFailed,
@@ -80,7 +81,9 @@ class FlakyStrategyDefinition(Flaky):
 
 
 class FlakyFailure(ExceptionGroup, Flaky):  # type: ignore[type-arg]
-    pass
+    def derive(self, excs: Any) -> FlakyFailure:
+        # Keep the type through .split() and .subgroup().
+        return FlakyFailure(self.message, excs)
 
 
 class ResolutionFailed(InvalidArgument):
