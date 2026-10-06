@@ -59,6 +59,10 @@ class Nothing(Generator[Any]):
         tc.reject()
         raise AssertionError("unreachable")  # nocov
 
+    @property
+    def is_empty(self) -> bool:
+        return True
+
     def __repr__(self) -> str:
         return "nothing()"
 

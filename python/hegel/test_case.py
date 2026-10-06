@@ -38,12 +38,16 @@ class _Global:
     """State shared by every handle onto one test case: whether drawn
     values are reported, and where."""
 
-    __slots__ = ("emit", "explicit", "sink")
+    __slots__ = ("emit", "explicit", "hypothesis_shared", "is_final", "sink")
 
-    def __init__(self, emit: bool, sink: OutputSink | None, explicit: Any) -> None:
+    def __init__(
+        self, emit: bool, sink: OutputSink | None, explicit: Any, is_final: bool = False
+    ) -> None:
         self.emit = emit
         self.sink = sink if emit else _discard
         self.explicit = explicit
+        self.is_final = is_final
+        self.hypothesis_shared: dict[Any, Any] | None = None
 
 
 class _DrawState:
@@ -83,9 +87,10 @@ class TestCase:
         emit: bool = False,
         sink: OutputSink | None = None,
         explicit: Any = None,
+        is_final: bool = False,
     ) -> None:
         self._handle = handle
-        self._global = _Global(emit, sink, explicit)
+        self._global = _Global(emit, sink, explicit, is_final)
         self._span_depth = 0
         self._printing_depth = 0
         self._printer: PrettyPrinter | None = None
@@ -193,6 +198,10 @@ class TestCase:
         case (or in verbose mode)."""
         if not self._global.emit:
             return
+        explicit = self._global.explicit
+        if explicit is not None:
+            explicit.note(str(message))
+            return
         self._handle.note(str(message))
 
     def target(self, score: float, label: str = "") -> None:
@@ -293,6 +302,12 @@ class TestCase:
     @property
     def is_nondeterministic(self) -> bool:
         return self._handle.is_nondeterministic()
+
+    @property
+    def is_final(self) -> bool:
+        """Whether this is the final replay of a failure (or an explicit
+        test case), whose output is reported."""
+        return self._global.is_final
 
     # -- spans -----------------------------------------------------------
 

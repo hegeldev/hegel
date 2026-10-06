@@ -123,7 +123,7 @@ def _run_test_case(
     quiet = verbosity is Verbosity.quiet
     capture_at_discovery = not is_final and handle.is_nondeterministic()
     should_emit = ((is_final or capture_at_discovery) and not quiet) or verbose
-    tc = TestCase(handle, should_emit, case_sink or output.resolved_sink())
+    tc = TestCase(handle, should_emit, case_sink or output.resolved_sink(), is_final=is_final)
     outcome = _CaseOutcome(_native.STATUS_VALID, None, None, None)
     try:
         test_fn(tc)
@@ -333,7 +333,7 @@ def _run_explicit(
     test_fn: Callable[[TestCase], Any], case: ExplicitCase, output: RunOutput
 ) -> None:
     explicit = ExplicitTestCase(case)
-    tc = TestCase(NO_HANDLE, True, output.resolved_sink(), explicit)
+    tc = TestCase(NO_HANDLE, True, output.resolved_sink(), explicit, is_final=True)
     try:
         test_fn(tc)
     except LoopDone:

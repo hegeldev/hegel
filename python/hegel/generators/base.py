@@ -73,6 +73,8 @@ class Generator(Generic[T]):
         from it."""
         return FlatMapped(self, f)
 
+    flatmap = flat_map
+
     def filter(self, predicate: Callable[[T], bool]) -> Generator[T]:
         """Keep only values satisfying ``predicate``. After three rejected
         attempts the test case is rejected as if by ``assume``."""
@@ -98,6 +100,15 @@ class Generator(Generic[T]):
         from hegel.runner import find_example
 
         return find_example(self)
+
+    def validate(self) -> None:
+        """Check the generator's arguments; Hegel generators validate on
+        construction, so this is a no-op kept for API compatibility."""
+
+    @property
+    def is_empty(self) -> bool:
+        """Whether this generator can never produce a value."""
+        return False
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"

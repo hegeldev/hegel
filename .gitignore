@@ -15,3 +15,4 @@ __pycache__/
 *.egg-info
 /python/hegel/_native.*.so
 /python/hegel/_native.pyd
+.claude/

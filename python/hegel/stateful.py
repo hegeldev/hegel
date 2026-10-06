@@ -103,6 +103,7 @@ class Machine:
         self._steps = DEFAULT_STEP_COUNT
         self._min_concurrency = 1
         self._max_concurrency = 1
+        self._print_steps = True
 
     def rule(
         self,
@@ -187,7 +188,7 @@ class Machine:
                 self._steps,
             )
         else:
-            _run_sequential(self._tc, self._rules, self._invariants, self._steps)
+            _run_sequential(self._tc, self._rules, self._invariants, self._steps, self._print_steps)
 
 
 # -- the engine protocol ----------------------------------------------------
@@ -199,21 +200,29 @@ def _note_trailer(tc: TestCase, exception: BaseException, trailer: str) -> None:
 
 
 def _check_invariants(
-    tc: TestCase, invariants: list[Invariant], machine: NativeMachine | None
+    tc: TestCase,
+    invariants: list[Invariant],
+    machine: NativeMachine | None,
+    print_steps: bool = True,
 ) -> None:
     for index, inv in enumerate(invariants):
         if machine is not None and not machine.should_check_invariant(tc._handle, index):
             continue
-        inv_tc = tc.child(2)
+        inv_tc = tc.child(2) if print_steps else tc
         try:
             inv.apply(inv_tc)
         except BaseException as exception:
-            _note_trailer(tc, exception, f"Invariant {inv.name} failed:")
+            if print_steps:
+                _note_trailer(tc, exception, f"Invariant {inv.name} failed:")
             raise
 
 
 def _run_sequential(
-    tc: TestCase, rules: list[Rule], invariants: list[Invariant], step_count: int
+    tc: TestCase,
+    rules: list[Rule],
+    invariants: list[Invariant],
+    step_count: int,
+    print_steps: bool = True,
 ) -> None:
     machine, _ = tc._handle.new_state_machine(
         [r.name for r in rules],
@@ -225,10 +234,11 @@ def _run_sequential(
         1,
         step_count,
     )
-    if invariants:
+    if invariants and print_steps:
         tc.note("Checking invariants on the initial state.")
     _check_invariants(tc, invariants, None)
     steps_attempted = 0
+    note = tc.note if print_steps else _silent
     while True:
         tc.start_span(RULE_LABEL)
         if machine.next_group(tc._handle) is None:
@@ -241,28 +251,34 @@ def _run_sequential(
                     f"state_machine_next_rule returned out-of-range rule index {rule_index}"
                 )
             current = rules[rule_index]
-            tc.note(f"Step {steps_attempted + 1}: {current.name} {{")
-            rule_tc = tc.child(2)
+            note(f"Step {steps_attempted + 1}: {current.name} {{")
+            rule_tc = tc.child(2) if print_steps else tc
             steps_attempted += 1
             try:
                 current.apply(rule_tc)
             except AssumeFailed:
                 machine.rule_rejected(tc._handle, 0)
                 round_rejected = True
-                tc.child(2).note("Rule stopped early due to violated assumption.")
-                tc.note("}")
+                if print_steps:
+                    tc.child(2).note("Rule stopped early due to violated assumption.")
+                note("}")
             except BaseException as exception:
-                tc.note("}")
-                _note_trailer(tc, exception, f"Rule {current.name} failed:")
+                note("}")
+                if print_steps:
+                    _note_trailer(tc, exception, f"Rule {current.name} failed:")
                 tc.stop_span(False)
                 raise
             else:
-                tc.note("}")
+                note("}")
         tc.stop_span(round_rejected)
-        _check_invariants(tc, invariants, machine)
-    if invariants:
+        _check_invariants(tc, invariants, machine, print_steps)
+    if invariants and print_steps:
         tc.note("Checking invariants on the final state.")
-    _check_invariants(tc, invariants, None)
+    _check_invariants(tc, invariants, None, print_steps)
+
+
+def _silent(message: str) -> None:
+    pass
 
 
 class _Event:
