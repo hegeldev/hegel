@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import inspect
 import os
 import threading
-from collections.abc import Collection
+from collections.abc import Collection, Iterator
 from enum import Enum, IntEnum, unique
 from typing import Any
 
@@ -176,9 +177,15 @@ def _validate_database(value: Any) -> ExampleDatabase | None:
     )
 
 
+_local = threading.local()
+
+
 class settingsMeta(type):
     @property
     def default(cls) -> settings:
+        override = getattr(_local, "override", None)
+        if override is not None:
+            return override
         current = settings._current_profile
         return settings._profiles[current]
 
@@ -362,6 +369,10 @@ class settings(metaclass=settingsMeta):
             settings._profiles[name] = settings(base, **kwargs)
 
     @staticmethod
+    def get_current_profile_name() -> str:
+        return settings._current_profile
+
+    @staticmethod
     def get_profile(name: str) -> settings:
         _check_type(str, name, "name")
         try:
@@ -406,6 +417,18 @@ class settings(metaclass=settingsMeta):
             print_blob=self.print_blob,
             backend=backend,
         )
+
+
+@contextlib.contextmanager
+def local_settings(s: settings) -> Iterator[settings]:
+    """Make ``s`` the default settings on this thread for the block (as a
+    running test's settings are)."""
+    previous = getattr(_local, "override", None)
+    _local.override = s
+    try:
+        yield s
+    finally:
+        _local.override = previous
 
 
 def _validate_step_count(value: Any) -> int:

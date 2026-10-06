@@ -7,17 +7,19 @@ import functools
 import hashlib
 import inspect
 import time
+import unittest
 from collections.abc import Callable, Hashable
 from typing import Any, TypeVar
 
-from hegel.errors import HegelError
+from hegel.errors import Flaky, RunError
 from hegel.explicit import ExplicitCase
-from hegel.hypothesis._settings import HealthCheck, Phase, Verbosity
+from hegel.hypothesis._settings import HealthCheck, Phase, Verbosity, local_settings
 from hegel.hypothesis._settings import settings as Settings
 from hegel.hypothesis.control import BuildContext
 from hegel.hypothesis.errors import (
     DeadlineExceeded,
     FailedHealthCheck,
+    HypothesisWarning,
     InvalidArgument,
     NoSuchExample,
     Unsatisfiable,
@@ -29,6 +31,7 @@ from hegel.runner import (
     _database_key_of,
     _location_of,
     _run_explicit,
+    _skip_exceptions,
     with_output_override,
 )
 from hegel.runner import (
@@ -189,7 +192,6 @@ def _is_invalid_test(
     given_kwargs: dict[str, Any],
 ) -> Any:
     from hegel.hypothesis._settings import all_settings
-    from hegel.hypothesis.strategies._base import NOTHING
 
     invalid = functools.partial(_invalid, exc=InvalidArgument, test=test, given_kwargs=given_kwargs)
     if not (given_arguments or given_kwargs):
@@ -229,8 +231,8 @@ def _is_invalid_test(
         )
     if any(p.default is not p.empty for p in params):
         return invalid("Cannot apply @given to a function with defaults.")
-    empty = [f"{s!r} (arg {idx})" for idx, s in enumerate(given_arguments) if s is NOTHING] + [
-        f"{name}={s!r}" for name, s in given_kwargs.items() if s is NOTHING
+    empty = [f"{s!r} (arg {idx})" for idx, s in enumerate(given_arguments) if _is_empty(s)] + [
+        f"{name}={s!r}" for name, s in given_kwargs.items() if _is_empty(s)
     ]
     if empty:
         strats = "strategies" if len(empty) > 1 else "strategy"
@@ -272,6 +274,10 @@ def _explicit_cases(
             )
         cases.append((ex, ExplicitCase((), example_kwargs)))
     return cases
+
+
+def _is_empty(strategy: Any) -> bool:
+    return isinstance(strategy, SearchStrategy) and strategy.is_empty
 
 
 class _XfailPassed(AssertionError):
@@ -353,6 +359,7 @@ def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], 
             )
             for name, strategy in given_kwargs.items():
                 check_strategy(strategy, name=name)
+                strategy.validate()
             if inspect.iscoroutinefunction(inner):
                 raise InvalidArgument(
                     "Hypothesis doesn't know how to run async test functions like "
@@ -448,8 +455,11 @@ def _run_given(
     check_return = HealthCheck.return_value not in test_settings.suppress_health_check
     current_example: list[Example | None] = [None]
     print_args = getattr(wrapped_test, "_hypothesis_internal_print_given_args", True)
+    executed = [False]
+    valid = [False]
 
     def body(tc: TestCase) -> None:
+        executed[0] = True
         with BuildContext(tc, is_final=tc.is_final, runner=selfy) as context:
             if print_args:
                 drawn = {
@@ -464,11 +474,13 @@ def _run_given(
             except UnsatisfiedAssumption:
                 tc.reject()
             except BaseException as error:
+                valid[0] = True
                 if ex is not None and ex.xfail:
                     if isinstance(error, ex.raises):
                         return
                     raise
                 raise
+            valid[0] = True
             elapsed = time.perf_counter() - started
             if ex is not None and ex.xfail:
                 raise _XfailPassed(
@@ -504,17 +516,46 @@ def _run_given(
     if Phase.explicit not in test_settings.phases:
         explicit = []
 
+    verbose = test_settings.verbosity >= Verbosity.verbose
+
     def run_cases() -> None:
         output = RunOutput.resolve()
+        failures: list[tuple[str, BaseException]] = []
         for ex, case in explicit:
             current_example[0] = ex
+            call = "{}({})".format(
+                inner.__name__, ", ".join(f"{k}={v!r}" for k, v in case.kwargs.items())
+            )
+            if verbose:
+                output.line(f"Trying explicit example: {call}")
             try:
                 _run_explicit(body, case, output)
             except InvalidArgument as error:
                 if "assumption violated" in str(error):
                     continue
                 raise
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except _skip_exceptions():
+                raise
+            except BaseException as error:
+                if isinstance(error, Exception) and any(
+                    isinstance(arg, SearchStrategy) for arg in ex.args + tuple(ex.kwargs.values())
+                ):
+                    new = HypothesisWarning(
+                        "The @example() decorator expects to be passed values, but "
+                        "you passed strategies instead.  See https://hypothesis."
+                        "readthedocs.io/en/latest/reference/api.html#hypothesis"
+                        ".example for details."
+                    )
+                    new.__cause__ = error
+                    error = new
+                failures.append((call, error))
+                if not test_settings.report_multiple_bugs or not isinstance(error, Exception):
+                    break
         current_example[0] = None
+        if failures:
+            _raise_explicit_failures(failures, simplify=not verbose)
         if blob is not None:
             hegel_run(
                 body, native, database_key=database_key, test_location=location, reproduce_blob=blob
@@ -524,11 +565,64 @@ def _run_given(
             return
         hegel_run(body, native, database_key=database_key, test_location=location)
 
-    if test_settings.verbosity == Verbosity.quiet:
-        with with_output_override(lambda line: None):
-            run_cases()
-    else:
-        run_cases()
+    try:
+        with local_settings(test_settings):
+            if test_settings.verbosity == Verbosity.quiet:
+                with with_output_override(lambda line: None):
+                    run_cases()
+            else:
+                run_cases()
+    except RunError as error:
+        if isinstance(error, FailedHealthCheck) and "across the full search space" in str(error):
+            raise Unsatisfiable(
+                f"Unable to satisfy assumptions of {inner.__name__}. Hypothesis tried "
+                "every possible input, and all of them failed a .filter() or assume()"
+            ) from None
+        if isinstance(error, (FailedHealthCheck, Flaky)):
+            raise
+        if str(error).startswith("Unsatisfiable"):
+            raise Unsatisfiable(str(error)) from None
+        raise
+    if not executed[0]:
+        raise unittest.SkipTest("Hypothesis has been told to run no examples for this test.")
+    if not valid[0]:
+        raise Unsatisfiable(
+            f"Unable to satisfy assumptions of {inner.__name__}. Every test case failed a "
+            ".filter() or assume() (or none was generated)."
+        )
+
+
+def _raise_explicit_failures(failures: list[tuple[str, BaseException]], *, simplify: bool) -> None:
+    """Raise the explicit examples' failures: grouped by origin (keeping the
+    simplest with a note counting the others) unless ``simplify`` is off,
+    and as an exception group when more than one remains."""
+    groups: dict[Any, list[tuple[str, BaseException]]] = {}
+    for call, error in failures:
+        key = (type(error), _origin_of(error)) if simplify else id(error)
+        groups.setdefault(key, []).append((call, error))
+    chosen: list[BaseException] = []
+    for group in groups.values():
+        group.sort(key=lambda item: (len(item[0]), item[0]))
+        error = group[0][1]
+        if len(group) > 1:
+            other_count = len(group) - 1
+            error.add_note(
+                f"(note: {other_count} other explicit example{'s' * (other_count > 1)} "
+                "also failed with this error; use Verbosity.verbose to view)"
+            )
+        chosen.append(error)
+    if len(chosen) == 1:
+        raise chosen[0]
+    raise BaseExceptionGroup(f"Hypothesis found {len(chosen)} distinct failures.", chosen)
+
+
+def _origin_of(error: BaseException) -> tuple[str, int] | None:
+    tb = error.__traceback__
+    last = None
+    while tb is not None:
+        last = (tb.tb_frame.f_code.co_filename, tb.tb_lineno)
+        tb = tb.tb_next
+    return last
 
 
 def _format_example(ex: Example) -> str:
@@ -544,18 +638,59 @@ def find(
     random: Any = None,
     database_key: bytes | None = None,
 ) -> Any:
-    """A minimal example from ``specifier`` satisfying ``condition``."""
+    """A minimal example from ``specifier`` satisfying ``condition``.
+
+    Raises ``NoSuchExample`` when no generated value satisfies it, and
+    ``Unsatisfiable`` when the condition rejects too many values."""
     if settings is None:
         settings = Settings(max_examples=2000)
     check_strategy(specifier, name="specifier")
     if not callable(condition):
         raise InvalidArgument(f"Expected callable but got condition={condition!r}")
-    from hegel.runner import find_example
+    settings = Settings(
+        settings,
+        database=None,
+        deadline=None,
+        suppress_health_check=[h for h in HealthCheck if h is not HealthCheck.filter_too_much],
+        report_multiple_bugs=False,
+        phases=[p for p in settings.phases if p in (Phase.generate, Phase.shrink)]
+        or [Phase.generate],
+    )
+    found: list[Any] = []
+    user_rejected = [False]
 
+    def body(tc: TestCase) -> None:
+        with BuildContext(tc, is_final=tc.is_final):
+            value = tc.draw(specifier, name="Example")
+            try:
+                satisfied = condition(value)
+            except UnsatisfiedAssumption:
+                user_rejected[0] = True
+                tc.reject()
+            if satisfied:
+                found.append(value)
+                raise _Found()
+
+    native = settings.to_hegel()
+    if random is not None:
+        native = native.replace(seed=random.getrandbits(64), database="")
     try:
         with with_output_override(lambda line: None):
-            return find_example(specifier, condition)
-    except HegelError as error:
-        if "Could not find" in str(error):
-            raise NoSuchExample(condition) from None
-        raise
+            hegel_run(body, native, database_key=None)
+    except _Found:
+        return found[-1]
+    except FailedHealthCheck as error:
+        if user_rejected[0]:
+            raise Unsatisfiable(
+                f"Unable to satisfy assumptions of {getattr(condition, '__name__', condition)}"
+            ) from error
+    except RunError as error:
+        if user_rejected[0]:
+            raise Unsatisfiable(str(error)) from error
+        if "Unsatisfiable" not in str(error):
+            raise
+    raise NoSuchExample(condition)
+
+
+class _Found(BaseException):
+    pass

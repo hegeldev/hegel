@@ -19,6 +19,7 @@ from hegel.generators.base import Generator
 from hegel.hypothesis.control import current_build_context, currently_in_test_context
 from hegel.hypothesis.errors import InvalidArgument
 from hegel.hypothesis.strategies._base import (
+    InvalidStrategy,
     SearchStrategy,
     check_strategy,
     check_type,
@@ -357,11 +358,13 @@ def lists(
     min_size, max_size = int(min_size), None if max_size is None else int(max_size)
     if max_size == 0:
         return just([])
-    if unique or unique_by is not None:
-        if getattr(elements, "is_empty", False):
-            return just([]) if min_size == 0 else gs.nothing()
-    elif getattr(elements, "is_empty", False) and min_size > 0:
-        return gs.nothing()
+    if getattr(elements, "is_empty", False):
+        if min_size > 0:
+            return InvalidStrategy(
+                f"Cannot create non-empty lists with elements drawn from {elements!r} "
+                "because it has no values."
+            )
+        return just([])
     return gs.lists(
         elements, min_size=min_size, max_size=max_size, unique=unique, unique_by=unique_by
     )
