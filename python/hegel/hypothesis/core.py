@@ -516,6 +516,10 @@ def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], 
                 selfy = kwargs.get(posnames[0], arguments[0] if arguments else None)
             elif arguments:
                 selfy = arguments[0]
+            # A mock passed as the first argument (e.g. by @patch) is not self,
+            # and must not be mistaken for an executor.
+            if hasattr(selfy, "hypothesis_internal_is_this_a_mock_check"):
+                selfy = None
             if isinstance(selfy, unittest.TestCase) and test.__name__ in dir(unittest.TestCase):
                 _fail_health_check(
                     test_settings,
