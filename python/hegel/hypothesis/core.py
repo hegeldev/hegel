@@ -568,13 +568,6 @@ def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], 
             for name, strategy in given_kwargs.items():
                 check_strategy(strategy, name=name)
                 strategy.validate()
-            if inspect.iscoroutinefunction(inner):
-                raise InvalidArgument(
-                    "Hypothesis doesn't know how to run async test functions like "
-                    f"{inner.__name__}.  You'll need to write a custom executor, "
-                    "or use a library like pytest-asyncio or pytest-trio which can "
-                    "handle the translation for you."
-                )
             selfy = None
             posnames = [
                 p.name
@@ -589,6 +582,15 @@ def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], 
             # and must not be mistaken for an executor.
             if hasattr(selfy, "hypothesis_internal_is_this_a_mock_check"):
                 selfy = None
+            # A custom executor (e.g. one that awaits coroutines) may be able
+            # to run an async test; without one we certainly cannot.
+            if inspect.iscoroutinefunction(inner) and not hasattr(selfy, "execute_example"):
+                raise InvalidArgument(
+                    "Hypothesis doesn't know how to run async test functions like "
+                    f"{inner.__name__}.  You'll need to write a custom executor, "
+                    "or use a library like pytest-asyncio or pytest-trio which can "
+                    "handle the translation for you."
+                )
             if isinstance(selfy, unittest.TestCase) and test.__name__ in dir(unittest.TestCase):
                 _fail_health_check(
                     test_settings,
@@ -728,7 +730,7 @@ def _run_given(
 ) -> None:
     deadline = test_settings.deadline.total_seconds() if test_settings.deadline else None
     check_return = HealthCheck.return_value not in test_settings.suppress_health_check
-    current_example: list[Example | None] = [None]
+    current_example: list[tuple[Example, ExplicitCase] | None] = [None]
     print_args = getattr(wrapped_test, "_hypothesis_internal_print_given_args", True)
     executed = [False]
     valid = [False]
@@ -757,7 +759,7 @@ def _run_given(
                 return inner(*arguments, **kwargs, **drawn)
 
             gc_started = _gc_cumulative_time()
-            ex = current_example[0]
+            ex, case = current_example[0] or (None, None)
             try:
                 result = execute(run)
             except UnsatisfiedAssumption as error:
@@ -767,6 +769,12 @@ def _run_given(
                 valid[0] = True
                 if ex is not None and ex.xfail:
                     if isinstance(error, ex.raises):
+                        if not isinstance(error, Exception):
+                            raise InvalidArgument(
+                                f"@example({_format_case(case)}) raised an expected "
+                                f"{error!r}, but Hypothesis does not treat this as a "
+                                "test failure"
+                            ) from error
                         return
                     raise
                 outcomes.record(error)
@@ -779,10 +787,7 @@ def _run_given(
                 - context.draw_time
             )
             if ex is not None and ex.xfail:
-                raise _XfailPassed(
-                    f"Expected an exception from @example({_format_example(ex)}), but no "
-                    f"exception was raised{': ' + ex.reason if ex.reason else ''}"
-                )
+                raise _XfailPassed(_xfail_passed_message(ex, case))
             if result is not None and check_return:
                 raise FailedHealthCheck(
                     f"Tests run under @given should return None, but {inner.__name__} "
@@ -837,7 +842,7 @@ def _run_given(
         output = RunOutput.resolve()
         failures: list[tuple[str, BaseException]] = []
         for ex, case in explicit:
-            current_example[0] = ex
+            current_example[0] = (ex, case)
             call = "{}({})".format(
                 inner.__name__, ", ".join(f"{k}={v!r}" for k, v in case.kwargs.items())
             )
@@ -978,9 +983,27 @@ def _origin_of(error: BaseException) -> tuple[str, int] | None:
     return last
 
 
-def _format_example(ex: Example) -> str:
-    parts = [repr(a) for a in ex.args] + [f"{k}={v!r}" for k, v in ex.kwargs.items()]
+def _format_case(case: ExplicitCase) -> str:
+    """The explicit example's values by parameter name, as Hypothesis shows them."""
+    parts = [repr(a) for a in case.args] + [f"{k}={v!r}" for k, v in case.kwargs.items()]
     return ", ".join(parts)
+
+
+def _xfail_passed_message(ex: Example, case: ExplicitCase) -> str:
+    reason = f" because {ex.reason}" * bool(ex.reason)
+    if ex.raises is BaseException:
+        name = "exception"  # special-case no raises= arg
+    elif not isinstance(ex.raises, tuple):
+        name = ex.raises.__name__
+    elif len(ex.raises) == 1:
+        name = ex.raises[0].__name__
+    else:
+        name = ", ".join(e.__name__ for e in ex.raises[:-1]) + f", or {ex.raises[-1].__name__}"
+    vowel = name.upper()[0] in "AEIOU"
+    return (
+        f"Expected a{'n' * vowel} {name} from @example({_format_case(case)}){reason}, "
+        "but no exception was raised."
+    )
 
 
 def find(
