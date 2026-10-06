@@ -87,9 +87,7 @@ def test_recursive_can_generate_varied_structures():
 
     find_any(values, lambda x: x is None)
     find_any(values, lambda x: isinstance(x, list))
-    find_any(
-        values, lambda x: isinstance(x, list) and any(isinstance(y, list) for y in x)
-    )
+    find_any(values, lambda x: isinstance(x, list) and any(isinstance(y, list) for y in x))
 
 
 @checks_deprecated_behaviour

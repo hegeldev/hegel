@@ -8,10 +8,14 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+import sys
 from collections.abc import Buffer
 from dataclasses import dataclass
 
 import pytest
+
+if sys.version_info < (3, 14):
+    pytest.skip("memoryview generics need Python 3.14", allow_module_level=True)
 
 from hegel.hypothesis import given, strategies as st
 
@@ -26,9 +30,7 @@ class A:
     # see https://docs.python.org/3/reference/datamodel.html#python-buffer-protocol
     # and https://peps.python.org/pep-0688/
     def __buffer__(self, flags):
-        return memoryview(
-            self.constant.to_bytes() + self.x.to_bytes(length=32, signed=True)
-        )
+        return memoryview(self.constant.to_bytes() + self.x.to_bytes(length=32, signed=True))
 
 
 @given(st.from_type(memoryview[A]))
@@ -46,9 +48,7 @@ def test_errors_when___buffer___not_implemented():
     def f(v):
         pass
 
-    with pytest.raises(
-        TypeError, match="a bytes-like object is required, not 'NoBuffer'"
-    ):
+    with pytest.raises(TypeError, match="a bytes-like object is required, not 'NoBuffer'"):
         f()
 
 

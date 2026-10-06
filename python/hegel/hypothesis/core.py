@@ -12,7 +12,7 @@ from typing import Any, TypeVar
 
 from hegel.errors import HegelError, RunError
 from hegel.explicit import ExplicitCase
-from hegel.hypothesis._settings import HealthCheck, Phase, Verbosity
+from hegel.hypothesis._settings import HealthCheck, Phase, Verbosity, local_settings
 from hegel.hypothesis._settings import settings as Settings
 from hegel.hypothesis.control import BuildContext
 from hegel.hypothesis.errors import (
@@ -373,16 +373,17 @@ def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], 
                 selfy = arguments[0]
             _check_fixtures(inner, kwargs, test_settings)
             explicit = _explicit_cases(wrapped_test, original_sig, given_kwargs)
-            _run_given(
-                inner,
-                wrapped_test,
-                given_kwargs,
-                arguments,
-                kwargs,
-                selfy,
-                test_settings,
-                explicit,
-            )
+            with local_settings(test_settings):
+                _run_given(
+                    inner,
+                    wrapped_test,
+                    given_kwargs,
+                    arguments,
+                    kwargs,
+                    selfy,
+                    test_settings,
+                    explicit,
+                )
 
         wrapped_test.is_hypothesis_test = True  # type: ignore[attr-defined]
         wrapped_test.hypothesis = HypothesisHandle(test, given_kwargs, lambda: wrapped_test)  # type: ignore[attr-defined]

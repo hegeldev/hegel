@@ -24,7 +24,7 @@ import pytest
 
 from hegel.hypothesis import Verbosity, assume, find, given, settings, strategies as st
 from hegel.hypothesis.errors import InvalidArgument, InvalidState
-from hegel.hypothesis.internal.reflection import nicerepr
+from tests.hypothesis_port.common.compat import nicerepr
 from hegel.hypothesis.reporting import with_reporter
 from hegel.hypothesis.strategies import booleans, functions, integers
 
@@ -277,7 +277,7 @@ def test_constant_functions_are_shown_as_lambdas(returns, expected, pure):
         raise AssertionError
 
     output = failing_output(test)
-    assert f"f={expected}," in output
+    assert f"f = {expected}" in output  # Hegel prints one ``name = value`` line per argument
     assert "Called function" not in output
 
 
@@ -320,14 +320,12 @@ def test_non_constant_functions_still_note_their_calls(returns):
         raise AssertionError
 
     output = failing_output(test)
-    assert "f=func_d," in output
+    assert "f = func_d" in output  # Hegel prints one ``name = value`` line per argument
     assert "Called function: func_d(1) ->" in output
 
 
 def test_functions_supports_find():
-    f = find(
-        st.functions(like=pure_func, returns=st.integers(), pure=True), lambda x: True
-    )
+    f = find(st.functions(like=pure_func, returns=st.integers(), pure=True), lambda x: True)
     with pytest.raises(InvalidState):
         f(1, 2)
     assert f.__name__ == pure_func.__name__
@@ -541,6 +539,4 @@ def test_generator_functions_reject_other_annotations(annotation):
 )
 def test_async_generator_functions_reject_other_annotations(annotation):
     with pytest.raises(InvalidArgument, match="Cannot infer the yield type"):
-        check_can_generate_examples(
-            functions(like=make_gen_like(annotation, is_async=True))
-        )
+        check_can_generate_examples(functions(like=make_gen_like(annotation, is_async=True)))

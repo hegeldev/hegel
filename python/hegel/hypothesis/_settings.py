@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import inspect
 import os
 import threading
-from collections.abc import Collection
+from collections.abc import Collection, Iterator
 from enum import Enum, IntEnum, unique
 from typing import Any
 
@@ -178,9 +179,15 @@ def _validate_database(value: Any) -> ExampleDatabase | None:
     )
 
 
+_local_override = threading.local()
+
+
 class settingsMeta(type):
     @property
     def default(cls) -> settings:
+        override = getattr(_local_override, "settings", None)
+        if override is not None:
+            return override
         current = settings._current_profile
         return settings._profiles[current]
 
@@ -476,3 +483,15 @@ settings.register_profile(
 )
 if os.environ.get("CI") or os.environ.get("TF_BUILD"):  # nocov
     settings.load_profile("ci")
+
+
+@contextlib.contextmanager
+def local_settings(value: settings) -> Iterator[None]:
+    """Make ``settings.default`` return ``value`` on this thread, as
+    Hypothesis does while a test with explicit settings is running."""
+    previous = getattr(_local_override, "settings", None)
+    _local_override.settings = value
+    try:
+        yield
+    finally:
+        _local_override.settings = previous

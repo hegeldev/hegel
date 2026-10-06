@@ -13,16 +13,29 @@ import math
 import random as _random
 import struct
 import sys
+import typing
 import warnings
-from collections.abc import Callable, Hashable, Iterable, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Callable,
+    Hashable,
+    Iterable,
+    Iterator,
+    Sequence,
+)
+from collections.abc import Generator as GeneratorABC
+from types import EllipsisType
 from typing import Any, Protocol, TypeVar
 
 from hegel import generators as gs
 from hegel.generators.base import Generator
 from hegel.generators.combinators import Just, Nothing, OneOf, SampledFrom
+from hegel.generators.recursive import Deferred
 from hegel.generators.strings import Characters
 from hegel.hypothesis.control import current_build_context, currently_in_test_context
-from hegel.hypothesis.errors import HypothesisWarning, InvalidArgument
+from hegel.hypothesis.errors import HypothesisWarning, InvalidArgument, InvalidState
 from hegel.hypothesis.strategies._base import (
     NOTHING,
     LazyStrategy,
@@ -120,7 +133,36 @@ builds = _passthrough("builds", gs.builds)
 timezones = _passthrough("timezones", gs.timezones)
 timedeltas = _passthrough("timedeltas", gs.timedeltas)
 dates = _passthrough("dates", gs.dates)
-deferred = gs.deferred
+
+
+def deferred(definition: Callable[[], SearchStrategy[Ex]]) -> SearchStrategy[Ex]:
+    """A strategy defined by a function called on first use, so the
+    definition can refer to itself (or to strategies defined later)."""
+    strategy: Generator[Any]
+
+    def resolve() -> Generator[Any]:
+        if not callable(definition):
+            raise InvalidArgument(
+                f"Expected definition to be a function but got {definition!r} of type "
+                f"{type(definition).__name__} instead."
+            )
+        result = definition()
+        if not isinstance(result, Generator):
+            raise InvalidArgument(
+                f"Expected definition to return a SearchStrategy but got {result!r} of "
+                f"type {type(result).__name__} instead."
+            )
+        seen = {id(strategy)}
+        inner = result
+        while isinstance(inner, Deferred):
+            if id(inner) in seen:
+                raise InvalidArgument("Definition of deferred strategy refers to itself")
+            seen.add(id(inner))
+            inner = inner.definition()
+        return result
+
+    strategy = gs.deferred(resolve)
+    return strategy
 
 
 @defines_strategy
@@ -763,13 +805,29 @@ def characters(
                 f"Categories {sorted(overlap)!r} are present in both categories "
                 "and exclude_categories"
             )
+    for name, value in (
+        ("include_characters", include_characters),
+        ("exclude_characters", exclude_characters),
+    ):
+        if value is None:
+            continue
+        if not_one_char := [c for c in value if not isinstance(c, str) or len(c) != 1]:
+            raise InvalidArgument(
+                f"Elements of {name} are required to be a single character, "
+                f"but {not_one_char!r} are not."
+            )
     if include_characters is not None and exclude_characters is not None:
         overlap = set(include_characters) & set(exclude_characters)
         if overlap:
             raise InvalidArgument(
                 f"Characters {sorted(overlap)!r} are present in both "
-                "include_characters and exclude_characters"
+                f"include_characters={include_characters!r}, and "
+                f"exclude_characters={exclude_characters!r}"
             )
+    if include_characters is not None and not isinstance(include_characters, str):
+        include_characters = "".join(include_characters)
+    if exclude_characters is not None and not isinstance(exclude_characters, str):
+        exclude_characters = "".join(exclude_characters)
     if (
         min_codepoint is None
         and max_codepoint is None
@@ -1066,6 +1124,23 @@ def _to_fraction(value: Any, name: str) -> _fractions.Fraction | None:
         raise InvalidArgument(f"{name}={value!r} cannot be converted to a Fraction") from None
 
 
+def _cathetus(h: float, a: float) -> float:
+    """The other leg of a right triangle with hypotenuse ``h`` and leg
+    ``a``: sqrt(h**2 - a**2), computed without overflow or underflow."""
+    h, a = math.fabs(h), math.fabs(a)
+    if h < a:
+        return math.nan
+    if math.isinf(h):
+        return math.inf
+    if h > math.sqrt(sys.float_info.max):
+        if h > sys.float_info.max / 2:
+            return math.sqrt(h - a) * math.sqrt(h / 2 + a / 2) * math.sqrt(2)
+        return math.sqrt(h - a) * math.sqrt(h + a)
+    if h < math.sqrt(sys.float_info.min):
+        return math.sqrt(h - a) * math.sqrt(h + a)
+    return math.sqrt((h - a) * (h + a))
+
+
 @defines_strategy
 def complex_numbers(
     *,
@@ -1077,35 +1152,20 @@ def complex_numbers(
     width: int = 128,
 ) -> SearchStrategy[complex]:
     """Complex numbers with real and imaginary parts of ``width // 2`` bits,
-    optionally bounded in magnitude."""
-    if width not in (32, 64, 128):
-        raise InvalidArgument(
-            f"Got width={width!r}, but the only valid values are the integers 32, 64, and 128."
-        )
-    if (
-        isinstance(min_magnitude, bool)
-        or not isinstance(min_magnitude, (int, float))
-        or min_magnitude < 0
-    ):
-        raise InvalidArgument(f"min_magnitude={min_magnitude!r} must be a non-negative number")
-    for name, value in (("min_magnitude", min_magnitude), ("max_magnitude", max_magnitude)):
-        if isinstance(value, float) and math.isnan(value):
-            raise InvalidArgument(f"Invalid end point {name}={value!r}")
+    optionally bounded in magnitude; drawn as Hypothesis draws them, with
+    the real part constrained by the imaginary part already drawn."""
+    _check_float_bound("min_magnitude", min_magnitude)
+    _check_float_bound("max_magnitude", max_magnitude)
+    if min_magnitude is None:
+        raise InvalidArgument("Use min_magnitude=0 or omit the argument entirely.")
+    if min_magnitude < 0:
+        raise InvalidArgument(f"min_magnitude={min_magnitude!r} must not be negative.")
+    if max_magnitude is not None and max_magnitude < 0:
+        raise InvalidArgument(f"max_magnitude={max_magnitude!r} must not be negative.")
+    check_valid_interval(min_magnitude, max_magnitude, "min_magnitude", "max_magnitude")
+    check_type(bool, allow_subnormal, "allow_subnormal")
     if max_magnitude == math.inf:
         max_magnitude = None
-    if max_magnitude is not None:
-        if (
-            isinstance(max_magnitude, bool)
-            or not isinstance(max_magnitude, (int, float))
-            or max_magnitude < 0
-        ):
-            raise InvalidArgument(
-                f"max_magnitude={max_magnitude!r} must be a non-negative number or None"
-            )
-        if max_magnitude < min_magnitude:
-            raise InvalidArgument(
-                f"max_magnitude={max_magnitude!r} < min_magnitude={min_magnitude!r}"
-            )
     if allow_infinity is None:
         allow_infinity = max_magnitude is None
     elif allow_infinity and max_magnitude is not None:
@@ -1119,31 +1179,44 @@ def complex_numbers(
             f"Cannot have allow_nan={allow_nan!r}, min_magnitude={min_magnitude!r}, "
             f"max_magnitude={max_magnitude!r}"
         )
+    if width not in (32, 64, 128):
+        raise InvalidArgument(
+            f"width={width!r}, but must be 32, 64 or 128 (other complex dtypes "
+            "such as complex192 or complex256 are not supported)"
+        )
     component_width = width // 2
-    unbounded = floats(
-        allow_nan=allow_nan,
-        allow_infinity=allow_infinity,
-        allow_subnormal=allow_subnormal,
-        width=component_width,
-    )
+    allow_kw: dict[str, Any] = {
+        "allow_nan": allow_nan,
+        "allow_infinity": allow_infinity,
+        # A nonzero normal min_magnitude with a zero imaginary part would make
+        # allow_subnormal=True an error for the real part, so True becomes None.
+        "allow_subnormal": None if allow_subnormal else allow_subnormal,
+        "width": component_width,
+    }
     if min_magnitude == 0 and max_magnitude is None:
-        return tuples(unbounded, unbounded).map(lambda p: complex(p[0], p[1]))
-    parts = floats(
-        -math.inf if max_magnitude is None else -max_magnitude,
-        math.inf if max_magnitude is None else max_magnitude,
-        allow_nan=False,
-        allow_infinity=allow_infinity if max_magnitude is None else False,
-        allow_subnormal=allow_subnormal,
-        width=component_width,
-    )
+        return tuples(floats(**allow_kw), floats(**allow_kw)).map(lambda p: complex(p[0], p[1]))
 
-    def in_range(z: complex) -> bool:
-        magnitude = abs(z)
-        if max_magnitude is not None and magnitude > max_magnitude:
-            return False
-        return magnitude >= min_magnitude
+    def constrained_complex(tc: TestCase) -> complex:
+        draw = tc.draw_silent
+        if max_magnitude is None:
+            zi = draw(floats(**allow_kw))
+            rmax = None
+        else:
+            bound = _float_of(max_magnitude, component_width)
+            zi = draw(floats(-bound, bound, **allow_kw))
+            rmax = _float_of(_cathetus(max_magnitude, zi), component_width)
+        if min_magnitude == 0 or math.fabs(zi) >= min_magnitude:
+            zr = draw(floats(None if rmax is None else -rmax, rmax, **allow_kw))
+        else:
+            rmin = _float_of(_cathetus(min_magnitude, zi), component_width)
+            zr = draw(floats(rmin, rmax, **allow_kw))
+        # Draw the sign bool for a given pair of magnitude arguments either
+        # always or never (for stable shrinking), but only invert when needed.
+        if min_magnitude > 0 and draw(booleans()) and math.fabs(zi) <= min_magnitude:
+            zr = -zr
+        return complex(zr, zi)
 
-    return tuples(parts, parts).map(lambda p: complex(p[0], p[1])).filter(in_range)
+    return gs.composite(constrained_complex)()
 
 
 # -- time -------------------------------------------------------------------------
@@ -1495,30 +1568,78 @@ def runner(*, default: Any = not_set) -> SearchStrategy[Any]:
 def functions(
     *,
     like: Callable[..., Any] = lambda: None,
-    returns: SearchStrategy[Any] | None = None,
+    returns: SearchStrategy[Any] | EllipsisType = ...,
     pure: bool = False,
 ) -> SearchStrategy[Callable[..., Any]]:
-    """Functions with the same signature as ``like``, returning values
-    drawn from ``returns``."""
+    """Functions with the same signature (and kind: plain, async, generator
+    or async generator) as ``like``, returning values drawn from
+    ``returns`` (inferred from the return annotation when omitted)."""
+    check_type(bool, pure, "pure")
     if not callable(like):
         raise InvalidArgument(
-            "The first argument to functions() must be a callable to imitate, but "
-            f"got non-callable like={like!r}"
+            "The first argument to functions() must be a callable to imitate, "
+            f"but got non-callable like={like!r}"
         )
-    if returns is None:
-        from hegel.hypothesis.strategies import from_type as _from_type
-
-        hints = {}
+    is_async = inspect.iscoroutinefunction(like)
+    is_async_gen = inspect.isasyncgenfunction(like)
+    is_gen = inspect.isgeneratorfunction(like) or is_async_gen
+    if pure and (is_async or is_gen):
+        raise InvalidArgument(
+            f"pure=True is invalid for like={getattr(like, '__name__', like)!r}, because "
+            "async functions are for non-deterministic IO and generators are consumed "
+            "by iteration, so returning a cached value makes no sense"
+        )
+    if returns is None or returns is ...:
         try:
-            import typing
-
             hints = typing.get_type_hints(like)
         except Exception:  # noqa: BLE001
             hints = {}
-        returns = _from_type(hints["return"]) if "return" in hints else none()
+        if is_gen:
+            allowed: tuple[Any, ...] = (
+                (AsyncIterator, AsyncIterable, AsyncGenerator)
+                if is_async_gen
+                else (Iterator, Iterable, GeneratorABC)
+            )
+            ret = hints.get("return")
+            kind = typing.get_origin(ret) or ret
+            if ret is not None and kind not in allowed:
+                options = ", ".join(t.__name__ for t in allowed)
+                raise InvalidArgument(
+                    f"Cannot infer the yield type of like={getattr(like, '__name__', like)!r} "
+                    f"from its return annotation {ret!r}. Expected one of {options}. "
+                    "Alternatively, pass returns= to specify the yield type explicitly."
+                )
+            args = typing.get_args(ret)
+            returns = from_type(args[0]) if args else none()
+        else:
+            returns = from_type(hints.get("return", type(None)))
     check_strategy(returns, "returns")
-    check_type(bool, pure, "pure")
+    if is_gen:
+        returns = lists(returns)
     return _Functions(like, returns, pure)
+
+
+class _CanVary:
+    def __repr__(self) -> str:
+        return "can_vary"
+
+
+_can_vary: Any = _CanVary()
+
+
+async def _checkpoint() -> None:  # nocov - depends on the installed frameworks
+    # Trio-style checkpoint semantics, finding the right way to yield to
+    # the user's async framework when it is not asyncio.
+    if anyio := sys.modules.get("anyio"):
+        await anyio.lowlevel.checkpoint()
+        return
+    if sniffio := sys.modules.get("sniffio"):
+        if sniffio.current_async_library() == "trio":
+            await sys.modules["trio"].lowlevel.checkpoint()
+            return
+    import asyncio
+
+    await asyncio.sleep(0)
 
 
 class _Functions(Generator[Callable[..., Any]]):
@@ -1527,34 +1648,197 @@ class _Functions(Generator[Callable[..., Any]]):
         self.returns = returns
         self.pure = pure
         self.label = returns.label
+        # A returns strategy with a single possible value - just(), none(),
+        # or a one-element sampled_from() - makes the function a constant,
+        # shown as a lambda instead of noting each call.
+        unwrapped = unwrap_strategies(returns)
+        if isinstance(unwrapped, Just):
+            self._constant = unwrapped.value
+        elif isinstance(unwrapped, SampledFrom) and len(unwrapped.elements) == 1:
+            self._constant = unwrapped.elements[0]
+        else:
+            self._constant = _can_vary
+
+    @property
+    def is_empty(self) -> bool:
+        return self.returns.is_empty
+
+    def _constant_description(self) -> str:
+        sig = inspect.signature(self.like)
+        params = str(
+            sig.replace(
+                parameters=[
+                    param.replace(annotation=inspect.Parameter.empty)
+                    for param in sig.parameters.values()
+                ],
+                return_annotation=inspect.Signature.empty,
+            )
+        )[1:-1]
+        return f"lambda {params}: {self._constant!r}" if params else f"lambda: {self._constant!r}"
+
+    def description(self) -> str:
+        if self._constant is _can_vary or inspect.iscoroutinefunction(self.like):
+            return getattr(self.like, "__name__", repr(self.like))
+        return self._constant_description()
 
     def do_draw(self, tc: TestCase) -> Callable[..., Any]:
         like, returns, pure = self.like, self.returns, self.pure
+        varies = self._constant is _can_vary or inspect.iscoroutinefunction(like)
         cache: dict[Any, Any] = {}
         signature = inspect.signature(like)
+        context = current_build_context() if currently_in_test_context() else None
 
-        @functools.wraps(like)
-        def generated(*args: Any, **kwargs: Any) -> Any:
-            bound = signature.bind(*args, **kwargs)
-            bound.apply_defaults()
+        def should_note() -> bool:
+            from hegel.hypothesis._settings import Verbosity, settings
+
+            return tc.is_final or settings.default.verbosity >= Verbosity.verbose
+
+        def draw_value(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
+            if context is None or not any(c is context for c in _build_context_stack()):
+                raise InvalidState(
+                    f"This generated {getattr(like, '__name__', like)} function can only "
+                    "be called within the scope of the @given that created it."
+                )
             if pure:
-                key = (tuple(bound.args), tuple(sorted(bound.kwargs.items())))
-                try:
-                    if key in cache:
-                        return cache[key]
-                except TypeError:
-                    key = None
-                value = tc.draw_silent(returns)
-                if key is not None:
-                    cache[key] = value
-                return value
-            return tc.draw_silent(returns)
+                bound = signature.bind(*args, **kwargs)
+                bound.apply_defaults()
+                key = (tuple(bound.args), frozenset(bound.kwargs.items()))
+                if key not in cache:
+                    cache[key] = tc.draw_silent(returns)
+                    if varies and should_note():
+                        _note_call(tc, like, args, kwargs, cache[key])
+                return cache[key]
+            value = tc.draw_silent(returns)
+            if varies and should_note():
+                _note_call(tc, like, args, kwargs, value)
+            return value
 
-        generated.__hegel_signature__ = signature  # type: ignore[attr-defined]
-        return generated
+        if inspect.iscoroutinefunction(like):
+
+            async def body(*args: Any, **kwargs: Any) -> Any:
+                value = draw_value(args, kwargs)
+                await _checkpoint()
+                return value
+
+            kind = "async"
+        elif inspect.isasyncgenfunction(like):
+
+            async def body(*args: Any, **kwargs: Any) -> Any:
+                for value in draw_value(args, kwargs):
+                    await _checkpoint()
+                    yield value
+                await _checkpoint()
+
+            kind = "async gen"
+        elif inspect.isgeneratorfunction(like):
+
+            def body(*args: Any, **kwargs: Any) -> Any:
+                yield from draw_value(args, kwargs)
+
+            kind = "gen"
+        else:
+
+            def body(*args: Any, **kwargs: Any) -> Any:
+                return draw_value(args, kwargs)
+
+            kind = "plain"
+        inner = _with_signature(like, signature, body, kind)
+        inner.__hegel_signature__ = signature  # type: ignore[attr-defined]
+        if not varies:
+            inner.__hegel_description__ = self._constant_description()  # type: ignore[attr-defined]
+        return inner
+
+    def do_draw_and_print(self, tc: TestCase, printer: Any) -> Callable[..., Any]:
+        value = self.do_draw(tc)
+        printer.text(self.description())
+        return value
 
     def __repr__(self) -> str:
         return f"functions(like={self.like!r}, returns={self.returns!r}, pure={self.pure!r})"
+
+
+def _with_signature(
+    like: Callable[..., Any], sig: inspect.Signature, body: Callable[..., Any], kind: str
+) -> Callable[..., Any]:
+    """A function of the same kind (plain, async, generator or async
+    generator) and signature as ``like`` that forwards its arguments to
+    ``body``, so that calling it with the wrong arguments is a TypeError
+    before any value is drawn."""
+    namespace: dict[str, Any] = {"__body": body}
+    decl: list[str] = []
+    call: list[str] = []
+    params = list(sig.parameters.values())
+    positional_only = [p for p in params if p.kind is p.POSITIONAL_ONLY]
+    has_var_positional = any(p.kind is p.VAR_POSITIONAL for p in params)
+    star_added = False
+    for index, param in enumerate(params):
+        default = ""
+        if param.default is not param.empty:
+            namespace[f"__default{index}"] = param.default
+            default = f"=__default{index}"
+        if param.kind is param.VAR_POSITIONAL:
+            decl.append(f"*{param.name}")
+            call.append(f"*{param.name}")
+            star_added = True
+        elif param.kind is param.VAR_KEYWORD:
+            decl.append(f"**{param.name}")
+            call.append(f"**{param.name}")
+        elif param.kind is param.KEYWORD_ONLY:
+            if not has_var_positional and not star_added:
+                decl.append("*")
+                star_added = True
+            decl.append(param.name + default)
+            call.append(f"{param.name}={param.name}")
+        else:
+            decl.append(param.name + default)
+            call.append(param.name)
+            if positional_only and param is positional_only[-1]:
+                decl.append("/")
+    arguments = ", ".join(decl)
+    forwarded = ", ".join(call)
+    if kind == "async":
+        source = f"async def inner({arguments}):\n    return await __body({forwarded})\n"
+    elif kind == "async gen":
+        source = (
+            f"async def inner({arguments}):\n"
+            f"    async for value in __body({forwarded}):\n        yield value\n"
+        )
+    elif kind == "gen":
+        source = f"def inner({arguments}):\n    yield from __body({forwarded})\n"
+    else:
+        source = f"def inner({arguments}):\n    return __body({forwarded})\n"
+    exec(source, namespace)  # noqa: S102
+    inner = namespace["inner"]
+    for attribute in ("__module__", "__name__", "__qualname__", "__doc__"):
+        try:
+            setattr(inner, attribute, getattr(like, attribute))
+        except AttributeError:  # nocov
+            pass
+    inner.__dict__.update(getattr(like, "__dict__", {}))
+    return inner
+
+
+def _build_context_stack() -> list[Any]:
+    from hegel.hypothesis.control import _stack
+
+    return _stack()
+
+
+def _note_call(
+    tc: TestCase,
+    like: Callable[..., Any],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    value: Any,
+) -> None:
+    from hegel.hypothesis.reporting import report
+
+    bits = [repr(a) for a in args] + [f"{k}={v!r}" for k, v in kwargs.items()]
+    text = f"Called function: {getattr(like, '__name__', like)}({', '.join(bits)}) -> {value!r}"
+    if tc.is_final:
+        tc.note(text)
+    else:
+        report(text)
 
 
 def register_type_strategy(

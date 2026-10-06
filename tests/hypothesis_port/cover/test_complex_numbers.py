@@ -72,11 +72,7 @@ def test_max_magnitude_zero(val):
 def test_min_magnitude_respected(data, mag):
     c = data.draw(complex_numbers(min_magnitude=mag))
     # See test_max_magnitude_respected comment
-    assert (
-        abs(c.real) >= mag
-        or abs(c.imag) >= mag
-        or abs(c) >= mag * (1 - sys.float_info.epsilon)
-    )
+    assert abs(c.real) >= mag or abs(c.imag) >= mag or abs(c) >= mag * (1 - sys.float_info.epsilon)
 
 
 def test_minimal_min_magnitude_zero():
@@ -124,9 +120,7 @@ def test_allow_subnormal(allow_subnormal, min_magnitude, max_magnitude):
     if allow_subnormal:
         find_any(strat, lambda x: _is_subnormal(x.real) or _is_subnormal(x.imag))
     else:
-        assert_no_examples(
-            strat, lambda x: _is_subnormal(x.real) or _is_subnormal(x.imag)
-        )
+        assert_no_examples(strat, lambda x: _is_subnormal(x.real) or _is_subnormal(x.imag))
 
 
 @pytest.mark.parametrize("allow_subnormal", [1, 0.0, "False"])

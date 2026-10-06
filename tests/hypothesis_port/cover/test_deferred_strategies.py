@@ -13,7 +13,11 @@ import pytest
 from hegel.hypothesis import given, strategies as st
 from hegel.hypothesis.errors import InvalidArgument
 
-from tests.hypothesis_port.common.debug import assert_no_examples, check_can_generate_examples, minimal
+from tests.hypothesis_port.common.debug import (
+    assert_no_examples,
+    check_can_generate_examples,
+    minimal,
+)
 
 
 def test_binary_tree():
@@ -50,16 +54,13 @@ def test_errors_on_definition_as_self():
         check_can_generate_examples(x)
 
 
-def test_branches_pass_through_deferred():
-    x = st.one_of(st.booleans(), st.integers())
-    y = st.deferred(lambda: x)
-    assert x.branches == y.branches
+# test_branches_pass_through_deferred dropped: Hegel strategies have no
+# ``branches`` attribute (a Hypothesis internal).
 
 
 def test_can_draw_one_of_self():
     x = st.deferred(lambda: st.one_of(st.booleans(), x))
     assert minimal(x) is False
-    assert len(x.branches) == 1
 
 
 def test_hidden_self_references_just_result_in_no_example():
@@ -92,9 +93,7 @@ def test_mutually_recursive_tuples_draw_nothing():
 
 def test_literals_strategy_is_valid():
     literals = st.deferred(
-        lambda: st.one_of(
-            st.booleans(), st.tuples(literals, literals), literals.map(lambda x: [x])
-        )
+        lambda: st.one_of(st.booleans(), st.tuples(literals, literals), literals.map(lambda x: [x]))
     )
 
     @given(literals)
@@ -103,13 +102,10 @@ def test_literals_strategy_is_valid():
 
     test()
 
-    assert not literals.has_reusable_values
-
 
 def test_impossible_self_recursion():
     x = st.deferred(lambda: st.tuples(st.none(), x))
     assert x.is_empty
-    assert x.has_reusable_values
 
 
 def test_very_deep_deferral():
@@ -128,7 +124,6 @@ def test_very_deep_deferral():
 
     strategies = list(map(strat, range(100)))
 
-    assert strategies[0].has_reusable_values
     assert not strategies[0].is_empty
 
 

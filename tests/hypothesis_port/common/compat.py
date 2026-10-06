@@ -46,6 +46,9 @@ def next_up_normal(value: float, width: int, *, allow_subnormal: bool) -> float:
 
 
 def get_pretty_function_description(f: object) -> str:
+    description = getattr(f, "__hegel_description__", None)
+    if description is not None:
+        return description
     name = getattr(f, "__name__", None)
     if name is None:
         return repr(f)

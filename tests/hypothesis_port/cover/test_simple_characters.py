@@ -37,18 +37,14 @@ def test_bad_codepoint_arguments():
 def test_exclude_all_available_range():
     with pytest.raises(InvalidArgument):
         check_can_generate_examples(
-            characters(
-                min_codepoint=ord("0"), max_codepoint=ord("0"), exclude_characters="0"
-            )
+            characters(min_codepoint=ord("0"), max_codepoint=ord("0"), exclude_characters="0")
         )
 
 
 def test_when_nothing_could_be_produced():
     with pytest.raises(InvalidArgument):
         check_can_generate_examples(
-            characters(
-                categories=["Cc"], min_codepoint=ord("0"), max_codepoint=ord("9")
-            )
+            characters(categories=["Cc"], min_codepoint=ord("0"), max_codepoint=ord("9"))
         )
 
 
@@ -146,9 +142,7 @@ def test_whitelisted_characters_override():
 
 def test_blacklisted_characters():
     bad_chars = "te02тест49st"
-    st = characters(
-        min_codepoint=ord("0"), max_codepoint=ord("9"), exclude_characters=bad_chars
-    )
+    st = characters(min_codepoint=ord("0"), max_codepoint=ord("9"), exclude_characters=bad_chars)
 
     assert "1" == minimal(st)
 
