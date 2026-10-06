@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import threading
 
-import hegel
 import pytest
+
+import hegel
 from hegel import generators as gs
 from hegel.generators.recursive import DEFERRED_LABEL, Deferred
-
 from tests.helpers import failing, notes, run_test
 
 

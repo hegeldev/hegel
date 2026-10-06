@@ -3,14 +3,14 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-import hegel
 import pytest
+
+import hegel
 from hegel import _native
 from hegel import generators as gs
 from hegel.errors import AssumeFailed, InternalError, LoopDone
 from hegel.pretty import PrettyPrinter
 from hegel.test_case import Collection, TestCase
-
 from tests.helpers import failing, notes, run_test
 
 

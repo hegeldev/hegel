@@ -5,11 +5,11 @@ import re
 import unicodedata
 import uuid
 
-import hegel
 import pytest
+
+import hegel
 from hegel import generators as gs
 from hegel.generators.strings import Characters, CharacterSpec, Text, TextFromAlphabet
-
 from tests.helpers import run_test
 
 

@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import enum
 
-import hegel
 import pytest
+
+import hegel
 from hegel import generators as gs
 from hegel.generators.base import Filtered, FlatMapped, Generator, Mapped
 from hegel.generators.combinators import Nothing, OneOf, as_generator
 from hegel.pretty import PrettyPrinter
-
 from tests.helpers import failing, notes, run_test
 
 

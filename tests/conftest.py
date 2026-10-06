@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-import hegel
 import pytest
+
+import hegel
 from hegel.runner import with_output_override
 
 pytest_plugins = ["pytester"]

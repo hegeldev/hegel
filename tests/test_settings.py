@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import hegel
 import pytest
+
+import hegel
 from hegel import _native
 from hegel.settings import (
     Backend,

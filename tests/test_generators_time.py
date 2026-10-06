@@ -3,10 +3,10 @@ from __future__ import annotations
 import datetime as dt
 import zoneinfo
 
-import hegel
 import pytest
-from hegel import generators as gs
 
+import hegel
+from hegel import generators as gs
 from tests.helpers import failing, run_test
 
 

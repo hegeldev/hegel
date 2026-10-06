@@ -3,11 +3,11 @@ from __future__ import annotations
 import math
 import struct
 
-import hegel
 import pytest
+
+import hegel
 from hegel import generators as gs
 from hegel.generators.numeric import UNBOUNDED_MAGNITUDE, Booleans, Integers
-
 from tests.helpers import failing, notes, run_test
 
 

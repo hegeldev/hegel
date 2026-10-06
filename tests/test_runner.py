@@ -4,8 +4,9 @@ import inspect
 import sys
 import threading
 
-import hegel
 import pytest
+
+import hegel
 from hegel import generators as gs
 from hegel.runner import (
     RunOutput,
@@ -15,7 +16,6 @@ from hegel.runner import (
     with_output_override,
 )
 from hegel.settings import Phase, Verbosity
-
 from tests.helpers import failing, notes, run_test
 
 

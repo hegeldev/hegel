@@ -3,10 +3,10 @@ from __future__ import annotations
 import dataclasses
 import inspect
 
-import hegel
 import pytest
-from hegel import generators as gs
 
+import hegel
+from hegel import generators as gs
 from tests.helpers import failing, notes, run_test
 
 

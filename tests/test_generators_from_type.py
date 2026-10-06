@@ -11,11 +11,11 @@ import ipaddress
 import typing
 import uuid
 
-import hegel
 import pytest
+
+import hegel
 from hegel import generators as gs
 from hegel.generators.from_type import infer_missing_arguments
-
 from tests.helpers import run_test
 
 

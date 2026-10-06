@@ -3,8 +3,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-import hegel
 import pytest
+
+import hegel
 
 
 def run_test(fn: Callable[..., Any], **settings: Any) -> None:
