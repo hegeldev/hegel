@@ -44,6 +44,29 @@ def pytest_configure(config: Any) -> None:
     Settings.set_default_profile("pytest")
 
 
+_POINTLESS_DECORATORS = [
+    ("example", "hypothesis_explicit_examples"),
+    ("seed", "_hypothesis_internal_use_seed"),
+    ("settings", "_hypothesis_internal_settings_applied"),
+    ("reproduce_example", "_hypothesis_internal_use_reproduce_failure"),
+]
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item: Any) -> Any:
+    obj = getattr(item, "obj", None)
+    if obj is not None and not getattr(obj, "is_hypothesis_test", False):
+        # Hypothesis's decorators do nothing without @given, so refuse them.
+        for name, attribute in _POINTLESS_DECORATORS:
+            if getattr(obj, attribute, None):
+                from hegel.errors import InvalidArgument
+
+                raise InvalidArgument(
+                    f"Using `@{name}` on a test without `@given` is completely pointless."
+                )
+    yield
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_collection_modifyitems(items: list[Any]) -> Any:
     yield
