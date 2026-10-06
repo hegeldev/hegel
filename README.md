@@ -13,7 +13,8 @@ Two APIs are provided:
   (`@given`, `strategies`, `settings`, `RuleBasedStateMachine`, ...) reimplemented
   on top of Hegel, so existing Hypothesis tests can run on the Hegel engine with an
   import change. The parts of Hypothesis it does not cover are listed in
-  `tests/hypothesis_port/GAPS.md`.
+  `docs/comparison-with-hypothesis.md`; engine behaviour that differs from
+  Python's `re` or from Hypothesis is recorded in `docs/engine-issues.md`.
 
 ## Installation
 

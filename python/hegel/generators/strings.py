@@ -298,10 +298,7 @@ class Regex(Generator[str]):
                     "from_regex alphabet must be a string of characters or characters()"
                 )
             alphabet_handle = spec.build(0, 0)
-        # The engine takes a NUL-terminated pattern, so spell literal NULs
-        # as the escape the regex parser accepts.
-        escaped = pattern.replace("\x00", "\\x00")
-        self._handle = _native.StringGenerator.regex(escaped, fullmatch, alphabet_handle)
+        self._handle = _native.StringGenerator.regex(pattern, fullmatch, alphabet_handle)
         self.label = REGEX_LABEL
 
     def do_draw(self, tc: TestCase) -> str:

@@ -64,7 +64,7 @@ FLAGS = st.sets(st.sampled_from([re.ASCII, re.IGNORECASE, re.MULTILINE, re.DOTAL
 
 @pytest.mark.xfail(
     strict=False,
-    reason="hegel's regex engine folds non-ASCII letters' case even under the ASCII flag",
+    reason="hegel engine issues: NUL in a pattern is lost, and non-ASCII case folds under (?a)",
 )
 @given(st.data())
 def test_fuzz_stuff(data):

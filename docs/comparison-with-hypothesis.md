@@ -3,7 +3,8 @@
 This page records what Hegel for Python has, what it does differently, and
 what it lacks, relative to Hypothesis 6.168. `tests/hypothesis_port/GAPS.md`
 holds the finer-grained list produced while porting Hypothesis's test suite
-to `hegel.hypothesis`.
+to `hegel.hypothesis`, and `docs/engine-issues.md` lists the engine bugs found
+along the way.
 
 ## Same job, different shape
 

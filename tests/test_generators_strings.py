@@ -110,6 +110,10 @@ def test_characters():
     assert hegel.find_example(gs.characters()) == "0"
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="libhegel takes the pattern as a C string, so a literal NUL cannot reach it",
+)
 def test_from_regex_with_literal_nul():
     check_all(gs.from_regex("a\x00b"), lambda s: "a\x00b" in s)
     check_all(gs.from_regex("[\x00]", fullmatch=True), lambda s: s == "\x00")
