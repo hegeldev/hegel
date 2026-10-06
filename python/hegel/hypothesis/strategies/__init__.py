@@ -1889,17 +1889,20 @@ class _RandomSeeder:
 
 @defines_strategy
 def random_module() -> SearchStrategy[_RandomSeeder]:
-    """Seed the global ``random`` module for the test case, restoring its
-    state afterwards."""
+    """Seed the global ``random`` module, and every generator passed to
+    ``register_random``, for the test case, restoring their states
+    afterwards."""
 
     def seed_random(tc: TestCase) -> _RandomSeeder:
+        from hegel.hypothesis._entropy import get_seeder_and_restorer
+
         seed = tc.draw_silent(gs.integers(0, 2**32 - 1))
-        state = _random.getstate()
-        _random.seed(seed)
+        seed_all, restore_all = get_seeder_and_restorer(seed)
+        seed_all()
         if currently_in_test_context():
             from hegel.hypothesis.control import cleanup
 
-            cleanup(lambda: _random.setstate(state))
+            cleanup(restore_all)
         return _RandomSeeder(seed)
 
     return SearchStrategy(gs.composite(seed_random)())

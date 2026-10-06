@@ -73,6 +73,10 @@ def _is_singleton(obj: object) -> bool:
 class VarReference:
     name: str
 
+    def __repr__(self) -> str:
+        # As it reads in the printed steps: the bundle value's variable.
+        return self.name
+
 
 @dataclass(slots=True, frozen=True)
 class MultipleResults(Generic[Ex]):
@@ -810,6 +814,11 @@ def get_state_machine_test(
         raise InvalidArgument(f"Expected settings but got settings={settings!r}")
     if not isinstance(_min_steps, int) or _min_steps < 0:
         raise InvalidArgument(f"_min_steps={_min_steps} must be non-negative.")
+    if _min_steps > 0:
+        raise InvalidArgument(
+            f"_min_steps={_min_steps} is not supported: the Hegel engine has no minimum "
+            "number of steps for a state machine run (docs/engine-issues.md)."
+        )
     resolved = settings
 
     @resolved

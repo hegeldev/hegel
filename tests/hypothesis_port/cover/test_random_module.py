@@ -12,7 +12,8 @@ import gc
 import random
 import sys
 
-# Dropped (Hegel's register_random does not manage registered PRNG state, and there is no deterministic_PRNG or entropy module): test_registering_a_Random_is_idempotent, test_manages_registered_Random_instance, test_registered_Random_is_seeded_by_random_module_strategy, test_given_does_not_pollute_state, test_find_does_not_pollute_state, test_evil_prng_registration_nonsense, test_passing_unreferenced_instance_raises, test_passing_unreferenced_instance_within_function_scope_raises, test_passing_referenced_instance_within_function_scope_raises, test_register_random_within_nested_function_scope.
+# test_given_does_not_pollute_state and test_find_does_not_pollute_state drop
+# their checks of Hypothesis's private thread-local Random, which Hegel lacks.
 
 
 import pytest
@@ -26,6 +27,8 @@ from hegel.hypothesis import (
     settings,
     strategies as st,
 )
+from hegel.hypothesis import _entropy as entropy
+from hegel.hypothesis._entropy import deterministic_PRNG
 from hegel.hypothesis.errors import HypothesisWarning, InvalidArgument
 from tests.hypothesis_port.common.compat import GRAALPY, PYPY
 
@@ -87,3 +90,198 @@ def test_will_actually_use_the_random_seed(rnd):
     random.seed(rnd.seed)
     assert a == random.randint(0, 100)
     assert b == random.randint(0, 100)
+
+
+@skipif_threading
+def test_registering_a_Random_is_idempotent():
+    gc_collect()
+    n_registered = len(entropy.RANDOMS_TO_MANAGE)
+    # on 3.14+, python introduced the LOAD_FAST_BORROW opcode, which does
+    # not increment the refcount. Passing a bare r to register_random here on 3.14+
+    # would use LOAD_FAST_BORROW and entropy.py would see a non-increasing refcount
+    # and hard-error. On 3.13 and earlier, this is a warning instead.
+    #
+    # For compatibility with both versions, this test forces a refcount increment
+    # with a redundant container.
+    container = [random.Random()]
+    r = container[0]
+    register_random(r)
+    register_random(r)
+    assert len(entropy.RANDOMS_TO_MANAGE) == n_registered + 1
+    del container
+    del r
+    gc_collect()
+    assert len(entropy.RANDOMS_TO_MANAGE) == n_registered
+
+
+def test_manages_registered_Random_instance():
+    r = random.Random()
+    register_random(r)
+    state = r.getstate()
+    result = []
+
+    @given(st.integers())
+    def inner(x):
+        v = r.random()
+        if result:
+            assert v == result[0]
+        else:
+            result.append(v)
+
+    inner()
+    assert state == r.getstate()
+
+
+def test_registered_Random_is_seeded_by_random_module_strategy():
+    r = random.Random()
+    register_random(r)
+    state = r.getstate()
+    results = set()
+    count = 0
+
+    @given(st.integers())
+    def inner(x):
+        nonlocal count
+        results.add(r.random())
+        count += 1
+
+    inner()
+    assert count > len(results) * 0.9, "too few unique random numbers"
+    assert state == r.getstate()
+
+
+def test_given_does_not_pollute_state():
+    with deterministic_PRNG():
+
+        @given(st.random_module())
+        def test(r):
+            pass
+
+        test()
+        state_a = random.getstate()
+
+        test()
+        state_b = random.getstate()
+
+        assert state_a == state_b
+
+
+@skipif_threading  # modifying global random state
+def test_find_does_not_pollute_state():
+    with deterministic_PRNG():
+        find(st.random_module(), lambda r: True)
+        state_a = random.getstate()
+
+        find(st.random_module(), lambda r: True)
+        state_b = random.getstate()
+
+        assert state_a == state_b
+
+
+@skipif_threading  # we assume we're the only writer to entropy.RANDOMS_TO_MANAGE
+def test_evil_prng_registration_nonsense():
+    # my guess is that other tests may register randoms that are then marked for
+    # deletion (but not actually gc'd yet). Therefore, depending on the order tests
+    # are run, RANDOMS_TO_MANAGE may start with more entries than after a gc. To
+    # force a clean slate for this test, unconditionally gc.
+    gc.collect()
+    with deterministic_PRNG():
+        pass
+
+    n_registered = len(entropy.RANDOMS_TO_MANAGE)
+    # put inside a list to increment ref count and avoid our warning/error about no
+    # referrers
+    c1, c2, c3 = [random.Random(1)], [random.Random(2)], [random.Random(3)]
+    r1, r2, r3 = c1[0], c2[0], c3[0]
+    s2 = r2.getstate()
+
+    # We're going to be totally evil here: register two randoms, then
+    # drop one and add another, and finally check that we reset only
+    # the states that we collected before we started
+    register_random(r1)
+    k = max(entropy.RANDOMS_TO_MANAGE)  # get a handle to check if r1 still exists
+    register_random(r2)
+    assert len(entropy.RANDOMS_TO_MANAGE) == n_registered + 2
+
+    with deterministic_PRNG():
+        del r1
+        del c1
+        gc_collect()
+        assert k not in entropy.RANDOMS_TO_MANAGE, "r1 has been garbage-collected"
+        assert len(entropy.RANDOMS_TO_MANAGE) == n_registered + 1
+
+        r2.seed(4)
+        register_random(r3)
+        r3.seed(4)
+        s4 = r3.getstate()
+
+    # Implicit check, no exception was raised in __exit__
+    assert r2.getstate() == s2, "reset previously registered random state"
+    assert r3.getstate() == s4, "retained state when registered within the context"
+
+
+@pytest.mark.skipif(PYPY, reason="We can't guard against bad no-reference patterns in pypy.")
+def test_passing_unreferenced_instance_raises():
+    with pytest.raises(ReferenceError):
+        register_random(random.Random(0))
+
+
+@xfail_if_gil_disabled
+@pytest.mark.skipif(PYPY, reason="We can't guard against bad no-reference patterns in pypy.")
+def test_passing_unreferenced_instance_within_function_scope_raises():
+    def f():
+        register_random(random.Random(0))
+
+    with pytest.raises(ReferenceError):
+        f()
+
+    # we have two error paths for register_random: one which warns and one which
+    # errors. We use an alias to bump the refcount while not adding a gc referrer,
+    # which covers the warning path.
+    def f():
+        r = random.Random(0)
+        _r2 = r
+        register_random(r)
+
+    with pytest.warns(
+        HypothesisWarning,
+        match="It looks like `register_random` was passed an object that could be"
+        " garbage collected",
+    ):
+        f()
+
+
+@xfail_if_gil_disabled
+@pytest.mark.skipif(PYPY, reason="We can't guard against bad no-reference patterns in pypy.")
+@pytest.mark.skipif(
+    sys.version_info[:2] < (3, 14),
+    reason="warns instead of raises on 3.13 or earlier due to gc changes",
+)
+def test_passing_referenced_instance_within_function_scope_raises():
+    def f():
+        r = random.Random(0)
+        register_random(r)
+
+    with pytest.raises(
+        ReferenceError,
+        match=r"`register_random` was passed .* which will be garbage collected",
+    ):
+        f()
+
+
+@pytest.mark.skipif(PYPY, reason="We can't guard against bad no-reference patterns in pypy.")
+@skipif_threading  # we assume we're the only writer to entropy.RANDOMS_TO_MANAGE
+def test_register_random_within_nested_function_scope():
+    n_registered = len(entropy.RANDOMS_TO_MANAGE)
+
+    def f():
+        # put inside a list to increment ref count and avoid our warning/error about no
+        # referrers
+        container = [random.Random()]
+        r = container[0]
+        register_random(r)
+        assert len(entropy.RANDOMS_TO_MANAGE) == n_registered + 1
+
+    f()
+    gc_collect()
+    assert len(entropy.RANDOMS_TO_MANAGE) == n_registered

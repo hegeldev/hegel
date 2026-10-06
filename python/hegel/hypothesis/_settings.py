@@ -262,11 +262,12 @@ class settingsMeta(type):
             )
         super().__setattr__(name, value)
 
-    def __getattr__(cls, name: str) -> Any:
-        # ``settings.max_examples`` etc. read the current default settings.
+    def __getattribute__(cls, name: str) -> Any:
+        # ``settings.max_examples`` etc. read the current default settings,
+        # rather than the slot descriptors the class itself holds.
         if name in all_settings:
-            return getattr(cls.default, name)
-        raise AttributeError(name)
+            return getattr(type.__getattribute__(cls, "default"), name)
+        return type.__getattribute__(cls, name)
 
     def __repr__(cls) -> str:
         return "hypothesis.settings"
@@ -275,8 +276,9 @@ class settingsMeta(type):
 class settings(metaclass=settingsMeta):
     """Settings for Hypothesis-style tests, mapped onto Hegel's settings.
 
-    ``deadline`` is enforced by the Python layer (per test case, with the
-    final replay allowed 1.25x). ``Phase.explain`` and the health checks
+    ``deadline`` is enforced by the Python layer, per test case: test
+    cases may take up to 1.25x the deadline while generating, and the final
+    replay of a failure is held to the deadline itself. ``Phase.explain`` and the health checks
     without a Hegel equivalent are accepted and ignored.
     """
 

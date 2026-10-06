@@ -6,6 +6,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
+from hegel import errors as hegel_errors
 from hegel.errors import (
     AssumeFailed,
     DidNotReproduce,
@@ -63,8 +64,9 @@ class NoSuchExample(HypothesisException):
         super().__init__(f"No examples found of condition {desc}{extra}")
 
 
-class Unsatisfiable(HypothesisException):
-    """Too few valid examples could be generated."""
+class Unsatisfiable(hegel_errors.Unsatisfiable):
+    """Too few valid examples could be generated. A Hegel
+    :class:`hegel.errors.Unsatisfiable`, so either catches it."""
 
 
 class ChoiceTooLarge(HypothesisException):

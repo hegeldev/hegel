@@ -155,7 +155,7 @@ def event(value: str, payload: Any = "") -> None:
     """Record an event for the run's statistics."""
     if not isinstance(value, str):
         raise InvalidArgument(f"Expected str but got {value!r} (type={type(value).__name__})")
-    tc = _current_tc("make record an event")
+    tc = _current_tc("record an event")
     if payload == "":
         tc.event(value)
     elif isinstance(payload, (int, float)) and not isinstance(payload, bool):

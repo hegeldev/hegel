@@ -9,7 +9,6 @@ import gc
 import hashlib
 import inspect
 import os
-import re
 import threading
 import time
 import types
@@ -19,9 +18,11 @@ import warnings
 from collections.abc import Callable, Hashable
 from typing import Any, TypeVar
 
+from hegel import errors as hegel_errors
 from hegel._draw_names import DrawName
-from hegel.errors import Flaky, RunError, StopTest
+from hegel.errors import Flaky, MultipleFailures, RunError, StopTest
 from hegel.explicit import ExplicitCase
+from hegel.hypothesis._entropy import deterministic_PRNG
 from hegel.hypothesis._settings import HealthCheck, Phase, Verbosity, local_settings
 from hegel.hypothesis._settings import settings as Settings
 from hegel.hypothesis.control import BuildContext, currently_in_test_context
@@ -686,6 +687,7 @@ def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], 
         wrapped_test._hypothesis_internal_use_reproduce_failure = getattr(  # type: ignore[attr-defined]
             test, "_hypothesis_internal_use_reproduce_failure", None
         )
+        wrapped_test.hegel_reproduce_blob = getattr(test, "hegel_reproduce_blob", None)  # type: ignore[attr-defined]
         wrapped_test.__signature__ = new_signature  # type: ignore[attr-defined]
         return wrapped_test
 
@@ -779,7 +781,10 @@ def _run_given(
 
     def body(tc: TestCase) -> None:
         executed[0] = True
-        with BuildContext(tc, is_final=tc.is_final, runner=selfy) as context:
+        with (
+            deterministic_PRNG(),
+            BuildContext(tc, is_final=tc.is_final, runner=selfy) as context,
+        ):
             started: list[float] = []
 
             def run() -> Any:
@@ -861,16 +866,24 @@ def _run_given(
     if seed_value is not None:
         native = native.replace(seed=_seed_to_int(seed_value), database="")
     reproduce = getattr(wrapped_test, "_hypothesis_internal_use_reproduce_failure", None)
-    blob = None
+    # @hegel.reproduce_failure works on a @given test too.
+    blob = getattr(wrapped_test, "hegel_reproduce_blob", None)
     if reproduce is not None:
         from hegel.hypothesis import __version__
 
+        if not str(reproduce[0]).endswith("+hegel"):
+            raise InvalidArgument(
+                f"This failure blob is from Hypothesis {reproduce[0]} itself, and "
+                "hegel.hypothesis can only replay blobs it printed itself (with a "
+                f"version ending in +hegel, currently {__version__!r}). Run the test "
+                "to find the failure again."
+            )
         if reproduce[0] != __version__:
             raise InvalidArgument(
                 "Attempting to reproduce a failure from a different version of "
-                f"Hypothesis. This failure is from {reproduce[0]}, but you are "
-                f"currently running {__version__!r}. Please change your Hypothesis "
-                "version to work with this example."
+                f"hegel.hypothesis. This failure is from {reproduce[0]}, but you are "
+                f"currently running {__version__!r}. Run the test to find the failure "
+                "again."
             )
         blob = reproduce[1]
         if isinstance(blob, bytes):
@@ -937,6 +950,8 @@ def _run_given(
             else:
                 run_cases()
     except RunError as error:
+        # libhegel reports why a run failed only as a message, so the finer
+        # distinctions Hypothesis draws are read from it (docs/engine-issues.md).
         if isinstance(error, FailedHealthCheck) and "across the full search space" in str(error):
             raise Unsatisfiable(
                 f"Unable to satisfy assumptions of {inner.__name__}. Hypothesis tried "
@@ -955,7 +970,7 @@ def _run_given(
                     "be generated"
                 ) from error
             raise
-        if str(error).startswith("Unsatisfiable"):
+        if isinstance(error, hegel_errors.Unsatisfiable):
             raise Unsatisfiable(str(error)) from None
         raise
     if not executed[0]:
@@ -967,27 +982,22 @@ def _run_given(
         )
 
 
-_HEGEL_REPRODUCER = re.compile(r'@hegel\.reproduce_failure\("([^"]*)"\)')
+def _hypothesis_reproducer(blob: str) -> str:
+    """The reproducer note in Hypothesis's words, for its decorator."""
+    from hegel.hypothesis import __version__
+
+    return (
+        "You can reproduce this example by temporarily adding "
+        f"@reproduce_failure({__version__!r}, {blob.encode('ascii')!r}) as a decorator "
+        "on your test case"
+    )
 
 
 def _run_rewriting_reproducer(*args: Any, **kwargs: Any) -> None:
-    """Run the engine, rewriting the reproducer note on a failure into the
-    Hypothesis form ``@reproduce_failure(version, blob)``."""
-    try:
-        hegel_run(*args, **kwargs)
-    except BaseException as error:
-        notes = getattr(error, "__notes__", None)
-        if notes:
-            from hegel.hypothesis import __version__
-
-            def rewrite(match: re.Match[str]) -> str:
-                return f"@reproduce_failure({__version__!r}, {match.group(1).encode('ascii')!r})"
-
-            error.__notes__ = [
-                _HEGEL_REPRODUCER.sub(rewrite, note).replace("above @hegel.test", "above @given")
-                for note in notes
-            ]
-        raise
+    """Run the engine, wording the reproducer note for Hypothesis's
+    ``@reproduce_failure(version, blob)``."""
+    __tracebackhide__ = True
+    hegel_run(*args, reproducer=_hypothesis_reproducer, **kwargs)
 
 
 @contextlib.contextmanager
@@ -1024,7 +1034,9 @@ def _raise_explicit_failures(failures: list[tuple[str, BaseException]], *, simpl
         chosen.append(error)
     if len(chosen) == 1:
         raise chosen[0]
-    raise BaseExceptionGroup(f"Hypothesis found {len(chosen)} distinct failures.", chosen)
+    raise MultipleFailures(
+        f"Hypothesis found {len(chosen)} distinct failures in explicit examples.", chosen
+    )
 
 
 def _origin_of(error: BaseException) -> tuple[str, int] | None:
@@ -1089,7 +1101,7 @@ def find(
     user_rejected = [False]
 
     def body(tc: TestCase) -> None:
-        with BuildContext(tc, is_final=tc.is_final):
+        with deterministic_PRNG(), BuildContext(tc, is_final=tc.is_final):
             value = tc._draw_as(unwrap_strategies(specifier), DrawName("Example", False))
             try:
                 satisfied = condition(value)
@@ -1119,7 +1131,7 @@ def find(
     except RunError as error:
         if user_rejected[0]:
             raise Unsatisfiable(str(error)) from error
-        if "Unsatisfiable" not in str(error):
+        if not isinstance(error, hegel_errors.Unsatisfiable):
             raise
     raise NoSuchExample(condition)
 
