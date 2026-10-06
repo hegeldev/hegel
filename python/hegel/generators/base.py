@@ -13,10 +13,12 @@ if TYPE_CHECKING:
     from hegel.test_case import TestCase
 
 __all__ = [
-    "FlatMapped",
     "Filtered",
+    "FlatMapped",
     "Generator",
     "Mapped",
+    "PrintedAsCall",
+    "PrintedWith",
     "combine_labels",
     "label_from_name",
 ]

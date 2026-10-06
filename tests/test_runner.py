@@ -224,7 +224,7 @@ def test_explicit_test_case_errors():
     @hegel.explicit_test_case(1)
     @hegel.test
     def engine_op(tc):
-        tc.generate_boolean()
+        tc._generate_boolean()
 
     with pytest.raises(hegel.InvalidArgument, match="not supported in explicit"):
         engine_op()

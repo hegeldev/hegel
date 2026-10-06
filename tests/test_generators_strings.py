@@ -111,7 +111,7 @@ def test_characters():
 
 
 def test_from_regex_with_literal_nul():
-    check_all(gs.from_regex("a\x00b"), lambda s: "a\x00b" in s)
+    check_all(gs.from_regex("a\x00b", fullmatch=False), lambda s: "a\x00b" in s)
     check_all(gs.from_regex("[\x00]", fullmatch=True), lambda s: s == "\x00")
 
 
@@ -124,11 +124,15 @@ def test_from_regex_honours_compiled_flags():
         lambda s: s.isalnum() or s == b"_",
     )
     check_all(gs.from_regex(re.compile(" a b ", re.VERBOSE), fullmatch=True), lambda s: s == "ab")
-    check_all(gs.from_regex(re.compile("^a$", re.MULTILINE)), lambda s: re.search("^a$", s, re.M))
+    check_all(
+        gs.from_regex(re.compile("^a$", re.MULTILINE), fullmatch=False),
+        lambda s: re.search("^a$", s, re.M),
+    )
 
 
 def test_from_regex():
-    check_all(gs.from_regex(r"\d+"), lambda s: re.search(r"\d+", s))
+    check_all(gs.from_regex(r"\d+"), lambda s: re.fullmatch(r"\d+", s))
+    check_all(gs.from_regex(r"\d+", fullmatch=False), lambda s: re.search(r"\d+", s))
     check_all(
         gs.from_regex(r"^[a-z]{2,4}$", fullmatch=True), lambda s: re.fullmatch(r"[a-z]{2,4}", s)
     )
@@ -142,7 +146,7 @@ def test_from_regex():
         gs.from_regex(r".+", fullmatch=True, alphabet=gs.characters(codec="ascii")),
         lambda s: s.isascii(),
     )
-    assert repr(gs.from_regex("a")) == "from_regex('a', fullmatch=False)"
+    assert repr(gs.from_regex("a")) == "from_regex('a', fullmatch=True)"
     with pytest.raises(hegel.InvalidArgument):
         gs.from_regex(5)
     with pytest.raises(hegel.InvalidArgument):

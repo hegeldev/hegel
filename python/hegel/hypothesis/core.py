@@ -783,7 +783,7 @@ def _run_given(
         executed[0] = True
         with (
             deterministic_PRNG(),
-            BuildContext(tc, is_final=tc.is_final, runner=selfy) as context,
+            BuildContext(tc, is_final=tc._is_final, runner=selfy) as context,
         ):
             started: list[float] = []
 
@@ -1101,7 +1101,7 @@ def find(
     user_rejected = [False]
 
     def body(tc: TestCase) -> None:
-        with deterministic_PRNG(), BuildContext(tc, is_final=tc.is_final):
+        with deterministic_PRNG(), BuildContext(tc, is_final=tc._is_final):
             value = tc._draw_as(unwrap_strategies(specifier), DrawName("Example", False))
             try:
                 satisfied = condition(value)

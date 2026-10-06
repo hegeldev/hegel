@@ -23,6 +23,7 @@ from hegel.errors import (
     InternalError,
     InvalidArgument,
     MultipleFailures,
+    ResolutionFailed,
     RunError,
     StopTest,
     Unsatisfiable,
@@ -42,6 +43,7 @@ from hegel.settings import (
     NondeterminismStrictness,
     Phase,
     Settings,
+    TestLocation,
     Verbosity,
 )
 from hegel.stateful import (
@@ -78,11 +80,14 @@ __all__ = [
     "Phase",
     "Pool",
     "PrettyPrinter",
+    "ResolutionFailed",
     "RunError",
     "Settings",
     "StateMachine",
     "StopTest",
     "TestCase",
+    "TestLocation",
+    "Unsatisfiable",
     "Verbosity",
     "composite",
     "engine_version",
@@ -97,7 +102,6 @@ __all__ = [
     "run_state_machine",
     "state_machine_test",
     "test",
-    "Unsatisfiable",
 ]
 
 

@@ -23,6 +23,7 @@ def test_plain():
 def test_profile_seed_verbosity():
     settings = hegel.Settings()
     print("SEED", settings.seed, "VERBOSITY", settings.verbosity.name, "CASES", settings.test_cases)
+    print("DERANDOMIZE", settings.derandomize, "DATABASE", repr(settings.database))
 """
 
 
@@ -60,6 +61,14 @@ hegel.Settings.register_profile("mine", test_cases=7)
     result = pytester.runpytest("-s", "-k", "profile_seed", "--hegel-verbosity=debug")
     result.assert_outcomes(passed=1)
     result.stdout.fnmatch_lines(["*VERBOSITY debug*"])
+    result = pytester.runpytest(
+        "-s", "-k", "profile_seed", "--hegel-derandomize", "--hegel-database=elsewhere"
+    )
+    result.assert_outcomes(passed=1)
+    result.stdout.fnmatch_lines(["*DERANDOMIZE True DATABASE 'elsewhere'*"])
+    result = pytester.runpytest("-s", "-k", "profile_seed", "--hegel-database=")
+    result.assert_outcomes(passed=1)
+    result.stdout.fnmatch_lines(["*DATABASE ''*"])
 
 
 HYPOTHESIS_FILE = """

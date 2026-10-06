@@ -137,7 +137,7 @@ class Text(Generator[str]):
         self.label = TEXT_LABEL
 
     def do_draw(self, tc: TestCase) -> str:
-        return tc.generate_string(self._handle)
+        return tc._generate_string(self._handle)
 
     def __repr__(self) -> str:
         return f"text(min_size={self.min_size}, max_size={self.max_size})"
@@ -255,7 +255,7 @@ class Characters(Generator[str]):
         self.label = CHARACTERS_LABEL
 
     def do_draw(self, tc: TestCase) -> str:
-        return tc.generate_string(self._handle)
+        return tc._generate_string(self._handle)
 
     def __repr__(self) -> str:
         return "characters()"
@@ -302,16 +302,18 @@ class Regex(Generator[str]):
         self.label = REGEX_LABEL
 
     def do_draw(self, tc: TestCase) -> str:
-        return tc.generate_string(self._handle)
+        return tc._generate_string(self._handle)
 
     def __repr__(self) -> str:
         return f"from_regex({self.pattern!r}, fullmatch={self.fullmatch})"
 
 
-def from_regex(regex: Any, *, fullmatch: bool = False, alphabet: Any = None) -> Generator[str]:
+def from_regex(regex: Any, *, fullmatch: bool = True, alphabet: Any = None) -> Generator[str]:
     """Generate strings matching ``regex`` (a pattern string or compiled
-    pattern). With ``fullmatch`` the whole string matches; otherwise the
-    string merely contains a match, as ``re.search`` would find."""
+    pattern). By default the whole string matches, as ``re.fullmatch``
+    checks; with ``fullmatch=False`` the string merely contains a match, as
+    ``re.search`` would find. (Hypothesis's ``from_regex``, and so
+    ``hegel.hypothesis``'s, defaults to ``fullmatch=False``.)"""
     pattern = getattr(regex, "pattern", regex)
     flags = getattr(regex, "flags", 0)
     if isinstance(pattern, bytes):
@@ -348,7 +350,7 @@ class Binary(Generator[bytes]):
         self.label = BINARY_LABEL
 
     def do_draw(self, tc: TestCase) -> bytes:
-        return tc.generate_bytes(self.min_size, self.max_size)
+        return tc._generate_bytes(self.min_size, self.max_size)
 
     def __repr__(self) -> str:
         return f"binary(min_size={self.min_size}, max_size={self.max_size})"
@@ -372,7 +374,7 @@ class EngineString(Generator[str]):
         self.name = name
 
     def do_draw(self, tc: TestCase) -> str:
-        return tc.generate_string(self._handle)
+        return tc._generate_string(self._handle)
 
     def __repr__(self) -> str:
         return self.name
@@ -407,10 +409,10 @@ class IpAddresses(Generator[Any]):
     def do_draw(self, tc: TestCase) -> Any:
         v = self.v
         if v is None:
-            v = 4 if tc.generate_integer(0, 1) == 0 else 6
+            v = 4 if tc._generate_integer(0, 1) == 0 else 6
         if v == 4:
-            return ipaddress.IPv4Address(tc.generate_ipv4())
-        return ipaddress.IPv6Address(tc.generate_ipv6())
+            return ipaddress.IPv4Address(tc._generate_ipv4())
+        return ipaddress.IPv6Address(tc._generate_ipv6())
 
     def __repr__(self) -> str:
         return "ip_addresses()" if self.v is None else f"ip_addresses(v={self.v})"
@@ -440,9 +442,9 @@ class Uuids(Generator[_uuid.UUID]):
         self.label = UUID_LABEL
 
     def do_draw(self, tc: TestCase) -> _uuid.UUID:
-        if self.allow_nil and tc.generate_boolean(0.1):
+        if self.allow_nil and tc._generate_boolean(0.1):
             return _uuid.UUID(int=0)
-        return _uuid.UUID(bytes=tc.generate_uuid(self.version))
+        return _uuid.UUID(bytes=tc._generate_uuid(self.version))
 
     def __repr__(self) -> str:
         return "uuids()" if self.version is None else f"uuids(version={self.version})"

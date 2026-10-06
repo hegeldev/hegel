@@ -1,5 +1,25 @@
-"""pytest integration: ``--hegel-profile`` selects the settings profile,
-``--hegel-seed`` fixes the seed, and tests are marked ``hegel``."""
+"""pytest integration, registered automatically when hegel is installed.
+
+Hegel tests are marked ``hegel`` (and hegel.hypothesis tests
+``hypothesis``), and these options adjust the default settings profile for
+the run:
+
+``--hegel-profile NAME``
+    Start from the named settings profile.
+``--hegel-seed SEED``
+    Fix the seed.
+``--hegel-verbosity {quiet,normal,verbose,debug}``
+    Set the verbosity.
+``--hegel-derandomize``
+    Derive each test's seed from the test itself.
+``--hegel-database PATH``
+    Keep the example database in ``PATH``; ``--hegel-database=`` (empty)
+    disables it.
+
+The ``--hypothesis-profile``, ``--hypothesis-seed`` and
+``--hypothesis-verbosity`` options do the same for hegel.hypothesis tests
+(see :mod:`hegel._pytest_hypothesis`).
+"""
 
 from __future__ import annotations
 
@@ -7,28 +27,12 @@ from typing import Any
 
 import pytest
 
+from hegel import _pytest_hypothesis
+
 
 def pytest_addoption(parser: Any) -> None:
     group = parser.getgroup("hegel")
-    group.addoption(
-        "--hypothesis-profile",
-        action="store",
-        default=None,
-        help="hegel.hypothesis settings profile to load",
-    )
-    group.addoption(
-        "--hypothesis-seed",
-        action="store",
-        default=None,
-        help="Seed for hegel.hypothesis tests",
-    )
-    group.addoption(
-        "--hypothesis-verbosity",
-        action="store",
-        default=None,
-        choices=["quiet", "normal", "verbose", "debug"],
-        help="Verbosity of hegel.hypothesis tests",
-    )
+    _pytest_hypothesis.addoption(group)
     group.addoption(
         "--hegel-profile", action="store", default=None, help="Hegel settings profile to use"
     )
@@ -42,25 +46,43 @@ def pytest_addoption(parser: Any) -> None:
         choices=["quiet", "normal", "verbose", "debug"],
         help="Hegel output verbosity",
     )
+    group.addoption(
+        "--hegel-derandomize",
+        action="store_true",
+        default=None,
+        help="Derive each Hegel test's seed from the test itself",
+    )
+    group.addoption(
+        "--hegel-database",
+        action="store",
+        default=None,
+        help="Directory for Hegel's example database (empty to disable it)",
+    )
+
+
+_OPTIONS = {
+    "seed": ("--hegel-seed", int),
+    "verbosity": ("--hegel-verbosity", str),
+    "derandomize": ("--hegel-derandomize", bool),
+    "database": ("--hegel-database", str),
+}
 
 
 def pytest_configure(config: Any) -> None:
     config.addinivalue_line("markers", "hegel: a Hegel property-based test")
     config.addinivalue_line("markers", "hypothesis: a hegel.hypothesis property-based test")
-    _configure_hypothesis(config)
+    _pytest_hypothesis.configure(config)
     profile = config.getoption("--hegel-profile")
-    seed = config.getoption("--hegel-seed")
-    verbosity = config.getoption("--hegel-verbosity")
-    if profile is None and seed is None and verbosity is None:
+    overrides = {
+        field: convert(value)
+        for field, (option, convert) in _OPTIONS.items()
+        if (value := config.getoption(option)) is not None
+    }
+    if profile is None and not overrides:
         return
-    from hegel.settings import Settings, Verbosity
+    from hegel.settings import Settings
 
     base = Settings() if profile is None else Settings.from_profile(profile)
-    overrides: dict[str, Any] = {}
-    if seed is not None:
-        overrides["seed"] = int(seed)
-    if verbosity is not None:
-        overrides["verbosity"] = Verbosity[verbosity]
     Settings.register_profile("pytest", base, **overrides)
     Settings.set_default_profile("pytest")
 
@@ -73,68 +95,7 @@ def pytest_itemcollected(item: Any) -> None:
         item.add_marker(pytest.mark.hypothesis)
 
 
-def _configure_hypothesis(config: Any) -> None:
-    profile = config.getoption("--hypothesis-profile")
-    seed = config.getoption("--hypothesis-seed")
-    verbosity = config.getoption("--hypothesis-verbosity")
-    if profile is None and seed is None and verbosity is None:
-        return
-    from hegel.hypothesis import Verbosity, settings
-
-    if profile is not None:
-        settings.load_profile(profile)
-    overrides: dict[str, Any] = {}
-    if verbosity is not None:
-        overrides["verbosity"] = Verbosity[verbosity]
-    if seed is not None:
-        overrides["database"] = None
-        overrides["derandomize"] = False
-        config._hegel_hypothesis_seed = int(seed)
-    if overrides:
-        settings.register_profile("hegel-pytest", settings.default, **overrides)
-        settings.load_profile("hegel-pytest")
-
-
-_POINTLESS_DECORATORS = [
-    ("example", "hypothesis_explicit_examples"),
-    ("seed", "_hypothesis_internal_use_seed"),
-    ("settings", "_hypothesis_internal_settings_applied"),
-    ("reproduce_example", "_hypothesis_internal_use_reproduce_failure"),
-]
-
-
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_call(item: Any) -> Any:
-    test = getattr(item, "obj", None)
-    if test is not None and getattr(test, "is_hypothesis_test", False):
-        seed = getattr(item.config, "_hegel_hypothesis_seed", None)
-        if seed is not None and getattr(test, "_hypothesis_internal_use_seed", None) is None:
-            from hegel.hypothesis import seed as seed_test
-
-            seed_test(seed)(test)  # type: ignore[type-var]
-        if item.get_closest_marker("parametrize") is not None:
-            # pytest makes a new class instance per parametrization, which
-            # would look like differing executors; see Hypothesis issue 3733.
-            from hegel.hypothesis._settings import HealthCheck
-            from hegel.hypothesis._settings import settings as Settings
-
-            fn = getattr(test, "__func__", test)
-            current = getattr(fn, "_hypothesis_internal_use_settings", None) or Settings.default
-            if HealthCheck.differing_executors not in current.suppress_health_check:
-                fn._hypothesis_internal_use_settings = Settings(
-                    current,
-                    suppress_health_check=[
-                        *current.suppress_health_check,
-                        HealthCheck.differing_executors,
-                    ],
-                )
-    else:
-        # Hypothesis's decorators do nothing without @given, so refuse them.
-        for name, attribute in _POINTLESS_DECORATORS:
-            if getattr(test, attribute, None):
-                from hegel.errors import InvalidArgument
-
-                raise InvalidArgument(
-                    f"Using `@{name}` on a test without `@given` is completely pointless."
-                )
+    _pytest_hypothesis.before_call(item)
     yield

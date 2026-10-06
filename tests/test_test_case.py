@@ -205,33 +205,33 @@ def test_span_bookkeeping():
 
 def test_primitive_draws():
     def body(tc):
-        assert tc.generate_boolean(1.0) is True
-        assert tc.generate_boolean(0.0) is False
-        assert tc.generate_boolean(0.5, forced=True) is True
-        assert tc.generate_integer(3, 3) == 3
-        big = tc.generate_integer(-(10**30), 10**30)
+        assert tc._generate_boolean(1.0) is True
+        assert tc._generate_boolean(0.0) is False
+        assert tc._generate_boolean(0.5, forced=True) is True
+        assert tc._generate_integer(3, 3) == 3
+        big = tc._generate_integer(-(10**30), 10**30)
         assert -(10**30) <= big <= 10**30
-        f = tc.generate_float(64, 0.0, 1.0, False, False, False, False, 5e-324)
+        f = tc._generate_float(64, 0.0, 1.0, False, False, False, False, 5e-324)
         assert 0.0 <= f <= 1.0
-        assert len(tc.generate_bytes(2, 2)) == 2
-        s = tc.generate_string(
+        assert len(tc._generate_bytes(2, 2)) == 2
+        s = tc._generate_string(
             _native.StringGenerator.text(1, 1, "ascii", 0, None, None, None, None, None)
         )
         assert len(s) == 1
-        d = tc.generate_date(dt.date(2000, 1, 1), dt.date(2000, 1, 2))
+        d = tc._generate_date(dt.date(2000, 1, 1), dt.date(2000, 1, 2))
         assert d in (dt.date(2000, 1, 1), dt.date(2000, 1, 2))
-        t = tc.generate_time(dt.time(1, 2, 3, 4), dt.time(1, 2, 3, 4))
+        t = tc._generate_time(dt.time(1, 2, 3, 4), dt.time(1, 2, 3, 4))
         assert t == dt.time(1, 2, 3, 4)
-        when = tc.generate_datetime(
+        when = tc._generate_datetime(
             dt.datetime(2000, 1, 1, 1, 2, 3, 4), dt.datetime(2000, 1, 1, 1, 2, 3, 4)
         )
         assert when == dt.datetime(2000, 1, 1, 1, 2, 3, 4)
-        assert uuid.UUID(bytes=tc.generate_uuid(4)).version == 4
-        assert isinstance(uuid.UUID(bytes=tc.generate_uuid(None)), uuid.UUID)
-        assert len(tc.generate_ipv4()) == 4
-        assert len(tc.generate_ipv6()) == 16
+        assert uuid.UUID(bytes=tc._generate_uuid(4)).version == 4
+        assert isinstance(uuid.UUID(bytes=tc._generate_uuid(None)), uuid.UUID)
+        assert len(tc._generate_ipv4()) == 4
+        assert len(tc._generate_ipv6()) == 16
         with pytest.raises(hegel.InvalidArgument):
-            tc.generate_integer(2, 1)
+            tc._generate_integer(2, 1)
 
     run_test(body, test_cases=20)
 

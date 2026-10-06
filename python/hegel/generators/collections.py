@@ -330,7 +330,7 @@ class FixedDicts(Generator[dict[Any, Any]]):
             printer.text(": ")
             result[key] = tc.draw_and_print(generator, printer)
         for key, generator in self.optional.items():
-            if not tc.generate_boolean(0.5):
+            if not tc._generate_boolean(0.5):
                 continue
             with printer.speculate() as speculation:
                 if result:
@@ -409,7 +409,7 @@ def _draw_index_sample(tc: TestCase, n: int, min_size: int, max_size: int) -> li
     chosen: list[int] = []
     collection = Collection(tc, min_size, max_size)
     while remaining and collection.more():
-        j = tc.generate_integer(0, len(remaining) - 1)
+        j = tc._generate_integer(0, len(remaining) - 1)
         chosen.append(remaining.pop(j))
     return chosen
 
@@ -477,7 +477,7 @@ class Samples(Generator[list[T]]):
             collection = Collection(tc, self.min_size, max_size)
             result = []
             while collection.more():
-                result.append(self.elements[tc.generate_integer(0, n - 1)])
+                result.append(self.elements[tc._generate_integer(0, n - 1)])
             return result
         if self.min_size > n:
             raise InvalidArgument(

@@ -15,7 +15,7 @@ def test_is_final_is_set_on_the_final_replay_and_explicit_cases():
     seen: list[bool] = []
 
     def body(tc: hegel.TestCase) -> None:
-        seen.append(tc.is_final)
+        seen.append(tc._is_final)
         x = tc.draw(gs.integers(0, 10))
         assert x < 5
 

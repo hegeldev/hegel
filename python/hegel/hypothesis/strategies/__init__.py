@@ -1835,7 +1835,7 @@ class HypothesisRandom(_random.Random):
         from hegel.hypothesis.reporting import report
 
         tc = self._tc
-        final = tc is not None and tc.is_final
+        final = tc is not None and tc._is_final
         if not (final or settings.default.verbosity >= Verbosity.verbose):
             return
         args, kwargs = convert_kwargs(method, kwargs)
@@ -2052,7 +2052,7 @@ class _Functions(Generator[Callable[..., Any]]):
         def should_note() -> bool:
             from hegel.hypothesis._settings import Verbosity, settings
 
-            return tc.is_final or settings.default.verbosity >= Verbosity.verbose
+            return tc._is_final or settings.default.verbosity >= Verbosity.verbose
 
         def draw_value(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
             if context is None or not any(c is context for c in _build_context_stack()):
@@ -2193,7 +2193,7 @@ def _note_call(
 
     bits = [repr(a) for a in args] + [f"{k}={v!r}" for k, v in kwargs.items()]
     text = f"Called function: {getattr(like, '__name__', like)}({', '.join(bits)}) -> {value!r}"
-    if tc.is_final:
+    if tc._is_final:
         tc.note(text)
     else:
         report(text)

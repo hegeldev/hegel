@@ -1,4 +1,11 @@
-"""Span labels: opaque 64-bit identifiers for generators."""
+"""Span labels: opaque 64-bit identifiers for generators.
+
+These are computed in Python rather than by calling libhegel's
+``hegel_label_from_name`` and ``hegel_label_combine``: every generator
+computes its label when constructed, often at import time, and a native call
+for each costs more than the hash. ``tests/test_labels.py`` checks that both
+agree with libhegel's.
+"""
 
 from __future__ import annotations
 

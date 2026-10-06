@@ -18,7 +18,7 @@ from hegel.pretty import PrettyPrinter, pretty_print
 if TYPE_CHECKING:
     from hegel.test_case import TestCase
 
-__all__ = ["as_generator", "just", "none", "nothing", "one_of", "optional", "sampled_from"]
+__all__ = ["just", "none", "nothing", "one_of", "optional", "sampled_from"]
 
 T = TypeVar("T")
 
@@ -30,7 +30,8 @@ OPTIONAL_LABEL = label_from_name("hegel.optional")
 
 
 def as_generator(value: Any) -> Generator[Any]:
-    """Coerce the result of a user callback into a generator."""
+    """Check that ``value`` (an argument, or what a user callback returned)
+    is a generator, and return it."""
     if isinstance(value, Generator):
         return value
     raise InvalidArgument(f"expected a Generator but got {value!r} of type {type(value).__name__}")
@@ -84,7 +85,7 @@ class SampledFrom(Generator[T]):
         self.label = SAMPLED_FROM_LABEL
 
     def do_draw(self, tc: TestCase) -> T:
-        index = tc.generate_integer(0, len(self.elements) - 1)
+        index = tc._generate_integer(0, len(self.elements) - 1)
         return self.elements[index]
 
     def filter(self, predicate: Callable[[T], bool]) -> Generator[T]:
@@ -128,7 +129,7 @@ class FilteredSample(Generator[T]):
                 return element
         remaining = list(range(len(elements)))
         while remaining:
-            index = remaining.pop(tc.generate_integer(0, len(remaining) - 1))
+            index = remaining.pop(tc._generate_integer(0, len(remaining) - 1))
             element = elements[index]
             if self._accepts(element):
                 return element
@@ -148,7 +149,7 @@ def sampled_from(elements: Any) -> Generator[Any]:
         if issubclass(elements, enum.Flag):
             members = list(elements)
             if members:
-                return Lists_of_flags(elements, members)
+                return FlagCombinations(elements, members)
         elements = list(elements)
     elif isinstance(elements, (set, frozenset)):
         raise InvalidArgument(
@@ -161,8 +162,8 @@ def sampled_from(elements: Any) -> Generator[Any]:
     return SampledFrom(elements)
 
 
-class Lists_of_flags(Generator[Any]):
-    """Flag enums sample any combination of members."""
+class FlagCombinations(Generator[Any]):
+    """``sampled_from`` a flag enum: any combination of its members."""
 
     def __init__(self, cls: type, members: list[Any]) -> None:
         self.cls = cls
@@ -172,7 +173,7 @@ class Lists_of_flags(Generator[Any]):
     def do_draw(self, tc: TestCase) -> Any:
         # One bit per member, so every non-empty combination is reachable
         # and the smallest value is the first member alone.
-        mask = tc.generate_integer(1, (1 << len(self.members)) - 1)
+        mask = tc._generate_integer(1, (1 << len(self.members)) - 1)
         result = self.cls(0)
         for index, member in enumerate(self.members):
             if mask >> index & 1:
@@ -196,7 +197,7 @@ class OneOf(Generator[Any]):
         return self._label
 
     def _draw(self, tc: TestCase, printer: PrettyPrinter | None) -> Any:
-        index = tc.generate_integer(0, len(self.generators) - 1)
+        index = tc._generate_integer(0, len(self.generators) - 1)
         if printer is None:
             return tc.draw_silent(self.generators[index])
         return tc.draw_and_print(self.generators[index], printer)
@@ -243,7 +244,7 @@ class Optional(Generator[Any]):
         self.label = combine_labels([OPTIONAL_LABEL, inner.label])
 
     def _draw(self, tc: TestCase, printer: PrettyPrinter) -> Any:
-        if tc.generate_boolean(0.5):
+        if tc._generate_boolean(0.5):
             return tc.draw_and_print(self.inner, printer)
         pretty_print(None, printer)
         return None

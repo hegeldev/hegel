@@ -55,7 +55,7 @@ class Integers(Generator[int]):
         self.label = INTEGER_LABEL
 
     def do_draw(self, tc: TestCase) -> int:
-        return tc.generate_integer(self._lo, self._hi)
+        return tc._generate_integer(self._lo, self._hi)
 
     def __repr__(self) -> str:
         parts = []
@@ -84,7 +84,7 @@ class Booleans(Generator[bool]):
         self.label = BOOLEAN_LABEL
 
     def do_draw(self, tc: TestCase) -> bool:
-        return tc.generate_boolean(self.p)
+        return tc._generate_boolean(self.p)
 
     def __repr__(self) -> str:
         return "booleans()" if self.p == 0.5 else f"weighted_booleans({self.p!r})"
@@ -215,7 +215,7 @@ class Floats(Generator[float]):
         self.label = FLOAT_LABEL
 
     def do_draw(self, tc: TestCase) -> float:
-        return tc.generate_float(
+        return tc._generate_float(
             self.width,
             self._min,
             self._max,

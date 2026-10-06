@@ -742,7 +742,7 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
     def _run_steps(self, tc: HegelTestCase, settings: Settings) -> None:
         output = tc.note
         self._tc = tc
-        with BuildContext(tc, is_final=tc.is_final, runner=self):
+        with BuildContext(tc, is_final=tc._is_final, runner=self):
             try:
                 output(f"state = {type(self).__name__}()")
                 self.check_invariants(settings, output)

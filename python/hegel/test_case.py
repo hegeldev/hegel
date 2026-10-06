@@ -6,7 +6,7 @@ import datetime as _dt
 import sys
 import threading
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, NoReturn, TypeVar
 
 from hegel import _native
 from hegel._draw_names import DrawName, name_for_call
@@ -304,7 +304,7 @@ class TestCase:
             return
         self._handle.event_value(float(value), str(label))
 
-    def repeat(self, body: Callable[[], Any]) -> None:
+    def repeat(self, body: Callable[[], Any]) -> NoReturn:
         """Run ``body`` an engine-chosen number of times, then end the test
         case. Each repetition is reported under a ``// Repetition #N``
         heading. This never returns normally: it raises an internal
@@ -325,6 +325,8 @@ class TestCase:
             except (StopTest, InvalidArgument, InternalError, LoopDone):
                 raise
             except BaseException:
+                # Back on the test's own handle before the draw that marks
+                # the failing repetition.
                 self._restore_handle(outer)
                 self.draw_silent(booleans())
                 raise
@@ -390,7 +392,7 @@ class TestCase:
         return store[key]  # type: ignore[no-any-return]
 
     @property
-    def is_final(self) -> bool:
+    def _is_final(self) -> bool:
         """Whether this case's output is reported: an explicit test case,
         or a case the engine stamped for capture (the final replay of a
         failure, a confirmation replay, or a generation case under
@@ -428,14 +430,17 @@ class TestCase:
         self._span_depth = depth
 
     # -- primitive draws -------------------------------------------------
+    # The engine's primitive choices, which the built-in generators are made
+    # of. Private, as in the Rust library: a custom generator draws through
+    # draw() or draw_silent().
 
-    def generate_boolean(self, p: float = 0.5, forced: bool | None = None) -> bool:
+    def _generate_boolean(self, p: float = 0.5, forced: bool | None = None) -> bool:
         return self._handle.generate_boolean(p, forced)
 
-    def generate_integer(self, min_value: int, max_value: int) -> int:
+    def _generate_integer(self, min_value: int, max_value: int) -> int:
         return self._handle.generate_integer(min_value, max_value)
 
-    def generate_float(
+    def _generate_float(
         self,
         width: int,
         min_value: float,
@@ -457,27 +462,27 @@ class TestCase:
             smallest_nonzero_magnitude,
         )
 
-    def generate_bytes(self, min_size: int, max_size: int) -> bytes:
+    def _generate_bytes(self, min_size: int, max_size: int) -> bytes:
         return self._handle.generate_bytes(min_size, max_size)
 
-    def generate_string(self, generator: _native.StringGenerator) -> str:
+    def _generate_string(self, generator: _native.StringGenerator) -> str:
         return self._handle.generate_string(generator).decode("utf-8", "surrogatepass")
 
-    def generate_date(self, min_value: _dt.date, max_value: _dt.date) -> _dt.date:
+    def _generate_date(self, min_value: _dt.date, max_value: _dt.date) -> _dt.date:
         year, month, day = self._handle.generate_date(
             (min_value.year, min_value.month, min_value.day),
             (max_value.year, max_value.month, max_value.day),
         )
         return _dt.date(year, month, day)
 
-    def generate_time(self, min_value: _dt.time, max_value: _dt.time) -> _dt.time:
+    def _generate_time(self, min_value: _dt.time, max_value: _dt.time) -> _dt.time:
         hour, minute, second, nanosecond = self._handle.generate_time(
             (min_value.hour, min_value.minute, min_value.second, min_value.microsecond * 1000),
             (max_value.hour, max_value.minute, max_value.second, max_value.microsecond * 1000),
         )
         return _dt.time(hour, minute, second, nanosecond // 1000)
 
-    def generate_datetime(self, min_value: _dt.datetime, max_value: _dt.datetime) -> _dt.datetime:
+    def _generate_datetime(self, min_value: _dt.datetime, max_value: _dt.datetime) -> _dt.datetime:
         result = self._handle.generate_datetime(
             (
                 min_value.year,
@@ -501,13 +506,13 @@ class TestCase:
         year, month, day, hour, minute, second, nanosecond = result
         return _dt.datetime(year, month, day, hour, minute, second, nanosecond // 1000)
 
-    def generate_uuid(self, version: int | None = None) -> bytes:
+    def _generate_uuid(self, version: int | None = None) -> bytes:
         return self._handle.generate_uuid(version)
 
-    def generate_ipv4(self) -> bytes:
+    def _generate_ipv4(self) -> bytes:
         return self._handle.generate_ipv4()
 
-    def generate_ipv6(self) -> bytes:
+    def _generate_ipv6(self) -> bytes:
         return self._handle.generate_ipv6()
 
     def __repr__(self) -> str:

@@ -34,7 +34,7 @@ class Dates(Generator[dt.date]):
         self.label = DATE_LABEL
 
     def do_draw(self, tc: TestCase) -> dt.date:
-        return tc.generate_date(self.min_value, self.max_value)
+        return tc._generate_date(self.min_value, self.max_value)
 
     def __repr__(self) -> str:
         return f"dates(min_value={self.min_value!r}, max_value={self.max_value!r})"
@@ -63,7 +63,7 @@ class Times(Generator[dt.time]):
         )
 
     def do_draw(self, tc: TestCase) -> dt.time:
-        value = tc.generate_time(self.min_value, self.max_value)
+        value = tc._generate_time(self.min_value, self.max_value)
         if self.timezones is not None:
             value = value.replace(tzinfo=tc.draw_silent(self.timezones))
         return value
@@ -108,7 +108,7 @@ class Datetimes(Generator[dt.datetime]):
         )
 
     def do_draw(self, tc: TestCase) -> dt.datetime:
-        value = tc.generate_datetime(self.min_value, self.max_value)
+        value = tc._generate_datetime(self.min_value, self.max_value)
         if self.timezones is None:
             return value
         tz = tc.draw_silent(self.timezones)
