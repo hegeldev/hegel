@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import reprlib
 import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, TypeVar
@@ -180,6 +181,7 @@ class Deferred(Generator[T]):
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> T:
         return self._get().do_draw_and_print(tc, printer)
 
+    @reprlib.recursive_repr(fillvalue="...")
     def __repr__(self) -> str:
         if self._generator is None:
             return f"deferred({getattr(self.definition, '__name__', self.definition)!r})"

@@ -22,6 +22,10 @@ T = TypeVar("T")
 
 OutputSink = Callable[[str], None]
 
+# Deeper nesting than this ends the test case as too large, well before
+# Python's own recursion limit would turn it into a RecursionError.
+MAX_DRAW_DEPTH = 100
+
 MIN_DATE = (1, 1, 1)
 MAX_DATE = (9999, 12, 31)
 MIDNIGHT = (0, 0, 0, 0)
@@ -304,7 +308,10 @@ class TestCase:
 
     def start_span(self, label: int) -> None:
         """Open a span labelled ``label`` grouping the draws until the
-        matching :meth:`stop_span`."""
+        matching :meth:`stop_span`. Nesting deeper than ``MAX_DRAW_DEPTH``
+        abandons the test case as too large."""
+        if self._span_depth >= MAX_DRAW_DEPTH:
+            raise StopTest(f"draws nested more than {MAX_DRAW_DEPTH} deep")
         self._span_depth += 1
         try:
             self._handle.start_span(label)

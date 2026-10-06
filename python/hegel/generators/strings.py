@@ -118,11 +118,13 @@ def _alphabet_spec(alphabet: Any) -> CharacterSpec | Generator[str]:
         return alphabet.spec
     if isinstance(alphabet, Generator):
         return alphabet
-    chars = "".join(alphabet)
-    for char in chars:
-        if len(char) != 1:
-            raise InvalidArgument(f"alphabet must contain single characters, got {char!r}")
-    return CharacterSpec(categories=[], include_characters=chars)
+    items = list(alphabet)
+    for item in items:
+        if not isinstance(item, str) or len(item) != 1:
+            raise InvalidArgument(f"alphabet must contain single characters, got {item!r}")
+    if not items:
+        raise InvalidArgument("alphabet must not be empty")
+    return CharacterSpec(categories=[], include_characters="".join(items))
 
 
 class Text(Generator[str]):

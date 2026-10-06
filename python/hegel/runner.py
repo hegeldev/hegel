@@ -26,6 +26,7 @@ from hegel.errors import (
     MultipleFailures,
     RunError,
     StopTest,
+    Unsatisfiable,
 )
 from hegel.explicit import NO_HANDLE, ExplicitCase, ExplicitTestCase
 from hegel.settings import HealthCheck, Phase, Settings, TestLocation, Verbosity
@@ -231,6 +232,8 @@ def _drive(
             raise FailedHealthCheck(message)
         if message.startswith("Flaky test detected"):
             raise Flaky(message)
+        if message.startswith("Unsatisfiable"):
+            raise Unsatisfiable(message)
         raise RunError(message)
     if status == _native.RUN_STATUS_FAILED_NONDETERMINISTIC:
         if stash is None:

@@ -147,6 +147,8 @@ def from_type(type_: Any) -> Generator[Any]:
         return none()
     if type_ in _BUILTINS:
         return _BUILTINS[type_]()
+    if type_ is type:
+        return just(object)
     origin = typing.get_origin(type_)
     if origin is not None:
         generic = _generic(origin, typing.get_args(type_))
@@ -233,5 +235,10 @@ def infer_missing_arguments(
             continue
         if annotation is Ellipsis:
             continue
+        if isinstance(annotation, str):
+            raise InvalidArgument(
+                f"Cannot infer a generator for parameter {parameter.name!r} of "
+                f"{target!r}: its annotation {annotation!r} could not be resolved"
+            )
         result[parameter.name] = from_type(annotation)
     return result

@@ -26,6 +26,7 @@ __all__ = [
     "RetrySignal",
     "RunError",
     "StopTest",
+    "Unsatisfiable",
 ]
 
 
@@ -45,6 +46,11 @@ class FailedHealthCheck(RunError):
 
 class Flaky(RunError):
     """A failure found during generation did not reproduce when replayed."""
+
+
+class Unsatisfiable(RunError):
+    """The engine could not find enough inputs satisfying the test's
+    assumptions."""
 
 
 class DidNotReproduce(HegelError):
