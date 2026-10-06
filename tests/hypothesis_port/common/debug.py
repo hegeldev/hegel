@@ -4,6 +4,7 @@ from hegel.hypothesis import HealthCheck, Phase, Verbosity, given, settings as S
 from hegel.hypothesis.control import current_build_context, currently_in_test_context
 from hegel.hypothesis.errors import NoSuchExample, Unsatisfiable
 from hegel.hypothesis.strategies import SearchStrategy
+from hegel.hypothesis.strategies._base import unwrap_strategies
 
 from tests.hypothesis_port.common.utils import no_shrink
 
@@ -66,7 +67,7 @@ def find_any(definition, condition=lambda _: True, settings=None):
         # buffer; Hegel's buffer is far larger, so cap the attempts instead.
         tc = current_build_context().tc
         for _ in range(1000):
-            if condition(s := tc.draw_silent(definition)):
+            if condition(s := tc.draw_silent(unwrap_strategies(definition))):
                 return s
         tc.reject()
 
@@ -93,7 +94,7 @@ def assert_all_examples(strategy, predicate, settings=None):
     if currently_in_test_context():
         tc = current_build_context().tc
         for _ in range(20):
-            s = tc.draw_silent(strategy)
+            s = tc.draw_silent(unwrap_strategies(strategy))
             msg = f"Found {s!r} using strategy {strategy} which does not match"
             assert predicate(s), msg
 

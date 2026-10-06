@@ -124,9 +124,9 @@ Not available:
   (exceptions, `range`, `slice`, ...), typing special forms such as
   `Callable[...]`, `Type[...]` and `Final`, and forward references found in
   caller frames. `characters(codec=...)` beyond ascii, latin-1 and utf-8.
-- Hypothesis's typed `SearchStrategy` protocol: `hegel.hypothesis` strategies
-  are Hegel generators (`SearchStrategy` is an alias of `hegel.generators.Generator`),
-  so `.do_draw` receives a `TestCase` rather than `ConjectureData`.
+- Hypothesis's `SearchStrategy` internals: a `hegel.hypothesis` strategy wraps
+  a Hegel generator (its `generator` attribute), and a subclass's `do_draw`
+  receives a `DataObject` (as `data()` gives) rather than `ConjectureData`.
   `InvalidArgument` is not a `TypeError` subclass.
 - The pytest plugin's `--hypothesis-show-statistics`, `--hypothesis-explain`
   and statistics in the terminal summary. `--hypothesis-seed`,

@@ -4,28 +4,185 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Generic, TypeVar
 
-from hegel.generators.base import Generator
+from hegel.generators.base import Generator, label_from_name
 from hegel.generators.combinators import Nothing
 from hegel.hypothesis.errors import InvalidArgument
 
 __all__ = [
     "NOTHING",
+    "LazyStrategy",
     "SearchStrategy",
     "check_strategy",
     "check_type",
     "check_valid_size",
+    "defines_strategy",
+    "unwrap_strategies",
 ]
 
-#: A Hypothesis strategy is a Hegel generator.
-SearchStrategy = Generator
+Ex = TypeVar("Ex")
+T = TypeVar("T")
 
-NOTHING: Any = Nothing()
+
+class SearchStrategy(Generic[Ex]):
+    """A Hypothesis strategy: a wrapper around the Hegel generator that
+    draws its values, available as :attr:`generator`.
+
+    A subclass either passes a generator to ``__init__`` or defines
+    ``do_draw(self, data)``, drawing from other strategies with
+    ``data.draw(...)``.
+    """
+
+    def __init__(self, generator: Generator[Any] | None = None) -> None:
+        if generator is not None and not isinstance(generator, Generator):
+            raise InvalidArgument(
+                f"Expected a Generator but got {generator!r} (type={type(generator).__name__})"
+            )
+        self._generator: Generator[Any] | None = generator
+
+    def _build(self) -> Generator[Any]:
+        if type(self).do_draw is not SearchStrategy.do_draw:
+            return _CustomStrategy(self)
+        raise InvalidArgument(
+            f"{type(self).__name__} neither wraps a generator nor defines do_draw"
+        )
+
+    @property
+    def generator(self) -> Generator[Any]:
+        """The Hegel generator this strategy draws from."""
+        if self._generator is None:
+            self._generator = self._build()
+        return self._generator
+
+    def do_draw(self, data: Any) -> Ex:
+        raise NotImplementedError(f"{type(self).__name__} does not define do_draw")
+
+    @property
+    def label(self) -> int:
+        return self.generator.label
+
+    @property
+    def is_empty(self) -> bool:
+        return self.generator.is_empty
+
+    def validate(self) -> None:
+        """Validate the strategy's arguments (building it, if lazy)."""
+        self.generator  # noqa: B018
+
+    def map(self, pack: Callable[[Ex], T]) -> SearchStrategy[T]:
+        return LazyStrategy(
+            lambda: self.generator.map(pack),
+            (),
+            {},
+            name=lambda: f"{self!r}.map({_describe(pack)})",
+        )
+
+    def flatmap(self, expand: Callable[[Ex], SearchStrategy[T]]) -> SearchStrategy[T]:
+        def expand_to_generator(value: Ex) -> Generator[Any]:
+            return unwrap_strategies(expand(value))
+
+        return LazyStrategy(
+            lambda: self.generator.flat_map(expand_to_generator),
+            (),
+            {},
+            name=lambda: f"{self!r}.flatmap({_describe(expand)})",
+        )
+
+    def filter(self, condition: Callable[[Ex], Any]) -> SearchStrategy[Ex]:
+        return LazyStrategy(
+            lambda: self.generator.filter(condition),
+            (),
+            {},
+            name=lambda: f"{self!r}.filter({_describe(condition)})",
+        )
+
+    def __or__(self, other: SearchStrategy[T]) -> SearchStrategy[Ex | T]:
+        if not isinstance(other, SearchStrategy):
+            raise ValueError(f"Cannot | a SearchStrategy with {other!r}")
+        from hegel.hypothesis.strategies import OneOfStrategy, one_of
+
+        # ``a | b | c`` is one three-way choice, as in Hypothesis.
+        branches = [
+            s
+            for operand in (self, other)
+            for s in (operand.strategies if isinstance(operand, OneOfStrategy) else (operand,))
+        ]
+        return one_of(*branches)
+
+    def example(self) -> Ex:
+        """The minimal value the strategy generates, for interactive use."""
+        from hegel.runner import run, with_output_override
+        from hegel.settings import HealthCheck, Phase, Settings, Verbosity
+
+        generator = self.generator
+        found: list[Any] = []
+
+        def body(tc: Any) -> None:
+            found.append(tc.draw_silent(generator))
+            raise _ExampleFound()
+
+        settings = Settings(
+            database="",
+            verbosity=Verbosity.quiet,
+            phases=[Phase.generate, Phase.shrink],
+            print_blob=False,
+            suppress_health_check=HealthCheck.all(),
+        )
+        try:
+            with with_output_override(lambda line: None):
+                run(body, settings)
+        except _ExampleFound:
+            return found[-1]
+        raise InvalidArgument(f"{self!r} produced no example")
+
+    def __repr__(self) -> str:
+        if self._generator is None:
+            return f"{type(self).__name__}()"
+        return repr(self._generator)
+
+
+class _ExampleFound(Exception):
+    pass
+
+
+class _CustomStrategy(Generator[Any]):
+    """The generator behind a strategy subclass that defines ``do_draw``."""
+
+    def __init__(self, strategy: SearchStrategy[Any]) -> None:
+        self.strategy = strategy
+        self.label = label_from_name(f"hegel.hypothesis.{type(strategy).__qualname__}")
+
+    def do_draw(self, tc: Any) -> Any:
+        from hegel.hypothesis.strategies import DataObject
+
+        return self.strategy.do_draw(DataObject(tc))
+
+    def __repr__(self) -> str:
+        return repr(self.strategy)
+
+
+def unwrap_strategies(strategy: Any) -> Generator[Any]:
+    """The Hegel generator behind ``strategy`` (a generator is returned as is)."""
+    if isinstance(strategy, SearchStrategy):
+        return strategy.generator
+    if isinstance(strategy, Generator):
+        return strategy
+    raise InvalidArgument(
+        f"Expected a SearchStrategy but got {strategy!r} (type={type(strategy).__name__})"
+    )
+
+
+def is_nothing(strategy: Any) -> bool:
+    """Whether ``strategy`` is ``nothing()``, without building a lazy one."""
+    return isinstance(strategy, SearchStrategy) and isinstance(strategy._generator, Nothing)
+
+
+NOTHING: Any = SearchStrategy(Nothing())
 
 
 def check_strategy(arg: object, name: str = "") -> None:
-    if not isinstance(arg, Generator):
+    if not isinstance(arg, SearchStrategy):
         prefix = f"{name}=" if name else ""
         hint = ""
         if callable(arg) and getattr(arg, "__module__", "").startswith("hegel.hypothesis"):
@@ -38,7 +195,7 @@ def check_strategy(arg: object, name: str = "") -> None:
 
 
 def check_type(typ: type | tuple[type, ...], arg: object, name: str = "") -> None:
-    assert typ is not Generator, "use check_strategy instead"
+    assert typ is not SearchStrategy, "use check_strategy instead"
     if not isinstance(arg, typ):
         if isinstance(typ, tuple):
             typ_string = "one of " + ", ".join(t.__name__ for t in typ)
@@ -74,7 +231,7 @@ def check_valid_sizes(min_size: Any, max_size: Any) -> None:
     check_valid_interval(min_size, max_size, "min_size", "max_size")
 
 
-class LazyStrategy(Generator[Any]):
+class LazyStrategy(SearchStrategy[Any]):
     """A strategy built from ``function(*args, **kwargs)`` on first use.
 
     Hypothesis validates strategy arguments when a strategy is first drawn
@@ -91,74 +248,24 @@ class LazyStrategy(Generator[Any]):
         *,
         name: str | Callable[[], str] | None = None,
     ) -> None:
+        super().__init__()
         self.function = function
         self.__args = args
         self.__kwargs = kwargs
         self.__name: str | Callable[[], str] = (
             name if name is not None else getattr(function, "__name__", repr(function))
         )
-        self.__wrapped: Generator[Any] | None = None
 
-    def __or__(self, other: Any) -> Generator[Any]:
-        if not isinstance(other, Generator):
-            raise ValueError(f"Cannot | a SearchStrategy with {other!r}")
-        return super().__or__(other)
+    def _build(self) -> Generator[Any]:
+        built = self.function(*self.__args, **self.__kwargs)
+        if not isinstance(built, (SearchStrategy, Generator)):
+            label = self.__name() if callable(self.__name) else self.__name
+            raise InvalidArgument(f"{label}() must return a SearchStrategy but returned {built!r}")
+        return unwrap_strategies(built)
 
     @property
     def wrapped_strategy(self) -> Generator[Any]:
-        if self.__wrapped is None:
-            built = self.function(*self.__args, **self.__kwargs)
-            while isinstance(built, LazyStrategy):
-                built = built.wrapped_strategy
-            if not isinstance(built, Generator):
-                raise InvalidArgument(
-                    f"{self.__name}() must return a SearchStrategy but returned {built!r}"
-                )
-            self.__wrapped = built
-        return self.__wrapped
-
-    @property
-    def label(self) -> int:  # type: ignore[override]
-        return self.wrapped_strategy.label
-
-    def validate(self) -> None:
-        self.wrapped_strategy.validate()
-
-    @property
-    def is_empty(self) -> bool:
-        return self.wrapped_strategy.is_empty
-
-    def do_draw(self, tc: Any) -> Any:
-        return self.wrapped_strategy.do_draw(tc)
-
-    def do_draw_and_print(self, tc: Any, printer: Any) -> Any:
-        return self.wrapped_strategy.do_draw_and_print(tc, printer)
-
-    def map(self, pack: Any) -> Generator[Any]:
-        return LazyStrategy(
-            lambda: self.wrapped_strategy.map(pack),
-            (),
-            {},
-            name=lambda: f"{self!r}.map({_describe(pack)})",
-        )
-
-    def flat_map(self, f: Any) -> Generator[Any]:
-        return LazyStrategy(
-            lambda: self.wrapped_strategy.flat_map(f),
-            (),
-            {},
-            name=lambda: f"{self!r}.flatmap({_describe(f)})",
-        )
-
-    flatmap = flat_map
-
-    def filter(self, f: Any) -> Generator[Any]:
-        return LazyStrategy(
-            lambda: self.wrapped_strategy.filter(f),
-            (),
-            {},
-            name=lambda: f"{self!r}.filter({_describe(f)})",
-        )
+        return self.generator
 
     def __repr__(self) -> str:
         label = self.__name() if callable(self.__name) else self.__name
@@ -297,20 +404,15 @@ def defines_strategy(function: Any = None, *, try_non_lazy: bool = False) -> Any
     signature = inspect.signature(function)
 
     @functools.wraps(function)
-    def accept(*args: Any, **kwargs: Any) -> Generator[Any]:
+    def accept(*args: Any, **kwargs: Any) -> SearchStrategy[Any]:
         signature.bind(*args, **kwargs)  # a TypeError for bad arguments, eagerly
         if try_non_lazy:
             try:
-                return function(*args, **kwargs)
+                built = function(*args, **kwargs)
             except Exception:  # noqa: BLE001 - reported lazily, as Hypothesis does
                 pass
+            else:
+                return built if isinstance(built, SearchStrategy) else SearchStrategy(built)
         return LazyStrategy(function, args, kwargs)
 
     return accept
-
-
-def unwrap_strategies(s: Any) -> Any:
-    """The eager generator behind a lazy strategy (or ``s`` itself)."""
-    while isinstance(s, LazyStrategy):
-        s = s.wrapped_strategy
-    return s

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 TEST_FILE = """
@@ -68,6 +70,16 @@ def test_hypothesis_style(x):
     print("SEED", getattr(test_hypothesis_style, "_hypothesis_internal_use_seed", None))
     print("PROFILE", settings.default.max_examples, settings.default.verbosity.name)
 """
+
+
+@pytest.fixture(autouse=True)
+def _fresh_compat_modules(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each in-process pytest run below imports hegel.hypothesis afresh, so
+    the profile one run loads cannot leak into the next."""
+    for name in [
+        m for m in sys.modules if m == "hegel.hypothesis" or m.startswith("hegel.hypothesis.")
+    ]:
+        monkeypatch.delitem(sys.modules, name)
 
 
 def test_plugin_hypothesis_options(pytester: pytest.Pytester):

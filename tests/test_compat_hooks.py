@@ -11,14 +11,6 @@ from hegel import generators as gs
 from tests.helpers import find_example, notes, run_test
 
 
-def test_generator_compat_methods():
-    g = gs.integers()
-    g.validate()
-    assert g.is_empty is False
-    assert gs.nothing().is_empty is True
-    assert gs.Generator.flatmap is gs.Generator.flat_map
-
-
 def test_is_final_is_set_on_the_final_replay_and_explicit_cases():
     seen: list[bool] = []
 

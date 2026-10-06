@@ -17,16 +17,11 @@ __all__ = [
     "Filtered",
     "Generator",
     "Mapped",
-    "NOOP_PRINTER",
     "combine_labels",
     "label_from_name",
 ]
 
 T = TypeVar("T")
-
-
-class _ExampleFound(Exception):
-    """Stops the search behind ``Generator.example`` once a value is drawn."""
 
 
 U = TypeVar("U")
@@ -66,10 +61,6 @@ class Generator(Generic[T]):
         pretty_print(value, printer)
         return value
 
-    def generate(self, tc: TestCase) -> T:
-        """Alias for ``tc.draw_silent(self)``."""
-        return tc.draw_silent(self)
-
     def map(self, f: Callable[[T], U]) -> Generator[U]:
         """Transform generated values with ``f``."""
         return Mapped(self, f)
@@ -78,8 +69,6 @@ class Generator(Generic[T]):
         """Generate a value, then draw from the generator ``f`` builds
         from it."""
         return FlatMapped(self, f)
-
-    flatmap = flat_map
 
     def filter(self, predicate: Callable[[T], bool]) -> Generator[T]:
         """Keep only values satisfying ``predicate``. After three rejected
@@ -99,36 +88,6 @@ class Generator(Generic[T]):
         from hegel.generators.combinators import one_of
 
         return one_of(self, other)
-
-    def example(self, tc: TestCase | None = None) -> T:
-        """Draw one example from this generator, for interactive
-        exploration. Not for use inside tests."""
-        from hegel.runner import run, with_output_override
-        from hegel.settings import HealthCheck, Phase, Settings, Verbosity
-
-        found: list[T] = []
-
-        def body(case: TestCase) -> None:
-            found.append(case.draw_silent(self))
-            raise _ExampleFound()
-
-        settings = Settings(
-            database="",
-            verbosity=Verbosity.quiet,
-            phases=[Phase.generate, Phase.shrink],
-            print_blob=False,
-            suppress_health_check=HealthCheck.all(),
-        )
-        try:
-            with with_output_override(lambda line: None):
-                run(body, settings)
-        except _ExampleFound:
-            return found[-1]
-        raise InvalidArgument(f"{self!r} produced no example")
-
-    def validate(self) -> None:
-        """Check the generator's arguments; Hegel generators validate on
-        construction, so this is a no-op kept for API compatibility."""
 
     @property
     def is_empty(self) -> bool:

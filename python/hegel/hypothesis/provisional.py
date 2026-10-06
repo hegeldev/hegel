@@ -74,9 +74,10 @@ def domains(
     max_length = _clean_input(4, 255, max_length, "max_length")
     max_element_length = _clean_input(1, 63, max_element_length, "max_element_length")
     if max_element_length == 63:
-        return gs.domains(max_length=max_length)
-    return _Domains(max_length, max_element_length)
+        return SearchStrategy(gs.domains(max_length=max_length))
+    return SearchStrategy(_Domains(max_length, max_element_length))
 
 
+@defines_strategy
 def urls() -> SearchStrategy[str]:
-    return gs.urls()
+    return SearchStrategy(gs.urls())

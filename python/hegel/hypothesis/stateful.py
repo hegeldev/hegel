@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Generic, TypeVar
 
 from hegel import generators as gs
-from hegel.generators.combinators import OneOf
+from hegel.generators.base import Generator
 from hegel.hypothesis._settings import HealthCheck
 from hegel.hypothesis._settings import settings as Settings
 from hegel.hypothesis.control import BuildContext, current_build_context, currently_in_test_context
@@ -22,8 +22,9 @@ from hegel.hypothesis.errors import (
     InvalidDefinition,
     UnsatisfiedAssumption,
 )
-from hegel.hypothesis.strategies import SearchStrategy, check_strategy
+from hegel.hypothesis.strategies import OneOfStrategy, SearchStrategy, check_strategy
 from hegel.hypothesis.strategies import data as data_strategy
+from hegel.hypothesis.strategies._base import unwrap_strategies
 from hegel.pretty import pretty_repr
 from hegel.stateful import Machine, Pool
 from hegel.test_case import TestCase
@@ -145,7 +146,7 @@ class Bundle(SearchStrategy[Ex]):
         self.consume = consume
         self.draw_references = draw_references
         self._transformations = transformations
-        self.label = gs.label_from_name(f"hegel.hypothesis.bundle.{name}")
+        super().__init__(_BundleGenerator(self))
 
     def _machine(self) -> RuleBasedStateMachine:
         if currently_in_test_context():
@@ -153,25 +154,6 @@ class Bundle(SearchStrategy[Ex]):
             if isinstance(runner, RuleBasedStateMachine):
                 return runner
         raise InvalidArgument(f"Cannot draw from Bundle({self.name!r}) outside a state machine")
-
-    def do_draw(self, tc: TestCase) -> Any:
-        machine = self._machine()
-        pool = machine._pool(self.name, tc)
-        if pool.is_empty:
-            raise UnsatisfiedAssumption()
-        values = pool.values_consumed() if self.consume else pool.values_reusable()
-        attempts = _FILTER_ATTEMPTS if self._transformations else 1
-        for _ in range(attempts):
-            reference = tc.draw_silent(values)
-            result = self._transform(machine.names_to_values[reference.name])
-            if result is not _REJECTED:
-                if self.consume:
-                    machine._consumed_this_step.append((self.name, reference))
-                return reference if self.draw_references else result
-            if self.consume:
-                # The filter rejected it, so it stays available.
-                pool.add(reference, tc)
-        raise UnsatisfiedAssumption()
 
     def _transform(self, value: Any) -> Any:
         for kind, f in self._transformations:
@@ -215,6 +197,40 @@ class Bundle(SearchStrategy[Ex]):
 _REJECTED = object()
 
 
+class _BundleGenerator(Generator[Any]):
+    """Draws one of a bundle's values from its engine pool."""
+
+    def __init__(self, bundle: Bundle[Any]) -> None:
+        self.bundle = bundle
+        self.label = gs.label_from_name(f"hegel.hypothesis.bundle.{bundle.name}")
+
+    def is_currently_empty(self, tc: TestCase | None = None) -> bool:
+        return self.bundle.is_currently_empty(tc)
+
+    def do_draw(self, tc: TestCase) -> Any:
+        bundle = self.bundle
+        machine = bundle._machine()
+        pool = machine._pool(bundle.name, tc)
+        if pool.is_empty:
+            raise UnsatisfiedAssumption()
+        values = pool.values_consumed() if bundle.consume else pool.values_reusable()
+        attempts = _FILTER_ATTEMPTS if bundle._transformations else 1
+        for _ in range(attempts):
+            reference = tc.draw_silent(values)
+            result = bundle._transform(machine.names_to_values[reference.name])
+            if result is not _REJECTED:
+                if bundle.consume:
+                    machine._consumed_this_step.append((bundle.name, reference))
+                return reference if bundle.draw_references else result
+            if bundle.consume:
+                # The filter rejected it, so it stays available.
+                pool.add(reference, tc)
+        raise UnsatisfiedAssumption()
+
+    def __repr__(self) -> str:
+        return repr(self.bundle)
+
+
 _FILTER_ATTEMPTS = 3
 
 
@@ -243,7 +259,7 @@ def _convert_targets(targets: Any, target: Any) -> tuple[str, ...]:
     for t in targets:
         if not isinstance(t, Bundle):
             msg = "Got invalid target %r of type %r, but all targets must be Bundles."
-            if isinstance(t, OneOf):
+            if isinstance(t, OneOfStrategy):
                 msg += (
                     "\nIt looks like you passed `one_of(a, b)` or `a | b` as "
                     "a target.  You should instead pass `targets=(a, b)` to "
@@ -662,7 +678,7 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
     def _draw_arguments(self, tc: HegelTestCase, r: Rule) -> dict[str, Any]:
         self._consumed_this_step = []
         try:
-            return {k: tc.draw_silent(v) for k, v in r.arguments.items()}
+            return {k: tc.draw_silent(unwrap_strategies(v)) for k, v in r.arguments.items()}
         except UnsatisfiedAssumption:
             # The rule is skipped (Hegel's machine picks another), so values
             # its arguments consumed go back into their bundles.

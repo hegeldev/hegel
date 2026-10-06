@@ -4,9 +4,9 @@ from hegel.hypothesis.strategies import SearchStrategy, binary, integers
 
 
 class _Slow(SearchStrategy):
-    def do_draw(self, tc):
+    def do_draw(self, data):
         time.sleep(1.01)
-        tc.draw_silent(binary(min_size=2, max_size=2))
+        data.draw(binary(min_size=2, max_size=2))
 
 
 SLOW = _Slow()
@@ -18,8 +18,8 @@ class HardToShrink(SearchStrategy):
         self.__last = None
         self.accepted = set()
 
-    def do_draw(self, tc):
-        x = bytes(tc.draw_silent(integers(0, 255)) for _ in range(100))
+    def do_draw(self, data):
+        x = bytes(data.draw(integers(0, 255)) for _ in range(100))
         if x in self.accepted:
             return True
         ls = self.__last

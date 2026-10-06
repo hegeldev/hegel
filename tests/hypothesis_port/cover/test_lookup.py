@@ -515,10 +515,6 @@ def test_can_get_type_hints(thing):
     assert isinstance(get_type_hints(thing), dict)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
-)
 def test_force_builds_to_infer_strategies_for_default_args():
     # By default, leaves args with defaults and minimises to 2+4=6
     assert minimal(st.builds(annotated_func), lambda ex: True) == 6
@@ -561,10 +557,6 @@ def unknown_annotated_func(a: UnknownType, b=2, *, c: UnknownType, d=4):
     pass
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
-)
 def test_raises_for_arg_with_unresolvable_annotation():
     with pytest.raises(ResolutionFailed):
         check_can_generate_examples(st.builds(unknown_annotated_func))

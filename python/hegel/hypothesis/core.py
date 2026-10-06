@@ -21,7 +21,6 @@ from typing import Any, TypeVar
 
 from hegel.errors import Flaky, RunError, StopTest
 from hegel.explicit import ExplicitCase
-from hegel.generators.combinators import Nothing
 from hegel.hypothesis._settings import HealthCheck, Phase, Verbosity, local_settings
 from hegel.hypothesis._settings import settings as Settings
 from hegel.hypothesis.control import BuildContext, currently_in_test_context
@@ -35,7 +34,12 @@ from hegel.hypothesis.errors import (
     Unsatisfiable,
     UnsatisfiedAssumption,
 )
-from hegel.hypothesis.strategies._base import SearchStrategy, check_strategy
+from hegel.hypothesis.strategies._base import (
+    SearchStrategy,
+    check_strategy,
+    is_nothing,
+    unwrap_strategies,
+)
 from hegel.runner import (
     RunOutput,
     _database_key_of,
@@ -373,7 +377,7 @@ def _explicit_cases(
 def _is_empty(strategy: Any) -> bool:
     # Only ``nothing()`` itself counts, as in Hypothesis: asking a lazy
     # strategy whether it is empty would validate it at decoration time.
-    return isinstance(strategy, Nothing)
+    return is_nothing(strategy)
 
 
 class _XfailPassed(AssertionError):
@@ -782,9 +786,9 @@ def _run_given(
                 for name, strategy in given_kwargs.items():
                     try:
                         if print_args:
-                            drawn[name] = tc.draw(strategy, name=name)
+                            drawn[name] = tc.draw(unwrap_strategies(strategy), name=name)
                         else:
-                            drawn[name] = tc.draw_silent(strategy)
+                            drawn[name] = tc.draw_silent(unwrap_strategies(strategy))
                     except Exception as error:
                         error.add_note(f"while generating {name!r} from {strategy!r}")
                         raise
@@ -1080,7 +1084,7 @@ def find(
 
     def body(tc: TestCase) -> None:
         with BuildContext(tc, is_final=tc.is_final):
-            value = tc.draw(specifier, name="Example")
+            value = tc.draw(unwrap_strategies(specifier), name="Example")
             try:
                 satisfied = condition(value)
             except UnsatisfiedAssumption:
