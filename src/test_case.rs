@@ -56,6 +56,38 @@ impl Run {
         Ok(run)
     }
 
+    /// Like `start`, but the run replays `blob` until a replay fails
+    /// instead of exploring. A run with no failures means the blob is
+    /// stale.
+    #[staticmethod]
+    fn start_blob(py: Python<'_>, settings: &Settings, blob: &str) -> PyResult<Self> {
+        let output = Arc::new(OutputBuffer::default());
+        let user_data = SendPtr(output_user_data(&output));
+        let settings_ptr = SendPtr(settings.raw() as *mut c::HegelSettings);
+        let c_blob = cstring(blob);
+        let blob_ptr = SendPtr(c_blob.as_ptr() as *mut c_char);
+        let mut raw: *mut c::HegelRun = ptr::null_mut();
+        let raw_out = SendPtr(&mut raw as *mut *mut c::HegelRun);
+        let rc = py.detach(move || {
+            with_ctx(|ctx| unsafe {
+                c::hegel_run_start_blob(
+                    ctx,
+                    settings_ptr.get(),
+                    blob_ptr.get(),
+                    Some(output_trampoline),
+                    user_data.get(),
+                    raw_out.get(),
+                )
+            })
+        });
+        let run = Run {
+            raw: SendPtr(raw),
+            output,
+        };
+        check(rc)?;
+        Ok(run)
+    }
+
     /// The next test case to drive, or `None` once the run is finished.
     fn next_test_case(&self, py: Python<'_>) -> PyResult<Option<TestCase>> {
         let run = self.raw;
@@ -124,21 +156,27 @@ impl RunResult {
         Ok(count)
     }
 
-    /// The `index`-th distinct failure as `(origin, reproduction_blob)`.
-    fn failure(&self, index: usize) -> PyResult<(String, Option<String>)> {
+    /// The `index`-th distinct failure as `(origin, reproduction_blob,
+    /// caveat)`. The blob is absent for a failure the engine could not
+    /// confirm, and the caveat for a deterministic one.
+    #[allow(clippy::type_complexity)]
+    fn failure(&self, index: usize) -> PyResult<(String, Option<String>, Option<String>)> {
         let mut f: *mut c::HegelFailure = ptr::null_mut();
         with_ctx(|ctx| {
             check(unsafe { c::hegel_run_result_failure(ctx, self.raw.0, index, &mut f) })?;
             let mut origin: *const c_char = ptr::null();
             let mut blob: *const c_char = ptr::null();
+            let mut caveat: *const c_char = ptr::null();
             let result = check(unsafe { c::hegel_failure_origin(ctx, f, &mut origin) })
                 .and_then(|()| {
                     check(unsafe { c::hegel_failure_reproduction_blob(ctx, f, &mut blob) })
                 })
+                .and_then(|()| check(unsafe { c::hegel_failure_caveat(ctx, f, &mut caveat) }))
                 .map(|()| {
                     (
                         cstr_to_string(origin).unwrap_or_default(),
                         cstr_to_string(blob),
+                        cstr_to_string(caveat),
                     )
                 });
             let _ = unsafe { c::hegel_failure_free(ctx, f) };
@@ -219,35 +257,6 @@ fn datetime_from_c(d: c::hegel_datetime_t) -> PyDateTime {
 
 #[pymethods]
 impl TestCase {
-    /// Replay a reproduction blob as a standalone test case.
-    #[staticmethod]
-    fn from_blob(py: Python<'_>, settings: &Settings, blob: &str) -> PyResult<Self> {
-        let output = Arc::new(OutputBuffer::default());
-        let user_data = SendPtr(output_user_data(&output));
-        let settings_ptr = SendPtr(settings.raw() as *mut c::HegelSettings);
-        let c_blob = cstring(blob);
-        let blob_ptr = SendPtr(c_blob.as_ptr() as *mut c_char);
-        let mut raw: *mut c::HegelTestCase = ptr::null_mut();
-        let raw_out = SendPtr(&mut raw as *mut *mut c::HegelTestCase);
-        let rc = py.detach(move || {
-            with_ctx(|ctx| unsafe {
-                c::hegel_test_case_from_blob(
-                    ctx,
-                    settings_ptr.get(),
-                    blob_ptr.get(),
-                    Some(output_trampoline),
-                    user_data.get(),
-                    raw_out.get(),
-                )
-            })
-        });
-        check(rc)?;
-        Ok(TestCase {
-            raw: SendPtr(raw),
-            output: Some(output),
-        })
-    }
-
     fn drain_output(&self) -> Vec<String> {
         self.output.as_ref().map(|o| o.drain()).unwrap_or_default()
     }
@@ -281,10 +290,12 @@ impl TestCase {
         })
     }
 
-    fn is_nondeterministic(&self) -> PyResult<bool> {
+    /// Whether the engine stamped this case for capture: its output and,
+    /// if it fails, its diagnostic may become the failure report.
+    fn should_capture(&self) -> PyResult<bool> {
         let mut out = false;
         with_ctx(|ctx| {
-            check(unsafe { c::hegel_test_case_is_nondeterministic(ctx, self.tc(), &mut out) })
+            check(unsafe { c::hegel_test_case_should_capture(ctx, self.tc(), &mut out) })
         })?;
         Ok(out)
     }

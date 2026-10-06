@@ -47,7 +47,10 @@ class FailedHealthCheck(RunError):
 
 
 class Flaky(RunError):
-    """A failure found during generation did not reproduce when replayed."""
+    """The engine aborted the run because the test behaved
+    nondeterministically, under ``NondeterminismStrictness.error``. The
+    default strictness instead confirms such failures by repeated replay
+    and reports them with a caveat."""
 
 
 class Unsatisfiable(RunError):
@@ -61,12 +64,3 @@ class DidNotReproduce(HegelError):
 
 class MultipleFailures(ExceptionGroup):  # type: ignore[type-arg]
     """A run found several distinct failures (``report_multiple_failures``)."""
-
-
-FLAKY_DIAGNOSTIC = (
-    "Flaky test detected: Your test produced different outcomes when run with "
-    "the same generated data - it failed when it previously succeeded, or "
-    "succeeded when it previously failed. This usually means your test depends "
-    "on external state such as global variables, system time, or external "
-    "random number generators."
-)

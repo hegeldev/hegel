@@ -498,6 +498,9 @@ class settings(metaclass=settingsMeta):
             report_multiple_failures=self.report_multiple_bugs,
             print_blob=self.print_blob,
             backend=backend,
+            # Hypothesis reports a failure that does not reproduce as Flaky;
+            # Hegel's default would confirm it by repeated replay instead.
+            nondeterminism_strictness=hegel_settings.NondeterminismStrictness.error,
         )
 
 

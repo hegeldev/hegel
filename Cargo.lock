@@ -80,9 +80,9 @@ dependencies = [
 
 [[package]]
 name = "hegeltest-c"
-version = "0.43.7"
+version = "0.45.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffb913690e8f7276e92359e0f9a035973621cbe6f0b8935d809c8a5b178f0338"
+checksum = "f859fed86f0a0667319c15529f41044e13ca9cce663eeb72b8edefd83d27bacb"
 dependencies = [
  "dashu-int",
  "hashbrown",

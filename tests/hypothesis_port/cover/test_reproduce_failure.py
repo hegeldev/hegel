@@ -84,6 +84,11 @@ def test_errors_if_provided_example_does_not_reproduce_failure():
         test()
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel replays a blob with fresh draws past a divergence, so a changed "
+    "strategy shape that still fails is reported as the failure, not as DidNotReproduce",
+)
 def test_errors_with_did_not_reproduce_if_the_shape_changes():
     n = 11
     blob, b = failing_blob(st.binary(min_size=n, max_size=n))

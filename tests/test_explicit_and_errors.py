@@ -68,7 +68,6 @@ def test_error_hierarchy():
     group = errors.MultipleFailures("two", [ValueError(), KeyError()])
     assert isinstance(group, ExceptionGroup)
     assert len(group.exceptions) == 2
-    assert "Flaky test detected" in errors.FLAKY_DIAGNOSTIC
     assert set(errors.__all__) <= set(dir(errors))
     assert set(hegel.__all__) <= set(dir(hegel))
     assert set(hegel.generators.__all__) <= set(dir(hegel.generators))

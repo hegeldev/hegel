@@ -298,7 +298,7 @@ class TestCase:
             self._global.sink(
                 "Failed to render this test case's drawn values "
                 f"({error}). This indicates a bug in printing code the test "
-                "uses: check any __hegel_pretty__ method for unbalanced "
+                "uses: check any do_draw_and_print method for unbalanced "
                 "begin_group/end_group calls."
             )
             return
@@ -306,13 +306,11 @@ class TestCase:
             self._global.sink(line)
 
     @property
-    def _is_nondeterministic(self) -> bool:
-        return self._handle.is_nondeterministic()
-
-    @property
     def is_final(self) -> bool:
-        """Whether this is the final replay of a failure (or an explicit
-        test case), whose output is reported."""
+        """Whether this case's output is reported: an explicit test case,
+        or a case the engine stamped for capture (the final replay of a
+        failure, a confirmation replay, or a generation case under
+        nondeterministic handling)."""
         return self._global.is_final
 
     # -- spans -----------------------------------------------------------

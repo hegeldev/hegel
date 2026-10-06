@@ -13,6 +13,7 @@ from hegel import _native
 __all__ = [
     "Backend",
     "HealthCheck",
+    "NondeterminismStrictness",
     "Phase",
     "Settings",
     "TestLocation",
@@ -63,6 +64,18 @@ class Backend(enum.Enum):
     urandom = _native.BACKEND_URANDOM
 
 
+class NondeterminismStrictness(enum.Enum):
+    """How a run reacts to a test whose behaviour changes when the same
+    choices are replayed: silently switch to confirming failures by
+    repeated replay (``quiet``, the default), do so with a one-line
+    notice (``warn``), or abort the run with :class:`hegel.Flaky`
+    (``error``)."""
+
+    quiet = _native.NONDETERMINISM_QUIET
+    warn = _native.NONDETERMINISM_WARN
+    error = _native.NONDETERMINISM_ERROR
+
+
 @dataclass(frozen=True)
 class TestLocation:
     """Where a test is defined, recorded in the database and statistics."""
@@ -98,6 +111,7 @@ _FIELDS = (
     "show_statistics",
     "print_blob",
     "backend",
+    "nondeterminism_strictness",
 )
 
 
@@ -132,6 +146,7 @@ class Settings:
     show_statistics: bool = False
     print_blob: bool = False
     backend: Backend = Backend.default
+    nondeterminism_strictness: NondeterminismStrictness = NondeterminismStrictness.quiet
 
     def __init__(self, parent: Settings | None = None, **overrides: Any) -> None:
         base = _from_native(_native.Settings.new()) if parent is None else parent
@@ -195,6 +210,7 @@ class Settings:
         native.set_phases(_flags(self.phases))
         native.set_suppress_health_check(_flags(self.suppress_health_check))
         native.set_backend(self.backend.value)
+        native.set_nondeterminism_strictness(self.nondeterminism_strictness.value)
         return native
 
 
@@ -227,6 +243,11 @@ def _assign(settings: Settings, values: dict[str, Any]) -> None:
     object.__setattr__(settings, "show_statistics", bool(values["show_statistics"]))
     object.__setattr__(settings, "print_blob", bool(values["print_blob"]))
     object.__setattr__(settings, "backend", Backend(values["backend"]))
+    object.__setattr__(
+        settings,
+        "nondeterminism_strictness",
+        NondeterminismStrictness(values["nondeterminism_strictness"]),
+    )
 
 
 def _from_native(native: _native.Settings) -> Settings:
@@ -245,6 +266,9 @@ def _from_native(native: _native.Settings) -> Settings:
             "show_statistics": native.get_show_statistics(),
             "print_blob": native.get_print_blob(),
             "backend": Backend(native.get_backend()),
+            "nondeterminism_strictness": NondeterminismStrictness(
+                native.get_nondeterminism_strictness()
+            ),
         },
     )
     return settings

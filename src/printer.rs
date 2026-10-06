@@ -71,6 +71,16 @@ impl Printer {
         })
     }
 
+    /// Re-emit a flat representation (a `repr`) through the printer's
+    /// groups and break points so it wraps as if printed structurally.
+    fn reflow(&self, s: &str) -> PyResult<()> {
+        with_ctx(|ctx| {
+            tolerate(unsafe {
+                c::hegel_printer_reflow(ctx, self.raw.0, ptr::null(), s.as_ptr(), s.len())
+            })
+        })
+    }
+
     fn if_break(&self, s: &str) -> PyResult<()> {
         with_ctx(|ctx| {
             tolerate(unsafe { c::hegel_printer_if_break(ctx, self.raw.0, s.as_ptr(), s.len()) })

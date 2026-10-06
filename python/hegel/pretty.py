@@ -1,17 +1,17 @@
 """Pretty printing of drawn values, laid out by the engine's printer.
 
 Every printed draw is rendered through a :class:`PrettyPrinter` onto the
-test case's document, so large values wrap at the configured width. Values
-print with :func:`pretty_print`: containers structurally, dataclasses by
-field, objects defining ``__hegel_pretty__`` through that method, and
-everything else by ``repr``.
+test case's document, so large values wrap at the configured width. A
+value prints as its ``repr``, reflowed by the engine: it recovers the
+bracket structure of the one-line representation and lays it out as if it
+had been printed structurally, so there is nothing to register or
+implement for a type beyond a sensible ``__repr__``. Generators that draw
+component values print them structurally as they go
+(:meth:`hegel.generators.Generator.do_draw_and_print`).
 """
 
 from __future__ import annotations
 
-import dataclasses
-import enum
-from collections.abc import Callable
 from typing import Any
 
 from hegel import _native
@@ -24,7 +24,6 @@ __all__ = [
     "Speculation",
     "pretty_print",
     "pretty_repr",
-    "register_pretty_printer",
 ]
 
 DEFAULT_MAX_WIDTH = 79
@@ -64,6 +63,13 @@ class PrettyPrinter:
             first = False
             if line:
                 self._handle.text(line)
+
+    def reflow(self, text: str) -> None:
+        """Emit a one-line representation (a ``repr``), letting the engine
+        recover its bracket structure so it wraps like a value printed
+        structurally. Text that does not parse is emitted verbatim."""
+        if self._handle is not None:
+            self._handle.reflow(text)
 
     def breakable(self, sep: str = " ") -> None:
         """A break point: ``sep`` when the enclosing group fits on one line,
@@ -162,99 +168,13 @@ class Document:
 
 
 def pretty_repr(value: Any, max_width: int = DEFAULT_MAX_WIDTH) -> str:
-    """``value`` as :func:`pretty_print` lays it out, within ``max_width``."""
+    """``repr(value)`` as the engine lays it out, within ``max_width``."""
     document = Document(max_width)
     pretty_print(value, document.printer)
     return document.finish()
 
 
-def _print_sequence(
-    items: Any, printer: PrettyPrinter, open: str, close: str, trailing: str = ""
-) -> None:
-    printer.begin_group(len(open), open)
-    for index, item in enumerate(items):
-        if index > 0:
-            printer.text(",")
-            printer.breakable(" ")
-        pretty_print(item, printer)
-    if trailing:
-        printer.text(trailing)
-    printer.end_group(close)
-
-
-def _print_mapping(items: Any, printer: PrettyPrinter, open: str, close: str) -> None:
-    printer.begin_group(len(open), open)
-    for index, (key, value) in enumerate(items):
-        if index > 0:
-            printer.text(",")
-            printer.breakable(" ")
-        pretty_print(key, printer)
-        printer.text(": ")
-        pretty_print(value, printer)
-    printer.end_group(close)
-
-
-def _print_call(name: str, kwargs: list[tuple[str, Any]], printer: PrettyPrinter) -> None:
-    printer.begin_group(len(name) + 1, name + "(")
-    for index, (key, value) in enumerate(kwargs):
-        if index > 0:
-            printer.text(",")
-            printer.breakable(" ")
-        printer.text(key + "=")
-        pretty_print(value, printer)
-    printer.end_group(")")
-
-
-_PRINTERS: dict[type, Callable[[Any, PrettyPrinter], None]] = {}
-
-
-def register_pretty_printer(cls: type, printer: Callable[[Any, PrettyPrinter], None]) -> None:
-    """Register how instances of ``cls`` (exactly, not subclasses) print."""
-    _PRINTERS[cls] = printer
-
-
 def pretty_print(value: Any, printer: PrettyPrinter) -> None:
-    """Print ``value`` through ``printer`` as a Python expression."""
-    if not printer.should_print:
-        return
-    custom = getattr(type(value), "__hegel_pretty__", None)
-    if custom is not None:
-        custom(value, printer)
-        return
-    cls = type(value)
-    registered = _PRINTERS.get(cls)
-    if registered is not None:
-        registered(value, printer)
-        return
-    if cls is list:
-        _print_sequence(value, printer, "[", "]")
-    elif cls is tuple:
-        _print_sequence(value, printer, "(", ")", trailing="," if len(value) == 1 else "")
-    elif cls is set:
-        if value:
-            _print_sequence(_sorted_if_possible(value), printer, "{", "}")
-        else:
-            printer.text("set()")
-    elif cls is frozenset:
-        if value:
-            _print_sequence(_sorted_if_possible(value), printer, "frozenset({", "})")
-        else:
-            printer.text("frozenset()")
-    elif cls is dict:
-        _print_mapping(value.items(), printer, "{", "}")
-    elif dataclasses.is_dataclass(value) and not isinstance(value, type):
-        fields = [
-            (f.name, getattr(value, f.name)) for f in dataclasses.fields(value) if f.repr and f.init
-        ]
-        _print_call(cls.__qualname__, fields, printer)
-    elif isinstance(value, enum.Enum):
-        printer.text(f"{cls.__qualname__}.{value.name}")
-    else:
-        printer.text(repr(value))
-
-
-def _sorted_if_possible(items: Any) -> list[Any]:
-    try:
-        return sorted(items)
-    except TypeError:
-        return list(items)
+    """Print ``repr(value)`` through ``printer``, reflowed to fit."""
+    if printer.should_print:
+        printer.reflow(repr(value))

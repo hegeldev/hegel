@@ -54,6 +54,14 @@ impl Settings {
         with_ctx(|ctx| check(unsafe { c::hegel_settings_set_backend(ctx, self.raw.0, value) }))
     }
 
+    fn set_nondeterminism_strictness(&self, value: u32) -> PyResult<()> {
+        with_ctx(|ctx| {
+            check(unsafe {
+                c::hegel_settings_set_nondeterminism_strictness(ctx, self.raw.0, value)
+            })
+        })
+    }
+
     fn set_test_cases(&self, value: u64) -> PyResult<()> {
         with_ctx(|ctx| check(unsafe { c::hegel_settings_set_test_cases(ctx, self.raw.0, value) }))
     }
@@ -222,6 +230,16 @@ impl Settings {
     fn get_backend(&self) -> PyResult<u32> {
         let mut out = c::hegel_backend_t::HEGEL_BACKEND_DEFAULT;
         with_ctx(|ctx| check(unsafe { c::hegel_settings_get_backend(ctx, self.raw.0, &mut out) }))?;
+        Ok(out as u32)
+    }
+
+    fn get_nondeterminism_strictness(&self) -> PyResult<u32> {
+        let mut out = c::hegel_nondeterminism_strictness_t::HEGEL_NONDETERMINISM_QUIET;
+        with_ctx(|ctx| {
+            check(unsafe {
+                c::hegel_settings_get_nondeterminism_strictness(ctx, self.raw.0, &mut out)
+            })
+        })?;
         Ok(out as u32)
     }
 

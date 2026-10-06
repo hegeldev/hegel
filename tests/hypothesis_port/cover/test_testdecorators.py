@@ -422,7 +422,9 @@ def test_when_set_to_no_simplifies_runs_failing_example_twice():
 
     with pytest.raises(AssertionError) as err:
         foo()
-    assert len(failing) == 2
+    # Hegel confirms a failure by replaying it before the final replay, so
+    # the example runs more than Hypothesis's twice; it is still never shrunk.
+    assert len(failing) >= 2
     assert len(set(failing)) == 1
     assert "Falsifying example" in "\n".join(err.value.__notes__)
     assert "Lo" in "\n".join(err.value.__notes__)

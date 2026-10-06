@@ -131,6 +131,7 @@ def test_enum_helpers_and_fields():
         "show_statistics",
         "print_blob",
         "backend",
+        "nondeterminism_strictness",
     }
     assert TestLocation("f", 1).class_name == ""
 

@@ -88,13 +88,13 @@ impl StringGenerator {
     #[staticmethod]
     #[pyo3(signature = (pattern, fullmatch, alphabet))]
     fn regex(pattern: &str, fullmatch: bool, alphabet: Option<&StringGenerator>) -> PyResult<Self> {
-        let c_pattern = cstring(pattern);
         let mut raw: *mut c::HegelStringGenerator = ptr::null_mut();
         with_ctx(|ctx| {
             check(unsafe {
                 c::hegel_string_generator_regex(
                     ctx,
-                    c_pattern.as_ptr(),
+                    pattern.as_ptr(),
+                    pattern.len(),
                     fullmatch,
                     alphabet.map_or(ptr::null(), |a| a.raw()),
                     &mut raw,

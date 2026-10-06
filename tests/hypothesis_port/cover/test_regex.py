@@ -582,10 +582,6 @@ def test_charset_matching_nothing_only_rules_out_its_own_branch():
     )
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="Hegel's from_regex does not always honour an alphabet incompatible with a repeat",
-)
 def test_zero_minimum_repeats_incompatible_with_alphabet():
     # a subpattern which is incompatible with the alphabet can still be
     # repeated zero times - see issue #4857
@@ -596,10 +592,6 @@ def test_zero_minimum_repeats_incompatible_with_alphabet():
     assert_all_examples(st.from_regex("ab?", alphabet="a", fullmatch=True), lambda s: s == "a")
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="hegel engine issue: repetitions of a subpattern outside the alphabet are rejected",
-)
 def test_inline_flags_do_not_leak_out_of_an_incompatible_subpattern():
     # `(?i:Ā)` is incompatible with the alphabet, but the group's flags must not leak
     # onto the following `k`.
@@ -611,10 +603,6 @@ def test_inline_flags_do_not_leak_out_of_an_incompatible_subpattern():
     find_any(base_regex_strategy(regex, alphabet=alphabet), lambda s: s == "K")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel's from_regex does not yet support this construct (re.ASCII/IGNORECASE/DOTALL/MULTILINE flags, bytes character classes, alphabet checks, lookaheads)",
-)
 def test_ascii_inverted_categories_match_all_of_unicode():
     # \D under re.ASCII matches everything except [0-9], rather than being
     # restricted to ascii characters - see issue #4858
@@ -630,10 +618,6 @@ def test_ascii_inverted_categories_match_all_of_unicode():
         re.compile("[^\\u0000-\\u00ff]", re.ASCII),
         re.compile("ï", re.IGNORECASE | re.ASCII),
     ],
-)
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel engine issue: the ASCII flag excludes explicit non-ASCII characters and ranges",
 )
 def test_ascii_flag_does_not_restrict_characters_or_ranges(pattern):
     # re.ASCII changes what \d \s \w match and restricts casefolding to ascii

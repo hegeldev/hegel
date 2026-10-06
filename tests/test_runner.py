@@ -14,7 +14,7 @@ from hegel.runner import (
     _user_location,
     with_output_override,
 )
-from hegel.settings import Phase, Verbosity
+from hegel.settings import NondeterminismStrictness, Phase, Verbosity
 from tests.helpers import failing, find_example, notes, run_test
 
 
@@ -250,7 +250,7 @@ def test_find_example_shrinks():
         find_example(5)
 
 
-def test_flaky_failure_detected(output):
+def test_unconfirmed_failure_is_reported_with_a_caveat(output):
     calls = [0]
 
     def body(tc):
@@ -258,20 +258,33 @@ def test_flaky_failure_detected(output):
         calls[0] += 1
         assert calls[0] != 1
 
-    failing(body, hegel.Flaky)
+    error = failing(body)
+    assert any(note.startswith("unconfirmed failure") for note in notes(error))
+    assert any(line.startswith("note: unconfirmed failure") for line in output.lines)
+    assert "reproduce_failure" not in "\n".join(output.lines)
 
 
-def test_flaky_on_final_replay(output):
-    failed = [False]
+def test_nondeterminism_strictness_error_aborts_the_run(output):
+    calls = [0]
 
     def body(tc):
-        x = tc.draw(gs.integers(0, 1000))
-        if x > 0 and not failed[0]:
-            failed[0] = True
-            raise ValueError
-        tc.reject()
+        tc.draw(gs.integers())
+        calls[0] += 1
+        assert calls[0] != 1
 
-    failing(body, hegel.Flaky, phases=[Phase.generate])
+    failing(body, hegel.Flaky, nondeterminism_strictness=NondeterminismStrictness.error)
+
+
+def test_nondeterminism_strictness_warn_prints_a_notice(output):
+    calls = [0]
+
+    def body(tc):
+        tc.draw(gs.integers())
+        calls[0] += 1
+        assert calls[0] != 1
+
+    failing(body, nondeterminism_strictness=NondeterminismStrictness.warn)
+    assert any("nondeterminis" in line for line in output.lines)
 
 
 def test_health_check_failure():
@@ -549,14 +562,9 @@ class _FakeRun:
         (_FakeResult(hegel._native.RUN_STATUS_ERROR, "Something odd"), hegel.RunError, "odd"),
         (_FakeResult(hegel._native.RUN_STATUS_ERROR), hegel.RunError, "unknown error"),
         (
-            _FakeResult(hegel._native.RUN_STATUS_FAILED_NONDETERMINISTIC),
+            _FakeResult(hegel._native.RUN_STATUS_FAILED, failures=[("origin", None, None)]),
             hegel.InternalError,
-            "no stashed failure",
-        ),
-        (
-            _FakeResult(hegel._native.RUN_STATUS_FAILED, failures=[("origin", None)]),
-            hegel.InternalError,
-            "no reproduction blob",
+            "never seen by the test",
         ),
     ],
 )

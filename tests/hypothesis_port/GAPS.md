@@ -202,9 +202,15 @@ test_asyncio.
 - `UnsatisfiedAssumption` is a `BaseException` (it is Hegel's `AssumeFailed`),
   so it cannot be nested inside a `FlakyFailure` group; the flaky report
   describes it in a note instead. (Compat layer.)
-- After a flaky failure the engine keeps generating and replays the flaky
-  example last; a flaky failure among several bugs aborts the run with
-  `Flaky` rather than being reported alongside the others. (Engine.)
+- The compat layer runs with Hegel's `nondeterminism_strictness` set to
+  `error`, so a failure that does not reproduce aborts the run with `Flaky`
+  (as Hypothesis does) rather than being confirmed by repeated replay and
+  reported with a caveat; among several bugs it aborts the whole run instead
+  of being reported alongside the others. (Compat layer / engine.)
+- `reproduce_failure` replays a blob with fresh draws allowed past a
+  divergence, so a changed strategy shape that still fails is reported as
+  that failure rather than as `DidNotReproduce`
+  (`test_errors_with_did_not_reproduce_if_the_shape_changes`). (Engine.)
 - Non-deterministic data generation is reported by the engine as a `RunError`
   ("Your data generation is non-deterministic..."), mapped to
   `FlakyStrategyDefinition` only where the compat layer sees it. (Engine.)

@@ -28,6 +28,7 @@ from hegel.hypothesis.errors import (
     DeadlineExceeded,
     FailedHealthCheck,
     FlakyFailure,
+    FlakyStrategyDefinition,
     HypothesisWarning,
     InvalidArgument,
     NoSuchExample,
@@ -939,6 +940,8 @@ def _run_given(
                 "every possible input, and all of them failed a .filter() or assume()"
             ) from None
         if isinstance(error, Flaky):
+            if str(error).startswith("Your data generation is non-deterministic"):
+                raise FlakyStrategyDefinition(str(error)) from error
             raise _flaky_failure(error, inner.__name__, outcomes, timing, deadline) from error
         if isinstance(error, FailedHealthCheck):
             if "LargeInitialTestCase" in str(error) and not valid[0]:

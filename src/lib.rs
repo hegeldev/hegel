@@ -290,8 +290,16 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         c::hegel_run_status_t::HEGEL_RUN_STATUS_ERROR as u32,
     )?;
     m.add(
-        "RUN_STATUS_FAILED_NONDETERMINISTIC",
-        c::hegel_run_status_t::HEGEL_RUN_STATUS_FAILED_NONDETERMINISTIC as u32,
+        "NONDETERMINISM_QUIET",
+        c::hegel_nondeterminism_strictness_t::HEGEL_NONDETERMINISM_QUIET as u32,
+    )?;
+    m.add(
+        "NONDETERMINISM_WARN",
+        c::hegel_nondeterminism_strictness_t::HEGEL_NONDETERMINISM_WARN as u32,
+    )?;
+    m.add(
+        "NONDETERMINISM_ERROR",
+        c::hegel_nondeterminism_strictness_t::HEGEL_NONDETERMINISM_ERROR as u32,
     )?;
     m.add(
         "VERBOSITY_QUIET",

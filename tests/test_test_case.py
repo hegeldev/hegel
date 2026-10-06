@@ -157,7 +157,6 @@ def test_child_and_clone_handles():
         clone = tc._clone()
         clone._set_worker(0)
         b = clone.draw(gs.just("b"))
-        assert tc._is_nondeterministic is False
         assert repr(tc) == "TestCase()"
         raise ValueError(a + b)
 

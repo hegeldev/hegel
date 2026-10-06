@@ -11,7 +11,6 @@ from hegel.pretty import (
     Speculation,
     pretty_print,
     pretty_repr,
-    register_pretty_printer,
 )
 
 
@@ -27,39 +26,27 @@ class Point:
 
 
 class Custom:
-    def __hegel_pretty__(self, printer: PrettyPrinter) -> None:
-        printer.text("<custom>")
+    def __repr__(self) -> str:
+        return "<custom>"
 
 
-class Registered:
-    pass
-
-
-def test_pretty_repr_of_builtins():
-    assert pretty_repr([1, 2, 3]) == "[1, 2, 3]"
-    assert pretty_repr((1,)) == "(1,)"
-    assert pretty_repr((1, 2)) == "(1, 2)"
-    assert pretty_repr(set()) == "set()"
-    assert pretty_repr({3, 1, 2}) == "{1, 2, 3}"
-    assert pretty_repr({1, "a"}) in ("{1, 'a'}", "{'a', 1}")
-    assert pretty_repr(frozenset()) == "frozenset()"
-    assert pretty_repr(frozenset([2, 1])) == "frozenset({1, 2})"
-    assert pretty_repr({"a": [1], "b": None}) == "{'a': [1], 'b': None}"
-    assert pretty_repr("text\nwith newline") == "'text\\nwith newline'"
-    assert pretty_repr(Colour.red) == "Colour.red"
-    assert pretty_repr(Point(1, 2, 3)) == "Point(x=1, y=2)"
-    assert pretty_repr(Custom()) == "<custom>"
-    assert pretty_repr(Point) == repr(Point)
-
-
-def test_registered_printer_is_exact_type():
-    register_pretty_printer(Registered, lambda value, printer: printer.text("REG"))
-
-    class Sub(Registered):
-        pass
-
-    assert pretty_repr(Registered()) == "REG"
-    assert pretty_repr(Sub()) == repr(Sub()) or "Sub" in pretty_repr(Sub())
+def test_pretty_repr_is_repr_when_it_fits():
+    for value in (
+        [1, 2, 3],
+        (1,),
+        (1, 2),
+        set(),
+        {3, 1, 2},
+        frozenset(),
+        frozenset([2, 1]),
+        {"a": [1], "b": None},
+        "text\nwith newline",
+        Colour.red,
+        Point(1, 2, 3),
+        Custom(),
+        Point,
+    ):
+        assert pretty_repr(value) == repr(value)
 
 
 def test_wrapping_at_width():
@@ -72,10 +59,30 @@ def test_wrapping_at_width():
     assert pretty_repr(list(range(5)), max_width=DEFAULT_MAX_WIDTH) == "[0, 1, 2, 3, 4]"
 
 
+def test_wrapping_follows_repr_structure():
+    value = {"point": Point(1, 2), "items": list(range(30)), "tags": {"a", "b"}}
+    rendered = pretty_repr(value, max_width=40)
+    assert all(len(line) <= 40 for line in rendered.splitlines())
+    assert eval(rendered, {"Point": Point}) == value
+    assert "Point(x=1, y=2)" in rendered
+
+
+def test_reflow_of_unparseable_text_is_verbatim():
+    class Odd:
+        def __repr__(self) -> str:
+            return "<(unbalanced [brackets>"
+
+    assert pretty_repr(Odd()) == "<(unbalanced [brackets>"
+    document = Document(20)
+    document.printer.reflow("two\nlines")
+    assert document.finish() == "two\nlines"
+
+
 def test_noop_printer_accepts_everything():
     printer = PrettyPrinter.noop()
     assert not printer.should_print
     printer.text("a\nb")
+    printer.reflow("[1]")
     printer.breakable()
     printer.if_break(",")
     printer.hard_break()

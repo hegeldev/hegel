@@ -62,10 +62,6 @@ FLAGS = st.sets(st.sampled_from([re.ASCII, re.IGNORECASE, re.MULTILINE, re.DOTAL
 # Dropped test_conservative_regex_are_correct_by_construction: base_regex_strategy is internal
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="hegel engine issues: NUL in a pattern is lost, and non-ASCII case folds under (?a)",
-)
 @given(st.data())
 def test_fuzz_stuff(data):
     pattern = data.draw(
@@ -108,10 +104,6 @@ assert I_WITH_DOT.swapcase() == "i\u0307"  # note: string of length two!
 assert re.compile(I_WITH_DOT, flags=re.IGNORECASE).match(I_WITH_DOT.swapcase())
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="hegel from_regex builds non-matching strings for case-insensitive negated sets",
-)
 @given(st.data())
 def test_case_insensitive_not_literal_never_constructs_multichar_match(data):
     # So our goal is to confirm that we can never accidentally create a non-matching

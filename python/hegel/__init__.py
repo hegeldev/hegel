@@ -36,7 +36,14 @@ from hegel.runner import (
     run,
     test,
 )
-from hegel.settings import Backend, HealthCheck, Phase, Settings, Verbosity
+from hegel.settings import (
+    Backend,
+    HealthCheck,
+    NondeterminismStrictness,
+    Phase,
+    Settings,
+    Verbosity,
+)
 from hegel.stateful import (
     ConcurrentPool,
     Machine,
@@ -67,6 +74,7 @@ __all__ = [
     "InvalidArgument",
     "Machine",
     "MultipleFailures",
+    "NondeterminismStrictness",
     "Phase",
     "Pool",
     "PrettyPrinter",

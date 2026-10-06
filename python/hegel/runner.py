@@ -11,11 +11,10 @@ import threading
 import traceback
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from typing import Any, NoReturn, TypeVar
+from typing import Any, TypeVar
 
 from hegel import _native
 from hegel.errors import (
-    FLAKY_DIAGNOSTIC,
     AssumeFailed,
     DidNotReproduce,
     FailedHealthCheck,
@@ -116,16 +115,24 @@ def _format_exception(exception: BaseException) -> str:
 def _run_test_case(
     handle: _native.TestCase,
     test_fn: Callable[[TestCase], Any],
-    is_final: bool,
     verbosity: Verbosity,
     output: RunOutput,
     case_sink: OutputSink | None,
 ) -> _CaseOutcome:
+    """Run one engine-scheduled test case to completion.
+
+    The engine stamps the cases a failure report can be built from (the
+    final replay of each failure it is about to report, confirmation
+    replays, and generation cases under nondeterministic handling); a
+    stamped case emits its draws and notes and, if it fails, carries its
+    rendered traceback for the deferred report. Other cases run silently
+    unless the run is verbose.
+    """
     verbose = verbosity in (Verbosity.verbose, Verbosity.debug)
     quiet = verbosity is Verbosity.quiet
-    capture_at_discovery = not is_final and handle.is_nondeterministic()
-    should_emit = ((is_final or capture_at_discovery) and not quiet) or verbose
-    tc = TestCase(handle, should_emit, case_sink or output.resolved_sink(), is_final=is_final)
+    stamped = handle.should_capture()
+    should_emit = (stamped and not quiet) or verbose
+    tc = TestCase(handle, should_emit, case_sink or output.resolved_sink(), is_final=stamped)
     outcome = _CaseOutcome(_native.STATUS_VALID, None, None, None)
     try:
         test_fn(tc)
@@ -145,9 +152,9 @@ def _run_test_case(
         outcome.status = _native.STATUS_INTERESTING
         outcome.origin = f"{type(exception).__qualname__} at {_user_location(exception)}"
         outcome.exception = exception
-        if (is_final or capture_at_discovery) and not quiet:
+        if stamped and not quiet:
             outcome.diagnostic = _format_exception(exception)
-            if verbose and capture_at_discovery:
+            if verbose:
                 output.block(outcome.diagnostic)
         elif verbose:
             output.block(_format_exception(exception))
@@ -193,14 +200,38 @@ def _reproducer_line(settings: Settings, blob: str | None) -> str | None:
     )
 
 
-def _annotate(exception: BaseException, lines: list[str], reproducer: str | None) -> None:
+def _annotate(
+    exception: BaseException, lines: list[str], caveat: str | None, reproducer: str | None
+) -> None:
     notes = []
     if lines:
         notes.append("Falsifying example:\n" + "\n".join(lines))
+    if caveat is not None:
+        notes.append(caveat)
     if reproducer is not None:
         notes.append(reproducer.strip("\n"))
     for note in notes:
         exception.add_note(note)
+
+
+@dataclass
+class _Captured:
+    """One origin's failure report material, captured as the case ran:
+    its buffered draw and note lines (empty under quiet verbosity), its
+    rendered traceback (only for a stamped case), and the exception to
+    re-raise. Captures are ranked so that an unstamped shrink probe's bare
+    capture cannot replace a stamped one, while at equal rank the newest
+    wins: final replay over confirmation over discovery."""
+
+    lines: list[str]
+    diagnostic: str | None
+    exception: BaseException
+
+    @property
+    def rank(self) -> int:
+        if self.diagnostic is not None:
+            return 2
+        return 1 if self.lines else 0
 
 
 def _drive(
@@ -209,13 +240,55 @@ def _drive(
     database_key: str | None,
     test_location: TestLocation | None,
 ) -> None:
-    verbosity = settings.verbosity
-    quiet = verbosity is Verbosity.quiet
-    verbose = verbosity in (Verbosity.verbose, Verbosity.debug)
     output = RunOutput.resolve()
     native_settings = settings._build(database_key, test_location)
     run = _native.Run.start(native_settings)
-    stash: tuple[list[str], str | None, BaseException] | None = None
+    _drive_run(run, test_fn, settings, output, None)
+
+
+def _drive_blob_replay(
+    test_fn: Callable[[TestCase], Any],
+    settings: Settings,
+    database_key: str | None,
+    test_location: TestLocation | None,
+    blob: str,
+) -> None:
+    """Replay a reproduce blob: the engine replays it until a replay fails,
+    under a bounded budget, and a run with no failures means the blob did
+    not reproduce."""
+    output = RunOutput.resolve()
+    native_settings = settings._build(database_key, test_location)
+    run = _native.Run.start_blob(native_settings, blob)
+    _drive_run(
+        run,
+        test_fn,
+        settings,
+        output,
+        "reproduce_failure: the supplied failure blob did not reproduce a failure. "
+        "The failure may have been fixed, or, for a nondeterministic blob, it may not "
+        "have recurred within the replay budget (a bug failing 10% of the time escapes "
+        "it about 5% of the time). Re-run to retry, or remove the decorator once the "
+        "failure is fixed.",
+    )
+
+
+def _drive_run(
+    run: _native.Run,
+    test_fn: Callable[[TestCase], Any],
+    settings: Settings,
+    output: RunOutput,
+    stale_message: str | None,
+) -> None:
+    """Pull every test case off ``run``, capturing report material per
+    failure origin, then act on the verdict. The engine owns the whole
+    exploration, the final replay of each reported failure included, so
+    the report is assembled from the freshest stamped capture of each
+    origin. A passing run returns, unless ``stale_message`` is set (a blob
+    replay), where a pass means the blob did not reproduce."""
+    verbosity = settings.verbosity
+    quiet = verbosity is Verbosity.quiet
+    verbose = verbosity in (Verbosity.verbose, Verbosity.debug)
+    captured: dict[str, _Captured] = {}
 
     def flush() -> None:
         output.lines(run.drain_output())
@@ -234,118 +307,61 @@ def _drive(
                     output.line(line)
                 buffer.append(line)
 
-        outcome = _run_test_case(handle, test_fn, False, verbosity, output, case_sink)
+        outcome = _run_test_case(handle, test_fn, verbosity, output, case_sink)
         flush()
         if outcome.status == _native.STATUS_INTERESTING and outcome.exception is not None:
-            stash = (buffer, outcome.diagnostic, outcome.exception)
+            report = _Captured(buffer, outcome.diagnostic, outcome.exception)
+            origin = outcome.origin or ""
+            stored = captured.get(origin)
+            if stored is None or report.rank >= stored.rank:
+                captured[origin] = report
 
     result = run.result()
     flush()
     status = result.status()
     if status == _native.RUN_STATUS_PASSED:
+        if stale_message is not None:
+            raise DidNotReproduce(stale_message)
         return
     if status == _native.RUN_STATUS_ERROR:
         message = result.error() or "the run failed with an unknown error"
         if message.startswith("FailedHealthCheck:"):
             raise FailedHealthCheck(message)
-        if message.startswith("Flaky test detected"):
+        if message.startswith(("Flaky test detected", "Your data generation is non-deterministic")):
             raise Flaky(message)
         if message.startswith("Unsatisfiable"):
             raise Unsatisfiable(message)
         raise RunError(message)
-    if status == _native.RUN_STATUS_FAILED_NONDETERMINISTIC:
-        if stash is None:
-            raise InternalError("a failed nondeterministic run has no stashed failure")
-        stashed_lines, diagnostic, exception = stash
-        output.lines(stashed_lines)
-        if diagnostic is not None:
-            output.block(diagnostic)
-        _annotate(exception, stashed_lines, None)
-        raise exception
     count = result.failure_count()
     multiple = count > 1
     if multiple and not quiet:
         output.line(f"Property-based test failed with {count} distinct failures.")
-    replay_settings = settings._build(database_key, None)
     exceptions: list[BaseException] = []
     for index in range(count):
         if multiple and not quiet:
             output.line("")
-        origin, blob = result.failure(index)
-        if blob is None:
-            raise InternalError(f"failure {index} has no reproduction blob")
-        lines: list[str] = []
-        case_output = RunOutput(output.sink)
-        collecting = _Collecting(output, lines)
-        outcome = _replay_blob(replay_settings, blob, test_fn, verbosity, case_output, collecting)
-        if outcome.status != _native.STATUS_INTERESTING or outcome.exception is None:
-            raise Flaky(f"{FLAKY_DIAGNOSTIC}\nThe failure that did not reproduce was: {origin}")
-        if outcome.diagnostic is not None:
-            output.block(outcome.diagnostic)
+        origin, blob, caveat = result.failure(index)
+        if origin not in captured:
+            raise InternalError(f"failure {index} ({origin}) was never seen by the test")
+        report = captured.pop(origin)
+        output.lines(report.lines)
+        if report.diagnostic is not None:
+            output.block(report.diagnostic)
+        if quiet:
+            caveat = None
+        elif caveat is not None:
+            output.line(f"note: {caveat}")
         reproducer = _reproducer_line(settings, blob)
         if reproducer is not None:
             output.block(reproducer + "\n")
-        _annotate(outcome.exception, lines, reproducer)
-        exceptions.append(outcome.exception)
+        _annotate(report.exception, report.lines, caveat, reproducer)
+        exceptions.append(report.exception)
     if multiple:
         raise MultipleFailures(
             f"Property-based test failed with {count} distinct failures.",
             exceptions,  # type: ignore[arg-type]
         )
     raise exceptions[0]
-
-
-class _Collecting:
-    """An output sink that both forwards lines and keeps them."""
-
-    __slots__ = ("lines", "output")
-
-    def __init__(self, output: RunOutput, lines: list[str]) -> None:
-        self.output = output
-        self.lines = lines
-
-    def __call__(self, line: str) -> None:
-        self.lines.append(line)
-        self.output.line(line)
-
-
-def _replay_blob(
-    native_settings: _native.Settings,
-    blob: str,
-    test_fn: Callable[[TestCase], Any],
-    verbosity: Verbosity,
-    output: RunOutput,
-    case_sink: OutputSink | None,
-) -> _CaseOutcome:
-    handle = _native.TestCase.from_blob(native_settings, blob)
-    output.lines(handle.drain_output())
-    outcome = _run_test_case(handle, test_fn, True, verbosity, output, case_sink)
-    output.lines(handle.drain_output())
-    return outcome
-
-
-def _drive_blob_replay(
-    test_fn: Callable[[TestCase], Any],
-    settings: Settings,
-    database_key: str | None,
-    test_location: TestLocation | None,
-    blob: str,
-) -> NoReturn:
-    output = RunOutput.resolve()
-    native_settings = settings._build(database_key, test_location)
-    lines: list[str] = []
-    outcome = _replay_blob(
-        native_settings, blob, test_fn, settings.verbosity, output, _Collecting(output, lines)
-    )
-    if outcome.diagnostic is not None:
-        output.block(outcome.diagnostic)
-    if outcome.status == _native.STATUS_INTERESTING and outcome.exception is not None:
-        _annotate(outcome.exception, lines, None)
-        raise outcome.exception
-    raise DidNotReproduce(
-        "reproduce_failure: the supplied failure blob no longer reproduces a failure. "
-        "The failure may have been fixed, or the blob is stale."
-    )
 
 
 def _run_explicit(
@@ -363,7 +379,7 @@ def _run_explicit(
         output.line(f"Explicit test case {case!r} failed:")
         output.lines(explicit.lines)
         output.block(_format_exception(exception))
-        _annotate(exception, explicit.lines, None)
+        _annotate(exception, explicit.lines, None, None)
         raise
     explicit.check_consumed()
 

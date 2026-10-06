@@ -25,8 +25,12 @@ along the way.
 - Concurrent stateful testing: `max_concurrency > 1` runs rules from several
   threads in engine-scheduled rounds, with per-worker output attribution.
 - `tc.repeat(body)`: engine-sized repetition of a block of a test.
-- Nondeterministic-run handling: a run that is nondeterministic (a concurrent
-  machine, say) reports the failure as discovered instead of replaying it.
+- Nondeterministic-run handling: when a test's behaviour changes under
+  replay (a concurrent machine, say), the engine confirms each failure by
+  repeated replay and reports it with a caveat describing how reliably it
+  reproduced. `nondeterminism_strictness` makes that silent (the default), a
+  one-line notice, or a `Flaky` error; the compat layer uses `error` to keep
+  Hypothesis's semantics.
 - Statistics for every run (`show_statistics`), including `event_value`
   numeric observations.
 - The `urandom` backend for workload-style runs.

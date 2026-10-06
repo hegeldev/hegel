@@ -347,7 +347,6 @@ def test_concurrent_machine_finds_race(output):
     assert "Round 1: group" in text
     assert "[worker " in text
     assert "Invariant non_negative failed:" in text
-    assert any("nondeterministic" in line for line in output.lines)
 
 
 def test_concurrent_machine_passes_when_safe():
