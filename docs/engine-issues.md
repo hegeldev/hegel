@@ -41,6 +41,14 @@ than worked around in the bindings, so they can be fixed in the engine.
 - Bounded integers are drawn with a heavy weight on huge values:
   `integers(0, 10**100)` produced values above `10**25` about two thirds of
   the time (`tests/hypothesis_port/nocover/test_integer_ranges.py`).
+- A run whose first twenty or so test cases are all rejected ends quietly as
+  passed: with `test_cases=1000` and every health check suppressed, a test
+  that draws a value and rejects all but one of seven equally likely values
+  stops after about twenty rejections roughly 4% of the time, with no
+  `Unsatisfiable` (which is only raised when the test draws no data) and no
+  failed health check. A test whose assumptions always fail therefore passes.
+  (Seen as an intermittent failure of `find_example` in
+  `tests/test_generators_combinators.py::test_sampled_from`.)
 - Identical inputs are generated repeatedly; there is no duplicate suppression
   (`tests/hypothesis_port/nocover/test_duplication.py`).
 - No widening of `one_of` branches. For `integers() | sampled_from([4991,

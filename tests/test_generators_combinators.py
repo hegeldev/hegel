@@ -58,10 +58,13 @@ def test_sampled_from():
     check_all(gs.sampled_from(range(3)), lambda v: v in range(3))
     check_all(gs.sampled_from(Colour), lambda v: isinstance(v, Colour))
     check_all(gs.sampled_from(Perm), lambda v: isinstance(v, Perm) and v.value != 0)
-    assert (
-        find_example(gs.sampled_from(Perm), lambda p: p == Perm.read | Perm.write)
-        == Perm.read | Perm.write
-    )
+    combinations = set()
+
+    def collect(tc):
+        combinations.add(tc.draw(gs.sampled_from(Perm)))
+
+    run_test(collect, test_cases=200)
+    assert combinations == {Perm(bits) for bits in range(1, 8)}
     assert repr(gs.sampled_from((1, 2))) == "sampled_from([1, 2])"
     assert find_example(gs.sampled_from([3, 2, 1])) == 3
     with pytest.raises(hegel.InvalidArgument):
