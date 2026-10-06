@@ -182,7 +182,7 @@ def test_explicit_test_case_errors():
     @hegel.explicit_test_case(y=1)
     @hegel.test
     def missing(tc):
-        x = tc.draw(gs.integers())
+        x = tc.draw(gs.integers())  # noqa: F841
 
     with pytest.raises(hegel.InvalidArgument, match="has no value for draw 'x'"):
         missing()
@@ -223,7 +223,7 @@ def test_explicit_test_case_errors():
     @hegel.explicit_test_case(1)
     @hegel.test
     def done(tc):
-        x = tc.draw(gs.integers())
+        x = tc.draw(gs.integers())  # noqa: F841
         raise hegel.errors.LoopDone()
 
     done()
@@ -400,7 +400,7 @@ def test_keyboard_interrupt_propagates():
 
 def test_invalid_argument_in_test_propagates_with_output(output):
     def body(tc):
-        x = tc.draw(gs.integers())
+        x = tc.draw(gs.integers())  # noqa: F841
         raise hegel.InvalidArgument("bad")
 
     failing(body, hegel.InvalidArgument)
