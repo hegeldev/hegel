@@ -920,6 +920,15 @@ class _Data(Generator[DataObject]):
     def do_draw(self, tc: TestCase) -> DataObject:
         return DataObject(_root(tc))
 
+    def map(self, pack: Any) -> Any:
+        raise InvalidArgument("Cannot map a data() strategy; draw a value and transform it instead")
+
+    def filter(self, condition: Any) -> Any:
+        raise InvalidArgument("Cannot filter a data() strategy; use assume() in the test instead")
+
+    def flatmap(self, expand: Any) -> Any:
+        raise InvalidArgument("Cannot flatmap a data() strategy; draw a value and use it instead")
+
     def do_draw_and_print(self, tc: TestCase, printer: Any) -> DataObject:
         printer.text("data(...)")
         return DataObject(_root(tc))
