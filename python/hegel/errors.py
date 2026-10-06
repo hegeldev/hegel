@@ -8,7 +8,6 @@ from hegel._native import (
     HegelError,
     InternalError,
     InvalidArgument,
-    RetrySignal,
     StopTest,
 )
 
@@ -21,10 +20,8 @@ __all__ = [
     "HegelError",
     "InternalError",
     "InvalidArgument",
-    "LoopDone",
     "MultipleFailures",
     "ResolutionFailed",
-    "RetrySignal",
     "RunError",
     "StopTest",
     "Unsatisfiable",

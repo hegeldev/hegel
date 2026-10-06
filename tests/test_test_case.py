@@ -57,7 +57,7 @@ def test_nested_draws_are_silent():
 def test_draw_silent_and_generate_alias():
     def body(tc):
         a = tc.draw_silent(gs.integers(0, 3))
-        b = gs.integers(0, 3).generate(tc)
+        b = tc.draw_silent(gs.integers(0, 3))
         assert 0 <= a <= 3 and 0 <= b <= 3
         raise KeyError
 
@@ -151,13 +151,13 @@ def test_repeat_can_run_zero_times():
 
 def test_child_and_clone_handles():
     def body(tc):
-        child = tc.child(4)
+        child = tc._child(4)
         a = child.draw(gs.just("a"))
         child.note("inside")
-        clone = tc.clone()
+        clone = tc._clone()
         clone._set_worker(0)
         b = clone.draw(gs.just("b"))
-        assert tc.is_nondeterministic is False
+        assert tc._is_nondeterministic is False
         assert repr(tc) == "TestCase()"
         raise ValueError(a + b)
 
@@ -170,21 +170,21 @@ def test_child_and_clone_handles():
 
 def test_span_bookkeeping():
     def body(tc):
-        assert tc.open_span_depth == 0
+        assert tc._open_span_depth == 0
         tc.start_span(7)
-        assert tc.open_span_depth == 1
+        assert tc._open_span_depth == 1
         tc.stop_span()
         with pytest.raises(InternalError):
             tc.stop_span()
         tc.start_span(1)
         tc.start_span(2)
         tc._reset_open_spans_to(0)
-        assert tc.open_span_depth == 0
+        assert tc._open_span_depth == 0
         with pytest.raises(InternalError):
             tc._reset_open_spans_to(5)
         with pytest.raises(OverflowError):
             tc.start_span(-1)
-        assert tc.open_span_depth == 0
+        assert tc._open_span_depth == 0
 
     run_test(body, test_cases=1)
 
@@ -277,7 +277,7 @@ def test_draw_and_print_runs_inside_span():
         printer = tc._with_printer()
         value = tc.draw_and_print(gs.just([1, 2]), printer)
         assert value == [1, 2]
-        assert tc.open_span_depth == 0
+        assert tc._open_span_depth == 0
         raise ValueError
 
     error = failing(body, ValueError, test_cases=1)

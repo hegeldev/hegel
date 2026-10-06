@@ -33,7 +33,6 @@ from hegel.settings import Phase, Settings, TestLocation, Verbosity
 from hegel.test_case import OutputSink, TestCase
 
 __all__ = [
-    "RunOutput",
     "explicit_test_case",
     "reproduce_failure",
     "run",

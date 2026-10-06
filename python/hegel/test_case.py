@@ -72,7 +72,7 @@ class TestCase:
 
     Test bodies receive an instance; they never construct one. Each
     instance owns a libhegel handle and may be driven by one thread at a
-    time. For another thread, :meth:`clone` a handle with an independent
+    time. For another thread, :meth:`_clone` a handle with an independent
     choice stream.
     """
 
@@ -259,13 +259,13 @@ class TestCase:
 
     # -- handles and output ----------------------------------------------
 
-    def child(self, extra_indent: int = 2) -> TestCase:
+    def _child(self, extra_indent: int = 2) -> TestCase:
         """An instance for an indented section of this one's output (a
         stateful rule body, say): it draws from the same choice stream, and
         every line it prints is nested ``extra_indent`` columns further in."""
         return TestCase._derive(self, self._handle.block(extra_indent))
 
-    def clone(self) -> TestCase:
+    def _clone(self) -> TestCase:
         """A handle with an independent choice stream, for another thread."""
         return TestCase._derive(self, self._handle.clone())
 
@@ -306,7 +306,7 @@ class TestCase:
             self._global.sink(line)
 
     @property
-    def is_nondeterministic(self) -> bool:
+    def _is_nondeterministic(self) -> bool:
         return self._handle.is_nondeterministic()
 
     @property
@@ -337,7 +337,7 @@ class TestCase:
         self._handle.stop_span(discard)
 
     @property
-    def open_span_depth(self) -> int:
+    def _open_span_depth(self) -> int:
         return self._span_depth
 
     def _reset_open_spans_to(self, depth: int) -> None:

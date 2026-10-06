@@ -24,8 +24,6 @@ if TYPE_CHECKING:
     from hegel.test_case import TestCase
 
 __all__ = [
-    "ANONYMOUS_GROUP",
-    "DEFAULT_STEP_COUNT",
     "ConcurrentPool",
     "Invariant",
     "Machine",
@@ -208,7 +206,7 @@ def _check_invariants(
     for index, inv in enumerate(invariants):
         if machine is not None and not machine.should_check_invariant(tc._handle, index):
             continue
-        inv_tc = tc.child(2) if print_steps else tc
+        inv_tc = tc._child(2) if print_steps else tc
         try:
             inv.apply(inv_tc)
         except BaseException as exception:
@@ -252,7 +250,7 @@ def _run_sequential(
                 )
             current = rules[rule_index]
             note(f"Step {steps_attempted + 1}: {current.name} {{")
-            rule_tc = tc.child(2) if print_steps else tc
+            rule_tc = tc._child(2) if print_steps else tc
             steps_attempted += 1
             try:
                 current.apply(rule_tc)
@@ -260,7 +258,7 @@ def _run_sequential(
                 machine.rule_rejected(tc._handle, 0)
                 round_rejected = True
                 if print_steps:
-                    tc.child(2).note("Rule stopped early due to violated assumption.")
+                    tc._child(2).note("Rule stopped early due to violated assumption.")
                 note("}")
             except BaseException as exception:
                 note("}")
@@ -313,7 +311,7 @@ def _worker_round(worker: int, tc: TestCase, rules: list[Rule], machine: NativeM
             return _Event("done")
         current = rules[rule_index]
         tc.note(f"Rule: {current.name} {{")
-        rule_tc = tc.child(2)
+        rule_tc = tc._child(2)
         try:
             current.apply(rule_tc)
         except BaseException as exception:
@@ -324,7 +322,7 @@ def _worker_round(worker: int, tc: TestCase, rules: list[Rule], machine: NativeM
                 except BaseException as rejected:  # nocov - the engine abandoned the case
                     tc.note("}")
                     return _classify(rejected)
-                tc.child(2).note("Rule stopped early due to violated assumption.")
+                tc._child(2).note("Rule stopped early due to violated assumption.")
                 tc.note("}")
                 continue
             tc.note("}")
@@ -450,7 +448,7 @@ def _run_concurrent(
             name = group_names[group]
             tc.note(f"---------------- Round {round_number}: group {name!r} ----------------")
             for worker, rounds in enumerate(round_queues):
-                worker_tc = tc.clone()
+                worker_tc = tc._clone()
                 worker_tc._set_worker(worker)
                 rounds.put(worker_tc)
             events: list[_Event] = []

@@ -7,6 +7,7 @@ import pytest
 
 import hegel
 from hegel.generators.combinators import as_generator
+from hegel.runner import with_output_override
 
 
 def run_test(fn: Callable[..., Any], **settings: Any) -> None:
@@ -45,7 +46,7 @@ def find_example(generator: Any, condition: Callable[[Any], bool] | None = None)
         raise _Found()
 
     try:
-        with hegel.with_output_override(lambda line: None):
+        with with_output_override(lambda line: None):
             hegel.run(
                 body,
                 hegel.Settings(

@@ -24,6 +24,7 @@ __all__ = [
     "Speculation",
     "pretty_print",
     "pretty_repr",
+    "register_pretty_printer",
 ]
 
 DEFAULT_MAX_WIDTH = 79

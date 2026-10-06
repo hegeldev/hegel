@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 import hegel
-from hegel import errors
+from hegel import _native, errors
 from hegel.explicit import NO_HANDLE, ExplicitCase, ExplicitTestCase
 from hegel.test_case import TestCase
 
@@ -63,7 +63,7 @@ def test_error_hierarchy():
     assert issubclass(errors.BackendError, errors.HegelError)
     assert issubclass(errors.InternalError, errors.HegelError)
     assert issubclass(errors.HegelError, Exception)
-    for control in (errors.StopTest, errors.AssumeFailed, errors.RetrySignal, errors.LoopDone):
+    for control in (errors.StopTest, errors.AssumeFailed, _native.RetrySignal, errors.LoopDone):
         assert issubclass(control, BaseException) and not issubclass(control, Exception)
     group = errors.MultipleFailures("two", [ValueError(), KeyError()])
     assert isinstance(group, ExceptionGroup)

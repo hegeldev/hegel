@@ -35,9 +35,8 @@ from hegel.runner import (
     reproduce_failure,
     run,
     test,
-    with_output_override,
 )
-from hegel.settings import Backend, HealthCheck, Phase, Settings, TestLocation, Verbosity
+from hegel.settings import Backend, HealthCheck, Phase, Settings, Verbosity
 from hegel.stateful import (
     ConcurrentPool,
     Machine,
@@ -76,7 +75,6 @@ __all__ = [
     "StateMachine",
     "StopTest",
     "TestCase",
-    "TestLocation",
     "Verbosity",
     "composite",
     "engine_version",
@@ -92,7 +90,6 @@ __all__ = [
     "state_machine_test",
     "test",
     "Unsatisfiable",
-    "with_output_override",
 ]
 
 

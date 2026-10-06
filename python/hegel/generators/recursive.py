@@ -7,7 +7,8 @@ import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, TypeVar
 
-from hegel.errors import InvalidArgument, RetrySignal
+from hegel._native import RetrySignal
+from hegel.errors import InvalidArgument
 from hegel.generators.base import NOOP_PRINTER, Generator, combine_labels, label_from_name
 from hegel.generators.combinators import as_generator
 from hegel.pretty import PrettyPrinter
@@ -82,7 +83,7 @@ class Recursive(Generator[T]):
         self.label = combine_labels([RECURSIVE_LABEL, leaf.label])
 
     def _draw(self, tc: TestCase, printer: PrettyPrinter) -> T:
-        base_depth = tc.open_span_depth
+        base_depth = tc._open_span_depth
         recursion = tc._handle.new_recursion(self.max_depth, self.max_leaves)
         while True:
             root = _Subtree(self, recursion, 0)
@@ -198,7 +199,7 @@ class Deferred(Generator[T]):
             in_progress.discard(id(self))
 
     def _check_depth(self, tc: TestCase) -> None:
-        if tc.open_span_depth > MAX_DEFERRED_DEPTH:
+        if tc._open_span_depth > MAX_DEFERRED_DEPTH:
             tc.reject()
 
     def do_draw(self, tc: TestCase) -> T:

@@ -94,7 +94,7 @@ def test_recursive_retry_on_too_many_leaves_within_other_draws():
     def body(tc):
         outer = tc.draw(gs.tuples(gs.integers(), wide))
         assert leaves(outer[1]) <= 4
-        assert tc.open_span_depth == 0
+        assert tc._open_span_depth == 0
 
     run_test(body, test_cases=200)
 
