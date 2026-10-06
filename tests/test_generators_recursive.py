@@ -161,3 +161,25 @@ def test_recursive_branches_can_draw_subtrees_silently():
     check_all(nested, lambda v: isinstance(v, (int, tuple)), test_cases=100)
     wrapped = gs.recursive(gs.integers(), lambda c: c.map(lambda v: [v]))
     check_all(wrapped, lambda v: isinstance(v, (int, list)), test_cases=100)
+
+
+def test_emptiness_of_recursive_and_deferred_definitions():
+    assert gs.recursive(gs.nothing(), gs.lists).is_empty
+    assert not gs.recursive(gs.integers(), gs.lists).is_empty
+    bad = Deferred(lambda: gs.one_of(bad, bad))
+    assert bad.is_empty
+    good = Deferred(lambda: gs.one_of(gs.integers(), good))
+    assert not good.is_empty
+    assert not gs.one_of(gs.integers(), gs.nothing()).is_empty
+    assert gs.one_of(gs.nothing(), gs.nothing()).is_empty
+    assert gs.sampled_from([1]).is_empty is False
+
+
+def test_deferred_self_reference_without_a_way_out_is_rejected():
+    hidden = Deferred(lambda: gs.none().flat_map(lambda _: hidden))
+
+    def body(tc):
+        tc.draw(hidden)
+
+    with pytest.raises(hegel.errors.Unsatisfiable):
+        run_test(body, test_cases=20)

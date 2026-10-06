@@ -24,6 +24,12 @@ DEFAULT_MAX_DEPTH = 32
 DEFAULT_MAX_LEAVES = 100
 RECURSIVE_LABEL = label_from_name("hegel.recursive")
 DEFERRED_LABEL = label_from_name("hegel.deferred")
+# A deferred definition drawn more deeply nested than this (a definition
+# that always refers back to itself) rejects the test case instead of
+# recursing until Python gives up.
+# Below the test case's own span-depth limit, so a definition that only
+# refers back to itself is rejected as an assumption rather than overrunning.
+MAX_DEFERRED_DEPTH = 64
 
 
 class _Subtree(Generator[T]):
@@ -105,6 +111,10 @@ class Recursive(Generator[T]):
     def __repr__(self) -> str:
         return f"recursive({self.leaf!r}, {getattr(self.branch, '__name__', self.branch)!r})"
 
+    @property
+    def is_empty(self) -> bool:
+        return self.leaf.is_empty
+
 
 def recursive(
     leaf: Generator[T],
@@ -172,10 +182,31 @@ class Deferred(Generator[T]):
     def label(self, value: int) -> None:  # nocov
         self._label = value
 
+    @property
+    def is_empty(self) -> bool:
+        """Whether the definition can never produce a value. A definition
+        that reaches itself while this is computed is taken to be empty on
+        that path, so only self-references with another way out count."""
+        in_progress: set[int] = getattr(_calculating, "empty", None) or set()
+        _calculating.empty = in_progress
+        if id(self) in in_progress:
+            return True
+        in_progress.add(id(self))
+        try:
+            return self._get().is_empty
+        finally:
+            in_progress.discard(id(self))
+
+    def _check_depth(self, tc: TestCase) -> None:
+        if tc.open_span_depth > MAX_DEFERRED_DEPTH:
+            tc.reject()
+
     def do_draw(self, tc: TestCase) -> T:
+        self._check_depth(tc)
         return self._get().do_draw(tc)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> T:
+        self._check_depth(tc)
         return self._get().do_draw_and_print(tc, printer)
 
     @reprlib.recursive_repr(fillvalue="...")

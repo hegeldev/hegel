@@ -56,4 +56,10 @@ __all__ = [
 
 def register_random(r: object) -> None:
     """Accepted for compatibility: Hegel does not manage the state of
-    random number generators, so this does nothing."""
+    random number generators, so this only validates its argument."""
+    from hegel.hypothesis.errors import InvalidArgument
+
+    if not (hasattr(r, "seed") and hasattr(r, "getstate") and hasattr(r, "setstate")):
+        raise InvalidArgument(
+            f"r={r!r} does not have all the required methods: 'seed', 'getstate', 'setstate'"
+        )

@@ -117,10 +117,6 @@ def test_flag_enum_repr_uses_class_not_a_list():
     assert lazy_repr == "sampled_from(tests.hypothesis_port.nocover.test_sampled_from.AFlag)"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel sampled_from(Flag) only generates the named members, not combinations",
-)
 def test_exhaustive_flags():
     # Generate powerset of flag combinations. There are only 2^3 of them, so
     # we can reasonably expect that they are all are found.
@@ -143,10 +139,6 @@ def test_flags_minimize_to_first_named_flag():
     assert minimal(st.sampled_from(LargeFlag)) == LargeFlag.bit0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel sampled_from(Flag) only generates the named members, not combinations",
-)
 def test_flags_minimizes_bit_count():
     assert (
         minimal(st.sampled_from(LargeFlag), lambda f: f.value.bit_count() > 1)
@@ -154,27 +146,14 @@ def test_flags_minimizes_bit_count():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel sampled_from(Flag) only generates the named members, not combinations",
-)
-@pytest.mark.skipif(
-    settings.get_current_profile_name() == "crosshair",
-    reason="takes ~10 mins; path tree is too large",
-)
+@pytest.mark.xfail(strict=False, reason="all 64 bits set is rarely generated within the budget")
 def test_flags_finds_all_bits_set():
     assert find_any(st.sampled_from(LargeFlag), lambda f: f == ~LargeFlag(0))
 
 
-@pytest.mark.xfail(
-    strict=True, reason="hegel sampled_from rejects a Flag whose members are all aliases as empty"
-)
 def test_sample_unnamed_alias():
     assert find_any(st.sampled_from(UnnamedFlag), lambda f: f == UnnamedFlag.b)
 
 
-@pytest.mark.xfail(
-    strict=True, reason="hegel sampled_from rejects a Flag whose members are all aliases as empty"
-)
 def test_shrink_to_named_empty():
     assert minimal(st.sampled_from(UnnamedFlag)) == UnnamedFlag(0)

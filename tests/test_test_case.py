@@ -288,3 +288,14 @@ def test_assume_failed_is_base_exception():
     assert issubclass(AssumeFailed, BaseException)
     assert not issubclass(AssumeFailed, Exception)
     assert isinstance(TestCase.__test__, bool)
+
+
+def test_draws_nested_too_deep_abandon_the_case():
+    from hegel.test_case import MAX_DRAW_DEPTH
+
+    def body(tc):
+        for _ in range(MAX_DRAW_DEPTH + 1):
+            tc.start_span(1)
+
+    with pytest.raises(hegel.errors.FailedHealthCheck):
+        run_test(body, test_cases=10)

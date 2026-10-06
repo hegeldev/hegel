@@ -19,8 +19,9 @@ import warnings
 from collections.abc import Callable, Hashable
 from typing import Any, TypeVar
 
-from hegel.errors import Flaky, RunError
+from hegel.errors import Flaky, RunError, StopTest
 from hegel.explicit import ExplicitCase
+from hegel.generators.combinators import Nothing
 from hegel.hypothesis._settings import HealthCheck, Phase, Verbosity, local_settings
 from hegel.hypothesis._settings import settings as Settings
 from hegel.hypothesis.control import BuildContext, currently_in_test_context
@@ -370,7 +371,9 @@ def _explicit_cases(
 
 
 def _is_empty(strategy: Any) -> bool:
-    return isinstance(strategy, SearchStrategy) and strategy.is_empty
+    # Only ``nothing()`` itself counts, as in Hypothesis: asking a lazy
+    # strategy whether it is empty would validate it at decoration time.
+    return isinstance(strategy, Nothing)
 
 
 class _XfailPassed(AssertionError):
@@ -732,7 +735,11 @@ def _executor(runner: Any) -> Callable[[Callable[[], Any]], Any]:
                 teardown(token)
 
         return execute
-    return lambda function: function()
+    return _call
+
+
+def _call(function: Callable[[], Any]) -> Any:
+    return function()
 
 
 def _run_given(
@@ -747,6 +754,15 @@ def _run_given(
 ) -> None:
     deadline = test_settings.deadline.total_seconds() if test_settings.deadline else None
     check_return = HealthCheck.return_value not in test_settings.suppress_health_check
+    # Strategies validate when the test runs, as in Hypothesis.
+    empty = [
+        f"{name}={strategy!r}"
+        for name, strategy in given_kwargs.items()
+        if isinstance(strategy, SearchStrategy) and strategy.is_empty
+    ]
+    if empty:
+        strats = "strategies" if len(empty) > 1 else "strategy"
+        raise Unsatisfiable(f"Cannot generate test cases from empty {strats}: " + ", ".join(empty))
     current_example: list[tuple[Example, ExplicitCase] | None] = [None]
     print_args = getattr(wrapped_test, "_hypothesis_internal_print_given_args", True)
     executed = [False]
@@ -782,6 +798,9 @@ def _run_given(
             except UnsatisfiedAssumption as error:
                 outcomes.record(error)
                 tc.reject()
+            except StopTest:
+                # The engine abandoned the case (it overran); not a valid run.
+                raise
             except BaseException as error:
                 valid[0] = True
                 if ex is not None and case is not None and ex.xfail:
@@ -918,6 +937,13 @@ def _run_given(
         if isinstance(error, Flaky):
             raise _flaky_failure(error, inner.__name__, outcomes, timing, deadline) from error
         if isinstance(error, FailedHealthCheck):
+            if "LargeInitialTestCase" in str(error) and not valid[0]:
+                # Every input was rejected before it could even be built (a
+                # strategy that only refers back to itself, say).
+                raise Unsatisfiable(
+                    f"Unable to satisfy assumptions of {inner.__name__}: no input could "
+                    "be generated"
+                ) from error
             raise
         if str(error).startswith("Unsatisfiable"):
             raise Unsatisfiable(str(error)) from None

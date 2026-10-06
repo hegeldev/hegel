@@ -13,10 +13,6 @@ import pytest
 from hegel.hypothesis import given, strategies as st
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel complex_numbers() does not round magnitudes to the component width (issue 3573)",
-)
 @pytest.mark.parametrize("width", [32, 64, 128])
 @pytest.mark.parametrize("keyword", ["min_magnitude", "max_magnitude"])
 @given(data=st.data())

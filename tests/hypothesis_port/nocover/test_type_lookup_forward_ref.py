@@ -82,7 +82,6 @@ def test_mutually_recursive_types_with_typevar_alternate(data):
     data.draw(st.from_type(D))
 
 
-@pytest.mark.xfail(strict=True, reason="hegel from_type does not resolve ForwardRef annotations")
 def test_forward_ref_to_undefined_still_fails():
     # Forward references to undefined names should still fail
     A = _Dict[bool, "UndefinedType"]  # noqa: F821

@@ -19,6 +19,8 @@ from hegel.hypothesis.errors import HypothesisDeprecationWarning
 from hegel.hypothesis.reporting import default, with_reporter
 from hegel.hypothesis.strategies import register_type_strategy
 
+from tests.hypothesis_port.common.compat import next_down
+
 time_sleep = time.sleep
 
 skipif_emscripten = mark.skipif(
@@ -197,6 +199,10 @@ def raises_warning(expected_warning, match=None):
         warnings.simplefilter("error", expected_warning)
         with pytest.raises(expected_warning, match=match):
             yield
+
+
+# Some Python builds flush subnormal floats to zero.
+PYTHON_FTZ = next_down(sys.float_info.min) == 0.0
 
 
 class Why(enum.Enum):

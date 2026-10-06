@@ -93,6 +93,10 @@ class SampledFrom(Generator[T]):
         finds it."""
         return FilteredSample(self, [predicate])
 
+    @property
+    def is_empty(self) -> bool:
+        return not self.elements
+
     def __repr__(self) -> str:
         return f"sampled_from({list(self.elements)!r})"
 
@@ -166,10 +170,12 @@ class Lists_of_flags(Generator[Any]):
         self.label = combine_labels([SAMPLED_FROM_LABEL, label_from_name("hegel.flags")])
 
     def do_draw(self, tc: TestCase) -> Any:
-        index = tc.generate_integer(0, len(self.members) - 1)
-        result = self.members[index]
-        for member in self.members:
-            if tc.generate_boolean(0.3):
+        # One bit per member, so every non-empty combination is reachable
+        # and the smallest value is the first member alone.
+        mask = tc.generate_integer(1, (1 << len(self.members)) - 1)
+        result = self.cls(0)
+        for index, member in enumerate(self.members):
+            if mask >> index & 1:
                 result |= member
         return result
 
@@ -177,7 +183,17 @@ class Lists_of_flags(Generator[Any]):
 class OneOf(Generator[Any]):
     def __init__(self, generators: list[Generator[Any]]) -> None:
         self.generators = generators
-        self.label = combine_labels([ONE_OF_LABEL, combine_labels(g.label for g in generators)])
+        self._label: int | None = None
+
+    @property
+    def label(self) -> int:  # type: ignore[override]
+        # Computed on first use so that ``a | b`` never forces lazily
+        # validated operands at definition time.
+        if self._label is None:
+            self._label = combine_labels(
+                [ONE_OF_LABEL, combine_labels(g.label for g in self.generators)]
+            )
+        return self._label
 
     def _draw(self, tc: TestCase, printer: PrettyPrinter | None) -> Any:
         index = tc.generate_integer(0, len(self.generators) - 1)
@@ -190,6 +206,10 @@ class OneOf(Generator[Any]):
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> Any:
         return self._draw(tc, printer)
+
+    @property
+    def is_empty(self) -> bool:
+        return all(g.is_empty for g in self.generators)
 
     def __repr__(self) -> str:
         return "one_of(" + ", ".join(repr(g) for g in self.generators) + ")"

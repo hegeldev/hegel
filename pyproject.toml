@@ -52,6 +52,9 @@ xfail_strict = true
 line-length = 100
 target-version = "py311"
 
+[tool.ruff.per-file-target-version]
+"tests/hypothesis_port/cover/test_typealias_py312.py" = "py312"
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "W"]
 ignore = ["E741", "B008", "B023", "B904", "UP007", "UP045"]

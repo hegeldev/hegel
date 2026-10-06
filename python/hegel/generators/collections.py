@@ -112,6 +112,10 @@ class Lists(Generator[list[T]]):
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> list[T]:
         return self._draw(tc, printer)
 
+    @property
+    def is_empty(self) -> bool:
+        return self.min_size > 0 and self.elements.is_empty
+
     def __repr__(self) -> str:
         return f"lists({self.elements!r}, min_size={self.min_size}, max_size={self.max_size})"
 
@@ -187,6 +191,10 @@ class Sets(Generator[Any]):
     def __repr__(self) -> str:
         name = "frozensets" if self.frozen else "sets"
         return f"{name}({self.elements!r}, min_size={self.min_size}, max_size={self.max_size})"
+
+    @property
+    def is_empty(self) -> bool:
+        return self.min_size > 0 and self.elements.is_empty
 
 
 def sets(
@@ -278,6 +286,10 @@ class Dicts(Generator[dict[Any, Any]]):
             f"min_size={self.min_size}, max_size={self.max_size})"
         )
 
+    @property
+    def is_empty(self) -> bool:
+        return self.min_size > 0 and (self.keys.is_empty or self.values.is_empty)
+
 
 def dicts(
     keys: Generator[Any],
@@ -337,6 +349,10 @@ class FixedDicts(Generator[dict[Any, Any]]):
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> dict[Any, Any]:
         return self._draw(tc, printer)
 
+    @property
+    def is_empty(self) -> bool:
+        return any(g.is_empty for g in self.mapping.values())
+
 
 def fixed_dicts(
     mapping: dict[Any, Generator[Any]], *, optional: dict[Any, Generator[Any]] | None = None
@@ -377,6 +393,10 @@ class Tuples(Generator[tuple[Any, ...]]):
 
     def __repr__(self) -> str:
         return "tuples(" + ", ".join(repr(g) for g in self.generators) + ")"
+
+    @property
+    def is_empty(self) -> bool:
+        return any(g.is_empty for g in self.generators)
 
 
 def tuples(*generators: Generator[Any]) -> Generator[tuple[Any, ...]]:

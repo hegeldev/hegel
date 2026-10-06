@@ -18,6 +18,17 @@ than worked around in the bindings, so they can be fixed in the engine.
   bindings pass with `(?a)` since bytes `\w` and case folding are ASCII-only
   in Python. `tests/hypothesis_port/nocover/test_regex.py::test_fuzz_stuff`
   is a non-strict xfail for this reason.
+- **The ASCII flag excludes explicit non-ASCII characters.** Under `re.ASCII`
+  Python still matches literal characters and ranges outside ASCII, so
+  `(?a)[Ï-İ]` and `(?a)[^\u0000-\u00ff]` have matches; the engine finds no
+  string for them. `test_ascii_flag_does_not_restrict_characters_or_ranges` in
+  `tests/hypothesis_port/cover/test_regex.py` is xfailed.
+- **Repetitions of an unproducible subpattern are rejected, not skipped.**
+  For `(?-i:Ā)*k` with an alphabet of code points up to 127, the engine keeps
+  choosing one or more repetitions of `Ā`, which the alphabet cannot supply,
+  and rejects the attempt; about a third of runs then trip `FilterTooMuch`
+  instead of producing `k`. `test_inline_flags_do_not_leak_out_of_an_incompatible_subpattern`
+  is a non-strict xfail.
 - **Case-insensitive negated sets** sometimes produce strings that do not
   match (`tests/hypothesis_port/cover/test_regex.py`, non-strict xfail from
   the port).

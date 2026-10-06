@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import abc
 import collections
 import collections.abc
 import dataclasses
@@ -191,3 +192,161 @@ def test_builds_infers_annotated_arguments():
 
     with pytest.raises(hegel.InvalidArgument, match="could not be resolved"):
         infer_missing_arguments(BadHints, 0, {})
+
+
+def test_from_type_networks_and_interfaces():
+    check_all(gs.from_type(ipaddress.IPv4Network), lambda v: isinstance(v, ipaddress.IPv4Network))
+    check_all(gs.from_type(ipaddress.IPv6Network), lambda v: isinstance(v, ipaddress.IPv6Network))
+    check_all(
+        gs.from_type(ipaddress.IPv4Interface), lambda v: isinstance(v, ipaddress.IPv4Interface)
+    )
+    check_all(
+        gs.from_type(ipaddress.IPv6Interface), lambda v: isinstance(v, ipaddress.IPv6Interface)
+    )
+
+
+class Node:
+    def __init__(self, child: Node | None = None):
+        self.child = child
+
+
+def test_from_type_resolves_self_referential_optional_arguments():
+    check_all(gs.from_type(Node), lambda v: isinstance(v, Node))
+    assert hegel.find_example(gs.from_type(Node), lambda n: True).child is None
+    assert hegel.find_example(gs.from_type(Node), lambda n: n.child is not None).child.child is None
+
+
+BoundToNode = typing.TypeVar("BoundToNode", bound="Node")
+
+
+def test_from_type_resolves_forward_references():
+    check_all(gs.from_type(typing.ForwardRef("int")), lambda v: isinstance(v, int))
+    check_all(gs.from_type(BoundToNode), lambda v: isinstance(v, Node))
+    with pytest.raises(hegel.errors.ResolutionFailed, match="Could not resolve"):
+        gs.from_type(typing.ForwardRef("NoSuchThing"))
+    with pytest.raises(hegel.errors.ResolutionFailed, match="string annotations"):
+        gs.from_type("int")
+    with pytest.raises(hegel.errors.ResolutionFailed, match="not a type"):
+        gs.from_type(42)
+    gs.register_type_generator(typing.ForwardRef("Registered"), gs.just("registered"))
+    try:
+        check_all(gs.from_type(typing.ForwardRef("Registered")), lambda v: v == "registered")
+    finally:
+        del gs.from_type.__globals__["_registry"][typing.ForwardRef("Registered")]
+
+
+@pytest.mark.skipif(not hasattr(typing, "TypeAliasType"), reason="PEP 695 needs Python 3.12")
+def test_from_type_resolves_type_aliases():
+    alias = typing.TypeAliasType("alias", int)  # type: ignore[attr-defined]
+    check_all(gs.from_type(alias), lambda v: isinstance(v, int))
+    T = typing.TypeVar("T")
+    generic = typing.TypeAliasType("generic", list[T], type_params=(T,))  # type: ignore[attr-defined]
+    check_all(gs.from_type(generic[int]), lambda v: all(isinstance(x, int) for x in v))
+    gs.register_type_generator(generic, lambda t: gs.just(typing.get_args(t)))
+    try:
+        check_all(gs.from_type(generic[str]), lambda v: v == (str,))
+    finally:
+        del gs.from_type.__globals__["_registry"][generic]
+    unparametrised = typing.TypeAliasType("plain", list[int], type_params=(T,))  # type: ignore[attr-defined]
+    check_all(gs.from_type(unparametrised[str]), lambda v: isinstance(v, list))
+
+
+class Shape:
+    def __init__(self, sides: int):
+        self.sides = sides
+
+
+class Square(Shape):
+    pass
+
+
+class Abstract(abc.ABC):
+    @abc.abstractmethod
+    def method(self): ...
+
+
+class Concrete(Abstract):
+    def __init__(self, x: int):
+        self.x = x
+
+    def method(self):
+        return self.x
+
+
+class Unbuildable(Abstract):
+    def __init__(self, x):
+        self.x = x
+
+    def method(self):
+        return self.x
+
+
+class Lonely(abc.ABC):
+    @abc.abstractmethod
+    def method(self): ...
+
+
+def test_from_type_prefers_registered_subclasses_and_resolves_abstract_classes():
+    gs.register_type_generator(Square, gs.just(Square(4)))
+    try:
+        check_all(gs.from_type(Shape), lambda v: isinstance(v, Square))
+    finally:
+        del gs.from_type.__globals__["_registry"][Square]
+    check_all(gs.from_type(Abstract), lambda v: isinstance(v, Concrete))
+    with pytest.raises(hegel.errors.ResolutionFailed, match="no subclasses"):
+        gs.from_type(Lonely)
+
+    class OnlyUnbuildable(abc.ABC):
+        @abc.abstractmethod
+        def method(self): ...
+
+    class Sub(OnlyUnbuildable):
+        def __init__(self, x):
+            self.x = x
+
+        def method(self):
+            return self.x
+
+    with pytest.raises(hegel.errors.ResolutionFailed, match="no subclass can be resolved"):
+        gs.from_type(OnlyUnbuildable)
+
+
+def test_registered_generators_are_checked():
+    gs.register_type_generator(Shape, lambda t: "not a generator")
+    try:
+        with pytest.raises(hegel.errors.ResolutionFailed, match="not a generator"):
+            gs.from_type(Shape)
+    finally:
+        del gs.from_type.__globals__["_registry"][Shape]
+    gs.register_type_generator(Shape, gs.nothing())
+    try:
+        with pytest.raises(hegel.errors.ResolutionFailed, match="is empty"):
+            gs.from_type(Shape)
+    finally:
+        del gs.from_type.__globals__["_registry"][Shape]
+
+
+class HasMethod(typing.Protocol):
+    def method(self) -> int: ...
+
+
+def test_registered_protocols_do_not_break_subclass_checks():
+    # issubclass() against a non-runtime protocol raises TypeError.
+    gs.register_type_generator(HasMethod, gs.just(Concrete(1)))
+    gs.register_type_generator(Square, gs.just(Square(4)))
+    try:
+        check_all(gs.from_type(Shape), lambda v: isinstance(v, Square))
+    finally:
+        del gs.from_type.__globals__["_registry"][HasMethod]
+        del gs.from_type.__globals__["_registry"][Square]
+
+
+BoundToRegistered = typing.TypeVar("BoundToRegistered", bound="RegisteredName")  # noqa: F821
+
+
+def test_type_variables_bound_to_registered_forward_references():
+    gs.register_type_generator(typing.ForwardRef("RegisteredName"), gs.just("registered"))
+    try:
+        check_all(gs.from_type(BoundToRegistered), lambda v: v == "registered")
+    finally:
+        del gs.from_type.__globals__["_registry"][typing.ForwardRef("RegisteredName")]

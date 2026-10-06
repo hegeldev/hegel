@@ -23,11 +23,16 @@ __all__ = [
     "InvalidArgument",
     "LoopDone",
     "MultipleFailures",
+    "ResolutionFailed",
     "RetrySignal",
     "RunError",
     "StopTest",
     "Unsatisfiable",
 ]
+
+
+class ResolutionFailed(InvalidArgument):
+    """``from_type`` could not find a generator for a type."""
 
 
 class LoopDone(BaseException):

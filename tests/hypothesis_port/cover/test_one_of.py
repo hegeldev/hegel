@@ -57,7 +57,13 @@ def test_one_of_without_strategies_suggests_sampled_from():
         ((st.integers() | st.integers()) | st.integers(), 1),
         (st.integers() | (st.integers() | st.integers()), 1),
         (st.integers() | st.text() | st.booleans(), 1),
-        (st.from_type(int | Sequence[int]), 2),
+        pytest.param(
+            st.from_type(int | Sequence[int]),
+            2,
+            marks=pytest.mark.xfail(
+                strict=True, reason="Hegel's from_type(Sequence) is not a one_of of lists"
+            ),
+        ),
     ],
 )
 def test_one_of_unwrapping(strategy, count):

@@ -133,6 +133,8 @@ def _validate_bool(name: str, value: Any) -> bool:
 def _validate_enum(enum: type[Enum], value: Any, name: str) -> Any:
     if isinstance(value, enum):
         return value
+    if isinstance(value, str) and value in enum.__members__:
+        return enum.__members__[value]
     try:
         if isinstance(value, str):
             return enum[value]
