@@ -42,7 +42,7 @@ class _Global:
 
     def __init__(self, emit: bool, sink: OutputSink | None, explicit: Any) -> None:
         self.emit = emit
-        self.sink = sink if emit else _discard
+        self.sink: OutputSink = sink if (emit and sink is not None) else _discard
         self.explicit = explicit
 
 

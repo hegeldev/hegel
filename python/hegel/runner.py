@@ -235,12 +235,12 @@ def _drive(
     if status == _native.RUN_STATUS_FAILED_NONDETERMINISTIC:
         if stash is None:
             raise InternalError("a failed nondeterministic run has no stashed failure")
-        lines, diagnostic, exception = stash
-        for line in lines:
+        stashed_lines, diagnostic, exception = stash
+        for line in stashed_lines:
             output.line(line)
         if diagnostic is not None:
             output.block(diagnostic)
-        _annotate(exception, lines, None)
+        _annotate(exception, stashed_lines, None)
         raise exception
     count = result.failure_count()
     multiple = count > 1
@@ -269,7 +269,8 @@ def _drive(
         exceptions.append(outcome.exception)
     if multiple:
         raise MultipleFailures(
-            f"Property-based test failed with {count} distinct failures.", exceptions
+            f"Property-based test failed with {count} distinct failures.",
+            exceptions,  # type: ignore[arg-type]
         )
     raise exceptions[0]
 

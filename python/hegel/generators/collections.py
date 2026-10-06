@@ -126,7 +126,7 @@ def lists(
     min_size, max_size = _check_sizes(min_size, max_size)
     if unique and unique_by is not None:
         raise InvalidArgument("Cannot pass both unique and unique_by")
-    keys = None
+    keys: tuple[Callable[[Any], Hashable], ...] | None = None
     if unique:
         keys = (_identity,)
     elif unique_by is not None:
@@ -152,7 +152,7 @@ class Sets(Generator[Any]):
         open_, close = ("frozenset({", "})") if self.frozen else ("{", "}")
         printer.begin_group(len(open_), open_)
         collection = Collection(tc, self.min_size, self.max_size)
-        result: set[T] = set()
+        result: set[Any] = set()
         while collection.more():
             with printer.speculate() as speculation:
                 if result:

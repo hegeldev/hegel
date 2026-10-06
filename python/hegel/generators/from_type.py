@@ -30,7 +30,7 @@ from hegel.generators.collections import (
 )
 from hegel.generators.combinators import just, none, one_of, sampled_from
 from hegel.generators.numeric import booleans, floats, integers
-from hegel.generators.strings import binary, characters, ip_addresses, text, uuids
+from hegel.generators.strings import binary, ip_addresses, text, uuids
 from hegel.generators.time import dates, datetimes, timedeltas, times
 
 __all__ = ["from_type", "register_type_generator"]
@@ -110,8 +110,10 @@ def _generic(origin: Any, args: tuple[Any, ...]) -> Generator[Any] | None:
     ):
         keys = from_type(args[0]) if args else integers()
         values = from_type(args[1]) if len(args) > 1 else integers()
-        result = dicts(keys, values)
-        return result.map(collections.OrderedDict) if origin is collections.OrderedDict else result
+        mapping = dicts(keys, values)
+        if origin is collections.OrderedDict:
+            return mapping.map(collections.OrderedDict)
+        return mapping
     if origin in (collections.abc.Iterable, collections.abc.Iterator, collections.abc.Collection):
         return iterables(from_type(args[0]) if args else integers())
     if origin is tuple:
@@ -170,12 +172,6 @@ def from_type(type_: Any) -> Generator[Any]:
         return sampled_from(type_)
     if issubclass(type_, bool):
         return booleans()
-    for base, factory in _BUILTINS.items():
-        if isinstance(base, type) and base is not object and issubclass(type_, base):
-            if type_ is base:
-                return factory()
-    if type_ is characters:  # nocov
-        return characters()
     if dataclasses.is_dataclass(type_):
         from hegel.generators.composite import builds
 

@@ -313,9 +313,10 @@ def from_regex(regex: Any, *, fullmatch: bool = False, alphabet: Any = None) -> 
     pattern = getattr(regex, "pattern", regex)
     if isinstance(pattern, bytes):
         pattern = pattern.decode("latin-1")
-        return Regex(pattern, bool(fullmatch), alphabet or characters(max_codepoint=255)).map(
-            lambda s: s.encode("latin-1")
+        latin: Generator[Any] = Regex(
+            pattern, bool(fullmatch), alphabet or characters(max_codepoint=255)
         )
+        return latin.map(lambda s: s.encode("latin-1"))
     if not isinstance(pattern, str):
         raise InvalidArgument(f"regex={regex!r} must be a string or compiled pattern")
     return Regex(pattern, bool(fullmatch), alphabet)

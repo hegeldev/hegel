@@ -414,12 +414,12 @@ def _run_concurrent(
     threads: list[threading.Thread] = []
     for worker in range(concurrency):
         rounds: queue.Queue[TestCase | None] = queue.Queue()
-        events: queue.Queue[_Event] = queue.Queue()
+        outcomes: queue.Queue[_Event] = queue.Queue()
         round_queues.append(rounds)
-        event_queues.append(events)
+        event_queues.append(outcomes)
         thread = threading.Thread(
             target=_worker_loop,
-            args=(worker, rules, machine, rounds, events),
+            args=(worker, rules, machine, rounds, outcomes),
             name=f"hegel-worker-{worker}",
             daemon=True,
         )
@@ -437,7 +437,7 @@ def _run_concurrent(
                 worker_tc = tc.clone()
                 worker_tc._set_worker(worker)
                 rounds.put(worker_tc)
-            events = []
+            events: list[_Event] = []
             for worker, event_queue in enumerate(event_queues):
                 if not threads[worker].is_alive() and event_queue.empty():  # nocov
                     events.append(_Event("died"))
@@ -601,10 +601,10 @@ def _instantiate(cls: type[StateMachine], tc: TestCase) -> StateMachine:
     import inspect
 
     try:
-        parameters = inspect.signature(cls).parameters
+        takes_tc = bool(inspect.signature(cls).parameters)
     except (TypeError, ValueError):  # nocov
-        parameters = {}
-    if parameters:
+        takes_tc = False
+    if takes_tc:
         return cls(tc)  # type: ignore[call-arg]
     return cls()
 
