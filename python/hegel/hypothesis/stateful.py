@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Generic, TypeVar
 
 from hegel import generators as gs
+from hegel.generators.combinators import OneOf
 from hegel.hypothesis._settings import HealthCheck
 from hegel.hypothesis._settings import settings as Settings
 from hegel.hypothesis.control import BuildContext, current_build_context, currently_in_test_context
