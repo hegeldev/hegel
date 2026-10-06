@@ -581,3 +581,34 @@ def test_explicit_test_case_below_test_decorator():
     assert [c.args for c in test_it.hegel_explicit_cases] == [(1,), (2,)]
     test_it()
     assert seen[:2] == [1, 2]
+
+
+def test_skip_exceptions_end_the_run_without_shrinking():
+    import unittest
+
+    calls = []
+
+    def body(tc):
+        calls.append(tc.draw(gs.integers(0, 100)))
+        raise unittest.SkipTest("not today")
+
+    with pytest.raises(unittest.SkipTest):
+        hegel.run(body, test_cases=50, database="")
+    assert len(calls) == 1
+
+    def pytest_skip(tc):
+        tc.draw(gs.integers())
+        pytest.skip("nor tomorrow")
+
+    with pytest.raises(pytest.skip.Exception):
+        hegel.run(pytest_skip, test_cases=50, database="")
+
+
+def test_skip_exceptions_without_pytest(monkeypatch):
+    import unittest
+
+    from hegel.runner import _skip_exceptions
+
+    assert pytest.skip.Exception in _skip_exceptions()
+    monkeypatch.delitem(sys.modules, "_pytest.outcomes")
+    assert _skip_exceptions() == (unittest.SkipTest,)

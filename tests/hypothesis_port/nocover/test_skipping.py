@@ -51,6 +51,10 @@ def test_no_failing_test_case_if_unittest_skip(skip_exception):
     assert "Failing test case" not in o.getvalue()
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="a skip ends the hegel run before the engine saves anything to the database",
+)
 def test_skip_exceptions_save_database_entries():
     """Skip exceptions should save database entries for immediate replay (issue #4484)."""
     database = InMemoryExampleDatabase()

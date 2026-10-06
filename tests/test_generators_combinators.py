@@ -224,7 +224,7 @@ def test_chained_filters_combine_into_one():
     g = gs.integers(0, 100).filter(lambda x: x % 2 == 0).filter(lambda x: x % 3 == 0)
     assert isinstance(g, Filtered)
     assert not isinstance(g.source, Filtered)
-    assert "<lambda> and <lambda>" == g.predicate.__name__
+    assert repr(g) == "integers(min_value=0, max_value=100).filter(<lambda>).filter(<lambda>)"
     assert hegel.find_example(g, lambda x: x > 0) == 6
 
 

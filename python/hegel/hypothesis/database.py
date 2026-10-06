@@ -27,6 +27,22 @@ class ExampleDatabase:
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"
 
+    @property
+    def data(self) -> dict[bytes, set[bytes]]:
+        """What the engine has stored: each key's directory name (Hegel hashes
+        the key) mapped to the entries saved under it."""
+        result: dict[bytes, set[bytes]] = {}
+        root = Path(self._hegel_path) if self._hegel_path else None
+        if root is None or not root.is_dir():
+            return result
+        for key_dir in root.iterdir():
+            if not key_dir.is_dir():
+                continue
+            values = {p.read_bytes() for p in key_dir.iterdir() if p.is_file()}
+            if values:
+                result[key_dir.name.encode()] = values
+        return result
+
 
 class DirectoryBasedExampleDatabase(ExampleDatabase):
     def __init__(self, path: str | os.PathLike[str]) -> None:

@@ -2,27 +2,22 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import inspect
 import os
 import threading
-from collections.abc import Collection
-from enum import Enum, IntEnum, unique
+from collections.abc import Collection, Iterator
+from enum import Enum, EnumMeta, IntEnum, unique
 from typing import Any
 
 from hegel import settings as hegel_settings
 from hegel.hypothesis.database import DirectoryBasedExampleDatabase, ExampleDatabase
 from hegel.hypothesis.errors import InvalidArgument
+from hegel.hypothesis.utils.conventions import not_set
+from hegel.hypothesis.utils.deprecation import note_deprecation
 
 __all__ = ["HealthCheck", "Phase", "Verbosity", "settings"]
-
-
-class _NotSet:
-    def __repr__(self) -> str:
-        return "not_set"
-
-
-not_set: Any = _NotSet()
 
 
 @unique
@@ -49,8 +44,14 @@ class Phase(IntEnum):
         return f"Phase.{self.name}"
 
 
+class HealthCheckMeta(EnumMeta):
+    def __iter__(self) -> Iterator[HealthCheck]:
+        deprecated = (HealthCheck.return_value, HealthCheck.not_a_test_method)
+        return iter(x for x in super().__iter__() if x not in deprecated)
+
+
 @unique
-class HealthCheck(Enum):
+class HealthCheck(Enum, metaclass=HealthCheckMeta):
     data_too_large = 1
     filter_too_much = 2
     too_slow = 3
@@ -66,6 +67,12 @@ class HealthCheck(Enum):
 
     @classmethod
     def all(cls) -> list[HealthCheck]:
+        note_deprecation(
+            "`HealthCheck.all()` is deprecated; use `list(HealthCheck)` instead.",
+            since="2023-04-16",
+            has_codemod=True,
+            stacklevel=1,
+        )
         return list(cls)
 
 
@@ -126,8 +133,10 @@ def _validate_enum(enum: type[Enum], value: Any, name: str) -> Any:
     if isinstance(value, enum):
         return value
     try:
+        if isinstance(value, str):
+            return enum[value]
         return enum(value)
-    except ValueError:
+    except (ValueError, KeyError):
         raise InvalidArgument(
             f"Invalid {name}={value!r}, must be one of {[v for v in enum]!r}"
         ) from None
@@ -145,7 +154,16 @@ def _validate_health_checks(value: Any) -> tuple[HealthCheck, ...]:
         raise InvalidArgument(
             f"suppress_health_check={value!r} must be a collection of HealthCheck values"
         )
-    return tuple(_validate_enum(HealthCheck, h, "suppress_health_check") for h in value)
+    checks = tuple(_validate_enum(HealthCheck, h, "suppress_health_check") for h in value)
+    for check in checks:
+        if check in (HealthCheck.return_value, HealthCheck.not_a_test_method):
+            note_deprecation(
+                f"The {check.name} health check is deprecated, because this is always an error.",
+                since="2023-03-15",
+                has_codemod=False,
+                stacklevel=2,
+            )
+    return checks
 
 
 def _validate_deadline(value: Any) -> datetime.timedelta | None:
@@ -158,7 +176,10 @@ def _validate_deadline(value: Any) -> datetime.timedelta | None:
     elif isinstance(value, (int, float)):
         if value != value or value in (float("inf"), float("-inf")):
             raise InvalidArgument(f"deadline={value!r} must be finite")
-        delta = datetime.timedelta(milliseconds=value)
+        try:
+            delta = datetime.timedelta(milliseconds=value)
+        except OverflowError:
+            raise InvalidArgument(f"deadline={value!r} is too large to be a timedelta") from None
     else:
         raise InvalidArgument(f"deadline={value!r} (type {type(value).__name__}) is not valid")
     if delta <= datetime.timedelta(0):
@@ -169,18 +190,59 @@ def _validate_deadline(value: Any) -> datetime.timedelta | None:
 def _validate_database(value: Any) -> ExampleDatabase | None:
     if value is None or isinstance(value, ExampleDatabase):
         return value
-    if isinstance(value, (str, os.PathLike)):
-        return DirectoryBasedExampleDatabase(value)
     raise InvalidArgument(
-        f"database={value!r} must be None, an ExampleDatabase, or a directory path"
+        f"Expected None or ExampleDatabase but got database={value!r} "
+        f"(type={type(value).__name__}). Pass DirectoryBasedExampleDatabase(path) "
+        "to use a directory."
     )
+
+
+_local = threading.local()
+
+_CI_VARS: dict[str, str | None] = {
+    "CI": None,  # various, including GitHub Actions, Travis CI, and AppVeyor
+    "__TOX_ENVIRONMENT_VARIABLE_ORIGINAL_CI": None,  # tox under CI
+    "TF_BUILD": "True",  # Azure Pipelines
+}
+
+
+def is_in_ci() -> bool:
+    return any(
+        key in os.environ and (value is None or os.environ[key] == value)
+        for key, value in _CI_VARS.items()
+    )
+
+
+class _DefaultVariable:
+    """The settings object currently loaded as the default (per thread),
+    or None when the current profile has to be looked up again."""
+
+    def __init__(self) -> None:
+        self._data = threading.local()
+
+    @property
+    def value(self) -> settings | None:
+        return getattr(self._data, "value", None)
+
+    @value.setter
+    def value(self, value: settings | None) -> None:
+        self._data.value = value
+
+
+default_variable = _DefaultVariable()
 
 
 class settingsMeta(type):
     @property
     def default(cls) -> settings:
-        current = settings._current_profile
-        return settings._profiles[current]
+        override = getattr(_local, "override", None)
+        if override is not None:
+            return override
+        current = default_variable.value
+        if current is None:
+            current = settings._profiles.get(settings._current_profile)
+            default_variable.value = current
+        return current  # type: ignore[return-value]
 
     def __setattr__(cls, name: str, value: object) -> None:
         if name == "default":
@@ -196,6 +258,12 @@ class settingsMeta(type):
                 "to decorate your test instead."
             )
         super().__setattr__(name, value)
+
+    def __getattr__(cls, name: str) -> Any:
+        # ``settings.max_examples`` etc. read the current default settings.
+        if name in all_settings:
+            return getattr(cls.default, name)
+        raise AttributeError(name)
 
     def __repr__(cls) -> str:
         return "hypothesis.settings"
@@ -214,6 +282,7 @@ class settings(metaclass=settingsMeta):
     _lock = threading.Lock()
 
     __slots__ = (
+        "_fallback",
         "_in_definition",
         "backend",
         "database",
@@ -252,7 +321,8 @@ class settings(metaclass=settingsMeta):
                 "derandomize=True implies database=None, so passing "
                 f"database={database!r} too is invalid."
             )
-        base = parent if parent is not None else settings._profiles.get(settings._current_profile)
+        base = parent if parent is not None else settings.default
+        object.__setattr__(self, "_fallback", base)
 
         def pick(name: str, value: Any, validate: Any) -> Any:
             if value is not_set:
@@ -357,11 +427,29 @@ class settings(metaclass=settingsMeta):
         """Register a named collection of settings, built on ``parent`` (or
         the default profile) with ``kwargs`` overriding."""
         _check_type(str, name, "name")
+        override = getattr(_local, "override", None)
+        if override is not None and override != settings._profiles.get(settings._current_profile):
+            note_deprecation(
+                "Cannot register a settings profile when the current settings differ "
+                "from the current profile (usually due to an @settings decorator). "
+                "Register profiles at module level instead.",
+                since="2025-11-15",
+                has_codemod=False,
+                stacklevel=1,
+            )
         base = parent if parent is not None else settings._profiles.get("default")
-        if base is None:
-            base = settings._profiles.get(settings._current_profile)
         with settings._lock:
-            settings._profiles[name] = settings(base, **kwargs)
+            # Pass the parent straight through when nothing overrides it, so
+            # the registered profile falls back to it directly.
+            settings._profiles[name] = (
+                parent if parent is not None and not kwargs else settings(base, **kwargs)
+            )
+        if settings._current_profile == name:
+            settings.load_profile(name)
+
+    @staticmethod
+    def get_current_profile_name() -> str:
+        return settings._current_profile
 
     @staticmethod
     def get_profile(name: str) -> settings:
@@ -372,17 +460,13 @@ class settings(metaclass=settingsMeta):
             raise InvalidArgument(f"Profile {name!r} is not registered") from None
 
     @staticmethod
-    def get_current_profile_name() -> str:
-        return settings._current_profile
-
-    @staticmethod
     def load_profile(name: str) -> None:
         """Make the named profile the default for tests without their own."""
         _check_type(str, name, "name")
         with settings._lock:
             profile = settings.get_profile(name)
             settings._current_profile = name
-            settings._profiles[name] = profile
+            default_variable.value = profile
 
     # -- mapping to Hegel ---------------------------------------------------
 
@@ -412,6 +496,18 @@ class settings(metaclass=settingsMeta):
             print_blob=self.print_blob,
             backend=backend,
         )
+
+
+@contextlib.contextmanager
+def local_settings(s: settings) -> Iterator[settings]:
+    """Make ``s`` the default settings on this thread for the block (as a
+    running test's settings are)."""
+    previous = getattr(_local, "override", None)
+    _local.override = s
+    try:
+        yield s
+    finally:
+        _local.override = previous
 
 
 def _validate_step_count(value: Any) -> int:
@@ -473,5 +569,5 @@ settings.register_profile(
     print_blob=True,
     suppress_health_check=[HealthCheck.too_slow],
 )
-if os.environ.get("CI") or os.environ.get("TF_BUILD"):  # nocov
+if is_in_ci():  # nocov
     settings.load_profile("ci")

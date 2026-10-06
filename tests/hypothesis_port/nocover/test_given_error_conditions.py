@@ -17,10 +17,6 @@ from hegel.hypothesis.strategies import integers
 from tests.hypothesis_port.common.utils import fails_with
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel passes silently when every example is rejected and health checks are suppressed",
-)
 @fails_with(Unsatisfiable)
 @given(integers())
 @settings(max_examples=50, suppress_health_check=list(HealthCheck))

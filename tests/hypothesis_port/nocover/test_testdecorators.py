@@ -16,10 +16,6 @@ from hegel.hypothesis import HealthCheck, given, reject, settings, strategies as
 from hegel.hypothesis.errors import InvalidArgument, Unsatisfiable
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel passes silently when every example is rejected and health checks are suppressed",
-)
 def test_contains_the_test_function_name_in_the_exception_string():
     look_for_one = settings(max_examples=1, suppress_health_check=list(HealthCheck))
 

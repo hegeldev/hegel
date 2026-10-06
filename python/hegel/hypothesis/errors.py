@@ -3,6 +3,9 @@ describe the same event."""
 
 from __future__ import annotations
 
+from datetime import timedelta
+from typing import Any
+
 from hegel.errors import (
     AssumeFailed,
     DidNotReproduce,
@@ -32,7 +35,6 @@ __all__ = [
     "InvalidArgument",
     "InvalidDefinition",
     "InvalidState",
-    "MultipleFailures",
     "NoSuchExample",
     "NonInteractiveExampleWarning",
     "NonRoundTrippableCharactersWarning",
@@ -78,7 +80,9 @@ class FlakyStrategyDefinition(Flaky):
 
 
 class FlakyFailure(ExceptionGroup, Flaky):  # type: ignore[type-arg]
-    pass
+    def derive(self, excs: Any) -> FlakyFailure:
+        # Keep the type through .split() and .subgroup().
+        return FlakyFailure(self.message, excs)
 
 
 class ResolutionFailed(InvalidArgument):
@@ -124,7 +128,11 @@ class Frozen(HypothesisException):
 class DeadlineExceeded(HypothesisException):
     """A test case took longer than the configured deadline."""
 
-    def __init__(self, runtime: float, deadline: float) -> None:
+    def __init__(self, runtime: float | timedelta, deadline: float | timedelta) -> None:
+        if isinstance(runtime, timedelta):
+            runtime = runtime.total_seconds()
+        if isinstance(deadline, timedelta):
+            deadline = deadline.total_seconds()
         super().__init__(
             f"Test took {runtime * 1000:.2f}ms, which exceeds the deadline of "
             f"{deadline * 1000:.2f}ms"
@@ -145,4 +153,14 @@ class BackendCannotProceed(HypothesisException):
 
 
 # Hypothesis reports several distinct failures as an exception group.
-MultipleFailures = BaseExceptionGroup
+def __getattr__(name: str) -> Any:
+    if name == "MultipleFailures":
+        import warnings
+
+        warnings.warn(
+            "MultipleFailures is deprecated; use `except BaseExceptionGroup` instead",
+            HypothesisDeprecationWarning,
+            stacklevel=2,
+        )
+        return BaseExceptionGroup
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

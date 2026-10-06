@@ -45,7 +45,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-p no:cacheprovider"
+addopts = "-p no:cacheprovider -p pytester"
 xfail_strict = true
 
 [tool.ruff]

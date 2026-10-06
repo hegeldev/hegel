@@ -1,0 +1,150 @@
+# This file is part of Hypothesis, which may be found at
+# https://github.com/HypothesisWorks/hypothesis/
+#
+# Copyright the Hypothesis Authors.
+# Individual contributors are listed in AUTHORS.rst and the git log.
+#
+# This Source Code Form is subject to the terms of the Mozilla Public License,
+# v. 2.0. If a copy of the MPL was not distributed with this file, You can
+# obtain one at https://mozilla.org/MPL/2.0/.
+
+from contextlib import contextmanager, nullcontext
+
+from hegel.hypothesis import example, find, given, note
+from hegel.hypothesis._settings import Verbosity, settings
+from hegel.hypothesis.reporting import default as default_reporter, with_reporter
+from hegel.hypothesis.strategies import booleans, integers, lists
+
+from tests.hypothesis_port.common.debug import minimal
+from tests.hypothesis_port.common.utils import capture_out, fails
+
+# Hegel has no observability hooks to record notes with; nothing to capture.
+capture_observations = nullcontext
+
+
+# Hegel's verbose output announces each example with "Running test case"
+# rather than Hypothesis's "Test case:" lines.
+
+
+@contextmanager
+def capture_verbosity():
+    with capture_out() as o, with_reporter(default_reporter):
+        yield o
+
+
+def test_prints_intermediate_in_success():
+    with capture_verbosity() as o:
+
+        @settings(verbosity=Verbosity.verbose)
+        @given(booleans())
+        def test_works(x):
+            pass
+
+        test_works()
+    assert "Running test case" in o.getvalue()
+
+
+def test_notes_are_not_printed_twice_in_debug_mode():
+    # the engine's debug output must not repeat notes which were already
+    # printed, even when observability has recorded them on the data
+    @settings(verbosity=Verbosity.debug, max_examples=1, database=None)
+    @given(booleans())
+    def test_works(x):
+        note("this is a note")
+
+    with capture_verbosity() as o, capture_observations():
+        test_works()
+    assert o.getvalue().count("this is a note") == 1
+
+
+def test_does_not_log_in_quiet_mode():
+    with capture_verbosity() as o:
+
+        @fails
+        @settings(verbosity=Verbosity.quiet, print_blob=False)
+        @given(integers())
+        def test_foo(x):
+            raise AssertionError
+
+        test_foo()
+    assert not o.getvalue()
+
+
+def test_includes_progress_in_verbose_mode():
+    with capture_verbosity() as o:
+        minimal(
+            lists(integers(), min_size=1),
+            lambda x: sum(x) >= 100,
+            settings(verbosity=Verbosity.verbose),
+        )
+    out = o.getvalue()
+    assert out
+    assert "Running test case" in out
+
+
+def test_prints_initial_attempts_on_find():
+    with capture_verbosity() as o:
+
+        def foo():
+            seen = []
+
+            def not_first(x):
+                if not seen:
+                    seen.append(x)
+                    return False
+                return x not in seen
+
+            find(
+                integers(),
+                not_first,
+                settings=settings(verbosity=Verbosity.verbose, max_examples=1000),
+            )
+
+        foo()
+
+    assert "Running test case" in o.getvalue()
+
+
+def test_includes_intermediate_results_in_verbose_mode():
+    with capture_verbosity() as o:
+
+        @fails
+        @settings(
+            verbosity=Verbosity.verbose,
+            database=None,
+            derandomize=True,
+            max_examples=100,
+        )
+        @given(lists(integers(), min_size=1))
+        def test_foo(x):
+            assert sum(x) < 10000
+
+        test_foo()
+    lines = o.getvalue().splitlines()
+    assert len([l for l in lines if "Running test case" in l]) > 2
+    assert [l for l in lines if "AssertionError" in l]
+
+
+@example(0)
+@settings(verbosity=Verbosity.quiet)
+@given(integers())
+def test_no_indexerror_in_quiet_mode(x):
+    # Regression tests for https://github.com/HypothesisWorks/hypothesis/issues/2696
+    # where quiet mode -> no fragments to report -> IndexError accessing first report
+    pass
+
+
+@fails
+@example(0)
+@settings(verbosity=Verbosity.quiet, report_multiple_bugs=True)
+@given(integers())
+def test_no_indexerror_in_quiet_mode_report_multiple(x):
+    assert x
+
+
+@fails
+@example(0)
+@settings(verbosity=Verbosity.quiet, report_multiple_bugs=False)
+@given(integers())
+def test_no_indexerror_in_quiet_mode_report_one(x):
+    assert x

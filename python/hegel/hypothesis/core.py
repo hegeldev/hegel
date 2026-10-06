@@ -3,21 +3,32 @@ tests on Hegel."""
 
 from __future__ import annotations
 
+import contextlib
 import functools
+import gc
 import hashlib
 import inspect
+import os
+import re
+import threading
 import time
+import types
+import unittest
+import unittest.mock
+import warnings
 from collections.abc import Callable, Hashable
 from typing import Any, TypeVar
 
-from hegel.errors import HegelError
+from hegel.errors import Flaky, RunError
 from hegel.explicit import ExplicitCase
-from hegel.hypothesis._settings import HealthCheck, Phase, Verbosity
+from hegel.hypothesis._settings import HealthCheck, Phase, Verbosity, local_settings
 from hegel.hypothesis._settings import settings as Settings
-from hegel.hypothesis.control import BuildContext
+from hegel.hypothesis.control import BuildContext, currently_in_test_context
 from hegel.hypothesis.errors import (
     DeadlineExceeded,
     FailedHealthCheck,
+    FlakyFailure,
+    HypothesisWarning,
     InvalidArgument,
     NoSuchExample,
     Unsatisfiable,
@@ -29,6 +40,7 @@ from hegel.runner import (
     _database_key_of,
     _location_of,
     _run_explicit,
+    _skip_exceptions,
     with_output_override,
 )
 from hegel.runner import (
@@ -172,14 +184,96 @@ def _seed_to_int(value: Hashable) -> int:
     return int.from_bytes(digest[:8], "little")
 
 
+def _get_signature(test: Any) -> inspect.Signature:
+    """Like inspect.signature, but a function decorated with unittest.mock.patch
+    is treated as ``(*args, **kwargs)``, as Hypothesis does: the mocks are
+    added positionally by the patch wrapper, not by the caller."""
+    patches = getattr(test, "patchings", None)
+    if isinstance(patches, list) and all(isinstance(p, unittest.mock._patch) for p in patches):
+        return inspect.Signature(
+            [
+                inspect.Parameter("args", inspect.Parameter.VAR_POSITIONAL),
+                inspect.Parameter("keywargs", inspect.Parameter.VAR_KEYWORD),
+            ],
+            return_annotation=None,
+        )
+    return inspect.signature(test)
+
+
 def _invalid(message: str, *, exc: type[Exception], test: Any, given_kwargs: Any) -> Any:
     @functools.wraps(test)
     def wrapped_test(*arguments: Any, **kwargs: Any) -> Any:  # nocov
         raise exc(message)
 
+    # Hide the given arguments from test runners so they do not look like
+    # fixtures; the error is raised when the test is called.
+    try:
+        sig = inspect.signature(test)
+        wrapped_test.__signature__ = sig.replace(  # type: ignore[attr-defined]
+            parameters=[p for p in sig.parameters.values() if p.name not in given_kwargs],
+            return_annotation=None,
+        )
+    except (TypeError, ValueError):
+        pass
     wrapped_test.is_hypothesis_test = True  # type: ignore[attr-defined]
     wrapped_test.hypothesis = HypothesisHandle(test, given_kwargs, lambda: wrapped_test)  # type: ignore[attr-defined]
     return wrapped_test
+
+
+_HEGEL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _trim_traceback(tb: types.TracebackType | None) -> types.TracebackType | None:
+    """Drop Hegel's own frames from a traceback, keeping the wrapper's and one
+    more, so the user sees their test; disabled by HYPOTHESIS_NO_TRACEBACK_TRIM."""
+    if tb is None or os.environ.get("HYPOTHESIS_NO_TRACEBACK_TRIM"):
+        return tb
+    entries = []
+    while tb is not None:
+        entries.append(tb)
+        tb = tb.tb_next
+    kept = []
+    internal = 0
+    for entry in entries:
+        filename = os.path.abspath(entry.tb_frame.f_code.co_filename)
+        if filename.startswith(_HEGEL_DIR + os.sep):
+            # The @given wrapper's own frame (the head) plus one more.
+            internal += 1
+            if internal > 2:
+                continue
+        kept.append(entry)
+    trimmed: types.TracebackType | None = None
+    for entry in reversed(kept):
+        trimmed = types.TracebackType(trimmed, entry.tb_frame, entry.tb_lasti, entry.tb_lineno)
+    return trimmed
+
+
+def _normalise_arguments(
+    signature: inspect.Signature, arguments: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """Bind the caller's arguments to the test's signature without its given
+    parameters, passing by keyword where possible so that drawn values can
+    fill the gaps (e.g. ``@given(y=...)`` on ``f(x, y, z)`` called as ``f(1, 2)``)."""
+    bound = signature.bind(*arguments, **kwargs)
+    params = list(signature.parameters.values())
+    has_varargs = any(p.kind is p.VAR_POSITIONAL and bound.arguments.get(p.name) for p in params)
+    positional: list[Any] = []
+    keyword: dict[str, Any] = {}
+    for param in params:
+        if param.name not in bound.arguments:
+            continue
+        value = bound.arguments[param.name]
+        if param.kind is param.VAR_POSITIONAL:
+            positional.extend(value)
+        elif param.kind is param.VAR_KEYWORD:
+            keyword.update(value)
+        elif param.kind is param.POSITIONAL_ONLY or (
+            has_varargs and param.kind is param.POSITIONAL_OR_KEYWORD
+        ):
+            positional.append(value)
+        else:
+            keyword[param.name] = value
+    return tuple(positional), keyword
 
 
 def _is_invalid_test(
@@ -189,13 +283,14 @@ def _is_invalid_test(
     given_kwargs: dict[str, Any],
 ) -> Any:
     from hegel.hypothesis._settings import all_settings
-    from hegel.hypothesis.strategies._base import NOTHING
 
-    invalid = functools.partial(_invalid, exc=InvalidArgument, test=test, given_kwargs=given_kwargs)
-    if not (given_arguments or given_kwargs):
-        return invalid("given must be called with at least one argument")
     params = list(original_sig.parameters.values())
     pos_params = [p for p in params if p.kind is p.POSITIONAL_OR_KEYWORD]
+    # Positional strategies would have filled the positional parameters.
+    hidden = given_kwargs if given_kwargs else {p.name: None for p in pos_params}
+    invalid = functools.partial(_invalid, exc=InvalidArgument, test=test, given_kwargs=hidden)
+    if not (given_arguments or given_kwargs):
+        return invalid("given must be called with at least one argument")
     kwonly_params = [p for p in params if p.kind is p.KEYWORD_ONLY]
     if given_arguments and params != pos_params:
         return invalid(
@@ -229,8 +324,8 @@ def _is_invalid_test(
         )
     if any(p.default is not p.empty for p in params):
         return invalid("Cannot apply @given to a function with defaults.")
-    empty = [f"{s!r} (arg {idx})" for idx, s in enumerate(given_arguments) if s is NOTHING] + [
-        f"{name}={s!r}" for name, s in given_kwargs.items() if s is NOTHING
+    empty = [f"{s!r} (arg {idx})" for idx, s in enumerate(given_arguments) if _is_empty(s)] + [
+        f"{name}={s!r}" for name, s in given_kwargs.items() if _is_empty(s)
     ]
     if empty:
         strats = "strategies" if len(empty) > 1 else "strategy"
@@ -274,19 +369,153 @@ def _explicit_cases(
     return cases
 
 
+def _is_empty(strategy: Any) -> bool:
+    return isinstance(strategy, SearchStrategy) and strategy.is_empty
+
+
 class _XfailPassed(AssertionError):
     pass
 
 
+_gc_state = {"start": 0.0, "total": 0.0}
+
+
+def _gc_callback(phase: str, info: dict[str, Any]) -> None:
+    now = time.perf_counter()
+    if phase == "start":
+        _gc_state["start"] = now
+    else:
+        _gc_state["total"] += now - _gc_state["start"]
+
+
+if hasattr(gc, "callbacks"):  # CPython
+    gc.callbacks.append(_gc_callback)
+
+
+def _gc_cumulative_time() -> float:
+    """Seconds spent in garbage collection so far, excluded from deadlines."""
+    return _gc_state["total"]
+
+
+running_under_pytest = False
+global_force_seed: Hashable | None = None
+
+
+class _Outcomes:
+    """The last outcomes of the test body, for explaining a flaky result."""
+
+    def __init__(self) -> None:
+        self.last_failure: BaseException | None = None
+        self.previous_failure: BaseException | None = None
+        self.last_was_failure = False
+
+    def record(self, error: BaseException | None) -> None:
+        if error is None:
+            self.last_was_failure = False
+            return
+        self.previous_failure = self.last_failure
+        self.last_failure = error
+        self.last_was_failure = True
+
+
+def _flaky_failure(
+    error: Flaky,
+    name: str,
+    outcomes: _Outcomes,
+    timing: list[float | None],
+    deadline: float | None,
+) -> BaseException:
+    """The Flaky error from the engine as Hypothesis's FlakyFailure group
+    around the failure(s) involved, noting deadline timings."""
+    failure = outcomes.last_failure
+    if failure is None:
+        return error
+    if outcomes.last_was_failure and outcomes.previous_failure is not None:
+        previous = outcomes.previous_failure
+        involved = [previous, failure]
+        message = (
+            "Inconsistent results from replaying a failing test case!\n"
+            f"  last: {type(previous).__name__}\n  this: {type(failure).__name__}"
+        )
+    else:
+        involved = [failure]
+        message = (
+            f"Hypothesis {name} produces unreliable results: Failed on the first call "
+            "but did not on a subsequent one"
+        )
+    # An exception group cannot hold BaseExceptions such as Hegel's
+    # UnsatisfiedAssumption; those are described in a note instead.
+    nested = [e for e in involved if isinstance(e, Exception)]
+    if not nested:
+        return error
+    group = FlakyFailure(message, nested)
+    for e in involved:
+        if not isinstance(e, Exception):
+            group.add_note(f"One of the runs raised {type(e).__name__}: {e}")
+    group.add_note(str(error))
+    if isinstance(failure, DeadlineExceeded) and deadline is not None and timing[1] is not None:
+        group.add_note(
+            "Unreliable test timing! On an initial run, this test took "
+            f"{failure.runtime * 1000:.2f}ms, which exceeded the deadline of "
+            f"{deadline * 1000:.2f}ms, but on a subsequent run it took "
+            f"{timing[1] * 1000:.2f}ms, which did not. If you expect this sort of "
+            "variability in your test timings, consider turning deadlines off for "
+            "this test by setting deadline=None."
+        )
+    return group
+
+
+def _fail_health_check(test_settings: Settings, message: str, check: HealthCheck) -> None:
+    """Raise FailedHealthCheck for ``check`` unless the settings suppress it."""
+    __tracebackhide__ = True
+    if check in test_settings.suppress_health_check:
+        return
+    raise FailedHealthCheck(message)
+
+
+_NOT_SEEN = object()
+
+
+@contextlib.contextmanager
+def _fake_subTest(self: Any, msg: Any = None, **__: Any) -> Any:
+    """Replaces unittest's subTest while a @given test runs: per-test-case
+    reporting would otherwise show every failing example as a separate
+    failing test."""
+    warnings.warn(
+        "subTest per-test-case reporting interacts badly with Hypothesis "
+        "trying hundreds of test cases, so we disable it for the duration of "
+        "any test that uses `@given`.",
+        HypothesisWarning,
+        stacklevel=2,
+    )
+    yield
+
+
 def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], TestFunc]:
     """Turn a function taking strategies' values into a Hegel test."""
+    if currently_in_test_context():
+        _fail_health_check(
+            Settings.default,
+            "Nesting @given tests results in quadratic generation and shrinking "
+            "behavior, and can usually be more cleanly expressed by replacing the "
+            "inner function with an st.data() parameter on the outer @given."
+            "\n\n"
+            "If it is difficult or impossible to refactor this test to remove the "
+            "nested @given, you can disable this health check with "
+            "@settings(suppress_health_check=[HealthCheck.nested_given]) on the "
+            "outer @given. See "
+            "https://hypothesis.readthedocs.io/en/latest/reference/api.html"
+            "#hypothesis.HealthCheck "
+            "for details.",
+            HealthCheck.nested_given,
+        )
 
     def run_test_as_given(test: Any) -> Any:
         if inspect.isclass(test):
             raise InvalidArgument("@given cannot be applied to a class")
         given_arguments = tuple(_given_arguments)
         given_kwargs = dict(_given_kwargs)
-        original_sig = inspect.signature(test)
+        original_sig = _get_signature(test)
         if given_arguments == (Ellipsis,) and not given_kwargs:
             given_kwargs = {
                 p.name: Ellipsis
@@ -335,6 +564,8 @@ def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], 
         ordered += [k for k in given_kwargs if k not in ordered]
         given_kwargs = {k: given_kwargs[k] for k in ordered}
 
+        executors_seen = threading.local()
+
         @functools.wraps(test)
         def wrapped_test(*arguments: Any, **kwargs: Any) -> Any:
             __tracebackhide__ = True
@@ -353,13 +584,7 @@ def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], 
             )
             for name, strategy in given_kwargs.items():
                 check_strategy(strategy, name=name)
-            if inspect.iscoroutinefunction(inner):
-                raise InvalidArgument(
-                    "Hypothesis doesn't know how to run async test functions like "
-                    f"{inner.__name__}.  You'll need to write a custom executor, "
-                    "or use a library like pytest-asyncio or pytest-trio which can "
-                    "handle the translation for you."
-                )
+                strategy.validate()
             selfy = None
             posnames = [
                 p.name
@@ -370,18 +595,71 @@ def given(*_given_arguments: Any, **_given_kwargs: Any) -> Callable[[TestFunc], 
                 selfy = kwargs.get(posnames[0], arguments[0] if arguments else None)
             elif arguments:
                 selfy = arguments[0]
+            # A mock passed as the first argument (e.g. by @patch) is not self,
+            # and must not be mistaken for an executor.
+            if hasattr(selfy, "hypothesis_internal_is_this_a_mock_check"):
+                selfy = None
+            # A custom executor (e.g. one that awaits coroutines) may be able
+            # to run an async test; without one we certainly cannot.
+            if inspect.iscoroutinefunction(inner) and not hasattr(selfy, "execute_example"):
+                raise InvalidArgument(
+                    "Hypothesis doesn't know how to run async test functions like "
+                    f"{inner.__name__}.  You'll need to write a custom executor, "
+                    "or use a library like pytest-asyncio or pytest-trio which can "
+                    "handle the translation for you."
+                )
+            if isinstance(selfy, unittest.TestCase) and test.__name__ in dir(unittest.TestCase):
+                _fail_health_check(
+                    test_settings,
+                    f"You have applied @given to the method {test.__name__}, which is "
+                    "used by the unittest runner but is not itself a test. "
+                    "This is not useful in any way.",
+                    HealthCheck.not_a_test_method,
+                )
+            # Check selfy really is self (not e.g. a mock) before health-checking
+            # that the method is always called on the same instance.
+            cur_self = selfy if getattr(type(selfy), test.__name__, None) is wrapped_test else None
+            prev_self = getattr(executors_seen, "prev_self", _NOT_SEEN)
+            if prev_self is _NOT_SEEN:
+                executors_seen.prev_self = cur_self
+            elif cur_self is not prev_self:
+                _fail_health_check(
+                    test_settings,
+                    f"The method {test.__qualname__} was called from multiple "
+                    "different executors. This may lead to flaky tests and "
+                    "nonreproducible errors when replaying from database."
+                    "\n\n"
+                    "Unlike most health checks, HealthCheck.differing_executors "
+                    "warns about a correctness issue with your test. We "
+                    "therefore recommend fixing the underlying issue, rather "
+                    "than suppressing this health check. However, if you are "
+                    "confident this health check can be safely disabled, you can "
+                    "do so with "
+                    "@settings(suppress_health_check=[HealthCheck.differing_executors]). "
+                    "See "
+                    "https://hypothesis.readthedocs.io/en/latest/reference/api.html"
+                    "#hypothesis.HealthCheck "
+                    "for details.",
+                    HealthCheck.differing_executors,
+                )
+            arguments, kwargs = _normalise_arguments(new_signature, arguments, kwargs)
             _check_fixtures(inner, kwargs, test_settings)
             explicit = _explicit_cases(wrapped_test, original_sig, given_kwargs)
-            _run_given(
-                inner,
-                wrapped_test,
-                given_kwargs,
-                arguments,
-                kwargs,
-                selfy,
-                test_settings,
-                explicit,
-            )
+            try:
+                _run_given(
+                    inner,
+                    wrapped_test,
+                    given_kwargs,
+                    arguments,
+                    kwargs,
+                    selfy,
+                    test_settings,
+                    explicit,
+                )
+            except BaseException as error:
+                if test_settings.verbosity < Verbosity.debug:
+                    error.__traceback__ = _trim_traceback(error.__traceback__)
+                raise
 
         wrapped_test.is_hypothesis_test = True  # type: ignore[attr-defined]
         wrapped_test.hypothesis = HypothesisHandle(test, given_kwargs, lambda: wrapped_test)  # type: ignore[attr-defined]
@@ -434,6 +712,29 @@ def _check_fixtures(inner: Any, kwargs: dict[str, Any], test_settings: Settings)
             )
 
 
+def _executor(runner: Any) -> Callable[[Callable[[], Any]], Any]:
+    """How to call the test body: through ``runner.execute_example`` or
+    between ``setup_example`` and ``teardown_example`` when the test's
+    instance defines them, as in Hypothesis."""
+    execute_example = getattr(runner, "execute_example", None)
+    if execute_example is not None:
+        return execute_example
+    if hasattr(runner, "setup_example") or hasattr(runner, "teardown_example"):
+        setup = getattr(runner, "setup_example", None) or (lambda: None)
+        teardown = getattr(runner, "teardown_example", None) or (lambda token: None)
+
+        def execute(function: Callable[[], Any]) -> Any:
+            token = None
+            try:
+                token = setup()
+                return function()
+            finally:
+                teardown(token)
+
+        return execute
+    return lambda function: function()
+
+
 def _run_given(
     inner: Any,
     wrapped_test: Any,
@@ -446,35 +747,64 @@ def _run_given(
 ) -> None:
     deadline = test_settings.deadline.total_seconds() if test_settings.deadline else None
     check_return = HealthCheck.return_value not in test_settings.suppress_health_check
-    current_example: list[Example | None] = [None]
+    current_example: list[tuple[Example, ExplicitCase] | None] = [None]
     print_args = getattr(wrapped_test, "_hypothesis_internal_print_given_args", True)
+    executed = [False]
+    valid = [False]
+    outcomes = _Outcomes()
+    timing: list[float | None] = [None, None]
+    execute = _executor(selfy)
 
     def body(tc: TestCase) -> None:
+        executed[0] = True
         with BuildContext(tc, is_final=tc.is_final, runner=selfy) as context:
-            if print_args:
-                drawn = {
-                    name: tc.draw(strategy, name=name) for name, strategy in given_kwargs.items()
-                }
-            else:
-                drawn = {name: tc.draw_silent(strategy) for name, strategy in given_kwargs.items()}
-            started = time.perf_counter()
-            ex = current_example[0]
+            started: list[float] = []
+
+            def run() -> Any:
+                # Drawn under the executor too, so setup_example precedes it.
+                drawn = {}
+                for name, strategy in given_kwargs.items():
+                    try:
+                        if print_args:
+                            drawn[name] = tc.draw(strategy, name=name)
+                        else:
+                            drawn[name] = tc.draw_silent(strategy)
+                    except Exception as error:
+                        error.add_note(f"while generating {name!r} from {strategy!r}")
+                        raise
+                started.append(time.perf_counter())
+                return inner(*arguments, **kwargs, **drawn)
+
+            gc_started = _gc_cumulative_time()
+            ex, case = current_example[0] or (None, None)
             try:
-                result = inner(*arguments, **kwargs, **drawn)
-            except UnsatisfiedAssumption:
+                result = execute(run)
+            except UnsatisfiedAssumption as error:
+                outcomes.record(error)
                 tc.reject()
             except BaseException as error:
+                valid[0] = True
                 if ex is not None and ex.xfail:
                     if isinstance(error, ex.raises):
+                        if not isinstance(error, Exception):
+                            raise InvalidArgument(
+                                f"@example({_format_case(case)}) raised an expected "
+                                f"{error!r}, but Hypothesis does not treat this as a "
+                                "test failure"
+                            ) from error
                         return
                     raise
+                outcomes.record(error)
                 raise
-            elapsed = time.perf_counter() - started
+            valid[0] = True
+            # Time in garbage collection and in data.draw() does not count.
+            elapsed = (
+                (time.perf_counter() - started[0] if started else 0.0)
+                - (_gc_cumulative_time() - gc_started)
+                - context.draw_time
+            )
             if ex is not None and ex.xfail:
-                raise _XfailPassed(
-                    f"Expected an exception from @example({_format_example(ex)}), but no "
-                    f"exception was raised{': ' + ex.reason if ex.reason else ''}"
-                )
+                raise _XfailPassed(_xfail_passed_message(ex, case))
             if result is not None and check_return:
                 raise FailedHealthCheck(
                     f"Tests run under @given should return None, but {inner.__name__} "
@@ -485,17 +815,36 @@ def _run_given(
                     "suppress_health_check settings for this test."
                 )
             if deadline is not None:
-                allowed = deadline * (1.25 if context.is_final else 1.0)
+                # Only clear deadline failures count while generating and
+                # shrinking; the final replay is held to the deadline itself.
+                allowed = deadline if context.is_final else deadline * 1.25
                 if elapsed > allowed:
-                    raise DeadlineExceeded(elapsed, deadline)
+                    error = DeadlineExceeded(elapsed, deadline)
+                    timing[0] = elapsed
+                    outcomes.record(error)
+                    raise error
+                if timing[0] is not None:
+                    timing[1] = elapsed
+            outcomes.record(None)
 
     native = test_settings.to_hegel()
     seed_value = getattr(wrapped_test, "_hypothesis_internal_use_seed", None)
+    if seed_value is None:
+        seed_value = global_force_seed
     if seed_value is not None:
         native = native.replace(seed=_seed_to_int(seed_value), database="")
     reproduce = getattr(wrapped_test, "_hypothesis_internal_use_reproduce_failure", None)
     blob = None
     if reproduce is not None:
+        from hegel.hypothesis import __version__
+
+        if reproduce[0] != __version__:
+            raise InvalidArgument(
+                "Attempting to reproduce a failure from a different version of "
+                f"Hypothesis. This failure is from {reproduce[0]}, but you are "
+                f"currently running {__version__!r}. Please change your Hypothesis "
+                "version to work with this example."
+            )
         blob = reproduce[1]
         if isinstance(blob, bytes):
             blob = blob.decode("ascii")
@@ -504,36 +853,174 @@ def _run_given(
     if Phase.explicit not in test_settings.phases:
         explicit = []
 
+    verbose = test_settings.verbosity >= Verbosity.verbose
+
     def run_cases() -> None:
         output = RunOutput.resolve()
+        failures: list[tuple[str, BaseException]] = []
         for ex, case in explicit:
-            current_example[0] = ex
+            current_example[0] = (ex, case)
+            call = "{}({})".format(
+                inner.__name__, ", ".join(f"{k}={v!r}" for k, v in case.kwargs.items())
+            )
+            if verbose:
+                output.line(f"Trying explicit example: {call}")
             try:
                 _run_explicit(body, case, output)
             except InvalidArgument as error:
                 if "assumption violated" in str(error):
                     continue
                 raise
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except _skip_exceptions():
+                raise
+            except BaseException as error:
+                if isinstance(error, Exception) and any(
+                    isinstance(arg, SearchStrategy) for arg in ex.args + tuple(ex.kwargs.values())
+                ):
+                    new = HypothesisWarning(
+                        "The @example() decorator expects to be passed values, but "
+                        "you passed strategies instead.  See https://hypothesis."
+                        "readthedocs.io/en/latest/reference/api.html#hypothesis"
+                        ".example for details."
+                    )
+                    new.__cause__ = error
+                    error = new
+                failures.append((call, error))
+                if not test_settings.report_multiple_bugs or not isinstance(error, Exception):
+                    break
         current_example[0] = None
+        if failures:
+            _raise_explicit_failures(failures, simplify=not verbose)
         if blob is not None:
-            hegel_run(
+            _run_rewriting_reproducer(
                 body, native, database_key=database_key, test_location=location, reproduce_blob=blob
             )
             return
         if not any(p in test_settings.phases for p in (Phase.reuse, Phase.generate)):
             return
-        hegel_run(body, native, database_key=database_key, test_location=location)
+        _run_rewriting_reproducer(body, native, database_key=database_key, test_location=location)
 
-    if test_settings.verbosity == Verbosity.quiet:
-        with with_output_override(lambda line: None):
-            run_cases()
+    try:
+        with local_settings(test_settings), _patched_subtest(selfy):
+            if test_settings.verbosity == Verbosity.quiet:
+                with with_output_override(lambda line: None):
+                    run_cases()
+            else:
+                run_cases()
+    except RunError as error:
+        if isinstance(error, FailedHealthCheck) and "across the full search space" in str(error):
+            raise Unsatisfiable(
+                f"Unable to satisfy assumptions of {inner.__name__}. Hypothesis tried "
+                "every possible input, and all of them failed a .filter() or assume()"
+            ) from None
+        if isinstance(error, Flaky):
+            raise _flaky_failure(error, inner.__name__, outcomes, timing, deadline) from error
+        if isinstance(error, FailedHealthCheck):
+            raise
+        if str(error).startswith("Unsatisfiable"):
+            raise Unsatisfiable(str(error)) from None
+        raise
+    if not executed[0]:
+        raise unittest.SkipTest("Hypothesis has been told to run no examples for this test.")
+    if not valid[0]:
+        raise Unsatisfiable(
+            f"Unable to satisfy assumptions of {inner.__name__}. Every test case failed a "
+            ".filter() or assume() (or none was generated)."
+        )
+
+
+_HEGEL_REPRODUCER = re.compile(r'@hegel\.reproduce_failure\("([^"]*)"\)')
+
+
+def _run_rewriting_reproducer(*args: Any, **kwargs: Any) -> None:
+    """Run the engine, rewriting the reproducer note on a failure into the
+    Hypothesis form ``@reproduce_failure(version, blob)``."""
+    try:
+        hegel_run(*args, **kwargs)
+    except BaseException as error:
+        notes = getattr(error, "__notes__", None)
+        if notes:
+            from hegel.hypothesis import __version__
+
+            def rewrite(match: re.Match[str]) -> str:
+                return f"@reproduce_failure({__version__!r}, {match.group(1).encode('ascii')!r})"
+
+            error.__notes__ = [
+                _HEGEL_REPRODUCER.sub(rewrite, note).replace("above @hegel.test", "above @given")
+                for note in notes
+            ]
+        raise
+
+
+@contextlib.contextmanager
+def _patched_subtest(runner: Any) -> Any:
+    if isinstance(runner, unittest.TestCase) and hasattr(runner, "subTest"):
+        original = runner.subTest
+        runner.subTest = types.MethodType(_fake_subTest, runner)  # type: ignore[method-assign]
+        try:
+            yield
+        finally:
+            runner.subTest = original  # type: ignore[method-assign]
     else:
-        run_cases()
+        yield
 
 
-def _format_example(ex: Example) -> str:
-    parts = [repr(a) for a in ex.args] + [f"{k}={v!r}" for k, v in ex.kwargs.items()]
+def _raise_explicit_failures(failures: list[tuple[str, BaseException]], *, simplify: bool) -> None:
+    """Raise the explicit examples' failures: grouped by origin (keeping the
+    simplest with a note counting the others) unless ``simplify`` is off,
+    and as an exception group when more than one remains."""
+    groups: dict[Any, list[tuple[str, BaseException]]] = {}
+    for call, error in failures:
+        key = (type(error), _origin_of(error)) if simplify else id(error)
+        groups.setdefault(key, []).append((call, error))
+    chosen: list[BaseException] = []
+    for group in groups.values():
+        group.sort(key=lambda item: (len(item[0]), item[0]))
+        error = group[0][1]
+        if len(group) > 1:
+            other_count = len(group) - 1
+            error.add_note(
+                f"(note: {other_count} other explicit example{'s' * (other_count > 1)} "
+                "also failed with this error; use Verbosity.verbose to view)"
+            )
+        chosen.append(error)
+    if len(chosen) == 1:
+        raise chosen[0]
+    raise BaseExceptionGroup(f"Hypothesis found {len(chosen)} distinct failures.", chosen)
+
+
+def _origin_of(error: BaseException) -> tuple[str, int] | None:
+    tb = error.__traceback__
+    last = None
+    while tb is not None:
+        last = (tb.tb_frame.f_code.co_filename, tb.tb_lineno)
+        tb = tb.tb_next
+    return last
+
+
+def _format_case(case: ExplicitCase) -> str:
+    """The explicit example's values by parameter name, as Hypothesis shows them."""
+    parts = [repr(a) for a in case.args] + [f"{k}={v!r}" for k, v in case.kwargs.items()]
     return ", ".join(parts)
+
+
+def _xfail_passed_message(ex: Example, case: ExplicitCase) -> str:
+    reason = f" because {ex.reason}" * bool(ex.reason)
+    if ex.raises is BaseException:
+        name = "exception"  # special-case no raises= arg
+    elif not isinstance(ex.raises, tuple):
+        name = ex.raises.__name__
+    elif len(ex.raises) == 1:
+        name = ex.raises[0].__name__
+    else:
+        name = ", ".join(e.__name__ for e in ex.raises[:-1]) + f", or {ex.raises[-1].__name__}"
+    vowel = name.upper()[0] in "AEIOU"
+    return (
+        f"Expected a{'n' * vowel} {name} from @example({_format_case(case)}){reason}, "
+        "but no exception was raised."
+    )
 
 
 def find(
@@ -544,20 +1031,62 @@ def find(
     random: Any = None,
     database_key: bytes | None = None,
 ) -> Any:
-    """A minimal example from ``specifier`` satisfying ``condition``."""
+    """A minimal example from ``specifier`` satisfying ``condition``.
+
+    Raises ``NoSuchExample`` when no generated value satisfies it, and
+    ``Unsatisfiable`` when the condition rejects too many values."""
     if settings is None:
         settings = Settings(max_examples=2000)
     check_strategy(specifier, name="specifier")
     if not callable(condition):
         raise InvalidArgument(f"Expected callable but got condition={condition!r}")
-    from hegel.runner import find_example
+    settings = Settings(
+        settings,
+        database=None,
+        deadline=None,
+        suppress_health_check=[h for h in HealthCheck if h is not HealthCheck.filter_too_much],
+        report_multiple_bugs=False,
+        phases=[p for p in settings.phases if p in (Phase.generate, Phase.shrink)]
+        or [Phase.generate],
+    )
+    found: list[Any] = []
+    user_rejected = [False]
 
+    def body(tc: TestCase) -> None:
+        with BuildContext(tc, is_final=tc.is_final):
+            value = tc.draw(specifier, name="Example")
+            try:
+                satisfied = condition(value)
+            except UnsatisfiedAssumption:
+                user_rejected[0] = True
+                tc.reject()
+            if satisfied:
+                found.append(value)
+                raise _Found()
+
+    native = settings.to_hegel()
+    if random is not None:
+        native = native.replace(seed=random.getrandbits(64), database="")
     try:
-        with with_output_override(lambda line: None):
-            return find_example(specifier, condition)
-    except HegelError as error:
-        # Hypothesis's find() suppresses health checks; a filtered-out search
-        # space is reported as NoSuchExample.
-        if "Could not find" in str(error) or isinstance(error, FailedHealthCheck):
-            raise NoSuchExample(condition) from None
-        raise
+        if settings.verbosity >= Verbosity.verbose:
+            hegel_run(body, native, database_key=None)
+        else:
+            with with_output_override(lambda line: None):
+                hegel_run(body, native, database_key=None)
+    except _Found:
+        return found[-1]
+    except FailedHealthCheck as error:
+        if user_rejected[0]:
+            raise Unsatisfiable(
+                f"Unable to satisfy assumptions of {getattr(condition, '__name__', condition)}"
+            ) from error
+    except RunError as error:
+        if user_rejected[0]:
+            raise Unsatisfiable(str(error)) from error
+        if "Unsatisfiable" not in str(error):
+            raise
+    raise NoSuchExample(condition)
+
+
+class _Found(BaseException):
+    pass

@@ -114,10 +114,6 @@ class Generator(Generic[T]):
         return f"{type(self).__name__}()"
 
 
-def _fn_name(f: Any) -> str:
-    return getattr(f, "__name__", repr(f))
-
-
 class Mapped(Generator[U]):
     def __init__(self, source: Generator[T], f: Callable[[T], U]) -> None:
         self.source = source
@@ -197,9 +193,15 @@ class FlatMapped(Generator[U]):
 
 
 class Filtered(Generator[T]):
-    def __init__(self, source: Generator[T], predicate: Callable[[T], bool]) -> None:
+    def __init__(
+        self,
+        source: Generator[T],
+        predicate: Callable[[T], bool],
+        names: tuple[str, ...] | None = None,
+    ) -> None:
         self.source = source
         self.predicate = predicate
+        self.names = names if names is not None else (_name(predicate),)
         self.label = combine_labels([FILTER_LABEL, source.label])
 
     def filter(self, predicate: Callable[[T], bool]) -> Generator[T]:
@@ -210,8 +212,7 @@ class Filtered(Generator[T]):
         def both(value: T) -> bool:
             return bool(first(value)) and bool(predicate(value))
 
-        both.__name__ = f"{_fn_name(first)} and {_fn_name(predicate)}"
-        return Filtered(self.source, both)
+        return Filtered(self.source, both, (*self.names, _name(predicate)))
 
     def _draw(self, tc: TestCase, printer: PrettyPrinter, silent: bool) -> T:
         for _ in range(3):
@@ -242,7 +243,7 @@ class Filtered(Generator[T]):
         return self._draw(tc, printer, False)
 
     def __repr__(self) -> str:
-        return f"{self.source!r}.filter({_name(self.predicate)})"
+        return repr(self.source) + "".join(f".filter({name})" for name in self.names)
 
 
 def _name(f: Any) -> str:

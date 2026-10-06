@@ -95,13 +95,46 @@ def _configure_hypothesis(config: Any) -> None:
         settings.load_profile("hegel-pytest")
 
 
+_POINTLESS_DECORATORS = [
+    ("example", "hypothesis_explicit_examples"),
+    ("seed", "_hypothesis_internal_use_seed"),
+    ("settings", "_hypothesis_internal_settings_applied"),
+    ("reproduce_example", "_hypothesis_internal_use_reproduce_failure"),
+]
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_call(item: Any) -> Any:
-    seed = getattr(item.config, "_hegel_hypothesis_seed", None)
     test = getattr(item, "obj", None)
-    if seed is not None and getattr(test, "is_hypothesis_test", False):
-        from hegel.hypothesis import seed as seed_test
+    if test is not None and getattr(test, "is_hypothesis_test", False):
+        seed = getattr(item.config, "_hegel_hypothesis_seed", None)
+        if seed is not None and getattr(test, "_hypothesis_internal_use_seed", None) is None:
+            from hegel.hypothesis import seed as seed_test
 
-        if getattr(test, "_hypothesis_internal_use_seed", None) is None:
             seed_test(seed)(test)  # type: ignore[type-var]
+        if item.get_closest_marker("parametrize") is not None:
+            # pytest makes a new class instance per parametrization, which
+            # would look like differing executors; see Hypothesis issue 3733.
+            from hegel.hypothesis._settings import HealthCheck
+            from hegel.hypothesis._settings import settings as Settings
+
+            fn = getattr(test, "__func__", test)
+            current = getattr(fn, "_hypothesis_internal_use_settings", None) or Settings.default
+            if HealthCheck.differing_executors not in current.suppress_health_check:
+                fn._hypothesis_internal_use_settings = Settings(
+                    current,
+                    suppress_health_check=[
+                        *current.suppress_health_check,
+                        HealthCheck.differing_executors,
+                    ],
+                )
+    else:
+        # Hypothesis's decorators do nothing without @given, so refuse them.
+        for name, attribute in _POINTLESS_DECORATORS:
+            if getattr(test, attribute, None):
+                from hegel.errors import InvalidArgument
+
+                raise InvalidArgument(
+                    f"Using `@{name}` on a test without `@given` is completely pointless."
+                )
     yield

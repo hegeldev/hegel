@@ -132,8 +132,8 @@ class FilteredSample(Generator[T]):
         raise AssertionError("unreachable")  # nocov
 
     def __repr__(self) -> str:
-        names = ", ".join(getattr(p, "__name__", repr(p)) for p in self.predicates)
-        return f"{self.source!r}.filter({names})"
+        names = (getattr(p, "__name__", repr(p)) for p in self.predicates)
+        return repr(self.source) + "".join(f".filter({name})" for name in names)
 
 
 def sampled_from(elements: Any) -> Generator[Any]:

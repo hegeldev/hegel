@@ -141,6 +141,8 @@ def _run_test_case(
         raise
     except (KeyboardInterrupt, SystemExit):
         raise
+    except _skip_exceptions():
+        raise
     except BaseException as exception:
         outcome.status = _native.STATUS_INTERESTING
         outcome.origin = f"{type(exception).__qualname__} at {_user_location(exception)}"
@@ -156,6 +158,22 @@ def _run_test_case(
         output.line(_stop_reason(outcome))
     handle.mark_complete(outcome.status, outcome.origin)
     return outcome
+
+
+def _skip_exceptions() -> tuple[type[BaseException], ...]:
+    """Exceptions that skip a test outright (a test runner's "skip" signal)
+    end the run instead of counting as a failure to shrink."""
+    import unittest
+
+    found: list[type[BaseException]] = [unittest.SkipTest]
+    outcomes = sys.modules.get("_pytest.outcomes")
+    if outcomes is not None:
+        found.extend(
+            exc
+            for exc in (getattr(outcomes, "Skipped", None), getattr(outcomes, "XFailed", None))
+            if exc is not None
+        )
+    return tuple(found)
 
 
 def _stop_reason(outcome: _CaseOutcome) -> str:

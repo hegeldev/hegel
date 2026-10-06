@@ -1195,7 +1195,7 @@ def _failing_blob():
     with pytest.raises(AssertionError) as err:
         run_state_machine_as_test(TrivialMachine, settings=Settings(print_blob=True, database=None))
     notes = "\n".join(_notes(err.value))
-    match = re.search(r'reproduce_failure\("([^"]+)"\)', notes)
+    match = re.search(r"reproduce_failure\((?:'[^']*', b)?['\"]([^'\"]+)['\"]\)", notes)
     assert match, notes
     return match.group(1)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import datetime as dt
 import decimal
 import fractions as _fractions
@@ -11,20 +12,26 @@ import math
 import random as _random
 import struct
 import sys
+import textwrap
+import time
+import typing
+import warnings
 from collections.abc import Callable, Hashable, Iterable, Sequence
 from typing import Any, Protocol, TypeVar
 
 from hegel import generators as gs
 from hegel.generators.base import Generator
 from hegel.hypothesis.control import current_build_context, currently_in_test_context
-from hegel.hypothesis.errors import InvalidArgument
+from hegel.hypothesis.errors import HypothesisWarning, InvalidArgument
 from hegel.hypothesis.strategies._base import (
+    InvalidStrategy,
     SearchStrategy,
     check_strategy,
     check_type,
     check_valid_interval,
     check_valid_sizes,
 )
+from hegel.hypothesis.utils.deprecation import note_deprecation
 from hegel.test_case import TestCase
 
 __all__ = [
@@ -357,11 +364,13 @@ def lists(
     min_size, max_size = int(min_size), None if max_size is None else int(max_size)
     if max_size == 0:
         return just([])
-    if unique or unique_by is not None:
-        if getattr(elements, "is_empty", False):
-            return just([]) if min_size == 0 else gs.nothing()
-    elif getattr(elements, "is_empty", False) and min_size > 0:
-        return gs.nothing()
+    if getattr(elements, "is_empty", False):
+        if min_size > 0:
+            return InvalidStrategy(
+                f"Cannot create non-empty lists with elements drawn from {elements!r} "
+                "because it has no values."
+            )
+        return just([])
     return gs.lists(
         elements, min_size=min_size, max_size=max_size, unique=unique, unique_by=unique_by
     )
@@ -897,7 +906,15 @@ class DataObject:
         check_strategy(strategy, "strategy")
         self.count += 1
         name = None if label is None else str(label)
-        return self._tc.draw(strategy, name=name)
+        from hegel.hypothesis.control import _current_build_context
+
+        started = time.perf_counter()
+        try:
+            return self._tc.draw(strategy, name=name)
+        finally:
+            context = _current_build_context.value
+            if context is not None:
+                context.draw_time += time.perf_counter() - started
 
     @property
     def conjecture_data(self) -> TestCase:
@@ -907,6 +924,15 @@ class DataObject:
 class _Data(Generator[DataObject]):
     def do_draw(self, tc: TestCase) -> DataObject:
         return DataObject(_root(tc))
+
+    def map(self, pack: Any) -> Any:
+        raise InvalidArgument("Cannot map a data() strategy; draw a value and transform it instead")
+
+    def filter(self, condition: Any) -> Any:
+        raise InvalidArgument("Cannot filter a data() strategy; use assume() in the test instead")
+
+    def flatmap(self, expand: Any) -> Any:
+        raise InvalidArgument("Cannot flatmap a data() strategy; draw a value and use it instead")
 
     def do_draw_and_print(self, tc: TestCase, printer: Any) -> DataObject:
         printer.text("data(...)")
@@ -948,16 +974,28 @@ def composite(f: Callable[..., Ex]) -> Callable[..., SearchStrategy[Ex]]:
         raise InvalidArgument(f"composite() takes a function, not {f!r}")
     signature = inspect.signature(f)
     params = list(signature.parameters.values())
-    if not params or params[0].kind not in (
-        params[0].POSITIONAL_ONLY,
-        params[0].POSITIONAL_OR_KEYWORD,
-    ):
+    if not params or "POSITIONAL" not in params[0].kind.name:
         raise InvalidArgument(
             "Functions wrapped with composite must take at least one "
             f"positional argument. {f!r} does not"
         )
     if params[0].default is not params[0].empty:
         raise InvalidArgument("A default value for initial argument will never be used")
+    if not (f is typing._overload_dummy or _first_param_referenced(f, params[0].name)):
+        note_deprecation(
+            "There is no reason to use @st.composite on a function which "
+            "does not call the provided draw() function internally.",
+            since="2022-07-17",
+            has_codemod=False,
+        )
+    if getattr(signature.return_annotation, "__origin__", None) is SearchStrategy:
+        ret_repr = repr(signature.return_annotation).replace("hegel.hypothesis.strategies.", "st.")
+        warnings.warn(
+            f"Return-type annotation is `{ret_repr}`, but the decorated "
+            "function should return a value (not a strategy)",
+            HypothesisWarning,
+            stacklevel=2,
+        )
 
     @functools.wraps(f)
     def tc_function(tc: TestCase, *args: Any, **kwargs: Any) -> Ex:
@@ -965,8 +1003,31 @@ def composite(f: Callable[..., Ex]) -> Callable[..., SearchStrategy[Ex]]:
 
     tc_function.__signature__ = signature  # type: ignore[attr-defined]
     accept = gs.composite(tc_function)
-    accept.__signature__ = signature.replace(parameters=params[1:])  # type: ignore[attr-defined]
-    return accept
+    # A function taking only *args receives draw as its first element.
+    outer_params = params if params[0].kind is params[0].VAR_POSITIONAL else params[1:]
+    outer_signature = signature.replace(parameters=outer_params)
+
+    @functools.wraps(f)
+    def checked(*args: Any, **kwargs: Any) -> SearchStrategy[Ex]:
+        # Fail now, as calling the function would, rather than when drawn.
+        outer_signature.bind(*args, **kwargs)
+        return accept(*args, **kwargs)
+
+    checked.__dict__.update(getattr(accept, "__dict__", {}))
+    checked.__signature__ = outer_signature  # type: ignore[attr-defined]
+    return checked
+
+
+def _first_param_referenced(f: Any, name: str) -> bool:
+    """Whether ``f``'s body reads the parameter ``name`` (the draw function)."""
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(f)))
+    except Exception:  # noqa: BLE001
+        return True
+    return any(
+        isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Load)
+        for node in ast.walk(tree)
+    )
 
 
 def shared(base: SearchStrategy[Ex], *, key: Hashable = None) -> SearchStrategy[Ex]:

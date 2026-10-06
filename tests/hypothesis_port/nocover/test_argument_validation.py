@@ -58,10 +58,6 @@ def test_raise_invalid_argument(function, args, kwargs):
         test()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel reports lists(nothing(), min_size=1) as Unsatisfiable, not InvalidArgument",
-)
 def test_raise_invalid_argument_for_nonempty_list_of_nothing():
     with pytest.raises(InvalidArgument):
 

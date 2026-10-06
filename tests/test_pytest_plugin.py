@@ -111,3 +111,52 @@ def test_seeded(x):
     result = pytester.runpytest("-s", "--hypothesis-seed=5")
     result.assert_outcomes(passed=1)
     result.stdout.fnmatch_lines(["*SEED 7*"])
+
+
+def test_plugin_rejects_pointless_hypothesis_decorators(pytester: pytest.Pytester):
+    pytester.makepyfile(
+        """
+from hegel.hypothesis import example, settings
+
+@example(1)
+def test_example_without_given():
+    pass
+
+@settings(max_examples=5)
+def test_settings_without_given():
+    pass
+
+def test_plain():
+    pass
+"""
+    )
+    result = pytester.runpytest("-v")
+    result.assert_outcomes(passed=1, failed=2)
+    result.stdout.fnmatch_lines(
+        ["*Using `@example` on a test without `@given` is completely pointless*"]
+    )
+
+
+def test_plugin_suppresses_differing_executors_for_parametrized_methods(
+    pytester: pytest.Pytester,
+):
+    pytester.makepyfile(
+        """
+import pytest
+from hegel.hypothesis import given, settings, HealthCheck, strategies as st
+
+class TestParametrized:
+    @pytest.mark.parametrize("n", [1, 2])
+    @given(st.integers())
+    def test_method(self, n, x):
+        pass
+
+    @pytest.mark.parametrize("n", [1, 2])
+    @settings(suppress_health_check=[HealthCheck.differing_executors])
+    @given(st.integers())
+    def test_already_suppressed(self, n, x):
+        pass
+"""
+    )
+    result = pytester.runpytest("-v")
+    result.assert_outcomes(passed=4)
