@@ -29,7 +29,7 @@ common_settings = {
 
 @pytest.mark.xfail(
     strict=True,
-    reason="hegel's target() does not steer generation toward the threshold (needed >5000 of 4000 allowed examples)",
+    reason="Engine: targeting only starts halfway through the budget, so the threshold is found after about 5000 cases, more than the 4000 allowed (docs/engine-issues.md)",
 )
 @pytest.mark.parametrize("seed_val", [0, 1, 2])
 def test_finds_threshold_bug_quickly_with_large_budget(seed_val):

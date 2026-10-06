@@ -213,7 +213,9 @@ class Node:
 def test_from_type_resolves_self_referential_optional_arguments():
     check_all(gs.from_type(Node), lambda v: isinstance(v, Node))
     assert find_example(gs.from_type(Node), lambda n: True).child is None
-    assert find_example(gs.from_type(Node), lambda n: n.child is not None).child.child is None
+    assert (
+        find_example(gs.from_type(Node), lambda n: n.child is not None, seed=0).child.child is None
+    )
 
 
 BoundToNode = typing.TypeVar("BoundToNode", bound="Node")

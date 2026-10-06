@@ -4,6 +4,56 @@ Places where libhegel (`hegeltest-c` 0.45.0) behaves differently from what
 Python's `re` module or Hypothesis would do. These are recorded here rather
 than worked around in the bindings, so they can be fixed in the engine.
 
+## Regular expressions
+
+- Patterns no string can match, such as `a^b` or `(?!foo)foo`, are not
+  recognised as empty: the engine keeps generating strings that fail the
+  match, and the run ends `FilterTooMuch` rather than finding nothing
+  (`tests/hypothesis_port/cover/test_regex.py::test_caret_in_the_middle_does_not_generate_anything`,
+  `test_impossible_negative_lookahead`).
+- A character class that matches nothing in the given alphabet (`\d` with
+  `alphabet="abc"`, `[^a]` with `alphabet="a"`) is not reported up front.
+  Hypothesis raises an error naming the class and the alphabet; libhegel
+  generates and filters
+  (`test_regex.py::test_charsets_which_match_nothing_in_the_alphabet`).
+
+## Shrinking and generation
+
+- Shrinking can stop short of the minimum: with seed 6, a search over
+  `integers(0, 100)` for a positive multiple of six shrinks to 78 rather
+  than 6. Unseeded, about one run in twenty stops early like this
+  (`tests/test_engine_issues.py`).
+- Small finite spaces are covered unevenly. The all-zero choice sequence is
+  drawn far more often than its share (28% of cases against an expected
+  12.5% for an eight-value space), so other values can be missed entirely:
+  with seed 27, a hundred cases of `one_of(sampled_from(["a", "b", "c",
+  "empty"]), …)` never draw `"empty"` (`tests/test_engine_issues.py`;
+  `tests/hypothesis_port/nocover/test_sampled_from.py::test_exhaustive_flags`, which
+  fails intermittently for the same reason).
+- Targeting does steer generation, but only from halfway through the
+  budget: the first targeting pass starts after `test_cases / 2` cases. With
+  `test_cases=10_000`, `lists(integers(0, 1000))`, `target(min(sum(xs),
+  50_000))` and `assert sum(xs) < 30_000`, the failure is found at about
+  case 5,006. Hypothesis targets from much earlier, and also reports the
+  highest score seen for each label when the run ends; libhegel reports no
+  scores.
+
+## Messages and reporting
+
+- The `FilterTooMuch` health check message uses Rust syntax
+  (`HealthCheck::FilterTooMuch`) for the setting to suppress it, and blames
+  `assume()` even when a generator's `.filter()` did the rejecting.
+- Run errors (health checks, flaky tests, unsatisfiable runs) reach the
+  bindings only as messages, with no structured kind, so `hegel.runner`
+  classifies them by message prefix (`_RUN_ERROR_PREFIXES`). A change of
+  wording in the engine would silently turn them into plain `RunError`s.
+
+## Stateful testing
+
+- There is no minimum step count for a state machine run: the engine decides
+  how many steps to take, so Hypothesis's `_min_steps` is rejected with
+  `InvalidArgument` rather than honoured.
+
 ## Other
 
 - `sets(sampled_from(range(n)), min_size=n)` fails `FilterTooMuch` because the
@@ -19,7 +69,8 @@ than worked around in the bindings, so they can be fixed in the engine.
   `Unsatisfiable` (which is only raised when the test draws no data) and no
   failed health check. A test whose assumptions always fail therefore passes.
   (Seen as an intermittent failure of `find_example` in
-  `tests/test_generators_combinators.py::test_sampled_from`.)
+  `tests/test_generators_combinators.py::test_sampled_from`; pinned with a
+  seed in `tests/test_engine_issues.py`.)
 - Identical inputs are generated repeatedly; there is no duplicate suppression
   (`tests/hypothesis_port/nocover/test_duplication.py`).
 - No widening of `one_of` branches. For `integers() | sampled_from([4991,

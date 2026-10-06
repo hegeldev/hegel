@@ -31,10 +31,14 @@ class _Found(Exception):
     pass
 
 
-def find_example(generator: Any, condition: Callable[[Any], bool] | None = None) -> Any:
+def find_example(
+    generator: Any, condition: Callable[[Any], bool] | None = None, seed: int | None = None
+) -> Any:
     """The minimal value from ``generator`` satisfying ``condition`` (any
     value when no condition is given). The search runs as a test whose
-    failure is finding the value, so the result is shrunk."""
+    failure is finding the value, so the result is shrunk. A ``seed``
+    fixes the search, for a condition the engine can miss (see
+    docs/engine-issues.md)."""
     generator = as_generator(generator)
     found: list[Any] = []
 
@@ -56,6 +60,7 @@ def find_example(generator: Any, condition: Callable[[Any], bool] | None = None)
                     test_cases=1000,
                     print_blob=False,
                     suppress_health_check=hegel.HealthCheck.all(),
+                    seed=seed,
                 ),
             )
     except _Found:
