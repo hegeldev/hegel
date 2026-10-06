@@ -34,6 +34,7 @@ from types import EllipsisType
 from typing import Any, Protocol, TypeVar
 
 from hegel import generators as gs
+from hegel._draw_names import DrawName
 from hegel.generators.base import Generator
 from hegel.generators.combinators import Just, Nothing, SampledFrom
 from hegel.generators.recursive import Deferred
@@ -1474,12 +1475,18 @@ class DataObject:
     def draw(self, strategy: SearchStrategy[Ex], label: Any = None) -> Ex:
         check_strategy(strategy, "strategy")
         self.count += 1
-        name = None if label is None else str(label)
+        # Hypothesis numbers unlabelled draws across every data() object.
+        counter = self._tc._per_case("hypothesis.data_draws", lambda: [0])
+        counter[0] += 1
+        if label is None:
+            draw_name, separator = DrawName(f"Draw {counter[0]}", False), ": "
+        else:
+            draw_name, separator = DrawName(str(label), False), " = "
         from hegel.hypothesis.control import _current_build_context
 
         started = time.perf_counter()
         try:
-            return self._tc.draw(unwrap_strategies(strategy), name=name)
+            return self._tc._draw_as(unwrap_strategies(strategy), draw_name, separator)
         finally:
             context = _current_build_context.value
             if context is not None:
@@ -1649,11 +1656,7 @@ class _Shared(Generator[Any]):
 def _per_case_store(tc: TestCase) -> dict[Any, Any]:
     if currently_in_test_context():
         return current_build_context().shared
-    store = getattr(tc._global, "hypothesis_shared", None)
-    if store is None:
-        store = {}
-        tc._global.hypothesis_shared = store  # type: ignore[attr-defined]
-    return store
+    return tc._per_case("hypothesis.shared", dict)
 
 
 @defines_strategy

@@ -19,6 +19,7 @@ import warnings
 from collections.abc import Callable, Hashable
 from typing import Any, TypeVar
 
+from hegel._draw_names import DrawName
 from hegel.errors import Flaky, RunError, StopTest
 from hegel.explicit import ExplicitCase
 from hegel.hypothesis._settings import HealthCheck, Phase, Verbosity, local_settings
@@ -787,7 +788,9 @@ def _run_given(
                 for name, strategy in given_kwargs.items():
                     try:
                         if print_args:
-                            drawn[name] = tc.draw(unwrap_strategies(strategy), name=name)
+                            drawn[name] = tc._draw_as(
+                                unwrap_strategies(strategy), DrawName(name, False)
+                            )
                         else:
                             drawn[name] = tc.draw_silent(unwrap_strategies(strategy))
                     except Exception as error:
@@ -1087,7 +1090,7 @@ def find(
 
     def body(tc: TestCase) -> None:
         with BuildContext(tc, is_final=tc.is_final):
-            value = tc.draw(unwrap_strategies(specifier), name="Example")
+            value = tc._draw_as(unwrap_strategies(specifier), DrawName("Example", False))
             try:
                 satisfied = condition(value)
             except UnsatisfiedAssumption:

@@ -8,6 +8,7 @@ from hegel.errors import InvalidArgument
 from hegel.pretty import pretty_repr
 
 if TYPE_CHECKING:
+    from hegel._draw_names import DrawName
     from hegel.generators.base import Generator
     from hegel.test_case import TestCase
 
@@ -52,9 +53,8 @@ class ExplicitTestCase:
         self.used: set[str] = set()
         self.lines: list[str] = []
 
-    def draw(self, tc: TestCase, generator: Generator[Any], name: str | None) -> Any:
-        display = tc._allocate_display_name(name)
-        key = None if display is None else display.removesuffix(" = ")
+    def draw(self, tc: TestCase, generator: Generator[Any], draw_name: DrawName) -> Any:
+        key = tc._allocate_display_name(draw_name)
         if key is not None and key in self.named and key not in self.used:
             self.used.add(key)
             value = self.named[key]
@@ -62,17 +62,12 @@ class ExplicitTestCase:
             value = self.positional[self.consumed]
             self.consumed += 1
         else:
-            what = (
-                f"draw {key!r}"
-                if key is not None and not key.startswith("Draw ")
-                else "an unnamed draw"
-            )
             raise InvalidArgument(
-                f"Explicit test case {self.case!r} has no value for {what}: pass it by "
-                "name, or add a positional value"
+                f"Explicit test case {self.case!r} has no value for draw {key!r}: pass it "
+                "by name, or add a positional value"
             )
-        if display is not None:
-            self.lines.append(f"{display}{pretty_repr(value)}")
+        if key is not None:
+            self.lines.append(f"{key} = {pretty_repr(value)}")
         return value
 
     def draw_silent(self, tc: TestCase, generator: Generator[Any]) -> Any:

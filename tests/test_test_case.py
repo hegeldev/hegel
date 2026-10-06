@@ -8,6 +8,7 @@ import pytest
 import hegel
 from hegel import _native
 from hegel import generators as gs
+from hegel._draw_names import DrawName
 from hegel.errors import AssumeFailed, InternalError, LoopDone
 from hegel.pretty import PrettyPrinter
 from hegel.test_case import Collection, TestCase
@@ -24,8 +25,8 @@ def test_draw_reports_values_with_inferred_names():
     error = failing(body)
     falsifying = notes(error)[0]
     assert falsifying.startswith("Falsifying example:\nxs = [0, 0]\n")
-    assert "\nnamed = " in falsifying
-    assert "\nDraw 1: 5" in falsifying
+    assert "\nnamed_1 = " in falsifying
+    assert "\ndraw_1 = 5" in falsifying
 
 
 def test_repeated_names_get_suffixes():
@@ -36,7 +37,22 @@ def test_repeated_names_get_suffixes():
         assert x is None or x_2 is None
 
     lines = notes(failing(body))[0].splitlines()
-    assert lines[1:] == ["x = 1", "x_2 = 1", "x_3 = 1", "x_2_2 = 2"]
+    assert lines[1:] == ["x_1 = 1", "x_2 = 1", "x_3 = 1", "x_2_1 = 2"]
+
+
+def test_a_name_drawn_more_often_than_inferred_is_numbered():
+    def draw_x(tc):
+        x = tc.draw(gs.just(1))
+        return x
+
+    def body(tc):
+        draw_x(tc)
+        draw_x(tc)
+        x_2 = tc.draw(gs.just(2), name="x_2")
+        raise AssertionError(x_2)
+
+    lines = notes(failing(body))[0].splitlines()
+    assert lines[1:] == ["x = 1", "x_2 = 1", "x_2_1 = 2"]
 
 
 def test_nested_draws_are_silent():
@@ -251,8 +267,7 @@ def test_test_case_without_emit_discards_output():
     def body(tc):
         tc.note("never shown")
         assert tc._global.sink("x") is None
-        assert tc._allocate_display_name("x") is None
-        assert tc._allocate_display_name(None) is None
+        assert tc._allocate_display_name(DrawName("x", False)) is None
         tc._emit_rendered_output()
 
     run_test(body, verbosity=hegel.Verbosity.quiet, test_cases=1)
@@ -298,3 +313,27 @@ def test_draws_nested_too_deep_abandon_the_case():
 
     with pytest.raises(hegel.errors.FailedHealthCheck):
         run_test(body, test_cases=10)
+
+
+def test_numbered_names_skip_names_already_taken():
+    def body(tc):
+        x_1 = tc.draw(gs.just(0))
+        for _ in range(2):
+            x = tc.draw(gs.just(1))
+        raise AssertionError((x_1, x))
+
+    lines = notes(failing(body))[0].splitlines()
+    assert lines[1:] == ["x_1 = 0", "x_2 = 1", "x_3 = 1"]
+
+
+def test_per_case_state_is_shared_by_every_handle_onto_a_test_case():
+    seen = []
+
+    def body(tc):
+        store = tc._per_case("key", list)
+        assert tc._clone()._per_case("key", list) is store
+        assert tc._child()._per_case("key", dict) is store
+        seen.append(store)
+
+    run_test(body, test_cases=2, database="")
+    assert len(seen) == 2 and seen[0] is not seen[1]

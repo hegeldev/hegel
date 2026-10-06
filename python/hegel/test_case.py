@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from hegel import _native
-from hegel._draw_names import name_for_call
+from hegel._draw_names import DrawName, name_for_call
 from hegel.errors import AssumeFailed, InternalError, InvalidArgument, LoopDone, StopTest
 from hegel.pretty import DEFAULT_MAX_WIDTH, PrettyPrinter
 
@@ -34,15 +34,25 @@ MIN_DATETIME = MIN_DATE + MIDNIGHT
 MAX_DATETIME = MAX_DATE + LAST_NANOSECOND
 
 
+_UNNAMED = DrawName("draw", repeatable=True)
+
+
+def _generator_class() -> type:
+    from hegel.generators.base import Generator
+
+    return Generator
+
+
 def _discard(_line: str) -> None:
     pass
 
 
 class _Global:
     """State shared by every handle onto one test case: whether drawn
-    values are reported, and where."""
+    values are reported, and where, and per-test-case state kept by layers
+    built on Hegel (see :meth:`TestCase._per_case`)."""
 
-    __slots__ = ("emit", "explicit", "hypothesis_shared", "is_final", "sink")
+    __slots__ = ("emit", "explicit", "is_final", "per_case", "sink")
 
     def __init__(
         self, emit: bool, sink: OutputSink | None, explicit: Any, is_final: bool = False
@@ -51,18 +61,17 @@ class _Global:
         self.sink: OutputSink = sink if (emit and sink is not None) else _discard
         self.explicit = explicit
         self.is_final = is_final
-        self.hypothesis_shared: dict[Any, Any] | None = None
+        self.per_case: dict[Any, Any] = {}
 
 
 class _DrawState:
     """Draw-name bookkeeping for one naming scope."""
 
-    __slots__ = ("allocated", "counts", "lock", "unnamed")
+    __slots__ = ("allocated", "counts", "lock")
 
     def __init__(self) -> None:
         self.counts: dict[str, int] = {}
         self.allocated: set[str] = set()
-        self.unnamed = 0
         self.lock = threading.Lock()
 
 
@@ -120,25 +129,43 @@ class TestCase:
 
         The value is printed, as ``name = value``, into the output shown
         for a failing test case. When ``name`` is omitted it is inferred
-        from the assignment the call appears in (``x = tc.draw(...)``), and
-        an unassigned draw reports as ``Draw N: value``.
+        from the assignment the call appears in (``x = tc.draw(...)``); a
+        draw that can run more than once per test case (in a loop, say) is
+        numbered, as ``x_1``, ``x_2``, ... An explicit ``name`` is always
+        numbered, since it typically names a draw in a helper function,
+        and an unassigned draw reports as ``draw_1``, ``draw_2``, ...
         """
+        if not isinstance(generator, _generator_class()):
+            raise InvalidArgument(
+                f"tc.draw() takes a generator, but got {generator!r} of type "
+                f"{type(generator).__name__}"
+                + (". Did you forget to call it?" if callable(generator) else "")
+            )
         explicit = self._global.explicit
         if explicit is None and (self._span_depth > 0 or self._printing_depth > 0):
             return self.draw_silent(generator)
-        if name is None:
+        if name is not None:
+            draw_name = DrawName(str(name), repeatable=True)
+        else:
             frame = sys._getframe(1)
-            name = name_for_call(frame.f_code.co_filename, frame.f_lineno)
+            draw_name = name_for_call(frame.f_code.co_filename, frame.f_lineno) or _UNNAMED
+        return self._draw_as(generator, draw_name)
+
+    def _draw_as(self, generator: Generator[T], draw_name: DrawName, separator: str = " = ") -> T:
+        """Draw a value reported as ``<name><separator><value>``, under the
+        name allocated for ``draw_name``. Nested draws are silent: callers
+        check for them first."""
+        explicit = self._global.explicit
         if explicit is not None:
-            return explicit.draw(self, generator, name)
-        display = self._allocate_display_name(name)
+            return explicit.draw(self, generator, draw_name)
+        display = self._allocate_display_name(draw_name)
         if display is None:
             return self.draw_silent(generator)
         self._printing_depth += 1
         try:
             printer = self._with_printer()
             with printer.speculate() as speculation:
-                printer.text(display)
+                printer.text(f"{display}{separator}")
                 value = self.draw_and_print(generator, printer)
                 printer.hard_break()
                 speculation.commit()
@@ -165,25 +192,28 @@ class TestCase:
         self.stop_span(False)
         return value
 
-    def _allocate_display_name(self, name: str | None) -> str | None:
+    def _allocate_display_name(self, draw_name: DrawName) -> str | None:
+        """Count a draw under ``draw_name`` and return the name it is
+        reported as (``None`` when this test case reports nothing)."""
         state = self._draw_state
+        name = draw_name.name
         with state.lock:
-            if name is None:
-                state.unnamed += 1
-                if not self._global.emit:
-                    return None
-                return f"Draw {state.unnamed}: "
             count = state.counts.get(name, 0) + 1
             state.counts[name] = count
             if not self._global.emit:
                 return None
-            candidate = name if count == 1 else f"{name}_{count}"
-            suffix = count
-            while candidate in state.allocated:
-                suffix += 1
+            if draw_name.repeatable or count > 1 or name in state.allocated:
+                # A name inferred as drawn once that is drawn again (from a
+                # helper called twice, say) carries on from its count.
+                suffix = count
                 candidate = f"{name}_{suffix}"
+                while candidate in state.allocated:
+                    suffix += 1
+                    candidate = f"{name}_{suffix}"
+            else:
+                candidate = name
             state.allocated.add(candidate)
-            return f"{candidate} = "
+            return candidate
 
     # -- control flow ----------------------------------------------------
 
@@ -304,6 +334,15 @@ class TestCase:
             return
         for line in output.splitlines():
             self._global.sink(line)
+
+    def _per_case(self, key: Any, factory: Callable[[], T]) -> T:
+        """State keyed by ``key`` that lives as long as this test case and
+        is shared by every handle onto it, created by ``factory`` on first
+        use."""
+        store = self._global.per_case
+        if key not in store:
+            store[key] = factory()
+        return store[key]  # type: ignore[no-any-return]
 
     @property
     def is_final(self) -> bool:

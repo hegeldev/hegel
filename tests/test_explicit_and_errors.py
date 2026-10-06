@@ -19,18 +19,18 @@ def test_no_handle_rejects_every_operation():
 
 
 def test_explicit_test_case_consumption():
-    explicit = ExplicitTestCase(ExplicitCase((1, 2), {"x": 3}))
+    explicit = ExplicitTestCase(ExplicitCase((1, 2), {"x_1": 3}))
     tc = TestCase(NO_HANDLE, True, None, explicit)
     assert tc.draw(hegel.generators.integers(), name="x") == 3
-    assert tc.draw(hegel.generators.integers(), name="x") == 1  # x already used: positional
+    assert tc.draw(hegel.generators.integers(), name="x") == 1  # no x_2: positional
     assert tc.draw(hegel.generators.integers()) == 2
-    assert explicit.lines == ["x = 3", "x_2 = 1", "Draw 1: 2"]
+    assert explicit.lines == ["x_1 = 3", "x_2 = 1", "draw_1 = 2"]
     tc.note("a\nb")
     assert explicit.lines[-2:] == ["a", "b"]
     explicit.check_consumed()
-    with pytest.raises(hegel.InvalidArgument, match="unnamed draw"):
+    with pytest.raises(hegel.InvalidArgument, match="no value for draw .draw_2."):
         tc.draw(hegel.generators.integers())
-    with pytest.raises(hegel.InvalidArgument, match="draw 'y'"):
+    with pytest.raises(hegel.InvalidArgument, match="draw 'y_1'"):
         tc.draw(hegel.generators.integers(), name="y")
 
 
