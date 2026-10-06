@@ -355,3 +355,50 @@ fn escape_errors_surface_from_the_parser() {
     assert!(err("a: \"\"").contains("Empty terminals are not allowed"));
     assert!(err("a: /a\nb/").contains("verbose"));
 }
+
+#[test]
+fn errors_at_the_end_of_the_input_point_at_the_last_token() {
+    let message = err("start: (");
+    assert!(message.contains("line 1 column 8"), "{message}");
+}
+
+#[test]
+fn stray_tokens_after_an_alias_are_rejected() {
+    assert!(err("start: a -> b *").contains("Misplaced operator"));
+    assert!(err("start: a -> b c").contains("Expecting option (\"|\")"));
+}
+
+#[test]
+fn an_alternative_bar_cannot_start_a_statement() {
+    let message = err("\n| a");
+    assert!(
+        message.contains("Expecting rule or terminal definition"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_statement_cannot_start_with_a_closing_bracket() {
+    assert!(err(") a").contains("Unmatched closing parenthesis"));
+    assert!(err("] a").contains("Unmatched closing parenthesis"));
+}
+
+#[test]
+fn a_bare_operator_is_not_a_value() {
+    let message = err("start: a | ~2");
+    assert!(message.contains("Misplaced operator"), "{message}");
+    let message = err("start: tmpl{:}");
+    assert!(message.contains("Expecting a value"), "{message}");
+}
+
+#[test]
+fn an_operator_after_a_declare_is_misplaced() {
+    assert!(err("%declare A *").contains("Misplaced operator"));
+}
+
+#[test]
+fn a_value_missing_at_the_end_of_the_input() {
+    let message = err("start: tmpl{");
+    assert!(message.contains("Expecting a value"), "{message}");
+    assert!(message.contains("line 1 column 13"), "{message}");
+}

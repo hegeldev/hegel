@@ -21,11 +21,9 @@
 
 use super::ast::PatternKind;
 use super::compile::{TermId, TerminalDef};
-use super::{GrammarError, GrammarResult};
 use crate::native::re::constants::{MAXREPEAT, SRE_FLAG_IGNORECASE};
 use crate::native::re::matcher::Matcher;
-use crate::native::re::parser::{OpCode, ParsedPattern, SetItem, SubPattern, parse_pattern};
-use alloc::format;
+use crate::native::re::parser::{OpCode, ParsedPattern, SetItem, SubPattern};
 use alloc::vec::Vec;
 
 /// The characters a pattern can start with, as sorted disjoint ranges;
@@ -169,12 +167,6 @@ pub struct Lexer {
     patterns: Vec<Option<ParsedPattern>>,
 }
 
-fn parse_terminal(term: &TerminalDef, regexp: &str) -> GrammarResult<ParsedPattern> {
-    parse_pattern(regexp, 0).map_err(|e| {
-        GrammarError::new(format!("Cannot compile token {}: {regexp}: {e}", term.name))
-    })
-}
-
 fn is_subset(flags: &str, of: &str) -> bool {
     flags.chars().all(|f| of.contains(f))
 }
@@ -182,18 +174,14 @@ fn is_subset(flags: &str, of: &str) -> bool {
 impl Lexer {
     /// Build the lexer over `terminals` (indexed by [`TermId`]); terminals
     /// without a pattern take no part.
-    pub fn new(terminals: &[TerminalDef]) -> GrammarResult<Lexer> {
+    pub fn new(terminals: &[TerminalDef]) -> Lexer {
         let mut order: Vec<(TermId, &TerminalDef, ParsedPattern)> = Vec::new();
         let mut patterns = Vec::with_capacity(terminals.len());
         for (id, term) in terminals.iter().enumerate() {
-            patterns.push(match &term.regexp {
-                Some(regexp) => {
-                    let parsed = parse_terminal(term, regexp)?;
-                    order.push((id, term, parsed.clone()));
-                    Some(parsed)
-                }
-                None => None,
-            });
+            if let Some(parsed) = &term.parsed {
+                order.push((id, term, parsed.clone()));
+            }
+            patterns.push(term.parsed.clone());
         }
         order.sort_by(|(_, a, _), (_, b, _)| {
             let key = |t: &TerminalDef| {
@@ -240,10 +228,10 @@ impl Lexer {
                 unless,
             })
             .collect();
-        Ok(Lexer {
+        Lexer {
             terminals,
             patterns,
-        })
+        }
     }
 
     /// Match terminal `id`'s own pattern at `pos`, as the dynamic lexer
@@ -276,10 +264,8 @@ impl Lexer {
             };
             let token = &text[pos..end];
             for (sid, sparsed) in &term.unless {
-                match Matcher::new(sparsed).fullmatch(token) {
-                    Ok(true) => return Lexed::Token(*sid, end),
-                    Ok(false) => {}
-                    Err(_) => return Lexed::Unknown,
+                if Matcher::new(sparsed).fullmatch(token) == Ok(true) {
+                    return Lexed::Token(*sid, end);
                 }
             }
             return Lexed::Token(term.id, end);

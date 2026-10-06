@@ -22,7 +22,12 @@
 //! differently, or at random with a rate drawn once per string. Each
 //! terminal string is checked to lex back as itself, and each inserted
 //! ignorable to be skipped between its neighbours, with a few retries
-//! before the string is accepted as it is.
+//! before the string is accepted as it is. Those checks look at adjacent
+//! tokens only, and a backtracking regex can run on much further (an
+//! escaped delimiter it prefers to read as such, say, that then lets it
+//! reach the next delimiter in the string), so the finished string is
+//! lexed once more as a whole and regenerated when it does not read back
+//! as its tokens.
 
 use super::analysis::{Alt, Analysis, Node, NodeKind, analyze};
 use super::builder::{ImportSource, load_grammar};
@@ -45,18 +50,14 @@ pub const DEFAULT_MAX_SIZE: u64 = 8192;
 /// The default cap on how deeply rules nest.
 pub const DEFAULT_MAX_DEPTH: u32 = 200;
 
-/// The number of oversize strings one draw discards (halving its target
-/// each time) before the test case is rejected.
+/// The number of strings one draw discards, for being oversize (halving
+/// its target each time) or for not lexing back as their tokens, before
+/// the test case is rejected.
 const MAX_ATTEMPTS: u32 = 9;
 
-/// How often a terminal is redrawn when the lexer would not read it back
-/// as itself, and an ignorable when the lexer would not skip it between
-/// its neighbours, before the draw is accepted anyway.
+/// How often a terminal is redrawn when the basic lexer would not read it
+/// back as itself before the draw is accepted anyway.
 const LEX_RETRIES: u32 = 3;
-
-/// How many strings a terminal may draw that its own pattern does not
-/// read back whole before the test case is rejected.
-const TERMINAL_ATTEMPTS: u32 = 20;
 
 /// How many ignorables an insertion tries before giving up (dropping
 /// an optional one, or keeping the last when the lexer needs one),
@@ -74,7 +75,7 @@ const LARGE_TARGET_PROBABILITY: f64 = 0.75;
 /// The spare budget at which a rule is as likely to pick a growing
 /// alternative as a closing one: the probability of growing is
 /// `spare / (spare + GROW_SCALE)`.
-const GROW_SCALE: f64 = 8.0;
+const GROW_SCALE: f64 = 1.0;
 
 /// The number of distinct `%ignore` insertion rates a string may draw;
 /// the rate is `(k / (IGNORE_RATE_STEPS - 1))^2` for `k` drawn uniformly
@@ -189,7 +190,7 @@ impl GrammarSpec {
             }
         }
         let analysis = analyze(&grammar, term_min)?;
-        let lexer = Lexer::new(&grammar.terminals)?;
+        let lexer = Lexer::new(&grammar.terminals);
         let root = &analysis.rules[start];
         if options.max_size < root.min_size {
             return Err(GrammarError::new(format!(
@@ -259,15 +260,15 @@ impl GrammarSpec {
         Ok(observed)
     }
 
-    /// Whether terminal `id`'s pattern, matched at the start of `text`,
-    /// takes all of it: a text it matches in full but stops short of
-    /// when read from the front (a lazy repeat, or an earlier branch of
-    /// an alternation) is one no lexer reads back whole.
-    fn complete(&self, id: TermId, text: &[char]) -> bool {
+    /// How much of `text`, which terminal `id`'s pattern matches in full,
+    /// the pattern takes when matched from the front: less than all of
+    /// it after a lazy repeat or an earlier branch of an alternation, in
+    /// which case no lexer reads the text back whole but every one reads
+    /// back that prefix, itself a string the terminal matches.
+    fn whole(&self, id: TermId, text: &[char]) -> usize {
         match self.lexer.match_terminal(id, text, 0) {
-            Lexed::Token(_, end) => end == text.len(),
-            Lexed::NoMatch => false,
-            Lexed::Unknown => true,
+            Lexed::Token(_, end) => end,
+            Lexed::NoMatch | Lexed::Unknown => text.len(),
         }
     }
 
@@ -427,9 +428,8 @@ impl GrammarSpec {
                 continue;
             }
             let expected: &[TermId] = match &token.reading {
-                Reading::Itself => core::slice::from_ref(&token.id),
                 Reading::Tokens(expected) => expected,
-                Reading::Opaque => return Fit::Exact,
+                _ => core::slice::from_ref(&token.id),
             };
             let mut j = i + 1;
             while j < observed.len() && observed[j].1 < e {
@@ -440,7 +440,7 @@ impl GrammarSpec {
             }
             let group = &observed[i..j];
             let last_end = group[group.len() - 1].2;
-            if group.len() != expected.len() || start > s || last_end < e {
+            if group.len() != expected.len() {
                 return Fit::Wrong;
             }
             if !group
@@ -502,6 +502,7 @@ pub fn from_lark(
     GrammarSpec::new(grammar, options)
 }
 
+#[derive(Clone)]
 struct Token {
     id: TermId,
     text: Vec<char>,
@@ -523,6 +524,8 @@ impl Token {
 enum Step {
     Engine(EngineError),
     TooLong,
+    /// The finished string does not lex back as its tokens.
+    Misread,
 }
 
 impl From<EngineError> for Step {
@@ -585,10 +588,7 @@ impl Generation<'_> {
             .filter(feasible)
             .filter(|a| a.growing())
             .collect();
-        hegel_internal_assert!(
-            !closing.is_empty() || !growing.is_empty(),
-            "no alternative fits a budget of {budget} at depth {depth}"
-        );
+        hegel_internal_assert!(!closing.is_empty() || !growing.is_empty());
         let class = if closing.is_empty() {
             growing
         } else if growing.is_empty() {
@@ -784,9 +784,10 @@ impl Generation<'_> {
         Ok(min + extra.clamp(1, extra_max))
     }
 
-    /// Draw a string for terminal `id`: from its pattern, redrawn a few
-    /// times while the lexer would not read it back as that terminal, or
-    /// from its explicit generator as it comes.
+    /// Draw a string for terminal `id`: from its pattern, cut to what the
+    /// pattern reads back from the front and redrawn a few times while
+    /// the basic lexer would not read it back as that terminal, or from
+    /// its explicit generator as it comes.
     fn draw_terminal(&mut self, ntc: &mut NativeTestCase, id: TermId) -> Result<Token, Step> {
         match &self.spec.terminals[id] {
             TerminalGen::Explicit(spec) => Ok(Token {
@@ -799,8 +800,8 @@ impl Generation<'_> {
                 let mut attempt = 0;
                 loop {
                     ntc.start_span(LABEL_TERMINAL);
-                    let text: Vec<char> = generate_string(ntc, spec)?.chars().collect();
-                    let complete = self.spec.complete(id, &text);
+                    let mut text: Vec<char> = generate_string(ntc, spec)?.chars().collect();
+                    text.truncate(self.spec.whole(id, &text));
                     let reading = self.spec.reading(id, &text);
                     let token = Token {
                         id,
@@ -809,14 +810,10 @@ impl Generation<'_> {
                         droppable: false,
                     };
                     attempt += 1;
-                    let accept = complete && (token.lexable() || attempt > LEX_RETRIES);
+                    let accept = token.lexable() || attempt > LEX_RETRIES;
                     ntc.stop_span(!accept);
                     if accept {
                         return Ok(token);
-                    }
-                    if attempt >= TERMINAL_ATTEMPTS {
-                        ntc.conclude(Status::Invalid, None);
-                        return Err(Step::Engine(EngineError::InvalidTestCase));
                     }
                 }
             }
@@ -1003,7 +1000,14 @@ impl Generation<'_> {
 
     fn run(&mut self, ntc: &mut NativeTestCase, budget: u64) -> Result<(), Step> {
         self.rule(ntc, self.spec.start, budget, 0)?;
-        self.maybe_ignore(ntc, None)
+        self.maybe_ignore(ntc, None)?;
+        let tokens: Vec<&Token> = self.tokens.iter().collect();
+        let text: Vec<char> = tokens.iter().flat_map(|t| t.text.iter().copied()).collect();
+        if self.spec.scans(&text, &tokens) {
+            Ok(())
+        } else {
+            Err(Step::Misread)
+        }
     }
 }
 
@@ -1012,7 +1016,6 @@ pub fn generate_grammar(
     ntc: &mut NativeTestCase,
     spec: &GrammarSpec,
 ) -> Result<String, EngineError> {
-    let base_span_depth = ntc.span_depth();
     let min = spec.min_size();
     let mut target = if spec.max_size > min
         && spanned(ntc, LABEL_BOOLEAN, |ntc| {
@@ -1050,16 +1053,15 @@ pub fn generate_grammar(
                 return Ok(out);
             }
             Err(Step::Engine(e)) => return Err(e),
-            Err(Step::TooLong) => {
-                while ntc.span_depth() > base_span_depth {
-                    ntc.stop_span(true);
-                }
+            Err(step) => {
                 attempt += 1;
                 if attempt >= MAX_ATTEMPTS {
                     ntc.conclude(Status::Invalid, None);
                     return Err(EngineError::InvalidTestCase);
                 }
-                target = min.max(target / 2);
+                if matches!(step, Step::TooLong) {
+                    target = min.max(target / 2);
+                }
             }
         }
     }

@@ -396,3 +396,20 @@ fn grammar_lookups() {
     assert_eq!(grammar.rule_id("missing"), None);
     assert_eq!(grammar.terminal_id("MISSING"), None);
 }
+
+#[test]
+fn a_template_parameter_used_as_a_template_is_rejected_like_lark() {
+    let compiled = |text: &str| compile(&load_grammar(text, None, &NoImports).unwrap(), &["start"]);
+    let err = compiled("start: tmpl{inner}\ntmpl{x}: x{\"a\"}\ninner{y}: y \"b\"\n").unwrap_err();
+    assert_eq!(err.message, "Template 'inner' is used without arguments");
+    let err = compiled("start: tmpl{A}\ntmpl{x}: x{\"a\"}\nA: \"q\"\n").unwrap_err();
+    assert_eq!(
+        err.message,
+        "Template 'A' used but not defined (in rule tmpl{A})"
+    );
+    let err = compiled("start: tmpl{r}\ntmpl{x}: x{\"a\"}\nr: \"q\"\n").unwrap_err();
+    assert_eq!(
+        err.message,
+        "Template 'r' used but not defined (in rule tmpl{r})"
+    );
+}

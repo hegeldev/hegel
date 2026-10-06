@@ -31,14 +31,8 @@ impl<'a> Parser<'a> {
     }
 
     fn pos(&self) -> Pos {
-        match self.tokens.get(self.i) {
-            Some(t) => t.pos,
-            None => self
-                .tokens
-                .last()
-                .map(|t| t.pos)
-                .unwrap_or(Pos { line: 1, column: 1 }),
-        }
+        let token = self.tokens.get(self.i).or(self.tokens.last());
+        token.map_or(Pos { line: 1, column: 1 }, |t| t.pos)
     }
 
     fn advance(&mut self) -> Tok {
@@ -238,9 +232,8 @@ impl<'a> Parser<'a> {
             modifiers.keep_all_tokens = m.contains('!');
             self.advance();
         }
-        let name = match self.advance() {
-            Tok::Rule(name) => name,
-            _ => return Err(self.error("Expecting rule or terminal definition")),
+        let Tok::Rule(name) = self.advance() else {
+            unreachable!("rule modifiers are lexed only before a rule name")
         };
         if modifiers.expand1 && name.starts_with('_') {
             return Err(GrammarError::new(
@@ -277,9 +270,8 @@ impl<'a> Parser<'a> {
     }
 
     fn term_def(&mut self) -> GrammarResult<TermDef> {
-        let name = match self.advance() {
-            Tok::Terminal(name) => name,
-            _ => return Err(self.error("Expecting rule or terminal definition")),
+        let Tok::Terminal(name) = self.advance() else {
+            unreachable!("term_def is entered on a terminal name")
         };
         if self.peek() == Some(&Tok::Dot) && matches!(self.peek_at(1), Some(Tok::Terminal(_))) {
             return Err(self.error("Terminal names cannot contain dots"));
@@ -483,7 +475,7 @@ impl<'a> Parser<'a> {
                 }
             }
             Tok::Regexp { body, flags } => Ok(Expr::Literal(regex_literal(&body, &flags)?)),
-            _ => Err(self.error_at(pos, "Expecting a value")),
+            _ => unreachable!("atom is entered only on a token that starts one"),
         }
     }
 

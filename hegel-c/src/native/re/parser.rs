@@ -136,7 +136,7 @@ impl SubPattern {
 
 /// Top-level output of [`parse`]: the parsed pattern tree plus the
 /// active flags inherited from inline modifiers and call-site arguments.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedPattern {
     pub pattern: SubPattern,
     pub flags: u32,

@@ -80,7 +80,6 @@ fn python_literal(body: &str, literal: &str) -> GrammarResult<String> {
         match n {
             '\\' => out.push('\\'),
             '"' => out.push('"'),
-            '\'' => out.push('\''),
             'n' => out.push('\n'),
             't' => out.push('\t'),
             'f' => out.push('\x0c'),
@@ -100,10 +99,7 @@ fn python_literal(body: &str, literal: &str) -> GrammarResult<String> {
                 out.push(ch);
                 i = next;
             }
-            other => {
-                out.push('\\');
-                out.push(other);
-            }
+            _ => unreachable!("eval_escaping doubles every other backslash"),
         }
     }
     Ok(out)

@@ -163,3 +163,9 @@ fn pattern_to_regexp_wraps_each_flag() {
         "(?s:(?i:x))"
     );
 }
+
+#[test]
+fn eval_escaping_handles_quotes_and_four_digit_unicode_escapes() {
+    assert_eq!(eval_escaping(r"it\'s").unwrap(), r"it\'s");
+    assert_eq!(eval_escaping(r"\u00e9\u0041").unwrap(), "éA");
+}

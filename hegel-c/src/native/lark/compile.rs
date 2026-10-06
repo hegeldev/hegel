@@ -9,7 +9,7 @@ use super::ast::{Expr, Pattern, PatternKind, Symbol};
 use super::builder::BuiltGrammar;
 use super::escape::pattern_to_regexp;
 use super::{GrammarError, GrammarResult};
-use crate::native::re::parser::parse_pattern;
+use crate::native::re::parser::{ParsedPattern, parse_pattern};
 use crate::native::re::width::get_width;
 use crate::native::{HashMap, HashSet};
 use alloc::boxed::Box;
@@ -27,8 +27,9 @@ pub struct TerminalDef {
     pub name: String,
     pub pattern: Option<Pattern>,
     /// The pattern as a Python-syntax regex (Lark's `to_regexp`), when
-    /// there is one.
+    /// there is one, and that regex parsed.
     pub regexp: Option<String>,
+    pub parsed: Option<ParsedPattern>,
     pub priority: i64,
     /// The shortest and longest strings the terminal can match, in
     /// codepoints (`None` for unbounded), when there is a pattern.
@@ -136,13 +137,16 @@ fn is_identifier(value: &str) -> bool {
     chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
-/// The widths of a pattern, by parsing its regex form with the engine's
-/// Python-syntax regex parser.
+/// A pattern's regex form parsed with the engine's Python-syntax regex
+/// parser.
+fn parse_terminal_pattern(name: &str, pattern: &Pattern) -> GrammarResult<ParsedPattern> {
+    parse_pattern(&pattern_to_regexp(pattern), 0)
+        .map_err(|e| GrammarError::new(format!("Cannot compile token {name}: {e}")))
+}
+
+/// The widths of a pattern.
 fn pattern_widths(name: &str, pattern: &Pattern) -> GrammarResult<(u64, Option<u64>)> {
-    let regexp = pattern_to_regexp(pattern);
-    let parsed = parse_pattern(&regexp, 0)
-        .map_err(|e| GrammarError::new(format!("Cannot compile token {name}: {e}")))?;
-    Ok(get_width(&parsed.pattern))
+    Ok(get_width(&parse_terminal_pattern(name, pattern)?.pattern))
 }
 
 fn repeat_suffix(min: u32, max: Option<u32>) -> String {
@@ -197,13 +201,9 @@ fn terminal_tree_to_pattern(name: &str, expr: &Expr) -> GrammarResult<Pattern> {
             ))
             .with_flags(&inner.flags))
         }
-        Expr::Symbol(symbol) => Err(GrammarError::new(format!(
-            "Terminal {name} references {} after terminal inlining; this is a bug in Hegel",
-            symbol.name()
-        ))),
-        Expr::Template { .. } => Err(GrammarError::new(format!(
-            "Templates cannot be used inside terminals ({name})"
-        ))),
+        Expr::Symbol(_) | Expr::Template { .. } => {
+            unreachable!("terminal bodies have their symbols inlined and templates rejected")
+        }
     }
 }
 
@@ -258,18 +258,19 @@ impl Compiler {
         pattern: Option<Pattern>,
         priority: i64,
     ) -> GrammarResult<TermId> {
-        let (regexp, min_width, max_width) = match &pattern {
+        let (regexp, parsed, min_width, max_width) = match &pattern {
             Some(p) => {
-                let (min, max) = pattern_widths(&name, p)?;
+                let parsed = parse_terminal_pattern(&name, p)?;
+                let (min, max) = get_width(&parsed.pattern);
                 if min == 0 {
                     return Err(GrammarError::new(format!(
                         "Zero-width terminals are not allowed ({name}: {})",
                         pattern_to_regexp(p)
                     )));
                 }
-                (Some(pattern_to_regexp(p)), min, max)
+                (Some(pattern_to_regexp(p)), Some(parsed), min, max)
             }
-            None => (None, 0, Some(0)),
+            None => (None, None, 0, Some(0)),
         };
         let id = self.terminals.len();
         if let Some(p) = &pattern {
@@ -280,6 +281,7 @@ impl Compiler {
             name,
             pattern,
             regexp,
+            parsed,
             priority,
             min_width,
             max_width,
@@ -389,11 +391,7 @@ impl Compiler {
             }
             Expr::Symbol(Symbol::Terminal(name)) => match self.term_ids.get(name) {
                 Some(&id) => Item::Terminal(id),
-                None => {
-                    return Err(GrammarError::new(format!(
-                        "Terminal '{name}' used but not defined (in rule {rule_name})"
-                    )));
-                }
+                None => unreachable!("undefined terminals are rejected before compiling"),
             },
             Expr::Symbol(Symbol::Rule(name)) => Item::Rule(self.rule_id(name)),
             Expr::Literal(pattern) => Item::Terminal(self.anonymous_terminal(pattern)?),
@@ -564,12 +562,9 @@ pub fn compile(built: &BuiltGrammar, start: &[&str]) -> GrammarResult<Grammar> {
     }
     for (name, &id) in &compiler.rule_ids {
         if compiler.rules[id].is_none() {
-            let what = if compiler.templates.contains_key(name) {
-                format!("Template '{name}' is used without arguments")
-            } else {
-                format!("Rule '{name}' used but not defined")
-            };
-            return Err(GrammarError::new(what));
+            return Err(GrammarError::new(format!(
+                "Template '{name}' is used without arguments"
+            )));
         }
     }
     let rules: Vec<Rule> = compiler.rules.into_iter().map(|r| r.unwrap()).collect();

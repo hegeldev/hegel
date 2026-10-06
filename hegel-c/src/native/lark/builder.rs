@@ -302,12 +302,6 @@ impl<'s> GrammarBuilder<'s> {
                 type_name(is_term)
             )));
         };
-        if existing.is_term != is_term {
-            return Err(GrammarError::new(format!(
-                "Cannot extend {} {name} - one is a terminal, while the other is not.",
-                type_name(is_term)
-            )));
-        }
         if existing.params != params {
             return Err(GrammarError::new(format!(
                 "Cannot extend {} with different parameters: {name}",

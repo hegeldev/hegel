@@ -45,3 +45,7 @@ impl fmt::Display for GrammarError {
 }
 
 pub type GrammarResult<T> = Result<T, GrammarError>;
+
+#[cfg(test)]
+#[path = "../../../tests/embedded/native/lark/mod_tests.rs"]
+mod tests;

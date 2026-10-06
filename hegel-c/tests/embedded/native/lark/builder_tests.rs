@@ -338,3 +338,47 @@ fn find_used_symbols_includes_templates_and_arguments() {
     let symbols = find_used_symbols(&built.rule_defs[0].2);
     assert_eq!(symbols, vec!["t", "A", "b", "c"]);
 }
+
+#[test]
+fn imported_rules_bring_their_templates_along_mangled() {
+    let sources = Sources(vec![("lib.lark", "tmpl{x}: x \"a\"\nrule: tmpl{\"b\"}\n")]);
+    let built = build_with("%import .lib.rule\nstart: rule\n", &sources).unwrap();
+    let names = rule_names(&built);
+    assert!(names.contains(&"rule"), "{names:?}");
+    assert!(names.contains(&"lib__tmpl"), "{names:?}");
+}
+
+#[test]
+fn imported_rules_may_reference_what_their_grammar_lacks() {
+    let sources = Sources(vec![("lib.lark", "rule: other\n")]);
+    let err = build_with("%import .lib.rule\nstart: rule\n", &sources).unwrap_err();
+    assert!(err.message.contains("lib__other"), "{}", err.message);
+}
+
+#[test]
+fn a_later_import_alias_of_the_same_name_replaces_the_earlier() {
+    let built = build("%import common.INT -> A\n%import common.INT -> B\nstart: B\n");
+    let names = term_names(&built);
+    assert!(names.contains(&"B"), "{names:?}");
+    assert!(!names.contains(&"A"), "{names:?}");
+    assert!(err("%import common.INT -> A\n%import common.INT -> B\nstart: A\n").contains("'A'"));
+}
+
+#[test]
+fn undefined_symbols_are_found_inside_repeats_and_template_arguments() {
+    let message = err("start: \"x\" UNDEF*\n");
+    assert!(
+        message.contains("Terminal 'UNDEF' used but not defined"),
+        "{message}"
+    );
+    let message = err("start: tmpl{UNDEF}\ntmpl{a}: a\n");
+    assert!(
+        message.contains("Terminal 'UNDEF' used but not defined"),
+        "{message}"
+    );
+    let message = err("start: tmpl{\"q\"} nope\ntmpl{a}: a\n");
+    assert!(
+        message.contains("Rule 'nope' used but not defined"),
+        "{message}"
+    );
+}
