@@ -4,11 +4,16 @@
 from __future__ import annotations
 
 import threading
+import warnings
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from hegel.hypothesis.errors import InvalidArgument, UnsatisfiedAssumption
+from hegel.hypothesis.errors import (
+    HypothesisDeprecationWarning,
+    InvalidArgument,
+    UnsatisfiedAssumption,
+)
 
 if TYPE_CHECKING:
     from hegel.test_case import TestCase
@@ -29,7 +34,9 @@ __all__ = [
 class BuildContext:
     """The state of the test case currently being executed."""
 
-    def __init__(self, tc: TestCase, *, is_final: bool = False, runner: Any = None) -> None:
+    def __init__(
+        self, tc: TestCase | None = None, *, is_final: bool = False, runner: Any = None
+    ) -> None:
         self.tc = tc
         self.is_final = is_final
         self.runner = runner
@@ -42,13 +49,16 @@ class BuildContext:
         _stack().append(self)
         return self
 
-    def __exit__(self, *exc: object) -> None:
+    def __exit__(self, exc_type: object, exc: BaseException | None, tb: object) -> None:
         stack = _stack()
         assert stack and stack[-1] is self
         stack.pop()
-        self.close()
+        self.close(exc)
 
-    def close(self) -> None:
+    def close(self, cause: BaseException | None = None) -> None:
+        """Run the registered cleanup tasks (last registered first). Their
+        errors are raised, chained to ``cause`` (the error that ended the
+        block, if any)."""
         tasks, self.tasks = self.tasks, []
         errors: list[BaseException] = []
         for task in reversed(tasks):
@@ -57,9 +67,8 @@ class BuildContext:
             except BaseException as error:  # noqa: BLE001
                 errors.append(error)
         if errors:
-            if len(errors) == 1:
-                raise errors[0]
-            raise BaseExceptionGroup("Cleanup failed", errors)
+            error = errors[0] if len(errors) == 1 else BaseExceptionGroup("Cleanup failed", errors)
+            raise error from cause
 
 
 _local = threading.local()
@@ -70,6 +79,19 @@ def _stack() -> list[BuildContext]:
     if stack is None:
         stack = _local.stack = []
     return stack
+
+
+class _CurrentBuildContext:
+    """Compatibility handle: ``_current_build_context.value`` is the current
+    build context, or None outside a test."""
+
+    @property
+    def value(self) -> BuildContext | None:
+        stack = _stack()
+        return stack[-1] if stack else None
+
+
+_current_build_context = _CurrentBuildContext()
 
 
 def currently_in_test_context() -> bool:
@@ -91,13 +113,24 @@ def _current_tc(what: str) -> TestCase:
     return stack[-1].tc
 
 
+def _warn_outside_test(name: str) -> None:
+    if not currently_in_test_context():
+        warnings.warn(
+            f"Using `{name}` outside a property-based test is deprecated",
+            HypothesisDeprecationWarning,
+            stacklevel=3,
+        )
+
+
 def reject() -> NoReturn:
     """Reject the current test case as invalid."""
+    _warn_outside_test("reject")
     raise UnsatisfiedAssumption()
 
 
 def assume(condition: object) -> bool:
     """Reject the current test case unless ``condition`` holds."""
+    _warn_outside_test("assume")
     if not condition:
         raise UnsatisfiedAssumption()
     return True
