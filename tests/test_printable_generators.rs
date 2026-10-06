@@ -503,6 +503,10 @@ fn every_leaf_generator_prints() {
     assert_eq!(printed_draw_lines(gs::text()), vec!["let draw_1 = \"\";"]);
     printed_draw_lines(gs::characters());
     printed_draw_lines(gs::from_regex("[a-z]{2}"));
+    assert_eq!(
+        printed_draw_lines(gs::from_lark("start: \"a\"")),
+        vec!["let draw_1 = \"a\";"]
+    );
     assert_eq!(printed_draw_lines(gs::binary()), vec!["let draw_1 = [];"]);
     printed_draw_lines(gs::emails());
     printed_draw_lines(gs::urls());

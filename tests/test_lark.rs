@@ -1,0 +1,122 @@
+mod common;
+
+use common::utils::{assert_all_examples, find_any, minimal};
+use hegel::generators::{self as gs, Generator};
+
+const INT_LIST: &str = "start: INT (\",\" INT)*\n%import common.INT\n";
+
+fn is_int_list(s: &str) -> bool {
+    s.split(',')
+        .all(|part| part.parse::<u64>().is_ok() || part.len() > 19)
+}
+
+#[test]
+fn test_from_lark_generates_strings_of_the_grammar() {
+    assert_all_examples(gs::from_lark(INT_LIST), |s: &String| is_int_list(s));
+}
+
+#[test]
+fn test_from_lark_generates_large_strings_by_default() {
+    find_any(gs::from_lark(INT_LIST), |s: &String| s.len() > 2000);
+}
+
+#[test]
+fn test_from_lark_shrinks_to_the_smallest_string() {
+    assert_eq!(
+        minimal(gs::from_lark(INT_LIST), |s: &String| s.contains(',')),
+        "0,0"
+    );
+}
+
+#[test]
+fn test_from_lark_start_selects_the_rule() {
+    assert_all_examples(
+        gs::from_lark("a: \"a\"+\nb: \"b\"+\n").start("b"),
+        |s: &String| !s.is_empty() && s.chars().all(|c| c == 'b'),
+    );
+}
+
+#[test]
+fn test_from_lark_explicit_supplies_declared_terminals() {
+    assert_all_examples(
+        gs::from_lark("start: WORD \"!\" NUM\n%declare WORD NUM\n")
+            .explicit("WORD", gs::from_regex("[a-z]{3}"))
+            .explicit("NUM", gs::text().alphabet("0123456789").min_size(1)),
+        |s: &String| {
+            let (word, num) = s.split_once('!').unwrap();
+            word.len() == 3
+                && word.chars().all(|c| c.is_ascii_lowercase())
+                && !num.is_empty()
+                && num.chars().all(|c| c.is_ascii_digit())
+        },
+    );
+}
+
+#[test]
+fn test_from_lark_alphabet_constrains_pattern_terminals() {
+    assert_all_examples(
+        gs::from_lark("start: /[a-z]+/").alphabet(
+            gs::characters()
+                .min_codepoint(u32::from('a'))
+                .max_codepoint(u32::from('b')),
+        ),
+        |s: &String| !s.is_empty() && s.chars().all(|c| c == 'a' || c == 'b'),
+    );
+}
+
+#[test]
+fn test_from_lark_max_size_caps_the_length() {
+    assert_all_examples(gs::from_lark(INT_LIST).max_size(10), |s: &String| {
+        is_int_list(s) && s.len() <= 10
+    });
+}
+
+#[test]
+fn test_from_lark_max_depth_caps_the_nesting() {
+    assert_all_examples(
+        gs::from_lark("start: \"(\" start \")\" | \"x\"").max_depth(3),
+        |s: &String| ["x", "(x)", "((x))"].contains(&s.as_str()),
+    );
+    find_any(
+        gs::from_lark("start: \"(\" start \")\" | \"x\"").max_depth(3),
+        |s: &String| s == "((x))",
+    );
+}
+
+#[test]
+fn test_from_lark_import_path_resolves_imports() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(dir.path().join("lib.lark"), "LETTERS: /[a-z]+/\n").unwrap();
+    assert_all_examples(
+        gs::from_lark("%import lib.LETTERS\nstart: LETTERS\n").import_path(dir.path()),
+        |s: &String| !s.is_empty() && s.chars().all(|c| c.is_ascii_lowercase()),
+    );
+}
+
+#[test]
+fn test_from_lark_inserts_ignored_terminals() {
+    find_any(
+        gs::from_lark("start: \"a\" \"b\"\n%import common.WS\n%ignore WS\n"),
+        |s: &String| s.contains(' '),
+    );
+}
+
+#[test]
+fn test_from_lark_draws_inside_collections() {
+    assert_all_examples(
+        gs::vecs(gs::from_lark(INT_LIST).max_size(20)).max_size(3),
+        |v: &Vec<String>| v.len() <= 3 && v.iter().all(|s| is_int_list(s)),
+    );
+}
+
+#[test]
+fn test_from_lark_labels_distinguish_grammars_and_start_rules() {
+    let a = gs::from_lark("start: \"a\"");
+    let b = gs::from_lark("start: \"b\"");
+    assert_ne!(a.label(), b.label());
+    assert_ne!(
+        a.label(),
+        gs::from_lark("start: \"a\"").start("other").label()
+    );
+    assert_eq!(a.label(), gs::from_lark("start: \"a\"").label());
+}

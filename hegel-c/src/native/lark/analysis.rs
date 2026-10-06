@@ -59,14 +59,8 @@ pub struct Node {
     pub min_depth: u32,
 }
 
-impl Node {
-    /// Whether the node can produce arbitrarily long strings.
-    pub fn growing(&self) -> bool {
-        self.max_size.is_none()
-    }
-}
-
 impl Alt {
+    /// Whether the alternative can produce arbitrarily long strings.
     pub fn growing(&self) -> bool {
         self.max_size.is_none()
     }

@@ -7,6 +7,7 @@ use crate::native::bignum::BigInt;
 use crate::native::core::{ManyState, NativeStateMachine, NativeVariables, RecursionState};
 use crate::native::draws::special::{Date, DateTime, Time};
 use crate::native::draws::{FloatSpec, StringSpec};
+use crate::native::lark::generate::GrammarSpec;
 
 /// Error returned by [`DataSource`] methods when an operation cannot complete.
 ///
@@ -85,6 +86,9 @@ pub trait DataSource: Send + Sync {
     /// Draw a string according to a validated [`StringSpec`] (text, regex,
     /// email, url, or domain).
     fn generate_string(&self, spec: &StringSpec) -> Result<String, DataSourceError>;
+
+    /// Draw a string of the grammar described by a [`GrammarSpec`].
+    fn generate_grammar(&self, spec: &GrammarSpec) -> Result<String, DataSourceError>;
 
     /// Draw a Gregorian calendar [`Date`] in `[min, max]`, shrinking toward
     /// 2000-01-01 (clamped into range). Errors with `InvalidArgument` for

@@ -61,7 +61,7 @@ fn repeats_scale_the_minimum_and_bound_the_maximum() {
     assert_eq!(inner.min_size, 1);
     assert_eq!(alt.items[0].max_size, Some(3));
     assert_eq!(alt.items[1].min_size, 0);
-    assert!(alt.items[1].growing());
+    assert_eq!(alt.items[1].max_size, None);
     assert_eq!(alt.items[2].min_size, 1);
     assert_eq!(alt.items[3].max_size, Some(1));
     assert_eq!(alt.items[3].min_depth, 0);

@@ -55,6 +55,7 @@ fn backreferences_use_the_group_width() {
 fn conditional_groups() {
     assert_eq!(width("(a)?(?(1)bc|d)"), (1, Some(3)));
     assert_eq!(width("(a)?(?(1)bc)"), (0, Some(3)));
+    assert_eq!(width("(a)?(?(1)b*|c)"), (0, None));
 }
 
 #[test]

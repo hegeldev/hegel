@@ -75,6 +75,7 @@ pub struct Grammar {
 }
 
 impl Grammar {
+    #[cfg(test)]
     pub fn rule_id(&self, name: &str) -> Option<RuleId> {
         self.rules.iter().position(|r| r.name == name)
     }

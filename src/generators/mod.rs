@@ -14,6 +14,7 @@ mod deferred;
 #[allow(clippy::module_inception)]
 mod generators;
 mod labels;
+mod lark;
 mod misc;
 mod numeric;
 mod recursive;
@@ -46,6 +47,7 @@ pub use generators::{
     PrintableGenerator, PrintedAsCall, PrintedAsDebug, PrintedWith,
 };
 pub use labels::{combine_labels, label_from_name};
+pub use lark::{LarkGenerator, from_lark};
 pub use misc::{BoolGenerator, JustGenerator, booleans, just, unit, weighted_booleans};
 pub use numeric::{Float, FloatGenerator, Integer, IntegerGenerator, floats, integers};
 pub use recursive::{RecursiveGenerator, SubtreeGenerator, recursive};
@@ -56,9 +58,9 @@ pub use sequences::{
 pub use strings::{
     BinaryGenerator, CharactersGenerator, DateStringGenerator, DateTimeStringGenerator,
     DomainGenerator, EmailGenerator, IpAddressGenerator, Ipv4AddressGenerator,
-    Ipv6AddressGenerator, RegexGenerator, TextGenerator, TimeStringGenerator, UrlGenerator,
-    UuidsGenerator, binary, characters, date_strings, datetime_strings, domains, emails,
-    from_regex, ip_addresses, text, time_strings, urls, uuids,
+    Ipv6AddressGenerator, RegexGenerator, TerminalGenerator, TextGenerator, TimeStringGenerator,
+    UrlGenerator, UuidsGenerator, binary, characters, date_strings, datetime_strings, domains,
+    emails, from_regex, ip_addresses, text, time_strings, urls, uuids,
 };
 pub use time::{DurationGenerator, durations};
 pub use tuples::{

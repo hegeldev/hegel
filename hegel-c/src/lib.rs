@@ -4423,7 +4423,7 @@ pub unsafe extern "C" fn hegel_generate_bytes_result_free(
 /// across test cases and threads. Free it with
 /// `hegel_string_generator_free` once no draws will use it again.
 pub struct HegelStringGenerator {
-    spec: crate::native::draws::StringSpec,
+    spec: Arc<crate::native::draws::StringSpec>,
 }
 
 /// Translate a constructor-time engine error onto `ctx`. Constructors
@@ -4537,7 +4537,9 @@ unsafe fn write_string_generator(
     out_generator: *mut *mut HegelStringGenerator,
     spec: crate::native::draws::StringSpec,
 ) -> hegel_result_t {
-    let handle = into_raw_send_sync(HegelStringGenerator { spec });
+    let handle = into_raw_send_sync(HegelStringGenerator {
+        spec: Arc::new(spec),
+    });
     unsafe { *out_generator = handle };
     HEGEL_OK
 }
@@ -4681,7 +4683,7 @@ pub unsafe extern "C" fn hegel_string_generator_regex(
             Ok(None) => String::new(),
             Err(rc) => return rc,
         };
-    let alphabet_spec = unsafe { alphabet.as_ref() }.map(|g| &g.spec);
+    let alphabet_spec = unsafe { alphabet.as_ref() }.map(|g| &*g.spec);
     match crate::native::draws::StringSpec::regex(&pattern, fullmatch, alphabet_spec) {
         Ok(spec) => unsafe { write_string_generator(out_generator, spec) },
         Err(e) => translate_construct_error(ctx, e),
@@ -4813,15 +4815,22 @@ pub unsafe extern "C" fn hegel_generate_string(
         return HEGEL_E_INVALID_ARG;
     }
     match tc.stream.generate_string(&generator.spec) {
-        Ok(s) => {
-            let boxed = s.into_bytes().into_boxed_slice();
-            let len = boxed.len();
-            let data = Box::into_raw(boxed).cast::<c_char>();
-            unsafe { *out_result = hegel_generate_string_result_t { data, len } };
-            HEGEL_OK
-        }
+        Ok(s) => unsafe { write_string_result(out_result, s) },
         Err(e) => translate_ds_error(ctx, e),
     }
+}
+
+/// Hand `s` to the caller through `out_result` as a libhegel-allocated
+/// buffer, to be released with `hegel_generate_string_result_free`.
+unsafe fn write_string_result(
+    out_result: *mut hegel_generate_string_result_t,
+    s: String,
+) -> hegel_result_t {
+    let boxed = s.into_bytes().into_boxed_slice();
+    let len = boxed.len();
+    let data = Box::into_raw(boxed).cast::<c_char>();
+    unsafe { *out_result = hegel_generate_string_result_t { data, len } };
+    HEGEL_OK
 }
 
 /// Parameters:
@@ -4847,6 +4856,269 @@ pub unsafe extern "C" fn hegel_generate_string_result_free(
     result.data = ptr::null_mut();
     result.len = 0;
     HEGEL_OK
+}
+
+/// Import callback for `hegel_grammar_new`, asked for every `%import` that
+/// the grammar, or a grammar it imports, makes. `user_data` is the pointer
+/// supplied alongside the callback. `base_path` is the directory of the
+/// importing grammar (the directory part of the `out_path` this callback
+/// gave for it), or NULL when the importing grammar is the text passed to
+/// `hegel_grammar_new`; `grammar_path` is the file the import names
+/// relative to it (`common.lark` for `%import common.INT`, `a/b.lark` for
+/// `%import a.b.rule`). Both are NUL-terminated UTF-8 valid only for the
+/// duration of the call. To supply the grammar, set `out_path` to the
+/// NUL-terminated path it was found at, `out_text` and `out_text_len` to
+/// its UTF-8 text, all kept alive until `hegel_grammar_new` returns, and
+/// return true; return false when there is no such grammar, in which case
+/// an absolute import (`%import common.INT`, as opposed to the relative
+/// `%import .common.INT`) still resolves against the grammars bundled with
+/// libhegel: `common`, `lark`, `python` and `unicode`.
+#[allow(non_camel_case_types)]
+pub type hegel_grammar_import_t = Option<
+    unsafe extern "C" fn(
+        user_data: *mut c_void,
+        base_path: *const c_char,
+        grammar_path: *const c_char,
+        out_path: *mut *const c_char,
+        out_text: *mut *const c_char,
+        out_text_len: *mut usize,
+    ) -> bool,
+>;
+
+/// A caller-supplied import callback paired with its `user_data` pointer.
+struct CallbackImports {
+    callback: unsafe extern "C" fn(
+        *mut c_void,
+        *const c_char,
+        *const c_char,
+        *mut *const c_char,
+        *mut *const c_char,
+        *mut usize,
+    ) -> bool,
+    user_data: *mut c_void,
+}
+
+impl crate::native::lark::builder::ImportSource for CallbackImports {
+    fn load(&self, base_path: Option<&str>, grammar_path: &str) -> Option<(String, String)> {
+        let base = base_path.map(cstring_lossy);
+        let path = cstring_lossy(grammar_path);
+        let mut out_path: *const c_char = ptr::null();
+        let mut out_text: *const c_char = ptr::null();
+        let mut out_text_len = 0usize;
+        let found = unsafe {
+            (self.callback)(
+                self.user_data,
+                base.as_ref().map_or(ptr::null(), |b| b.as_ptr()),
+                path.as_ptr(),
+                &mut out_path,
+                &mut out_text,
+                &mut out_text_len,
+            )
+        };
+        if !found || out_path.is_null() || out_text.is_null() {
+            return None;
+        }
+        let path = unsafe { CStr::from_ptr(out_path) }
+            .to_string_lossy()
+            .into_owned();
+        let text = unsafe { core::slice::from_raw_parts(out_text.cast::<u8>(), out_text_len) };
+        Some((path, String::from_utf8_lossy(text).into_owned()))
+    }
+}
+
+/// A grammar to draw strings of
+///
+/// Build one with `hegel_grammar_new` from a grammar in Lark's syntax; the
+/// grammar is checked and compiled at construction. A grammar is immutable
+/// after construction and may be shared freely across test cases and
+/// threads. Free it with `hegel_grammar_free` once no draws will use it
+/// again.
+pub struct HegelGrammar {
+    spec: crate::native::lark::generate::GrammarSpec,
+}
+
+/// Compile a grammar written in Lark's syntax (see
+/// <https://lark-parser.readthedocs.io/en/stable/grammar.html>) into a
+/// generator of the strings it accepts, drawn with `hegel_generate_grammar`.
+///
+/// Parameters:
+/// `text`: The grammar, NUL-terminated UTF-8.
+/// `start`: The rule whose strings to generate, or NULL for `start`.
+/// `max_size`: The most characters a string may have, or 0 for the default
+///   of 8192. Must not be below the shortest string the start rule can
+///   produce.
+/// `max_depth`: How deeply rules may nest, or 0 for the default of 200.
+///   Must not be below the shallowest nesting the start rule can produce.
+/// `alphabet`: Optional (NULL for none). Must be a text generator; its
+///   characters are the ones the terminals' patterns may draw where they
+///   leave the choice open (wildcards, negated classes).
+/// `explicit_names`, `explicit_generators`, `explicit_len`: `explicit_len`
+///   terminals to draw from the given string generators instead of their
+///   patterns. Every terminal the grammar `%declare`s must be given one;
+///   a terminal with a pattern may be overridden. Each generator must
+///   outlive this call only.
+/// `import_callback`, `import_data`: How `%import`s are resolved (see
+///   `hegel_grammar_import_t`); NULL to resolve only against the bundled
+///   grammars.
+/// `out_grammar`: Receives the grammar handle.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` with a message describing
+/// what is wrong with the grammar or the options: a syntax error, an
+/// undefined or unused symbol, a rule that can never produce a finite
+/// string, a `%declare`d terminal without a generator, or a cap below the
+/// smallest string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_grammar_new(
+    ctx: *mut HegelContext,
+    text: *const c_char,
+    start: *const c_char,
+    max_size: u64,
+    max_depth: u32,
+    alphabet: *const HegelStringGenerator,
+    explicit_names: *const *const c_char,
+    explicit_generators: *const *const HegelStringGenerator,
+    explicit_len: usize,
+    import_callback: hegel_grammar_import_t,
+    import_data: *mut c_void,
+    out_grammar: *mut *mut HegelGrammar,
+) -> hegel_result_t {
+    use crate::native::lark::builder::{ImportSource, NoImports};
+    use crate::native::lark::generate::{GrammarOptions, from_lark};
+    const FN: &str = "hegel_grammar_new";
+    clear_last_error(ctx);
+    if out_grammar.is_null() {
+        set_last_error(ctx, "hegel_grammar_new: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    unsafe { *out_grammar = ptr::null_mut() };
+    let text = match unsafe { required_utf8_arg(ctx, FN, "text", text) } {
+        Ok(s) => s,
+        Err(rc) => return rc,
+    };
+    let defaults = GrammarOptions::default();
+    let start = match unsafe { optional_utf8_arg(ctx, FN, "start", start) } {
+        Ok(s) => s.unwrap_or(defaults.start),
+        Err(rc) => return rc,
+    };
+    let names = match unsafe {
+        names_from_c_array(ctx, FN, "explicit_names", explicit_names, explicit_len)
+    } {
+        Ok(names) => names,
+        Err(rc) => return rc,
+    };
+    if explicit_generators.is_null() && explicit_len > 0 {
+        set_last_error(
+            ctx,
+            "hegel_grammar_new: explicit_generators pointer is null",
+        );
+        return HEGEL_E_INVALID_ARG;
+    }
+    let mut explicit = Vec::with_capacity(explicit_len);
+    for (i, name) in names.into_iter().enumerate() {
+        let generator = unsafe { *explicit_generators.add(i) };
+        let Some(generator) = (unsafe { generator.as_ref() }) else {
+            set_last_error(
+                ctx,
+                &format!("hegel_grammar_new: explicit_generators[{i}] is null"),
+            );
+            return HEGEL_E_INVALID_HANDLE;
+        };
+        explicit.push((name, Arc::clone(&generator.spec)));
+    }
+    let options = GrammarOptions {
+        start,
+        explicit,
+        alphabet: unsafe { alphabet.as_ref() }.map(|g| Arc::clone(&g.spec)),
+        max_size: if max_size == 0 {
+            defaults.max_size
+        } else {
+            max_size
+        },
+        max_depth: if max_depth == 0 {
+            defaults.max_depth
+        } else {
+            max_depth
+        },
+    };
+    let callback = import_callback.map(|callback| CallbackImports {
+        callback,
+        user_data: import_data,
+    });
+    let source: &dyn ImportSource = match &callback {
+        Some(callback) => callback,
+        None => &NoImports,
+    };
+    match from_lark(&text, source, options) {
+        Ok(spec) => {
+            unsafe { *out_grammar = into_raw_send_sync(HegelGrammar { spec }) };
+            HEGEL_OK
+        }
+        Err(e) => {
+            set_last_error(ctx, &e.message);
+            HEGEL_E_INVALID_ARG
+        }
+    }
+}
+
+/// Parameters:
+/// `grammar`: The grammar to release. Safe to call with NULL.
+///
+/// Returns `HEGEL_OK`.
+///
+/// Each grammar must be freed exactly once, and only after every draw
+/// using it has completed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_grammar_free(
+    ctx: *mut HegelContext,
+    grammar: *mut HegelGrammar,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    if grammar.is_null() {
+        return HEGEL_OK;
+    }
+    // SAFETY: `grammar` came from `hegel_grammar_new`'s `into_raw_send_sync`
+    // and, per the documented contract, is freed exactly once.
+    drop(unsafe { Box::from_raw(grammar) });
+    HEGEL_OK
+}
+
+/// Draw a string of a grammar: a string the grammar's start rule accepts,
+/// aiming at a length drawn up to the grammar's size cap, as many as 8192
+/// characters by default.
+///
+/// Parameters:
+/// `grammar`: A grammar built by `hegel_grammar_new`.
+/// `out_result`: Receives a libhegel-allocated UTF-8 buffer (not
+///   NUL-terminated) with the string. Release with
+///   `hegel_generate_string_result_free`.
+///
+/// Returns `HEGEL_OK`, `HEGEL_E_STOP_TEST`, or `HEGEL_E_ASSUME` when the
+/// draw could not produce a string that lexes back as the grammar's
+/// tokens, which rejects the test case.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_generate_grammar(
+    ctx: *mut HegelContext,
+    tc: *mut HegelTestCase,
+    grammar: *const HegelGrammar,
+    out_result: *mut hegel_generate_string_result_t,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    let (tc, _guard) = match unsafe { tc_guard(ctx, "hegel_generate_grammar", tc) } {
+        Ok(t) => t,
+        Err(rc) => return rc,
+    };
+    let Some(grammar) = (unsafe { grammar.as_ref() }) else {
+        set_last_error(ctx, "hegel_generate_grammar: grammar handle is null");
+        return HEGEL_E_INVALID_HANDLE;
+    };
+    if out_result.is_null() {
+        set_last_error(ctx, "hegel_generate_grammar: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    match tc.stream.generate_grammar(&grammar.spec) {
+        Ok(s) => unsafe { write_string_result(out_result, s) },
+        Err(e) => translate_ds_error(ctx, e),
+    }
 }
 
 /// A drawn proleptic Gregorian calendar date: `year` in

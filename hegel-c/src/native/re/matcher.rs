@@ -241,6 +241,7 @@ impl<'p> Matcher<'p> {
     }
 
     /// Replace the step and depth budgets.
+    #[cfg(test)]
     pub fn with_limits(mut self, step_limit: u64, depth_limit: usize) -> Self {
         self.step_limit = step_limit;
         self.depth_limit = depth_limit;
@@ -877,7 +878,7 @@ impl<'p> Matcher<'p> {
                 }
                 OpCode::GroupRef(g) => match find_group(self.pattern, *g) {
                     Some(group) => self.width(group),
-                    None => (0, 0),
+                    None => unreachable!("the parser rejects references to undefined groups"),
                 },
                 OpCode::GroupRefExists { yes, no, .. } => {
                     let (yl, yh) = self.width(yes);
@@ -1083,64 +1084,68 @@ fn unfold(l: char) -> &'static [char] {
     UNFOLD.get(&l).map_or(&[], Vec::as_slice)
 }
 
+const EXTRA_CASES: &[(char, &[char])] = &[
+    ('\u{69}', &['\u{131}']),
+    ('\u{73}', &['\u{17f}']),
+    ('\u{b5}', &['\u{3bc}']),
+    ('\u{131}', &['\u{69}']),
+    ('\u{17f}', &['\u{73}']),
+    ('\u{345}', &['\u{3b9}', '\u{1fbe}']),
+    ('\u{390}', &['\u{1fd3}']),
+    ('\u{3b0}', &['\u{1fe3}']),
+    ('\u{3b2}', &['\u{3d0}']),
+    ('\u{3b5}', &['\u{3f5}']),
+    ('\u{3b8}', &['\u{3d1}']),
+    ('\u{3b9}', &['\u{345}', '\u{1fbe}']),
+    ('\u{3ba}', &['\u{3f0}']),
+    ('\u{3bc}', &['\u{b5}']),
+    ('\u{3c0}', &['\u{3d6}']),
+    ('\u{3c1}', &['\u{3f1}']),
+    ('\u{3c2}', &['\u{3c3}']),
+    ('\u{3c3}', &['\u{3c2}']),
+    ('\u{3c6}', &['\u{3d5}']),
+    ('\u{3d0}', &['\u{3b2}']),
+    ('\u{3d1}', &['\u{3b8}']),
+    ('\u{3d5}', &['\u{3c6}']),
+    ('\u{3d6}', &['\u{3c0}']),
+    ('\u{3f0}', &['\u{3ba}']),
+    ('\u{3f1}', &['\u{3c1}']),
+    ('\u{3f5}', &['\u{3b5}']),
+    ('\u{432}', &['\u{1c80}']),
+    ('\u{434}', &['\u{1c81}']),
+    ('\u{43e}', &['\u{1c82}']),
+    ('\u{441}', &['\u{1c83}']),
+    ('\u{442}', &['\u{1c84}', '\u{1c85}']),
+    ('\u{44a}', &['\u{1c86}']),
+    ('\u{463}', &['\u{1c87}']),
+    ('\u{1c80}', &['\u{432}']),
+    ('\u{1c81}', &['\u{434}']),
+    ('\u{1c82}', &['\u{43e}']),
+    ('\u{1c83}', &['\u{441}']),
+    ('\u{1c84}', &['\u{442}', '\u{1c85}']),
+    ('\u{1c85}', &['\u{442}', '\u{1c84}']),
+    ('\u{1c86}', &['\u{44a}']),
+    ('\u{1c87}', &['\u{463}']),
+    ('\u{1c88}', &['\u{a64b}']),
+    ('\u{1e61}', &['\u{1e9b}']),
+    ('\u{1e9b}', &['\u{1e61}']),
+    ('\u{1fbe}', &['\u{345}', '\u{3b9}']),
+    ('\u{1fd3}', &['\u{390}']),
+    ('\u{1fe3}', &['\u{3b0}']),
+    ('\u{a64b}', &['\u{1c88}']),
+    ('\u{fb05}', &['\u{fb06}']),
+    ('\u{fb06}', &['\u{fb05}']),
+];
+
 /// CPython's `re._casefix._EXTRA_CASES`: pairs of lowercase characters
 /// that `re.IGNORECASE` treats as equal although their lowercase forms
 /// differ, because they share an uppercase form (`s` and `ſ`, `k` and
 /// the Kelvin sign's lowercase `k`, the Greek symbol variants, ...).
 fn extra_cases(l: char) -> &'static [char] {
-    match l {
-        '\u{69}' => &['\u{131}'],
-        '\u{73}' => &['\u{17f}'],
-        '\u{b5}' => &['\u{3bc}'],
-        '\u{131}' => &['\u{69}'],
-        '\u{17f}' => &['\u{73}'],
-        '\u{345}' => &['\u{3b9}', '\u{1fbe}'],
-        '\u{390}' => &['\u{1fd3}'],
-        '\u{3b0}' => &['\u{1fe3}'],
-        '\u{3b2}' => &['\u{3d0}'],
-        '\u{3b5}' => &['\u{3f5}'],
-        '\u{3b8}' => &['\u{3d1}'],
-        '\u{3b9}' => &['\u{345}', '\u{1fbe}'],
-        '\u{3ba}' => &['\u{3f0}'],
-        '\u{3bc}' => &['\u{b5}'],
-        '\u{3c0}' => &['\u{3d6}'],
-        '\u{3c1}' => &['\u{3f1}'],
-        '\u{3c2}' => &['\u{3c3}'],
-        '\u{3c3}' => &['\u{3c2}'],
-        '\u{3c6}' => &['\u{3d5}'],
-        '\u{3d0}' => &['\u{3b2}'],
-        '\u{3d1}' => &['\u{3b8}'],
-        '\u{3d5}' => &['\u{3c6}'],
-        '\u{3d6}' => &['\u{3c0}'],
-        '\u{3f0}' => &['\u{3ba}'],
-        '\u{3f1}' => &['\u{3c1}'],
-        '\u{3f5}' => &['\u{3b5}'],
-        '\u{432}' => &['\u{1c80}'],
-        '\u{434}' => &['\u{1c81}'],
-        '\u{43e}' => &['\u{1c82}'],
-        '\u{441}' => &['\u{1c83}'],
-        '\u{442}' => &['\u{1c84}', '\u{1c85}'],
-        '\u{44a}' => &['\u{1c86}'],
-        '\u{463}' => &['\u{1c87}'],
-        '\u{1c80}' => &['\u{432}'],
-        '\u{1c81}' => &['\u{434}'],
-        '\u{1c82}' => &['\u{43e}'],
-        '\u{1c83}' => &['\u{441}'],
-        '\u{1c84}' => &['\u{442}', '\u{1c85}'],
-        '\u{1c85}' => &['\u{442}', '\u{1c84}'],
-        '\u{1c86}' => &['\u{44a}'],
-        '\u{1c87}' => &['\u{463}'],
-        '\u{1c88}' => &['\u{a64b}'],
-        '\u{1e61}' => &['\u{1e9b}'],
-        '\u{1e9b}' => &['\u{1e61}'],
-        '\u{1fbe}' => &['\u{345}', '\u{3b9}'],
-        '\u{1fd3}' => &['\u{390}'],
-        '\u{1fe3}' => &['\u{3b0}'],
-        '\u{a64b}' => &['\u{1c88}'],
-        '\u{fb05}' => &['\u{fb06}'],
-        '\u{fb06}' => &['\u{fb05}'],
-        _ => &[],
-    }
+    EXTRA_CASES
+        .iter()
+        .find(|(c, _)| *c == l)
+        .map_or(&[], |(_, cases)| cases)
 }
 
 /// CPython's category tests: the `UNI_` variants in Unicode mode, the

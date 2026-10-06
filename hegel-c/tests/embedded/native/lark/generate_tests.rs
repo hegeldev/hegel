@@ -7,6 +7,7 @@ use crate::native::core::ChoiceValue;
 use crate::native::lark::builder::{ImportSource, NoImports};
 use crate::native::rng::EngineRng;
 use alloc::string::ToString;
+use alloc::sync::Arc;
 use alloc::vec;
 use std::path::Path;
 
@@ -29,10 +30,10 @@ fn small(text: &str, max_size: u64) -> GrammarSpec {
     .unwrap()
 }
 
-fn explicit(name: &str, pattern: &str) -> (String, StringSpec) {
+fn explicit(name: &str, pattern: &str) -> (String, Arc<StringSpec>) {
     (
         name.to_string(),
-        StringSpec::regex(pattern, true, None).unwrap(),
+        Arc::new(StringSpec::regex(pattern, true, None).unwrap()),
     )
 }
 
@@ -122,7 +123,7 @@ fn alphabet_must_be_a_text_generator() {
     let err = spec_with(
         "start: A\nA: /a+/\n",
         GrammarOptions {
-            alphabet: Some(StringSpec::regex("a", true, None).unwrap()),
+            alphabet: Some(Arc::new(StringSpec::regex("a", true, None).unwrap())),
             ..GrammarOptions::default()
         },
     )
@@ -322,7 +323,7 @@ fn separators_are_forced_between_tokens_that_would_merge() {
     );
     let strings = samples(&spec, 100);
     for s in &strings {
-        assert_eq!(s.trim().split_whitespace().count(), 2, "{s:?}");
+        assert_eq!(s.split_whitespace().count(), 2, "{s:?}");
     }
 }
 
@@ -667,7 +668,7 @@ fn fixture_spec(
     name: &str,
     start: &str,
     max_size: u64,
-    explicit: Vec<(String, StringSpec)>,
+    explicit: Vec<(String, Arc<StringSpec>)>,
 ) -> GrammarSpec {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/lark")
@@ -718,7 +719,7 @@ fn experiment() {
                     let pattern = crate::native::lark::escape::re_escape(&text);
                     (
                         name.to_string(),
-                        StringSpec::regex(&pattern, true, None).unwrap(),
+                        Arc::new(StringSpec::regex(&pattern, true, None).unwrap()),
                     )
                 })
                 .collect()

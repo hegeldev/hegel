@@ -505,16 +505,21 @@ pub struct EmailGenerator {
 
 const EMAIL_LABEL: u64 = label_from_name("hegel.emails");
 
+impl EmailGenerator {
+    fn handle(&self) -> &ffi::StringGenerator {
+        self.handle.get_or_init(|| {
+            ffi::StringGenerator::email().unwrap_or_else(|msg| invalid_argument!("{msg}"))
+        })
+    }
+}
+
 impl Generator<String> for EmailGenerator {
     fn label(&self) -> u64 {
         EMAIL_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
-        let handle = self.handle.get_or_init(|| {
-            ffi::StringGenerator::email().unwrap_or_else(|msg| invalid_argument!("{msg}"))
-        });
-        tc.generate_string(handle)
+        tc.generate_string(self.handle())
     }
 }
 
@@ -532,16 +537,21 @@ pub struct UrlGenerator {
 
 const URL_LABEL: u64 = label_from_name("hegel.urls");
 
+impl UrlGenerator {
+    fn handle(&self) -> &ffi::StringGenerator {
+        self.handle.get_or_init(|| {
+            ffi::StringGenerator::url().unwrap_or_else(|msg| invalid_argument!("{msg}"))
+        })
+    }
+}
+
 impl Generator<String> for UrlGenerator {
     fn label(&self) -> u64 {
         URL_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
-        let handle = self.handle.get_or_init(|| {
-            ffi::StringGenerator::url().unwrap_or_else(|msg| invalid_argument!("{msg}"))
-        });
-        tc.generate_string(handle)
+        tc.generate_string(self.handle())
     }
 }
 
@@ -569,20 +579,25 @@ impl DomainGenerator {
 
 const DOMAIN_LABEL: u64 = label_from_name("hegel.domains");
 
+impl DomainGenerator {
+    fn handle(&self) -> &ffi::StringGenerator {
+        self.handle.get_or_init(|| {
+            if !(self.max_length >= 4 && self.max_length <= 255) {
+                invalid_argument!("max_length must be between 4 and 255");
+            }
+            ffi::StringGenerator::domain(self.max_length as u64)
+                .unwrap_or_else(|msg| invalid_argument!("{msg}"))
+        })
+    }
+}
+
 impl Generator<String> for DomainGenerator {
     fn label(&self) -> u64 {
         DOMAIN_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
-        let handle = self.handle.get_or_init(|| {
-            if !(self.max_length >= 4 && self.max_length <= 255) {
-                invalid_argument!("max_length must be between 4 and 255");
-            }
-            ffi::StringGenerator::domain(self.max_length as u64)
-                .unwrap_or_else(|msg| invalid_argument!("{msg}"))
-        });
-        tc.generate_string(handle)
+        tc.generate_string(self.handle())
     }
 }
 
@@ -595,6 +610,43 @@ pub fn domains() -> DomainGenerator {
         handle: OnceLock::new(),
     }
 }
+
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// A string generator the engine draws directly, usable as the generator of
+/// a terminal in a Lark grammar through
+/// [`LarkGenerator::explicit`](super::LarkGenerator::explicit).
+///
+/// Implemented by [`TextGenerator`], [`RegexGenerator`], [`EmailGenerator`],
+/// [`UrlGenerator`] and [`DomainGenerator`]; this trait is sealed.
+pub trait TerminalGenerator: sealed::Sealed {
+    #[doc(hidden)]
+    fn terminal_handle(&self) -> &ffi::StringGenerator;
+}
+
+macro_rules! terminal_generators {
+    ($($ty:ident),* $(,)?) => {
+        $(
+            impl sealed::Sealed for $ty {}
+
+            impl TerminalGenerator for $ty {
+                fn terminal_handle(&self) -> &ffi::StringGenerator {
+                    self.handle()
+                }
+            }
+        )*
+    };
+}
+
+terminal_generators!(
+    TextGenerator,
+    RegexGenerator,
+    EmailGenerator,
+    UrlGenerator,
+    DomainGenerator,
+);
 
 /// Generator for IP addresses. Created by [`ip_addresses()`].
 ///

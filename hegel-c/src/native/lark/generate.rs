@@ -42,6 +42,7 @@ use crate::native::draws::{
 use crate::native::labels::label_from_name;
 use alloc::format;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 /// The default cap on the length of a generated string, in characters.
@@ -95,6 +96,7 @@ const MIN_PERSISTENCE: f64 = 32.0;
 /// element count.
 const COUNT_RESOLUTION: u64 = 1 << 20;
 
+const LABEL_GRAMMAR: u64 = label_from_name("hegel.lark");
 const LABEL_TERMINAL: u64 = label_from_name("hegel.lark.terminal");
 const LABEL_IGNORE: u64 = label_from_name("hegel.lark.ignore");
 const LABEL_ELEMENT: u64 = label_from_name("hegel.lark.element");
@@ -105,14 +107,14 @@ enum TerminalGen {
     Pattern(StringSpec),
     /// From a generator supplied for a `%declare`d (or overridden)
     /// terminal, taken as it comes.
-    Explicit(StringSpec),
+    Explicit(Arc<StringSpec>),
 }
 
 /// Options for building a [`GrammarSpec`].
 pub struct GrammarOptions {
     pub start: String,
-    pub explicit: Vec<(String, StringSpec)>,
-    pub alphabet: Option<StringSpec>,
+    pub explicit: Vec<(String, Arc<StringSpec>)>,
+    pub alphabet: Option<Arc<StringSpec>>,
     pub max_size: u64,
     pub max_depth: u32,
 }
@@ -134,6 +136,7 @@ impl Default for GrammarOptions {
 pub struct GrammarSpec {
     analysis: Analysis,
     terminals: Vec<TerminalGen>,
+    #[cfg(test)]
     terminal_names: Vec<String>,
     ignore: Vec<TermId>,
     lexer: Lexer,
@@ -169,14 +172,13 @@ impl GrammarSpec {
                     term_min.push(1);
                 }
                 (None, Some(regexp)) => {
-                    let spec = StringSpec::regex(regexp, true, options.alphabet.as_ref()).map_err(
-                        |e| {
+                    let spec = StringSpec::regex(regexp, true, options.alphabet.as_deref())
+                        .map_err(|e| {
                             GrammarError::new(format!(
                                 "Cannot generate terminal {} from {regexp}: {e}",
                                 term.name
                             ))
-                        },
-                    )?;
+                        })?;
                     terminals.push(TerminalGen::Pattern(spec));
                     term_min.push(term.min_width);
                 }
@@ -212,6 +214,7 @@ impl GrammarSpec {
         Ok(GrammarSpec {
             analysis,
             terminals,
+            #[cfg(test)]
             terminal_names: grammar.terminals.iter().map(|t| t.name.clone()).collect(),
             ignore: grammar.ignore,
             lexer,
@@ -228,6 +231,7 @@ impl GrammarSpec {
     }
 
     /// The names of the terminals, indexed by [`TermId`].
+    #[cfg(test)]
     pub fn terminal_names(&self) -> &[String] {
         &self.terminal_names
     }
@@ -947,7 +951,8 @@ impl Generation<'_> {
         })?;
         let id = candidates[index as usize];
         let text = match &self.spec.terminals[id] {
-            TerminalGen::Explicit(spec) | TerminalGen::Pattern(spec) => generate_string(ntc, spec)?,
+            TerminalGen::Explicit(spec) => generate_string(ntc, spec)?,
+            TerminalGen::Pattern(spec) => generate_string(ntc, spec)?,
         };
         let text: Vec<char> = text.chars().collect();
         let reading = self.spec.reading(id, &text);
@@ -1011,11 +1016,15 @@ impl Generation<'_> {
     }
 }
 
-/// Draw a string from `spec`.
+/// Draw a string from `spec`, in a span of its own.
 pub fn generate_grammar(
     ntc: &mut NativeTestCase,
     spec: &GrammarSpec,
 ) -> Result<String, EngineError> {
+    spanned(ntc, LABEL_GRAMMAR, |ntc| draw_grammar(ntc, spec))
+}
+
+fn draw_grammar(ntc: &mut NativeTestCase, spec: &GrammarSpec) -> Result<String, EngineError> {
     let min = spec.min_size();
     let mut target = if spec.max_size > min
         && spanned(ntc, LABEL_BOOLEAN, |ntc| {

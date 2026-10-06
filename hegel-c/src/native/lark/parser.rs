@@ -1,9 +1,11 @@
 //! Recursive-descent parser for `.lark` grammar text, following the
 //! meta-grammar in Lark's `load_grammar.py` (`RULES`).
 
+#[cfg(test)]
+use super::ast::Pattern;
 use super::ast::{
-    Alternative, Definition, Expr, ImportNames, ImportStmt, Pattern, RuleDef, RuleModifiers,
-    Statement, Symbol, TermDef,
+    Alternative, Definition, Expr, ImportNames, ImportStmt, RuleDef, RuleModifiers, Statement,
+    Symbol, TermDef,
 };
 use super::escape::{range_literal, regex_literal, string_literal};
 use super::lexer::{Pos, Tok, Token, tokenize};
@@ -498,8 +500,9 @@ pub fn parse_grammar(text: &str) -> GrammarResult<Vec<Statement>> {
     parser.parse_grammar()
 }
 
-/// A literal as the parser produces it, for tests and callers that build
-/// patterns by hand.
+/// A literal as the parser produces it, for tests that build patterns by
+/// hand.
+#[cfg(test)]
 pub fn literal(pattern: Pattern) -> Expr {
     Expr::Literal(pattern)
 }

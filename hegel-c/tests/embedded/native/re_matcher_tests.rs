@@ -86,6 +86,8 @@ fn greedy_and_lazy_compound_repeats() {
     check("(?:ab)??ab", "ab", 0, Some(2), true);
     check("(?i)(?:ab)*", "ABab", 0, Some(4), true);
     check("(a|b)*c", "ababc", 0, Some(5), true);
+    check("(?i:a)*b", "aAb", 0, Some(3), true);
+    check("a{2,}?b", "ab", 0, None, false);
 }
 
 #[test]
@@ -113,6 +115,11 @@ fn repeats_of_unit_sequence_alternations() {
     check("(?:ab|a){1,1}?c", "abc", 0, Some(3), true);
     check("(?:ab){0}c", "c", 0, Some(1), true);
     check("(?:ab|a){0,1}ab", "ab", 0, Some(2), true);
+    check("(?:[ab]c|a)+cb", "acb", 0, Some(3), true);
+    check("(?:[ab]c|x)+ac", "acac", 0, Some(4), true);
+    check("(?:[ab]c|a)+?cb", "acb", 0, Some(3), true);
+    check("(?:[ab]c|a)+?cb", "acacb", 0, Some(5), true);
+    check("(?:[ab]c|x)+?d", "acb", 0, None, false);
 }
 
 #[test]
@@ -202,6 +209,8 @@ fn lookbehind() {
     check("(a)(?<=\\1)b", "ab", 0, Some(2), true);
     check("(a)(?<=(?(1)a|b))b", "ab", 0, Some(2), true);
     check("(ab)(c)?(?<=\\2)d", "abd", 0, None, false);
+    check("(?:(a))+?(?<=\\1)b", "ab", 0, Some(2), true);
+    check("(?:(ab))+?(?<=\\1)c", "ababc", 0, Some(5), true);
 }
 
 #[test]
@@ -212,6 +221,7 @@ fn variable_width_lookbehind_accepts_any_of_its_widths() {
     check("(?<!a|bc)d", "xd", 1, Some(2), false);
     check("(?<=a+)d", "aaad", 3, Some(4), false);
     check("(?<=(?:ab){1,2}|x)d", "ababd", 4, Some(5), false);
+    check("(?<=a+?)d", "aad", 2, Some(3), false);
 }
 
 #[test]
@@ -297,6 +307,9 @@ fn ignorecase_sets() {
     check("(?i)[^a-z\\d]", "5", 0, None, false);
     check("(?i)[^\\W]", "\u{c9}", 0, Some(1), true);
     check("(?i)[b-d]", "a", 0, None, false);
+    check("(?i)[ab]", "B", 0, Some(1), true);
+    check("(?i)[\u{17f}x]", "S", 0, Some(1), true);
+    check("(?i)[^ab]", "A", 0, None, false);
 }
 
 #[test]
@@ -427,6 +440,16 @@ fn case_folding_helpers_match_cpython() {
     assert!(unfold('\u{1c6}').contains(&'\u{1c5}'));
     assert_eq!(extra_cases('s'), &['\u{17f}']);
     assert_eq!(extra_cases('a'), &[] as &[char]);
+    for &(c, cases) in EXTRA_CASES {
+        for &other in cases {
+            assert!(extra_cases(other).contains(&c), "{c:?} <-> {other:?}");
+            assert_eq!(
+                fold(c, true).to_uppercase().next(),
+                fold(other, true).to_uppercase().next(),
+                "{c:?} <-> {other:?}"
+            );
+        }
+    }
 }
 
 #[test]
