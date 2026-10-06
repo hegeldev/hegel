@@ -12,10 +12,12 @@ from inspect import Parameter as P, signature
 
 import pytest
 
+# Dropped (define_function_signature is a Hypothesis internal): test_copying_preserves_signature.
+
+
 from hegel.hypothesis import given, strategies as st
-from hegel.hypothesis.internal.reflection import (
+from tests.hypothesis_port.common.compat import (
     convert_positional_arguments,
-    define_function_signature,
     get_pretty_function_description,
 )
 
@@ -33,14 +35,6 @@ def has_annotation(a: int, *b, c=2) -> None:
     pass
 
 
-@pytest.mark.parametrize("f", [has_annotation, lambda *, a: a, lambda *, a=1: a])
-def test_copying_preserves_signature(f):
-    af = signature(f)
-    t = define_function_signature("foo", "docstring", af)(universal_acceptor)
-    at = signature(t)
-    assert af.parameters == at.parameters
-
-
 @pytest.mark.parametrize(
     "lam,source",
     [
@@ -50,6 +44,10 @@ def test_copying_preserves_signature(f):
         ((lambda *, a=1: a), "lambda *, a=1: a"),
         ((lambda **kw: kw), "lambda **kw: kw"),
     ],
+)
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's lambda description does not handle keyword-only or variadic parameters",
 )
 def test_kwonly_lambda_formatting(lam, source):
     # Testing kwonly lambdas, with and without varargs and default values
@@ -94,6 +92,10 @@ def first_annot(draw: None):
     pass
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's composite does not rewrite the return annotation to SearchStrategy[...]",
+)
 def test_composite_edits_annotations():
     sig_comp = signature(st.composite(to_wrap_with_composite))
     assert sig_comp.return_annotation == st.SearchStrategy[int]

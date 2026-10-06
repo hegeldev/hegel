@@ -11,13 +11,14 @@ import enum
 import fractions
 import inspect
 import ipaddress
+import sys
 import types
 import typing
 import uuid
 from collections.abc import Callable
 from typing import Any
 
-from hegel.errors import InvalidArgument
+from hegel.errors import InvalidArgument, ResolutionFailed
 from hegel.generators.base import Generator
 from hegel.generators.collections import (
     dicts,
@@ -36,6 +37,7 @@ from hegel.generators.time import dates, datetimes, timedeltas, times
 __all__ = ["from_type", "register_type_generator"]
 
 _registry: dict[Any, Any] = {}
+_TypeAliasType: Any = getattr(typing, "TypeAliasType", None)  # Python 3.12+
 
 
 def register_type_generator(
@@ -128,8 +130,10 @@ def _generic(origin: Any, args: tuple[Any, ...]) -> Generator[Any] | None:
     ):
         keys = from_type(args[0]) if args else integers()
         values = from_type(args[1]) if len(args) > 1 else integers()
-        result = dicts(keys, values)
-        return result.map(collections.OrderedDict) if origin is collections.OrderedDict else result
+        mapping = dicts(keys, values)
+        return (
+            mapping.map(collections.OrderedDict) if origin is collections.OrderedDict else mapping
+        )
     if origin in (collections.abc.Iterable, collections.abc.Iterator, collections.abc.Collection):
         return iterables(from_type(args[0]) if args else integers())
     if origin is tuple:
@@ -155,26 +159,37 @@ def from_type(type_: Any) -> Generator[Any]:
     annotated constructors, or anything registered with
     :func:`register_type_generator`."""
     if type_ in _registry:
-        registered = _registry[type_]
-        return registered if isinstance(registered, Generator) else registered(type_)
+        return _registered(type_, type_)
     if isinstance(type_, str):
-        raise InvalidArgument(f"from_type({type_!r}): string annotations must be resolved first")
+        raise ResolutionFailed(f"from_type({type_!r}): string annotations must be resolved first")
+    if isinstance(type_, typing.ForwardRef):
+        return from_type(_resolve_forward_ref(type_, None))
     if type_ is None:
         return none()
+    if _TypeAliasType is not None and isinstance(type_, _TypeAliasType):
+        return from_type(type_.__value__)
     if type_ in _BUILTINS:
         return _BUILTINS[type_]()
     origin = typing.get_origin(type_)
+    if _TypeAliasType is not None and isinstance(origin, _TypeAliasType):
+        if origin in _registry:
+            return _registered(origin, type_)
+        try:
+            return from_type(origin.__value__[typing.get_args(type_)])
+        except TypeError:
+            return from_type(origin.__value__)
     if origin is not None:
         generic = _generic(origin, typing.get_args(type_))
         if generic is not None:
             return generic
         if origin in _registry:
-            registered = _registry[origin]
-            return registered if isinstance(registered, Generator) else registered(type_)
+            return _registered(origin, type_)
         return from_type(origin)
     if isinstance(type_, typing.TypeVar):
         bound = getattr(type_, "__bound__", None)
         constraints = getattr(type_, "__constraints__", ())
+        if isinstance(bound, typing.ForwardRef):
+            bound = _resolve_forward_ref(bound, type_)
         if bound is not None:
             return from_type(bound)
         if constraints:
@@ -183,7 +198,10 @@ def from_type(type_: Any) -> Generator[Any]:
     if isinstance(type_, typing.NewType):
         return from_type(type_.__supertype__)
     if not isinstance(type_, type):
-        raise InvalidArgument(f"from_type({type_!r}): not a type")
+        raise ResolutionFailed(f"from_type({type_!r}): not a type")
+    subclasses = _registered_subclasses(type_)
+    if subclasses:
+        return one_of(*(_registered(sub, sub) for sub in subclasses))
     if issubclass(type_, enum.Enum):
         return sampled_from(type_)
     if issubclass(type_, bool):
@@ -198,6 +216,8 @@ def from_type(type_: Any) -> Generator[Any]:
         from hegel.generators.composite import builds
 
         return builds(type_)
+    if inspect.isabstract(type_):
+        return _abstract(type_)
     if hasattr(type_, "__annotations__") and typing.is_typeddict(type_):
         hints = typing.get_type_hints(type_)
         required = getattr(type_, "__required_keys__", set(hints))
@@ -207,7 +227,7 @@ def from_type(type_: Any) -> Generator[Any]:
     try:
         signature = inspect.signature(type_)
     except (TypeError, ValueError):
-        raise InvalidArgument(
+        raise ResolutionFailed(
             f"Cannot infer a generator for {type_!r}: no usable signature"
         ) from None
     from hegel.generators.composite import builds
@@ -219,11 +239,81 @@ def from_type(type_: Any) -> Generator[Any]:
             inspect.Parameter.KEYWORD_ONLY,
         ):
             if parameter.annotation is inspect.Parameter.empty:
-                raise InvalidArgument(
+                raise ResolutionFailed(
                     f"Cannot infer a generator for {type_!r}: required argument "
                     f"{parameter.name!r} has no type annotation"
                 )
     return builds(type_)
+
+
+def _registered(key: Any, type_: Any) -> Generator[Any]:
+    registered = _registry[key]
+    result = registered if isinstance(registered, Generator) else registered(type_)
+    if not isinstance(result, Generator):
+        raise ResolutionFailed(
+            f"The generator registered for {key!r} returned {result!r}, not a generator"
+        )
+    if result.is_empty:
+        raise ResolutionFailed(f"The generator registered for {key!r} is empty")
+    return result
+
+
+def _registered_subclasses(type_: Any) -> list[Any]:
+    """Registered types that are strict subclasses of ``type_`` and of no
+    other known type, in Hypothesis's order of preference."""
+    known = [
+        k for k in list(_registry) + list(_BUILTINS) if isinstance(k, type) and k is not object
+    ]
+    return [
+        k
+        for k in _registry
+        if isinstance(k, type)
+        and k is not type_
+        and _safe_issubclass(k, type_)
+        and sum(_safe_issubclass(k, other) for other in known) == 1
+    ]
+
+
+def _safe_issubclass(cls: Any, base: Any) -> bool:
+    try:
+        return issubclass(cls, base)
+    except TypeError:  # TypedDicts, non-runtime protocols and the like
+        return False
+
+
+def _abstract(type_: Any) -> Generator[Any]:
+    subclasses = type_.__subclasses__()
+    if not subclasses:
+        raise ResolutionFailed(
+            f"Could not resolve {type_!r} to a generator: it is abstract and has no subclasses"
+        )
+    options = []
+    for subclass in subclasses:
+        try:
+            options.append(from_type(subclass))
+        except InvalidArgument:
+            continue
+    if not options:
+        raise ResolutionFailed(
+            f"Could not resolve {type_!r} to a generator: no subclass can be resolved"
+        )
+    return one_of(*options)
+
+
+def _resolve_forward_ref(ref: typing.ForwardRef, owner: Any) -> Any:
+    """The type a forward reference names: a registered ``ForwardRef``,
+    or a name evaluated in the module that defined ``owner``."""
+    if ref in _registry:
+        return ref
+    module = getattr(owner, "__module__", None)
+    namespace = dict(vars(sys.modules[module])) if module in sys.modules else {}
+    try:
+        return eval(ref.__forward_arg__, namespace)  # noqa: S307
+    except Exception:
+        raise ResolutionFailed(
+            f"Could not resolve forward reference {ref.__forward_arg__!r}: "
+            "register a generator for it with register_type_generator"
+        ) from None
 
 
 def infer_missing_arguments(

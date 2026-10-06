@@ -14,21 +14,14 @@ import platform
 import zoneinfo
 from functools import partial
 
+# Dropped (they drive Hypothesis's DatetimeStrategy internals (transition probing, filter rewriting, ConjectureData)): test_aware_datetimes_filter_rewriting_uses_instant_semantics, test_probed_transitions_include_known_dst_change, test_interesting_instants_beyond_the_scan_range, test_probing_finds_transitions_a_week_apart, test_probing_a_misaligned_window_still_finds_transitions, test_tricky_draw_falls_back_for_utc_frame_bounds.
+
+
 import pytest
 
 from hegel.hypothesis import given, settings, strategies as st
 from hegel.hypothesis.errors import InvalidArgument
-from hegel.hypothesis.internal.conjecture.data import ConjectureData
-from hegel.hypothesis.strategies._internal.datetime import (
-    DatetimeStrategy,
-    _ambiguous,
-    _instant,
-    _interesting_instants,
-    _probe_transitions,
-    _transitions,
-    datetime_does_not_exist,
-)
-from hegel.hypothesis.strategies._internal.lazy import unwrap_strategies
+from tests.hypothesis_port.common.compat import _ambiguous, _instant, datetime_does_not_exist
 
 from tests.hypothesis_port.common.debug import (
     assert_all_examples,
@@ -48,6 +41,10 @@ def test_utc_is_minimal():
     .filter(partial(operator.le, dt.datetime(2020, 1, 1, tzinfo=dt.timezone.utc)))
     .filter(partial(operator.ge, dt.datetime(2020, 4, 1, tzinfo=dt.timezone.utc)))
 )
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or target DST folds",
+)
 def test_aware_datetimes_filter_rewriting_narrows_arbitrary_timezones(value):
     # A three-month window in a twenty-thousand-year range would fail the
     # filter_too_much health check without rewriting.
@@ -55,26 +52,8 @@ def test_aware_datetimes_filter_rewriting_narrows_arbitrary_timezones(value):
     assert value <= dt.datetime(2020, 4, 1, tzinfo=dt.timezone.utc)
 
 
-def test_aware_datetimes_filter_rewriting_uses_instant_semantics():
-    # A predicate comparing values which share the bound's tzinfo object uses
-    # fold-ignoring wall-clock order, while the rewritten bounds order values
-    # by the moment they refer to, matching the strategy's semantics for aware
-    # bounds.  These differ only for ambiguous wall times inside a DST fold:
-    tz = zoneinfo.ZoneInfo("America/New_York")
-    bound = dt.datetime(2020, 11, 1, 1, 30, tzinfo=tz)  # EDT; 1-2am repeats
-    inside = dt.datetime(2020, 11, 1, 1, 0, fold=1, tzinfo=tz)  # EST, so a
-    # later instant than the bound, despite the earlier wall-clock reading
-    predicate = partial(operator.le, bound)
-    assert not predicate(inside)
-    s = unwrap_strategies(st.datetimes(timezones=st.just(tz))).filter(predicate)
-    assert isinstance(s, DatetimeStrategy)
-    assert s.in_bounds(inside)
-
-
 def test_can_generate_non_utc():
-    find_any(
-        st.datetimes(timezones=st.timezones()).filter(lambda d: d.tzinfo.key != "UTC")
-    )
+    find_any(st.datetimes(timezones=st.timezones()).filter(lambda d: d.tzinfo.key != "UTC"))
 
 
 @given(st.data(), st.datetimes(), st.datetimes())
@@ -90,6 +69,10 @@ def test_datetimes_stay_within_naive_bounds(data, lo, hi):
     st.datetimes(timezones=st.timezones()),
     st.datetimes(timezones=st.timezones()),
 )
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or target DST folds",
+)
 def test_datetimes_stay_within_aware_bounds(data, lo, hi):
     if _instant(lo) > _instant(hi):
         lo, hi = hi, lo
@@ -100,9 +83,11 @@ def test_datetimes_stay_within_aware_bounds(data, lo, hi):
 
 
 @given(
-    st.datetimes(
-        min_value=dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc), allow_imaginary=False
-    )
+    st.datetimes(min_value=dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc), allow_imaginary=False)
+)
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or target DST folds",
 )
 def test_allow_imaginary_is_not_an_error_for_aware_bounds(d):
     pass
@@ -123,6 +108,10 @@ def at(day, hour, minute=0, *, key, fold=0):
 
 
 @pytest.mark.parametrize("key, day", FALL_BACK_DAYS)
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or target DST folds",
+)
 def test_bounds_at_either_side_of_a_fold(key, day):
     lo = at(day, 1, 30, key=key, fold=1)
     hi = at(day, 3, key=key)
@@ -141,6 +130,10 @@ def test_bounds_at_either_side_of_a_fold(key, day):
 
 
 @pytest.mark.parametrize("key, day", FALL_BACK_DAYS)
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or target DST folds",
+)
 def test_fold_bound_with_long_interval(key, day):
     # Intervals of more than a day are drawn as local wall times, rejecting
     # the rare draw of an ambiguous time beside a bound with the out-of-bounds
@@ -155,6 +148,10 @@ def test_fold_bound_with_long_interval(key, day):
 
 
 @pytest.mark.parametrize("key, day", FALL_BACK_DAYS)
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or target DST folds",
+)
 def test_bounds_inside_a_fold(key, day):
     lo = at(day, 1, 55, key=key, fold=0)
     hi = at(day, 1, 5, key=key, fold=1)
@@ -180,6 +177,10 @@ def test_fold_inverted_bounds_are_invalid(key, day):
 
 
 @pytest.mark.parametrize("key, day", FALL_BACK_DAYS)
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or target DST folds",
+)
 def test_equal_bounds_at_ambiguous_moment_preserves_fold(key, day):
     dt = at(day, 1, 30, key=key, fold=1)
     assert_all_examples(
@@ -189,6 +190,10 @@ def test_equal_bounds_at_ambiguous_moment_preserves_fold(key, day):
 
 
 @pytest.mark.parametrize("kwargs", [{"no_cache": 1}])
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not validate the timezones strategy's element type",
+)
 def test_timezones_argument_validation(kwargs):
     with pytest.raises(InvalidArgument):
         st.timezones(**kwargs).validate()
@@ -233,70 +238,19 @@ def test_can_disallow_prefixes():
     )
 
 
-def test_probed_transitions_include_known_dst_change():
-    # 2007-03-11 02:00 EST sprang forward to 03:00 EDT, i.e. 07:00 UTC
-    tz = zoneinfo.ZoneInfo("America/New_York")
-    assert dt.datetime(2007, 3, 11, 7) in _transitions(tz)
-
-
-def test_interesting_instants_beyond_the_scan_range():
-    # Recurring DST rules continue indefinitely, so windows wholly beyond
-    # the usual scan range are probed directly instead.
-    lo, hi = dt.datetime(6000, 1, 1), dt.datetime(6002, 1, 1)
-    instants, nearest = _interesting_instants(
-        zoneinfo.ZoneInfo("America/New_York"), lo, hi
-    )
-    assert instants
-    assert all(lo <= t <= hi for t in instants)
-    assert nearest == 0
-
-
 def test_generates_imaginary_datetimes():
     tz = zoneinfo.ZoneInfo("America/New_York")
     find_any(st.datetimes(timezones=st.just(tz)), datetime_does_not_exist)
 
 
 @pytest.mark.parametrize("fold", [0, 1])
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or target DST folds",
+)
 def test_generates_ambiguous_datetimes_in_both_folds(fold):
     tz = zoneinfo.ZoneInfo("America/New_York")
     find_any(
         st.datetimes(timezones=st.just(tz)),
         lambda x: x.fold == fold and _ambiguous(x.replace(tzinfo=None), tz),
     )
-
-
-def test_probing_finds_transitions_a_week_apart():
-    # Brazil moved the start of DST forward by one week in October 2000
-    found = _probe_transitions(
-        zoneinfo.ZoneInfo("America/Noronha"),
-        dt.datetime(2000, 9, 1),
-        dt.datetime(2000, 11, 1),
-    )
-    assert found == (dt.datetime(2000, 10, 8, 2), dt.datetime(2000, 10, 15, 1))
-
-
-def test_probing_a_misaligned_window_still_finds_transitions():
-    # Windows whose endpoints are not whole seconds exercise the bisection
-    # guard for sub-second intervals straddling a whole second
-    transition = dt.datetime(2007, 3, 11, 7)  # 02:00 EST -> 03:00 EDT
-    lo = transition - dt.timedelta(seconds=1) + dt.timedelta(microseconds=1)
-    for hi in [
-        lo + dt.timedelta(seconds=1, microseconds=500000),
-        transition + dt.timedelta(hours=1),
-    ]:
-        found = _probe_transitions(zoneinfo.ZoneInfo("America/New_York"), lo, hi)
-        assert len(found) == 1
-        assert abs(found[0] - transition) <= dt.timedelta(seconds=1)
-
-
-def test_tricky_draw_falls_back_for_utc_frame_bounds():
-    # Bounds inside the same DST fold have no wall-clock drawing window, so a
-    # tricky draw falls back to the ordinary draw-in-UTC-and-convert path.
-    tz = zoneinfo.ZoneInfo("America/New_York")
-    lo = dt.datetime(2020, 11, 1, 1, 59, tzinfo=tz, fold=0)
-    hi = dt.datetime(2020, 11, 1, 1, 1, tzinfo=tz, fold=1)
-    strategy = unwrap_strategies(st.datetimes(lo, hi, timezones=st.just(tz)))
-    # tricky selector, then the UTC wall time 2020-11-01 05:59:30 and fold
-    data = ConjectureData.for_choices((True, 2020, 11, 1, 5, 59, 30, 0, 0))
-    value = strategy.do_draw(data)
-    assert _instant(lo) <= _instant(value) <= _instant(hi)

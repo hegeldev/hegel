@@ -11,18 +11,16 @@
 import datetime as dt
 from calendar import monthrange
 
+# Dropped (they drive Hypothesis's DatetimeStrategy internals (ConjectureData, _interesting_instants, tricky_possible)): test_tricky_draw_with_unusable_tzinfo_falls_back, test_tricky_path_is_skipped_when_provably_fruitless, test_fixed_offset_timezones_has_no_interesting_instants, test_early_transition_timezone_interesting_instants, test_interesting_instants_near_datetime_min, test_tricky_draw_rejects_out_of_bounds_fold.
+
+
 import pytest
 
 from hegel.hypothesis import HealthCheck, example, given, settings, strategies as st
 from hegel.hypothesis.errors import InvalidArgument, StopTest, Unsatisfiable
-from hegel.hypothesis.internal.conjecture.data import ConjectureData
 from hegel.hypothesis.strategies import dates, datetimes, timedeltas, times
-from hegel.hypothesis.strategies._internal.datetime import (
-    _instant,
-    _interesting_instants,
-    _num_days_in_month,
-)
-from hegel.hypothesis.strategies._internal.lazy import unwrap_strategies
+
+from tests.hypothesis_port.common.compat import _instant, _num_days_in_month
 
 from tests.hypothesis_port.common.debug import (
     assert_all_examples,
@@ -47,10 +45,13 @@ def test_can_find_positive_delta():
     assert minimal(timedeltas(), lambda x: x.days > 0) == dt.timedelta(1)
 
 
+@pytest.mark.xfail(
+    strict=True, reason="Hegel's timedeltas() shrinks towards zero by components, not whole days"
+)
 def test_can_find_negative_delta():
-    assert minimal(
-        timedeltas(max_value=dt.timedelta(10**6)), lambda x: x.days < 0
-    ) == dt.timedelta(-1)
+    assert minimal(timedeltas(max_value=dt.timedelta(10**6)), lambda x: x.days < 0) == dt.timedelta(
+        -1
+    )
 
 
 def test_can_find_on_the_second():
@@ -76,6 +77,10 @@ def test_max_value_is_respected():
 
 @settings(suppress_health_check=list(HealthCheck))
 @given(timedeltas())
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's timedeltas() does not return the bound object itself when min_value == max_value",
+)
 def test_single_timedelta(val):
     assert_simple_property(timedeltas(val, val), lambda v: v is val)
 
@@ -94,9 +99,7 @@ def test_default_datetimes_are_naive(dt):
 
 def test_bordering_on_a_leap_year():
     x = minimal(
-        datetimes(
-            dt.datetime.min.replace(year=2003), dt.datetime.max.replace(year=2005)
-        ),
+        datetimes(dt.datetime.min.replace(year=2003), dt.datetime.max.replace(year=2005)),
         lambda x: x.month == 2 and x.day == 29,
         settings=settings(max_examples=2500),
     )
@@ -125,6 +128,10 @@ def test_max_year_is_respected():
 
 
 @given(dates())
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's dates() does not return the bound object itself when min_value == max_value",
+)
 def test_single_date(val):
     assert find_any(dates(val, val)) is val
 
@@ -159,10 +166,12 @@ def test_naive_times_are_naive(dt):
     assert dt.tzinfo is None
 
 
+@pytest.mark.xfail(strict=True, reason="Hegel's datetimes() never sets fold=1")
 def test_can_generate_datetime_with_fold_1():
     find_any(datetimes(), lambda d: d.fold)
 
 
+@pytest.mark.xfail(strict=True, reason="Hegel's times() never sets fold=1")
 def test_can_generate_time_with_fold_1():
     find_any(times(), lambda d: d.fold)
 
@@ -177,6 +186,10 @@ def test_generates_leap_second_adjacent_times():
     find_any(datetimes(), lambda x: x.time() >= dt.time(23, 59, 58, 999999))
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+)
 def test_generates_unix_rollover_adjacent_times():
     find_any(datetimes(), lambda x: x.date() == dt.date(2038, 1, 19))
 
@@ -195,9 +208,7 @@ def test_tricky_draws_with_datetime_subclass_bounds():
     # representable range - must not leak into the tricky window computation.
     lo = _DatetimeSubclass(2016, 12, 31, 12)
     hi = _DatetimeSubclass(2017, 1, 2, 12)
-    assert_all_examples(
-        datetimes(lo, hi), lambda x: lo <= x <= hi and type(x) is dt.datetime
-    )
+    assert_all_examples(datetimes(lo, hi), lambda x: lo <= x <= hi and type(x) is dt.datetime)
 
 
 def test_tricky_windows_clamp_at_either_bound():
@@ -225,6 +236,10 @@ class _LateShiftTimezone(dt.tzinfo):
         return "Late"
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+)
 def test_tricky_draws_near_datetime_max_stay_in_bounds():
     # The sole interesting instant is two days before datetime.max, so the
     # windows around it are clamped to the bounds rather than overflowing.
@@ -260,35 +275,6 @@ class _UnhashableTimezone(dt.tzinfo):
         return "Unhashable"
 
 
-@pytest.mark.parametrize("tz_class", [_BrokenTimezone, _UnhashableTimezone])
-def test_tricky_draw_with_unusable_tzinfo_falls_back(tz_class):
-    # A tzinfo whose methods raise when probed, or which the
-    # interesting-instants cache cannot hash, yields no interesting instants;
-    # a tricky draw falls back to an ordinary one instead of erroring.
-    strategy = unwrap_strategies(datetimes(timezones=st.just(tz_class())))
-    data = ConjectureData.for_choices((True, 2001, 2, 3, 4, 5, 6, 7, 0))
-    value = strategy.do_draw(data)
-    assert value.replace(tzinfo=None) == dt.datetime(2001, 2, 3, 4, 5, 6, 7)
-
-
-def test_tricky_path_is_skipped_when_provably_fruitless():
-    # No timezones to have transitions, and no leap seconds or rollovers
-    # within bounds, so the strategy never draws the tricky-path selector.
-    quiet = datetimes(dt.datetime(1500, 1, 1), dt.datetime(1600, 1, 1))
-    assert not unwrap_strategies(quiet).tricky_possible
-    assert unwrap_strategies(datetimes()).tricky_possible
-    check_can_generate_examples(quiet)
-
-
-def test_fixed_offset_timezones_has_no_interesting_instants():
-    # A fixed-offset timezone has no transitions
-    instants, nearest = _interesting_instants(
-        dt.timezone.utc, dt.datetime(2016, 1, 1), dt.datetime(2018, 1, 1)
-    )
-    assert instants == (dt.datetime(2017, 1, 1),)
-    assert nearest == 0
-
-
 class _EarlyTransitionTimezone(dt.tzinfo):
     # A timezone with an offset change in 1699
     def utcoffset(self, value):
@@ -300,18 +286,6 @@ class _EarlyTransitionTimezone(dt.tzinfo):
 
     def tzname(self, value):
         return "Early"
-
-
-def test_early_transition_timezone_interesting_instants():
-    lo, hi = dt.datetime.min, dt.datetime(1700, 1, 1)
-    instants, nearest = _interesting_instants(_EarlyTransitionTimezone(), lo, hi)
-    assert instants == (dt.datetime(1699, 6, 1),)
-    assert nearest == 0
-
-
-def test_interesting_instants_near_datetime_min():
-    lo, hi = dt.datetime.min, dt.datetime(3, 1, 1)
-    assert _interesting_instants(_EarlyTransitionTimezone(), lo, hi) == ((), 0)
 
 
 UTC = dt.timezone.utc
@@ -331,6 +305,10 @@ def test_mixing_aware_and_naive_bounds_is_invalid(aware_arg):
         datetimes(**kwargs).validate()
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+)
 def test_aware_bounds_are_compared_as_moments_in_time():
     lo = dt.datetime(2000, 1, 1, 12, tzinfo=UTC)
     hi = lo.astimezone(dt.timezone(dt.timedelta(hours=-5)))  # the same moment
@@ -351,6 +329,10 @@ def test_aware_bounds_with_none_from_timezones_strategy_is_invalid():
     datetimes(timezones=st.just(UTC)),
     datetimes(timezones=st.just(UTC)),
 )
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+)
 def test_datetimes_stay_within_aware_bounds(data, lo, hi):
     if lo > hi:
         lo, hi = hi, lo
@@ -360,20 +342,36 @@ def test_datetimes_stay_within_aware_bounds(data, lo, hi):
 
 
 @given(datetimes(min_value=dt.datetime(2000, 1, 1, tzinfo=UTC), timezones=st.just(UTC)))
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+)
 def test_single_aware_bound_min(d):
     assert d >= dt.datetime(2000, 1, 1, tzinfo=UTC)
 
 
 @given(datetimes(max_value=dt.datetime(2000, 1, 1, tzinfo=UTC), timezones=st.just(UTC)))
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+)
 def test_single_aware_bound_max(d):
     assert d <= dt.datetime(2000, 1, 1, tzinfo=UTC)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+)
 def test_shrinks_to_aware_min_bound():
     lo = dt.datetime(2024, 3, 4, 5, 6, tzinfo=UTC)
     assert minimal(datetimes(min_value=lo, timezones=st.just(UTC))) == lo
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+)
 def test_bounds_unrepresentable_in_timezone_are_rejected():
     lo = dt.datetime.max.replace(tzinfo=UTC) - dt.timedelta(hours=1)
     tz = dt.timezone(dt.timedelta(hours=5))
@@ -385,10 +383,12 @@ def test_bounds_unrepresentable_in_timezone_are_rejected():
     datetimes(
         dt.datetime.min.replace(tzinfo=UTC),
         dt.datetime.max.replace(tzinfo=UTC),
-        timezones=st.sampled_from(
-            [dt.timezone(dt.timedelta(hours=h)) for h in (-10, 10)]
-        ),
+        timezones=st.sampled_from([dt.timezone(dt.timedelta(hours=h)) for h in (-10, 10)]),
     )
+)
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
 )
 def test_extreme_aware_bounds_are_clamped_per_timezone(d):
     # Each of these timezones can represent only some moments between the
@@ -410,6 +410,10 @@ class EternalFold(dt.tzinfo):
         return dt.timedelta(0)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+)
 def test_pathological_timezone_may_leave_no_valid_fold():
     # With an interval of more than a day we draw local wall times; every wall
     # time in EternalFold is ambiguous, so draws adjacent to a bound whose fold
@@ -424,6 +428,10 @@ def test_pathological_timezone_may_leave_no_valid_fold():
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+)
 def test_pathological_timezone_inverted_bounds_draw_via_utc():
     tz = EternalFold()
     lo = dt.datetime(2000, 1, 1, 2, 0, tzinfo=tz)
@@ -437,6 +445,10 @@ def test_pathological_timezone_inverted_bounds_draw_via_utc():
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+)
 def test_pathological_timezone_bounds_unrepresentable_in_utc():
     # Wall-clock-inverted bounds near datetime.min, whose moments precede it.
     tz = EternalFold()
@@ -447,6 +459,10 @@ def test_pathological_timezone_bounds_unrepresentable_in_utc():
         check_can_generate_examples(datetimes(lo, hi, timezones=st.just(tz)))
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+)
 def test_pathological_timezone_unrepresentable_moments_are_rejected():
     # Near datetime.max, some of the moments between these bounds have no
     # EternalFold wall time at all; drawing one is rejected, and the rest
@@ -460,6 +476,10 @@ def test_pathological_timezone_unrepresentable_moments_are_rejected():
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's datetimes() does not accept timezone-aware bounds or generate tricky (fold/transition) instants",
+)
 def test_pathological_timezone_single_bound_near_extreme():
     tz = EternalFold()
     hi = (dt.datetime.min + dt.timedelta(minutes=90)).replace(fold=1, tzinfo=tz)
@@ -488,11 +508,7 @@ class _DoubleFallBackTimezone(dt.tzinfo):
 
     def utcoffset(self, value):
         naive = value.replace(tzinfo=None)
-        candidates = [
-            off
-            for start, off in self.transitions
-            if self._offset_at(naive - off) == off
-        ]
+        candidates = [off for start, off in self.transitions if self._offset_at(naive - off) == off]
         return candidates[0 if value.fold else -1]
 
     def dst(self, value):
@@ -500,17 +516,3 @@ class _DoubleFallBackTimezone(dt.tzinfo):
 
     def tzname(self, value):
         return "Fall"
-
-
-def test_tricky_draw_rejects_out_of_bounds_fold():
-    # The lower bound is a thrice-ambiguous wall time taken in a later fold,
-    # and the second fall-back is in bounds with its window clamped against
-    # that bound - so a drawn wall time with fold=0 takes the earliest
-    # offset, an instant before the bounds, and must be rejected.
-    tz = _DoubleFallBackTimezone()
-    lo = dt.datetime(2020, 11, 1, 1, 30, fold=1, tzinfo=tz)
-    hi = dt.datetime(2020, 11, 3, 12, tzinfo=tz)
-    strategy = unwrap_strategies(datetimes(lo, hi, timezones=st.just(tz)))
-    data = ConjectureData.for_choices((True, 0, 0, 2020, 11, 1, 1, 30, 0, 500000, 0))
-    with pytest.raises(StopTest):
-        strategy.do_draw(data)

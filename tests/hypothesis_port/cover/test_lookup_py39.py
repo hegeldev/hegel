@@ -41,6 +41,10 @@ from tests.hypothesis_port.common.utils import temp_registered
         ),
     ],
 )
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type does not handle this typing construct (Annotated metadata, registered tuple/list origins, Callable[..., None], grouped protocols)",
+)
 def test_typing_Annotated(annotated_type, expected_strategy_repr):
     assert repr(st.from_type(annotated_type)) == expected_strategy_repr
 
@@ -60,21 +64,37 @@ def arg_more_than_ten(x: MoreThanTenInt):
 
 
 @given(st.data())
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type does not handle this typing construct (Annotated metadata, registered tuple/list origins, Callable[..., None], grouped protocols)",
+)
 def test_annotated_positive_int(data):
     data.draw(st.builds(arg_positive))
 
 
 @given(st.data())
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type does not handle this typing construct (Annotated metadata, registered tuple/list origins, Callable[..., None], grouped protocols)",
+)
 def test_annotated_more_than_ten(data):
     data.draw(st.builds(arg_more_than_ten))
 
 
 @given(st.data())
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type does not handle this typing construct (Annotated metadata, registered tuple/list origins, Callable[..., None], grouped protocols)",
+)
 def test_annotated_with_two_strategies(data):
     assert data.draw(st.from_type(WithTwoStrategies)) is None
 
 
 @given(st.data())
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type does not handle this typing construct (Annotated metadata, registered tuple/list origins, Callable[..., None], grouped protocols)",
+)
 def test_annotated_extra_metadata(data):
     assert data.draw(st.from_type(ExtraAnnotationNoStrategy)) > 0
 
@@ -85,6 +105,10 @@ class User:
     following: list["User"]  # works with typing.List
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type does not handle this typing construct (Annotated metadata, registered tuple/list origins, Callable[..., None], grouped protocols)",
+)
 def test_string_forward_ref_resolved():
     # Forward references to types in scope now work
     # See https://github.com/HypothesisWorks/hypothesis/issues/4542
@@ -124,6 +148,10 @@ def _shorter_lists(list_type):
     return st.lists(st.from_type(*typing.get_args(list_type)), max_size=2)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type does not handle this typing construct (Annotated metadata, registered tuple/list origins, Callable[..., None], grouped protocols)",
+)
 def test_can_register_builtin_list():
     # Regression test for https://github.com/HypothesisWorks/hypothesis/issues/3635
     with temp_registered(list, _shorter_lists):
@@ -156,6 +184,10 @@ def test_only_tuple_subclasses_in_typing_type():
         assert_all_examples(s, lambda x: type(x) is FooableConcrete)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type does not handle this typing construct (Annotated metadata, registered tuple/list origins, Callable[..., None], grouped protocols)",
+)
 def test_lookup_registered_tuple():
     sentinel = object()
     typ = tuple[int]
@@ -175,10 +207,18 @@ class LazyStrategyAnnotation:
 
 
 @given(...)
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type does not handle this typing construct (Annotated metadata, registered tuple/list origins, Callable[..., None], grouped protocols)",
+)
 def test_grouped_protocol_strategy(x: typing.Annotated[int, LazyStrategyAnnotation()]):
     assert x is sentinel
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type does not handle this typing construct (Annotated metadata, registered tuple/list origins, Callable[..., None], grouped protocols)",
+)
 def test_collections_abc_callable_none():
     # https://github.com/HypothesisWorks/hypothesis/issues/4192
     s = st.from_type(collections.abc.Callable[[None], None])

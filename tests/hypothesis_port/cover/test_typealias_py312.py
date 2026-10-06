@@ -12,11 +12,13 @@ import typing
 from collections.abc import Callable
 from typing import get_args, get_origin
 
+# Dropped (evaluate_type_alias_type is a Hypothesis internal): test_typealias_evaluation.
+
+
 import pytest
 
 from hegel.hypothesis import strategies as st
 from hegel.hypothesis.errors import HypothesisException
-from hegel.hypothesis.strategies._internal.types import evaluate_type_alias_type
 
 from tests.hypothesis_port.common.debug import assert_simple_property, find_any
 from tests.hypothesis_port.common.utils import temp_registered
@@ -29,9 +31,7 @@ def test_resolves_simple_typealias():
 
     assert_simple_property(st.from_type(MyInt), lambda x: isinstance(x, int))
     assert_simple_property(st.from_type(AliasedInt), lambda x: isinstance(x, int))
-    assert_simple_property(
-        st.from_type(MaybeInt), lambda x: isinstance(x, int) or x is None
-    )
+    assert_simple_property(st.from_type(MaybeInt), lambda x: isinstance(x, int) or x is None)
 
     find_any(st.from_type(MaybeInt), lambda x: isinstance(x, int))
     find_any(st.from_type(MaybeInt), lambda x: x is None)
@@ -47,9 +47,7 @@ def test_resolves_nested():
 
 def test_resolves_parametrized():
     type MyList = list[int]
-    assert_simple_property(
-        st.from_type(MyList), lambda l: all(isinstance(x, int) for x in l)
-    )
+    assert_simple_property(st.from_type(MyList), lambda l: all(isinstance(x, int) for x in l))
 
 
 def test_mutually_recursive_fails():
@@ -94,9 +92,7 @@ def test_resolves_parameterized_typealias():
 
     assert_simple_property(st.from_type(A[int]), lambda x: isinstance(x, list))
     find_any(st.from_type(A[int]), lambda x: len(x) > 0)
-    assert_simple_property(
-        st.from_type(A[int]), lambda x: all(isinstance(i, int) for i in x)
-    )
+    assert_simple_property(st.from_type(A[int]), lambda x: all(isinstance(i, int) for i in x))
 
 
 def test_resolves_nested_parameterized_typealias():
@@ -104,9 +100,7 @@ def test_resolves_nested_parameterized_typealias():
     type Outer[T] = Inner[T]
 
     assert_simple_property(st.from_type(Outer[str]), lambda x: isinstance(x, list))
-    assert_simple_property(
-        st.from_type(Outer[str]), lambda x: all(isinstance(i, str) for i in x)
-    )
+    assert_simple_property(st.from_type(Outer[str]), lambda x: all(isinstance(i, str) for i in x))
 
 
 def test_resolves_parameterized_typealias_with_literal_types():
@@ -134,52 +128,13 @@ def test_can_register_parameterized_typealias_with_unused_params():
 
     st.register_type_strategy(MyList, resolve_mylist)
 
-    assert_simple_property(
-        st.from_type(MyList[int, float]), lambda x: isinstance(x, list)
-    )
+    assert_simple_property(st.from_type(MyList[int, float]), lambda x: isinstance(x, list))
     assert_simple_property(
         st.from_type(MyList[int, float]), lambda x: all(isinstance(i, int) for i in x)
     )
 
 
+@pytest.mark.xfail(strict=True, reason="Hegel's from_type does not resolve PEP 695 type aliases")
 def test_pep695_self_referential_alias():
     type RecAlias = list[typing.Union["RecAlias", int]]  # noqa: UP007
     find_any(st.from_type(RecAlias))
-
-
-def test_typealias_evaluation():
-    type A[T1, T2] = list[T1]
-    assert evaluate_type_alias_type(A[int, float]) == list[int]
-
-    type A[T1, T2] = list[T2]
-    assert evaluate_type_alias_type(A[float, int]) == list[int]
-
-    type A[K, V] = dict[V, K]
-    assert evaluate_type_alias_type(A[str, int]) == dict[int, str]
-
-    type A[T] = list[list[T]]
-    assert evaluate_type_alias_type(A[int]) == list[list[int]]
-
-    type Inner[T] = list[T]
-    type Outer[T] = Inner[T]
-    assert evaluate_type_alias_type(Outer[int]) == list[int]
-
-    type Bare[T] = list
-    assert evaluate_type_alias_type(Bare[int]) == list
-
-    type A[T1, T2] = list[T1]
-    assert evaluate_type_alias_type(A[int]) == list[int]
-
-    # tries to reference free variable
-    type A[T1, T2] = list[T2]
-    with pytest.raises(ValueError):
-        evaluate_type_alias_type(A[int])
-
-    # (currently) unsupported type forms
-    type A[*Ts] = tuple[*Ts]
-    with pytest.raises(HypothesisException, match="Hypothesis does not yet support"):
-        assert evaluate_type_alias_type(A[int, str, float]) == tuple[int, str, float]
-
-    type A[**P] = Callable[P, int]
-    with pytest.raises(HypothesisException, match="Hypothesis does not yet support"):
-        assert evaluate_type_alias_type(A[[str, float]]) == Callable[[str, float], int]

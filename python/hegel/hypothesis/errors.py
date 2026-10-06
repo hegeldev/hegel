@@ -81,8 +81,7 @@ class FlakyFailure(ExceptionGroup, Flaky):  # type: ignore[type-arg]
     pass
 
 
-class ResolutionFailed(InvalidArgument):
-    """``from_type`` could not resolve a type to a strategy."""
+from hegel.errors import ResolutionFailed  # noqa: E402
 
 
 class InvalidState(HypothesisException):

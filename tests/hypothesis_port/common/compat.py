@@ -46,13 +46,14 @@ def next_up_normal(value: float, width: int, *, allow_subnormal: bool) -> float:
 
 
 def get_pretty_function_description(f: object) -> str:
+    from hegel.hypothesis.strategies._base import _describe
+
     description = getattr(f, "__hegel_description__", None)
     if description is not None:
         return description
-    name = getattr(f, "__name__", None)
-    if name is None:
+    if not callable(f):
         return repr(f)
-    return name
+    return _describe(f)
 
 
 def nicerepr(v: object) -> str:
@@ -83,3 +84,82 @@ def float_of(x: float, width: int) -> float:
 
 def is_negative(value: float) -> bool:
     return math.copysign(1.0, value) < 0
+
+
+def stack_depth_of_caller() -> int:
+    frame = sys._getframe(2)
+    size = 1
+    while frame:
+        frame = frame.f_back
+        size += 1
+    return size
+
+
+def convert_positional_arguments(function, args, kwargs):
+    """Move every argument that can be passed by keyword into kwargs."""
+    import inspect
+
+    sig = inspect.signature(function, follow_wrapped=False)
+    bound = sig.bind(*args, **kwargs)
+    new_args = []
+    new_kwargs = dict(bound.arguments)
+    for p in sig.parameters.values():
+        if p.name in new_kwargs:
+            if p.kind is p.POSITIONAL_ONLY:
+                new_args.append(new_kwargs.pop(p.name))
+            elif p.kind is p.VAR_POSITIONAL:
+                new_args.extend(new_kwargs.pop(p.name))
+            elif p.kind is p.VAR_KEYWORD:
+                new_kwargs.update(new_kwargs.pop(p.name))
+    return tuple(new_args), new_kwargs
+
+
+class UniqueIdentifier:
+    """A unique sentinel with a readable repr."""
+
+    def __init__(self, identifier: str) -> None:
+        self.identifier = identifier
+
+    def __repr__(self) -> str:
+        return self.identifier
+
+
+# --- hypothesis.strategies._internal.random ---------------------------------
+
+from hegel.hypothesis.strategies import RANDOM_METHODS, convert_kwargs  # noqa: E402
+
+
+def normalize_zero(f: float) -> float:
+    return 0.0 if f == 0.0 else f
+
+
+# --- hypothesis.strategies._internal.datetime -------------------------------
+
+import datetime as _dt  # noqa: E402
+from calendar import monthrange as _monthrange  # noqa: E402
+
+
+def _instant(value):
+    return value.replace(tzinfo=None) - _dt.datetime.min - value.utcoffset()
+
+
+def _ambiguous(value, tz):
+    return (
+        value.replace(fold=0, tzinfo=tz).utcoffset() != value.replace(fold=1, tzinfo=tz).utcoffset()
+    )
+
+
+def datetime_does_not_exist(value):
+    if value.tzinfo is None:
+        return False
+    try:
+        roundtrip = value.astimezone(_dt.timezone.utc).astimezone(value.tzinfo)
+    except OverflowError:
+        return True
+    if value.tzinfo is not roundtrip.tzinfo and value.utcoffset() != roundtrip.utcoffset():
+        return True
+    return value != roundtrip
+
+
+def _num_days_in_month(year, month):
+    return _monthrange(year, month)[1]

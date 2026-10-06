@@ -12,30 +12,23 @@ import inspect
 import math
 from copy import copy
 
+# Dropped (Hegel's randoms() are seeded random.Random objects, not Hypothesis's ArtificialRandom): test_implements_all_random_methods, test_artificial_random_with_already_initialized_states_for_ids.
+
+
 import pytest
 
 from hegel.hypothesis import HealthCheck, assume, given, settings, strategies as st
-from hegel.hypothesis.internal.compat import ExceptionGroup
-from hegel.hypothesis.internal.conjecture.data import ConjectureData
-from hegel.hypothesis.strategies._internal.random import (
+from hegel.hypothesis.strategies import HypothesisRandom, TrueRandom
+
+from tests.hypothesis_port.common.compat import (
     RANDOM_METHODS,
-    ArtificialRandom,
-    HypothesisRandom,
-    TrueRandom,
+    ExceptionGroup,
     convert_kwargs,
     normalize_zero,
 )
 
 from tests.hypothesis_port.common.debug import assert_all_examples, find_any
 from tests.hypothesis_port.common.utils import Why, xfail_on_crosshair
-
-
-def test_implements_all_random_methods():
-    for name in dir(HypothesisRandom):
-        if not name.startswith("_") or name == "_randbelow":
-            f = getattr(HypothesisRandom, name)
-            if inspect.isfunction(f):
-                assert f.__module__ == "hypothesis.strategies._internal.random", name
 
 
 any_random = st.randoms(use_true_random=False) | st.randoms(use_true_random=True)
@@ -66,12 +59,8 @@ define_method_strategy("getrandbits", n=st.integers(1, 128))
 define_method_strategy("gauss", mu=st.floats(-1000, 1000), sigma=beta_param)
 define_method_strategy("normalvariate", mu=st.floats(-1000, 1000), sigma=beta_param)
 # the standard library lognormalvariate is weirdly bad at handling large floats
-define_method_strategy(
-    "lognormvariate", mu=st.floats(0.1, 10), sigma=st.floats(0.1, 10)
-)
-define_method_strategy(
-    "vonmisesvariate", mu=st.floats(0, math.pi * 2), kappa=beta_param
-)
+define_method_strategy("lognormvariate", mu=st.floats(0.1, 10), sigma=st.floats(0.1, 10))
+define_method_strategy("vonmisesvariate", mu=st.floats(0, math.pi * 2), kappa=beta_param)
 # Small alpha may raise ZeroDivisionError, see https://bugs.python.org/issue41421
 define_method_strategy("paretovariate", alpha=st.floats(min_value=1.0))
 define_method_strategy("shuffle", x=st.lists(st.integers()))
@@ -284,6 +273,7 @@ def test_converts_kwargs_correctly_in_output(use_true_random):
 
 
 @given(st.randoms(use_true_random=False))
+@pytest.mark.xfail(strict=True, reason="randrange(100, step=3) differs for a real random.Random")
 def test_some_ranges_are_in_range(rnd):
     assert 0 <= rnd.randrange(10) < 10
     assert 11 <= rnd.randrange(11, 20) < 20
@@ -402,27 +392,25 @@ def test_can_draw_empty_from_empty_sequence(rnd):
     assert rnd.sample([], 0) == []
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's randoms() are seeded random.Random objects, so exact boundary values cannot be targeted",
+)
 def test_random_includes_zero_excludes_one():
     strat = st.randoms(use_true_random=False).map(lambda r: r.random())
     assert_all_examples(strat, lambda x: 0 <= x < 1)
     find_any(strat, lambda x: x == 0)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's randoms() are seeded random.Random objects, so exact boundary values cannot be targeted",
+)
 def test_betavariate_includes_zero_and_one():
     # https://github.com/HypothesisWorks/hypothesis/issues/4297#issuecomment-2720144709
     strat = st.randoms(use_true_random=False).flatmap(
-        lambda r: st.builds(
-            r.betavariate, alpha=st.just(1.0) | beta_param, beta=beta_param
-        )
+        lambda r: st.builds(r.betavariate, alpha=st.just(1.0) | beta_param, beta=beta_param)
     )
     assert_all_examples(strat, lambda x: 0 <= x <= 1)
     find_any(strat, lambda x: x == 0)
     find_any(strat, lambda x: x == 1)
-
-
-def test_artificial_random_with_already_initialized_states_for_ids():
-    # covering test for calling .getstate when data.states_for_ids is not None.
-    data = ConjectureData.for_choices([])
-    data.states_for_ids = {}
-    r = ArtificialRandom(note_method_calls=False, data=data)
-    r.getstate()

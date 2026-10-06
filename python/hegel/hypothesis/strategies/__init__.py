@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import codecs
+import collections
 import datetime as dt
 import decimal
 import fractions as _fractions
@@ -122,7 +123,7 @@ def _passthrough(name: str, function: Any) -> Any:
     call.__name__ = name
     call.__qualname__ = name
     call.__doc__ = function.__doc__
-    call.__wrapped__ = function
+    call.__wrapped__ = function  # type: ignore[attr-defined]
     return defines_strategy(call)
 
 
@@ -490,7 +491,7 @@ class _Float16(Generator[float]):
         self.hi = _F16_MAX if max_value is None else min(max_value, _F16_MAX)
         self.inner: Generator[float]
         if self.lo > self.hi:  # an infinite bound: only that infinity remains
-            self.inner = gs.just(min_value if min_value == math.inf else max_value)
+            self.inner = gs.just(math.inf if min_value == math.inf else -math.inf)
         else:
             # 16-bit subnormals are normal 32-bit floats, so let the inner
             # generator infer its own subnormal handling from the bounds.
@@ -528,7 +529,7 @@ class _Float16(Generator[float]):
         return f"floats(min_value={self.min_value!r}, max_value={self.max_value!r}, width=16)"
 
 
-@defines_strategy
+@defines_strategy(try_non_lazy=True)
 def sampled_from(elements: Any) -> SearchStrategy[Any]:
     """One of the given values (a sequence, or an Enum class)."""
     if isinstance(elements, (set, frozenset)):
@@ -536,20 +537,53 @@ def sampled_from(elements: Any) -> SearchStrategy[Any]:
             "Cannot sample from a set, since sets have no defined order. "
             f"Use a sequence (e.g. list or tuple) instead: {elements!r}"
         )
-    if isinstance(elements, dict):
+    if isinstance(elements, dict) and not isinstance(elements, collections.OrderedDict):
         raise InvalidArgument("Cannot sample from a dict; use sampled_from(list(d)) or similar")
+    if isinstance(elements, type) and issubclass(elements, enum_module.Flag):
+        return _sampled_flags(elements)
     if isinstance(elements, type) and issubclass(elements, enum_module.Enum):
         return gs.sampled_from(elements)
-    if isinstance(elements, str):
+    if isinstance(elements, (str, collections.OrderedDict)):
         elements = list(elements)
     if not isinstance(elements, Sequence):
-        try:
-            elements = list(elements)
-        except TypeError:
-            raise InvalidArgument(f"Cannot sample from {elements!r}, not an iterable") from None
+        hint = ""
+        if isinstance(elements, type) and getattr(elements, "__annotations__", None):
+            hint = (
+                " Did you mean to sample from its annotations? To generate instances "
+                "of a dataclass or similar, use builds() or from_type() instead."
+            )
+        raise InvalidArgument(
+            f"Cannot sample from {elements!r} because it is not an ordered collection.{hint}"
+        )
     if not elements:
         raise InvalidArgument("Cannot sample from a length-zero sequence.")
     return gs.sampled_from(elements)
+
+
+def _sampled_flags(flag_type: Any) -> SearchStrategy[Any]:
+    """Members of an ``enum.Flag``, including the empty value and
+    combinations of named flags, as Hypothesis samples them."""
+    import operator
+
+    flags = sorted(
+        set(flag_type.__members__.values()), key=lambda v: (v.value.bit_count(), v.value)
+    )
+    flags_with_empty = flags
+    if not flags or flags[0].value != 0:
+        try:
+            flags_with_empty = [*flags, flag_type(0)]
+        except TypeError:  # nocov
+            pass
+    if not flags_with_empty:
+        raise InvalidArgument("Cannot sample from a length-zero sequence.")
+    inner = [gs.sampled_from(flags_with_empty)]
+    if len(flags) > 1:
+        inner.append(
+            integers(1, len(flags))
+            .flatmap(lambda r: sets(gs.sampled_from(flags), min_size=r, max_size=r))
+            .map(lambda s: flag_type(functools.reduce(operator.or_, (f.value for f in s))))
+        )
+    return gs.one_of(*inner)
 
 
 import enum as enum_module  # noqa: E402
@@ -943,7 +977,7 @@ def from_regex(
         if isinstance(resolved, Nothing):
             return NOTHING
         alphabet = resolved
-    return gs.from_regex(regex, fullmatch=fullmatch, alphabet=alphabet)
+    return gs.from_regex(regex, fullmatch=fullmatch, alphabet=alphabet)  # type: ignore[return-value]
 
 
 @defines_strategy
@@ -1311,7 +1345,7 @@ def recursive(
             HypothesisWarning,
             stacklevel=2,
         )
-    return gs.recursive(base, extend, max_leaves=max_leaves)
+    return gs.recursive(base, extend, max_leaves=max_leaves)  # type: ignore[arg-type]
 
 
 def _describe_function(f: Any) -> str:
@@ -1503,21 +1537,183 @@ def slices(size: int) -> SearchStrategy[slice]:
 def randoms(
     *, note_method_calls: bool = False, use_true_random: bool = False
 ) -> SearchStrategy[_random.Random]:
-    """``random.Random`` instances with a generated seed."""
+    """``random.Random`` instances with a generated seed; with
+    ``note_method_calls`` each call is reported with the failing example."""
     check_type(bool, note_method_calls, "note_method_calls")
     check_type(bool, use_true_random, "use_true_random")
-    if use_true_random:
-        return gs.composite(lambda tc: _random.Random())()
-    return integers(0, 2**63 - 1).map(_HypothesisRandom).print_as_call("HypothesisRandom")
+    cls = TrueRandom if use_true_random else HypothesisRandom
+
+    def draw_random(tc: TestCase) -> _random.Random:
+        seed = tc.draw_silent(integers(0, 2**64 - 1))
+        return cls(seed, note_method_calls=note_method_calls, tc=tc)
+
+    return gs.composite(draw_random)()
 
 
-class _HypothesisRandom(_random.Random):
-    def __init__(self, seed: int = 0) -> None:
+RANDOM_METHODS = [
+    name
+    for name in [
+        "_randbelow",
+        "betavariate",
+        "binomialvariate",
+        "choice",
+        "choices",
+        "expovariate",
+        "gammavariate",
+        "gauss",
+        "getrandbits",
+        "lognormvariate",
+        "normalvariate",
+        "paretovariate",
+        "randint",
+        "random",
+        "randrange",
+        "sample",
+        "shuffle",
+        "triangular",
+        "uniform",
+        "vonmisesvariate",
+        "weibullvariate",
+        "randbytes",
+    ]
+    if hasattr(_random.Random, name)
+]
+
+
+def _random_stub_getrandbits(self: Any, n: int) -> int:  # nocov
+    raise NotImplementedError
+
+
+def _random_stub_random(self: Any) -> float:  # nocov
+    raise NotImplementedError
+
+
+def _random_stub_randbelow(self: Any, n: int) -> int:  # nocov
+    raise NotImplementedError
+
+
+_RANDOM_STUBS: dict[str, Any] = {
+    "getrandbits": _random_stub_getrandbits,
+    "random": _random_stub_random,
+    "_randbelow": _random_stub_randbelow,
+}
+_DUMMY_RANDOM = _random.Random(0)
+
+
+@functools.cache
+def _random_signature(name: str) -> inspect.Signature:
+    return inspect.signature(_RANDOM_STUBS.get(name, getattr(_random.Random, name)))
+
+
+def convert_kwargs(name: str, kwargs: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
+    """Split keyword arguments to ``Random.<name>`` into the positional and
+    keyword parts of the shortest equivalent call."""
+    kwargs = dict(kwargs)
+    signature = _random_signature(name)
+    params = signature.parameters
+    bound = signature.bind(_DUMMY_RANDOM, **kwargs)
+    bound.apply_defaults()
+    for k in list(kwargs):
+        if kwargs[k] is params[k].default or params[k].kind != inspect.Parameter.KEYWORD_ONLY:
+            kwargs.pop(k)
+    arg_names = list(params)[1:]
+    args = []
+    for a in arg_names:
+        if params[a].kind == inspect.Parameter.KEYWORD_ONLY:
+            break
+        args.append(bound.arguments[a])
+        kwargs.pop(a, None)
+    while args:
+        name = arg_names[len(args) - 1]
+        if args[-1] is params[name].default:
+            args.pop()
+        else:
+            break
+    return (args, kwargs)
+
+
+class HypothesisRandom(_random.Random):
+    """A ``random.Random`` seeded from the test case, which can report
+    its method calls alongside the failing example."""
+
+    def __init__(
+        self, seed: int = 0, *, note_method_calls: bool = False, tc: TestCase | None = None
+    ) -> None:
         super().__init__(seed)
         self._hegel_seed = seed
+        self._note_method_calls = note_method_calls
+        self._tc = tc
 
     def __repr__(self) -> str:
-        return f"HypothesisRandom({self._hegel_seed})"
+        return f"HypothesisRandom({self._hegel_seed!r})"
+
+    def __copy__(self) -> HypothesisRandom:
+        result = type(self)(
+            self._hegel_seed, note_method_calls=self._note_method_calls, tc=self._tc
+        )
+        result.setstate(self.getstate())
+        return result
+
+    def __deepcopy__(self, memo: Any) -> HypothesisRandom:
+        return self.__copy__()
+
+    def __reduce__(self) -> Any:  # nocov
+        return (type(self), (self._hegel_seed,), self.getstate())
+
+    def seed(self, a: Any = None, version: int = 2) -> None:
+        super().seed(a, version)
+        if isinstance(a, int):
+            self._hegel_seed = a
+
+    def _hegel_log_random(self, method: str, kwargs: dict[str, Any], result: Any) -> None:
+        if not self._note_method_calls:
+            return
+        from hegel.hypothesis._settings import Verbosity, settings
+        from hegel.hypothesis.reporting import report
+
+        tc = self._tc
+        final = tc is not None and tc.is_final
+        if not (final or settings.default.verbosity >= Verbosity.verbose):
+            return
+        args, kwargs = convert_kwargs(method, kwargs)
+        argstr = ", ".join([repr(a) for a in args] + [f"{k}={v!r}" for k, v in kwargs.items()])
+        text = f"{self!r}.{method}({argstr}) -> {result!r}"
+        if final:
+            assert tc is not None
+            tc.note(text)
+        else:
+            report(text)
+
+
+class TrueRandom(HypothesisRandom):
+    """A :class:`HypothesisRandom` whose seed is reported as ``Random(seed)``."""
+
+    def __repr__(self) -> str:
+        return f"Random({self._hegel_seed!r})"
+
+
+def _define_noting_method(name: str) -> None:
+    target = getattr(_random.Random, name)
+    signature = _random_signature(name)
+
+    def implementation(self: HypothesisRandom, *args: Any, **kwargs: Any) -> Any:
+        result = target(self, *args, **kwargs)
+        if self._note_method_calls:
+            bound = signature.bind(self, *args, **kwargs)
+            bound.apply_defaults()
+            arguments = dict(bound.arguments)
+            arguments.pop(next(iter(signature.parameters)))
+            self._hegel_log_random(name, arguments, result)
+        return result
+
+    implementation.__name__ = name
+    implementation.__qualname__ = f"HypothesisRandom.{name}"
+    implementation.__doc__ = target.__doc__
+    setattr(HypothesisRandom, name, implementation)
+
+
+for _name in RANDOM_METHODS:
+    _define_noting_method(_name)
 
 
 class _RandomSeeder:
@@ -1614,9 +1810,9 @@ def functions(
         else:
             returns = from_type(hints.get("return", type(None)))
     check_strategy(returns, "returns")
-    if is_gen:
-        returns = lists(returns)
-    return _Functions(like, returns, pure)
+    assert isinstance(returns, Generator)
+    strategy: Generator[Any] = lists(returns) if is_gen else returns
+    return _Functions(like, strategy, pure)
 
 
 class _CanVary:
@@ -1713,35 +1909,32 @@ class _Functions(Generator[Callable[..., Any]]):
                 _note_call(tc, like, args, kwargs, value)
             return value
 
+        async def async_body(*args: Any, **kwargs: Any) -> Any:
+            value = draw_value(args, kwargs)
+            await _checkpoint()
+            return value
+
+        async def async_gen_body(*args: Any, **kwargs: Any) -> Any:
+            for value in draw_value(args, kwargs):
+                await _checkpoint()
+                yield value
+            await _checkpoint()
+
+        def gen_body(*args: Any, **kwargs: Any) -> Any:
+            yield from draw_value(args, kwargs)
+
+        def plain_body(*args: Any, **kwargs: Any) -> Any:
+            return draw_value(args, kwargs)
+
+        body: Callable[..., Any]
         if inspect.iscoroutinefunction(like):
-
-            async def body(*args: Any, **kwargs: Any) -> Any:
-                value = draw_value(args, kwargs)
-                await _checkpoint()
-                return value
-
-            kind = "async"
+            body, kind = async_body, "async"
         elif inspect.isasyncgenfunction(like):
-
-            async def body(*args: Any, **kwargs: Any) -> Any:
-                for value in draw_value(args, kwargs):
-                    await _checkpoint()
-                    yield value
-                await _checkpoint()
-
-            kind = "async gen"
+            body, kind = async_gen_body, "async gen"
         elif inspect.isgeneratorfunction(like):
-
-            def body(*args: Any, **kwargs: Any) -> Any:
-                yield from draw_value(args, kwargs)
-
-            kind = "gen"
+            body, kind = gen_body, "gen"
         else:
-
-            def body(*args: Any, **kwargs: Any) -> Any:
-                return draw_value(args, kwargs)
-
-            kind = "plain"
+            body, kind = plain_body, "plain"
         inner = _with_signature(like, signature, body, kind)
         inner.__hegel_signature__ = signature  # type: ignore[attr-defined]
         if not varies:
@@ -1846,6 +2039,15 @@ def register_type_strategy(
 ) -> None:
     """Make ``from_type(custom_type)`` use ``strategy`` (or the strategy
     the callable returns for the type)."""
+    if not _is_a_type(custom_type):
+        raise InvalidArgument(f"custom_type={custom_type!r} must be a type")
+    if typing.get_args(custom_type):
+        raise InvalidArgument(
+            f"Cannot register generic type {custom_type!r}, because it has type "
+            "arguments which would not be handled. Instead, register a function for "
+            f"{typing.get_origin(custom_type)!r} which can inspect specific type "
+            "objects and return a strategy"
+        )
     if not isinstance(strategy, Generator) and not callable(strategy):
         raise InvalidArgument(
             f"strategy={strategy!r} must be a SearchStrategy, or a function that "
@@ -1854,6 +2056,18 @@ def register_type_strategy(
     if isinstance(strategy, Generator) and strategy.is_empty:
         raise InvalidArgument(f"strategy={strategy!r} cannot be an empty strategy")
     gs.register_type_generator(custom_type, strategy)
+
+
+_TypeAliasType: Any = getattr(typing, "TypeAliasType", None)  # Python 3.12+
+
+
+def _is_a_type(thing: Any) -> bool:
+    return (
+        isinstance(thing, (type, typing.TypeVar, typing.NewType, typing.ForwardRef))
+        or (_TypeAliasType is not None and isinstance(thing, _TypeAliasType))
+        or typing.get_origin(thing) is not None
+        or thing in (typing.Any,)
+    )
 
 
 @defines_strategy

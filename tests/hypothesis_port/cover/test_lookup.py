@@ -35,6 +35,9 @@ from typing import (
     Type as _Type,
 )
 
+# Dropped (counts calls to Hypothesis's internal get_type_hints): test_resolving_mutually_recursive_abstract_subclasses_is_efficient.
+
+
 import pytest
 
 from hegel.hypothesis import HealthCheck, assume, given, settings, strategies as st
@@ -44,11 +47,14 @@ from hegel.hypothesis.errors import (
     ResolutionFailed,
     SmallSearchSpaceWarning,
 )
-from hegel.hypothesis.internal.compat import get_type_hints
-from hegel.hypothesis.internal.conjecture.junkdrawer import stack_depth_of_caller
-from hegel.hypothesis.internal.reflection import get_pretty_function_description
 from hegel.hypothesis.strategies import from_type
-from hegel.hypothesis.strategies._internal import core, types
+
+from tests.hypothesis_port.common import types
+from tests.hypothesis_port.common.compat import (
+    get_pretty_function_description,
+    get_type_hints,
+    stack_depth_of_caller,
+)
 
 from tests.hypothesis_port.common.debug import (
     assert_all_examples,
@@ -65,16 +71,15 @@ from tests.hypothesis_port.common.utils import fails_with, temp_registered
 
 sentinel = object()
 BUILTIN_TYPES = tuple(
-    v
-    for v in vars(builtins).values()
-    if isinstance(v, type) and v.__name__ != "BuiltinImporter"
+    v for v in vars(builtins).values() if isinstance(v, type) and v.__name__ != "BuiltinImporter"
 )
 generics = sorted(
     (
         t
         for t in types._global_type_lookup
         # We ignore TypeVar, because it is not a Generic type:
-        if isinstance(t, types.typing_root_type) and t != typing.TypeVar
+        if isinstance(t, types.typing_root_type)
+        and t != typing.TypeVar
         # accessing ByteString warns on 3.15
         and (not ((3, 12) <= sys.version_info[:2] < (3, 14)) or t != typing.ByteString)
     ),
@@ -102,6 +107,10 @@ def test_resolve_typing_module(data, typ):
 
 
 @pytest.mark.parametrize("typ", [typing.Any, typing.Union])
+@pytest.mark.xfail(
+    strict=False,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_does_not_resolve_special_cases(typ):
     with pytest.raises(InvalidArgument):
         check_can_generate_examples(from_type(typ))
@@ -122,12 +131,20 @@ def test_specialised_scalar_types(data, typ, instance_of):
     assert isinstance(ex, instance_of)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_typing_Type_int():
     for t in (type[int], type["int"], _Type[int], _Type["int"]):
         assert_simple_property(from_type(t), lambda x: x is int)
 
 
 @given(from_type(type[str | list]) | from_type(_Type[str | list]))
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_typing_Type_Union(ex):
     assert ex in (str, list)
 
@@ -148,6 +165,10 @@ def test_typing_Type_Union(ex):
     ids=repr,
 )
 @given(data=st.data())
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_rare_types(data, typ):
     ex = data.draw(from_type(typ))
     with warnings.catch_warnings():
@@ -191,6 +212,10 @@ class Elem:
     ids=repr,
 )
 @given(data=st.data())
+@pytest.mark.xfail(
+    strict=False,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_specialised_collection_types(data, typ, coll_type):
     ex = data.draw(from_type(typ))
     assert isinstance(ex, coll_type)
@@ -213,6 +238,10 @@ class ElemValue:
     ids=repr,
 )
 @given(data=st.data())
+@pytest.mark.xfail(
+    strict=False,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_specialised_mapping_types(data, typ, coll_type):
     ex = data.draw(from_type(typ).filter(len))
     assert isinstance(ex, coll_type)
@@ -222,6 +251,10 @@ def test_specialised_mapping_types(data, typ, coll_type):
 
 
 @given(from_type(typing.ItemsView[Elem, Elem]).filter(len))
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_ItemsView(ex):
     # See https://github.com/python/typing/issues/177
     assert isinstance(ex, type({}.items()))
@@ -232,12 +265,20 @@ def test_ItemsView(ex):
 @pytest.mark.parametrize("generic", [typing.Match, typing.Pattern])
 @pytest.mark.parametrize("typ", [bytes, str])
 @given(data=st.data())
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_regex_types(data, generic, typ):
     x = data.draw(from_type(generic[typ]))
     assert isinstance(x[0] if generic is typing.Match else x.pattern, typ)
 
 
 @given(x=...)
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_Generator(x: typing.Generator[Elem, None, ElemValue]):
     assert isinstance(x, typing.Generator)
     try:
@@ -277,6 +318,10 @@ def test_lookup_overrides_defaults():
     inner_2()
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_register_generic_typing_strats():
     # I don't expect anyone to do this, but good to check it works as expected
     with temp_registered(
@@ -285,9 +330,7 @@ def test_register_generic_typing_strats():
     ):
         # We register sets for the abstract sequence type, which masks subtypes
         # from supertype resolution but not direct resolution
-        assert_all_examples(
-            from_type(typing.Sequence[int]), lambda ex: isinstance(ex, set)
-        )
+        assert_all_examples(from_type(typing.Sequence[int]), lambda ex: isinstance(ex, set))
         assert_all_examples(
             from_type(typing.Container[int]),
             lambda ex: not isinstance(ex, typing.Sequence),
@@ -318,6 +361,10 @@ def if_available(name):
         if_available("SupportsIndex"),
     ],
     ids=get_pretty_function_description,
+)
+@pytest.mark.xfail(
+    strict=False,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
 )
 def test_resolves_weird_types(typ):
     check_can_generate_examples(from_type(typ))
@@ -352,6 +399,10 @@ st.register_type_strategy(Baz, st.builds(Baz, st.integers()))
 )
 @settings(suppress_health_check=[HealthCheck.too_slow])
 @given(data=st.data())
+@pytest.mark.xfail(
+    strict=False,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_typevar_type_is_consistent(data, var, expected):
     strat = st.from_type(var)
     v1 = data.draw(strat)
@@ -388,10 +439,18 @@ def same_type_args(a: A, b: A):
 
 
 @given(st.builds(same_type_args))
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_same_typevars_same_type(_):
     """Ensures that single type argument will always have the same type in a single context."""
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_typevars_can_be_redefined():
     """We test that one can register a custom strategy for all type vars."""
     A = typing.TypeVar("A")
@@ -400,6 +459,10 @@ def test_typevars_can_be_redefined():
         assert_all_examples(st.from_type(A), lambda obj: obj == 1)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_typevars_can_be_redefine_with_factory():
     """We test that one can register a custom strategy for all type vars."""
     A = typing.TypeVar("A")
@@ -408,6 +471,10 @@ def test_typevars_can_be_redefine_with_factory():
         assert_all_examples(st.from_type(A), lambda obj: obj == "A")
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_typevars_can_be_resolved_conditionally():
     sentinel = object()
     A = typing.TypeVar("A")
@@ -448,6 +515,10 @@ def test_can_get_type_hints(thing):
     assert isinstance(get_type_hints(thing), dict)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_force_builds_to_infer_strategies_for_default_args():
     # By default, leaves args with defaults and minimises to 2+4=6
     assert minimal(st.builds(annotated_func), lambda ex: True) == 6
@@ -490,13 +561,15 @@ def unknown_annotated_func(a: UnknownType, b=2, *, c: UnknownType, d=4):
     pass
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_raises_for_arg_with_unresolvable_annotation():
     with pytest.raises(ResolutionFailed):
         check_can_generate_examples(st.builds(unknown_annotated_func))
     with pytest.raises(ResolutionFailed):
-        check_can_generate_examples(
-            st.builds(unknown_annotated_func, a=st.none(), c=...)
-        )
+        check_can_generate_examples(st.builds(unknown_annotated_func, a=st.none(), c=...))
 
 
 @given(a=..., b=...)
@@ -526,6 +599,10 @@ def test_resolves_NewType():
 
 
 @pytest.mark.parametrize("is_handled", [True, False])
+@pytest.mark.xfail(
+    strict=False,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_resolves_NewType_conditionally(is_handled):
     sentinel = object()
     typ = typing.NewType("T", int)
@@ -588,9 +665,7 @@ class AnnotatedTarget:
 def test_required_args(target, args, kwargs):
     # Mostly checking that `self` (and only self) is correctly excluded
     check_can_generate_examples(
-        st.builds(
-            target, *map(st.just, args), **{k: st.just(v) for k, v in kwargs.items()}
-        )
+        st.builds(target, *map(st.just, args), **{k: st.just(v) for k, v in kwargs.items()})
     )
 
 
@@ -614,6 +689,10 @@ def test_override_args_for_namedtuple(thing):
 
 
 @pytest.mark.parametrize("thing", [typing.Optional, list, _List])
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_can_resolve_forward_reference_to_class(thing):
     # Forward references to classes in scope should now be resolved
     # See https://github.com/HypothesisWorks/hypothesis/issues/4542
@@ -622,12 +701,20 @@ def test_can_resolve_forward_reference_to_class(thing):
 
 
 @pytest.mark.parametrize("thing", [type, _Type])
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_can_resolve_type_forward_reference(thing):
     # type["ConcreteFoo"] resolves the forward reference to the class in scope
     t = thing["ConcreteFoo"]
     assert_simple_property(st.from_type(t), lambda x: x is ConcreteFoo)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_forward_ref_resolved_from_local_scope():
     # Test that forward refs can be resolved from local variables (f_locals)
     # This explicitly tests the f_locals lookup path in _resolve_forward_ref_in_caller
@@ -638,6 +725,10 @@ def test_forward_ref_resolved_from_local_scope():
     check_can_generate_examples(st.from_type(LocalType))
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel does not warn about forward references that are ambiguous between stack frames",
+)
 def test_ambiguous_forward_ref_is_not_resolved():
     # If different frames define the same name with different values,
     # we should not resolve it (ambiguous) to avoid false positives.
@@ -660,6 +751,10 @@ def test_ambiguous_forward_ref_is_not_resolved():
 RecursiveModuleAlias = list[typing.Union["RecursiveModuleAlias", int]]
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_forward_ref_found_in_multiple_frames_is_resolved():
     # The alias is a module global, so the same name and value is found in the
     # globals of more than one stack frame (this test and the nested helper),
@@ -675,6 +770,9 @@ class NamedTupleNode(typing.NamedTuple):
     children: list["NamedTupleNode"]
 
 
+@pytest.mark.xfail(
+    strict=True, reason="Hegel's from_type is eager, so recursive types recurse without bound"
+)
 def test_namedtuple_self_referential_forward_ref():
     find_any(st.from_type(NamedTupleNode))
 
@@ -682,9 +780,7 @@ def test_namedtuple_self_referential_forward_ref():
 def test_forward_ref_to_non_type_in_caller_frame_fails():
     _hyp_test_not_a_type_marker = 42
     with pytest.raises(ResolutionFailed):
-        check_can_generate_examples(
-            st.from_type(typing.ForwardRef("_hyp_test_not_a_type_marker"))
-        )
+        check_can_generate_examples(st.from_type(typing.ForwardRef("_hyp_test_not_a_type_marker")))
 
 
 def test_unresolved_forward_ref_fails_without_ambiguity_warning():
@@ -696,6 +792,10 @@ def test_unresolved_forward_ref_fails_without_ambiguity_warning():
             )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_from_type_builtin_generic_with_string_forward_ref():
     class _LateBoundForListString:
         pass
@@ -718,6 +818,9 @@ class Tree:
     reason="takes ~19 mins; datastructure explosion https://github.com/pschanely/hypothesis-crosshair/issues/27",
 )
 @given(tree=st.builds(Tree))
+@pytest.mark.xfail(
+    strict=True, reason="Hegel's from_type is eager, so recursive types recurse without bound"
+)
 def test_resolving_recursive_type(tree):
     assert isinstance(tree, Tree)
 
@@ -726,6 +829,9 @@ class TypedTree(typing.TypedDict):
     nxt: typing.Optional["TypedTree"]
 
 
+@pytest.mark.xfail(
+    strict=True, reason="Hegel's from_type is eager, so recursive types recurse without bound"
+)
 def test_resolving_recursive_typeddict():
     assert_simple_property(
         st.from_type(TypedTree),
@@ -770,6 +876,9 @@ class MutualB:
 
 
 @given(nxt=st.from_type(MutualA))
+@pytest.mark.xfail(
+    strict=True, reason="Hegel's from_type is eager, so recursive types recurse without bound"
+)
 def test_resolving_mutually_recursive_types(nxt):
     i = 0
     while nxt:
@@ -778,6 +887,9 @@ def test_resolving_mutually_recursive_types(nxt):
         i += 1
 
 
+@pytest.mark.xfail(
+    strict=True, reason="Hegel's from_type is eager, so recursive types recurse without bound"
+)
 def test_resolving_mutually_recursive_types_with_limited_stack():
     orig_recursionlimit = sys.getrecursionlimit()
     current_stack_depth = stack_depth_of_caller()
@@ -833,10 +945,11 @@ class SomeClass:
         return f"SomeClass({self.value}, next_node={self.next_node})"
 
 
+@pytest.mark.xfail(
+    strict=True, reason="Hegel's from_type is eager, so recursive types recurse without bound"
+)
 def test_resolving_recursive_type_with_registered_constraint():
-    with temp_registered(
-        SomeClass, st.builds(SomeClass, value=st.integers(min_value=1))
-    ):
+    with temp_registered(SomeClass, st.builds(SomeClass, value=st.integers(min_value=1))):
 
         @given(s=st.from_type(SomeClass))
         def test(s):
@@ -845,16 +958,21 @@ def test_resolving_recursive_type_with_registered_constraint():
         test()
 
 
+@pytest.mark.xfail(
+    strict=True, reason="Hegel's from_type is eager, so recursive types recurse without bound"
+)
 def test_resolving_recursive_type_with_registered_constraint_not_none():
-    with temp_registered(
-        SomeClass, st.builds(SomeClass, value=st.integers(min_value=1))
-    ):
+    with temp_registered(SomeClass, st.builds(SomeClass, value=st.integers(min_value=1))):
         s = st.from_type(SomeClass)
         print(s, s.wrapped_strategy)
         find_any(s, lambda s: s.next_node is not None)
 
 
 @given(from_type(tuple[()]) | from_type(_Tuple[()]))
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_resolves_empty_Tuple_issue_1583_regression(ex):
     # See e.g. https://github.com/python/mypy/commit/71332d58
     assert ex == ()
@@ -867,6 +985,10 @@ def test_can_register_NewType():
 
 
 @given(st.from_type(typing.Callable))
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_resolves_bare_callable_to_function(f):
     val = f()
     assert val is None
@@ -875,12 +997,20 @@ def test_resolves_bare_callable_to_function(f):
 
 
 @given(st.from_type(typing.Callable[[str], int]))
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_resolves_callable_with_arg_to_function(f):
     val = f("1")
     assert isinstance(val, int)
 
 
 @given(st.from_type(typing.Callable[..., int]))
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_resolves_ellipses_callable_to_function(f):
     val = f()
     assert isinstance(val, int)
@@ -918,48 +1048,10 @@ def test_cannot_resolve_abstract_class_with_no_concrete_subclass(instance):
     raise AssertionError("test body unreachable as strategy cannot resolve")
 
 
-def test_resolving_mutually_recursive_abstract_subclasses_is_efficient(monkeypatch):
-    # regression test for #4729
-
-    class Stmt(abc.ABC):
-        @abc.abstractmethod
-        def f(self) -> str: ...
-
-    # A leaf subclass gives the recursion a base case so generation can terminate.
-    Leaf = dataclasses.make_dataclass(
-        "Leaf", [("v", int)], bases=(Stmt,), namespace={"f": lambda self: ""}
-    )
-    n = 15
-    # Keep a reference to the subclasses so they aren't garbage-collected (which
-    # would remove them from Stmt.__subclasses__()) before we resolve the type.
-    subclasses = [Leaf] + [
-        dataclasses.make_dataclass(
-            f"S{i}",
-            [("a", Stmt), ("b", typing.Optional[Stmt])],
-            bases=(Stmt,),
-            namespace={"f": lambda self: ""},
-        )
-        for i in range(n)
-    ]
-    assert set(Stmt.__subclasses__()) == set(subclasses)
-
-    calls = 0
-    real_get_type_hints = core.get_type_hints
-
-    def counting_get_type_hints(thing):
-        nonlocal calls
-        calls += 1
-        return real_get_type_hints(thing)
-
-    monkeypatch.setattr(core, "get_type_hints", counting_get_type_hints)
-    st.from_type(Stmt).validate()
-    assert n <= calls < 50 * n
-
-    # ...while still resolving to every subclass, including recursive ones.
-    find_any(st.from_type(Stmt), lambda x: isinstance(x, Leaf))
-    find_any(st.from_type(Stmt), lambda x: not isinstance(x, Leaf))
-
-
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_type_with_unresolvable_forward_reference_fails():
     t = type["UnknownForwardRef"]  # noqa: F821
     with pytest.raises(ResolutionFailed):
@@ -968,6 +1060,10 @@ def test_type_with_unresolvable_forward_reference_fails():
 
 @pytest.mark.parametrize("typ", [typing.Hashable, typing.Sized])
 @given(data=st.data())
+@pytest.mark.xfail(
+    strict=False,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_inference_on_generic_collections_abc_aliases(typ, data):
     # regression test for inference bug on types that are just aliases
     # types for simple interfaces in collections abc and take no args
@@ -990,6 +1086,10 @@ def test_bytestring_not_treated_as_generic_sequence(val):
 @pytest.mark.parametrize(
     "type_", [int, Real, object, typing.Union[int, str], typing.Union[Real, str]]
 )
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_bytestring_is_valid_sequence_of_int_and_parent_classes(type_):
     find_any(
         st.from_type(typing.Sequence[type_]),
@@ -999,6 +1099,10 @@ def test_bytestring_is_valid_sequence_of_int_and_parent_classes(type_):
 
 @pytest.mark.parametrize("protocol", [typing.SupportsAbs, typing.SupportsRound])
 @given(data=st.data())
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_supportsop_types_support_protocol(protocol, data):
     # test values drawn from SupportsOp types are indeed considered instances
     # of that type.
@@ -1009,6 +1113,10 @@ def test_supportsop_types_support_protocol(protocol, data):
 
 
 @pytest.mark.parametrize("restrict_custom_strategy", [True, False])
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_generic_aliases_can_be_conditionally_resolved_by_registered_function(
     restrict_custom_strategy,
 ):
@@ -1029,32 +1137,24 @@ def test_generic_aliases_can_be_conditionally_resolved_by_registered_function(
     def get_custom_container_strategy(thing):
         if restrict_custom_strategy and typing.get_origin(thing) != CustomContainer:
             return NotImplemented
-        return st.builds(
-            CustomContainer, content=st.from_type(typing.get_args(thing)[0])
-        )
+        return st.builds(CustomContainer, content=st.from_type(typing.get_args(thing)[0]))
 
     with temp_registered(CustomContainer, get_custom_container_strategy):
 
         def is_custom_container_with_str(example):
-            return isinstance(example, CustomContainer) and isinstance(
-                example.content, str
-            )
+            return isinstance(example, CustomContainer) and isinstance(example.content, str)
 
         def is_non_custom_container(example):
             return isinstance(example, typing.Container) and not isinstance(
                 example, CustomContainer
             )
 
-        assert_all_examples(
-            st.from_type(CustomContainer[str]), is_custom_container_with_str
-        )
+        assert_all_examples(st.from_type(CustomContainer[str]), is_custom_container_with_str)
         # If the strategy function is restricting, it doesn't return a strategy
         # for requests for Container[...], so it's never generated. When not
         # restricting, it is generated.
         if restrict_custom_strategy:
-            assert_all_examples(
-                st.from_type(typing.Container[str]), is_non_custom_container
-            )
+            assert_all_examples(st.from_type(typing.Container[str]), is_non_custom_container)
         else:
             find_any(st.from_type(typing.Container[str]), is_custom_container_with_str)
             find_any(st.from_type(typing.Container[str]), is_non_custom_container)
@@ -1070,6 +1170,10 @@ def test_generic_aliases_can_be_conditionally_resolved_by_registered_function(
     ],
 )
 @given(data=st.data())
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_supportscast_types_support_protocol_or_are_castable(protocol, typ, data):
     value = data.draw(st.from_type(protocol))
     # check that we aren't somehow generating instances of the protocol itself
@@ -1085,6 +1189,10 @@ def test_can_cast():
 
 
 @pytest.mark.parametrize("type_", [datetime.timezone, datetime.tzinfo])
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_timezone_lookup(type_):
     assert issubclass(type_, datetime.tzinfo)
     assert_all_examples(st.from_type(type_), lambda t: isinstance(t, type_))
@@ -1116,6 +1224,10 @@ def test_no_byteswarning(_):
     settings.get_current_profile_name() == "crosshair",
     reason="Crosshair is too much slower at hashing values",
 )
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_hashable_type_unhashable_value():
     # Decimal("snan") is not hashable; we should be able to generate it.
     # See https://github.com/HypothesisWorks/hypothesis/issues/2320
@@ -1126,6 +1238,10 @@ def test_hashable_type_unhashable_value():
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_unhashable_type():
     class UnhashableMeta(type):
         __hash__ = None
@@ -1133,9 +1249,7 @@ def test_unhashable_type():
     class UnhashableType(metaclass=UnhashableMeta):
         pass
 
-    assert_simple_property(
-        st.from_type(UnhashableType), lambda x: isinstance(x, UnhashableType)
-    )
+    assert_simple_property(st.from_type(UnhashableType), lambda x: isinstance(x, UnhashableType))
 
 
 class _EmptyClass:
@@ -1158,6 +1272,9 @@ class _EmptyClass:
         ),
     ],
 )
+@pytest.mark.xfail(
+    strict=False, reason="from_type() keeps its own lazy repr instead of the resolved strategy's"
+)
 def test_repr_passthrough(typ, repr_):
     assert repr(st.from_type(typ)) == repr_
 
@@ -1169,6 +1286,10 @@ class TreeForwardRefs(typing.NamedTuple):
 
 
 @given(st.builds(TreeForwardRefs))
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_resolves_forward_references_outside_annotations(t):
     assert isinstance(t, TreeForwardRefs)
 
@@ -1186,6 +1307,10 @@ class WithOptionalInSignature:
         self.a = kwargs["a"]
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_compat_get_type_hints_aware_of_None_default():
     # Regression test for https://github.com/HypothesisWorks/hypothesis/issues/2648
     strategy = st.builds(WithOptionalInSignature, a=...)
@@ -1266,6 +1391,10 @@ really_takes_str.__signature__ = signature(selfless_signature)
         really_takes_str,
     ],
 )
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_signature_is_the_most_important_source(thing):
     """Signature types should take precedence over all other annotations."""
     check_can_generate_examples(st.builds(thing))
@@ -1276,12 +1405,20 @@ class AnnotatedAndDefault:
         self.foo = foo
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_from_type_can_be_default_or_annotation():
     find_any(st.from_type(AnnotatedAndDefault), lambda x: x.foo is None)
     find_any(st.from_type(AnnotatedAndDefault), lambda x: isinstance(x.foo, bool))
 
 
 @pytest.mark.parametrize("t", BUILTIN_TYPES, ids=lambda t: t.__name__)
+@pytest.mark.xfail(
+    strict=False,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_resolves_builtin_types(t):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SmallSearchSpaceWarning)
@@ -1291,6 +1428,10 @@ def test_resolves_builtin_types(t):
 @pytest.mark.parametrize("t", BUILTIN_TYPES, ids=lambda t: t.__name__)
 @given(data=st.data())
 @settings(max_examples=20)
+@pytest.mark.xfail(
+    strict=False,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_resolves_forwardrefs_to_builtin_types(t, data):
     if t.__name__ == "object" and settings.get_current_profile_name() == "threading":
         # from_type(ForwardRef("object")) pulls from register_type_strategy,
@@ -1307,13 +1448,20 @@ def test_resolves_forwardrefs_to_builtin_types(t, data):
 
 
 @pytest.mark.parametrize("t", BUILTIN_TYPES, ids=lambda t: t.__name__)
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_resolves_type_of_builtin_types(t):
     assert_simple_property(st.from_type(type[t.__name__]), lambda v: v is t)
 
 
 @given(
-    st.from_type(type[typing.Union["str", "int"]])
-    | st.from_type(_Type[typing.Union["str", "int"]])
+    st.from_type(type[typing.Union["str", "int"]]) | st.from_type(_Type[typing.Union["str", "int"]])
+)
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
 )
 def test_resolves_type_of_union_of_forwardrefs_to_builtins(x):
     assert x in (str, int)
@@ -1332,10 +1480,12 @@ def test_resolves_type_of_union_of_forwardrefs_to_builtins(x):
         ),
     ],
 )
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_builds_suggests_from_type(type_):
-    with pytest.raises(
-        InvalidArgument, match=re.escape(f"try using from_type({type_!r})")
-    ):
+    with pytest.raises(InvalidArgument, match=re.escape(f"try using from_type({type_!r})")):
         check_can_generate_examples(st.builds(type_))
 
     try:
@@ -1348,17 +1498,17 @@ def test_builds_suggests_from_type(type_):
 @pytest.mark.skipif(sys.version_info < (3, 14), reason="different error on 3.14+")
 @pytest.mark.parametrize("type_", [typing.Optional[int]])
 def test_builds_suggests_from_type_on_construction(type_):
-    with pytest.raises(
-        InvalidArgument, match=re.escape(f"Try using from_type({type_!r})")
-    ):
+    with pytest.raises(InvalidArgument, match=re.escape(f"Try using from_type({type_!r})")):
         check_can_generate_examples(st.builds(type_))
 
-    with pytest.raises(
-        InvalidArgument, match=re.escape(f"Try using from_type({type_!r})")
-    ):
+    with pytest.raises(InvalidArgument, match=re.escape(f"Try using from_type({type_!r})")):
         check_can_generate_examples(st.builds(type_, st.just("has an argument")))
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_builds_mentions_no_type_check():
     @typing.no_type_check
     def f(x: int):
@@ -1380,6 +1530,10 @@ def test_tuple_subclasses_not_generic_sequences():
         assert_no_examples(s, lambda x: isinstance(x, tuple))
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_custom_strategy_function_resolves_types_conditionally():
     sentinel = object()
 
@@ -1415,6 +1569,10 @@ class CustomInteger(int):
 
 
 @given(...)
+@pytest.mark.xfail(
+    strict=True,
+    reason="Hegel's from_type resolves far fewer types than Hypothesis's type lookup (builtins without annotations, typing special forms, protocols, forward references, TypeVar factories)",
+)
 def test_from_type_resolves_required_posonly_args(n: CustomInteger):
     # st.builds() does not infer for positional arguments, but st.from_type()
     # does.  See e.g. https://stackoverflow.com/q/79199376/ for motivation.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from typing import Any
 
 from hegel.generators.base import Generator
@@ -79,13 +80,20 @@ class LazyStrategy(Generator[Any]):
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
         *,
-        name: str | None = None,
+        name: str | Callable[[], str] | None = None,
     ) -> None:
         self.function = function
         self.__args = args
         self.__kwargs = kwargs
-        self.__name = name or getattr(function, "__name__", repr(function))
+        self.__name: str | Callable[[], str] = (
+            name if name is not None else getattr(function, "__name__", repr(function))
+        )
         self.__wrapped: Generator[Any] | None = None
+
+    def __or__(self, other: Any) -> Generator[Any]:
+        if not isinstance(other, Generator):
+            raise ValueError(f"Cannot | a SearchStrategy with {other!r}")
+        return super().__or__(other)
 
     @property
     def wrapped_strategy(self) -> Generator[Any]:
@@ -117,9 +125,12 @@ class LazyStrategy(Generator[Any]):
     def do_draw_and_print(self, tc: Any, printer: Any) -> Any:
         return self.wrapped_strategy.do_draw_and_print(tc, printer)
 
-    def map(self, f: Any) -> Generator[Any]:
+    def map(self, pack: Any) -> Generator[Any]:
         return LazyStrategy(
-            lambda: self.wrapped_strategy.map(f), (), {}, name=f"{self!r}.map({_describe(f)})"
+            lambda: self.wrapped_strategy.map(pack),
+            (),
+            {},
+            name=lambda: f"{self!r}.map({_describe(pack)})",
         )
 
     def flat_map(self, f: Any) -> Generator[Any]:
@@ -127,7 +138,7 @@ class LazyStrategy(Generator[Any]):
             lambda: self.wrapped_strategy.flat_map(f),
             (),
             {},
-            name=f"{self!r}.flatmap({_describe(f)})",
+            name=lambda: f"{self!r}.flatmap({_describe(f)})",
         )
 
     flatmap = flat_map
@@ -137,42 +148,52 @@ class LazyStrategy(Generator[Any]):
             lambda: self.wrapped_strategy.filter(f),
             (),
             {},
-            name=f"{self!r}.filter({_describe(f)})",
+            name=lambda: f"{self!r}.filter({_describe(f)})",
         )
 
     def __repr__(self) -> str:
+        label = self.__name() if callable(self.__name) else self.__name
         if not self.__args and not self.__kwargs:
-            if self.__name.endswith(")"):
-                return self.__name
-            return f"{self.__name}()"
+            if label.endswith(")"):
+                return label
+            return f"{label}()"
         try:
             import inspect
 
             signature = inspect.signature(self.function)
             bound = signature.bind(*self.__args, **self.__kwargs)
-            parts = []
+            parts: list[str] = []
             for name, value in bound.arguments.items():
                 param = signature.parameters[name]
                 if param.kind is param.VAR_POSITIONAL:
-                    parts.extend(repr(v) for v in value)
+                    parts.extend(_arg_repr(v) for v in value)
                 elif param.kind is param.VAR_KEYWORD:
-                    parts.extend(f"{k}={v!r}" for k, v in value.items())
+                    parts.extend(f"{k}={_arg_repr(v)}" for k, v in value.items())
                 elif param.kind is param.POSITIONAL_ONLY or (
                     param.kind is param.POSITIONAL_OR_KEYWORD
                     and name in [p for p in signature.parameters][: len(self.__args)]
                 ):
-                    parts.append(repr(value))
+                    parts.append(_arg_repr(value))
                 elif (
                     param.default is param.empty
                     or value is not param.default
                     and value != param.default
                 ):
-                    parts.append(f"{name}={value!r}")
+                    parts.append(f"{name}={_arg_repr(value)}")
         except (TypeError, ValueError):
-            parts = [repr(a) for a in self.__args] + [
-                f"{k}={v!r}" for k, v in self.__kwargs.items()
+            parts = [_arg_repr(a) for a in self.__args] + [
+                f"{k}={_arg_repr(v)}" for k, v in self.__kwargs.items()
             ]
-        return f"{self.__name}({', '.join(parts)})"
+        return f"{label}({', '.join(parts)})"
+
+
+def _arg_repr(value: Any) -> str:
+    """``repr(value)``, except that functions show their name or source."""
+    import inspect
+
+    if inspect.isfunction(value) or inspect.isbuiltin(value) or inspect.ismethod(value):
+        return _describe(value)
+    return repr(value)
 
 
 def _describe(f: Any) -> str:
@@ -206,17 +227,27 @@ def _trim_lambda(source: str) -> str:
     return source.strip()
 
 
-def defines_strategy(function: Any) -> Any:
+def defines_strategy(function: Any = None, *, try_non_lazy: bool = False) -> Any:
     """Make a strategy-returning function lazy: calling it returns a
-    :class:`LazyStrategy` that builds the real strategy on first draw."""
+    :class:`LazyStrategy` that builds the real strategy on first draw.
+    With ``try_non_lazy`` the strategy is built eagerly when that does not
+    raise, so that e.g. ``sampled_from`` copies its elements at once."""
     import functools
     import inspect
+
+    if function is None:
+        return functools.partial(defines_strategy, try_non_lazy=try_non_lazy)
 
     signature = inspect.signature(function)
 
     @functools.wraps(function)
-    def accept(*args: Any, **kwargs: Any) -> LazyStrategy:
+    def accept(*args: Any, **kwargs: Any) -> Generator[Any]:
         signature.bind(*args, **kwargs)  # a TypeError for bad arguments, eagerly
+        if try_non_lazy:
+            try:
+                return function(*args, **kwargs)
+            except Exception:  # noqa: BLE001 - reported lazily, as Hypothesis does
+                pass
         return LazyStrategy(function, args, kwargs)
 
     return accept
