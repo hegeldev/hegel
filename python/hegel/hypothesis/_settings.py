@@ -284,6 +284,8 @@ class settings(metaclass=settingsMeta):
         self.backend = pick("backend", backend, _validate_backend)
         object.__setattr__(self, "_in_definition", False)
 
+    _in_definition: bool
+
     def __setattr__(self, name: str, value: object) -> None:
         if not name.startswith("_") and not self._in_definition:
             raise AttributeError("settings objects are immutable")

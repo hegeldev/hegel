@@ -27,6 +27,7 @@ from hegel.hypothesis.strategies import data as data_strategy
 from hegel.pretty import pretty_repr
 from hegel.stateful import Machine
 from hegel.test_case import TestCase
+from hegel.test_case import TestCase as HegelTestCase
 
 __all__ = [
     "Bundle",
@@ -632,7 +633,7 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
             self.bundle(b.name) for b in r.bundles
         )
 
-    def _draw_arguments(self, tc: TestCase, r: Rule) -> dict[str, Any]:
+    def _draw_arguments(self, tc: HegelTestCase, r: Rule) -> dict[str, Any]:
         try:
             return {k: tc.draw_silent(v) for k, v in r.arguments.items()}
         except UnsatisfiedAssumption:
@@ -642,7 +643,7 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
 
     def _execute_rule(
         self,
-        tc: TestCase,
+        tc: HegelTestCase,
         r: Rule,
         data: dict[str, Any],
         settings: Settings,
@@ -683,13 +684,13 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
         finally:
             output(self._repr_step(r, data_to_print, result))
 
-    def _run(self, tc: TestCase, settings: Settings) -> None:
+    def _run(self, tc: HegelTestCase, settings: Settings) -> None:
         try:
             self._run_steps(tc, settings)
         except _AbortCase:
             raise UnsatisfiedAssumption() from None
 
-    def _run_steps(self, tc: TestCase, settings: Settings) -> None:
+    def _run_steps(self, tc: HegelTestCase, settings: Settings) -> None:
         output = tc.note
         with BuildContext(tc, is_final=tc.is_final, runner=self):
             try:
@@ -715,7 +716,7 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
                 # ones after initialize rules were already checked above.
                 initial = [True]
 
-                def check(inv_tc: TestCase) -> None:
+                def check(inv_tc: HegelTestCase) -> None:
                     if initial:
                         initial.pop()
                         return
@@ -730,8 +731,8 @@ class RuleBasedStateMachine(metaclass=StateMachineMeta):
 
     def _rule_runner(
         self, r: Rule, settings: Settings, output: Callable[[str], None]
-    ) -> Callable[[TestCase], None]:
-        def apply(tc: TestCase) -> None:
+    ) -> Callable[[HegelTestCase], None]:
+        def apply(tc: HegelTestCase) -> None:
             if not self._rule_is_valid(r):
                 if not any(self._rule_is_valid(other) for other in self.rules):
                     rules = ", ".join(other.function.__name__ for other in self.rules)

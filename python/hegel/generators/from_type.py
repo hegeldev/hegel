@@ -180,8 +180,8 @@ def from_type(type_: Any) -> Generator[Any]:
         hints = typing.get_type_hints(type_)
         required = getattr(type_, "__required_keys__", set(hints))
         mapping = {k: from_type(v) for k, v in hints.items() if k in required}
-        optional = {k: from_type(v) for k, v in hints.items() if k not in required}
-        return fixed_dicts(mapping, optional=optional).map(type_)
+        extras = {k: from_type(v) for k, v in hints.items() if k not in required}
+        return fixed_dicts(mapping, optional=extras).map(type_)
     try:
         signature = _signature(type_)
     except (TypeError, ValueError):
@@ -238,7 +238,7 @@ def _type_hints(target: Any) -> dict[str, Any]:
     """Resolved annotations of ``target``: for a class, its own annotations
     overlaid with those of ``__init__``."""
     hints: dict[str, Any] = {}
-    sources = [target, target.__init__] if isinstance(target, type) else [target]
+    sources = [target, target.__init__] if isinstance(target, type) else [target]  # type: ignore[misc]
     for source in sources:
         try:
             hints.update(typing.get_type_hints(source))
