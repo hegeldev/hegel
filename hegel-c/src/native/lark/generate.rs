@@ -3,7 +3,10 @@
 //! Every draw first picks a target length: with probability 3/4 a length
 //! uniform between the smallest string the start rule can produce and
 //! the size cap, otherwise the smallest. The grammar is then walked top
-//! down with that target as a character budget. A rule's alternatives
+//! down with that target as a character budget, in which every terminal
+//! counts for the length of its strings on average
+//! ([`StringSpec::typical_width`]), so that the structure a budget buys
+//! comes out near the target. A rule's alternatives
 //! are split into those that can grow without bound and those that
 //! cannot, a weighted boolean whose probability rises with the budget
 //! left over after the rule's minimum chooses between the two classes,
@@ -23,14 +26,18 @@
 //! differently, or at random with a rate drawn once per string. Each
 //! terminal string is checked to lex back as itself, and each inserted
 //! ignorable to be skipped between its neighbours, with a few retries
-//! before the string is accepted as it is. Those checks look at adjacent
-//! tokens only, and a backtracking regex can run on much further (an
-//! escaped delimiter it prefers to read as such, say, that then lets it
-//! reach the next delimiter in the string), so the finished string is
-//! lexed once more as a whole and regenerated when it does not read back
-//! as its tokens. Every token keeps what the lexers found at the start of
-//! its text on its own ([`TokenScans`]), which the checks on the longer
-//! texts it is part of carry over rather than matching it again.
+//! before the string is accepted as it is. Every token keeps what the
+//! lexers found at the start of its text on its own ([`TokenScans`]),
+//! with how that depended on the text's edges, and most stretches of
+//! tokens are settled from those findings alone ([`GrammarSpec::settled`]):
+//! each token reads as itself, nothing about it looks at the text before
+//! it, and what the end of its text left open the next token closes
+//! without changing the reading. The rest are lexed in full; those checks
+//! look at adjacent tokens only, and a backtracking regex can run on much
+//! further (an escaped delimiter it prefers to read as such, say, that
+//! then lets it reach the next delimiter in the string), so a finished
+//! string with such a stretch is lexed once more as a whole and
+//! regenerated when it does not read back as its tokens.
 
 use super::analysis::{Alt, Analysis, Node, NodeKind, analyze};
 use super::builder::{ImportSource, load_grammar};
@@ -163,6 +170,7 @@ impl GrammarSpec {
         }
         let mut terminals = Vec::with_capacity(grammar.terminals.len());
         let mut term_min = Vec::with_capacity(grammar.terminals.len());
+        let mut term_typical = Vec::with_capacity(grammar.terminals.len());
         for term in &grammar.terminals {
             let explicit = options
                 .explicit
@@ -171,8 +179,9 @@ impl GrammarSpec {
                 .map(|i| options.explicit.swap_remove(i).1);
             match (explicit, &term.regexp) {
                 (Some(spec), _) => {
-                    terminals.push(TerminalGen::Explicit(spec));
                     term_min.push(1);
+                    term_typical.push(typical_size(&spec, 1));
+                    terminals.push(TerminalGen::Explicit(spec));
                 }
                 (None, Some(regexp)) => {
                     let spec = StringSpec::regex(regexp, true, options.alphabet.as_deref())
@@ -182,8 +191,9 @@ impl GrammarSpec {
                                 term.name
                             ))
                         })?;
-                    terminals.push(TerminalGen::Pattern(spec));
                     term_min.push(term.min_width);
+                    term_typical.push(typical_size(&spec, term.min_width));
+                    terminals.push(TerminalGen::Pattern(spec));
                 }
                 (None, None) => {
                     return Err(GrammarError::new(format!(
@@ -194,7 +204,7 @@ impl GrammarSpec {
                 }
             }
         }
-        let analysis = analyze(&grammar, term_min)?;
+        let analysis = analyze(&grammar, term_min, term_typical)?;
         let lexer = Lexer::new(&grammar.terminals);
         let root = &analysis.rules[start];
         if options.max_size < root.min_size {
@@ -249,6 +259,18 @@ impl GrammarSpec {
 
     fn is_pattern(&self, id: TermId) -> bool {
         matches!(self.terminals[id], TerminalGen::Pattern(_))
+    }
+
+    /// Whether the basic lexer reads `token`'s text on its own as one
+    /// token: of its own type, or for a token the grammar needs, of
+    /// another type (an ignorable read as something the parser would
+    /// see is not skipped, see [`GrammarSpec::basic_fit`]).
+    fn single(&self, token: &Token) -> bool {
+        match &token.reading {
+            Reading::Itself => true,
+            Reading::Tokens(read) => read.len() == 1 && !self.is_ignore(token.id),
+            Reading::Ignorables | Reading::Opaque => false,
+        }
     }
 
     /// The tokens the basic lexer reads `text` as, with their extents.
@@ -327,7 +349,7 @@ impl GrammarSpec {
             Err(_) => Reading::Opaque,
             Ok(got) if got.len() == 1 && self.same_type(id, got[0].0) => Reading::Itself,
             Ok(got) if self.is_ignore(id) && got.iter().all(|&(g, _, _)| self.is_ignore(g)) => {
-                Reading::Itself
+                Reading::Ignorables
             }
             Ok(got) => Reading::Tokens(got.into_iter().map(|(g, _, _)| g).collect()),
         }
@@ -427,18 +449,59 @@ impl GrammarSpec {
     }
 
     /// How well the lexers read the concatenation of `tokens` back:
-    /// [`Fit::Wrong`] when the dynamic lexer does not read it as `tokens`
-    /// at all (see [`GrammarSpec::scans`]), [`Fit::Exact`] when the basic
-    /// lexer reads it as `tokens` too, and [`Fit::Retyped`] in between.
+    /// [`Fit::Settled`] when what they found at the start of each token
+    /// on its own already proves they read it as `tokens` (see
+    /// [`GrammarSpec::settled`]), otherwise [`Fit::Wrong`] when the
+    /// dynamic lexer does not read it as `tokens` at all (see
+    /// [`GrammarSpec::scans`]), [`Fit::Exact`] when the basic lexer reads
+    /// it as `tokens` too, and [`Fit::Retyped`] in between.
     fn fit(&self, tokens: &[&Token]) -> Fit {
-        let mut text = Vec::with_capacity(tokens.iter().map(|t| t.text.len()).sum());
-        for token in tokens {
-            text.extend_from_slice(&token.text);
+        let text = text_of(tokens);
+        if self.settled(&text, tokens) {
+            return Fit::Settled;
         }
         if !self.scans(&text, tokens) {
             return Fit::Wrong;
         }
         self.basic_fit(&text, tokens).max(Fit::Retyped)
+    }
+
+    /// Whether what the lexers found at the start of each token's text on
+    /// its own proves that they read `text`, the concatenation of
+    /// `tokens`, as exactly those tokens, and would still with any text
+    /// after it: every token reads back as one token (of its own type or,
+    /// as on its own, another) and its own pattern takes all of it,
+    /// nothing a lexer tried on a token after the first looked at the
+    /// text before it, and what the end of a token's text left open the
+    /// text after it settles without changing what either lexer reads
+    /// (see [`Lexer::settle`]).
+    fn settled(&self, text: &[char], tokens: &[&Token]) -> bool {
+        let mut start = 0;
+        for (i, token) in tokens.iter().enumerate() {
+            let len = token.text.len();
+            let Lexed::Token(read, _) = token.scans.basic.lexed else {
+                return false;
+            };
+            if !self.single(token)
+                || !token.whole()
+                || (i > 0 && (token.scans.own.anchored || token.scans.basic.anchored))
+            {
+                return false;
+            }
+            if i + 1 < tokens.len() {
+                let own = self.lexer.settle(&token.scans.own, text, start, len, false);
+                let basic = self
+                    .lexer
+                    .settle(&token.scans.basic, text, start, len, true);
+                if own != Some(Lexed::Token(token.id, start + len))
+                    || basic != Some(Lexed::Token(read, start + len))
+                {
+                    return false;
+                }
+            }
+            start += len;
+        }
+        true
     }
 
     /// How the basic lexer reads the concatenation of `tokens`: every
@@ -470,7 +533,7 @@ impl GrammarSpec {
         let mut pos = 0;
         for token in tokens {
             let end = pos + token.text.len();
-            if !(token.reading == Reading::Itself && self.is_ignore(token.id)) {
+            if !(token.lexable() && self.is_ignore(token.id)) {
                 regions.push((pos, end, *token));
             }
             pos = end;
@@ -552,9 +615,10 @@ enum Placement {
 /// How the lexer reads one token's text on its own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Reading {
-    /// As a single token of its own type (or, for an ignorable, as
-    /// nothing but ignorable tokens).
+    /// As a single token of its own type.
     Itself,
+    /// For an ignorable, as several tokens, all of them ignorable.
+    Ignorables,
     /// As this sequence of tokens.
     Tokens(Vec<TermId>),
     /// Not at all: the lexer does not know the terminal, cannot read the
@@ -564,12 +628,22 @@ enum Reading {
 
 /// How the lexer reads a stretch of tokens, from worst to best: with
 /// tokens merged, split or swallowed, with the right extents but other
-/// types, or exactly.
+/// types, exactly, or exactly and provably so with any text after it
+/// (see [`GrammarSpec::settled`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Fit {
     Wrong,
     Retyped,
     Exact,
+    Settled,
+}
+
+fn text_of(tokens: &[&Token]) -> Vec<char> {
+    let mut text = Vec::with_capacity(tokens.iter().map(|t| t.text.len()).sum());
+    for token in tokens {
+        text.extend_from_slice(&token.text);
+    }
+    text
 }
 
 /// Load a Lark grammar and build a [`GrammarSpec`] for it.
@@ -612,9 +686,15 @@ struct TokenScans {
 }
 
 impl Token {
-    /// Whether the basic lexer reads the token back as itself on its own.
+    /// Whether the basic lexer reads the token back as itself on its own
+    /// (or, for an ignorable, as nothing but ignorable tokens).
     fn lexable(&self) -> bool {
-        self.reading == Reading::Itself
+        matches!(self.reading, Reading::Itself | Reading::Ignorables)
+    }
+
+    /// Whether the token's own pattern takes all of its text.
+    fn whole(&self) -> bool {
+        self.scans.own.lexed == Lexed::Token(self.id, self.text.len())
     }
 }
 
@@ -636,10 +716,20 @@ struct Generation<'s> {
     tokens: Vec<Token>,
     consumed: u64,
     ignore_rate: f64,
+    /// Whether some stretch of the tokens was accepted without being
+    /// settled (see [`GrammarSpec::settled`]), so that the finished
+    /// string has to be lexed as a whole.
+    unsettled: bool,
 }
 
 /// The probability of taking a growing alternative with `spare` budget
 /// beyond the rule's minimum.
+/// The length of `spec`'s strings on average, as a whole number of
+/// characters and never below `min`, the shortest string it can produce.
+fn typical_size(spec: &StringSpec, min: u64) -> u64 {
+    (spec.typical_width().round() as u64).max(min)
+}
+
 fn grow_probability(spare: u64) -> f64 {
     let spare = spare as f64;
     spare / (spare + GROW_SCALE)
@@ -665,6 +755,13 @@ fn split_budget(
 }
 
 impl Generation<'_> {
+    /// Draw one of `alts` for a rule reached at `depth` with `budget`
+    /// characters to spend: between the alternatives that close the
+    /// derivation and the ones that can grow without bound (or, when
+    /// every alternative can, between the cheapest and the rest, so that
+    /// a rule like `sum: product | sum "+" product` does not recurse
+    /// regardless of its budget) with a probability that rises with the
+    /// spare budget, then uniformly within the class.
     fn choose_alt<'a>(
         &mut self,
         ntc: &mut NativeTestCase,
@@ -672,27 +769,23 @@ impl Generation<'_> {
         budget: u64,
         depth: u32,
     ) -> Result<&'a Alt, EngineError> {
-        let feasible = |alt: &&Alt| {
-            alt.min_size <= budget && depth.saturating_add(alt.min_depth) <= self.spec.max_depth
+        let feasible: Vec<&Alt> = alts
+            .iter()
+            .filter(|alt| {
+                alt.min_size <= budget && depth.saturating_add(alt.min_depth) <= self.spec.max_depth
+            })
+            .collect();
+        hegel_internal_assert!(!feasible.is_empty());
+        let typical = feasible.iter().map(|a| a.typical_size).min().unwrap_or(0);
+        let (closing, growing): (Vec<&Alt>, Vec<&Alt>) = if feasible.iter().any(|a| !a.growing()) {
+            feasible.iter().partition(|a| !a.growing())
+        } else {
+            feasible.iter().partition(|a| a.typical_size == typical)
         };
-        let closing: Vec<&Alt> = alts
-            .iter()
-            .filter(feasible)
-            .filter(|a| !a.growing())
-            .collect();
-        let growing: Vec<&Alt> = alts
-            .iter()
-            .filter(feasible)
-            .filter(|a| a.growing())
-            .collect();
-        hegel_internal_assert!(!closing.is_empty() || !growing.is_empty());
-        let class = if closing.is_empty() {
-            growing
-        } else if growing.is_empty() {
+        let class = if growing.is_empty() {
             closing
         } else {
-            let min_size = alts.iter().map(|a| a.min_size).min().unwrap_or(0);
-            let p = grow_probability(budget - min_size);
+            let p = grow_probability(budget.saturating_sub(typical));
             let grow = spanned(ntc, LABEL_BOOLEAN, |ntc| ntc.weighted_precise(p, None))?;
             if grow { growing } else { closing }
         };
@@ -734,7 +827,7 @@ impl Generation<'_> {
         budget: u64,
         depth: u32,
     ) -> Result<(), Step> {
-        let spare = budget.saturating_sub(alt.min_size);
+        let spare = budget.saturating_sub(alt.typical_size);
         let flexible: Vec<usize> = alt
             .items
             .iter()
@@ -742,7 +835,7 @@ impl Generation<'_> {
             .filter(|(_, item)| item.max_size != Some(item.min_size))
             .map(|(i, _)| i)
             .collect();
-        let mut budgets: Vec<u64> = alt.items.iter().map(|item| item.min_size).collect();
+        let mut budgets: Vec<u64> = alt.items.iter().map(|item| item.typical_size).collect();
         if !flexible.is_empty() && spare > 0 {
             let shares = split_budget(ntc, spare, flexible.len())?;
             let mut leftover = 0u64;
@@ -751,7 +844,7 @@ impl Generation<'_> {
                 let item = &alt.items[i];
                 match item.max_size {
                     Some(max) => {
-                        let capacity = max - item.min_size;
+                        let capacity = max.saturating_sub(item.typical_size);
                         budgets[i] += share.min(capacity);
                         leftover += share.saturating_sub(capacity);
                     }
@@ -805,7 +898,7 @@ impl Generation<'_> {
         depth: u32,
     ) -> Result<(), Step> {
         let min = u64::from(min);
-        let cost = inner.min_size;
+        let cost = inner.typical_size;
         let spare = budget.saturating_sub(min.saturating_mul(cost));
         let fits_depth = depth.saturating_add(inner.min_depth) <= self.spec.max_depth;
         let feasible_max = if !fits_depth || inner.max_size == Some(0) {
@@ -989,7 +1082,7 @@ impl Generation<'_> {
                 Placement::Placed(_) => return Ok(true),
                 Placement::Rejected(token) if !self.fits(&token.text) => oversize = true,
                 Placement::Rejected(token) => {
-                    if token.reading == Reading::Itself && candidates.len() > 1 {
+                    if token.lexable() && candidates.len() > 1 {
                         candidates.retain(|&id| id != token.id);
                     }
                 }
@@ -1042,6 +1135,7 @@ impl Generation<'_> {
         let (token, fit) = self.draw_ignore(ntc, candidates, from, next)?;
         if fit > Fit::Wrong {
             self.push(token)?;
+            self.unsettled |= fit < Fit::Settled;
             return Ok(Placement::Placed(fit));
         }
         if !self.fits(&token.text) {
@@ -1106,23 +1200,29 @@ impl Generation<'_> {
     /// string's ignore rate. A separator the basic lexer needs but none
     /// of the ignorables can provide is left out; one the dynamic lexer
     /// needs too makes the test case invalid, since the string would not
-    /// be in the grammar.
+    /// be in the grammar. A grammar without ignorables has nothing to
+    /// insert, and leaves what the pair checks cannot settle to the lexing
+    /// of the whole string.
     fn maybe_ignore(&mut self, ntc: &mut NativeTestCase, next: Option<&Token>) -> Result<(), Step> {
         if self.spec.ignore.is_empty() {
+            if let (Some(prev), Some(next)) = (self.tokens.last(), next) {
+                self.unsettled |= !self.spec.settled(&text_of(&[prev, next]), &[prev, next]);
+            }
             return Ok(());
         }
         let pair = match (self.tokens.last(), next) {
             (Some(prev), Some(next)) => self.spec.fit(&[prev, next]),
-            _ => Fit::Exact,
+            _ => Fit::Settled,
         };
         let forced = if pair < Fit::Exact { Some(true) } else { None };
-        if ntc.weighted(self.ignore_rate, forced)?
-            && !self.insert_ignore(ntc, next)?
-            && pair == Fit::Wrong
-        {
+        if ntc.weighted(self.ignore_rate, forced)? && self.insert_ignore(ntc, next)? {
+            return Ok(());
+        }
+        if pair == Fit::Wrong {
             ntc.conclude(Status::Invalid, None);
             return Err(Step::Engine(EngineError::InvalidTestCase));
         }
+        self.unsettled |= pair < Fit::Settled;
         Ok(())
     }
 
@@ -1140,6 +1240,9 @@ impl Generation<'_> {
     fn run(&mut self, ntc: &mut NativeTestCase, budget: u64) -> Result<(), Step> {
         self.rule(ntc, self.spec.start, budget, 0)?;
         self.maybe_ignore(ntc, None)?;
+        if !self.unsettled {
+            return Ok(());
+        }
         let tokens: Vec<&Token> = self.tokens.iter().collect();
         let text: Vec<char> = tokens.iter().flat_map(|t| t.text.iter().copied()).collect();
         if self.spec.scans(&text, &tokens) {
@@ -1186,6 +1289,7 @@ fn draw_grammar(ntc: &mut NativeTestCase, spec: &GrammarSpec) -> Result<String, 
             tokens: Vec::new(),
             consumed: 0,
             ignore_rate,
+            unsettled: false,
         };
         match generation.run(ntc, target) {
             Ok(()) => {

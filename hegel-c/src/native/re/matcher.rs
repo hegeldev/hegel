@@ -105,7 +105,7 @@ impl FailedEnds {
 /// How a match depended on the edges of the text, which says whether
 /// the same text with more around it (before its start or after its
 /// end) would match the same way.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Touch {
     /// The matcher looked at neither edge of the text: the result stands
     /// for the same text with anything before and after it.
@@ -116,24 +116,88 @@ pub enum Touch {
     /// text: on a longer text it ends after the run of that unit
     /// continuing from there.
     Tail(usize),
+    /// Only tests of single characters looked at the end, and every one
+    /// found no character there: on a longer text whose next character
+    /// none of them matches they all fail the same way, so the result
+    /// stands.
+    Unless(Vec<Probe>),
     /// The result may change with more text.
     End,
 }
 
+/// A test of a single character that read the end of the text, as
+/// [`probe_matches`] can run it again on the character that follows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Probe {
+    Literal(u32, u32),
+    NotLiteral(u32, u32),
+    Any(u32),
+    /// A character class, by the address of its items.
+    In(usize, u32),
+    /// The unit of the unbounded greedy repeat `run_id` (see
+    /// [`find_run`]).
+    Run(usize),
+}
+
+impl Probe {
+    fn new(unit: UnitOp<'_>, flags: u32) -> Probe {
+        match unit {
+            UnitOp::Literal(cp) => Probe::Literal(cp, flags),
+            UnitOp::NotLiteral(cp) => Probe::NotLiteral(cp, flags),
+            UnitOp::Any => Probe::Any(flags),
+            UnitOp::In(items) => Probe::In(items.as_ptr() as usize, flags),
+        }
+    }
+}
+
 impl Touch {
     /// Record a read at the end of the text by something other than a
-    /// tail run.
+    /// single-character test.
     fn end(&mut self) {
         *self = Touch::End;
+    }
+
+    /// A cheap summary that changes whenever the touch does: a touch only
+    /// ever moves from `Never` through `Tail` and `Unless` to `End`, and
+    /// an `Unless` only ever gains probes.
+    fn stamp(&self) -> (u8, usize) {
+        match self {
+            Touch::Never => (0, 0),
+            Touch::Tail(run_id) => (1, *run_id),
+            Touch::Unless(probes) => (2, probes.len()),
+            Touch::End => (3, 0),
+        }
+    }
+
+    /// Record a single-character test finding the end of the text.
+    fn tested(&mut self, probe: Probe) {
+        *self = match core::mem::replace(self, Touch::End) {
+            Touch::Never => Touch::Unless(alloc::vec![probe]),
+            Touch::Tail(run_id) => Touch::Unless(alloc::vec![Probe::Run(run_id), probe]),
+            Touch::Unless(mut probes) => {
+                if !probes.contains(&probe) {
+                    probes.push(probe);
+                }
+                Touch::Unless(probes)
+            }
+            Touch::End => Touch::End,
+        };
     }
 
     /// Record the forward scan of the unbounded greedy unit repeat
     /// `run_id` reaching the end of the text.
     fn tail(&mut self, run_id: usize) {
-        *self = match *self {
+        *self = match core::mem::replace(self, Touch::End) {
             Touch::Never => Touch::Tail(run_id),
             Touch::Tail(id) if id == run_id => Touch::Tail(id),
-            _ => Touch::End,
+            Touch::Tail(id) => Touch::Unless(alloc::vec![Probe::Run(id), Probe::Run(run_id)]),
+            Touch::Unless(mut probes) => {
+                if !probes.contains(&Probe::Run(run_id)) {
+                    probes.push(Probe::Run(run_id));
+                }
+                Touch::Unless(probes)
+            }
+            Touch::End => Touch::End,
         };
     }
 }
@@ -188,7 +252,7 @@ impl State<'_> {
         match self.text.get(index) {
             Some(&c) => unit_matches(unit, c, flags),
             None => {
-                self.touch.end();
+                self.touch.tested(Probe::new(unit, flags));
                 false
             }
         }
@@ -298,14 +362,15 @@ fn unit_alternatives<'a>(p: &'a SubPattern, flags: u32, out: &mut Vec<UnitSequen
             .iter()
             .all(|alternative| unit_alternatives(alternative, flags, out)),
         ops => {
-            let mut sequence = Vec::with_capacity(ops.len());
-            for op in ops {
-                match as_unit(op) {
-                    Some(unit) => sequence.push((unit, flags)),
-                    None => return false,
-                }
+            if !ops.iter().all(|op| as_unit(op).is_some()) {
+                return false;
             }
-            out.push(sequence);
+            out.push(
+                ops.iter()
+                    .filter_map(as_unit)
+                    .map(|unit| (unit, flags))
+                    .collect(),
+            );
             true
         }
     }
@@ -402,7 +467,14 @@ impl<'p> Matcher<'p> {
             },
         );
         let matched = matched?;
-        Ok((if matched { end } else { None }, state.touch))
+        let end = if matched { end } else { None };
+        let touch = match state.touch {
+            Touch::Tail(run_id) if end != Some(text.len()) => {
+                Touch::Unless(alloc::vec![Probe::Run(run_id)])
+            }
+            touch => touch,
+        };
+        Ok((end, touch))
     }
 
     /// Whether the pattern matches the whole of `text`, like CPython's
@@ -655,9 +727,9 @@ impl<'p> Matcher<'p> {
         flags: u32,
     ) -> MatchResult {
         if direction > 0 {
-            let before = st.touch;
+            let before = st.touch.stamp();
             let found = self.first_end(st, p, pos, flags)?.is_some();
-            if st.touch != before {
+            if st.touch.stamp() != before {
                 st.touch.end();
             }
             return Ok(found);
@@ -817,7 +889,7 @@ impl<'p> Matcher<'p> {
             if max == MAXREPEAT {
                 st.touch.tail(run_id);
             } else {
-                st.touch.end();
+                st.touch.tested(Probe::new(unit, unit_flags));
             }
         }
         if max == MAXREPEAT {
@@ -1397,6 +1469,49 @@ pub fn run_len(parsed: &ParsedPattern, run_id: usize, text: &[char], from: usize
             .take_while(|&&c| unit_matches(unit, c, flags))
             .count(),
     )
+}
+
+/// Whether `probe` (from a [`Touch::Unless`] of a match of `parsed`)
+/// matches `c`; `None` when `parsed` has no such test.
+pub fn probe_matches(parsed: &ParsedPattern, probe: &Probe, c: char) -> Option<bool> {
+    let (unit, flags) = match *probe {
+        Probe::Literal(cp, flags) => (UnitOp::Literal(cp), flags),
+        Probe::NotLiteral(cp, flags) => (UnitOp::NotLiteral(cp), flags),
+        Probe::Any(flags) => (UnitOp::Any, flags),
+        Probe::In(items, flags) => (UnitOp::In(find_set(&parsed.pattern, items)?), flags),
+        Probe::Run(run_id) => find_run(&parsed.pattern, parsed.flags, run_id)?,
+    };
+    Some(unit_matches(unit, c, flags))
+}
+
+/// The items of the character class at address `items`, searched for
+/// through `p`.
+fn find_set(p: &SubPattern, items: usize) -> Option<&[SetItem]> {
+    for op in &p.data {
+        let found = match op {
+            OpCode::In(candidates) if candidates.as_ptr() as usize == items => {
+                Some(candidates.as_slice())
+            }
+            OpCode::MaxRepeat { item, .. }
+            | OpCode::MinRepeat { item, .. }
+            | OpCode::PossessiveRepeat { item, .. } => find_set(item, items),
+            OpCode::Subpattern { p, .. }
+            | OpCode::AtomicGroup(p)
+            | OpCode::Assert { p, .. }
+            | OpCode::AssertNot { p, .. } => find_set(p, items),
+            OpCode::Branch(alternatives) => alternatives
+                .iter()
+                .find_map(|alternative| find_set(alternative, items)),
+            OpCode::GroupRefExists { yes, no, .. } => {
+                find_set(yes, items).or_else(|| no.as_ref().and_then(|no| find_set(no, items)))
+            }
+            _ => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
 }
 
 /// The single unit, with its flags, of the unbounded greedy repeat whose

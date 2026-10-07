@@ -168,6 +168,49 @@ fn caps_below_the_smallest_string_are_errors() {
 }
 
 #[test]
+fn budgets_count_terminals_at_their_typical_length() {
+    let spec = small("start: NAME+\nNAME: /[a-z]+/ \" \"\n", 1 << 20);
+    assert_eq!(spec.analysis.rules[spec.start].typical_size, 7);
+    for seed in 0..32 {
+        let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+        let mut generation = Generation {
+            spec: &spec,
+            tokens: Vec::new(),
+            consumed: 0,
+            ignore_rate: 0.0,
+            unsettled: false,
+        };
+        assert!(generation.run(&mut ntc, 70).is_ok());
+        assert!(
+            generation.tokens.len() <= 10,
+            "seed {seed}: {}",
+            generation.tokens.len()
+        );
+    }
+}
+
+#[test]
+fn rules_whose_alternatives_all_grow_still_keep_to_their_budget() {
+    let spec = fixture_spec("calc", "start", 4000, vec![]);
+    for seed in 0..32 {
+        let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+        let mut generation = Generation {
+            spec: &spec,
+            tokens: Vec::new(),
+            consumed: 0,
+            ignore_rate: 0.0,
+            unsettled: false,
+        };
+        assert!(generation.run(&mut ntc, 500).is_ok(), "seed {seed}");
+        assert!(
+            (250..=1500).contains(&generation.consumed),
+            "seed {seed}: {} characters for a budget of 500",
+            generation.consumed
+        );
+    }
+}
+
+#[test]
 fn grammar_errors_propagate() {
     assert!(spec_with("start: (\n", GrammarOptions::default()).is_err());
     assert!(spec_with("start: start \"x\"\n", GrammarOptions::default()).is_err());
@@ -431,6 +474,7 @@ fn optional_tokens_may_be_swallowed_by_their_neighbours() {
         ],
         consumed: 0,
         ignore_rate: 0.0,
+        unsettled: false,
     };
     generation.mark_droppable(0);
     assert!(generation.tokens.iter().all(|t| !t.droppable));
@@ -455,7 +499,8 @@ fn readings_of_terminal_texts() {
     assert_eq!(tok(&spec, "NAME", "iffy").reading, Reading::Itself);
     assert_eq!(tok(&spec, "WS", "  ").reading, Reading::Itself);
     let ws = tid(&spec, "WS");
-    assert_eq!(tok(&spec, "WS", " \n").reading, Reading::Itself);
+    assert_eq!(tok(&spec, "WS", " \n").reading, Reading::Ignorables);
+    assert!(tok(&spec, "WS", " \n").lexable());
     assert_eq!(
         tok(&spec, "WS", " x").reading,
         Reading::Tokens(vec![ws, tid(&spec, "NAME")])
@@ -471,11 +516,14 @@ fn scans_follows_the_dynamic_lexer() {
     let ws = tok(&spec, "WS", " ");
     assert_eq!(fit(&spec, &[a.clone(), b.clone()]), Fit::Wrong);
     assert_eq!(fit(&spec, &[a.clone(), ws.clone(), b.clone()]), Fit::Wrong);
-    assert_eq!(fit(&spec, &[a.clone(), ws.clone(), c.clone()]), Fit::Exact);
-    assert_eq!(fit(&spec, &[b.clone(), c.clone()]), Fit::Exact);
-    assert_eq!(fit(&spec, &[a.clone(), ws.clone()]), Fit::Exact);
+    assert_eq!(
+        fit(&spec, &[a.clone(), ws.clone(), c.clone()]),
+        Fit::Settled
+    );
+    assert_eq!(fit(&spec, &[b.clone(), c.clone()]), Fit::Settled);
+    assert_eq!(fit(&spec, &[a.clone(), ws.clone()]), Fit::Settled);
     assert_eq!(fit(&spec, &[ws.clone(), ws.clone(), c.clone()]), Fit::Exact);
-    assert_eq!(fit(&spec, &[a.clone(), a.clone()]), Fit::Exact);
+    assert_eq!(fit(&spec, &[a.clone(), a.clone()]), Fit::Settled);
     let mut dropped = b.clone();
     dropped.droppable = true;
     assert_eq!(fit(&spec, &[a.clone(), dropped.clone()]), Fit::Retyped);
@@ -623,10 +671,10 @@ fn a_regex_may_run_on_past_the_next_token_to_a_later_one() {
     let c = tok(&spec, "C", "x");
     assert_eq!(a.reading, Reading::Itself);
     assert_eq!(fit(&spec, &[a.clone(), b.clone()]), Fit::Exact);
-    assert_eq!(fit(&spec, &[b.clone(), c.clone()]), Fit::Exact);
+    assert_eq!(fit(&spec, &[b.clone(), c.clone()]), Fit::Settled);
     assert_eq!(fit(&spec, &[a.clone(), b.clone(), c.clone()]), Fit::Wrong);
     let longer = tok(&spec, "A", "a\\xx");
-    assert_eq!(fit(&spec, &[longer, b, c]), Fit::Exact);
+    assert_eq!(fit(&spec, &[longer, b, c]), Fit::Settled);
 }
 
 #[test]
@@ -746,6 +794,64 @@ fn cached_scans_extend_as_fresh_matches_do() {
         }
     }
     assert!(extended > 10_000);
+}
+
+#[test]
+fn settled_stretches_read_back_exactly_and_settled_strings_lex_as_wholes() {
+    let mut settled = 0;
+    let mut unsettled = 0;
+    let mut whole_strings = 0;
+    for (name, start) in [
+        ("json", "value"),
+        ("calc", "start"),
+        ("features", "start"),
+        ("verilog", "start"),
+        ("template_lark", "start"),
+        ("turtle", "start"),
+    ] {
+        let spec = fixture_spec(name, start, 400, vec![]);
+        for seed in 0..8 {
+            let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+            let mut generation = Generation {
+                spec: &spec,
+                tokens: Vec::new(),
+                consumed: 0,
+                ignore_rate: 0.25,
+                unsettled: false,
+            };
+            if generation.run(&mut ntc, 200).is_err() {
+                continue;
+            }
+            let tokens: Vec<&Token> = generation.tokens.iter().collect();
+            for width in 2..=3 {
+                for window in tokens.windows(width) {
+                    let text = text_of(window);
+                    if spec.settled(&text, window) {
+                        settled += 1;
+                        assert!(spec.scans(&text, window), "{name} {seed} {text:?}");
+                        assert_eq!(
+                            spec.basic_fit(&text, window),
+                            Fit::Exact,
+                            "{name} {seed} {text:?}"
+                        );
+                    } else {
+                        unsettled += 1;
+                    }
+                }
+            }
+            if !generation.unsettled {
+                whole_strings += 1;
+                let text = text_of(&tokens);
+                assert!(spec.scans(&text, &tokens), "{name} {seed} {text:?}");
+                assert!(tokens.iter().all(|t| spec.single(t) && t.whole()));
+            }
+        }
+    }
+    assert!(
+        settled > 2 * unsettled,
+        "{settled} settled, {unsettled} not"
+    );
+    assert!(whole_strings > 0);
 }
 
 /// Writes the corpus `scripts/check-lark.py` parses with Lark: for each

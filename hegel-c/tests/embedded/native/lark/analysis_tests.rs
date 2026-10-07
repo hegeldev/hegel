@@ -9,9 +9,16 @@ use alloc::vec;
 fn analyzed(text: &str) -> (Grammar, Analysis) {
     let built = load_grammar(text, None, &NoImports).unwrap();
     let grammar = compile(&built, &["start"]).unwrap();
-    let term_min = grammar.terminals.iter().map(|t| t.min_width).collect();
-    let analysis = analyze(&grammar, term_min).unwrap();
+    let analysis = analyze(&grammar, term_min(&grammar), term_typical(&grammar)).unwrap();
     (grammar, analysis)
+}
+
+fn term_min(grammar: &Grammar) -> Vec<u64> {
+    grammar.terminals.iter().map(|t| t.min_width).collect()
+}
+
+fn term_typical(grammar: &Grammar) -> Vec<u64> {
+    grammar.terminals.iter().map(|t| 3 * t.min_width).collect()
 }
 
 fn rule<'a>(grammar: &Grammar, analysis: &'a Analysis, name: &str) -> &'a Rule {
@@ -141,11 +148,29 @@ fn unproductive_alternatives_and_rules_are_dropped() {
 }
 
 #[test]
+fn typical_sizes_count_terminals_at_their_typical_length() {
+    let (g, a) =
+        analyzed("start: \"ab\" NUM | start NUM | (NUM | \"ab\" \"ab\") NUM~2 NUM+\nNUM: /[0-9]+/");
+    let start = rule(&g, &a, "start");
+    assert_eq!(start.min_size, 3);
+    assert_eq!(start.typical_size, 9);
+    let alts = &start.alternatives;
+    assert_eq!(alts[0].typical_size, 9);
+    assert_eq!(alts[0].items[0].typical_size, 6);
+    assert_eq!(alts[0].items[1].typical_size, 3);
+    assert_eq!(alts[1].typical_size, 12);
+    assert_eq!(alts[2].min_size, 4);
+    assert_eq!(alts[2].typical_size, 12);
+    assert_eq!(alts[2].items[0].typical_size, 3);
+    assert_eq!(alts[2].items[1].typical_size, 6);
+    assert_eq!(alts[2].items[2].typical_size, 3);
+}
+
+#[test]
 fn unproductive_start_rule_is_an_error() {
     let built = load_grammar("start: start \"x\" | \"y\" start\n", None, &NoImports).unwrap();
     let grammar = compile(&built, &["start"]).unwrap();
-    let term_min = grammar.terminals.iter().map(|t| t.min_width).collect();
-    let err = analyze(&grammar, term_min).unwrap_err();
+    let err = analyze(&grammar, term_min(&grammar), term_typical(&grammar)).unwrap_err();
     assert_eq!(
         err.message,
         "Rule 'start' can never produce a finite string: every alternative recurses \

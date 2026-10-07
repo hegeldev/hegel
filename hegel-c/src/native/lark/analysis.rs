@@ -25,6 +25,9 @@ pub type Bound = Option<u64>;
 pub struct Rule {
     pub name: String,
     pub min_size: u64,
+    /// `min_size` with every terminal counted at the length of its strings
+    /// on average rather than its shortest: what the generator budgets by.
+    pub typical_size: u64,
     pub min_depth: u32,
     pub alternatives: Vec<Alt>,
 }
@@ -32,6 +35,9 @@ pub struct Rule {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Alt {
     pub min_size: u64,
+    /// `min_size` with every terminal counted at the length of its strings
+    /// on average rather than its shortest: what the generator budgets by.
+    pub typical_size: u64,
     /// The largest string the alternative can produce with every terminal
     /// at its shortest; `None` when it can grow without bound.
     pub max_size: Bound,
@@ -55,6 +61,9 @@ pub enum NodeKind {
 pub struct Node {
     pub kind: NodeKind,
     pub min_size: u64,
+    /// `min_size` with every terminal counted at the length of its strings
+    /// on average rather than its shortest: what the generator budgets by.
+    pub typical_size: u64,
     pub max_size: Bound,
     pub min_depth: u32,
 }
@@ -87,40 +96,71 @@ fn max_bound(a: Bound, b: Bound) -> Bound {
 #[derive(Clone)]
 struct RuleFacts {
     min_size: Option<u64>,
+    typical_size: Option<u64>,
     min_depth: Option<u32>,
     max_size: Bound,
     unbounded: bool,
+}
+
+/// Which length of each terminal the size of a construct counts it at.
+#[derive(Clone, Copy)]
+enum Measure {
+    /// The shortest string the terminal can produce.
+    Min,
+    /// The length of the terminal's strings on average.
+    Typical,
 }
 
 struct Analyzer<'g> {
     grammar: &'g Grammar,
     /// The smallest string each terminal can match.
     term_min: Vec<u64>,
+    /// The length of each terminal's strings on average.
+    term_typical: Vec<u64>,
     facts: Vec<RuleFacts>,
 }
 
 impl Analyzer<'_> {
-    fn item_min_size(&self, item: &Item) -> Option<u64> {
+    /// The smallest string an item can produce, counting terminals by
+    /// `measure`, under the current estimates for the rules.
+    fn item_size(&self, item: &Item, measure: Measure) -> Option<u64> {
         match item {
-            Item::Terminal(t) => Some(self.term_min[*t]),
-            Item::Rule(r) => self.facts[*r].min_size,
-            Item::Group(alts) => alts.iter().filter_map(|a| self.seq_min_size(a)).min(),
+            Item::Terminal(t) => Some(match measure {
+                Measure::Min => self.term_min[*t],
+                Measure::Typical => self.term_typical[*t],
+            }),
+            Item::Rule(r) => match measure {
+                Measure::Min => self.facts[*r].min_size,
+                Measure::Typical => self.facts[*r].typical_size,
+            },
+            Item::Group(alts) => alts.iter().filter_map(|a| self.seq_size(a, measure)).min(),
             Item::Repeat { inner, min, .. } => {
                 if *min == 0 {
                     Some(0)
                 } else {
-                    Some(self.item_min_size(inner)?.saturating_mul(u64::from(*min)))
+                    Some(
+                        self.item_size(inner, measure)?
+                            .saturating_mul(u64::from(*min)),
+                    )
                 }
             }
         }
     }
 
-    fn seq_min_size(&self, seq: &Sequence) -> Option<u64> {
+    fn seq_size(&self, seq: &Sequence, measure: Measure) -> Option<u64> {
         let mut total = 0u64;
         for item in &seq.items {
-            total = total.saturating_add(self.item_min_size(item)?);
+            total = total.saturating_add(self.item_size(item, measure)?);
         }
         Some(total)
+    }
+
+    fn item_min_size(&self, item: &Item) -> Option<u64> {
+        self.item_size(item, Measure::Min)
+    }
+
+    fn seq_min_size(&self, seq: &Sequence) -> Option<u64> {
+        self.seq_size(seq, Measure::Min)
     }
 
     fn item_min_depth(&self, item: &Item) -> Option<u32> {
@@ -205,10 +245,14 @@ impl Analyzer<'_> {
         loop {
             let mut changed = false;
             for r in 0..self.grammar.rules.len() {
-                let min_size = self.grammar.rules[r]
-                    .alternatives
+                let alternatives = &self.grammar.rules[r].alternatives;
+                let min_size = alternatives
                     .iter()
-                    .filter_map(|alt| self.seq_min_size(alt))
+                    .filter_map(|alt| self.seq_size(alt, Measure::Min))
+                    .min();
+                let typical_size = alternatives
+                    .iter()
+                    .filter_map(|alt| self.seq_size(alt, Measure::Typical))
                     .min();
                 let min_depth = self
                     .rule_alternatives(r)
@@ -216,8 +260,12 @@ impl Analyzer<'_> {
                     .min()
                     .map(|d| d.saturating_add(1));
                 let facts = &mut self.facts[r];
-                if min_size != facts.min_size || min_depth != facts.min_depth {
+                if min_size != facts.min_size
+                    || typical_size != facts.typical_size
+                    || min_depth != facts.min_depth
+                {
                     facts.min_size = min_size;
+                    facts.typical_size = typical_size;
                     facts.min_depth = min_depth;
                     changed = true;
                 }
@@ -297,6 +345,7 @@ impl Analyzer<'_> {
         Node {
             kind,
             min_size: self.item_min_size(item).unwrap_or(0),
+            typical_size: self.item_size(item, Measure::Typical).unwrap_or(0),
             max_size: self.item_max_size(item),
             min_depth: self.item_min_depth(item).unwrap_or(0),
         }
@@ -308,6 +357,7 @@ impl Analyzer<'_> {
             .filter(|alt| self.seq_min_size(alt).is_some())
             .map(|alt| Alt {
                 min_size: self.seq_min_size(alt).unwrap_or(0),
+                typical_size: self.seq_size(alt, Measure::Typical).unwrap_or(0),
                 max_size: self.seq_max_size(alt),
                 min_depth: self.seq_min_depth(alt).unwrap_or(0),
                 items: alt.items.iter().map(|item| self.build_item(item)).collect(),
@@ -319,14 +369,21 @@ impl Analyzer<'_> {
 }
 
 /// Analyse `grammar`, with `term_min` giving the shortest string each
-/// terminal can produce. Fails when a start rule has no finite derivation.
-pub fn analyze(grammar: &Grammar, term_min: Vec<u64>) -> GrammarResult<Analysis> {
+/// terminal can produce and `term_typical` the length of its strings on
+/// average. Fails when a start rule has no finite derivation.
+pub fn analyze(
+    grammar: &Grammar,
+    term_min: Vec<u64>,
+    term_typical: Vec<u64>,
+) -> GrammarResult<Analysis> {
     let mut analyzer = Analyzer {
         grammar,
         term_min,
+        term_typical,
         facts: alloc::vec![
             RuleFacts {
                 min_size: None,
+                typical_size: None,
                 min_depth: None,
                 max_size: Some(0),
                 unbounded: false,
@@ -352,6 +409,7 @@ pub fn analyze(grammar: &Grammar, term_min: Vec<u64>) -> GrammarResult<Analysis>
         .map(|(r, rule)| Rule {
             name: rule.name.clone(),
             min_size: analyzer.facts[r].min_size.unwrap_or(0),
+            typical_size: analyzer.facts[r].typical_size.unwrap_or(0),
             min_depth: analyzer.facts[r].min_depth.unwrap_or(0),
             alternatives: analyzer.build_alts(&rule.alternatives),
         })

@@ -8,10 +8,12 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::native::bignum::{BigInt, ToPrimitive};
+use crate::native::core::state::length_p_continue;
 use crate::native::core::{EngineError, ManyState, NativeTestCase, Status};
 use crate::native::intervalsets::IntervalSet;
 use crate::native::re::constants::{
-    AtCode, ChCode, SRE_FLAG_ASCII, SRE_FLAG_DOTALL, SRE_FLAG_IGNORECASE, SRE_FLAG_MULTILINE,
+    AtCode, ChCode, MAXREPEAT, SRE_FLAG_ASCII, SRE_FLAG_DOTALL, SRE_FLAG_IGNORECASE,
+    SRE_FLAG_MULTILINE,
 };
 use crate::native::re::parser::{OpCode, ParsedPattern, SetItem, SubPattern, parse_pattern};
 use crate::sys::sync::{Lazy, Mutex};
@@ -47,6 +49,12 @@ pub(crate) struct CompiledRegex {
 }
 
 impl CompiledRegex {
+    /// The length of the strings drawn from the pattern on average (see
+    /// [`typical_width`]).
+    pub(crate) fn typical_width(&self) -> f64 {
+        typical_width(&self.parsed.pattern)
+    }
+
     /// Parse `pattern`, reporting an invalid-argument diagnostic so a bad
     /// pattern surfaces at construction time rather than mid-draw.
     pub(crate) fn compile(
@@ -844,21 +852,15 @@ fn emit_from_chars(
     if chars.is_empty() {
         return Err(mark_invalid(ntc));
     }
-    let n = chars.len();
+    let n = chars.len() as u64;
     let idx = if n > 256 && ntc.weighted(0.8, None)? {
-        ntc.draw_integer(BigInt::from(0), BigInt::from(255))?
-            .to_i128()
-            .unwrap() as usize
+        ntc.draw_integer_uniform(0, 255)?
     } else if n > 256 {
-        ntc.draw_integer(BigInt::from(256), BigInt::from(n as i64 - 1))?
-            .to_i128()
-            .unwrap() as usize
+        ntc.draw_integer_uniform(256, n - 1)?
     } else {
-        ntc.draw_integer(BigInt::from(0), BigInt::from(n as i64 - 1))?
-            .to_i128()
-            .unwrap() as usize
+        ntc.draw_integer_uniform(0, n - 1)?
     };
-    out.push(chars[idx]);
+    out.push(chars[idx as usize]);
     Ok(())
 }
 
@@ -1222,6 +1224,70 @@ fn is_word_boundary(chars: &[char], pos: usize) -> bool {
     let before = pos > 0 && is_uni_word(chars[pos - 1]);
     let after = pos < chars.len() && is_uni_word(chars[pos]);
     before != after
+}
+
+/// The length of the strings the generator draws from `p` on average, in
+/// codepoints: one for each op that emits a character, the mean over the
+/// branches of an alternation (and over the two arms of a conditional),
+/// the length of the group a backreference repeats, and for a repeat the
+/// number of elements the collection protocol pulls on average (see
+/// [`typical_count`]) times the length of one.
+pub(crate) fn typical_width(p: &SubPattern) -> f64 {
+    let mut groups = Vec::new();
+    typical_of(p, &mut groups)
+}
+
+fn typical_of(p: &SubPattern, groups: &mut Vec<Option<f64>>) -> f64 {
+    let mut total = 0.0;
+    for op in &p.data {
+        total += match op {
+            OpCode::Literal(_) | OpCode::NotLiteral(_) | OpCode::Any | OpCode::In(_) => 1.0,
+            OpCode::At(_) | OpCode::Assert { .. } | OpCode::AssertNot { .. } | OpCode::Failure => {
+                0.0
+            }
+            OpCode::Branch(items) => {
+                let sum: f64 = items.iter().map(|item| typical_of(item, groups)).sum();
+                sum / items.len().max(1) as f64
+            }
+            OpCode::AtomicGroup(inner) => typical_of(inner, groups),
+            OpCode::Subpattern { group, p, .. } => {
+                let width = typical_of(p, groups);
+                if let Some(g) = group {
+                    let index = *g as usize;
+                    if groups.len() <= index {
+                        groups.resize(index + 1, None);
+                    }
+                    groups[index] = Some(width);
+                }
+                width
+            }
+            OpCode::GroupRef(g) => groups.get(*g as usize).copied().flatten().unwrap_or(0.0),
+            OpCode::GroupRefExists { yes, no, .. } => {
+                let no = no.as_ref().map_or(0.0, |no| typical_of(no, groups));
+                (typical_of(yes, groups) + no) / 2.0
+            }
+            OpCode::MaxRepeat { min, max, item }
+            | OpCode::MinRepeat { min, max, item }
+            | OpCode::PossessiveRepeat { min, max, item } => {
+                let max = (*max != MAXREPEAT).then_some(*max as usize);
+                typical_count(*min as usize, max) * typical_of(item, groups)
+            }
+        };
+    }
+    total
+}
+
+/// How many elements a collection of `min_size` to `max_size` elements
+/// has on average: the collection protocol goes on past the minimum with
+/// the probability [`length_p_continue`] sets each time, so the count
+/// beyond it is geometric, cut off at the maximum.
+pub(crate) fn typical_count(min_size: usize, max_size: Option<usize>) -> f64 {
+    let p = length_p_continue(min_size, max_size);
+    let extra = match max_size {
+        None => p / (1.0 - p),
+        Some(max_size) => p * (1.0 - p.powf((max_size - min_size) as f64)) / (1.0 - p),
+    };
+    min_size as f64 + extra
 }
 
 #[cfg(test)]

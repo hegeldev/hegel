@@ -7,6 +7,7 @@
 //! matcher's own reading of the semantics.
 
 use super::*;
+use crate::native::re::constants::SRE_FLAG_UNICODE;
 use crate::native::re::parser::parse_pattern;
 use crate::native::re::vm::Program;
 use alloc::string::String;
@@ -50,13 +51,13 @@ fn check(pattern: &str, text: &str, pos: usize, expected_end: Option<usize>, exp
     if let Ok(program) = Program::compile(&parsed) {
         let text = chars(text);
         assert_eq!(
-            program.run(&text, pos, None),
+            program.scan(&text, pos, None).0,
             expected_end,
             "simulated match end of {pattern:?} on {text:?} at {pos}"
         );
         if pos == 0 {
             assert_eq!(
-                program.run(&text, 0, Some(text.len())).is_some(),
+                program.scan(&text, 0, Some(text.len())).0.is_some(),
                 expected_full,
                 "simulated fullmatch of {pattern:?} on {text:?}"
             );
@@ -563,13 +564,59 @@ fn touch(pattern: &str, text: &str) -> (Option<usize>, Touch) {
 
 #[test]
 fn touch_reports_how_a_match_depended_on_the_edges_of_the_text() {
+    let unicode = SRE_FLAG_UNICODE;
     assert_eq!(touch("abc", "abc"), (Some(3), Touch::Never));
-    assert_eq!(touch("abc", "ab"), (None, Touch::End));
+    assert_eq!(
+        touch("abc", "ab"),
+        (
+            None,
+            Touch::Unless(vec![Probe::Literal('c' as u32, unicode)])
+        )
+    );
     assert_eq!(touch("\"[^\"]*\"", "\"ab\""), (Some(4), Touch::Never));
     assert!(matches!(touch("a*", "aa"), (Some(2), Touch::Tail(_))));
     assert!(matches!(touch("(?:a*)*", "aa"), (Some(2), Touch::Tail(_))));
-    assert_eq!(touch("a*b*", "aa"), (Some(2), Touch::End));
-    assert_eq!(touch("a{1,3}", "aa"), (Some(2), Touch::End));
+    assert!(matches!(
+        touch("a*b*", "aa"),
+        (Some(2), Touch::Unless(probes)) if matches!(probes[..], [Probe::Run(_), Probe::Run(_)])
+    ));
+    assert_eq!(
+        touch("a{1,3}", "aa"),
+        (
+            Some(2),
+            Touch::Unless(vec![Probe::Literal('a' as u32, unicode)])
+        )
+    );
+    assert_eq!(
+        touch("a(?:.|b)?", "a"),
+        (
+            Some(1),
+            Touch::Unless(vec![
+                Probe::Any(unicode),
+                Probe::Literal('b' as u32, unicode)
+            ])
+        )
+    );
+    assert_eq!(
+        touch("a[^b]?[^b]?", "a"),
+        (
+            Some(1),
+            Touch::Unless(vec![Probe::NotLiteral('b' as u32, unicode)])
+        )
+    );
+    assert!(matches!(
+        touch("[a-z]+(?<=a)", "abc"),
+        (Some(1), Touch::Unless(probes)) if matches!(probes[..], [Probe::Run(_)])
+    ));
+    assert!(matches!(
+        touch("a*(?!)", "aa"),
+        (None, Touch::Unless(probes)) if matches!(probes[..], [Probe::Run(_)])
+    ));
+    assert!(matches!(
+        touch("[ab]*a*", "a"),
+        (Some(1), Touch::Unless(probes)) if matches!(probes[..], [Probe::Run(_), Probe::Run(_)])
+    ));
+    assert!(matches!(touch("x?a*", "a"), (Some(1), Touch::Tail(_))));
     assert_eq!(touch("a$", "a"), (Some(1), Touch::End));
     assert_eq!(touch("\\ba", "a"), (Some(1), Touch::End));
     assert_eq!(touch("x\\b", "x"), (Some(1), Touch::End));
@@ -594,6 +641,53 @@ fn tail_len(pattern: &str, text: &str, longer: &str) -> Option<usize> {
     let extended = run_len(&parsed, run_id, &longer, text.len()).map(|more| text.len() + more);
     assert_eq!(extended, full, "{pattern:?} on {longer:?}");
     extended
+}
+
+fn probes(pattern: &str, text: &str) -> (ParsedPattern, Vec<Probe>) {
+    let parsed = parse_pattern(pattern, 0).unwrap();
+    let (_, touch) = Matcher::new(&parsed)
+        .match_at_touch(&chars(text), 0)
+        .unwrap();
+    let Touch::Unless(probes) = touch else {
+        panic!("{pattern:?} on {text:?} gave {touch:?}");
+    };
+    (parsed, probes)
+}
+
+#[test]
+fn probes_run_their_tests_again_on_the_next_character() {
+    for (pattern, text, passing, failing) in [
+        ("x[ab]?", "x", "ab", "cx"),
+        ("x(?:[ab])?", "x", "ab", "c"),
+        ("x(?:[ab]|c)?", "x", "abc", "d"),
+        ("x(?:[ab]y|cz)?", "x", "abc", "d"),
+        ("x(?>[ab])?", "x", "ab", "c"),
+        ("xa(?<=a[bc]?)", "xa", "bc", "d"),
+        ("xa(?<!a[bc]?)", "xa", "bc", "d"),
+        ("x[ab]*?y", "x", "aby", "c"),
+        ("(a)?(?(1)[bc]|d)", "a", "bc", "ad"),
+        ("(a)?(?(1)b|[cd])", "", "acd", "b"),
+        ("x(?i:[ab])?", "x", "abAB", "c"),
+        ("[a-z]+[0-9]?", "ab", "z5", "-"),
+        ("a.?", "a", "x", "\n"),
+        ("(?s)a.?", "a", "x\n", ""),
+    ] {
+        let (parsed, probes) = probes(pattern, text);
+        let matched = |c: char| {
+            probes
+                .iter()
+                .any(|probe| probe_matches(&parsed, probe, c).unwrap())
+        };
+        for c in passing.chars() {
+            assert!(matched(c), "{pattern:?} on {text:?} then {c:?}");
+        }
+        for c in failing.chars() {
+            assert!(!matched(c), "{pattern:?} on {text:?} then {c:?}");
+        }
+    }
+    let parsed = parse_pattern("a", 0).unwrap();
+    assert_eq!(probe_matches(&parsed, &Probe::In(0, 0), 'a'), None);
+    assert_eq!(probe_matches(&parsed, &Probe::Run(0), 'a'), None);
 }
 
 #[test]

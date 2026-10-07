@@ -399,17 +399,13 @@ impl Program {
     /// The end of the match at `start` that CPython's
     /// `pattern.match(text, start)` finds, or with `exact_end` the one
     /// among the matches ending there that CPython's backtracking finds
-    /// first (`pattern.fullmatch(text)` for the text's end). A `start`
-    /// past the end of the text is clamped to it, as CPython does.
-    pub fn run(&self, text: &[char], start: usize, exact_end: Option<usize>) -> Option<usize> {
-        self.scan(text, start, exact_end).0
-    }
-
-    /// [`run`](Self::run), with how the match depended on the edges of
-    /// the text (never [`Touch::Tail`]: the threads alive at the end are
-    /// carried whole instead) and, when threads were still waiting for
-    /// input there and nothing else looked at an edge, those threads,
-    /// for [`resume`](Self::resume).
+    /// first (`pattern.fullmatch(text)` for the text's end), with how the
+    /// match depended on the edges of the text (never [`Touch::Tail`]:
+    /// the threads alive at the end are carried whole instead) and, when
+    /// threads were still waiting for input there and nothing else
+    /// looked at an edge, those threads, for [`resume`](Self::resume). A
+    /// `start` past the end of the text is clamped to it, as CPython
+    /// does.
     pub fn scan(
         &self,
         text: &[char],

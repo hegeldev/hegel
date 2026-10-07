@@ -29,10 +29,11 @@
 use super::ast::{Pattern, PatternKind};
 use super::compile::{TermId, TerminalDef};
 use crate::native::re::categories::class_ranges;
-use crate::native::re::constants::{MAXREPEAT, SRE_FLAG_IGNORECASE};
-use crate::native::re::matcher::{MatchError, Matcher, Touch, run_len};
+use crate::native::re::constants::{AtCode, MAXREPEAT, SRE_FLAG_IGNORECASE};
+use crate::native::re::matcher::{MatchError, Matcher, Probe, Touch, probe_matches, run_len};
 use crate::native::re::parser::{OpCode, ParsedPattern, SetItem, SubPattern};
 use crate::native::re::vm::{Program, Resume, has_nested_repeats};
+use crate::native::re::width::get_width;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
@@ -156,12 +157,78 @@ pub fn first_chars(parsed: &ParsedPattern) -> Option<FirstChars> {
     Some(FirstChars::normalized(walk.ranges))
 }
 
+/// Whether a match of `parsed` at a position can depend on the text
+/// before that position: an anchor or word boundary it may test before
+/// consuming anything, or a lookbehind that may reach further back than
+/// what it has consumed by then.
+pub fn anchored(parsed: &ParsedPattern) -> bool {
+    looks_back(&parsed.pattern, 0).is_none()
+}
+
+/// The least number of characters consumed after `p` matches at a
+/// position `consumed` characters into a text, or `None` when `p` may
+/// look before the start of the text.
+fn looks_back(p: &SubPattern, consumed: u64) -> Option<u64> {
+    let mut consumed = consumed;
+    for op in &p.data {
+        consumed = match op {
+            OpCode::Literal(_) | OpCode::NotLiteral(_) | OpCode::Any | OpCode::In(_) => {
+                consumed + 1
+            }
+            OpCode::At(AtCode::End | AtCode::EndString) | OpCode::GroupRef(_) | OpCode::Failure => {
+                consumed
+            }
+            OpCode::At(_) => {
+                if consumed == 0 {
+                    return None;
+                }
+                consumed
+            }
+            OpCode::Assert { direction, p } | OpCode::AssertNot { direction, p } => {
+                if *direction < 0 {
+                    if get_width(p).1.is_none_or(|hi| hi > consumed) {
+                        return None;
+                    }
+                    looks_back(p, 0)?;
+                } else {
+                    looks_back(p, consumed)?;
+                }
+                consumed
+            }
+            OpCode::Branch(alternatives) => {
+                let mut least = None;
+                for alternative in alternatives {
+                    let after = looks_back(alternative, consumed)?;
+                    least = Some(least.map_or(after, |least: u64| least.min(after)));
+                }
+                least.unwrap_or(consumed)
+            }
+            OpCode::Subpattern { p, .. } | OpCode::AtomicGroup(p) => looks_back(p, consumed)?,
+            OpCode::GroupRefExists { yes, no, .. } => {
+                let yes = looks_back(yes, consumed)?;
+                match no {
+                    Some(no) => yes.min(looks_back(no, consumed)?),
+                    None => consumed,
+                }
+            }
+            OpCode::MaxRepeat { min, item, .. }
+            | OpCode::MinRepeat { min, item, .. }
+            | OpCode::PossessiveRepeat { min, item, .. } => {
+                let each = looks_back(item, consumed)? - consumed;
+                consumed.saturating_add(each.saturating_mul(u64::from(*min)))
+            }
+        };
+    }
+    Some(consumed)
+}
+
 /// One terminal's pattern as the simulated lexers match it: the parsed
 /// regex, the characters a match can start with (so most terminals are
 /// ruled out at a position without running the matcher), for a
 /// case-sensitive string terminal the literal itself, compared directly,
-/// and the compiled [`Program`] for a pattern that could send the
-/// backtracking matcher quadratic, which simulates every path at once.
+/// the compiled [`Program`] for a pattern that could send the
+/// backtracking matcher quadratic, which simulates every path at once,
+/// and whether a match can depend on the text before it.
 #[derive(Clone)]
 struct TermPattern {
     /// Shared between the clones of the pattern the lexers hold, so the
@@ -170,6 +237,27 @@ struct TermPattern {
     first: Option<FirstChars>,
     literal: Option<Vec<char>>,
     program: Option<Program>,
+    anchored: bool,
+}
+
+/// What matching a terminal's pattern at a position found: the end of
+/// the match, how that depended on the edges of the text, and whether
+/// the pattern was run at all (one its first characters rule out, or a
+/// literal, looks at nothing before the position).
+struct Outcome {
+    result: Result<Option<usize>, MatchError>,
+    edge: Edge,
+    anchored: bool,
+}
+
+impl Outcome {
+    fn fixed(result: Result<Option<usize>, MatchError>) -> Outcome {
+        Outcome {
+            result,
+            edge: Edge::Fixed,
+            anchored: false,
+        }
+    }
 }
 
 impl TermPattern {
@@ -181,6 +269,7 @@ impl TermPattern {
             program: (literal.is_none() && has_nested_repeats(&parsed.pattern))
                 .then(|| Program::compile(&parsed).ok())
                 .flatten(),
+            anchored: anchored(&parsed),
             parsed: Arc::new(parsed),
             literal,
         }
@@ -189,20 +278,24 @@ impl TermPattern {
     /// The end of the match at `pos`, as CPython's `pattern.match` finds
     /// it.
     fn match_at(&self, text: &[char], pos: usize) -> Result<Option<usize>, MatchError> {
-        self.scan(text, pos).0
+        self.scan(text, pos).result
     }
 
     /// [`match_at`](Self::match_at), with how the result depended on the
     /// edges of the text.
-    fn scan(&self, text: &[char], pos: usize) -> (Result<Option<usize>, MatchError>, Edge) {
+    fn scan(&self, text: &[char], pos: usize) -> Outcome {
         if let Some(first) = &self.first {
             match text.get(pos) {
                 Some(&c) if first.contains(c) => {}
                 Some(_) => {
-                    return (Ok(None), Edge::Fixed);
+                    return Outcome::fixed(Ok(None));
                 }
                 None => {
-                    return (Ok(None), Edge::Lost);
+                    return Outcome {
+                        result: Ok(None),
+                        edge: Edge::Lost,
+                        anchored: false,
+                    };
                 }
             }
         }
@@ -214,27 +307,35 @@ impl TermPattern {
                 } else {
                     Edge::Fixed
                 };
-                return (Ok(None), edge);
+                return Outcome {
+                    result: Ok(None),
+                    edge,
+                    anchored: false,
+                };
             }
-            return (
-                Ok(rest.starts_with(literal).then(|| pos + literal.len())),
-                Edge::Fixed,
-            );
+            return Outcome::fixed(Ok(rest.starts_with(literal).then(|| pos + literal.len())));
         }
-        if let Some(program) = &self.program {
+        let (result, edge) = if let Some(program) = &self.program {
             let (end, touch, resume) = program.scan(text, pos, None);
             let edge = match (touch, resume) {
                 (Touch::Never, _) => Edge::Fixed,
                 (_, Some(resume)) => Edge::Carry(Carry::Resume(resume)),
                 (_, None) => Edge::Lost,
             };
-            return (Ok(end), edge);
-        }
-        match Matcher::new(&self.parsed).match_at_touch(text, pos) {
-            Ok((end, Touch::Never)) => (Ok(end), Edge::Fixed),
-            Ok((end, Touch::Tail(run_id))) => (Ok(end), Edge::Carry(Carry::Tail(run_id))),
-            Ok((end, Touch::End)) => (Ok(end), Edge::Lost),
-            Err(e) => (Err(e), Edge::Lost),
+            (Ok(end), edge)
+        } else {
+            match Matcher::new(&self.parsed).match_at_touch(text, pos) {
+                Ok((end, Touch::Never)) => (Ok(end), Edge::Fixed),
+                Ok((end, Touch::Tail(run_id))) => (Ok(end), Edge::Carry(Carry::Tail(run_id))),
+                Ok((end, Touch::Unless(probes))) => (Ok(end), Edge::Carry(Carry::Unless(probes))),
+                Ok((end, Touch::End)) => (Ok(end), Edge::Lost),
+                Err(e) => (Err(e), Edge::Lost),
+            }
+        };
+        Outcome {
+            result,
+            edge,
+            anchored: self.anchored,
         }
     }
 
@@ -242,6 +343,17 @@ impl TermPattern {
     /// this pattern reported) continues from `from`.
     fn run_len(&self, run_id: usize, text: &[char], from: usize) -> Option<usize> {
         run_len(&self.parsed, run_id, text, from)
+    }
+
+    /// Whether `c` passes one of `probes` (from a [`Touch::Unless`] this
+    /// pattern reported); `None` for a probe the pattern cannot run.
+    fn probed(&self, probes: &[Probe], c: char) -> Option<bool> {
+        for probe in probes {
+            if probe_matches(&self.parsed, probe, c)? {
+                return Some(true);
+            }
+        }
+        Some(false)
     }
 
     fn fullmatch(&self, text: &[char]) -> Result<bool, MatchError> {
@@ -280,6 +392,9 @@ enum Carry {
     /// end of the text, where the match ended: the match goes on as far
     /// as the run does.
     Tail(usize),
+    /// The backtracking matcher's tests that found the end: the outcome
+    /// stands unless the next character passes one of them.
+    Unless(Vec<Probe>),
     /// The simulation's threads still waiting for input at the end.
     Resume(Resume),
 }
@@ -296,7 +411,8 @@ enum Edge {
 
 /// What a lexer found at a position of some text, with how that depended
 /// on where the text ended, so that the finding can be carried over to a
-/// longer text that begins the same way (see [`Lexer::extend`]).
+/// longer text that begins the same way (see [`Lexer::extend`]), and
+/// whether it could depend on text before the position.
 #[derive(Debug, Clone)]
 pub struct Scan {
     pub lexed: Lexed,
@@ -306,6 +422,10 @@ pub struct Scan {
     steps: Vec<(TermId, Carry)>,
     /// Whether the finding can be carried over at all.
     carried: bool,
+    /// Whether a terminal tried could have looked at text before the
+    /// position, so that the finding stands only where nothing precedes
+    /// it (see [`anchored`]).
+    pub anchored: bool,
 }
 
 impl Scan {
@@ -314,13 +434,15 @@ impl Scan {
             lexed,
             steps: Vec::new(),
             carried: !matches!(lexed, Lexed::Unknown),
+            anchored: false,
         }
     }
 
-    fn note(&mut self, id: TermId, edge: Edge) {
-        match edge {
+    fn note(&mut self, id: TermId, outcome: &Outcome) {
+        self.anchored |= outcome.anchored;
+        match &outcome.edge {
             Edge::Fixed => {}
-            Edge::Carry(carry) => self.steps.push((id, carry)),
+            Edge::Carry(carry) => self.steps.push((id, carry.clone())),
             Edge::Lost => self.carried = false,
         }
     }
@@ -422,13 +544,13 @@ impl Lexer {
         let Some(pattern) = &self.patterns[id] else {
             return Scan::new(Lexed::Unknown);
         };
-        let (result, edge) = pattern.scan(text, pos);
-        let mut scan = Scan::new(match result {
+        let outcome = pattern.scan(text, pos);
+        let mut scan = Scan::new(match outcome.result {
             Ok(Some(end)) => Lexed::Token(id, end),
             Ok(None) => Lexed::NoMatch,
             Err(_) => Lexed::Unknown,
         });
-        scan.note(id, edge);
+        scan.note(id, &outcome);
         scan
     }
 
@@ -448,9 +570,9 @@ impl Lexer {
             return scan;
         }
         for term in &self.terminals {
-            let (result, edge) = term.pattern.scan(text, pos);
-            scan.note(term.id, edge);
-            match result {
+            let outcome = term.pattern.scan(text, pos);
+            scan.note(term.id, &outcome);
+            match outcome.result {
                 Ok(Some(end)) => {
                     scan.lexed = Lexed::Token(self.retype(term, &text[pos..end]), end);
                     return scan;
@@ -492,6 +614,33 @@ impl Lexer {
         len: usize,
         retype: bool,
     ) -> Option<Lexed> {
+        self.carry(scan, text, pos, len, retype, false)
+    }
+
+    /// [`extend`](Self::extend), for a `text` that may itself go on past
+    /// its end: nothing when the answer could still change with what
+    /// follows, so that an answer stands for the token in any text that
+    /// continues this one.
+    pub fn settle(
+        &self,
+        scan: &Scan,
+        text: &[char],
+        pos: usize,
+        len: usize,
+        retype: bool,
+    ) -> Option<Lexed> {
+        self.carry(scan, text, pos, len, retype, true)
+    }
+
+    fn carry(
+        &self,
+        scan: &Scan,
+        text: &[char],
+        pos: usize,
+        len: usize,
+        retype: bool,
+        open: bool,
+    ) -> Option<Lexed> {
         if !scan.carried {
             return None;
         }
@@ -500,12 +649,32 @@ impl Lexer {
             let end = match carry {
                 Carry::Literal => {
                     let literal = pattern.literal.as_ref()?;
-                    text[pos..]
-                        .starts_with(literal)
-                        .then(|| pos + literal.len())
+                    let rest = &text[pos..];
+                    if open && rest.len() < literal.len() && literal.starts_with(rest) {
+                        return None;
+                    }
+                    rest.starts_with(literal).then(|| pos + literal.len())
                 }
-                Carry::Tail(run_id) => Some(pos + len + pattern.run_len(*run_id, text, pos + len)?),
-                Carry::Resume(resume) => pattern.program.as_ref()?.resume(resume, text, pos, len).0,
+                Carry::Tail(run_id) => {
+                    let end = pos + len + pattern.run_len(*run_id, text, pos + len)?;
+                    if open && end == text.len() {
+                        return None;
+                    }
+                    Some(end)
+                }
+                Carry::Unless(probes) => match text.get(pos + len) {
+                    Some(&c) if pattern.probed(probes, c)? => return None,
+                    Some(_) => None,
+                    None if open => return None,
+                    None => None,
+                },
+                Carry::Resume(resume) => {
+                    let (end, touch, _) = pattern.program.as_ref()?.resume(resume, text, pos, len);
+                    if open && touch != Touch::Never {
+                        return None;
+                    }
+                    end
+                }
             };
             if let Some(end) = end {
                 let id = if retype {

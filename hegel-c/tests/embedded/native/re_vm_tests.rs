@@ -14,6 +14,10 @@ fn program(pattern: &str) -> Result<Program, Unsupported> {
     Program::compile(&parse_pattern(pattern, 0).unwrap())
 }
 
+fn run(p: &Program, text: &[char], start: usize, exact_end: Option<usize>) -> Option<usize> {
+    p.scan(text, start, exact_end).0
+}
+
 #[test]
 fn declines_constructs_whose_matching_depends_on_captures_or_commitment() {
     for pattern in ["(a)\\1", "(a)?(?(1)b|c)", "(?>ab|a)c", "a*+b", "(?:a|b)++"] {
@@ -40,43 +44,43 @@ fn declines_programs_that_unroll_too_far() {
 #[test]
 fn start_is_clamped_to_the_text() {
     let p = program("a*").unwrap();
-    assert_eq!(p.run(&chars("aa"), 5, None), Some(2));
-    assert_eq!(p.run(&chars("aa"), 5, Some(2)), Some(2));
-    assert_eq!(p.run(&chars(""), 0, None), Some(0));
-    assert_eq!(program("a").unwrap().run(&chars(""), 0, None), None);
+    assert_eq!(run(&p, &chars("aa"), 5, None), Some(2));
+    assert_eq!(run(&p, &chars("aa"), 5, Some(2)), Some(2));
+    assert_eq!(run(&p, &chars(""), 0, None), Some(0));
+    assert_eq!(run(&program("a").unwrap(), &chars(""), 0, None), None);
 }
 
 #[test]
 fn exact_end_backtracks_past_earlier_matches() {
     let p = program("(?:a|ab)(?:c|bcd)").unwrap();
-    assert_eq!(p.run(&chars("abcd"), 0, None), Some(4));
-    assert_eq!(p.run(&chars("abcd"), 0, Some(3)), Some(3));
-    assert_eq!(p.run(&chars("abcd"), 0, Some(2)), None);
+    assert_eq!(run(&p, &chars("abcd"), 0, None), Some(4));
+    assert_eq!(run(&p, &chars("abcd"), 0, Some(3)), Some(3));
+    assert_eq!(run(&p, &chars("abcd"), 0, Some(2)), None);
     let p = program("a|ab|abc").unwrap();
-    assert_eq!(p.run(&chars("abcd"), 0, Some(2)), Some(2));
-    assert_eq!(p.run(&chars("abcd"), 0, Some(3)), Some(3));
-    assert_eq!(p.run(&chars("abcd"), 0, Some(4)), None);
+    assert_eq!(run(&p, &chars("abcd"), 0, Some(2)), Some(2));
+    assert_eq!(run(&p, &chars("abcd"), 0, Some(3)), Some(3));
+    assert_eq!(run(&p, &chars("abcd"), 0, Some(4)), None);
 }
 
 #[test]
 fn lookarounds_nest_and_look_behind_variable_widths() {
     let p = program("(?<=a(?=b)b)c").unwrap();
-    assert_eq!(p.run(&chars("abc"), 2, None), Some(3));
-    assert_eq!(p.run(&chars("xbc"), 2, None), None);
+    assert_eq!(run(&p, &chars("abc"), 2, None), Some(3));
+    assert_eq!(run(&p, &chars("xbc"), 2, None), None);
     let p = program("(?<=ab|b)c").unwrap();
-    assert_eq!(p.run(&chars("abc"), 2, None), Some(3));
-    assert_eq!(p.run(&chars("c"), 0, None), None);
+    assert_eq!(run(&p, &chars("abc"), 2, None), Some(3));
+    assert_eq!(run(&p, &chars("c"), 0, None), None);
     let p = program("(?<!ab)c").unwrap();
-    assert_eq!(p.run(&chars("abc"), 2, None), None);
-    assert_eq!(p.run(&chars("xbc"), 2, None), Some(3));
-    assert_eq!(p.run(&chars("c"), 0, None), Some(1));
+    assert_eq!(run(&p, &chars("abc"), 2, None), None);
+    assert_eq!(run(&p, &chars("xbc"), 2, None), Some(3));
+    assert_eq!(run(&p, &chars("c"), 0, None), Some(1));
 }
 
 #[test]
 fn an_impossible_alternative_is_skipped() {
     let p = program("(?:a(?!)|ab)c").unwrap();
-    assert_eq!(p.run(&chars("abc"), 0, None), Some(3));
-    assert_eq!(program("(?!)").unwrap().run(&chars("a"), 0, None), None);
+    assert_eq!(run(&p, &chars("abc"), 0, None), Some(3));
+    assert_eq!(run(&program("(?!)").unwrap(), &chars("a"), 0, None), None);
 }
 
 /// Every pattern that can be expressed finds the same ends as the
@@ -120,7 +124,7 @@ fn agrees_with_the_backtracking_matcher() {
             for pos in 0..=text.len() {
                 let expected = matcher.match_at_touch(&text, pos).unwrap().0;
                 assert_eq!(
-                    program.run(&text, pos, None),
+                    run(&program, &text, pos, None),
                     expected,
                     "{pattern:?} {text:?} {pos}"
                 );
@@ -128,7 +132,7 @@ fn agrees_with_the_backtracking_matcher() {
             for end in 0..=text.len() {
                 let prefix = &text[..end];
                 assert_eq!(
-                    program.run(prefix, 0, Some(end)).is_some(),
+                    run(&program, prefix, 0, Some(end)).is_some(),
                     matcher.fullmatch(prefix).unwrap(),
                     "{pattern:?} {prefix:?}"
                 );
@@ -244,16 +248,19 @@ fn resume_continues_a_scan_as_a_fresh_run_would() {
 #[test]
 fn sets_match_beyond_ascii() {
     assert_eq!(
-        program("[α-ω]+").unwrap().run(&chars("αβγ!"), 0, None),
+        run(&program("[α-ω]+").unwrap(), &chars("αβγ!"), 0, None),
         Some(3)
     );
     assert_eq!(
-        program("\\w+").unwrap().run(&chars("héllo wörld"), 0, None),
+        run(&program("\\w+").unwrap(), &chars("héllo wörld"), 0, None),
         Some(5)
     );
-    assert_eq!(program("[^a]").unwrap().run(&chars("é"), 0, None), Some(1));
     assert_eq!(
-        program("(?i)[a-c]+").unwrap().run(&chars("aBcÀ"), 0, None),
+        run(&program("[^a]").unwrap(), &chars("é"), 0, None),
+        Some(1)
+    );
+    assert_eq!(
+        run(&program("(?i)[a-c]+").unwrap(), &chars("aBcÀ"), 0, None),
         Some(3)
     );
 }

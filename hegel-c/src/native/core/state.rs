@@ -46,6 +46,10 @@ use crate::native::statistics::{
 };
 use crate::sys::sync::{Lazy, Mutex};
 
+/// How many recent integer draws' constraints a test case keeps for
+/// later draws to share (see `NativeTestCase::shared_integer_kind`).
+const INTEGER_KINDS_REMEMBERED: usize = 8;
+
 /// State for a variable-length collection.
 pub struct ManyState {
     pub min_size: usize,
@@ -1646,6 +1650,11 @@ pub struct NativeTestCase {
     rng: Option<EngineRng>,
     max_size: usize,
     pub nodes: Vec<ChoiceNode>,
+    /// The constraints of the most recent integer draws, shared with the
+    /// nodes that recorded them, so that a draw repeating one of them
+    /// (the next character from the same class, say) shares it too
+    /// rather than allocating its own copy.
+    integer_kinds: Vec<Arc<IntegerChoice>>,
     /// Set to `true` by [`Self::freeze`] on the first call; subsequent calls
     /// are no-ops. A dedicated boolean (rather than checking the family's
     /// status) lets `conclude_test` conclude before calling `freeze()`
@@ -1839,6 +1848,7 @@ impl NativeTestCase {
             rng,
             max_size,
             nodes: Vec::new(),
+            integer_kinds: Vec::new(),
             frozen: false,
             should_capture,
             family,
@@ -2287,10 +2297,25 @@ impl NativeTestCase {
             obs.draw_integer(&v, was_forced);
         }
 
+        let kind = self.shared_integer_kind(kind);
         self.nodes
-            .push(ChoiceNode::integer(kind.clone(), v.clone(), was_forced));
+            .push(ChoiceNode::integer_shared(kind, v.clone(), was_forced));
 
         Ok(v)
+    }
+
+    /// `kind` as the nodes share it: the copy a recent draw recorded when
+    /// one did, else a new one remembered in place of the oldest.
+    fn shared_integer_kind(&mut self, kind: &IntegerChoice) -> Arc<IntegerChoice> {
+        if let Some(shared) = self.integer_kinds.iter().find(|shared| ***shared == *kind) {
+            return Arc::clone(shared);
+        }
+        let shared = Arc::new(kind.clone());
+        if self.integer_kinds.len() == INTEGER_KINDS_REMEMBERED {
+            self.integer_kinds.remove(0);
+        }
+        self.integer_kinds.push(Arc::clone(&shared));
+        shared
     }
 
     /// Record a forced integer draw in `[min_value, max_value]`.

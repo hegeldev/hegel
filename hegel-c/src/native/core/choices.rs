@@ -1439,7 +1439,12 @@ impl ChoiceNode {
 
     /// An integer node.
     pub fn integer(constraint: IntegerChoice, value: BigInt, was_forced: bool) -> Self {
-        Self::new(ChoiceData::Integer(Arc::new(constraint), value), was_forced)
+        Self::integer_shared(Arc::new(constraint), value, was_forced)
+    }
+
+    /// An integer node whose constraint other nodes may share.
+    pub fn integer_shared(constraint: Arc<IntegerChoice>, value: BigInt, was_forced: bool) -> Self {
+        Self::new(ChoiceData::Integer(constraint, value), was_forced)
     }
 
     /// A boolean node.
