@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::native::re::parser::parse_pattern;
+use crate::native::re::vm::Program;
 use alloc::string::String;
 use alloc::vec;
 
@@ -15,9 +16,13 @@ fn chars(text: &str) -> Vec<char> {
     text.chars().collect()
 }
 
+fn match_at(matcher: &Matcher, text: &[char], pos: usize) -> Result<Option<usize>, MatchError> {
+    matcher.match_at_touch(text, pos).map(|(end, _)| end)
+}
+
 fn end(pattern: &str, text: &str, pos: usize) -> Option<usize> {
     let parsed = parse_pattern(pattern, 0).unwrap();
-    Matcher::new(&parsed).match_at(&chars(text), pos).unwrap()
+    match_at(&Matcher::new(&parsed), &chars(text), pos).unwrap()
 }
 
 fn full(pattern: &str, text: &str) -> bool {
@@ -25,7 +30,9 @@ fn full(pattern: &str, text: &str) -> bool {
     Matcher::new(&parsed).fullmatch(&chars(text)).unwrap()
 }
 
-/// Checks `match_at` and `fullmatch` against one CPython observation.
+/// Checks `match_at` and `fullmatch` against one CPython observation,
+/// and the simulation in [`vm`](crate::native::re::vm) too when it can
+/// express the pattern.
 fn check(pattern: &str, text: &str, pos: usize, expected_end: Option<usize>, expected_full: bool) {
     assert_eq!(
         end(pattern, text, pos),
@@ -38,6 +45,22 @@ fn check(pattern: &str, text: &str, pos: usize, expected_end: Option<usize>, exp
             expected_full,
             "fullmatch of {pattern:?} on {text:?}"
         );
+    }
+    let parsed = parse_pattern(pattern, 0).unwrap();
+    if let Ok(program) = Program::compile(&parsed) {
+        let text = chars(text);
+        assert_eq!(
+            program.run(&text, pos, None),
+            expected_end,
+            "simulated match end of {pattern:?} on {text:?} at {pos}"
+        );
+        if pos == 0 {
+            assert_eq!(
+                program.run(&text, 0, Some(text.len())).is_some(),
+                expected_full,
+                "simulated fullmatch of {pattern:?} on {text:?}"
+            );
+        }
     }
 }
 
@@ -372,7 +395,7 @@ fn step_limit_fires_on_catastrophic_backtracking() {
     let parsed = parse_pattern("(a*)*b", 0).unwrap();
     let text = chars(&"a".repeat(30));
     let matcher = Matcher::new(&parsed).with_limits(10_000, DEFAULT_DEPTH_LIMIT);
-    assert_eq!(matcher.match_at(&text, 0), Err(MatchError::StepLimit));
+    assert_eq!(match_at(&matcher, &text, 0), Err(MatchError::StepLimit));
     assert_eq!(matcher.fullmatch(&text), Err(MatchError::StepLimit));
 }
 
@@ -381,14 +404,14 @@ fn depth_limit_fires_on_long_repeats_of_capturing_items() {
     let parsed = parse_pattern("(?:(a)b)*", 0).unwrap();
     let text = chars(&"ab".repeat(100));
     let matcher = Matcher::new(&parsed).with_limits(DEFAULT_STEP_LIMIT, 10);
-    assert_eq!(matcher.match_at(&text, 0), Err(MatchError::DepthLimit));
+    assert_eq!(match_at(&matcher, &text, 0), Err(MatchError::DepthLimit));
     let relaxed = Matcher::new(&parsed);
-    assert_eq!(relaxed.match_at(&text, 0), Ok(Some(200)));
+    assert_eq!(match_at(&relaxed, &text, 0), Ok(Some(200)));
     let long = chars(&"ab".repeat(2000));
-    assert_eq!(relaxed.match_at(&long, 0), Err(MatchError::DepthLimit));
+    assert_eq!(match_at(&relaxed, &long, 0), Err(MatchError::DepthLimit));
     let lazy = parse_pattern("(?:(a)b)*?$", 0).unwrap();
     assert_eq!(
-        Matcher::new(&lazy).match_at(&long, 0),
+        match_at(&Matcher::new(&lazy), &long, 0),
         Err(MatchError::DepthLimit)
     );
 }
@@ -401,16 +424,19 @@ fn default_limits_handle_long_unit_sequence_repeats() {
     text.push('"');
     let text = chars(&text);
     assert_eq!(
-        Matcher::new(&parsed).match_at(&text, 0),
+        match_at(&Matcher::new(&parsed), &text, 0),
         Ok(Some(text.len()))
     );
     let lazy = parse_pattern("\"(?:\\\\.|[^\"])*?\"", 0).unwrap();
-    assert_eq!(Matcher::new(&lazy).match_at(&text, 0), Ok(Some(text.len())));
+    assert_eq!(
+        match_at(&Matcher::new(&lazy), &text, 0),
+        Ok(Some(text.len()))
+    );
     let units = parse_pattern("(?:ab)*", 0).unwrap();
     let long = chars(&"ab".repeat(5000));
-    assert_eq!(Matcher::new(&units).match_at(&long, 0), Ok(Some(10_000)));
+    assert_eq!(match_at(&Matcher::new(&units), &long, 0), Ok(Some(10_000)));
     let single = parse_pattern("[ab]*?$", 0).unwrap();
-    assert_eq!(Matcher::new(&single).match_at(&long, 0), Ok(Some(10_000)));
+    assert_eq!(match_at(&Matcher::new(&single), &long, 0), Ok(Some(10_000)));
 }
 
 #[test]
@@ -441,6 +467,7 @@ fn case_folding_helpers_match_cpython() {
     assert_eq!(extra_cases('s'), &['\u{17f}']);
     assert_eq!(extra_cases('a'), &[] as &[char]);
     for &(c, cases) in EXTRA_CASES {
+        assert!(cases.len() <= 2, "{c:?}");
         for &other in cases {
             assert!(extra_cases(other).contains(&c), "{c:?} <-> {other:?}");
             assert_eq!(
@@ -489,11 +516,11 @@ fn find_group_searches_every_construct() {
 fn match_end_prefers_first_successful_alternative_with_fullmatch_backtracking() {
     let parsed = parse_pattern("(?:a|ab)(?:c|bcd)", 0).unwrap();
     let matcher = Matcher::new(&parsed);
-    assert_eq!(matcher.match_at(&chars("abcd"), 0), Ok(Some(4)));
+    assert_eq!(match_at(&matcher, &chars("abcd"), 0), Ok(Some(4)));
     assert!(matcher.fullmatch(&chars("abcd")).unwrap());
     assert!(matcher.fullmatch(&chars("abc")).unwrap());
     assert!(!matcher.fullmatch(&chars("abce")).unwrap());
-    assert_eq!(matcher.match_at(&chars("abce"), 0), Ok(Some(3)));
+    assert_eq!(match_at(&matcher, &chars("abce"), 0), Ok(Some(3)));
 }
 
 #[test]
@@ -525,4 +552,75 @@ fn unit_alternatives_recognises_only_unit_sequences() {
     assert!(single_unit(&parse_pattern("(?:(?:a))", 0).unwrap().pattern, 0).is_some());
     assert!(single_unit(&parse_pattern("(a)", 0).unwrap().pattern, 0).is_none());
     assert!(single_unit(&parse_pattern("ab", 0).unwrap().pattern, 0).is_none());
+}
+
+fn touch(pattern: &str, text: &str) -> (Option<usize>, Touch) {
+    let parsed = parse_pattern(pattern, 0).unwrap();
+    Matcher::new(&parsed)
+        .match_at_touch(&chars(text), 0)
+        .unwrap()
+}
+
+#[test]
+fn touch_reports_how_a_match_depended_on_the_edges_of_the_text() {
+    assert_eq!(touch("abc", "abc"), (Some(3), Touch::Never));
+    assert_eq!(touch("abc", "ab"), (None, Touch::End));
+    assert_eq!(touch("\"[^\"]*\"", "\"ab\""), (Some(4), Touch::Never));
+    assert!(matches!(touch("a*", "aa"), (Some(2), Touch::Tail(_))));
+    assert!(matches!(touch("(?:a*)*", "aa"), (Some(2), Touch::Tail(_))));
+    assert_eq!(touch("a*b*", "aa"), (Some(2), Touch::End));
+    assert_eq!(touch("a{1,3}", "aa"), (Some(2), Touch::End));
+    assert_eq!(touch("a$", "a"), (Some(1), Touch::End));
+    assert_eq!(touch("\\ba", "a"), (Some(1), Touch::End));
+    assert_eq!(touch("x\\b", "x"), (Some(1), Touch::End));
+    assert_eq!(touch("(?<=x)a", "xa"), (None, Touch::End));
+    assert_eq!(touch("x(?=a*)", "x"), (Some(1), Touch::End));
+    assert_eq!(touch("x(?=a)", "xa"), (Some(1), Touch::Never));
+    assert_eq!(touch("(a)\\1", "a"), (None, Touch::End));
+    assert_eq!(touch("a*?b", "aab"), (Some(3), Touch::Never));
+    assert_eq!(touch("a*?", "aa"), (Some(0), Touch::Never));
+}
+
+fn tail_len(pattern: &str, text: &str, longer: &str) -> Option<usize> {
+    let parsed = parse_pattern(pattern, 0).unwrap();
+    let text = chars(text);
+    let (end, touch) = Matcher::new(&parsed).match_at_touch(&text, 0).unwrap();
+    assert_eq!(end, Some(text.len()), "{pattern:?} on {text:?}");
+    let Touch::Tail(run_id) = touch else {
+        panic!("{pattern:?} on {text:?} gave {touch:?}");
+    };
+    let longer = chars(longer);
+    let full = match_at(&Matcher::new(&parsed), &longer, 0).unwrap();
+    let extended = run_len(&parsed, run_id, &longer, text.len()).map(|more| text.len() + more);
+    assert_eq!(extended, full, "{pattern:?} on {longer:?}");
+    extended
+}
+
+#[test]
+fn run_len_continues_a_tail_run_through_every_construct() {
+    assert_eq!(tail_len("a*", "aa", "aaab"), Some(3));
+    assert_eq!(tail_len("x|a*", "aa", "aa"), Some(2));
+    assert_eq!(tail_len("(a*)", "a", "aaa"), Some(3));
+    assert_eq!(tail_len("(x)?(?(1)a*|b*)", "xa", "xaa"), Some(3));
+    assert_eq!(tail_len("(x)?(?(1)a*|b*)", "b", "bbc"), Some(2));
+    assert_eq!(tail_len("(?>a*)", "a", "aa"), Some(2));
+    assert_eq!(tail_len("(?:a*)++", "aa", "aaa"), Some(3));
+    assert_eq!(tail_len("(?:a*)+?", "aa", "aaaa"), Some(4));
+    assert_eq!(tail_len("(?i)a*", "aA", "aAa"), Some(3));
+    let parsed = parse_pattern("a*", 0).unwrap();
+    assert_eq!(run_len(&parsed, usize::MAX, &chars("aaa"), 0), None);
+    assert_eq!(
+        run_len(&parse_pattern("a", 0).unwrap(), 0, &chars("a"), 0),
+        None
+    );
+}
+
+#[test]
+fn repeat_iterations_ending_where_an_earlier_one_failed_are_not_retried() {
+    check("(?:ab|ab?)*c", "ababx", 0, None, false);
+    check("(?:ab|ab?)*c", "ababc", 0, Some(5), true);
+    check("(?:ab|ab?){2,}c", "ababx", 0, None, false);
+    check("(?:ab|ab?)*?c", "ababx", 0, None, false);
+    check("(?:ab|ab?)*?c", "ababc", 0, Some(5), true);
+    check("(?:ab|ab?){2,}?c", "ababx", 0, None, false);
 }

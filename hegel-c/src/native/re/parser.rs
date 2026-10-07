@@ -140,6 +140,26 @@ impl SubPattern {
 pub struct ParsedPattern {
     pub pattern: SubPattern,
     pub flags: u32,
+    /// Whether the pattern contains a backreference or conditional group
+    /// anywhere, which makes how a part of it matches depend on what was
+    /// captured on the way there.
+    pub group_refs: bool,
+}
+
+/// Whether `p` contains a backreference or conditional group anywhere.
+fn has_group_refs(p: &SubPattern) -> bool {
+    p.data.iter().any(|op| match op {
+        OpCode::GroupRef(_) | OpCode::GroupRefExists { .. } => true,
+        OpCode::Branch(alternatives) => alternatives.iter().any(has_group_refs),
+        OpCode::Subpattern { p, .. }
+        | OpCode::AtomicGroup(p)
+        | OpCode::Assert { p, .. }
+        | OpCode::AssertNot { p, .. } => has_group_refs(p),
+        OpCode::MaxRepeat { item, .. }
+        | OpCode::MinRepeat { item, .. }
+        | OpCode::PossessiveRepeat { item, .. } => has_group_refs(item),
+        _ => false,
+    })
 }
 
 /// Parsing error with an offset into the original pattern string. Mirrors
@@ -1490,6 +1510,7 @@ pub fn parse_pattern(pattern: &str, flags: u32) -> ParseResult<ParsedPattern> {
     }
 
     Ok(ParsedPattern {
+        group_refs: has_group_refs(&p),
         pattern: p,
         flags: state.flags,
     })

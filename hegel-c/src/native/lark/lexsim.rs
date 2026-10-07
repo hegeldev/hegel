@@ -18,12 +18,22 @@
 //! re-typed as the string terminal when the texts agree. That is
 //! [`Lexer::next_token`], which the generator uses to prefer strings the
 //! stricter lexers read back as intended.
+//!
+//! Both lexers are run over the same texts many times as the generator
+//! tries tokens in their contexts, so a [`Scan`] records, along with what
+//! a lexer found at the start of a text, how that finding depended on the
+//! text's end (the terminals the end left open, and how each would go on
+//! with more text), and [`Lexer::extend`] carries it over to the longer
+//! texts the same token is part of without matching it again.
 
-use super::ast::PatternKind;
+use super::ast::{Pattern, PatternKind};
 use super::compile::{TermId, TerminalDef};
+use crate::native::re::categories::class_ranges;
 use crate::native::re::constants::{MAXREPEAT, SRE_FLAG_IGNORECASE};
-use crate::native::re::matcher::Matcher;
+use crate::native::re::matcher::{MatchError, Matcher, Touch, run_len};
 use crate::native::re::parser::{OpCode, ParsedPattern, SetItem, SubPattern};
+use crate::native::re::vm::{Program, Resume, has_nested_repeats};
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 /// The characters a pattern can start with, as sorted disjoint ranges;
@@ -86,7 +96,11 @@ impl FirstWalk {
                     match item {
                         SetItem::Literal(c) => self.ranges.push((*c, *c)),
                         SetItem::Range(lo, hi) => self.ranges.push((*lo, *hi)),
-                        SetItem::Negate | SetItem::Category(_) => self.any = true,
+                        SetItem::Category(category) => match class_ranges(*category) {
+                            Some(ranges) => self.ranges.extend_from_slice(ranges),
+                            None => self.any = true,
+                        },
+                        SetItem::Negate => self.any = true,
                     }
                 }
                 false
@@ -142,11 +156,106 @@ pub fn first_chars(parsed: &ParsedPattern) -> Option<FirstChars> {
     Some(FirstChars::normalized(walk.ranges))
 }
 
+/// One terminal's pattern as the simulated lexers match it: the parsed
+/// regex, the characters a match can start with (so most terminals are
+/// ruled out at a position without running the matcher), for a
+/// case-sensitive string terminal the literal itself, compared directly,
+/// and the compiled [`Program`] for a pattern that could send the
+/// backtracking matcher quadratic, which simulates every path at once.
+#[derive(Clone)]
+struct TermPattern {
+    /// Shared between the clones of the pattern the lexers hold, so the
+    /// addresses that identify its repeats (see [`Touch::Tail`]) agree.
+    parsed: Arc<ParsedPattern>,
+    first: Option<FirstChars>,
+    literal: Option<Vec<char>>,
+    program: Option<Program>,
+}
+
+impl TermPattern {
+    fn new(pattern: &Pattern, parsed: ParsedPattern) -> TermPattern {
+        let literal = (pattern.kind == PatternKind::Str && pattern.flags.is_empty())
+            .then(|| pattern.value.chars().collect());
+        TermPattern {
+            first: first_chars(&parsed),
+            program: (literal.is_none() && has_nested_repeats(&parsed.pattern))
+                .then(|| Program::compile(&parsed).ok())
+                .flatten(),
+            parsed: Arc::new(parsed),
+            literal,
+        }
+    }
+
+    /// The end of the match at `pos`, as CPython's `pattern.match` finds
+    /// it.
+    fn match_at(&self, text: &[char], pos: usize) -> Result<Option<usize>, MatchError> {
+        self.scan(text, pos).0
+    }
+
+    /// [`match_at`](Self::match_at), with how the result depended on the
+    /// edges of the text.
+    fn scan(&self, text: &[char], pos: usize) -> (Result<Option<usize>, MatchError>, Edge) {
+        if let Some(first) = &self.first {
+            match text.get(pos) {
+                Some(&c) if first.contains(c) => {}
+                Some(_) => {
+                    return (Ok(None), Edge::Fixed);
+                }
+                None => {
+                    return (Ok(None), Edge::Lost);
+                }
+            }
+        }
+        if let Some(literal) = &self.literal {
+            let rest = &text[pos.min(text.len())..];
+            if rest.len() < literal.len() {
+                let edge = if literal.starts_with(rest) {
+                    Edge::Carry(Carry::Literal)
+                } else {
+                    Edge::Fixed
+                };
+                return (Ok(None), edge);
+            }
+            return (
+                Ok(rest.starts_with(literal).then(|| pos + literal.len())),
+                Edge::Fixed,
+            );
+        }
+        if let Some(program) = &self.program {
+            let (end, touch, resume) = program.scan(text, pos, None);
+            let edge = match (touch, resume) {
+                (Touch::Never, _) => Edge::Fixed,
+                (_, Some(resume)) => Edge::Carry(Carry::Resume(resume)),
+                (_, None) => Edge::Lost,
+            };
+            return (Ok(end), edge);
+        }
+        match Matcher::new(&self.parsed).match_at_touch(text, pos) {
+            Ok((end, Touch::Never)) => (Ok(end), Edge::Fixed),
+            Ok((end, Touch::Tail(run_id))) => (Ok(end), Edge::Carry(Carry::Tail(run_id))),
+            Ok((end, Touch::End)) => (Ok(end), Edge::Lost),
+            Err(e) => (Err(e), Edge::Lost),
+        }
+    }
+
+    /// How far the unit of the tail run `run_id` (from a [`Touch::Tail`]
+    /// this pattern reported) continues from `from`.
+    fn run_len(&self, run_id: usize, text: &[char], from: usize) -> Option<usize> {
+        run_len(&self.parsed, run_id, text, from)
+    }
+
+    fn fullmatch(&self, text: &[char]) -> Result<bool, MatchError> {
+        if let Some(literal) = &self.literal {
+            return Ok(text == literal.as_slice());
+        }
+        Matcher::new(&self.parsed).fullmatch(text)
+    }
+}
+
 struct LexTerminal {
     id: TermId,
-    parsed: ParsedPattern,
-    first: Option<FirstChars>,
-    unless: Vec<(TermId, ParsedPattern)>,
+    pattern: TermPattern,
+    unless: Vec<(TermId, TermPattern)>,
 }
 
 /// What the simulated lexer found at a position.
@@ -160,11 +269,70 @@ pub enum Lexed {
     Unknown,
 }
 
+/// How a terminal's outcome at the start of a text could change with
+/// more text after it, and how to find out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Carry {
+    /// The text is a proper prefix of the terminal's literal: compare
+    /// the literal again.
+    Literal,
+    /// The backtracking matcher's unbounded run `run_id` reached the
+    /// end of the text, where the match ended: the match goes on as far
+    /// as the run does.
+    Tail(usize),
+    /// The simulation's threads still waiting for input at the end.
+    Resume(Resume),
+}
+
+/// How a terminal's outcome depended on the edges of the text.
+enum Edge {
+    /// Not at all.
+    Fixed,
+    /// More text after it could change the outcome, as described.
+    Carry(Carry),
+    /// In a way that cannot be carried over.
+    Lost,
+}
+
+/// What a lexer found at a position of some text, with how that depended
+/// on where the text ended, so that the finding can be carried over to a
+/// longer text that begins the same way (see [`Lexer::extend`]).
+#[derive(Debug, Clone)]
+pub struct Scan {
+    pub lexed: Lexed,
+    /// The terminals tried whose outcome more text could change, in the
+    /// order they were tried, each with how to find out; `lexed` is what
+    /// stands when none of them does.
+    steps: Vec<(TermId, Carry)>,
+    /// Whether the finding can be carried over at all.
+    carried: bool,
+}
+
+impl Scan {
+    fn new(lexed: Lexed) -> Scan {
+        Scan {
+            lexed,
+            steps: Vec::new(),
+            carried: !matches!(lexed, Lexed::Unknown),
+        }
+    }
+
+    fn note(&mut self, id: TermId, edge: Edge) {
+        match edge {
+            Edge::Fixed => {}
+            Edge::Carry(carry) => self.steps.push((id, carry)),
+            Edge::Lost => self.carried = false,
+        }
+    }
+}
+
 /// The sorted terminal order of Lark's basic lexer and its keyword
 /// re-typing, over the terminals of one grammar.
 pub struct Lexer {
     terminals: Vec<LexTerminal>,
-    patterns: Vec<Option<ParsedPattern>>,
+    patterns: Vec<Option<TermPattern>>,
+    /// Where each terminal (by [`TermId`]) is in `terminals`.
+    positions: Vec<Option<usize>>,
 }
 
 fn is_subset(flags: &str, of: &str) -> bool {
@@ -175,13 +343,17 @@ impl Lexer {
     /// Build the lexer over `terminals` (indexed by [`TermId`]); terminals
     /// without a pattern take no part.
     pub fn new(terminals: &[TerminalDef]) -> Lexer {
-        let mut order: Vec<(TermId, &TerminalDef, ParsedPattern)> = Vec::new();
+        let mut order: Vec<(TermId, &TerminalDef, TermPattern)> = Vec::new();
         let mut patterns = Vec::with_capacity(terminals.len());
         for (id, term) in terminals.iter().enumerate() {
-            if let Some(parsed) = &term.parsed {
-                order.push((id, term, parsed.clone()));
+            let pattern = term
+                .parsed
+                .as_ref()
+                .map(|parsed| TermPattern::new(term.pattern.as_ref().unwrap(), parsed.clone()));
+            if let Some(pattern) = &pattern {
+                order.push((id, term, pattern.clone()));
             }
-            patterns.push(term.parsed.clone());
+            patterns.push(pattern);
         }
         order.sort_by(|(_, a, _), (_, b, _)| {
             let key = |t: &TerminalDef| {
@@ -195,20 +367,19 @@ impl Lexer {
             key(a).cmp(&key(b)).then_with(|| a.name.cmp(&b.name))
         });
         let mut embedded: Vec<TermId> = Vec::new();
-        let mut unless_lists: Vec<Vec<(TermId, ParsedPattern)>> = Vec::new();
-        for (_, term, parsed) in &order {
+        let mut unless_lists: Vec<Vec<(TermId, TermPattern)>> = Vec::new();
+        for (_, term, tpattern) in &order {
             let mut unless = Vec::new();
             let pattern = term.pattern.as_ref().unwrap();
             if pattern.kind == PatternKind::Re {
-                let matcher = Matcher::new(parsed);
-                for (sid, sterm, sparsed) in &order {
+                for (sid, sterm, spattern_parsed) in &order {
                     let spattern = sterm.pattern.as_ref().unwrap();
                     if spattern.kind != PatternKind::Str || sterm.priority != term.priority {
                         continue;
                     }
                     let text: Vec<char> = spattern.value.chars().collect();
-                    if matcher.match_at(&text, 0) == Ok(Some(text.len())) {
-                        unless.push((*sid, sparsed.clone()));
+                    if tpattern.match_at(&text, 0) == Ok(Some(text.len())) {
+                        unless.push((*sid, spattern_parsed.clone()));
                         if is_subset(&spattern.flags, &pattern.flags) {
                             embedded.push(*sid);
                         }
@@ -217,20 +388,24 @@ impl Lexer {
             }
             unless_lists.push(unless);
         }
-        let terminals = order
+        let terminals: Vec<LexTerminal> = order
             .into_iter()
             .zip(unless_lists)
             .filter(|((id, _, _), _)| !embedded.contains(id))
-            .map(|((id, _, parsed), unless)| LexTerminal {
+            .map(|((id, _, pattern), unless)| LexTerminal {
                 id,
-                first: first_chars(&parsed),
-                parsed,
+                pattern,
                 unless,
             })
             .collect();
+        let mut positions = alloc::vec![None; patterns.len()];
+        for (i, term) in terminals.iter().enumerate() {
+            positions[term.id] = Some(i);
+        }
         Lexer {
             terminals,
             patterns,
+            positions,
         }
     }
 
@@ -238,39 +413,113 @@ impl Lexer {
     /// does for a terminal the parser expects there; a terminal without
     /// a pattern (one `%declare`d) cannot be checked.
     pub fn match_terminal(&self, id: TermId, text: &[char], pos: usize) -> Lexed {
-        let Some(parsed) = &self.patterns[id] else {
-            return Lexed::Unknown;
+        self.match_terminal_scan(id, text, pos).lexed
+    }
+
+    /// [`match_terminal`](Self::match_terminal), with how the result
+    /// depended on the end of the text.
+    pub fn match_terminal_scan(&self, id: TermId, text: &[char], pos: usize) -> Scan {
+        let Some(pattern) = &self.patterns[id] else {
+            return Scan::new(Lexed::Unknown);
         };
-        match Matcher::new(parsed).match_at(text, pos) {
+        let (result, edge) = pattern.scan(text, pos);
+        let mut scan = Scan::new(match result {
             Ok(Some(end)) => Lexed::Token(id, end),
             Ok(None) => Lexed::NoMatch,
             Err(_) => Lexed::Unknown,
-        }
+        });
+        scan.note(id, edge);
+        scan
     }
 
     /// Lex one token of `text` at `pos`, as Lark's basic lexer would.
     pub fn next_token(&self, text: &[char], pos: usize) -> Lexed {
-        let Some(&c) = text.get(pos) else {
-            return Lexed::NoMatch;
-        };
+        self.next_token_scan(text, pos).lexed
+    }
+
+    /// [`next_token`](Self::next_token), with how the result depended on
+    /// the end of the text: a terminal that failed after looking at the
+    /// end might match with more text, so the result then stands only for
+    /// this text.
+    pub fn next_token_scan(&self, text: &[char], pos: usize) -> Scan {
+        let mut scan = Scan::new(Lexed::NoMatch);
+        if pos >= text.len() {
+            scan.carried = false;
+            return scan;
+        }
         for term in &self.terminals {
-            if term.first.as_ref().is_some_and(|first| !first.contains(c)) {
-                continue;
-            }
-            let end = match Matcher::new(&term.parsed).match_at(text, pos) {
-                Ok(Some(end)) => end,
-                Ok(None) => continue,
-                Err(_) => return Lexed::Unknown,
-            };
-            let token = &text[pos..end];
-            for (sid, sparsed) in &term.unless {
-                if Matcher::new(sparsed).fullmatch(token) == Ok(true) {
-                    return Lexed::Token(*sid, end);
+            let (result, edge) = term.pattern.scan(text, pos);
+            scan.note(term.id, edge);
+            match result {
+                Ok(Some(end)) => {
+                    scan.lexed = Lexed::Token(self.retype(term, &text[pos..end]), end);
+                    return scan;
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    scan.lexed = Lexed::Unknown;
+                    scan.carried = false;
+                    return scan;
                 }
             }
-            return Lexed::Token(term.id, end);
         }
-        Lexed::NoMatch
+        scan
+    }
+
+    /// The terminal the basic lexer reports a token of `term` with the
+    /// text `token` as: a string terminal the text matches completely,
+    /// if any, else `term` itself.
+    fn retype(&self, term: &LexTerminal, token: &[char]) -> TermId {
+        for (sid, spattern) in &term.unless {
+            if spattern.fullmatch(token) == Ok(true) {
+                return *sid;
+            }
+        }
+        term.id
+    }
+
+    /// What `scan`, found at the start of a text of `len` characters,
+    /// says about the text that begins the same way at `pos` of `text`:
+    /// the first terminal whose outcome the end of the text left open
+    /// and that matches on the longer one (re-typed as a keyword, for a
+    /// basic-lexer scan, when `retype`), else the same thing shifted to
+    /// `pos`; nothing when the finding cannot be carried over.
+    pub fn extend(
+        &self,
+        scan: &Scan,
+        text: &[char],
+        pos: usize,
+        len: usize,
+        retype: bool,
+    ) -> Option<Lexed> {
+        if !scan.carried {
+            return None;
+        }
+        for (id, carry) in &scan.steps {
+            let pattern = self.patterns[*id].as_ref()?;
+            let end = match carry {
+                Carry::Literal => {
+                    let literal = pattern.literal.as_ref()?;
+                    text[pos..]
+                        .starts_with(literal)
+                        .then(|| pos + literal.len())
+                }
+                Carry::Tail(run_id) => Some(pos + len + pattern.run_len(*run_id, text, pos + len)?),
+                Carry::Resume(resume) => pattern.program.as_ref()?.resume(resume, text, pos, len).0,
+            };
+            if let Some(end) = end {
+                let id = if retype {
+                    self.retype(&self.terminals[self.positions[*id]?], &text[pos..end])
+                } else {
+                    *id
+                };
+                return Some(Lexed::Token(id, end));
+            }
+        }
+        Some(match scan.lexed {
+            Lexed::Token(id, end) => Lexed::Token(id, pos + end),
+            other => other,
+        })
     }
 }
 

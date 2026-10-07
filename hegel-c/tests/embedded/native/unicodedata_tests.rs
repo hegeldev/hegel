@@ -182,3 +182,16 @@ fn category_from_code_rejects_unknown() {
     assert_eq!(Category::from_code("lu"), None);
     assert_eq!(Category::from_code("Luu"), None);
 }
+
+#[test]
+fn category_runs_tile_the_codespace() {
+    let mut next = 0;
+    for (start, end, cat) in category_runs() {
+        assert_eq!(start, next);
+        assert!(start <= end);
+        assert_eq!(general_category(start).unwrap(), cat);
+        assert_eq!(general_category(end).unwrap(), cat);
+        next = end + 1;
+    }
+    assert_eq!(next, 0x10FFFF + 1);
+}

@@ -1,0 +1,259 @@
+//! Tests for `src/native/re/vm.rs`. The CPython-verified cases in
+//! `re_matcher_tests.rs` run against the simulation too; these cover
+//! what the simulation declines and what only it decides.
+
+use super::*;
+use crate::native::re::matcher::Matcher;
+use crate::native::re::parser::parse_pattern;
+
+fn chars(text: &str) -> Vec<char> {
+    text.chars().collect()
+}
+
+fn program(pattern: &str) -> Result<Program, Unsupported> {
+    Program::compile(&parse_pattern(pattern, 0).unwrap())
+}
+
+#[test]
+fn declines_constructs_whose_matching_depends_on_captures_or_commitment() {
+    for pattern in ["(a)\\1", "(a)?(?(1)b|c)", "(?>ab|a)c", "a*+b", "(?:a|b)++"] {
+        assert_eq!(program(pattern).err(), Some(Unsupported), "{pattern}");
+    }
+}
+
+#[test]
+fn declines_repeats_of_items_that_can_match_empty() {
+    for pattern in ["(a?)*", "(a|)+b", "(?:a*)*?", "(\\b)*", "(?:(?=a))+"] {
+        assert_eq!(program(pattern).err(), Some(Unsupported), "{pattern}");
+    }
+    assert!(program("(a?b)*").is_ok());
+}
+
+#[test]
+fn declines_programs_that_unroll_too_far() {
+    assert_eq!(program("(?:ab){3000}").err(), Some(Unsupported));
+    assert_eq!(program("(?:ab){0,3000}").err(), Some(Unsupported));
+    assert_eq!(program("a{100}(?=b{4000})").err(), Some(Unsupported));
+    assert!(program("(?:ab){1000}").is_ok());
+}
+
+#[test]
+fn start_is_clamped_to_the_text() {
+    let p = program("a*").unwrap();
+    assert_eq!(p.run(&chars("aa"), 5, None), Some(2));
+    assert_eq!(p.run(&chars("aa"), 5, Some(2)), Some(2));
+    assert_eq!(p.run(&chars(""), 0, None), Some(0));
+    assert_eq!(program("a").unwrap().run(&chars(""), 0, None), None);
+}
+
+#[test]
+fn exact_end_backtracks_past_earlier_matches() {
+    let p = program("(?:a|ab)(?:c|bcd)").unwrap();
+    assert_eq!(p.run(&chars("abcd"), 0, None), Some(4));
+    assert_eq!(p.run(&chars("abcd"), 0, Some(3)), Some(3));
+    assert_eq!(p.run(&chars("abcd"), 0, Some(2)), None);
+    let p = program("a|ab|abc").unwrap();
+    assert_eq!(p.run(&chars("abcd"), 0, Some(2)), Some(2));
+    assert_eq!(p.run(&chars("abcd"), 0, Some(3)), Some(3));
+    assert_eq!(p.run(&chars("abcd"), 0, Some(4)), None);
+}
+
+#[test]
+fn lookarounds_nest_and_look_behind_variable_widths() {
+    let p = program("(?<=a(?=b)b)c").unwrap();
+    assert_eq!(p.run(&chars("abc"), 2, None), Some(3));
+    assert_eq!(p.run(&chars("xbc"), 2, None), None);
+    let p = program("(?<=ab|b)c").unwrap();
+    assert_eq!(p.run(&chars("abc"), 2, None), Some(3));
+    assert_eq!(p.run(&chars("c"), 0, None), None);
+    let p = program("(?<!ab)c").unwrap();
+    assert_eq!(p.run(&chars("abc"), 2, None), None);
+    assert_eq!(p.run(&chars("xbc"), 2, None), Some(3));
+    assert_eq!(p.run(&chars("c"), 0, None), Some(1));
+}
+
+#[test]
+fn an_impossible_alternative_is_skipped() {
+    let p = program("(?:a(?!)|ab)c").unwrap();
+    assert_eq!(p.run(&chars("abc"), 0, None), Some(3));
+    assert_eq!(program("(?!)").unwrap().run(&chars("a"), 0, None), None);
+}
+
+/// Every pattern that can be expressed finds the same ends as the
+/// backtracking matcher at every position, and the same fullmatch
+/// verdicts, over texts the patterns match and texts they do not.
+#[test]
+fn agrees_with_the_backtracking_matcher() {
+    let patterns = [
+        "\\/(?!\\/)(\\\\\\/|\\\\\\\\|[^\\/\\n])*?\\/[imslux]*",
+        "(\\r?\\n)+\\s*",
+        "\\s*//[^\\n]*",
+        "\"(?:[^\"\\\\]|\\\\.)*\"",
+        "\".*?(?<!\\\\)(\\\\\\\\)*?\"",
+        "/\\*(\\*(?!/)|[^*])*\\*/",
+        "[+*]|[?](?![a-z])",
+        "(?i)ab+c?|d{2,3}e*?f",
+        "(?:ab|a)(?:bc|c)?d*(?=e|$)",
+        "^[a-z_]\\w*\\b",
+        "(?m)^#.*$",
+        "x{2,4}?y|x+",
+    ];
+    let texts = [
+        "/ab\\/c/i rest",
+        "//x\n\n  \r\n\t|",
+        "\"a\\\"b\\\\\"c\"",
+        "/* a * b **/ x",
+        "? ?a *",
+        "ABbbC dde ddfe",
+        "abcd abcde acd",
+        "foo_bar1 baz",
+        "#c\n#d\nx",
+        "xxxxy xy",
+        "",
+    ];
+    for pattern in patterns {
+        let parsed = parse_pattern(pattern, 0).unwrap();
+        let program = Program::compile(&parsed).unwrap();
+        let matcher = Matcher::new(&parsed);
+        for text in texts {
+            let text = chars(text);
+            for pos in 0..=text.len() {
+                let expected = matcher.match_at_touch(&text, pos).unwrap().0;
+                assert_eq!(
+                    program.run(&text, pos, None),
+                    expected,
+                    "{pattern:?} {text:?} {pos}"
+                );
+            }
+            for end in 0..=text.len() {
+                let prefix = &text[..end];
+                assert_eq!(
+                    program.run(prefix, 0, Some(end)).is_some(),
+                    matcher.fullmatch(prefix).unwrap(),
+                    "{pattern:?} {prefix:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn scan_reports_the_threads_the_end_of_the_text_left_waiting() {
+    let newlines = program("(\\r?\\n)+\\s*").unwrap();
+    let (end, touch, resume) = newlines.scan(&chars("\n"), 0, None);
+    assert_eq!((end, touch), (Some(1), Touch::End));
+    let resume = resume.unwrap();
+    let longer = chars("\n\r\n  x");
+    assert_eq!(newlines.resume(&resume, &longer, 0, 1).0, Some(5));
+    assert_eq!(newlines.resume(&resume, &chars("\nx"), 0, 1).0, Some(1));
+    let (end, touch, resume) = newlines.scan(&chars("\n "), 0, None);
+    assert_eq!((end, touch), (Some(2), Touch::End));
+    assert_eq!(
+        newlines.resume(&resume.unwrap(), &chars("\n \n"), 0, 2).0,
+        Some(3)
+    );
+    let closed = program("\"[^\"]*\"").unwrap();
+    assert_eq!(
+        closed.scan(&chars("\"a\""), 0, None),
+        (Some(3), Touch::Never, None)
+    );
+    assert_eq!(closed.scan(&chars("\"a"), 0, None).2.unwrap().found, None);
+    let boundary = program("\\bx").unwrap();
+    assert_eq!(
+        boundary.scan(&chars("x"), 0, None),
+        (Some(1), Touch::End, None)
+    );
+    let behind = program("(?<=a)b*").unwrap();
+    assert_eq!(behind.scan(&chars("b"), 0, None), (None, Touch::End, None));
+    assert!(behind.scan(&chars("ab"), 1, None).2.is_some());
+    let ahead = program("x(?=a*)").unwrap();
+    assert_eq!(
+        ahead.scan(&chars("x"), 0, None),
+        (Some(1), Touch::End, None)
+    );
+    assert_eq!(
+        ahead.scan(&chars("xb"), 0, None),
+        (Some(1), Touch::Never, None)
+    );
+    let star = program("a*").unwrap();
+    assert_eq!(
+        star.scan(&chars("a"), 0, Some(1)),
+        (Some(1), Touch::End, None)
+    );
+    assert_eq!(star.scan(&chars("a"), 5, None).0, Some(1));
+}
+
+#[test]
+fn resume_continues_a_scan_as_a_fresh_run_would() {
+    let patterns = [
+        "(\\r?\\n)+\\s*",
+        "\\s*//[^\\n]*",
+        "\"(?:[^\"\\\\]|\\\\.)*\"",
+        "[+*]|[?](?![a-z])",
+        "(?i)ab+c?|d{2,3}e*?f",
+        "(?:ab|a)(?:bc|c)?d*(?=e|$)",
+        "^[a-z_]\\w*\\b",
+        "(?m)^#.*$",
+        "x{2,4}?y|x+",
+        "[0-9]+(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?",
+    ];
+    let texts = [
+        "//x\n\n  \r\n\t|",
+        "\"a\\\"b\\\\\"c\"",
+        "? ?a *",
+        "ABbbC dde ddfe",
+        "abcd abcde acd",
+        "foo_bar1 baz",
+        "#c\n#d\nx",
+        "xxxxy xy",
+        "12.5e-3 7. .5e",
+        "",
+    ];
+    let (mut fixed, mut resumed, mut lost) = (0, 0, 0);
+    for pattern in patterns {
+        let program = program(pattern).unwrap();
+        for text in texts {
+            let text = chars(text);
+            for split in 0..=text.len() {
+                for start in 0..=split {
+                    let full = program.scan(&text, start, None).0;
+                    let (end, touch, resume) = program.scan(&text[..split], start, None);
+                    match (touch, resume) {
+                        (Touch::Never, None) => {
+                            fixed += 1;
+                            assert_eq!(end, full, "{pattern:?} {text:?} {start}..{split}");
+                        }
+                        (Touch::End, Some(resume)) => {
+                            resumed += 1;
+                            let carried = program.resume(&resume, &text, start, split - start);
+                            assert_eq!(carried.0, full, "{pattern:?} {text:?} {start}..{split}");
+                        }
+                        (Touch::End, None) => lost += 1,
+                        other => panic!("{pattern:?} {text:?} {start}..{split}: {other:?}"),
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        fixed > 100 && resumed > 100 && lost > 100,
+        "{fixed} {resumed} {lost}"
+    );
+}
+
+#[test]
+fn sets_match_beyond_ascii() {
+    assert_eq!(
+        program("[α-ω]+").unwrap().run(&chars("αβγ!"), 0, None),
+        Some(3)
+    );
+    assert_eq!(
+        program("\\w+").unwrap().run(&chars("héllo wörld"), 0, None),
+        Some(5)
+    );
+    assert_eq!(program("[^a]").unwrap().run(&chars("é"), 0, None), Some(1));
+    assert_eq!(
+        program("(?i)[a-c]+").unwrap().run(&chars("aBcÀ"), 0, None),
+        Some(3)
+    );
+}

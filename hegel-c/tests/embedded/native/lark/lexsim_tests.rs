@@ -149,14 +149,29 @@ fn first_chars_skip_nullable_prefixes() {
 #[test]
 fn first_chars_give_up_on_unknowable_starts() {
     assert_eq!(firsts("[^a]b"), None);
+    assert_eq!(firsts("[^ab]c"), None);
     assert_eq!(firsts(".b"), None);
-    assert_eq!(firsts("\\d"), None);
+    assert_eq!(firsts("\\D"), None);
+    assert_eq!(firsts("\\S"), None);
+    assert_eq!(firsts("\\W"), None);
     assert_eq!(firsts("(a)\\1"), Some(FirstChars(vec![(97, 97)])));
     assert_eq!(firsts("(a)?\\1b"), None);
     assert_eq!(firsts("(?i:a)b"), None);
     assert_eq!(firsts("(?i)ab"), None);
     assert_eq!(firsts("a*"), None);
     assert_eq!(firsts("(?!)"), Some(FirstChars(vec![])));
+}
+
+#[test]
+fn first_chars_of_category_classes_cover_the_class() {
+    let digits = firsts("\\d").unwrap();
+    assert!(digits.contains('7') && digits.contains('\u{663}') && !digits.contains('a'));
+    let spaces = firsts("\\s*//").unwrap();
+    assert!(spaces.contains(' ') && spaces.contains('\u{3000}') && spaces.contains('/'));
+    assert!(spaces.contains('\u{1c}') && !spaces.contains('x'));
+    let words = firsts("\\w+").unwrap();
+    assert!(words.contains('_') && words.contains('\u{e9}') && words.contains('\u{663}'));
+    assert!(!words.contains('-') && !words.contains(' '));
 }
 
 #[test]
@@ -180,4 +195,84 @@ fn first_chars_merge_adjacent_and_overlapping_ranges() {
 fn first_chars_prune_terminals_in_the_order() {
     let g = compiled("start: A B\nA: /a+/\nB: /[^a]+/\n");
     assert_eq!(lex(&g, "aab"), vec![("A", 2), ("B", 1)]);
+}
+
+#[test]
+fn extend_carries_what_the_end_of_the_text_left_open() {
+    let grammar = compiled(
+        "start: NAME KW C D E F\nNAME: /[a-z]+/\nKW: \"if\"\nC: \"ab\"\nD: /(?!x)[0-9]+/\nE: /a\\b/\nF: /(?<=x)(a?b)+/\n",
+    );
+    let lexer = Lexer::new(&grammar.terminals);
+    let id = |name: &str| {
+        grammar
+            .terminals
+            .iter()
+            .position(|t| t.name == name)
+            .unwrap()
+    };
+    let scan = lexer.next_token_scan(&chars("i"), 0);
+    assert_eq!(scan.lexed, Lexed::Token(id("NAME"), 1));
+    assert_eq!(
+        lexer.extend(&scan, &chars("if "), 0, 1, true),
+        Some(Lexed::Token(id("KW"), 2))
+    );
+    assert_eq!(
+        lexer.extend(&scan, &chars("ifx"), 0, 1, true),
+        Some(Lexed::Token(id("NAME"), 3))
+    );
+    assert_eq!(
+        lexer.extend(&scan, &chars("xif"), 1, 1, false),
+        Some(Lexed::Token(id("NAME"), 3))
+    );
+    let scan = lexer.match_terminal_scan(id("C"), &chars("a"), 0);
+    assert_eq!(scan.lexed, Lexed::NoMatch);
+    assert_eq!(
+        lexer.extend(&scan, &chars("ab"), 0, 1, false),
+        Some(Lexed::Token(id("C"), 2))
+    );
+    assert_eq!(
+        lexer.extend(&scan, &chars("ax"), 0, 1, false),
+        Some(Lexed::NoMatch)
+    );
+    let scan = lexer.match_terminal_scan(id("C"), &chars("x"), 0);
+    assert_eq!(
+        lexer.extend(&scan, &chars("xab"), 0, 1, false),
+        Some(Lexed::NoMatch)
+    );
+    let scan = lexer.match_terminal_scan(id("D"), &chars("12"), 0);
+    assert_eq!(scan.lexed, Lexed::Token(id("D"), 2));
+    assert_eq!(
+        lexer.extend(&scan, &chars("123-"), 0, 2, false),
+        Some(Lexed::Token(id("D"), 3))
+    );
+    let scan = lexer.match_terminal_scan(id("E"), &chars("a"), 0);
+    assert_eq!(scan.lexed, Lexed::Token(id("E"), 1));
+    assert_eq!(lexer.extend(&scan, &chars("ab"), 0, 1, false), None);
+    let scan = lexer.match_terminal_scan(id("F"), &chars("b"), 0);
+    assert_eq!(scan.lexed, Lexed::NoMatch);
+    assert_eq!(lexer.extend(&scan, &chars("bb"), 0, 1, false), None);
+    assert!(
+        lexer
+            .extend(
+                &lexer.match_terminal_scan(id("F"), &chars("xb"), 1),
+                &chars("xbb"),
+                1,
+                1,
+                false
+            )
+            .is_some()
+    );
+    let scan = lexer.match_terminal_scan(id("C"), &chars("ab"), 2);
+    assert_eq!(scan.lexed, Lexed::NoMatch);
+    assert_eq!(lexer.extend(&scan, &chars("abab"), 2, 0, false), None);
+    assert_eq!(
+        lexer.extend(
+            &lexer.next_token_scan(&chars("a"), 1),
+            &chars("ab"),
+            1,
+            0,
+            false
+        ),
+        None
+    );
 }

@@ -183,6 +183,18 @@ fn nfd_bases() -> &'static [(u32, u32)] {
     &BASES
 }
 
+/// The General Category table as `(start, end, category)` runs of equal
+/// category, in increasing order and together covering every codepoint in
+/// `0..=0x10FFFF`.
+pub fn category_runs() -> impl Iterator<Item = (u32, u32, Category)> {
+    let mut start = 0;
+    ranges().iter().map(move |&(end, cat)| {
+        let run = (start, end, cat);
+        start = end + 1;
+        run
+    })
+}
+
 /// Return the Unicode General Category for `cp`.
 ///
 /// Matches Python's `unicodedata.category(chr(cp))` for every codepoint in

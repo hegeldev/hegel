@@ -57,11 +57,13 @@ fn tid(spec: &GrammarSpec, name: &str) -> TermId {
 fn tok(spec: &GrammarSpec, name: &str, text: &str) -> Token {
     let id = tid(spec, name);
     let text: Vec<char> = text.chars().collect();
+    let scans = spec.scan_token(id, &text, None);
     Token {
         id,
-        reading: spec.reading(id, &text),
+        reading: spec.reading(id, &text, &scans.basic),
         text,
         droppable: false,
+        scans,
     }
 }
 
@@ -300,7 +302,7 @@ fn terminals_are_cut_to_what_their_pattern_reads_from_the_front() {
     let spec = grammar("start: A\nA: /a|ab/\n");
     assert!(samples(&spec, 30).iter().all(|s| s == "a"));
     let a = tid(&spec, "A");
-    assert_eq!(spec.whole(a, &['x']), 1);
+    assert_eq!(spec.whole(a, &['x']).0, 1);
 }
 
 #[test]
@@ -453,9 +455,9 @@ fn readings_of_terminal_texts() {
     assert_eq!(tok(&spec, "NAME", "iffy").reading, Reading::Itself);
     assert_eq!(tok(&spec, "WS", "  ").reading, Reading::Itself);
     let ws = tid(&spec, "WS");
-    assert_eq!(spec.reading(ws, &[' ', '\n']), Reading::Itself);
+    assert_eq!(tok(&spec, "WS", " \n").reading, Reading::Itself);
     assert_eq!(
-        spec.reading(ws, &[' ', 'x']),
+        tok(&spec, "WS", " x").reading,
         Reading::Tokens(vec![ws, tid(&spec, "NAME")])
     );
 }
@@ -508,7 +510,7 @@ fn scans_follows_the_dynamic_lexer() {
         Fit::Retyped
     );
     let text: Vec<char> = "cx".chars().collect();
-    assert!(!spec.scans(&text, &[&c, &c]));
+    assert!(!spec.scans(&text, &[&c, &tok(&spec, "C", "x")]));
 }
 
 #[test]
@@ -696,6 +698,54 @@ fn fixture_grammars_generate() {
         assert!(strings.iter().all(|s| s.chars().count() <= 2000), "{name}");
         assert!(strings.iter().any(|s| s.chars().count() > 500), "{name}");
     }
+}
+
+#[test]
+fn cached_scans_extend_as_fresh_matches_do() {
+    let mut extended = 0;
+    for (name, start) in [
+        ("json", "value"),
+        ("calc", "start"),
+        ("features", "start"),
+        ("verilog", "start"),
+        ("template_lark", "start"),
+        ("turtle", "start"),
+    ] {
+        let spec = fixture_spec(name, start, 48, vec![]);
+        let lexer = &spec.lexer;
+        let terminals: Vec<TermId> = (0..spec.terminal_names().len())
+            .filter(|&id| spec.is_pattern(id))
+            .collect();
+        for seed in 0..6 {
+            let Ok(sample) = draw(&spec, seed).0 else {
+                continue;
+            };
+            let text: Vec<char> = sample.chars().collect();
+            for a in 0..text.len() {
+                for b in a + 1..=text.len() {
+                    let part = &text[a..b];
+                    let scan = lexer.next_token_scan(part, 0);
+                    if let Some(lexed) = lexer.extend(&scan, &text, a, b - a, true) {
+                        extended += 1;
+                        assert_eq!(lexed, lexer.next_token(&text, a), "{name} {a}..{b}");
+                    }
+                    for &id in &terminals {
+                        let scan = lexer.match_terminal_scan(id, part, 0);
+                        if let Some(lexed) = lexer.extend(&scan, &text, a, b - a, false) {
+                            extended += 1;
+                            assert_eq!(
+                                lexed,
+                                lexer.match_terminal(id, &text, a),
+                                "{name} {} {a}..{b}",
+                                spec.terminal_names()[id]
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(extended > 10_000);
 }
 
 /// Writes the corpus `scripts/check-lark.py` parses with Lark: for each

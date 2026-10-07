@@ -7,10 +7,14 @@
 //! generator walks its AST. [`matcher`] is a backtracking matcher over the
 //! same AST with CPython's search order, for the places that must know
 //! where CPython's `re` would end a match (checking that a generated
-//! terminal lexes back to itself, simulating a lexer at token boundaries).
+//! terminal lexes back to itself, simulating a lexer at token boundaries);
+//! [`vm`] finds the same match ends for the patterns it can express by
+//! simulating every path at once, in time linear in the text.
 
 pub mod casefold;
+pub mod categories;
 pub mod constants;
 pub mod matcher;
 pub mod parser;
+pub mod vm;
 pub mod width;

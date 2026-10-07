@@ -13,9 +13,10 @@
 //! repetition draws a count that fits its budget and shares the budget
 //! equally between the elements, pulling them with the collection
 //! protocol so the shrinker can delete them one at a time. Budgets steer
-//! the structure only: each terminal is drawn by its own regex generator,
-//! and a string that overruns the size cap regardless is discarded and
-//! regenerated with half the target, up to [`MAX_ATTEMPTS`] times.
+//! the structure only: each terminal is drawn by its own regex generator
+//! (redrawn a few times when it alone overruns the size cap), and a
+//! string that overruns the cap regardless is discarded and regenerated
+//! with half the target, up to [`MAX_ATTEMPTS`] times.
 //!
 //! Between adjacent tokens the generator inserts a `%ignore` terminal
 //! either when the simulated lexer says the two would otherwise lex
@@ -27,12 +28,14 @@
 //! escaped delimiter it prefers to read as such, say, that then lets it
 //! reach the next delimiter in the string), so the finished string is
 //! lexed once more as a whole and regenerated when it does not read back
-//! as its tokens.
+//! as its tokens. Every token keeps what the lexers found at the start of
+//! its text on its own ([`TokenScans`]), which the checks on the longer
+//! texts it is part of carry over rather than matching it again.
 
 use super::analysis::{Alt, Analysis, Node, NodeKind, analyze};
 use super::builder::{ImportSource, load_grammar};
 use super::compile::{Grammar, RuleId, TermId, compile};
-use super::lexsim::{Lexed, Lexer};
+use super::lexsim::{Lexed, Lexer, Scan};
 use super::{GrammarError, GrammarResult};
 use crate::control::hegel_internal_assert;
 use crate::native::core::{EngineError, ManyState, NativeTestCase, Status};
@@ -248,12 +251,31 @@ impl GrammarSpec {
         matches!(self.terminals[id], TerminalGen::Pattern(_))
     }
 
-    /// The tokens the lexer reads `text` as, with their extents.
-    fn lex_all(&self, text: &[char]) -> Result<Vec<(TermId, usize, usize)>, Lexed> {
-        let mut observed = Vec::new();
+    /// The tokens the basic lexer reads `text` as, with their extents.
+    /// `known` lists, in order, where the tokens that make up `text`
+    /// start, how long each is and what the lexer found at its start on
+    /// its own, for the lexer to carry over where it arrives at such a
+    /// start (see [`Lexer::extend`]).
+    fn lex_all(
+        &self,
+        text: &[char],
+        known: &[(usize, usize, &Scan)],
+    ) -> Result<Vec<(TermId, usize, usize)>, Lexed> {
+        let mut observed = Vec::with_capacity(known.len() + 1);
         let mut pos = 0;
+        let mut k = 0;
         while pos < text.len() {
-            match self.lexer.next_token(text, pos) {
+            while k < known.len() && known[k].0 < pos {
+                k += 1;
+            }
+            let lexed = match known.get(k) {
+                Some(&(start, len, scan)) if start == pos => {
+                    self.lexer.extend(scan, text, pos, len, true)
+                }
+                _ => None,
+            }
+            .unwrap_or_else(|| self.lexer.next_token(text, pos));
+            match lexed {
                 Lexed::Token(id, end) => {
                     observed.push((id, pos, end));
                     pos = end;
@@ -268,20 +290,40 @@ impl GrammarSpec {
     /// the pattern takes when matched from the front: less than all of
     /// it after a lazy repeat or an earlier branch of an alternation, in
     /// which case no lexer reads the text back whole but every one reads
-    /// back that prefix, itself a string the terminal matches.
-    fn whole(&self, id: TermId, text: &[char]) -> usize {
-        match self.lexer.match_terminal(id, text, 0) {
+    /// back that prefix, itself a string the terminal matches. Also what
+    /// the match found, for [`GrammarSpec::scan_token`] when nothing is
+    /// cut off.
+    fn whole(&self, id: TermId, text: &[char]) -> (usize, Scan) {
+        let scan = self.lexer.match_terminal_scan(id, text, 0);
+        let end = match scan.lexed {
             Lexed::Token(_, end) => end,
             Lexed::NoMatch | Lexed::Unknown => text.len(),
+        };
+        (end, scan)
+    }
+
+    /// What the lexers find at the start of `text`, the text of a token
+    /// of terminal `id`, on its own; `own` is the terminal's own match
+    /// there when already known.
+    fn scan_token(&self, id: TermId, text: &[char], own: Option<Scan>) -> TokenScans {
+        TokenScans {
+            own: own.unwrap_or_else(|| self.lexer.match_terminal_scan(id, text, 0)),
+            basic: self.lexer.next_token_scan(text, 0),
+            ignores: self
+                .ignore
+                .iter()
+                .map(|&ignore| self.lexer.match_terminal_scan(ignore, text, 0))
+                .collect(),
         }
     }
 
-    /// How the basic lexer reads the text of terminal `id` on its own.
-    fn reading(&self, id: TermId, text: &[char]) -> Reading {
+    /// How the basic lexer reads the text of terminal `id` on its own,
+    /// given what it finds at the start of it.
+    fn reading(&self, id: TermId, text: &[char], basic: &Scan) -> Reading {
         if !self.is_pattern(id) {
             return Reading::Opaque;
         }
-        match self.lex_all(text) {
+        match self.lex_all(text, &[(0, text.len(), basic)]) {
             Err(_) => Reading::Opaque,
             Ok(got) if got.len() == 1 && self.same_type(id, got[0].0) => Reading::Itself,
             Ok(got) if self.is_ignore(id) && got.iter().all(|&(g, _, _)| self.is_ignore(g)) => {
@@ -323,6 +365,8 @@ impl GrammarSpec {
         let mut reachable = alloc::vec![false; text.len() + 1];
         reachable[0] = true;
         let mut k = 0;
+        let mut t = 0;
+        let mut tried: Vec<(TermId, Lexed)> = Vec::new();
         for p in 0..=text.len() {
             if !reachable[p] {
                 continue;
@@ -330,11 +374,32 @@ impl GrammarSpec {
             while k < significant.len() && bounds[significant[k]].1 <= p {
                 k += 1;
             }
+            while t < tokens.len() && bounds[t].0 < p {
+                t += 1;
+            }
             if p == text.len() {
                 return true;
             }
+            let starting = (t < tokens.len() && bounds[t].0 == p).then_some(t);
+            let carried = |scan: &Scan, j: usize| {
+                self.lexer
+                    .extend(scan, text, p, tokens[j].text.len(), false)
+            };
+            tried.clear();
             for (j, &i) in significant.iter().enumerate().skip(k) {
-                match self.lexer.match_terminal(tokens[i].id, text, p) {
+                let id = tokens[i].id;
+                let lexed = match tried.iter().find(|(tried, _)| *tried == id) {
+                    Some(&(_, lexed)) => lexed,
+                    None => {
+                        let lexed = starting
+                            .filter(|&s| s == i)
+                            .and_then(|s| carried(&tokens[s].scans.own, s))
+                            .unwrap_or_else(|| self.lexer.match_terminal(id, text, p));
+                        tried.push((id, lexed));
+                        lexed
+                    }
+                };
+                match lexed {
                     Lexed::Token(_, got) if got >= bounds[i].1 && within(got, j + 1) => {
                         reachable[got] = true;
                     }
@@ -345,8 +410,11 @@ impl GrammarSpec {
                     break;
                 }
             }
-            for &ignore in &self.ignore {
-                match self.lexer.match_terminal(ignore, text, p) {
+            for (n, &ignore) in self.ignore.iter().enumerate() {
+                let lexed = starting
+                    .and_then(|s| carried(&tokens[s].scans.ignores[n], s))
+                    .unwrap_or_else(|| self.lexer.match_terminal(ignore, text, p));
+                match lexed {
                     Lexed::Token(_, got) if got > p && within(got, k) => reachable[got] = true,
                     Lexed::Unknown => {
                         reachable[kept(k).map_or(text.len(), |i| bounds[i].0.max(p))] = true;
@@ -363,7 +431,10 @@ impl GrammarSpec {
     /// at all (see [`GrammarSpec::scans`]), [`Fit::Exact`] when the basic
     /// lexer reads it as `tokens` too, and [`Fit::Retyped`] in between.
     fn fit(&self, tokens: &[&Token]) -> Fit {
-        let text: Vec<char> = tokens.iter().flat_map(|t| t.text.iter().copied()).collect();
+        let mut text = Vec::with_capacity(tokens.iter().map(|t| t.text.len()).sum());
+        for token in tokens {
+            text.extend_from_slice(&token.text);
+        }
         if !self.scans(&text, tokens) {
             return Fit::Wrong;
         }
@@ -384,7 +455,13 @@ impl GrammarSpec {
         if tokens.iter().any(|t| t.reading == Reading::Opaque) {
             return Fit::Exact;
         }
-        let observed = match self.lex_all(text) {
+        let mut known = Vec::with_capacity(tokens.len());
+        let mut start = 0;
+        for token in tokens {
+            known.push((start, token.text.len(), &token.scans.basic));
+            start += token.text.len();
+        }
+        let observed = match self.lex_all(text, &known) {
             Ok(observed) => observed,
             Err(Lexed::NoMatch) => return Fit::Wrong,
             Err(_) => return Fit::Exact,
@@ -516,6 +593,22 @@ struct Token {
     /// (`x?`, `[x]`, `x*`), so a lexer that runs it into its neighbour
     /// or skips it leaves a string the parser still accepts.
     droppable: bool,
+    scans: TokenScans,
+}
+
+/// What the lexers found at the start of a token's text on its own, kept
+/// with the token so that the checks on the longer texts the token is
+/// part of (its fit with its neighbours, the finished string) need not
+/// match it again where the finding carries over (see [`Lexer::extend`]).
+#[derive(Clone)]
+struct TokenScans {
+    /// The token's own terminal matched at its start.
+    own: Scan,
+    /// The basic lexer's first token.
+    basic: Scan,
+    /// Each ignorable terminal, in [`GrammarSpec::ignore`] order, matched
+    /// at its start.
+    ignores: Vec<Scan>,
 }
 
 impl Token {
@@ -794,26 +887,41 @@ impl Generation<'_> {
     /// its explicit generator as it comes.
     fn draw_terminal(&mut self, ntc: &mut NativeTestCase, id: TermId) -> Result<Token, Step> {
         match &self.spec.terminals[id] {
-            TerminalGen::Explicit(spec) => Ok(Token {
-                id,
-                text: generate_string(ntc, spec)?.chars().collect(),
-                reading: Reading::Opaque,
-                droppable: false,
-            }),
+            TerminalGen::Explicit(spec) => {
+                let text: Vec<char> = generate_string(ntc, spec)?.chars().collect();
+                Ok(Token {
+                    id,
+                    scans: self.spec.scan_token(id, &text, None),
+                    text,
+                    reading: Reading::Opaque,
+                    droppable: false,
+                })
+            }
             TerminalGen::Pattern(spec) => {
                 let mut attempt = 0;
                 loop {
                     ntc.start_span(LABEL_TERMINAL);
                     let mut text: Vec<char> = generate_string(ntc, spec)?.chars().collect();
-                    text.truncate(self.spec.whole(id, &text));
-                    let reading = self.spec.reading(id, &text);
+                    attempt += 1;
+                    if !self.fits(&text) {
+                        ntc.stop_span(true);
+                        if attempt > LEX_RETRIES {
+                            return Err(Step::TooLong);
+                        }
+                        continue;
+                    }
+                    let (end, own) = self.spec.whole(id, &text);
+                    let own = (end == text.len()).then_some(own);
+                    text.truncate(end);
+                    let scans = self.spec.scan_token(id, &text, own);
+                    let reading = self.spec.reading(id, &text, &scans.basic);
                     let token = Token {
                         id,
                         text,
                         reading,
                         droppable: false,
+                        scans,
                     };
-                    attempt += 1;
                     let accept = token.lexable() || attempt > LEX_RETRIES;
                     ntc.stop_span(!accept);
                     if accept {
@@ -827,6 +935,12 @@ impl Generation<'_> {
     fn terminal(&mut self, ntc: &mut NativeTestCase, id: TermId) -> Result<(), Step> {
         let token = self.draw_terminal(ntc, id)?;
         self.emit(ntc, token)
+    }
+
+    /// Whether `text` still fits under the size cap after what has been
+    /// emitted so far.
+    fn fits(&self, text: &[char]) -> bool {
+        self.consumed.saturating_add(text.len() as u64) <= self.spec.max_size
     }
 
     fn consume(&mut self, len: usize) -> Result<(), Step> {
@@ -864,6 +978,7 @@ impl Generation<'_> {
     ) -> Result<bool, Step> {
         let from = self.tokens.len().saturating_sub(1);
         let mut candidates = self.spec.ignore.clone();
+        let mut oversize = false;
         for _ in 0..IGNORE_ATTEMPTS {
             ntc.start_span(LABEL_IGNORE);
             let mut draws = IGNORE_CHAIN_DRAWS;
@@ -872,12 +987,16 @@ impl Generation<'_> {
             ntc.stop_span(!accept);
             match placement? {
                 Placement::Placed(_) => return Ok(true),
+                Placement::Rejected(token) if !self.fits(&token.text) => oversize = true,
                 Placement::Rejected(token) => {
                     if token.reading == Reading::Itself && candidates.len() > 1 {
                         candidates.retain(|&id| id != token.id);
                     }
                 }
             }
+        }
+        if oversize {
+            return Err(Step::TooLong);
         }
         Ok(false)
     }
@@ -925,6 +1044,9 @@ impl Generation<'_> {
             self.push(token)?;
             return Ok(Placement::Placed(fit));
         }
+        if !self.fits(&token.text) {
+            return Ok(Placement::Rejected(token));
+        }
         if depth < IGNORE_CHAIN && *draws > 0 && self.ignore_fit(from, &token, None) > Fit::Wrong {
             let (count, consumed) = (self.tokens.len(), self.consumed);
             self.push(token)?;
@@ -955,12 +1077,24 @@ impl Generation<'_> {
             TerminalGen::Pattern(spec) => generate_string(ntc, spec)?,
         };
         let text: Vec<char> = text.chars().collect();
-        let reading = self.spec.reading(id, &text);
+        let scans = self.spec.scan_token(id, &text, None);
+        if !self.fits(&text) {
+            let token = Token {
+                id,
+                text,
+                reading: Reading::Opaque,
+                droppable: false,
+                scans,
+            };
+            return Ok((token, Fit::Wrong));
+        }
+        let reading = self.spec.reading(id, &text, &scans.basic);
         let token = Token {
             id,
             text,
             reading,
             droppable: false,
+            scans,
         };
         let fit = self.ignore_fit(from, &token, next);
         Ok((token, fit))

@@ -18,6 +18,7 @@
 
 use alloc::vec::Vec;
 
+use super::categories;
 use super::constants::{
     AtCode, ChCode, MAXREPEAT, SRE_FLAG_DOTALL, SRE_FLAG_IGNORECASE, SRE_FLAG_MULTILINE,
     SRE_FLAG_UNICODE, TYPE_FLAGS,
@@ -25,7 +26,6 @@ use super::constants::{
 use super::parser::{OpCode, ParsedPattern, SetItem, SubPattern};
 use crate::native::HashMap;
 use crate::sys::sync::Lazy;
-use crate::unicodedata;
 
 /// The default number of matching steps one match may take before it is
 /// abandoned with [`MatchError::StepLimit`].
@@ -66,13 +66,91 @@ pub struct Matcher<'p> {
     flags: u32,
     step_limit: u64,
     depth_limit: usize,
+    /// Whether the rest of a repeat can be assumed to match the same way
+    /// from the same position however the repeat got there: true unless
+    /// the pattern has backreferences or conditional groups, whose
+    /// matching depends on what was captured on the way.
+    memoize: bool,
+}
+
+/// The positions at which the continuation of one repeat iteration has
+/// already failed, so that reaching them again by another path through
+/// the iteration (or, for the run of a single unit, by giving back a
+/// different number of units) need not retry it. Only used when the
+/// matcher may memoize; see [`Matcher::memoize`].
+struct FailedEnds {
+    active: bool,
+    ends: Vec<usize>,
+}
+
+impl FailedEnds {
+    fn new(active: bool) -> FailedEnds {
+        FailedEnds {
+            active,
+            ends: Vec::new(),
+        }
+    }
+
+    fn contains(&self, end: usize) -> bool {
+        self.active && self.ends.contains(&end)
+    }
+
+    fn record(&mut self, end: usize, result: &MatchResult) {
+        if self.active && matches!(result, Ok(false)) {
+            self.ends.push(end);
+        }
+    }
+}
+
+/// How a match depended on the edges of the text, which says whether
+/// the same text with more around it (before its start or after its
+/// end) would match the same way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Touch {
+    /// The matcher looked at neither edge of the text: the result stands
+    /// for the same text with anything before and after it.
+    Never,
+    /// The only thing that looked at the end was the forward scan of one
+    /// unbounded greedy repeat of a single unit (identified by the
+    /// `run_id` of [`find_run`]), and the match ends at the end of the
+    /// text: on a longer text it ends after the run of that unit
+    /// continuing from there.
+    Tail(usize),
+    /// The result may change with more text.
+    End,
+}
+
+impl Touch {
+    /// Record a read at the end of the text by something other than a
+    /// tail run.
+    fn end(&mut self) {
+        *self = Touch::End;
+    }
+
+    /// Record the forward scan of the unbounded greedy unit repeat
+    /// `run_id` reaching the end of the text.
+    fn tail(&mut self, run_id: usize) {
+        *self = match *self {
+            Touch::Never => Touch::Tail(run_id),
+            Touch::Tail(id) if id == run_id => Touch::Tail(id),
+            _ => Touch::End,
+        };
+    }
 }
 
 /// Per-match mutable state: the text, the capture groups set so far, and
 /// the remaining budgets.
 struct State<'t> {
     text: &'t [char],
+    touch: Touch,
     marks: Vec<Option<(usize, usize)>>,
+    /// Whether the groups' marks are kept at all: nothing reads them
+    /// unless the pattern refers back to a group.
+    track_marks: bool,
+    /// The last run of a single unit measured for an unbounded greedy
+    /// repeat, as (the repeat's identity, run start, run end): a repeat
+    /// re-entered anywhere inside that run ends at the same place.
+    run: Option<(usize, usize, usize)>,
     steps: u64,
     step_limit: u64,
     depth: usize,
@@ -104,12 +182,55 @@ impl State<'_> {
         self.marks.get(g as usize).copied().flatten()
     }
 
+    /// Whether the character at `index` matches `unit`, noting a read at
+    /// the end of the text.
+    fn unit_at(&mut self, index: usize, unit: UnitOp<'_>, flags: u32) -> bool {
+        match self.text.get(index) {
+            Some(&c) => unit_matches(unit, c, flags),
+            None => {
+                self.touch.end();
+                false
+            }
+        }
+    }
+
+    /// [`at_matches`] at `pos`, noting when the verdict depends on where
+    /// the text ends.
+    fn at(&mut self, at: AtCode, pos: usize, flags: u32) -> bool {
+        if pos == 0
+            || (!matches!(at, AtCode::Beginning | AtCode::BeginningString)
+                && pos + 1 >= self.text.len())
+        {
+            self.touch.end();
+        }
+        at_matches(at, self.text, pos, flags)
+    }
+
     fn set_group(&mut self, g: u32, value: Option<(usize, usize)>) {
         let g = g as usize;
+        if !self.track_marks {
+            return;
+        }
         if self.marks.len() <= g {
             self.marks.resize(g + 1, None);
         }
         self.marks[g] = value;
+    }
+
+    /// The marks as they are, to put back with [`State::restore_marks`]
+    /// after a failed attempt.
+    fn save_marks(&self) -> Vec<Option<(usize, usize)>> {
+        if self.track_marks {
+            self.marks.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn restore_marks(&mut self, saved: Vec<Option<(usize, usize)>>) {
+        if self.track_marks {
+            self.marks = saved;
+        }
     }
 }
 
@@ -191,12 +312,9 @@ fn unit_alternatives<'a>(p: &'a SubPattern, flags: u32, out: &mut Vec<UnitSequen
 }
 
 /// The end of `sequence` matched at `pos`, if it matches there.
-fn sequence_end(text: &[char], pos: usize, sequence: &UnitSequence<'_>) -> Option<usize> {
+fn sequence_end(st: &mut State<'_>, pos: usize, sequence: &UnitSequence<'_>) -> Option<usize> {
     for (offset, &(unit, flags)) in sequence.iter().enumerate() {
-        if !text
-            .get(pos + offset)
-            .is_some_and(|&c| unit_matches(unit, c, flags))
-        {
+        if !st.unit_at(pos + offset, unit, flags) {
             return None;
         }
     }
@@ -206,7 +324,7 @@ fn sequence_end(text: &[char], pos: usize, sequence: &UnitSequence<'_>) -> Optio
 /// The first alternative at index `from` or later that matches at `pos`,
 /// with its end.
 fn first_alternative(
-    text: &[char],
+    st: &mut State<'_>,
     alternatives: &[UnitSequence<'_>],
     pos: usize,
     from: usize,
@@ -215,14 +333,12 @@ fn first_alternative(
         .iter()
         .enumerate()
         .skip(from)
-        .find_map(|(index, alternative)| {
-            sequence_end(text, pos, alternative).map(|end| (index, end))
-        })
+        .find_map(|(index, alternative)| sequence_end(st, pos, alternative).map(|end| (index, end)))
 }
 
 /// CPython's `_combine_flags`: a scoped type flag (`a`/`u`/`L`) replaces
 /// the inherited one rather than adding to it.
-fn combine_flags(mut flags: u32, add_flags: u32, del_flags: u32) -> u32 {
+pub(super) fn combine_flags(mut flags: u32, add_flags: u32, del_flags: u32) -> u32 {
     if add_flags & TYPE_FLAGS != 0 {
         flags &= !TYPE_FLAGS;
     }
@@ -237,6 +353,7 @@ impl<'p> Matcher<'p> {
             flags: parsed.flags,
             step_limit: DEFAULT_STEP_LIMIT,
             depth_limit: DEFAULT_DEPTH_LIMIT,
+            memoize: !parsed.group_refs,
         }
     }
 
@@ -251,7 +368,10 @@ impl<'p> Matcher<'p> {
     fn state<'t>(&self, text: &'t [char]) -> State<'t> {
         State {
             text,
+            touch: Touch::Never,
             marks: Vec::new(),
+            track_marks: !self.memoize,
+            run: None,
             steps: 0,
             step_limit: self.step_limit,
             depth: 0,
@@ -260,9 +380,14 @@ impl<'p> Matcher<'p> {
     }
 
     /// The end of the match CPython's `pattern.match(text, start)` finds,
-    /// or `None` when the pattern does not match at `start`. A `start`
-    /// past the end of the text is clamped to it, as CPython does.
-    pub fn match_at(&self, text: &[char], start: usize) -> Result<Option<usize>, MatchError> {
+    /// or `None` when the pattern does not match at `start` (a `start`
+    /// past the end of the text is clamped to it, as CPython does), with
+    /// how the match depended on the edges of the text.
+    pub fn match_at_touch(
+        &self,
+        text: &[char],
+        start: usize,
+    ) -> Result<(Option<usize>, Touch), MatchError> {
         let start = start.min(text.len());
         let mut state = self.state(text);
         let mut end = None;
@@ -275,12 +400,13 @@ impl<'p> Matcher<'p> {
                 end = Some(pos);
                 Ok(true)
             },
-        )?;
-        Ok(if matched { end } else { None })
+        );
+        let matched = matched?;
+        Ok((if matched { end } else { None }, state.touch))
     }
 
     /// Whether the pattern matches the whole of `text`, like CPython's
-    /// `pattern.fullmatch(text)`: unlike [`match_at`](Self::match_at)
+    /// `pattern.fullmatch(text)`: unlike [`match_at_touch`](Self::match_at_touch)
     /// reaching the end, this backtracks into the pattern looking for a
     /// match that ends exactly at the end.
     pub fn fullmatch(&self, text: &[char]) -> Result<bool, MatchError> {
@@ -328,18 +454,16 @@ impl<'p> Matcher<'p> {
                 return k(st, pos);
             };
             if let Some(unit) = as_unit(op) {
-                match st.text.get(pos) {
-                    Some(&c) if unit_matches(unit, c, flags) => {
-                        pos += 1;
-                        index += 1;
-                    }
-                    _ => return Ok(false),
+                if !st.unit_at(pos, unit, flags) {
+                    return Ok(false);
                 }
+                pos += 1;
+                index += 1;
                 continue;
             }
             match op {
                 OpCode::At(at) => {
-                    if !at_matches(*at, st.text, pos, flags) {
+                    if !st.at(*at, pos, flags) {
                         return Ok(false);
                     }
                     index += 1;
@@ -399,6 +523,7 @@ impl<'p> Matcher<'p> {
                 };
                 let len = end - start;
                 if pos + len > st.text.len() {
+                    st.touch.end();
                     return Ok(false);
                 }
                 for offset in 0..len {
@@ -426,38 +551,41 @@ impl<'p> Matcher<'p> {
                 }
             }
             OpCode::Assert { direction, p } => {
-                let saved = st.marks.clone();
+                let saved = st.save_marks();
                 if !self.lookaround(st, *direction, p, pos, flags)? {
                     return Ok(false);
                 }
                 if self.seq(st, rest, pos, flags, k)? {
                     return Ok(true);
                 }
-                st.marks = saved;
+                st.restore_marks(saved);
                 Ok(false)
             }
             OpCode::AssertNot { direction, p } => {
-                let saved = st.marks.clone();
+                let saved = st.save_marks();
                 if self.lookaround(st, *direction, p, pos, flags)? {
-                    st.marks = saved;
+                    st.restore_marks(saved);
                     return Ok(false);
                 }
                 self.seq(st, rest, pos, flags, k)
             }
             OpCode::AtomicGroup(p) => {
-                let saved = st.marks.clone();
+                let saved = st.save_marks();
                 let Some(end) = self.first_end(st, p, pos, flags)? else {
                     return Ok(false);
                 };
                 if self.seq(st, rest, end, flags, k)? {
                     return Ok(true);
                 }
-                st.marks = saved;
+                st.restore_marks(saved);
                 Ok(false)
             }
             OpCode::MaxRepeat { min, max, item } => {
                 if let Some((unit, unit_flags)) = single_unit(item, flags) {
-                    return self.greedy_unit(st, unit, unit_flags, *min, *max, rest, pos, flags, k);
+                    let run_id = core::ptr::from_ref(item) as usize;
+                    return self.greedy_unit(
+                        st, run_id, unit, unit_flags, *min, *max, rest, pos, flags, k,
+                    );
                 }
                 let mut alternatives = Vec::new();
                 if unit_alternatives(item, flags, &mut alternatives) {
@@ -527,9 +655,17 @@ impl<'p> Matcher<'p> {
         flags: u32,
     ) -> MatchResult {
         if direction > 0 {
-            return Ok(self.first_end(st, p, pos, flags)?.is_some());
+            let before = st.touch;
+            let found = self.first_end(st, p, pos, flags)?.is_some();
+            if st.touch != before {
+                st.touch.end();
+            }
+            return Ok(found);
         }
         let (lo, hi) = self.width(p);
+        if hi > pos {
+            st.touch.end();
+        }
         let mut w = lo;
         while w <= hi && w <= pos {
             if self.seq(st, &p.data, pos - w, flags, &mut |_, end| Ok(end == pos))? {
@@ -557,15 +693,25 @@ impl<'p> Matcher<'p> {
         k: Cont<'_, 't>,
     ) -> MatchResult {
         st.step()?;
+        let mut failed = FailedEnds::new(self.memoize);
         if count < min {
             return self.seq(st, &item.data, pos, flags, &mut |st, end| {
-                self.greedy(st, item, min, max, count + 1, last_pos, rest, end, flags, k)
+                if failed.contains(end) {
+                    return Ok(false);
+                }
+                let result =
+                    self.greedy(st, item, min, max, count + 1, last_pos, rest, end, flags, k);
+                failed.record(end, &result);
+                result
             });
         }
         if (max == MAXREPEAT || count < max)
             && last_pos != Some(pos)
             && self.seq(st, &item.data, pos, flags, &mut |st, end| {
-                self.greedy(
+                if failed.contains(end) {
+                    return Ok(false);
+                }
+                let result = self.greedy(
                     st,
                     item,
                     min,
@@ -576,7 +722,9 @@ impl<'p> Matcher<'p> {
                     end,
                     flags,
                     k,
-                )
+                );
+                failed.record(end, &result);
+                result
             })?
         {
             return Ok(true);
@@ -600,9 +748,16 @@ impl<'p> Matcher<'p> {
         k: Cont<'_, 't>,
     ) -> MatchResult {
         st.step()?;
+        let mut failed = FailedEnds::new(self.memoize);
         if count < min {
             return self.seq(st, &item.data, pos, flags, &mut |st, end| {
-                self.lazy(st, item, min, max, count + 1, last_pos, rest, end, flags, k)
+                if failed.contains(end) {
+                    return Ok(false);
+                }
+                let result =
+                    self.lazy(st, item, min, max, count + 1, last_pos, rest, end, flags, k);
+                failed.record(end, &result);
+                result
             });
         }
         if self.seq(st, rest, pos, flags, k)? {
@@ -612,7 +767,10 @@ impl<'p> Matcher<'p> {
             return Ok(false);
         }
         self.seq(st, &item.data, pos, flags, &mut |st, end| {
-            self.lazy(
+            if failed.contains(end) {
+                return Ok(false);
+            }
+            let result = self.lazy(
                 st,
                 item,
                 min,
@@ -623,7 +781,9 @@ impl<'p> Matcher<'p> {
                 end,
                 flags,
                 k,
-            )
+            );
+            failed.record(end, &result);
+            result
         })
     }
 
@@ -632,6 +792,7 @@ impl<'p> Matcher<'p> {
     fn greedy_unit<'t>(
         &self,
         st: &mut State<'t>,
+        run_id: usize,
         unit: UnitOp<'_>,
         unit_flags: u32,
         min: u32,
@@ -642,14 +803,25 @@ impl<'p> Matcher<'p> {
         k: Cont<'_, 't>,
     ) -> MatchResult {
         let limit = repeat_limit(max);
-        let mut count = 0;
-        while count < limit
-            && st
-                .text
-                .get(pos + count)
-                .is_some_and(|&c| unit_matches(unit, c, unit_flags))
-        {
+        let mut count = match st.run {
+            Some((id, start, end)) if id == run_id && (start..=end).contains(&pos) => end - pos,
+            _ => 0,
+        };
+        while count < limit && pos + count < st.text.len() {
+            if !unit_matches(unit, st.text[pos + count], unit_flags) {
+                break;
+            }
             count += 1;
+        }
+        if count < limit && pos + count == st.text.len() {
+            if max == MAXREPEAT {
+                st.touch.tail(run_id);
+            } else {
+                st.touch.end();
+            }
+        }
+        if max == MAXREPEAT {
+            st.run = Some((run_id, pos, pos + count));
         }
         if count < min as usize {
             return Ok(false);
@@ -681,14 +853,9 @@ impl<'p> Matcher<'p> {
         k: Cont<'_, 't>,
     ) -> MatchResult {
         let limit = repeat_limit(max);
-        let next_matches = |st: &State<'t>, count: usize| {
-            st.text
-                .get(pos + count)
-                .is_some_and(|&c| unit_matches(unit, c, unit_flags))
-        };
         let mut count = 0;
         while count < min as usize {
-            if !next_matches(st, count) {
+            if !st.unit_at(pos + count, unit, unit_flags) {
                 return Ok(false);
             }
             count += 1;
@@ -698,7 +865,7 @@ impl<'p> Matcher<'p> {
             if self.seq(st, rest, pos + count, flags, k)? {
                 return Ok(true);
             }
-            if count >= limit || !next_matches(st, count) {
+            if count >= limit || !st.unit_at(pos + count, unit, unit_flags) {
                 return Ok(false);
             }
             count += 1;
@@ -728,7 +895,7 @@ impl<'p> Matcher<'p> {
         loop {
             while repeat_allowed(&frames, min, max, cur) {
                 st.step()?;
-                match first_alternative(st.text, alternatives, cur, 0) {
+                match first_alternative(st, alternatives, cur, 0) {
                     Some((index, end)) => {
                         frames.push((cur, index));
                         cur = end;
@@ -744,9 +911,7 @@ impl<'p> Matcher<'p> {
                     return Ok(false);
                 };
                 st.step()?;
-                if let Some((next, end)) =
-                    first_alternative(st.text, alternatives, start, index + 1)
-                {
+                if let Some((next, end)) = first_alternative(st, alternatives, start, index + 1) {
                     frames.push((start, next));
                     cur = end;
                     break;
@@ -783,7 +948,7 @@ impl<'p> Matcher<'p> {
                 return Ok(true);
             }
             if repeat_allowed(&frames, min, max, cur) {
-                if let Some((index, end)) = first_alternative(st.text, alternatives, cur, 0) {
+                if let Some((index, end)) = first_alternative(st, alternatives, cur, 0) {
                     frames.push((cur, index));
                     cur = end;
                     continue;
@@ -794,9 +959,7 @@ impl<'p> Matcher<'p> {
                     return Ok(false);
                 };
                 st.step()?;
-                if let Some((next, end)) =
-                    first_alternative(st.text, alternatives, start, index + 1)
-                {
+                if let Some((next, end)) = first_alternative(st, alternatives, start, index + 1) {
                     frames.push((start, next));
                     cur = end;
                     break;
@@ -819,12 +982,12 @@ impl<'p> Matcher<'p> {
         flags: u32,
         k: Cont<'_, 't>,
     ) -> MatchResult {
-        let saved = st.marks.clone();
+        let saved = st.save_marks();
         let mut count = 0;
         let mut cur = pos;
         while count < min {
             let Some(end) = self.first_end(st, item, cur, flags)? else {
-                st.marks = saved;
+                st.restore_marks(saved);
                 return Ok(false);
             };
             cur = end;
@@ -843,7 +1006,7 @@ impl<'p> Matcher<'p> {
         if self.seq(st, rest, cur, flags, k)? {
             return Ok(true);
         }
-        st.marks = saved;
+        st.restore_marks(saved);
         Ok(false)
     }
 
@@ -970,7 +1133,7 @@ fn unit_matches(op: UnitOp<'_>, c: char, flags: u32) -> bool {
 /// an uncased pattern character matches exactly; a cased one matches any
 /// text character with the same lowercase form, or (Unicode mode) one of
 /// its `_casefix` equivalents. The parser only emits valid codepoints.
-fn literal_eq(cp: u32, c: char, flags: u32) -> bool {
+pub(super) fn literal_eq(cp: u32, c: char, flags: u32) -> bool {
     char::from_u32(cp).is_some_and(|l| char_eq(l, c, flags))
 }
 
@@ -1001,15 +1164,20 @@ fn backref_eq(a: char, b: char, flags: u32) -> bool {
 /// the set is tested against the lowercase form of the character, and
 /// contains the lowercase forms of its members plus their `_casefix`
 /// equivalents.
-fn set_matches(items: &[SetItem], c: char, flags: u32) -> bool {
+pub(super) fn set_matches(items: &[SetItem], c: char, flags: u32) -> bool {
     let negate = matches!(items.first(), Some(SetItem::Negate));
     let ignore_case = flags & SRE_FLAG_IGNORECASE != 0;
     let unicode = flags & SRE_FLAG_UNICODE != 0;
     let probe = if ignore_case { fold(c, unicode) } else { c };
-    let mut equivalents: Vec<char> = alloc::vec![probe];
+    let mut equivalents = [probe; 3];
+    let mut count = 1;
     if ignore_case && unicode {
-        equivalents.extend_from_slice(extra_cases(probe));
+        for &extra in extra_cases(probe) {
+            equivalents[count] = extra;
+            count += 1;
+        }
     }
+    let equivalents = &equivalents[..count];
     let contained = items.iter().any(|item| match item {
         SetItem::Negate => false,
         SetItem::Literal(cp) => char::from_u32(*cp).is_some_and(|member| {
@@ -1150,7 +1318,7 @@ fn extra_cases(l: char) -> &'static [char] {
 
 /// CPython's category tests: the `UNI_` variants in Unicode mode, the
 /// ASCII ones otherwise.
-fn in_category(c: char, category: ChCode, unicode: bool) -> bool {
+pub(crate) fn in_category(c: char, category: ChCode, unicode: bool) -> bool {
     match category {
         ChCode::Digit => is_digit(c, unicode),
         ChCode::NotDigit => !is_digit(c, unicode),
@@ -1162,8 +1330,8 @@ fn in_category(c: char, category: ChCode, unicode: bool) -> bool {
 }
 
 fn is_digit(c: char, unicode: bool) -> bool {
-    if unicode {
-        unicodedata::is_in_group_char(c, "Nd")
+    if unicode && !c.is_ascii() {
+        categories::in_class(c, ChCode::Digit)
     } else {
         c.is_ascii_digit()
     }
@@ -1183,21 +1351,21 @@ fn is_space(c: char, unicode: bool) -> bool {
                 | '\x1e'
                 | '\x1f'
                 | '\u{85}'
-        ) || unicodedata::is_in_group_char(c, "Z")
+        ) || (!c.is_ascii() && categories::in_class(c, ChCode::Space))
     } else {
         matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c')
     }
 }
 
 fn is_word(c: char, unicode: bool) -> bool {
-    if unicode {
-        c == '_' || unicodedata::is_in_group_char(c, "L") || unicodedata::is_in_group_char(c, "N")
+    if unicode && !c.is_ascii() {
+        categories::in_class(c, ChCode::Word)
     } else {
         c == '_' || c.is_ascii_alphanumeric()
     }
 }
 
-fn at_matches(at: AtCode, text: &[char], pos: usize, flags: u32) -> bool {
+pub(super) fn at_matches(at: AtCode, text: &[char], pos: usize, flags: u32) -> bool {
     let multiline = flags & SRE_FLAG_MULTILINE != 0;
     match at {
         AtCode::BeginningString => pos == 0,
@@ -1216,6 +1384,53 @@ fn is_word_boundary(text: &[char], pos: usize, flags: u32) -> bool {
     let before = pos > 0 && is_word(text[pos - 1], unicode);
     let after = pos < text.len() && is_word(text[pos], unicode);
     before != after
+}
+
+/// How many characters from `from` on match the unit of the unbounded
+/// greedy repeat `run_id` (a [`Touch::Tail`]) in `parsed`; `None` when
+/// `parsed` has no such repeat.
+pub fn run_len(parsed: &ParsedPattern, run_id: usize, text: &[char], from: usize) -> Option<usize> {
+    let (unit, flags) = find_run(&parsed.pattern, parsed.flags, run_id)?;
+    Some(
+        text[from.min(text.len())..]
+            .iter()
+            .take_while(|&&c| unit_matches(unit, c, flags))
+            .count(),
+    )
+}
+
+/// The single unit, with its flags, of the unbounded greedy repeat whose
+/// item is at address `run_id`, searched for through `p`.
+fn find_run(p: &SubPattern, flags: u32, run_id: usize) -> Option<(UnitOp<'_>, u32)> {
+    for op in &p.data {
+        let found = match op {
+            OpCode::MaxRepeat { item, max, .. }
+                if *max == MAXREPEAT && core::ptr::from_ref(item) as usize == run_id =>
+            {
+                single_unit(item, flags)
+            }
+            OpCode::MaxRepeat { item, .. }
+            | OpCode::MinRepeat { item, .. }
+            | OpCode::PossessiveRepeat { item, .. } => find_run(item, flags, run_id),
+            OpCode::Subpattern {
+                add_flags,
+                del_flags,
+                p,
+                ..
+            } => find_run(p, combine_flags(flags, *add_flags, *del_flags), run_id),
+            OpCode::AtomicGroup(p) => find_run(p, flags, run_id),
+            OpCode::Branch(alternatives) => alternatives
+                .iter()
+                .find_map(|alternative| find_run(alternative, flags, run_id)),
+            OpCode::GroupRefExists { yes, no, .. } => find_run(yes, flags, run_id)
+                .or_else(|| no.as_ref().and_then(|no| find_run(no, flags, run_id))),
+            _ => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
 }
 
 #[cfg(test)]
