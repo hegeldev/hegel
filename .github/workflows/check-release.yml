@@ -10,7 +10,10 @@ permissions: {}
 jobs:
   check-release:
     name: check release
-    if: "!contains(github.event.pull_request.labels.*.name, 'skip release')"
+    # Releases are switched off while hegel-python is only shared internally
+    # (see the release job in ci.yml). To turn this back on, restore:
+    #   "!contains(github.event.pull_request.labels.*.name, 'skip release')"
+    if: false
     runs-on: ubuntu-latest
     permissions:
       contents: read

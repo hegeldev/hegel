@@ -36,6 +36,10 @@ so run `just setup` first.
   `docs/engine-issues.md` and mark the affected test `xfail` (strict, so it
   flags when the engine is fixed), instead of papering over it in the
   bindings. The fix belongs in the engine.
+- **Releases are currently switched off** (the `release` job in `ci.yml` and
+  the `check-release` workflow are disabled with `if: false`) while the
+  project is shared internally. The rest of this item describes how they
+  work once switched back on.
 - **Every PR that changes what ships needs a `RELEASE.md`.** That means any
   change to `src/`, `python/hegel/`, `Cargo.toml` or `Cargo.lock`. See
   `RELEASE-sample.md` for the format and the semver rules (on 0.x, breaking
