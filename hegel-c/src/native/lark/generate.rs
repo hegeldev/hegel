@@ -722,14 +722,14 @@ struct Generation<'s> {
     unsettled: bool,
 }
 
-/// The probability of taking a growing alternative with `spare` budget
-/// beyond the rule's minimum.
 /// The length of `spec`'s strings on average, as a whole number of
 /// characters and never below `min`, the shortest string it can produce.
 fn typical_size(spec: &StringSpec, min: u64) -> u64 {
     (spec.typical_width().round() as u64).max(min)
 }
 
+/// The probability of taking a growing alternative with `spare` budget
+/// beyond the rule's minimum.
 fn grow_probability(spare: u64) -> f64 {
     let spare = spare as f64;
     spare / (spare + GROW_SCALE)
