@@ -3,13 +3,16 @@
 //! Every draw first picks a target length: with probability 3/4 a length
 //! uniform between the smallest string the start rule can produce and
 //! the size cap, otherwise the smallest. The grammar is then walked top
-//! down with that target as a character budget, in which every terminal
-//! counts for the length of its strings on average
-//! ([`StringSpec::typical_width`]), so that the structure a budget buys
-//! comes out near the target. A rule's alternatives
-//! are split into those that can grow without bound and those that
-//! cannot, a weighted boolean whose probability rises with the budget
-//! left over after the rule's minimum chooses between the two classes,
+//! down with a character budget, in which every terminal counts for the
+//! length of its strings on average ([`StringSpec::typical_width`]), so
+//! that the structure a budget buys comes out near the budget. The
+//! budget is the target less what the `%ignore` insertions between
+//! tokens will add at the string's insertion rate
+//! ([`ignore_cost`]). A rule's
+//! alternatives are split into those that can grow without bound and
+//! those that cannot, a weighted boolean whose probability rises with
+//! the budget left over after the cheapest growing alternative chooses
+//! between the two classes,
 //! and the alternative is drawn uniformly from the class; a sequence
 //! splits its spare budget between its flexible items at uniformly drawn
 //! cut points, so no position is systematically larger than another; a
@@ -83,9 +86,9 @@ const IGNORE_CHAIN_DRAWS: u32 = 4;
 /// smallest one.
 const LARGE_TARGET_PROBABILITY: f64 = 0.75;
 
-/// The spare budget at which a rule is as likely to pick a growing
-/// alternative as a closing one: the probability of growing is
-/// `spare / (spare + GROW_SCALE)`.
+/// The spare budget, beyond the cheapest growing alternative, at which
+/// a rule is as likely to pick a growing alternative as a closing one:
+/// the probability of growing is `spare / (spare + GROW_SCALE)`.
 const GROW_SCALE: f64 = 1.0;
 
 /// The number of distinct `%ignore` insertion rates a string may draw;
@@ -149,6 +152,7 @@ pub struct GrammarSpec {
     #[cfg(test)]
     terminal_names: Vec<String>,
     ignore: Vec<TermId>,
+    ignore_cost: f64,
     lexer: Lexer,
     start: RuleId,
     labels: Vec<u64>,
@@ -204,6 +208,7 @@ impl GrammarSpec {
                 }
             }
         }
+        let ignore_cost = ignore_cost(&grammar.ignore, &term_typical);
         let analysis = analyze(&grammar, term_min, term_typical)?;
         let lexer = Lexer::new(&grammar.terminals);
         let root = &analysis.rules[start];
@@ -230,6 +235,7 @@ impl GrammarSpec {
             #[cfg(test)]
             terminal_names: grammar.terminals.iter().map(|t| t.name.clone()).collect(),
             ignore: grammar.ignore,
+            ignore_cost,
             lexer,
             start,
             labels,
@@ -728,6 +734,31 @@ fn typical_size(spec: &StringSpec, min: u64) -> u64 {
     (spec.typical_width().round() as u64).max(min)
 }
 
+/// The characters a `%ignore` insertion adds for each character a
+/// token adds, on average, with `term_typical` the typical width of
+/// each terminal: a string drawn with insertion rate `r` comes out
+/// about `1 + r * ignore_cost` times the budget its tokens were given.
+fn ignore_cost(ignore: &[TermId], term_typical: &[u64]) -> f64 {
+    let mean = |ids: &mut dyn Iterator<Item = TermId>| {
+        let (sum, count) = ids.fold((0u64, 0u64), |(sum, count), id| {
+            (sum + term_typical[id], count + 1)
+        });
+        (count > 0).then(|| sum as f64 / count as f64)
+    };
+    let Some(inserted) = mean(&mut ignore.iter().copied()) else {
+        return 0.0;
+    };
+    let token = mean(&mut (0..term_typical.len()).filter(|id| !ignore.contains(id)));
+    inserted / token.unwrap_or(inserted).max(1.0)
+}
+
+/// The budget for the tokens of a string aiming at `target` characters
+/// with `%ignore` insertion rate `rate`, never below `min`: the
+/// insertions add about `rate * ignore_cost` characters per token one.
+fn token_budget(target: u64, min: u64, rate: f64, ignore_cost: f64) -> u64 {
+    min.max((target as f64 / (1.0 + rate * ignore_cost)) as u64)
+}
+
 /// The probability of taking a growing alternative with `spare` budget
 /// beyond the rule's minimum.
 fn grow_probability(spare: u64) -> f64 {
@@ -761,7 +792,8 @@ impl Generation<'_> {
     /// every alternative can, between the cheapest and the rest, so that
     /// a rule like `sum: product | sum "+" product` does not recurse
     /// regardless of its budget) with a probability that rises with the
-    /// spare budget, then uniformly within the class.
+    /// budget to spare beyond the cheapest growing alternative, then
+    /// uniformly within the class.
     fn choose_alt<'a>(
         &mut self,
         ntc: &mut NativeTestCase,
@@ -785,7 +817,8 @@ impl Generation<'_> {
         let class = if growing.is_empty() {
             closing
         } else {
-            let p = grow_probability(budget.saturating_sub(typical));
+            let cheapest_growing = growing.iter().map(|a| a.typical_size).min().unwrap_or(0);
+            let p = grow_probability(budget.saturating_sub(cheapest_growing));
             let grow = spanned(ntc, LABEL_BOOLEAN, |ntc| ntc.weighted_precise(p, None))?;
             if grow { growing } else { closing }
         };
@@ -1291,7 +1324,8 @@ fn draw_grammar(ntc: &mut NativeTestCase, spec: &GrammarSpec) -> Result<String, 
             ignore_rate,
             unsettled: false,
         };
-        match generation.run(ntc, target) {
+        let budget = token_budget(target, min, ignore_rate, spec.ignore_cost);
+        match generation.run(ntc, budget) {
             Ok(()) => {
                 let mut out = String::new();
                 for token in &generation.tokens {

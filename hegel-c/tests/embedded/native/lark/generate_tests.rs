@@ -913,3 +913,21 @@ fn engine_errors_inside_the_walk_propagate() {
         Err(EngineError::Overrun)
     ));
 }
+
+#[test]
+fn ignore_cost_compares_insertions_with_tokens() {
+    let spec = grammar("start: /[ab]/ /cd/\n");
+    assert_eq!(spec.ignore_cost, 0.0);
+    let spec = grammar("start: /[ab]/ /cd/\nWS: / {9}/\n%ignore WS\n");
+    assert_eq!(spec.ignore_cost, 6.0);
+    let spec = grammar("start: WS\nWS: / {3}/\n%ignore WS\n");
+    assert_eq!(spec.ignore_cost, 1.0);
+}
+
+#[test]
+fn token_budgets_leave_room_for_ignore_insertions() {
+    assert_eq!(token_budget(350, 1, 0.0, 9.0), 350);
+    assert_eq!(token_budget(350, 1, 1.0, 9.0), 35);
+    assert_eq!(token_budget(350, 1, 0.25, 4.0), 175);
+    assert_eq!(token_budget(3, 2, 1.0, 9.0), 2);
+}

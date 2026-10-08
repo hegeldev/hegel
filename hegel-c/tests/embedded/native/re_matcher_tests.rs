@@ -658,6 +658,7 @@ fn probes(pattern: &str, text: &str) -> (ParsedPattern, Vec<Probe>) {
 fn probes_run_their_tests_again_on_the_next_character() {
     for (pattern, text, passing, failing) in [
         ("x[ab]?", "x", "ab", "cx"),
+        ("x[^b]?", "x", "acx", "b"),
         ("x(?:[ab])?", "x", "ab", "c"),
         ("x(?:[ab]|c)?", "x", "abc", "d"),
         ("x(?:[ab]y|cz)?", "x", "abc", "d"),
