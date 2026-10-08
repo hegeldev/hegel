@@ -50,6 +50,13 @@ use crate::sys::sync::{Lazy, Mutex};
 /// later draws to share (see `NativeTestCase::shared_integer_kind`).
 const INTEGER_KINDS_REMEMBERED: usize = 8;
 
+/// The most choices and the most spans a test case in this process has
+/// recorded so far, as capacity hints for the next one: its choice and
+/// span vectors would otherwise grow by doubling, and copying the large
+/// vectors of a long test case costs more than its draws.
+static MOST_NODES: AtomicUsize = AtomicUsize::new(0);
+static MOST_SPANS: AtomicUsize = AtomicUsize::new(0);
+
 /// State for a variable-length collection.
 pub struct ManyState {
     pub min_size: usize,
@@ -1409,6 +1416,13 @@ impl Spans {
         Spans { inner: Vec::new() }
     }
 
+    /// An empty `Spans` collection with room for `capacity` spans.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Spans {
+            inner: Vec::with_capacity(capacity),
+        }
+    }
+
     /// Number of recorded spans.
     pub fn len(&self) -> usize {
         self.inner.len()
@@ -1843,11 +1857,13 @@ impl NativeTestCase {
         family: Arc<FamilyCore>,
         clone_id: Vec<usize>,
     ) -> Self {
+        let nodes = MOST_NODES.load(Ordering::Relaxed).min(max_size);
+        let spans = MOST_SPANS.load(Ordering::Relaxed).min(max_size);
         NativeTestCase {
             replay,
             rng,
             max_size,
-            nodes: Vec::new(),
+            nodes: Vec::with_capacity(nodes),
             integer_kinds: Vec::new(),
             frozen: false,
             should_capture,
@@ -1855,11 +1871,11 @@ impl NativeTestCase {
             clone_id,
             clone_counter: 0,
             clone_children: Vec::new(),
-            spans: Spans::new(),
+            spans: Spans::with_capacity(spans),
             span_stack: Vec::new(),
-            span_ordinals: Vec::new(),
+            span_ordinals: Vec::with_capacity(spans),
             sibling_counts: HashMap::default(),
-            child_nodes: Vec::new(),
+            child_nodes: Vec::with_capacity(spans),
             top_child_nodes: 0,
             has_discards: false,
             observer,
@@ -2158,6 +2174,8 @@ impl NativeTestCase {
         while let Some(idx) = self.span_stack.pop() {
             self.close_span(idx, end);
         }
+        MOST_NODES.fetch_max(end, Ordering::Relaxed);
+        MOST_SPANS.fetch_max(self.spans.len(), Ordering::Relaxed);
         self.conclude(Status::Valid, None);
         if let Some(ref mut obs) = self.observer {
             let (status, origin) = self
@@ -2305,16 +2323,24 @@ impl NativeTestCase {
     }
 
     /// `kind` as the nodes share it: the copy a recent draw recorded when
-    /// one did, else a new one remembered in place of the oldest.
+    /// one did, else a new one remembered in place of the one drawn
+    /// longest ago. The remembered kinds are kept most recently drawn
+    /// first, so the few kinds a generator draws over and over are found
+    /// after a comparison or two.
     fn shared_integer_kind(&mut self, kind: &IntegerChoice) -> Arc<IntegerChoice> {
-        if let Some(shared) = self.integer_kinds.iter().find(|shared| ***shared == *kind) {
-            return Arc::clone(shared);
+        if let Some(i) = self
+            .integer_kinds
+            .iter()
+            .position(|shared| **shared == *kind)
+        {
+            self.integer_kinds[..=i].rotate_right(1);
+            return Arc::clone(&self.integer_kinds[0]);
         }
         let shared = Arc::new(kind.clone());
         if self.integer_kinds.len() == INTEGER_KINDS_REMEMBERED {
-            self.integer_kinds.remove(0);
+            self.integer_kinds.pop();
         }
-        self.integer_kinds.push(Arc::clone(&shared));
+        self.integer_kinds.insert(0, Arc::clone(&shared));
         shared
     }
 

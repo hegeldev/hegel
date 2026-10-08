@@ -883,7 +883,9 @@ fn write_corpus() {
         let started = std::time::Instant::now();
         for seed in 0..n {
             let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
-            match generate_grammar(&mut ntc, &spec) {
+            let outcome = generate_grammar(&mut ntc, &spec);
+            ntc.freeze();
+            match outcome {
                 Ok(s) => {
                     sizes.push(s.chars().count());
                     lines.push_str(&serde_json::to_string(&s).unwrap());

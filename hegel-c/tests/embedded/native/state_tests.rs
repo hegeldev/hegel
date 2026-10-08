@@ -3,7 +3,7 @@ use super::*;
 use crate::native::HashSet;
 use crate::native::core::BUFFER_SIZE;
 use crate::native::core::GenerationParameters;
-use crate::native::core::choices::{BooleanChoice, ChoiceKind};
+use crate::native::core::choices::{BooleanChoice, ChoiceData, ChoiceKind};
 use crate::native::rng::EngineRng;
 use alloc::string::ToString;
 
@@ -3102,4 +3102,47 @@ fn draw_index_weighted_replays_the_prefix_even_for_an_excluded_entry() {
 fn draw_index_weighted_simplest_is_zero() {
     let mut ntc = NativeTestCase::for_simplest(8).unwrap();
     assert_eq!(ntc.draw_index_weighted(&[0.0, 1.0, 1.0]).unwrap(), 0);
+}
+
+#[test]
+fn integer_kinds_are_remembered_most_recently_drawn_first() {
+    let mut tc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
+    let remembered = |tc: &NativeTestCase| -> Vec<u64> {
+        tc.integer_kinds
+            .iter()
+            .map(|kind| u64::try_from(kind.max_value.clone()).unwrap())
+            .collect()
+    };
+    for max in [1, 2, 1] {
+        tc.draw_integer_uniform(0, max).unwrap();
+    }
+    assert_eq!(remembered(&tc), [1, 2]);
+    let shared = |tc: &NativeTestCase, i: usize| match &tc.nodes[i].data {
+        ChoiceData::Integer(kind, _) => Arc::clone(kind),
+        other => panic!("{other:?}"),
+    };
+    assert!(Arc::ptr_eq(&shared(&tc, 0), &shared(&tc, 2)));
+    assert!(!Arc::ptr_eq(&shared(&tc, 0), &shared(&tc, 1)));
+    for max in 3..=INTEGER_KINDS_REMEMBERED as u64 + 1 {
+        tc.draw_integer_uniform(0, max).unwrap();
+    }
+    assert_eq!(remembered(&tc), [9, 8, 7, 6, 5, 4, 3, 1]);
+}
+
+#[test]
+fn a_test_case_reserves_room_for_the_most_choices_and_spans_seen() {
+    let mut tc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
+    for _ in 0..300 {
+        tc.start_span(7);
+        tc.draw_integer_uniform(0, 9).unwrap();
+        tc.stop_span(false);
+    }
+    tc.freeze();
+    let next = NativeTestCase::new_random(EngineRng::seeded(1)).unwrap();
+    assert!(next.nodes.capacity() >= 300);
+    assert!(next.spans.inner.capacity() >= 300);
+    assert!(next.span_ordinals.capacity() >= 300);
+    assert!(next.child_nodes.capacity() >= 300);
+    let small = NativeTestCase::for_choices_and_template(&[], None, None, 5, None);
+    assert!(small.nodes.capacity() <= 5);
 }
