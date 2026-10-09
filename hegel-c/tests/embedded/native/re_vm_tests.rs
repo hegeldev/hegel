@@ -264,3 +264,123 @@ fn sets_match_beyond_ascii() {
         Some(3)
     );
 }
+
+#[test]
+fn programs_that_look_around_them_keep_no_automaton() {
+    for pattern in [
+        "a*",
+        "\\d+(?:\\.\\d+)?",
+        "(?:ab|a)(?:bc|c)?",
+        "(?i)[a-c]+x*?",
+    ] {
+        assert!(program(pattern).unwrap().dfa.is_some(), "{pattern}");
+    }
+    for pattern in ["^a*", "a*$", "\\ba", "x(?=a*)", "(?<=a)b", "(?!x)y"] {
+        assert!(program(pattern).unwrap().dfa.is_none(), "{pattern}");
+    }
+}
+
+#[test]
+fn the_automaton_remembers_the_states_a_run_passes_through() {
+    let p = program("(?:ab|a)(?:bc|c)?d*").unwrap();
+    let text = chars("abcdd abcd acd ad é");
+    let states = |p: &Program| p.dfa.as_ref().unwrap().lock().states.len();
+    assert_eq!(states(&p), 0);
+    let twin = p.clone();
+    for pos in 0..=text.len() {
+        assert_eq!(run(&p, &text, pos, None), run(&twin, &text, pos, None));
+    }
+    let remembered = states(&p);
+    assert!((4..=16).contains(&remembered), "{remembered}");
+    assert_eq!(states(&twin), remembered);
+    for pos in 0..=text.len() {
+        run(&p, &text, pos, None);
+    }
+    assert_eq!(states(&p), remembered);
+    let dfa = p.dfa.as_ref().unwrap().lock();
+    assert!(dfa.states.iter().any(|state| !state.other.is_empty()));
+    assert!(
+        dfa.states
+            .iter()
+            .all(|state| state.waiting <= state.pcs.len())
+    );
+}
+
+#[test]
+fn the_automaton_forgets_its_states_when_there_are_too_many() {
+    let p = program("(?:ab){0,600}c?").unwrap();
+    let fresh = p.clone();
+    let text: Vec<char> = "ab".repeat(600).chars().chain(['c']).collect();
+    let states = |p: &Program| p.dfa.as_ref().unwrap().lock().states.len();
+    let (end, touch, resume) = p.scan(&text, 0, None);
+    assert_eq!((end, touch, resume), (Some(1201), Touch::Never, None));
+    assert!(states(&p) <= DFA_STATES, "{}", states(&p));
+    for split in [1, 700, 1199, 1200] {
+        let (end, touch, resume) = p.scan(&text[..split], 0, None);
+        assert_eq!(touch, Touch::End, "{split}");
+        assert_eq!(
+            (end, &resume),
+            (
+                fresh.scan(&text[..split], 0, None).0,
+                &fresh.scan(&text[..split], 0, None).2
+            ),
+            "{split}"
+        );
+        let carried = p.resume(&resume.unwrap(), &text, 0, split);
+        assert_eq!(carried.0, Some(1201), "{split}");
+        assert!(states(&p) <= DFA_STATES, "{}", states(&p));
+    }
+}
+
+#[test]
+fn characters_beyond_ascii_share_transitions_by_class() {
+    let p = program("[α-ω]+(?:[^a-z]x)?").unwrap();
+    let text = chars("αβγδ Ωx");
+    assert_eq!(run(&p, &text, 0, None), Some(4));
+    assert_eq!(run(&p, &text, 4, None), None);
+    assert_eq!(run(&p, &chars("αÀx"), 0, None), Some(3));
+    let dfa = p.dfa.as_ref().unwrap().lock();
+    let other: usize = dfa.states.iter().map(|state| state.other.len()).sum();
+    assert!((2..=4).contains(&other), "{other}");
+    drop(dfa);
+    assert!(matches!(p.classes, Classes::Ranges(_)));
+    assert!(p.class('α') != p.class('À') && p.class('β') == p.class('γ'));
+    assert_eq!(p.class('a'), u64::from('a'));
+    let word = program("\\w+\\D\\s").unwrap();
+    assert!(matches!(&word.classes, Classes::Ranges(bounds) if bounds.len() > 100));
+    assert_eq!(run(&word, &chars("héllo٣ \u{2003}"), 0, None), Some(8));
+    assert!(word.class('é') == word.class('ö') && word.class('é') != word.class('\u{2003}'));
+    let ascii = program("(?a)\\w+").unwrap();
+    assert!(matches!(&ascii.classes, Classes::Ranges(bounds) if bounds.is_empty()));
+    assert_eq!(run(&ascii, &chars("héllo"), 0, None), Some(1));
+    let folded = program("(?i)[α-ω]+x").unwrap();
+    assert!(matches!(folded.classes, Classes::Tests(_)));
+    assert_eq!(run(&folded, &chars("αΒΓX"), 0, None), Some(4));
+    assert!(folded.class('Β') == folded.class('γ') && folded.class('Β') != folded.class('À'));
+    let many = program(&["(?i)", &"[^a]".repeat(70)].concat()).unwrap();
+    assert!(matches!(many.classes, Classes::ByChar));
+    assert_eq!(many.class('α'), u64::from('α'));
+    let text: Vec<char> = "αβ".repeat(35).chars().collect();
+    assert_eq!(run(&many, &text, 0, None), Some(70));
+    assert_eq!(run(&many, &text[..69], 0, None), None);
+}
+
+#[test]
+fn a_resume_names_its_state_and_checks_it_is_still_the_same() {
+    let p = program("ab*c?").unwrap();
+    let (end, _, resume) = p.scan(&chars("ab"), 0, None);
+    let resume = resume.unwrap();
+    assert_eq!(end, Some(2));
+    assert_ne!(resume.state, UNKNOWN);
+    assert_eq!(p.resume(&resume, &chars("abbc"), 0, 2).0, Some(4));
+    p.dfa.as_ref().unwrap().lock().clear();
+    assert_eq!(p.resume(&resume, &chars("abbc"), 0, 2).0, Some(4));
+    let other = program("xy*").unwrap();
+    for text in ["x", "xy"] {
+        other.scan(&chars(text), 0, None);
+    }
+    let mut stale = resume.clone();
+    stale.state = 0;
+    assert_eq!(p.resume(&stale, &chars("abc"), 0, 2).0, Some(3));
+    assert!(p.swallows(&stale, 'b') && !p.swallows(&stale, 'd'));
+}

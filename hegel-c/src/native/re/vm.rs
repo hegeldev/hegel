@@ -12,10 +12,13 @@
 //! cannot match empty (where CPython has special rules for stopping),
 //! and whose unrolled size stays within [`PROGRAM_LIMIT`]; anything else
 //! is [`Unsupported`] and stays with the backtracking matcher. The
-//! simulation costs more per character than backtracking does on the
-//! common run of a pattern, so it earns its keep on the patterns where
-//! backtracking can go quadratic: a repeat nested in a repeat (see
-//! [`has_nested_repeats`]).
+//! simulation on its own costs more per character than backtracking
+//! does on the common run of a pattern, so a program whose instructions
+//! never look at the text around a position (no anchors or lookarounds)
+//! remembers the thread lists it passes through as the states of a
+//! deterministic automaton, built lazily one transition at a time (see
+//! [`Dfa`]): a character seen before in a state seen before costs a
+//! table lookup.
 //!
 //! Because the threads alive at any position are the whole state of a
 //! run, a run that reaches the end of its text with threads still
@@ -23,16 +26,28 @@
 //! later over a longer text that begins the same way, instead of
 //! starting over.
 
-use super::constants::{AtCode, MAXREPEAT, SRE_FLAG_DOTALL};
+use super::categories::class_ranges;
+use super::constants::{
+    AtCode, ChCode, MAXREPEAT, SRE_FLAG_DOTALL, SRE_FLAG_IGNORECASE, SRE_FLAG_UNICODE,
+};
 use super::matcher::{Touch, at_matches, combine_flags, literal_eq, set_matches};
 use super::parser::{OpCode, ParsedPattern, SetItem, SubPattern};
 use super::width::get_width;
+use crate::native::HashMap;
 use crate::sys::sync::Mutex;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 /// The most instructions a program may have, counting the repeats it
 /// unrolls.
 const PROGRAM_LIMIT: usize = 4096;
+
+/// The most thread lists a program's [`Dfa`] remembers before it forgets
+/// them all and starts over.
+const DFA_STATES: usize = 1024;
+
+/// A transition not yet taken in a [`DfaState`].
+const UNKNOWN: u32 = u32::MAX;
 
 /// Marks a stack entry in [`Program::follow`] that only adds its
 /// instruction to the thread list, so a lazy loop's own thread can come
@@ -56,6 +71,41 @@ enum Unit {
 }
 
 impl Unit {
+    /// Add to `bounds` the codepoints at which the test's answer
+    /// changes, when it follows from codepoint ranges: not under
+    /// IGNORECASE, whose folding crosses ranges.
+    fn bounds(&self, flags: u32, bounds: &mut Vec<u32>) -> bool {
+        if flags & SRE_FLAG_IGNORECASE != 0 {
+            return false;
+        }
+        let mut range = |lo: u32, hi: u32| bounds.extend([lo, hi.saturating_add(1)]);
+        match self {
+            Unit::Literal(cp) | Unit::NotLiteral(cp) => range(*cp, *cp),
+            Unit::Any => range(u32::from('\n'), u32::from('\n')),
+            Unit::In(items, _) => {
+                for item in items {
+                    match item {
+                        SetItem::Negate => {}
+                        SetItem::Literal(cp) => range(*cp, *cp),
+                        SetItem::Range(lo, hi) => range(*lo, *hi),
+                        SetItem::Category(_) if flags & SRE_FLAG_UNICODE == 0 => {}
+                        SetItem::Category(category) => {
+                            let class = match category {
+                                ChCode::Digit | ChCode::NotDigit => ChCode::Digit,
+                                ChCode::Space | ChCode::NotSpace => ChCode::Space,
+                                ChCode::Word | ChCode::NotWord => ChCode::Word,
+                            };
+                            for &(lo, hi) in class_ranges(class).unwrap_or(&[]) {
+                                range(lo, hi);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        true
+    }
+
     fn matches(&self, c: char, flags: u32) -> bool {
         match self {
             Unit::Literal(cp) => literal_eq(*cp, c, flags),
@@ -106,6 +156,54 @@ pub struct Program {
     insts: Vec<Inst>,
     /// Thread lists from earlier runs, kept to save allocating them again.
     scratch: Mutex<Vec<Scratch>>,
+    /// The transitions taken so far between the thread lists of a program
+    /// whose threads never look at the text around them, so that the
+    /// lists need not be followed again, shared with the program's
+    /// clones; `None` for a program with an anchor or lookaround, whose
+    /// lists depend on where they are.
+    dfa: Option<Arc<Mutex<Dfa>>>,
+    /// How the characters beyond ASCII fall into classes that every
+    /// character test in the program treats alike (see
+    /// [`Program::class`]).
+    classes: Classes,
+}
+
+/// How a program tells the characters beyond ASCII apart for its
+/// [`Dfa`].
+enum Classes {
+    /// By where they fall among these sorted codepoints, at each of
+    /// which some test's answer changes.
+    Ranges(Vec<u32>),
+    /// By which of these tests (instructions) they pass, for tests
+    /// whose answers do not follow from codepoint ranges.
+    Tests(Vec<usize>),
+    /// Each by itself: too many tests to count.
+    ByChar,
+}
+
+impl Classes {
+    fn of(insts: &[Inst]) -> Classes {
+        let units: Vec<usize> = (0..insts.len())
+            .filter(|&pc| matches!(insts[pc], Inst::Unit(..) | Inst::Loop(..)))
+            .collect();
+        let mut bounds = Vec::new();
+        for &pc in &units {
+            let (Inst::Unit(unit, flags) | Inst::Loop(unit, flags, _)) = &insts[pc] else {
+                unreachable!("units are character tests")
+            };
+            if !unit.bounds(*flags, &mut bounds) {
+                return if units.len() > 63 {
+                    Classes::ByChar
+                } else {
+                    Classes::Tests(units)
+                };
+            }
+        }
+        bounds.retain(|&bound| bound >= 128);
+        bounds.sort_unstable();
+        bounds.dedup();
+        Classes::Ranges(bounds)
+    }
 }
 
 impl Clone for Program {
@@ -113,6 +211,93 @@ impl Clone for Program {
         Program {
             insts: self.insts.clone(),
             scratch: Mutex::new(Vec::new()),
+            dfa: self.dfa.clone(),
+            classes: Classes::of(&self.insts),
+        }
+    }
+}
+
+/// The thread lists a program's runs have passed through, each with the
+/// list one character leads to from it where that has been worked out.
+#[derive(Default)]
+struct Dfa {
+    states: Vec<DfaState>,
+    /// Each state's threads, by state.
+    ids: HashMap<Arc<[usize]>, u32>,
+    /// The state a run starts in, once worked out.
+    start: Option<u32>,
+}
+
+/// One thread list, in order of preference and cut after the first
+/// thread that has matched, since the ones after it never run.
+struct DfaState {
+    pcs: Arc<[usize]>,
+    /// How many of the threads wait for a character: all of them, or
+    /// all but the matched one at the end.
+    waiting: usize,
+    /// The state each ASCII character leads to, or [`UNKNOWN`].
+    ascii: [u32; 128],
+    /// The state each class of other character seen so far leads to
+    /// (see [`Program::class`]).
+    other: Vec<(u64, u32)>,
+}
+
+impl DfaState {
+    fn next(&self, class: u64) -> u32 {
+        match class {
+            cp if cp < 128 => self.ascii[cp as usize],
+            _ => self
+                .other
+                .iter()
+                .find(|(known, _)| *known == class)
+                .map_or(UNKNOWN, |(_, next)| *next),
+        }
+    }
+
+    fn set_next(&mut self, class: u64, next: u32) {
+        match class {
+            cp if cp < 128 => self.ascii[cp as usize] = next,
+            _ => self.other.push((class, next)),
+        }
+    }
+}
+
+impl Dfa {
+    /// The state whose threads are `pcs`, made when new; the caller
+    /// keeps the number of states within [`DFA_STATES`].
+    fn intern(&mut self, insts: &[Inst], pcs: &[usize]) -> u32 {
+        let waiting = pcs
+            .iter()
+            .position(|&pc| matches!(insts[pc], Inst::Match))
+            .unwrap_or(pcs.len());
+        let pcs = &pcs[..(waiting + 1).min(pcs.len())];
+        if let Some(&id) = self.ids.get(pcs) {
+            return id;
+        }
+        let id = self.states.len() as u32;
+        let pcs: Arc<[usize]> = Arc::from(pcs);
+        self.states.push(DfaState {
+            pcs: Arc::clone(&pcs),
+            waiting,
+            ascii: [UNKNOWN; 128],
+            other: Vec::new(),
+        });
+        self.ids.insert(pcs, id);
+        id
+    }
+
+    fn clear(&mut self) {
+        self.states.clear();
+        self.ids.clear();
+        self.start = None;
+    }
+
+    /// The state `resume`'s threads are in: the one it names when that
+    /// is still theirs, else found or made afresh.
+    fn resumed(&mut self, insts: &[Inst], resume: &Resume) -> u32 {
+        match self.states.get(resume.state as usize) {
+            Some(state) if state.pcs == resume.pcs => resume.state,
+            _ => self.intern(insts, &resume.pcs),
         }
     }
 }
@@ -326,11 +511,24 @@ fn split_inst(body: usize, exit: usize, greedy: bool) -> Inst {
 /// preference, with the match found by then (as an offset from where the
 /// run started): enough to carry on when more text follows, see
 /// [`Program::resume`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Resume {
-    pcs: Vec<usize>,
+    /// The threads, cut like a [`DfaState`]'s after the first that
+    /// matched, if any did.
+    pcs: Arc<[usize]>,
     found: Option<usize>,
+    /// The [`Dfa`] state the threads were in, to be checked before
+    /// use: the automaton may have forgotten it since.
+    state: u32,
 }
+
+impl PartialEq for Resume {
+    fn eq(&self, other: &Resume) -> bool {
+        self.pcs == other.pcs && self.found == other.found
+    }
+}
+
+impl Eq for Resume {}
 
 /// The threads alive at one position, in order of preference, with a
 /// generation stamp per instruction recording which list last took it.
@@ -379,10 +577,52 @@ impl Program {
                 *target = entry;
             }
         }
+        let positional = compiler
+            .insts
+            .iter()
+            .any(|inst| matches!(inst, Inst::At(..) | Inst::Look { .. }));
+        let classes = Classes::of(&compiler.insts);
         Ok(Program {
             insts: compiler.insts,
             scratch: Mutex::new(Vec::new()),
+            dfa: (!positional).then(|| Arc::new(Mutex::new(Dfa::default()))),
+            classes,
         })
+    }
+
+    /// Whether the program remembers the states its runs pass through
+    /// (see [`Dfa`]), which it cannot when its threads look at the text
+    /// around them.
+    pub fn remembers(&self) -> bool {
+        self.dfa.is_some()
+    }
+
+    /// Which characters `c` behaves like in every one of the program's
+    /// character tests, so that its transitions can stand for them all:
+    /// an ASCII character is its own class, with the tests looked up by
+    /// it; any other is told apart as [`Classes`] says.
+    fn class(&self, c: char) -> u64 {
+        let cp = u32::from(c);
+        if cp < 128 {
+            return u64::from(cp);
+        }
+        match &self.classes {
+            Classes::Ranges(bounds) => 128 + bounds.partition_point(|&bound| bound <= cp) as u64,
+            Classes::ByChar => u64::from(cp),
+            Classes::Tests(units) => {
+                let mut class = 1 << 63;
+                for (i, &pc) in units.iter().enumerate() {
+                    let (Inst::Unit(unit, flags) | Inst::Loop(unit, flags, _)) = &self.insts[pc]
+                    else {
+                        unreachable!("units are character tests")
+                    };
+                    if unit.matches(c, *flags) {
+                        class |= 1 << i;
+                    }
+                }
+                class
+            }
+        }
     }
 
     fn take_scratch(&self) -> Scratch {
@@ -412,8 +652,36 @@ impl Program {
         start: usize,
         exact_end: Option<usize>,
     ) -> (Option<usize>, Touch, Option<Resume>) {
+        let start = start.min(text.len());
+        if let (Some(dfa), None) = (&self.dfa, exact_end) {
+            let mut dfa = dfa.lock();
+            let state = match dfa.start {
+                Some(state) => state,
+                None => {
+                    let mut scratch = self.take_scratch();
+                    scratch.generation += 1;
+                    scratch.current.pcs.clear();
+                    let mut touch = Touch::Never;
+                    let generation = scratch.generation;
+                    self.follow(
+                        &mut scratch.current,
+                        &mut scratch.stack,
+                        generation,
+                        0,
+                        text,
+                        start,
+                        &mut touch,
+                    );
+                    let state = dfa.intern(&self.insts, &scratch.current.pcs);
+                    self.return_scratch(scratch);
+                    dfa.start = Some(state);
+                    state
+                }
+            };
+            return self.dfa_steps(&mut dfa, state, text, start, start, None);
+        }
         let mut scratch = self.take_scratch();
-        let found = self.run_from(0, text, start.min(text.len()), exact_end, &mut scratch);
+        let found = self.run_from(0, text, start, exact_end, &mut scratch);
         self.return_scratch(scratch);
         found
     }
@@ -429,10 +697,18 @@ impl Program {
         start: usize,
         consumed: usize,
     ) -> (Option<usize>, Touch, Option<Resume>) {
+        let found = resume.found.map(|found| start + found);
+        if let Some(dfa) = &self.dfa {
+            let mut dfa = dfa.lock();
+            if dfa.states.len() >= DFA_STATES {
+                dfa.clear();
+            }
+            let state = dfa.resumed(&self.insts, resume);
+            return self.dfa_steps(&mut dfa, state, text, start, start + consumed, found);
+        }
         let mut scratch = self.take_scratch();
         scratch.current.pcs.clear();
         scratch.current.pcs.extend_from_slice(&resume.pcs);
-        let found = resume.found.map(|found| start + found);
         let out = self.steps(
             text,
             start,
@@ -468,6 +744,112 @@ impl Program {
             &mut touch,
         );
         self.steps(text, start, start, exact_end, None, touch, scratch)
+    }
+
+    /// Whether the threads a run left waiting would match through `c`:
+    /// on a text that continues with `c`, the match ends at or after it.
+    /// Only known for a program with a [`Dfa`]; for one whose threads
+    /// look at the text around them, `false`.
+    pub fn swallows(&self, resume: &Resume, c: char) -> bool {
+        let Some(dfa) = &self.dfa else {
+            return false;
+        };
+        let mut dfa = dfa.lock();
+        if dfa.states.len() >= DFA_STATES {
+            dfa.clear();
+        }
+        let state = dfa.resumed(&self.insts, resume);
+        let class = self.class(c);
+        let next = match dfa.states[state as usize].next(class) {
+            UNKNOWN => self.dfa_transition(&mut dfa, state, c, class, &[c], 0),
+            next => next,
+        };
+        let next = &dfa.states[next as usize];
+        next.waiting < next.pcs.len()
+    }
+
+    /// [`steps`](Self::steps) for a program with a [`Dfa`], from `state`
+    /// at `pos`: each character leads to the state remembered for it, or
+    /// to the state its threads lead to, remembered then.
+    fn dfa_steps(
+        &self,
+        dfa: &mut Dfa,
+        mut state: u32,
+        text: &[char],
+        start: usize,
+        mut pos: usize,
+        mut found: Option<usize>,
+    ) -> (Option<usize>, Touch, Option<Resume>) {
+        loop {
+            let current = &dfa.states[state as usize];
+            if current.waiting < current.pcs.len() {
+                found = Some(pos);
+            }
+            if current.waiting == 0 {
+                return (found, Touch::Never, None);
+            }
+            let Some(&c) = text.get(pos) else {
+                let resume = Resume {
+                    pcs: Arc::clone(&current.pcs),
+                    found: found.map(|found| found - start),
+                    state,
+                };
+                return (found, Touch::End, Some(resume));
+            };
+            let class = self.class(c);
+            state = match current.next(class) {
+                UNKNOWN => self.dfa_transition(dfa, state, c, class, text, pos),
+                next => next,
+            };
+            pos += 1;
+        }
+    }
+
+    /// Work out and remember where `c`, of `class`, leads from `state`
+    /// at `pos`, forgetting every state first when there are too many.
+    #[allow(clippy::too_many_arguments)]
+    fn dfa_transition(
+        &self,
+        dfa: &mut Dfa,
+        mut state: u32,
+        c: char,
+        class: u64,
+        text: &[char],
+        pos: usize,
+    ) -> u32 {
+        let mut scratch = self.take_scratch();
+        scratch.generation += 1;
+        scratch.next.pcs.clear();
+        let mut touch = Touch::Never;
+        let current = &dfa.states[state as usize];
+        for &pc in &current.pcs[..current.waiting] {
+            let target = match &self.insts[pc] {
+                Inst::Unit(unit, flags) => unit.matches(c, *flags).then_some(pc + 1),
+                Inst::Loop(unit, flags, _) => unit.matches(c, *flags).then_some(pc),
+                _ => unreachable!("only characters wait for input"),
+            };
+            if let Some(target) = target {
+                let generation = scratch.generation;
+                self.follow(
+                    &mut scratch.next,
+                    &mut scratch.stack,
+                    generation,
+                    target,
+                    text,
+                    pos + 1,
+                    &mut touch,
+                );
+            }
+        }
+        if dfa.states.len() >= DFA_STATES {
+            let pcs = Arc::clone(&dfa.states[state as usize].pcs);
+            dfa.clear();
+            state = dfa.intern(&self.insts, &pcs);
+        }
+        let next = dfa.intern(&self.insts, &scratch.next.pcs);
+        self.return_scratch(scratch);
+        dfa.states[state as usize].set_next(class, next);
+        next
     }
 
     /// Advance the threads in `scratch.current` from `pos` to the end of
@@ -528,8 +910,9 @@ impl Program {
                     return (found, touch, None);
                 }
                 let resume = (touch == Touch::Never && exact_end.is_none()).then(|| Resume {
-                    pcs: current.pcs[..waiting].to_vec(),
+                    pcs: Arc::from(&current.pcs[..waiting]),
                     found: found.map(|found| found - start),
+                    state: UNKNOWN,
                 });
                 return (found, Touch::End, resume);
             }

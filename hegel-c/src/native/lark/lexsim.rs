@@ -242,9 +242,11 @@ fn looks_back(p: &SubPattern, consumed: u64) -> Option<u64> {
 /// regex, the characters a match can start with (so most terminals are
 /// ruled out at a position without running the matcher), for a
 /// case-sensitive string terminal the literal itself, compared directly,
-/// the compiled [`Program`] for a pattern that could send the
-/// backtracking matcher quadratic, which simulates every path at once,
-/// and whether a match can depend on the text before it.
+/// the compiled [`Program`] for a pattern whose simulation remembers the
+/// states it passes through (one without anchors or lookarounds) or
+/// that could send the backtracking matcher quadratic, and whether a
+/// match can depend on the text before it. The backtracking matcher is
+/// left with the rest.
 #[derive(Clone)]
 struct TermPattern {
     /// Shared between the clones of the pattern the lexers hold, so the
@@ -282,9 +284,11 @@ impl TermPattern {
             .then(|| pattern.value.chars().collect());
         TermPattern {
             first: first_chars(&parsed),
-            program: (literal.is_none() && has_nested_repeats(&parsed.pattern))
+            program: literal
+                .is_none()
                 .then(|| Program::compile(&parsed).ok())
-                .flatten(),
+                .flatten()
+                .filter(|program| program.remembers() || has_nested_repeats(&parsed.pattern)),
             anchored: anchored(&parsed),
             parsed: Arc::new(parsed),
             literal,
@@ -595,7 +599,11 @@ impl Lexer {
                     Carry::Unless(probes) => first
                         .chars()
                         .any(|c| pattern.probed(probes, c) != Some(true)),
-                    Carry::Literal | Carry::Resume(_) => true,
+                    Carry::Resume(resume) => pattern
+                        .program
+                        .as_ref()
+                        .is_none_or(|program| first.chars().any(|c| !program.swallows(resume, c))),
+                    Carry::Literal => true,
                 })
         })
     }

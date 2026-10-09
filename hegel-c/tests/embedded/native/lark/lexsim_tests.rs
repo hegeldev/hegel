@@ -428,7 +428,7 @@ TAIL: /[a-z]+(?<=a)/
             "{text:?}"
         );
     }
-    for text in ["12.5", "123", "12"] {
+    for text in ["123", "12"] {
         assert_eq!(
             lexer.settle(&scan, &chars(text), 0, 2, false),
             None,
@@ -436,10 +436,17 @@ TAIL: /[a-z]+(?<=a)/
         );
     }
     assert_eq!(
+        lexer.settle(&scan, &chars("12.5"), 0, 2, false),
+        Some(Lexed::Token(id("NUMBER"), 4))
+    );
+    assert_eq!(
         lexer.extend(&scan, &chars("12"), 0, 2, false),
         Some(Lexed::Token(id("NUMBER"), 2))
     );
-    assert_eq!(lexer.extend(&scan, &chars("12.5"), 0, 2, false), None);
+    assert_eq!(
+        lexer.extend(&scan, &chars("12.5"), 0, 2, false),
+        Some(Lexed::Token(id("NUMBER"), 4))
+    );
     let scan = lexer.match_terminal_scan(id("COMMENT"), &chars("  "), 0);
     assert_eq!(scan.lexed, Lexed::NoMatch);
     assert_eq!(
@@ -454,7 +461,10 @@ TAIL: /[a-z]+(?<=a)/
         lexer.extend(&scan, &chars("  z"), 0, 2, true),
         Some(Lexed::NoMatch)
     );
-    assert_eq!(lexer.extend(&scan, &chars("  # c"), 0, 2, true), None);
+    assert_eq!(
+        lexer.extend(&scan, &chars("  # c"), 0, 2, true),
+        Some(Lexed::Token(id("COMMENT"), 5))
+    );
     let scan = lexer.match_terminal_scan(id("TAIL"), &chars("abc"), 0);
     assert_eq!(scan.lexed, Lexed::Token(id("TAIL"), 1));
     assert_eq!(
