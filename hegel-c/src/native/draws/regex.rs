@@ -2,7 +2,6 @@ use crate::control::{InternalError, hegel_internal_unwrap};
 use crate::native::{HashMap, HashSet};
 use alloc::format;
 use alloc::string::String;
-use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -82,8 +81,8 @@ impl CompiledRegex {
 /// match, ...) are retried a few times within the same test case — the
 /// analogue of Hypothesis's strategy-level `.filter(re.search)` retries —
 /// before the whole test case is marked invalid.
-/// The bytes a drawn string starts out with room for, so that one of
-/// ordinary length is built without the buffer growing.
+/// The characters a drawn string starts out with room for, so that one
+/// of ordinary length is built without the buffer growing.
 const TYPICAL_CAPACITY: usize = 64;
 
 pub(crate) fn generate_regex(
@@ -91,22 +90,46 @@ pub(crate) fn generate_regex(
     re: &CompiledRegex,
     fullmatch: bool,
 ) -> Result<String, EngineError> {
+    let mut out = Vec::with_capacity(TYPICAL_CAPACITY);
+    generate_regex_into(ntc, re, fullmatch, &mut out)?;
+    Ok(out.into_iter().collect())
+}
+
+/// Draw a string matching `re` onto the end of `out`, whose earlier text
+/// the pattern never sees: an anchor at the start of the pattern is at
+/// the start of the drawn string. What an attempt that fails a deferred
+/// check or errors added is removed again.
+pub(crate) fn generate_regex_into(
+    ntc: &mut NativeTestCase,
+    re: &CompiledRegex,
+    fullmatch: bool,
+    out: &mut Vec<char>,
+) -> Result<(), EngineError> {
     const MAX_ATTEMPTS: usize = 5;
+    let base = out.len();
     for _ in 0..MAX_ATTEMPTS {
-        if let Some(s) = generate_regex_attempt(ntc, re, fullmatch)? {
-            return Ok(s);
+        match generate_regex_attempt(ntc, re, fullmatch, out, base) {
+            Ok(true) => return Ok(()),
+            Ok(false) => out.truncate(base),
+            Err(e) => {
+                out.truncate(base);
+                return Err(e);
+            }
         }
     }
     Err(mark_invalid(ntc))
 }
 
-/// One generation attempt. Returns `Ok(None)` when the candidate was
-/// generated but failed a deferred check against the final string.
+/// One generation attempt, appending to `out` from `base` on. Returns
+/// `Ok(false)` when the candidate was generated but failed a deferred
+/// check against the final string.
 fn generate_regex_attempt(
     ntc: &mut NativeTestCase,
     re: &CompiledRegex,
     fullmatch: bool,
-) -> Result<Option<String>, EngineError> {
+    out: &mut Vec<char>,
+    base: usize,
+) -> Result<bool, EngineError> {
     let parsed = &re.parsed;
     let alphabet = &re.alphabet;
 
@@ -114,6 +137,7 @@ fn generate_regex_attempt(
         groups: HashMap::default(),
         flags: parsed.flags,
         fullmatch,
+        base,
         pending_anchors: Vec::new(),
         pending_asserts: Vec::new(),
         pending_lookaheads: Vec::new(),
@@ -121,21 +145,20 @@ fn generate_regex_attempt(
         in_cache: &re.in_cache,
         char_cache: &re.char_cache,
     };
-    let mut result = String::with_capacity(TYPICAL_CAPACITY);
 
     if parsed.pattern.is_empty() {
         if !fullmatch {
-            draw_pad(ntc, alphabet, &mut result)?;
+            draw_pad(ntc, alphabet, out)?;
         }
-        return Ok(Some(result));
+        return Ok(true);
     }
 
     if !fullmatch {
-        draw_prefix(ntc, parsed, alphabet, &mut result)?;
+        draw_prefix(ntc, parsed, alphabet, out, base)?;
     }
-    generate_subpattern(ntc, &parsed.pattern, &mut state, alphabet, &mut result)?;
+    generate_subpattern(ntc, &parsed.pattern, &mut state, alphabet, out)?;
     if !fullmatch {
-        draw_suffix(ntc, parsed, alphabet, &mut result)?;
+        draw_suffix(ntc, parsed, alphabet, out)?;
     }
 
     let needs_final_checks = !state.pending_anchors.is_empty()
@@ -143,10 +166,10 @@ fn generate_regex_attempt(
         || !state.pending_lookaheads.is_empty()
         || state.needs_whole_match;
     if needs_final_checks {
-        let final_chars: Vec<char> = result.chars().collect();
+        let final_chars = &out[base..];
         for anchor in &state.pending_anchors {
-            if !at_matches(&anchor.at, &final_chars, anchor.char_pos, anchor.flags) {
-                return Ok(None);
+            if !at_matches(&anchor.at, final_chars, anchor.char_pos, anchor.flags) {
+                return Ok(false);
             }
         }
         for pending in &state.pending_asserts {
@@ -154,7 +177,7 @@ fn generate_regex_attempt(
                 match_seq(
                     &pending.pattern.data,
                     pending.char_pos,
-                    &final_chars,
+                    final_chars,
                     pending.flags,
                     &pending.groups,
                 )
@@ -164,14 +187,14 @@ fn generate_regex_attempt(
                     match_seq(
                         &pending.pattern.data,
                         start,
-                        &final_chars,
+                        final_chars,
                         pending.flags,
                         &pending.groups,
                     ) == Some(pending.char_pos)
                 })
             };
             if !holds {
-                return Ok(None);
+                return Ok(false);
             }
         }
         for pending in &state.pending_lookaheads {
@@ -179,7 +202,7 @@ fn generate_regex_attempt(
                 match_seq(
                     &pending.pattern.data,
                     pending.char_pos,
-                    &final_chars,
+                    final_chars,
                     pending.flags,
                     &pending.groups,
                 )
@@ -189,22 +212,22 @@ fn generate_regex_attempt(
                     match_seq(
                         &pending.pattern.data,
                         start,
-                        &final_chars,
+                        final_chars,
                         pending.flags,
                         &pending.groups,
                     ) == Some(pending.char_pos)
                 })
             };
             if matches {
-                return Ok(None);
+                return Ok(false);
             }
         }
-        if state.needs_whole_match && !whole_match(parsed, fullmatch, &final_chars, &state.groups) {
-            return Ok(None);
+        if state.needs_whole_match && !whole_match(parsed, fullmatch, final_chars, &state.groups) {
+            return Ok(false);
         }
     }
 
-    Ok(Some(result))
+    Ok(true)
 }
 
 /// Whether the pattern matches `chars` — anywhere for search semantics, or
@@ -218,7 +241,7 @@ fn whole_match(
     parsed: &ParsedPattern,
     fullmatch: bool,
     chars: &[char],
-    groups: &HashMap<u32, String>,
+    groups: &HashMap<u32, Vec<char>>,
 ) -> bool {
     if fullmatch {
         let mut anchored = parsed.pattern.data.clone();
@@ -235,13 +258,17 @@ fn whole_match(
 /// back-references) and the active regex flags (which change as we descend
 /// into `SUBPATTERN` nodes with inline flag modifiers).
 struct GenState<'a> {
-    groups: HashMap<u32, String>,
+    groups: HashMap<u32, Vec<char>>,
     flags: u32,
     /// Whether the draw is anchored at both ends. Affects how lookaround
     /// assertions are generated: in fullmatch mode their bodies must not be
     /// emitted (the pattern has to consume the entire output), so they become
     /// deferred checks instead.
     fullmatch: bool,
+    /// Where in the output buffer the drawn string starts: the text
+    /// before it belongs to the caller, and the anchors and deferred
+    /// checks never look at it.
+    base: usize,
     /// Zero-width anchors (`\b`, `\B`, and `$`/`\Z` in non-final positions)
     /// recorded during generation and checked against the final output
     /// string, since the content that follows them isn't known yet when they
@@ -278,7 +305,7 @@ struct PendingAssertNot {
     direction: i32,
     pattern: SubPattern,
     flags: u32,
-    groups: HashMap<u32, String>,
+    groups: HashMap<u32, Vec<char>>,
 }
 
 /// Draw 0..10 arbitrary characters from `alphabet` (or ASCII 32..126 when
@@ -287,7 +314,7 @@ struct PendingAssertNot {
 fn draw_pad(
     ntc: &mut NativeTestCase,
     alphabet: &Option<IntervalSet>,
-    out: &mut String,
+    out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
     let n = ntc
         .draw_integer(BigInt::from(0), BigInt::from(10))?
@@ -327,7 +354,8 @@ fn draw_prefix(
     ntc: &mut NativeTestCase,
     parsed: &ParsedPattern,
     alphabet: &Option<IntervalSet>,
-    out: &mut String,
+    out: &mut Vec<char>,
+    base: usize,
 ) -> Result<(), EngineError> {
     if let Some(OpCode::At(at)) = effective_first(&parsed.pattern) {
         match at {
@@ -335,7 +363,7 @@ fn draw_prefix(
             AtCode::Beginning => {
                 if parsed.flags & SRE_FLAG_MULTILINE != 0 && alphabet_allows(alphabet, '\n') {
                     draw_pad(ntc, alphabet, out)?;
-                    if !out.is_empty() {
+                    if out.len() > base {
                         out.push('\n');
                     }
                 }
@@ -351,7 +379,7 @@ fn draw_suffix(
     ntc: &mut NativeTestCase,
     parsed: &ParsedPattern,
     alphabet: &Option<IntervalSet>,
-    out: &mut String,
+    out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
     if let Some(OpCode::At(at)) = effective_last(&parsed.pattern) {
         match at {
@@ -382,7 +410,7 @@ fn generate_subpattern(
     sp: &SubPattern,
     state: &mut GenState,
     alphabet: &Option<IntervalSet>,
-    out: &mut String,
+    out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
     for op in &sp.data {
         generate_op(ntc, op, state, alphabet, out)?;
@@ -394,7 +422,7 @@ fn generate_op(
     op: &OpCode,
     state: &mut GenState,
     alphabet: &Option<IntervalSet>,
-    out: &mut String,
+    out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
     match op {
         OpCode::Literal(cp) => {
@@ -449,22 +477,22 @@ fn generate_op(
             emit_from_chars(ntc, &chars, out)?;
         }
         OpCode::At(at) => match at {
-            AtCode::BeginningString if !out.is_empty() => {
+            AtCode::BeginningString if out.len() > state.base => {
                 return Err(mark_invalid(ntc));
             }
             AtCode::BeginningString => {}
             AtCode::Beginning => {
                 if state.flags & SRE_FLAG_MULTILINE != 0 {
-                    if !out.is_empty() && !out.ends_with('\n') {
+                    if out.len() > state.base && out.last() != Some(&'\n') {
                         return Err(mark_invalid(ntc));
                     }
-                } else if !out.is_empty() {
+                } else if out.len() > state.base {
                     return Err(mark_invalid(ntc));
                 }
             }
             AtCode::End | AtCode::EndString | AtCode::Boundary | AtCode::NonBoundary => {
                 state.pending_anchors.push(PendingAnchor {
-                    char_pos: out.chars().count(),
+                    char_pos: out.len() - state.base,
                     at: *at,
                     flags: state.flags,
                 });
@@ -506,14 +534,14 @@ fn generate_op(
             generate_subpattern(ntc, p, state, alphabet, out)?;
             state.flags = saved_flags;
             if let Some(gid) = group {
-                state.groups.insert(*gid, out[before..].to_string());
+                state.groups.insert(*gid, out[before..].to_vec());
             }
         }
         OpCode::GroupRef(gid) => {
-            let Some(val) = state.groups.get(gid).cloned() else {
+            let Some(val) = state.groups.get(gid) else {
                 return Err(mark_invalid(ntc));
             };
-            out.push_str(&val);
+            out.extend_from_slice(val);
         }
         OpCode::GroupRefExists {
             cond_group,
@@ -529,7 +557,7 @@ fn generate_op(
         OpCode::Assert { direction, p } => {
             if state.fullmatch {
                 state.pending_asserts.push(PendingAssertNot {
-                    char_pos: out.chars().count(),
+                    char_pos: out.len() - state.base,
                     direction: *direction,
                     pattern: p.clone(),
                     flags: state.flags,
@@ -541,7 +569,7 @@ fn generate_op(
         }
         OpCode::AssertNot { direction, p } => {
             state.pending_lookaheads.push(PendingAssertNot {
-                char_pos: out.chars().count(),
+                char_pos: out.len() - state.base,
                 direction: *direction,
                 pattern: p.clone(),
                 flags: state.flags,
@@ -851,7 +879,7 @@ fn draw_any_char(
 fn emit_from_chars(
     ntc: &mut NativeTestCase,
     chars: &[char],
-    out: &mut String,
+    out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
     if chars.is_empty() {
         return Err(mark_invalid(ntc));
@@ -935,7 +963,7 @@ fn match_seq(
     pos: usize,
     chars: &[char],
     flags: u32,
-    groups: &HashMap<u32, String>,
+    groups: &HashMap<u32, Vec<char>>,
 ) -> Option<usize> {
     let Some((first, rest)) = ops.split_first() else {
         return Some(pos);
@@ -1008,16 +1036,15 @@ fn match_seq(
         }
         OpCode::GroupRef(gid) => {
             let val = groups.get(gid)?;
-            let vcs: Vec<char> = val.chars().collect();
-            if pos + vcs.len() > chars.len() {
+            if pos + val.len() > chars.len() {
                 return None;
             }
-            for (i, vc) in vcs.iter().enumerate() {
+            for (i, vc) in val.iter().enumerate() {
                 if !chars_eq(chars[pos + i], *vc, flags) {
                     return None;
                 }
             }
-            match_seq(rest, pos + vcs.len(), chars, flags, groups)
+            match_seq(rest, pos + val.len(), chars, flags, groups)
         }
         OpCode::GroupRefExists {
             cond_group,

@@ -9,6 +9,7 @@ use crate::native::rng::EngineRng;
 use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec;
+use core::ops::{Deref, DerefMut};
 use std::path::Path;
 
 fn spec_with(text: &str, options: GrammarOptions) -> GrammarResult<GrammarSpec> {
@@ -54,28 +55,66 @@ fn tid(spec: &GrammarSpec, name: &str) -> TermId {
         .unwrap()
 }
 
-fn tok(spec: &GrammarSpec, name: &str, text: &str) -> Token {
-    let id = tid(spec, name);
-    let text: Vec<char> = text.chars().collect();
-    let scans = Arc::new(spec.scan_token(id, &text, None));
-    Token {
-        id,
-        reading: spec.reading(id, &text, &scans.basic),
-        text,
-        droppable: false,
-        scans,
+/// A token with its text, to lay out with others in a string of their own.
+#[derive(Clone)]
+struct Tok {
+    token: Token,
+    text: Vec<char>,
+}
+
+impl Deref for Tok {
+    type Target = Token;
+
+    fn deref(&self) -> &Token {
+        &self.token
     }
 }
 
-fn fit(spec: &GrammarSpec, tokens: &[Token]) -> Fit {
-    let refs: Vec<&Token> = tokens.iter().collect();
-    spec.fit(&refs)
+impl DerefMut for Tok {
+    fn deref_mut(&mut self) -> &mut Token {
+        &mut self.token
+    }
 }
 
-fn basic_fit(spec: &GrammarSpec, tokens: &[Token]) -> Fit {
-    let refs: Vec<&Token> = tokens.iter().collect();
-    let text: Vec<char> = tokens.iter().flat_map(|t| t.text.iter().copied()).collect();
-    spec.basic_fit(&text, &refs)
+fn tok(spec: &GrammarSpec, name: &str, text: &str) -> Tok {
+    let id = tid(spec, name);
+    let text: Vec<char> = text.chars().collect();
+    let scans = Arc::new(spec.scan_token(id, &text, None));
+    let token = Token {
+        id,
+        start: 0,
+        end: text.len(),
+        reading: spec.reading(id, &text, &scans.basic),
+        droppable: false,
+        scans,
+    };
+    Tok { token, text }
+}
+
+/// `toks` one after another: the text and the tokens placed in it.
+fn lay_out(toks: &[Tok]) -> (Vec<char>, Vec<Token>) {
+    let mut text = Vec::new();
+    let mut tokens = Vec::new();
+    for tok in toks {
+        let start = text.len();
+        text.extend_from_slice(&tok.text);
+        tokens.push(Token {
+            start,
+            end: text.len(),
+            ..tok.token.clone()
+        });
+    }
+    (text, tokens)
+}
+
+fn fit(spec: &GrammarSpec, toks: &[Tok]) -> Fit {
+    let (text, tokens) = lay_out(toks);
+    spec.fit(&text, &tokens)
+}
+
+fn basic_fit(spec: &GrammarSpec, toks: &[Tok]) -> Fit {
+    let (text, tokens) = lay_out(toks);
+    spec.basic_fit(&text, &tokens)
 }
 
 const PARENS: &str = "start: \"()\" | \"(\" start \")\" | start start\n";
@@ -191,9 +230,9 @@ fn rules_whose_alternatives_all_grow_still_keep_to_their_budget() {
         let mut generation = Generation::new(&spec, 0.0);
         assert!(generation.run(&mut ntc, 500).is_ok(), "seed {seed}");
         assert!(
-            (250..=1500).contains(&generation.consumed),
+            (250..=1500).contains(&generation.text.len()),
             "seed {seed}: {} characters for a budget of 500",
-            generation.consumed
+            generation.text.len()
         );
     }
 }
@@ -454,11 +493,11 @@ fn optional_tokens_may_be_swallowed_by_their_neighbours() {
     );
     assert!(strings.iter().any(|s| s == "abc"));
     let mut generation = Generation::new(&spec, 0.0);
-    generation.tokens = vec![
+    (generation.text, generation.tokens) = lay_out(&[
         tok(&spec, "A", "a"),
         tok(&spec, "B", "b"),
         tok(&spec, "C", "c"),
-    ];
+    ]);
     generation.mark_droppable(0);
     assert!(generation.tokens.iter().all(|t| !t.droppable));
     generation.mark_droppable(3);
@@ -540,8 +579,8 @@ fn scans_follows_the_dynamic_lexer() {
         ),
         Fit::Retyped
     );
-    let text: Vec<char> = "cx".chars().collect();
-    assert!(!spec.scans(&text, &[&c, &tok(&spec, "C", "x")]));
+    let (text, tokens) = lay_out(&[c, tok(&spec, "C", "x")]);
+    assert!(!spec.scans(&text, &tokens));
 }
 
 #[test]
@@ -624,10 +663,8 @@ fn basic_fit_reads_ignorable_stretches_loosely() {
         basic_fit(&spec, &[a.clone(), i.clone(), tok(&spec, "A", "a")]),
         Fit::Retyped
     );
-    let b = Token {
-        reading: Reading::Itself,
-        ..tok(&spec, "B", "xxb")
-    };
+    let mut b = tok(&spec, "B", "xxb");
+    b.reading = Reading::Itself;
     assert_eq!(basic_fit(&spec, &[a.clone(), i.clone(), b]), Fit::Wrong);
 }
 
@@ -639,10 +676,8 @@ fn basic_fit_trusts_what_it_cannot_lex() {
     let short = tok(&spec, "A", "ab");
     let b = tok(&spec, "B", "c");
     assert_eq!(basic_fit(&spec, &[short.clone(), b.clone()]), Fit::Exact);
-    let long = Token {
-        reading: Reading::Itself,
-        ..a
-    };
+    let mut long = a;
+    long.reading = Reading::Itself;
     assert_eq!(basic_fit(&spec, &[long, b]), Fit::Exact);
 }
 
@@ -799,15 +834,15 @@ fn settled_stretches_read_back_exactly_and_settled_strings_lex_as_wholes() {
             if generation.run(&mut ntc, 200).is_err() {
                 continue;
             }
-            let tokens: Vec<&Token> = generation.tokens.iter().collect();
+            let tokens = &generation.tokens;
             for width in 2..=3 {
                 for window in tokens.windows(width) {
-                    let text = text_of(window);
-                    if spec.settled(&text, window) {
+                    let text = &generation.text[window[0].start..window[width - 1].end];
+                    if spec.settled(text, window) {
                         settled += 1;
-                        assert!(spec.scans(&text, window), "{name} {seed} {text:?}");
+                        assert!(spec.scans(text, window), "{name} {seed} {text:?}");
                         assert_eq!(
-                            spec.basic_fit(&text, window),
+                            spec.basic_fit(text, window),
                             Fit::Exact,
                             "{name} {seed} {text:?}"
                         );
@@ -818,8 +853,8 @@ fn settled_stretches_read_back_exactly_and_settled_strings_lex_as_wholes() {
             }
             if !generation.unsettled {
                 whole_strings += 1;
-                let text = text_of(&tokens);
-                assert!(spec.scans(&text, &tokens), "{name} {seed} {text:?}");
+                let text = &generation.text;
+                assert!(spec.scans(text, tokens), "{name} {seed} {text:?}");
                 assert!(tokens.iter().all(|t| spec.single(t) && t.whole()));
             }
         }

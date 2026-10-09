@@ -51,7 +51,7 @@ use crate::control::{hegel_internal_assert, hegel_internal_unwrap};
 use crate::native::HashMap;
 use crate::native::core::{EngineError, ManyState, NativeTestCase, Status};
 use crate::native::draws::{
-    LABEL_BOOLEAN, LABEL_INTEGER, StringSpec, generate_string, many_more, spanned,
+    LABEL_BOOLEAN, LABEL_INTEGER, StringSpec, generate_string_into, many_more, spanned,
 };
 use crate::native::labels::label_from_name;
 use alloc::format;
@@ -376,12 +376,12 @@ impl GrammarSpec {
     /// takes the `\r` of the `\r\n` after it, say); it may never take
     /// all of a needed token. A pattern too involved to match is given
     /// the benefit of the doubt.
-    fn scans(&self, text: &[char], tokens: &[&Token]) -> bool {
+    fn scans(&self, text: &[char], tokens: &[Token]) -> bool {
         let mut bounds = Vec::with_capacity(tokens.len());
         let mut pos = 0;
         for token in tokens {
-            bounds.push((pos, pos + token.text.len()));
-            pos += token.text.len();
+            bounds.push((pos, pos + token.len()));
+            pos += token.len();
         }
         let significant: Vec<usize> = (0..tokens.len())
             .filter(|&i| !self.is_ignore(tokens[i].id))
@@ -412,10 +412,8 @@ impl GrammarSpec {
                 return true;
             }
             let starting = (t < tokens.len() && bounds[t].0 == p).then_some(t);
-            let carried = |scan: &Scan, j: usize| {
-                self.lexer
-                    .extend(scan, text, p, tokens[j].text.len(), false)
-            };
+            let carried =
+                |scan: &Scan, j: usize| self.lexer.extend(scan, text, p, tokens[j].len(), false);
             tried.clear();
             for (j, &i) in significant.iter().enumerate().skip(k) {
                 let id = tokens[i].id;
@@ -457,22 +455,21 @@ impl GrammarSpec {
         false
     }
 
-    /// How well the lexers read the concatenation of `tokens` back:
-    /// [`Fit::Settled`] when what they found at the start of each token
-    /// on its own already proves they read it as `tokens` (see
-    /// [`GrammarSpec::settled`]), otherwise [`Fit::Wrong`] when the
+    /// How well the lexers read `text`, the text of `tokens` one after
+    /// another, back: [`Fit::Settled`] when what they found at the start
+    /// of each token on its own already proves they read it as `tokens`
+    /// (see [`GrammarSpec::settled`]), otherwise [`Fit::Wrong`] when the
     /// dynamic lexer does not read it as `tokens` at all (see
     /// [`GrammarSpec::scans`]), [`Fit::Exact`] when the basic lexer reads
     /// it as `tokens` too, and [`Fit::Retyped`] in between.
-    fn fit(&self, tokens: &[&Token]) -> Fit {
-        let text = text_of(tokens);
-        if self.settled(&text, tokens) {
+    fn fit(&self, text: &[char], tokens: &[Token]) -> Fit {
+        if self.settled(text, tokens) {
             return Fit::Settled;
         }
-        if !self.scans(&text, tokens) {
+        if !self.scans(text, tokens) {
             return Fit::Wrong;
         }
-        self.basic_fit(&text, tokens).max(Fit::Retyped)
+        self.basic_fit(text, tokens).max(Fit::Retyped)
     }
 
     /// Whether what the lexers found at the start of each token's text on
@@ -484,10 +481,10 @@ impl GrammarSpec {
     /// text before it, and what the end of a token's text left open the
     /// text after it settles without changing what either lexer reads
     /// (see [`Lexer::settle`]).
-    fn settled(&self, text: &[char], tokens: &[&Token]) -> bool {
+    fn settled(&self, text: &[char], tokens: &[Token]) -> bool {
         let mut start = 0;
         for (i, token) in tokens.iter().enumerate() {
-            let len = token.text.len();
+            let len = token.len();
             let Lexed::Token(read, _) = token.scans.basic.lexed else {
                 return false;
             };
@@ -523,15 +520,15 @@ impl GrammarSpec {
     /// but the exact extent is only [`Fit::Retyped`]; anything else that
     /// differs is [`Fit::Wrong`]. A token the lexer cannot read at all
     /// makes the whole check moot.
-    fn basic_fit(&self, text: &[char], tokens: &[&Token]) -> Fit {
+    fn basic_fit(&self, text: &[char], tokens: &[Token]) -> Fit {
         if tokens.iter().any(|t| t.reading == Reading::Opaque) {
             return Fit::Exact;
         }
         let mut known = Vec::with_capacity(tokens.len());
         let mut start = 0;
         for token in tokens {
-            known.push((start, token.text.len(), &token.scans.basic));
-            start += token.text.len();
+            known.push((start, token.len(), &token.scans.basic));
+            start += token.len();
         }
         let observed = match self.lex_all(text, &known) {
             Ok(observed) => observed,
@@ -541,9 +538,9 @@ impl GrammarSpec {
         let mut regions = Vec::with_capacity(tokens.len());
         let mut pos = 0;
         for token in tokens {
-            let end = pos + token.text.len();
+            let end = pos + token.len();
             if !(token.lexable() && self.is_ignore(token.id)) {
-                regions.push((pos, end, *token));
+                regions.push((pos, end, token));
             }
             pos = end;
         }
@@ -615,10 +612,16 @@ impl GrammarSpec {
 
 /// The outcome of placing one ignorable (and any chain after it).
 enum Placement {
-    /// The tokens were pushed and the lexer reads them this well.
+    /// The tokens are in the string and the lexer reads them this well.
     Placed(Fit),
-    /// Nothing was pushed; the ignorable drawn first is handed back.
-    Rejected(Token),
+    /// Nothing is left in the string; the ignorable drawn first was of
+    /// this terminal, and read back as itself on its own or not, or was
+    /// too long for the string.
+    Rejected {
+        id: TermId,
+        lexable: bool,
+        oversize: bool,
+    },
 }
 
 /// How the lexer reads one token's text on its own.
@@ -647,14 +650,6 @@ enum Fit {
     Settled,
 }
 
-fn text_of(tokens: &[&Token]) -> Vec<char> {
-    let mut text = Vec::with_capacity(tokens.iter().map(|t| t.text.len()).sum());
-    for token in tokens {
-        text.extend_from_slice(&token.text);
-    }
-    text
-}
-
 /// Load a Lark grammar and build a [`GrammarSpec`] for it.
 pub fn from_lark(
     text: &str,
@@ -669,7 +664,10 @@ pub fn from_lark(
 #[derive(Clone)]
 struct Token {
     id: TermId,
-    text: Vec<char>,
+    /// Where its text lies in the string being generated
+    /// ([`Generation::text`]).
+    start: usize,
+    end: usize,
     reading: Reading,
     /// Whether the string stays in the grammar without this token: it
     /// is the only token of an element of a repetition that allows none
@@ -694,6 +692,10 @@ struct TokenScans {
 }
 
 impl Token {
+    fn len(&self) -> usize {
+        self.end - self.start
+    }
+
     /// Whether the basic lexer reads the token back as itself on its own
     /// (or, for an ignorable, as nothing but ignorable tokens).
     fn lexable(&self) -> bool {
@@ -702,7 +704,7 @@ impl Token {
 
     /// Whether the token's own pattern takes all of its text.
     fn whole(&self) -> bool {
-        self.scans.own.lexed == Lexed::Token(self.id, self.text.len())
+        self.scans.own.lexed == Lexed::Token(self.id, self.len())
     }
 }
 
@@ -724,8 +726,11 @@ type Readings = HashMap<Vec<char>, (Arc<TokenScans>, Reading)>;
 
 struct Generation<'s> {
     spec: &'s GrammarSpec,
+    /// The string so far: the text of `tokens`, in order and without
+    /// gaps. Terminals are drawn onto its end, and a draw that is not
+    /// kept is cut off again.
+    text: Vec<char>,
     tokens: Vec<Token>,
-    consumed: u64,
     ignore_rate: f64,
     /// Whether some stretch of the tokens was accepted without being
     /// settled (see [`GrammarSpec::settled`]), so that the finished
@@ -746,8 +751,8 @@ impl<'s> Generation<'s> {
     fn new(spec: &'s GrammarSpec, ignore_rate: f64) -> Generation<'s> {
         Generation {
             spec,
+            text: Vec::new(),
             tokens: Vec::new(),
-            consumed: 0,
             ignore_rate,
             unsettled: false,
             read: (0..spec.terminals.len())
@@ -757,16 +762,27 @@ impl<'s> Generation<'s> {
         }
     }
 
-    /// The scans and reading of a token of terminal `id` with `text`,
-    /// from the ones remembered when the text was drawn before, else
-    /// computed (with `own` for the terminal's own scan when the caller
-    /// already has it) and remembered.
+    /// Forget the string, keeping what was learnt about the texts drawn
+    /// for it (which depends on the grammar alone) for the next one.
+    fn reset(&mut self) {
+        self.text.clear();
+        self.tokens.clear();
+        self.unsettled = false;
+        self.chains.clear();
+    }
+
+    /// The scans and reading of a token of terminal `id` whose text is
+    /// the string from `start` on, from the ones remembered when the
+    /// text was drawn before, else computed (with `own` for the
+    /// terminal's own scan when the caller already has it) and
+    /// remembered.
     fn read_token(
         &mut self,
         id: TermId,
-        text: &[char],
+        start: usize,
         own: Option<Scan>,
     ) -> (Arc<TokenScans>, Reading) {
+        let text = &self.text[start..];
         if let Some(found) = self.read[id].get(text) {
             return found.clone();
         }
@@ -774,6 +790,42 @@ impl<'s> Generation<'s> {
         let reading = self.spec.reading(id, text, &scans.basic);
         self.read[id].insert(text.to_vec(), (Arc::clone(&scans), reading.clone()));
         (scans, reading)
+    }
+
+    /// The token of terminal `id` whose text is the string from `start`
+    /// on, with `own` its own scan when already known.
+    fn token(&mut self, id: TermId, start: usize, own: Option<Scan>) -> Token {
+        let (scans, reading) = self.read_token(id, start, own);
+        Token {
+            id,
+            start,
+            end: self.text.len(),
+            reading,
+            droppable: false,
+            scans,
+        }
+    }
+
+    /// Whether a string `len` characters long is within the size cap.
+    fn fits(&self, len: usize) -> bool {
+        len as u64 <= self.spec.max_size
+    }
+
+    /// The tokens from index `from` on, leaving out the last `pending`
+    /// (see [`Generation::maybe_ignore`]), with their text.
+    fn window(&self, from: usize, pending: usize) -> (&[char], &[Token]) {
+        let tokens = &self.tokens[from..self.tokens.len() - pending];
+        let start = tokens.first().map_or(self.text.len(), |t| t.start);
+        let end = tokens.last().map_or(start, |t| t.end);
+        (&self.text[start..end], tokens)
+    }
+
+    /// The token before the last `pending`, if any.
+    fn before(&self, pending: usize) -> Option<&Token> {
+        self.tokens
+            .len()
+            .checked_sub(pending + 1)
+            .map(|i| &self.tokens[i])
     }
 }
 
@@ -1074,111 +1126,80 @@ impl Generation<'_> {
     /// the basic lexer would not read it back as that terminal, or from
     /// its explicit generator as it comes.
     fn draw_terminal(&mut self, ntc: &mut NativeTestCase, id: TermId) -> Result<Token, Step> {
+        let start = self.text.len();
         match &self.spec.terminals[id] {
             TerminalGen::Explicit(spec) => {
-                let text: Vec<char> = generate_string(ntc, spec)?.chars().collect();
-                let (scans, reading) = self.read_token(id, &text, None);
-                Ok(Token {
-                    id,
-                    scans,
-                    text,
-                    reading,
-                    droppable: false,
-                })
+                generate_string_into(ntc, spec, &mut self.text)?;
+                Ok(self.token(id, start, None))
             }
             TerminalGen::Pattern(spec) => {
                 let mut attempt = 0;
                 loop {
                     ntc.start_span(LABEL_TERMINAL);
-                    let mut text: Vec<char> = generate_string(ntc, spec)?.chars().collect();
+                    generate_string_into(ntc, spec, &mut self.text)?;
                     attempt += 1;
-                    if !self.fits(&text) {
+                    if !self.fits(self.text.len()) {
+                        self.text.truncate(start);
                         ntc.stop_span(true);
                         if attempt > LEX_RETRIES {
                             return Err(Step::TooLong);
                         }
                         continue;
                     }
-                    let (end, own) = self.spec.whole(id, &text);
-                    let own = (end == text.len()).then_some(own);
-                    text.truncate(end);
-                    let (scans, reading) = self.read_token(id, &text, own);
-                    let token = Token {
-                        id,
-                        text,
-                        reading,
-                        droppable: false,
-                        scans,
-                    };
+                    let (end, own) = self.spec.whole(id, &self.text[start..]);
+                    let own = (start + end == self.text.len()).then_some(own);
+                    self.text.truncate(start + end);
+                    let token = self.token(id, start, own);
                     let accept = token.lexable() || attempt > LEX_RETRIES;
                     ntc.stop_span(!accept);
                     if accept {
                         return Ok(token);
                     }
+                    self.text.truncate(start);
                 }
             }
         }
     }
 
+    /// Draw a token of terminal `id` onto the end of the string, with
+    /// any ignorables that go before it, and fail when the string has
+    /// outgrown the size cap.
     fn terminal(&mut self, ntc: &mut NativeTestCase, id: TermId) -> Result<(), Step> {
         let token = self.draw_terminal(ntc, id)?;
-        self.emit(ntc, token)
-    }
-
-    /// Whether `text` still fits under the size cap after what has been
-    /// emitted so far.
-    fn fits(&self, text: &[char]) -> bool {
-        self.consumed.saturating_add(text.len() as u64) <= self.spec.max_size
-    }
-
-    fn consume(&mut self, len: usize) -> Result<(), Step> {
-        self.consumed = self.consumed.saturating_add(len as u64);
-        if self.consumed > self.spec.max_size {
+        self.tokens.push(token);
+        self.maybe_ignore(ntc, 1)?;
+        if !self.fits(self.text.len()) {
             return Err(Step::TooLong);
         }
         Ok(())
     }
 
-    /// How the lexer reads the ignorable `ign` after the tokens emitted
-    /// from index `from` on and before `next`.
-    fn ignore_fit(&self, from: usize, ign: &Token, next: Option<&Token>) -> Fit {
-        let tokens: Vec<&Token> = self.tokens[from..]
-            .iter()
-            .chain([ign])
-            .chain(next)
-            .collect();
-        self.spec.fit(&tokens)
-    }
-
-    /// Insert ignorable tokens between the last token emitted and `next`,
-    /// reporting whether any were. An ignorable the lexer would run into
-    /// the token after it (a comment, say, which only a newline ends) is
-    /// followed by another ignorable drawn to keep the two apart, up to
+    /// Insert ignorable tokens before the last `pending` tokens of the
+    /// string (the token just drawn, or none at its end), reporting
+    /// whether any were. An ignorable the lexer would run into the token
+    /// after it (a comment, say, which only a newline ends) is followed
+    /// by another ignorable drawn to keep the two apart, up to
     /// [`IGNORE_CHAIN`] deep; a chain that still changes the token
     /// sequence is redrawn, without the terminal it started from when
     /// that read fine on its own, until the attempts run out. An
     /// ignorable the lexer merely gives another type is kept, since that
     /// is a property of the grammar no redraw will change.
-    fn insert_ignore(
-        &mut self,
-        ntc: &mut NativeTestCase,
-        next: Option<&Token>,
-    ) -> Result<bool, Step> {
-        let from = self.tokens.len().saturating_sub(1);
+    fn insert_ignore(&mut self, ntc: &mut NativeTestCase, pending: usize) -> Result<bool, Step> {
+        let from = (self.tokens.len() - pending).saturating_sub(1);
         let mut candidates = self.spec.ignore.clone();
         let mut oversize = false;
         for _ in 0..IGNORE_ATTEMPTS {
             ntc.start_span(LABEL_IGNORE);
             let mut draws = IGNORE_CHAIN_DRAWS;
-            let placement = self.place_ignore(ntc, &candidates, from, next, 0, &mut draws);
-            let accept = !matches!(placement, Ok(Placement::Rejected(_)));
+            let placement = self.place_ignore(ntc, &candidates, from, pending, 0, &mut draws);
+            let accept = !matches!(placement, Ok(Placement::Rejected { .. }));
             ntc.stop_span(!accept);
             match placement? {
                 Placement::Placed(_) => return Ok(true),
-                Placement::Rejected(token) if !self.fits(&token.text) => oversize = true,
-                Placement::Rejected(token) => {
-                    if token.lexable() && candidates.len() > 1 {
-                        candidates.retain(|&id| id != token.id);
+                Placement::Rejected { oversize: true, .. } => oversize = true,
+                Placement::Rejected { id, lexable, .. } => {
+                    if lexable && candidates.len() > 1 {
+                        candidates.retain(|&candidate| candidate != id);
                     }
                 }
             }
@@ -1189,22 +1210,22 @@ impl Generation<'_> {
         Ok(false)
     }
 
-    /// Draw ignorables after the ones pushed since `from` until the
-    /// lexer reads the chain and `next` back as intended, or `draws`
-    /// run out; nothing stays pushed when they do. Only ignorables that
-    /// could end the last one's match where it is are drawn (see
-    /// [`Lexer::can_stop`]): a comment that runs to the end of its line
-    /// is followed by something that can hold a newline, never by
-    /// spaces it would swallow. An ignorable that could but, as drawn,
-    /// keeps failing to is given up on for the rest of the string (see
-    /// [`Generation::hopeful`]), since what the analysis cannot rule out
-    /// the draws may: a comment can begin with the newline that ends
-    /// the one before it, but rarely does.
+    /// Draw ignorables after the ones inserted since `from` until the
+    /// lexer reads the chain and the pending token back as intended, or
+    /// `draws` run out; nothing stays inserted when they do. Only
+    /// ignorables that could end the last one's match where it is are
+    /// drawn (see [`Lexer::can_stop`]): a comment that runs to the end
+    /// of its line is followed by something that can hold a newline,
+    /// never by spaces it would swallow. An ignorable that could but, as
+    /// drawn, keeps failing to is given up on for the rest of the string
+    /// (see [`Generation::hopeful`]), since what the analysis cannot
+    /// rule out the draws may: a comment can begin with the newline that
+    /// ends the one before it, but rarely does.
     fn ignore_chain(
         &mut self,
         ntc: &mut NativeTestCase,
         from: usize,
-        next: Option<&Token>,
+        pending: usize,
         depth: u32,
         draws: &mut u32,
     ) -> Result<Fit, Step> {
@@ -1215,7 +1236,7 @@ impl Generation<'_> {
                 .iter()
                 .copied()
                 .filter(|&id| {
-                    self.tokens.last().is_none_or(|prev| {
+                    self.before(pending).is_none_or(|prev| {
                         self.spec.lexer.can_stop(&prev.scans.own, id) && self.hopeful(prev.id, id)
                     })
                 })
@@ -1225,8 +1246,8 @@ impl Generation<'_> {
             }
             *draws -= 1;
             ntc.start_span(LABEL_IGNORE);
-            let placement = self.place_ignore(ntc, &candidates, from, next, depth, draws);
-            let accept = !matches!(placement, Ok(Placement::Rejected(_)));
+            let placement = self.place_ignore(ntc, &candidates, from, pending, depth, draws);
+            let accept = !matches!(placement, Ok(Placement::Rejected { .. }));
             ntc.stop_span(!accept);
             if let Placement::Placed(fit) = placement? {
                 return Ok(fit);
@@ -1245,29 +1266,29 @@ impl Generation<'_> {
             .is_none_or(|&(failed, succeeded)| failed < IGNORE_CHAIN_PATIENCE * (succeeded + 1))
     }
 
-    /// Draw one ignorable before `next` and, when the lexer would run it
-    /// into `next` but not into the tokens before it, a chain of further
-    /// ignorables after it; the whole chain from the token at `from` on is
-    /// what has to lex. The tokens are pushed when the result fits. A
-    /// draw in a chain (at a `depth` above zero) counts against drawing
-    /// that ignorable after that token again until it is placed, and
-    /// then for it.
+    /// Draw one ignorable before the last `pending` tokens and, when the
+    /// lexer would run it into the token after it but not into the
+    /// tokens before it, a chain of further ignorables after it; the
+    /// whole chain from the token at `from` on is what has to lex. The
+    /// tokens stay in the string when the result fits. A draw in a chain
+    /// (at a `depth` above zero) counts against drawing that ignorable
+    /// after that token again until it is placed, and then for it.
     fn place_ignore(
         &mut self,
         ntc: &mut NativeTestCase,
         candidates: &[TermId],
         from: usize,
-        next: Option<&Token>,
+        pending: usize,
         depth: u32,
         draws: &mut u32,
     ) -> Result<Placement, Step> {
-        let prev = self.tokens.last().map(|prev| prev.id);
-        let (token, fit) = self.draw_ignore(ntc, candidates, from, next)?;
-        let pair = prev.filter(|_| depth > 0).map(|prev| (prev, token.id));
+        let prev = self.before(pending).map(|prev| prev.id);
+        let (id, fit) = self.draw_ignore(ntc, candidates, from, pending)?;
+        let pair = prev.filter(|_| depth > 0).map(|prev| (prev, id));
         if let Some(pair) = pair {
             self.chains.entry(pair).or_default().0 += 1;
         }
-        let placement = self.place_drawn(ntc, token, fit, from, next, depth, draws)?;
+        let placement = self.place_drawn(ntc, id, fit, from, pending, depth, draws)?;
         if let (Some(pair), Placement::Placed(_)) = (pair, &placement) {
             let (failed, succeeded) = self.chains.entry(pair).or_default();
             *failed -= 1;
@@ -1276,98 +1297,135 @@ impl Generation<'_> {
         Ok(placement)
     }
 
+    /// Keep or remove the ignorable of terminal `id` just inserted
+    /// before the last `pending` tokens, which the lexer reads back this
+    /// well with its neighbours, or `None` when it was too long for the
+    /// string and never inserted.
     fn place_drawn(
         &mut self,
         ntc: &mut NativeTestCase,
-        token: Token,
-        fit: Fit,
+        id: TermId,
+        fit: Option<Fit>,
         from: usize,
-        next: Option<&Token>,
+        pending: usize,
         depth: u32,
         draws: &mut u32,
     ) -> Result<Placement, Step> {
+        let Some(fit) = fit else {
+            return Ok(Placement::Rejected {
+                id,
+                lexable: false,
+                oversize: true,
+            });
+        };
         if fit > Fit::Wrong {
-            self.push(token)?;
             self.unsettled |= fit < Fit::Settled;
             return Ok(Placement::Placed(fit));
         }
-        if !self.fits(&token.text) {
-            return Ok(Placement::Rejected(token));
-        }
-        if depth < IGNORE_CHAIN && *draws > 0 && self.ignore_fit(from, &token, None) > Fit::Wrong {
-            let (count, consumed) = (self.tokens.len(), self.consumed);
-            self.push(token)?;
-            let fit = self.ignore_chain(ntc, from, next, depth + 1, draws)?;
-            if fit > Fit::Wrong {
-                return Ok(Placement::Placed(fit));
+        if depth < IGNORE_CHAIN && *draws > 0 {
+            let (text, tokens) = self.window(from, pending);
+            if self.spec.fit(text, tokens) > Fit::Wrong {
+                let fit = self.ignore_chain(ntc, from, pending, depth + 1, draws)?;
+                if fit > Fit::Wrong {
+                    return Ok(Placement::Placed(fit));
+                }
             }
-            self.consumed = consumed;
-            let token = self.tokens.drain(count..).next().unwrap();
-            return Ok(Placement::Rejected(token));
         }
-        Ok(Placement::Rejected(token))
+        let token = self.remove(pending);
+        Ok(Placement::Rejected {
+            id: token.id,
+            lexable: token.lexable(),
+            oversize: false,
+        })
     }
 
+    /// Draw one ignorable from `candidates` into the string before the
+    /// last `pending` tokens: its terminal, and how the lexer reads the
+    /// tokens from `from` on with it in place, or `None` when it alone
+    /// would take the string past the size cap and is left out.
     fn draw_ignore(
         &mut self,
         ntc: &mut NativeTestCase,
         candidates: &[TermId],
         from: usize,
-        next: Option<&Token>,
-    ) -> Result<(Token, Fit), Step> {
+        pending: usize,
+    ) -> Result<(TermId, Option<Fit>), Step> {
         let index = spanned(ntc, LABEL_INTEGER, |ntc| {
             ntc.draw_integer_uniform(0, candidates.len() as u64 - 1)
         })?;
         let id = candidates[index as usize];
-        let text = match &self.spec.terminals[id] {
-            TerminalGen::Explicit(spec) => generate_string(ntc, spec)?,
-            TerminalGen::Pattern(spec) => generate_string(ntc, spec)?,
-        };
-        let text: Vec<char> = text.chars().collect();
-        let (scans, reading) = self.read_token(id, &text, None);
-        if !self.fits(&text) {
-            let token = Token {
-                id,
-                text,
-                reading: Reading::Opaque,
-                droppable: false,
-                scans,
-            };
-            return Ok((token, Fit::Wrong));
+        let at = self.tokens.len() - pending;
+        let start = self
+            .tokens
+            .get(at)
+            .map_or(self.text.len(), |next| next.start);
+        let drawn = self.text.len();
+        match &self.spec.terminals[id] {
+            TerminalGen::Explicit(spec) => generate_string_into(ntc, spec, &mut self.text)?,
+            TerminalGen::Pattern(spec) => generate_string_into(ntc, spec, &mut self.text)?,
+        }
+        let len = self.text.len() - drawn;
+        if !self.fits(start + len) {
+            self.text.truncate(drawn);
+            return Ok((id, None));
+        }
+        let (scans, reading) = self.read_token(id, drawn, None);
+        self.text[start..].rotate_left(drawn - start);
+        for later in &mut self.tokens[at..] {
+            later.start += len;
+            later.end += len;
         }
         let token = Token {
             id,
-            text,
+            start,
+            end: start + len,
             reading,
             droppable: false,
             scans,
         };
-        let fit = self.ignore_fit(from, &token, next);
-        Ok((token, fit))
+        self.tokens.insert(at, token);
+        let (text, tokens) = self.window(from, 0);
+        Ok((id, Some(self.spec.fit(text, tokens))))
     }
 
-    /// Decide whether an ignorable goes before `next` (or at the end of the
-    /// string when `next` is `None`): always when a lexer would otherwise
-    /// read `next` and the previous token differently, otherwise at the
-    /// string's ignore rate. A separator the basic lexer needs but none
-    /// of the ignorables can provide is left out; one the dynamic lexer
-    /// needs too makes the test case invalid, since the string would not
-    /// be in the grammar. A grammar without ignorables has nothing to
-    /// insert, and leaves what the pair checks cannot settle to the lexing
-    /// of the whole string.
-    fn maybe_ignore(&mut self, ntc: &mut NativeTestCase, next: Option<&Token>) -> Result<(), Step> {
+    /// Take the token before the last `pending` out of the string.
+    fn remove(&mut self, pending: usize) -> Token {
+        let at = self.tokens.len() - pending - 1;
+        let token = self.tokens.remove(at);
+        self.text.drain(token.start..token.end);
+        for later in &mut self.tokens[at..] {
+            later.start -= token.len();
+            later.end -= token.len();
+        }
+        token
+    }
+
+    /// Decide whether an ignorable goes before the last `pending` tokens
+    /// (the token just drawn, or none at the end of the string): always
+    /// when a lexer would otherwise read that token and the one before
+    /// it differently, otherwise at the string's ignore rate. A
+    /// separator the basic lexer needs but none of the ignorables can
+    /// provide is left out; one the dynamic lexer needs too makes the
+    /// test case invalid, since the string would not be in the grammar.
+    /// A grammar without ignorables has nothing to insert, and leaves
+    /// what the pair checks cannot settle to the lexing of the whole
+    /// string.
+    fn maybe_ignore(&mut self, ntc: &mut NativeTestCase, pending: usize) -> Result<(), Step> {
+        let at = self.tokens.len() - pending;
+        let adjacent = at.checked_sub(1).filter(|_| pending > 0);
         if self.spec.ignore.is_empty() {
-            if let (Some(prev), Some(next)) = (self.tokens.last(), next) {
-                self.unsettled |= !self.spec.settled(&text_of(&[prev, next]), &[prev, next]);
+            if let Some(from) = adjacent {
+                let (text, tokens) = self.window(from, 0);
+                self.unsettled |= !self.spec.settled(text, tokens);
             }
             return Ok(());
         }
-        let pair = match (self.tokens.last(), next) {
-            (Some(prev), Some(next)) => self.spec.fit(&[prev, next]),
-            _ => Fit::Settled,
-        };
+        let pair = adjacent.map_or(Fit::Settled, |from| {
+            let (text, tokens) = self.window(from, 0);
+            self.spec.fit(text, tokens)
+        });
         let forced = if pair < Fit::Exact { Some(true) } else { None };
-        if ntc.weighted(self.ignore_rate, forced)? && self.insert_ignore(ntc, next)? {
+        if ntc.weighted(self.ignore_rate, forced)? && self.insert_ignore(ntc, pending)? {
             return Ok(());
         }
         if pair == Fit::Wrong {
@@ -1378,26 +1436,10 @@ impl Generation<'_> {
         Ok(())
     }
 
-    fn emit(&mut self, ntc: &mut NativeTestCase, token: Token) -> Result<(), Step> {
-        self.maybe_ignore(ntc, Some(&token))?;
-        self.push(token)
-    }
-
-    fn push(&mut self, token: Token) -> Result<(), Step> {
-        self.consume(token.text.len())?;
-        self.tokens.push(token);
-        Ok(())
-    }
-
     fn run(&mut self, ntc: &mut NativeTestCase, budget: u64) -> Result<(), Step> {
         self.rule(ntc, self.spec.start, budget, 0)?;
-        self.maybe_ignore(ntc, None)?;
-        if !self.unsettled {
-            return Ok(());
-        }
-        let tokens: Vec<&Token> = self.tokens.iter().collect();
-        let text: Vec<char> = tokens.iter().flat_map(|t| t.text.iter().copied()).collect();
-        if self.spec.scans(&text, &tokens) {
+        self.maybe_ignore(ntc, 0)?;
+        if !self.unsettled || self.spec.scans(&self.text, &self.tokens) {
             Ok(())
         } else {
             Err(Step::Misread)
@@ -1435,17 +1477,11 @@ fn draw_grammar(ntc: &mut NativeTestCase, spec: &GrammarSpec) -> Result<String, 
         fraction * fraction
     };
     let mut attempt = 0;
+    let mut generation = Generation::new(spec, ignore_rate);
     loop {
-        let mut generation = Generation::new(spec, ignore_rate);
         let budget = token_budget(target, min, ignore_rate, spec.ignore_cost);
         match generation.run(ntc, budget) {
-            Ok(()) => {
-                let mut out = String::new();
-                for token in &generation.tokens {
-                    out.extend(token.text.iter());
-                }
-                return Ok(out);
-            }
+            Ok(()) => return Ok(generation.text.iter().collect()),
             Err(Step::Engine(e)) => return Err(e),
             Err(step) => {
                 attempt += 1;
@@ -1456,6 +1492,7 @@ fn draw_grammar(ntc: &mut NativeTestCase, spec: &GrammarSpec) -> Result<String, 
                 if matches!(step, Step::TooLong) {
                     target = min.max(target / 2);
                 }
+                generation.reset();
             }
         }
     }

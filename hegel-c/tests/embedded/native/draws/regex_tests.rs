@@ -16,6 +16,7 @@ use crate::native::re::constants::{
     AtCode, ChCode, SRE_FLAG_DOTALL, SRE_FLAG_IGNORECASE, SRE_FLAG_MULTILINE,
 };
 use crate::native::re::parser::{OpCode, SetItem, SubPattern};
+use alloc::string::ToString;
 
 fn chars(s: &str) -> Vec<char> {
     s.chars().collect()
@@ -355,7 +356,7 @@ fn match_seq_atomic_group() {
 #[test]
 fn match_seq_groupref_match() {
     let mut groups = HashMap::default();
-    groups.insert(1, "ab".to_string());
+    groups.insert(1, chars("ab"));
     let ops = vec![OpCode::GroupRef(1)];
     assert_eq!(match_seq(&ops, 0, &chars("ab"), 0, &groups), Some(2));
 }
@@ -363,7 +364,7 @@ fn match_seq_groupref_match() {
 #[test]
 fn match_seq_groupref_too_short() {
     let mut groups = HashMap::default();
-    groups.insert(1, "abc".to_string());
+    groups.insert(1, chars("abc"));
     let ops = vec![OpCode::GroupRef(1)];
     assert_eq!(match_seq(&ops, 0, &chars("ab"), 0, &groups), None);
 }
@@ -371,7 +372,7 @@ fn match_seq_groupref_too_short() {
 #[test]
 fn match_seq_groupref_mismatched() {
     let mut groups = HashMap::default();
-    groups.insert(1, "ab".to_string());
+    groups.insert(1, chars("ab"));
     let ops = vec![OpCode::GroupRef(1)];
     assert_eq!(match_seq(&ops, 0, &chars("xy"), 0, &groups), None);
 }
@@ -386,7 +387,7 @@ fn match_seq_groupref_unset() {
 #[test]
 fn match_seq_groupref_exists_yes_arm() {
     let mut groups = HashMap::default();
-    groups.insert(1, "x".to_string());
+    groups.insert(1, chars("x"));
     let ops = vec![OpCode::GroupRefExists {
         cond_group: 1,
         yes: sub(vec![lit('a')]),
@@ -672,7 +673,7 @@ fn generate_op_ignorecase_literal_outside_alphabet_marks_invalid() {
     let char_cache = Mutex::new(HashMap::default());
     let mut state = ignorecase_state(&cache, &char_cache);
     let alphabet = Some(IntervalSet::new(vec![('A' as u32, 'A' as u32)]).unwrap());
-    let mut out = String::new();
+    let mut out = Vec::new();
     let result = generate_op(&mut ntc, &lit('a'), &mut state, &alphabet, &mut out);
     assert!(result.is_err());
     assert_eq!(ntc.status(), Some(Status::Invalid));
@@ -694,6 +695,7 @@ fn ignorecase_state<'a>(
         groups: HashMap::default(),
         flags: SRE_FLAG_IGNORECASE,
         fullmatch: false,
+        base: 0,
         pending_anchors: Vec::new(),
         pending_asserts: Vec::new(),
         pending_lookaheads: Vec::new(),
@@ -749,9 +751,13 @@ fn generate_op_ignorecase_eszett_never_emits_truncated_uppercase() {
     for seed in 0..50 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
         let mut state = ignorecase_state(&cache, &char_cache);
-        let mut out = String::new();
+        let mut out = Vec::new();
         generate_op(&mut ntc, &lit('ß'), &mut state, &None, &mut out).unwrap();
-        assert_eq!(out, "ß", "seed {seed} emitted a non-matching case variant");
+        assert_eq!(
+            out,
+            chars("ß"),
+            "seed {seed} emitted a non-matching case variant"
+        );
     }
 }
 
@@ -764,9 +770,9 @@ fn generate_op_ignorecase_plain_letter_emits_both_cases() {
     for seed in 0..50 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
         let mut state = ignorecase_state(&cache, &char_cache);
-        let mut out = String::new();
+        let mut out = Vec::new();
         generate_op(&mut ntc, &lit('a'), &mut state, &None, &mut out).unwrap();
-        seen.insert(out);
+        seen.insert(out.into_iter().collect::<String>());
     }
     assert!(seen.contains("a") && seen.contains("A"), "saw {seen:?}");
 }
@@ -789,7 +795,7 @@ fn generate_op_ignorecase_not_literal_blacklists_swapcase_fixpoint() {
     for seed in 0..100 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
         let mut state = ignorecase_state(&cache, &char_cache);
-        let mut out = String::new();
+        let mut out = Vec::new();
         generate_op(
             &mut ntc,
             &OpCode::NotLiteral('İ' as u32),
@@ -798,7 +804,7 @@ fn generate_op_ignorecase_not_literal_blacklists_swapcase_fixpoint() {
             &mut out,
         )
         .unwrap();
-        assert_eq!(out, "x", "seed {seed} emitted a case-equal char");
+        assert_eq!(out, chars("x"), "seed {seed} emitted a case-equal char");
     }
 }
 

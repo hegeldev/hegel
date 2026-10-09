@@ -374,6 +374,26 @@ pub fn generate_string(ntc: &mut NativeTestCase, spec: &StringSpec) -> Result<St
     }
 }
 
+/// Draw a string according to `spec` as [`generate_string`] does, onto
+/// the end of `out`.
+pub fn generate_string_into(
+    ntc: &mut NativeTestCase,
+    spec: &StringSpec,
+    out: &mut Vec<char>,
+) -> Result<(), EngineError> {
+    if let StringSpec::Regex {
+        compiled,
+        fullmatch,
+    } = spec
+    {
+        return spanned(ntc, LABEL_REGEX, |ntc| {
+            regex::generate_regex_into(ntc, compiled, *fullmatch, out)
+        });
+    }
+    out.extend(generate_string(ntc, spec)?.chars());
+    Ok(())
+}
+
 /// Run `f` inside a `label`ed span. The span is closed whether or not `f`
 /// succeeds (closing after a freeze is a no-op — `freeze` already closed
 /// every open span).
