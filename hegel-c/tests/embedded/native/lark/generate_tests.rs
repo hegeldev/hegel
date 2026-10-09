@@ -992,3 +992,33 @@ fn chain_pairs_that_keep_failing_are_given_up_on() {
     generation.chains.insert((comment, sep), (8, 1));
     assert!(!generation.hopeful(comment, sep));
 }
+
+#[test]
+fn a_grammar_remembers_the_lexing_of_its_token_texts_up_to_a_point() {
+    let spec = grammar("start: NAME+\nNAME: /[a-z]+/\n");
+    let name = tid(&spec, "NAME");
+    let text = |n: usize| -> Vec<char> {
+        format!("x{n}")
+            .chars()
+            .map(|c| c.to_digit(10).map_or(c, |d| (b'a' + d as u8) as char))
+            .collect()
+    };
+    let remembered = || spec.readings.lock().len;
+    let (first, reading) = spec.read_token(name, &text(0), None);
+    assert_eq!(reading, Reading::Itself);
+    assert_eq!(remembered(), 1);
+    let (again, _) = spec.read_token(name, &text(0), None);
+    assert!(Arc::ptr_eq(&first, &again));
+    assert_eq!(remembered(), 1);
+    for n in 1..READINGS_CAPACITY {
+        spec.read_token(name, &text(n), None);
+    }
+    assert_eq!(remembered(), READINGS_CAPACITY);
+    let (still, _) = spec.read_token(name, &text(0), None);
+    assert!(Arc::ptr_eq(&first, &still));
+    spec.read_token(name, &text(READINGS_CAPACITY), None);
+    assert_eq!(remembered(), 1);
+    let (after, _) = spec.read_token(name, &text(0), None);
+    assert!(!Arc::ptr_eq(&first, &after));
+    assert_eq!(remembered(), 2);
+}
