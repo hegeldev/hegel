@@ -3193,6 +3193,68 @@ fn a_dropped_test_case_hands_its_vectors_on_emptied() {
     assert!(SpareVectors::offer(&mut SPARE_VECTORS.lock(), taken.nodes, taken.spans).is_none());
 }
 
+#[test]
+fn forgetting_plain_nodes_still_releases_the_ones_that_own_heap_memory() {
+    let stream = Arc::new(RealizedStream::empty());
+    let mut nodes = Vec::with_capacity(16);
+    nodes.push(ChoiceNode::boolean(BooleanChoice { p: 0.5 }, true, false));
+    nodes.push(ChoiceNode::clone_stream(Arc::clone(&stream), false));
+    nodes.push(ChoiceNode::integer(
+        IntegerChoice::small(0, 9, 0),
+        BigInt::from(4),
+        false,
+    ));
+    nodes.push(ChoiceNode::integer(
+        IntegerChoice::new(0, BigInt::from(u128::MAX), 0),
+        BigInt::from(u128::MAX) + BigInt::from(1),
+        false,
+    ));
+    nodes.push(ChoiceNode::bytes(
+        BytesChoice {
+            min_size: 0,
+            max_size: 4,
+        },
+        vec![1, 2, 3],
+        false,
+    ));
+    assert_eq!(Arc::strong_count(&stream), 2);
+    forget_plain_nodes(&mut nodes);
+    assert!(nodes.is_empty());
+    assert_eq!(nodes.capacity(), 16);
+    assert_eq!(Arc::strong_count(&stream), 1);
+}
+
+#[test]
+fn a_sequence_of_plain_nodes_is_emptied_without_dropping_any() {
+    let mut nodes = Vec::with_capacity(8);
+    nodes.push(ChoiceNode::boolean(BooleanChoice { p: 0.5 }, false, false));
+    nodes.push(ChoiceNode::integer(
+        IntegerChoice::small(-5, 5, 0),
+        BigInt::from(-2),
+        true,
+    ));
+    nodes.push(ChoiceNode::integer(
+        IntegerChoice::small(i64::MIN, i64::MAX, 0),
+        BigInt::from(i64::MIN),
+        false,
+    ));
+    forget_plain_nodes(&mut nodes);
+    assert!(nodes.is_empty());
+    assert_eq!(nodes.capacity(), 8);
+}
+
+#[test]
+fn a_dropped_test_case_releases_the_streams_its_clone_nodes_hold() {
+    let stream = Arc::new(RealizedStream::empty());
+    let mut tc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
+    tc.weighted(0.5, None).unwrap();
+    tc.nodes
+        .push(ChoiceNode::clone_stream(Arc::clone(&stream), false));
+    assert_eq!(Arc::strong_count(&stream), 2);
+    drop(tc);
+    assert_eq!(Arc::strong_count(&stream), 1);
+}
+
 struct Unscripted;
 
 impl ExternalReplay for Unscripted {

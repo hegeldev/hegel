@@ -56,6 +56,12 @@ impl IntegerChoice {
         IntegerChoice(Bounds::Small { min, max, towards })
     }
 
+    /// Whether the bounds fit a machine word and so are held inline.
+    #[inline]
+    pub fn is_small(&self) -> bool {
+        matches!(self.0, Bounds::Small { .. })
+    }
+
     /// The inclusive lower bound.
     pub fn min_value(&self) -> BigInt {
         match &self.0 {
@@ -1531,6 +1537,19 @@ impl ChoiceNode {
     /// A clone node carrying the realized stream of its execution.
     pub fn clone_stream(stream: Arc<RealizedStream>, was_forced: bool) -> Self {
         Self::new(ChoiceData::Clone(stream), was_forced)
+    }
+
+    /// Whether dropping the node frees nothing, so it can be forgotten
+    /// instead: a boolean or float node, or an integer node whose bounds
+    /// and value are both held inline. Every other node owns a heap block
+    /// or a reference count.
+    #[inline]
+    pub fn owns_no_heap(&self) -> bool {
+        match &self.data {
+            ChoiceData::Boolean(..) | ChoiceData::Float(..) => true,
+            ChoiceData::Integer(kind, value) => kind.is_small() && value.is_inline(),
+            ChoiceData::Bytes(..) | ChoiceData::String(..) | ChoiceData::Clone(..) => false,
+        }
     }
 
     /// The node's constraint, as a standalone [`ChoiceKind`].

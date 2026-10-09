@@ -1817,10 +1817,23 @@ impl Drop for NativeTestCase {
     fn drop(&mut self) {
         let mut nodes = core::mem::take(&mut self.nodes);
         let mut spans = core::mem::take(&mut self.spans.inner);
-        nodes.clear();
+        forget_plain_nodes(&mut nodes);
         spans.clear();
         let unkept = SpareVectors::offer(&mut SPARE_VECTORS.lock(), nodes, spans);
         drop(unkept);
+    }
+}
+
+/// Empties `nodes`, skipping the drop glue when no node owns heap memory:
+/// nearly every node a run records is a boolean or a small integer whose
+/// drop frees nothing, and running the glue over those is the bulk of
+/// what emptying a finished test case's choice sequence costs. A sequence
+/// holding any other node is cleared the usual way.
+fn forget_plain_nodes(nodes: &mut Vec<ChoiceNode>) {
+    if nodes.iter().all(ChoiceNode::owns_no_heap) {
+        nodes.drain(..).for_each(core::mem::forget);
+    } else {
+        nodes.clear();
     }
 }
 

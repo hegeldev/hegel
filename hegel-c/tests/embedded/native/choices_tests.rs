@@ -1235,3 +1235,27 @@ fn a_choice_node_is_a_few_words() {
             .clamped_shrink_towards()
     );
 }
+
+#[test]
+fn small_bounds_are_the_ones_held_inline() {
+    assert!(IntegerChoice::small(-3, 3, 0).is_small());
+    assert!(IntegerChoice::new(i64::MIN, i64::MAX, 0).is_small());
+    assert!(!IntegerChoice::new(0, BigInt::from(u64::MAX), 0).is_small());
+    assert!(!IntegerChoice::new(BigInt::from(i128::MIN), 0, 0).is_small());
+}
+
+#[test]
+fn nodes_that_own_no_heap_are_booleans_floats_and_inline_integers() {
+    assert!(ChoiceNode::boolean(BooleanChoice { p: 0.5 }, true, false).owns_no_heap());
+    assert!(ChoiceNode::float(fc(0.0, 1.0, false, false), 0.5, true).owns_no_heap());
+    assert!(integer_node(0, 10, 3).owns_no_heap());
+    assert!(integer_node(i64::MIN as i128, i64::MAX as i128, -7).owns_no_heap());
+    assert!(!integer_node(0, u64::MAX as i128, 3).owns_no_heap());
+    let beyond_inline = BigInt::from(u128::MAX) + BigInt::from(1);
+    assert!(
+        !ChoiceNode::integer(IntegerChoice::small(0, 1, 0), beyond_inline, false).owns_no_heap()
+    );
+    assert!(!bytes_node(0, 2, Vec::new()).owns_no_heap());
+    assert!(!string_node(vec![(97, 122)], 0, 2, Vec::new()).owns_no_heap());
+    assert!(!ChoiceNode::clone_stream(Arc::new(RealizedStream::empty()), false).owns_no_heap());
+}

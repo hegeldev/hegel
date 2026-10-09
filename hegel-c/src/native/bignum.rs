@@ -153,6 +153,15 @@ impl BigInt {
     pub fn bits(&self) -> u64 {
         self.magnitude().bits()
     }
+
+    /// Whether the value lives inline rather than in a heap buffer, so that
+    /// dropping it frees nothing. The backend keeps up to two machine words
+    /// inline and only ever moves three or more words to the heap, so the
+    /// bit length answers exactly.
+    #[inline]
+    pub fn is_inline(&self) -> bool {
+        self.0.bit_len() <= 128
+    }
 }
 
 impl BigUint {
