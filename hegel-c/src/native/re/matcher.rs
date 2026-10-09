@@ -1201,11 +1201,43 @@ fn unit_matches(op: UnitOp<'_>, c: char, flags: u32) -> bool {
     }
 }
 
+/// The code points a match of `parsed` consists of, with the flags in
+/// force for them, when the pattern is a plain sequence of literals,
+/// possibly inside non-capturing groups that set flags (the shape of a
+/// string terminal with flags, `(?i:KeyWord)`); `None` for any other
+/// pattern. Such a pattern fully matches a text exactly when the text is
+/// as long as the sequence and each character passes [`literal_eq`]
+/// against its code point, which is what [`Matcher::fullmatch`] would
+/// find by recursing through the groups.
+pub fn literal_sequence(parsed: &ParsedPattern) -> Option<(Vec<u32>, u32)> {
+    let mut ops = parsed.pattern.data.as_slice();
+    let mut flags = parsed.flags;
+    while let [
+        OpCode::Subpattern {
+            group: None,
+            add_flags,
+            del_flags,
+            p,
+        },
+    ] = ops
+    {
+        flags = combine_flags(flags, *add_flags, *del_flags);
+        ops = &p.data;
+    }
+    ops.iter()
+        .map(|op| match op {
+            OpCode::Literal(cp) => Some(*cp),
+            _ => None,
+        })
+        .collect::<Option<Vec<u32>>>()
+        .map(|literals| (literals, flags))
+}
+
 /// CPython's `LITERAL` / `LITERAL_IGNORE` / `LITERAL_UNI_IGNORE` test:
 /// an uncased pattern character matches exactly; a cased one matches any
 /// text character with the same lowercase form, or (Unicode mode) one of
 /// its `_casefix` equivalents. The parser only emits valid codepoints.
-pub(super) fn literal_eq(cp: u32, c: char, flags: u32) -> bool {
+pub fn literal_eq(cp: u32, c: char, flags: u32) -> bool {
     char::from_u32(cp).is_some_and(|l| char_eq(l, c, flags))
 }
 

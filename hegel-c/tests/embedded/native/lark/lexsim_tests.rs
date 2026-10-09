@@ -5,6 +5,9 @@
 use super::*;
 use crate::native::lark::builder::{NoImports, load_grammar};
 use crate::native::lark::compile::{Grammar, compile};
+use crate::native::lark::escape::pattern_to_regexp;
+use crate::native::re::constants::SRE_FLAG_UNICODE;
+use crate::native::re::matcher::Matcher;
 use crate::native::re::parser::parse_pattern;
 use alloc::vec;
 
@@ -61,6 +64,50 @@ fn keyword_at_a_different_priority_is_not_retyped() {
 fn keyword_with_flags_the_regex_lacks_stays_in_the_order() {
     let g = compiled("start: NAME KW\nNAME: /[a-z]+/\nKW: \"if\"i\n%ignore \" \"\n");
     assert_eq!(lex(&g, "IF if"), vec![("KW", 2), ("KW", 2)]);
+}
+
+#[test]
+fn string_terminals_with_flags_are_retyped_by_comparing_their_literals() {
+    let g = compiled("start: NAME KW\nNAME: /[a-z]+/i\nKW: \"if\"i\n%ignore \" \"\n");
+    assert_eq!(
+        lex(&g, "IF iffy If"),
+        vec![("KW", 2), ("NAME", 4), ("KW", 2)]
+    );
+    let texts = [
+        "KeyWord", "keyword", "KEYWORD", "KeyWor", "KeyWords", "", "a b", "A B", "ab", "ß", "ẞ",
+        "k", "K", "\u{212A}", "Ab", "aB",
+    ];
+    let strings: &[(&str, &str)] = &[
+        ("KeyWord", "i"),
+        ("a b", "x"),
+        ("ß", "i"),
+        ("k", "i"),
+        ("Ab", "is"),
+        ("ab", ""),
+    ];
+    for &(value, flags) in strings {
+        let pattern = Pattern::str(value).with_flags(flags);
+        let parsed = parse_pattern(&pattern_to_regexp(&pattern), 0).unwrap();
+        let term = TermPattern::new(&pattern, parsed.clone());
+        assert_eq!(term.literal.is_some(), flags.is_empty());
+        assert_eq!(term.literals.is_some(), !flags.is_empty());
+        for text in texts {
+            let text = chars(text);
+            assert_eq!(
+                term.fullmatch(&text),
+                Matcher::new(&parsed).fullmatch(&text),
+                "{value:?} with flags {flags:?} on {text:?}"
+            );
+        }
+    }
+    let plain = Pattern::re("abc");
+    let parsed = parse_pattern(&pattern_to_regexp(&plain), 0).unwrap();
+    let term = TermPattern::new(&plain, parsed);
+    assert!(term.literal.is_none());
+    assert_eq!(term.literals, Some((vec![97, 98, 99], SRE_FLAG_UNICODE)));
+    let regex = Pattern::re("a.c");
+    let parsed = parse_pattern(&pattern_to_regexp(&regex), 0).unwrap();
+    assert!(TermPattern::new(&regex, parsed).literals.is_none());
 }
 
 #[test]

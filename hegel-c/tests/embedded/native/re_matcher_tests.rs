@@ -7,7 +7,7 @@
 //! matcher's own reading of the semantics.
 
 use super::*;
-use crate::native::re::constants::SRE_FLAG_UNICODE;
+use crate::native::re::constants::{SRE_FLAG_ASCII, SRE_FLAG_UNICODE, SRE_FLAG_VERBOSE};
 use crate::native::re::parser::parse_pattern;
 use crate::native::re::vm::Program;
 use alloc::string::String;
@@ -718,4 +718,40 @@ fn repeat_iterations_ending_where_an_earlier_one_failed_are_not_retried() {
     check("(?:ab|ab?)*?c", "ababx", 0, None, false);
     check("(?:ab|ab?)*?c", "ababc", 0, Some(5), true);
     check("(?:ab|ab?){2,}?c", "ababx", 0, None, false);
+}
+
+#[test]
+fn literal_sequences_are_plain_literals_inside_flag_groups() {
+    let unicode = SRE_FLAG_UNICODE;
+    let sequence = |pattern: &str| literal_sequence(&parse_pattern(pattern, 0).unwrap());
+    assert_eq!(sequence("abc"), Some((vec![97, 98, 99], unicode)));
+    assert_eq!(
+        sequence("(?i:abc)"),
+        Some((vec![97, 98, 99], unicode | SRE_FLAG_IGNORECASE))
+    );
+    assert_eq!(
+        sequence("(?s:(?i:ab))"),
+        Some((
+            vec![97, 98],
+            unicode | SRE_FLAG_IGNORECASE | SRE_FLAG_DOTALL
+        ))
+    );
+    assert_eq!(
+        sequence("(?x:a\\ b)"),
+        Some((vec![97, 32, 98], unicode | SRE_FLAG_VERBOSE))
+    );
+    assert_eq!(sequence("(?a:ab)"), Some((vec![97, 98], SRE_FLAG_ASCII)));
+    assert_eq!(sequence("(?i)(?-i:ab)"), Some((vec![97, 98], unicode)));
+    assert_eq!(
+        sequence("(?i:)"),
+        Some((vec![], unicode | SRE_FLAG_IGNORECASE))
+    );
+    assert_eq!(sequence("a.c"), None);
+    assert_eq!(sequence("(ab)"), None);
+    assert_eq!(sequence("(?i:a)b"), None);
+    assert_eq!(sequence("(?i:ab)(?i:cd)"), None);
+    assert_eq!(sequence("ab|cd"), None);
+    assert_eq!(sequence("[ab]"), None);
+    assert_eq!(sequence("a*"), None);
+    assert_eq!(sequence("\\bab"), None);
 }

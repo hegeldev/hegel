@@ -30,7 +30,9 @@ use super::ast::{Pattern, PatternKind};
 use super::compile::{TermId, TerminalDef};
 use crate::native::re::categories::class_ranges;
 use crate::native::re::constants::{AtCode, MAXREPEAT, SRE_FLAG_IGNORECASE};
-use crate::native::re::matcher::{MatchError, Matcher, Probe, Touch, probe_matches, run_len};
+use crate::native::re::matcher::{
+    MatchError, Matcher, Probe, Touch, literal_eq, literal_sequence, probe_matches, run_len,
+};
 use crate::native::re::parser::{OpCode, ParsedPattern, SetItem, SubPattern};
 use crate::native::re::vm::{Program, Resume, has_nested_repeats};
 use crate::native::re::width::get_width;
@@ -243,11 +245,13 @@ fn looks_back(p: &SubPattern, consumed: u64) -> Option<u64> {
 /// regex, the characters a match can start with (so most terminals are
 /// ruled out at a position without running the matcher), for a
 /// case-sensitive string terminal the literal itself, compared directly,
-/// the compiled [`Program`] for a pattern whose simulation remembers the
-/// states it passes through (one without anchors or lookarounds) or
-/// that could send the backtracking matcher quadratic, and whether a
-/// match can depend on the text before it. The backtracking matcher is
-/// left with the rest.
+/// for any other plain sequence of literals (a string terminal with
+/// flags) its code points and their flags, so that re-typing a token as
+/// it compares them directly too, the compiled [`Program`] for a pattern
+/// whose simulation remembers the states it passes through (one without
+/// anchors or lookarounds) or that could send the backtracking matcher
+/// quadratic, and whether a match can depend on the text before it. The
+/// backtracking matcher is left with the rest.
 #[derive(Clone)]
 struct TermPattern {
     /// Shared between the clones of the pattern the lexers hold, so the
@@ -255,6 +259,7 @@ struct TermPattern {
     parsed: Arc<ParsedPattern>,
     first: Option<FirstChars>,
     literal: Option<Vec<char>>,
+    literals: Option<(Vec<u32>, u32)>,
     program: Option<Program>,
     anchored: bool,
 }
@@ -285,6 +290,10 @@ impl TermPattern {
             .then(|| pattern.value.chars().collect());
         TermPattern {
             first: first_chars(&parsed),
+            literals: literal
+                .is_none()
+                .then(|| literal_sequence(&parsed))
+                .flatten(),
             program: literal
                 .is_none()
                 .then(|| Program::compile(&parsed).ok())
@@ -377,9 +386,25 @@ impl TermPattern {
         Some(false)
     }
 
+    /// Whether the pattern matches the whole of `text`. The lexers ask
+    /// this of every string terminal a token could be re-typed as, so
+    /// the comparison with a literal stays in the caller.
+    #[inline]
     fn fullmatch(&self, text: &[char]) -> Result<bool, MatchError> {
         if let Some(literal) = &self.literal {
             return Ok(text == literal.as_slice());
+        }
+        self.fullmatch_pattern(text)
+    }
+
+    #[inline(never)]
+    fn fullmatch_pattern(&self, text: &[char]) -> Result<bool, MatchError> {
+        if let Some((literals, flags)) = &self.literals {
+            return Ok(text.len() == literals.len()
+                && literals
+                    .iter()
+                    .zip(text)
+                    .all(|(&cp, &c)| literal_eq(cp, c, *flags)));
         }
         Matcher::new(&self.parsed).fullmatch(text)
     }
