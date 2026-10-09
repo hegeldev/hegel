@@ -224,11 +224,13 @@ typedef enum {
      */
     HEGEL_BACKEND_DEFAULT = 1,
     /*
-     Read fresh entropy from `/dev/urandom` on every draw, falling back to
-     an OS-seeded PRNG on platforms without it. Intended for running under
-     Antithesis, whose fuzzer controls `/dev/urandom`, and selected by the
-     shipped `workload` profile; you almost certainly don't want it
-     otherwise.
+     Take fresh entropy from outside the process on every draw: inside
+     Antithesis, from its fuzzer through `fuzz_get_random` in
+     `/usr/lib/libvoidstar.so`; elsewhere, or when that library cannot be
+     loaded, from `/dev/urandom`, falling back to an OS-seeded PRNG on
+     platforms without it. Intended for running under Antithesis and
+     selected by the shipped `workload` profile; you almost certainly
+     don't want it otherwise.
      */
     HEGEL_BACKEND_URANDOM = 2,
 } hegel_backend_t;

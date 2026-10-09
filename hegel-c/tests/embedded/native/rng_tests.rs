@@ -82,15 +82,63 @@ fn from_os_or_zero_warns_and_seeds_zero_when_entropy_failed() {
 
 #[test]
 fn urandom_or_fallback_warns_and_uses_a_prng_when_unavailable() {
-    let mut rng = EngineRng::urandom_or_fallback(false);
+    let mut rng = EngineRng::urandom_or_fallback(None, false);
     assert!(matches!(rng, EngineRng::Prng(_)));
     let _: u64 = rng.next_u64();
 }
 
 #[test]
 fn urandom_or_fallback_uses_the_random_device_when_available() {
-    let rng = EngineRng::urandom_or_fallback(true);
+    let rng = EngineRng::urandom_or_fallback(None, true);
     assert!(matches!(rng, EngineRng::Urandom(_)));
+}
+
+extern "C" fn sevens() -> u64 {
+    0x0707_0707_0707_0707
+}
+
+extern "C" fn counting() -> u64 {
+    use core::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0x1000_0000_0000_0000);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+#[test]
+fn urandom_or_fallback_prefers_the_fuzz_source_whenever_it_is_there() {
+    let source = unsafe { FuzzSource::new(sevens) };
+    for available in [true, false] {
+        let rng = EngineRng::urandom_or_fallback(Some(source), available);
+        assert!(matches!(rng, EngineRng::Antithesis(_)));
+    }
+}
+
+#[test]
+fn antithesis_draws_every_width_from_the_fuzz_source() {
+    let mut rng = EngineRng::Antithesis(unsafe { FuzzSource::new(sevens) });
+    assert_eq!(rng.next_u32(), 0x0707_0707);
+    assert_eq!(rng.next_u64(), 0x0707_0707_0707_0707);
+    let mut buf = [0u8; 13];
+    rng.fill_bytes(&mut buf);
+    assert_eq!(buf, [7; 13]);
+}
+
+#[test]
+fn antithesis_makes_one_call_per_word_and_starts_each_draw_afresh() {
+    let mut rng = EngineRng::Antithesis(unsafe { FuzzSource::new(counting) });
+    assert_eq!(rng.next_u32(), 0);
+    assert_eq!(rng.next_u64(), 0x1000_0000_0000_0001);
+    let mut buf = [0u8; 9];
+    rng.fill_bytes(&mut buf);
+    assert_eq!(buf, [2, 0, 0, 0, 0, 0, 0, 0x10, 3]);
+    assert_eq!(rng.next_u64(), 0x1000_0000_0000_0004);
+}
+
+#[test]
+fn antithesis_spawn_is_another_reader_of_the_same_source() {
+    let mut rng = EngineRng::Antithesis(unsafe { FuzzSource::new(sevens) });
+    let mut child = rng.spawn();
+    assert!(matches!(child, EngineRng::Antithesis(_)));
+    assert_eq!(child.next_u32(), 0x0707_0707);
 }
 
 #[cfg(unix)]

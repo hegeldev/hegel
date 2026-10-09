@@ -188,6 +188,22 @@ fn an_unwritable_sdk_file_is_announced_on_the_output() {
 }
 
 #[test]
+fn no_fuzz_source_is_looked_up_outside_antithesis() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("libvoidstar.so");
+    assert!(fuzz_source_from(|_| None, path.to_str().unwrap()).is_none());
+}
+
+#[cfg(not(windows))]
+#[test]
+fn no_fuzz_source_inside_antithesis_without_the_library() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let env = env_with_output_dir(dir.path().to_str().unwrap());
+    let path = dir.path().join("libvoidstar.so");
+    assert!(fuzz_source_from(env, path.to_str().unwrap()).is_none());
+}
+
+#[test]
 fn a_reporter_outside_antithesis_is_silent() {
     let (output, lines) = capturing_output();
     Reporter::new(location(), output).report(false);

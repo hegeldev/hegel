@@ -77,15 +77,19 @@ pub enum Backend {
     /// The default: generate from a seeded pseudo-random generator. Runs are
     /// reproducible from [`Settings::seed`] and shrinking/replay work as usual.
     Default,
-    /// Read fresh entropy from `/dev/urandom` on every draw, instead of
-    /// expanding a single PRNG seed.
+    /// Take fresh entropy from outside the process on every draw, instead
+    /// of expanding a single PRNG seed.
     ///
-    /// This exists for running under [Antithesis](https://antithesis.com/),
-    /// whose fuzzer controls the bytes returned by `/dev/urandom`. Sourcing
-    /// every choice from the OS random device hands the fuzzer control over
-    /// the entire test case (rather than just the PRNG seed), so it can steer
-    /// and reproduce generation directly. The shipped `workload` settings
-    /// profile selects this backend.
+    /// This exists for running under [Antithesis](https://antithesis.com/).
+    /// Sourcing every choice from its fuzzer hands it control over the
+    /// entire test case (rather than just the PRNG seed), so it can steer
+    /// and reproduce generation directly. Inside Antithesis (detected from
+    /// `ANTITHESIS_OUTPUT_DIR`) each draw asks the fuzzer through its
+    /// instrumentation library, `fuzz_get_random` from
+    /// `/usr/lib/libvoidstar.so`, the same function Antithesis's SDKs draw
+    /// from; when that library cannot be loaded, and everywhere outside
+    /// Antithesis, each draw reads `/dev/urandom` instead. The shipped
+    /// `workload` settings profile selects this backend.
     ///
     /// The generation algorithm is otherwise unchanged — only the random
     /// source differs. On platforms without `/dev/urandom` (Windows) it falls

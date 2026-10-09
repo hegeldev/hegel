@@ -216,6 +216,62 @@ fn urandom_is_unavailable() {
     assert!(urandom(&mut buf).is_err());
 }
 
+/// Compile `source` into a shared library in `dir` and return its path.
+#[cfg(unix)]
+fn build_library(dir: &TempDir, name: &str, source: &str) -> String {
+    let c_file = temp_path(dir, &format!("{name}.c"));
+    std::fs::write(&c_file, source).unwrap();
+    let lib = temp_path(dir, &format!("lib{name}.so"));
+    let status = std::process::Command::new("cc")
+        .args(["-shared", "-fPIC", "-o", &lib, &c_file])
+        .status()
+        .unwrap();
+    assert!(status.success(), "cc failed: {status}");
+    lib
+}
+
+#[cfg(unix)]
+#[test]
+fn fuzz_source_lays_out_each_call_to_the_named_symbol_little_endian() {
+    let dir = TempDir::new().unwrap();
+    let lib = build_library(
+        &dir,
+        "counting",
+        "#include <stdint.h>\n\
+         uint64_t fuzz_get_random(void) { static uint64_t n = 0x0807060504030201; return n++; }\n",
+    );
+    let source = fuzz_source(&lib, "fuzz_get_random").unwrap();
+    let mut buf = [0u8; 11];
+    source.fill(&mut buf);
+    assert_eq!(buf, [1, 2, 3, 4, 5, 6, 7, 8, 2, 2, 3]);
+    let mut buf = [0u8; 4];
+    source.fill(&mut buf);
+    assert_eq!(buf, [3, 2, 3, 4]);
+}
+
+#[cfg(unix)]
+#[test]
+fn fuzz_source_is_none_when_the_library_lacks_the_symbol() {
+    let dir = TempDir::new().unwrap();
+    let lib = build_library(&dir, "other", "int fuzz_getchar(void) { return 4; }\n");
+    assert!(fuzz_source(&lib, "fuzz_get_random").is_none());
+    assert!(fuzz_source(&lib, "fuzz\0getchar").is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn fuzz_source_is_none_without_the_library() {
+    let dir = TempDir::new().unwrap();
+    assert!(fuzz_source(&temp_path(&dir, "libmissing.so"), "fuzz_get_random").is_none());
+    assert!(fuzz_source(&temp_path(&dir, "lib\0.so"), "fuzz_get_random").is_none());
+}
+
+#[cfg(windows)]
+#[test]
+fn fuzz_source_is_unavailable() {
+    assert!(fuzz_source("C:\\no\\such\\library.dll", "fuzz_get_random").is_none());
+}
+
 #[cfg(unix)]
 #[test]
 fn retry_intr_retries_interrupted_calls() {

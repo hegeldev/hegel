@@ -6,14 +6,21 @@
 //!
 //!   * [`EngineRng::Prng`] — a seeded [`SmallRng`]. This is the default and
 //!     drives reproducible, seed-controlled generation.
-//!   * [`EngineRng::Urandom`] — reads fresh bytes from the OS random device
-//!     (`/dev/urandom`) on every draw. Selected by `Backend::Urandom` (and
-//!     automatically under Antithesis). It exists so that an external
-//!     controller of the OS random source — the Antithesis fuzzer — controls
+//!   * [`EngineRng::Antithesis`] — asks the Antithesis fuzzer for every
+//!     draw through its instrumentation library (`fuzz_get_random` from
+//!     libvoidstar, the function its SDKs draw from). Selected by
+//!     `Backend::Urandom` inside Antithesis, which the shipped `workload`
+//!     profile does automatically. It exists so that the fuzzer controls
 //!     every choice the engine makes, rather than only the seed of a PRNG
-//!     that then expands deterministically. Mirrors Hypothesis's
-//!     `URandomProvider`, which is the ordinary `HypothesisProvider` with its
-//!     `Random` swapped for one reading from `/dev/urandom`.
+//!     that then expands deterministically, and sees each draw as a request
+//!     of its own.
+//!   * [`EngineRng::Urandom`] — reads fresh bytes from the OS random device
+//!     (`/dev/urandom`) on every draw. What `Backend::Urandom` falls back to
+//!     when the Antithesis library is not there to ask: Antithesis's fuzzer
+//!     controls the random device too, just without seeing the draws as
+//!     draws. Mirrors Hypothesis's `URandomProvider`, which is the ordinary
+//!     `HypothesisProvider` with its `Random` swapped for one reading from
+//!     `/dev/urandom`.
 //!
 //! The `Prng` variant delegates each method to the inner `SmallRng`'s native
 //! method (rather than routing everything through `fill_bytes`) so that a given
@@ -25,7 +32,7 @@ use rand::TryRng;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
-use crate::sys;
+use crate::sys::{self, FuzzSource};
 
 /// A source of randomness reading directly from the OS random device.
 ///
@@ -50,8 +57,11 @@ impl UrandomRng {
 pub enum EngineRng {
     /// A seeded pseudo-random generator (the default backend).
     Prng(SmallRng),
+    /// Every draw requested from the Antithesis fuzzer (the urandom backend
+    /// inside Antithesis).
+    Antithesis(FuzzSource),
     /// Fresh OS entropy from the OS random device on every draw (the
-    /// urandom backend).
+    /// urandom backend elsewhere).
     Urandom(UrandomRng),
 }
 
@@ -89,7 +99,8 @@ impl EngineRng {
         Self::seeded(0)
     }
 
-    /// The urandom backend: every draw reads fresh from the OS random
+    /// The urandom backend: inside Antithesis, every draw is requested from
+    /// its fuzzer; elsewhere, every draw reads fresh from the OS random
     /// device.
     ///
     /// On platforms without an OS random device (Windows) there is nothing
@@ -97,10 +108,13 @@ impl EngineRng {
     /// Hypothesis, which warns and falls back to `backend="hypothesis"`
     /// there.
     pub fn urandom() -> Self {
-        Self::urandom_or_fallback(sys::urandom_available())
+        Self::urandom_or_fallback(crate::antithesis::fuzz_source(), sys::urandom_available())
     }
 
-    fn urandom_or_fallback(available: bool) -> Self {
+    fn urandom_or_fallback(fuzz: Option<FuzzSource>, available: bool) -> Self {
+        if let Some(source) = fuzz {
+            return EngineRng::Antithesis(source);
+        }
         if available {
             return EngineRng::Urandom(UrandomRng);
         }
@@ -117,13 +131,22 @@ impl EngineRng {
     ///
     /// For [`EngineRng::Prng`] this seeds a fresh `SmallRng` from the parent —
     /// the same `SmallRng::from_rng` derivation the engine used before
-    /// `EngineRng` existed, so seeded trajectories are unchanged. For
-    /// [`EngineRng::Urandom`] every reader is an equivalent stateless view of
-    /// the OS random device, so the child is simply another urandom reader.
+    /// `EngineRng` existed, so seeded trajectories are unchanged. The other
+    /// two are stateless views of an external source — the fuzzer or the OS
+    /// random device — so the child is simply another reader of the same.
     pub fn spawn(&mut self) -> EngineRng {
         match self {
             EngineRng::Prng(rng) => EngineRng::Prng(SmallRng::from_rng(rng)),
+            EngineRng::Antithesis(source) => EngineRng::Antithesis(*source),
             EngineRng::Urandom(_) => EngineRng::Urandom(UrandomRng),
+        }
+    }
+
+    /// Fill `dst` from the external source, for the two non-PRNG variants.
+    fn fill_external(&self, dst: &mut [u8]) {
+        match self {
+            EngineRng::Antithesis(source) => source.fill(dst),
+            _ => UrandomRng::read_exact(dst),
         }
     }
 }
@@ -134,9 +157,9 @@ impl TryRng for EngineRng {
     fn try_next_u32(&mut self) -> Result<u32, Infallible> {
         Ok(match self {
             EngineRng::Prng(rng) => rng.next_u32(),
-            EngineRng::Urandom(_) => {
+            _ => {
                 let mut buf = [0u8; 4];
-                UrandomRng::read_exact(&mut buf);
+                self.fill_external(&mut buf);
                 u32::from_le_bytes(buf)
             }
         })
@@ -145,9 +168,9 @@ impl TryRng for EngineRng {
     fn try_next_u64(&mut self) -> Result<u64, Infallible> {
         Ok(match self {
             EngineRng::Prng(rng) => rng.next_u64(),
-            EngineRng::Urandom(_) => {
+            _ => {
                 let mut buf = [0u8; 8];
-                UrandomRng::read_exact(&mut buf);
+                self.fill_external(&mut buf);
                 u64::from_le_bytes(buf)
             }
         })
@@ -156,7 +179,7 @@ impl TryRng for EngineRng {
     fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Infallible> {
         match self {
             EngineRng::Prng(rng) => rng.fill_bytes(dst),
-            EngineRng::Urandom(_) => UrandomRng::read_exact(dst),
+            _ => self.fill_external(dst),
         }
         Ok(())
     }

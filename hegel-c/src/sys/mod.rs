@@ -2,7 +2,8 @@
 //!
 //! Everything the engine wants from the OS — filesystem operations for the
 //! failure database, a monotonic clock for deadlines and health checks,
-//! entropy for PRNG seeding, the `/dev/urandom` reader behind the urandom
+//! entropy for PRNG seeding, the `/dev/urandom` reader and the
+//! shared-library lookup of Antithesis's fuzzer entropy behind the urandom
 //! backend, environment lookups, and stderr output — goes through this
 //! module. No other module may touch the OS directly, and no other module
 //! may assume an OS exists: every capability here is either fallible
@@ -212,6 +213,63 @@ pub fn urandom_available() -> bool {
 /// WebAssembly do not provide a direct random source in this phase.
 pub fn urandom(buf: &mut [u8]) -> Result<(), Error> {
     imp::urandom(buf)
+}
+
+/// A function returning 64 bits of entropy per call, with the fuzzer
+/// supplying them: the C signature `uint64_t (*)(void)` of Antithesis's
+/// `fuzz_get_random`, which its language SDKs draw their randomness from.
+pub type RandomFn = unsafe extern "C" fn() -> u64;
+
+/// A source of entropy delivering eight bytes per call to a function
+/// resolved from a shared library, so that the function's provider — the
+/// Antithesis fuzzer — sees every draw the engine makes as a request of
+/// its own.
+#[derive(Debug, Clone, Copy)]
+pub struct FuzzSource {
+    get_random: RandomFn,
+}
+
+impl FuzzSource {
+    /// A source drawing from `get_random`.
+    ///
+    /// # Safety
+    ///
+    /// `get_random` must be safe to call at any time from any thread with
+    /// no preconditions, as a C `uint64_t f(void)` would be.
+    pub unsafe fn new(get_random: RandomFn) -> Self {
+        FuzzSource { get_random }
+    }
+
+    /// Fill `buf` with as few calls as cover it, each call's value laid
+    /// down little-endian and the last one's surplus bytes dropped. Nothing
+    /// is carried over between fills: every fill starts a fresh call.
+    pub fn fill(&self, buf: &mut [u8]) {
+        for chunk in buf.chunks_mut(8) {
+            // SAFETY: the constructor's contract: the function has no
+            // preconditions.
+            let word = unsafe { (self.get_random)() };
+            chunk.copy_from_slice(&word.to_le_bytes()[..chunk.len()]);
+        }
+    }
+}
+
+/// The source `symbol` names in the shared library at `path`, loading the
+/// library if needed. `None` if the library cannot be loaded or lacks the
+/// symbol — on Unix, where loading a library by path is possible, and
+/// always on Windows and browser WebAssembly. The library stays loaded.
+///
+/// `symbol` must name a function of [`RandomFn`]'s C signature; there is
+/// no way to check, so a mismatch is undefined behaviour at the first draw.
+pub fn fuzz_source(path: &str, symbol: &str) -> Option<FuzzSource> {
+    let address = imp::dynamic_symbol(path, symbol)?;
+    // SAFETY: the caller's contract: the symbol is a C function of
+    // `RandomFn`'s signature, so the non-null address is one, and a
+    // function pointer has the same representation as a data pointer on
+    // every supported target.
+    unsafe {
+        let get_random = core::mem::transmute::<*mut core::ffi::c_void, RandomFn>(address);
+        Some(FuzzSource::new(get_random))
+    }
 }
 
 /// The value of the environment variable `name`, decoded lossily. `None`
