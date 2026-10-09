@@ -468,6 +468,16 @@ impl Scan {
     }
 }
 
+/// What the lexer found for terminal `id` when matching its pattern at
+/// a position gave `result`.
+fn lexed(id: TermId, result: &Result<Option<usize>, MatchError>) -> Lexed {
+    match result {
+        Ok(Some(end)) => Lexed::Token(id, *end),
+        Ok(None) => Lexed::NoMatch,
+        Err(_) => Lexed::Unknown,
+    }
+}
+
 /// The sorted terminal order of Lark's basic lexer and its keyword
 /// re-typing, over the terminals of one grammar.
 pub struct Lexer {
@@ -555,7 +565,10 @@ impl Lexer {
     /// does for a terminal the parser expects there; a terminal without
     /// a pattern (one `%declare`d) cannot be checked.
     pub fn match_terminal(&self, id: TermId, text: &[char], pos: usize) -> Lexed {
-        self.match_terminal_scan(id, text, pos).lexed
+        match &self.patterns[id] {
+            Some(pattern) => lexed(id, &pattern.match_at(text, pos)),
+            None => Lexed::Unknown,
+        }
     }
 
     /// [`match_terminal`](Self::match_terminal), with how the result
@@ -565,11 +578,7 @@ impl Lexer {
             return Scan::new(Lexed::Unknown);
         };
         let outcome = pattern.scan(text, pos);
-        let mut scan = Scan::new(match outcome.result {
-            Ok(Some(end)) => Lexed::Token(id, end),
-            Ok(None) => Lexed::NoMatch,
-            Err(_) => Lexed::Unknown,
-        });
+        let mut scan = Scan::new(lexed(id, &outcome.result));
         scan.note(id, &outcome);
         scan
     }

@@ -170,6 +170,20 @@ pub struct GrammarSpec {
     /// whitespace drawn again, in the same string or a later one, is
     /// lexed once; emptied when it holds [`READINGS_CAPACITY`] texts.
     readings: Mutex<ReadingsCache>,
+    /// Working space for [`GrammarSpec::scans`], kept from one check to
+    /// the next so that the walk allocates nothing.
+    scratch: Mutex<ScansScratch>,
+}
+
+/// The vectors [`GrammarSpec::scans`] works in: where each token lies,
+/// which tokens the parser needs, the positions the lexer can reach and
+/// the terminals tried at the position being walked.
+#[derive(Default)]
+struct ScansScratch {
+    bounds: Vec<(usize, usize)>,
+    significant: Vec<usize>,
+    reachable: Vec<bool>,
+    tried: Vec<(TermId, Lexed)>,
 }
 
 /// What the lexers found in each distinct text drawn for one terminal.
@@ -266,6 +280,7 @@ impl GrammarSpec {
                 by_terminal: (0..terminals_len).map(|_| HashMap::default()).collect(),
                 len: 0,
             }),
+            scratch: Mutex::new(ScansScratch::default()),
         })
     }
 
@@ -425,15 +440,21 @@ impl GrammarSpec {
     /// all of a needed token. A pattern too involved to match is given
     /// the benefit of the doubt.
     fn scans(&self, text: &[char], tokens: &[Token]) -> bool {
-        let mut bounds = Vec::with_capacity(tokens.len());
+        let mut scratch = self.scratch.lock();
+        let ScansScratch {
+            bounds,
+            significant,
+            reachable,
+            tried,
+        } = &mut *scratch;
+        bounds.clear();
         let mut pos = 0;
         for token in tokens {
             bounds.push((pos, pos + token.len()));
             pos += token.len();
         }
-        let significant: Vec<usize> = (0..tokens.len())
-            .filter(|&i| !self.is_ignore(tokens[i].id))
-            .collect();
+        significant.clear();
+        significant.extend((0..tokens.len()).filter(|&i| !self.is_ignore(tokens[i].id)));
         let kept = |k: usize| {
             significant[k..]
                 .iter()
@@ -441,11 +462,11 @@ impl GrammarSpec {
                 .copied()
         };
         let within = |got: usize, k: usize| kept(k).is_none_or(|i| got < bounds[i].1);
-        let mut reachable = alloc::vec![false; text.len() + 1];
+        reachable.clear();
+        reachable.resize(text.len() + 1, false);
         reachable[0] = true;
         let mut k = 0;
         let mut t = 0;
-        let mut tried: Vec<(TermId, Lexed)> = Vec::new();
         for p in 0..=text.len() {
             if !reachable[p] {
                 continue;
@@ -593,26 +614,25 @@ impl GrammarSpec {
             regions
                 .iter()
                 .filter(move |&&(s, e, _)| start < e && s < end)
-                .collect::<Vec<_>>()
         };
         let mut fit = Fit::Exact;
         let mut i = 0;
         while i < observed.len() {
             let (got, start, end) = observed[i];
-            let hits = overlapping(start, end);
-            let Some(&&(s, e, token)) = hits.first() else {
+            let mut hits = overlapping(start, end);
+            let Some(&(s, e, token)) = hits.next() else {
                 if !self.is_ignore(got) {
                     fit = Fit::Retyped;
                 }
                 i += 1;
                 continue;
             };
-            if hits.len() > 1 {
+            if hits.next().is_some() {
                 return Fit::Wrong;
             }
             if self.is_ignore(token.id) {
                 while i < observed.len() && observed[i].1 < e {
-                    if overlapping(observed[i].1, observed[i].2).len() > 1 {
+                    if overlapping(observed[i].1, observed[i].2).nth(1).is_some() {
                         return Fit::Wrong;
                     }
                     if !self.is_ignore(observed[i].0) {
@@ -628,7 +648,7 @@ impl GrammarSpec {
             };
             let mut j = i + 1;
             while j < observed.len() && observed[j].1 < e {
-                if overlapping(observed[j].1, observed[j].2).len() > 1 {
+                if overlapping(observed[j].1, observed[j].2).nth(1).is_some() {
                     return Fit::Wrong;
                 }
                 j += 1;
