@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::native::core::ChoiceValue;
+use crate::native::lark::analysis::Bound;
 use crate::native::lark::builder::{ImportSource, NoImports};
 use crate::native::rng::EngineRng;
 use alloc::string::ToString;
@@ -1124,4 +1125,102 @@ fn a_grammar_remembers_the_lexing_of_its_token_texts_up_to_a_point() {
     assert!(!Arc::ptr_eq(&first, &after));
     assert_eq!(after.reading, Reading::Itself);
     assert_eq!(remembered(), 2);
+}
+
+#[test]
+fn nth_set_bit_counts_from_the_lowest() {
+    assert_eq!(nth_set_bit(0b1011, 0), Some(0));
+    assert_eq!(nth_set_bit(0b1011, 1), Some(1));
+    assert_eq!(nth_set_bit(0b1011, 2), Some(3));
+    assert_eq!(nth_set_bit(0b1011, 3), None);
+    assert_eq!(nth_set_bit(0, 0), None);
+    assert_eq!(nth_set_bit(1 << 63, 0), Some(63));
+    assert_eq!(nth_set_bit(u64::MAX, 63), Some(63));
+    assert_eq!(nth_set_bit(u64::MAX, 64), None);
+    assert_eq!(nth_set_bit(u64::MAX, u64::MAX), None);
+}
+
+fn alt(min_size: u64, typical_size: u64, max_size: Bound, min_depth: u32) -> Alt {
+    Alt {
+        min_size,
+        typical_size,
+        max_size,
+        min_depth,
+        items: vec![],
+    }
+}
+
+#[test]
+fn choosing_an_alternative_by_mask_agrees_with_scanning() {
+    let spec = spec_with(
+        "start: \"a\"\n",
+        GrammarOptions {
+            max_depth: 6,
+            ..GrammarOptions::default()
+        },
+    )
+    .unwrap();
+    let mut rng = EngineRng::seeded(0);
+    let (mut chosen, mut infeasible, mut beyond_mask, mut grew) = (0, 0, 0, 0);
+    for case in 0..600u64 {
+        let n = 1 + usize::from(rng.next_byte()) % 70;
+        let growth = rng.next_byte() % 3;
+        let alts: Vec<Alt> = (0..n)
+            .map(|_| {
+                let min_size = u64::from(rng.next_byte() % 8);
+                let typical_size = min_size + u64::from(rng.next_byte() % 4);
+                let grows = match growth {
+                    0 => false,
+                    1 => true,
+                    _ => rng.next_byte() % 2 == 0,
+                };
+                let max_size = (!grows).then_some(typical_size + 3);
+                alt(
+                    min_size,
+                    typical_size,
+                    max_size,
+                    u32::from(rng.next_byte() % 4),
+                )
+            })
+            .collect();
+        let budget = u64::from(rng.next_byte() % 12);
+        let depth = u32::from(rng.next_byte() % 6);
+        let mut by_mask = NativeTestCase::new_random(EngineRng::seeded(case)).unwrap();
+        let mut by_scan = NativeTestCase::new_random(EngineRng::seeded(case)).unwrap();
+        let mut generation = Generation::new(&spec, 0.0);
+        let position = |alt: &Alt| alts.iter().position(|a| core::ptr::eq(a, alt)).unwrap();
+        let masked = generation
+            .choose_alt(&mut by_mask, &alts, budget, depth)
+            .map(position);
+        let scanned = generation
+            .choose_alt_scanning(&mut by_scan, &alts, budget, depth)
+            .map(position);
+        match (masked, scanned) {
+            (Ok(a), Ok(b)) => {
+                assert_eq!(a, b);
+                chosen += 1;
+                beyond_mask += usize::from(n > MASKED_ALTS);
+                grew += usize::from(alts[a].growing());
+            }
+            (Err(_), Err(_)) => infeasible += 1,
+            (masked, scanned) => panic!("{masked:?} by mask but {scanned:?} by scanning"),
+        }
+        assert_eq!(by_mask.nodes, by_scan.nodes);
+    }
+    assert!(
+        chosen > 500 && infeasible >= 10 && beyond_mask > 30 && grew > 200,
+        "{chosen} {infeasible} {beyond_mask} {grew}"
+    );
+}
+
+#[test]
+fn rules_with_more_alternatives_than_a_mask_holds() {
+    let keywords: Vec<String> = (0..70).map(|i| format!("\"k{i}\"")).collect();
+    let spec = grammar(&format!("start: {}\n", keywords.join(" | ")));
+    let drawn: Vec<usize> = samples(&spec, 40)
+        .iter()
+        .map(|s| s.strip_prefix('k').unwrap().parse().unwrap())
+        .collect();
+    assert!(drawn.iter().all(|&i| i < 70));
+    assert!(drawn.iter().any(|&i| i >= MASKED_ALTS));
 }

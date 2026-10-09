@@ -993,6 +993,19 @@ fn token_budget(target: u64, min: u64, rate: f64, ignore_cost: f64) -> u64 {
     min.max((target as f64 / (1.0 + rate * ignore_cost)) as u64)
 }
 
+/// How many alternatives of a rule [`Generation::choose_alt`] can hold in
+/// a bit mask.
+const MASKED_ALTS: usize = u64::BITS as usize;
+
+/// The position of the `index`th set bit of `bits`, counting from the
+/// lowest, when it has that many.
+fn nth_set_bit(mut bits: u64, index: u64) -> Option<u32> {
+    for _ in 0..index.min(u64::from(u64::BITS)) {
+        bits &= bits.wrapping_sub(1);
+    }
+    (bits != 0).then_some(bits.trailing_zeros())
+}
+
 /// The probability of taking a growing alternative with `spare` budget
 /// beyond the rule's minimum.
 fn grow_probability(spare: u64) -> f64 {
@@ -1011,7 +1024,70 @@ impl Generation<'_> {
     /// regardless of its budget) with a probability that rises with the
     /// budget to spare beyond the cheapest growing alternative, then
     /// uniformly within the class.
+    ///
+    /// The classes are kept as bit masks over the alternatives, so that
+    /// each is sized and indexed without another pass over them; a rule
+    /// with more alternatives than a mask holds is drawn from by
+    /// [`Generation::choose_alt_scanning`], which answers the same.
     fn choose_alt<'a>(
+        &mut self,
+        ntc: &mut NativeTestCase,
+        alts: &'a [Alt],
+        budget: u64,
+        depth: u32,
+    ) -> Result<&'a Alt, EngineError> {
+        if alts.len() > MASKED_ALTS {
+            return self.choose_alt_scanning(ntc, alts, budget, depth);
+        }
+        let max_depth = self.spec.max_depth;
+        let mut feasible = 0u64;
+        let mut typical = u64::MAX;
+        let mut any_closing = false;
+        for (i, alt) in alts.iter().enumerate() {
+            if alt.min_size <= budget && depth.saturating_add(alt.min_depth) <= max_depth {
+                feasible |= 1 << i;
+                typical = typical.min(alt.typical_size);
+                any_closing |= !alt.growing();
+            }
+        }
+        hegel_internal_assert!(feasible != 0);
+        let mut growing = 0u64;
+        let mut cheapest_growing = u64::MAX;
+        let mut rest = feasible;
+        while rest != 0 {
+            let i = rest.trailing_zeros();
+            rest &= rest - 1;
+            let alt = &alts[i as usize];
+            let closes = if any_closing {
+                !alt.growing()
+            } else {
+                alt.typical_size == typical
+            };
+            if !closes {
+                growing |= 1 << i;
+                cheapest_growing = cheapest_growing.min(alt.typical_size);
+            }
+        }
+        let grow = if growing == 0 {
+            false
+        } else {
+            let p = grow_probability(budget.saturating_sub(cheapest_growing));
+            spanned(ntc, LABEL_BOOLEAN, |ntc| ntc.weighted_precise(p, None))?
+        };
+        let class = if grow { growing } else { feasible & !growing };
+        let index = spanned(ntc, LABEL_INTEGER, |ntc| {
+            ntc.draw_integer_uniform(0, u64::from(class.count_ones()) - 1)
+        })?;
+        let chosen = hegel_internal_unwrap!(
+            nth_set_bit(class, index),
+            "choose_alt: drew an index past the class"
+        );
+        Ok(&alts[chosen as usize])
+    }
+
+    /// [`Generation::choose_alt`] for any number of alternatives, finding
+    /// each class by scanning them.
+    fn choose_alt_scanning<'a>(
         &mut self,
         ntc: &mut NativeTestCase,
         alts: &'a [Alt],
