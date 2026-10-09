@@ -2286,14 +2286,12 @@ impl NativeTestCase {
             Err(_) => IntegerChoice::new(min_value, max_value, 0u64),
         };
 
-        let v = self.draw_integer_from(kind, |_, rng| {
-            Ok(BigInt::from(rng.random_range(min_value..=max_value)))
-        })?;
-
-        Ok(hegel_internal_unwrap!(
-            u64::try_from(v).ok(),
-            "draw_integer_uniform: validated value does not fit u64"
-        ))
+        self.draw_integer_as(
+            kind,
+            |_, n| n.to_u64().filter(|v| (min_value..=max_value).contains(v)),
+            |v| BigInt::from(*v),
+            |_, rng| Ok(rng.random_range(min_value..=max_value)),
+        )
     }
 
     /// Draw an index in `[0, weights.len())` with probability proportional
@@ -2319,30 +2317,62 @@ impl NativeTestCase {
         ))
     }
 
-    /// Shared body of the integer draws: resolve the choice against the
-    /// prefix, falling back to `sample` for fresh generation, then record
-    /// and observe it.
+    /// [`draw_integer_as`](Self::draw_integer_as) for a draw that works in
+    /// `BigInt` throughout.
     fn draw_integer_from(
         &mut self,
         kind: IntegerChoice,
         sample: impl Fn(&IntegerChoice, &mut EngineRng) -> Result<BigInt, InternalError>,
     ) -> Result<BigInt, EngineError> {
+        self.draw_integer_as(
+            kind,
+            |kind, n| kind.validate(n).then(|| n.clone()),
+            BigInt::clone,
+            sample,
+        )
+    }
+
+    /// Shared body of the integer draws, for a draw whose values are a type
+    /// `V` the recorded `BigInt` is `widen`ed from (so that a draw within a
+    /// native width never round-trips its value through `BigInt`): resolve
+    /// the choice against the prefix, reading a stored integer with
+    /// `narrow` (which answers `None` for a value `kind` does not admit),
+    /// falling back to `sample` for fresh generation, then record and
+    /// observe it.
+    fn draw_integer_as<V>(
+        &mut self,
+        kind: IntegerChoice,
+        narrow: impl Fn(&IntegerChoice, &BigInt) -> Option<V>,
+        widen: impl FnOnce(&V) -> BigInt,
+        sample: impl FnOnce(&IntegerChoice, &mut EngineRng) -> Result<V, InternalError>,
+    ) -> Result<V, EngineError> {
         let (v, was_forced) = self.resolve_choice(
-            || Ok(kind.simplest()),
-            || Ok(kind.unit()),
-            |v| match v {
-                ChoiceValue::Integer(n) if kind.validate(n) => Some(n.clone()),
+            || {
+                Ok(hegel_internal_unwrap!(
+                    narrow(&kind, &kind.simplest()),
+                    "draw_integer_as: the simplest value is outside its own range"
+                ))
+            },
+            || {
+                Ok(hegel_internal_unwrap!(
+                    narrow(&kind, &kind.unit()),
+                    "draw_integer_as: the unit value is outside its own range"
+                ))
+            },
+            |value| match value {
+                ChoiceValue::Integer(n) => narrow(&kind, n),
                 _ => None,
             },
             |rng| sample(&kind, rng),
         )?;
 
+        let recorded = widen(&v);
         if let Some(ref mut obs) = self.observer {
-            obs.draw_integer(&v, was_forced);
+            obs.draw_integer(&recorded, was_forced);
         }
 
         self.nodes
-            .push(ChoiceNode::integer(kind, v.clone(), was_forced));
+            .push(ChoiceNode::integer(kind, recorded, was_forced));
 
         Ok(v)
     }

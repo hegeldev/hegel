@@ -3218,6 +3218,49 @@ fn an_unaddressed_stream_works_its_draw_addresses_out_from_its_spans() {
 }
 
 #[test]
+fn uniform_draws_replay_misfit_and_template_the_prefix_in_their_own_width() {
+    let prefix = vec![
+        ChoiceValue::Integer(BigInt::from(7u64)),
+        ChoiceValue::Integer(BigInt::from(u64::MAX)),
+        ChoiceValue::Integer(BigInt::from(12u64)),
+        ChoiceValue::Boolean(false),
+        ChoiceValue::Boolean(true),
+    ];
+    let prefix_nodes = vec![
+        ChoiceNode::integer(IntegerChoice::small(0, 9, 0), BigInt::from(7u64), false),
+        ChoiceNode::integer(
+            IntegerChoice::new(0u64, u64::MAX, 0u64),
+            BigInt::from(u64::MAX),
+            false,
+        ),
+        ChoiceNode::integer(IntegerChoice::small(0, 99, 0), BigInt::from(12u64), false),
+        ChoiceNode::boolean(BooleanChoice { p: 0.5 }, false, false),
+        ChoiceNode::boolean(BooleanChoice { p: 0.5 }, true, false),
+    ];
+    let mut tc = NativeTestCase::for_choices_and_template(
+        &prefix,
+        Some(&prefix_nodes),
+        Some(ChoiceTemplate::simplest(None).unwrap()),
+        10,
+        None,
+    );
+    assert_eq!(tc.draw_integer_uniform(3, 9).unwrap(), 7);
+    assert_eq!(
+        tc.draw_integer_uniform(u64::MAX - 1, u64::MAX).unwrap(),
+        u64::MAX
+    );
+    assert_eq!(tc.draw_integer_uniform(3, 9).unwrap(), 4);
+    assert_eq!(tc.draw_integer_uniform(3, 9).unwrap(), 3);
+    assert_eq!(tc.draw_integer_uniform(3, 9).unwrap(), 4);
+    assert_eq!(tc.draw_integer_uniform(3, 9).unwrap(), 3);
+    let values: Vec<ChoiceValue> = tc.nodes.iter().map(|n| n.data.value()).collect();
+    assert_eq!(
+        values,
+        [7, u64::MAX, 4, 3, 4, 3].map(|v| ChoiceValue::Integer(BigInt::from(v)))
+    );
+}
+
+#[test]
 fn uniform_draws_record_their_bounds_whatever_their_width() {
     let mut tc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
     tc.draw_integer_uniform(3, 9).unwrap();
