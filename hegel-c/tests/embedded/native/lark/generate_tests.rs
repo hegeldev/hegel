@@ -1125,6 +1125,26 @@ fn a_grammar_remembers_the_lexing_of_its_token_texts_up_to_a_point() {
     assert!(!Arc::ptr_eq(&first, &after));
     assert_eq!(after.reading, Reading::Itself);
     assert_eq!(remembered(), 2);
+    assert_eq!(
+        spec.readings.lock().texts.len(),
+        text(READINGS_CAPACITY).len() + text(0).len()
+    );
+}
+
+#[test]
+fn a_text_remembered_again_takes_the_place_of_what_was_held() {
+    let spec = grammar("start: NAME+\nNAME: /[a-z]+/\n");
+    let name = tid(&spec, "NAME");
+    let text: Vec<char> = "abc".chars().collect();
+    let first = spec.read_token(name, &text, None);
+    let again = Arc::new(spec.scan_token(name, &text, None));
+    spec.readings.lock().remember(name, &text, &again);
+    let readings = spec.readings.lock();
+    assert!(Arc::ptr_eq(readings.find(name, &text).unwrap(), &again));
+    assert!(!Arc::ptr_eq(readings.find(name, &text).unwrap(), &first));
+    assert_eq!(readings.len, 1);
+    assert_eq!(readings.texts, text);
+    assert!(readings.find(name, &text[..2]).is_none());
 }
 
 #[test]

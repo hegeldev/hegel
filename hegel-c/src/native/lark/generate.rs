@@ -59,6 +59,9 @@ use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::hash::{Hash, Hasher};
+use hashbrown::HashTable;
+use rustc_hash::FxHasher;
 
 /// The default cap on the length of a generated string, in characters.
 pub const DEFAULT_MAX_SIZE: u64 = 8192;
@@ -214,12 +217,72 @@ struct ScansScratch {
     observed: Vec<(TermId, usize, usize)>,
 }
 
-/// What the lexers found in each distinct text drawn for one terminal.
-type Readings = HashMap<Vec<char>, Arc<TokenScans>>;
+/// What the lexers found in each distinct text drawn for one terminal,
+/// by the text's hash.
+type Readings = HashTable<Remembered>;
+
+/// What the lexers found in one text, which lies at `start..end` of the
+/// cache's `texts`.
+struct Remembered {
+    start: usize,
+    end: usize,
+    scans: Arc<TokenScans>,
+}
 
 struct ReadingsCache {
     by_terminal: Vec<Readings>,
+    /// The remembered texts, one after another, so that remembering a
+    /// text allocates nothing of its own.
+    texts: Vec<char>,
     len: usize,
+}
+
+/// The hash of a text in [`ReadingsCache`].
+fn text_hash(text: &[char]) -> u64 {
+    let mut hasher = FxHasher::default();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+impl ReadingsCache {
+    /// What was remembered of `text` as a token of terminal `id`.
+    fn find(&self, id: TermId, text: &[char]) -> Option<&Arc<TokenScans>> {
+        let texts = &self.texts;
+        self.by_terminal[id]
+            .find(text_hash(text), |held| texts[held.start..held.end] == *text)
+            .map(|held| &held.scans)
+    }
+
+    /// Remember `scans` for `text` as a token of terminal `id`, in place
+    /// of what another thread remembered for it meanwhile, if anything,
+    /// forgetting everything first when the cache is full.
+    fn remember(&mut self, id: TermId, text: &[char], scans: &Arc<TokenScans>) {
+        if self.len >= READINGS_CAPACITY {
+            self.by_terminal.iter_mut().for_each(HashTable::clear);
+            self.texts.clear();
+            self.len = 0;
+        }
+        let hash = text_hash(text);
+        let Self {
+            by_terminal,
+            texts,
+            len,
+        } = self;
+        let table = &mut by_terminal[id];
+        if let Some(held) = table.find_mut(hash, |held| texts[held.start..held.end] == *text) {
+            held.scans = Arc::clone(scans);
+            return;
+        }
+        let start = texts.len();
+        texts.extend_from_slice(text);
+        let held = Remembered {
+            start,
+            end: texts.len(),
+            scans: Arc::clone(scans),
+        };
+        table.insert_unique(hash, held, |held| text_hash(&texts[held.start..held.end]));
+        *len += 1;
+    }
 }
 
 impl GrammarSpec {
@@ -305,7 +368,8 @@ impl GrammarSpec {
             max_size: options.max_size,
             max_depth: options.max_depth,
             readings: Mutex::new(ReadingsCache {
-                by_terminal: (0..terminals_len).map(|_| HashMap::default()).collect(),
+                by_terminal: (0..terminals_len).map(|_| HashTable::new()).collect(),
+                texts: Vec::new(),
                 len: 0,
             }),
             scratch: Mutex::new(ScansScratch::default()),
@@ -318,21 +382,11 @@ impl GrammarSpec {
     /// computed (with `own` for the terminal's own scan when the caller
     /// already has it) and remembered.
     fn read_token(&self, id: TermId, text: &[char], own: Option<Scan>) -> Arc<TokenScans> {
-        if let Some(found) = self.readings.lock().by_terminal[id].get(text) {
+        if let Some(found) = self.readings.lock().find(id, text) {
             return Arc::clone(found);
         }
         let scans = Arc::new(self.scan_token(id, text, own));
-        let mut readings = self.readings.lock();
-        if readings.len >= READINGS_CAPACITY {
-            readings.by_terminal.iter_mut().for_each(HashMap::clear);
-            readings.len = 0;
-        }
-        if readings.by_terminal[id]
-            .insert(text.to_vec(), Arc::clone(&scans))
-            .is_none()
-        {
-            readings.len += 1;
-        }
+        self.readings.lock().remember(id, text, &scans);
         scans
     }
 
