@@ -35,7 +35,7 @@ impl<'a> Shrinker<'a> {
                     let decremented: Option<ChoiceData> = match &prev.data {
                         ChoiceData::Integer(ic, v) if *v != ic.simplest() => ic
                             .value_from_bigint(&(v.clone() - 1))
-                            .map(|nv| ChoiceData::Integer(alloc::sync::Arc::clone(ic), nv)),
+                            .map(|nv| ChoiceData::Integer(ic.clone(), nv)),
                         ChoiceData::Boolean(bc, true) => {
                             Some(ChoiceData::Boolean(bc.clone(), false))
                         }
@@ -167,7 +167,7 @@ impl<'a> Shrinker<'a> {
                 i += 1;
                 continue;
             };
-            let (ic, current_val) = (alloc::sync::Arc::clone(ic), current_val.clone());
+            let (ic, current_val) = (ic.clone(), current_val.clone());
             let simplest = ic.simplest();
             if current_val == simplest {
                 i += 1;
@@ -194,7 +194,7 @@ impl<'a> Shrinker<'a> {
             };
             let mut lowered = self.current_nodes.clone();
             lowered[i] = ChoiceNode::new(
-                ChoiceData::Integer(alloc::sync::Arc::clone(&ic), towards),
+                ChoiceData::Integer(ic.clone(), towards),
                 lowered[i].was_forced,
             );
 

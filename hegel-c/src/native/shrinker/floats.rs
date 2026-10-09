@@ -469,9 +469,9 @@ fn scaled_integer_candidates(
         push(&t_i - &d_i, &t_j - &d_j);
     }
     let bound = if d_j.sign() == Sign::Plus {
-        &ic_j.max_value - &t_j
+        &ic_j.max_value() - &t_j
     } else {
-        &ic_j.min_value - &t_j
+        &ic_j.min_value() - &t_j
     };
     let scaled: Vec<BigInt> = SCALE_FACTORS
         .iter()
@@ -546,7 +546,7 @@ enum Numeric {
 /// The numeric pair at `data`, when it is an integer or float node.
 fn numeric_at(data: &ChoiceData) -> Option<Numeric> {
     match data {
-        ChoiceData::Integer(ic, v) => Some(Numeric::Integer((**ic).clone(), v.clone())),
+        ChoiceData::Integer(ic, v) => Some(Numeric::Integer(ic.clone(), v.clone())),
         ChoiceData::Float(fc, v) => Some(Numeric::Float(fc.clone(), *v)),
         _ => None,
     }

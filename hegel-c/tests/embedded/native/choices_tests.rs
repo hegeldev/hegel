@@ -5,12 +5,7 @@ use alloc::string::ToString;
 #[test]
 fn integer_choice_simplest_spans_zero() {
     assert_eq!(
-        IntegerChoice {
-            min_value: BigInt::from(-10),
-            max_value: BigInt::from(10),
-            shrink_towards: BigInt::from(0),
-        }
-        .simplest(),
+        IntegerChoice::new(BigInt::from(-10), BigInt::from(10), BigInt::from(0)).simplest(),
         BigInt::from(0)
     );
 }
@@ -18,12 +13,7 @@ fn integer_choice_simplest_spans_zero() {
 #[test]
 fn integer_choice_simplest_all_positive() {
     assert_eq!(
-        IntegerChoice {
-            min_value: BigInt::from(5),
-            max_value: BigInt::from(100),
-            shrink_towards: BigInt::from(0),
-        }
-        .simplest(),
+        IntegerChoice::new(BigInt::from(5), BigInt::from(100), BigInt::from(0)).simplest(),
         BigInt::from(5)
     );
 }
@@ -31,12 +21,7 @@ fn integer_choice_simplest_all_positive() {
 #[test]
 fn integer_choice_simplest_all_negative() {
     assert_eq!(
-        IntegerChoice {
-            min_value: BigInt::from(-100),
-            max_value: BigInt::from(-5),
-            shrink_towards: BigInt::from(0),
-        }
-        .simplest(),
+        IntegerChoice::new(BigInt::from(-100), BigInt::from(-5), BigInt::from(0)).simplest(),
         BigInt::from(-5)
     );
 }
@@ -44,12 +29,7 @@ fn integer_choice_simplest_all_negative() {
 #[test]
 fn integer_choice_unit_spans_zero() {
     assert_eq!(
-        IntegerChoice {
-            min_value: BigInt::from(-10),
-            max_value: BigInt::from(10),
-            shrink_towards: BigInt::from(0),
-        }
-        .unit(),
+        IntegerChoice::new(BigInt::from(-10), BigInt::from(10), BigInt::from(0)).unit(),
         BigInt::from(1)
     );
 }
@@ -57,12 +37,7 @@ fn integer_choice_unit_spans_zero() {
 #[test]
 fn integer_choice_unit_all_positive() {
     assert_eq!(
-        IntegerChoice {
-            min_value: BigInt::from(5),
-            max_value: BigInt::from(100),
-            shrink_towards: BigInt::from(0),
-        }
-        .unit(),
+        IntegerChoice::new(BigInt::from(5), BigInt::from(100), BigInt::from(0)).unit(),
         BigInt::from(6)
     );
 }
@@ -70,12 +45,7 @@ fn integer_choice_unit_all_positive() {
 #[test]
 fn integer_choice_unit_all_negative() {
     assert_eq!(
-        IntegerChoice {
-            min_value: BigInt::from(-100),
-            max_value: BigInt::from(-5),
-            shrink_towards: BigInt::from(0),
-        }
-        .unit(),
+        IntegerChoice::new(BigInt::from(-100), BigInt::from(-5), BigInt::from(0)).unit(),
         BigInt::from(-6)
     );
 }
@@ -83,23 +53,18 @@ fn integer_choice_unit_all_negative() {
 #[test]
 fn integer_choice_unit_single_value_range() {
     assert_eq!(
-        IntegerChoice {
-            min_value: BigInt::from(5),
-            max_value: BigInt::from(5),
-            shrink_towards: BigInt::from(0),
-        }
-        .unit(),
+        IntegerChoice::new(BigInt::from(5), BigInt::from(5), BigInt::from(0)).unit(),
         BigInt::from(5)
     );
 }
 
 #[test]
 fn choice_kind_resolve_rejects_kind_value_mismatch() {
-    let kind = ChoiceKind::Integer(std::sync::Arc::new(IntegerChoice {
-        min_value: BigInt::from(0),
-        max_value: BigInt::from(100),
-        shrink_towards: BigInt::from(0),
-    }));
+    let kind = ChoiceKind::Integer(IntegerChoice::new(
+        BigInt::from(0),
+        BigInt::from(100),
+        BigInt::from(0),
+    ));
     assert_eq!(kind.resolve(&ChoiceValue::Boolean(true)), None);
 }
 
@@ -108,11 +73,7 @@ fn bu(n: u64) -> crate::native::bignum::BigUint {
 }
 
 fn integer_choice(min: i128, max: i128) -> IntegerChoice {
-    IntegerChoice {
-        min_value: BigInt::from(min),
-        max_value: BigInt::from(max),
-        shrink_towards: BigInt::from(0),
-    }
+    IntegerChoice::new(BigInt::from(min), BigInt::from(max), BigInt::from(0))
 }
 
 #[test]
@@ -200,11 +161,7 @@ fn integer_choice_from_index_overflowing_u128_returns_none() {
 
 #[test]
 fn integer_choice_index_round_trip_nonzero_shrink_towards() {
-    let ic = IntegerChoice {
-        min_value: BigInt::from(-5),
-        max_value: BigInt::from(40),
-        shrink_towards: BigInt::from(7),
-    };
+    let ic = IntegerChoice::new(BigInt::from(-5), BigInt::from(40), BigInt::from(7));
     for v in -5i128..=40 {
         let bv = BigInt::from(v);
         let idx = ic.to_index(&bv);
@@ -214,11 +171,7 @@ fn integer_choice_index_round_trip_nonzero_shrink_towards() {
 
 #[test]
 fn integer_choice_index_round_trip_shrink_towards_clamped_outside_range() {
-    let ic = IntegerChoice {
-        min_value: BigInt::from(10),
-        max_value: BigInt::from(30),
-        shrink_towards: BigInt::from(-100),
-    };
+    let ic = IntegerChoice::new(BigInt::from(10), BigInt::from(30), BigInt::from(-100));
     for v in 10i128..=30 {
         let bv = BigInt::from(v);
         let idx = ic.to_index(&bv);
@@ -633,11 +586,7 @@ fn string_choice_from_index_past_max_returns_none() {
 
 fn integer_node(min: i128, max: i128, value: i128) -> ChoiceNode {
     ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(min),
-            max_value: BigInt::from(max),
-            shrink_towards: BigInt::from(0),
-        },
+        IntegerChoice::new(BigInt::from(min), BigInt::from(max), BigInt::from(0)),
         BigInt::from(value),
         false,
     )
@@ -737,15 +686,9 @@ fn nodes_sort_key_shortlex_orders_by_length_then_element() {
 
 #[test]
 fn choice_kind_unit_dispatches_to_each_sub_kind() {
-    let ic = IntegerChoice {
-        min_value: BigInt::from(0),
-        max_value: BigInt::from(10),
-        shrink_towards: BigInt::from(0),
-    };
+    let ic = IntegerChoice::new(BigInt::from(0), BigInt::from(10), BigInt::from(0));
     assert_eq!(
-        ChoiceKind::Integer(std::sync::Arc::new(ic.clone()))
-            .unit()
-            .unwrap(),
+        ChoiceKind::Integer(ic.clone()).unit().unwrap(),
         ChoiceValue::Integer(ic.unit())
     );
 
@@ -797,11 +740,7 @@ fn engine_error_display_covers_all_variants() {
 fn big_integer_node(distance_beyond_u128: u32) -> ChoiceNode {
     let huge = BigInt::from(u128::MAX) * BigInt::from(4) + BigInt::from(distance_beyond_u128);
     ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(0),
-            max_value: huge.clone(),
-            shrink_towards: BigInt::from(0),
-        },
+        IntegerChoice::new(BigInt::from(0), huge.clone(), BigInt::from(0)),
         huge,
         false,
     )
@@ -1269,4 +1208,30 @@ fn clone_kind_has_no_dense_index() {
         None
     );
     assert_eq!(ChoiceKind::Clone.max_index(), None);
+}
+
+#[test]
+fn a_choice_node_is_a_few_words() {
+    assert_eq!(core::mem::size_of::<IntegerChoice>(), 32);
+    assert_eq!(core::mem::size_of::<ChoiceNode>(), 64);
+    let wide = IntegerChoice::new(BigInt::from(0), BigInt::from(u128::MAX), BigInt::from(0));
+    let small = IntegerChoice::new(BigInt::from(0), BigInt::from(i64::MAX), BigInt::from(0));
+    assert_eq!(small, IntegerChoice::small(0, i64::MAX, 0));
+    assert_ne!(wide, small);
+    assert_eq!(wide.max_value(), BigInt::from(u128::MAX));
+    assert!(wide.validate(&BigInt::from(u64::MAX)) && !wide.validate(&BigInt::from(-1)));
+    assert!(small.validate(&BigInt::from(i64::MAX)) && !small.validate(&BigInt::from(u64::MAX)));
+    assert_eq!(
+        small.sort_key(&BigInt::from(-3)),
+        (BigUint::from(3u32), true)
+    );
+    assert_eq!(
+        wide.sort_key(&BigInt::from(-3)),
+        (BigUint::from(3u32), true)
+    );
+    assert_eq!(
+        IntegerChoice::new(5, 9, 0).clamped_shrink_towards(),
+        IntegerChoice::new(BigInt::from(5), BigInt::from(u128::MAX), BigInt::from(0))
+            .clamped_shrink_towards()
+    );
 }

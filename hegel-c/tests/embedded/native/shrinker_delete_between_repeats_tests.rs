@@ -16,11 +16,7 @@ use alloc::vec::Vec;
 
 fn int_node(value: i128) -> ChoiceNode {
     ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(0),
-            max_value: BigInt::from(100),
-            shrink_towards: BigInt::from(0),
-        },
+        IntegerChoice::new(BigInt::from(0), BigInt::from(100), BigInt::from(0)),
         BigInt::from(value),
         false,
     )
@@ -135,11 +131,7 @@ fn adjacent_repeats_propose_nothing() {
 #[test]
 fn equal_values_with_different_constraints_are_not_repeats() {
     let narrow = ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(0),
-            max_value: BigInt::from(10),
-            shrink_towards: BigInt::from(0),
-        },
+        IntegerChoice::new(BigInt::from(0), BigInt::from(10), BigInt::from(0)),
         BigInt::from(5),
         false,
     );

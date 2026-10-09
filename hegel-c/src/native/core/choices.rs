@@ -7,27 +7,87 @@ use super::state::Span;
 use crate::control::{
     InternalError, hegel_internal_assert, hegel_internal_error, hegel_internal_unwrap,
 };
-use crate::native::bignum::{BigInt, BigUint, Zero};
+use crate::native::bignum::{BigInt, BigUint, ToPrimitive, Zero};
 use crate::native::floats::sign_aware_lte;
 use crate::native::intervalsets::IntervalSet;
+use alloc::boxed::Box;
 
-/// An integer choice with bounded range, using `BigInt` for all widths.
+/// An integer choice with bounded range. Bounds that fit a machine word
+/// are kept inline, as nearly every draw's do; wider ones are boxed, so
+/// the kind is a few words to store and copy in every choice node. The
+/// representation is canonical, so equal bounds compare equal however
+/// they were given.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IntegerChoice {
-    pub min_value: BigInt,
-    pub max_value: BigInt,
-    /// The "preferred" value the shrinker aims at (default 0). All of
-    /// [`Self::simplest`], [`Self::unit`], and [`Self::sort_key`] are
-    /// anchored at `shrink_towards.clamp(min_value, max_value)`, so
-    /// integer-shrinking passes converge on this value rather than on 0.
-    pub shrink_towards: BigInt,
+pub struct IntegerChoice(Bounds);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Bounds {
+    Small { min: i64, max: i64, towards: i64 },
+    Wide(Box<WideBounds>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WideBounds {
+    min: BigInt,
+    max: BigInt,
+    towards: BigInt,
 }
 
 impl IntegerChoice {
+    /// The choice of a value in `min_value..=max_value` that shrinks
+    /// towards `shrink_towards` (clamped into the range). All of
+    /// [`Self::simplest`], [`Self::unit`], and [`Self::sort_key`] are
+    /// anchored at that clamped value, so integer-shrinking passes
+    /// converge on it rather than on 0.
+    pub fn new(
+        min_value: impl Into<BigInt>,
+        max_value: impl Into<BigInt>,
+        shrink_towards: impl Into<BigInt>,
+    ) -> Self {
+        let (min, max, towards) = (min_value.into(), max_value.into(), shrink_towards.into());
+        match (min.to_i64(), max.to_i64(), towards.to_i64()) {
+            (Some(min), Some(max), Some(towards)) => Self::small(min, max, towards),
+            _ => IntegerChoice(Bounds::Wide(Box::new(WideBounds { min, max, towards }))),
+        }
+    }
+
+    /// [`Self::new`] for bounds that fit a machine word.
+    pub fn small(min: i64, max: i64, towards: i64) -> Self {
+        IntegerChoice(Bounds::Small { min, max, towards })
+    }
+
+    /// The inclusive lower bound.
+    pub fn min_value(&self) -> BigInt {
+        match &self.0 {
+            Bounds::Small { min, .. } => BigInt::from(*min),
+            Bounds::Wide(wide) => wide.min.clone(),
+        }
+    }
+
+    /// The inclusive upper bound.
+    pub fn max_value(&self) -> BigInt {
+        match &self.0 {
+            Bounds::Small { max, .. } => BigInt::from(*max),
+            Bounds::Wide(wide) => wide.max.clone(),
+        }
+    }
+
+    /// The value the shrinker aims at, before clamping into the range.
+    pub fn shrink_towards(&self) -> BigInt {
+        match &self.0 {
+            Bounds::Small { towards, .. } => BigInt::from(*towards),
+            Bounds::Wide(wide) => wide.towards.clone(),
+        }
+    }
+
     pub(crate) fn clamped_shrink_towards(&self) -> BigInt {
-        self.shrink_towards
-            .clone()
-            .clamp(self.min_value.clone(), self.max_value.clone())
+        match &self.0 {
+            Bounds::Small { min, max, towards } => BigInt::from((*towards).clamp(*min, *max)),
+            Bounds::Wide(wide) => wide
+                .towards
+                .clone()
+                .clamp(wide.min.clone(), wide.max.clone()),
+        }
     }
 
     pub fn simplest(&self) -> BigInt {
@@ -48,17 +108,26 @@ impl IntegerChoice {
     }
 
     pub fn validate(&self, value: &BigInt) -> bool {
-        self.min_value <= *value && *value <= self.max_value
+        match &self.0 {
+            Bounds::Small { min, max, .. } => {
+                value.to_i64().is_some_and(|v| *min <= v && v <= *max)
+            }
+            Bounds::Wide(wide) => wide.min <= *value && *value <= wide.max,
+        }
     }
 
     pub fn sort_key(&self, value: &BigInt) -> (BigUint, bool) {
+        if let (Bounds::Small { min, max, towards }, Some(v)) = (&self.0, value.to_i64()) {
+            let target = (*towards).clamp(*min, *max);
+            return (BigUint::from(v.abs_diff(target)), v < target);
+        }
         let target = self.clamped_shrink_towards();
         let distance = (value - &target).magnitude();
         (distance, *value < target)
     }
 
     pub fn max_index(&self) -> BigUint {
-        (&self.max_value - &self.min_value).magnitude()
+        (self.max_value() - self.min_value()).magnitude()
     }
 
     pub fn to_index(&self, value: &BigInt) -> BigUint {
@@ -66,8 +135,8 @@ impl IntegerChoice {
         if *value == s {
             return BigUint::zero();
         }
-        let above = (&self.max_value - &s).magnitude();
-        let below = (&s - &self.min_value).magnitude();
+        let above = (self.max_value() - &s).magnitude();
+        let below = (&s - self.min_value()).magnitude();
         let d_abs = (value - &s).magnitude();
         let one = BigUint::from(1u32);
         let d_minus_one = &d_abs - &one;
@@ -87,8 +156,8 @@ impl IntegerChoice {
         if index.is_zero() {
             return Some(s);
         }
-        let above = (&self.max_value - &s).magnitude();
-        let below = (&s - &self.min_value).magnitude();
+        let above = (self.max_value() - &s).magnitude();
+        let below = (&s - self.min_value()).magnitude();
         if index > &above + &below {
             return None;
         }
@@ -693,13 +762,12 @@ fn max_finite_global_rank() -> crate::native::bignum::BigUint {
 
 /// The kind of choice made at a particular point.
 ///
-/// The `IntegerChoice` payload is shared via `Arc`: the shrinker and data
-/// tree clone kinds constantly, and the integer constraint holds three
-/// `BigInt`s, so sharing turns those deep clones into a pointer bump. The
-/// other constraints are a few machine words and are carried by value.
+/// Every constraint is carried by value: the integer constraint's three
+/// `BigInt`s live inline unless a bound is wider than a machine word, so
+/// cloning one copies a few words, as for the other constraints.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChoiceKind {
-    Integer(Arc<IntegerChoice>),
+    Integer(IntegerChoice),
     Boolean(BooleanChoice),
     Float(FloatChoice),
     Bytes(BytesChoice),
@@ -1167,7 +1235,7 @@ impl ChoiceKind {
     pub fn resolve(&self, value: &ChoiceValue) -> Option<ChoiceData> {
         match (self, value) {
             (ChoiceKind::Integer(ic), ChoiceValue::Integer(v)) if ic.validate(v) => {
-                Some(ChoiceData::Integer(Arc::clone(ic), v.clone()))
+                Some(ChoiceData::Integer(ic.clone(), v.clone()))
             }
             (ChoiceKind::Boolean(bc), ChoiceValue::Boolean(v)) => {
                 Some(ChoiceData::Boolean(bc.clone(), *v))
@@ -1191,10 +1259,9 @@ impl ChoiceKind {
 /// mismatch unrepresentable: a consumer that needs both matches a single
 /// variant and gets a proven-consistent pair.
 ///
-/// The `IntegerChoice` constraint is shared via `Arc` because the shrinker
-/// clones entire `Vec<ChoiceNode>` vectors thousands of times per shrink
-/// run, while the constraint almost never changes; this turns three
-/// `BigInt` deep-clones per integer node into a pointer bump. A clone
+/// The `IntegerChoice` constraint is carried by value: its bounds are
+/// inline `BigInt`s for every width a draw ordinarily asks for, so a node
+/// is a few words to clone and costs no allocation to record. A clone
 /// node's payload is the realized stream of its execution — realized by
 /// construction, so consumers never re-prove it.
 ///
@@ -1203,7 +1270,7 @@ impl ChoiceKind {
 /// payloads compare by child values recursively.
 #[derive(Clone, Debug)]
 pub enum ChoiceData {
-    Integer(Arc<IntegerChoice>, BigInt),
+    Integer(IntegerChoice, BigInt),
     Boolean(BooleanChoice, bool),
     Float(FloatChoice, f64),
     Bytes(BytesChoice, Vec<u8>),
@@ -1233,11 +1300,10 @@ impl Eq for ChoiceData {}
 
 impl ChoiceData {
     /// The constraint half of the pair, as a standalone [`ChoiceKind`].
-    /// Cheap: the integer constraint shares its `Arc` and the others are a
-    /// few machine words.
+    /// Cheap: every constraint is a few machine words.
     pub fn kind(&self) -> ChoiceKind {
         match self {
-            ChoiceData::Integer(ic, _) => ChoiceKind::Integer(Arc::clone(ic)),
+            ChoiceData::Integer(ic, _) => ChoiceKind::Integer(ic.clone()),
             ChoiceData::Boolean(bc, _) => ChoiceKind::Boolean(bc.clone()),
             ChoiceData::Float(fc, _) => ChoiceKind::Float(fc.clone()),
             ChoiceData::Bytes(bc, _) => ChoiceKind::Bytes(bc.clone()),
@@ -1297,7 +1363,7 @@ impl ChoiceData {
     /// The same constraint paired with its simplest value.
     pub fn with_simplest(&self) -> Result<ChoiceData, InternalError> {
         Ok(match self {
-            ChoiceData::Integer(ic, _) => ChoiceData::Integer(Arc::clone(ic), ic.simplest()),
+            ChoiceData::Integer(ic, _) => ChoiceData::Integer(ic.clone(), ic.simplest()),
             ChoiceData::Boolean(bc, _) => ChoiceData::Boolean(bc.clone(), false),
             ChoiceData::Float(fc, _) => ChoiceData::Float(fc.clone(), fc.simplest()?),
             ChoiceData::Bytes(bc, _) => ChoiceData::Bytes(bc.clone(), bc.simplest()),
@@ -1439,11 +1505,6 @@ impl ChoiceNode {
 
     /// An integer node.
     pub fn integer(constraint: IntegerChoice, value: BigInt, was_forced: bool) -> Self {
-        Self::integer_shared(Arc::new(constraint), value, was_forced)
-    }
-
-    /// An integer node whose constraint other nodes may share.
-    pub fn integer_shared(constraint: Arc<IntegerChoice>, value: BigInt, was_forced: bool) -> Self {
         Self::new(ChoiceData::Integer(constraint, value), was_forced)
     }
 

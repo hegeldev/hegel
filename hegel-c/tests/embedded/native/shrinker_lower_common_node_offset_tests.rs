@@ -12,11 +12,11 @@ use alloc::vec::Vec;
 
 fn int_node(value: i128, shrink_towards: i128) -> ChoiceNode {
     ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(i128::MIN),
-            max_value: BigInt::from(i128::MAX),
-            shrink_towards: BigInt::from(shrink_towards),
-        },
+        IntegerChoice::new(
+            BigInt::from(i128::MIN),
+            BigInt::from(i128::MAX),
+            BigInt::from(shrink_towards),
+        ),
         BigInt::from(value),
         false,
     )
@@ -85,11 +85,7 @@ fn lower_common_node_offset_collapses_zig_zag_pair() {
 
 fn bounded_int_node(value: i128, min: i128, max: i128) -> ChoiceNode {
     ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(min),
-            max_value: BigInt::from(max),
-            shrink_towards: BigInt::from(0),
-        },
+        IntegerChoice::new(BigInt::from(min), BigInt::from(max), BigInt::from(0)),
         BigInt::from(value),
         false,
     )

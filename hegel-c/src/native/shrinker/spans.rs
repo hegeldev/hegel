@@ -10,7 +10,6 @@ use crate::control::{hegel_internal_debug_assert, hegel_internal_debug_assert_eq
 use crate::native::HashSet;
 use crate::native::core::{ChoiceData, ChoiceNode, sort_key};
 use alloc::boxed::Box;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 /// The [`PermutationJudge`] behind [`Shrinker::reorder_spans`]: splices the
@@ -155,7 +154,7 @@ impl<'a> Shrinker<'a> {
             ChoiceData::Integer(ic, v) => [v.clone() - 1, v.clone() + 1]
                 .into_iter()
                 .filter_map(|nv| ic.value_from_bigint(&nv))
-                .map(|nv| ChoiceData::Integer(Arc::clone(ic), nv))
+                .map(|nv| ChoiceData::Integer(ic.clone(), nv))
                 .collect(),
             ChoiceData::Boolean(bc, b) => alloc::vec![ChoiceData::Boolean(bc.clone(), !b)],
             ChoiceData::String(sc, cps) if cps.len() > sc.min_size => {

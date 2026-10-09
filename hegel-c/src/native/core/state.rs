@@ -46,10 +46,6 @@ use crate::native::statistics::{
 };
 use crate::sys::sync::{Lazy, Mutex};
 
-/// How many recent integer draws' constraints a test case keeps for
-/// later draws to share (see `NativeTestCase::shared_integer_kind`).
-const INTEGER_KINDS_REMEMBERED: usize = 8;
-
 /// The most choices and the most spans a test case in this process has
 /// recorded so far, as capacity hints for the next one: its choice and
 /// span vectors would otherwise grow by doubling, and copying the large
@@ -698,9 +694,9 @@ pub(crate) fn biased_integer_sample(
     rng: &mut EngineRng,
     params: IntegerGenerationParameters,
 ) -> Result<BigInt, InternalError> {
-    Ok(match (ic.min_value.to_i128(), ic.max_value.to_i128()) {
+    Ok(match (ic.min_value().to_i128(), ic.max_value().to_i128()) {
         (Some(min_i), Some(max_i)) => BigInt::from(biased_i128_sample(min_i, max_i, rng, params)?),
-        _ => biguint_sample_in_range(&ic.min_value, &ic.max_value, rng, params),
+        _ => biguint_sample_in_range(&ic.min_value(), &ic.max_value(), rng, params),
     })
 }
 
@@ -1664,11 +1660,6 @@ pub struct NativeTestCase {
     rng: Option<EngineRng>,
     max_size: usize,
     pub nodes: Vec<ChoiceNode>,
-    /// The constraints of the most recent integer draws, shared with the
-    /// nodes that recorded them, so that a draw repeating one of them
-    /// (the next character from the same class, say) shares it too
-    /// rather than allocating its own copy.
-    integer_kinds: Vec<Arc<IntegerChoice>>,
     /// Set to `true` by [`Self::freeze`] on the first call; subsequent calls
     /// are no-ops. A dedicated boolean (rather than checking the family's
     /// status) lets `conclude_test` conclude before calling `freeze()`
@@ -1693,6 +1684,12 @@ pub struct NativeTestCase {
     /// Each entry was pushed by `start_span` and is awaiting a matching
     /// `stop_span` call.
     pub span_stack: Vec<usize>,
+    /// Whether the replay serves draws by address (see
+    /// [`Replay::addressed`]), so that [`Self::draw_address`] is asked at
+    /// every draw and the per-span bookkeeping below is kept; otherwise it
+    /// is left empty and an address, should one be asked for, is worked
+    /// out from the spans.
+    addressed: bool,
     /// Per span, the number of earlier siblings under the same parent with
     /// the same label: its frame ordinal in a draw's address. Computed at
     /// `start_span` from `sibling_counts` so an address costs one lookup
@@ -1859,12 +1856,13 @@ impl NativeTestCase {
     ) -> Self {
         let nodes = MOST_NODES.load(Ordering::Relaxed).min(max_size);
         let spans = MOST_SPANS.load(Ordering::Relaxed).min(max_size);
+        let addressed = replay.addressed();
+        let bookkept = if addressed { spans } else { 0 };
         NativeTestCase {
             replay,
             rng,
             max_size,
             nodes: Vec::with_capacity(nodes),
-            integer_kinds: Vec::new(),
             frozen: false,
             should_capture,
             family,
@@ -1873,9 +1871,10 @@ impl NativeTestCase {
             clone_children: Vec::new(),
             spans: Spans::with_capacity(spans),
             span_stack: Vec::new(),
-            span_ordinals: Vec::with_capacity(spans),
-            sibling_counts: HashMap::with_capacity_and_hasher(spans, Default::default()),
-            child_nodes: Vec::with_capacity(spans),
+            addressed,
+            span_ordinals: Vec::with_capacity(bookkept),
+            sibling_counts: HashMap::with_capacity_and_hasher(bookkept, Default::default()),
+            child_nodes: Vec::with_capacity(bookkept),
             top_child_nodes: 0,
             has_discards: false,
             observer,
@@ -2087,10 +2086,12 @@ impl NativeTestCase {
             parent,
             discarded: false,
         });
-        let siblings = self.sibling_counts.entry((parent, label)).or_insert(0);
-        self.span_ordinals.push(*siblings);
-        *siblings += 1;
-        self.child_nodes.push(0);
+        if self.addressed {
+            let siblings = self.sibling_counts.entry((parent, label)).or_insert(0);
+            self.span_ordinals.push(*siblings);
+            *siblings += 1;
+            self.child_nodes.push(0);
+        }
         self.span_stack.push(idx);
         if depth + 1 > MAX_DEPTH {
             self.conclude(Status::Invalid, None);
@@ -2115,15 +2116,46 @@ impl NativeTestCase {
     /// them into one state could serve the wrong one. Agrees with
     /// `graph::draw_addresses` over the recorded spans.
     pub fn draw_address(&self) -> Vec<(u64, usize)> {
-        let direct = match self.span_stack.last() {
-            Some(&idx) => self.nodes.len() - self.spans[idx].start - self.child_nodes[idx],
-            None => self.nodes.len() - self.top_child_nodes,
-        };
+        let innermost = self.span_stack.last().copied();
+        let start = innermost.map_or(0, |idx| self.spans[idx].start);
+        let direct = self.nodes.len() - start - self.child_draws(innermost);
         self.span_stack
             .iter()
-            .map(|&idx| (self.spans[idx].label, self.span_ordinals[idx]))
+            .map(|&idx| (self.spans[idx].label, self.ordinal(idx)))
             .chain(core::iter::once((DRAW_LABEL, direct)))
             .collect()
+    }
+
+    /// The number of earlier siblings of span `idx` with its label: kept
+    /// per span when the stream is addressed, else counted.
+    fn ordinal(&self, idx: usize) -> usize {
+        if self.addressed {
+            return self.span_ordinals[idx];
+        }
+        let span = &self.spans[idx];
+        self.spans
+            .iter()
+            .take(idx)
+            .filter(|s| s.parent == span.parent && s.label == span.label)
+            .count()
+    }
+
+    /// The number of draws inside the closed children of span `parent`
+    /// (of no span, for `None`): kept per span when the stream is
+    /// addressed, else summed. An open span is on the span stack, so the
+    /// innermost open span has no open child to miscount.
+    fn child_draws(&self, parent: Option<usize>) -> usize {
+        if self.addressed {
+            return match parent {
+                Some(idx) => self.child_nodes[idx],
+                None => self.top_child_nodes,
+            };
+        }
+        self.spans
+            .iter()
+            .filter(|s| s.parent == parent)
+            .map(|s| s.end - s.start)
+            .sum()
     }
 
     /// Close the innermost currently-open span.
@@ -2150,9 +2182,11 @@ impl NativeTestCase {
         let span = &mut self.spans[idx];
         span.end = end;
         let inside = end - span.start;
-        match span.parent {
-            Some(parent) => self.child_nodes[parent] += inside,
-            None => self.top_child_nodes += inside,
+        if self.addressed {
+            match span.parent {
+                Some(parent) => self.child_nodes[parent] += inside,
+                None => self.top_child_nodes += inside,
+            }
         }
     }
 
@@ -2219,15 +2253,11 @@ impl NativeTestCase {
             "Invalid range [{min_value:?}, {max_value:?}]"
         );
 
-        let kind = IntegerChoice {
-            min_value,
-            max_value,
-            shrink_towards: BigInt::zero(),
-        };
+        let kind = IntegerChoice::new(min_value, max_value, BigInt::zero());
 
         let params = self.family.generation_parameters().integer;
         let v =
-            self.draw_integer_from(&kind, |kind, rng| biased_integer_sample(kind, rng, params))?;
+            self.draw_integer_from(kind, |kind, rng| biased_integer_sample(kind, rng, params))?;
 
         Ok(hegel_internal_unwrap!(
             T::try_from(v).ok(),
@@ -2250,13 +2280,12 @@ impl NativeTestCase {
             "Invalid range [{min_value:?}, {max_value:?}]"
         );
 
-        let kind = IntegerChoice {
-            min_value: min_value.into(),
-            max_value: max_value.into(),
-            shrink_towards: BigInt::zero(),
+        let kind = match i64::try_from(max_value) {
+            Ok(max) => IntegerChoice::small(min_value as i64, max, 0),
+            Err(_) => IntegerChoice::new(min_value, max_value, 0u64),
         };
 
-        let v = self.draw_integer_from(&kind, |_, rng| {
+        let v = self.draw_integer_from(kind, |_, rng| {
             Ok(BigInt::from(rng.random_range(min_value..=max_value)))
         })?;
 
@@ -2277,13 +2306,9 @@ impl NativeTestCase {
             return Ok(only);
         }
 
-        let kind = IntegerChoice {
-            min_value: BigInt::zero(),
-            max_value: BigInt::from(max_index),
-            shrink_towards: BigInt::zero(),
-        };
+        let kind = IntegerChoice::new(BigInt::zero(), BigInt::from(max_index), BigInt::zero());
 
-        let v = self.draw_integer_from(&kind, |_, rng| {
+        let v = self.draw_integer_from(kind, |_, rng| {
             Ok(BigInt::from(weighted_index_sample(weights, rng) as u64))
         })?;
 
@@ -2298,7 +2323,7 @@ impl NativeTestCase {
     /// and observe it.
     fn draw_integer_from(
         &mut self,
-        kind: &IntegerChoice,
+        kind: IntegerChoice,
         sample: impl Fn(&IntegerChoice, &mut EngineRng) -> Result<BigInt, InternalError>,
     ) -> Result<BigInt, EngineError> {
         let (v, was_forced) = self.resolve_choice(
@@ -2308,40 +2333,17 @@ impl NativeTestCase {
                 ChoiceValue::Integer(n) if kind.validate(n) => Some(n.clone()),
                 _ => None,
             },
-            |rng| sample(kind, rng),
+            |rng| sample(&kind, rng),
         )?;
 
         if let Some(ref mut obs) = self.observer {
             obs.draw_integer(&v, was_forced);
         }
 
-        let kind = self.shared_integer_kind(kind);
         self.nodes
-            .push(ChoiceNode::integer_shared(kind, v.clone(), was_forced));
+            .push(ChoiceNode::integer(kind, v.clone(), was_forced));
 
         Ok(v)
-    }
-
-    /// `kind` as the nodes share it: the copy a recent draw recorded when
-    /// one did, else a new one remembered in place of the one drawn
-    /// longest ago. The remembered kinds are kept most recently drawn
-    /// first, so the few kinds a generator draws over and over are found
-    /// after a comparison or two.
-    fn shared_integer_kind(&mut self, kind: &IntegerChoice) -> Arc<IntegerChoice> {
-        if let Some(i) = self
-            .integer_kinds
-            .iter()
-            .position(|shared| **shared == *kind)
-        {
-            self.integer_kinds[..=i].rotate_right(1);
-            return Arc::clone(&self.integer_kinds[0]);
-        }
-        let shared = Arc::new(kind.clone());
-        if self.integer_kinds.len() == INTEGER_KINDS_REMEMBERED {
-            self.integer_kinds.pop();
-        }
-        self.integer_kinds.insert(0, Arc::clone(&shared));
-        shared
     }
 
     /// Record a forced integer draw in `[min_value, max_value]`.
@@ -2355,17 +2357,13 @@ impl NativeTestCase {
         max_value: T,
         forced: T,
     ) -> Result<(), EngineError> {
-        let kind = IntegerChoice {
-            min_value: min_value.into(),
-            max_value: max_value.into(),
-            shrink_towards: BigInt::zero(),
-        };
+        let kind = IntegerChoice::new(min_value, max_value, BigInt::zero());
         let v: BigInt = forced.into();
         hegel_internal_assert!(
-            kind.min_value <= v && v <= kind.max_value,
+            kind.validate(&v),
             "forced value {v:?} outside [{:?}, {:?}]",
-            kind.min_value,
-            kind.max_value
+            kind.min_value(),
+            kind.max_value()
         );
 
         self.pre_choice()?;
@@ -2430,11 +2428,7 @@ impl NativeTestCase {
         }
 
         let id = hegel_internal_unwrap!(v.to_i64(), "draw_fresh_id: id does not fit i64");
-        let kind = IntegerChoice {
-            min_value: BigInt::zero(),
-            max_value: BigInt::from(window_hi),
-            shrink_towards: BigInt::zero(),
-        };
+        let kind = IntegerChoice::new(BigInt::zero(), BigInt::from(window_hi), BigInt::zero());
         self.nodes.push(ChoiceNode::integer(kind, v, was_forced));
         used.insert(id);
         Ok(id)
@@ -2497,11 +2491,7 @@ impl NativeTestCase {
             Err(0) => sorted[0],
             Err(idx) => sorted[idx - 1],
         };
-        let kind = IntegerChoice {
-            min_value: BigInt::zero(),
-            max_value: BigInt::from(window_hi),
-            shrink_towards: BigInt::zero(),
-        };
+        let kind = IntegerChoice::new(BigInt::zero(), BigInt::from(window_hi), BigInt::zero());
         let value = BigInt::from(chosen);
 
         if let Some(ref mut obs) = self.observer {

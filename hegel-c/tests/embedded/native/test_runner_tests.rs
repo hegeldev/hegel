@@ -163,11 +163,11 @@ fn bool_node(value: bool) -> ChoiceNode {
 
 fn int_node(value: i128) -> ChoiceNode {
     ChoiceNode::integer(
-        crate::native::core::choices::IntegerChoice {
-            min_value: BigInt::from(0),
-            max_value: BigInt::from(100),
-            shrink_towards: BigInt::from(0),
-        },
+        crate::native::core::choices::IntegerChoice::new(
+            BigInt::from(0),
+            BigInt::from(100),
+            BigInt::from(0),
+        ),
         BigInt::from(value),
         false,
     )
@@ -7455,11 +7455,11 @@ fn an_exhausted_backtrack_after_a_dry_pooled_review_rejects_the_origin() {
         async |ctx| {
             let wide_node = |v: i128| {
                 ChoiceNode::integer(
-                    crate::native::core::choices::IntegerChoice {
-                        min_value: BigInt::from(0),
-                        max_value: BigInt::from(1_000_000),
-                        shrink_towards: BigInt::from(0),
-                    },
+                    crate::native::core::choices::IntegerChoice::new(
+                        BigInt::from(0),
+                        BigInt::from(1_000_000),
+                        BigInt::from(0),
+                    ),
                     BigInt::from(v),
                     false,
                 )

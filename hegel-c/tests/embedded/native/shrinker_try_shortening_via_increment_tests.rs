@@ -12,11 +12,7 @@ use alloc::vec::Vec;
 
 fn selector(value: i128) -> ChoiceNode {
     ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(0),
-            max_value: BigInt::from(1),
-            shrink_towards: BigInt::from(0),
-        },
+        IntegerChoice::new(BigInt::from(0), BigInt::from(1), BigInt::from(0)),
         BigInt::from(value),
         false,
     )
@@ -257,11 +253,7 @@ fn propagates_the_improvement_cap() {
 
 fn int_node(value: i128, max: i128) -> ChoiceNode {
     ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(0),
-            max_value: BigInt::from(max),
-            shrink_towards: BigInt::from(0),
-        },
+        IntegerChoice::new(BigInt::from(0), BigInt::from(max), BigInt::from(0)),
         BigInt::from(value),
         false,
     )
