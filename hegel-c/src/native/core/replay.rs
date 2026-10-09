@@ -282,6 +282,20 @@ pub(crate) struct Replay {
     shared: Arc<Mutex<LiveSet>>,
     external: Option<External>,
     graph: Option<Mutex<GraphWalk>>,
+    /// The position from which every draw of the stream is left to the
+    /// RNG with nothing to resolve or record: under [`Rescue::Pun`] the
+    /// end of the proposal, and never for a replay that still has to
+    /// prune or diverge its live set, ask its resolver or walk its graph.
+    plain_from: usize,
+}
+
+/// [`Replay::plain_from`] for a replay of `timelines` under `rescue`
+/// with no resolver and no graph.
+fn plain_from(rescue: Rescue, timelines: &[Option<Vec<ChoiceValue>>]) -> usize {
+    match rescue {
+        Rescue::Pun => timelines[0].as_ref().map_or(0, Vec::len),
+        Rescue::Continue => usize::MAX,
+    }
 }
 
 impl Replay {
@@ -302,12 +316,14 @@ impl Replay {
             shared,
             external: Some(external),
             graph: None,
+            plain_from: usize::MAX,
         }
     }
 
     /// A [`Rescue::Pun`] replay of one proposed sequence.
     pub(crate) fn pun(prefix: Vec<ChoiceValue>, nodes: Option<Vec<ChoiceNode>>) -> Self {
         Replay {
+            plain_from: prefix.len(),
             timelines: alloc::vec![Some(prefix)],
             nodes: alloc::vec![nodes],
             rescue: Rescue::Pun,
@@ -333,6 +349,7 @@ impl Replay {
             shared,
             external: None,
             graph: None,
+            plain_from: usize::MAX,
         }
     }
 
@@ -346,7 +363,16 @@ impl Replay {
             shared: Arc::new(Mutex::new(LiveSet::new(0))),
             external: None,
             graph: Some(Mutex::new(GraphWalk::new(graph))),
+            plain_from: usize::MAX,
         }
+    }
+
+    /// The position from which every draw of this stream is left to the
+    /// RNG: [`Self::resolve`] is [`Resolved::Exhausted`] there and does
+    /// nothing else, so a draw past it need not ask.
+    #[inline]
+    pub(crate) fn plain_from(&self) -> usize {
+        self.plain_from
     }
 
     /// The proposal's stored value at `position`, for [`Rescue::Pun`].
@@ -549,6 +575,7 @@ impl Replay {
             }
         }
         Replay {
+            plain_from: plain_from(self.rescue, &timelines),
             timelines,
             nodes,
             rescue: self.rescue,

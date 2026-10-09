@@ -2851,7 +2851,9 @@ impl NativeTestCase {
     /// hands back a value proven to fit the draw. Under [`Rescue::Pun`] a
     /// stored value that doesn't fit puns exactly as before: to the draw's
     /// `simplest()` when the stale value was its original kind's simplest,
-    /// and to `unit()` otherwise.
+    /// and to `unit()` otherwise. A draw the replay has nothing to say
+    /// about (see [`Replay::plain_from`]) and no template decides goes
+    /// straight to the RNG.
     fn resolve_choice<V>(
         &mut self,
         simplest: impl FnOnce() -> Result<V, InternalError>,
@@ -2862,6 +2864,14 @@ impl NativeTestCase {
         self.pre_choice()?;
 
         let idx = self.nodes.len();
+
+        if idx >= self.replay.plain_from() && self.trailing_template.is_none() {
+            let rng = hegel_internal_unwrap!(
+                self.rng.as_mut(),
+                "resolve_choice: no RNG available for random generation"
+            );
+            return Ok((random(rng)?, false));
+        }
 
         match self
             .replay

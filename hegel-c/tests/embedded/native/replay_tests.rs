@@ -364,3 +364,34 @@ fn a_cloned_stream_resolves_through_the_same_external_resolver() {
     assert_eq!(draw_int(&mut child.lock()), 2);
     assert_eq!(tc.divergence(), None);
 }
+
+#[test]
+fn plain_from_is_the_end_of_a_proposal_and_never_comes_otherwise() {
+    assert_eq!(Replay::pun(vec![int(1), int(2)], None).plain_from(), 2);
+    assert_eq!(Replay::pun(Vec::new(), None).plain_from(), 0);
+    assert_eq!(
+        Replay::counterexample(vec![vec![int(1)]]).plain_from(),
+        usize::MAX
+    );
+    assert_eq!(
+        Replay::external(Box::new(Scripted {
+            values: vec![int(1)],
+            seen: Vec::new(),
+            frames: Arc::new(Mutex::new(Vec::new())),
+            divergence: None,
+        }))
+        .plain_from(),
+        usize::MAX
+    );
+    assert_eq!(
+        Replay::graph(Arc::new(Graph::new())).plain_from(),
+        usize::MAX
+    );
+
+    let pun = Replay::pun(vec![int(1), clone_of(vec![int(2), int(3), int(4)])], None);
+    assert_eq!(pun.clone_child(&[], 1, Vec::new).plain_from(), 3);
+    assert_eq!(pun.clone_child(&[], 0, Vec::new).plain_from(), 0);
+    assert_eq!(pun.clone_child(&[], 5, Vec::new).plain_from(), 0);
+    let live = Replay::counterexample(vec![vec![clone_of(vec![int(2)])]]);
+    assert_eq!(live.clone_child(&[], 0, Vec::new).plain_from(), usize::MAX);
+}
