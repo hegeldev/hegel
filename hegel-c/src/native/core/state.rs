@@ -1754,7 +1754,16 @@ pub struct NativeTestCase {
     replay: Replay,
     rng: Option<EngineRng>,
     max_size: usize,
+    /// The choice sequence so far, appended to only by the draw methods
+    /// here (which keep `plain` current).
     pub nodes: Vec<ChoiceNode>,
+    /// Whether every node recorded so far owns no heap memory (see
+    /// [`ChoiceNode::owns_no_heap`]), so that dropping the test case can
+    /// forget its choice sequence instead of running the drop glue over
+    /// it: nearly every node a run records is a boolean or a small integer
+    /// whose drop frees nothing, and running the glue over those is the
+    /// bulk of what emptying a finished test case's choice sequence costs.
+    plain: bool,
     /// Set to `true` by [`Self::freeze`] on the first call; subsequent calls
     /// are no-ops. A dedicated boolean (rather than checking the family's
     /// status) lets `conclude_test` conclude before calling `freeze()`
@@ -1814,26 +1823,21 @@ pub struct NativeTestCase {
 }
 
 impl Drop for NativeTestCase {
+    /// Hands the choice sequence's and spans' vectors on emptied. A plain
+    /// choice sequence (see [`Self::plain`]) is emptied by leaking a drain
+    /// of the whole of it, which forgets every node at once instead of
+    /// visiting each: a drain empties the vector as it is made.
     fn drop(&mut self) {
         let mut nodes = core::mem::take(&mut self.nodes);
         let mut spans = core::mem::take(&mut self.spans.inner);
-        forget_plain_nodes(&mut nodes);
+        if self.plain {
+            core::mem::forget(nodes.drain(..));
+        } else {
+            nodes.clear();
+        }
         spans.clear();
         let unkept = SpareVectors::offer(&mut SPARE_VECTORS.lock(), nodes, spans);
         drop(unkept);
-    }
-}
-
-/// Empties `nodes`, skipping the drop glue when no node owns heap memory:
-/// nearly every node a run records is a boolean or a small integer whose
-/// drop frees nothing, and running the glue over those is the bulk of
-/// what emptying a finished test case's choice sequence costs. A sequence
-/// holding any other node is cleared the usual way.
-fn forget_plain_nodes(nodes: &mut Vec<ChoiceNode>) {
-    if nodes.iter().all(ChoiceNode::owns_no_heap) {
-        nodes.drain(..).for_each(core::mem::forget);
-    } else {
-        nodes.clear();
     }
 }
 
@@ -1983,6 +1987,7 @@ impl NativeTestCase {
             rng,
             max_size,
             nodes: spare.nodes,
+            plain: true,
             frozen: false,
             should_capture,
             family,
@@ -2153,7 +2158,7 @@ impl NativeTestCase {
             child_id,
         );
         let handle = Arc::new(Mutex::new(child));
-        self.nodes.push(ChoiceNode::clone_stream(
+        self.record(ChoiceNode::clone_stream(
             Arc::new(RealizedStream::empty()),
             false,
         ));
@@ -2181,6 +2186,14 @@ impl NativeTestCase {
             let was_forced = self.nodes[idx].was_forced;
             self.nodes[idx] = ChoiceNode::clone_stream(Arc::new(stream), was_forced);
         }
+    }
+
+    /// Append `node` to the choice sequence, noting when it owns heap
+    /// memory. The draws that record only booleans, floats and native-width
+    /// integers push straight onto `nodes` instead.
+    fn record(&mut self, node: ChoiceNode) {
+        self.plain &= node.owns_no_heap();
+        self.nodes.push(node);
     }
 
     /// Open a new span at the current choice position, labelled with `label`.
@@ -2404,6 +2417,7 @@ impl NativeTestCase {
             |_, n| n.to_i64().filter(|v| (min_value..=max_value).contains(v)),
             |v| BigInt::from(*v),
             |_, rng| biased_i64_sample(min_value, max_value, rng, params),
+            |_| true,
         )
     }
 
@@ -2426,12 +2440,14 @@ impl NativeTestCase {
             Ok(max) => IntegerChoice::small(min_value as i64, max, 0),
             Err(_) => IntegerChoice::new(min_value, max_value, 0u64),
         };
+        let small = kind.is_small();
 
         self.draw_integer_as(
             kind,
             |_, n| n.to_u64().filter(|v| (min_value..=max_value).contains(v)),
             |v| BigInt::from(*v),
             |_, rng| Ok(rng.random_range(min_value..=max_value)),
+            move |_| small,
         )
     }
 
@@ -2470,6 +2486,7 @@ impl NativeTestCase {
             |kind, n| kind.validate(n).then(|| n.clone()),
             BigInt::clone,
             sample,
+            ChoiceNode::owns_no_heap,
         )
     }
 
@@ -2479,13 +2496,16 @@ impl NativeTestCase {
     /// the choice against the prefix, reading a stored integer with
     /// `narrow` (which answers `None` for a value `kind` does not admit),
     /// falling back to `sample` for fresh generation, then record and
-    /// observe it.
+    /// observe it. `plain` answers whether the recorded node owns no heap
+    /// memory (a draw within a native width knows without looking at the
+    /// node), for [`Self::plain`].
     fn draw_integer_as<V>(
         &mut self,
         kind: IntegerChoice,
         narrow: impl Fn(&IntegerChoice, &BigInt) -> Option<V>,
         widen: impl FnOnce(&V) -> BigInt,
         sample: impl FnOnce(&IntegerChoice, &mut EngineRng) -> Result<V, InternalError>,
+        plain: impl FnOnce(&ChoiceNode) -> bool,
     ) -> Result<V, EngineError> {
         let (v, was_forced) = self.resolve_choice(
             || {
@@ -2512,8 +2532,9 @@ impl NativeTestCase {
             obs.draw_integer(&recorded, was_forced);
         }
 
-        self.nodes
-            .push(ChoiceNode::integer(kind, recorded, was_forced));
+        let node = ChoiceNode::integer(kind, recorded, was_forced);
+        self.plain &= plain(&node);
+        self.nodes.push(node);
 
         Ok(v)
     }
@@ -2544,7 +2565,7 @@ impl NativeTestCase {
             obs.draw_integer(&v, true);
         }
 
-        self.nodes.push(ChoiceNode::integer(kind, v, true));
+        self.record(ChoiceNode::integer(kind, v, true));
 
         Ok(())
     }
@@ -2601,7 +2622,7 @@ impl NativeTestCase {
 
         let id = hegel_internal_unwrap!(v.to_i64(), "draw_fresh_id: id does not fit i64");
         let kind = IntegerChoice::new(BigInt::zero(), BigInt::from(window_hi), BigInt::zero());
-        self.nodes.push(ChoiceNode::integer(kind, v, was_forced));
+        self.record(ChoiceNode::integer(kind, v, was_forced));
         used.insert(id);
         Ok(id)
     }
@@ -2670,8 +2691,7 @@ impl NativeTestCase {
             obs.draw_integer(&value, was_forced);
         }
 
-        self.nodes
-            .push(ChoiceNode::integer(kind, value, was_forced));
+        self.record(ChoiceNode::integer(kind, value, was_forced));
         Ok(chosen)
     }
 
@@ -2737,8 +2757,7 @@ impl NativeTestCase {
             |rng| biased_bytes_sample(&kind, rng),
         )?;
 
-        self.nodes
-            .push(ChoiceNode::bytes(kind, v.clone(), was_forced));
+        self.record(ChoiceNode::bytes(kind, v.clone(), was_forced));
 
         if let Some(ref mut obs) = self.observer {
             obs.draw_bytes(&v, was_forced);
@@ -2777,8 +2796,7 @@ impl NativeTestCase {
             |rng| biased_string_sample(&kind, rng),
         )?;
 
-        self.nodes
-            .push(ChoiceNode::string(kind, v.clone(), was_forced));
+        self.record(ChoiceNode::string(kind, v.clone(), was_forced));
 
         let s = codepoints_to_string(&v);
         if let Some(ref mut obs) = self.observer {

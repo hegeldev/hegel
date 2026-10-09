@@ -3194,53 +3194,65 @@ fn a_dropped_test_case_hands_its_vectors_on_emptied() {
 }
 
 #[test]
-fn forgetting_plain_nodes_still_releases_the_ones_that_own_heap_memory() {
-    let stream = Arc::new(RealizedStream::empty());
-    let mut nodes = Vec::with_capacity(16);
-    nodes.push(ChoiceNode::boolean(BooleanChoice { p: 0.5 }, true, false));
-    nodes.push(ChoiceNode::clone_stream(Arc::clone(&stream), false));
-    nodes.push(ChoiceNode::integer(
-        IntegerChoice::small(0, 9, 0),
-        BigInt::from(4),
-        false,
-    ));
-    nodes.push(ChoiceNode::integer(
-        IntegerChoice::new(0, BigInt::from(u128::MAX), 0),
-        BigInt::from(u128::MAX) + BigInt::from(1),
-        false,
-    ));
-    nodes.push(ChoiceNode::bytes(
-        BytesChoice {
-            min_size: 0,
-            max_size: 4,
-        },
-        vec![1, 2, 3],
-        false,
-    ));
-    assert_eq!(Arc::strong_count(&stream), 2);
-    forget_plain_nodes(&mut nodes);
-    assert!(nodes.is_empty());
-    assert_eq!(nodes.capacity(), 16);
-    assert_eq!(Arc::strong_count(&stream), 1);
+fn draws_of_booleans_floats_and_native_integers_keep_the_choice_sequence_plain() {
+    let mut tc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
+    tc.weighted(0.5, None).unwrap();
+    tc.weighted(0.5, Some(true)).unwrap();
+    tc.draw_integer_uniform(0, 10).unwrap();
+    tc.draw_integer_uniform(0, i64::MAX as u64).unwrap();
+    tc.draw_integer_i64(-5, 5).unwrap();
+    tc.draw_integer::<i64>(0, 10).unwrap();
+    tc.draw_integer::<u128>(0, 1000).unwrap();
+    tc.draw_integer_forced(0, 10, 3).unwrap();
+    tc.draw_fresh_id().unwrap();
+    tc.draw_from_set(&[0, 1]).unwrap();
+    tc.draw_float(FloatWidth::F64, 0.0, 1.0, false, false, 5e-324)
+        .unwrap();
+    assert!(tc.plain);
+    assert_eq!(tc.nodes.len(), 11);
+    assert!(tc.nodes.iter().all(ChoiceNode::owns_no_heap));
 }
 
 #[test]
-fn a_sequence_of_plain_nodes_is_emptied_without_dropping_any() {
-    let mut nodes = Vec::with_capacity(8);
-    nodes.push(ChoiceNode::boolean(BooleanChoice { p: 0.5 }, false, false));
-    nodes.push(ChoiceNode::integer(
-        IntegerChoice::small(-5, 5, 0),
-        BigInt::from(-2),
-        true,
-    ));
-    nodes.push(ChoiceNode::integer(
-        IntegerChoice::small(i64::MIN, i64::MAX, 0),
-        BigInt::from(i64::MIN),
-        false,
-    ));
-    forget_plain_nodes(&mut nodes);
-    assert!(nodes.is_empty());
-    assert_eq!(nodes.capacity(), 8);
+fn a_recorded_node_that_owns_heap_memory_makes_the_choice_sequence_not_plain() {
+    let intervals =
+        crate::native::intervalsets::IntervalSet::new(vec![('a' as u32, 'z' as u32)]).unwrap();
+    let intervals: Arc<_> = intervals.into();
+    let heap_owning: [&dyn Fn(&mut NativeTestCase); 6] = [
+        &|tc| {
+            tc.draw_integer_uniform(0, u64::MAX).unwrap();
+        },
+        &|tc| {
+            tc.draw_integer::<u128>(0, u128::MAX).unwrap();
+        },
+        &|tc| {
+            tc.draw_integer_forced(
+                BigInt::zero(),
+                BigInt::from(u128::MAX) + BigInt::from(1),
+                BigInt::from(u128::MAX) + BigInt::from(1),
+            )
+            .unwrap();
+        },
+        &|tc| {
+            tc.draw_bytes(1, 4).unwrap();
+        },
+        &|tc| {
+            tc.draw_string(Arc::clone(&intervals), 1, 4).unwrap();
+        },
+        &|tc| {
+            tc.clone_stream().unwrap();
+        },
+    ];
+    for draw in heap_owning {
+        let mut tc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
+        tc.weighted(0.5, None).unwrap();
+        assert!(tc.plain);
+        draw(&mut tc);
+        assert!(!tc.plain);
+        assert!(!tc.nodes.iter().all(ChoiceNode::owns_no_heap));
+        tc.weighted(0.5, None).unwrap();
+        assert!(!tc.plain);
+    }
 }
 
 #[test]
@@ -3248,11 +3260,15 @@ fn a_dropped_test_case_releases_the_streams_its_clone_nodes_hold() {
     let stream = Arc::new(RealizedStream::empty());
     let mut tc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
     tc.weighted(0.5, None).unwrap();
+    tc.clone_stream().unwrap();
     tc.nodes
         .push(ChoiceNode::clone_stream(Arc::clone(&stream), false));
     assert_eq!(Arc::strong_count(&stream), 2);
     drop(tc);
     assert_eq!(Arc::strong_count(&stream), 1);
+    let taken = SpareVectors::take(&mut SPARE_VECTORS.lock(), usize::MAX, 0, 0);
+    assert!(taken.nodes.is_empty() && taken.spans.is_empty());
+    assert!(SpareVectors::offer(&mut SPARE_VECTORS.lock(), taken.nodes, taken.spans).is_none());
 }
 
 struct Unscripted;
