@@ -6,7 +6,6 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::native::bignum::{BigInt, ToPrimitive};
 use crate::native::core::state::length_p_continue;
 use crate::native::core::{EngineError, ManyState, NativeTestCase, Status};
 use crate::native::intervalsets::IntervalSet;
@@ -316,10 +315,7 @@ fn draw_pad(
     alphabet: &Option<IntervalSet>,
     out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
-    let n = ntc
-        .draw_integer(BigInt::from(0), BigInt::from(10))?
-        .to_i128()
-        .unwrap();
+    let n = ntc.draw_integer_i64(0, 10)?;
     for _ in 0..n {
         let c = draw_any_char(ntc, alphabet)?;
         out.push(c);
@@ -429,10 +425,7 @@ fn generate_op(
             let c = codepoint_to_char(*cp)?;
             if state.flags & SRE_FLAG_IGNORECASE != 0 {
                 if let Some(sw) = char_swapcase(c) {
-                    let which = ntc
-                        .draw_integer(BigInt::from(0), BigInt::from(1))?
-                        .to_i128()
-                        .unwrap();
+                    let which = ntc.draw_integer_i64(0, 1)?;
                     let pick = if which == 0 { c } else { sw };
                     if !alphabet_allows(alphabet, pick) {
                         return Err(mark_invalid(ntc));
@@ -516,10 +509,7 @@ fn generate_op(
             emit_from_chars(ntc, &chars, out)?;
         }
         OpCode::Branch(items) => {
-            let idx = ntc
-                .draw_integer(BigInt::from(0), BigInt::from(items.len() as i64 - 1))?
-                .to_i128()
-                .unwrap() as usize;
+            let idx = ntc.draw_integer_i64(0, items.len() as i64 - 1)? as usize;
             generate_subpattern(ntc, &items[idx], state, alphabet, out)?;
         }
         OpCode::Subpattern {
@@ -847,10 +837,7 @@ fn draw_any_char(
 ) -> Result<char, EngineError> {
     match alphabet {
         None => {
-            let cp = ntc
-                .draw_integer(BigInt::from(32), BigInt::from(126))?
-                .to_i128()
-                .unwrap();
+            let cp = ntc.draw_integer_i64(32, 126)?;
             Ok(hegel_internal_unwrap!(
                 char::from_u32(cp as u32),
                 "draw_any_char: printable-ASCII draw {cp} is not a char"
@@ -861,10 +848,7 @@ fn draw_any_char(
             if n == 0 {
                 return Err(mark_invalid(ntc));
             }
-            let idx = ntc
-                .draw_integer(BigInt::from(0), BigInt::from(n as i64 - 1))?
-                .to_i128()
-                .unwrap();
+            let idx = ntc.draw_integer_i64(0, n as i64 - 1)?;
             let cp = hegel_internal_unwrap!(
                 intervals.get(idx as isize),
                 "draw_any_char: alphabet index {idx} out of bounds"

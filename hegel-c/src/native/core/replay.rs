@@ -377,6 +377,12 @@ impl Replay {
     /// acceptance test over stored values and, for a graph walk or an
     /// external resolver only, its structural address. A proposal's misfit
     /// under [`Rescue::Pun`] is the shrink's own edit, never a divergence.
+    ///
+    /// Inlined into every draw: each draw instantiates it once, and the
+    /// draws live in another module, so without the hint whether its
+    /// body is inlined into them depends on how the codegen units happen
+    /// to be partitioned.
+    #[inline]
     pub(crate) fn resolve<V>(
         &self,
         stream: &[usize],

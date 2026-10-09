@@ -284,13 +284,38 @@ fn integer_sample_from_distribution(
     rng: &mut EngineRng,
 ) -> Result<i128, InternalError> {
     let dist = INTEGERS_DISTRIBUTION.as_ref().map_err(Clone::clone)?;
-    let lo = dist.cdf(min_value as f64 - 0.5)?;
-    let hi = dist.cdf(max_value as f64 + 0.5)?;
+    let lo = dist.cdf(i128_to_f64(min_value) - 0.5)?;
+    let hi = dist.cdf(i128_to_f64(max_value) + 0.5)?;
     if hi - lo < 1e-13 {
         return Ok(rng.random_range(min_value..=max_value));
     }
     let p = (lo + rng.random::<f64>() * (hi - lo)).max(f64::MIN_POSITIVE);
-    Ok((libm::round(dist.inverse_cdf(p)?) as i128).clamp(min_value, max_value))
+    Ok(f64_to_i128(libm::round(dist.inverse_cdf(p)?)).clamp(min_value, max_value))
+}
+
+/// `v as f64`, converted from `i64` when `v` fits one. The two conversions
+/// round to the nearest `f64` alike, but the `i128` one is an out-of-line
+/// call where the `i64` one is a single instruction, and nearly every
+/// draw's bounds fit `i64`.
+fn i128_to_f64(v: i128) -> f64 {
+    match i64::try_from(v) {
+        Ok(v) => v as f64,
+        Err(_) => v as f64,
+    }
+}
+
+/// `2^63`, the first magnitude `i64` cannot hold.
+const I64_LIMIT: f64 = (1u128 << 63) as f64;
+
+/// `r as i128`, converted through `i64` when `r` lies within its range.
+/// Both conversions truncate towards zero, saturate at the bounds and
+/// take `NaN` to zero; the `i64` one is a single instruction.
+fn f64_to_i128(r: f64) -> i128 {
+    if (-I64_LIMIT..I64_LIMIT).contains(&r) {
+        i128::from(r as i64)
+    } else {
+        r as i128
+    }
 }
 
 /// Hand-picked "interesting" boundary values: the small magnitudes `0..=±8`,
@@ -698,6 +723,22 @@ pub(crate) fn biased_integer_sample(
         (Some(min_i), Some(max_i)) => BigInt::from(biased_i128_sample(min_i, max_i, rng, params)?),
         _ => biguint_sample_in_range(&ic.min_value(), &ic.max_value(), rng, params),
     })
+}
+
+/// [`biased_i128_sample`] for a range within `i64`. Every category of
+/// that sampler answers a value inside the range, so the result narrows
+/// exactly.
+fn biased_i64_sample(
+    min_value: i64,
+    max_value: i64,
+    rng: &mut EngineRng,
+    params: IntegerGenerationParameters,
+) -> Result<i64, InternalError> {
+    let v = biased_i128_sample(i128::from(min_value), i128::from(max_value), rng, params)?;
+    Ok(hegel_internal_unwrap!(
+        i64::try_from(v).ok(),
+        "biased_i64_sample: sampled {v} outside [{min_value}, {max_value}]"
+    ))
 }
 
 /// Narrow-range sampler: the original nasty-pool + distribution behaviour,
@@ -2264,6 +2305,28 @@ impl NativeTestCase {
             T::try_from(v).ok(),
             "draw_integer: validated value does not fit the requested width"
         ))
+    }
+
+    /// [`Self::draw_integer`] for a range within `i64`, which nearly every
+    /// draw the engine's own generators make is: the same choice, the same
+    /// distribution and the same recorded node, but the bounds and the value
+    /// never pass through `BigInt` on the way (the recorded node still holds
+    /// a `BigInt`, as every integer node does).
+    pub fn draw_integer_i64(&mut self, min_value: i64, max_value: i64) -> Result<i64, EngineError> {
+        hegel_internal_assert!(
+            min_value <= max_value,
+            "Invalid range [{min_value:?}, {max_value:?}]"
+        );
+
+        let kind = IntegerChoice::small(min_value, max_value, 0);
+
+        let params = self.family.generation_parameters().integer;
+        self.draw_integer_as(
+            kind,
+            |_, n| n.to_i64().filter(|v| (min_value..=max_value).contains(v)),
+            |v| BigInt::from(*v),
+            |_, rng| biased_i64_sample(min_value, max_value, rng, params),
+        )
     }
 
     /// Draw a random integer *uniformly* from `[min_value, max_value]`,

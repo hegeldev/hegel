@@ -3261,6 +3261,149 @@ fn uniform_draws_replay_misfit_and_template_the_prefix_in_their_own_width() {
 }
 
 #[test]
+fn i64_draws_match_the_bigint_draw_choice_for_choice() {
+    let mut wide = NativeTestCase::new_random(EngineRng::seeded(5)).unwrap();
+    let mut narrow = NativeTestCase::new_random(EngineRng::seeded(5)).unwrap();
+    for (min, max) in [
+        (0, 1),
+        (0, 10),
+        (32, 126),
+        (-100, 100),
+        (i64::MIN, i64::MAX),
+    ] {
+        for _ in 0..40 {
+            let expected = wide.draw_integer::<i64>(min, max).unwrap();
+            assert_eq!(narrow.draw_integer_i64(min, max).unwrap(), expected);
+        }
+    }
+    assert_eq!(wide.nodes.len(), narrow.nodes.len());
+    for (w, n) in wide.nodes.iter().zip(narrow.nodes.iter()) {
+        assert_eq!(w.data, n.data);
+        assert_eq!(w.was_forced, n.was_forced);
+    }
+}
+
+#[test]
+fn i64_draws_replay_misfit_and_template_the_prefix() {
+    let prefix = vec![
+        ChoiceValue::Integer(BigInt::from(7)),
+        ChoiceValue::Integer(BigInt::from(i64::MIN)),
+        ChoiceValue::Integer(BigInt::from(12)),
+        ChoiceValue::Integer(BigInt::from(i64::MAX) + BigInt::from(1)),
+        ChoiceValue::Boolean(false),
+        ChoiceValue::Boolean(true),
+    ];
+    let prefix_nodes = vec![
+        ChoiceNode::integer(IntegerChoice::small(0, 9, 0), BigInt::from(7), false),
+        ChoiceNode::integer(
+            IntegerChoice::small(i64::MIN, i64::MIN + 1, 0),
+            BigInt::from(i64::MIN),
+            false,
+        ),
+        ChoiceNode::integer(IntegerChoice::small(0, 99, 0), BigInt::from(12), false),
+        ChoiceNode::integer(
+            IntegerChoice::new(0, BigInt::from(i64::MAX) + BigInt::from(1), 0),
+            BigInt::from(i64::MAX) + BigInt::from(1),
+            false,
+        ),
+        ChoiceNode::boolean(BooleanChoice { p: 0.5 }, false, false),
+        ChoiceNode::boolean(BooleanChoice { p: 0.5 }, true, false),
+    ];
+    let mut tc = NativeTestCase::for_choices_and_template(
+        &prefix,
+        Some(&prefix_nodes),
+        Some(ChoiceTemplate::simplest(None).unwrap()),
+        10,
+        None,
+    );
+    assert_eq!(tc.draw_integer_i64(3, 9).unwrap(), 7);
+    assert_eq!(
+        tc.draw_integer_i64(i64::MIN, i64::MIN + 1).unwrap(),
+        i64::MIN
+    );
+    assert_eq!(tc.draw_integer_i64(3, 9).unwrap(), 4);
+    assert_eq!(tc.draw_integer_i64(3, 9).unwrap(), 4);
+    assert_eq!(tc.draw_integer_i64(3, 9).unwrap(), 3);
+    assert_eq!(tc.draw_integer_i64(3, 9).unwrap(), 4);
+    assert_eq!(tc.draw_integer_i64(3, 9).unwrap(), 3);
+    let values: Vec<ChoiceValue> = tc.nodes.iter().map(|n| n.data.value()).collect();
+    assert_eq!(
+        values,
+        [7, i64::MIN, 4, 4, 3, 4, 3].map(|v| ChoiceValue::Integer(BigInt::from(v)))
+    );
+    let kinds: Vec<ChoiceKind> = tc.nodes.iter().map(|n| n.data.kind()).collect();
+    assert_eq!(
+        kinds[1],
+        ChoiceKind::Integer(IntegerChoice::small(i64::MIN, i64::MIN + 1, 0))
+    );
+}
+
+#[test]
+fn i64_draws_reject_an_inverted_range() {
+    let mut tc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
+    assert!(tc.draw_integer_i64(5, 4).is_err());
+}
+
+#[test]
+fn biased_i64_sample_matches_the_i128_sampler() {
+    for (min, max) in [(0, 1), (0, 254), (i64::MIN, i64::MAX), (7, 7)] {
+        let mut a = EngineRng::seeded(9);
+        let mut b = EngineRng::seeded(9);
+        for _ in 0..100 {
+            let params = GenerationParameters::draw(&mut a).unwrap().integer;
+            GenerationParameters::draw(&mut b).unwrap();
+            let expected =
+                biased_i128_sample(i128::from(min), i128::from(max), &mut a, params).unwrap();
+            let v = biased_i64_sample(min, max, &mut b, params).unwrap();
+            assert_eq!(i128::from(v), expected);
+            assert!((min..=max).contains(&v));
+        }
+    }
+}
+
+#[test]
+fn i128_to_f64_agrees_with_the_cast_either_side_of_i64() {
+    for v in [
+        0,
+        1,
+        -1,
+        255,
+        i128::from(i64::MAX),
+        i128::from(i64::MIN),
+        i128::from(i64::MAX) + 1,
+        i128::from(i64::MIN) - 1,
+        9_007_199_254_740_993,
+        -9_007_199_254_740_993,
+        i128::MAX,
+        i128::MIN,
+    ] {
+        assert_eq!(i128_to_f64(v).to_bits(), (v as f64).to_bits(), "{v}");
+    }
+}
+
+#[test]
+fn f64_to_i128_agrees_with_the_cast_either_side_of_i64() {
+    for r in [
+        0.0,
+        -0.0,
+        0.5,
+        -2.5,
+        1e18,
+        -1e18,
+        I64_LIMIT,
+        -I64_LIMIT,
+        I64_LIMIT * 2.0,
+        -I64_LIMIT * 2.0,
+        1e40,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+    ] {
+        assert_eq!(f64_to_i128(r), r as i128, "{r}");
+    }
+}
+
+#[test]
 fn uniform_draws_record_their_bounds_whatever_their_width() {
     let mut tc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
     tc.draw_integer_uniform(3, 9).unwrap();
