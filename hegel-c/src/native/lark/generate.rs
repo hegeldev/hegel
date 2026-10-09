@@ -170,8 +170,9 @@ pub struct GrammarSpec {
     /// whitespace drawn again, in the same string or a later one, is
     /// lexed once; emptied when it holds [`READINGS_CAPACITY`] texts.
     readings: Mutex<ReadingsCache>,
-    /// Working space for [`GrammarSpec::scans`], kept from one check to
-    /// the next so that the walk allocates nothing.
+    /// Working space for [`GrammarSpec::scans`] and
+    /// [`GrammarSpec::lex_all`], kept from one check to the next so that
+    /// the walks allocate nothing.
     scratch: Mutex<ScansScratch>,
     /// The vectors of the roomiest finished [`Generation`], emptied, for
     /// the next draw to work in instead of growing its own from nothing.
@@ -202,17 +203,19 @@ impl Buffers {
 
 /// The vectors [`GrammarSpec::scans`] works in: where each token lies,
 /// which tokens the parser needs, the positions the lexer can reach and
-/// the terminals tried at the position being walked.
+/// the terminals tried at the position being walked; and the tokens
+/// [`GrammarSpec::lex_all`] observes, with their extents.
 #[derive(Default)]
 struct ScansScratch {
     bounds: Vec<(usize, usize)>,
     significant: Vec<usize>,
     reachable: Vec<bool>,
     tried: Vec<(TermId, Lexed)>,
+    observed: Vec<(TermId, usize, usize)>,
 }
 
 /// What the lexers found in each distinct text drawn for one terminal.
-type Readings = HashMap<Vec<char>, (Arc<TokenScans>, Reading)>;
+type Readings = HashMap<Vec<char>, Arc<TokenScans>>;
 
 struct ReadingsCache {
     by_terminal: Vec<Readings>,
@@ -314,30 +317,23 @@ impl GrammarSpec {
     /// from the ones remembered when the text was drawn before, else
     /// computed (with `own` for the terminal's own scan when the caller
     /// already has it) and remembered.
-    fn read_token(
-        &self,
-        id: TermId,
-        text: &[char],
-        own: Option<Scan>,
-    ) -> (Arc<TokenScans>, Reading) {
+    fn read_token(&self, id: TermId, text: &[char], own: Option<Scan>) -> Arc<TokenScans> {
         if let Some(found) = self.readings.lock().by_terminal[id].get(text) {
-            return found.clone();
+            return Arc::clone(found);
         }
         let scans = Arc::new(self.scan_token(id, text, own));
-        let reading = self.reading(id, text, &scans.basic);
         let mut readings = self.readings.lock();
         if readings.len >= READINGS_CAPACITY {
             readings.by_terminal.iter_mut().for_each(HashMap::clear);
             readings.len = 0;
         }
-        let remembered = (Arc::clone(&scans), reading.clone());
         if readings.by_terminal[id]
-            .insert(text.to_vec(), remembered)
+            .insert(text.to_vec(), Arc::clone(&scans))
             .is_none()
         {
             readings.len += 1;
         }
-        (scans, reading)
+        scans
     }
 
     /// The smallest string the grammar can produce, in characters.
@@ -368,24 +364,25 @@ impl GrammarSpec {
     /// another type (an ignorable read as something the parser would
     /// see is not skipped, see [`GrammarSpec::basic_fit`]).
     fn single(&self, token: &Token) -> bool {
-        match &token.reading {
+        match token.reading() {
             Reading::Itself => true,
             Reading::Tokens(read) => read.len() == 1 && !self.is_ignore(token.id),
             Reading::Ignorables | Reading::Opaque => false,
         }
     }
 
-    /// The tokens the basic lexer reads `text` as, with their extents.
-    /// `known` lists, in order, where the tokens that make up `text`
-    /// start, how long each is and what the lexer found at its start on
-    /// its own, for the lexer to carry over where it arrives at such a
-    /// start (see [`Lexer::extend`]).
+    /// The tokens the basic lexer reads `text` as, with their extents,
+    /// into `observed`. `known` lists, in order, where the tokens that
+    /// make up `text` start, how long each is and what the lexer found at
+    /// its start on its own, for the lexer to carry over where it arrives
+    /// at such a start (see [`Lexer::extend`]).
     fn lex_all(
         &self,
         text: &[char],
         known: &[(usize, usize, &Scan)],
-    ) -> Result<Vec<(TermId, usize, usize)>, Lexed> {
-        let mut observed = Vec::with_capacity(known.len() + 1);
+        observed: &mut Vec<(TermId, usize, usize)>,
+    ) -> Result<(), Lexed> {
+        observed.clear();
         let mut pos = 0;
         let mut k = 0;
         while pos < text.len() {
@@ -407,7 +404,7 @@ impl GrammarSpec {
                 other => return Err(other),
             }
         }
-        Ok(observed)
+        Ok(())
     }
 
     /// How much of `text`, which terminal `id`'s pattern matches in full,
@@ -427,13 +424,14 @@ impl GrammarSpec {
     }
 
     /// What the lexers find at the start of `text`, the text of a token
-    /// of terminal `id`, on its own; `own` is the terminal's own match
-    /// there when already known.
+    /// of terminal `id`, on its own, and how the basic lexer reads all
+    /// of it; `own` is the terminal's own match there when already known.
     fn scan_token(&self, id: TermId, text: &[char], own: Option<Scan>) -> TokenScans {
         let own = own.unwrap_or_else(|| self.lexer.match_terminal_scan(id, text, 0));
         let basic = self.lexer.next_token_scan_knowing(text, 0, id, &own);
         TokenScans {
             basic_follows_own: basic.follows(&own),
+            reading: self.reading(id, text, &basic),
             own,
             basic,
         }
@@ -445,13 +443,17 @@ impl GrammarSpec {
         if !self.is_pattern(id) {
             return Reading::Opaque;
         }
-        match self.lex_all(text, &[(0, text.len(), basic)]) {
-            Err(_) => Reading::Opaque,
-            Ok(got) if got.len() == 1 && self.same_type(id, got[0].0) => Reading::Itself,
-            Ok(got) if self.is_ignore(id) && got.iter().all(|&(g, _, _)| self.is_ignore(g)) => {
-                Reading::Ignorables
-            }
-            Ok(got) => Reading::Tokens(got.into_iter().map(|(g, _, _)| g).collect()),
+        let mut scratch = self.scratch.lock();
+        let got = &mut scratch.observed;
+        if self.lex_all(text, &[(0, text.len(), basic)], got).is_err() {
+            return Reading::Opaque;
+        }
+        if got.len() == 1 && self.same_type(id, got[0].0) {
+            Reading::Itself
+        } else if self.is_ignore(id) && got.iter().all(|&(g, _, _)| self.is_ignore(g)) {
+            Reading::Ignorables
+        } else {
+            Reading::Tokens(got.iter().map(|&(g, _, _)| g).collect())
         }
     }
 
@@ -474,6 +476,7 @@ impl GrammarSpec {
             significant,
             reachable,
             tried,
+            observed: _,
         } = &mut *scratch;
         bounds.clear();
         let mut pos = 0;
@@ -618,7 +621,7 @@ impl GrammarSpec {
     /// differs is [`Fit::Wrong`]. A token the lexer cannot read at all
     /// makes the whole check moot.
     fn basic_fit(&self, text: &[char], tokens: &[Token]) -> Fit {
-        if tokens.iter().any(|t| t.reading == Reading::Opaque) {
+        if tokens.iter().any(|t| *t.reading() == Reading::Opaque) {
             return Fit::Exact;
         }
         let mut known = Vec::with_capacity(tokens.len());
@@ -627,11 +630,13 @@ impl GrammarSpec {
             known.push((start, token.len(), &token.scans.basic));
             start += token.len();
         }
-        let observed = match self.lex_all(text, &known) {
-            Ok(observed) => observed,
+        let mut scratch = self.scratch.lock();
+        let observed = &mut scratch.observed;
+        match self.lex_all(text, &known, observed) {
+            Ok(()) => {}
             Err(Lexed::NoMatch) => return Fit::Wrong,
             Err(_) => return Fit::Exact,
-        };
+        }
         let mut regions = Vec::with_capacity(tokens.len());
         let mut pos = 0;
         for token in tokens {
@@ -673,7 +678,7 @@ impl GrammarSpec {
                 }
                 continue;
             }
-            let expected: &[TermId] = match &token.reading {
+            let expected: &[TermId] = match token.reading() {
                 Reading::Tokens(expected) => expected,
                 _ => core::slice::from_ref(&token.id),
             };
@@ -764,7 +769,6 @@ struct Token {
     /// ([`Generation::text`]).
     start: usize,
     end: usize,
-    reading: Reading,
     /// Whether the string stays in the grammar without this token: it
     /// is the only token of an element of a repetition that allows none
     /// (`x?`, `[x]`, `x*`), so a lexer that runs it into its neighbour
@@ -773,15 +777,18 @@ struct Token {
     scans: Arc<TokenScans>,
 }
 
-/// What the lexers found at the start of a token's text on its own, kept
-/// with the token so that the checks on the longer texts the token is
-/// part of (its fit with its neighbours, the finished string) need not
-/// match it again where the finding carries over (see [`Lexer::extend`]).
+/// What the lexers found in a token's text on its own, kept with the
+/// token (and remembered for the text, see [`GrammarSpec::read_token`])
+/// so that the checks on the longer texts the token is part of (its fit
+/// with its neighbours, the finished string) need not match it again
+/// where the finding carries over (see [`Lexer::extend`]).
 struct TokenScans {
     /// The token's own terminal matched at its start.
     own: Scan,
     /// The basic lexer's first token.
     basic: Scan,
+    /// How the basic lexer reads the whole text.
+    reading: Reading,
     /// Whether `basic` carries over any text exactly as `own` does (see
     /// [`Scan::follows`]): the basic lexer got as far as the token's own
     /// terminal without another leaving anything open, so settling the
@@ -796,10 +803,15 @@ impl Token {
         self.end - self.start
     }
 
+    /// How the basic lexer reads the token's text on its own.
+    fn reading(&self) -> &Reading {
+        &self.scans.reading
+    }
+
     /// Whether the basic lexer reads the token back as itself on its own
     /// (or, for an ignorable, as nothing but ignorable tokens).
     fn lexable(&self) -> bool {
-        matches!(self.reading, Reading::Itself | Reading::Ignorables)
+        matches!(self.reading(), Reading::Itself | Reading::Ignorables)
     }
 
     /// Whether the token's own pattern takes all of its text.
@@ -899,14 +911,12 @@ impl<'s> Generation<'s> {
     /// The token of terminal `id` whose text is the string from `start`
     /// on, with `own` its own scan when already known.
     fn token(&mut self, id: TermId, start: usize, own: Option<Scan>) -> Token {
-        let (scans, reading) = self.spec.read_token(id, &self.text[start..], own);
         Token {
             id,
             start,
             end: self.text.len(),
-            reading,
             droppable: false,
-            scans,
+            scans: self.spec.read_token(id, &self.text[start..], own),
         }
     }
 
@@ -1508,7 +1518,7 @@ impl Generation<'_> {
             self.text.truncate(drawn);
             return Ok(None);
         }
-        let (scans, reading) = self.spec.read_token(id, &self.text[drawn..], None);
+        let scans = self.spec.read_token(id, &self.text[drawn..], None);
         self.text[start..].rotate_left(drawn - start);
         for later in &mut self.tokens[at..] {
             later.start += len;
@@ -1518,7 +1528,6 @@ impl Generation<'_> {
             id,
             start,
             end: start + len,
-            reading,
             droppable: false,
             scans,
         };

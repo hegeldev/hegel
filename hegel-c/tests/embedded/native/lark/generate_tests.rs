@@ -79,16 +79,24 @@ impl DerefMut for Tok {
 fn tok(spec: &GrammarSpec, name: &str, text: &str) -> Tok {
     let id = tid(spec, name);
     let text: Vec<char> = text.chars().collect();
-    let scans = Arc::new(spec.scan_token(id, &text, None));
     let token = Token {
         id,
         start: 0,
         end: text.len(),
-        reading: spec.reading(id, &text, &scans.basic),
         droppable: false,
-        scans,
+        scans: Arc::new(spec.scan_token(id, &text, None)),
     };
     Tok { token, text }
+}
+
+/// `token` with its text read as `reading`, whatever the lexer says.
+fn reread(token: &mut Token, reading: Reading) {
+    token.scans = Arc::new(TokenScans {
+        own: token.scans.own.clone(),
+        basic: token.scans.basic.clone(),
+        reading,
+        basic_follows_own: token.scans.basic_follows_own,
+    });
 }
 
 /// `toks` one after another: the text and the tokens placed in it.
@@ -475,7 +483,7 @@ fn declared_ignorables_are_trusted() {
         "{strings:?}"
     );
     let ws = tok(&spec, "WS", " ");
-    assert_eq!(ws.reading, Reading::Opaque);
+    assert_eq!(*ws.reading(), Reading::Opaque);
     let a = tok(&spec, "NAME", "ab");
     let b = tok(&spec, "NAME", "cd");
     assert_eq!(fit(&spec, &[a, ws, b]), Fit::Exact);
@@ -510,21 +518,21 @@ fn optional_tokens_may_be_swallowed_by_their_neighbours() {
 #[test]
 fn readings_of_terminal_texts() {
     let spec = grammar("start: A B\nA: /ab/\nB.2: /a/\n");
-    assert_eq!(tok(&spec, "A", "ab").reading, Reading::Opaque);
+    assert_eq!(*tok(&spec, "A", "ab").reading(), Reading::Opaque);
     let spec = grammar(
         "start: KW NAME\nKW: \"if\"\nNAME: /[a-z]+/\n%ignore WS\n%ignore NL\nWS: / +/\nNL: /\\n/\n",
     );
     assert_eq!(
-        tok(&spec, "NAME", "if").reading,
+        *tok(&spec, "NAME", "if").reading(),
         Reading::Tokens(vec![tid(&spec, "KW")])
     );
-    assert_eq!(tok(&spec, "NAME", "iffy").reading, Reading::Itself);
-    assert_eq!(tok(&spec, "WS", "  ").reading, Reading::Itself);
+    assert_eq!(*tok(&spec, "NAME", "iffy").reading(), Reading::Itself);
+    assert_eq!(*tok(&spec, "WS", "  ").reading(), Reading::Itself);
     let ws = tid(&spec, "WS");
-    assert_eq!(tok(&spec, "WS", " \n").reading, Reading::Ignorables);
+    assert_eq!(*tok(&spec, "WS", " \n").reading(), Reading::Ignorables);
     assert!(tok(&spec, "WS", " \n").lexable());
     assert_eq!(
-        tok(&spec, "WS", " x").reading,
+        *tok(&spec, "WS", " x").reading(),
         Reading::Tokens(vec![ws, tid(&spec, "NAME")])
     );
 }
@@ -633,7 +641,7 @@ fn basic_fit_rejects_merged_and_split_tokens() {
     );
     let a = tok(&spec, "A", "pq");
     assert_eq!(
-        a.reading,
+        *a.reading(),
         Reading::Tokens(vec![tid(&spec, "P"), tid(&spec, "Q")])
     );
     assert_eq!(
@@ -656,7 +664,7 @@ fn basic_fit_reads_ignorable_stretches_loosely() {
     let a = tok(&spec, "A", "a");
     let i = tok(&spec, "I", "xx");
     assert_eq!(
-        i.reading,
+        *i.reading(),
         Reading::Tokens(vec![tid(&spec, "X"), tid(&spec, "X")])
     );
     assert_eq!(
@@ -664,7 +672,7 @@ fn basic_fit_reads_ignorable_stretches_loosely() {
         Fit::Retyped
     );
     let mut b = tok(&spec, "B", "xxb");
-    b.reading = Reading::Itself;
+    reread(&mut b, Reading::Itself);
     assert_eq!(basic_fit(&spec, &[a.clone(), i.clone(), b]), Fit::Wrong);
 }
 
@@ -672,12 +680,12 @@ fn basic_fit_reads_ignorable_stretches_loosely() {
 fn basic_fit_trusts_what_it_cannot_lex() {
     let spec = grammar("start: A B\nA: /(a*)*b/\nB: /c/\n");
     let a = tok(&spec, "A", &"a".repeat(40));
-    assert_eq!(a.reading, Reading::Opaque);
+    assert_eq!(*a.reading(), Reading::Opaque);
     let short = tok(&spec, "A", "ab");
     let b = tok(&spec, "B", "c");
     assert_eq!(basic_fit(&spec, &[short.clone(), b.clone()]), Fit::Exact);
     let mut long = a;
-    long.reading = Reading::Itself;
+    reread(&mut long, Reading::Itself);
     assert_eq!(basic_fit(&spec, &[long, b]), Fit::Exact);
 }
 
@@ -687,7 +695,7 @@ fn a_regex_may_run_on_past_the_next_token_to_a_later_one() {
     let a = tok(&spec, "A", "a\\x");
     let b = tok(&spec, "B", "y");
     let c = tok(&spec, "C", "x");
-    assert_eq!(a.reading, Reading::Itself);
+    assert_eq!(*a.reading(), Reading::Itself);
     assert_eq!(fit(&spec, &[a.clone(), b.clone()]), Fit::Exact);
     assert_eq!(fit(&spec, &[b.clone(), c.clone()]), Fit::Settled);
     assert_eq!(fit(&spec, &[a.clone(), b.clone(), c.clone()]), Fit::Wrong);
@@ -906,6 +914,7 @@ fn settling_a_basic_scan_that_follows_the_own_one_never_changes_the_answer() {
                     scans: Arc::new(TokenScans {
                         own: token.scans.own.clone(),
                         basic: token.scans.basic.clone(),
+                        reading: token.scans.reading.clone(),
                         basic_follows_own: false,
                     }),
                     ..token.clone()
@@ -1097,21 +1106,22 @@ fn a_grammar_remembers_the_lexing_of_its_token_texts_up_to_a_point() {
             .collect()
     };
     let remembered = || spec.readings.lock().len;
-    let (first, reading) = spec.read_token(name, &text(0), None);
-    assert_eq!(reading, Reading::Itself);
+    let first = spec.read_token(name, &text(0), None);
+    assert_eq!(first.reading, Reading::Itself);
     assert_eq!(remembered(), 1);
-    let (again, _) = spec.read_token(name, &text(0), None);
+    let again = spec.read_token(name, &text(0), None);
     assert!(Arc::ptr_eq(&first, &again));
     assert_eq!(remembered(), 1);
     for n in 1..READINGS_CAPACITY {
         spec.read_token(name, &text(n), None);
     }
     assert_eq!(remembered(), READINGS_CAPACITY);
-    let (still, _) = spec.read_token(name, &text(0), None);
+    let still = spec.read_token(name, &text(0), None);
     assert!(Arc::ptr_eq(&first, &still));
     spec.read_token(name, &text(READINGS_CAPACITY), None);
     assert_eq!(remembered(), 1);
-    let (after, _) = spec.read_token(name, &text(0), None);
+    let after = spec.read_token(name, &text(0), None);
     assert!(!Arc::ptr_eq(&first, &after));
+    assert_eq!(after.reading, Reading::Itself);
     assert_eq!(remembered(), 2);
 }
