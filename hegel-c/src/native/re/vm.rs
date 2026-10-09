@@ -601,11 +601,21 @@ impl Program {
     /// character tests, so that its transitions can stand for them all:
     /// an ASCII character is its own class, with the tests looked up by
     /// it; any other is told apart as [`Classes`] says.
+    #[inline]
     fn class(&self, c: char) -> u64 {
         let cp = u32::from(c);
         if cp < 128 {
             return u64::from(cp);
         }
+        self.class_beyond_ascii(c)
+    }
+
+    /// [`class`](Self::class) for a character beyond ASCII, kept out of
+    /// the stepping loops so that an ASCII character costs them nothing
+    /// but the test.
+    #[inline(never)]
+    fn class_beyond_ascii(&self, c: char) -> u64 {
+        let cp = u32::from(c);
         match &self.classes {
             Classes::Ranges(bounds) => 128 + bounds.partition_point(|&bound| bound <= cp) as u64,
             Classes::ByChar => u64::from(cp),
@@ -781,26 +791,34 @@ impl Program {
         mut found: Option<usize>,
     ) -> (Option<usize>, Touch, Option<Resume>) {
         loop {
-            let current = &dfa.states[state as usize];
-            if current.waiting < current.pcs.len() {
-                found = Some(pos);
-            }
-            if current.waiting == 0 {
-                return (found, Touch::Never, None);
-            }
-            let Some(&c) = text.get(pos) else {
-                let resume = Resume {
-                    pcs: Arc::clone(&current.pcs),
-                    found: found.map(|found| found - start),
-                    state,
+            let states = &dfa.states;
+            let c = loop {
+                let current = &states[state as usize];
+                if current.waiting < current.pcs.len() {
+                    found = Some(pos);
+                }
+                if current.waiting == 0 {
+                    return (found, Touch::Never, None);
+                }
+                let Some(&c) = text.get(pos) else {
+                    let resume = Resume {
+                        pcs: Arc::clone(&current.pcs),
+                        found: found.map(|found| found - start),
+                        state,
+                    };
+                    return (found, Touch::End, Some(resume));
                 };
-                return (found, Touch::End, Some(resume));
+                let next = match u32::from(c) {
+                    cp if cp < 128 => current.ascii[cp as usize],
+                    _ => current.next(self.class_beyond_ascii(c)),
+                };
+                if next == UNKNOWN {
+                    break c;
+                }
+                state = next;
+                pos += 1;
             };
-            let class = self.class(c);
-            state = match current.next(class) {
-                UNKNOWN => self.dfa_transition(dfa, state, c, class, text, pos),
-                next => next,
-            };
+            state = self.dfa_transition(dfa, state, c, self.class(c), text, pos);
             pos += 1;
         }
     }
