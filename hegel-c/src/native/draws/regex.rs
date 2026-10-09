@@ -15,7 +15,7 @@ use crate::native::re::constants::{
 };
 use crate::native::re::parser::{OpCode, ParsedPattern, SetItem, SubPattern, parse_pattern};
 use crate::sys::sync::{Lazy, Mutex};
-use crate::unicodedata;
+use crate::unicodedata::{self, Category};
 
 use super::many_more;
 
@@ -724,14 +724,14 @@ fn build_in_set(
             }
         }
         if !categories.is_empty() {
-            let cat_chars = gather_chars(alphabet, |c| {
-                categories.iter().any(|cat| in_category(c, *cat))
+            let cat_chars = gather_chars_by_category(alphabet, |c, category| {
+                categories.iter().any(|cat| in_category(c, category, *cat))
             });
             for c in cat_chars {
                 if ascii_only && (c as u32) >= 128 {
                     continue;
                 }
-                if seen.insert(c) {
+                if seen.is_empty() || !seen.contains(&c) {
                     out.push(c);
                 }
             }
@@ -743,18 +743,14 @@ fn build_in_set(
         for c in positive {
             positive_set.extend(swapcase_blacklist(c, flags));
         }
-        Ok(gather_chars(alphabet, |c| {
-            if ascii_only && (c as u32) >= 128 {
-                return false;
-            }
-            if positive_set.contains(&c) {
-                return false;
-            }
-            if cat_blocks.iter().any(|cat| in_category(c, *cat)) {
-                return false;
-            }
-            true
-        }))
+        let allowed = |c: char| !(ascii_only && (c as u32) >= 128) && !positive_set.contains(&c);
+        if cat_blocks.is_empty() {
+            Ok(gather_chars(alphabet, allowed))
+        } else {
+            Ok(gather_chars_by_category(alphabet, |c, category| {
+                allowed(c) && !cat_blocks.iter().any(|cat| in_category(c, category, *cat))
+            }))
+        }
     }
 }
 fn add_with_swapcase(v: &mut Vec<char>, c: char, flags: u32) {
@@ -766,26 +762,65 @@ fn add_with_swapcase(v: &mut Vec<char>, c: char, flags: u32) {
     }
 }
 
-/// Return whether codepoint `c` is in the given CPython character category.
-fn in_category(c: char, cat: ChCode) -> bool {
+/// Return whether the character `c`, whose General Category is `category`,
+/// is in the given CPython character category.
+fn in_category(c: char, category: Category, cat: ChCode) -> bool {
+    let major = category.as_str().as_bytes()[0];
     match cat {
-        ChCode::Digit => unicodedata::is_in_group_char(c, "Nd"),
-        ChCode::NotDigit => !unicodedata::is_in_group_char(c, "Nd"),
-        ChCode::Space => is_uni_space(c),
-        ChCode::NotSpace => !is_uni_space(c),
-        ChCode::Word => is_uni_word(c),
-        ChCode::NotWord => !is_uni_word(c),
+        ChCode::Digit => category == Category::Nd,
+        ChCode::NotDigit => category != Category::Nd,
+        ChCode::Space => is_uni_space(c, major),
+        ChCode::NotSpace => !is_uni_space(c, major),
+        ChCode::Word => is_uni_word(c, major),
+        ChCode::NotWord => !is_uni_word(c, major),
     }
 }
-fn is_uni_space(c: char) -> bool {
+fn is_uni_space(c: char, major: u8) -> bool {
     matches!(
         c,
         ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c' | '\x1c' | '\x1d' | '\x1e' | '\x1f' | '\u{85}'
-    ) || unicodedata::is_in_group_char(c, "Z")
+    ) || major == b'Z'
 }
 
-fn is_uni_word(c: char) -> bool {
-    c == '_' || unicodedata::is_in_group_char(c, "L") || unicodedata::is_in_group_char(c, "N")
+fn is_uni_word(c: char, major: u8) -> bool {
+    c == '_' || major == b'L' || major == b'N'
+}
+
+/// [`in_category`] for a character whose General Category is not yet known.
+fn in_category_char(c: char, cat: ChCode) -> bool {
+    in_category(c, unicodedata::general_category_char(c), cat)
+}
+
+/// Gather all characters in `alphabet` (or BMP-minus-surrogates when no
+/// alphabet is given) that satisfy `predicate`, which is also told each
+/// character's General Category. Walks the category runs instead of looking
+/// each character up, so a category-driven class costs a few instructions
+/// per codepoint rather than a table search.
+fn gather_chars_by_category<F: Fn(char, Category) -> bool>(
+    alphabet: &Option<IntervalSet>,
+    predicate: F,
+) -> Vec<char> {
+    let mut out = Vec::new();
+    let mut gather = |lo: u32, hi: u32| {
+        for (start, end, category) in unicodedata::category_runs_in(lo, hi) {
+            for cp in start..=end {
+                if let Some(c) = char::from_u32(cp) {
+                    if predicate(c, category) {
+                        out.push(c);
+                    }
+                }
+            }
+        }
+    };
+    match alphabet {
+        None => gather(0, 0xFFFF),
+        Some(intervals) => {
+            for &(start, end) in &intervals.intervals {
+                gather(start, end);
+            }
+        }
+    }
+    out
 }
 
 /// Gather all characters in `alphabet` (or BMP-minus-surrogates when no
@@ -796,10 +831,8 @@ fn gather_chars<F: Fn(char) -> bool>(alphabet: &Option<IntervalSet>, predicate: 
     let mut out = Vec::new();
     match alphabet {
         None => {
-            for cp in 0u32..=0xFFFF {
-                if is_surrogate_cp(cp) {
-                    continue;
-                }
+            out.reserve(0x10000 - 0x800);
+            for cp in (0u32..0xD800).chain(0xE000..0x10000) {
                 if let Some(c) = char::from_u32(cp) {
                     if predicate(c) {
                         out.push(c);
@@ -1205,7 +1238,7 @@ fn char_matches_set(items: &[SetItem], c: char, flags: u32) -> bool {
                 }
             }
             SetItem::Category(cat) => {
-                if in_category(c, *cat) {
+                if in_category_char(c, *cat) {
                     contained = true;
                 }
             }
@@ -1236,8 +1269,8 @@ fn at_matches(at: &AtCode, chars: &[char], pos: usize, flags: u32) -> bool {
     }
 }
 fn is_word_boundary(chars: &[char], pos: usize) -> bool {
-    let before = pos > 0 && is_uni_word(chars[pos - 1]);
-    let after = pos < chars.len() && is_uni_word(chars[pos]);
+    let before = pos > 0 && in_category_char(chars[pos - 1], ChCode::Word);
+    let after = pos < chars.len() && in_category_char(chars[pos], ChCode::Word);
     before != after
 }
 

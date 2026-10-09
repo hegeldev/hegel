@@ -1,5 +1,6 @@
 use super::*;
 use alloc::string::ToString;
+use alloc::vec;
 
 const PYTHON_RANGES: &[(u32, &str)] = &include!("unicodedata_python_reference_data.rs");
 
@@ -63,9 +64,9 @@ fn char_variants_agree_with_the_u32_lookups() {
         general_category_char('\u{10FFFF}'),
         general_category(0x10FFFF).unwrap()
     );
-    assert!(is_in_group_char('A', "Lu"));
-    assert!(is_in_group_char('A', "L"));
-    assert!(!is_in_group_char('A', "N"));
+    assert!(is_in_group('A' as u32, "Lu").unwrap());
+    assert!(is_in_group('A' as u32, "L").unwrap());
+    assert!(!is_in_group('A' as u32, "N").unwrap());
 }
 
 #[test]
@@ -194,4 +195,36 @@ fn category_runs_tile_the_codespace() {
         next = end + 1;
     }
     assert_eq!(next, 0x10FFFF + 1);
+}
+
+#[test]
+fn category_runs_in_clip_the_runs_to_the_range() {
+    for &(lo, hi) in &[
+        (0, 0xFFFF),
+        (0x41, 0x5A),
+        (0x30, 0x7F),
+        (0x3A, 0x3A),
+        (0x10FFFF, 0x10FFFF),
+        (0x10FF00, 0x11FFFF),
+        (0, 0x10FFFF),
+    ] {
+        let top = hi.min(0x10FFFF);
+        let mut next = lo;
+        for (start, end, cat) in category_runs_in(lo, hi) {
+            assert_eq!(start, next);
+            assert!(start <= end && end <= top);
+            assert_eq!(general_category(start).unwrap(), cat);
+            assert_eq!(general_category(end).unwrap(), cat);
+            next = end + 1;
+        }
+        assert_eq!(next, top + 1, "runs over {lo:#x}..={hi:#x}");
+    }
+    assert!(category_runs_in(0, 0x10FFFF).eq(category_runs()));
+    assert_eq!(
+        category_runs_in(0x41, 0x5A).collect::<Vec<_>>(),
+        vec![(0x41, 0x5A, Category::Lu)]
+    );
+    assert!(category_runs_in(0x30, 0x7F).count() > 1);
+    assert_eq!(category_runs_in(5, 3).count(), 0);
+    assert_eq!(category_runs_in(0x110000, 0x110005).count(), 0);
 }

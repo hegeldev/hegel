@@ -1059,3 +1059,118 @@ fn codepoint_to_char_reports_surrogates_as_internal_errors() {
     assert_eq!(codepoint_to_char('a' as u32).unwrap(), 'a');
     assert!(codepoint_to_char(0xD800).is_err());
 }
+
+fn reference_in_category(c: char, cat: ChCode) -> bool {
+    let group = |g: &str| unicodedata::is_in_group(c as u32, g).unwrap();
+    let space = matches!(
+        c,
+        ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c' | '\x1c' | '\x1d' | '\x1e' | '\x1f' | '\u{85}'
+    ) || group("Z");
+    let word = c == '_' || group("L") || group("N");
+    match cat {
+        ChCode::Digit => group("Nd"),
+        ChCode::NotDigit => !group("Nd"),
+        ChCode::Space => space,
+        ChCode::NotSpace => !space,
+        ChCode::Word => word,
+        ChCode::NotWord => !word,
+    }
+}
+
+fn reference_in_set(items: &[SetItem], flags: u32, alphabet: &Option<IntervalSet>) -> Vec<char> {
+    let negate = matches!(items.first(), Some(SetItem::Negate));
+    let mut positive = Vec::new();
+    let mut categories = Vec::new();
+    for item in items {
+        match item {
+            SetItem::Negate => {}
+            SetItem::Literal(cp) => {
+                add_with_swapcase(&mut positive, char::from_u32(*cp).unwrap(), flags);
+            }
+            SetItem::Range(lo, hi) => {
+                for c in (*lo..=*hi).filter_map(char::from_u32) {
+                    add_with_swapcase(&mut positive, c, flags);
+                }
+            }
+            SetItem::Category(cat) => categories.push(*cat),
+        }
+    }
+    let ascii_only = flags & SRE_FLAG_ASCII != 0;
+    let in_classes = |c: char| categories.iter().any(|cat| reference_in_category(c, *cat));
+    if !negate {
+        let mut out = Vec::new();
+        let mut seen: HashSet<char> = HashSet::default();
+        for c in positive {
+            if !(ascii_only && (c as u32) >= 128) && alphabet_allows(alphabet, c) && seen.insert(c)
+            {
+                out.push(c);
+            }
+        }
+        for c in gather_chars(alphabet, in_classes) {
+            if !(ascii_only && (c as u32) >= 128) && seen.insert(c) {
+                out.push(c);
+            }
+        }
+        out
+    } else {
+        let mut positive_set: HashSet<char> = HashSet::default();
+        for c in positive {
+            positive_set.extend(swapcase_blacklist(c, flags));
+        }
+        gather_chars(alphabet, |c| {
+            !(ascii_only && (c as u32) >= 128) && !positive_set.contains(&c) && !in_classes(c)
+        })
+    }
+}
+
+#[test]
+fn build_in_set_category_classes_match_a_lookup_per_character() {
+    use ChCode::*;
+    let alphabets = [
+        None,
+        Some(IntervalSet::new(vec![(0x20, 0x7E), (0xA0, 0x3FF), (0x1_F600, 0x1_F64F)]).unwrap()),
+    ];
+    let item_sets: Vec<Vec<SetItem>> = [Digit, NotDigit, Space, NotSpace, Word, NotWord]
+        .iter()
+        .flat_map(|cat| {
+            [
+                vec![SetItem::Category(*cat)],
+                vec![SetItem::Negate, SetItem::Category(*cat)],
+            ]
+        })
+        .chain([
+            vec![
+                SetItem::Literal('0' as u32),
+                SetItem::Range('x' as u32, 'z' as u32),
+                SetItem::Category(Digit),
+            ],
+            vec![
+                SetItem::Negate,
+                SetItem::Literal('a' as u32),
+                SetItem::Category(Space),
+                SetItem::Category(Digit),
+            ],
+            vec![
+                SetItem::Literal('a' as u32),
+                SetItem::Category(Word),
+                SetItem::Category(Space),
+            ],
+        ])
+        .collect();
+    for alphabet in &alphabets {
+        for items in &item_sets {
+            for flags in [0, SRE_FLAG_IGNORECASE, SRE_FLAG_ASCII] {
+                assert_eq!(
+                    build_in_set(items, flags, alphabet).unwrap(),
+                    reference_in_set(items, flags, alphabet),
+                    "{items:?} with flags {flags}"
+                );
+            }
+        }
+    }
+    let digits_and_zero = [SetItem::Literal('0' as u32), SetItem::Category(Digit)];
+    let out = build_in_set(&digits_and_zero, 0, &None).unwrap();
+    assert_eq!(out[0], '0');
+    assert_eq!(out.iter().filter(|c| **c == '0').count(), 1);
+    assert!(out.contains(&'٣'));
+}

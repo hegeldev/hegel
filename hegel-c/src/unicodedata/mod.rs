@@ -195,6 +195,31 @@ pub fn category_runs() -> impl Iterator<Item = (u32, u32, Category)> {
     })
 }
 
+/// The runs of [`category_runs`] restricted to the codepoints `lo..=hi`:
+/// the first and last runs are clipped to that range, codepoints above
+/// `0x10FFFF` are left out, and an empty range yields nothing. Walking
+/// these answers a category question about every codepoint of a range
+/// without a table lookup per codepoint.
+pub fn category_runs_in(lo: u32, hi: u32) -> impl Iterator<Item = (u32, u32, Category)> {
+    let table = ranges();
+    let hi = hi.min(0x10FFFF);
+    let first = if lo > hi {
+        table.len()
+    } else {
+        table.partition_point(|&(end, _)| end < lo)
+    };
+    let mut start = if first == 0 {
+        0
+    } else {
+        table[first - 1].0 + 1
+    };
+    table[first..].iter().map_while(move |&(end, cat)| {
+        let run_start = start;
+        start = end + 1;
+        (run_start <= hi).then(|| (run_start.max(lo), end.min(hi), cat))
+    })
+}
+
 /// Return the Unicode General Category for `cp`.
 ///
 /// Matches Python's `unicodedata.category(chr(cp))` for every codepoint in
@@ -240,14 +265,7 @@ pub fn is_in_group(cp: u32, group: &str) -> Result<bool, InternalError> {
     Ok(group_matches(general_category(cp)?.as_str(), group))
 }
 
-/// [`is_in_group`] for a `char`, whose type already guarantees a codepoint
-/// in range — so the check cannot fail.
-pub fn is_in_group_char(c: char, group: &str) -> bool {
-    group_matches(general_category_char(c).as_str(), group)
-}
-
-/// Shared group-matching rule behind [`is_in_group`] /
-/// [`is_in_group_char`].
+/// Shared group-matching rule behind [`is_in_group`].
 fn group_matches(cat: &str, group: &str) -> bool {
     match group.len() {
         2 => cat == group,
