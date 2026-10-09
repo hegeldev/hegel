@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use once_cell::race::OnceBox;
 
-use rand::{Rng, RngExt};
+use rand::RngExt;
 
 use crate::native::rng::EngineRng;
 
@@ -1041,6 +1041,9 @@ pub(crate) fn biased_bytes_sample(
 /// to exactly `1.0` and the floor alone would make `true` unreachable), and
 /// the `max(1, …)` keeps at least `n == 0` falsey for `p` near one. A
 /// probability needing more than 8 bits is approximated, but only slightly.
+/// The floor is the truncating `as u32` cast: its argument is never negative
+/// for a valid `p`, and the clamp absorbs the saturated cases (`NaN` to 0 and
+/// anything from 256 up), so the threshold is the one the formula names.
 ///
 /// Callers must pass `0.0 < p < 1.0`; the `p <= 0` / `p >= 1` cases are forced
 /// without consuming entropy by [`NativeTestCase::weighted`].
@@ -1049,10 +1052,8 @@ pub(crate) fn biased_bytes_sample(
 /// boolean) matters for the urandom backend, where every byte is
 /// fuzzer-controlled entropy and a one-bit decision should cost one byte.
 pub(crate) fn weighted_boolean_sample(p: f64, rng: &mut EngineRng) -> bool {
-    let falsey = (libm::floor(256.0 * (1.0 - p)).max(1.0) as u32).min(255);
-    let mut byte = [0u8; 1];
-    rng.fill_bytes(&mut byte);
-    u32::from(byte[0]) >= falsey
+    let falsey = ((256.0 * (1.0 - p)) as u32).clamp(1, 255);
+    u32::from(rng.next_byte()) >= falsey
 }
 
 /// Full-precision weighted boolean: `true` with probability `p`, faithful to

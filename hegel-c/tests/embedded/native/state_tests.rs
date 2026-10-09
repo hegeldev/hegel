@@ -1351,6 +1351,38 @@ fn weighted_boolean_sample_consumes_exactly_one_byte() {
     assert_eq!(a.next_u64(), b.next_u64());
 }
 
+/// The threshold is `min(255, max(1, floor(256 * (1 - p))))`; the
+/// implementation reaches it by a truncating cast and a clamp, which must
+/// agree with the floored formula for every `p` in `(0, 1)`, from the
+/// `1.0 - p == 1.0` edge up to probabilities a hair below one.
+#[test]
+fn weighted_boolean_sample_matches_the_floored_threshold() {
+    use rand::Rng;
+    for p in [
+        1e-300,
+        1e-9,
+        1.0 / 512.0,
+        0.1,
+        0.5,
+        0.9,
+        1.0 - 1.0 / 512.0,
+        1.0 - 1e-12,
+    ] {
+        let mut a = EngineRng::seeded(77);
+        let mut b = EngineRng::seeded(77);
+        let falsey = ((256.0_f64 * (1.0 - p)).floor().max(1.0) as u32).min(255);
+        for _ in 0..256 {
+            let mut byte = [0u8; 1];
+            b.fill_bytes(&mut byte);
+            assert_eq!(
+                weighted_boolean_sample(p, &mut a),
+                u32::from(byte[0]) >= falsey,
+                "p={p}"
+            );
+        }
+    }
+}
+
 /// `p` still controls the probability of `true` under the byte-based draw.
 #[test]
 fn weighted_boolean_sample_respects_probability() {

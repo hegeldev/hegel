@@ -93,6 +93,26 @@ fn urandom_or_fallback_uses_the_random_device_when_available() {
     assert!(matches!(rng, EngineRng::Urandom(_)));
 }
 
+#[test]
+fn prng_next_byte_matches_a_one_byte_fill() {
+    let mut a = EngineRng::seeded(2024);
+    let mut b = EngineRng::seeded(2024);
+    for _ in 0..64 {
+        let mut byte = [0u8; 1];
+        a.fill_bytes(&mut byte);
+        assert_eq!(b.next_byte(), byte[0]);
+    }
+    assert_eq!(a.next_u64(), b.next_u64());
+}
+
+#[cfg(unix)]
+#[test]
+fn urandom_next_byte_reads_the_random_device() {
+    let mut rng = EngineRng::urandom();
+    let draws: std::collections::HashSet<u8> = (0..64).map(|_| rng.next_byte()).collect();
+    assert!(draws.len() > 1, "urandom returned a constant byte stream");
+}
+
 #[cfg(unix)]
 #[test]
 fn urandom_fills_all_widths() {
