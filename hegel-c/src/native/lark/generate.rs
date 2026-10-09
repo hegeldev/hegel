@@ -47,7 +47,8 @@ use super::builder::{ImportSource, load_grammar};
 use super::compile::{Grammar, RuleId, TermId, compile};
 use super::lexsim::{Lexed, Lexer, Scan};
 use super::{GrammarError, GrammarResult};
-use crate::control::hegel_internal_assert;
+use crate::control::{hegel_internal_assert, hegel_internal_unwrap};
+use crate::native::HashMap;
 use crate::native::core::{EngineError, ManyState, NativeTestCase, Status};
 use crate::native::draws::{
     LABEL_BOOLEAN, LABEL_INTEGER, StringSpec, generate_string, many_more, spanned,
@@ -81,6 +82,7 @@ const LEX_RETRIES: u32 = 3;
 const IGNORE_ATTEMPTS: u32 = 4;
 const IGNORE_CHAIN: u32 = 2;
 const IGNORE_CHAIN_DRAWS: u32 = 4;
+const IGNORE_CHAIN_PATIENCE: u32 = 4;
 
 /// The probability that a draw aims for a large string rather than the
 /// smallest one.
@@ -334,9 +336,10 @@ impl GrammarSpec {
     /// of terminal `id`, on its own; `own` is the terminal's own match
     /// there when already known.
     fn scan_token(&self, id: TermId, text: &[char], own: Option<Scan>) -> TokenScans {
+        let own = own.unwrap_or_else(|| self.lexer.match_terminal_scan(id, text, 0));
         TokenScans {
-            own: own.unwrap_or_else(|| self.lexer.match_terminal_scan(id, text, 0)),
-            basic: self.lexer.next_token_scan(text, 0),
+            basic: self.lexer.next_token_scan_knowing(text, 0, id, &own),
+            own,
             ignores: self
                 .ignore
                 .iter()
@@ -673,14 +676,13 @@ struct Token {
     /// (`x?`, `[x]`, `x*`), so a lexer that runs it into its neighbour
     /// or skips it leaves a string the parser still accepts.
     droppable: bool,
-    scans: TokenScans,
+    scans: Arc<TokenScans>,
 }
 
 /// What the lexers found at the start of a token's text on its own, kept
 /// with the token so that the checks on the longer texts the token is
 /// part of (its fit with its neighbours, the finished string) need not
 /// match it again where the finding carries over (see [`Lexer::extend`]).
-#[derive(Clone)]
 struct TokenScans {
     /// The token's own terminal matched at its start.
     own: Scan,
@@ -717,6 +719,9 @@ impl From<EngineError> for Step {
     }
 }
 
+/// What the lexers found in each distinct text drawn for one terminal.
+type Readings = HashMap<Vec<char>, (Arc<TokenScans>, Reading)>;
+
 struct Generation<'s> {
     spec: &'s GrammarSpec,
     tokens: Vec<Token>,
@@ -726,6 +731,50 @@ struct Generation<'s> {
     /// settled (see [`GrammarSpec::settled`]), so that the finished
     /// string has to be lexed as a whole.
     unsettled: bool,
+    /// What the lexers found in each distinct token text drawn so far,
+    /// by terminal, so that a keyword, an operator or a stretch of
+    /// whitespace drawn again is lexed once per string rather than once
+    /// per occurrence.
+    read: Vec<Readings>,
+    /// How often each ignorable drawn to end another's match in a chain
+    /// (see [`Generation::ignore_chain`]) has failed and succeeded at
+    /// it, by the pair of terminals.
+    chains: HashMap<(TermId, TermId), (u32, u32)>,
+}
+
+impl<'s> Generation<'s> {
+    fn new(spec: &'s GrammarSpec, ignore_rate: f64) -> Generation<'s> {
+        Generation {
+            spec,
+            tokens: Vec::new(),
+            consumed: 0,
+            ignore_rate,
+            unsettled: false,
+            read: (0..spec.terminals.len())
+                .map(|_| HashMap::default())
+                .collect(),
+            chains: HashMap::default(),
+        }
+    }
+
+    /// The scans and reading of a token of terminal `id` with `text`,
+    /// from the ones remembered when the text was drawn before, else
+    /// computed (with `own` for the terminal's own scan when the caller
+    /// already has it) and remembered.
+    fn read_token(
+        &mut self,
+        id: TermId,
+        text: &[char],
+        own: Option<Scan>,
+    ) -> (Arc<TokenScans>, Reading) {
+        if let Some(found) = self.read[id].get(text) {
+            return found.clone();
+        }
+        let scans = Arc::new(self.spec.scan_token(id, text, own));
+        let reading = self.spec.reading(id, text, &scans.basic);
+        self.read[id].insert(text.to_vec(), (Arc::clone(&scans), reading.clone()));
+        (scans, reading)
+    }
 }
 
 /// The length of `spec`'s strings on average, as a whole number of
@@ -801,31 +850,44 @@ impl Generation<'_> {
         budget: u64,
         depth: u32,
     ) -> Result<&'a Alt, EngineError> {
-        let feasible: Vec<&Alt> = alts
-            .iter()
-            .filter(|alt| {
-                alt.min_size <= budget && depth.saturating_add(alt.min_depth) <= self.spec.max_depth
-            })
-            .collect();
-        hegel_internal_assert!(!feasible.is_empty());
-        let typical = feasible.iter().map(|a| a.typical_size).min().unwrap_or(0);
-        let (closing, growing): (Vec<&Alt>, Vec<&Alt>) = if feasible.iter().any(|a| !a.growing()) {
-            feasible.iter().partition(|a| !a.growing())
-        } else {
-            feasible.iter().partition(|a| a.typical_size == typical)
+        let feasible = |alt: &Alt| {
+            alt.min_size <= budget && depth.saturating_add(alt.min_depth) <= self.spec.max_depth
         };
-        let class = if growing.is_empty() {
-            closing
-        } else {
-            let cheapest_growing = growing.iter().map(|a| a.typical_size).min().unwrap_or(0);
-            let p = grow_probability(budget.saturating_sub(cheapest_growing));
-            let grow = spanned(ntc, LABEL_BOOLEAN, |ntc| ntc.weighted_precise(p, None))?;
-            if grow { growing } else { closing }
+        let mut count = 0;
+        let mut typical = u64::MAX;
+        let mut any_closing = false;
+        for alt in alts.iter().filter(|alt| feasible(alt)) {
+            count += 1;
+            typical = typical.min(alt.typical_size);
+            any_closing |= !alt.growing();
+        }
+        hegel_internal_assert!(count > 0);
+        let closing = |alt: &Alt| {
+            if any_closing {
+                !alt.growing()
+            } else {
+                alt.typical_size == typical
+            }
         };
+        let in_class = |alt: &Alt, grow: bool| feasible(alt) && closing(alt) != grow;
+        let growing = alts.iter().filter(|alt| in_class(alt, true));
+        let grow = match growing.clone().map(|alt| alt.typical_size).min() {
+            None => false,
+            Some(cheapest_growing) => {
+                let p = grow_probability(budget.saturating_sub(cheapest_growing));
+                spanned(ntc, LABEL_BOOLEAN, |ntc| ntc.weighted_precise(p, None))?
+            }
+        };
+        let size = alts.iter().filter(|alt| in_class(alt, grow)).count();
         let index = spanned(ntc, LABEL_INTEGER, |ntc| {
-            ntc.draw_integer_uniform(0, class.len() as u64 - 1)
+            ntc.draw_integer_uniform(0, size as u64 - 1)
         })?;
-        Ok(class[index as usize])
+        Ok(hegel_internal_unwrap!(
+            alts.iter()
+                .filter(|alt| in_class(alt, grow))
+                .nth(index as usize),
+            "choose_alt: drew an index past the class"
+        ))
     }
 
     fn rule(
@@ -1015,11 +1077,12 @@ impl Generation<'_> {
         match &self.spec.terminals[id] {
             TerminalGen::Explicit(spec) => {
                 let text: Vec<char> = generate_string(ntc, spec)?.chars().collect();
+                let (scans, reading) = self.read_token(id, &text, None);
                 Ok(Token {
                     id,
-                    scans: self.spec.scan_token(id, &text, None),
+                    scans,
                     text,
-                    reading: Reading::Opaque,
+                    reading,
                     droppable: false,
                 })
             }
@@ -1039,8 +1102,7 @@ impl Generation<'_> {
                     let (end, own) = self.spec.whole(id, &text);
                     let own = (end == text.len()).then_some(own);
                     text.truncate(end);
-                    let scans = self.spec.scan_token(id, &text, own);
-                    let reading = self.spec.reading(id, &text, &scans.basic);
+                    let (scans, reading) = self.read_token(id, &text, own);
                     let token = Token {
                         id,
                         text,
@@ -1129,7 +1191,15 @@ impl Generation<'_> {
 
     /// Draw ignorables after the ones pushed since `from` until the
     /// lexer reads the chain and `next` back as intended, or `draws`
-    /// run out; nothing stays pushed when they do.
+    /// run out; nothing stays pushed when they do. Only ignorables that
+    /// could end the last one's match where it is are drawn (see
+    /// [`Lexer::can_stop`]): a comment that runs to the end of its line
+    /// is followed by something that can hold a newline, never by
+    /// spaces it would swallow. An ignorable that could but, as drawn,
+    /// keeps failing to is given up on for the rest of the string (see
+    /// [`Generation::hopeful`]), since what the analysis cannot rule out
+    /// the draws may: a comment can begin with the newline that ends
+    /// the one before it, but rarely does.
     fn ignore_chain(
         &mut self,
         ntc: &mut NativeTestCase,
@@ -1138,8 +1208,21 @@ impl Generation<'_> {
         depth: u32,
         draws: &mut u32,
     ) -> Result<Fit, Step> {
-        let candidates = self.spec.ignore.clone();
         while *draws > 0 {
+            let candidates: Vec<TermId> = self
+                .spec
+                .ignore
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    self.tokens.last().is_none_or(|prev| {
+                        self.spec.lexer.can_stop(&prev.scans.own, id) && self.hopeful(prev.id, id)
+                    })
+                })
+                .collect();
+            if candidates.is_empty() {
+                break;
+            }
             *draws -= 1;
             ntc.start_span(LABEL_IGNORE);
             let placement = self.place_ignore(ntc, &candidates, from, next, depth, draws);
@@ -1152,10 +1235,23 @@ impl Generation<'_> {
         Ok(Fit::Wrong)
     }
 
+    /// Whether drawing the ignorable `id` to end a token of `prev` in a
+    /// chain is still worth it: it is until it has failed
+    /// [`IGNORE_CHAIN_PATIENCE`] times for each time it has succeeded,
+    /// and once more.
+    fn hopeful(&self, prev: TermId, id: TermId) -> bool {
+        self.chains
+            .get(&(prev, id))
+            .is_none_or(|&(failed, succeeded)| failed < IGNORE_CHAIN_PATIENCE * (succeeded + 1))
+    }
+
     /// Draw one ignorable before `next` and, when the lexer would run it
     /// into `next` but not into the tokens before it, a chain of further
     /// ignorables after it; the whole chain from the token at `from` on is
-    /// what has to lex. The tokens are pushed when the result fits.
+    /// what has to lex. The tokens are pushed when the result fits. A
+    /// draw in a chain (at a `depth` above zero) counts against drawing
+    /// that ignorable after that token again until it is placed, and
+    /// then for it.
     fn place_ignore(
         &mut self,
         ntc: &mut NativeTestCase,
@@ -1165,7 +1261,31 @@ impl Generation<'_> {
         depth: u32,
         draws: &mut u32,
     ) -> Result<Placement, Step> {
+        let prev = self.tokens.last().map(|prev| prev.id);
         let (token, fit) = self.draw_ignore(ntc, candidates, from, next)?;
+        let pair = prev.filter(|_| depth > 0).map(|prev| (prev, token.id));
+        if let Some(pair) = pair {
+            self.chains.entry(pair).or_default().0 += 1;
+        }
+        let placement = self.place_drawn(ntc, token, fit, from, next, depth, draws)?;
+        if let (Some(pair), Placement::Placed(_)) = (pair, &placement) {
+            let (failed, succeeded) = self.chains.entry(pair).or_default();
+            *failed -= 1;
+            *succeeded += 1;
+        }
+        Ok(placement)
+    }
+
+    fn place_drawn(
+        &mut self,
+        ntc: &mut NativeTestCase,
+        token: Token,
+        fit: Fit,
+        from: usize,
+        next: Option<&Token>,
+        depth: u32,
+        draws: &mut u32,
+    ) -> Result<Placement, Step> {
         if fit > Fit::Wrong {
             self.push(token)?;
             self.unsettled |= fit < Fit::Settled;
@@ -1204,7 +1324,7 @@ impl Generation<'_> {
             TerminalGen::Pattern(spec) => generate_string(ntc, spec)?,
         };
         let text: Vec<char> = text.chars().collect();
-        let scans = self.spec.scan_token(id, &text, None);
+        let (scans, reading) = self.read_token(id, &text, None);
         if !self.fits(&text) {
             let token = Token {
                 id,
@@ -1215,7 +1335,6 @@ impl Generation<'_> {
             };
             return Ok((token, Fit::Wrong));
         }
-        let reading = self.spec.reading(id, &text, &scans.basic);
         let token = Token {
             id,
             text,
@@ -1317,13 +1436,7 @@ fn draw_grammar(ntc: &mut NativeTestCase, spec: &GrammarSpec) -> Result<String, 
     };
     let mut attempt = 0;
     loop {
-        let mut generation = Generation {
-            spec,
-            tokens: Vec::new(),
-            consumed: 0,
-            ignore_rate,
-            unsettled: false,
-        };
+        let mut generation = Generation::new(spec, ignore_rate);
         let budget = token_budget(target, min, ignore_rate, spec.ignore_cost);
         match generation.run(ntc, budget) {
             Ok(()) => {

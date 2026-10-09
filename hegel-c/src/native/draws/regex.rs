@@ -82,6 +82,10 @@ impl CompiledRegex {
 /// match, ...) are retried a few times within the same test case — the
 /// analogue of Hypothesis's strategy-level `.filter(re.search)` retries —
 /// before the whole test case is marked invalid.
+/// The bytes a drawn string starts out with room for, so that one of
+/// ordinary length is built without the buffer growing.
+const TYPICAL_CAPACITY: usize = 64;
+
 pub(crate) fn generate_regex(
     ntc: &mut NativeTestCase,
     re: &CompiledRegex,
@@ -117,7 +121,7 @@ fn generate_regex_attempt(
         in_cache: &re.in_cache,
         char_cache: &re.char_cache,
     };
-    let mut result = String::new();
+    let mut result = String::with_capacity(TYPICAL_CAPACITY);
 
     if parsed.pattern.is_empty() {
         if !fullmatch {

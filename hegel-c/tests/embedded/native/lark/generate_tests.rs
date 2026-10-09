@@ -57,7 +57,7 @@ fn tid(spec: &GrammarSpec, name: &str) -> TermId {
 fn tok(spec: &GrammarSpec, name: &str, text: &str) -> Token {
     let id = tid(spec, name);
     let text: Vec<char> = text.chars().collect();
-    let scans = spec.scan_token(id, &text, None);
+    let scans = Arc::new(spec.scan_token(id, &text, None));
     Token {
         id,
         reading: spec.reading(id, &text, &scans.basic),
@@ -173,13 +173,7 @@ fn budgets_count_terminals_at_their_typical_length() {
     assert_eq!(spec.analysis.rules[spec.start].typical_size, 7);
     for seed in 0..32 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
-        let mut generation = Generation {
-            spec: &spec,
-            tokens: Vec::new(),
-            consumed: 0,
-            ignore_rate: 0.0,
-            unsettled: false,
-        };
+        let mut generation = Generation::new(&spec, 0.0);
         assert!(generation.run(&mut ntc, 70).is_ok());
         assert!(
             generation.tokens.len() <= 10,
@@ -194,13 +188,7 @@ fn rules_whose_alternatives_all_grow_still_keep_to_their_budget() {
     let spec = fixture_spec("calc", "start", 4000, vec![]);
     for seed in 0..32 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
-        let mut generation = Generation {
-            spec: &spec,
-            tokens: Vec::new(),
-            consumed: 0,
-            ignore_rate: 0.0,
-            unsettled: false,
-        };
+        let mut generation = Generation::new(&spec, 0.0);
         assert!(generation.run(&mut ntc, 500).is_ok(), "seed {seed}");
         assert!(
             (250..=1500).contains(&generation.consumed),
@@ -465,17 +453,12 @@ fn optional_tokens_may_be_swallowed_by_their_neighbours() {
         "{strings:?}"
     );
     assert!(strings.iter().any(|s| s == "abc"));
-    let mut generation = Generation {
-        spec: &spec,
-        tokens: vec![
-            tok(&spec, "A", "a"),
-            tok(&spec, "B", "b"),
-            tok(&spec, "C", "c"),
-        ],
-        consumed: 0,
-        ignore_rate: 0.0,
-        unsettled: false,
-    };
+    let mut generation = Generation::new(&spec, 0.0);
+    generation.tokens = vec![
+        tok(&spec, "A", "a"),
+        tok(&spec, "B", "b"),
+        tok(&spec, "C", "c"),
+    ];
     generation.mark_droppable(0);
     assert!(generation.tokens.iter().all(|t| !t.droppable));
     generation.mark_droppable(3);
@@ -812,13 +795,7 @@ fn settled_stretches_read_back_exactly_and_settled_strings_lex_as_wholes() {
         let spec = fixture_spec(name, start, 400, vec![]);
         for seed in 0..8 {
             let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
-            let mut generation = Generation {
-                spec: &spec,
-                tokens: Vec::new(),
-                consumed: 0,
-                ignore_rate: 0.25,
-                unsettled: false,
-            };
+            let mut generation = Generation::new(&spec, 0.25);
             if generation.run(&mut ntc, 200).is_err() {
                 continue;
             }
@@ -932,4 +909,51 @@ fn token_budgets_leave_room_for_ignore_insertions() {
     assert_eq!(token_budget(350, 1, 1.0, 9.0), 35);
     assert_eq!(token_budget(350, 1, 0.25, 4.0), 175);
     assert_eq!(token_budget(3, 2, 1.0, 9.0), 2);
+}
+
+#[test]
+fn chains_skip_ignorables_the_previous_one_would_swallow() {
+    let spec = small(
+        "start: NUM+\nNUM: /[0-9]/\nWS: / +/\nCOMMENT: /#[#a-z0-9 ]*/\n%ignore WS\n%ignore COMMENT\n",
+        200,
+    );
+    for s in samples(&spec, 100) {
+        let body = s.split('#').next().unwrap();
+        assert!(
+            body.chars().all(|c| c.is_ascii_digit() || c == ' '),
+            "{s:?}"
+        );
+    }
+}
+
+#[test]
+fn chain_pairs_that_keep_failing_are_given_up_on() {
+    let spec = small(
+        "start: NUM NUM NUM NUM NUM NUM NUM NUM\nNUM: /[0-9]/\nCOMMENT: /#[^\\n]*/\n\
+         SEP: /\\n[^\\n]*|x/\n%ignore COMMENT\n%ignore SEP\n",
+        4000,
+    );
+    let comment = tid(&spec, "COMMENT");
+    let sep = tid(&spec, "SEP");
+    let mut given_up = 0;
+    for seed in 0..64 {
+        let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+        let mut generation = Generation::new(&spec, 0.5);
+        if generation.run(&mut ntc, 2000).is_err() {
+            continue;
+        }
+        for (pair, &(failed, succeeded)) in &generation.chains {
+            assert!(failed <= IGNORE_CHAIN_PATIENCE, "seed {seed} {pair:?}");
+            assert_eq!(succeeded, 0, "seed {seed} {pair:?}");
+        }
+        if generation.chains.get(&(comment, sep)) == Some(&(IGNORE_CHAIN_PATIENCE, 0)) {
+            given_up += 1;
+        }
+    }
+    assert!(given_up > 8, "{given_up}");
+    let mut generation = Generation::new(&spec, 0.5);
+    generation.chains.insert((comment, sep), (7, 1));
+    assert!(generation.hopeful(comment, sep));
+    generation.chains.insert((comment, sep), (8, 1));
+    assert!(!generation.hopeful(comment, sep));
 }

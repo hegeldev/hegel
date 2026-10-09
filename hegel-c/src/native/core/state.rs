@@ -1874,7 +1874,7 @@ impl NativeTestCase {
             spans: Spans::with_capacity(spans),
             span_stack: Vec::new(),
             span_ordinals: Vec::with_capacity(spans),
-            sibling_counts: HashMap::default(),
+            sibling_counts: HashMap::with_capacity_and_hasher(spans, Default::default()),
             child_nodes: Vec::with_capacity(spans),
             top_child_nodes: 0,
             has_discards: false,

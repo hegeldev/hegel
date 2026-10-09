@@ -43,6 +43,17 @@ use alloc::vec::Vec;
 pub struct FirstChars(Vec<(u32, u32)>);
 
 impl FirstChars {
+    /// How many characters the set has.
+    fn len(&self) -> u64 {
+        self.0.iter().map(|&(lo, hi)| u64::from(hi - lo) + 1).sum()
+    }
+
+    fn chars(&self) -> impl Iterator<Item = char> + '_ {
+        self.0
+            .iter()
+            .flat_map(|&(lo, hi)| (lo..=hi).filter_map(char::from_u32))
+    }
+
     fn contains(&self, c: char) -> bool {
         let c = c as u32;
         let i = self.0.partition_point(|&(_, hi)| hi < c);
@@ -156,6 +167,11 @@ pub fn first_chars(parsed: &ParsedPattern) -> Option<FirstChars> {
     }
     Some(FirstChars::normalized(walk.ranges))
 }
+
+/// The most first characters of a candidate [`Lexer::can_stop`] tries
+/// against the run of the token before it; a larger set is taken to
+/// contain one that stops the run.
+const STOPPERS_TRIED: u64 = 256;
 
 /// Whether a match of `parsed` at a position can depend on the text
 /// before that position: an anchor or word boundary it may test before
@@ -554,6 +570,36 @@ impl Lexer {
         scan
     }
 
+    /// Whether a token of `candidate` right after a token whose own
+    /// scan is `scan` could end that token's match where it is: false
+    /// only when the match is known to run on through every character
+    /// the candidate can start with, so that it would read on into the
+    /// candidate and past it just the same.
+    pub fn can_stop(&self, scan: &Scan, candidate: TermId) -> bool {
+        let Some(first) = self.patterns[candidate]
+            .as_ref()
+            .and_then(|pattern| pattern.first.as_ref())
+        else {
+            return true;
+        };
+        if first.len() > STOPPERS_TRIED || !scan.carried {
+            return true;
+        }
+        scan.steps.iter().all(|(id, carry)| {
+            self.patterns[*id]
+                .as_ref()
+                .is_none_or(|pattern| match carry {
+                    Carry::Tail(run_id) => first
+                        .chars()
+                        .any(|c| pattern.run_len(*run_id, &[c], 0) != Some(1)),
+                    Carry::Unless(probes) => first
+                        .chars()
+                        .any(|c| pattern.probed(probes, c) != Some(true)),
+                    Carry::Literal | Carry::Resume(_) => true,
+                })
+        })
+    }
+
     /// Lex one token of `text` at `pos`, as Lark's basic lexer would.
     pub fn next_token(&self, text: &[char], pos: usize) -> Lexed {
         self.next_token_scan(text, pos).lexed
@@ -564,21 +610,54 @@ impl Lexer {
     /// end might match with more text, so the result then stands only for
     /// this text.
     pub fn next_token_scan(&self, text: &[char], pos: usize) -> Scan {
+        self.basic_scan(text, pos, None)
+    }
+
+    /// [`next_token_scan`](Self::next_token_scan), given `own`, what
+    /// [`match_terminal_scan`](Self::match_terminal_scan) found for the
+    /// terminal `id` at `pos`, so that its pattern need not be run
+    /// again.
+    pub fn next_token_scan_knowing(
+        &self,
+        text: &[char],
+        pos: usize,
+        id: TermId,
+        own: &Scan,
+    ) -> Scan {
+        self.basic_scan(text, pos, Some((id, own)))
+    }
+
+    fn basic_scan(&self, text: &[char], pos: usize, known: Option<(TermId, &Scan)>) -> Scan {
         let mut scan = Scan::new(Lexed::NoMatch);
         if pos >= text.len() {
             scan.carried = false;
             return scan;
         }
         for term in &self.terminals {
-            let outcome = term.pattern.scan(text, pos);
-            scan.note(term.id, &outcome);
-            match outcome.result {
+            let result = match known {
+                Some((id, own)) if id == term.id => {
+                    scan.anchored |= own.anchored;
+                    scan.carried &= own.carried;
+                    scan.steps.extend(own.steps.iter().cloned());
+                    match own.lexed {
+                        Lexed::Token(_, end) => Ok(Some(end)),
+                        Lexed::NoMatch => Ok(None),
+                        Lexed::Unknown => Err(()),
+                    }
+                }
+                _ => {
+                    let outcome = term.pattern.scan(text, pos);
+                    scan.note(term.id, &outcome);
+                    outcome.result.map_err(|_| ())
+                }
+            };
+            match result {
                 Ok(Some(end)) => {
                     scan.lexed = Lexed::Token(self.retype(term, &text[pos..end]), end);
                     return scan;
                 }
                 Ok(None) => {}
-                Err(_) => {
+                Err(()) => {
                     scan.lexed = Lexed::Unknown;
                     scan.carried = false;
                     return scan;

@@ -464,3 +464,63 @@ TAIL: /[a-z]+(?<=a)/
     assert_eq!(lexer.settle(&scan, &chars("abcd"), 0, 3, false), None);
     assert_eq!(lexer.extend(&scan, &chars("abcd"), 0, 3, false), None);
 }
+
+#[test]
+fn only_candidates_that_can_end_the_previous_match_are_worth_trying() {
+    let grammar = compiled(
+        "start: NUM+ | D | COMMENT | WS | NL | OPT | BS | C | WIDE | X\nNUM: /[0-9]/\n\
+         COMMENT: /#[^\\n]*/\nWS: /[ \\t]+/\nNL: /\\n+/\nOPT: /ab?/\nBS: /b+/\nC: /c/\n\
+         WIDE: /[\\u0100-\\u0fff]/\nX: \"xy\"\n%declare D\n",
+    );
+    let lexer = Lexer::new(&grammar.terminals);
+    let id = |name: &str| grammar.terminal_id(name).unwrap();
+    let comment = lexer.match_terminal_scan(id("COMMENT"), &chars("# hi"), 0);
+    assert!(!lexer.can_stop(&comment, id("WS")));
+    assert!(lexer.can_stop(&comment, id("NL")));
+    assert!(!lexer.can_stop(&comment, id("COMMENT")));
+    assert!(lexer.can_stop(&comment, id("WIDE")));
+    assert!(lexer.can_stop(&comment, id("D")));
+    let opt = lexer.match_terminal_scan(id("OPT"), &chars("a"), 0);
+    assert!(!lexer.can_stop(&opt, id("BS")));
+    assert!(lexer.can_stop(&opt, id("C")));
+    let fixed = lexer.match_terminal_scan(id("X"), &chars("xy"), 0);
+    assert!(lexer.can_stop(&fixed, id("WS")));
+    let partial = lexer.match_terminal_scan(id("X"), &chars("x"), 0);
+    assert!(partial.carried && !partial.steps.is_empty());
+    assert!(lexer.can_stop(&partial, id("WS")));
+    let unknown = lexer.match_terminal_scan(id("D"), &chars("x"), 0);
+    assert!(lexer.can_stop(&unknown, id("WS")));
+}
+
+#[test]
+fn a_known_own_scan_stands_in_for_running_its_pattern_again() {
+    let g = compiled("start: A B C\nA: /a+/\nB: /ab/\nC: /(c*)*d/\n");
+    let lexer = Lexer::new(&g.terminals);
+    let (a, b, c) = (
+        g.terminal_id("A").unwrap(),
+        g.terminal_id("B").unwrap(),
+        g.terminal_id("C").unwrap(),
+    );
+    for (id, text) in [(a, "aab"), (b, "aab"), (b, "abb"), (a, "xa"), (c, "ccccc")] {
+        for pos in 0..2 {
+            let text = chars(text);
+            let own = lexer.match_terminal_scan(id, &text, pos);
+            let knowing = lexer.next_token_scan_knowing(&text, pos, id, &own);
+            let plain = lexer.next_token_scan(&text, pos);
+            assert_eq!(knowing.lexed, plain.lexed, "{id} {text:?} {pos}");
+            assert_eq!(knowing.carried, plain.carried, "{id} {text:?} {pos}");
+            assert_eq!(knowing.anchored, plain.anchored, "{id} {text:?} {pos}");
+            assert_eq!(
+                knowing.steps.len(),
+                plain.steps.len(),
+                "{id} {text:?} {pos}"
+            );
+        }
+    }
+    let long = chars(&"c".repeat(40));
+    let own = lexer.match_terminal_scan(c, &long, 0);
+    assert_eq!(own.lexed, Lexed::Unknown);
+    let knowing = lexer.next_token_scan_knowing(&long, 0, c, &own);
+    assert_eq!(knowing.lexed, Lexed::Unknown);
+    assert!(!knowing.carried);
+}
