@@ -431,9 +431,11 @@ impl GrammarSpec {
     /// there when already known.
     fn scan_token(&self, id: TermId, text: &[char], own: Option<Scan>) -> TokenScans {
         let own = own.unwrap_or_else(|| self.lexer.match_terminal_scan(id, text, 0));
+        let basic = self.lexer.next_token_scan_knowing(text, 0, id, &own);
         TokenScans {
-            basic: self.lexer.next_token_scan_knowing(text, 0, id, &own),
+            basic_follows_own: basic.follows(&own),
             own,
+            basic,
         }
     }
 
@@ -588,13 +590,16 @@ impl GrammarSpec {
             }
             if i + 1 < tokens.len() {
                 let own = self.lexer.settle(&token.scans.own, text, start, len, false);
-                let basic = self
-                    .lexer
-                    .settle(&token.scans.basic, text, start, len, true);
-                if own != Some(Lexed::Token(token.id, start + len))
-                    || basic != Some(Lexed::Token(read, start + len))
-                {
+                if own != Some(Lexed::Token(token.id, start + len)) {
                     return false;
+                }
+                if !token.scans.basic_follows_own {
+                    let basic = self
+                        .lexer
+                        .settle(&token.scans.basic, text, start, len, true);
+                    if basic != Some(Lexed::Token(read, start + len)) {
+                        return false;
+                    }
                 }
             }
             start += len;
@@ -777,6 +782,13 @@ struct TokenScans {
     own: Scan,
     /// The basic lexer's first token.
     basic: Scan,
+    /// Whether `basic` carries over any text exactly as `own` does (see
+    /// [`Scan::follows`]): the basic lexer got as far as the token's own
+    /// terminal without another leaving anything open, so settling the
+    /// token for it (see [`GrammarSpec::settled`]) can only come out as
+    /// settling its own match did, re-typed as the basic lexer read the
+    /// token on its own.
+    basic_follows_own: bool,
 }
 
 impl Token {

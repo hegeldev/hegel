@@ -505,6 +505,16 @@ impl Scan {
             Edge::Lost => self.carried = false,
         }
     }
+
+    /// Whether carrying this scan over a text (see [`Lexer::extend`])
+    /// finds a token ending where carrying `other` over the same text
+    /// does, whatever the text: the same terminals were left open, each
+    /// with the same way to find out, and both findings carry over or
+    /// neither does. The tokens found may still differ in type, as the
+    /// basic lexer's re-typing or the findings themselves say.
+    pub fn follows(&self, other: &Scan) -> bool {
+        self.carried == other.carried && self.steps.as_slice() == other.steps.as_slice()
+    }
 }
 
 /// What the lexer found for terminal `id` when matching its pattern at

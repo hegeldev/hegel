@@ -562,3 +562,50 @@ fn steps_stay_in_the_scan_until_a_second_is_noted() {
         assert_eq!(onto_one.as_slice(), all.as_slice());
     }
 }
+
+#[test]
+fn a_scan_follows_another_that_left_the_same_steps_open() {
+    let scan = |lexed: Lexed, steps: Steps, carried: bool| Scan {
+        lexed,
+        steps,
+        carried,
+        anchored: false,
+    };
+    let step = |id: TermId| (id, Carry::Tail(id));
+    let own = scan(Lexed::Token(1, 2), Steps::One(step(1)), true);
+    assert!(own.follows(&own));
+    assert!(scan(Lexed::Token(7, 2), Steps::One(step(1)), true).follows(&own));
+    assert!(!scan(Lexed::Token(1, 2), Steps::One(step(1)), false).follows(&own));
+    assert!(!scan(Lexed::Token(1, 2), Steps::None, true).follows(&own));
+    assert!(
+        !scan(
+            Lexed::Token(1, 2),
+            Steps::Many(vec![step(0), step(1)]),
+            true
+        )
+        .follows(&own)
+    );
+    assert!(!scan(Lexed::Token(1, 2), Steps::One((1, Carry::Literal)), true).follows(&own));
+    let none = scan(Lexed::NoMatch, Steps::None, false);
+    assert!(scan(Lexed::Token(1, 2), Steps::None, false).follows(&none));
+    assert!(!scan(Lexed::NoMatch, Steps::None, true).follows(&none));
+
+    let grammar = compiled("start: A B C\nA: /ab+/\nB: /a/\nC: /c/\n");
+    let lexer = Lexer::new(&grammar.terminals);
+    let id = |name: &str| {
+        grammar
+            .terminals
+            .iter()
+            .position(|t| t.name == name)
+            .unwrap()
+    };
+    let own = lexer.match_terminal_scan(id("A"), &chars("abb"), 0);
+    let basic = lexer.next_token_scan_knowing(&chars("abb"), 0, id("A"), &own);
+    assert!(basic.follows(&own));
+    let own = lexer.match_terminal_scan(id("B"), &chars("a"), 0);
+    let basic = lexer.next_token_scan_knowing(&chars("a"), 0, id("B"), &own);
+    assert!(!basic.follows(&own));
+    let own = lexer.match_terminal_scan(id("C"), &chars("c"), 0);
+    let basic = lexer.next_token_scan_knowing(&chars("c"), 0, id("C"), &own);
+    assert!(basic.follows(&own));
+}

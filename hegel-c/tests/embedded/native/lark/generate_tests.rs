@@ -866,6 +866,69 @@ fn settled_stretches_read_back_exactly_and_settled_strings_lex_as_wholes() {
     assert!(whole_strings > 0);
 }
 
+#[test]
+fn the_basic_scan_follows_the_own_one_unless_an_earlier_terminal_was_left_open() {
+    let spec = grammar("start: A B\nA: /ab+/\nB: /a/\n");
+    assert!(tok(&spec, "A", "abb").scans.basic_follows_own);
+    assert!(!tok(&spec, "B", "a").scans.basic_follows_own);
+}
+
+#[test]
+fn settling_a_basic_scan_that_follows_the_own_one_never_changes_the_answer() {
+    let mut followed = 0;
+    let mut checked = 0;
+    for (name, start) in [
+        ("json", "value"),
+        ("calc", "start"),
+        ("features", "start"),
+        ("verilog", "start"),
+        ("template_lark", "start"),
+        ("turtle", "start"),
+    ] {
+        let spec = fixture_spec(name, start, 400, vec![]);
+        for seed in 0..8 {
+            let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+            let mut generation = Generation::new(&spec, 0.25);
+            if generation.run(&mut ntc, 200).is_err() {
+                continue;
+            }
+            let tokens = &generation.tokens;
+            for token in tokens {
+                if token.scans.basic_follows_own {
+                    followed += 1;
+                } else {
+                    checked += 1;
+                }
+            }
+            let checked_tokens: Vec<Token> = tokens
+                .iter()
+                .map(|token| Token {
+                    scans: Arc::new(TokenScans {
+                        own: token.scans.own.clone(),
+                        basic: token.scans.basic.clone(),
+                        basic_follows_own: false,
+                    }),
+                    ..token.clone()
+                })
+                .collect();
+            for width in 2..=3 {
+                for (window, checked_window) in
+                    tokens.windows(width).zip(checked_tokens.windows(width))
+                {
+                    let text = &generation.text[window[0].start..window[width - 1].end];
+                    assert_eq!(
+                        spec.settled(text, window),
+                        spec.settled(text, checked_window),
+                        "{name} {seed} {text:?}"
+                    );
+                }
+            }
+        }
+    }
+    assert!(followed > checked, "{followed} followed, {checked} checked");
+    assert!(checked > 0);
+}
+
 /// Writes the corpus `scripts/check-lark.py` parses with Lark: for each
 /// fixture grammar named in `HEGEL_LARK_CORPUS_GRAMMARS`, one JSON string
 /// per line of `HEGEL_LARK_CORPUS_N` generated strings, in
