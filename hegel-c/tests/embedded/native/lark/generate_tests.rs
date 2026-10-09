@@ -919,6 +919,36 @@ fn write_corpus() {
 }
 
 #[test]
+fn draws_work_in_the_buffers_the_spec_has_to_spare() {
+    let spec = grammar("start: (\"ab\" | \"cd\")+\n");
+    assert!(spec.buffers.lock().is_none());
+    draw(&spec, 0).0.unwrap();
+    let used = {
+        let buffers = spec.buffers.lock();
+        let kept = buffers.as_ref().unwrap();
+        assert!(kept.text.is_empty() && kept.tokens.is_empty());
+        assert!(kept.text.capacity() > 0 && kept.text.capacity() < 1 << 16);
+        kept.text.capacity()
+    };
+    let roomy = Buffers {
+        text: Vec::with_capacity(1 << 16),
+        ..Buffers::default()
+    };
+    let displaced = roomy.offer(&mut spec.buffers.lock()).unwrap();
+    assert_eq!(displaced.text.capacity(), used);
+    draw(&spec, 1).0.unwrap();
+    assert!(spec.buffers.lock().as_ref().unwrap().text.capacity() >= 1 << 16);
+
+    let unkept = Buffers::default().offer(&mut spec.buffers.lock()).unwrap();
+    assert_eq!(unkept.text.capacity(), 0);
+    assert!(spec.buffers.lock().as_ref().unwrap().text.capacity() >= 1 << 16);
+
+    let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::Boolean(false)], None, None);
+    assert!(generate_grammar(&mut ntc, &spec).is_err());
+    assert!(spec.buffers.lock().is_some());
+}
+
+#[test]
 fn engine_errors_inside_the_walk_propagate() {
     let spec = grammar("start: \"a\" | \"b\"\n");
     let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::Boolean(false)], None, None);

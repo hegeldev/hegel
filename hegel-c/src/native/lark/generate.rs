@@ -173,6 +173,31 @@ pub struct GrammarSpec {
     /// Working space for [`GrammarSpec::scans`], kept from one check to
     /// the next so that the walk allocates nothing.
     scratch: Mutex<ScansScratch>,
+    /// The vectors of the roomiest finished [`Generation`], emptied, for
+    /// the next draw to work in instead of growing its own from nothing.
+    buffers: Mutex<Option<Buffers>>,
+}
+
+/// The vectors a [`Generation`] works in, emptied, between one draw and
+/// the next.
+#[derive(Default)]
+struct Buffers {
+    text: Vec<char>,
+    tokens: Vec<Token>,
+    budgets: Vec<u64>,
+    candidates: Vec<TermId>,
+    chains: HashMap<(TermId, TermId), (u32, u32)>,
+}
+
+impl Buffers {
+    /// Put these buffers in `slot` when they have room for more text than
+    /// the ones there, handing back whichever set is not kept.
+    fn offer(self, slot: &mut Option<Buffers>) -> Option<Buffers> {
+        match slot {
+            Some(held) if held.text.capacity() >= self.text.capacity() => Some(self),
+            _ => slot.replace(self),
+        }
+    }
 }
 
 /// The vectors [`GrammarSpec::scans`] works in: where each token lies,
@@ -281,6 +306,7 @@ impl GrammarSpec {
                 len: 0,
             }),
             scratch: Mutex::new(ScansScratch::default()),
+            buffers: Mutex::new(None),
         })
     }
 
@@ -808,17 +834,46 @@ struct Generation<'s> {
 }
 
 impl<'s> Generation<'s> {
+    /// A generation working in the buffers `spec` has to spare.
     fn new(spec: &'s GrammarSpec, ignore_rate: f64) -> Generation<'s> {
+        let buffers = spec.buffers.lock().take().unwrap_or_default();
         Generation {
             spec,
-            text: Vec::new(),
-            tokens: Vec::new(),
+            text: buffers.text,
+            tokens: buffers.tokens,
             ignore_rate,
             unsettled: false,
-            budgets: Vec::new(),
-            candidates: Vec::new(),
-            chains: HashMap::default(),
+            budgets: buffers.budgets,
+            candidates: buffers.candidates,
+            chains: buffers.chains,
         }
+    }
+
+    /// Hand the buffers back to the spec, emptied.
+    fn recycle(self) {
+        let Generation {
+            spec,
+            mut text,
+            mut tokens,
+            mut budgets,
+            mut candidates,
+            mut chains,
+            ..
+        } = self;
+        text.clear();
+        tokens.clear();
+        budgets.clear();
+        candidates.clear();
+        chains.clear();
+        let buffers = Buffers {
+            text,
+            tokens,
+            budgets,
+            candidates,
+            chains,
+        };
+        let unkept = buffers.offer(&mut spec.buffers.lock());
+        drop(unkept);
     }
 
     /// Forget the string.
@@ -1529,7 +1584,7 @@ pub fn generate_grammar(
 
 fn draw_grammar(ntc: &mut NativeTestCase, spec: &GrammarSpec) -> Result<String, EngineError> {
     let min = spec.min_size();
-    let mut target = if spec.max_size > min
+    let target = if spec.max_size > min
         && spanned(ntc, LABEL_BOOLEAN, |ntc| {
             ntc.weighted_precise(LARGE_TARGET_PROBABILITY, None)
         })? {
@@ -1548,23 +1603,39 @@ fn draw_grammar(ntc: &mut NativeTestCase, spec: &GrammarSpec) -> Result<String, 
         let fraction = step as f64 / (IGNORE_RATE_STEPS - 1) as f64;
         fraction * fraction
     };
-    let mut attempt = 0;
     let mut generation = Generation::new(spec, ignore_rate);
-    loop {
-        let budget = token_budget(target, min, ignore_rate, spec.ignore_cost);
-        match generation.run(ntc, budget) {
-            Ok(()) => return Ok(generation.text.iter().collect()),
-            Err(Step::Engine(e)) => return Err(e),
-            Err(step) => {
-                attempt += 1;
-                if attempt >= MAX_ATTEMPTS {
-                    ntc.conclude(Status::Invalid, None);
-                    return Err(EngineError::InvalidTestCase);
+    let result = generation.attempts(ntc, target, min);
+    generation.recycle();
+    result
+}
+
+impl Generation<'_> {
+    /// Draw strings of about `target` characters (never below `min`, the
+    /// shortest the grammar allows) until one is kept, halving the target
+    /// after each one that is too long.
+    fn attempts(
+        &mut self,
+        ntc: &mut NativeTestCase,
+        mut target: u64,
+        min: u64,
+    ) -> Result<String, EngineError> {
+        let mut attempt = 0;
+        loop {
+            let budget = token_budget(target, min, self.ignore_rate, self.spec.ignore_cost);
+            match self.run(ntc, budget) {
+                Ok(()) => return Ok(self.text.iter().collect()),
+                Err(Step::Engine(e)) => return Err(e),
+                Err(step) => {
+                    attempt += 1;
+                    if attempt >= MAX_ATTEMPTS {
+                        ntc.conclude(Status::Invalid, None);
+                        return Err(EngineError::InvalidTestCase);
+                    }
+                    if matches!(step, Step::TooLong) {
+                        target = min.max(target / 2);
+                    }
+                    self.reset();
                 }
-                if matches!(step, Step::TooLong) {
-                    target = min.max(target / 2);
-                }
-                generation.reset();
             }
         }
     }

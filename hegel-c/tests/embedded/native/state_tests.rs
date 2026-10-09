@@ -3142,6 +3142,57 @@ fn a_test_case_reserves_room_for_the_most_choices_and_spans_seen() {
     assert!(small.nodes.capacity() <= 5);
 }
 
+#[test]
+fn spare_vectors_keep_the_roomiest_offer_for_a_test_case_that_can_fill_them() {
+    let pair = |nodes: usize, spans: usize| {
+        (
+            Vec::<ChoiceNode>::with_capacity(nodes),
+            Vec::<Span>::with_capacity(spans),
+        )
+    };
+    let mut slot = None;
+    let fresh = SpareVectors::take(&mut slot, 1000, 5, 7);
+    assert!(fresh.nodes.capacity() >= 5 && fresh.nodes.capacity() <= 1000);
+    assert!(fresh.spans.capacity() >= 7);
+    assert!(slot.is_none());
+
+    let (nodes, spans) = pair(64, 8);
+    assert!(SpareVectors::offer(&mut slot, nodes, spans).is_none());
+    assert_eq!(slot.as_ref().unwrap().nodes.capacity(), 64);
+    let (nodes, spans) = pair(16, 16);
+    let unkept = SpareVectors::offer(&mut slot, nodes, spans).unwrap();
+    assert_eq!(unkept.nodes.capacity(), 16);
+    assert_eq!(slot.as_ref().unwrap().nodes.capacity(), 64);
+    let (nodes, spans) = pair(128, 4);
+    let unkept = SpareVectors::offer(&mut slot, nodes, spans).unwrap();
+    assert_eq!(unkept.nodes.capacity(), 64);
+    assert_eq!(slot.as_ref().unwrap().nodes.capacity(), 128);
+
+    let small = SpareVectors::take(&mut slot, 100, 3, 3);
+    assert!(small.nodes.capacity() >= 3 && small.nodes.capacity() < 128);
+    assert_eq!(slot.as_ref().unwrap().nodes.capacity(), 128);
+    let taken = SpareVectors::take(&mut slot, 1000, 200, 300);
+    assert!(taken.nodes.is_empty() && taken.spans.is_empty());
+    assert!(taken.nodes.capacity() >= 200);
+    assert!(taken.spans.capacity() >= 300);
+    assert!(slot.is_none());
+}
+
+#[test]
+fn a_dropped_test_case_hands_its_vectors_on_emptied() {
+    let mut tc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
+    for _ in 0..40 {
+        tc.start_span(3);
+        tc.weighted(0.5, None).unwrap();
+        tc.stop_span(false);
+    }
+    tc.freeze();
+    drop(tc);
+    let taken = SpareVectors::take(&mut SPARE_VECTORS.lock(), usize::MAX, 0, 0);
+    assert!(taken.nodes.is_empty() && taken.spans.is_empty());
+    assert!(SpareVectors::offer(&mut SPARE_VECTORS.lock(), taken.nodes, taken.spans).is_none());
+}
+
 struct Unscripted;
 
 impl ExternalReplay for Unscripted {

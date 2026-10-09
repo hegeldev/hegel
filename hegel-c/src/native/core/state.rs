@@ -53,6 +53,59 @@ use crate::sys::sync::{Lazy, Mutex};
 static MOST_NODES: AtomicUsize = AtomicUsize::new(0);
 static MOST_SPANS: AtomicUsize = AtomicUsize::new(0);
 
+/// The emptied choice and span vectors of the roomiest test case dropped
+/// so far, for the next test case to record into instead of allocating
+/// and growing vectors of its own.
+static SPARE_VECTORS: Mutex<Option<SpareVectors>> = Mutex::new(None);
+
+/// A dropped test case's choice and span vectors, emptied.
+struct SpareVectors {
+    nodes: Vec<ChoiceNode>,
+    spans: Vec<Span>,
+}
+
+impl SpareVectors {
+    /// Put the emptied `nodes` and `spans` in `slot` when they have room
+    /// for more choices than the vectors there, handing back whichever
+    /// pair is not kept.
+    fn offer(
+        slot: &mut Option<SpareVectors>,
+        nodes: Vec<ChoiceNode>,
+        spans: Vec<Span>,
+    ) -> Option<SpareVectors> {
+        let offered = SpareVectors { nodes, spans };
+        match slot {
+            Some(held) if held.nodes.capacity() >= offered.nodes.capacity() => Some(offered),
+            _ => slot.replace(offered),
+        }
+    }
+
+    /// The vectors in `slot` when a test case of up to `max_size` choices
+    /// could fill them, else fresh ones; either way with room for at least
+    /// `nodes` choices and `spans` spans.
+    fn take(
+        slot: &mut Option<SpareVectors>,
+        max_size: usize,
+        nodes: usize,
+        spans: usize,
+    ) -> SpareVectors {
+        match slot.take() {
+            Some(mut held) if held.nodes.capacity() <= max_size => {
+                held.nodes.reserve_exact(nodes);
+                held.spans.reserve_exact(spans);
+                held
+            }
+            left => {
+                *slot = left;
+                SpareVectors {
+                    nodes: Vec::with_capacity(nodes),
+                    spans: Vec::with_capacity(spans),
+                }
+            }
+        }
+    }
+}
+
 /// State for a variable-length collection.
 pub struct ManyState {
     pub min_size: usize,
@@ -1760,6 +1813,17 @@ pub struct NativeTestCase {
     trailing_template: Option<ChoiceTemplate>,
 }
 
+impl Drop for NativeTestCase {
+    fn drop(&mut self) {
+        let mut nodes = core::mem::take(&mut self.nodes);
+        let mut spans = core::mem::take(&mut self.spans.inner);
+        nodes.clear();
+        spans.clear();
+        let unkept = SpareVectors::offer(&mut SPARE_VECTORS.lock(), nodes, spans);
+        drop(unkept);
+    }
+}
+
 impl NativeTestCase {
     /// A fresh randomly generated test case: the replay primitive's
     /// fresh-generation tier under nondeterministic handling.
@@ -1900,18 +1964,19 @@ impl NativeTestCase {
         let spans = MOST_SPANS.load(Ordering::Relaxed).min(max_size);
         let addressed = replay.addressed();
         let bookkept = if addressed { spans } else { 0 };
+        let spare = SpareVectors::take(&mut SPARE_VECTORS.lock(), max_size, nodes, spans);
         NativeTestCase {
             replay,
             rng,
             max_size,
-            nodes: Vec::with_capacity(nodes),
+            nodes: spare.nodes,
             frozen: false,
             should_capture,
             family,
             clone_id,
             clone_counter: 0,
             clone_children: Vec::new(),
-            spans: Spans::with_capacity(spans),
+            spans: Spans { inner: spare.spans },
             span_stack: Vec::new(),
             addressed,
             span_ordinals: Vec::with_capacity(bookkept),
