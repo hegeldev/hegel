@@ -496,7 +496,7 @@ fn only_candidates_that_can_end_the_previous_match_are_worth_trying() {
     let fixed = lexer.match_terminal_scan(id("X"), &chars("xy"), 0);
     assert!(lexer.can_stop(&fixed, id("WS")));
     let partial = lexer.match_terminal_scan(id("X"), &chars("x"), 0);
-    assert!(partial.carried && !partial.steps.is_empty());
+    assert!(partial.carried && !partial.steps.as_slice().is_empty());
     assert!(lexer.can_stop(&partial, id("WS")));
     let unknown = lexer.match_terminal_scan(id("D"), &chars("x"), 0);
     assert!(lexer.can_stop(&unknown, id("WS")));
@@ -521,8 +521,8 @@ fn a_known_own_scan_stands_in_for_running_its_pattern_again() {
             assert_eq!(knowing.carried, plain.carried, "{id} {text:?} {pos}");
             assert_eq!(knowing.anchored, plain.anchored, "{id} {text:?} {pos}");
             assert_eq!(
-                knowing.steps.len(),
-                plain.steps.len(),
+                knowing.steps.as_slice().len(),
+                plain.steps.as_slice().len(),
                 "{id} {text:?} {pos}"
             );
         }
@@ -533,4 +533,32 @@ fn a_known_own_scan_stands_in_for_running_its_pattern_again() {
     let knowing = lexer.next_token_scan_knowing(&long, 0, c, &own);
     assert_eq!(knowing.lexed, Lexed::Unknown);
     assert!(!knowing.carried);
+}
+
+#[test]
+fn steps_stay_in_the_scan_until_a_second_is_noted() {
+    let step = |id: TermId| (id, Carry::Tail(id));
+    let mut steps = Steps::None;
+    assert!(steps.as_slice().is_empty());
+    steps.push(1, Carry::Tail(1));
+    assert_eq!(steps, Steps::One(step(1)));
+    assert_eq!(steps.as_slice(), &[step(1)]);
+    steps.push(2, Carry::Tail(2));
+    assert_eq!(steps, Steps::Many(vec![step(1), step(2)]));
+    steps.push(3, Carry::Tail(3));
+    assert_eq!(steps.as_slice(), &[step(1), step(2), step(3)]);
+    for (from, expected) in [
+        (Steps::None, vec![]),
+        (Steps::One(step(4)), vec![step(4)]),
+        (Steps::Many(vec![step(5), step(6)]), vec![step(5), step(6)]),
+    ] {
+        let mut extended = Steps::None;
+        extended.extend_from(&from);
+        assert_eq!(extended.as_slice(), expected.as_slice());
+        let mut onto_one = Steps::One(step(0));
+        onto_one.extend_from(&from);
+        let mut all = vec![step(0)];
+        all.extend(expected);
+        assert_eq!(onto_one.as_slice(), all.as_slice());
+    }
 }

@@ -35,6 +35,7 @@ use crate::native::re::parser::{OpCode, ParsedPattern, SetItem, SubPattern};
 use crate::native::re::vm::{Program, Resume, has_nested_repeats};
 use crate::native::re::width::get_width;
 use alloc::sync::Arc;
+use alloc::vec;
 use alloc::vec::Vec;
 
 /// The characters a pattern can start with, as sorted disjoint ranges;
@@ -429,6 +430,44 @@ enum Edge {
     Lost,
 }
 
+/// The steps of a [`Scan`]: the terminals tried whose outcome more text
+/// could change, each with how to find out. Nearly every scan notes
+/// none or one, so those are kept in the scan itself and only a second
+/// step moves them to the heap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Steps {
+    None,
+    One((TermId, Carry)),
+    Many(Vec<(TermId, Carry)>),
+}
+
+impl Steps {
+    fn as_slice(&self) -> &[(TermId, Carry)] {
+        match self {
+            Steps::None => &[],
+            Steps::One(step) => core::slice::from_ref(step),
+            Steps::Many(steps) => steps,
+        }
+    }
+
+    fn push(&mut self, id: TermId, carry: Carry) {
+        if let Steps::Many(steps) = self {
+            steps.push((id, carry));
+            return;
+        }
+        *self = match core::mem::replace(self, Steps::None) {
+            Steps::One(first) => Steps::Many(vec![first, (id, carry)]),
+            _ => Steps::One((id, carry)),
+        };
+    }
+
+    fn extend_from(&mut self, other: &Steps) {
+        for (id, carry) in other.as_slice() {
+            self.push(*id, carry.clone());
+        }
+    }
+}
+
 /// What a lexer found at a position of some text, with how that depended
 /// on where the text ended, so that the finding can be carried over to a
 /// longer text that begins the same way (see [`Lexer::extend`]), and
@@ -439,7 +478,7 @@ pub struct Scan {
     /// The terminals tried whose outcome more text could change, in the
     /// order they were tried, each with how to find out; `lexed` is what
     /// stands when none of them does.
-    steps: Vec<(TermId, Carry)>,
+    steps: Steps,
     /// Whether the finding can be carried over at all.
     carried: bool,
     /// Whether a terminal tried could have looked at text before the
@@ -452,7 +491,7 @@ impl Scan {
     fn new(lexed: Lexed) -> Scan {
         Scan {
             lexed,
-            steps: Vec::new(),
+            steps: Steps::None,
             carried: !matches!(lexed, Lexed::Unknown),
             anchored: false,
         }
@@ -462,7 +501,7 @@ impl Scan {
         self.anchored |= outcome.anchored;
         match &outcome.edge {
             Edge::Fixed => {}
-            Edge::Carry(carry) => self.steps.push((id, carry.clone())),
+            Edge::Carry(carry) => self.steps.push(id, carry.clone()),
             Edge::Lost => self.carried = false,
         }
     }
@@ -598,7 +637,7 @@ impl Lexer {
         if first.len() > STOPPERS_TRIED || !scan.carried {
             return true;
         }
-        scan.steps.iter().all(|(id, carry)| {
+        scan.steps.as_slice().iter().all(|(id, carry)| {
             self.patterns[*id]
                 .as_ref()
                 .is_none_or(|pattern| match carry {
@@ -655,7 +694,7 @@ impl Lexer {
                 Some((id, own)) if id == term.id => {
                     scan.anchored |= own.anchored;
                     scan.carried &= own.carried;
-                    scan.steps.extend(own.steps.iter().cloned());
+                    scan.steps.extend_from(&own.steps);
                     match own.lexed {
                         Lexed::Token(_, end) => Ok(Some(end)),
                         Lexed::NoMatch => Ok(None),
@@ -740,7 +779,7 @@ impl Lexer {
         if !scan.carried {
             return None;
         }
-        for (id, carry) in &scan.steps {
+        for (id, carry) in scan.steps.as_slice() {
             let pattern = self.patterns[*id].as_ref()?;
             let end = match carry {
                 Carry::Literal => {
