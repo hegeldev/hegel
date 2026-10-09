@@ -458,16 +458,18 @@ fn generate_op(
         }
         OpCode::Any => {
             let allow_newline = state.flags & SRE_FLAG_DOTALL != 0;
-            let chars = if alphabet.is_none() {
-                cached_default_any(allow_newline)
+            if alphabet.is_none() {
+                let n = DEFAULT_ANY_LEN - u64::from(!allow_newline);
+                let idx = draw_char_index(ntc, n)?;
+                out.push(default_any_char(idx, allow_newline)?);
             } else {
-                cached_chars(
+                let chars = cached_chars(
                     state.char_cache,
                     (u32::MAX, state.flags & SRE_FLAG_DOTALL),
                     || gather_chars(alphabet, |c| allow_newline || c != '\n'),
-                )
-            };
-            emit_from_chars(ntc, &chars, out)?;
+                );
+                emit_from_chars(ntc, &chars, out)?;
+            }
         }
         OpCode::At(at) => match at {
             AtCode::BeginningString if out.len() > state.base => {
@@ -623,18 +625,27 @@ fn cached_default_in_set(items: &[SetItem], flags: u32) -> Result<Arc<[char]>, I
     Ok(computed)
 }
 
-/// Cached character set for `Any` nodes with the default alphabet: the whole
-/// BMP minus surrogates (minus `'\n'` without DOTALL). Same rationale as
-/// [`cached_default_in_set`] — the 64K-codepoint scan is too expensive to
-/// repeat per drawn character.
-fn cached_default_any(allow_newline: bool) -> Arc<[char]> {
-    static CACHE: Lazy<[Arc<[char]>; 2]> = Lazy::new(|| {
-        [
-            gather_chars(&None, |c| c != '\n').into(),
-            gather_chars(&None, |_| true).into(),
-        ]
-    });
-    Arc::clone(&CACHE[usize::from(allow_newline)])
+/// How many characters an `Any` node can emit under the default alphabet
+/// with DOTALL: the whole BMP minus the surrogates. Without DOTALL the
+/// newline is excluded too, so the count is one less.
+const DEFAULT_ANY_LEN: u64 = 0x10000 - 0x800;
+
+/// The `idx`th character (in codepoint order) that an `Any` node can emit
+/// under the default alphabet: the BMP minus surrogates, minus `'\n'`
+/// without DOTALL. Equivalent to indexing the [`gather_chars`] scan of that
+/// set, computed in closed form so the 64K-codepoint scan never runs.
+fn default_any_char(idx: u64, allow_newline: bool) -> Result<char, InternalError> {
+    let mut cp = hegel_internal_unwrap!(
+        u32::try_from(idx).ok(),
+        "default_any_char: index {idx} is not a codepoint"
+    );
+    if !allow_newline && cp >= '\n' as u32 {
+        cp += 1;
+    }
+    if cp >= 0xD800 {
+        cp += 0x800;
+    }
+    codepoint_to_char(cp)
 }
 
 /// Look up `key` in a per-[`CompiledRegex`] character-set cache, computing
@@ -901,16 +912,21 @@ fn emit_from_chars(
     if chars.is_empty() {
         return Err(mark_invalid(ntc));
     }
-    let n = chars.len() as u64;
-    let idx = if n > 256 && ntc.weighted(0.8, None)? {
-        ntc.draw_integer_uniform(0, 255)?
-    } else if n > 256 {
-        ntc.draw_integer_uniform(256, n - 1)?
-    } else {
-        ntc.draw_integer_uniform(0, n - 1)?
-    };
+    let idx = draw_char_index(ntc, chars.len() as u64)?;
     out.push(chars[idx as usize]);
     Ok(())
+}
+
+/// Draw an index into a character set of `n` (non-zero) characters, biased
+/// towards the first 256 when the set is larger than that.
+fn draw_char_index(ntc: &mut NativeTestCase, n: u64) -> Result<u64, EngineError> {
+    if n > 256 && ntc.weighted(0.8, None)? {
+        ntc.draw_integer_uniform(0, 255)
+    } else if n > 256 {
+        ntc.draw_integer_uniform(256, n - 1)
+    } else {
+        ntc.draw_integer_uniform(0, n - 1)
+    }
 }
 
 fn mark_invalid(ntc: &mut NativeTestCase) -> EngineError {

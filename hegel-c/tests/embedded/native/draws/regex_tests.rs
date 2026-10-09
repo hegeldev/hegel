@@ -1174,3 +1174,16 @@ fn build_in_set_category_classes_match_a_lookup_per_character() {
     assert_eq!(out.iter().filter(|c| **c == '0').count(), 1);
     assert!(out.contains(&'٣'));
 }
+
+#[test]
+fn default_any_char_indexes_the_default_any_scan() {
+    for allow_newline in [false, true] {
+        let scan = gather_chars(&None, |c| allow_newline || c != '\n');
+        let n = DEFAULT_ANY_LEN - u64::from(!allow_newline);
+        assert_eq!(scan.len() as u64, n);
+        for (idx, &c) in scan.iter().enumerate() {
+            assert_eq!(default_any_char(idx as u64, allow_newline).unwrap(), c);
+        }
+    }
+    assert!(default_any_char(u64::from(u32::MAX) + 1, true).is_err());
+}
