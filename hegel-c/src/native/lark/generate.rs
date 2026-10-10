@@ -394,10 +394,27 @@ impl GrammarSpec {
     /// computed (with `own` for the terminal's own scan when the caller
     /// already has it) and remembered.
     fn read_token(&self, id: TermId, text: &[char], own: Option<Scan>) -> Arc<TokenScans> {
+        self.recall(id, text)
+            .unwrap_or_else(|hash| self.learn(id, hash, text, own))
+    }
+
+    /// The scans and reading remembered for a token of terminal `id`
+    /// with `text` from when the text was drawn before, or, when it was
+    /// not, the text's hash, for [`GrammarSpec::learn`].
+    fn recall(&self, id: TermId, text: &[char]) -> Result<Arc<TokenScans>, u64> {
         let hash = text_hash(text);
-        if let Some(found) = self.readings.lock().find(id, hash, text) {
-            return Arc::clone(found);
+        match self.readings.lock().find(id, hash, text) {
+            Some(found) => Ok(Arc::clone(found)),
+            None => Err(hash),
         }
+    }
+
+    /// Compute the scans and reading of a token of terminal `id` with
+    /// `text`, whose [`text_hash`] is `hash` and which
+    /// [`GrammarSpec::recall`] found nothing for, with `own` for the
+    /// terminal's own scan when the caller already has it, and remember
+    /// them.
+    fn learn(&self, id: TermId, hash: u64, text: &[char], own: Option<Scan>) -> Arc<TokenScans> {
         let scans = Arc::new(self.scan_token(id, text, own));
         self.readings.lock().remember(id, hash, text, &scans);
         scans
@@ -494,11 +511,7 @@ impl GrammarSpec {
     /// cut off.
     fn whole(&self, id: TermId, text: &[char]) -> (usize, Scan) {
         let scan = self.lexer.match_terminal_scan(id, text, 0);
-        let end = match scan.lexed {
-            Lexed::Token(_, end) => end,
-            Lexed::NoMatch | Lexed::Unknown => text.len(),
-        };
-        (end, scan)
+        (taken(&scan, text.len()), scan)
     }
 
     /// What the lexers find at the start of `text`, the text of a token
@@ -894,6 +907,16 @@ struct TokenScans {
     basic_follows_own: bool,
 }
 
+/// How much of a text of `len` characters a terminal's own match at its
+/// start, `scan`, takes: all of it when the pattern found no match
+/// there or could not be run.
+fn taken(scan: &Scan, len: usize) -> usize {
+    match scan.lexed {
+        Lexed::Token(_, end) => end,
+        Lexed::NoMatch | Lexed::Unknown => len,
+    }
+}
+
 impl Token {
     fn len(&self) -> usize {
         self.end - self.start
@@ -1005,14 +1028,14 @@ impl<'s> Generation<'s> {
     }
 
     /// The token of terminal `id` whose text is the string from `start`
-    /// on, with `own` its own scan when already known.
-    fn token(&mut self, id: TermId, start: usize, own: Option<Scan>) -> Token {
+    /// on, with `scans` what the lexers find in it.
+    fn token(&self, id: TermId, start: usize, scans: Arc<TokenScans>) -> Token {
         Token {
             id,
             start,
             end: self.text.len(),
             droppable: false,
-            scans: self.spec.read_token(id, &self.text[start..], own),
+            scans,
         }
     }
 
@@ -1442,13 +1465,16 @@ impl Generation<'_> {
     /// Draw a string for terminal `id`: from its pattern, cut to what the
     /// pattern reads back from the front and redrawn a few times while
     /// the basic lexer would not read it back as that terminal, or from
-    /// its explicit generator as it comes.
+    /// its explicit generator as it comes. A text drawn before is not
+    /// matched again: what was remembered of it (see
+    /// [`GrammarSpec::recall`]) says how much of it the pattern takes.
     fn draw_terminal(&mut self, ntc: &mut NativeTestCase, id: TermId) -> Result<Token, Step> {
         let start = self.text.len();
         match &self.spec.terminals[id] {
             TerminalGen::Explicit(spec) => {
                 generate_string_into(ntc, spec, &mut self.text)?;
-                Ok(self.token(id, start, None))
+                let scans = self.spec.read_token(id, &self.text[start..], None);
+                Ok(self.token(id, start, scans))
             }
             TerminalGen::Pattern(spec) => {
                 let mut attempt = 0;
@@ -1464,10 +1490,22 @@ impl Generation<'_> {
                         }
                         continue;
                     }
-                    let (end, own) = self.spec.whole(id, &self.text[start..]);
-                    let own = (start + end == self.text.len()).then_some(own);
+                    let drawn = &self.text[start..];
+                    let len = drawn.len();
+                    let (end, scans) = match self.spec.recall(id, drawn) {
+                        Ok(scans) => (taken(&scans.own, len), Some(scans)),
+                        Err(hash) => {
+                            let (end, own) = self.spec.whole(id, drawn);
+                            let scans =
+                                (end == len).then(|| self.spec.learn(id, hash, drawn, Some(own)));
+                            (end, scans)
+                        }
+                    };
                     self.text.truncate(start + end);
-                    let token = self.token(id, start, own);
+                    let scans = scans
+                        .filter(|_| end == len)
+                        .unwrap_or_else(|| self.spec.read_token(id, &self.text[start..], None));
+                    let token = self.token(id, start, scans);
                     let accept = token.lexable() || attempt > LEX_RETRIES;
                     ntc.stop_span(!accept);
                     if accept {

@@ -1209,6 +1209,39 @@ fn a_text_remembered_again_takes_the_place_of_what_was_held() {
 }
 
 #[test]
+fn a_text_recalled_is_what_was_learnt_of_it() {
+    let spec = grammar("start: NAME+\nNAME: /[a-z]+/\n");
+    let name = tid(&spec, "NAME");
+    let text: Vec<char> = "abc".chars().collect();
+    let Err(hash) = spec.recall(name, &text) else {
+        panic!("a text not drawn yet was recalled");
+    };
+    assert_eq!(hash, text_hash(&text));
+    let learnt = spec.learn(name, hash, &text, None);
+    assert_eq!(learnt.reading, Reading::Itself);
+    assert!(Arc::ptr_eq(&spec.recall(name, &text).unwrap(), &learnt));
+    assert!(Arc::ptr_eq(&spec.read_token(name, &text, None), &learnt));
+    assert_eq!(spec.readings.lock().len, 1);
+}
+
+#[test]
+fn a_remembered_text_the_pattern_does_not_take_whole_is_cut_like_a_fresh_one() {
+    let text = "start: A\nA: /a|ab/\n";
+    let fresh = grammar(text);
+    let seeded = grammar(text);
+    let a = tid(&seeded, "A");
+    let ab: Vec<char> = "ab".chars().collect();
+    let remembered = seeded.read_token(a, &ab, None);
+    assert_eq!(taken(&remembered.own, ab.len()), 1);
+    let strings = samples(&seeded, 50);
+    assert_eq!(strings, samples(&fresh, 50));
+    assert!(strings.iter().all(|s| s == "a"), "{strings:?}");
+    assert!(Arc::ptr_eq(&seeded.recall(a, &ab).unwrap(), &remembered));
+    assert_eq!(seeded.readings.lock().len, 2);
+    assert_eq!(fresh.readings.lock().len, 1);
+}
+
+#[test]
 fn a_text_hashes_the_same_however_it_was_built_and_unlike_its_prefixes() {
     let texts: Vec<Vec<char>> = (0..6).map(|n| "abcde"[..n].chars().collect()).collect();
     for text in &texts {
