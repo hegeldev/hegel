@@ -137,18 +137,24 @@ impl EngineRng {
     /// `SmallRng`'s own choice of generator: 64 bits on 64-bit targets, 32
     /// bits elsewhere. For [`EngineRng::Urandom`] it reads one byte from the
     /// OS random device, so the fuzzer still sees a one-byte read.
+    #[inline]
     pub fn next_byte(&mut self) -> u8 {
         match self {
             #[cfg(target_pointer_width = "64")]
             EngineRng::Prng(rng) => rng.next_u64() as u8,
             #[cfg(not(target_pointer_width = "64"))]
             EngineRng::Prng(rng) => rng.next_u32() as u8,
-            EngineRng::Urandom(_) => {
-                let mut buf = [0u8; 1];
-                UrandomRng::read_exact(&mut buf);
-                buf[0]
-            }
+            EngineRng::Urandom(_) => Self::urandom_byte(),
         }
+    }
+
+    /// One byte from the OS random device, the
+    /// [`EngineRng::Urandom`] arm of [`Self::next_byte`].
+    #[inline(never)]
+    fn urandom_byte() -> u8 {
+        let mut buf = [0u8; 1];
+        UrandomRng::read_exact(&mut buf);
+        buf[0]
     }
 }
 

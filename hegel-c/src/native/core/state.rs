@@ -11,6 +11,7 @@ use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use once_cell::race::OnceBox;
 
 use rand::RngExt;
+use rand::distr::uniform::{UniformInt, UniformSampler};
 
 use crate::native::rng::EngineRng;
 
@@ -2325,17 +2326,33 @@ impl NativeTestCase {
             discarded: false,
         });
         if self.addressed {
-            let siblings = self.sibling_counts.entry((parent, label)).or_insert(0);
-            self.span_ordinals.push(*siblings);
-            *siblings += 1;
-            self.child_nodes.push(0);
+            self.address_span(parent, label);
         }
         self.span_stack.push(idx);
         if depth + 1 > MAX_DEPTH {
-            self.conclude(Status::Invalid, None);
-            self.freeze();
+            self.span_overflow();
         }
         idx
+    }
+
+    /// The address bookkeeping of a span just opened under `parent` with
+    /// `label` on an addressed stream: its ordinal among its siblings and
+    /// an empty count of its children's draws. Kept out of
+    /// [`Self::start_span`] so the hashing stays off the plain path.
+    #[inline(never)]
+    fn address_span(&mut self, parent: Option<usize>, label: u64) {
+        let siblings = self.sibling_counts.entry((parent, label)).or_insert(0);
+        self.span_ordinals.push(*siblings);
+        *siblings += 1;
+        self.child_nodes.push(0);
+    }
+
+    /// Mark the test case invalid for a span opened past [`MAX_DEPTH`].
+    #[cold]
+    #[inline(never)]
+    fn span_overflow(&mut self) {
+        self.conclude(Status::Invalid, None);
+        self.freeze();
     }
 
     /// The number of currently-open spans.
@@ -2539,6 +2556,10 @@ impl NativeTestCase {
     /// For draws whose value parameterizes later generation — such as a
     /// recursive draw's target size — where the shaped distribution's bias
     /// toward small magnitudes would defeat the point of drawing at all.
+    ///
+    /// A fresh value comes from rand's inclusive-range integer sampler
+    /// called directly, the one `random_range` wraps, so seeded streams are
+    /// unchanged and the draw skips that wrapper's own call and checks.
     pub fn draw_integer_uniform(
         &mut self,
         min_value: u64,
@@ -2559,7 +2580,12 @@ impl NativeTestCase {
             kind,
             |_, n| n.to_u64().filter(|v| (min_value..=max_value).contains(v)),
             |v| BigInt::from(*v),
-            |_, rng| Ok(rng.random_range(min_value..=max_value)),
+            |_, rng| {
+                Ok(hegel_internal_unwrap!(
+                    UniformInt::<u64>::sample_single_inclusive(min_value, max_value, rng).ok(),
+                    "draw_integer_uniform: the range [{min_value:?}, {max_value:?}] is empty"
+                ))
+            },
             move |_| small,
         )
     }
@@ -2981,10 +3007,18 @@ impl NativeTestCase {
             });
         }
         if self.nodes.len() >= self.max_size || !self.family.try_take_draw() {
-            self.conclude(Status::EarlyStop, None);
-            return Err(EngineError::Overrun);
+            return Err(self.early_stop());
         }
         Ok(())
+    }
+
+    /// Conclude the test case early, for a draw there is no room for, and
+    /// the error that draw reports.
+    #[cold]
+    #[inline(never)]
+    fn early_stop(&mut self) -> EngineError {
+        self.conclude(Status::EarlyStop, None);
+        EngineError::Overrun
     }
 
     /// Resolve a typed choice value from the replay, the trailing template,
@@ -3017,6 +3051,22 @@ impl NativeTestCase {
             return Ok((random(rng)?, false));
         }
 
+        self.resolve_choice_replayed(idx, simplest, unit, from_prefix, random)
+    }
+
+    /// [`Self::resolve_choice`] for a draw at `idx` the replay or the
+    /// trailing template may decide. Kept out of line so that the plain
+    /// path, which every draw past the proposal takes, carries none of
+    /// its machinery.
+    #[inline(never)]
+    fn resolve_choice_replayed<V>(
+        &mut self,
+        idx: usize,
+        simplest: impl FnOnce() -> Result<V, InternalError>,
+        unit: impl FnOnce() -> Result<V, InternalError>,
+        from_prefix: impl Fn(&ChoiceValue) -> Option<V>,
+        random: impl FnOnce(&mut EngineRng) -> Result<V, InternalError>,
+    ) -> Result<(V, bool), EngineError> {
         match self
             .replay
             .resolve(&self.clone_id, idx, || self.draw_address(), from_prefix)
@@ -3034,8 +3084,7 @@ impl NativeTestCase {
 
         if let Some(template) = self.trailing_template.as_mut() {
             if matches!(template.count, Some(0)) {
-                self.conclude(Status::EarlyStop, None);
-                return Err(EngineError::Overrun);
+                return Err(self.early_stop());
             }
             let value = match template.kind {
                 ChoiceTemplateKind::Simplest => simplest()?,
