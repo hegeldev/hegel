@@ -1,5 +1,6 @@
 use super::*;
 use crate::native::bignum::BigInt;
+use crate::native::core::Constraint;
 use crate::native::core::choices::{BooleanChoice, IntegerChoice};
 
 fn bool_node(value: bool) -> ChoiceNode {
@@ -214,10 +215,10 @@ fn the_kind_ledger_names_a_grammar_constraint_by_its_identity() {
             .into(),
         min_size: 0,
         max_size: 4,
-        grammar: None,
+        constraint: None,
     };
     let constrained = StringChoice {
-        grammar: Some(alloc::sync::Arc::clone(&constraint)),
+        constraint: Some(Constraint::Grammar(alloc::sync::Arc::clone(&constraint))),
         ..plain.clone()
     };
     let mut ledger = KindLedger::default();

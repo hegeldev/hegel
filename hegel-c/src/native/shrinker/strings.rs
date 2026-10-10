@@ -1,14 +1,13 @@
 use crate::native::HashMap;
 use alloc::vec::Vec;
 
+use crate::native::core::Constraint;
 use crate::native::core::{ChoiceData, ChoiceValue, StringChoice};
 use crate::unicodedata;
 
 use super::search::{BinSearchDown, FindInteger};
 use super::{PassExit, ShrinkResult, Shrinker, absorb_node_gone};
-use crate::control::{
-    hegel_internal_debug_assert, hegel_internal_debug_assert_ne, hegel_internal_unwrap,
-};
+use crate::control::{hegel_internal_debug_assert_ne, hegel_internal_unwrap};
 
 impl<'a> Shrinker<'a> {
     pub(super) async fn shrink_strings(&mut self) -> ShrinkResult<()> {
@@ -67,6 +66,40 @@ impl<'a> Shrinker<'a> {
                 cand.remove(j);
                 self.replace(&HashMap::from_iter([(i, ChoiceValue::String(cand))]))
                     .await?;
+            }
+
+            if kind.constraint.is_some() {
+                for width in (2..=8).rev() {
+                    let cur = self.current_string(i).ok_or(PassExit::NodeGone)?;
+                    let mut start = cur.len().saturating_sub(width);
+                    loop {
+                        let cur = self.current_string(i).ok_or(PassExit::NodeGone)?;
+                        if start + width <= cur.len() {
+                            let mut cand = cur.clone();
+                            cand.drain(start..start + width);
+                            self.replace(&HashMap::from_iter([(i, ChoiceValue::String(cand))]))
+                                .await?;
+                        }
+                        if start == 0 {
+                            break;
+                        }
+                        start -= 1;
+                    }
+                }
+                let simplest = kind.simplest()?;
+                let cur = self.current_string(i).ok_or(PassExit::NodeGone)?;
+                for k in 1..=cur.len().min(simplest.len()) {
+                    let cur = self.current_string(i).ok_or(PassExit::NodeGone)?;
+                    let mut tail = cur[..cur.len() - k].to_vec();
+                    tail.extend_from_slice(&simplest[simplest.len() - k..]);
+                    self.replace(&HashMap::from_iter([(i, ChoiceValue::String(tail))]))
+                        .await?;
+                    let cur = self.current_string(i).ok_or(PassExit::NodeGone)?;
+                    let mut head = simplest[..k].to_vec();
+                    head.extend_from_slice(&cur[k..]);
+                    self.replace(&HashMap::from_iter([(i, ChoiceValue::String(head))]))
+                        .await?;
+                }
             }
 
             let cur = self.current_string(i).ok_or(PassExit::NodeGone)?;
@@ -399,7 +432,9 @@ impl<'a> Shrinker<'a> {
             for replacement in candidates {
                 let mut new_value = cur.clone();
                 new_value[pos] = replacement;
-                hegel_internal_debug_assert!(kind.validate(&new_value));
+                if !kind.validate(&new_value) {
+                    continue;
+                }
                 if self
                     .replace(&HashMap::from_iter([(i, ChoiceValue::String(new_value))]))
                     .await?
@@ -413,10 +448,16 @@ impl<'a> Shrinker<'a> {
 }
 
 /// "Obvious smaller" replacement codepoints to try for a character with
-/// The constraint and value of a string node under no grammar; see
+/// The kind and value of a string node under no grammar (a string under a
+/// regex is one: its candidates are cheap to check against the pattern); see
 /// [`Shrinker::string_at`].
 fn plain_string(data: &ChoiceData) -> Option<(&StringChoice, &[u32])> {
-    data.as_string().filter(|(sc, _)| sc.grammar.is_none())
+    data.as_string().filter(|(sc, _)| {
+        sc.constraint
+            .as_ref()
+            .and_then(Constraint::grammar)
+            .is_none()
+    })
 }
 
 /// codepoint `cp` in a [`StringChoice`] with the given alphabet, in

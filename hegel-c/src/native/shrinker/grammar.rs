@@ -64,7 +64,7 @@ impl<'a> Shrinker<'a> {
         i: usize,
     ) -> Option<(StringChoice, Arc<GrammarConstraint>, Vec<u32>)> {
         let (sc, v) = self.current_nodes.get(i)?.data.as_string()?;
-        let constraint = Arc::clone(sc.grammar.as_ref()?);
+        let constraint = Arc::clone(sc.constraint.as_ref()?.grammar()?);
         Some((sc.clone(), constraint, v.to_vec()))
     }
 

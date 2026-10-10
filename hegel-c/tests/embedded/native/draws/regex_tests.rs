@@ -13,12 +13,14 @@ use crate::native::HashMap;
 use crate::native::bignum::BigInt;
 use crate::native::core::{ChoiceValue, GenerationParameters, NativeTestCase};
 use crate::native::draws::source::{RngDraws, SimplestDraws};
+use crate::native::draws::{StringSpec, TextAlphabet};
 use crate::native::re::constants::{
     AtCode, ChCode, SRE_FLAG_DOTALL, SRE_FLAG_IGNORECASE, SRE_FLAG_MULTILINE,
 };
 use crate::native::re::parser::{OpCode, SetItem, SubPattern};
 use crate::native::rng::EngineRng;
 use alloc::string::ToString;
+use alloc::vec;
 
 fn chars(s: &str) -> Vec<char> {
     s.chars().collect()
@@ -1495,4 +1497,150 @@ fn the_simplest_source_draws_the_simplest_match() {
         );
         assert_eq!(draws.status(), None);
     }
+}
+
+fn spec(pattern: &str, fullmatch: bool) -> StringSpec {
+    StringSpec::regex(pattern, fullmatch, None).unwrap()
+}
+
+fn regex_kind(spec: &StringSpec) -> &Arc<StringChoice> {
+    match spec {
+        StringSpec::Regex { kind, .. } => kind,
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn a_regex_string_is_one_choice_under_the_pattern_as_its_constraint() {
+    let spec = spec("[a-z]+@[a-z]+", true);
+    let kind = regex_kind(&spec);
+    assert_eq!(kind.max_size, REGEX_MAX_SIZE);
+    assert_eq!(kind.intervals.len(), 0x110000 - 0x800);
+    assert!(matches!(kind.constraint, Some(Constraint::Regex(_))));
+    assert_eq!(kind.constraint.as_ref().unwrap().simplest(), None);
+
+    let mut ntc = NativeTestCase::new_random(EngineRng::seeded(1)).unwrap();
+    let drawn = crate::native::draws::generate_string(&mut ntc, &spec).unwrap();
+    assert_eq!(ntc.nodes.len(), 1);
+    let (recorded, value) = ntc.nodes[0].data.as_string().unwrap();
+    assert_eq!(recorded, &**kind);
+    assert_eq!(
+        value,
+        chars(&drawn)
+            .iter()
+            .map(|&c| u32::from(c))
+            .collect::<Vec<u32>>()
+    );
+    assert!(kind.validate(value));
+    assert_eq!(
+        kind.constraint.as_ref().unwrap().simplest(),
+        Some(&[u32::from('a'), u32::from('@'), u32::from('a')][..])
+    );
+}
+
+#[test]
+fn a_regex_string_drawn_over_an_alphabet_is_recorded_over_it() {
+    let letters = StringSpec::text(
+        &TextAlphabet {
+            categories: Some(vec![]),
+            include_characters: Some("abc".to_string()),
+            ..TextAlphabet::default()
+        },
+        0,
+        1,
+    )
+    .unwrap();
+    let spec = StringSpec::regex("[a-z]+", true, Some(&letters)).unwrap();
+    let kind = regex_kind(&spec);
+    assert_eq!(kind.intervals.len(), 3);
+    assert!(kind.validate(&[u32::from('b')]));
+    assert!(
+        !kind.validate(&[u32::from('z')]),
+        "in the pattern, outside the alphabet"
+    );
+}
+
+#[test]
+fn a_replayed_string_the_pattern_rejects_is_punned_to_the_simplest() {
+    let spec = spec("[a-z]+@[a-z]+", true);
+    let stored = vec![ChoiceValue::String(
+        chars("!!!").iter().map(|&c| u32::from(c)).collect(),
+    )];
+    let mut ntc = NativeTestCase::for_choices(&stored, None, None);
+    assert_eq!(
+        crate::native::draws::generate_string(&mut ntc, &spec).unwrap(),
+        "a@a"
+    );
+    let kept = vec![ChoiceValue::String(
+        chars("zz@q").iter().map(|&c| u32::from(c)).collect(),
+    )];
+    let mut ntc = NativeTestCase::for_choices(&kept, None, None);
+    assert_eq!(
+        crate::native::draws::generate_string(&mut ntc, &spec).unwrap(),
+        "zz@q"
+    );
+}
+
+#[test]
+fn the_simplest_string_falls_back_on_seeded_draws_when_the_simplest_walk_fails_its_check() {
+    let spec = spec("(?!a)[ab]", true);
+    let kind = regex_kind(&spec);
+    let mut ntc = NativeTestCase::new_random(EngineRng::seeded(1)).unwrap();
+    crate::native::draws::generate_string(&mut ntc, &spec).unwrap();
+    assert_eq!(
+        kind.constraint.as_ref().unwrap().simplest(),
+        Some(&[u32::from('b')][..])
+    );
+}
+
+#[test]
+fn a_pattern_with_no_string_concludes_the_test_case_invalid_at_the_first_draw() {
+    let spec = spec("(?>a+)a", true);
+    let mut ntc = NativeTestCase::new_random(EngineRng::seeded(1)).unwrap();
+    let result = crate::native::draws::generate_string(&mut ntc, &spec);
+    assert!(
+        matches!(result, Err(EngineError::InvalidTestCase)),
+        "{result:?}"
+    );
+    assert_eq!(ntc.status(), Some(Status::Invalid));
+}
+
+#[test]
+fn a_draw_over_the_size_cap_concludes_the_test_case_invalid() {
+    let spec = spec("aaa", true);
+    let (re, kind) = match &spec {
+        StringSpec::Regex { compiled, kind, .. } => (compiled, kind),
+        _ => unreachable!(),
+    };
+    let mut rng = EngineRng::seeded(0);
+    let mut draws = RngDraws::new(&mut rng, Default::default());
+    assert!(matches!(
+        draw_regex(&mut draws, re, true, 2),
+        Err(EngineError::InvalidTestCase)
+    ));
+    assert_eq!(draws.status(), Some(Status::Invalid));
+    let mut draws = RngDraws::new(&mut rng, Default::default());
+    assert_eq!(
+        draw_regex(&mut draws, re, true, kind.max_size).unwrap(),
+        vec![u32::from('a'); 3]
+    );
+}
+
+#[test]
+fn ensuring_the_simplest_string_of_a_kind_under_no_regex_is_an_internal_error() {
+    let spec = spec("a", true);
+    let plain = StringChoice {
+        intervals: Arc::new(IntervalSet::unicode_scalars().unwrap()),
+        min_size: 0,
+        max_size: 4,
+        constraint: None,
+    };
+    let (re, _) = match &spec {
+        StringSpec::Regex { compiled, kind, .. } => (compiled, kind),
+        _ => unreachable!(),
+    };
+    assert!(matches!(
+        ensure_simplest(&mut SimplestDraws::default(), re, true, &plain),
+        Err(EngineError::Internal(_))
+    ));
 }

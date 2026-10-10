@@ -543,7 +543,7 @@ fn string_choice(intervals: Vec<(u32, u32)>, min_size: usize, max_size: usize) -
             .into(),
         min_size,
         max_size,
-        grammar: None,
+        constraint: None,
     }
 }
 
@@ -808,7 +808,7 @@ fn string_max_index() {
             .into(),
         min_size: 0,
         max_size: 2,
-        grammar: None,
+        constraint: None,
     });
     assert_eq!(kind.max_index(), Some(bu(12)));
 }
@@ -832,7 +832,7 @@ fn string_to_index_via_dispatch() {
             .into(),
         min_size: 0,
         max_size: 4,
-        grammar: None,
+        constraint: None,
     });
     let data = kind.resolve(&ChoiceValue::String(vec![])).unwrap();
     assert_eq!(data.to_index().unwrap(), Some(bu(0)));
@@ -1312,7 +1312,9 @@ fn grammar_string_choice(text: &str, max_size: usize, simplest: &str) -> StringC
         .into(),
         min_size: 0,
         max_size,
-        grammar: Some(grammar_constraint(text, max_size, simplest)),
+        constraint: Some(Constraint::Grammar(grammar_constraint(
+            text, max_size, simplest,
+        ))),
     }
 }
 
@@ -1402,12 +1404,15 @@ fn grammar_string_choices_compare_by_the_grammars_identity() {
     assert_ne!(
         a,
         StringChoice {
-            grammar: None,
+            constraint: None,
             ..a.clone()
         }
     );
     let shown = alloc::format!("{a:?}");
-    let identity = alloc::format!("{:016x}", a.grammar.as_ref().unwrap().identity());
+    let identity = alloc::format!(
+        "{:016x}",
+        a.constraint.as_ref().unwrap().grammar().unwrap().identity()
+    );
     assert!(shown.contains("GrammarConstraint"), "{shown}");
     assert!(shown.contains(&identity), "{shown}");
 }

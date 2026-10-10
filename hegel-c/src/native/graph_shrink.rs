@@ -49,6 +49,7 @@ use crate::backend::RunError;
 use crate::control::hegel_internal_unwrap;
 use crate::native::HashMap;
 use crate::native::bignum::{BigInt, ToPrimitive};
+use crate::native::core::Constraint;
 use crate::native::core::{ChoiceData, ChoiceNode, ChoiceValue, Span, flattened_len, sort_key};
 use crate::native::graph::{Addr, Frame, Graph, Ident, Run, Step, Walked};
 use crate::native::nd::{self, Evidence, GauntletVerdict};
@@ -574,29 +575,31 @@ impl GraphShrinker {
                     })
                     .await?;
             }
-            (ChoiceData::String(sc, _), ChoiceValue::String(v)) => match &sc.grammar {
-                Some(constraint) => {
-                    let constraint = Arc::clone(constraint);
-                    changed |= self
-                        .shrink_grammar_string(probe, &mut key, data, &constraint, v)
-                        .await?;
+            (ChoiceData::String(sc, _), ChoiceValue::String(v)) => {
+                match sc.constraint.as_ref().and_then(Constraint::grammar) {
+                    Some(constraint) => {
+                        let constraint = Arc::clone(constraint);
+                        changed |= self
+                            .shrink_grammar_string(probe, &mut key, data, &constraint, v)
+                            .await?;
+                    }
+                    None => {
+                        let mut v = v;
+                        let simplest = sc.simplest_codepoint()?;
+                        changed |= self
+                            .shrink_sequence(
+                                probe,
+                                &mut key,
+                                data,
+                                &mut v,
+                                sc.min_size,
+                                simplest,
+                                |s| ChoiceValue::String(s.to_vec()),
+                            )
+                            .await?;
+                    }
                 }
-                None => {
-                    let mut v = v;
-                    let simplest = sc.simplest_codepoint()?;
-                    changed |= self
-                        .shrink_sequence(
-                            probe,
-                            &mut key,
-                            data,
-                            &mut v,
-                            sc.min_size,
-                            simplest,
-                            |s| ChoiceValue::String(s.to_vec()),
-                        )
-                        .await?;
-                }
-            },
+            }
             _ => {}
         }
         Ok(changed)

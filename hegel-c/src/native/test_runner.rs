@@ -3430,7 +3430,7 @@ impl<'a> Engine<'a> {
             .filter(|(_, node)| !node.was_forced)
             .filter_map(|(i, node)| {
                 let (kind, text) = node.data.as_string()?;
-                Some((i, kind, text, &**kind.grammar.as_ref()?))
+                Some((i, kind, text, &**kind.constraint.as_ref()?.grammar()?))
             })
             .collect();
         if targets.is_empty() {

@@ -3,7 +3,9 @@
 How a string drawn from a Lark grammar (`from_lark`) lives in the choice
 sequence: one string choice whose kind carries the grammar, generated
 directly against the RNG, checked by parsing on replay and shrunk through
-its derivation. Module docs in `hegel-c/src/native/lark/` carry the
+its derivation. A string drawn from a regex (`from_regex`) is one choice
+on the same terms, with the pattern as its constraint; the last section
+covers what differs. Module docs in `hegel-c/src/native/lark/` carry the
 per-function detail; this document is the map. File names below are
 relative to `hegel-c/src/native/`.
 
@@ -23,7 +25,8 @@ failure into noise.
 ## The model
 
 A string drawn from a grammar is one `ChoiceData::String` node whose
-`StringChoice` has `grammar: Some(constraint)` (`core/choices.rs`). The
+`StringChoice` has `constraint: Some(Constraint::Grammar(..))`
+(`core/choices.rs`). The
 node's value is the text itself, its alphabet is every Unicode scalar
 value and its only bounds are the empty string and the size cap: the
 grammar alone decides which strings are in (`StringChoice::validate`
@@ -155,5 +158,34 @@ derive a generated string more deeply than the walk did) does not.
   two grammars that differ only in them compare equal.
 - Mutation only reuses parts of the string being mutated, not of other
   strings under the same grammar seen earlier in the run.
-- Not done yet: regex-constrained standalone string nodes (`from_regex`
-  outside a grammar) along the same lines.
+
+## Strings under a regex
+
+A string drawn from a regex is one string node whose kind has
+`constraint: Some(Constraint::Regex(..))`: a `RegexConstraint`
+(`re/constraint.rs`) over the parsed pattern, whose `accepts` runs the
+backtracking matcher (`re/matcher.rs`) — the whole string must match, or
+under `fullmatch(false)` some substring must — and whose identity is
+hashed from the pattern, its flags, the match mode and the alphabet. The
+alphabet is the one the generator was given, or every scalar value; the
+size cap is `REGEX_MAX_SIZE` (`draws/regex.rs`), and a draw over it
+concludes the test case invalid, so a recorded string always validates.
+`generate_string` draws it through `draw_string_from` like a grammar
+string, with the regex walk (`draws/regex.rs`) as the random source, and
+sets the simplest string at the first draw the same way: the walk with
+every decision at its simplest, or the first of a few seeded walks that
+passes the pattern's deferred checks; a pattern no walk satisfies
+concludes the test case invalid, as a draw that finds no string does.
+
+There is no derivation pass: the string passes (`shrinker/strings.rs`)
+shrink a string under a regex, every candidate checked against the
+pattern when the node takes its new value, with two stages they run only
+under a constraint — deleting runs of two to eight characters, which
+removes an alternative the pattern only admits whole, and copying either
+end of the simplest string over the current one, which reaches an
+alternative that differs in several characters at once. A shrink that
+needs several characters changed together anywhere else is out of reach.
+Nor is there mutation within a regex string; span mutation still copies
+one whole regex string over another drawn under the same label, as it
+does any choice, and a copy the other pattern rejects is punned to that
+pattern's simplest string on replay.

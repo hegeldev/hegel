@@ -434,6 +434,14 @@ impl Generator<String> for RegexGenerator {
 
 /// Generate strings matching a regex pattern.
 ///
+/// The pattern is in Python `re` syntax. A generated string is a single
+/// choice holding the string itself, which the pattern constrains: a saved
+/// failure is replayed as long as the string still matches, and shrinking
+/// edits the string within the pattern — shortening it, deleting runs of
+/// characters, copying the ends of the pattern's simplest string over it
+/// and lowering characters one by one — rather than re-running the
+/// generator.
+///
 /// See [`RegexGenerator`] for builder methods.
 pub fn from_regex(pattern: &str) -> RegexGenerator {
     RegexGenerator {

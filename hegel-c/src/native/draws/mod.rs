@@ -10,6 +10,7 @@ pub mod special;
 pub mod text;
 
 use crate::native::bignum::BigInt;
+use crate::native::core::StringChoice;
 use crate::native::core::{
     EngineError, FloatChoice, FloatWidth, ManyState, NativeTestCase, RecursionState, Status,
     float_restrict_and_redraw,
@@ -263,6 +264,9 @@ pub enum StringSpec {
     Regex {
         compiled: Box<regex::CompiledRegex>,
         fullmatch: bool,
+        /// The string choice every string drawn from the pattern is
+        /// recorded as, carrying the pattern as its constraint.
+        kind: Arc<StringChoice>,
     },
     Email,
     Url,
@@ -330,9 +334,12 @@ impl StringSpec {
                 ));
             }
         };
+        let compiled = regex::CompiledRegex::compile(pattern, alphabet)?;
+        let kind = Arc::new(compiled.kind(fullmatch)?);
         Ok(StringSpec::Regex {
-            compiled: Box::new(regex::CompiledRegex::compile(pattern, alphabet)?),
+            compiled: Box::new(compiled),
             fullmatch,
+            kind,
         })
     }
 
@@ -367,9 +374,15 @@ pub fn generate_string(ntc: &mut NativeTestCase, spec: &StringSpec) -> Result<St
         StringSpec::Regex {
             compiled,
             fullmatch,
-        } => spanned(ntc, LABEL_REGEX, |ntc| {
-            regex::generate_regex(ntc, compiled, *fullmatch)
-        }),
+            kind,
+        } => {
+            regex::ensure_simplest(ntc, compiled, *fullmatch, kind)?;
+            spanned(ntc, LABEL_REGEX, |ntc| {
+                ntc.draw_string_from(Arc::clone(kind), |d| {
+                    regex::draw_regex(d, compiled, *fullmatch, kind.max_size)
+                })
+            })
+        }
         StringSpec::Email => spanned(ntc, LABEL_EMAIL, internet::generate_email),
         StringSpec::Url => spanned(ntc, LABEL_URL, internet::generate_url),
         StringSpec::Domain(spec) => spanned(ntc, LABEL_DOMAIN, |ntc| {
@@ -389,6 +402,7 @@ pub fn generate_string_into<D: Draws>(
     if let StringSpec::Regex {
         compiled,
         fullmatch,
+        ..
     } = spec
     {
         return spanned(d, LABEL_REGEX, |d| {

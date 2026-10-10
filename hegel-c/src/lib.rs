@@ -4658,6 +4658,10 @@ pub unsafe extern "C" fn hegel_string_generator_text(
 /// `alphabet`: Optional (NULL for none). Must be a text generator. Its
 ///   character set constrains the padding and wildcard characters.
 ///
+/// A string drawn from the generator is recorded as one string choice the
+/// pattern constrains, replayed as long as it still matches and shrunk
+/// within the pattern.
+///
 /// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an invalid string
 /// buffer, a pattern that does not parse, or an alphabet that is not a
 /// text generator.

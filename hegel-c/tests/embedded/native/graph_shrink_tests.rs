@@ -748,7 +748,7 @@ fn under_grammar(text: &str, simplest: &str, value: &str) -> ChoiceData {
             intervals: Arc::new(IntervalSet::new(vec![(b'a' as u32, b'c' as u32)]).unwrap()),
             min_size: 0,
             max_size: 8,
-            grammar: Some(Arc::new(constraint)),
+            constraint: Some(Constraint::Grammar(Arc::new(constraint))),
         }),
         cps(value),
     )

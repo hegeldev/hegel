@@ -3,6 +3,7 @@
 //! terminals are placed, and the lexer-fit checks that decide it.
 
 use super::*;
+use crate::native::core::Constraint;
 use crate::native::core::state::codepoints_to_string;
 use crate::native::core::{ChoiceKind, ChoiceValue, GenerationParameters, NativeTestCase};
 use crate::native::draws::TextAlphabet;
@@ -1722,7 +1723,10 @@ fn a_grammar_string_is_one_choice_under_the_grammar_constraint() {
             panic!("{node:?}");
         };
         assert_eq!(kind, *spec.kind);
-        assert_eq!(kind.grammar.as_deref(), Some(spec.constraint().as_ref()));
+        assert_eq!(
+            kind.constraint.as_ref().and_then(Constraint::grammar),
+            Some(spec.constraint())
+        );
         assert!(kind.validate(&cps(&s)));
         assert_eq!(ntc.spans.len(), 1);
         assert_eq!(ntc.spans[0].label, LABEL_GRAMMAR);

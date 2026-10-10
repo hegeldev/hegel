@@ -56,6 +56,7 @@ use super::lexsim::{Lexed, Lexer, Scan, Starters};
 use super::{GrammarError, GrammarResult};
 use crate::control::{hegel_internal_assert, hegel_internal_unwrap};
 use crate::native::HashMap;
+use crate::native::core::Constraint;
 use crate::native::core::state::boolean_threshold;
 use crate::native::core::{EngineError, NativeTestCase, Status, StringChoice};
 use crate::native::draws::source::{RngDraws, SimplestDraws};
@@ -492,7 +493,7 @@ impl GrammarSpec {
             intervals: Arc::clone(constraint.intervals()),
             min_size: 0,
             max_size,
-            grammar: Some(Arc::clone(&constraint)),
+            constraint: Some(Constraint::Grammar(Arc::clone(&constraint))),
         });
         let spec = GrammarSpec {
             analysis,

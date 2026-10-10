@@ -204,7 +204,7 @@ fn is_climbable_rejects_strings() {
         intervals: IntervalSet::new(vec![(0x20, 0x7E)]).unwrap().into(),
         min_size: 0,
         max_size: 10,
-        grammar: None,
+        constraint: None,
     };
     let node = ChoiceNode::string(sc, vec![b'a' as u32], false);
     assert!(!is_climbable(&node.data));
@@ -306,7 +306,7 @@ fn step_choice_rejects_unsteppable_kinds() {
             intervals: IntervalSet::new(vec![(97, 122)]).unwrap().into(),
             min_size: 0,
             max_size: 4,
-            grammar: None,
+            constraint: None,
         },
         vec![97],
         false,

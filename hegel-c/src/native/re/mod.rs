@@ -14,6 +14,7 @@
 pub mod casefold;
 pub mod categories;
 pub mod constants;
+pub mod constraint;
 pub mod matcher;
 pub mod parser;
 pub mod vm;

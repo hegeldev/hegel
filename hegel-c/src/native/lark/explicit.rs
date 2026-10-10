@@ -93,6 +93,7 @@ impl ExplicitMatcher {
             StringSpec::Regex {
                 compiled,
                 fullmatch,
+                ..
             } => Kind::pattern(compiled.parsed().clone(), *fullmatch),
             StringSpec::Email => Kind::pattern(approximate(EMAIL)?, true),
             StringSpec::Url => Kind::pattern(approximate(URL)?, true),

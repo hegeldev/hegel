@@ -1,4 +1,4 @@
-use crate::control::{InternalError, hegel_internal_unwrap};
+use crate::control::{InternalError, hegel_internal_error, hegel_internal_unwrap};
 use crate::native::{HashMap, HashSet};
 use alloc::boxed::Box;
 use alloc::format;
@@ -9,15 +9,19 @@ use alloc::vec::Vec;
 use hashbrown::hash_map::Entry;
 
 use crate::native::core::state::{boolean_threshold, length_p_continue};
-use crate::native::core::{EngineError, ManyState, Status};
+use crate::native::core::{Constraint, EngineError, ManyState, Status, StringChoice};
+use crate::native::draws::source::{RngDraws, SimplestDraws};
 use crate::native::intervalsets::IntervalSet;
 use crate::native::re::constants::{
     AtCode, ChCode, MAXREPEAT, SRE_FLAG_ASCII, SRE_FLAG_DOTALL, SRE_FLAG_IGNORECASE,
     SRE_FLAG_MULTILINE,
 };
+use crate::native::re::constraint::RegexConstraint;
 use crate::native::re::parser::{OpCode, ParsedPattern, SetItem, SubPattern, parse_pattern};
+use crate::native::rng::EngineRng;
 use crate::sys::sync::{Lazy, Mutex};
 use crate::unicodedata::{self, Category};
+use alloc::string::ToString;
 
 use super::{Draws, many_more};
 
@@ -89,6 +93,7 @@ impl Complement {
 /// `\w` cost a full alphabet scan to materialise).
 #[derive(Debug)]
 pub struct CompiledRegex {
+    pattern: String,
     parsed: ParsedPattern,
     alphabet: Option<IntervalSet>,
     in_cache: Mutex<HashMap<InKey, InSet>>,
@@ -117,12 +122,98 @@ impl CompiledRegex {
             EngineError::InvalidArgument(format!("invalid regex pattern {pattern:?}: {e}"))
         })?;
         Ok(CompiledRegex {
+            pattern: pattern.to_string(),
             parsed,
             alphabet,
             in_cache: Mutex::new(HashMap::default()),
             char_cache: Mutex::new(HashMap::default()),
         })
     }
+}
+
+impl CompiledRegex {
+    /// The string choice a string drawn from the pattern is recorded as:
+    /// over the alphabet (every scalar value when there is none), up to
+    /// [`REGEX_MAX_SIZE`] long, and under the pattern as its constraint.
+    pub(crate) fn kind(&self, fullmatch: bool) -> Result<StringChoice, EngineError> {
+        let intervals = match &self.alphabet {
+            Some(alphabet) => alphabet.clone(),
+            None => IntervalSet::unicode_scalars()?,
+        };
+        let constraint = RegexConstraint::new(
+            &self.pattern,
+            self.parsed.clone(),
+            fullmatch,
+            self.alphabet.as_ref(),
+        );
+        Ok(StringChoice {
+            intervals: Arc::new(intervals),
+            min_size: 0,
+            max_size: REGEX_MAX_SIZE,
+            constraint: Some(Constraint::Regex(Arc::new(constraint))),
+        })
+    }
+}
+
+/// The most characters a string drawn from a pattern may have, so that
+/// the choice recording it has a bound; a draw past it is invalid.
+pub(crate) const REGEX_MAX_SIZE: usize = 1 << 16;
+
+/// Seeds tried for the simplest string when the simplest walk fails a
+/// deferred check, before giving the pattern up.
+const SIMPLEST_FALLBACK_SEEDS: u64 = 8;
+
+/// Set `kind`'s constraint's simplest string if it is not yet: the
+/// string drawn when every decision goes the simplest way, or, when that
+/// fails a deferred check (padding a `\b` needs, say), the first of a
+/// few seeded draws that does not. A pattern with no string either way
+/// concludes the test case invalid, as a draw that finds no string does.
+pub(crate) fn ensure_simplest<D: Draws>(
+    d: &mut D,
+    re: &CompiledRegex,
+    fullmatch: bool,
+    kind: &StringChoice,
+) -> Result<(), EngineError> {
+    let Some(Constraint::Regex(constraint)) = &kind.constraint else {
+        hegel_internal_error!("ensure_simplest: the kind is not under a regex");
+    };
+    let found = constraint.simplest_or_init(|| {
+        if let Ok(simplest) = generate_regex(&mut SimplestDraws::default(), re, fullmatch) {
+            return Ok(codepoints(&simplest));
+        }
+        for seed in 0..SIMPLEST_FALLBACK_SEEDS {
+            let mut rng = EngineRng::seeded(seed);
+            let mut draws = RngDraws::new(&mut rng, Default::default());
+            if let Ok(simplest) = generate_regex(&mut draws, re, fullmatch) {
+                return Ok(codepoints(&simplest));
+            }
+        }
+        Err(())
+    });
+    if found.is_err() {
+        return Err(mark_invalid(d));
+    }
+    Ok(())
+}
+
+fn codepoints(s: &str) -> Vec<u32> {
+    s.chars().map(u32::from).collect()
+}
+
+/// Draw a string matching `re` from `d` as the codepoints a string choice
+/// records, concluding the test case invalid when it is over `max_size`.
+pub(crate) fn draw_regex<D: Draws>(
+    d: &mut D,
+    re: &CompiledRegex,
+    fullmatch: bool,
+    max_size: usize,
+) -> Result<Vec<u32>, EngineError> {
+    let mut out = Vec::with_capacity(TYPICAL_CAPACITY);
+    generate_regex_into(d, re, fullmatch, &mut out)?;
+    if out.len() > max_size {
+        return Err(mark_invalid(d));
+    }
+    Ok(out.into_iter().map(u32::from).collect())
 }
 
 /// Draw a string matching `re`, anchored at both ends when `fullmatch`

@@ -1,8 +1,10 @@
 use crate::exchange::drive_no_yield;
+use crate::native::core::Constraint;
 use crate::native::core::{ChoiceNode, ChoiceValue, Spans, StringChoice};
 use crate::native::intervalsets::IntervalSet;
 use crate::native::shrinker::{ShrinkRun, Shrinker};
 use alloc::boxed::Box;
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -16,7 +18,7 @@ fn string_node(value: Vec<u32>, min_codepoint: u32, max_codepoint: u32) -> Choic
             intervals: intervals(min_codepoint, max_codepoint).into(),
             min_size: 0,
             max_size: 32,
-            grammar: None,
+            constraint: None,
         },
         value,
         false,
@@ -253,7 +255,7 @@ fn grammar_node(text: &str, simplest: &str, value: &str) -> ChoiceNode {
             intervals: intervals(0, 0x10FFFF).into(),
             min_size: 0,
             max_size: 32,
-            grammar: Some(constraint.into()),
+            constraint: Some(Constraint::Grammar(constraint.into())),
         },
         cps(value),
         false,
@@ -279,4 +281,86 @@ fn the_string_passes_leave_a_string_under_a_grammar_alone() {
         shrinker.current_nodes[1].value(),
         ChoiceValue::String(cps(""))
     );
+}
+
+fn regex_node(pattern: &str, simplest: &str, value: &str) -> ChoiceNode {
+    let kind = match crate::native::draws::StringSpec::regex(pattern, true, None).unwrap() {
+        crate::native::draws::StringSpec::Regex { kind, .. } => kind,
+        _ => unreachable!(),
+    };
+    let Some(Constraint::Regex(constraint)) = &kind.constraint else {
+        unreachable!()
+    };
+    constraint
+        .simplest_or_init(|| Ok::<_, ()>(cps(simplest)))
+        .unwrap();
+    ChoiceNode::string((*kind).clone(), cps(value), false)
+}
+
+fn string_shrinker(
+    nodes: Vec<ChoiceNode>,
+    accept: impl Fn(&[u32]) -> bool + Send + Sync + 'static,
+) -> Shrinker<'static> {
+    Shrinker::with_probe(
+        Box::new(move |run: ShrinkRun<'_>| match run {
+            ShrinkRun::Full(nodes) => {
+                let ok = matches!(nodes[0].value(), ChoiceValue::String(s) if accept(&s));
+                (ok, nodes.to_vec(), Spans::new())
+            }
+            ShrinkRun::Probe { .. } => (false, Vec::new(), Spans::new()),
+        }),
+        nodes,
+        Spans::new(),
+    )
+}
+
+fn string_of(shrinker: &Shrinker<'_>) -> String {
+    match shrinker.current_nodes[0].value() {
+        ChoiceValue::String(s) => s.into_iter().map(|c| char::from_u32(c).unwrap()).collect(),
+        _ => unreachable!(),
+    }
+}
+
+/// The passes run on a string under a regex, every candidate checked
+/// against the pattern: a natural simpler character the pattern rejects
+/// is passed over, and the ordinary shrink reaches the simplest.
+#[test]
+fn the_string_passes_shrink_a_string_under_a_regex_within_the_pattern() {
+    let mut shrinker =
+        accepting_shrinker(vec![regex_node("\u{101}+", "\u{101}", "\u{101}\u{101}")]);
+    drive_no_yield(shrinker.normalize_unicode_chars()).unwrap();
+    assert_eq!(string_of(&shrinker), "\u{101}\u{101}");
+    drive_no_yield(shrinker.shrink_strings()).unwrap();
+    assert_eq!(string_of(&shrinker), "\u{101}");
+}
+
+/// A run of characters the pattern only admits together is deleted at
+/// once, which deleting them one at a time could not do.
+#[test]
+fn a_run_of_characters_a_regex_needs_together_is_deleted_at_once() {
+    let mut shrinker = string_shrinker(
+        vec![regex_node("(foo|barbaz)+", "foo", "foobarbazfoo")],
+        |s| {
+            let s: String = s.iter().map(|&c| char::from_u32(c).unwrap()).collect();
+            s.contains("barbaz")
+        },
+    );
+    drive_no_yield(shrinker.shrink_strings()).unwrap();
+    assert_eq!(string_of(&shrinker), "barbaz");
+}
+
+/// Either end of the simplest string is copied over the string, which
+/// reaches an alternative that differs in several characters at once.
+#[test]
+fn the_ends_of_the_simplest_string_are_copied_over_a_string_under_a_regex() {
+    let mut shrinker = string_shrinker(
+        vec![regex_node(
+            r"(com|org)\.[a-z]+@[a-z]+\.(com|org)",
+            "com.a@a.com",
+            "org.aaaaaa@a.org",
+        )],
+        |s| s.len() >= 16,
+    );
+    drive_no_yield(shrinker.shrink_strings()).unwrap();
+    assert_eq!(string_of(&shrinker), "com.a@aaaaaa.com");
 }

@@ -84,7 +84,7 @@ impl GrammarConstraint {
     ) -> Result<GrammarConstraint, InternalError> {
         let terminals = GrammarTerminals::new(&grammar, explicit)?;
         let parser = Parser::new(&grammar, start);
-        let intervals = IntervalSet::new(alloc::vec![(0, 0xD7FF), (0xE000, 0x10FFFF)])?;
+        let intervals = IntervalSet::unicode_scalars()?;
         let mut hasher = FxHasher::default();
         format!("{grammar:?}").hash(&mut hasher);
         start.hash(&mut hasher);

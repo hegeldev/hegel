@@ -65,7 +65,7 @@ fn ascii_string_choice() -> StringChoice {
         intervals: IntervalSet::new(vec![(0x20, 0x7E)]).unwrap().into(),
         min_size: 0,
         max_size: 100,
-        grammar: None,
+        constraint: None,
     }
 }
 
@@ -76,7 +76,7 @@ fn unicode_string_choice() -> StringChoice {
             .into(),
         min_size: 0,
         max_size: 100,
-        grammar: None,
+        constraint: None,
     }
 }
 

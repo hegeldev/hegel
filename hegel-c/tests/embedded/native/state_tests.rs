@@ -1148,7 +1148,7 @@ fn biased_string_sample_caps_constant_pool_probability() {
         .into(),
         min_size: 0,
         max_size: 100,
-        grammar: None,
+        constraint: None,
     };
     let mut rng = EngineRng::seeded(9);
     let pool = &*GLOBAL_CONSTANTS_STRINGS;
@@ -1199,7 +1199,7 @@ fn biased_string_sample_empty_alphabet_returns_empty_string() {
             .into(),
         min_size: 0,
         max_size: 0,
-        grammar: None,
+        constraint: None,
     };
     let mut rng = EngineRng::seeded(7);
     for _ in 0..200 {
@@ -3675,7 +3675,7 @@ fn a_spent_template_stops_a_string_drawn_from_the_rng_early() {
             .into(),
         min_size: 0,
         max_size: 10,
-        grammar: None,
+        constraint: None,
     });
     let mut tc = NativeTestCase::for_choices_and_template(
         &[],
@@ -3712,7 +3712,7 @@ fn a_string_drawn_from_the_rng_notifies_the_observer() {
             .into(),
         min_size: 0,
         max_size: 10,
-        grammar: None,
+        constraint: None,
     });
     let mut tc = NativeTestCase::for_choices_and_template(&[], None, None, BUFFER_SIZE, Some(obs))
         .with_random(EngineRng::seeded(0))

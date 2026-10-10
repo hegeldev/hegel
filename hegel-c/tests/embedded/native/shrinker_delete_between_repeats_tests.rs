@@ -209,7 +209,7 @@ fn fingerprints_cover_all_value_kinds() {
                 intervals: IntervalSet::new(vec![(97, 122)]).unwrap().into(),
                 min_size: 0,
                 max_size: 8,
-                grammar: None,
+                constraint: None,
             },
             vec![97, 98],
             false,

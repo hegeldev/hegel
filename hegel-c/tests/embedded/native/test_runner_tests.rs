@@ -11,6 +11,7 @@
 
 use super::*;
 use crate::native::core::BUFFER_SIZE;
+use crate::native::core::Constraint;
 use crate::native::core::StringChoice;
 use crate::native::core::choices::BooleanChoice;
 use crate::native::graph::DRAW_LABEL;
@@ -816,7 +817,7 @@ fn grammar_node(spec: &GrammarSpec, text: &str, forced: bool) -> ChoiceNode {
             intervals: Arc::clone(constraint.intervals()),
             min_size: 0,
             max_size: constraint.max_size(),
-            grammar: Some(Arc::clone(constraint)),
+            constraint: Some(Constraint::Grammar(Arc::clone(constraint))),
         },
         text.chars().map(u32::from).collect(),
         forced,

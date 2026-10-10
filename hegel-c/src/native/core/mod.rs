@@ -5,7 +5,7 @@ pub(crate) mod state;
 pub(crate) mod state_machine;
 pub use choices::{
     BytesChoice, ChoiceData, ChoiceKind, ChoiceNode, ChoiceValue, ChoiceValueRef, CloneRecord,
-    EngineError, FloatChoice, InterestingOrigin, NodesSortKey, RealizedStream, Status,
+    Constraint, EngineError, FloatChoice, InterestingOrigin, NodesSortKey, RealizedStream, Status,
     StringChoice, flattened_len, flattened_values_len, sort_key,
 };
 pub use float_index::{float_to_index, index_to_float};

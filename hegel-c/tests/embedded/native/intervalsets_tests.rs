@@ -2,6 +2,16 @@ use super::*;
 use alloc::vec;
 
 #[test]
+fn unicode_scalars_holds_every_scalar_value_and_no_surrogate() {
+    let all = IntervalSet::unicode_scalars().unwrap();
+    assert_eq!(all.len(), 0x110000 - 0x800);
+    assert!(
+        all.contains(0) && all.contains(0xD7FF) && all.contains(0xE000) && all.contains(0x10FFFF)
+    );
+    assert!(!all.contains(0xD800) && !all.contains(0xDFFF) && !all.contains(0x110000));
+}
+
+#[test]
 fn new_concatenates_offsets() {
     let iv = IntervalSet::new(vec![(0, 2), (10, 12)]).unwrap();
     assert_eq!(iv.len(), 6);

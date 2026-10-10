@@ -201,6 +201,7 @@ fn generate_string_from<D: Draws>(d: &mut D, spec: &StringSpec) -> Result<String
         StringSpec::Regex {
             compiled,
             fullmatch,
+            ..
         } => regex::generate_regex(d, compiled, *fullmatch),
         StringSpec::Email => internet::generate_email(d),
         StringSpec::Url => internet::generate_url(d),
@@ -289,7 +290,7 @@ impl Draws for RngDraws<'_> {
             intervals,
             min_size,
             max_size,
-            grammar: None,
+            constraint: None,
         };
         let codepoints = biased_string_sample(&kind, self.rng)?;
         Ok(codepoints_to_string(&codepoints))
@@ -379,7 +380,7 @@ impl Draws for SimplestDraws {
             intervals,
             min_size,
             max_size,
-            grammar: None,
+            constraint: None,
         };
         Ok(codepoints_to_string(&kind.simplest()?))
     }

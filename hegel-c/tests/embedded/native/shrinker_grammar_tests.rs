@@ -2,6 +2,7 @@
 //! on strings under a grammar.
 
 use crate::exchange::drive_no_yield;
+use crate::native::core::Constraint;
 use crate::native::core::{ChoiceNode, ChoiceValue, Spans, StringChoice};
 use crate::native::draws::{StringSpec, TextAlphabet};
 use crate::native::lark::builder::{NoImports, load_grammar};
@@ -61,7 +62,7 @@ fn grammar_node_with(
             intervals: Arc::clone(constraint.intervals()),
             min_size: 0,
             max_size: 64,
-            grammar: Some(Arc::new(constraint)),
+            constraint: Some(Constraint::Grammar(Arc::new(constraint))),
         },
         cps(value),
         forced,
@@ -203,7 +204,7 @@ fn a_forced_string_and_a_string_without_a_grammar_are_left_alone() {
             ),
             min_size: 0,
             max_size: 8,
-            grammar: None,
+            constraint: None,
         },
         cps("zz"),
         false,

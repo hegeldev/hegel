@@ -11,6 +11,7 @@ use crate::native::bignum::{BigInt, BigUint, ToPrimitive, Zero};
 use crate::native::floats::sign_aware_lte;
 use crate::native::intervalsets::IntervalSet;
 use crate::native::lark::constraint::GrammarConstraint;
+use crate::native::re::constraint::RegexConstraint;
 use alloc::boxed::Box;
 
 /// An integer choice with bounded range. Bounds that fit a machine word
@@ -333,17 +334,53 @@ impl BytesChoice {
 /// followed by `'1'`..`'9'`, `'A'`..`'Z'`, then characters below `'0'` in
 /// reverse, then characters above `'Z'` in natural order.
 ///
-/// A choice with a `grammar` accepts only the strings the grammar derives
-/// (within the length bounds and alphabet, which still apply): its
-/// simplest value is the grammar's, the constraint takes part in equality
-/// by identity, and the choice has no dense index, since shortlex position
-/// says nothing about which strings the grammar derives.
+/// What narrows a string choice beyond its length bounds and alphabet: a
+/// grammar that must derive the string, or a regex that must match it.
+/// Either compares and hashes by identity.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Constraint {
+    Grammar(Arc<GrammarConstraint>),
+    Regex(Arc<RegexConstraint>),
+}
+
+impl Constraint {
+    /// Whether `text` is one of the constraint's strings.
+    pub fn accepts(&self, text: &[u32]) -> bool {
+        match self {
+            Constraint::Grammar(grammar) => grammar.accepts(text),
+            Constraint::Regex(regex) => regex.accepts(text),
+        }
+    }
+
+    /// The constraint's simplest string, once the generator has set it.
+    pub fn simplest(&self) -> Option<&[u32]> {
+        match self {
+            Constraint::Grammar(grammar) => grammar.simplest(),
+            Constraint::Regex(regex) => regex.simplest(),
+        }
+    }
+
+    /// The grammar, when the constraint is one.
+    pub fn grammar(&self) -> Option<&Arc<GrammarConstraint>> {
+        match self {
+            Constraint::Grammar(grammar) => Some(grammar),
+            Constraint::Regex(_) => None,
+        }
+    }
+}
+
+/// A choice with a `constraint` accepts only the strings the constraint
+/// does (within the length bounds and alphabet, which still apply): its
+/// simplest value is the constraint's, the constraint takes part in
+/// equality by identity, and the choice has no dense index, since
+/// shortlex position says nothing about which strings the constraint
+/// accepts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StringChoice {
     pub intervals: Arc<IntervalSet>,
     pub min_size: usize,
     pub max_size: usize,
-    pub grammar: Option<Arc<GrammarConstraint>>,
+    pub constraint: Option<Constraint>,
 }
 
 impl StringChoice {
@@ -378,12 +415,12 @@ impl StringChoice {
     /// The simplest sequence of codepoints of length `min_size`, built
     /// from repeated [`simplest_codepoint`]. An empty alphabet is legal when
     /// `min_size == 0` (the empty string is then the choice's only value).
-    /// Under a grammar, the grammar's simplest string.
+    /// Under a constraint, the constraint's simplest string.
     pub fn simplest(&self) -> Result<Vec<u32>, InternalError> {
-        if let Some(grammar) = &self.grammar {
+        if let Some(constraint) = &self.constraint {
             let simplest = hegel_internal_unwrap!(
-                grammar.simplest(),
-                "StringChoice::simplest: the grammar's simplest string is not set"
+                constraint.simplest(),
+                "StringChoice::simplest: the constraint's simplest string is not set"
             );
             return Ok(simplest.to_vec());
         }
@@ -394,10 +431,10 @@ impl StringChoice {
     }
 
     /// Second-simplest codepoint sequence, used for type-punning during replay.
-    /// Under a grammar this is the simplest string for now: the grammar's
-    /// second-simplest derivation is a later stage's to compute.
+    /// Under a constraint this is the simplest string for now: the
+    /// constraint's second-simplest string is a later stage's to compute.
     pub fn unit(&self) -> Result<Vec<u32>, InternalError> {
-        if self.grammar.is_some() || self.intervals.is_empty() {
+        if self.constraint.is_some() || self.intervals.is_empty() {
             return self.simplest();
         }
         let simplest_cp = self.simplest_codepoint()?;
@@ -425,20 +462,20 @@ impl StringChoice {
     }
 
     /// Whether `value` is one of this choice's strings: within the length
-    /// bounds, over the alphabet, and, under a grammar, derived by it.
+    /// bounds, over the alphabet, and accepted by the constraint if any.
     pub fn validate(&self, value: &[u32]) -> bool {
         if !(self.min_size <= value.len() && value.len() <= self.max_size) {
             return false;
         }
         value.iter().all(|&cp| self.intervals.contains(cp))
-            && self.grammar.as_ref().is_none_or(|g| g.accepts(value))
+            && self.constraint.as_ref().is_none_or(|c| c.accepts(value))
     }
 
     /// Whether the shortlex index ([`to_index`](Self::to_index) and
     /// [`from_index`](Self::from_index)) ranges over exactly this choice's
-    /// strings, which it does unless a grammar narrows them.
+    /// strings, which it does unless a constraint narrows them.
     pub fn indexed(&self) -> bool {
-        self.grammar.is_none()
+        self.constraint.is_none()
     }
 
     /// Cardinality of the alphabet.
