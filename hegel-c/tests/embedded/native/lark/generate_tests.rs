@@ -56,11 +56,23 @@ fn tid(spec: &GrammarSpec, name: &str) -> TermId {
         .unwrap()
 }
 
-/// A token with its text, to lay out with others in a string of their own.
+/// A token with its text and what the lexers find in it, to lay out
+/// with others in a string of their own.
 #[derive(Clone)]
 struct Tok {
     token: Token,
     text: Vec<char>,
+    scans: TokenScans,
+}
+
+impl Tok {
+    fn reading(&self) -> &Reading {
+        &self.scans.reading
+    }
+
+    fn lexable(&self) -> bool {
+        matches!(self.reading(), Reading::Itself | Reading::Ignorables)
+    }
 }
 
 impl Deref for Tok {
@@ -80,50 +92,50 @@ impl DerefMut for Tok {
 fn tok(spec: &GrammarSpec, name: &str, text: &str) -> Tok {
     let id = tid(spec, name);
     let text: Vec<char> = text.chars().collect();
+    let scans = spec.scan_token(id, &text, None);
     let token = Token {
         id,
         start: 0,
         end: text.len(),
         droppable: false,
-        scans: Arc::new(spec.scan_token(id, &text, None)),
+        scans: 0,
     };
-    Tok { token, text }
+    Tok { token, text, scans }
 }
 
-/// `token` with its text read as `reading`, whatever the lexer says.
-fn reread(token: &mut Token, reading: Reading) {
-    token.scans = Arc::new(TokenScans {
-        own: token.scans.own.clone(),
-        basic: token.scans.basic.clone(),
-        reading,
-        basic_follows_own: token.scans.basic_follows_own,
-    });
+/// `tok` with its text read as `reading`, whatever the lexer says.
+fn reread(tok: &mut Tok, reading: Reading) {
+    tok.scans.reading = reading;
 }
 
-/// `toks` one after another: the text and the tokens placed in it.
-fn lay_out(toks: &[Tok]) -> (Vec<char>, Vec<Token>) {
+/// `toks` one after another: the text, the tokens placed in it and
+/// their findings, which the tokens index.
+fn lay_out(toks: &[Tok]) -> (Vec<char>, Vec<Token>, Vec<TokenScans>) {
     let mut text = Vec::new();
     let mut tokens = Vec::new();
+    let mut findings = Vec::new();
     for tok in toks {
         let start = text.len();
         text.extend_from_slice(&tok.text);
         tokens.push(Token {
             start,
             end: text.len(),
+            scans: findings.len(),
             ..tok.token.clone()
         });
+        findings.push(tok.scans.clone());
     }
-    (text, tokens)
+    (text, tokens, findings)
 }
 
 fn fit(spec: &GrammarSpec, toks: &[Tok]) -> Fit {
-    let (text, tokens) = lay_out(toks);
-    spec.fit(&text, &tokens)
+    let (text, tokens, findings) = lay_out(toks);
+    spec.fit(&text, &tokens, &findings)
 }
 
 fn basic_fit(spec: &GrammarSpec, toks: &[Tok]) -> Fit {
-    let (text, tokens) = lay_out(toks);
-    spec.basic_fit(&text, &tokens)
+    let (text, tokens, findings) = lay_out(toks);
+    spec.basic_fit(&text, &tokens, &findings)
 }
 
 const PARENS: &str = "start: \"()\" | \"(\" start \")\" | start start\n";
@@ -502,7 +514,11 @@ fn optional_tokens_may_be_swallowed_by_their_neighbours() {
     );
     assert!(strings.iter().any(|s| s == "abc"));
     let mut generation = Generation::new(&spec, 0.0);
-    (generation.text, generation.tokens) = lay_out(&[
+    (
+        generation.text,
+        generation.tokens,
+        generation.readings.findings,
+    ) = lay_out(&[
         tok(&spec, "A", "a"),
         tok(&spec, "B", "b"),
         tok(&spec, "C", "c"),
@@ -565,7 +581,7 @@ fn a_reading_is_how_the_basic_lexer_reads_the_text_afresh() {
                 let lexed = spec.lex_all(text, &[], &mut fresh);
                 let ids: Vec<TermId> = fresh.iter().map(|&(g, _, _)| g).collect();
                 read += 1;
-                match token.reading() {
+                match token.reading(&generation.readings.findings) {
                     Reading::Opaque => assert!(lexed.is_err(), "{name} {seed} {text:?}"),
                     Reading::Itself => {
                         assert!(lexed.is_ok(), "{name} {seed} {text:?}");
@@ -641,8 +657,8 @@ fn scans_follows_the_dynamic_lexer() {
         ),
         Fit::Retyped
     );
-    let (text, tokens) = lay_out(&[c, tok(&spec, "C", "x")]);
-    assert!(!spec.scans(&text, &tokens));
+    let (text, tokens, findings) = lay_out(&[c, tok(&spec, "C", "x")]);
+    assert!(!spec.scans(&text, &tokens, &findings));
 }
 
 #[test]
@@ -897,14 +913,15 @@ fn settled_stretches_read_back_exactly_and_settled_strings_lex_as_wholes() {
                 continue;
             }
             let tokens = &generation.tokens;
+            let findings = &generation.readings.findings;
             for width in 2..=3 {
                 for window in tokens.windows(width) {
                     let text = &generation.text[window[0].start..window[width - 1].end];
-                    if spec.settled(text, window) {
+                    if spec.settled(text, window, findings) {
                         settled += 1;
-                        assert!(spec.scans(text, window), "{name} {seed} {text:?}");
+                        assert!(spec.scans(text, window, findings), "{name} {seed} {text:?}");
                         assert_eq!(
-                            spec.basic_fit(text, window),
+                            spec.basic_fit(text, window, findings),
                             Fit::Exact,
                             "{name} {seed} {text:?}"
                         );
@@ -916,8 +933,12 @@ fn settled_stretches_read_back_exactly_and_settled_strings_lex_as_wholes() {
             if !generation.unsettled {
                 whole_strings += 1;
                 let text = &generation.text;
-                assert!(spec.scans(text, tokens), "{name} {seed} {text:?}");
-                assert!(tokens.iter().all(|t| spec.single(t) && t.whole()));
+                assert!(spec.scans(text, tokens, findings), "{name} {seed} {text:?}");
+                assert!(
+                    tokens
+                        .iter()
+                        .all(|t| spec.single(t, findings) && t.whole(findings))
+                );
             }
         }
     }
@@ -955,33 +976,27 @@ fn settling_a_basic_scan_that_follows_the_own_one_never_changes_the_answer() {
                 continue;
             }
             let tokens = &generation.tokens;
+            let findings = &generation.readings.findings;
             for token in tokens {
-                if token.scans.basic_follows_own {
+                if findings[token.scans].basic_follows_own {
                     followed += 1;
                 } else {
                     checked += 1;
                 }
             }
-            let checked_tokens: Vec<Token> = tokens
+            let checked_findings: Vec<TokenScans> = findings
                 .iter()
-                .map(|token| Token {
-                    scans: Arc::new(TokenScans {
-                        own: token.scans.own.clone(),
-                        basic: token.scans.basic.clone(),
-                        reading: token.scans.reading.clone(),
-                        basic_follows_own: false,
-                    }),
-                    ..token.clone()
+                .map(|scans| TokenScans {
+                    basic_follows_own: false,
+                    ..scans.clone()
                 })
                 .collect();
             for width in 2..=3 {
-                for (window, checked_window) in
-                    tokens.windows(width).zip(checked_tokens.windows(width))
-                {
+                for window in tokens.windows(width) {
                     let text = &generation.text[window[0].start..window[width - 1].end];
                     assert_eq!(
-                        spec.settled(text, window),
-                        spec.settled(text, checked_window),
+                        spec.settled(text, window, findings),
+                        spec.settled(text, window, &checked_findings),
                         "{name} {seed} {text:?}"
                     );
                 }
@@ -1058,14 +1073,16 @@ fn draws_work_in_the_buffers_the_spec_has_to_spare() {
     };
     let roomy = Buffers {
         text: Vec::with_capacity(1 << 16),
-        ..Buffers::default()
+        ..Buffers::new(spec.terminals.len())
     };
     let displaced = roomy.offer(&mut spec.buffers.lock()).unwrap();
     assert_eq!(displaced.text.capacity(), used);
     draw(&spec, 1).0.unwrap();
     assert!(spec.buffers.lock().as_ref().unwrap().text.capacity() >= 1 << 16);
 
-    let unkept = Buffers::default().offer(&mut spec.buffers.lock()).unwrap();
+    let unkept = Buffers::new(spec.terminals.len())
+        .offer(&mut spec.buffers.lock())
+        .unwrap();
     assert_eq!(unkept.text.capacity(), 0);
     assert!(spec.buffers.lock().as_ref().unwrap().text.capacity() >= 1 << 16);
 
@@ -1150,7 +1167,7 @@ fn chain_pairs_that_keep_failing_are_given_up_on() {
 }
 
 #[test]
-fn a_grammar_remembers_the_lexing_of_its_token_texts_up_to_a_point() {
+fn a_generation_remembers_the_lexing_of_its_token_texts_until_a_draw_finds_too_many() {
     let spec = grammar("start: NAME+\nNAME: /[a-z]+/\n");
     let name = tid(&spec, "NAME");
     let text = |n: usize| -> Vec<char> {
@@ -1159,29 +1176,45 @@ fn a_grammar_remembers_the_lexing_of_its_token_texts_up_to_a_point() {
             .map(|c| c.to_digit(10).map_or(c, |d| (b'a' + d as u8) as char))
             .collect()
     };
-    let remembered = || spec.readings.lock().len;
-    let first = spec.read_token(name, &text(0), None);
-    assert_eq!(first.reading, Reading::Itself);
-    assert_eq!(remembered(), 1);
-    let again = spec.read_token(name, &text(0), None);
-    assert!(Arc::ptr_eq(&first, &again));
-    assert_eq!(remembered(), 1);
-    for n in 1..READINGS_CAPACITY {
-        spec.read_token(name, &text(n), None);
-    }
-    assert_eq!(remembered(), READINGS_CAPACITY);
-    let still = spec.read_token(name, &text(0), None);
-    assert!(Arc::ptr_eq(&first, &still));
-    spec.read_token(name, &text(READINGS_CAPACITY), None);
-    assert_eq!(remembered(), 1);
-    let after = spec.read_token(name, &text(0), None);
-    assert!(!Arc::ptr_eq(&first, &after));
-    assert_eq!(after.reading, Reading::Itself);
-    assert_eq!(remembered(), 2);
+    let mut generation = Generation::new(&spec, 0.0);
+    let first = generation.readings.read_token(&spec, name, &text(0), None);
+    assert_eq!(generation.readings.findings[first].reading, Reading::Itself);
+    assert_eq!(generation.readings.len, 1);
     assert_eq!(
-        spec.readings.lock().texts.len(),
-        text(READINGS_CAPACITY).len() + text(0).len()
+        generation.readings.read_token(&spec, name, &text(0), None),
+        first
     );
+    assert_eq!(generation.readings.len, 1);
+    assert_eq!(generation.readings.findings.len(), 1);
+    for n in 1..READINGS_CAPACITY - 1 {
+        generation.readings.read_token(&spec, name, &text(n), None);
+    }
+    assert_eq!(generation.readings.len, READINGS_CAPACITY - 1);
+    generation.recycle();
+    let mut generation = Generation::new(&spec, 0.0);
+    assert_eq!(generation.readings.len, READINGS_CAPACITY - 1);
+    assert_eq!(
+        generation.readings.read_token(&spec, name, &text(0), None),
+        first
+    );
+    for n in READINGS_CAPACITY - 1..=READINGS_CAPACITY {
+        generation.readings.read_token(&spec, name, &text(n), None);
+    }
+    assert_eq!(generation.readings.len, READINGS_CAPACITY + 1);
+    assert_eq!(
+        generation.readings.read_token(&spec, name, &text(0), None),
+        first
+    );
+    generation.recycle();
+    let mut generation = Generation::new(&spec, 0.0);
+    assert_eq!(generation.readings.len, 0);
+    assert!(generation.readings.findings.is_empty());
+    assert!(generation.readings.texts.is_empty());
+    let after = generation.readings.read_token(&spec, name, &text(0), None);
+    assert_eq!(after, 0);
+    assert_eq!(generation.readings.findings[after].reading, Reading::Itself);
+    assert_eq!(generation.readings.len, 1);
+    assert_eq!(generation.readings.texts, text(0));
 }
 
 #[test]
@@ -1189,20 +1222,14 @@ fn a_text_remembered_again_takes_the_place_of_what_was_held() {
     let spec = grammar("start: NAME+\nNAME: /[a-z]+/\n");
     let name = tid(&spec, "NAME");
     let text: Vec<char> = "abc".chars().collect();
-    let first = spec.read_token(name, &text, None);
-    let again = Arc::new(spec.scan_token(name, &text, None));
+    let mut readings = ReadingsCache::new(spec.terminals.len());
+    let first = readings.read_token(&spec, name, &text, None);
     let hash = text_hash(&text);
-    spec.readings.lock().remember(name, hash, &text, &again);
-    let readings = spec.readings.lock();
-    assert!(Arc::ptr_eq(
-        readings.find(name, hash, &text).unwrap(),
-        &again
-    ));
-    assert!(!Arc::ptr_eq(
-        readings.find(name, hash, &text).unwrap(),
-        &first
-    ));
+    let again = readings.remember(name, hash, &text, spec.scan_token(name, &text, None));
+    assert_ne!(again, first);
+    assert_eq!(readings.find(name, hash, &text), Some(again));
     assert_eq!(readings.len, 1);
+    assert_eq!(readings.findings.len(), 2);
     assert_eq!(readings.texts, text);
     let shorter = &text[..2];
     assert!(readings.find(name, text_hash(shorter), shorter).is_none());
@@ -1213,15 +1240,17 @@ fn a_text_recalled_is_what_was_learnt_of_it() {
     let spec = grammar("start: NAME+\nNAME: /[a-z]+/\n");
     let name = tid(&spec, "NAME");
     let text: Vec<char> = "abc".chars().collect();
-    let Err(hash) = spec.recall(name, &text) else {
+    let mut readings = ReadingsCache::new(spec.terminals.len());
+    let Err(hash) = readings.recall(name, &text) else {
         panic!("a text not drawn yet was recalled");
     };
     assert_eq!(hash, text_hash(&text));
-    let learnt = spec.learn(name, hash, &text, None);
-    assert_eq!(learnt.reading, Reading::Itself);
-    assert!(Arc::ptr_eq(&spec.recall(name, &text).unwrap(), &learnt));
-    assert!(Arc::ptr_eq(&spec.read_token(name, &text, None), &learnt));
-    assert_eq!(spec.readings.lock().len, 1);
+    let learnt = readings.learn(&spec, name, hash, &text, None);
+    assert_eq!(readings.findings[learnt].reading, Reading::Itself);
+    assert_eq!(readings.recall(name, &text), Ok(learnt));
+    assert_eq!(readings.read_token(&spec, name, &text, None), learnt);
+    assert_eq!(readings.len, 1);
+    assert_eq!(readings.findings.len(), 1);
 }
 
 #[test]
@@ -1231,14 +1260,20 @@ fn a_remembered_text_the_pattern_does_not_take_whole_is_cut_like_a_fresh_one() {
     let seeded = grammar(text);
     let a = tid(&seeded, "A");
     let ab: Vec<char> = "ab".chars().collect();
-    let remembered = seeded.read_token(a, &ab, None);
-    assert_eq!(taken(&remembered.own, ab.len()), 1);
+    let mut generation = Generation::new(&seeded, 0.0);
+    let remembered = generation.readings.read_token(&seeded, a, &ab, None);
+    assert_eq!(
+        taken(&generation.readings.findings[remembered].own, ab.len()),
+        1
+    );
+    generation.recycle();
     let strings = samples(&seeded, 50);
     assert_eq!(strings, samples(&fresh, 50));
     assert!(strings.iter().all(|s| s == "a"), "{strings:?}");
-    assert!(Arc::ptr_eq(&seeded.recall(a, &ab).unwrap(), &remembered));
-    assert_eq!(seeded.readings.lock().len, 2);
-    assert_eq!(fresh.readings.lock().len, 1);
+    let generation = Generation::new(&seeded, 0.0);
+    assert_eq!(generation.readings.recall(a, &ab), Ok(remembered));
+    assert_eq!(generation.readings.len, 2);
+    assert_eq!(Generation::new(&fresh, 0.0).readings.len, 1);
 }
 
 #[test]

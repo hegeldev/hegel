@@ -70,8 +70,9 @@ pub const DEFAULT_MAX_SIZE: u64 = 8192;
 /// The default cap on how deeply rules nest.
 pub const DEFAULT_MAX_DEPTH: u32 = 200;
 
-/// How many distinct token texts a grammar remembers the lexing of
-/// (see [`GrammarSpec::read_token`]) before forgetting them all.
+/// How many distinct token texts a generation remembers the lexing of
+/// (see [`ReadingsCache::read_token`]) before the next draw forgets
+/// them all.
 const READINGS_CAPACITY: usize = 1 << 13;
 
 /// The number of strings one draw discards, for being oversize (halving
@@ -174,32 +175,40 @@ pub struct GrammarSpec {
     group_classes: Vec<Option<AltClasses>>,
     max_size: u64,
     max_depth: u32,
-    /// What the lexers found in each distinct token text drawn so far,
-    /// by terminal, so that a keyword, an operator or a stretch of
-    /// whitespace drawn again, in the same string or a later one, is
-    /// lexed once; emptied when it holds [`READINGS_CAPACITY`] texts.
-    readings: Mutex<ReadingsCache>,
     /// Working space for [`GrammarSpec::scans`] and
     /// [`GrammarSpec::lex_all`], kept from one check to the next so that
     /// the walks allocate nothing.
     scratch: Mutex<ScansScratch>,
-    /// The vectors of the roomiest finished [`Generation`], emptied, for
-    /// the next draw to work in instead of growing its own from nothing.
+    /// The vectors of the roomiest finished [`Generation`], emptied, and
+    /// what it remembers of the token texts drawn, for the next draw to
+    /// work in instead of growing its own from nothing.
     buffers: Mutex<Option<Buffers>>,
 }
 
-/// The vectors a [`Generation`] works in, emptied, between one draw and
-/// the next.
-#[derive(Default)]
+/// The vectors a [`Generation`] works in, emptied, and the readings it
+/// remembers, between one draw and the next.
 struct Buffers {
     text: Vec<char>,
     tokens: Vec<Token>,
     budgets: Vec<u64>,
     candidates: Vec<TermId>,
     chains: HashMap<(TermId, TermId), (u32, u32)>,
+    readings: ReadingsCache,
 }
 
 impl Buffers {
+    /// Empty buffers for a grammar of `terminals` terminals.
+    fn new(terminals: usize) -> Buffers {
+        Buffers {
+            text: Vec::new(),
+            tokens: Vec::new(),
+            budgets: Vec::new(),
+            candidates: Vec::new(),
+            chains: HashMap::default(),
+            readings: ReadingsCache::new(terminals),
+        }
+    }
+
     /// Put these buffers in `slot` when they have room for more text than
     /// the ones there, handing back whichever set is not kept.
     fn offer(self, slot: &mut Option<Buffers>) -> Option<Buffers> {
@@ -227,21 +236,32 @@ struct ScansScratch {
 /// by the text's hash.
 type Readings = HashTable<Remembered>;
 
-/// What the lexers found in one text, which lies at `start..end` of the
-/// cache's `texts`, with the text's hash, so that the table grows
-/// without hashing its texts again.
+/// One text remembered, which lies at `start..end` of the cache's
+/// `texts`, with the text's hash, so that the table grows without
+/// hashing its texts again, and where in the cache's `findings` what
+/// the lexers found in it is.
 struct Remembered {
     hash: u64,
     start: usize,
     end: usize,
-    scans: Arc<TokenScans>,
+    scans: usize,
 }
 
+/// What the lexers found in each distinct token text drawn so far, by
+/// terminal, so that a keyword, an operator or a stretch of whitespace
+/// drawn again, in the same string or a later one, is lexed once. A
+/// generation's own (see [`Buffers`]), so that its tokens refer to the
+/// findings by index (see [`Token::scans`]) and the cache is emptied
+/// only between one draw and the next, when no token does (see
+/// [`ReadingsCache::forget_when_full`]).
 struct ReadingsCache {
     by_terminal: Vec<Readings>,
     /// The remembered texts, one after another, so that remembering a
     /// text allocates nothing of its own.
     texts: Vec<char>,
+    /// What the lexers found in each remembered text, one after another
+    /// likewise.
+    findings: Vec<TokenScans>,
     len: usize,
 }
 
@@ -260,33 +280,52 @@ fn text_hash(text: &[char]) -> u64 {
 }
 
 impl ReadingsCache {
-    /// What was remembered of `text`, whose [`text_hash`] is `hash`, as
-    /// a token of terminal `id`.
-    fn find(&self, id: TermId, hash: u64, text: &[char]) -> Option<&Arc<TokenScans>> {
-        let texts = &self.texts;
-        self.by_terminal[id]
-            .find(hash, |held| texts[held.start..held.end] == *text)
-            .map(|held| &held.scans)
+    /// An empty cache for a grammar of `terminals` terminals.
+    fn new(terminals: usize) -> ReadingsCache {
+        ReadingsCache {
+            by_terminal: (0..terminals).map(|_| HashTable::new()).collect(),
+            texts: Vec::new(),
+            findings: Vec::new(),
+            len: 0,
+        }
     }
 
-    /// Remember `scans` for `text`, whose [`text_hash`] is `hash`, as a
-    /// token of terminal `id`, in place of what another thread
-    /// remembered for it meanwhile, if anything, forgetting everything
-    /// first when the cache is full.
-    fn remember(&mut self, id: TermId, hash: u64, text: &[char], scans: &Arc<TokenScans>) {
+    /// Forget everything when the cache holds [`READINGS_CAPACITY`]
+    /// texts or more, for a draw about to start, while no token refers
+    /// to the findings.
+    fn forget_when_full(&mut self) {
         if self.len >= READINGS_CAPACITY {
             self.by_terminal.iter_mut().for_each(HashTable::clear);
             self.texts.clear();
+            self.findings.clear();
             self.len = 0;
         }
+    }
+
+    /// Where in `findings` what was remembered of `text`, whose
+    /// [`text_hash`] is `hash`, as a token of terminal `id` is.
+    fn find(&self, id: TermId, hash: u64, text: &[char]) -> Option<usize> {
+        let texts = &self.texts;
+        self.by_terminal[id]
+            .find(hash, |held| texts[held.start..held.end] == *text)
+            .map(|held| held.scans)
+    }
+
+    /// Remember `scans` for `text`, whose [`text_hash`] is `hash`, as a
+    /// token of terminal `id`, in place of what was remembered for it
+    /// before, if anything: where in `findings` it is.
+    fn remember(&mut self, id: TermId, hash: u64, text: &[char], scans: TokenScans) -> usize {
         let Self {
             by_terminal,
             texts,
+            findings,
             len,
         } = self;
+        let at = findings.len();
+        findings.push(scans);
         let eq = |held: &Remembered| texts[held.start..held.end] == *text;
         match by_terminal[id].entry(hash, eq, |held| held.hash) {
-            Entry::Occupied(mut held) => held.get_mut().scans = Arc::clone(scans),
+            Entry::Occupied(mut held) => held.get_mut().scans = at,
             Entry::Vacant(slot) => {
                 let start = texts.len();
                 texts.extend_from_slice(text);
@@ -294,11 +333,56 @@ impl ReadingsCache {
                     hash,
                     start,
                     end: texts.len(),
-                    scans: Arc::clone(scans),
+                    scans: at,
                 });
                 *len += 1;
             }
         }
+        at
+    }
+
+    /// The scans and reading of a token of terminal `id` with `text`,
+    /// from the ones remembered when the text was drawn before, else
+    /// computed for `spec` (with `own` for the terminal's own scan when
+    /// the caller already has it) and remembered: where in `findings`
+    /// they are.
+    fn read_token(
+        &mut self,
+        spec: &GrammarSpec,
+        id: TermId,
+        text: &[char],
+        own: Option<Scan>,
+    ) -> usize {
+        match self.recall(id, text) {
+            Ok(scans) => scans,
+            Err(hash) => self.learn(spec, id, hash, text, own),
+        }
+    }
+
+    /// Where in `findings` the scans and reading remembered for a token
+    /// of terminal `id` with `text` from when the text was drawn before
+    /// are, or, when it was not, the text's hash, for
+    /// [`ReadingsCache::learn`].
+    fn recall(&self, id: TermId, text: &[char]) -> Result<usize, u64> {
+        let hash = text_hash(text);
+        self.find(id, hash, text).ok_or(hash)
+    }
+
+    /// Compute, for `spec`, the scans and reading of a token of terminal
+    /// `id` with `text`, whose [`text_hash`] is `hash` and which
+    /// [`ReadingsCache::recall`] found nothing for, with `own` for the
+    /// terminal's own scan when the caller already has it, and remember
+    /// them: where in `findings` they are.
+    fn learn(
+        &mut self,
+        spec: &GrammarSpec,
+        id: TermId,
+        hash: u64,
+        text: &[char],
+        own: Option<Scan>,
+    ) -> usize {
+        let scans = spec.scan_token(id, text, own);
+        self.remember(id, hash, text, scans)
     }
 }
 
@@ -377,7 +461,6 @@ impl GrammarSpec {
             .map(|rule| AltClasses::of(&rule.alternatives))
             .collect();
         let group_classes = group_classes(&analysis);
-        let terminals_len = terminals.len();
         Ok(GrammarSpec {
             analysis,
             terminals,
@@ -392,45 +475,9 @@ impl GrammarSpec {
             group_classes,
             max_size: options.max_size,
             max_depth: options.max_depth,
-            readings: Mutex::new(ReadingsCache {
-                by_terminal: (0..terminals_len).map(|_| HashTable::new()).collect(),
-                texts: Vec::new(),
-                len: 0,
-            }),
             scratch: Mutex::new(ScansScratch::default()),
             buffers: Mutex::new(None),
         })
-    }
-
-    /// The scans and reading of a token of terminal `id` with `text`,
-    /// from the ones remembered when the text was drawn before, else
-    /// computed (with `own` for the terminal's own scan when the caller
-    /// already has it) and remembered.
-    fn read_token(&self, id: TermId, text: &[char], own: Option<Scan>) -> Arc<TokenScans> {
-        self.recall(id, text)
-            .unwrap_or_else(|hash| self.learn(id, hash, text, own))
-    }
-
-    /// The scans and reading remembered for a token of terminal `id`
-    /// with `text` from when the text was drawn before, or, when it was
-    /// not, the text's hash, for [`GrammarSpec::learn`].
-    fn recall(&self, id: TermId, text: &[char]) -> Result<Arc<TokenScans>, u64> {
-        let hash = text_hash(text);
-        match self.readings.lock().find(id, hash, text) {
-            Some(found) => Ok(Arc::clone(found)),
-            None => Err(hash),
-        }
-    }
-
-    /// Compute the scans and reading of a token of terminal `id` with
-    /// `text`, whose [`text_hash`] is `hash` and which
-    /// [`GrammarSpec::recall`] found nothing for, with `own` for the
-    /// terminal's own scan when the caller already has it, and remember
-    /// them.
-    fn learn(&self, id: TermId, hash: u64, text: &[char], own: Option<Scan>) -> Arc<TokenScans> {
-        let scans = Arc::new(self.scan_token(id, text, own));
-        self.readings.lock().remember(id, hash, text, &scans);
-        scans
     }
 
     /// The smallest string the grammar can produce, in characters.
@@ -460,8 +507,8 @@ impl GrammarSpec {
     /// token: of its own type, or for a token the grammar needs, of
     /// another type (an ignorable read as something the parser would
     /// see is not skipped, see [`GrammarSpec::basic_fit`]).
-    fn single(&self, token: &Token) -> bool {
-        match token.reading() {
+    fn single(&self, token: &Token, findings: &[TokenScans]) -> bool {
+        match token.reading(findings) {
             Reading::Itself => true,
             Reading::Tokens(read) => read.len() == 1 && !self.is_ignore(token.id),
             Reading::Ignorables | Reading::Opaque => false,
@@ -586,8 +633,9 @@ impl GrammarSpec {
     /// all of a needed token. A pattern too involved to match is given
     /// the benefit of the doubt. Where a token starts, its own pattern
     /// is not matched again: what it found on the token's text alone
-    /// (see [`TokenScans::own`]) is carried over the text after it.
-    fn scans(&self, text: &[char], tokens: &[Token]) -> bool {
+    /// (see [`TokenScans::own`], in `findings`) is carried over the text
+    /// after it.
+    fn scans(&self, text: &[char], tokens: &[Token], findings: &[TokenScans]) -> bool {
         let mut scratch = self.scratch.lock();
         let ScansScratch {
             bounds,
@@ -640,7 +688,7 @@ impl GrammarSpec {
                     None => {
                         let lexed = starting
                             .filter(|&s| s == i)
-                            .and_then(|s| carried(&tokens[s].scans.own, s))
+                            .and_then(|s| carried(&findings[tokens[s].scans].own, s))
                             .unwrap_or_else(|| self.lexer.match_terminal(id, text, p));
                         tried.push((id, lexed));
                         lexed
@@ -660,7 +708,7 @@ impl GrammarSpec {
             for &ignore in &self.ignore {
                 let lexed = starting
                     .filter(|&s| tokens[s].id == ignore)
-                    .and_then(|s| carried(&tokens[s].scans.own, s))
+                    .and_then(|s| carried(&findings[tokens[s].scans].own, s))
                     .unwrap_or_else(|| self.lexer.match_terminal(ignore, text, p));
                 match lexed {
                     Lexed::Token(_, got) if got > p && within(got, k) => reachable[got] = true,
@@ -680,15 +728,16 @@ impl GrammarSpec {
     /// (see [`GrammarSpec::settled`]), otherwise [`Fit::Wrong`] when the
     /// dynamic lexer does not read it as `tokens` at all (see
     /// [`GrammarSpec::scans`]), [`Fit::Exact`] when the basic lexer reads
-    /// it as `tokens` too, and [`Fit::Retyped`] in between.
-    fn fit(&self, text: &[char], tokens: &[Token]) -> Fit {
-        if self.settled(text, tokens) {
+    /// it as `tokens` too, and [`Fit::Retyped`] in between. `findings`
+    /// is what the tokens' [`Token::scans`] index, here and in each check.
+    fn fit(&self, text: &[char], tokens: &[Token], findings: &[TokenScans]) -> Fit {
+        if self.settled(text, tokens, findings) {
             return Fit::Settled;
         }
-        if !self.scans(text, tokens) {
+        if !self.scans(text, tokens, findings) {
             return Fit::Wrong;
         }
-        self.basic_fit(text, tokens).max(Fit::Retyped)
+        self.basic_fit(text, tokens, findings).max(Fit::Retyped)
     }
 
     /// Whether what the lexers found at the start of each token's text on
@@ -700,28 +749,27 @@ impl GrammarSpec {
     /// text before it, and what the end of a token's text left open the
     /// text after it settles without changing what either lexer reads
     /// (see [`Lexer::settle`]).
-    fn settled(&self, text: &[char], tokens: &[Token]) -> bool {
+    fn settled(&self, text: &[char], tokens: &[Token], findings: &[TokenScans]) -> bool {
         let mut start = 0;
         for (i, token) in tokens.iter().enumerate() {
             let len = token.len();
-            let Lexed::Token(read, _) = token.scans.basic.lexed else {
+            let scans = &findings[token.scans];
+            let Lexed::Token(read, _) = scans.basic.lexed else {
                 return false;
             };
-            if !self.single(token)
-                || !token.whole()
-                || (i > 0 && (token.scans.own.anchored || token.scans.basic.anchored))
+            if !self.single(token, findings)
+                || !token.whole(findings)
+                || (i > 0 && (scans.own.anchored || scans.basic.anchored))
             {
                 return false;
             }
             if i + 1 < tokens.len() {
-                let own = self.lexer.settle(&token.scans.own, text, start, len, false);
+                let own = self.lexer.settle(&scans.own, text, start, len, false);
                 if own != Some(Lexed::Token(token.id, start + len)) {
                     return false;
                 }
-                if !token.scans.basic_follows_own {
-                    let basic = self
-                        .lexer
-                        .settle(&token.scans.basic, text, start, len, true);
+                if !scans.basic_follows_own {
+                    let basic = self.lexer.settle(&scans.basic, text, start, len, true);
                     if basic != Some(Lexed::Token(read, start + len)) {
                         return false;
                     }
@@ -742,14 +790,17 @@ impl GrammarSpec {
     /// but the exact extent is only [`Fit::Retyped`]; anything else that
     /// differs is [`Fit::Wrong`]. A token the lexer cannot read at all
     /// makes the whole check moot.
-    fn basic_fit(&self, text: &[char], tokens: &[Token]) -> Fit {
-        if tokens.iter().any(|t| *t.reading() == Reading::Opaque) {
+    fn basic_fit(&self, text: &[char], tokens: &[Token], findings: &[TokenScans]) -> Fit {
+        if tokens
+            .iter()
+            .any(|t| *t.reading(findings) == Reading::Opaque)
+        {
             return Fit::Exact;
         }
         let mut known = Vec::with_capacity(tokens.len());
         let mut start = 0;
         for token in tokens {
-            known.push((start, token.len(), &token.scans.basic));
+            known.push((start, token.len(), &findings[token.scans].basic));
             start += token.len();
         }
         let mut scratch = self.scratch.lock();
@@ -763,7 +814,7 @@ impl GrammarSpec {
         let mut pos = 0;
         for token in tokens {
             let end = pos + token.len();
-            if !(token.lexable() && self.is_ignore(token.id)) {
+            if !(token.lexable(findings) && self.is_ignore(token.id)) {
                 regions.push((pos, end, token));
             }
             pos = end;
@@ -800,7 +851,7 @@ impl GrammarSpec {
                 }
                 continue;
             }
-            let expected: &[TermId] = match token.reading() {
+            let expected: &[TermId] = match token.reading(findings) {
                 Reading::Tokens(expected) => expected,
                 _ => core::slice::from_ref(&token.id),
             };
@@ -896,14 +947,17 @@ struct Token {
     /// (`x?`, `[x]`, `x*`), so a lexer that runs it into its neighbour
     /// or skips it leaves a string the parser still accepts.
     droppable: bool,
-    scans: Arc<TokenScans>,
+    /// Where in the generation's findings (see
+    /// [`ReadingsCache::findings`]) what the lexers found in its text is.
+    scans: usize,
 }
 
-/// What the lexers found in a token's text on its own, kept with the
-/// token (and remembered for the text, see [`GrammarSpec::read_token`])
-/// so that the checks on the longer texts the token is part of (its fit
+/// What the lexers found in a token's text on its own, kept for the
+/// token (see [`Token::scans`]) and remembered for the text (see
+/// [`ReadingsCache::read_token`]) so that the checks on the longer texts the token is part of (its fit
 /// with its neighbours, the finished string) need not match it again
 /// where the finding carries over (see [`Lexer::extend`]).
+#[derive(Clone)]
 struct TokenScans {
     /// The token's own terminal matched at its start.
     own: Scan,
@@ -935,20 +989,24 @@ impl Token {
         self.end - self.start
     }
 
-    /// How the basic lexer reads the token's text on its own.
-    fn reading(&self) -> &Reading {
-        &self.scans.reading
+    /// How the basic lexer reads the token's text on its own, from
+    /// `findings`, which its `scans` index.
+    fn reading<'a>(&self, findings: &'a [TokenScans]) -> &'a Reading {
+        &findings[self.scans].reading
     }
 
     /// Whether the basic lexer reads the token back as itself on its own
     /// (or, for an ignorable, as nothing but ignorable tokens).
-    fn lexable(&self) -> bool {
-        matches!(self.reading(), Reading::Itself | Reading::Ignorables)
+    fn lexable(&self, findings: &[TokenScans]) -> bool {
+        matches!(
+            self.reading(findings),
+            Reading::Itself | Reading::Ignorables
+        )
     }
 
     /// Whether the token's own pattern takes all of its text.
-    fn whole(&self) -> bool {
-        self.scans.own.lexed == Lexed::Token(self.id, self.len())
+    fn whole(&self, findings: &[TokenScans]) -> bool {
+        findings[self.scans].own.lexed == Lexed::Token(self.id, self.len())
     }
 }
 
@@ -987,12 +1045,22 @@ struct Generation<'s> {
     /// (see [`Generation::ignore_chain`]) has failed and succeeded at
     /// it, by the pair of terminals.
     chains: HashMap<(TermId, TermId), (u32, u32)>,
+    /// What the lexers found in each distinct token text drawn, by this
+    /// generation and the ones before it that worked in these buffers
+    /// (see [`ReadingsCache`]); the tokens' [`Token::scans`] index its
+    /// findings.
+    readings: ReadingsCache,
 }
 
 impl<'s> Generation<'s> {
     /// A generation working in the buffers `spec` has to spare.
     fn new(spec: &'s GrammarSpec, ignore_rate: f64) -> Generation<'s> {
-        let buffers = spec.buffers.lock().take().unwrap_or_default();
+        let mut buffers = spec
+            .buffers
+            .lock()
+            .take()
+            .unwrap_or_else(|| Buffers::new(spec.terminals.len()));
+        buffers.readings.forget_when_full();
         Generation {
             spec,
             text: buffers.text,
@@ -1002,10 +1070,11 @@ impl<'s> Generation<'s> {
             budgets: buffers.budgets,
             candidates: buffers.candidates,
             chains: buffers.chains,
+            readings: buffers.readings,
         }
     }
 
-    /// Hand the buffers back to the spec, emptied.
+    /// Hand the buffers back to the spec, emptied but for the readings.
     fn recycle(self) {
         let Generation {
             spec,
@@ -1014,6 +1083,7 @@ impl<'s> Generation<'s> {
             mut budgets,
             mut candidates,
             mut chains,
+            readings,
             ..
         } = self;
         text.clear();
@@ -1027,6 +1097,7 @@ impl<'s> Generation<'s> {
             budgets,
             candidates,
             chains,
+            readings,
         };
         let unkept = buffers.offer(&mut spec.buffers.lock());
         drop(unkept);
@@ -1041,8 +1112,9 @@ impl<'s> Generation<'s> {
     }
 
     /// The token of terminal `id` whose text is the string from `start`
-    /// on, with `scans` what the lexers find in it.
-    fn token(&self, id: TermId, start: usize, scans: Arc<TokenScans>) -> Token {
+    /// on, with `scans` where what the lexers find in it is (see
+    /// [`Token::scans`]).
+    fn token(&self, id: TermId, start: usize, scans: usize) -> Token {
         Token {
             id,
             start,
@@ -1584,13 +1656,15 @@ impl Generation<'_> {
     /// the basic lexer would not read it back as that terminal, or from
     /// its explicit generator as it comes. A text drawn before is not
     /// matched again: what was remembered of it (see
-    /// [`GrammarSpec::recall`]) says how much of it the pattern takes.
+    /// [`ReadingsCache::recall`]) says how much of it the pattern takes.
     fn draw_terminal(&mut self, ntc: &mut NativeTestCase, id: TermId) -> Result<Token, Step> {
         let start = self.text.len();
         match &self.spec.terminals[id] {
             TerminalGen::Explicit(spec) => {
                 generate_string_into(ntc, spec, &mut self.text)?;
-                let scans = self.spec.read_token(id, &self.text[start..], None);
+                let scans = self
+                    .readings
+                    .read_token(self.spec, id, &self.text[start..], None);
                 Ok(self.token(id, start, scans))
             }
             TerminalGen::Pattern(spec) => {
@@ -1609,21 +1683,23 @@ impl Generation<'_> {
                     }
                     let drawn = &self.text[start..];
                     let len = drawn.len();
-                    let (end, scans) = match self.spec.recall(id, drawn) {
-                        Ok(scans) => (taken(&scans.own, len), Some(scans)),
+                    let (end, scans) = match self.readings.recall(id, drawn) {
+                        Ok(scans) => (taken(&self.readings.findings[scans].own, len), Some(scans)),
                         Err(hash) => {
                             let (end, own) = self.spec.whole(id, drawn);
-                            let scans =
-                                (end == len).then(|| self.spec.learn(id, hash, drawn, Some(own)));
+                            let scans = (end == len).then(|| {
+                                self.readings.learn(self.spec, id, hash, drawn, Some(own))
+                            });
                             (end, scans)
                         }
                     };
                     self.text.truncate(start + end);
-                    let scans = scans
-                        .filter(|_| end == len)
-                        .unwrap_or_else(|| self.spec.read_token(id, &self.text[start..], None));
+                    let scans = scans.filter(|_| end == len).unwrap_or_else(|| {
+                        self.readings
+                            .read_token(self.spec, id, &self.text[start..], None)
+                    });
                     let token = self.token(id, start, scans);
-                    let accept = token.lexable() || attempt > LEX_RETRIES;
+                    let accept = token.lexable(&self.readings.findings) || attempt > LEX_RETRIES;
                     ntc.stop_span(!accept);
                     if accept {
                         return Ok(token);
@@ -1708,7 +1784,8 @@ impl Generation<'_> {
         while *draws > 0 {
             let fitting = |this: &Self, id: TermId| {
                 this.before(pending).is_none_or(|prev| {
-                    this.spec.lexer.can_stop(&prev.scans.own, id) && this.hopeful(prev.id, id)
+                    let own = &this.readings.findings[prev.scans].own;
+                    this.spec.lexer.can_stop(own, id) && this.hopeful(prev.id, id)
                 })
             };
             let candidates = || {
@@ -1804,7 +1881,7 @@ impl Generation<'_> {
         }
         if depth < IGNORE_CHAIN && *draws > 0 {
             let (text, tokens) = self.window(from, pending);
-            if self.spec.fit(text, tokens) > Fit::Wrong {
+            if self.spec.fit(text, tokens, &self.readings.findings) > Fit::Wrong {
                 let fit = self.ignore_chain(ntc, from, pending, depth + 1, draws)?;
                 if fit > Fit::Wrong {
                     return Ok(Placement::Placed(fit));
@@ -1814,7 +1891,7 @@ impl Generation<'_> {
         let token = self.remove(pending);
         Ok(Placement::Rejected {
             id: token.id,
-            lexable: token.lexable(),
+            lexable: token.lexable(&self.readings.findings),
             oversize: false,
         })
     }
@@ -1845,7 +1922,9 @@ impl Generation<'_> {
             self.text.truncate(drawn);
             return Ok(None);
         }
-        let scans = self.spec.read_token(id, &self.text[drawn..], None);
+        let scans = self
+            .readings
+            .read_token(self.spec, id, &self.text[drawn..], None);
         self.text[start..].rotate_left(drawn - start);
         for later in &mut self.tokens[at..] {
             later.start += len;
@@ -1860,7 +1939,7 @@ impl Generation<'_> {
         };
         self.tokens.insert(at, token);
         let (text, tokens) = self.window(from, 0);
-        Ok(Some(self.spec.fit(text, tokens)))
+        Ok(Some(self.spec.fit(text, tokens, &self.readings.findings)))
     }
 
     /// Take the token before the last `pending` out of the string.
@@ -1891,13 +1970,13 @@ impl Generation<'_> {
         if self.spec.ignore.is_empty() {
             if let Some(from) = adjacent {
                 let (text, tokens) = self.window(from, 0);
-                self.unsettled |= !self.spec.settled(text, tokens);
+                self.unsettled |= !self.spec.settled(text, tokens, &self.readings.findings);
             }
             return Ok(());
         }
         let pair = adjacent.map_or(Fit::Settled, |from| {
             let (text, tokens) = self.window(from, 0);
-            self.spec.fit(text, tokens)
+            self.spec.fit(text, tokens, &self.readings.findings)
         });
         let forced = if pair < Fit::Exact { Some(true) } else { None };
         if ntc.weighted(self.ignore_rate, forced)? && self.insert_ignore(ntc, pending)? {
@@ -1914,7 +1993,11 @@ impl Generation<'_> {
     fn run(&mut self, ntc: &mut NativeTestCase, budget: u64) -> Result<(), Step> {
         self.rule(ntc, self.spec.start, budget, 0)?;
         self.maybe_ignore(ntc, 0)?;
-        if !self.unsettled || self.spec.scans(&self.text, &self.tokens) {
+        if !self.unsettled
+            || self
+                .spec
+                .scans(&self.text, &self.tokens, &self.readings.findings)
+        {
             Ok(())
         } else {
             Err(Step::Misread)
