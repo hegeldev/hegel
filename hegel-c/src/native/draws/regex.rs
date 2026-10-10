@@ -642,7 +642,12 @@ fn generate_op(
 /// looked up once and every repetition emits from it, drawing exactly
 /// what [`generate_op`] on the item would draw at each repetition without
 /// its lookup. The first repetition is decided before the set is looked
-/// up, as the generic loop would, so a repeat of nothing never builds it.
+/// up, as the generic loop would, so a repeat of nothing never builds it,
+/// and an empty set marks the test case invalid where its first emission
+/// would have. The set's form is settled once too, and the loop over the
+/// repetitions is kept in a frame of its own, so that each repetition
+/// costs its draws and little else.
+#[inline(never)]
 fn repeat_in(
     ntc: &mut NativeTestCase,
     ms: &mut ManyState,
@@ -655,11 +660,31 @@ fn repeat_in(
         return Ok(());
     }
     let mut cache = state.in_cache.lock();
-    let set = in_set(&mut cache, items, state.flags, alphabet)?;
-    loop {
-        emit_from_set(ntc, set, out)?;
-        if !many_more(ntc, ms)? {
-            return Ok(());
+    match in_set(&mut cache, items, state.flags, alphabet)? {
+        InSet::Listed(chars) => {
+            if chars.is_empty() {
+                return Err(mark_invalid(ntc));
+            }
+            let n = chars.len() as u64;
+            loop {
+                let idx = draw_char_index(ntc, n)?;
+                out.push(chars[idx as usize]);
+                if !many_more(ntc, ms)? {
+                    return Ok(());
+                }
+            }
+        }
+        InSet::Complement(complement) => {
+            if complement.len == 0 {
+                return Err(mark_invalid(ntc));
+            }
+            loop {
+                let idx = draw_char_index(ntc, complement.len)?;
+                out.push(complement.get(idx)?);
+                if !many_more(ntc, ms)? {
+                    return Ok(());
+                }
+            }
         }
     }
 }
@@ -1071,6 +1096,7 @@ fn emit_from_set(
 
 /// Draw an index into a character set of `n` (non-zero) characters, biased
 /// towards the first 256 when the set is larger than that.
+#[inline]
 fn draw_char_index(ntc: &mut NativeTestCase, n: u64) -> Result<u64, EngineError> {
     if n > 256 && ntc.weighted(0.8, None)? {
         ntc.draw_integer_uniform(0, 255)

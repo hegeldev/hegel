@@ -1321,13 +1321,17 @@ fn a_repeated_class_draws_what_repeating_it_in_a_group_would() {
             other => panic!("not a single repeat: {other:?}"),
         }
     }
+    let listed = |c: char| c == 'a' || c == 'b';
+    let complemented = |c: char| c != 'a' && c != 'b';
     let mut empty = 0;
     let mut filled = 0;
-    for (direct, grouped) in [
-        ("[ab]*", "([ab])*"),
-        ("[ab]+?", "([ab])+?"),
-        ("[ab]{3}", "([ab]){3}"),
-        ("[ab]*+", "([ab])*+"),
+    for (direct, grouped, allowed) in [
+        ("[ab]*", "([ab])*", &listed as &dyn Fn(char) -> bool),
+        ("[ab]+?", "([ab])+?", &listed),
+        ("[ab]{3}", "([ab]){3}", &listed),
+        ("[ab]*+", "([ab])*+", &listed),
+        ("[^ab]*", "([^ab])*", &complemented),
+        ("[^ab]{2,4}", "([^ab]){2,4}", &complemented),
     ] {
         let direct = CompiledRegex::compile(direct, None).unwrap();
         let grouped = CompiledRegex::compile(grouped, None).unwrap();
@@ -1342,7 +1346,7 @@ fn a_repeated_class_draws_what_repeating_it_in_a_group_would() {
             let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
             let other = generate_regex(&mut ntc, &grouped, true).unwrap();
             assert_eq!(one, other, "seed {seed}");
-            assert!(one.chars().all(|c| c == 'a' || c == 'b'), "{one:?}");
+            assert!(one.chars().all(allowed), "{one:?}");
             if one.is_empty() {
                 empty += 1;
             } else {
@@ -1355,19 +1359,39 @@ fn a_repeated_class_draws_what_repeating_it_in_a_group_would() {
 
 #[test]
 fn a_repeated_empty_class_marks_invalid() {
-    let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::Integer(BigInt::from(0))], None, None);
-    let cache = Mutex::new(HashMap::default());
-    let char_cache = Mutex::new(HashMap::default());
-    let mut state = ignorecase_state(&cache, &char_cache);
     let alphabet = Some(IntervalSet::new(vec![('x' as u32, 'x' as u32)]).unwrap());
-    let op = OpCode::MaxRepeat {
-        min: 1,
-        max: 1,
-        item: sub(vec![OpCode::In(vec![SetItem::Literal('a' as u32)])]),
-    };
-    let mut out = Vec::new();
-    let result = generate_op(&mut ntc, &op, &mut state, &alphabet, &mut out);
-    assert!(result.is_err());
-    assert_eq!(ntc.status(), Some(Status::Invalid));
-    assert!(out.is_empty());
+    for (items, alphabet, complemented) in [
+        (vec![SetItem::Literal('a' as u32)], &alphabet, false),
+        (
+            vec![SetItem::Negate, SetItem::Range(0, 0xFFFF)],
+            &None,
+            true,
+        ),
+    ] {
+        let mut ntc =
+            NativeTestCase::for_choices(&[ChoiceValue::Integer(BigInt::from(0))], None, None);
+        let cache = Mutex::new(HashMap::default());
+        let char_cache = Mutex::new(HashMap::default());
+        let mut state = ignorecase_state(&cache, &char_cache);
+        let op = OpCode::MaxRepeat {
+            min: 1,
+            max: 1,
+            item: sub(vec![OpCode::In(items)]),
+        };
+        let mut out = Vec::new();
+        let result = generate_op(&mut ntc, &op, &mut state, alphabet, &mut out);
+        assert!(result.is_err());
+        assert_eq!(ntc.status(), Some(Status::Invalid));
+        assert!(out.is_empty());
+        let cache = cache.lock();
+        let set = cache.values().next().unwrap();
+        assert_eq!(
+            matches!(set, InSet::Complement(complement) if complement.len == 0),
+            complemented
+        );
+        assert_eq!(
+            matches!(set, InSet::Listed(chars) if chars.is_empty()),
+            !complemented
+        );
+    }
 }
