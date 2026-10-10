@@ -324,26 +324,47 @@ static INTEGERS_DISTRIBUTION: Lazy<
     )
 });
 
+/// The CDF of [`INTEGERS_DISTRIBUTION`] half a step either side of
+/// `[min_value, max_value]`: the window a draw from that range inverts.
+fn distribution_window(min_value: i128, max_value: i128) -> Result<(f64, f64), InternalError> {
+    let dist = INTEGERS_DISTRIBUTION.as_ref().map_err(Clone::clone)?;
+    let lo = dist.cdf(i128_to_f64(min_value) - 0.5)?;
+    let hi = dist.cdf(i128_to_f64(max_value) + 0.5)?;
+    Ok((lo, hi))
+}
+
 /// Draw an integer in `[min_value, max_value]` from
-/// [`INTEGERS_DISTRIBUTION`] restricted to that range.
+/// [`INTEGERS_DISTRIBUTION`] restricted to that range, given the range's
+/// [`distribution_window`].
 ///
 /// Falls back to a plain uniform draw when the CDF window across the
 /// requested range is too narrow for inverse-CDF sampling to be stable.
 /// Callers must ensure `min_value < max_value`; the `min == max` early
 /// return is handled at the [`biased_integer_sample`] call site.
+fn sample_distribution_window(
+    min_value: i128,
+    max_value: i128,
+    (lo, hi): (f64, f64),
+    rng: &mut EngineRng,
+) -> Result<i128, InternalError> {
+    if hi - lo < 1e-13 {
+        return Ok(rng.random_range(min_value..=max_value));
+    }
+    let dist = INTEGERS_DISTRIBUTION.as_ref().map_err(Clone::clone)?;
+    let p = (lo + rng.random::<f64>() * (hi - lo)).max(f64::MIN_POSITIVE);
+    Ok(f64_to_i128(libm::round(dist.inverse_cdf(p)?)).clamp(min_value, max_value))
+}
+
+/// Draw an integer in `[min_value, max_value]` from
+/// [`INTEGERS_DISTRIBUTION`] restricted to that range: the range's
+/// [`distribution_window`], sampled by [`sample_distribution_window`].
 fn integer_sample_from_distribution(
     min_value: i128,
     max_value: i128,
     rng: &mut EngineRng,
 ) -> Result<i128, InternalError> {
-    let dist = INTEGERS_DISTRIBUTION.as_ref().map_err(Clone::clone)?;
-    let lo = dist.cdf(i128_to_f64(min_value) - 0.5)?;
-    let hi = dist.cdf(i128_to_f64(max_value) + 0.5)?;
-    if hi - lo < 1e-13 {
-        return Ok(rng.random_range(min_value..=max_value));
-    }
-    let p = (lo + rng.random::<f64>() * (hi - lo)).max(f64::MIN_POSITIVE);
-    Ok(f64_to_i128(libm::round(dist.inverse_cdf(p)?)).clamp(min_value, max_value))
+    let window = distribution_window(min_value, max_value)?;
+    sample_distribution_window(min_value, max_value, window, rng)
 }
 
 /// `v as f64`, converted from `i64` when `v` fits one. The two conversions
@@ -778,49 +799,141 @@ pub(crate) fn biased_integer_sample(
     })
 }
 
-/// [`biased_i128_sample`] for a range within `i64`. Every category of
-/// that sampler answers a value inside the range, so the result narrows
-/// exactly.
+/// [`biased_i128_sample`] for a range within `i64`, with `narrow` the
+/// range's [`NarrowRange`] when [`is_narrow`] says it has one. Every
+/// category of that sampler answers a value inside the range, so the
+/// result narrows exactly.
 fn biased_i64_sample(
     min_value: i64,
     max_value: i64,
+    narrow: Option<&NarrowRange>,
     rng: &mut EngineRng,
     params: IntegerGenerationParameters,
 ) -> Result<i64, InternalError> {
-    let v = biased_i128_sample(i128::from(min_value), i128::from(max_value), rng, params)?;
+    let v = match narrow {
+        Some(range) => range.sample(rng)?,
+        None => biased_i128_sample(i128::from(min_value), i128::from(max_value), rng, params)?,
+    };
     Ok(hegel_internal_unwrap!(
         i64::try_from(v).ok(),
         "biased_i64_sample: sampled {v} outside [{min_value}, {max_value}]"
     ))
 }
 
-/// Narrow-range sampler: the original nasty-pool + distribution behaviour,
-/// unchanged, so ranges below [`CURATED_MIN_WIDTH`] keep their exact previous
-/// generation and shrink behaviour.
+/// Whether `[min_value, max_value]` holds more than one value and is
+/// narrower than [`CURATED_MIN_WIDTH`]: the ranges [`biased_i128_sample`]
+/// hands to the narrow-range sampler, [`NarrowRange`]. A width that
+/// overflows `i128` is unambiguously wide.
+fn is_narrow(min_value: i128, max_value: i128) -> bool {
+    min_value < max_value
+        && max_value
+            .checked_sub(min_value)
+            .is_some_and(|w| (w as u128) < CURATED_MIN_WIDTH)
+}
+
+/// What the narrow-range sampler works out from a range's bounds alone:
+/// the run of [`SORTED_NASTY_POOL`] inside the range and whether the
+/// bounds themselves are missing from it, the chance of drawing one of
+/// those boundary values, and the range's [`distribution_window`]. Worked
+/// out once per range a test case draws from (see [`NarrowRanges`])
+/// rather than at every draw, since a grammar's regex terminals draw from
+/// the same few ranges thousands of times.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct NarrowRange {
+    min_value: i128,
+    max_value: i128,
+    /// Where the pool's values inside the range start.
+    pool_start: usize,
+    /// Whether `min_value` is missing from the pool, so counts on its own.
+    need_min: bool,
+    /// Whether `max_value` is missing from the pool, so counts on its own.
+    need_max: bool,
+    /// The boundary values to choose from: the pool's run plus the bounds
+    /// it lacks.
+    count: usize,
+    /// The chance a draw answers a boundary value.
+    threshold: f64,
+    window: (f64, f64),
+}
+
+impl NarrowRange {
+    /// Works out `[min_value, max_value]`, a range [`is_narrow`] admits.
+    fn new(min_value: i128, max_value: i128) -> Result<Self, InternalError> {
+        let pool = &*SORTED_NASTY_POOL;
+        let lo = pool.partition_point(|&v| v < min_value);
+        let hi = pool.partition_point(|&v| v <= max_value);
+        let static_slice = &pool[lo..hi];
+        let need_min = static_slice.first() != Some(&min_value);
+        let need_max = static_slice.last() != Some(&max_value);
+        let count = static_slice.len() + (need_min as usize) + (need_max as usize);
+        Ok(NarrowRange {
+            min_value,
+            max_value,
+            pool_start: lo,
+            need_min,
+            need_max,
+            count,
+            threshold: (count as f64 * BOUNDARY_PROBABILITY).min(0.5),
+            window: distribution_window(min_value, max_value)?,
+        })
+    }
+
+    /// Narrow-range sampler: the original nasty-pool + distribution
+    /// behaviour, unchanged, so ranges below [`CURATED_MIN_WIDTH`] keep
+    /// their exact previous generation and shrink behaviour.
+    fn sample(&self, rng: &mut EngineRng) -> Result<i128, InternalError> {
+        if rng.random::<f64>() < self.threshold {
+            let idx = rng.random_range(0..self.count);
+            Ok(if self.need_min && idx == 0 {
+                self.min_value
+            } else if self.need_max && idx == self.count - 1 {
+                self.max_value
+            } else {
+                SORTED_NASTY_POOL[self.pool_start + idx - self.need_min as usize]
+            })
+        } else {
+            sample_distribution_window(self.min_value, self.max_value, self.window, rng)
+        }
+    }
+}
+
+/// [`NarrowRange::sample`] for a range worked out on the spot.
 fn narrow_nasty_sample(
     min_value: i128,
     max_value: i128,
     rng: &mut EngineRng,
 ) -> Result<i128, InternalError> {
-    let pool = &*SORTED_NASTY_POOL;
-    let lo = pool.partition_point(|&v| v < min_value);
-    let hi = pool.partition_point(|&v| v <= max_value);
-    let static_slice = &pool[lo..hi];
-    let need_min = static_slice.first() != Some(&min_value);
-    let need_max = static_slice.last() != Some(&max_value);
-    let count = static_slice.len() + (need_min as usize) + (need_max as usize);
-    let threshold = (count as f64 * BOUNDARY_PROBABILITY).min(0.5);
-    if rng.random::<f64>() < threshold {
-        let idx = rng.random_range(0..count);
-        Ok(if need_min && idx == 0 {
-            min_value
-        } else if need_max && idx == count - 1 {
-            max_value
-        } else {
-            static_slice[idx - need_min as usize]
-        })
-    } else {
-        integer_sample_from_distribution(min_value, max_value, rng)
+    NarrowRange::new(min_value, max_value)?.sample(rng)
+}
+
+/// How many bits of a range's mixed bounds pick its slot in
+/// [`NarrowRanges`]; the table holds one slot per value of them.
+const NARROW_RANGE_SLOT_BITS: u32 = 3;
+
+/// The narrow ranges a test case has drawn from lately, each worked out
+/// once: a table with a slot per mix of the bounds, where a range takes
+/// the slot of whatever range it shares it with. An unused slot holds the
+/// default range, whose equal bounds no range [`is_narrow`] admits has.
+#[derive(Debug, Default)]
+struct NarrowRanges([NarrowRange; 1 << NARROW_RANGE_SLOT_BITS]);
+
+impl NarrowRanges {
+    /// The slot for `[min_value, max_value]`.
+    fn slot(min_value: i128, max_value: i128) -> usize {
+        let mixed = (max_value as u64)
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add((min_value as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93));
+        (mixed >> (u64::BITS - NARROW_RANGE_SLOT_BITS)) as usize
+    }
+
+    /// `[min_value, max_value]`, a range [`is_narrow`] admits, worked out
+    /// now unless its slot already holds it.
+    fn get(&mut self, min_value: i128, max_value: i128) -> Result<NarrowRange, InternalError> {
+        let held = &mut self.0[Self::slot(min_value, max_value)];
+        if held.min_value != min_value || held.max_value != max_value {
+            *held = NarrowRange::new(min_value, max_value)?;
+        }
+        Ok(*held)
     }
 }
 
@@ -848,12 +961,7 @@ fn biased_i128_sample(
         return Ok(min_value);
     }
 
-    // `checked_sub` returning `None` means the width overflows `i128`, so the
-    // range is unambiguously wide.
-    let is_wide = max_value
-        .checked_sub(min_value)
-        .is_none_or(|w| w as u128 >= CURATED_MIN_WIDTH);
-    if !is_wide {
+    if is_narrow(min_value, max_value) {
         return narrow_nasty_sample(min_value, max_value, rng);
     }
 
@@ -1820,6 +1928,9 @@ pub struct NativeTestCase {
     /// (`Status::EarlyStop` + `EngineError`). `None` means "no template" —
     /// draws past the prefix go to `rng` or panic, as before.
     trailing_template: Option<ChoiceTemplate>,
+    /// The narrow ranges [`Self::draw_integer_i64`] has drawn from lately,
+    /// worked out once each.
+    narrow_ranges: NarrowRanges,
 }
 
 impl Drop for NativeTestCase {
@@ -2004,6 +2115,7 @@ impl NativeTestCase {
             has_discards: false,
             observer,
             trailing_template,
+            narrow_ranges: NarrowRanges::default(),
         }
     }
 
@@ -2412,11 +2524,19 @@ impl NativeTestCase {
         let kind = IntegerChoice::small(min_value, max_value, 0);
 
         let params = self.family.generation_parameters().integer;
+        let narrow = if is_narrow(i128::from(min_value), i128::from(max_value)) {
+            Some(
+                self.narrow_ranges
+                    .get(i128::from(min_value), i128::from(max_value))?,
+            )
+        } else {
+            None
+        };
         self.draw_integer_as(
             kind,
             |_, n| n.to_i64().filter(|v| (min_value..=max_value).contains(v)),
             |v| BigInt::from(*v),
-            |_, rng| biased_i64_sample(min_value, max_value, rng, params),
+            |_, rng| biased_i64_sample(min_value, max_value, narrow.as_ref(), rng, params),
             |_| true,
         )
     }

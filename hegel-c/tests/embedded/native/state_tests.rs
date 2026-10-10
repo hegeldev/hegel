@@ -3398,7 +3398,9 @@ fn i64_draws_match_the_bigint_draw_choice_for_choice() {
         (0, 10),
         (32, 126),
         (-100, 100),
+        (i64::MAX - 3, i64::MAX),
         (i64::MIN, i64::MAX),
+        (0, 1),
     ] {
         for _ in 0..40 {
             let expected = wide.draw_integer::<i64>(min, max).unwrap();
@@ -3475,7 +3477,16 @@ fn i64_draws_reject_an_inverted_range() {
 
 #[test]
 fn biased_i64_sample_matches_the_i128_sampler() {
-    for (min, max) in [(0, 1), (0, 254), (i64::MIN, i64::MAX), (7, 7)] {
+    for (min, max, narrow) in [
+        (0, 1, true),
+        (0, 254, true),
+        (0, 255, true),
+        (0, 256, false),
+        (i64::MIN, i64::MAX, false),
+        (7, 7, false),
+    ] {
+        assert_eq!(is_narrow(i128::from(min), i128::from(max)), narrow);
+        let range = narrow.then(|| NarrowRange::new(i128::from(min), i128::from(max)).unwrap());
         let mut a = EngineRng::seeded(9);
         let mut b = EngineRng::seeded(9);
         for _ in 0..100 {
@@ -3483,10 +3494,56 @@ fn biased_i64_sample_matches_the_i128_sampler() {
             GenerationParameters::draw(&mut b).unwrap();
             let expected =
                 biased_i128_sample(i128::from(min), i128::from(max), &mut a, params).unwrap();
-            let v = biased_i64_sample(min, max, &mut b, params).unwrap();
+            let v = biased_i64_sample(min, max, range.as_ref(), &mut b, params).unwrap();
             assert_eq!(i128::from(v), expected);
             assert!((min..=max).contains(&v));
         }
+    }
+    assert!(!is_narrow(i128::MIN, i128::MAX));
+}
+
+#[test]
+fn a_test_case_works_out_each_narrow_range_once_until_another_takes_its_slot() {
+    let mut ranges = NarrowRanges::default();
+    let slot = NarrowRanges::slot(0, 1);
+    let first = ranges.get(0, 1).unwrap();
+    assert_eq!(first, NarrowRange::new(0, 1).unwrap());
+    assert_eq!(ranges.0[slot], first);
+    assert_eq!(ranges.get(0, 1).unwrap(), first);
+    assert_eq!(ranges.0[slot], first);
+    let unused = NarrowRange::default();
+    assert_eq!(
+        ranges.0.iter().filter(|held| **held == unused).count(),
+        ranges.0.len() - 1
+    );
+
+    let other = (2..256)
+        .find(|&max| NarrowRanges::slot(0, max) == slot)
+        .unwrap();
+    let second = ranges.get(0, other).unwrap();
+    assert_eq!(second, NarrowRange::new(0, other).unwrap());
+    assert_ne!(second, first);
+    assert_eq!(ranges.0[slot], second);
+    assert_eq!(ranges.get(0, 1).unwrap(), first);
+    assert_eq!(ranges.0[slot], first);
+
+    let distinct = (2..256)
+        .find(|&max| NarrowRanges::slot(0, max) != slot)
+        .unwrap();
+    ranges.get(0, distinct).unwrap();
+    assert_eq!(ranges.0[slot], first);
+    assert_eq!(
+        ranges.0.iter().filter(|held| **held == unused).count(),
+        ranges.0.len() - 2
+    );
+
+    let mut a = EngineRng::seeded(3);
+    let mut b = EngineRng::seeded(3);
+    for _ in 0..50 {
+        assert_eq!(
+            ranges.get(0, other).unwrap().sample(&mut a).unwrap(),
+            narrow_nasty_sample(0, other, &mut b).unwrap()
+        );
     }
 }
 
