@@ -16,7 +16,7 @@ fn compiled(text: &str, start: &str) -> Grammar {
 fn constraint(text: &str, start: &str, max_size: usize, simplest: &str) -> GrammarConstraint {
     let grammar = compiled(text, start);
     let start = grammar.start[0];
-    let c = GrammarConstraint::new(grammar, &[], start, max_size).unwrap();
+    let c = GrammarConstraint::new(grammar, &[], start, max_size, u32::MAX).unwrap();
     c.simplest_or_init(|| Ok::<_, InternalError>(cps(simplest)))
         .unwrap();
     c
@@ -89,7 +89,7 @@ fn the_smallest_text_each_rule_and_terminal_derives_is_learned() {
     let item = grammar.rule_id("item").unwrap();
     let int = grammar.terminal_id("INT").unwrap();
     let space = grammar.ignore[0];
-    let c = GrammarConstraint::new(grammar, &[], start, 64).unwrap();
+    let c = GrammarConstraint::new(grammar, &[], start, 64, u32::MAX).unwrap();
     assert_eq!(c.smallest_for_rule(start), None);
     assert_eq!(c.smallest_for_terminal(int), None);
     assert!(c.accepts(&cps("12,  [7, 3]")));
@@ -113,7 +113,7 @@ fn the_simplest_string_teaches_its_derivation() {
     let grammar = compiled(LIST, "start");
     let start = grammar.start[0];
     let int = grammar.terminal_id("INT").unwrap();
-    let c = GrammarConstraint::new(grammar, &[], start, 64).unwrap();
+    let c = GrammarConstraint::new(grammar, &[], start, 64, u32::MAX).unwrap();
     c.simplest_or_init(|| Ok::<_, u8>(cps("0"))).unwrap();
     assert_eq!(c.smallest_for_terminal(int), Some(cps("0")));
     assert_eq!(c.known_len(), 1);
@@ -151,8 +151,8 @@ fn the_grammar_the_start_rule_and_the_size_cap_each_tell_constraints_apart() {
     let grammar = compiled(two, "start");
     let start = grammar.rule_id("start").unwrap();
     let other = grammar.rule_id("other").unwrap();
-    let from_start = GrammarConstraint::new(grammar.clone(), &[], start, 16).unwrap();
-    let from_other = GrammarConstraint::new(grammar, &[], other, 16).unwrap();
+    let from_start = GrammarConstraint::new(grammar.clone(), &[], start, 16, u32::MAX).unwrap();
+    let from_other = GrammarConstraint::new(grammar, &[], other, 16, u32::MAX).unwrap();
     assert_eq!(from_start.simplest(), None);
     assert_eq!(from_start.simplest_or_init(|| Err(7)), Err(7));
     assert_eq!(from_start.simplest(), None);

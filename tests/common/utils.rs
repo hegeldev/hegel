@@ -141,7 +141,7 @@ where
             let value = tc.draw_silent(&self.generator);
             assert!(
                 (self.predicate)(&value),
-                "Found value that does not match predicate"
+                "Found value that does not match predicate: {value:?}"
             );
         })
         .settings(settings)

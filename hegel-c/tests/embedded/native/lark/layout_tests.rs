@@ -24,13 +24,31 @@ fn laid_out(grammar_text: &str, text: &str) -> (Grammar, GrammarConstraint, Layo
     let built = load_grammar(grammar_text, None, &NoImports).unwrap();
     let grammar = compile(&built, &["start"]).unwrap();
     let start = grammar.start[0];
-    let constraint = GrammarConstraint::new(grammar.clone(), &[], start, 64).unwrap();
+    let constraint = GrammarConstraint::new(grammar.clone(), &[], start, 64, u32::MAX).unwrap();
     let text = cps(text);
     let tree = constraint.tree(&text).unwrap();
     (grammar, constraint, Layout::new(&tree), text)
 }
 
 const NESTED: &str = "start: \"[\" (start (\",\" start)*)? \"]\" | \"x\"\n";
+
+#[test]
+fn depth_counts_the_rules_nested_on_the_deepest_path() {
+    for (text, depth) in [
+        ("x", 1),
+        ("[]", 1),
+        ("[x]", 2),
+        ("[x,[x,x]]", 3),
+        ("[[[x]],x]", 4),
+    ] {
+        let (_, _, layout, _) = laid_out(NESTED, text);
+        assert_eq!(layout.depth(), depth, "{text}");
+    }
+    for (text, depth) in [("x", 1), ("(x)", 2), ("(((x)))", 4)] {
+        let (_, _, layout, _) = laid_out("start: \"(\" start \")\" | \"x\"\n", text);
+        assert_eq!(layout.depth(), depth, "{text}");
+    }
+}
 
 #[test]
 fn nodes_cover_their_children_contiguously_and_leaves_cover_the_text() {

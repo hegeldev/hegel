@@ -26,6 +26,7 @@ pub mod layout;
 pub mod lexer;
 pub mod lexsim;
 pub mod lower;
+pub mod mutate;
 pub mod parse;
 pub mod parser;
 

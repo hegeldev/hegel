@@ -173,6 +173,23 @@ impl Layout {
             .collect()
     }
 
+    /// How deeply the rules nest: the most rule nodes on any path from
+    /// the root to a leaf.
+    pub fn depth(&self) -> u32 {
+        self.depth_below(0)
+    }
+
+    fn depth_below(&self, index: usize) -> u32 {
+        let node = &self.nodes[index];
+        let own = u32::from(matches!(node.part, Part::Rule(_)));
+        own + node
+            .children
+            .iter()
+            .map(|&child| self.depth_below(child))
+            .max()
+            .unwrap_or(0)
+    }
+
     /// Every rule node with its rule, in pre-order.
     pub fn rules(&self) -> Vec<(RuleId, usize, usize)> {
         self.nodes

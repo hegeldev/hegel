@@ -3690,3 +3690,37 @@ fn a_spent_template_stops_a_string_drawn_from_the_rng_early() {
     assert_eq!(tc.status(), Some(Status::EarlyStop));
     assert_eq!(tc.nodes.len(), 1);
 }
+
+#[test]
+fn a_string_drawn_from_the_rng_notifies_the_observer() {
+    use std::sync::{Arc as SyncArc, Mutex};
+    struct StringObserver {
+        captured: SyncArc<Mutex<Option<(String, bool)>>>,
+    }
+    impl DataObserver for StringObserver {
+        fn draw_string(&mut self, value: &str, was_forced: bool) {
+            *self.captured.lock().unwrap() = Some((value.to_string(), was_forced));
+        }
+    }
+    let captured = SyncArc::new(Mutex::new(None));
+    let obs = Box::new(StringObserver {
+        captured: captured.clone(),
+    });
+    let kind = Arc::new(StringChoice {
+        intervals: crate::native::intervalsets::IntervalSet::new(vec![(0, 0x7F)])
+            .unwrap()
+            .into(),
+        min_size: 0,
+        max_size: 10,
+        grammar: None,
+    });
+    let mut tc = NativeTestCase::for_choices_and_template(&[], None, None, BUFFER_SIZE, Some(obs))
+        .with_random(EngineRng::seeded(0))
+        .unwrap();
+    let drawn = tc
+        .draw_string_from(kind, |_| Ok("ab".chars().map(u32::from).collect()))
+        .unwrap();
+    assert_eq!(drawn, "ab");
+    let recorded = captured.lock().unwrap().take();
+    assert_eq!(recorded, Some((String::from("ab"), false)));
+}

@@ -52,7 +52,7 @@ fn grammar_node_with(
         .iter()
         .map(|(name, spec)| (grammar.terminal_id(name).unwrap(), Arc::clone(spec)))
         .collect();
-    let constraint = GrammarConstraint::new(grammar, &explicit, start, 64).unwrap();
+    let constraint = GrammarConstraint::new(grammar, &explicit, start, 64, u32::MAX).unwrap();
     constraint
         .simplest_or_init(|| Ok::<_, crate::control::InternalError>(cps(simplest)))
         .unwrap();

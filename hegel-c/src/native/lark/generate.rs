@@ -485,7 +485,8 @@ impl GrammarSpec {
         let terminal_names = grammar.terminals.iter().map(|t| t.name.clone()).collect();
         let ignore = grammar.ignore.clone();
         let constraint = Arc::new(
-            GrammarConstraint::new(grammar, &explicit_specs, start, max_size).map_err(internal)?,
+            GrammarConstraint::new(grammar, &explicit_specs, start, max_size, options.max_depth)
+                .map_err(internal)?,
         );
         let kind = Arc::new(StringChoice {
             intervals: Arc::clone(constraint.intervals()),

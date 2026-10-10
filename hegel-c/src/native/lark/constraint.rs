@@ -46,6 +46,11 @@ pub struct GrammarConstraint {
     start: RuleId,
     identity: u64,
     max_size: usize,
+    /// How deep the rules of a string's derivation may nest, for
+    /// mutation (see [`crate::native::lark::mutate`]); the generator keeps
+    /// to it, and the parser does not, since an ambiguous grammar may
+    /// derive a generated string more deeply than the walk did.
+    max_depth: u32,
     /// The simplest string, computed by the generator at the first draw
     /// (see [`GrammarConstraint::simplest_or_init`]).
     simplest: OnceBox<Vec<u32>>,
@@ -75,6 +80,7 @@ impl GrammarConstraint {
         explicit: &[(TermId, Arc<StringSpec>)],
         start: RuleId,
         max_size: usize,
+        max_depth: u32,
     ) -> Result<GrammarConstraint, InternalError> {
         let terminals = GrammarTerminals::new(&grammar, explicit)?;
         let parser = Parser::new(&grammar, start);
@@ -94,6 +100,7 @@ impl GrammarConstraint {
             start,
             identity: hasher.finish(),
             max_size,
+            max_depth,
             simplest: OnceBox::new(),
             known: Mutex::new(HashMap::default()),
             intervals: Arc::new(intervals),
@@ -202,6 +209,11 @@ impl GrammarConstraint {
     /// The cap on the length of the strings accepted.
     pub fn max_size(&self) -> usize {
         self.max_size
+    }
+
+    /// How deep the rules of a derivation may nest, for mutation.
+    pub fn max_depth(&self) -> u32 {
+        self.max_depth
     }
 
     /// The compiled grammar.

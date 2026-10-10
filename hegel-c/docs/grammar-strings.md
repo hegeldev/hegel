@@ -118,6 +118,26 @@ ignored text cut, every repeat emptied, halved and shortened by one,
 every hoist, and every leaf replaced by the smallest text seen for its
 terminal, each once, and all of them again after one is accepted.
 
+## Mutation
+
+Span mutation (`test_runner.rs`, `try_span_mutation`) proposes new test
+cases after a valid one by duplicating and swapping the choices under
+same-label spans, which is how the engine reuses parts of one value in
+another. A string under a grammar is one choice and opens no spans, so
+the same moves are made on its text through its layout
+(`lark/mutate.rs`): the text of a rule node copied over another node of
+the same rule (over a nested one to deepen a recursion, or over the
+whole to cut it), or a repetition duplicated along with the text that
+separates it from its neighbour. `try_grammar_mutation` runs after span
+mutation on the same terms: a few random moves on a random string under
+a grammar, each proposed through the execution cache, stopping at the
+first interesting one. A move's result is parsed first, and one the
+grammar does not derive or that is over the size cap is not run, since
+replay would only pun it to the simplest string; nor is one whose
+derivation nests rules deeper than the grammar's depth cap, which the
+generator keeps to and the parser (which an ambiguous grammar may let
+derive a generated string more deeply than the walk did) does not.
+
 ## What the design rules out, and what is left
 
 - A derivation built by the shrinker is never remembered as a derivation
@@ -133,6 +153,7 @@ terminal, each once, and all of them again after one is accepted.
   such a generator would never draw.
 - The constraint's identity does not include the explicit generators, so
   two grammars that differ only in them compare equal.
-- Not done yet: reusing subtrees of earlier strings at generation time
-  (a grammar-aware mutator), and regex-constrained standalone string
-  nodes (`from_regex` outside a grammar) along the same lines.
+- Mutation only reuses parts of the string being mutated, not of other
+  strings under the same grammar seen earlier in the run.
+- Not done yet: regex-constrained standalone string nodes (`from_regex`
+  outside a grammar) along the same lines.
