@@ -107,7 +107,53 @@ fn string_terminals_with_flags_are_retyped_by_comparing_their_literals() {
     assert_eq!(term.literals, Some((vec![97, 98, 99], SRE_FLAG_UNICODE)));
     let regex = Pattern::re("a.c");
     let parsed = parse_pattern(&pattern_to_regexp(&regex), 0).unwrap();
-    assert!(TermPattern::new(&regex, parsed).literals.is_none());
+    let term = TermPattern::new(&regex, parsed);
+    assert!(term.literals.is_none());
+    assert_eq!(term.fullmatch(&chars("abc")), Ok(true));
+    assert_eq!(term.fullmatch(&chars("axc")), Ok(true));
+    assert_eq!(term.fullmatch(&chars("abcd")), Ok(false));
+    assert_eq!(term.fullmatch(&chars("ab")), Ok(false));
+}
+
+#[test]
+fn runs_and_probes_the_backtracking_matcher_left_open_are_carried() {
+    let grammar = compiled(
+        "start: NUM+ | D | OPT | BS | C | DA\nNUM: /[0-9]/\nD: /(?!x)[0-9]+/\nOPT: /(?!x)ab?/\n\
+         BS: /b+/\nC: /c/\nDA: /[0-9a]/\n",
+    );
+    let lexer = Lexer::new(&grammar.terminals);
+    let id = |name: &str| grammar.terminal_id(name).unwrap();
+    let digits = lexer.match_terminal_scan(id("D"), &chars("12"), 0);
+    assert_eq!(digits.lexed, Lexed::Token(id("D"), 2));
+    assert!(matches!(digits.steps.as_slice(), [(_, Carry::Tail(_))]));
+    assert!(!lexer.can_stop(&digits, id("NUM")));
+    assert!(lexer.can_stop(&digits, id("DA")));
+    assert!(lexer.can_stop(&digits, id("C")));
+    assert_eq!(lexer.settle(&digits, &chars("123"), 0, 2, false), None);
+    assert_eq!(
+        lexer.settle(&digits, &chars("12x"), 0, 2, false),
+        Some(Lexed::Token(id("D"), 2))
+    );
+    assert_eq!(
+        lexer.extend(&digits, &chars("123"), 0, 2, false),
+        Some(Lexed::Token(id("D"), 3))
+    );
+    let opt = lexer.match_terminal_scan(id("OPT"), &chars("a"), 0);
+    assert_eq!(opt.lexed, Lexed::Token(id("OPT"), 1));
+    assert!(matches!(opt.steps.as_slice(), [(_, Carry::Unless(_))]));
+    assert!(!lexer.can_stop(&opt, id("BS")));
+    assert!(lexer.can_stop(&opt, id("C")));
+    assert_eq!(lexer.settle(&opt, &chars("a"), 0, 1, false), None);
+    assert_eq!(lexer.settle(&opt, &chars("ab"), 0, 1, false), None);
+    assert_eq!(
+        lexer.settle(&opt, &chars("ac"), 0, 1, false),
+        Some(Lexed::Token(id("OPT"), 1))
+    );
+    assert_eq!(lexer.extend(&opt, &chars("ab"), 0, 1, false), None);
+    assert_eq!(
+        lexer.extend(&opt, &chars("ac"), 0, 1, false),
+        Some(Lexed::Token(id("OPT"), 1))
+    );
 }
 
 #[test]

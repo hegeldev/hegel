@@ -1615,13 +1615,6 @@ impl Spans {
         Spans { inner: Vec::new() }
     }
 
-    /// An empty `Spans` collection with room for `capacity` spans.
-    pub fn with_capacity(capacity: usize) -> Self {
-        Spans {
-            inner: Vec::with_capacity(capacity),
-        }
-    }
-
     /// Number of recorded spans.
     pub fn len(&self) -> usize {
         self.inner.len()

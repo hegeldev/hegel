@@ -27,6 +27,28 @@ fn integer_choice_simplest_all_negative() {
 }
 
 #[test]
+fn integer_choice_shrink_towards_is_kept_unclamped_whatever_the_width() {
+    let small = IntegerChoice::new(BigInt::from(5), BigInt::from(10), BigInt::from(-3));
+    assert!(small.is_small());
+    assert_eq!(small.shrink_towards(), BigInt::from(-3));
+    assert_eq!(small.simplest(), BigInt::from(5));
+    let wide = integer_choice(0, 1 << 100);
+    assert!(!wide.is_small());
+    assert_eq!(wide.shrink_towards(), BigInt::from(0));
+    let towards = IntegerChoice::new(
+        BigInt::from(i128::MIN),
+        BigInt::from(i128::MAX),
+        BigInt::from(1i128 << 90),
+    );
+    assert!(!towards.is_small());
+    assert_eq!(towards.shrink_towards(), BigInt::from(1i128 << 90));
+    assert_eq!(towards.simplest(), BigInt::from(1i128 << 90));
+    let far = IntegerChoice::new(BigInt::from(1), BigInt::from(1i128 << 80), BigInt::from(-1));
+    assert_eq!(far.shrink_towards(), BigInt::from(-1));
+    assert_eq!(far.simplest(), BigInt::from(1));
+}
+
+#[test]
 fn integer_choice_unit_spans_zero() {
     assert_eq!(
         IntegerChoice::new(BigInt::from(-10), BigInt::from(10), BigInt::from(0)).unit(),

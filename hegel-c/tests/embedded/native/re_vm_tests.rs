@@ -384,3 +384,54 @@ fn a_resume_names_its_state_and_checks_it_is_still_the_same() {
     assert_eq!(p.resume(&stale, &chars("abc"), 0, 2).0, Some(3));
     assert!(p.swallows(&stale, 'b') && !p.swallows(&stale, 'd'));
 }
+
+#[test]
+fn nested_repeats_are_found_inside_groups() {
+    let nested = |pattern: &str| has_nested_repeats(&parse_pattern(pattern, 0).unwrap().pattern);
+    assert!(nested("(a+)+"));
+    assert!(nested("x(?:(a+)+)"));
+    assert!(nested("((a+)+)"));
+    assert!(nested("(?>(a+)+)"));
+    assert!(nested("b|((ab*)*c)"));
+    assert!(!nested("(a+)b+"));
+    assert!(!nested("((a+)b)"));
+    assert!(!nested("(?>a+)"));
+    assert!(!nested("(a|b)*"));
+}
+
+#[test]
+fn a_full_automaton_is_forgotten_before_a_run_is_carried_on() {
+    let text: Vec<char> = "ab".repeat(600).chars().chain(['c']).collect();
+    let states = |p: &Program| p.dfa.as_ref().unwrap().lock().states.len();
+    let split = DFA_STATES - 1;
+    let filled = || {
+        let p = program("(?:ab){0,600}c?").unwrap();
+        let (end, _, resume) = p.scan(&text[..split], 0, None);
+        assert_eq!(end, Some(split - 1));
+        assert_eq!(states(&p), DFA_STATES);
+        (p, resume.unwrap())
+    };
+    let (p, resume) = filled();
+    assert!(p.swallows(&resume, 'b'));
+    assert!(states(&p) < DFA_STATES);
+    assert!(!p.swallows(&resume, 'a'));
+    let (p, resume) = filled();
+    assert_eq!(p.resume(&resume, &text, 0, split).0, Some(1201));
+    assert!(states(&p) < DFA_STATES);
+    assert_eq!(
+        p.resume(&resume, &text[..split + 2], 0, split).0,
+        Some(split + 1)
+    );
+}
+
+#[test]
+fn a_program_that_looks_around_it_never_knows_what_it_swallows() {
+    let p = program("(?!x)ab*").unwrap();
+    assert!(!p.remembers());
+    let (end, touch, resume) = p.scan(&chars("a"), 0, None);
+    assert_eq!((end, touch), (Some(1), Touch::End));
+    let resume = resume.unwrap();
+    assert_eq!(p.resume(&resume, &chars("ab"), 0, 1).0, Some(2));
+    assert!(!p.swallows(&resume, 'b'));
+    assert!(!p.swallows(&resume, 'x'));
+}
