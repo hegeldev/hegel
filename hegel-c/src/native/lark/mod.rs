@@ -7,7 +7,8 @@
 //! [`compile::Grammar`] the generator walks: terminals as single regexes,
 //! rules as trees of alternatives, sequences and repetitions. Unlike Lark,
 //! repetition operators are kept as repetition nodes rather than desugared
-//! into recursive rules, so the generator can size them directly.
+//! into recursive rules, so the generator can size them directly; [`lower`]
+//! desugars them to BNF for parsing.
 
 pub mod analysis;
 pub mod ast;
@@ -17,6 +18,10 @@ pub mod escape;
 pub mod generate;
 pub mod lexer;
 pub mod lexsim;
+/// Nothing in the engine parses yet: database validation and the grammar
+/// shrink pass will, and lift the allowance.
+#[cfg_attr(not(test), allow(dead_code))]
+pub mod lower;
 pub mod parser;
 
 use alloc::string::String;
