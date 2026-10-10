@@ -437,7 +437,18 @@ impl GrammarSpec {
         observed: &mut Vec<(TermId, usize, usize)>,
     ) -> Result<(), Lexed> {
         observed.clear();
-        let mut pos = 0;
+        self.lex_from(text, 0, known, observed)
+    }
+
+    /// [`lex_all`](Self::lex_all) from `pos` on, after the tokens
+    /// `observed` already holds.
+    fn lex_from(
+        &self,
+        text: &[char],
+        mut pos: usize,
+        known: &[(usize, usize, &Scan)],
+        observed: &mut Vec<(TermId, usize, usize)>,
+    ) -> Result<(), Lexed> {
         let mut k = 0;
         while pos < text.len() {
             while k < known.len() && known[k].0 < pos {
@@ -492,14 +503,26 @@ impl GrammarSpec {
     }
 
     /// How the basic lexer reads the text of terminal `id` on its own,
-    /// given what it finds at the start of it.
+    /// given what it finds at the start of it: that token first, since
+    /// carrying the finding over the very text it was found on (see
+    /// [`Lexer::extend`]) can only find it again, then the rest of the
+    /// text lexed afresh.
     fn reading(&self, id: TermId, text: &[char], basic: &Scan) -> Reading {
         if !self.is_pattern(id) {
             return Reading::Opaque;
         }
         let mut scratch = self.scratch.lock();
         let got = &mut scratch.observed;
-        if self.lex_all(text, &[(0, text.len(), basic)], got).is_err() {
+        got.clear();
+        let mut pos = 0;
+        if !text.is_empty() {
+            let Lexed::Token(read, end) = basic.lexed else {
+                return Reading::Opaque;
+            };
+            got.push((read, 0, end));
+            pos = end;
+        }
+        if self.lex_from(text, pos, &[], got).is_err() {
             return Reading::Opaque;
         }
         if got.len() == 1 && self.same_type(id, got[0].0) {

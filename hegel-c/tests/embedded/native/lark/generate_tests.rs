@@ -536,6 +536,59 @@ fn readings_of_terminal_texts() {
         *tok(&spec, "WS", " x").reading(),
         Reading::Tokens(vec![ws, tid(&spec, "NAME")])
     );
+    assert_eq!(*tok(&spec, "NAME", "9").reading(), Reading::Opaque);
+    assert_eq!(*tok(&spec, "WS", "").reading(), Reading::Ignorables);
+    assert_eq!(*tok(&spec, "NAME", "").reading(), Reading::Tokens(vec![]));
+}
+
+#[test]
+fn a_reading_is_how_the_basic_lexer_reads_the_text_afresh() {
+    let mut read = 0;
+    for (name, start) in [
+        ("json", "value"),
+        ("calc", "start"),
+        ("features", "start"),
+        ("verilog", "start"),
+        ("template_lark", "start"),
+        ("turtle", "start"),
+    ] {
+        let spec = fixture_spec(name, start, 400, vec![]);
+        for seed in 0..8 {
+            let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+            let mut generation = Generation::new(&spec, 0.25);
+            if generation.run(&mut ntc, 200).is_err() {
+                continue;
+            }
+            for token in &generation.tokens {
+                let text = &generation.text[token.start..token.end];
+                let mut fresh = Vec::new();
+                let lexed = spec.lex_all(text, &[], &mut fresh);
+                let ids: Vec<TermId> = fresh.iter().map(|&(g, _, _)| g).collect();
+                read += 1;
+                match token.reading() {
+                    Reading::Opaque => assert!(lexed.is_err(), "{name} {seed} {text:?}"),
+                    Reading::Itself => {
+                        assert!(lexed.is_ok(), "{name} {seed} {text:?}");
+                        assert_eq!(ids.len(), 1, "{name} {seed} {text:?}");
+                        assert!(spec.same_type(token.id, ids[0]), "{name} {seed} {text:?}");
+                    }
+                    Reading::Ignorables => {
+                        assert!(lexed.is_ok(), "{name} {seed} {text:?}");
+                        assert!(spec.is_ignore(token.id), "{name} {seed} {text:?}");
+                        assert!(
+                            ids.iter().all(|&g| spec.is_ignore(g)),
+                            "{name} {seed} {text:?}"
+                        );
+                    }
+                    Reading::Tokens(tokens) => {
+                        assert!(lexed.is_ok(), "{name} {seed} {text:?}");
+                        assert_eq!(*tokens, ids, "{name} {seed} {text:?}");
+                    }
+                }
+            }
+        }
+    }
+    assert!(read > 1000, "{read}");
 }
 
 #[test]
