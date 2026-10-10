@@ -205,6 +205,11 @@ check: check-lint check-tests check-tests-all-features
 check-lark:
     scripts/check-lark.py
 
+# Compare the engine's grammar parser with Lark's Earley parser on strings
+# generated from the fixture grammars and mutations of them (needs uv).
+check-parse:
+    scripts/check-parse.py
+
 # Regenerate the `.expected` files for the Lark fixture grammars from Lark.
 lark-fixtures:
     scripts/gen-lark-fixtures.py

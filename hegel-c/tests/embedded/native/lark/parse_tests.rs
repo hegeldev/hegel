@@ -511,3 +511,45 @@ fn fixture_grammars_parse_their_own_strings() {
 fn fixture_grammars_parse_their_own_strings_at_full_size() {
     check_fixtures(DEFAULT_MAX_SIZE, 0..40);
 }
+
+/// Writes the parser's verdict on candidate strings for the oracle check
+/// (`scripts/check-parse.py`): for each grammar named in
+/// `HEGEL_LARK_CORPUS_GRAMMARS`, reads the JSON strings in
+/// `<HEGEL_LARK_VERDICT_DIR>/<name>.candidates.jsonl` and writes `true`
+/// or `false` per line to `<name>.verdicts.jsonl` beside it.
+#[test]
+#[ignore]
+fn write_verdicts() {
+    let dir = std::env::var("HEGEL_LARK_VERDICT_DIR").unwrap();
+    let grammars = std::env::var("HEGEL_LARK_CORPUS_GRAMMARS").unwrap();
+    let starts = corpus_grammars();
+    for name in grammars.split(',').filter(|name| !name.is_empty()) {
+        let (_, start) = starts.iter().find(|(n, _)| n == name).unwrap();
+        let s = build(fixture(name, start));
+        let input =
+            std::fs::read_to_string(Path::new(&dir).join(format!("{name}.candidates.jsonl")))
+                .unwrap();
+        let mut lines = String::new();
+        let started = std::time::Instant::now();
+        let mut count = 0;
+        for line in input.lines().filter(|line| !line.is_empty()) {
+            let candidate: String = serde_json::from_str(line).unwrap();
+            let text = chars(&candidate);
+            let verdict = match s.parser.parse(&s.lexer, &text) {
+                Ok(tree) => {
+                    assert!(covers(&tree, &text), "{name}: {candidate:?}");
+                    true
+                }
+                Err(_) => false,
+            };
+            lines.push_str(if verdict { "true\n" } else { "false\n" });
+            count += 1;
+        }
+        std::fs::write(
+            Path::new(&dir).join(format!("{name}.verdicts.jsonl")),
+            lines,
+        )
+        .unwrap();
+        std::eprintln!("{name}: {count} candidates, {:?}", started.elapsed());
+    }
+}
