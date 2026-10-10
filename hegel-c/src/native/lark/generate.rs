@@ -525,20 +525,20 @@ impl GrammarSpec {
     /// at the first draw: the smallest string with every decision at its
     /// simplest (see [`SimplestDraws`]), or, when that walk draws nothing
     /// because the string it heads for cannot be lexed back, the first
-    /// string of a few fixed seeded draws that succeeds, so that the
-    /// choice is the same in every run. A grammar none of them draws
-    /// from cannot be drawn from at all.
+    /// string a few fixed seeded random walks draw — of the smallest size
+    /// first, then of any size — so that the choice is the same in every
+    /// run. A grammar none of them draws from cannot be drawn from at
+    /// all.
     pub fn ensure_simplest(&self) -> Result<&[u32], EngineError> {
         self.constraint.simplest_or_init(|| {
             if let Ok(simplest) = smallest_string(&mut SimplestDraws::default(), self) {
                 return Ok(simplest);
             }
-            for seed in 0..SIMPLEST_FALLBACK_SEEDS {
-                let mut rng = EngineRng::seeded(seed);
-                let mut draws = RngDraws::new(&mut rng, Default::default());
-                if let Ok(simplest) = draw_grammar(&mut draws, self) {
-                    return Ok(simplest);
-                }
+            if let Some(simplest) = self
+                .seeded_string(true)
+                .or_else(|| self.seeded_string(false))
+            {
+                return Ok(simplest);
             }
             Err(EngineError::InvalidArgument(format!(
                 "no string of '{}' could be generated: its strings do not fit the size cap or \
@@ -546,6 +546,25 @@ impl GrammarSpec {
                 self.analysis.rules[self.start].name
             )))
         })
+    }
+
+    /// The first string of [`SIMPLEST_FALLBACK_SEEDS`] seeded random
+    /// walks that draws one: walks for a string of the smallest size when
+    /// `smallest`, otherwise ordinary draws.
+    fn seeded_string(&self, smallest: bool) -> Option<Vec<u32>> {
+        for seed in 0..SIMPLEST_FALLBACK_SEEDS {
+            let mut rng = EngineRng::seeded(seed);
+            let mut draws = RngDraws::new(&mut rng, Default::default());
+            let drawn = if smallest {
+                smallest_string(&mut draws, self)
+            } else {
+                draw_grammar(&mut draws, self)
+            };
+            if let Ok(string) = drawn {
+                return Some(string);
+            }
+        }
+        None
     }
 
     /// The smallest string the grammar can produce, in characters.

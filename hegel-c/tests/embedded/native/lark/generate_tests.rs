@@ -1776,6 +1776,16 @@ fn the_simplest_string_falls_back_on_a_seeded_draw_when_the_simplest_walk_cannot
 }
 
 #[test]
+fn the_simplest_string_falls_back_on_a_full_draw_when_no_smallest_string_lexes() {
+    let spec = grammar("start: a | b\na: NAME NAME\nb: NAME \"+\" NAME\nNAME: /[a-z]+/\n");
+    assert!(smallest_string(&mut SimplestDraws::default(), &spec).is_err());
+    assert_eq!(spec.seeded_string(true), None);
+    let simplest = codepoints_to_string(spec.ensure_simplest().unwrap());
+    assert!(simplest.contains('+'), "{simplest:?}");
+    assert_eq!(spec.seeded_string(false), Some(cps(&simplest)));
+}
+
+#[test]
 fn a_grammar_no_draw_can_generate_from_reports_so_at_the_first_draw() {
     let spec = grammar("start: NAME NAME\nNAME: /[a-z]+/\n");
     let mut ntc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();

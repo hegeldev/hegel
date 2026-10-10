@@ -2995,7 +2995,7 @@ impl NativeTestCase {
     /// kind accepts kept and any other punned, and otherwise drawn by
     /// `random` from a source over this test case's RNG and integer
     /// parameters. A conclusion `random` reaches is this test case's.
-    pub fn draw_string_from(
+    pub(crate) fn draw_string_from(
         &mut self,
         kind: Arc<StringChoice>,
         random: impl FnOnce(&mut RngDraws<'_>) -> Result<Vec<u32>, EngineError>,
