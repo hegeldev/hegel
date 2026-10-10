@@ -5,6 +5,7 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
+use hashbrown::hash_map::Entry;
 
 use crate::native::core::state::length_p_continue;
 use crate::native::core::{EngineError, ManyState, NativeTestCase, Status};
@@ -34,6 +35,53 @@ type InKey = (usize, usize, u32);
 /// the flag bits the set depends on.
 type CharKey = (u32, u32);
 
+/// The characters a `(IN, items)` node can emit, in codepoint order.
+#[derive(Debug, Clone, PartialEq)]
+enum InSet {
+    /// Every character the node can emit, listed.
+    Listed(Arc<[char]>),
+    /// The BMP minus a few excluded codepoints: what a negated class
+    /// without categories rules out under the default alphabet, indexed in
+    /// closed form like [`default_any_char`] so the 64K-codepoint scan that
+    /// would list the set never runs.
+    Complement(Arc<Complement>),
+}
+
+/// The BMP minus the codepoint ranges in `excluded`, which are sorted,
+/// disjoint, within the BMP, and always include the surrogates.
+#[derive(Debug, PartialEq)]
+struct Complement {
+    excluded: Vec<(u32, u32)>,
+    len: u64,
+}
+
+impl Complement {
+    fn new(mut excluded: Vec<(u32, u32)>) -> Self {
+        excluded.push((0xD800, 0xDFFF));
+        excluded.sort_unstable();
+        let removed: u64 = excluded.iter().map(|(lo, hi)| u64::from(hi - lo) + 1).sum();
+        Complement {
+            excluded,
+            len: 0x10000 - removed,
+        }
+    }
+
+    /// The `idx`th remaining character in codepoint order.
+    fn get(&self, idx: u64) -> Result<char, InternalError> {
+        let mut cp = hegel_internal_unwrap!(
+            u32::try_from(idx).ok(),
+            "Complement::get: index {idx} is not a codepoint"
+        );
+        for &(lo, hi) in &self.excluded {
+            if cp < lo {
+                break;
+            }
+            cp += hi - lo + 1;
+        }
+        codepoint_to_char(cp)
+    }
+}
+
 /// A regex pattern compiled once at string-generator construction time:
 /// the parsed AST, the optional user alphabet, and cross-draw caches of
 /// the alphabet-constrained character sets (category classes like
@@ -42,7 +90,7 @@ type CharKey = (u32, u32);
 pub(crate) struct CompiledRegex {
     parsed: ParsedPattern,
     alphabet: Option<IntervalSet>,
-    in_cache: Mutex<HashMap<InKey, Arc<[char]>>>,
+    in_cache: Mutex<HashMap<InKey, InSet>>,
     char_cache: Mutex<HashMap<CharKey, Arc<[char]>>>,
 }
 
@@ -286,7 +334,7 @@ struct GenState<'a> {
     needs_whole_match: bool,
     /// The enclosing [`CompiledRegex`]'s cross-draw cache of
     /// alphabet-constrained `IN`-node character sets.
-    in_cache: &'a Mutex<HashMap<InKey, Arc<[char]>>>,
+    in_cache: &'a Mutex<HashMap<InKey, InSet>>,
     /// The enclosing [`CompiledRegex`]'s cross-draw cache of
     /// alphabet-constrained `Any` / `NotLiteral` character sets.
     char_cache: &'a Mutex<HashMap<CharKey, Arc<[char]>>>,
@@ -495,20 +543,19 @@ fn generate_op(
         },
         OpCode::In(items) => {
             let key = (items.as_ptr() as usize, items.len(), state.flags);
-            let cached = state.in_cache.lock().get(&key).cloned();
-            let chars = match cached {
-                Some(cached) => cached,
-                None => {
+            let mut cache = state.in_cache.lock();
+            let set = match cache.entry(key) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => {
                     let computed = if alphabet.is_none() {
                         cached_default_in_set(items, state.flags)?
                     } else {
-                        build_in_set(items, state.flags, alphabet)?.into()
+                        build_in_set(items, state.flags, alphabet)?
                     };
-                    state.in_cache.lock().insert(key, Arc::clone(&computed));
-                    computed
+                    entry.insert(computed)
                 }
             };
-            emit_from_chars(ntc, &chars, out)?;
+            emit_from_set(ntc, set, out)?;
         }
         OpCode::Branch(items) => {
             let idx = ntc.draw_integer_i64(0, items.len() as i64 - 1)? as usize;
@@ -600,15 +647,15 @@ fn generate_op(
 }
 /// Cached version of [`build_in_set`] for the default (no-alphabet) case.
 ///
-/// Category-driven classes like `\w`, `\s`, `[^a-z0-9_]` require a full
+/// Category-driven classes like `\w`, `\s`, `[^\d]` require a full
 /// 65 536-codepoint BMP scan to compute, and the parser yields distinct
 /// `SetItem` slices for distinct regex patterns — so the state-level
 /// pointer cache only helps within one draw. Patterns like `\w` alone
 /// cost ~35ms per draw in debug; 10 draws trips the 1s TooSlow health
 /// check on slower CI runners. Since the default alphabet is fixed, we
 /// can memoise across draws (and across patterns).
-fn cached_default_in_set(items: &[SetItem], flags: u32) -> Result<Arc<[char]>, InternalError> {
-    type Cache = Mutex<HashMap<(Vec<SetItem>, u32), Arc<[char]>>>;
+fn cached_default_in_set(items: &[SetItem], flags: u32) -> Result<InSet, InternalError> {
+    type Cache = Mutex<HashMap<(Vec<SetItem>, u32), InSet>>;
     static CACHE: Lazy<Cache> = Lazy::new(|| Mutex::new(HashMap::default()));
     let cache_key = (
         items.to_vec(),
@@ -617,11 +664,11 @@ fn cached_default_in_set(items: &[SetItem], flags: u32) -> Result<Arc<[char]>, I
     {
         let guard = CACHE.lock();
         if let Some(cached) = guard.get(&cache_key) {
-            return Ok(Arc::clone(cached));
+            return Ok(cached.clone());
         }
     }
-    let computed: Arc<[char]> = build_in_set(items, flags, &None)?.into();
-    CACHE.lock().insert(cache_key, Arc::clone(&computed));
+    let computed = build_in_set(items, flags, &None)?;
+    CACHE.lock().insert(cache_key, computed.clone());
     Ok(computed)
 }
 
@@ -692,7 +739,7 @@ fn build_in_set(
     items: &[SetItem],
     flags: u32,
     alphabet: &Option<IntervalSet>,
-) -> Result<Vec<char>, InternalError> {
+) -> Result<InSet, InternalError> {
     let negate = matches!(items.first(), Some(SetItem::Negate));
 
     let mut positive: Vec<char> = Vec::new();
@@ -747,7 +794,7 @@ fn build_in_set(
                 }
             }
         }
-        Ok(out)
+        Ok(InSet::Listed(out.into()))
     } else {
         let cat_blocks: Vec<ChCode> = categories;
         let mut positive_set: HashSet<char> = HashSet::default();
@@ -755,12 +802,23 @@ fn build_in_set(
             positive_set.extend(swapcase_blacklist(c, flags));
         }
         let allowed = |c: char| !(ascii_only && (c as u32) >= 128) && !positive_set.contains(&c);
-        if cat_blocks.is_empty() {
-            Ok(gather_chars(alphabet, allowed))
+        if cat_blocks.is_empty() && alphabet.is_none() && !ascii_only {
+            let excluded = positive_set
+                .iter()
+                .map(|c| *c as u32)
+                .filter(|cp| *cp <= 0xFFFF)
+                .map(|cp| (cp, cp))
+                .collect();
+            Ok(InSet::Complement(Arc::new(Complement::new(excluded))))
+        } else if cat_blocks.is_empty() {
+            Ok(InSet::Listed(gather_chars(alphabet, allowed).into()))
         } else {
-            Ok(gather_chars_by_category(alphabet, |c, category| {
-                allowed(c) && !cat_blocks.iter().any(|cat| in_category(c, category, *cat))
-            }))
+            Ok(InSet::Listed(
+                gather_chars_by_category(alphabet, |c, category| {
+                    allowed(c) && !cat_blocks.iter().any(|cat| in_category(c, category, *cat))
+                })
+                .into(),
+            ))
         }
     }
 }
@@ -915,6 +973,24 @@ fn emit_from_chars(
     let idx = draw_char_index(ntc, chars.len() as u64)?;
     out.push(chars[idx as usize]);
     Ok(())
+}
+
+fn emit_from_set(
+    ntc: &mut NativeTestCase,
+    set: &InSet,
+    out: &mut Vec<char>,
+) -> Result<(), EngineError> {
+    match set {
+        InSet::Listed(chars) => emit_from_chars(ntc, chars, out),
+        InSet::Complement(complement) => {
+            if complement.len == 0 {
+                return Err(mark_invalid(ntc));
+            }
+            let idx = draw_char_index(ntc, complement.len)?;
+            out.push(complement.get(idx)?);
+            Ok(())
+        }
+    }
 }
 
 /// Draw an index into a character set of `n` (non-zero) characters, biased

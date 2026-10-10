@@ -643,11 +643,27 @@ fn match_seq_min_repeat_zero_width_item_after_min() {
     assert_eq!(match_seq(&ops, 0, &chars(""), 0, &groups), None);
 }
 
+fn set_len(set: &InSet) -> u64 {
+    match set {
+        InSet::Listed(chars) => chars.len() as u64,
+        InSet::Complement(complement) => complement.len,
+    }
+}
+
+fn listed(set: &InSet) -> Vec<char> {
+    match set {
+        InSet::Listed(chars) => chars.to_vec(),
+        InSet::Complement(complement) => (0..complement.len)
+            .map(|idx| complement.get(idx).unwrap())
+            .collect(),
+    }
+}
+
 #[test]
 fn build_in_set_ascii_only_drops_nonascii_positive_literal() {
     let items = vec![SetItem::Literal('a' as u32), SetItem::Literal(0xFF)];
     let out = build_in_set(&items, SRE_FLAG_ASCII, &None).unwrap();
-    assert_eq!(out, vec!['a']);
+    assert_eq!(out, InSet::Listed(vec!['a'].into()));
 }
 
 #[test]
@@ -655,7 +671,7 @@ fn build_in_set_alphabet_drops_disallowed_positive_literal() {
     let items = vec![SetItem::Literal('a' as u32), SetItem::Literal('b' as u32)];
     let alphabet = IntervalSet::new(vec![('a' as u32, 'a' as u32)]).unwrap();
     let out = build_in_set(&items, 0, &Some(alphabet)).unwrap();
-    assert_eq!(out, vec!['a']);
+    assert_eq!(out, InSet::Listed(vec!['a'].into()));
 }
 
 #[test]
@@ -663,7 +679,61 @@ fn build_in_set_negated_ascii_only_excludes_nonascii() {
     let items = vec![SetItem::Negate, SetItem::Literal('a' as u32)];
     let alphabet = IntervalSet::new(vec![(b' ' as u32, 0x100)]).unwrap();
     let out = build_in_set(&items, SRE_FLAG_ASCII, &Some(alphabet)).unwrap();
-    assert!(out.iter().all(|c| (*c as u32) < 128 && *c != 'a'));
+    assert!(listed(&out).iter().all(|c| (*c as u32) < 128 && *c != 'a'));
+}
+
+#[test]
+fn build_in_set_negated_default_set_is_the_complement_of_its_literals() {
+    let items = vec![
+        SetItem::Negate,
+        SetItem::Literal('k' as u32),
+        SetItem::Range('0' as u32, '2' as u32),
+        SetItem::Literal(0x1_F600),
+    ];
+    let out = build_in_set(&items, 0, &None).unwrap();
+    let InSet::Complement(complement) = &out else {
+        panic!("{out:?} is not a complement");
+    };
+    assert_eq!(
+        complement.excluded,
+        vec![
+            ('0' as u32, '0' as u32),
+            ('1' as u32, '1' as u32),
+            ('2' as u32, '2' as u32),
+            ('k' as u32, 'k' as u32),
+            (0xD800, 0xDFFF),
+        ]
+    );
+    assert_eq!(set_len(&out), DEFAULT_ANY_LEN - 4);
+    assert_eq!(listed(&out), reference_in_set(&items, 0, &None));
+    let ignorecase = build_in_set(&items, SRE_FLAG_IGNORECASE, &None).unwrap();
+    assert_eq!(set_len(&ignorecase), DEFAULT_ANY_LEN - 5);
+    assert_eq!(
+        listed(&ignorecase),
+        reference_in_set(&items, SRE_FLAG_IGNORECASE, &None)
+    );
+    assert!(!listed(&ignorecase).contains(&'K'));
+    assert!(complement.get(u64::from(u32::MAX) + 1).is_err());
+}
+
+#[test]
+fn generate_op_empty_in_set_marks_invalid() {
+    let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::Integer(BigInt::from(0))], None, None);
+    let cache = Mutex::new(HashMap::default());
+    let char_cache = Mutex::new(HashMap::default());
+    let mut state = ignorecase_state(&cache, &char_cache);
+    let alphabet = Some(IntervalSet::new(vec![('x' as u32, 'x' as u32)]).unwrap());
+    let items = vec![SetItem::Literal('a' as u32), SetItem::Literal('b' as u32)];
+    let mut out = Vec::new();
+    let result = generate_op(
+        &mut ntc,
+        &OpCode::In(items),
+        &mut state,
+        &alphabet,
+        &mut out,
+    );
+    assert!(result.is_err());
+    assert_eq!(ntc.status(), Some(Status::Invalid));
 }
 
 #[test]
@@ -680,6 +750,19 @@ fn generate_op_ignorecase_literal_outside_alphabet_marks_invalid() {
 }
 
 #[test]
+fn generate_op_negated_class_covering_the_bmp_marks_invalid() {
+    let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::Integer(BigInt::from(0))], None, None);
+    let cache = Mutex::new(HashMap::default());
+    let char_cache = Mutex::new(HashMap::default());
+    let mut state = ignorecase_state(&cache, &char_cache);
+    let items = vec![SetItem::Negate, SetItem::Range(0, 0xFFFF)];
+    let mut out = Vec::new();
+    let result = generate_op(&mut ntc, &OpCode::In(items), &mut state, &None, &mut out);
+    assert!(result.is_err());
+    assert_eq!(ntc.status(), Some(Status::Invalid));
+}
+
+#[test]
 fn compile_rejects_unparseable_patterns() {
     let err = CompiledRegex::compile("(unclosed", None).unwrap_err();
     assert!(matches!(err, EngineError::InvalidArgument(_)));
@@ -688,7 +771,7 @@ fn compile_rejects_unparseable_patterns() {
 }
 
 fn ignorecase_state<'a>(
-    cache: &'a Mutex<HashMap<InKey, Arc<[char]>>>,
+    cache: &'a Mutex<HashMap<InKey, InSet>>,
     char_cache: &'a Mutex<HashMap<CharKey, Arc<[char]>>>,
 ) -> GenState<'a> {
     GenState {
@@ -1139,6 +1222,12 @@ fn build_in_set_category_classes_match_a_lookup_per_character() {
             ]
         })
         .chain([
+            vec![SetItem::Negate, SetItem::Literal('a' as u32)],
+            vec![
+                SetItem::Negate,
+                SetItem::Range('a' as u32, 'z' as u32),
+                SetItem::Literal(0x1_F600),
+            ],
             vec![
                 SetItem::Literal('0' as u32),
                 SetItem::Range('x' as u32, 'z' as u32),
@@ -1161,7 +1250,7 @@ fn build_in_set_category_classes_match_a_lookup_per_character() {
         for items in &item_sets {
             for flags in [0, SRE_FLAG_IGNORECASE, SRE_FLAG_ASCII] {
                 assert_eq!(
-                    build_in_set(items, flags, alphabet).unwrap(),
+                    listed(&build_in_set(items, flags, alphabet).unwrap()),
                     reference_in_set(items, flags, alphabet),
                     "{items:?} with flags {flags}"
                 );
@@ -1169,7 +1258,7 @@ fn build_in_set_category_classes_match_a_lookup_per_character() {
         }
     }
     let digits_and_zero = [SetItem::Literal('0' as u32), SetItem::Category(Digit)];
-    let out = build_in_set(&digits_and_zero, 0, &None).unwrap();
+    let out = listed(&build_in_set(&digits_and_zero, 0, &None).unwrap());
     assert_eq!(out[0], '0');
     assert_eq!(out.iter().filter(|c| **c == '0').count(), 1);
     assert!(out.contains(&'٣'));
