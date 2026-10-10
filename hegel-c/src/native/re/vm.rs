@@ -293,11 +293,26 @@ impl Dfa {
     }
 
     /// The state `resume`'s threads are in: the one it names when that
-    /// is still theirs, else found or made afresh.
+    /// is still theirs (usually the very threads it was made from, so
+    /// their identity settles it before their contents are compared),
+    /// else found or made afresh.
     fn resumed(&mut self, insts: &[Inst], resume: &Resume) -> u32 {
         match self.states.get(resume.state as usize) {
-            Some(state) if state.pcs == resume.pcs => resume.state,
+            Some(state) if Arc::ptr_eq(&state.pcs, &resume.pcs) || state.pcs == resume.pcs => {
+                resume.state
+            }
             _ => self.intern(insts, &resume.pcs),
+        }
+    }
+
+    /// How to carry on from `state`, where a run that started at `start`
+    /// of a text and had found a match ending at `found`, if any, was
+    /// when the text ended.
+    fn resume_at(&self, state: u32, found: Option<usize>, start: usize) -> Resume {
+        Resume {
+            pcs: Arc::clone(&self.states[state as usize].pcs),
+            found: found.map(|found| found - start),
+            state,
         }
     }
 }
@@ -524,7 +539,7 @@ pub struct Resume {
 
 impl PartialEq for Resume {
     fn eq(&self, other: &Resume) -> bool {
-        self.pcs == other.pcs && self.found == other.found
+        (Arc::ptr_eq(&self.pcs, &other.pcs) || self.pcs == other.pcs) && self.found == other.found
     }
 }
 
@@ -688,7 +703,9 @@ impl Program {
                     state
                 }
             };
-            return self.dfa_steps(&mut dfa, state, text, start, start, None);
+            let (found, touch, state) = self.dfa_steps(&mut dfa, state, text, start, None);
+            let resume = (touch == Touch::End).then(|| dfa.resume_at(state, found, start));
+            return (found, touch, resume);
         }
         let mut scratch = self.take_scratch();
         let found = self.run_from(0, text, start, exact_end, &mut scratch);
@@ -698,15 +715,17 @@ impl Program {
 
     /// Carry on a run that [`scan`](Self::scan) started at `start` of a
     /// text of `consumed` characters, on `text`, which continues that
-    /// text after `start + consumed`: the same result as a run over all
-    /// of `text` from `start` would give.
+    /// text after `start + consumed`: the match and touch a run over all
+    /// of `text` from `start` would report, without the threads the end
+    /// of `text` leaves waiting (nothing carries on from here).
+    #[inline]
     pub fn resume(
         &self,
         resume: &Resume,
         text: &[char],
         start: usize,
         consumed: usize,
-    ) -> (Option<usize>, Touch, Option<Resume>) {
+    ) -> (Option<usize>, Touch) {
         let found = resume.found.map(|found| start + found);
         if let Some(dfa) = &self.dfa {
             let mut dfa = dfa.lock();
@@ -714,12 +733,13 @@ impl Program {
                 dfa.clear();
             }
             let state = dfa.resumed(&self.insts, resume);
-            return self.dfa_steps(&mut dfa, state, text, start, start + consumed, found);
+            let (end, touch, _) = self.dfa_steps(&mut dfa, state, text, start + consumed, found);
+            return (end, touch);
         }
         let mut scratch = self.take_scratch();
         scratch.current.pcs.clear();
         scratch.current.pcs.extend_from_slice(&resume.pcs);
-        let out = self.steps(
+        let (end, touch, _) = self.steps(
             text,
             start,
             start + consumed,
@@ -729,7 +749,7 @@ impl Program {
             &mut scratch,
         );
         self.return_scratch(scratch);
-        out
+        (end, touch)
     }
 
     fn run_from(
@@ -780,16 +800,17 @@ impl Program {
 
     /// [`steps`](Self::steps) for a program with a [`Dfa`], from `state`
     /// at `pos`: each character leads to the state remembered for it, or
-    /// to the state its threads lead to, remembered then.
+    /// to the state its threads lead to, remembered then. The state
+    /// returned is the one the run was in when the text ended, for
+    /// [`Dfa::resume_at`] (with [`Touch::Never`], the run died first).
     fn dfa_steps(
         &self,
         dfa: &mut Dfa,
         mut state: u32,
         text: &[char],
-        start: usize,
         mut pos: usize,
         mut found: Option<usize>,
-    ) -> (Option<usize>, Touch, Option<Resume>) {
+    ) -> (Option<usize>, Touch, u32) {
         loop {
             let states = &dfa.states;
             let c = loop {
@@ -798,15 +819,10 @@ impl Program {
                     found = Some(pos);
                 }
                 if current.waiting == 0 {
-                    return (found, Touch::Never, None);
+                    return (found, Touch::Never, state);
                 }
                 let Some(&c) = text.get(pos) else {
-                    let resume = Resume {
-                        pcs: Arc::clone(&current.pcs),
-                        found: found.map(|found| found - start),
-                        state,
-                    };
-                    return (found, Touch::End, Some(resume));
+                    return (found, Touch::End, state);
                 };
                 let next = match u32::from(c) {
                     cp if cp < 128 => current.ascii[cp as usize],

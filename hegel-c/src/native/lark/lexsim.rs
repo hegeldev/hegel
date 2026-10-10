@@ -853,7 +853,7 @@ impl Lexer {
                     None => None,
                 },
                 Carry::Resume(resume) => {
-                    let (end, touch, _) = pattern.program.as_ref()?.resume(resume, text, pos, len);
+                    let (end, touch) = pattern.program.as_ref()?.resume(resume, text, pos, len);
                     if open && touch != Touch::Never {
                         return None;
                     }
