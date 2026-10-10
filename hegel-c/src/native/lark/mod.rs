@@ -11,7 +11,8 @@
 //! desugars them for [`parse`], an Earley parser with a dynamic lexer that
 //! checks strings against the grammar and recovers their derivations,
 //! matching the terminals the user supplies generators for through
-//! [`explicit`].
+//! [`explicit`]; [`layout`] lays a derivation over its text for the
+//! shrinker to edit.
 
 pub mod analysis;
 pub mod ast;
@@ -21,6 +22,7 @@ pub mod constraint;
 pub mod escape;
 pub mod explicit;
 pub mod generate;
+pub mod layout;
 pub mod lexer;
 pub mod lexsim;
 pub mod lower;

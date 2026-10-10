@@ -754,22 +754,21 @@ fn under_grammar(text: &str, simplest: &str, value: &str) -> ChoiceData {
 }
 
 #[test]
-fn a_string_under_a_grammar_is_moved_to_its_simplest_but_not_down_the_ladder() {
+fn a_string_under_a_grammar_moves_to_its_simplest_or_down_its_derivation() {
     let cb = |s: &str| ChoiceValue::String(s.chars().map(|c| c as u32).collect());
     let (mut shrinker, mut probe) = start(ab_string_body, &[run(&[(A, cb("abababab"))])], 0.5);
     let key = edge_keys(shrinker.graph()).remove(0);
-    let plain = shrinker
-        .constraints
-        .get(&(Ident::Start, addr(A)))
-        .unwrap()
-        .clone();
     let constrained = under_grammar("start: \"ab\"*\n", "", "abababab");
     let moved = drive_no_yield(shrinker.shrink_value(&mut probe, &key, &constrained)).unwrap();
-    assert!(!moved);
-    assert_eq!(shrinker.witness().0[0].value(), cb("abababab"));
-    let moved = drive_no_yield(shrinker.shrink_value(&mut probe, &key, &plain)).unwrap();
     assert!(moved);
-    assert_eq!(shrinker.witness().0[0].value(), cb("aa"));
+    assert_eq!(shrinker.witness().0[0].value(), cb("ab"));
+
+    let (mut shrinker, mut probe) = start(ab_string_body, &[run(&[(A, cb("cc"))])], 0.5);
+    let key = edge_keys(shrinker.graph()).remove(0);
+    let constrained = under_grammar("start: \"ab\"*\n", "", "cc");
+    let moved = drive_no_yield(shrinker.shrink_value(&mut probe, &key, &constrained)).unwrap();
+    assert!(!moved);
+    assert_eq!(shrinker.witness().0[0].value(), cb("cc"));
 
     let (mut shrinker, mut probe) = start(ab_string_body, &[run(&[(A, cb("cbcb"))])], 0.5);
     let key = edge_keys(shrinker.graph()).remove(0);

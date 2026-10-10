@@ -37,6 +37,8 @@
 //! learned from every replay; a clone's record is not shrunk (only
 //! deleted) in this cut.
 
+use crate::native::lark::constraint::GrammarConstraint;
+use crate::native::lark::layout::Layout;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -514,9 +516,8 @@ impl GraphShrinker {
     /// The value moves for one draw: its constraint's simplest value, then
     /// a kind-specific ladder toward it — a binary search for integers,
     /// the integer part for floats, shorter then simpler elements for
-    /// sequences. A string under a grammar gets only the simplest value:
-    /// the sequence ladder's strings are hardly ever in the grammar, and a
-    /// grammar-directed ladder is to come.
+    /// sequences, and for a string under a grammar the coarse moves its
+    /// derivation allows (see [`Self::shrink_grammar_string`]).
     async fn shrink_value(
         &mut self,
         probe: &mut dyn GraphProbe,
@@ -573,18 +574,67 @@ impl GraphShrinker {
                     })
                     .await?;
             }
-            (ChoiceData::String(sc, _), ChoiceValue::String(v)) if sc.grammar.is_none() => {
-                let mut v = v;
-                let simplest = sc.simplest_codepoint()?;
-                changed |= self
-                    .shrink_sequence(probe, &mut key, data, &mut v, sc.min_size, simplest, |s| {
-                        ChoiceValue::String(s.to_vec())
-                    })
-                    .await?;
-            }
+            (ChoiceData::String(sc, _), ChoiceValue::String(v)) => match &sc.grammar {
+                Some(constraint) => {
+                    let constraint = Arc::clone(constraint);
+                    changed |= self
+                        .shrink_grammar_string(probe, &mut key, data, &constraint, v)
+                        .await?;
+                }
+                None => {
+                    let mut v = v;
+                    let simplest = sc.simplest_codepoint()?;
+                    changed |= self
+                        .shrink_sequence(
+                            probe,
+                            &mut key,
+                            data,
+                            &mut v,
+                            sc.min_size,
+                            simplest,
+                            |s| ChoiceValue::String(s.to_vec()),
+                        )
+                        .await?;
+                }
+            },
             _ => {}
         }
         Ok(changed)
+    }
+
+    /// The ladder for a string under a grammar, `text` now: the coarse
+    /// moves on its derivation (see
+    /// [`Layout::coarse_candidates`]), each tried once in turn and all of
+    /// them again after one is accepted. A text the grammar does not
+    /// derive has no derivation to move along.
+    async fn shrink_grammar_string(
+        &mut self,
+        probe: &mut dyn GraphProbe,
+        key: &mut EdgeKey,
+        data: &ChoiceData,
+        constraint: &GrammarConstraint,
+        mut text: Vec<u32>,
+    ) -> Result<bool, RunError> {
+        let mut changed = false;
+        'again: loop {
+            let Some(tree) = constraint.tree(&text) else {
+                return Ok(changed);
+            };
+            let layout = Layout::new(&tree);
+            let candidates =
+                layout.coarse_candidates(&text, |id| constraint.smallest_for_terminal(id));
+            for candidate in candidates {
+                if self
+                    .try_value(probe, key, data, ChoiceValue::String(candidate.clone()))
+                    .await?
+                {
+                    text = candidate;
+                    changed = true;
+                    continue 'again;
+                }
+            }
+            return Ok(changed);
+        }
     }
 
     /// The ladder for a sequence value: halve its length toward `min_len`,

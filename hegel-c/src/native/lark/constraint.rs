@@ -5,9 +5,10 @@
 //! Validating a replayed string means parsing it, so the constraint owns
 //! the compiled grammar, its terminals as the parser matches them (see
 //! [`GrammarTerminals`]) and a [`Parser`] from its start rule, and
-//! remembers the derivations it has found (and the ones the generator
-//! and the shrinker hand it) so that a string known to derive is never
-//! parsed twice.
+//! remembers the derivations it has found so that a string known to
+//! derive is never parsed twice. From every derivation it also learns
+//! the smallest text it has seen each rule and each terminal derive,
+//! which grammar-directed shrinking proposes in place of a larger one.
 //!
 //! Two constraints compare equal when they were compiled from the same
 //! grammar, for the same start rule and size cap: the engine compares
@@ -17,10 +18,12 @@
 
 use super::compile::{Grammar, RuleId, TermId};
 use super::explicit::GrammarTerminals;
+use super::layout::{Layout, Part};
 use super::parse::{Parser, Tree};
 use crate::control::InternalError;
 use crate::native::HashMap;
 use crate::native::draws::StringSpec;
+use crate::native::intervalsets::IntervalSet;
 use crate::sys::sync::Mutex;
 use alloc::boxed::Box;
 use alloc::format;
@@ -47,6 +50,17 @@ pub struct GrammarConstraint {
     /// (see [`GrammarConstraint::simplest_or_init`]).
     simplest: OnceBox<Vec<u32>>,
     known: Mutex<HashMap<(u64, usize), Arc<Tree>>>,
+    intervals: Arc<IntervalSet>,
+    smallest: Mutex<Smallest>,
+}
+
+/// The smallest text seen derived by each rule and each terminal, in
+/// the shrink order of the strings the constraint is on: shorter first,
+/// then character by character in the alphabet's shrink order.
+#[derive(Default)]
+struct Smallest {
+    rules: Vec<Option<Vec<u32>>>,
+    terminals: Vec<Option<Vec<u32>>>,
 }
 
 impl GrammarConstraint {
@@ -68,6 +82,10 @@ impl GrammarConstraint {
         format!("{grammar:?}").hash(&mut hasher);
         start.hash(&mut hasher);
         max_size.hash(&mut hasher);
+        let smallest = Smallest {
+            rules: alloc::vec![None; grammar.rules.len()],
+            terminals: alloc::vec![None; grammar.terminals.len()],
+        };
         Ok(GrammarConstraint {
             grammar,
             terminals,
@@ -77,7 +95,18 @@ impl GrammarConstraint {
             max_size,
             simplest: OnceBox::new(),
             known: Mutex::new(HashMap::default()),
+            intervals: Arc::new(IntervalSet::new(alloc::vec![
+                (0, 0xD7FF),
+                (0xE000, 0x10FFFF)
+            ])?),
+            smallest: Mutex::new(smallest),
         })
+    }
+
+    /// The alphabet of the strings the constraint is on: every Unicode
+    /// scalar value, the grammar alone deciding which strings are in.
+    pub fn intervals(&self) -> &Arc<IntervalSet> {
+        &self.intervals
     }
 
     /// The simplest string the grammar derives, computing it with `init`
@@ -88,9 +117,12 @@ impl GrammarConstraint {
         &self,
         init: impl FnOnce() -> Result<Vec<u32>, E>,
     ) -> Result<&[u32], E> {
-        self.simplest
+        let simplest = self
+            .simplest
             .get_or_try_init(|| init().map(Box::new))
-            .map(|simplest| simplest.as_slice())
+            .map(|simplest| simplest.as_slice())?;
+        self.tree(simplest);
+        Ok(simplest)
     }
 
     /// Whether `text` is in the grammar: known to derive, or parsed now
@@ -112,23 +144,50 @@ impl GrammarConstraint {
             .map(|&cp| char::from_u32(cp))
             .collect::<Option<_>>()?;
         let tree = Arc::new(self.parser.parse(&self.terminals, &chars).ok()?);
-        self.insert(key, Arc::clone(&tree));
-        Some(tree)
-    }
-
-    /// Remember `tree` as a derivation of `text`, for a caller that built
-    /// or edited the derivation itself, so that validating `text` later
-    /// parses nothing.
-    pub fn remember(&self, text: &[u32], tree: Arc<Tree>) {
-        self.insert(text_key(text), tree);
-    }
-
-    fn insert(&self, key: (u64, usize), tree: Arc<Tree>) {
+        self.learn(&tree, text);
         let mut known = self.known.lock();
         if known.len() >= KNOWN_CAPACITY {
             known.clear();
         }
-        known.insert(key, tree);
+        known.insert(key, Arc::clone(&tree));
+        Some(tree)
+    }
+
+    /// Note the text each rule and terminal derives in `tree`, a
+    /// derivation of `text`, where it is smaller than any seen before.
+    fn learn(&self, tree: &Tree, text: &[u32]) {
+        let mut smallest = self.smallest.lock();
+        for node in Layout::new(tree).nodes() {
+            let slot = match node.part {
+                Part::Rule(id) => &mut smallest.rules[id],
+                Part::Terminal(id) | Part::Ignored(id) => &mut smallest.terminals[id],
+                Part::Group | Part::Repeat => continue,
+            };
+            let derived = &text[node.start..node.end];
+            if slot
+                .as_deref()
+                .is_none_or(|known| self.smaller(derived, known))
+            {
+                *slot = Some(derived.to_vec());
+            }
+        }
+    }
+
+    /// Whether `a` comes before `b` in the shrink order of the strings
+    /// the constraint is on.
+    pub fn smaller(&self, a: &[u32], b: &[u32]) -> bool {
+        let key = |cp: &u32| self.intervals.index_from_codepoint_in_shrink_order(*cp);
+        a.len() < b.len() || (a.len() == b.len() && a.iter().map(key).lt(b.iter().map(key)))
+    }
+
+    /// The smallest text seen derived by `rule`.
+    pub fn smallest_for_rule(&self, rule: RuleId) -> Option<Vec<u32>> {
+        self.smallest.lock().rules[rule].clone()
+    }
+
+    /// The smallest text seen matched by `terminal`.
+    pub fn smallest_for_terminal(&self, terminal: TermId) -> Option<Vec<u32>> {
+        self.smallest.lock().terminals[terminal].clone()
     }
 
     /// The simplest string the grammar derives, once set.

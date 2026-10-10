@@ -48,7 +48,7 @@ fn a_codepoint_that_is_no_scalar_value_is_in_no_grammar() {
     let c = constraint("start: /./*\n", "start", 16, "");
     assert!(c.accepts(&cps("xyz")));
     assert!(!c.accepts(&[b'x' as u32, 0xD800]));
-    assert_eq!(c.known_len(), 1);
+    assert_eq!(c.known_len(), 2);
 }
 
 #[test]
@@ -57,41 +57,79 @@ fn a_string_known_to_derive_is_not_parsed_again() {
     let first = c.tree(&cps("abb")).unwrap();
     let again = c.tree(&cps("abb")).unwrap();
     assert!(Arc::ptr_eq(&first, &again));
-    assert_eq!(c.known_len(), 1);
+    assert_eq!(c.known_len(), 2);
     assert!(c.accepts(&cps("abb")));
-    assert_eq!(c.known_len(), 1);
+    assert_eq!(c.known_len(), 2);
     assert!(!c.accepts(&cps("bb")));
-    assert_eq!(c.known_len(), 1);
-}
-
-#[test]
-fn a_remembered_derivation_is_read_back_and_stands_for_acceptance() {
-    let c = constraint(AB, "start", 16, "a");
-    let tree = Arc::new(Tree::Repeat {
-        children: Vec::new(),
-    });
-    c.remember(&cps("zzz"), Arc::clone(&tree));
-    assert!(Arc::ptr_eq(&c.tree(&cps("zzz")).unwrap(), &tree));
-    assert!(c.accepts(&cps("zzz")));
-    assert!(!c.accepts(&cps("zz")));
-    assert!(!c.accepts(&cps("zzzz")));
+    assert_eq!(c.known_len(), 2);
 }
 
 #[test]
 fn the_memo_is_emptied_when_it_reaches_its_capacity() {
-    let c = constraint(AB, "start", 16, "a");
-    let tree = Arc::new(Tree::Repeat {
-        children: Vec::new(),
-    });
-    for i in 0..KNOWN_CAPACITY as u32 {
-        c.remember(&[i], Arc::clone(&tree));
+    let c = constraint("start: /[a-z]+/\n", "start", 16, "a");
+    assert_eq!(c.known_len(), 1);
+    let word = |i: usize| [b'a' as u32 + (i / 26) as u32, b'a' as u32 + (i % 26) as u32];
+    for i in 0..KNOWN_CAPACITY - 1 {
+        assert!(c.accepts(&word(i)));
     }
     assert_eq!(c.known_len(), KNOWN_CAPACITY);
-    assert!(c.accepts(&[0]));
-    c.remember(&[KNOWN_CAPACITY as u32], tree);
+    assert!(c.accepts(&word(KNOWN_CAPACITY)));
     assert_eq!(c.known_len(), 1);
-    assert!(!c.accepts(&[0]));
-    assert!(c.accepts(&[KNOWN_CAPACITY as u32]));
+    assert!(c.accepts(&word(0)));
+    assert_eq!(c.known_len(), 2);
+}
+
+const LIST: &str =
+    "start: item (\",\" item)*\nitem: INT | \"[\" start \"]\"\nINT: /[0-9]+/\n%ignore \" \"\n";
+
+#[test]
+fn the_smallest_text_each_rule_and_terminal_derives_is_learned() {
+    let grammar = compiled(LIST, "start");
+    let start = grammar.start[0];
+    let item = grammar.rule_id("item").unwrap();
+    let int = grammar.terminal_id("INT").unwrap();
+    let space = grammar.ignore[0];
+    let c = GrammarConstraint::new(grammar, &[], start, 64).unwrap();
+    assert_eq!(c.smallest_for_rule(start), None);
+    assert_eq!(c.smallest_for_terminal(int), None);
+    assert!(c.accepts(&cps("12,  [7, 3]")));
+    assert_eq!(c.smallest_for_rule(start), Some(cps("7, 3")));
+    assert_eq!(c.smallest_for_rule(item), Some(cps("3")));
+    assert_eq!(c.smallest_for_terminal(int), Some(cps("3")));
+    assert_eq!(c.smallest_for_terminal(space), Some(cps(" ")));
+    assert!(c.accepts(&cps("[9]")));
+    assert_eq!(c.smallest_for_rule(start), Some(cps("9")));
+    assert_eq!(c.smallest_for_rule(item), Some(cps("3")));
+    assert!(c.accepts(&cps("0")));
+    assert_eq!(c.smallest_for_rule(start), Some(cps("0")));
+    assert_eq!(c.smallest_for_rule(item), Some(cps("0")));
+    assert_eq!(c.smallest_for_terminal(int), Some(cps("0")));
+    assert!(c.accepts(&cps("0")));
+    assert_eq!(c.known_len(), 3);
+}
+
+#[test]
+fn the_simplest_string_teaches_its_derivation() {
+    let grammar = compiled(LIST, "start");
+    let start = grammar.start[0];
+    let int = grammar.terminal_id("INT").unwrap();
+    let c = GrammarConstraint::new(grammar, &[], start, 64).unwrap();
+    c.simplest_or_init(|| Ok::<_, u8>(cps("0"))).unwrap();
+    assert_eq!(c.smallest_for_terminal(int), Some(cps("0")));
+    assert_eq!(c.known_len(), 1);
+}
+
+#[test]
+fn smaller_orders_by_length_then_by_the_shrink_order_of_characters() {
+    let c = constraint(AB, "start", 16, "a");
+    assert!(c.smaller(&cps("zz"), &cps("000")));
+    assert!(c.smaller(&cps("0"), &cps("a")));
+    assert!(c.smaller(&cps("Z"), &cps(" ")));
+    assert!(c.smaller(&cps(" "), &cps("a")));
+    assert!(c.smaller(&cps("a0"), &cps("aa")));
+    assert!(!c.smaller(&cps("a"), &cps("a")));
+    assert!(!c.smaller(&cps("aa"), &cps("a0")));
+    assert_eq!(c.intervals().len(), 0x110000 - 0x800);
 }
 
 #[test]

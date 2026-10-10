@@ -60,14 +60,12 @@ use crate::native::core::state::boolean_threshold;
 use crate::native::core::{EngineError, NativeTestCase, Status, StringChoice};
 use crate::native::draws::source::{RngDraws, SimplestDraws};
 use crate::native::draws::{Draws, StringSpec, generate_string_into, spanned};
-use crate::native::intervalsets::IntervalSet;
 use crate::native::labels::label_from_name;
 use crate::native::rng::EngineRng;
 use crate::sys::sync::Mutex;
 use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
-use alloc::vec;
 use alloc::vec::Vec;
 use core::hash::Hasher;
 use hashbrown::HashTable;
@@ -490,9 +488,7 @@ impl GrammarSpec {
             GrammarConstraint::new(grammar, &explicit_specs, start, max_size).map_err(internal)?,
         );
         let kind = Arc::new(StringChoice {
-            intervals: Arc::new(
-                IntervalSet::new(vec![(0, 0xD7FF), (0xE000, 0x10FFFF)]).map_err(internal)?,
-            ),
+            intervals: Arc::clone(constraint.intervals()),
             min_size: 0,
             max_size,
             grammar: Some(Arc::clone(&constraint)),

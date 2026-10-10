@@ -3,6 +3,7 @@ mod clones;
 mod coarse;
 mod deletion;
 mod floats;
+mod grammar;
 mod index_passes;
 mod integers;
 mod mutation;
@@ -750,6 +751,10 @@ impl<'a> Shrinker<'a> {
             ShrinkPass::new(
                 "redistribute_bytes_pairs",
                 Box::new(|sh| boxed_pass(sh.redistribute_bytes_pairs())),
+            ),
+            ShrinkPass::new(
+                "shrink_grammar_strings",
+                Box::new(|sh| boxed_pass(sh.shrink_grammar_strings())),
             ),
             ShrinkPass::new(
                 "shrink_strings",
