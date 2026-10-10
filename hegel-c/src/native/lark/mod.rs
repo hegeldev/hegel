@@ -15,6 +15,10 @@ pub mod analysis;
 pub mod ast;
 pub mod builder;
 pub mod compile;
+/// The generator and the grammar shrink pass will seed the memo and read
+/// derivations back; until they do, only validation is reached.
+#[cfg_attr(not(test), allow(dead_code))]
+pub mod constraint;
 pub mod escape;
 pub mod generate;
 pub mod lexer;
