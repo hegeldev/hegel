@@ -1279,6 +1279,99 @@ fn alt(min_size: u64, typical_size: u64, max_size: Bound, min_depth: u32) -> Alt
 }
 
 #[test]
+fn the_classes_of_alternatives_are_worked_out_once_for_every_budget() {
+    let alts = [
+        alt(1, 2, Some(3), 0),
+        alt(2, 4, None, 3),
+        alt(2, 5, Some(9), 1),
+        alt(7, 7, None, 2),
+    ];
+    let classes = AltClasses::of(&alts).unwrap();
+    assert_eq!(
+        classes,
+        AltClasses {
+            min_depth: 3,
+            by_prefix: vec![(0, u64::MAX), (0b0010, 4), (0b0010, 4), (0b1010, 4)],
+        }
+    );
+    for budget in 0..9 {
+        for depth in 0..4 {
+            let found = feasible_classes(&alts, budget, depth, 5);
+            let at = classes.at(&alts, budget, depth, 5);
+            if depth <= 2 {
+                assert_eq!(at, Some(found), "{budget} {depth}");
+            } else {
+                assert_eq!(at, None, "{budget} {depth}");
+            }
+        }
+    }
+    assert_eq!(classes.at(&alts, 7, 2, 5), Some((0b1111, 0b1010, 4)));
+    assert_eq!(classes.at(&alts, 6, 2, 5), Some((0b0111, 0b0010, 4)));
+    assert_eq!(classes.at(&alts, 1, 2, 5), Some((0b0001, 0, u64::MAX)));
+    assert_eq!(classes.at(&alts, 0, 2, 5), Some((0, 0, u64::MAX)));
+    assert_eq!(classes.at(&alts, 7, 0, 2), None);
+    let unsorted = [alt(2, 2, None, 0), alt(1, 1, None, 0)];
+    assert_eq!(AltClasses::of(&unsorted), None);
+    assert_eq!(
+        AltClasses::of(&[]).unwrap(),
+        AltClasses {
+            min_depth: 0,
+            by_prefix: vec![],
+        }
+    );
+    assert_eq!(
+        AltClasses::of(&[]).unwrap().at(&[], 3, 0, 1),
+        Some((0, 0, u64::MAX))
+    );
+    let many: Vec<Alt> = (0..MASKED_ALTS as u64)
+        .map(|i| alt(i, i, None, 0))
+        .collect();
+    let classes = AltClasses::of(&many).unwrap();
+    assert_eq!(classes.by_prefix.len(), MASKED_ALTS);
+    assert_eq!(classes.at(&many, 63, 0, 1), Some((u64::MAX, !1, 1)));
+    assert_eq!(
+        classes.at(&many, 62, 0, 1),
+        Some((u64::MAX >> 1, (u64::MAX >> 1) & !1, 1))
+    );
+    let too_many: Vec<Alt> = (0..=MASKED_ALTS as u64)
+        .map(|i| alt(i, i, None, 0))
+        .collect();
+    assert_eq!(AltClasses::of(&too_many), None);
+}
+
+#[test]
+fn every_group_has_its_classes_by_its_number() {
+    let spec = grammar(
+        "start: (\"a\" | \"b\" (\"c\" | \"d\")+)* other\nother: \"e\" | (\"f\" | \"g\" \"h\")\n",
+    );
+    assert_eq!(spec.analysis.groups, 3);
+    assert_eq!(spec.group_classes.len(), 3);
+    let mut seen = 0;
+    for rule in &spec.analysis.rules {
+        for alt in &rule.alternatives {
+            for node in &alt.items {
+                if let NodeKind::Repeat { inner, .. } = &node.kind {
+                    let NodeKind::Group(group, alts) = &inner.kind else {
+                        panic!("{:?}", inner.kind);
+                    };
+                    assert_eq!(spec.group_classes[*group], AltClasses::of(alts));
+                    seen += 1;
+                }
+                if let NodeKind::Group(group, alts) = &node.kind {
+                    assert_eq!(spec.group_classes[*group], AltClasses::of(alts));
+                    seen += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(seen, 2);
+    assert!(spec.group_classes.iter().all(|classes| classes.is_some()));
+    let strings = samples(&spec, 50);
+    assert!(strings.iter().any(|s| s.contains('c') || s.contains('d')));
+    assert!(strings.iter().any(|s| s.contains('g')));
+}
+
+#[test]
 fn choosing_an_alternative_by_mask_agrees_with_scanning() {
     let spec = spec_with(
         "start: \"a\"\n",
@@ -1290,10 +1383,11 @@ fn choosing_an_alternative_by_mask_agrees_with_scanning() {
     .unwrap();
     let mut rng = EngineRng::seeded(0);
     let (mut chosen, mut infeasible, mut beyond_mask, mut grew) = (0, 0, 0, 0);
+    let (mut all, mut some, mut too_deep) = (0, 0, 0);
     for case in 0..600u64 {
         let n = 1 + usize::from(rng.next_byte()) % 70;
         let growth = rng.next_byte() % 3;
-        let alts: Vec<Alt> = (0..n)
+        let mut alts: Vec<Alt> = (0..n)
             .map(|_| {
                 let min_size = u64::from(rng.next_byte() % 8);
                 let typical_size = min_size + u64::from(rng.next_byte() % 4);
@@ -1311,33 +1405,55 @@ fn choosing_an_alternative_by_mask_agrees_with_scanning() {
                 )
             })
             .collect();
+        alts.sort_by_key(|alt| alt.min_size);
         let budget = u64::from(rng.next_byte() % 12);
         let depth = u32::from(rng.next_byte() % 6);
         let mut by_mask = NativeTestCase::new_random(EngineRng::seeded(case)).unwrap();
+        let mut by_classes = NativeTestCase::new_random(EngineRng::seeded(case)).unwrap();
         let mut by_scan = NativeTestCase::new_random(EngineRng::seeded(case)).unwrap();
         let mut generation = Generation::new(&spec, 0.0);
         let position = |alt: &Alt| alts.iter().position(|a| core::ptr::eq(a, alt)).unwrap();
         let masked = generation
-            .choose_alt(&mut by_mask, &alts, budget, depth)
+            .choose_alt(&mut by_mask, &alts, None, budget, depth)
+            .map(position);
+        let classes = AltClasses::of(&alts);
+        match classes
+            .as_ref()
+            .map(|classes| classes.at(&alts, budget, depth, spec.max_depth))
+        {
+            Some(Some((feasible, _, _))) if feasible.count_ones() as usize == n => all += 1,
+            Some(Some(_)) => some += 1,
+            Some(None) => too_deep += 1,
+            None => {}
+        }
+        let classed = generation
+            .choose_alt(&mut by_classes, &alts, classes.as_ref(), budget, depth)
             .map(position);
         let scanned = generation
             .choose_alt_scanning(&mut by_scan, &alts, budget, depth)
             .map(position);
-        match (masked, scanned) {
-            (Ok(a), Ok(b)) => {
-                assert_eq!(a, b);
+        match (masked, classed, scanned) {
+            (Ok(a), Ok(b), Ok(c)) => {
+                assert_eq!((a, b), (c, c));
                 chosen += 1;
                 beyond_mask += usize::from(n > MASKED_ALTS);
                 grew += usize::from(alts[a].growing());
             }
-            (Err(_), Err(_)) => infeasible += 1,
-            (masked, scanned) => panic!("{masked:?} by mask but {scanned:?} by scanning"),
+            (Err(_), Err(_), Err(_)) => infeasible += 1,
+            (masked, classed, scanned) => {
+                panic!("{masked:?} by mask, {classed:?} by classes but {scanned:?} by scanning")
+            }
         }
         assert_eq!(by_mask.nodes, by_scan.nodes);
+        assert_eq!(by_classes.nodes, by_scan.nodes);
     }
     assert!(
         chosen > 500 && infeasible >= 10 && beyond_mask > 30 && grew > 200,
         "{chosen} {infeasible} {beyond_mask} {grew}"
+    );
+    assert!(
+        all > 50 && some > 50 && too_deep > 50,
+        "{all} {some} {too_deep}"
     );
 }
 

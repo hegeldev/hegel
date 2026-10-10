@@ -89,7 +89,7 @@ fn groups_take_the_smallest_alternative() {
     let (g, a) = analyzed("start: (\"abc\" | \"d\" inner | \"ef\")\ninner: \"g\" \"h\"\n");
     let start = rule(&g, &a, "start");
     assert_eq!(start.min_size, 2);
-    let NodeKind::Group(alts) = &start.alternatives[0].items[0].kind else {
+    let NodeKind::Group(_, alts) = &start.alternatives[0].items[0].kind else {
         panic!("expected a group");
     };
     assert_eq!(alts.len(), 3);
@@ -136,7 +136,7 @@ fn unproductive_alternatives_and_rules_are_dropped() {
     };
     assert_eq!((*min, *max), (0, Some(0)));
     assert_eq!(start.alternatives[0].max_size, Some(0));
-    let NodeKind::Group(alts) = &start.alternatives[2].items[0].kind else {
+    let NodeKind::Group(_, alts) = &start.alternatives[2].items[0].kind else {
         panic!("expected a group");
     };
     assert_eq!(alts.len(), 1);

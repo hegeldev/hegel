@@ -14,6 +14,7 @@ use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::cell::Cell;
 
 /// A size bound that may be unbounded.
 pub type Bound = Option<u64>;
@@ -45,11 +46,15 @@ pub struct Alt {
     pub items: Vec<Node>,
 }
 
+/// The index of a group (a parenthesised choice of alternatives within
+/// an alternative) among all the groups of a grammar.
+pub type GroupId = usize;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeKind {
     Terminal(TermId),
     Rule(RuleId),
-    Group(Vec<Alt>),
+    Group(GroupId, Vec<Alt>),
     Repeat {
         inner: Box<Node>,
         min: u32,
@@ -76,10 +81,11 @@ impl Alt {
 }
 
 /// The analysed grammar: rules indexed by [`RuleId`] as in the compiled
-/// grammar they came from.
+/// grammar they came from, and how many groups they hold between them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Analysis {
     pub rules: Vec<Rule>,
+    pub groups: usize,
 }
 
 fn add_bound(a: Bound, b: Bound) -> Bound {
@@ -118,6 +124,8 @@ struct Analyzer<'g> {
     /// The length of each terminal's strings on average.
     term_typical: Vec<u64>,
     facts: Vec<RuleFacts>,
+    /// The groups numbered so far.
+    groups: Cell<usize>,
 }
 
 impl Analyzer<'_> {
@@ -332,7 +340,10 @@ impl Analyzer<'_> {
         let kind = match item {
             Item::Terminal(t) => NodeKind::Terminal(*t),
             Item::Rule(r) => NodeKind::Rule(*r),
-            Item::Group(alts) => NodeKind::Group(self.build_alts(alts)),
+            Item::Group(alts) => {
+                let group = self.groups.replace(self.groups.get() + 1);
+                NodeKind::Group(group, self.build_alts(alts))
+            }
             Item::Repeat { inner, min, max } => {
                 let productive = self.item_min_size(inner).is_some();
                 NodeKind::Repeat {
@@ -390,6 +401,7 @@ pub fn analyze(
             };
             grammar.rules.len()
         ],
+        groups: Cell::new(0),
     };
     analyzer.solve_minima();
     for &start in &grammar.start {
@@ -414,7 +426,10 @@ pub fn analyze(
             alternatives: analyzer.build_alts(&rule.alternatives),
         })
         .collect();
-    Ok(Analysis { rules })
+    Ok(Analysis {
+        rules,
+        groups: analyzer.groups.get(),
+    })
 }
 
 #[cfg(test)]

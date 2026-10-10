@@ -717,8 +717,10 @@ impl Program {
     /// text of `consumed` characters, on `text`, which continues that
     /// text after `start + consumed`: the match and touch a run over all
     /// of `text` from `start` would report, without the threads the end
-    /// of `text` leaves waiting (nothing carries on from here).
-    #[inline]
+    /// of `text` leaves waiting (nothing carries on from here). Its one
+    /// caller, the lexer simulation's carry, is better off with it inlined
+    /// whatever the compiler would decide on its own.
+    #[inline(always)]
     pub fn resume(
         &self,
         resume: &Resume,

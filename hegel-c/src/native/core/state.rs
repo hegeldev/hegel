@@ -3041,7 +3041,8 @@ impl NativeTestCase {
     /// `simplest()` when the stale value was its original kind's simplest,
     /// and to `unit()` otherwise. A draw the replay has nothing to say
     /// about (see [`Replay::plain_from`]) and no template decides goes
-    /// straight to the RNG.
+    /// straight to the RNG. `random` is called from here alone, so that
+    /// the compiler inlines it into the draw whatever its size.
     fn resolve_choice<V>(
         &mut self,
         simplest: impl FnOnce() -> Result<V, InternalError>,
@@ -3053,21 +3054,24 @@ impl NativeTestCase {
 
         let idx = self.nodes.len();
 
-        if idx >= self.replay.plain_from() && self.trailing_template.is_none() {
-            let rng = hegel_internal_unwrap!(
-                self.rng.as_mut(),
-                "resolve_choice: no RNG available for random generation"
-            );
-            return Ok((random(rng)?, false));
+        if idx < self.replay.plain_from() || self.trailing_template.is_some() {
+            if let Some(decided) = self.resolve_choice_replayed(idx, simplest, unit, from_prefix)? {
+                return Ok(decided);
+            }
         }
 
-        self.resolve_choice_replayed(idx, simplest, unit, from_prefix, random)
+        let rng = hegel_internal_unwrap!(
+            self.rng.as_mut(),
+            "resolve_choice: no RNG available for random generation"
+        );
+        Ok((random(rng)?, false))
     }
 
     /// [`Self::resolve_choice`] for a draw at `idx` the replay or the
-    /// trailing template may decide. Kept out of line so that the plain
-    /// path, which every draw past the proposal takes, carries none of
-    /// its machinery.
+    /// trailing template may decide: the value and whether it was forced,
+    /// or `None` when neither decides it. Kept out of line so that the
+    /// plain path, which every draw past the proposal takes, carries none
+    /// of its machinery.
     #[inline(never)]
     fn resolve_choice_replayed<V>(
         &mut self,
@@ -3075,19 +3079,21 @@ impl NativeTestCase {
         simplest: impl FnOnce() -> Result<V, InternalError>,
         unit: impl FnOnce() -> Result<V, InternalError>,
         from_prefix: impl Fn(&ChoiceValue) -> Option<V>,
-        random: impl FnOnce(&mut EngineRng) -> Result<V, InternalError>,
-    ) -> Result<(V, bool), EngineError> {
+    ) -> Result<Option<(V, bool)>, EngineError> {
         match self
             .replay
             .resolve(&self.clone_id, idx, || self.draw_address(), from_prefix)
         {
-            Resolved::Served(v) => return Ok((v, false)),
+            Resolved::Served(v) => return Ok(Some((v, false))),
             Resolved::Misfit(stored, timeline) => {
                 let is_simplest = match self.replay.proposal_node(timeline, idx) {
                     Some(pn) => *stored == pn.data.simplest_value()?,
                     None => false,
                 };
-                return Ok((if is_simplest { simplest()? } else { unit()? }, false));
+                return Ok(Some((
+                    if is_simplest { simplest()? } else { unit()? },
+                    false,
+                )));
             }
             Resolved::Exhausted => {}
         }
@@ -3102,14 +3108,10 @@ impl NativeTestCase {
             if let Some(c) = template.count.as_mut() {
                 *c -= 1;
             }
-            return Ok((value, false));
+            return Ok(Some((value, false)));
         }
 
-        let rng = hegel_internal_unwrap!(
-            self.rng.as_mut(),
-            "resolve_choice: no RNG available for random generation"
-        );
-        Ok((random(rng)?, false))
+        Ok(None)
     }
 }
 

@@ -167,6 +167,11 @@ pub struct GrammarSpec {
     lexer: Lexer,
     start: RuleId,
     labels: Vec<u64>,
+    /// How [`Generation::choose_alt`] classes each rule's alternatives,
+    /// indexed by [`RuleId`], and each group's, indexed by [`super::analysis::GroupId`];
+    /// `None` for more alternatives than a mask holds.
+    classes: Vec<Option<AltClasses>>,
+    group_classes: Vec<Option<AltClasses>>,
     max_size: u64,
     max_depth: u32,
     /// What the lexers found in each distinct token text drawn so far,
@@ -366,6 +371,12 @@ impl GrammarSpec {
             .iter()
             .map(|rule| label_from_name(&format!("hegel.lark.rule.{}", rule.name)))
             .collect();
+        let classes = analysis
+            .rules
+            .iter()
+            .map(|rule| AltClasses::of(&rule.alternatives))
+            .collect();
+        let group_classes = group_classes(&analysis);
         let terminals_len = terminals.len();
         Ok(GrammarSpec {
             analysis,
@@ -377,6 +388,8 @@ impl GrammarSpec {
             lexer,
             start,
             labels,
+            classes,
+            group_classes,
             max_size: options.max_size,
             max_depth: options.max_depth,
             readings: Mutex::new(ReadingsCache {
@@ -1116,6 +1129,124 @@ fn token_budget(target: u64, min: u64, rate: f64, ignore_cost: f64) -> u64 {
 /// a bit mask.
 const MASKED_ALTS: usize = u64::BITS as usize;
 
+/// The alternatives of `alts` that are feasible at `depth` with `budget`
+/// characters to spend, as a bit mask, with the growing class among them
+/// (see [`Generation::choose_alt`]) and the smallest typical size in it.
+/// `alts` must hold no more alternatives than a mask does.
+fn feasible_classes(alts: &[Alt], budget: u64, depth: u32, max_depth: u32) -> (u64, u64, u64) {
+    let mut feasible = 0u64;
+    let mut typical = u64::MAX;
+    let mut any_closing = false;
+    for (i, alt) in alts.iter().enumerate() {
+        if alt.min_size <= budget && depth.saturating_add(alt.min_depth) <= max_depth {
+            feasible |= 1 << i;
+            typical = typical.min(alt.typical_size);
+            any_closing |= !alt.growing();
+        }
+    }
+    let mut growing = 0u64;
+    let mut cheapest_growing = u64::MAX;
+    let mut rest = feasible;
+    while rest != 0 {
+        let i = rest.trailing_zeros();
+        rest &= rest - 1;
+        let alt = &alts[i as usize];
+        let closes = if any_closing {
+            !alt.growing()
+        } else {
+            alt.typical_size == typical
+        };
+        if !closes {
+            growing |= 1 << i;
+            cheapest_growing = cheapest_growing.min(alt.typical_size);
+        }
+    }
+    (feasible, growing, cheapest_growing)
+}
+
+/// What [`feasible_classes`] answers for the alternatives of a rule or
+/// group at any budget, worked out once, for as long as the depth leaves
+/// room for every one of them: the alternatives come sorted by minimum
+/// size (see [`analyze`]), so the ones feasible with a budget are the
+/// first so many of them, and the table holds the growing class and its
+/// cheapest typical size for each such prefix.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AltClasses {
+    /// The largest minimum depth among the alternatives: every one of
+    /// them has room at a depth that leaves this much.
+    min_depth: u32,
+    /// The growing class among the first `k` alternatives and the
+    /// smallest typical size in it, at index `k - 1`.
+    by_prefix: Vec<(u64, u64)>,
+}
+
+impl AltClasses {
+    /// The classes of `alts` by prefix, or `None` when they are more than
+    /// a mask holds or not sorted by minimum size.
+    fn of(alts: &[Alt]) -> Option<AltClasses> {
+        if alts.len() > MASKED_ALTS || !alts.is_sorted_by_key(|alt| alt.min_size) {
+            return None;
+        }
+        Some(AltClasses {
+            min_depth: alts.iter().map(|alt| alt.min_depth).max().unwrap_or(0),
+            by_prefix: (1..=alts.len())
+                .map(|k| {
+                    let (_, growing, cheapest) =
+                        feasible_classes(&alts[..k], u64::MAX, 0, u32::MAX);
+                    (growing, cheapest)
+                })
+                .collect(),
+        })
+    }
+
+    /// What [`feasible_classes`] answers for `alts`, the alternatives
+    /// these are the classes of, at `depth` with `budget` characters to
+    /// spend under `max_depth`, or `None` when the depth leaves room for
+    /// only some of them.
+    fn at(&self, alts: &[Alt], budget: u64, depth: u32, max_depth: u32) -> Option<(u64, u64, u64)> {
+        if depth.saturating_add(self.min_depth) > max_depth {
+            return None;
+        }
+        let mut k = alts.len();
+        while k > 0 && alts[k - 1].min_size > budget {
+            k -= 1;
+        }
+        Some(match k.checked_sub(1) {
+            Some(last) => {
+                let (growing, cheapest_growing) = self.by_prefix[last];
+                (u64::MAX >> (MASKED_ALTS - k), growing, cheapest_growing)
+            }
+            None => (0, 0, u64::MAX),
+        })
+    }
+}
+
+/// The classes (see [`AltClasses`]) of every group's alternatives in
+/// `analysis`, indexed by [`super::analysis::GroupId`].
+fn group_classes(analysis: &Analysis) -> Vec<Option<AltClasses>> {
+    fn walk(items: &[Node], classes: &mut [Option<AltClasses>]) {
+        for node in items {
+            match &node.kind {
+                NodeKind::Group(group, alts) => {
+                    classes[*group] = AltClasses::of(alts);
+                    for alt in alts {
+                        walk(&alt.items, classes);
+                    }
+                }
+                NodeKind::Repeat { inner, .. } => walk(core::slice::from_ref(inner), classes),
+                NodeKind::Terminal(_) | NodeKind::Rule(_) => {}
+            }
+        }
+    }
+    let mut classes = alloc::vec![None; analysis.groups];
+    for rule in &analysis.rules {
+        for alt in &rule.alternatives {
+            walk(&alt.items, &mut classes);
+        }
+    }
+    classes
+}
+
 /// The position of the `index`th set bit of `bits`, counting from the
 /// lowest, when it has that many.
 fn nth_set_bit(mut bits: u64, index: u64) -> Option<u32> {
@@ -1145,13 +1276,16 @@ impl Generation<'_> {
     /// uniformly within the class.
     ///
     /// The classes are kept as bit masks over the alternatives, so that
-    /// each is sized and indexed without another pass over them; a rule
-    /// with more alternatives than a mask holds is drawn from by
+    /// each is sized and indexed without another pass over them, and
+    /// looked up in `classes` (see [`AltClasses`]) when it has them for
+    /// this depth, instead of being found again; a rule with more
+    /// alternatives than a mask holds is drawn from by
     /// [`Generation::choose_alt_scanning`], which answers the same.
     fn choose_alt<'a>(
         &mut self,
         ntc: &mut NativeTestCase,
         alts: &'a [Alt],
+        classes: Option<&AltClasses>,
         budget: u64,
         depth: u32,
     ) -> Result<&'a Alt, EngineError> {
@@ -1159,34 +1293,10 @@ impl Generation<'_> {
             return self.choose_alt_scanning(ntc, alts, budget, depth);
         }
         let max_depth = self.spec.max_depth;
-        let mut feasible = 0u64;
-        let mut typical = u64::MAX;
-        let mut any_closing = false;
-        for (i, alt) in alts.iter().enumerate() {
-            if alt.min_size <= budget && depth.saturating_add(alt.min_depth) <= max_depth {
-                feasible |= 1 << i;
-                typical = typical.min(alt.typical_size);
-                any_closing |= !alt.growing();
-            }
-        }
+        let (feasible, growing, cheapest_growing) = classes
+            .and_then(|classes| classes.at(alts, budget, depth, max_depth))
+            .unwrap_or_else(|| feasible_classes(alts, budget, depth, max_depth));
         hegel_internal_assert!(feasible != 0);
-        let mut growing = 0u64;
-        let mut cheapest_growing = u64::MAX;
-        let mut rest = feasible;
-        while rest != 0 {
-            let i = rest.trailing_zeros();
-            rest &= rest - 1;
-            let alt = &alts[i as usize];
-            let closes = if any_closing {
-                !alt.growing()
-            } else {
-                alt.typical_size == typical
-            };
-            if !closes {
-                growing |= 1 << i;
-                cheapest_growing = cheapest_growing.min(alt.typical_size);
-            }
-        }
         let grow = if growing == 0 {
             false
         } else {
@@ -1274,7 +1384,13 @@ impl Generation<'_> {
         depth: u32,
     ) -> Result<(), Step> {
         let rule = &self.spec.analysis.rules[id];
-        let alt = self.choose_alt(ntc, &rule.alternatives, budget, depth + 1)?;
+        let alt = self.choose_alt(
+            ntc,
+            &rule.alternatives,
+            self.spec.classes[id].as_ref(),
+            budget,
+            depth + 1,
+        )?;
         self.sequence(ntc, alt, budget, depth + 1)
     }
 
@@ -1366,8 +1482,9 @@ impl Generation<'_> {
         match &node.kind {
             NodeKind::Terminal(t) => self.terminal(ntc, *t),
             NodeKind::Rule(r) => self.rule(ntc, *r, budget, depth),
-            NodeKind::Group(alts) => {
-                let alt = self.choose_alt(ntc, alts, budget, depth)?;
+            NodeKind::Group(group, alts) => {
+                let classes = self.spec.group_classes[*group].as_ref();
+                let alt = self.choose_alt(ntc, alts, classes, budget, depth)?;
                 self.sequence(ntc, alt, budget, depth)
             }
             NodeKind::Repeat { inner, min, max } => {
