@@ -259,6 +259,7 @@ impl Draws for RngDraws<'_> {
                     intervals: Arc::clone(intervals),
                     min_size: *min_size,
                     max_size: *max_size,
+                    grammar: None,
                 };
                 Ok(codepoints_to_string(&biased_string_sample(
                     &kind, self.rng,
@@ -355,6 +356,7 @@ impl Draws for SimplestDraws {
                     intervals: Arc::clone(intervals),
                     min_size: *min_size,
                     max_size: *max_size,
+                    grammar: None,
                 };
                 Ok(codepoints_to_string(&kind.simplest()?))
             }
