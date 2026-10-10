@@ -843,7 +843,7 @@ pub(crate) fn biased_i64_sample(
 /// narrower than [`CURATED_MIN_WIDTH`]: the ranges [`biased_i128_sample`]
 /// hands to the narrow-range sampler, [`NarrowRange`]. A width that
 /// overflows `i128` is unambiguously wide.
-fn is_narrow(min_value: i128, max_value: i128) -> bool {
+pub(crate) fn is_narrow(min_value: i128, max_value: i128) -> bool {
     min_value < max_value
         && max_value
             .checked_sub(min_value)
@@ -934,7 +934,7 @@ const NARROW_RANGE_SLOT_BITS: u32 = 3;
 /// the slot of whatever range it shares it with. An unused slot holds the
 /// default range, whose equal bounds no range [`is_narrow`] admits has.
 #[derive(Debug, Default)]
-struct NarrowRanges([NarrowRange; 1 << NARROW_RANGE_SLOT_BITS]);
+pub(crate) struct NarrowRanges([NarrowRange; 1 << NARROW_RANGE_SLOT_BITS]);
 
 impl NarrowRanges {
     /// The slot for `[min_value, max_value]`.
@@ -947,7 +947,11 @@ impl NarrowRanges {
 
     /// `[min_value, max_value]`, a range [`is_narrow`] admits, worked out
     /// now unless its slot already holds it.
-    fn get(&mut self, min_value: i128, max_value: i128) -> Result<NarrowRange, InternalError> {
+    pub(crate) fn get(
+        &mut self,
+        min_value: i128,
+        max_value: i128,
+    ) -> Result<NarrowRange, InternalError> {
         let held = &mut self.0[Self::slot(min_value, max_value)];
         if held.min_value != min_value || held.max_value != max_value {
             *held = NarrowRange::new(min_value, max_value)?;

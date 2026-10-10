@@ -15,9 +15,9 @@ use crate::control::{hegel_internal_assert, hegel_internal_unwrap};
 use crate::native::bignum::ToPrimitive;
 use crate::native::core::choices::{BooleanChoice, IntegerChoice};
 use crate::native::core::state::{
-    IntegerGenerationParameters, biased_i64_sample, biased_string_sample, boolean_forced,
-    codepoints_to_string, uniform_u64_inclusive, weighted_boolean_sample,
-    weighted_boolean_sample_precise,
+    IntegerGenerationParameters, NarrowRanges, biased_i64_sample, biased_string_sample,
+    boolean_forced, codepoints_to_string, is_narrow, uniform_u64_inclusive,
+    weighted_boolean_sample, weighted_boolean_sample_precise,
 };
 use crate::native::core::{EngineError, ManyState, NativeTestCase, Status, StringChoice};
 use crate::native::intervalsets::IntervalSet;
@@ -217,6 +217,7 @@ fn generate_string_from<D: Draws>(d: &mut D, spec: &StringSpec) -> Result<String
 pub(crate) struct RngDraws<'a> {
     rng: &'a mut EngineRng,
     params: IntegerGenerationParameters,
+    narrow_ranges: NarrowRanges,
     status: Option<Status>,
 }
 
@@ -226,6 +227,7 @@ impl<'a> RngDraws<'a> {
         RngDraws {
             rng,
             params,
+            narrow_ranges: NarrowRanges::default(),
             status: None,
         }
     }
@@ -250,10 +252,18 @@ impl Draws for RngDraws<'_> {
             min_value <= max_value,
             "Invalid range [{min_value:?}, {max_value:?}]"
         );
+        let narrow = if is_narrow(i128::from(min_value), i128::from(max_value)) {
+            Some(
+                self.narrow_ranges
+                    .get(i128::from(min_value), i128::from(max_value))?,
+            )
+        } else {
+            None
+        };
         Ok(biased_i64_sample(
             min_value,
             max_value,
-            None,
+            narrow.as_ref(),
             self.rng,
             self.params,
         )?)
