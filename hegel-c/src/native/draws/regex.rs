@@ -542,19 +542,8 @@ fn generate_op(
             }
         },
         OpCode::In(items) => {
-            let key = (items.as_ptr() as usize, items.len(), state.flags);
             let mut cache = state.in_cache.lock();
-            let set = match cache.entry(key) {
-                Entry::Occupied(entry) => entry.into_mut(),
-                Entry::Vacant(entry) => {
-                    let computed = if alphabet.is_none() {
-                        cached_default_in_set(items, state.flags)?
-                    } else {
-                        build_in_set(items, state.flags, alphabet)?
-                    };
-                    entry.insert(computed)
-                }
-            };
+            let set = in_set(&mut cache, items, state.flags, alphabet)?;
             emit_from_set(ntc, set, out)?;
         }
         OpCode::Branch(items) => {
@@ -635,6 +624,9 @@ fn generate_op(
                 Some(*max as usize)
             };
             let mut ms = ManyState::new(min, max);
+            if let [OpCode::In(items)] = item.data.as_slice() {
+                return repeat_in(ntc, &mut ms, items, state, alphabet, out);
+            }
             loop {
                 if !many_more(ntc, &mut ms)? {
                     break;
@@ -645,6 +637,55 @@ fn generate_op(
     }
     Ok(())
 }
+
+/// Draw a repeat whose item is one character class: the class's set is
+/// looked up once and every repetition emits from it, drawing exactly
+/// what [`generate_op`] on the item would draw at each repetition without
+/// its lookup. The first repetition is decided before the set is looked
+/// up, as the generic loop would, so a repeat of nothing never builds it.
+fn repeat_in(
+    ntc: &mut NativeTestCase,
+    ms: &mut ManyState,
+    items: &[SetItem],
+    state: &GenState,
+    alphabet: &Option<IntervalSet>,
+    out: &mut Vec<char>,
+) -> Result<(), EngineError> {
+    if !many_more(ntc, ms)? {
+        return Ok(());
+    }
+    let mut cache = state.in_cache.lock();
+    let set = in_set(&mut cache, items, state.flags, alphabet)?;
+    loop {
+        emit_from_set(ntc, set, out)?;
+        if !many_more(ntc, ms)? {
+            return Ok(());
+        }
+    }
+}
+
+/// The set an `In` node with `items` emits from under `flags`, from the
+/// regex's own cache, built and remembered there on the first ask.
+fn in_set<'c>(
+    cache: &'c mut HashMap<InKey, InSet>,
+    items: &[SetItem],
+    flags: u32,
+    alphabet: &Option<IntervalSet>,
+) -> Result<&'c InSet, InternalError> {
+    let key = (items.as_ptr() as usize, items.len(), flags);
+    match cache.entry(key) {
+        Entry::Occupied(entry) => Ok(entry.into_mut()),
+        Entry::Vacant(entry) => {
+            let computed = if alphabet.is_none() {
+                cached_default_in_set(items, flags)?
+            } else {
+                build_in_set(items, flags, alphabet)?
+            };
+            Ok(entry.insert(computed))
+        }
+    }
+}
+
 /// Cached version of [`build_in_set`] for the default (no-alphabet) case.
 ///
 /// Category-driven classes like `\w`, `\s`, `[^\d]` require a full

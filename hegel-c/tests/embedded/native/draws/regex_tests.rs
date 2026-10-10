@@ -1309,3 +1309,65 @@ fn default_any_char_indexes_the_default_any_scan() {
     }
     assert!(default_any_char(u64::from(u32::MAX) + 1, true).is_err());
 }
+
+#[test]
+fn a_repeated_class_draws_what_repeating_it_in_a_group_would() {
+    use crate::native::rng::EngineRng;
+    fn repeated(re: &CompiledRegex) -> &SubPattern {
+        match &re.parsed.pattern.data[..] {
+            [OpCode::MaxRepeat { item, .. }]
+            | [OpCode::MinRepeat { item, .. }]
+            | [OpCode::PossessiveRepeat { item, .. }] => item,
+            other => panic!("not a single repeat: {other:?}"),
+        }
+    }
+    let mut empty = 0;
+    let mut filled = 0;
+    for (direct, grouped) in [
+        ("[ab]*", "([ab])*"),
+        ("[ab]+?", "([ab])+?"),
+        ("[ab]{3}", "([ab]){3}"),
+        ("[ab]*+", "([ab])*+"),
+    ] {
+        let direct = CompiledRegex::compile(direct, None).unwrap();
+        let grouped = CompiledRegex::compile(grouped, None).unwrap();
+        assert!(matches!(repeated(&direct).data[..], [OpCode::In(_)]));
+        assert!(matches!(
+            repeated(&grouped).data[..],
+            [OpCode::Subpattern { group: Some(_), .. }]
+        ));
+        for seed in 0..200 {
+            let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+            let one = generate_regex(&mut ntc, &direct, true).unwrap();
+            let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+            let other = generate_regex(&mut ntc, &grouped, true).unwrap();
+            assert_eq!(one, other, "seed {seed}");
+            assert!(one.chars().all(|c| c == 'a' || c == 'b'), "{one:?}");
+            if one.is_empty() {
+                empty += 1;
+            } else {
+                filled += 1;
+            }
+        }
+    }
+    assert!(empty > 0 && filled > 0, "{empty} empty, {filled} filled");
+}
+
+#[test]
+fn a_repeated_empty_class_marks_invalid() {
+    let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::Integer(BigInt::from(0))], None, None);
+    let cache = Mutex::new(HashMap::default());
+    let char_cache = Mutex::new(HashMap::default());
+    let mut state = ignorecase_state(&cache, &char_cache);
+    let alphabet = Some(IntervalSet::new(vec![('x' as u32, 'x' as u32)]).unwrap());
+    let op = OpCode::MaxRepeat {
+        min: 1,
+        max: 1,
+        item: sub(vec![OpCode::In(vec![SetItem::Literal('a' as u32)])]),
+    };
+    let mut out = Vec::new();
+    let result = generate_op(&mut ntc, &op, &mut state, &alphabet, &mut out);
+    assert!(result.is_err());
+    assert_eq!(ntc.status(), Some(Status::Invalid));
+    assert!(out.is_empty());
+}
