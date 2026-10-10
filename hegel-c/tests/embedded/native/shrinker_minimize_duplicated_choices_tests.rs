@@ -59,6 +59,7 @@ fn string_node(value: Vec<u32>) -> ChoiceNode {
             intervals: IntervalSet::new(vec![(0, 0x10FFFF)]).unwrap().into(),
             min_size: 0,
             max_size: 16,
+            grammar: None,
         },
         value,
         false,

@@ -192,3 +192,42 @@ fn the_kind_ledger_stops_learning_at_its_cap_but_keeps_checking() {
     ledger.clear();
     assert!(ledger.observe(&[int_node(0, 5)]).unwrap().is_none());
 }
+
+#[test]
+fn the_kind_ledger_names_a_grammar_constraint_by_its_identity() {
+    use crate::native::core::choices::StringChoice;
+    use crate::native::intervalsets::IntervalSet;
+    use crate::native::lark::builder::{NoImports, load_grammar};
+    use crate::native::lark::compile::compile;
+    use crate::native::lark::constraint::GrammarConstraint;
+    let built = load_grammar("start: \"a\"\n", None, &NoImports).unwrap();
+    let grammar = compile(&built, &["start"]).unwrap();
+    let start = grammar.start[0];
+    let constraint = alloc::sync::Arc::new(GrammarConstraint::new(
+        grammar,
+        start,
+        4,
+        alloc::vec![b'a' as u32],
+    ));
+    let plain = StringChoice {
+        intervals: IntervalSet::new(alloc::vec![(b'a' as u32, b'a' as u32)])
+            .unwrap()
+            .into(),
+        min_size: 0,
+        max_size: 4,
+        grammar: None,
+    };
+    let constrained = StringChoice {
+        grammar: Some(alloc::sync::Arc::clone(&constraint)),
+        ..plain.clone()
+    };
+    let mut ledger = KindLedger::default();
+    let node = |sc| ChoiceNode::string(sc, alloc::vec![b'a' as u32], false);
+    assert!(ledger.observe(&[node(plain)]).unwrap().is_none());
+    let msg = ledger.observe(&[node(constrained)]).unwrap().unwrap();
+    let expected = alloc::format!(
+        "GrammarConstraint {{ identity: {:016x}, start: \"start\" }}",
+        constraint.identity()
+    );
+    assert!(msg.contains(&expected), "{msg}");
+}

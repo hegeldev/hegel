@@ -111,6 +111,7 @@ fn minimize_individual_choices_truncates_misaligned_string() {
                     .into(),
                 min_size: 0,
                 max_size: 16,
+                grammar: None,
             },
             vec![b'a' as u32, b'a' as u32, b'a' as u32],
             false,

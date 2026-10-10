@@ -18,6 +18,7 @@ fn string_node_with(min_cp: u32, max_cp: u32, value: Vec<u32>) -> ChoiceNode {
             intervals: IntervalSet::new(vec![(min_cp, max_cp)]).unwrap().into(),
             min_size: 0,
             max_size: 32,
+            grammar: None,
         },
         value,
         false,

@@ -2971,6 +2971,7 @@ impl NativeTestCase {
             intervals,
             min_size,
             max_size,
+            grammar: None,
         };
 
         let (v, was_forced) = self.resolve_choice(

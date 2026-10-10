@@ -10,6 +10,7 @@ use crate::control::{
 use crate::native::bignum::{BigInt, BigUint, ToPrimitive, Zero};
 use crate::native::floats::sign_aware_lte;
 use crate::native::intervalsets::IntervalSet;
+use crate::native::lark::constraint::GrammarConstraint;
 use alloc::boxed::Box;
 
 /// An integer choice with bounded range. Bounds that fit a machine word
@@ -331,11 +332,18 @@ impl BytesChoice {
 /// `'0'` is the simplest character whenever the alphabet contains it,
 /// followed by `'1'`..`'9'`, `'A'`..`'Z'`, then characters below `'0'` in
 /// reverse, then characters above `'Z'` in natural order.
+///
+/// A choice with a `grammar` accepts only the strings the grammar derives
+/// (within the length bounds and alphabet, which still apply): its
+/// simplest value is the grammar's, the constraint takes part in equality
+/// by identity, and the choice has no dense index, since shortlex position
+/// says nothing about which strings the grammar derives.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StringChoice {
     pub intervals: Arc<IntervalSet>,
     pub min_size: usize,
     pub max_size: usize,
+    pub grammar: Option<Arc<GrammarConstraint>>,
 }
 
 impl StringChoice {
@@ -370,7 +378,11 @@ impl StringChoice {
     /// The simplest sequence of codepoints of length `min_size`, built
     /// from repeated [`simplest_codepoint`]. An empty alphabet is legal when
     /// `min_size == 0` (the empty string is then the choice's only value).
+    /// Under a grammar, the grammar's simplest string.
     pub fn simplest(&self) -> Result<Vec<u32>, InternalError> {
+        if let Some(grammar) = &self.grammar {
+            return Ok(grammar.simplest().to_vec());
+        }
         if self.min_size == 0 {
             return Ok(Vec::new());
         }
@@ -378,8 +390,10 @@ impl StringChoice {
     }
 
     /// Second-simplest codepoint sequence, used for type-punning during replay.
+    /// Under a grammar this is the simplest string for now: the grammar's
+    /// second-simplest derivation is a later stage's to compute.
     pub fn unit(&self) -> Result<Vec<u32>, InternalError> {
-        if self.intervals.is_empty() {
+        if self.grammar.is_some() || self.intervals.is_empty() {
             return self.simplest();
         }
         let simplest_cp = self.simplest_codepoint()?;
@@ -406,11 +420,21 @@ impl StringChoice {
         }
     }
 
+    /// Whether `value` is one of this choice's strings: within the length
+    /// bounds, over the alphabet, and, under a grammar, derived by it.
     pub fn validate(&self, value: &[u32]) -> bool {
         if !(self.min_size <= value.len() && value.len() <= self.max_size) {
             return false;
         }
         value.iter().all(|&cp| self.intervals.contains(cp))
+            && self.grammar.as_ref().is_none_or(|g| g.accepts(value))
+    }
+
+    /// Whether the shortlex index ([`to_index`](Self::to_index) and
+    /// [`from_index`](Self::from_index)) ranges over exactly this choice's
+    /// strings, which it does unless a grammar narrows them.
+    pub fn indexed(&self) -> bool {
+        self.grammar.is_none()
     }
 
     /// Cardinality of the alphabet.
@@ -1203,21 +1227,23 @@ impl ChoiceKind {
     }
 
     /// Largest valid index for [`from_index`](Self::from_index), or `None`
-    /// for a clone kind (clone choices have no dense index).
+    /// for a kind without a dense index: a clone, or a string under a
+    /// grammar.
     pub fn max_index(&self) -> Option<crate::native::bignum::BigUint> {
         match self {
             ChoiceKind::Integer(ic) => Some(ic.max_index()),
             ChoiceKind::Boolean(bc) => Some(bc.max_index()),
             ChoiceKind::Float(fc) => Some(fc.max_index()),
             ChoiceKind::Bytes(bc) => Some(bc.max_index()),
-            ChoiceKind::String(sc) => Some(sc.max_index()),
-            ChoiceKind::Clone => None,
+            ChoiceKind::String(sc) if sc.indexed() => Some(sc.max_index()),
+            ChoiceKind::String(_) | ChoiceKind::Clone => None,
         }
     }
 
     /// The value at `index` under this kind's sort order. Returns `None`
-    /// when the index is out of range; a clone kind has no dense index, so
-    /// every index is out of range for it.
+    /// when the index is out of range; a clone kind and a string kind
+    /// under a grammar have no dense index, so every index is out of
+    /// range for them.
     #[allow(clippy::wrong_self_convention)]
     pub fn from_index(
         &self,
@@ -1228,8 +1254,10 @@ impl ChoiceKind {
             ChoiceKind::Boolean(bc) => bc.from_index(index).map(ChoiceValue::Boolean),
             ChoiceKind::Float(fc) => fc.from_index(index)?.map(ChoiceValue::Float),
             ChoiceKind::Bytes(bc) => bc.from_index(index)?.map(ChoiceValue::Bytes),
-            ChoiceKind::String(sc) => sc.from_index(index)?.map(ChoiceValue::String),
-            ChoiceKind::Clone => None,
+            ChoiceKind::String(sc) if sc.indexed() => {
+                sc.from_index(index)?.map(ChoiceValue::String)
+            }
+            ChoiceKind::String(_) | ChoiceKind::Clone => None,
         })
     }
 
@@ -1253,7 +1281,7 @@ impl ChoiceKind {
                 Some(ChoiceData::Bytes(bc.clone(), v.clone()))
             }
             (ChoiceKind::String(sc), ChoiceValue::String(v)) if sc.validate(v) => {
-                Some(ChoiceData::String(sc.clone(), v.clone()))
+                Some(ChoiceData::String(Arc::new(sc.clone()), v.clone()))
             }
             _ => None,
         }
@@ -1267,9 +1295,11 @@ impl ChoiceKind {
 ///
 /// The `IntegerChoice` constraint is carried by value: its bounds are
 /// inline `BigInt`s for every width a draw ordinarily asks for, so a node
-/// is a few words to clone and costs no allocation to record. A clone
-/// node's payload is the realized stream of its execution — realized by
-/// construction, so consumers never re-prove it.
+/// is a few words to clone and costs no allocation to record. The
+/// `StringChoice` constraint is shared behind an `Arc`: with its grammar
+/// it is wider than the integer payload, and a node is kept to a few
+/// words. A clone node's payload is the realized stream of its execution
+/// — realized by construction, so consumers never re-prove it.
 ///
 /// Equality mirrors the value semantics of [`ChoiceValue`] plus constraint
 /// equality: floats (both bounds and value) compare bit-exactly, and clone
@@ -1280,7 +1310,7 @@ pub enum ChoiceData {
     Boolean(BooleanChoice, bool),
     Float(FloatChoice, f64),
     Bytes(BytesChoice, Vec<u8>),
-    String(StringChoice, Vec<u32>),
+    String(Arc<StringChoice>, Vec<u32>),
     Clone(Arc<RealizedStream>),
 }
 
@@ -1313,7 +1343,7 @@ impl ChoiceData {
             ChoiceData::Boolean(bc, _) => ChoiceKind::Boolean(bc.clone()),
             ChoiceData::Float(fc, _) => ChoiceKind::Float(fc.clone()),
             ChoiceData::Bytes(bc, _) => ChoiceKind::Bytes(bc.clone()),
-            ChoiceData::String(sc, _) => ChoiceKind::String(sc.clone()),
+            ChoiceData::String(sc, _) => ChoiceKind::String(StringChoice::clone(sc)),
             ChoiceData::Clone(_) => ChoiceKind::Clone,
         }
     }
@@ -1373,7 +1403,7 @@ impl ChoiceData {
             ChoiceData::Boolean(bc, _) => ChoiceData::Boolean(bc.clone(), false),
             ChoiceData::Float(fc, _) => ChoiceData::Float(fc.clone(), fc.simplest()?),
             ChoiceData::Bytes(bc, _) => ChoiceData::Bytes(bc.clone(), bc.simplest()),
-            ChoiceData::String(sc, _) => ChoiceData::String(sc.clone(), sc.simplest()?),
+            ChoiceData::String(sc, _) => ChoiceData::String(Arc::clone(sc), sc.simplest()?),
             ChoiceData::Clone(_) => ChoiceData::Clone(Arc::new(RealizedStream::empty())),
         })
     }
@@ -1387,20 +1417,23 @@ impl ChoiceData {
             (ChoiceData::Clone(_), ChoiceValue::Clone(r)) => {
                 r.realized().map(|rs| ChoiceData::Clone(Arc::clone(rs)))
             }
+            (ChoiceData::String(sc, _), ChoiceValue::String(v)) => sc
+                .validate(v)
+                .then(|| ChoiceData::String(Arc::clone(sc), v.clone())),
             _ => self.kind().resolve(value),
         }
     }
 
     /// The value's dense index under its constraint's sort order, or `None`
-    /// for a clone (no dense index).
+    /// for a clone or a string under a grammar (no dense index).
     pub fn to_index(&self) -> Result<Option<crate::native::bignum::BigUint>, InternalError> {
         Ok(match self {
             ChoiceData::Integer(ic, v) => Some(ic.to_index(v)),
             ChoiceData::Boolean(bc, v) => Some(bc.to_index(*v)),
             ChoiceData::Float(fc, v) => Some(fc.to_index(*v)?),
             ChoiceData::Bytes(bc, v) => Some(bc.to_index(v)),
-            ChoiceData::String(sc, v) => Some(sc.to_index(v)),
-            ChoiceData::Clone(_) => None,
+            ChoiceData::String(sc, v) if sc.indexed() => Some(sc.to_index(v)),
+            ChoiceData::String(..) | ChoiceData::Clone(_) => None,
         })
     }
 
@@ -1445,7 +1478,7 @@ impl ChoiceData {
     /// The string constraint and value, when this is a string pair.
     pub fn as_string(&self) -> Option<(&StringChoice, &[u32])> {
         match self {
-            ChoiceData::String(sc, v) => Some((sc, v)),
+            ChoiceData::String(sc, v) => Some((sc.as_ref(), v)),
             _ => None,
         }
     }
@@ -1529,9 +1562,10 @@ impl ChoiceNode {
         Self::new(ChoiceData::Bytes(constraint, value), was_forced)
     }
 
-    /// A string node.
+    /// A string node; see [`StringChoice`] for the constraint, grammar
+    /// included.
     pub fn string(constraint: StringChoice, value: Vec<u32>, was_forced: bool) -> Self {
-        Self::new(ChoiceData::String(constraint, value), was_forced)
+        Self::new(ChoiceData::String(Arc::new(constraint), value), was_forced)
     }
 
     /// A clone node carrying the realized stream of its execution.
@@ -1712,7 +1746,7 @@ impl ChoiceNode {
                 NodeSortKeyRef::Scalar(BigUint::from(mag), neg)
             }
             ChoiceData::Bytes(_, v) => NodeSortKeyRef::Seq(SeqKeys::Bytes(v)),
-            ChoiceData::String(sc, v) => NodeSortKeyRef::Seq(SeqKeys::String(sc, v)),
+            ChoiceData::String(sc, v) => NodeSortKeyRef::Seq(SeqKeys::String(sc.as_ref(), v)),
             ChoiceData::Clone(rs) => NodeSortKeyRef::Clone(rs),
         }
     }

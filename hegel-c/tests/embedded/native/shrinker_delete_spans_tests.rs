@@ -196,6 +196,7 @@ fn string_node(value: &str) -> ChoiceNode {
                 .into(),
             min_size: 0,
             max_size: 16,
+            grammar: None,
         },
         value.chars().map(|c| c as u32).collect(),
         false,

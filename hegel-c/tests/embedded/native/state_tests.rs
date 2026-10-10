@@ -1148,6 +1148,7 @@ fn biased_string_sample_caps_constant_pool_probability() {
         .into(),
         min_size: 0,
         max_size: 100,
+        grammar: None,
     };
     let mut rng = EngineRng::seeded(9);
     let pool = &*GLOBAL_CONSTANTS_STRINGS;
@@ -1198,6 +1199,7 @@ fn biased_string_sample_empty_alphabet_returns_empty_string() {
             .into(),
         min_size: 0,
         max_size: 0,
+        grammar: None,
     };
     let mut rng = EngineRng::seeded(7);
     for _ in 0..200 {

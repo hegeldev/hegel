@@ -1,5 +1,7 @@
 use super::*;
 use crate::native::core::choices::BooleanChoice;
+use crate::native::lark::builder::{NoImports, load_grammar};
+use crate::native::lark::compile::compile;
 use alloc::string::ToString;
 
 #[test]
@@ -541,6 +543,7 @@ fn string_choice(intervals: Vec<(u32, u32)>, min_size: usize, max_size: usize) -
             .into(),
         min_size,
         max_size,
+        grammar: None,
     }
 }
 
@@ -805,6 +808,7 @@ fn string_max_index() {
             .into(),
         min_size: 0,
         max_size: 2,
+        grammar: None,
     });
     assert_eq!(kind.max_index(), Some(bu(12)));
 }
@@ -828,6 +832,7 @@ fn string_to_index_via_dispatch() {
             .into(),
         min_size: 0,
         max_size: 4,
+        grammar: None,
     });
     let data = kind.resolve(&ChoiceValue::String(vec![])).unwrap();
     assert_eq!(data.to_index().unwrap(), Some(bu(0)));
@@ -1280,4 +1285,145 @@ fn nodes_that_own_no_heap_are_booleans_floats_and_inline_integers() {
     assert!(!bytes_node(0, 2, Vec::new()).owns_no_heap());
     assert!(!string_node(vec![(97, 122)], 0, 2, Vec::new()).owns_no_heap());
     assert!(!ChoiceNode::clone_stream(Arc::new(RealizedStream::empty()), false).owns_no_heap());
+}
+
+fn grammar_constraint(text: &str, max_size: usize, simplest: &str) -> Arc<GrammarConstraint> {
+    let built = load_grammar(text, None, &NoImports).unwrap();
+    let grammar = compile(&built, &["start"]).unwrap();
+    let start = grammar.start[0];
+    Arc::new(GrammarConstraint::new(
+        grammar,
+        start,
+        max_size,
+        cps(simplest),
+    ))
+}
+
+fn cps(s: &str) -> Vec<u32> {
+    s.chars().map(u32::from).collect()
+}
+
+fn grammar_string_choice(text: &str, max_size: usize, simplest: &str) -> StringChoice {
+    StringChoice {
+        intervals: crate::native::intervalsets::IntervalSet::new(vec![
+            (0, 0xD7FF),
+            (0xE000, 0x10FFFF),
+        ])
+        .unwrap()
+        .into(),
+        min_size: 0,
+        max_size,
+        grammar: Some(grammar_constraint(text, max_size, simplest)),
+    }
+}
+
+const AB: &str = "start: \"a\" \"b\"*\n";
+
+#[test]
+fn a_grammar_string_choice_accepts_only_the_strings_the_grammar_derives() {
+    let sc = grammar_string_choice(AB, 4, "a");
+    assert!(sc.validate(&cps("a")));
+    assert!(sc.validate(&cps("abbb")));
+    assert!(!sc.validate(&cps("b")));
+    assert!(!sc.validate(&cps("")));
+    assert!(!sc.validate(&cps("abbbb")));
+    let narrow = StringChoice {
+        intervals: crate::native::intervalsets::IntervalSet::new(vec![(b'a' as u32, b'a' as u32)])
+            .unwrap()
+            .into(),
+        ..sc
+    };
+    assert!(narrow.validate(&cps("a")));
+    assert!(!narrow.validate(&cps("ab")));
+}
+
+#[test]
+fn a_grammar_string_choices_simplest_and_unit_are_the_grammars_simplest_string() {
+    let sc = grammar_string_choice(AB, 4, "a");
+    assert_eq!(sc.simplest().unwrap(), cps("a"));
+    assert_eq!(sc.unit().unwrap(), cps("a"));
+    let kind = ChoiceKind::String(sc.clone());
+    assert_eq!(kind.simplest().unwrap(), ChoiceValue::String(cps("a")));
+    assert_eq!(kind.unit().unwrap(), ChoiceValue::String(cps("a")));
+    let node = ChoiceNode::string(sc, cps("ab"), false);
+    assert_eq!(
+        node.data.simplest_value().unwrap(),
+        ChoiceValue::String(cps("a"))
+    );
+    assert!(!node.data.is_simplest().unwrap());
+    let simplest = node.with_simplest().unwrap();
+    assert!(simplest.data.is_simplest().unwrap());
+    assert_eq!(simplest.value(), ChoiceValue::String(cps("a")));
+    assert_eq!(simplest.kind(), node.kind());
+}
+
+#[test]
+fn a_grammar_string_choice_resolves_only_values_in_the_grammar() {
+    let sc = grammar_string_choice(AB, 4, "a");
+    let kind = ChoiceKind::String(sc.clone());
+    assert!(kind.resolve(&ChoiceValue::String(cps("ab"))).is_some());
+    assert!(kind.resolve(&ChoiceValue::String(cps("ba"))).is_none());
+    assert!(kind.resolve(&ChoiceValue::Bytes(vec![b'a'])).is_none());
+    let node = ChoiceNode::string(sc, cps("a"), false);
+    let moved = node.with_value(&ChoiceValue::String(cps("abb"))).unwrap();
+    assert_eq!(moved.value(), ChoiceValue::String(cps("abb")));
+    assert_eq!(moved.kind(), node.kind());
+    assert!(node.with_value(&ChoiceValue::String(cps("bb"))).is_none());
+    assert!(node.with_value(&ChoiceValue::Boolean(true)).is_none());
+    let plain = string_node(vec![(b'a' as u32, b'b' as u32)], 0, 4, cps("a"));
+    assert!(plain.with_value(&ChoiceValue::String(cps("ba"))).is_some());
+    assert!(plain.with_value(&ChoiceValue::String(cps("c"))).is_none());
+}
+
+#[test]
+fn a_grammar_string_choice_has_no_dense_index() {
+    let sc = grammar_string_choice(AB, 4, "a");
+    assert!(!sc.indexed());
+    assert!(string_choice(vec![(b'a' as u32, b'b' as u32)], 0, 4).indexed());
+    let kind = ChoiceKind::String(sc.clone());
+    assert_eq!(kind.max_index(), None);
+    assert_eq!(kind.from_index(bu(0)).unwrap(), None);
+    let node = ChoiceNode::string(sc, cps("ab"), false);
+    assert_eq!(node.data.to_index().unwrap(), None);
+    assert_eq!(node.data.max_index(), None);
+    assert_eq!(node.data.from_index(bu(1)).unwrap(), None);
+}
+
+#[test]
+fn grammar_string_choices_compare_by_the_grammars_identity() {
+    let a = grammar_string_choice(AB, 4, "a");
+    let b = grammar_string_choice(AB, 4, "a");
+    assert_eq!(a, b);
+    assert_eq!(ChoiceKind::String(a.clone()), ChoiceKind::String(b.clone()));
+    assert_eq!(
+        ChoiceNode::string(a.clone(), cps("a"), false),
+        ChoiceNode::string(b, cps("a"), false)
+    );
+    assert_ne!(a, grammar_string_choice("start: \"a\" \"c\"*\n", 4, "a"));
+    assert_ne!(
+        a,
+        StringChoice {
+            grammar: None,
+            ..a.clone()
+        }
+    );
+    let shown = alloc::format!("{a:?}");
+    let identity = alloc::format!("{:016x}", a.grammar.as_ref().unwrap().identity());
+    assert!(shown.contains("GrammarConstraint"), "{shown}");
+    assert!(shown.contains(&identity), "{shown}");
+}
+
+#[test]
+fn a_grammar_strings_value_serialises_like_any_string() {
+    let node = ChoiceNode::string(grammar_string_choice(AB, 4, "a"), cps("abb"), false);
+    let bytes = crate::native::database::serialize_choices(&[node.value()]).unwrap();
+    let plain = string_node(vec![(b'a' as u32, b'b' as u32)], 0, 4, cps("abb"));
+    assert_eq!(
+        bytes,
+        crate::native::database::serialize_choices(&[plain.value()]).unwrap()
+    );
+    assert_eq!(
+        crate::native::database::deserialize_choices_exact(&bytes).unwrap(),
+        vec![ChoiceValue::String(cps("abb"))]
+    );
 }

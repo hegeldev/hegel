@@ -16,6 +16,7 @@ fn string_node(value: Vec<u32>, min_codepoint: u32, max_codepoint: u32) -> Choic
             intervals: intervals(min_codepoint, max_codepoint).into(),
             min_size: 0,
             max_size: 32,
+            grammar: None,
         },
         value,
         false,
