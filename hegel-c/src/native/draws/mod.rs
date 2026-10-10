@@ -432,7 +432,7 @@ pub(crate) fn many_more(
         } else {
             None
         };
-        ntc.weighted(state.p_continue, forced)?
+        ntc.weighted_against(state.p_continue(), state.continue_threshold(), forced)?
     };
 
     if should_continue {

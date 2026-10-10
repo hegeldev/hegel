@@ -8,7 +8,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use hashbrown::hash_map::Entry;
 
-use crate::native::core::state::length_p_continue;
+use crate::native::core::state::{boolean_threshold, length_p_continue};
 use crate::native::core::{EngineError, ManyState, NativeTestCase, Status};
 use crate::native::intervalsets::IntervalSet;
 use crate::native::re::constants::{
@@ -1113,11 +1113,17 @@ fn emit_from_set(
     }
 }
 
+/// How likely a character drawn from a set of more than 256 is one of
+/// its first 256, with the byte the engine compares against for it (see
+/// [`boolean_threshold`]).
+const FIRST_256_PROBABILITY: f64 = 0.8;
+const FIRST_256_THRESHOLD: u8 = boolean_threshold(FIRST_256_PROBABILITY);
+
 /// Draw an index into a character set of `n` (non-zero) characters, biased
 /// towards the first 256 when the set is larger than that.
 #[inline]
 fn draw_char_index(ntc: &mut NativeTestCase, n: u64) -> Result<u64, EngineError> {
-    if n > 256 && ntc.weighted(0.8, None)? {
+    if n > 256 && ntc.weighted_against(FIRST_256_PROBABILITY, FIRST_256_THRESHOLD, None)? {
         ntc.draw_integer_uniform(0, 255)
     } else if n > 256 {
         ntc.draw_integer_uniform(256, n - 1)

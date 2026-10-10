@@ -1398,6 +1398,37 @@ fn weighted_boolean_sample_respects_probability() {
     assert!(low < n / 4, "p=0.1 produced {low}/{n} trues");
 }
 
+/// A draw against a threshold worked out beforehand is the draw
+/// [`NativeTestCase::weighted`] makes for the probability: the same
+/// value from the same byte, recorded the same, forced or not, and the
+/// threshold is the floored one the sampler compares against.
+#[test]
+fn weighted_against_a_worked_out_threshold_draws_what_weighted_draws() {
+    for p in [0.0, 1e-9, 1.0 / 512.0, 0.1, 0.5, 0.9, 1.0 - 1e-12, 1.0] {
+        let threshold = boolean_threshold(p);
+        assert_eq!(
+            u32::from(threshold),
+            ((256.0_f64 * (1.0 - p)).floor().max(1.0) as u32).min(255),
+            "p={p}"
+        );
+        let mut a = NativeTestCase::new_random(EngineRng::seeded(5)).unwrap();
+        let mut b = NativeTestCase::new_random(EngineRng::seeded(5)).unwrap();
+        let mut seen = [false; 2];
+        for i in 0..300 {
+            let forced = [Some(true), Some(false), None][i % 3];
+            let drawn = a.weighted(p, forced).unwrap();
+            assert_eq!(
+                drawn,
+                b.weighted_against(p, threshold, forced).unwrap(),
+                "p={p}"
+            );
+            seen[usize::from(drawn)] = true;
+        }
+        assert_eq!(a.nodes, b.nodes);
+        assert_eq!(seen, [true, true], "p={p}");
+    }
+}
+
 #[test]
 fn float_restrict_and_redraw_reroutes_excluded_magnitude_band() {
     let fc = FloatChoice {

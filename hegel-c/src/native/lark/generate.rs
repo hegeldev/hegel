@@ -49,6 +49,7 @@ use super::lexsim::{Lexed, Lexer, Scan};
 use super::{GrammarError, GrammarResult};
 use crate::control::{hegel_internal_assert, hegel_internal_unwrap};
 use crate::native::HashMap;
+use crate::native::core::state::boolean_threshold;
 use crate::native::core::{EngineError, ManyState, NativeTestCase, Status};
 use crate::native::draws::{
     LABEL_BOOLEAN, LABEL_INTEGER, StringSpec, generate_string_into, many_more, spanned,
@@ -1041,7 +1042,11 @@ struct Generation<'s> {
     /// kept is cut off again.
     text: Vec<char>,
     tokens: Vec<Token>,
+    /// How likely an ignorable goes before a token (see
+    /// [`Generation::maybe_ignore`]), with the byte the engine compares
+    /// against for it (see [`boolean_threshold`]).
     ignore_rate: f64,
+    ignore_threshold: u8,
     /// Whether some stretch of the tokens was accepted without being
     /// settled (see [`GrammarSpec::settled`]), so that the finished
     /// string has to be lexed as a whole.
@@ -1073,6 +1078,7 @@ impl<'s> Generation<'s> {
             text: buffers.text,
             tokens: buffers.tokens,
             ignore_rate,
+            ignore_threshold: boolean_threshold(ignore_rate),
             unsettled: false,
             budgets: buffers.budgets,
             candidates: buffers.candidates,
@@ -1605,8 +1611,9 @@ impl Generation<'_> {
             usize::try_from(min).unwrap_or(usize::MAX),
             Some(usize::try_from(count).unwrap_or(usize::MAX)),
         );
-        state.p_continue =
-            1.0 - 1.0 / (COUNT_PERSISTENCE * (count - min) as f64).max(MIN_PERSISTENCE);
+        state.set_p_continue(
+            1.0 - 1.0 / (COUNT_PERSISTENCE * (count - min) as f64).max(MIN_PERSISTENCE),
+        );
         while many_more(ntc, &mut state)? {
             let before = self.tokens.len();
             ntc.start_span(LABEL_ELEMENT);
@@ -1986,7 +1993,9 @@ impl Generation<'_> {
             self.spec.fit(text, tokens, &self.readings.findings)
         });
         let forced = if pair < Fit::Exact { Some(true) } else { None };
-        if ntc.weighted(self.ignore_rate, forced)? && self.insert_ignore(ntc, pending)? {
+        if ntc.weighted_against(self.ignore_rate, self.ignore_threshold, forced)?
+            && self.insert_ignore(ntc, pending)?
+        {
             return Ok(());
         }
         if pair == Fit::Wrong {

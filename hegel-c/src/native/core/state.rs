@@ -110,7 +110,12 @@ impl SpareVectors {
 pub struct ManyState {
     pub min_size: usize,
     pub max_size: f64,
-    pub p_continue: f64,
+    /// The probability of drawing another element past the minimum,
+    /// with the byte [`weighted_boolean_sample`] compares against for it
+    /// (see [`boolean_threshold`]), worked out when it is set rather
+    /// than at every element.
+    p_continue: f64,
+    continue_threshold: u8,
     pub count: usize,
     pub rejections: usize,
     pub force_stop: bool,
@@ -118,14 +123,33 @@ pub struct ManyState {
 
 impl ManyState {
     pub fn new(min_size: usize, max_size: Option<usize>) -> Self {
+        let p_continue = length_p_continue(min_size, max_size);
         ManyState {
             min_size,
             max_size: max_size.map_or(f64::INFINITY, |n| n as f64),
-            p_continue: length_p_continue(min_size, max_size),
+            p_continue,
+            continue_threshold: boolean_threshold(p_continue),
             count: 0,
             rejections: 0,
             force_stop: false,
         }
+    }
+
+    /// The probability of drawing another element past the minimum.
+    pub fn p_continue(&self) -> f64 {
+        self.p_continue
+    }
+
+    /// The byte [`weighted_boolean_sample`] compares against for
+    /// [`Self::p_continue`].
+    pub(crate) fn continue_threshold(&self) -> u8 {
+        self.continue_threshold
+    }
+
+    /// Set the probability of drawing another element past the minimum.
+    pub fn set_p_continue(&mut self, p: f64) {
+        self.p_continue = p;
+        self.continue_threshold = boolean_threshold(p);
     }
 }
 
@@ -1254,8 +1278,22 @@ pub(crate) fn biased_bytes_sample(
 /// boolean) matters for the urandom backend, where every byte is
 /// fuzzer-controlled entropy and a one-bit decision should cost one byte.
 pub(crate) fn weighted_boolean_sample(p: f64, rng: &mut EngineRng) -> bool {
-    let falsey = ((256.0 * (1.0 - p)) as u32).clamp(1, 255);
-    u32::from(rng.next_byte()) >= falsey
+    rng.next_byte() >= boolean_threshold(p)
+}
+
+/// The byte below which [`weighted_boolean_sample`] answers `false` for
+/// `p`: `min(255, max(1, floor(256 * (1 - p))))`. A caller that draws
+/// against one probability many times works it out once, for
+/// [`NativeTestCase::weighted_against`], instead of at every draw.
+pub(crate) const fn boolean_threshold(p: f64) -> u8 {
+    let threshold = (256.0 * (1.0 - p)) as u32;
+    if threshold < 1 {
+        1
+    } else if threshold > 255 {
+        255
+    } else {
+        threshold as u8
+    }
 }
 
 /// Full-precision weighted boolean: `true` with probability `p`, faithful to
@@ -2960,6 +2998,19 @@ impl NativeTestCase {
     /// forced to that value.
     pub fn weighted(&mut self, p: f64, forced: Option<bool>) -> Result<bool, EngineError> {
         self.weighted_with(p, forced, weighted_boolean_sample)
+    }
+
+    /// [`Self::weighted`] with `p`'s one-byte `threshold` worked out by
+    /// the caller (see [`boolean_threshold`]), for a probability drawn
+    /// against many times, as a repetition's continue decision is: the
+    /// same draw from the same byte, recorded the same.
+    pub(crate) fn weighted_against(
+        &mut self,
+        p: f64,
+        threshold: u8,
+        forced: Option<bool>,
+    ) -> Result<bool, EngineError> {
+        self.weighted_with(p, forced, move |_, rng| rng.next_byte() >= threshold)
     }
 
     /// Like [`Self::weighted`], but samples with the full-precision
