@@ -59,8 +59,9 @@ use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::hash::{Hash, Hasher};
+use core::hash::Hasher;
 use hashbrown::HashTable;
+use hashbrown::hash_table::Entry;
 use rustc_hash::FxHasher;
 
 /// The default cap on the length of a generated string, in characters.
@@ -222,8 +223,10 @@ struct ScansScratch {
 type Readings = HashTable<Remembered>;
 
 /// What the lexers found in one text, which lies at `start..end` of the
-/// cache's `texts`.
+/// cache's `texts`, with the text's hash, so that the table grows
+/// without hashing its texts again.
 struct Remembered {
+    hash: u64,
     start: usize,
     end: usize,
     scans: Arc<TokenScans>,
@@ -237,51 +240,60 @@ struct ReadingsCache {
     len: usize,
 }
 
-/// The hash of a text in [`ReadingsCache`].
+/// The hash of a text in [`ReadingsCache`]: of its characters two at a
+/// time, since the hasher takes a word per write.
 fn text_hash(text: &[char]) -> u64 {
     let mut hasher = FxHasher::default();
-    text.hash(&mut hasher);
+    let mut pairs = text.chunks_exact(2);
+    for pair in &mut pairs {
+        hasher.write_u64(u64::from(pair[0]) << 32 | u64::from(pair[1]));
+    }
+    if let [last] = pairs.remainder() {
+        hasher.write_u32(u32::from(*last));
+    }
     hasher.finish()
 }
 
 impl ReadingsCache {
-    /// What was remembered of `text` as a token of terminal `id`.
-    fn find(&self, id: TermId, text: &[char]) -> Option<&Arc<TokenScans>> {
+    /// What was remembered of `text`, whose [`text_hash`] is `hash`, as
+    /// a token of terminal `id`.
+    fn find(&self, id: TermId, hash: u64, text: &[char]) -> Option<&Arc<TokenScans>> {
         let texts = &self.texts;
         self.by_terminal[id]
-            .find(text_hash(text), |held| texts[held.start..held.end] == *text)
+            .find(hash, |held| texts[held.start..held.end] == *text)
             .map(|held| &held.scans)
     }
 
-    /// Remember `scans` for `text` as a token of terminal `id`, in place
-    /// of what another thread remembered for it meanwhile, if anything,
-    /// forgetting everything first when the cache is full.
-    fn remember(&mut self, id: TermId, text: &[char], scans: &Arc<TokenScans>) {
+    /// Remember `scans` for `text`, whose [`text_hash`] is `hash`, as a
+    /// token of terminal `id`, in place of what another thread
+    /// remembered for it meanwhile, if anything, forgetting everything
+    /// first when the cache is full.
+    fn remember(&mut self, id: TermId, hash: u64, text: &[char], scans: &Arc<TokenScans>) {
         if self.len >= READINGS_CAPACITY {
             self.by_terminal.iter_mut().for_each(HashTable::clear);
             self.texts.clear();
             self.len = 0;
         }
-        let hash = text_hash(text);
         let Self {
             by_terminal,
             texts,
             len,
         } = self;
-        let table = &mut by_terminal[id];
-        if let Some(held) = table.find_mut(hash, |held| texts[held.start..held.end] == *text) {
-            held.scans = Arc::clone(scans);
-            return;
+        let eq = |held: &Remembered| texts[held.start..held.end] == *text;
+        match by_terminal[id].entry(hash, eq, |held| held.hash) {
+            Entry::Occupied(mut held) => held.get_mut().scans = Arc::clone(scans),
+            Entry::Vacant(slot) => {
+                let start = texts.len();
+                texts.extend_from_slice(text);
+                slot.insert(Remembered {
+                    hash,
+                    start,
+                    end: texts.len(),
+                    scans: Arc::clone(scans),
+                });
+                *len += 1;
+            }
         }
-        let start = texts.len();
-        texts.extend_from_slice(text);
-        let held = Remembered {
-            start,
-            end: texts.len(),
-            scans: Arc::clone(scans),
-        };
-        table.insert_unique(hash, held, |held| text_hash(&texts[held.start..held.end]));
-        *len += 1;
     }
 }
 
@@ -382,11 +394,12 @@ impl GrammarSpec {
     /// computed (with `own` for the terminal's own scan when the caller
     /// already has it) and remembered.
     fn read_token(&self, id: TermId, text: &[char], own: Option<Scan>) -> Arc<TokenScans> {
-        if let Some(found) = self.readings.lock().find(id, text) {
+        let hash = text_hash(text);
+        if let Some(found) = self.readings.lock().find(id, hash, text) {
             return Arc::clone(found);
         }
         let scans = Arc::new(self.scan_token(id, text, own));
-        self.readings.lock().remember(id, text, &scans);
+        self.readings.lock().remember(id, hash, text, &scans);
         scans
     }
 

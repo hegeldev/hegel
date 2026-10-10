@@ -1191,13 +1191,35 @@ fn a_text_remembered_again_takes_the_place_of_what_was_held() {
     let text: Vec<char> = "abc".chars().collect();
     let first = spec.read_token(name, &text, None);
     let again = Arc::new(spec.scan_token(name, &text, None));
-    spec.readings.lock().remember(name, &text, &again);
+    let hash = text_hash(&text);
+    spec.readings.lock().remember(name, hash, &text, &again);
     let readings = spec.readings.lock();
-    assert!(Arc::ptr_eq(readings.find(name, &text).unwrap(), &again));
-    assert!(!Arc::ptr_eq(readings.find(name, &text).unwrap(), &first));
+    assert!(Arc::ptr_eq(
+        readings.find(name, hash, &text).unwrap(),
+        &again
+    ));
+    assert!(!Arc::ptr_eq(
+        readings.find(name, hash, &text).unwrap(),
+        &first
+    ));
     assert_eq!(readings.len, 1);
     assert_eq!(readings.texts, text);
-    assert!(readings.find(name, &text[..2]).is_none());
+    let shorter = &text[..2];
+    assert!(readings.find(name, text_hash(shorter), shorter).is_none());
+}
+
+#[test]
+fn a_text_hashes_the_same_however_it_was_built_and_unlike_its_prefixes() {
+    let texts: Vec<Vec<char>> = (0..6).map(|n| "abcde"[..n].chars().collect()).collect();
+    for text in &texts {
+        let copy = text.to_vec();
+        assert_eq!(text_hash(text), text_hash(&copy));
+    }
+    for (i, text) in texts.iter().enumerate() {
+        for shorter in &texts[..i] {
+            assert_ne!(text_hash(text), text_hash(shorter));
+        }
+    }
 }
 
 #[test]
