@@ -1,7 +1,7 @@
 use crate::native::HashMap;
 use alloc::vec::Vec;
 
-use crate::native::core::{ChoiceValue, StringChoice};
+use crate::native::core::{ChoiceData, ChoiceValue, StringChoice};
 use crate::unicodedata;
 
 use super::search::{BinSearchDown, FindInteger};
@@ -208,9 +208,11 @@ impl<'a> Shrinker<'a> {
 
     /// The string constraint and value at node `i`, or `None` when the node
     /// is not (or no longer) a string — a concurrent shrink can pun the kind
-    /// at any position between probes.
+    /// at any position between probes — or is a string under a grammar,
+    /// which these passes leave to a grammar-directed pass: the strings
+    /// they would propose are hardly ever in the grammar.
     fn string_at(&self, i: usize) -> Option<(StringChoice, Vec<u32>)> {
-        let (sc, v) = self.current_nodes.get(i)?.data.as_string()?;
+        let (sc, v) = plain_string(&self.current_nodes.get(i)?.data)?;
         Some((sc.clone(), v.to_vec()))
     }
 
@@ -247,7 +249,7 @@ impl<'a> Shrinker<'a> {
         self.current_nodes
             .iter()
             .enumerate()
-            .filter_map(|(i, n)| n.data.as_string().map(|_| i))
+            .filter_map(|(i, n)| plain_string(&n.data).map(|_| i))
             .collect()
     }
 
@@ -411,6 +413,12 @@ impl<'a> Shrinker<'a> {
 }
 
 /// "Obvious smaller" replacement codepoints to try for a character with
+/// The constraint and value of a string node under no grammar; see
+/// [`Shrinker::string_at`].
+fn plain_string(data: &ChoiceData) -> Option<(&StringChoice, &[u32])> {
+    data.as_string().filter(|(sc, _)| sc.grammar.is_none())
+}
+
 /// codepoint `cp` in a [`StringChoice`] with the given alphabet, in
 /// shrink-key order. Walks the first 62 alphabet positions (digits + ASCII
 /// letters when present) and then the NFD base of `cp` (e.g. `'À' → 'A'`)

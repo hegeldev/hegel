@@ -228,3 +228,51 @@ fn shrink_strings_linear_scan_breaks_when_replace_shortens_below_target() {
         _ => unreachable!(),
     }
 }
+
+fn cps(s: &str) -> Vec<u32> {
+    s.chars().map(u32::from).collect()
+}
+
+fn grammar_node(text: &str, simplest: &str, value: &str) -> ChoiceNode {
+    let built = crate::native::lark::builder::load_grammar(
+        text,
+        None,
+        &crate::native::lark::builder::NoImports,
+    )
+    .unwrap();
+    let grammar = crate::native::lark::compile::compile(&built, &["start"]).unwrap();
+    let start = grammar.start[0];
+    let constraint =
+        crate::native::lark::constraint::GrammarConstraint::new(grammar, start, 32, cps(simplest));
+    ChoiceNode::string(
+        StringChoice {
+            intervals: intervals(0, 0x10FFFF).into(),
+            min_size: 0,
+            max_size: 32,
+            grammar: Some(constraint.into()),
+        },
+        cps(value),
+        false,
+    )
+}
+
+#[test]
+fn the_string_passes_leave_a_string_under_a_grammar_alone() {
+    let initial = vec![
+        grammar_node("start: \"a\" \"b\"*\n", "a", "abb"),
+        string_node(cps("de"), 0, 0x10FFFF),
+    ];
+    let mut shrinker = accepting_shrinker(initial);
+    drive_no_yield(shrinker.shrink_strings()).unwrap();
+    drive_no_yield(shrinker.redistribute_string_pairs()).unwrap();
+    drive_no_yield(shrinker.lower_duplicated_characters()).unwrap();
+    drive_no_yield(shrinker.normalize_unicode_chars()).unwrap();
+    assert_eq!(
+        shrinker.current_nodes[0].value(),
+        ChoiceValue::String(cps("abb"))
+    );
+    assert_eq!(
+        shrinker.current_nodes[1].value(),
+        ChoiceValue::String(cps(""))
+    );
+}

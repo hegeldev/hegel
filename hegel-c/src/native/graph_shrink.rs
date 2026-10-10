@@ -514,7 +514,9 @@ impl GraphShrinker {
     /// The value moves for one draw: its constraint's simplest value, then
     /// a kind-specific ladder toward it — a binary search for integers,
     /// the integer part for floats, shorter then simpler elements for
-    /// sequences.
+    /// sequences. A string under a grammar gets only the simplest value:
+    /// the sequence ladder's strings are hardly ever in the grammar, and a
+    /// grammar-directed ladder is to come.
     async fn shrink_value(
         &mut self,
         probe: &mut dyn GraphProbe,
@@ -571,7 +573,7 @@ impl GraphShrinker {
                     })
                     .await?;
             }
-            (ChoiceData::String(sc, _), ChoiceValue::String(v)) => {
+            (ChoiceData::String(sc, _), ChoiceValue::String(v)) if sc.grammar.is_none() => {
                 let mut v = v;
                 let simplest = sc.simplest_codepoint()?;
                 changed |= self
