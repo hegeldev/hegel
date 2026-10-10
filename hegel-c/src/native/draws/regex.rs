@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use hashbrown::hash_map::Entry;
 
 use crate::native::core::state::{boolean_threshold, length_p_continue};
-use crate::native::core::{EngineError, ManyState, NativeTestCase, Status};
+use crate::native::core::{EngineError, ManyState, Status};
 use crate::native::intervalsets::IntervalSet;
 use crate::native::re::constants::{
     AtCode, ChCode, MAXREPEAT, SRE_FLAG_ASCII, SRE_FLAG_DOTALL, SRE_FLAG_IGNORECASE,
@@ -19,7 +19,7 @@ use crate::native::re::parser::{OpCode, ParsedPattern, SetItem, SubPattern, pars
 use crate::sys::sync::{Lazy, Mutex};
 use crate::unicodedata::{self, Category};
 
-use super::many_more;
+use super::{Draws, many_more};
 
 fn is_surrogate_cp(cp: u32) -> bool {
     (0xD800..=0xDFFF).contains(&cp)
@@ -133,13 +133,13 @@ impl CompiledRegex {
 /// of ordinary length is built without the buffer growing.
 const TYPICAL_CAPACITY: usize = 64;
 
-pub(crate) fn generate_regex(
-    ntc: &mut NativeTestCase,
+pub(crate) fn generate_regex<D: Draws>(
+    d: &mut D,
     re: &CompiledRegex,
     fullmatch: bool,
 ) -> Result<String, EngineError> {
     let mut out = Vec::with_capacity(TYPICAL_CAPACITY);
-    generate_regex_into(ntc, re, fullmatch, &mut out)?;
+    generate_regex_into(d, re, fullmatch, &mut out)?;
     Ok(out.into_iter().collect())
 }
 
@@ -147,8 +147,8 @@ pub(crate) fn generate_regex(
 /// the pattern never sees: an anchor at the start of the pattern is at
 /// the start of the drawn string. What an attempt that fails a deferred
 /// check or errors added is removed again.
-pub(crate) fn generate_regex_into(
-    ntc: &mut NativeTestCase,
+pub(crate) fn generate_regex_into<D: Draws>(
+    d: &mut D,
     re: &CompiledRegex,
     fullmatch: bool,
     out: &mut Vec<char>,
@@ -156,7 +156,7 @@ pub(crate) fn generate_regex_into(
     const MAX_ATTEMPTS: usize = 5;
     let base = out.len();
     for _ in 0..MAX_ATTEMPTS {
-        match generate_regex_attempt(ntc, re, fullmatch, out, base) {
+        match generate_regex_attempt(d, re, fullmatch, out, base) {
             Ok(true) => return Ok(()),
             Ok(false) => out.truncate(base),
             Err(e) => {
@@ -165,14 +165,14 @@ pub(crate) fn generate_regex_into(
             }
         }
     }
-    Err(mark_invalid(ntc))
+    Err(mark_invalid(d))
 }
 
 /// One generation attempt, appending to `out` from `base` on. Returns
 /// `Ok(false)` when the candidate was generated but failed a deferred
 /// check against the final string.
-fn generate_regex_attempt(
-    ntc: &mut NativeTestCase,
+fn generate_regex_attempt<D: Draws>(
+    d: &mut D,
     re: &CompiledRegex,
     fullmatch: bool,
     out: &mut Vec<char>,
@@ -194,17 +194,17 @@ fn generate_regex_attempt(
 
     if parsed.pattern.is_empty() {
         if !fullmatch {
-            draw_pad(ntc, alphabet, out)?;
+            draw_pad(d, alphabet, out)?;
         }
         return Ok(true);
     }
 
     if !fullmatch {
-        draw_prefix(ntc, parsed, alphabet, out, base)?;
+        draw_prefix(d, parsed, alphabet, out, base)?;
     }
-    generate_subpattern(ntc, &parsed.pattern, &mut state, alphabet, out)?;
+    generate_subpattern(d, &parsed.pattern, &mut state, alphabet, out)?;
     if !fullmatch {
-        draw_suffix(ntc, parsed, alphabet, out)?;
+        draw_suffix(d, parsed, alphabet, out)?;
     }
 
     if let Some(deferred) = &state.deferred {
@@ -372,14 +372,14 @@ struct PendingAssertNot<'a> {
 /// Draw 0..10 arbitrary characters from `alphabet` (or ASCII 32..126 when
 /// no alphabet is given). Used for prefix/suffix padding and for the
 /// empty-pattern case.
-fn draw_pad(
-    ntc: &mut NativeTestCase,
+fn draw_pad<D: Draws>(
+    d: &mut D,
     alphabet: &Option<IntervalSet>,
     out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
-    let n = ntc.draw_integer_i64(0, 10)?;
+    let n = d.draw_integer_i64(0, 10)?;
     for _ in 0..n {
-        let c = draw_any_char(ntc, alphabet)?;
+        let c = draw_any_char(d, alphabet)?;
         out.push(c);
     }
     Ok(())
@@ -408,8 +408,8 @@ fn effective_last(sp: &SubPattern) -> Option<&OpCode> {
     }
 }
 
-fn draw_prefix(
-    ntc: &mut NativeTestCase,
+fn draw_prefix<D: Draws>(
+    d: &mut D,
     parsed: &ParsedPattern,
     alphabet: &Option<IntervalSet>,
     out: &mut Vec<char>,
@@ -420,7 +420,7 @@ fn draw_prefix(
             AtCode::BeginningString => return Ok(()),
             AtCode::Beginning => {
                 if parsed.flags & SRE_FLAG_MULTILINE != 0 && alphabet_allows(alphabet, '\n') {
-                    draw_pad(ntc, alphabet, out)?;
+                    draw_pad(d, alphabet, out)?;
                     if out.len() > base {
                         out.push('\n');
                     }
@@ -430,11 +430,11 @@ fn draw_prefix(
             _ => {}
         }
     }
-    draw_pad(ntc, alphabet, out)
+    draw_pad(d, alphabet, out)
 }
 
-fn draw_suffix(
-    ntc: &mut NativeTestCase,
+fn draw_suffix<D: Draws>(
+    d: &mut D,
     parsed: &ParsedPattern,
     alphabet: &Option<IntervalSet>,
     out: &mut Vec<char>,
@@ -447,11 +447,11 @@ fn draw_suffix(
                     return Ok(());
                 }
                 if parsed.flags & SRE_FLAG_MULTILINE != 0 {
-                    if ntc.weighted(0.5, None)? {
+                    if d.weighted(0.5, None)? {
                         out.push('\n');
-                        draw_pad(ntc, alphabet, out)?;
+                        draw_pad(d, alphabet, out)?;
                     }
-                } else if ntc.weighted(0.5, None)? {
+                } else if d.weighted(0.5, None)? {
                     out.push('\n');
                 }
                 return Ok(());
@@ -459,24 +459,24 @@ fn draw_suffix(
             _ => {}
         }
     }
-    draw_pad(ntc, alphabet, out)
+    draw_pad(d, alphabet, out)
 }
 
 /// Recursively generate a string from a `SubPattern`, appending to `out`.
-fn generate_subpattern<'a>(
-    ntc: &mut NativeTestCase,
+fn generate_subpattern<'a, D: Draws>(
+    d: &mut D,
     sp: &'a SubPattern,
     state: &mut GenState<'a>,
     alphabet: &Option<IntervalSet>,
     out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
     for op in &sp.data {
-        generate_op(ntc, op, state, alphabet, out)?;
+        generate_op(d, op, state, alphabet, out)?;
     }
     Ok(())
 }
-fn generate_op<'a>(
-    ntc: &mut NativeTestCase,
+fn generate_op<'a, D: Draws>(
+    d: &mut D,
     op: &'a OpCode,
     state: &mut GenState<'a>,
     alphabet: &Option<IntervalSet>,
@@ -487,17 +487,17 @@ fn generate_op<'a>(
             let c = codepoint_to_char(*cp)?;
             if state.flags & SRE_FLAG_IGNORECASE != 0 {
                 if let Some(sw) = char_swapcase(c) {
-                    let which = ntc.draw_integer_i64(0, 1)?;
+                    let which = d.draw_integer_i64(0, 1)?;
                     let pick = if which == 0 { c } else { sw };
                     if !alphabet_allows(alphabet, pick) {
-                        return Err(mark_invalid(ntc));
+                        return Err(mark_invalid(d));
                     }
                     out.push(pick);
                     return Ok(());
                 }
             }
             if !alphabet_allows(alphabet, c) {
-                return Err(mark_invalid(ntc));
+                return Err(mark_invalid(d));
             }
             out.push(c);
         }
@@ -505,7 +505,7 @@ fn generate_op<'a>(
             let c = codepoint_to_char(*cp)?;
             if alphabet.is_none() {
                 let chars = cached_default_not_literal(c, state.flags);
-                emit_from_chars(ntc, &chars, out)?;
+                emit_from_chars(d, &chars, out)?;
             } else {
                 let chars = cached_chars(
                     state.char_cache,
@@ -515,14 +515,14 @@ fn generate_op<'a>(
                         gather_chars(alphabet, |c| !blacklist.contains(&c))
                     },
                 );
-                emit_from_chars(ntc, &chars, out)?;
+                emit_from_chars(d, &chars, out)?;
             }
         }
         OpCode::Any => {
             let allow_newline = state.flags & SRE_FLAG_DOTALL != 0;
             if alphabet.is_none() {
                 let n = DEFAULT_ANY_LEN - u64::from(!allow_newline);
-                let idx = draw_char_index(ntc, n)?;
+                let idx = draw_char_index(d, n)?;
                 out.push(default_any_char(idx, allow_newline)?);
             } else {
                 let chars = cached_chars(
@@ -530,21 +530,21 @@ fn generate_op<'a>(
                     (u32::MAX, state.flags & SRE_FLAG_DOTALL),
                     || gather_chars(alphabet, |c| allow_newline || c != '\n'),
                 );
-                emit_from_chars(ntc, &chars, out)?;
+                emit_from_chars(d, &chars, out)?;
             }
         }
         OpCode::At(at) => match at {
             AtCode::BeginningString if out.len() > state.base => {
-                return Err(mark_invalid(ntc));
+                return Err(mark_invalid(d));
             }
             AtCode::BeginningString => {}
             AtCode::Beginning => {
                 if state.flags & SRE_FLAG_MULTILINE != 0 {
                     if out.len() > state.base && out.last() != Some(&'\n') {
-                        return Err(mark_invalid(ntc));
+                        return Err(mark_invalid(d));
                     }
                 } else if out.len() > state.base {
-                    return Err(mark_invalid(ntc));
+                    return Err(mark_invalid(d));
                 }
             }
             AtCode::End | AtCode::EndString | AtCode::Boundary | AtCode::NonBoundary => {
@@ -559,11 +559,11 @@ fn generate_op<'a>(
         OpCode::In(items) => {
             let mut cache = state.in_cache.lock();
             let set = in_set(&mut cache, items, state.flags, alphabet)?;
-            emit_from_set(ntc, set, out)?;
+            emit_from_set(d, set, out)?;
         }
         OpCode::Branch(items) => {
-            let idx = ntc.draw_integer_i64(0, items.len() as i64 - 1)? as usize;
-            generate_subpattern(ntc, &items[idx], state, alphabet, out)?;
+            let idx = d.draw_integer_i64(0, items.len() as i64 - 1)? as usize;
+            generate_subpattern(d, &items[idx], state, alphabet, out)?;
         }
         OpCode::Subpattern {
             group,
@@ -574,7 +574,7 @@ fn generate_op<'a>(
             let saved_flags = state.flags;
             state.flags = (state.flags | *add_flags) & !*del_flags;
             let before = out.len();
-            generate_subpattern(ntc, p, state, alphabet, out)?;
+            generate_subpattern(d, p, state, alphabet, out)?;
             state.flags = saved_flags;
             if state.capture {
                 if let Some(gid) = group {
@@ -584,7 +584,7 @@ fn generate_op<'a>(
         }
         OpCode::GroupRef(gid) => {
             let Some(val) = state.groups.get(gid) else {
-                return Err(mark_invalid(ntc));
+                return Err(mark_invalid(d));
             };
             out.extend_from_slice(val);
         }
@@ -594,9 +594,9 @@ fn generate_op<'a>(
             no,
         } => {
             if state.groups.contains_key(cond_group) {
-                generate_subpattern(ntc, yes, state, alphabet, out)?;
+                generate_subpattern(d, yes, state, alphabet, out)?;
             } else if let Some(no) = no {
-                generate_subpattern(ntc, no, state, alphabet, out)?;
+                generate_subpattern(d, no, state, alphabet, out)?;
             }
         }
         OpCode::Assert { direction, p } => {
@@ -610,7 +610,7 @@ fn generate_op<'a>(
                 };
                 state.deferred().pending_asserts.push(pending);
             } else {
-                generate_subpattern(ntc, p, state, alphabet, out)?;
+                generate_subpattern(d, p, state, alphabet, out)?;
             }
         }
         OpCode::AssertNot { direction, p } => {
@@ -624,11 +624,11 @@ fn generate_op<'a>(
             state.deferred().pending_lookaheads.push(pending);
         }
         OpCode::Failure => {
-            return Err(mark_invalid(ntc));
+            return Err(mark_invalid(d));
         }
         OpCode::AtomicGroup(p) => {
             state.deferred().needs_whole_match = true;
-            generate_subpattern(ntc, p, state, alphabet, out)?;
+            generate_subpattern(d, p, state, alphabet, out)?;
         }
         OpCode::MaxRepeat { min, max, item }
         | OpCode::MinRepeat { min, max, item }
@@ -644,13 +644,13 @@ fn generate_op<'a>(
             };
             let mut ms = ManyState::new(min, max);
             if let [OpCode::In(items)] = item.data.as_slice() {
-                return repeat_in(ntc, &mut ms, items, state, alphabet, out);
+                return repeat_in(d, &mut ms, items, state, alphabet, out);
             }
             loop {
-                if !many_more(ntc, &mut ms)? {
+                if !many_more(d, &mut ms)? {
                     break;
                 }
-                generate_subpattern(ntc, item, state, alphabet, out)?;
+                generate_subpattern(d, item, state, alphabet, out)?;
             }
         }
     }
@@ -667,40 +667,40 @@ fn generate_op<'a>(
 /// repetitions is kept in a frame of its own, so that each repetition
 /// costs its draws and little else.
 #[inline(never)]
-fn repeat_in(
-    ntc: &mut NativeTestCase,
+fn repeat_in<D: Draws>(
+    d: &mut D,
     ms: &mut ManyState,
     items: &[SetItem],
     state: &GenState,
     alphabet: &Option<IntervalSet>,
     out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
-    if !many_more(ntc, ms)? {
+    if !many_more(d, ms)? {
         return Ok(());
     }
     let mut cache = state.in_cache.lock();
     match in_set(&mut cache, items, state.flags, alphabet)? {
         InSet::Listed(chars) => {
             if chars.is_empty() {
-                return Err(mark_invalid(ntc));
+                return Err(mark_invalid(d));
             }
             let n = chars.len() as u64;
             loop {
-                let idx = draw_char_index(ntc, n)?;
+                let idx = draw_char_index(d, n)?;
                 out.push(chars[idx as usize]);
-                if !many_more(ntc, ms)? {
+                if !many_more(d, ms)? {
                     return Ok(());
                 }
             }
         }
         InSet::Complement(complement) => {
             if complement.len == 0 {
-                return Err(mark_invalid(ntc));
+                return Err(mark_invalid(d));
             }
             loop {
-                let idx = draw_char_index(ntc, complement.len)?;
+                let idx = draw_char_index(d, complement.len)?;
                 out.push(complement.get(idx)?);
-                if !many_more(ntc, ms)? {
+                if !many_more(d, ms)? {
                     return Ok(());
                 }
             }
@@ -1053,13 +1053,10 @@ fn alphabet_allows(alphabet: &Option<IntervalSet>, c: char) -> bool {
 
 /// Pick an arbitrary character from the alphabet. Used for prefix/suffix
 /// padding — must never fail if the alphabet is non-empty.
-fn draw_any_char(
-    ntc: &mut NativeTestCase,
-    alphabet: &Option<IntervalSet>,
-) -> Result<char, EngineError> {
+fn draw_any_char<D: Draws>(d: &mut D, alphabet: &Option<IntervalSet>) -> Result<char, EngineError> {
     match alphabet {
         None => {
-            let cp = ntc.draw_integer_i64(32, 126)?;
+            let cp = d.draw_integer_i64(32, 126)?;
             Ok(hegel_internal_unwrap!(
                 char::from_u32(cp as u32),
                 "draw_any_char: printable-ASCII draw {cp} is not a char"
@@ -1068,9 +1065,9 @@ fn draw_any_char(
         Some(intervals) => {
             let n = intervals.len();
             if n == 0 {
-                return Err(mark_invalid(ntc));
+                return Err(mark_invalid(d));
             }
-            let idx = ntc.draw_integer_i64(0, n as i64 - 1)?;
+            let idx = d.draw_integer_i64(0, n as i64 - 1)?;
             let cp = hegel_internal_unwrap!(
                 intervals.get(idx as isize),
                 "draw_any_char: alphabet index {idx} out of bounds"
@@ -1082,31 +1079,27 @@ fn draw_any_char(
         }
     }
 }
-fn emit_from_chars(
-    ntc: &mut NativeTestCase,
+fn emit_from_chars<D: Draws>(
+    d: &mut D,
     chars: &[char],
     out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
     if chars.is_empty() {
-        return Err(mark_invalid(ntc));
+        return Err(mark_invalid(d));
     }
-    let idx = draw_char_index(ntc, chars.len() as u64)?;
+    let idx = draw_char_index(d, chars.len() as u64)?;
     out.push(chars[idx as usize]);
     Ok(())
 }
 
-fn emit_from_set(
-    ntc: &mut NativeTestCase,
-    set: &InSet,
-    out: &mut Vec<char>,
-) -> Result<(), EngineError> {
+fn emit_from_set<D: Draws>(d: &mut D, set: &InSet, out: &mut Vec<char>) -> Result<(), EngineError> {
     match set {
-        InSet::Listed(chars) => emit_from_chars(ntc, chars, out),
+        InSet::Listed(chars) => emit_from_chars(d, chars, out),
         InSet::Complement(complement) => {
             if complement.len == 0 {
-                return Err(mark_invalid(ntc));
+                return Err(mark_invalid(d));
             }
-            let idx = draw_char_index(ntc, complement.len)?;
+            let idx = draw_char_index(d, complement.len)?;
             out.push(complement.get(idx)?);
             Ok(())
         }
@@ -1122,18 +1115,18 @@ const FIRST_256_THRESHOLD: u8 = boolean_threshold(FIRST_256_PROBABILITY);
 /// Draw an index into a character set of `n` (non-zero) characters, biased
 /// towards the first 256 when the set is larger than that.
 #[inline]
-fn draw_char_index(ntc: &mut NativeTestCase, n: u64) -> Result<u64, EngineError> {
-    if n > 256 && ntc.weighted_against(FIRST_256_PROBABILITY, FIRST_256_THRESHOLD, None)? {
-        ntc.draw_integer_uniform(0, 255)
+fn draw_char_index<D: Draws>(d: &mut D, n: u64) -> Result<u64, EngineError> {
+    if n > 256 && d.weighted_against(FIRST_256_PROBABILITY, FIRST_256_THRESHOLD, None)? {
+        d.draw_integer_uniform(0, 255)
     } else if n > 256 {
-        ntc.draw_integer_uniform(256, n - 1)
+        d.draw_integer_uniform(256, n - 1)
     } else {
-        ntc.draw_integer_uniform(0, n - 1)
+        d.draw_integer_uniform(0, n - 1)
     }
 }
 
-fn mark_invalid(ntc: &mut NativeTestCase) -> EngineError {
-    ntc.conclude(Status::Invalid, None);
+fn mark_invalid<D: Draws>(d: &mut D) -> EngineError {
+    d.conclude(Status::Invalid);
     EngineError::InvalidTestCase
 }
 

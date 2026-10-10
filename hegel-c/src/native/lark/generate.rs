@@ -50,9 +50,9 @@ use super::{GrammarError, GrammarResult};
 use crate::control::{hegel_internal_assert, hegel_internal_unwrap};
 use crate::native::HashMap;
 use crate::native::core::state::boolean_threshold;
-use crate::native::core::{EngineError, ManyState, NativeTestCase, Status};
+use crate::native::core::{EngineError, ManyState, Status};
 use crate::native::draws::{
-    LABEL_BOOLEAN, LABEL_INTEGER, StringSpec, generate_string_into, many_more, spanned,
+    Draws, LABEL_BOOLEAN, LABEL_INTEGER, StringSpec, generate_string_into, many_more, spanned,
 };
 use crate::native::labels::label_from_name;
 use crate::sys::sync::Mutex;
@@ -1182,9 +1182,9 @@ fn nth_candidate(
 }
 
 /// Draw an index into `count` candidates, uniformly.
-fn draw_index(ntc: &mut NativeTestCase, count: usize) -> Result<usize, Step> {
-    let index = spanned(ntc, LABEL_INTEGER, |ntc| {
-        ntc.draw_integer_uniform(0, count as u64 - 1)
+fn draw_index<D: Draws>(d: &mut D, count: usize) -> Result<usize, Step> {
+    let index = spanned(d, LABEL_INTEGER, |d| {
+        d.draw_integer_uniform(0, count as u64 - 1)
     })?;
     Ok(index as usize)
 }
@@ -1376,16 +1376,16 @@ impl Generation<'_> {
     /// this depth, instead of being found again; a rule with more
     /// alternatives than a mask holds is drawn from by
     /// [`Generation::choose_alt_scanning`], which answers the same.
-    fn choose_alt<'a>(
+    fn choose_alt<'a, D: Draws>(
         &mut self,
-        ntc: &mut NativeTestCase,
+        d: &mut D,
         alts: &'a [Alt],
         classes: Option<&AltClasses>,
         budget: u64,
         depth: u32,
     ) -> Result<&'a Alt, EngineError> {
         if alts.len() > MASKED_ALTS {
-            return self.choose_alt_scanning(ntc, alts, budget, depth);
+            return self.choose_alt_scanning(d, alts, budget, depth);
         }
         let max_depth = self.spec.max_depth;
         let (feasible, growing, cheapest_growing) = classes
@@ -1396,11 +1396,11 @@ impl Generation<'_> {
             false
         } else {
             let p = grow_probability(budget.saturating_sub(cheapest_growing));
-            spanned(ntc, LABEL_BOOLEAN, |ntc| ntc.weighted_precise(p, None))?
+            spanned(d, LABEL_BOOLEAN, |d| d.weighted_precise(p, None))?
         };
         let class = if grow { growing } else { feasible & !growing };
-        let index = spanned(ntc, LABEL_INTEGER, |ntc| {
-            ntc.draw_integer_uniform(0, u64::from(class.count_ones()) - 1)
+        let index = spanned(d, LABEL_INTEGER, |d| {
+            d.draw_integer_uniform(0, u64::from(class.count_ones()) - 1)
         })?;
         let chosen = hegel_internal_unwrap!(
             nth_set_bit(class, index),
@@ -1411,9 +1411,9 @@ impl Generation<'_> {
 
     /// [`Generation::choose_alt`] for any number of alternatives, finding
     /// each class by scanning them.
-    fn choose_alt_scanning<'a>(
+    fn choose_alt_scanning<'a, D: Draws>(
         &mut self,
-        ntc: &mut NativeTestCase,
+        d: &mut D,
         alts: &'a [Alt],
         budget: u64,
         depth: u32,
@@ -1443,12 +1443,12 @@ impl Generation<'_> {
             None => false,
             Some(cheapest_growing) => {
                 let p = grow_probability(budget.saturating_sub(cheapest_growing));
-                spanned(ntc, LABEL_BOOLEAN, |ntc| ntc.weighted_precise(p, None))?
+                spanned(d, LABEL_BOOLEAN, |d| d.weighted_precise(p, None))?
             }
         };
         let size = alts.iter().filter(|alt| in_class(alt, grow)).count();
-        let index = spanned(ntc, LABEL_INTEGER, |ntc| {
-            ntc.draw_integer_uniform(0, size as u64 - 1)
+        let index = spanned(d, LABEL_INTEGER, |d| {
+            d.draw_integer_uniform(0, size as u64 - 1)
         })?;
         Ok(hegel_internal_unwrap!(
             alts.iter()
@@ -1458,46 +1458,46 @@ impl Generation<'_> {
         ))
     }
 
-    fn rule(
+    fn rule<D: Draws>(
         &mut self,
-        ntc: &mut NativeTestCase,
+        d: &mut D,
         id: RuleId,
         budget: u64,
         depth: u32,
     ) -> Result<(), Step> {
-        ntc.start_span(self.spec.labels[id]);
-        let result = self.rule_body(ntc, id, budget, depth);
-        ntc.stop_span(false);
+        d.start_span(self.spec.labels[id]);
+        let result = self.rule_body(d, id, budget, depth);
+        d.stop_span(false);
         result
     }
 
-    fn rule_body(
+    fn rule_body<D: Draws>(
         &mut self,
-        ntc: &mut NativeTestCase,
+        d: &mut D,
         id: RuleId,
         budget: u64,
         depth: u32,
     ) -> Result<(), Step> {
         let rule = &self.spec.analysis.rules[id];
         let alt = self.choose_alt(
-            ntc,
+            d,
             &rule.alternatives,
             self.spec.classes[id].as_ref(),
             budget,
             depth + 1,
         )?;
-        self.sequence(ntc, alt, budget, depth + 1)
+        self.sequence(d, alt, budget, depth + 1)
     }
 
-    fn sequence(
+    fn sequence<D: Draws>(
         &mut self,
-        ntc: &mut NativeTestCase,
+        d: &mut D,
         alt: &Alt,
         budget: u64,
         depth: u32,
     ) -> Result<(), Step> {
         let base = self.budgets.len();
-        let result = self.sequence_from(ntc, alt, budget, depth, base);
+        let result = self.sequence_from(d, alt, budget, depth, base);
         self.budgets.truncate(base);
         result
     }
@@ -1508,9 +1508,9 @@ impl Generation<'_> {
     /// drawn points so that no position is systematically larger than
     /// another; what an item with a maximum size cannot take is shared
     /// equally between the items without one.
-    fn sequence_from(
+    fn sequence_from<D: Draws>(
         &mut self,
-        ntc: &mut NativeTestCase,
+        d: &mut D,
         alt: &Alt,
         budget: u64,
         depth: u32,
@@ -1525,7 +1525,7 @@ impl Generation<'_> {
             let cuts = self.budgets.len();
             self.budgets.push(0);
             for _ in 1..parts {
-                let cut = spanned(ntc, LABEL_INTEGER, |ntc| ntc.draw_integer_uniform(0, spare))?;
+                let cut = spanned(d, LABEL_INTEGER, |d| d.draw_integer_uniform(0, spare))?;
                 self.budgets.push(cut);
             }
             self.budgets.push(spare);
@@ -1562,35 +1562,35 @@ impl Generation<'_> {
         }
         for (i, item) in alt.items.iter().enumerate() {
             let item_budget = self.budgets[base + i];
-            self.item(ntc, item, item_budget, depth)?;
+            self.item(d, item, item_budget, depth)?;
         }
         Ok(())
     }
 
-    fn item(
+    fn item<D: Draws>(
         &mut self,
-        ntc: &mut NativeTestCase,
+        d: &mut D,
         node: &Node,
         budget: u64,
         depth: u32,
     ) -> Result<(), Step> {
         match &node.kind {
-            NodeKind::Terminal(t) => self.terminal(ntc, *t),
-            NodeKind::Rule(r) => self.rule(ntc, *r, budget, depth),
+            NodeKind::Terminal(t) => self.terminal(d, *t),
+            NodeKind::Rule(r) => self.rule(d, *r, budget, depth),
             NodeKind::Group(group, alts) => {
                 let classes = self.spec.group_classes[*group].as_ref();
-                let alt = self.choose_alt(ntc, alts, classes, budget, depth)?;
-                self.sequence(ntc, alt, budget, depth)
+                let alt = self.choose_alt(d, alts, classes, budget, depth)?;
+                self.sequence(d, alt, budget, depth)
             }
             NodeKind::Repeat { inner, min, max } => {
-                self.repeat(ntc, inner, *min, *max, budget, depth)
+                self.repeat(d, inner, *min, *max, budget, depth)
             }
         }
     }
 
-    fn repeat(
+    fn repeat<D: Draws>(
         &mut self,
-        ntc: &mut NativeTestCase,
+        d: &mut D,
         inner: &Node,
         min: u32,
         max: Option<u32>,
@@ -1609,7 +1609,7 @@ impl Generation<'_> {
             max.map_or(cap, |max| cap.min(u64::from(max)))
         };
         let count = if feasible_max > min {
-            self.draw_count(ntc, min, feasible_max, spare)?
+            self.draw_count(d, min, feasible_max, spare)?
         } else {
             min
         };
@@ -1624,11 +1624,11 @@ impl Generation<'_> {
         state.set_p_continue(
             1.0 - 1.0 / (COUNT_PERSISTENCE * (count - min) as f64).max(MIN_PERSISTENCE),
         );
-        while many_more(ntc, &mut state)? {
+        while many_more(d, &mut state)? {
             let before = self.tokens.len();
-            ntc.start_span(LABEL_ELEMENT);
-            let result = self.item(ntc, inner, each, depth);
-            ntc.stop_span(false);
+            d.start_span(LABEL_ELEMENT);
+            let result = self.item(d, inner, each, depth);
+            d.stop_span(false);
             result?;
             if min == 0 {
                 self.mark_droppable(before);
@@ -1654,22 +1654,22 @@ impl Generation<'_> {
     /// like a growing alternative, from the spare budget, and the number
     /// of extra elements is then log-uniform, so a large budget is as
     /// likely to go into a few long elements as into many short ones.
-    fn draw_count(
+    fn draw_count<D: Draws>(
         &mut self,
-        ntc: &mut NativeTestCase,
+        d: &mut D,
         min: u64,
         feasible_max: u64,
         spare: u64,
     ) -> Result<u64, Step> {
         let p = grow_probability(spare);
-        let extend = spanned(ntc, LABEL_BOOLEAN, |ntc| ntc.weighted_precise(p, None))?;
+        let extend = spanned(d, LABEL_BOOLEAN, |d| d.weighted_precise(p, None))?;
         if !extend {
             return Ok(min);
         }
         let extra_max = feasible_max - min;
         let scale = ((extra_max + 1) as f64).ln();
-        let u = spanned(ntc, LABEL_INTEGER, |ntc| {
-            ntc.draw_integer_uniform(0, COUNT_RESOLUTION)
+        let u = spanned(d, LABEL_INTEGER, |d| {
+            d.draw_integer_uniform(0, COUNT_RESOLUTION)
         })?;
         let extra = (u as f64 / COUNT_RESOLUTION as f64 * scale).exp() as u64;
         Ok(min + extra.clamp(1, extra_max))
@@ -1681,11 +1681,11 @@ impl Generation<'_> {
     /// its explicit generator as it comes. A text drawn before is not
     /// matched again: what was remembered of it (see
     /// [`ReadingsCache::recall`]) says how much of it the pattern takes.
-    fn draw_terminal(&mut self, ntc: &mut NativeTestCase, id: TermId) -> Result<Token, Step> {
+    fn draw_terminal<D: Draws>(&mut self, d: &mut D, id: TermId) -> Result<Token, Step> {
         let start = self.text.len();
         match &self.spec.terminals[id] {
             TerminalGen::Explicit(spec) => {
-                generate_string_into(ntc, spec, &mut self.text)?;
+                generate_string_into(d, spec, &mut self.text)?;
                 let scans = self
                     .readings
                     .read_token(self.spec, id, &self.text[start..], None);
@@ -1694,12 +1694,12 @@ impl Generation<'_> {
             TerminalGen::Pattern(spec) => {
                 let mut attempt = 0;
                 loop {
-                    ntc.start_span(LABEL_TERMINAL);
-                    generate_string_into(ntc, spec, &mut self.text)?;
+                    d.start_span(LABEL_TERMINAL);
+                    generate_string_into(d, spec, &mut self.text)?;
                     attempt += 1;
                     if !self.fits(self.text.len()) {
                         self.text.truncate(start);
-                        ntc.stop_span(true);
+                        d.stop_span(true);
                         if attempt > LEX_RETRIES {
                             return Err(Step::TooLong);
                         }
@@ -1724,7 +1724,7 @@ impl Generation<'_> {
                     });
                     let token = self.token(id, start, scans);
                     let accept = token.lexable(&self.readings.findings) || attempt > LEX_RETRIES;
-                    ntc.stop_span(!accept);
+                    d.stop_span(!accept);
                     if accept {
                         return Ok(token);
                     }
@@ -1737,10 +1737,10 @@ impl Generation<'_> {
     /// Draw a token of terminal `id` onto the end of the string, with
     /// any ignorables that go before it, and fail when the string has
     /// outgrown the size cap.
-    fn terminal(&mut self, ntc: &mut NativeTestCase, id: TermId) -> Result<(), Step> {
-        let token = self.draw_terminal(ntc, id)?;
+    fn terminal<D: Draws>(&mut self, d: &mut D, id: TermId) -> Result<(), Step> {
+        let token = self.draw_terminal(d, id)?;
         self.tokens.push(token);
-        self.maybe_ignore(ntc, 1)?;
+        self.maybe_ignore(d, 1)?;
         if !self.fits(self.text.len()) {
             return Err(Step::TooLong);
         }
@@ -1757,19 +1757,19 @@ impl Generation<'_> {
     /// that read fine on its own, until the attempts run out. An
     /// ignorable the lexer merely gives another type is kept, since that
     /// is a property of the grammar no redraw will change.
-    fn insert_ignore(&mut self, ntc: &mut NativeTestCase, pending: usize) -> Result<bool, Step> {
+    fn insert_ignore<D: Draws>(&mut self, d: &mut D, pending: usize) -> Result<bool, Step> {
         let from = (self.tokens.len() - pending).saturating_sub(1);
         self.candidates.clear();
         self.candidates.extend_from_slice(&self.spec.ignore);
         let mut oversize = false;
         for _ in 0..IGNORE_ATTEMPTS {
-            ntc.start_span(LABEL_IGNORE);
+            d.start_span(LABEL_IGNORE);
             let mut draws = IGNORE_CHAIN_DRAWS;
-            let index = draw_index(ntc, self.candidates.len())?;
+            let index = draw_index(d, self.candidates.len())?;
             let id = self.candidates[index];
-            let placement = self.place_ignore(ntc, id, from, pending, 0, &mut draws);
+            let placement = self.place_ignore(d, id, from, pending, 0, &mut draws);
             let accept = !matches!(placement, Ok(Placement::Rejected { .. }));
-            ntc.stop_span(!accept);
+            d.stop_span(!accept);
             match placement? {
                 Placement::Placed(_) => return Ok(true),
                 Placement::Rejected { oversize: true, .. } => oversize = true,
@@ -1797,9 +1797,9 @@ impl Generation<'_> {
     /// (see [`Generation::hopeful`]), since what the analysis cannot
     /// rule out the draws may: a comment can begin with the newline that
     /// ends the one before it, but rarely does.
-    fn ignore_chain(
+    fn ignore_chain<D: Draws>(
         &mut self,
-        ntc: &mut NativeTestCase,
+        d: &mut D,
         from: usize,
         pending: usize,
         depth: u32,
@@ -1824,12 +1824,12 @@ impl Generation<'_> {
                 break;
             }
             *draws -= 1;
-            ntc.start_span(LABEL_IGNORE);
-            let index = draw_index(ntc, count)?;
+            d.start_span(LABEL_IGNORE);
+            let index = draw_index(d, count)?;
             let id = nth_candidate(candidates(), index)?;
-            let placement = self.place_ignore(ntc, id, from, pending, depth, draws);
+            let placement = self.place_ignore(d, id, from, pending, depth, draws);
             let accept = !matches!(placement, Ok(Placement::Rejected { .. }));
-            ntc.stop_span(!accept);
+            d.stop_span(!accept);
             if let Placement::Placed(fit) = placement? {
                 return Ok(fit);
             }
@@ -1854,9 +1854,9 @@ impl Generation<'_> {
     /// tokens stay in the string when the result fits. A draw in a chain
     /// (at a `depth` above zero) counts against drawing that ignorable
     /// after that token again until it is placed, and then for it.
-    fn place_ignore(
+    fn place_ignore<D: Draws>(
         &mut self,
-        ntc: &mut NativeTestCase,
+        d: &mut D,
         id: TermId,
         from: usize,
         pending: usize,
@@ -1864,12 +1864,12 @@ impl Generation<'_> {
         draws: &mut u32,
     ) -> Result<Placement, Step> {
         let prev = self.before(pending).map(|prev| prev.id);
-        let fit = self.draw_ignore(ntc, id, from, pending)?;
+        let fit = self.draw_ignore(d, id, from, pending)?;
         let pair = prev.filter(|_| depth > 0).map(|prev| (prev, id));
         if let Some(pair) = pair {
             self.chains.entry(pair).or_default().0 += 1;
         }
-        let placement = self.place_drawn(ntc, id, fit, from, pending, depth, draws)?;
+        let placement = self.place_drawn(d, id, fit, from, pending, depth, draws)?;
         if let (Some(pair), Placement::Placed(_)) = (pair, &placement) {
             let (failed, succeeded) = self.chains.entry(pair).or_default();
             *failed -= 1;
@@ -1882,9 +1882,9 @@ impl Generation<'_> {
     /// before the last `pending` tokens, which the lexer reads back this
     /// well with its neighbours, or `None` when it was too long for the
     /// string and never inserted.
-    fn place_drawn(
+    fn place_drawn<D: Draws>(
         &mut self,
-        ntc: &mut NativeTestCase,
+        d: &mut D,
         id: TermId,
         fit: Option<Fit>,
         from: usize,
@@ -1906,7 +1906,7 @@ impl Generation<'_> {
         if depth < IGNORE_CHAIN && *draws > 0 {
             let (text, tokens) = self.window(from, pending);
             if self.spec.fit(text, tokens, &self.readings.findings) > Fit::Wrong {
-                let fit = self.ignore_chain(ntc, from, pending, depth + 1, draws)?;
+                let fit = self.ignore_chain(d, from, pending, depth + 1, draws)?;
                 if fit > Fit::Wrong {
                     return Ok(Placement::Placed(fit));
                 }
@@ -1924,9 +1924,9 @@ impl Generation<'_> {
     /// last `pending` tokens: how the lexer reads the tokens from `from`
     /// on with it in place, or `None` when it alone would take the
     /// string past the size cap and is left out.
-    fn draw_ignore(
+    fn draw_ignore<D: Draws>(
         &mut self,
-        ntc: &mut NativeTestCase,
+        d: &mut D,
         id: TermId,
         from: usize,
         pending: usize,
@@ -1938,8 +1938,8 @@ impl Generation<'_> {
             .map_or(self.text.len(), |next| next.start);
         let drawn = self.text.len();
         match &self.spec.terminals[id] {
-            TerminalGen::Explicit(spec) => generate_string_into(ntc, spec, &mut self.text)?,
-            TerminalGen::Pattern(spec) => generate_string_into(ntc, spec, &mut self.text)?,
+            TerminalGen::Explicit(spec) => generate_string_into(d, spec, &mut self.text)?,
+            TerminalGen::Pattern(spec) => generate_string_into(d, spec, &mut self.text)?,
         }
         let len = self.text.len() - drawn;
         if !self.fits(start + len) {
@@ -1988,7 +1988,7 @@ impl Generation<'_> {
     /// A grammar without ignorables has nothing to insert, and leaves
     /// what the pair checks cannot settle to the lexing of the whole
     /// string.
-    fn maybe_ignore(&mut self, ntc: &mut NativeTestCase, pending: usize) -> Result<(), Step> {
+    fn maybe_ignore<D: Draws>(&mut self, d: &mut D, pending: usize) -> Result<(), Step> {
         let at = self.tokens.len() - pending;
         let adjacent = at.checked_sub(1).filter(|_| pending > 0);
         if self.spec.ignore.is_empty() {
@@ -2003,22 +2003,22 @@ impl Generation<'_> {
             self.spec.fit(text, tokens, &self.readings.findings)
         });
         let forced = if pair < Fit::Exact { Some(true) } else { None };
-        if ntc.weighted_against(self.ignore_rate, self.ignore_threshold, forced)?
-            && self.insert_ignore(ntc, pending)?
+        if d.weighted_against(self.ignore_rate, self.ignore_threshold, forced)?
+            && self.insert_ignore(d, pending)?
         {
             return Ok(());
         }
         if pair == Fit::Wrong {
-            ntc.conclude(Status::Invalid, None);
+            d.conclude(Status::Invalid);
             return Err(Step::Engine(EngineError::InvalidTestCase));
         }
         self.unsettled |= pair < Fit::Settled;
         Ok(())
     }
 
-    fn run(&mut self, ntc: &mut NativeTestCase, budget: u64) -> Result<(), Step> {
-        self.rule(ntc, self.spec.start, budget, 0)?;
-        self.maybe_ignore(ntc, 0)?;
+    fn run<D: Draws>(&mut self, d: &mut D, budget: u64) -> Result<(), Step> {
+        self.rule(d, self.spec.start, budget, 0)?;
+        self.maybe_ignore(d, 0)?;
         if !self.unsettled
             || self
                 .spec
@@ -2032,21 +2032,18 @@ impl Generation<'_> {
 }
 
 /// Draw a string from `spec`, in a span of its own.
-pub fn generate_grammar(
-    ntc: &mut NativeTestCase,
-    spec: &GrammarSpec,
-) -> Result<String, EngineError> {
-    spanned(ntc, LABEL_GRAMMAR, |ntc| draw_grammar(ntc, spec))
+pub fn generate_grammar<D: Draws>(d: &mut D, spec: &GrammarSpec) -> Result<String, EngineError> {
+    spanned(d, LABEL_GRAMMAR, |d| draw_grammar(d, spec))
 }
 
-fn draw_grammar(ntc: &mut NativeTestCase, spec: &GrammarSpec) -> Result<String, EngineError> {
+fn draw_grammar<D: Draws>(d: &mut D, spec: &GrammarSpec) -> Result<String, EngineError> {
     let min = spec.min_size();
     let target = if spec.max_size > min
-        && spanned(ntc, LABEL_BOOLEAN, |ntc| {
-            ntc.weighted_precise(LARGE_TARGET_PROBABILITY, None)
+        && spanned(d, LABEL_BOOLEAN, |d| {
+            d.weighted_precise(LARGE_TARGET_PROBABILITY, None)
         })? {
-        spanned(ntc, LABEL_INTEGER, |ntc| {
-            ntc.draw_integer_uniform(min, spec.max_size)
+        spanned(d, LABEL_INTEGER, |d| {
+            d.draw_integer_uniform(min, spec.max_size)
         })?
     } else {
         min
@@ -2054,14 +2051,14 @@ fn draw_grammar(ntc: &mut NativeTestCase, spec: &GrammarSpec) -> Result<String, 
     let ignore_rate = if spec.ignore.is_empty() {
         0.0
     } else {
-        let step = spanned(ntc, LABEL_INTEGER, |ntc| {
-            ntc.draw_integer_uniform(0, IGNORE_RATE_STEPS - 1)
+        let step = spanned(d, LABEL_INTEGER, |d| {
+            d.draw_integer_uniform(0, IGNORE_RATE_STEPS - 1)
         })?;
         let fraction = step as f64 / (IGNORE_RATE_STEPS - 1) as f64;
         fraction * fraction
     };
     let mut generation = Generation::new(spec, ignore_rate);
-    let result = generation.attempts(ntc, target, min);
+    let result = generation.attempts(d, target, min);
     generation.recycle();
     result
 }
@@ -2070,22 +2067,22 @@ impl Generation<'_> {
     /// Draw strings of about `target` characters (never below `min`, the
     /// shortest the grammar allows) until one is kept, halving the target
     /// after each one that is too long.
-    fn attempts(
+    fn attempts<D: Draws>(
         &mut self,
-        ntc: &mut NativeTestCase,
+        d: &mut D,
         mut target: u64,
         min: u64,
     ) -> Result<String, EngineError> {
         let mut attempt = 0;
         loop {
             let budget = token_budget(target, min, self.ignore_rate, self.spec.ignore_cost);
-            match self.run(ntc, budget) {
+            match self.run(d, budget) {
                 Ok(()) => return Ok(self.text.iter().collect()),
                 Err(Step::Engine(e)) => return Err(e),
                 Err(step) => {
                     attempt += 1;
                     if attempt >= MAX_ATTEMPTS {
-                        ntc.conclude(Status::Invalid, None);
+                        d.conclude(Status::Invalid);
                         return Err(EngineError::InvalidTestCase);
                     }
                     if matches!(step, Step::TooLong) {

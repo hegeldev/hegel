@@ -3,7 +3,7 @@
 //! terminals are placed, and the lexer-fit checks that decide it.
 
 use super::*;
-use crate::native::core::ChoiceValue;
+use crate::native::core::{ChoiceValue, NativeTestCase};
 use crate::native::lark::analysis::Bound;
 use crate::native::lark::builder::{ImportSource, NoImports};
 use crate::native::rng::EngineRng;

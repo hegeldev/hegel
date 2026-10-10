@@ -11,7 +11,7 @@
 use super::*;
 use crate::native::HashMap;
 use crate::native::bignum::BigInt;
-use crate::native::core::ChoiceValue;
+use crate::native::core::{ChoiceValue, NativeTestCase};
 use crate::native::re::constants::{
     AtCode, ChCode, SRE_FLAG_DOTALL, SRE_FLAG_IGNORECASE, SRE_FLAG_MULTILINE,
 };

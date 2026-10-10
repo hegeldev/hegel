@@ -1,0 +1,157 @@
+//! Where the engine's own string generators draw their decisions from.
+//!
+//! The regex generator ([`super::regex`]) and the grammar generator
+//! (`lark::generate`) make every random decision through [`Draws`], so
+//! that the same walk can be driven by a test case, which records each
+//! decision as a choice of its own, or by another source: an RNG alone,
+//! when a whole string is to be one choice, or nothing at all, when the
+//! simplest string is wanted. The trait holds exactly the operations the
+//! two generators need, each mirroring the [`NativeTestCase`] method of
+//! the same name.
+
+use super::{StringSpec, generate_string};
+use crate::control::hegel_internal_assert;
+use crate::native::core::{EngineError, ManyState, NativeTestCase, Status};
+use alloc::string::String;
+
+/// A source of the decisions the engine's string generators make. Every
+/// method mirrors the [`NativeTestCase`] method of the same name, whose
+/// contract it has; the test case itself implements it by forwarding.
+pub(crate) trait Draws {
+    /// A value drawn uniformly from `[min_value, max_value]`, as
+    /// [`NativeTestCase::draw_integer_uniform`] draws it.
+    fn draw_integer_uniform(&mut self, min_value: u64, max_value: u64) -> Result<u64, EngineError>;
+
+    /// A value drawn from `[min_value, max_value]` with the engine's
+    /// shaping towards small magnitudes and boundary values, as
+    /// [`NativeTestCase::draw_integer_i64`] draws it.
+    fn draw_integer_i64(&mut self, min_value: i64, max_value: i64) -> Result<i64, EngineError>;
+
+    /// A boolean that is `true` with probability `p`, sampled from one
+    /// byte, or `forced` when given, as [`NativeTestCase::weighted`]
+    /// draws it.
+    fn weighted(&mut self, p: f64, forced: Option<bool>) -> Result<bool, EngineError>;
+
+    /// [`Draws::weighted`] against `p`'s one-byte `threshold` worked out
+    /// by the caller, as [`NativeTestCase::weighted_against`] draws it.
+    fn weighted_against(
+        &mut self,
+        p: f64,
+        threshold: u8,
+        forced: Option<bool>,
+    ) -> Result<bool, EngineError>;
+
+    /// A boolean that is `true` with probability `p` at full precision,
+    /// or `forced` when given, as [`NativeTestCase::weighted_precise`]
+    /// draws it.
+    fn weighted_precise(&mut self, p: f64, forced: Option<bool>) -> Result<bool, EngineError>;
+
+    /// A string of `spec`, as [`generate_string`] draws it from a test
+    /// case: what [`super::generate_string_into`] falls back on for the
+    /// specs whose draw is not written against this trait (every kind
+    /// but a regex).
+    fn generate_string(&mut self, spec: &StringSpec) -> Result<String, EngineError>;
+
+    /// Open a span labelled `label`, as [`NativeTestCase::start_span`]
+    /// does.
+    fn start_span(&mut self, label: u64);
+
+    /// Close the innermost open span, marking it discarded when
+    /// `discard`, as [`NativeTestCase::stop_span`] does.
+    fn stop_span(&mut self, discard: bool);
+
+    /// Conclude the test case with `status`, as
+    /// [`NativeTestCase::conclude`] does with no origin: the first
+    /// conclusion stands.
+    fn conclude(&mut self, status: Status);
+
+    /// Advance the many state by one element, answering whether another
+    /// element should be drawn. Mirrors Hypothesis's `many.more()`.
+    fn many_more(&mut self, state: &mut ManyState) -> Result<bool, EngineError> {
+        let should_continue = if state.min_size as f64 == state.max_size {
+            state.count < state.min_size
+        } else {
+            let forced = if state.force_stop {
+                Some(false)
+            } else if state.count < state.min_size {
+                Some(true)
+            } else if state.count as f64 >= state.max_size {
+                Some(false)
+            } else {
+                None
+            };
+            self.weighted_against(state.p_continue(), state.continue_threshold(), forced)?
+        };
+
+        if should_continue {
+            state.count += 1;
+        }
+        Ok(should_continue)
+    }
+
+    /// Reject the last drawn element. Mirrors Hypothesis's
+    /// `many.reject()`: too many rejections stop the collection, or
+    /// conclude the test case invalid when it is still short of its
+    /// minimum.
+    fn many_reject(&mut self, state: &mut ManyState) -> Result<(), EngineError> {
+        hegel_internal_assert!(state.count > 0);
+        state.count -= 1;
+        state.rejections += 1;
+        if state.rejections > core::cmp::max(3, 2 * state.count) {
+            if state.count < state.min_size {
+                self.conclude(Status::Invalid);
+                return Err(EngineError::InvalidTestCase);
+            } else {
+                state.force_stop = true;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Draws for NativeTestCase {
+    fn draw_integer_uniform(&mut self, min_value: u64, max_value: u64) -> Result<u64, EngineError> {
+        NativeTestCase::draw_integer_uniform(self, min_value, max_value)
+    }
+
+    fn draw_integer_i64(&mut self, min_value: i64, max_value: i64) -> Result<i64, EngineError> {
+        NativeTestCase::draw_integer_i64(self, min_value, max_value)
+    }
+
+    fn weighted(&mut self, p: f64, forced: Option<bool>) -> Result<bool, EngineError> {
+        NativeTestCase::weighted(self, p, forced)
+    }
+
+    fn weighted_against(
+        &mut self,
+        p: f64,
+        threshold: u8,
+        forced: Option<bool>,
+    ) -> Result<bool, EngineError> {
+        NativeTestCase::weighted_against(self, p, threshold, forced)
+    }
+
+    fn weighted_precise(&mut self, p: f64, forced: Option<bool>) -> Result<bool, EngineError> {
+        NativeTestCase::weighted_precise(self, p, forced)
+    }
+
+    fn generate_string(&mut self, spec: &StringSpec) -> Result<String, EngineError> {
+        generate_string(self, spec)
+    }
+
+    fn start_span(&mut self, label: u64) {
+        NativeTestCase::start_span(self, label);
+    }
+
+    fn stop_span(&mut self, discard: bool) {
+        NativeTestCase::stop_span(self, discard);
+    }
+
+    fn conclude(&mut self, status: Status) {
+        NativeTestCase::conclude(self, status, None);
+    }
+}
+
+#[cfg(test)]
+#[path = "../../../tests/embedded/native/draws/source_tests.rs"]
+mod tests;

@@ -2,10 +2,10 @@
 
 pub mod internet;
 pub mod regex;
+pub(crate) mod source;
 pub mod special;
 pub mod text;
 
-use crate::control::hegel_internal_assert;
 use crate::native::bignum::BigInt;
 use crate::native::core::{
     EngineError, FloatChoice, FloatWidth, ManyState, NativeTestCase, RecursionState, Status,
@@ -19,6 +19,7 @@ use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+pub(crate) use source::Draws;
 pub use text::TextAlphabet;
 
 use crate::native::labels::label_from_name;
@@ -375,9 +376,10 @@ pub fn generate_string(ntc: &mut NativeTestCase, spec: &StringSpec) -> Result<St
 }
 
 /// Draw a string according to `spec` as [`generate_string`] does, onto
-/// the end of `out`.
-pub fn generate_string_into(
-    ntc: &mut NativeTestCase,
+/// the end of `out`, from any source of draws: a regex is drawn through
+/// the source, the other kinds as [`Draws::generate_string`] has it.
+pub fn generate_string_into<D: Draws>(
+    d: &mut D,
     spec: &StringSpec,
     out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
@@ -386,11 +388,11 @@ pub fn generate_string_into(
         fullmatch,
     } = spec
     {
-        return spanned(ntc, LABEL_REGEX, |ntc| {
-            regex::generate_regex_into(ntc, compiled, *fullmatch, out)
+        return spanned(d, LABEL_REGEX, |d| {
+            regex::generate_regex_into(d, compiled, *fullmatch, out)
         });
     }
-    out.extend(generate_string(ntc, spec)?.chars());
+    out.extend(d.generate_string(spec)?.chars());
     Ok(())
 }
 
@@ -403,61 +405,28 @@ pub fn generate_string_into(
 /// same-label spans to propose values that already appear elsewhere in the
 /// test case, which is how "find a list containing this integer"-shaped
 /// examples are discovered.
-pub(crate) fn spanned<R>(
-    ntc: &mut NativeTestCase,
+pub(crate) fn spanned<D: Draws, R>(
+    d: &mut D,
     label: u64,
-    f: impl FnOnce(&mut NativeTestCase) -> Result<R, EngineError>,
+    f: impl FnOnce(&mut D) -> Result<R, EngineError>,
 ) -> Result<R, EngineError> {
-    ntc.start_span(label);
-    let result = f(ntc);
-    ntc.stop_span(false);
+    d.start_span(label);
+    let result = f(d);
+    d.stop_span(false);
     result
 }
 
 /// Advance the many state by one element.  Returns true if another
-/// element should be drawn.  Mirrors `Hypothesis`'s `many.more()`.
-pub(crate) fn many_more(
-    ntc: &mut NativeTestCase,
-    state: &mut ManyState,
-) -> Result<bool, EngineError> {
-    let should_continue = if state.min_size as f64 == state.max_size {
-        state.count < state.min_size
-    } else {
-        let forced = if state.force_stop {
-            Some(false)
-        } else if state.count < state.min_size {
-            Some(true)
-        } else if state.count as f64 >= state.max_size {
-            Some(false)
-        } else {
-            None
-        };
-        ntc.weighted_against(state.p_continue(), state.continue_threshold(), forced)?
-    };
-
-    if should_continue {
-        state.count += 1;
-    }
-    Ok(should_continue)
+/// element should be drawn.  Mirrors `Hypothesis`'s `many.more()` (see
+/// [`Draws::many_more`]).
+pub(crate) fn many_more<D: Draws>(d: &mut D, state: &mut ManyState) -> Result<bool, EngineError> {
+    d.many_more(state)
 }
 
-/// Reject the last drawn element.  Mirrors Hypothesis's `many.reject()`.
-pub(crate) fn many_reject(
-    ntc: &mut NativeTestCase,
-    state: &mut ManyState,
-) -> Result<(), EngineError> {
-    hegel_internal_assert!(state.count > 0);
-    state.count -= 1;
-    state.rejections += 1;
-    if state.rejections > core::cmp::max(3, 2 * state.count) {
-        if state.count < state.min_size {
-            ntc.conclude(Status::Invalid, None);
-            return Err(EngineError::InvalidTestCase);
-        } else {
-            state.force_stop = true;
-        }
-    }
-    Ok(())
+/// Reject the last drawn element.  Mirrors Hypothesis's `many.reject()`
+/// (see [`Draws::many_reject`]).
+pub(crate) fn many_reject<D: Draws>(d: &mut D, state: &mut ManyState) -> Result<(), EngineError> {
+    d.many_reject(state)
 }
 
 /// The number of budget-exceeded retries one recursive draw gets before

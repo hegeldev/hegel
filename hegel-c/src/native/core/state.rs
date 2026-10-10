@@ -827,7 +827,7 @@ pub(crate) fn biased_integer_sample(
 /// range's [`NarrowRange`] when [`is_narrow`] says it has one. Every
 /// category of that sampler answers a value inside the range, so the
 /// result narrows exactly.
-fn biased_i64_sample(
+pub(crate) fn biased_i64_sample(
     min_value: i64,
     max_value: i64,
     narrow: Option<&NarrowRange>,
@@ -863,7 +863,7 @@ fn is_narrow(min_value: i128, max_value: i128) -> bool {
 /// rather than at every draw, since a grammar's regex terminals draw from
 /// the same few ranges thousands of times.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct NarrowRange {
+pub(crate) struct NarrowRange {
     min_value: i128,
     max_value: i128,
     /// Where the pool's values inside the range start.
@@ -3029,15 +3029,7 @@ impl NativeTestCase {
     ) -> Result<bool, EngineError> {
         let kind = BooleanChoice { p };
 
-        let forced_value = forced.or(if p <= 0.0 {
-            Some(false)
-        } else if p >= 1.0 {
-            Some(true)
-        } else {
-            None
-        });
-
-        let (v, was_forced) = if let Some(f) = forced_value {
+        let (v, was_forced) = if let Some(f) = boolean_forced(p, forced) {
             self.pre_choice()?;
             (f, true)
         } else {
@@ -3166,6 +3158,21 @@ impl NativeTestCase {
     }
 }
 
+/// The value a weighted boolean draw with probability `p` is forced to,
+/// if any: the value `forced` names, else `false` at `p <= 0` and `true`
+/// at `p >= 1`, which consume no entropy; at any other probability the
+/// draw is sampled. Shared by [`NativeTestCase::weighted`] and the other
+/// sources the engine's generators draw from (see `draws::source`).
+pub(crate) fn boolean_forced(p: f64, forced: Option<bool>) -> Option<bool> {
+    forced.or(if p <= 0.0 {
+        Some(false)
+    } else if p >= 1.0 {
+        Some(true)
+    } else {
+        None
+    })
+}
+
 /// A value drawn uniformly from `[low, high]` (which must not be empty),
 /// exactly as rand's inclusive single-value sampler for `u64` draws it
 /// from the same stream, its default variant that this crate builds: one
@@ -3175,7 +3182,7 @@ impl NativeTestCase {
 /// sampling inline, rather than as the compiler's call-by-call decision
 /// over rand's generic, which the shape of unrelated code could tip.
 #[inline(always)]
-fn uniform_u64_inclusive(low: u64, high: u64, rng: &mut EngineRng) -> u64 {
+pub(crate) fn uniform_u64_inclusive(low: u64, high: u64, rng: &mut EngineRng) -> u64 {
     let range = high.wrapping_sub(low).wrapping_add(1);
     if range == 0 {
         return rng.next_u64();
