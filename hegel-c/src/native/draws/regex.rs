@@ -1,5 +1,6 @@
 use crate::control::{InternalError, hegel_internal_unwrap};
 use crate::native::{HashMap, HashSet};
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -182,13 +183,11 @@ fn generate_regex_attempt(
 
     let mut state = GenState {
         groups: HashMap::default(),
+        capture: parsed.group_refs,
         flags: parsed.flags,
         fullmatch,
         base,
-        pending_anchors: Vec::new(),
-        pending_asserts: Vec::new(),
-        pending_lookaheads: Vec::new(),
-        needs_whole_match: false,
+        deferred: None,
         in_cache: &re.in_cache,
         char_cache: &re.char_cache,
     };
@@ -208,18 +207,14 @@ fn generate_regex_attempt(
         draw_suffix(ntc, parsed, alphabet, out)?;
     }
 
-    let needs_final_checks = !state.pending_anchors.is_empty()
-        || !state.pending_asserts.is_empty()
-        || !state.pending_lookaheads.is_empty()
-        || state.needs_whole_match;
-    if needs_final_checks {
+    if let Some(deferred) = &state.deferred {
         let final_chars = &out[base..];
-        for anchor in &state.pending_anchors {
+        for anchor in &deferred.pending_anchors {
             if !at_matches(&anchor.at, final_chars, anchor.char_pos, anchor.flags) {
                 return Ok(false);
             }
         }
-        for pending in &state.pending_asserts {
+        for pending in &deferred.pending_asserts {
             let holds = if pending.direction >= 0 {
                 match_seq(
                     &pending.pattern.data,
@@ -244,7 +239,7 @@ fn generate_regex_attempt(
                 return Ok(false);
             }
         }
-        for pending in &state.pending_lookaheads {
+        for pending in &deferred.pending_lookaheads {
             let matches = if pending.direction >= 0 {
                 match_seq(
                     &pending.pattern.data,
@@ -269,7 +264,8 @@ fn generate_regex_attempt(
                 return Ok(false);
             }
         }
-        if state.needs_whole_match && !whole_match(parsed, fullmatch, final_chars, &state.groups) {
+        if deferred.needs_whole_match && !whole_match(parsed, fullmatch, final_chars, &state.groups)
+        {
             return Ok(false);
         }
     }
@@ -306,6 +302,10 @@ fn whole_match(
 /// into `SUBPATTERN` nodes with inline flag modifiers).
 struct GenState<'a> {
     groups: HashMap<u32, Vec<char>>,
+    /// Whether a back-reference or conditional group somewhere in the
+    /// pattern reads `groups` back (see [`ParsedPattern::group_refs`]);
+    /// when nothing does, a capturing group's text is not kept.
+    capture: bool,
     flags: u32,
     /// Whether the draw is anchored at both ends. Affects how lookaround
     /// assertions are generated: in fullmatch mode their bodies must not be
@@ -316,22 +316,10 @@ struct GenState<'a> {
     /// before it belongs to the caller, and the anchors and deferred
     /// checks never look at it.
     base: usize,
-    /// Zero-width anchors (`\b`, `\B`, and `$`/`\Z` in non-final positions)
-    /// recorded during generation and checked against the final output
-    /// string, since the content that follows them isn't known yet when they
-    /// are reached.
-    pending_anchors: Vec<PendingAnchor>,
-    /// Positive lookaround assertions deferred in fullmatch mode.
-    pending_asserts: Vec<PendingAssertNot>,
-    /// Negative lookaround assertions recorded during generation. Each entry
-    /// captures the assertion body, the active flags, and a snapshot of the
-    /// groups at the point of the assertion. We check them against the final
-    /// output string in [`generate_regex`], so a candidate that violates one
-    /// is redrawn like any other failed deferred check.
-    pending_lookaheads: Vec<PendingAssertNot>,
-    /// Set when the pattern contains an atomic group or possessive repeat,
-    /// whose generated output must be re-validated against the whole pattern.
-    needs_whole_match: bool,
+    /// The checks against the final string the draw has recorded so far,
+    /// once it has recorded one; most patterns record none, so the draw
+    /// neither builds nor drops them.
+    deferred: Option<Box<Deferred<'a>>>,
     /// The enclosing [`CompiledRegex`]'s cross-draw cache of
     /// alphabet-constrained `IN`-node character sets.
     in_cache: &'a Mutex<HashMap<InKey, InSet>>,
@@ -340,17 +328,43 @@ struct GenState<'a> {
     char_cache: &'a Mutex<HashMap<CharKey, Arc<[char]>>>,
 }
 
+impl<'a> GenState<'a> {
+    /// The draw's deferred checks, to record one.
+    fn deferred(&mut self) -> &mut Deferred<'a> {
+        self.deferred.get_or_insert_with(Default::default)
+    }
+}
+
+/// What a draw checks against its final string once that is known, since
+/// the content after an anchor or a lookaround is not known when they are
+/// reached; a candidate that fails one is redrawn.
+#[derive(Default)]
+struct Deferred<'a> {
+    /// Zero-width anchors (`\b`, `\B`, and `$`/`\Z` in non-final positions)
+    /// recorded during generation.
+    pending_anchors: Vec<PendingAnchor>,
+    /// Positive lookaround assertions deferred in fullmatch mode.
+    pending_asserts: Vec<PendingAssertNot<'a>>,
+    /// Negative lookaround assertions recorded during generation. Each entry
+    /// captures the assertion body, the active flags, and a snapshot of the
+    /// groups at the point of the assertion.
+    pending_lookaheads: Vec<PendingAssertNot<'a>>,
+    /// Set when the pattern contains an atomic group or possessive repeat,
+    /// whose generated output must be re-validated against the whole pattern.
+    needs_whole_match: bool,
+}
+
 struct PendingAnchor {
     char_pos: usize,
     at: AtCode,
     flags: u32,
 }
 
-#[derive(Clone)]
-struct PendingAssertNot {
+struct PendingAssertNot<'a> {
     char_pos: usize,
     direction: i32,
-    pattern: SubPattern,
+    /// The assertion's body, in the pattern being drawn from.
+    pattern: &'a SubPattern,
     flags: u32,
     groups: HashMap<u32, Vec<char>>,
 }
@@ -449,10 +463,10 @@ fn draw_suffix(
 }
 
 /// Recursively generate a string from a `SubPattern`, appending to `out`.
-fn generate_subpattern(
+fn generate_subpattern<'a>(
     ntc: &mut NativeTestCase,
-    sp: &SubPattern,
-    state: &mut GenState,
+    sp: &'a SubPattern,
+    state: &mut GenState<'a>,
     alphabet: &Option<IntervalSet>,
     out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
@@ -461,10 +475,10 @@ fn generate_subpattern(
     }
     Ok(())
 }
-fn generate_op(
+fn generate_op<'a>(
     ntc: &mut NativeTestCase,
-    op: &OpCode,
-    state: &mut GenState,
+    op: &'a OpCode,
+    state: &mut GenState<'a>,
     alphabet: &Option<IntervalSet>,
     out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
@@ -534,11 +548,12 @@ fn generate_op(
                 }
             }
             AtCode::End | AtCode::EndString | AtCode::Boundary | AtCode::NonBoundary => {
-                state.pending_anchors.push(PendingAnchor {
+                let anchor = PendingAnchor {
                     char_pos: out.len() - state.base,
                     at: *at,
                     flags: state.flags,
-                });
+                };
+                state.deferred().pending_anchors.push(anchor);
             }
         },
         OpCode::In(items) => {
@@ -561,8 +576,10 @@ fn generate_op(
             let before = out.len();
             generate_subpattern(ntc, p, state, alphabet, out)?;
             state.flags = saved_flags;
-            if let Some(gid) = group {
-                state.groups.insert(*gid, out[before..].to_vec());
+            if state.capture {
+                if let Some(gid) = group {
+                    state.groups.insert(*gid, out[before..].to_vec());
+                }
             }
         }
         OpCode::GroupRef(gid) => {
@@ -584,38 +601,40 @@ fn generate_op(
         }
         OpCode::Assert { direction, p } => {
             if state.fullmatch {
-                state.pending_asserts.push(PendingAssertNot {
+                let pending = PendingAssertNot {
                     char_pos: out.len() - state.base,
                     direction: *direction,
-                    pattern: p.clone(),
+                    pattern: p,
                     flags: state.flags,
                     groups: state.groups.clone(),
-                });
+                };
+                state.deferred().pending_asserts.push(pending);
             } else {
                 generate_subpattern(ntc, p, state, alphabet, out)?;
             }
         }
         OpCode::AssertNot { direction, p } => {
-            state.pending_lookaheads.push(PendingAssertNot {
+            let pending = PendingAssertNot {
                 char_pos: out.len() - state.base,
                 direction: *direction,
-                pattern: p.clone(),
+                pattern: p,
                 flags: state.flags,
                 groups: state.groups.clone(),
-            });
+            };
+            state.deferred().pending_lookaheads.push(pending);
         }
         OpCode::Failure => {
             return Err(mark_invalid(ntc));
         }
         OpCode::AtomicGroup(p) => {
-            state.needs_whole_match = true;
+            state.deferred().needs_whole_match = true;
             generate_subpattern(ntc, p, state, alphabet, out)?;
         }
         OpCode::MaxRepeat { min, max, item }
         | OpCode::MinRepeat { min, max, item }
         | OpCode::PossessiveRepeat { min, max, item } => {
             if matches!(op, OpCode::PossessiveRepeat { .. }) {
-                state.needs_whole_match = true;
+                state.deferred().needs_whole_match = true;
             }
             let min = *min as usize;
             let max = if *max == u32::MAX {

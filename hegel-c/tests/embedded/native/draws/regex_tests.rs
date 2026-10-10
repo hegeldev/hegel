@@ -776,13 +776,11 @@ fn ignorecase_state<'a>(
 ) -> GenState<'a> {
     GenState {
         groups: HashMap::default(),
+        capture: false,
         flags: SRE_FLAG_IGNORECASE,
         fullmatch: false,
         base: 0,
-        pending_anchors: Vec::new(),
-        pending_asserts: Vec::new(),
-        pending_lookaheads: Vec::new(),
-        needs_whole_match: false,
+        deferred: None,
         in_cache: cache,
         char_cache,
     }
@@ -1393,5 +1391,40 @@ fn a_repeated_empty_class_marks_invalid() {
             matches!(set, InSet::Listed(chars) if chars.is_empty()),
             !complemented
         );
+    }
+}
+
+#[test]
+fn a_captured_group_is_kept_only_when_the_pattern_reads_it_back() {
+    use crate::native::rng::EngineRng;
+    let cache = Mutex::new(HashMap::default());
+    let char_cache = Mutex::new(HashMap::default());
+    let op = OpCode::Subpattern {
+        group: Some(1),
+        add_flags: 0,
+        del_flags: 0,
+        p: sub(vec![lit('a')]),
+    };
+    for capture in [false, true] {
+        let mut ntc = NativeTestCase::for_choices(&[], None, None);
+        let mut state = ignorecase_state(&cache, &char_cache);
+        state.capture = capture;
+        state.flags = 0;
+        let mut out = Vec::new();
+        generate_op(&mut ntc, &op, &mut state, &None, &mut out).unwrap();
+        assert_eq!(out, chars("a"));
+        assert_eq!(state.groups.get(&1), capture.then(|| chars("a")).as_ref());
+    }
+    let reading = CompiledRegex::compile("(a|b)\\1", None).unwrap();
+    let plain = CompiledRegex::compile("(a|b)(?!c)", None).unwrap();
+    assert!(reading.parsed.group_refs);
+    assert!(!plain.parsed.group_refs);
+    for seed in 0..50 {
+        let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+        let s = generate_regex(&mut ntc, &reading, true).unwrap();
+        assert!(s == "aa" || s == "bb", "{s:?}");
+        let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+        let s = generate_regex(&mut ntc, &plain, true).unwrap();
+        assert!(s == "a" || s == "b", "{s:?}");
     }
 }
