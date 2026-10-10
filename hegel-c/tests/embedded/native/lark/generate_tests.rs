@@ -3,9 +3,12 @@
 //! terminals are placed, and the lexer-fit checks that decide it.
 
 use super::*;
-use crate::native::core::{ChoiceValue, NativeTestCase};
+use crate::native::core::{ChoiceValue, GenerationParameters, NativeTestCase};
+use crate::native::draws::TextAlphabet;
+use crate::native::draws::source::{RngDraws, SimplestDraws};
 use crate::native::lark::analysis::Bound;
 use crate::native::lark::builder::{ImportSource, NoImports};
+use crate::native::lark::parse::Parser;
 use crate::native::rng::EngineRng;
 use alloc::string::ToString;
 use alloc::sync::Arc;
@@ -43,6 +46,16 @@ fn draw(spec: &GrammarSpec, seed: u64) -> (Result<String, EngineError>, Option<S
     let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
     let result = generate_grammar(&mut ntc, spec);
     (result, ntc.status())
+}
+
+/// [`draw`] from an RNG alone, seeded as the test case's would be, with
+/// the swarm parameters the test case draws from it first.
+fn draw_from_rng(spec: &GrammarSpec, seed: u64) -> (Result<String, EngineError>, Option<Status>) {
+    let mut rng = EngineRng::seeded(seed);
+    let params = GenerationParameters::draw(&mut rng).unwrap();
+    let mut draws = RngDraws::new(&mut rng, params.integer);
+    let result = generate_grammar(&mut draws, spec);
+    (result, draws.status())
 }
 
 fn samples(spec: &GrammarSpec, n: u64) -> Vec<String> {
@@ -810,20 +823,23 @@ impl ImportSource for FixtureImports {
     }
 }
 
+fn fixture_grammar(name: &str, start: &str) -> Grammar {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/lark")
+        .join(format!("{name}.lark"));
+    let text = std::fs::read_to_string(&path).unwrap();
+    let built = load_grammar(&text, Some(path.to_str().unwrap()), &FixtureImports).unwrap();
+    compile(&built, &[start]).unwrap()
+}
+
 fn fixture_spec(
     name: &str,
     start: &str,
     max_size: u64,
     explicit: Vec<(String, Arc<StringSpec>)>,
 ) -> GrammarSpec {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/lark")
-        .join(format!("{name}.lark"));
-    let text = std::fs::read_to_string(&path).unwrap();
-    let built = load_grammar(&text, Some(path.to_str().unwrap()), &FixtureImports).unwrap();
-    let grammar = compile(&built, &[start]).unwrap();
     GrammarSpec::new(
-        grammar,
+        fixture_grammar(name, start),
         GrammarOptions {
             start: start.to_string(),
             max_size,
@@ -1575,4 +1591,110 @@ fn an_ignorable_skipped_at_a_character_would_not_have_matched_there() {
     }
     assert!(skipped > 1000);
     assert!(tried > 10);
+}
+
+#[test]
+fn drawing_from_an_rng_gives_the_strings_a_fresh_test_case_draws() {
+    let text = (
+        "TEXT".to_string(),
+        Arc::new(StringSpec::text(&TextAlphabet::default(), 1, 5).unwrap()),
+    );
+    let specs = [
+        grammar("start: \"a\" \"b\"* | \"c\"+"),
+        grammar(
+            "start: item (\",\" item)*\nitem: NAME | \"[\" start \"]\"\nNAME: /[a-z]+/\n\
+             COMMENT: /#[^\\n]*/\n%import common.WS\n%ignore WS\n%ignore COMMENT",
+        ),
+        spec_with(
+            "start: (TEXT \";\")+\n%declare TEXT",
+            GrammarOptions {
+                explicit: vec![text],
+                ..GrammarOptions::default()
+            },
+        )
+        .unwrap(),
+        fixture_spec("json", "value", 2000, vec![]),
+        fixture_spec("calc", "start", 2000, vec![]),
+    ];
+    for (i, spec) in specs.iter().enumerate() {
+        for seed in 0..10 {
+            let (from_test_case, status) = draw(spec, seed);
+            let (from_rng, rng_status) = draw_from_rng(spec, seed);
+            assert_eq!(
+                from_test_case.as_ref().ok(),
+                from_rng.as_ref().ok(),
+                "grammar {i} seed {seed}"
+            );
+            assert_eq!(from_test_case.is_err(), from_rng.is_err());
+            assert_eq!(status, rng_status, "grammar {i} seed {seed}");
+        }
+    }
+}
+
+/// The string the simplest source draws from a grammar, which parses
+/// and concludes nothing; with how long the analysis says the grammar's
+/// smallest string is.
+fn simplest_string(grammar: Grammar, options: GrammarOptions) -> (String, u64) {
+    let lexer = Lexer::new(&grammar.terminals);
+    let parser = Parser::new(&grammar, grammar.start[0]);
+    let spec = GrammarSpec::new(grammar, options).unwrap();
+    let mut draws = SimplestDraws::default();
+    let s = generate_grammar(&mut draws, &spec).unwrap();
+    assert_eq!(draws.status(), None);
+    let chars: Vec<char> = s.chars().collect();
+    assert!(parser.accepts(&lexer, &chars), "{s:?}");
+    (s, spec.min_size())
+}
+
+fn simple_grammar(text: &str) -> Grammar {
+    let built = load_grammar(text, None, &NoImports).unwrap();
+    compile(&built, &["start"]).unwrap()
+}
+
+fn fixture_options(start: &str) -> GrammarOptions {
+    GrammarOptions {
+        start: start.to_string(),
+        ..GrammarOptions::default()
+    }
+}
+
+/// The simplest source aims for the smallest string and takes the
+/// cheapest alternatives and the fewest repetitions at every step, so
+/// the string it draws is a smallest one wherever each terminal's
+/// simplest match is its shortest.
+#[test]
+fn the_simplest_source_draws_the_smallest_string_of_a_grammar() {
+    let (s, min) = simplest_string(
+        simple_grammar("start: \"a\" \"b\"* | \"c\"+"),
+        GrammarOptions::default(),
+    );
+    assert!(s == "a" || s == "c", "{s:?}");
+    assert_eq!(min, 1);
+    let (s, min) = simplest_string(
+        simple_grammar(
+            "start: item (\",\" item)*\nitem: NAME | \"[\" start \"]\"\nNAME: /[a-z]+/\n\
+             %import common.WS\n%ignore WS",
+        ),
+        GrammarOptions::default(),
+    );
+    assert_eq!((s.as_str(), min), ("a", 1));
+    let (s, min) = simplest_string(
+        simple_grammar("start: \"x\" \"y\"? (\"p\" | \"qq\") \"z\" ~ 2..4"),
+        GrammarOptions::default(),
+    );
+    assert_eq!((s.as_str(), min), ("xpzz", 4));
+    let (s, min) = simplest_string(fixture_grammar("turtle", "start"), fixture_options("start"));
+    assert_eq!(s.chars().count() as u64, min, "{s:?}");
+}
+
+/// A terminal's simplest match takes the first alternative of its
+/// pattern, which need not be the shortest: `SIGNED_NUMBER` lists
+/// `FLOAT` before `INT`, so the simplest number is `0e0` where the
+/// smallest is one digit.
+#[test]
+fn a_terminal_whose_first_alternative_is_not_its_shortest_draws_longer_than_the_minimum() {
+    for (name, start) in [("json", "value"), ("calc", "start")] {
+        let (s, min) = simplest_string(fixture_grammar(name, start), fixture_options(start));
+        assert_eq!((s.as_str(), min), ("0e0", 1), "{name}");
+    }
 }

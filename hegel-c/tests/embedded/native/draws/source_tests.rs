@@ -1,9 +1,41 @@
 //! Tests for `src/native/draws/source.rs`: that a test case answers the
-//! `Draws` operations as its own methods do.
+//! `Draws` operations as its own methods do, that drawing from an RNG
+//! alone samples exactly as a fresh test case does, and that the
+//! simplest source answers every choice's simplest value.
 
 use super::*;
+use crate::native::core::GenerationParameters;
 use crate::native::draws::{TextAlphabet, many_more};
 use crate::native::rng::EngineRng;
+use alloc::vec;
+use alloc::vec::Vec;
+use rand::TryRng;
+
+fn text_spec(min_size: usize, max_size: usize) -> StringSpec {
+    StringSpec::text(&TextAlphabet::default(), min_size, max_size).unwrap()
+}
+
+fn regex_spec(pattern: &str) -> StringSpec {
+    StringSpec::regex(pattern, true, None).unwrap()
+}
+
+/// Every operation of the trait, drawn once each from `d`, as values
+/// that compare between sources.
+fn exercise<D: Draws>(d: &mut D, state: &mut ManyState) -> Vec<String> {
+    vec![
+        d.draw_integer_uniform(0, 10).unwrap().to_string(),
+        d.draw_integer_uniform(5, u64::MAX).unwrap().to_string(),
+        d.draw_integer_i64(0, 1).unwrap().to_string(),
+        d.draw_integer_i64(-100, 100).unwrap().to_string(),
+        d.draw_integer_i64(i64::MIN, i64::MAX).unwrap().to_string(),
+        d.weighted(0.3, None).unwrap().to_string(),
+        d.weighted_against(0.3, 100, None).unwrap().to_string(),
+        d.weighted_precise(0.3, None).unwrap().to_string(),
+        d.many_more(state).unwrap().to_string(),
+        d.generate_string(&text_spec(1, 6)).unwrap(),
+        d.generate_string(&regex_spec("[a-z]{2,8}[0-9]?")).unwrap(),
+    ]
+}
 
 #[test]
 fn a_test_case_draws_through_the_trait_as_through_its_own_methods() {
@@ -83,4 +115,116 @@ fn rejecting_past_the_minimum_stops_the_collection() {
     }
     assert!(state.force_stop);
     assert_eq!(state.count, 0);
+}
+
+#[test]
+fn drawing_from_an_rng_samples_as_a_fresh_test_case_does() {
+    for seed in 0..8 {
+        let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+        let mut rng = EngineRng::seeded(seed);
+        let params = GenerationParameters::draw(&mut rng).unwrap();
+        let mut draws = RngDraws::new(&mut rng, params.integer);
+        let mut state_a = ManyState::new(0, Some(10));
+        let mut state_b = ManyState::new(0, Some(10));
+        for _ in 0..20 {
+            assert_eq!(
+                exercise(&mut ntc, &mut state_a),
+                exercise(&mut draws, &mut state_b),
+                "seed {seed}"
+            );
+        }
+        assert_eq!(draws.status(), None);
+    }
+}
+
+#[test]
+fn forced_booleans_consume_no_entropy_from_an_rng() {
+    let mut rng = EngineRng::seeded(5);
+    let mut draws = RngDraws::new(&mut rng, GenerationParameters::default().integer);
+    assert!(!draws.weighted(0.0, None).unwrap());
+    assert!(draws.weighted(1.0, None).unwrap());
+    assert!(draws.weighted(0.5, Some(true)).unwrap());
+    assert!(!draws.weighted_against(0.0, 1, None).unwrap());
+    assert!(draws.weighted_against(0.5, 128, Some(true)).unwrap());
+    assert!(draws.weighted_precise(1.0, None).unwrap());
+    assert!(!draws.weighted_precise(0.5, Some(false)).unwrap());
+    assert_eq!(
+        rng.try_next_u64().unwrap(),
+        EngineRng::seeded(5).try_next_u64().unwrap()
+    );
+}
+
+#[test]
+fn an_rng_source_keeps_its_first_conclusion_and_ignores_spans() {
+    let mut rng = EngineRng::seeded(0);
+    let mut draws = RngDraws::new(&mut rng, GenerationParameters::default().integer);
+    draws.start_span(7);
+    draws.stop_span(true);
+    assert_eq!(draws.status(), None);
+    draws.conclude(Status::Invalid);
+    assert_eq!(draws.status(), Some(Status::Invalid));
+    draws.conclude(Status::Valid);
+    assert_eq!(draws.status(), Some(Status::Invalid));
+}
+
+#[test]
+fn internet_strings_are_drawn_from_a_test_case_only() {
+    let mut rng = EngineRng::seeded(0);
+    let mut from_rng = RngDraws::new(&mut rng, GenerationParameters::default().integer);
+    let mut simplest = SimplestDraws::default();
+    for spec in [
+        StringSpec::email(),
+        StringSpec::url(),
+        StringSpec::domain(20).unwrap(),
+    ] {
+        for err in [
+            from_rng.generate_string(&spec).unwrap_err(),
+            simplest.generate_string(&spec).unwrap_err(),
+        ] {
+            let EngineError::InvalidArgument(msg) = err else {
+                panic!("expected InvalidArgument, got {err:?}");
+            };
+            assert!(msg.contains("test case only"), "{msg}");
+        }
+    }
+}
+
+#[test]
+fn the_simplest_source_answers_every_choice_at_its_simplest() {
+    let mut draws = SimplestDraws::default();
+    assert_eq!(draws.draw_integer_uniform(0, 10).unwrap(), 0);
+    assert_eq!(draws.draw_integer_uniform(3, 10).unwrap(), 3);
+    assert_eq!(draws.draw_integer_uniform(7, u64::MAX).unwrap(), 7);
+    assert_eq!(draws.draw_integer_i64(-5, 5).unwrap(), 0);
+    assert_eq!(draws.draw_integer_i64(2, 9).unwrap(), 2);
+    assert_eq!(draws.draw_integer_i64(-9, -2).unwrap(), -2);
+    assert!(!draws.weighted(0.5, None).unwrap());
+    assert!(draws.weighted(0.5, Some(true)).unwrap());
+    assert!(draws.weighted(1.0, None).unwrap());
+    assert!(!draws.weighted_against(0.99, 1, None).unwrap());
+    assert!(draws.weighted_against(0.5, 128, Some(true)).unwrap());
+    assert!(!draws.weighted_precise(0.999, None).unwrap());
+    assert!(draws.weighted_precise(1.0, None).unwrap());
+    let mut state = ManyState::new(2, Some(5));
+    assert!(draws.many_more(&mut state).unwrap());
+    assert!(draws.many_more(&mut state).unwrap());
+    assert!(!draws.many_more(&mut state).unwrap());
+    assert_eq!(state.count, 2);
+    assert_eq!(draws.generate_string(&text_spec(3, 8)).unwrap(), "000");
+    assert_eq!(draws.generate_string(&text_spec(0, 8)).unwrap(), "");
+    assert_eq!(
+        draws.generate_string(&regex_spec("[a-z]{2,5}x?")).unwrap(),
+        "aa"
+    );
+    assert_eq!(draws.status(), None);
+}
+
+#[test]
+fn the_simplest_source_keeps_its_first_conclusion_and_ignores_spans() {
+    let mut draws = SimplestDraws::default();
+    draws.start_span(7);
+    draws.stop_span(false);
+    draws.conclude(Status::Valid);
+    draws.conclude(Status::Invalid);
+    assert_eq!(draws.status(), Some(Status::Valid));
 }

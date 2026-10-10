@@ -11,11 +11,13 @@
 use super::*;
 use crate::native::HashMap;
 use crate::native::bignum::BigInt;
-use crate::native::core::{ChoiceValue, NativeTestCase};
+use crate::native::core::{ChoiceValue, GenerationParameters, NativeTestCase};
+use crate::native::draws::source::{RngDraws, SimplestDraws};
 use crate::native::re::constants::{
     AtCode, ChCode, SRE_FLAG_DOTALL, SRE_FLAG_IGNORECASE, SRE_FLAG_MULTILINE,
 };
 use crate::native::re::parser::{OpCode, SetItem, SubPattern};
+use crate::native::rng::EngineRng;
 use alloc::string::ToString;
 
 fn chars(s: &str) -> Vec<char> {
@@ -1426,5 +1428,71 @@ fn a_captured_group_is_kept_only_when_the_pattern_reads_it_back() {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
         let s = generate_regex(&mut ntc, &plain, true).unwrap();
         assert!(s == "a" || s == "b", "{s:?}");
+    }
+}
+
+#[test]
+fn drawing_from_an_rng_gives_the_strings_a_fresh_test_case_draws() {
+    let patterns = [
+        "[a-z]+",
+        "(foo|bar)\\d{2,5}",
+        "(?i)hello world",
+        "a.b[^x]",
+        "\\w+@\\w+\\.com",
+        "^(ab|cd)*$",
+        "x(?=y)y",
+        "(?P<q>['\"])[^'\"]*(?P=q)",
+    ];
+    for pattern in patterns {
+        let re = CompiledRegex::compile(pattern, None).unwrap();
+        for fullmatch in [true, false] {
+            for seed in 0..10 {
+                let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+                let mut rng = EngineRng::seeded(seed);
+                let params = GenerationParameters::draw(&mut rng).unwrap();
+                let mut draws = RngDraws::new(&mut rng, params.integer);
+                let from_test_case = generate_regex(&mut ntc, &re, fullmatch);
+                let from_rng = generate_regex(&mut draws, &re, fullmatch);
+                assert_eq!(
+                    from_test_case.as_ref().ok(),
+                    from_rng.as_ref().ok(),
+                    "{pattern:?} fullmatch={fullmatch} seed={seed}"
+                );
+                assert_eq!(from_test_case.is_err(), from_rng.is_err());
+                assert_eq!(ntc.status(), draws.status());
+            }
+        }
+    }
+}
+
+#[test]
+fn an_rng_source_records_the_invalid_conclusion_of_a_failing_pattern() {
+    let re = CompiledRegex::compile("(?!)", None).unwrap();
+    let mut rng = EngineRng::seeded(0);
+    let mut draws = RngDraws::new(&mut rng, GenerationParameters::default().integer);
+    assert!(matches!(
+        generate_regex(&mut draws, &re, true).unwrap_err(),
+        EngineError::InvalidTestCase
+    ));
+    assert_eq!(draws.status(), Some(Status::Invalid));
+}
+
+#[test]
+fn the_simplest_source_draws_the_simplest_match() {
+    for (pattern, fullmatch, expected) in [
+        ("[a-z]{2,5}x?", true, "aa"),
+        ("(foo|bar)+", true, "foo"),
+        ("abc", false, "abc"),
+        ("(?i)abc", true, "abc"),
+        ("[1-9][0-9]*", true, "1"),
+    ] {
+        let re = CompiledRegex::compile(pattern, None).unwrap();
+        let mut draws = SimplestDraws::default();
+        assert_eq!(
+            generate_regex(&mut draws, &re, fullmatch).unwrap(),
+            expected,
+            "{pattern:?}"
+        );
+        assert_eq!(draws.status(), None);
     }
 }
