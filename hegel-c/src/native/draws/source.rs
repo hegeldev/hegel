@@ -252,21 +252,13 @@ impl Draws for RngDraws<'_> {
             min_value <= max_value,
             "Invalid range [{min_value:?}, {max_value:?}]"
         );
-        let narrow = if is_narrow(i128::from(min_value), i128::from(max_value)) {
-            Some(
-                self.narrow_ranges
-                    .get(i128::from(min_value), i128::from(max_value))?,
-            )
-        } else {
-            None
-        };
-        Ok(biased_i64_sample(
-            min_value,
-            max_value,
-            narrow.as_ref(),
-            self.rng,
-            self.params,
-        )?)
+        let (lo, hi) = (i128::from(min_value), i128::from(max_value));
+        let narrow = is_narrow(lo, hi)
+            .then(|| self.narrow_ranges.get(lo, hi))
+            .transpose()?;
+        let sample =
+            biased_i64_sample(min_value, max_value, narrow.as_ref(), self.rng, self.params);
+        Ok(sample?)
     }
 
     fn weighted(&mut self, p: f64, forced: Option<bool>) -> Result<bool, EngineError> {
@@ -299,9 +291,8 @@ impl Draws for RngDraws<'_> {
             max_size,
             grammar: None,
         };
-        Ok(codepoints_to_string(&biased_string_sample(
-            &kind, self.rng,
-        )?))
+        let codepoints = biased_string_sample(&kind, self.rng)?;
+        Ok(codepoints_to_string(&codepoints))
     }
 
     fn generate_string(&mut self, spec: &StringSpec) -> Result<String, EngineError> {

@@ -135,9 +135,7 @@ impl<'a> Shrinker<'a> {
                 let mut j = usize::MAX;
                 loop {
                     let d = self.derivation(i)?;
-                    let Some(items) = d.layout.repeats().get(r).cloned() else {
-                        return Ok(changed);
-                    };
+                    let items = d.layout.repeats().get(r).cloned().unwrap_or_default();
                     j = j.min(items.len());
                     if j < k || k >= items.len() {
                         break;
@@ -238,76 +236,120 @@ impl<'a> Shrinker<'a> {
         Ok(range.map(|(start, end)| (d, start, end)))
     }
 
-    /// Shrink the text of leaf `j`: delete it, keep the shortest prefix
-    /// that will do, delete single characters from the back, then lower
-    /// each character as far down the alphabet's shrink order as it goes.
+    /// Shrink the text of leaf `j` stage by stage (see [`LeafStage`])
+    /// until the stages are exhausted or the leaf is gone from the
+    /// derivation.
     async fn shrink_leaf(&mut self, i: usize, j: usize) -> Result<bool, PassExit> {
-        let Some((d, start, end)) = self.leaf(i, j)? else {
-            return Ok(false);
-        };
-        if start == end {
-            return Ok(false);
-        }
-        if self
-            .replace_text(i, splice(&d.text, start, end, &[]))
-            .await?
-        {
-            return Ok(true);
-        }
         let mut changed = false;
-        let mut search = BinSearchDown::new(1, (end - start) as i128);
-        while let Some(len) = search.probe() {
-            let Some((d, start, end)) = self.leaf(i, j)? else {
-                return Ok(changed);
+        let mut stage = LeafStage::Delete;
+        while let Some((d, start, end)) = self.leaf(i, j)? {
+            let Some(candidate) = stage.candidate(&d, start, end)? else {
+                break;
             };
-            let len = len as usize;
-            let ok = len < end - start
-                && self
-                    .replace_text(i, splice(&d.text, start + len, end, &[]))
-                    .await?;
-            search.record(ok);
+            let ok = self.replace_text(i, candidate).await?;
+            stage.record(ok);
             changed |= ok;
         }
-        let mut p = usize::MAX;
+        Ok(changed)
+    }
+}
+
+/// Where the shrinking of one leaf's text is: deleting it, keeping the
+/// shortest prefix that will do (a binary search on the length), deleting
+/// single characters from the back, then lowering each character in turn
+/// as far down the alphabet's shrink order as it goes (a binary search on
+/// its shrink key).
+enum LeafStage {
+    Delete,
+    Prefix(Option<BinSearchDown>),
+    Back(usize),
+    Lower {
+        p: usize,
+        search: Option<BinSearchDown>,
+    },
+    Done,
+}
+
+impl LeafStage {
+    /// The next text to try for the leaf at `start..end` of `d`, or
+    /// `None` once every stage is exhausted; [`Self::record`] must follow
+    /// with the verdict.
+    fn candidate(
+        &mut self,
+        d: &Derived,
+        start: usize,
+        end: usize,
+    ) -> Result<Option<Vec<u32>>, PassExit> {
+        let len = end - start;
         loop {
-            let Some((d, start, end)) = self.leaf(i, j)? else {
-                return Ok(changed);
-            };
-            p = p.min(end - start);
-            if p <= 1 {
-                break;
+            match self {
+                LeafStage::Delete => return Ok(Some(splice(&d.text, start, end, &[]))),
+                LeafStage::Prefix(slot) => {
+                    let search = slot.get_or_insert_with(|| BinSearchDown::new(1, len as i128));
+                    match search.probe() {
+                        Some(keep) if (keep as usize) < len => {
+                            return Ok(Some(splice(&d.text, start + keep as usize, end, &[])));
+                        }
+                        Some(_) => search.record(false),
+                        None => *self = LeafStage::Back(usize::MAX),
+                    }
+                }
+                LeafStage::Back(p) => {
+                    *p = (*p).min(len);
+                    if *p <= 1 {
+                        *self = LeafStage::Lower { p: 0, search: None };
+                    } else {
+                        *p -= 1;
+                        return Ok(Some(splice(&d.text, start + *p, start + *p + 1, &[])));
+                    }
+                }
+                LeafStage::Lower { p, search: slot } => {
+                    if *p >= len {
+                        *self = LeafStage::Done;
+                        continue;
+                    }
+                    let key = d.kind.codepoint_key(d.text[start + *p]);
+                    let search = slot.get_or_insert_with(|| BinSearchDown::new(0, i128::from(key)));
+                    match search.probe() {
+                        Some(k) => {
+                            let codepoint = hegel_internal_unwrap!(
+                                d.kind.key_to_codepoint(k as u32),
+                                "shrink_leaf: a key below a character's is in the alphabet"
+                            );
+                            return Ok(Some(splice(
+                                &d.text,
+                                start + *p,
+                                start + *p + 1,
+                                &[codepoint],
+                            )));
+                        }
+                        None => {
+                            *p += 1;
+                            *slot = None;
+                        }
+                    }
+                }
+                LeafStage::Done => return Ok(None),
             }
-            p -= 1;
-            changed |= self
-                .replace_text(i, splice(&d.text, start + p, start + p + 1, &[]))
-                .await?;
         }
-        let mut p = 0;
-        loop {
-            let Some((d, start, end)) = self.leaf(i, j)? else {
-                return Ok(changed);
-            };
-            if p >= end - start {
-                return Ok(changed);
+    }
+
+    /// Record the verdict on the text [`Self::candidate`] last returned.
+    fn record(&mut self, ok: bool) {
+        match self {
+            LeafStage::Delete => {
+                *self = if ok {
+                    LeafStage::Done
+                } else {
+                    LeafStage::Prefix(None)
+                }
             }
-            let key = d.kind.codepoint_key(d.text[start + p]);
-            let mut search = BinSearchDown::new(0, key as i128);
-            while let Some(k) = search.probe().filter(|_| key > 0) {
-                let Some((d, start, end)) = self.leaf(i, j)? else {
-                    return Ok(changed);
-                };
-                let codepoint = hegel_internal_unwrap!(
-                    d.kind.key_to_codepoint(k as u32),
-                    "shrink_leaf: a key below a character's is in the alphabet"
-                );
-                let ok = p < end - start
-                    && self
-                        .replace_text(i, splice(&d.text, start + p, start + p + 1, &[codepoint]))
-                        .await?;
-                search.record(ok);
-                changed |= ok;
-            }
-            p += 1;
+            LeafStage::Prefix(Some(search))
+            | LeafStage::Lower {
+                search: Some(search),
+                ..
+            } => search.record(ok),
+            _ => {}
         }
     }
 }

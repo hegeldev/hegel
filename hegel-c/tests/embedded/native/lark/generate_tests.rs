@@ -7,6 +7,7 @@ use crate::native::core::state::codepoints_to_string;
 use crate::native::core::{ChoiceKind, ChoiceValue, GenerationParameters, NativeTestCase};
 use crate::native::draws::TextAlphabet;
 use crate::native::draws::source::{RngDraws, SimplestDraws};
+use crate::native::intervalsets::IntervalSet;
 use crate::native::lark::analysis::Bound;
 use crate::native::lark::builder::{ImportSource, NoImports};
 use crate::native::lark::parse::Parser;
@@ -1803,4 +1804,56 @@ fn a_grammar_no_draw_can_generate_from_reports_so_at_the_first_draw() {
 
 fn cps(s: &str) -> Vec<u32> {
     s.chars().map(u32::from).collect()
+}
+
+/// A source that fails every draw, standing in for a test case that
+/// has run out of data.
+struct Failing;
+
+impl Draws for Failing {
+    fn draw_integer_uniform(&mut self, _: u64, _: u64) -> Result<u64, EngineError> {
+        Err(EngineError::Overrun)
+    }
+
+    fn draw_integer_i64(&mut self, _: i64, _: i64) -> Result<i64, EngineError> {
+        Err(EngineError::Overrun)
+    }
+
+    fn weighted(&mut self, _: f64, _: Option<bool>) -> Result<bool, EngineError> {
+        Err(EngineError::Overrun)
+    }
+
+    fn weighted_against(&mut self, _: f64, _: u8, _: Option<bool>) -> Result<bool, EngineError> {
+        Err(EngineError::Overrun)
+    }
+
+    fn weighted_precise(&mut self, _: f64, _: Option<bool>) -> Result<bool, EngineError> {
+        Err(EngineError::Overrun)
+    }
+
+    fn draw_string(
+        &mut self,
+        _: Arc<IntervalSet>,
+        _: usize,
+        _: usize,
+    ) -> Result<String, EngineError> {
+        Err(EngineError::Overrun)
+    }
+
+    fn generate_string(&mut self, _: &StringSpec) -> Result<String, EngineError> {
+        Err(EngineError::Overrun)
+    }
+
+    fn start_span(&mut self, _: u64) {}
+
+    fn stop_span(&mut self, _: bool) {}
+
+    fn conclude(&mut self, _: Status) {}
+}
+
+#[test]
+fn an_error_from_the_source_ends_the_walk_with_that_error() {
+    let spec = grammar("start: \"a\" | \"b\"\n");
+    let result = smallest_string(&mut Failing, &spec);
+    assert!(matches!(result, Err(EngineError::Overrun)), "{result:?}");
 }

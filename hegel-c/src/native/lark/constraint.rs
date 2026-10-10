@@ -78,6 +78,7 @@ impl GrammarConstraint {
     ) -> Result<GrammarConstraint, InternalError> {
         let terminals = GrammarTerminals::new(&grammar, explicit)?;
         let parser = Parser::new(&grammar, start);
+        let intervals = IntervalSet::new(alloc::vec![(0, 0xD7FF), (0xE000, 0x10FFFF)])?;
         let mut hasher = FxHasher::default();
         format!("{grammar:?}").hash(&mut hasher);
         start.hash(&mut hasher);
@@ -95,10 +96,7 @@ impl GrammarConstraint {
             max_size,
             simplest: OnceBox::new(),
             known: Mutex::new(HashMap::default()),
-            intervals: Arc::new(IntervalSet::new(alloc::vec![
-                (0, 0xD7FF),
-                (0xE000, 0x10FFFF)
-            ])?),
+            intervals: Arc::new(intervals),
             smallest: Mutex::new(smallest),
         })
     }

@@ -3666,3 +3666,27 @@ fn uniform_u64_inclusive_draws_what_rands_sampler_draws_from_the_same_stream() {
         assert_eq!(ours.next_u64(), theirs.next_u64());
     }
 }
+
+#[test]
+fn a_spent_template_stops_a_string_drawn_from_the_rng_early() {
+    let kind = Arc::new(StringChoice {
+        intervals: crate::native::intervalsets::IntervalSet::new(vec![(0, 0x7F)])
+            .unwrap()
+            .into(),
+        min_size: 0,
+        max_size: 10,
+        grammar: None,
+    });
+    let mut tc = NativeTestCase::for_choices_and_template(
+        &[],
+        None,
+        Some(ChoiceTemplate::simplest(Some(1)).unwrap()),
+        100,
+        None,
+    );
+    assert!(!tc.weighted(0.5, None).unwrap());
+    let drawn = tc.draw_string_from(kind, |_| Ok(vec![u32::from('a')]));
+    assert!(matches!(drawn, Err(EngineError::Overrun)), "{drawn:?}");
+    assert_eq!(tc.status(), Some(Status::EarlyStop));
+    assert_eq!(tc.nodes.len(), 1);
+}

@@ -668,3 +668,22 @@ fn an_explicit_terminal_whose_generator_draws_the_empty_string_matches_an_empty_
     }
     assert!(!parser.accepts(&terminals, &chars(" x")));
 }
+
+/// An ignorable that can match nothing (a `%declare`d terminal whose
+/// generator may draw the empty string) is skipped where it does.
+#[test]
+fn an_ignorable_matching_nothing_carries_no_item() {
+    let spaces = TextAlphabet {
+        categories: Some(vec![]),
+        include_characters: Some(" ".to_string()),
+        ..TextAlphabet::default()
+    };
+    let (_, terminals, parser) = explicit_setup(
+        "start: \"a\" \"b\"\n%declare WS\n%ignore WS\n",
+        &[("WS", Arc::new(StringSpec::text(&spaces, 0, 3).unwrap()))],
+    );
+    assert!(parser.accepts(&terminals, &chars("ab")));
+    assert!(parser.accepts(&terminals, &chars(" a  b ")));
+    assert!(parser.accepts(&terminals, &chars("a    b")));
+    assert!(!parser.accepts(&terminals, &chars("a b a")));
+}
