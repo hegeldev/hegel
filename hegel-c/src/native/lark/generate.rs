@@ -522,7 +522,9 @@ impl GrammarSpec {
     /// still reaches its end from where the run-in stops (a comment that
     /// takes the `\r` of the `\r\n` after it, say); it may never take
     /// all of a needed token. A pattern too involved to match is given
-    /// the benefit of the doubt.
+    /// the benefit of the doubt. Where a token starts, its own pattern
+    /// is not matched again: what it found on the token's text alone
+    /// (see [`TokenScans::own`]) is carried over the text after it.
     fn scans(&self, text: &[char], tokens: &[Token]) -> bool {
         let mut scratch = self.scratch.lock();
         let ScansScratch {
@@ -594,7 +596,11 @@ impl GrammarSpec {
                 }
             }
             for &ignore in &self.ignore {
-                match self.lexer.match_terminal(ignore, text, p) {
+                let lexed = starting
+                    .filter(|&s| tokens[s].id == ignore)
+                    .and_then(|s| carried(&tokens[s].scans.own, s))
+                    .unwrap_or_else(|| self.lexer.match_terminal(ignore, text, p));
+                match lexed {
                     Lexed::Token(_, got) if got > p && within(got, k) => reachable[got] = true,
                     Lexed::Unknown => {
                         reachable[kept(k).map_or(text.len(), |i| bounds[i].0.max(p))] = true;
