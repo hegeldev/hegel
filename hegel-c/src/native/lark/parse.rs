@@ -13,10 +13,15 @@
 //! matched there too, carrying the waiting items (and a completed start
 //! rule) past the ignored text. A string is accepted when a completed
 //! start production spanning all of it is in the last column, including
-//! when it ends in ignored text. A terminal without a pattern (one
-//! `%declare`d, or supplied by an explicit generator) never matches, as
-//! does a terminal whose regex is too involved to run within the
-//! matcher's budget; supporting explicit terminals here is a follow-up.
+//! when it ends in ignored text. What matches a terminal is the parser's
+//! caller's to say ([`Terminals`]): a [`Lexer`] matches each terminal's
+//! own pattern as Lark does, and never a terminal without a pattern (one
+//! `%declare`d) or one whose regex is too involved to run within the
+//! matcher's budget, while [`GrammarTerminals`](super::explicit::GrammarTerminals)
+//! also matches the terminals the user supplied a generator for, at
+//! every length the generator could have drawn, including none: an
+//! empty token advances its item in place, where Lark, which forbids
+//! empty terminals, would lose it.
 //!
 //! The tree recovered is the first derivation found, with the grammar's
 //! own structure: a node per rule alternative, per parenthesised group
@@ -29,6 +34,28 @@ use super::lexsim::{Lexed, Lexer};
 use super::lower::{Lowered, NtId, Provenance, Symbol, lower};
 use crate::native::HashSet;
 use alloc::vec::Vec;
+
+/// What matches a grammar's terminals in a text, for the parser to scan
+/// with.
+pub trait Terminals {
+    /// The positions where a token of `id` starting at `pos` may end, in
+    /// increasing order, appended to `out`: none when the terminal does
+    /// not match there, `pos` itself for an empty token.
+    fn ends(&self, id: TermId, text: &[char], pos: usize, out: &mut Vec<usize>);
+}
+
+/// Each terminal's own pattern matched at the position, as CPython's
+/// `pattern.match` and so Lark's dynamic lexer match it: one end, and
+/// never an empty one.
+impl Terminals for Lexer {
+    fn ends(&self, id: TermId, text: &[char], pos: usize, out: &mut Vec<usize>) {
+        if let Lexed::Token(_, end) = self.match_terminal(id, text, pos) {
+            if end > pos {
+                out.push(end);
+            }
+        }
+    }
+}
 
 /// A derivation of a string. The children of a [`Tree::Rule`] are the
 /// items of the alternative's [`Sequence`](super::compile::Sequence) in
@@ -158,7 +185,16 @@ struct Parse<'p> {
     /// The completed empty item of each nonterminal in the column being
     /// worked on, with that column.
     held: Vec<Option<(u32, u32)>>,
-    tried: Vec<(TermId, Lexed)>,
+    /// How many of the column's active items have been predicted from or
+    /// completed, how many of its waiting items scanned, and how many of
+    /// its active items checked for carrying past ignored text.
+    processed: usize,
+    scanned: usize,
+    carried: usize,
+    /// The ends found for each terminal tried at the column, as a range
+    /// of `ends`.
+    tried: Vec<(TermId, usize, usize)>,
+    ends: Vec<usize>,
 }
 
 impl Parser {
@@ -171,15 +207,15 @@ impl Parser {
         }
     }
 
-    /// Whether `text` is in the grammar, matching terminals with `lexer`
-    /// (built from the same grammar's terminals).
-    pub fn accepts(&self, lexer: &Lexer, text: &[char]) -> bool {
-        self.parse(lexer, text).is_ok()
+    /// Whether `text` is in the grammar, matching terminals with
+    /// `terminals` (over the same grammar's terminals).
+    pub fn accepts<T: Terminals>(&self, terminals: &T, text: &[char]) -> bool {
+        self.parse(terminals, text).is_ok()
     }
 
-    /// A derivation of `text`, matching terminals with `lexer` (built
-    /// from the same grammar's terminals).
-    pub fn parse(&self, lexer: &Lexer, text: &[char]) -> Result<Tree, ParseError> {
+    /// A derivation of `text`, matching terminals with `terminals` (over
+    /// the same grammar's terminals).
+    pub fn parse<T: Terminals>(&self, terminals: &T, text: &[char]) -> Result<Tree, ParseError> {
         let n = text.len();
         let mut parse = Parse {
             parser: self,
@@ -189,7 +225,11 @@ impl Parser {
             delayed: (0..=n).map(|_| Vec::new()).collect(),
             pending: 0,
             held: alloc::vec![None; self.lowered.by_lhs.len()],
+            processed: 0,
+            scanned: 0,
+            carried: 0,
             tried: Vec::new(),
+            ends: Vec::new(),
         };
         for &prod in &self.lowered.by_lhs[self.start] {
             parse.add(0, prod as u32, 0, 0, Back::Predicted);
@@ -198,12 +238,19 @@ impl Parser {
             if col > 0 {
                 parse.arrive(col);
             }
-            parse.predict_and_complete(col);
-            if col < n {
-                parse.scan(col, lexer, text);
-                if parse.pending == 0 {
-                    return Err(ParseError { position: col });
+            parse.processed = 0;
+            parse.scanned = 0;
+            parse.carried = 0;
+            parse.tried.clear();
+            parse.ends.clear();
+            loop {
+                parse.predict_and_complete(col);
+                if !parse.scan(col, terminals, text) {
+                    break;
                 }
+            }
+            if col < n && parse.pending == 0 {
+                return Err(ParseError { position: col });
             }
         }
         let root = parse.columns[n]
@@ -230,9 +277,9 @@ impl Parse<'_> {
             .copied()
     }
 
-    fn add(&mut self, col: usize, prod: u32, dot: u32, origin: u32, back: Back) {
+    fn add(&mut self, col: usize, prod: u32, dot: u32, origin: u32, back: Back) -> bool {
         if !self.seen.insert((col as u32, prod, dot, origin)) {
-            return;
+            return false;
         }
         let item = Item {
             prod,
@@ -247,6 +294,7 @@ impl Parse<'_> {
             Some(Symbol::Terminal(term)) => self.columns[col].scan.push((idx, term)),
             _ => self.columns[col].active.push(idx),
         }
+        true
     }
 
     fn arrive(&mut self, col: usize) {
@@ -271,12 +319,13 @@ impl Parse<'_> {
         }
     }
 
+    /// Predict from and complete the column's active items not yet
+    /// processed, and whatever that adds.
     fn predict_and_complete(&mut self, col: usize) {
         let parser = self.parser;
-        let mut k = 0;
-        while k < self.columns[col].active.len() {
-            let idx = self.columns[col].active[k];
-            k += 1;
+        while self.processed < self.columns[col].active.len() {
+            let idx = self.columns[col].active[self.processed];
+            self.processed += 1;
             let item = self.items[idx as usize];
             let next = self.next_symbol(&item);
             if let Some(Symbol::Nonterminal(nt)) = next {
@@ -316,21 +365,23 @@ impl Parse<'_> {
         }
     }
 
-    fn lex(&mut self, lexer: &Lexer, text: &[char], col: usize, term: TermId) -> Lexed {
-        if let Some(&(_, lexed)) = self.tried.iter().find(|(tried, _)| *tried == term) {
-            return lexed;
+    /// Where `term` matched at `col` can end, as a range of `ends`,
+    /// matched once per column.
+    fn lex<T: Terminals>(
+        &mut self,
+        terminals: &T,
+        text: &[char],
+        col: usize,
+        term: TermId,
+    ) -> (usize, usize) {
+        if let Some(&(_, from, to)) = self.tried.iter().find(|(tried, ..)| *tried == term) {
+            return (from, to);
         }
-        let lexed = lexer.match_terminal(term, text, col);
-        self.tried.push((term, lexed));
-        lexed
-    }
-
-    /// Where a match of `term` at `col` ends, when it matches some text.
-    fn matched(&mut self, lexer: &Lexer, text: &[char], col: usize, term: TermId) -> Option<usize> {
-        match self.lex(lexer, text, col, term) {
-            Lexed::Token(_, end) if end > col => Some(end),
-            _ => None,
-        }
+        let from = self.ends.len();
+        terminals.ends(term, text, col, &mut self.ends);
+        let to = self.ends.len();
+        self.tried.push((term, from, to));
+        (from, to)
     }
 
     fn delay(&mut self, end: usize, item: u32, term: TermId, advance: bool) {
@@ -342,33 +393,56 @@ impl Parse<'_> {
         self.pending += 1;
     }
 
-    fn scan(&mut self, col: usize, lexer: &Lexer, text: &[char]) {
+    /// Scan the column's waiting items not yet scanned, and carry those
+    /// and any newly complete start item past the ignored text matched
+    /// at the column; whether an item was added to the column itself,
+    /// by an empty token, so that there is more to predict and scan.
+    fn scan<T: Terminals>(&mut self, col: usize, terminals: &T, text: &[char]) -> bool {
         let parser = self.parser;
-        self.tried.clear();
+        let mut added = false;
         let waiting = self.columns[col].scan.len();
-        for j in 0..waiting {
+        for j in self.scanned..waiting {
             let (idx, term) = self.columns[col].scan[j];
-            if let Some(end) = self.matched(lexer, text, col, term) {
-                self.delay(end, idx, term, true);
-            }
-        }
-        for &ignore in &parser.ignore {
-            let Some(end) = self.matched(lexer, text, col, ignore) else {
-                continue;
-            };
-            for j in 0..waiting {
-                let (idx, _) = self.columns[col].scan[j];
-                self.delay(end, idx, ignore, false);
-            }
-            for j in 0..self.columns[col].active.len() {
-                let idx = self.columns[col].active[j];
-                let item = self.items[idx as usize];
-                let production = &parser.lowered.productions[item.prod as usize];
-                if production.lhs == parser.start && item.dot as usize == production.rhs.len() {
-                    self.delay(end, idx, ignore, false);
+            let (from, to) = self.lex(terminals, text, col, term);
+            for k in from..to {
+                let end = self.ends[k];
+                if end == col {
+                    let pred = self.items[idx as usize];
+                    let back = Back::Token {
+                        pred: idx,
+                        term: term as u32,
+                    };
+                    added |= self.add(col, pred.prod, pred.dot + 1, pred.origin, back);
+                } else {
+                    self.delay(end, idx, term, true);
                 }
             }
         }
+        let active = self.columns[col].active.len();
+        for &ignore in &parser.ignore {
+            let (from, to) = self.lex(terminals, text, col, ignore);
+            for k in from..to {
+                let end = self.ends[k];
+                if end == col {
+                    continue;
+                }
+                for j in self.scanned..waiting {
+                    let (idx, _) = self.columns[col].scan[j];
+                    self.delay(end, idx, ignore, false);
+                }
+                for j in self.carried..active {
+                    let idx = self.columns[col].active[j];
+                    let item = self.items[idx as usize];
+                    let production = &parser.lowered.productions[item.prod as usize];
+                    if production.lhs == parser.start && item.dot as usize == production.rhs.len() {
+                        self.delay(end, idx, ignore, false);
+                    }
+                }
+            }
+        }
+        self.scanned = waiting;
+        self.carried = active;
+        added
     }
 
     fn provenance(&self, idx: u32) -> Provenance {

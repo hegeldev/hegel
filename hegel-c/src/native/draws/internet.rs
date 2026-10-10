@@ -76,7 +76,7 @@ fn mark_invalid<D: Draws>(d: &mut D) -> Result<String, EngineError> {
 /// TLD list it admits, both fixed at construction time so draws never
 /// re-filter the IANA list.
 #[derive(Debug)]
-pub(crate) struct DomainSpec {
+pub struct DomainSpec {
     max_length: usize,
     eligible_tlds: Vec<&'static str>,
 }

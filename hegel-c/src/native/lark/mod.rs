@@ -9,7 +9,9 @@
 //! repetition operators are kept as repetition nodes rather than desugared
 //! into recursive rules, so the generator can size them directly. [`lower`]
 //! desugars them for [`parse`], an Earley parser with a dynamic lexer that
-//! checks strings against the grammar and recovers their derivations.
+//! checks strings against the grammar and recovers their derivations,
+//! matching the terminals the user supplies generators for through
+//! [`explicit`].
 
 pub mod analysis;
 pub mod ast;
@@ -20,6 +22,9 @@ pub mod compile;
 #[cfg_attr(not(test), allow(dead_code))]
 pub mod constraint;
 pub mod escape;
+/// Matched by [`constraint`] alone until the generator wires it in.
+#[cfg_attr(not(test), allow(dead_code))]
+pub mod explicit;
 pub mod generate;
 pub mod lexer;
 pub mod lexsim;

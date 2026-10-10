@@ -4,14 +4,17 @@
 
 use super::*;
 use crate::native::core::NativeTestCase;
+use crate::native::draws::{StringSpec, TextAlphabet};
 use crate::native::lark::builder::{ImportSource, NoImports, load_grammar};
 use crate::native::lark::compile::compile;
+use crate::native::lark::explicit::GrammarTerminals;
 use crate::native::lark::generate::{
     DEFAULT_MAX_SIZE, GrammarOptions, GrammarSpec, generate_grammar,
 };
 use crate::native::rng::EngineRng;
 use alloc::format;
 use alloc::string::{String, ToString};
+use alloc::sync::Arc;
 use alloc::vec;
 use std::path::Path;
 
@@ -552,4 +555,116 @@ fn write_verdicts() {
         .unwrap();
         std::eprintln!("{name}: {count} candidates, {:?}", started.elapsed());
     }
+}
+
+fn digits() -> TextAlphabet {
+    TextAlphabet {
+        categories: Some(vec![]),
+        include_characters: Some("0123456789".to_string()),
+        ..TextAlphabet::default()
+    }
+}
+
+/// The grammar `text` with the `%declare`d terminals in `explicit` drawn
+/// from the given generators, and a parser over it.
+fn explicit_setup(
+    text: &str,
+    explicit: &[(&str, Arc<StringSpec>)],
+) -> (Grammar, GrammarTerminals, Parser) {
+    let built = load_grammar(text, None, &NoImports).unwrap();
+    let grammar = compile(&built, &["start"]).unwrap();
+    let explicit: Vec<(TermId, Arc<StringSpec>)> = explicit
+        .iter()
+        .map(|(name, spec)| (grammar.terminal_id(name).unwrap(), Arc::clone(spec)))
+        .collect();
+    let terminals = GrammarTerminals::new(&grammar, &explicit).unwrap();
+    let parser = Parser::new(&grammar, grammar.start[0]);
+    (grammar, terminals, parser)
+}
+
+#[test]
+fn explicit_terminals_match_what_their_generators_draw() {
+    let (_, terminals, parser) = explicit_setup(
+        "start: WORD \"!\" NUM\n%declare WORD NUM\n",
+        &[
+            (
+                "WORD",
+                Arc::new(StringSpec::regex("[a-z]{3}", true, None).unwrap()),
+            ),
+            ("NUM", Arc::new(StringSpec::text(&digits(), 1, 8).unwrap())),
+        ],
+    );
+    assert!(parser.accepts(&terminals, &chars("abc!123")));
+    assert!(parser.accepts(&terminals, &chars("abc!1")));
+    assert!(!parser.accepts(&terminals, &chars("ab!1")));
+    assert!(!parser.accepts(&terminals, &chars("abcd!1")));
+    assert!(!parser.accepts(&terminals, &chars("abc!")));
+    assert!(!parser.accepts(&terminals, &chars("abc!123456789")));
+    assert!(!parser.accepts(&terminals, &chars("abc!12x")));
+    let tree = parser.parse(&terminals, &chars("abc!12")).unwrap();
+    assert_eq!(read_back(&tree, &chars("abc!12")), "abc!12");
+}
+
+#[test]
+fn an_explicit_terminal_without_a_generator_never_matches() {
+    let (_, terminals, parser) = explicit_setup("start: WORD \"!\"\n%declare WORD\n", &[]);
+    assert!(!parser.accepts(&terminals, &chars("abc!")));
+    assert!(!parser.accepts(&terminals, &chars("!")));
+}
+
+#[test]
+fn a_token_of_an_explicit_terminal_may_end_wherever_the_rest_of_the_string_parses() {
+    let (_, terminals, parser) = explicit_setup(
+        "start: NUM \",\" NUM | NUM NUM \";\"\n%declare NUM\n",
+        &[("NUM", Arc::new(StringSpec::text(&digits(), 1, 8).unwrap()))],
+    );
+    assert!(parser.accepts(&terminals, &chars("12,3")));
+    let tree = parser.parse(&terminals, &chars("1234;")).unwrap();
+    let Tree::Rule { alt, children, .. } = &tree else {
+        panic!("{tree:?}");
+    };
+    assert_eq!(*alt, 1);
+    assert_eq!(children.len(), 3);
+    assert!(matches!(children[0], Tree::Terminal { start: 0, .. }));
+    assert!(matches!(children[1], Tree::Terminal { end: 4, .. }));
+    assert!(!parser.accepts(&terminals, &chars("1234")));
+    assert!(!parser.accepts(&terminals, &chars(",3")));
+}
+
+#[test]
+fn an_explicit_terminal_whose_generator_draws_the_empty_string_matches_an_empty_token() {
+    let text = Arc::new(StringSpec::text(&digits(), 0, 4).unwrap());
+    let (_, terminals, parser) = explicit_setup(
+        "start: NUM \";\" NUM\n%declare NUM\n",
+        &[("NUM", Arc::clone(&text))],
+    );
+    for s in [";", "1;", ";2", "12;34"] {
+        let tree = parser
+            .parse(&terminals, &chars(s))
+            .unwrap_or_else(|e| panic!("{s:?} {e:?}"));
+        assert_eq!(tree.children().len(), 3);
+        assert_eq!(read_back(&tree, &chars(s)), s);
+    }
+    assert!(!parser.accepts(&terminals, &chars("")));
+    assert!(!parser.accepts(&terminals, &chars("12345;")));
+    let (_, terminals, parser) = explicit_setup(
+        "start: (NUM \",\")* NUM\n%declare NUM\n",
+        &[("NUM", Arc::clone(&text))],
+    );
+    for s in ["", "1", ",", ",,", "1,,2", "12,3,"] {
+        let tree = parser
+            .parse(&terminals, &chars(s))
+            .unwrap_or_else(|e| panic!("{s:?} {e:?}"));
+        assert_eq!(read_back(&tree, &chars(s)), s);
+    }
+    assert!(!parser.accepts(&terminals, &chars("x")));
+    assert!(!parser.accepts(&terminals, &chars("1,x")));
+    let (_, terminals, parser) = explicit_setup(
+        "start: NUM\n%declare NUM\n%import common.WS\n%ignore WS\n",
+        &[("NUM", text)],
+    );
+    for s in ["", " ", "1", " 1 ", "  "] {
+        assert!(parser.accepts(&terminals, &chars(s)), "{s:?}");
+    }
+    assert!(!parser.accepts(&terminals, &chars(" x")));
 }

@@ -1291,12 +1291,7 @@ fn grammar_constraint(text: &str, max_size: usize, simplest: &str) -> Arc<Gramma
     let built = load_grammar(text, None, &NoImports).unwrap();
     let grammar = compile(&built, &["start"]).unwrap();
     let start = grammar.start[0];
-    Arc::new(GrammarConstraint::new(
-        grammar,
-        start,
-        max_size,
-        cps(simplest),
-    ))
+    Arc::new(GrammarConstraint::new(grammar, &[], start, max_size, cps(simplest)).unwrap())
 }
 
 fn cps(s: &str) -> Vec<u32> {

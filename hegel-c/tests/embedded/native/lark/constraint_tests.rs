@@ -15,7 +15,7 @@ fn compiled(text: &str, start: &str) -> Grammar {
 fn constraint(text: &str, start: &str, max_size: usize, simplest: &str) -> GrammarConstraint {
     let grammar = compiled(text, start);
     let start = grammar.start[0];
-    GrammarConstraint::new(grammar, start, max_size, cps(simplest))
+    GrammarConstraint::new(grammar, &[], start, max_size, cps(simplest)).unwrap()
 }
 
 fn cps(s: &str) -> Vec<u32> {
@@ -109,8 +109,8 @@ fn the_grammar_the_start_rule_and_the_size_cap_each_tell_constraints_apart() {
     let grammar = compiled(two, "start");
     let start = grammar.rule_id("start").unwrap();
     let other = grammar.rule_id("other").unwrap();
-    let from_start = GrammarConstraint::new(grammar.clone(), start, 16, cps("ab"));
-    let from_other = GrammarConstraint::new(grammar, other, 16, cps("b"));
+    let from_start = GrammarConstraint::new(grammar.clone(), &[], start, 16, cps("ab")).unwrap();
+    let from_other = GrammarConstraint::new(grammar, &[], other, 16, cps("b")).unwrap();
     assert_ne!(from_start, from_other);
     assert!(from_start.accepts(&cps("ab")));
     assert!(from_other.accepts(&cps("b")));

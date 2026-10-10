@@ -3,10 +3,11 @@
 //! kind, a [`StringChoice`](crate::native::core::StringChoice) with a
 //! [`GrammarConstraint`], accepts exactly the strings the grammar derives.
 //! Validating a replayed string means parsing it, so the constraint owns
-//! the compiled grammar, a [`Lexer`] over its terminals and a [`Parser`]
-//! from its start rule, and remembers the derivations it has found (and
-//! the ones the generator and the shrinker hand it) so that a string
-//! known to derive is never parsed twice.
+//! the compiled grammar, its terminals as the parser matches them (see
+//! [`GrammarTerminals`]) and a [`Parser`] from its start rule, and
+//! remembers the derivations it has found (and the ones the generator
+//! and the shrinker hand it) so that a string known to derive is never
+//! parsed twice.
 //!
 //! Two constraints compare equal when they were compiled from the same
 //! grammar, for the same start rule and size cap: the engine compares
@@ -14,10 +15,12 @@
 //! [`KindLedger`](crate::native::exec_cache::KindLedger)), and a test
 //! that compiles its grammar afresh each run must not look nondeterministic.
 
-use super::compile::{Grammar, RuleId};
-use super::lexsim::Lexer;
+use super::compile::{Grammar, RuleId, TermId};
+use super::explicit::GrammarTerminals;
 use super::parse::{Parser, Tree};
+use crate::control::InternalError;
 use crate::native::HashMap;
+use crate::native::draws::StringSpec;
 use crate::sys::sync::Mutex;
 use alloc::format;
 use alloc::sync::Arc;
@@ -33,7 +36,7 @@ pub const KNOWN_CAPACITY: usize = 512;
 /// A grammar constraint on a string choice; see the module docs.
 pub struct GrammarConstraint {
     grammar: Grammar,
-    lexer: Lexer,
+    terminals: GrammarTerminals,
     parser: Parser,
     start: RuleId,
     identity: u64,
@@ -44,31 +47,34 @@ pub struct GrammarConstraint {
 
 impl GrammarConstraint {
     /// The constraint accepting the strings `grammar` derives from the
-    /// rule `start` within `max_size` characters, whose simplest string
-    /// is `simplest`: the shortest the grammar derives, first in the
-    /// string shrink order among those, supplied by the caller.
+    /// rule `start` within `max_size` characters, with the terminals in
+    /// `explicit` matched by the generators given for them, whose
+    /// simplest string is `simplest`: the shortest the grammar derives,
+    /// first in the string shrink order among those, supplied by the
+    /// caller.
     pub fn new(
         grammar: Grammar,
+        explicit: &[(TermId, Arc<StringSpec>)],
         start: RuleId,
         max_size: usize,
         simplest: Vec<u32>,
-    ) -> GrammarConstraint {
-        let lexer = Lexer::new(&grammar.terminals);
+    ) -> Result<GrammarConstraint, InternalError> {
+        let terminals = GrammarTerminals::new(&grammar, explicit)?;
         let parser = Parser::new(&grammar, start);
         let mut hasher = FxHasher::default();
         format!("{grammar:?}").hash(&mut hasher);
         start.hash(&mut hasher);
         max_size.hash(&mut hasher);
-        GrammarConstraint {
+        Ok(GrammarConstraint {
             grammar,
-            lexer,
+            terminals,
             parser,
             start,
             identity: hasher.finish(),
             max_size,
             simplest,
             known: Mutex::new(HashMap::default()),
-        }
+        })
     }
 
     /// Whether `text` is in the grammar: known to derive, or parsed now
@@ -89,7 +95,7 @@ impl GrammarConstraint {
             .iter()
             .map(|&cp| char::from_u32(cp))
             .collect::<Option<_>>()?;
-        let tree = Arc::new(self.parser.parse(&self.lexer, &chars).ok()?);
+        let tree = Arc::new(self.parser.parse(&self.terminals, &chars).ok()?);
         self.insert(key, Arc::clone(&tree));
         Some(tree)
     }

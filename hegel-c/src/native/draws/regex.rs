@@ -88,7 +88,7 @@ impl Complement {
 /// the alphabet-constrained character sets (category classes like
 /// `\w` cost a full alphabet scan to materialise).
 #[derive(Debug)]
-pub(crate) struct CompiledRegex {
+pub struct CompiledRegex {
     parsed: ParsedPattern,
     alphabet: Option<IntervalSet>,
     in_cache: Mutex<HashMap<InKey, InSet>>,
@@ -100,6 +100,11 @@ impl CompiledRegex {
     /// [`typical_width`]).
     pub(crate) fn typical_width(&self) -> f64 {
         typical_width(&self.parsed.pattern)
+    }
+
+    /// The parsed pattern.
+    pub(crate) fn parsed(&self) -> &ParsedPattern {
+        &self.parsed
     }
 
     /// Parse `pattern`, reporting an invalid-argument diagnostic so a bad

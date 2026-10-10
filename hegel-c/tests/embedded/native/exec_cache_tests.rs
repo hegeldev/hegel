@@ -203,12 +203,9 @@ fn the_kind_ledger_names_a_grammar_constraint_by_its_identity() {
     let built = load_grammar("start: \"a\"\n", None, &NoImports).unwrap();
     let grammar = compile(&built, &["start"]).unwrap();
     let start = grammar.start[0];
-    let constraint = alloc::sync::Arc::new(GrammarConstraint::new(
-        grammar,
-        start,
-        4,
-        alloc::vec![b'a' as u32],
-    ));
+    let constraint = alloc::sync::Arc::new(
+        GrammarConstraint::new(grammar, &[], start, 4, alloc::vec![b'a' as u32]).unwrap(),
+    );
     let plain = StringChoice {
         intervals: IntervalSet::new(alloc::vec![(b'a' as u32, b'a' as u32)])
             .unwrap()
