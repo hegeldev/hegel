@@ -737,14 +737,11 @@ fn under_grammar(text: &str, simplest: &str, value: &str) -> ChoiceData {
     let grammar = crate::native::lark::compile::compile(&built, &["start"]).unwrap();
     let start = grammar.start[0];
     let cps = |s: &str| s.chars().map(u32::from).collect::<Vec<u32>>();
-    let constraint = crate::native::lark::constraint::GrammarConstraint::new(
-        grammar,
-        &[],
-        start,
-        8,
-        cps(simplest),
-    )
-    .unwrap();
+    let constraint =
+        crate::native::lark::constraint::GrammarConstraint::new(grammar, &[], start, 8).unwrap();
+    constraint
+        .simplest_or_init(|| Ok::<_, crate::control::InternalError>(cps(simplest)))
+        .unwrap();
     ChoiceData::String(
         Arc::new(crate::native::core::StringChoice {
             intervals: Arc::new(IntervalSet::new(vec![(b'a' as u32, b'c' as u32)]).unwrap()),

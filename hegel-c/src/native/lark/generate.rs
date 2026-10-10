@@ -1,5 +1,12 @@
 //! Generating strings from an analysed grammar.
 //!
+//! A string drawn from a grammar is one choice of the test case: the walk
+//! below draws every decision from the test case's RNG alone, and the
+//! string is recorded under the grammar's constraint (see
+//! [`super::constraint`]), so that a replay checks a stored string by
+//! parsing it and the shrinker works on its derivation rather than on
+//! the decisions that produced it.
+//!
 //! Every draw first picks a target length: with probability 3/4 a length
 //! uniform between the smallest string the start rule can produce and
 //! the size cap, otherwise the smallest. The grammar is then walked top
@@ -17,8 +24,7 @@
 //! splits its spare budget between its flexible items at uniformly drawn
 //! cut points, so no position is systematically larger than another; a
 //! repetition draws a count that fits its budget and shares the budget
-//! equally between the elements, pulling them with the collection
-//! protocol so the shrinker can delete them one at a time. Budgets steer
+//! equally between the elements. Budgets steer
 //! the structure only: each terminal is drawn by its own regex generator
 //! (redrawn a few times when it alone overruns the size cap), and a
 //! string that overruns the cap regardless is discarded and regenerated
@@ -45,20 +51,23 @@
 use super::analysis::{Alt, Analysis, Node, NodeKind, analyze};
 use super::builder::{ImportSource, load_grammar};
 use super::compile::{Grammar, RuleId, TermId, compile};
+use super::constraint::GrammarConstraint;
 use super::lexsim::{Lexed, Lexer, Scan, Starters};
 use super::{GrammarError, GrammarResult};
 use crate::control::{hegel_internal_assert, hegel_internal_unwrap};
 use crate::native::HashMap;
 use crate::native::core::state::boolean_threshold;
-use crate::native::core::{EngineError, ManyState, Status};
-use crate::native::draws::{
-    Draws, LABEL_BOOLEAN, LABEL_INTEGER, StringSpec, generate_string_into, many_more, spanned,
-};
+use crate::native::core::{EngineError, NativeTestCase, Status, StringChoice};
+use crate::native::draws::source::{RngDraws, SimplestDraws};
+use crate::native::draws::{Draws, StringSpec, generate_string_into, spanned};
+use crate::native::intervalsets::IntervalSet;
 use crate::native::labels::label_from_name;
+use crate::native::rng::EngineRng;
 use crate::sys::sync::Mutex;
 use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
+use alloc::vec;
 use alloc::vec::Vec;
 use core::hash::Hasher;
 use hashbrown::HashTable;
@@ -114,22 +123,15 @@ const GROW_SCALE: f64 = 1.0;
 /// whitespace and a few are saturated with it.
 const IGNORE_RATE_STEPS: u64 = 5;
 
-/// Elements of a repetition are pulled with the collection protocol so
-/// the shrinker can delete them one at a time; the continue probability
-/// is set so a repetition reaches the count it drew with probability
-/// about `exp(-1 / COUNT_PERSISTENCE)`, and never stops short more than
-/// one time in `MIN_PERSISTENCE`.
-const COUNT_PERSISTENCE: f64 = 8.0;
-const MIN_PERSISTENCE: f64 = 32.0;
-
 /// The granularity of the log-uniform draw of a repetition's extra
 /// element count.
 const COUNT_RESOLUTION: u64 = 1 << 20;
 
+/// How many seeded draws stand in for the simplest walk when that one
+/// draws no string (see [`GrammarSpec::ensure_simplest`]).
+const SIMPLEST_FALLBACK_SEEDS: u64 = 8;
+
 const LABEL_GRAMMAR: u64 = label_from_name("hegel.lark");
-const LABEL_TERMINAL: u64 = label_from_name("hegel.lark.terminal");
-const LABEL_IGNORE: u64 = label_from_name("hegel.lark.ignore");
-const LABEL_ELEMENT: u64 = label_from_name("hegel.lark.element");
 
 /// How the strings of one terminal are drawn.
 enum TerminalGen {
@@ -162,7 +164,8 @@ impl Default for GrammarOptions {
 }
 
 /// A grammar ready to generate from: the analysed rules, a generator per
-/// terminal, the lexer simulation and the size and depth caps.
+/// terminal, the lexer simulation, the size and depth caps, and the
+/// choice a drawn string is recorded as.
 pub struct GrammarSpec {
     analysis: Analysis,
     terminals: Vec<TerminalGen>,
@@ -175,7 +178,11 @@ pub struct GrammarSpec {
     ignore_cost: f64,
     lexer: Lexer,
     start: RuleId,
-    labels: Vec<u64>,
+    /// The string choice every string drawn from the grammar is recorded
+    /// as: one node, over every character, constrained to the grammar,
+    /// which `constraint` is.
+    kind: Arc<StringChoice>,
+    constraint: Arc<GrammarConstraint>,
     /// How [`Generation::choose_alt`] classes each rule's alternatives,
     /// indexed by [`RuleId`], and each group's, indexed by [`super::analysis::GroupId`];
     /// `None` for more alternatives than a mask holds.
@@ -416,7 +423,8 @@ impl GrammarSpec {
         let mut terminals = Vec::with_capacity(grammar.terminals.len());
         let mut term_min = Vec::with_capacity(grammar.terminals.len());
         let mut term_typical = Vec::with_capacity(grammar.terminals.len());
-        for term in &grammar.terminals {
+        let mut explicit_specs = Vec::new();
+        for (id, term) in grammar.terminals.iter().enumerate() {
             let explicit = options
                 .explicit
                 .iter()
@@ -426,6 +434,7 @@ impl GrammarSpec {
                 (Some(spec), _) => {
                     term_min.push(1);
                     term_typical.push(typical_size(&spec, 1));
+                    explicit_specs.push((id, Arc::clone(&spec)));
                     terminals.push(TerminalGen::Explicit(spec));
                 }
                 (None, Some(regexp)) => {
@@ -466,34 +475,80 @@ impl GrammarSpec {
                 options.max_depth, root.name, root.min_depth
             )));
         }
-        let labels = analysis
-            .rules
-            .iter()
-            .map(|rule| label_from_name(&format!("hegel.lark.rule.{}", rule.name)))
-            .collect();
         let classes = analysis
             .rules
             .iter()
             .map(|rule| AltClasses::of(&rule.alternatives))
             .collect();
         let group_classes = group_classes(&analysis);
-        Ok(GrammarSpec {
+        let internal = |e: crate::control::InternalError| GrammarError::new(format!("{e}"));
+        let max_size = usize::try_from(options.max_size).unwrap_or(usize::MAX);
+        #[cfg(test)]
+        let terminal_names = grammar.terminals.iter().map(|t| t.name.clone()).collect();
+        let ignore = grammar.ignore.clone();
+        let constraint = Arc::new(
+            GrammarConstraint::new(grammar, &explicit_specs, start, max_size).map_err(internal)?,
+        );
+        let kind = Arc::new(StringChoice {
+            intervals: Arc::new(
+                IntervalSet::new(vec![(0, 0xD7FF), (0xE000, 0x10FFFF)]).map_err(internal)?,
+            ),
+            min_size: 0,
+            max_size,
+            grammar: Some(Arc::clone(&constraint)),
+        });
+        let spec = GrammarSpec {
             analysis,
             terminals,
             #[cfg(test)]
-            terminal_names: grammar.terminals.iter().map(|t| t.name.clone()).collect(),
-            ignore: grammar.ignore,
+            terminal_names,
+            ignore,
             ignore_starters,
             ignore_cost,
             lexer,
             start,
-            labels,
+            kind,
+            constraint,
             classes,
             group_classes,
             max_size: options.max_size,
             max_depth: options.max_depth,
             scratch: Mutex::new(ScansScratch::default()),
             buffers: Mutex::new(None),
+        };
+        Ok(spec)
+    }
+
+    /// The grammar constraint the strings drawn are recorded under.
+    #[cfg(test)]
+    pub fn constraint(&self) -> &Arc<GrammarConstraint> {
+        &self.constraint
+    }
+
+    /// The simplest string of the grammar, for its constraint, computed
+    /// at the first draw: the smallest string with every decision at its
+    /// simplest (see [`SimplestDraws`]), or, when that walk draws nothing
+    /// because the string it heads for cannot be lexed back, the first
+    /// string of a few fixed seeded draws that succeeds, so that the
+    /// choice is the same in every run. A grammar none of them draws
+    /// from cannot be drawn from at all.
+    pub fn ensure_simplest(&self) -> Result<&[u32], EngineError> {
+        self.constraint.simplest_or_init(|| {
+            if let Ok(simplest) = smallest_string(&mut SimplestDraws::default(), self) {
+                return Ok(simplest);
+            }
+            for seed in 0..SIMPLEST_FALLBACK_SEEDS {
+                let mut rng = EngineRng::seeded(seed);
+                let mut draws = RngDraws::new(&mut rng, Default::default());
+                if let Ok(simplest) = draw_grammar(&mut draws, self) {
+                    return Ok(simplest);
+                }
+            }
+            Err(EngineError::InvalidArgument(format!(
+                "no string of '{}' could be generated: its strings do not fit the size cap or \
+                 do not lex back as their tokens",
+                self.analysis.rules[self.start].name
+            )))
         })
     }
 
@@ -1183,9 +1238,7 @@ fn nth_candidate(
 
 /// Draw an index into `count` candidates, uniformly.
 fn draw_index<D: Draws>(d: &mut D, count: usize) -> Result<usize, Step> {
-    let index = spanned(d, LABEL_INTEGER, |d| {
-        d.draw_integer_uniform(0, count as u64 - 1)
-    })?;
+    let index = d.draw_integer_uniform(0, count as u64 - 1)?;
     Ok(index as usize)
 }
 
@@ -1396,12 +1449,10 @@ impl Generation<'_> {
             false
         } else {
             let p = grow_probability(budget.saturating_sub(cheapest_growing));
-            spanned(d, LABEL_BOOLEAN, |d| d.weighted_precise(p, None))?
+            d.weighted_precise(p, None)?
         };
         let class = if grow { growing } else { feasible & !growing };
-        let index = spanned(d, LABEL_INTEGER, |d| {
-            d.draw_integer_uniform(0, u64::from(class.count_ones()) - 1)
-        })?;
+        let index = d.draw_integer_uniform(0, u64::from(class.count_ones()) - 1)?;
         let chosen = hegel_internal_unwrap!(
             nth_set_bit(class, index),
             "choose_alt: drew an index past the class"
@@ -1443,13 +1494,11 @@ impl Generation<'_> {
             None => false,
             Some(cheapest_growing) => {
                 let p = grow_probability(budget.saturating_sub(cheapest_growing));
-                spanned(d, LABEL_BOOLEAN, |d| d.weighted_precise(p, None))?
+                d.weighted_precise(p, None)?
             }
         };
         let size = alts.iter().filter(|alt| in_class(alt, grow)).count();
-        let index = spanned(d, LABEL_INTEGER, |d| {
-            d.draw_integer_uniform(0, size as u64 - 1)
-        })?;
+        let index = d.draw_integer_uniform(0, size as u64 - 1)?;
         Ok(hegel_internal_unwrap!(
             alts.iter()
                 .filter(|alt| in_class(alt, grow))
@@ -1465,10 +1514,7 @@ impl Generation<'_> {
         budget: u64,
         depth: u32,
     ) -> Result<(), Step> {
-        d.start_span(self.spec.labels[id]);
-        let result = self.rule_body(d, id, budget, depth);
-        d.stop_span(false);
-        result
+        self.rule_body(d, id, budget, depth)
     }
 
     fn rule_body<D: Draws>(
@@ -1525,7 +1571,7 @@ impl Generation<'_> {
             let cuts = self.budgets.len();
             self.budgets.push(0);
             for _ in 1..parts {
-                let cut = spanned(d, LABEL_INTEGER, |d| d.draw_integer_uniform(0, spare))?;
+                let cut = d.draw_integer_uniform(0, spare)?;
                 self.budgets.push(cut);
             }
             self.budgets.push(spare);
@@ -1617,19 +1663,9 @@ impl Generation<'_> {
             .saturating_sub(count.saturating_mul(cost))
             .checked_div(count)
             .map_or(0, |share| cost + share);
-        let mut state = ManyState::new(
-            usize::try_from(min).unwrap_or(usize::MAX),
-            Some(usize::try_from(count).unwrap_or(usize::MAX)),
-        );
-        state.set_p_continue(
-            1.0 - 1.0 / (COUNT_PERSISTENCE * (count - min) as f64).max(MIN_PERSISTENCE),
-        );
-        while many_more(d, &mut state)? {
+        for _ in 0..count {
             let before = self.tokens.len();
-            d.start_span(LABEL_ELEMENT);
-            let result = self.item(d, inner, each, depth);
-            d.stop_span(false);
-            result?;
+            self.item(d, inner, each, depth)?;
             if min == 0 {
                 self.mark_droppable(before);
             }
@@ -1662,15 +1698,12 @@ impl Generation<'_> {
         spare: u64,
     ) -> Result<u64, Step> {
         let p = grow_probability(spare);
-        let extend = spanned(d, LABEL_BOOLEAN, |d| d.weighted_precise(p, None))?;
-        if !extend {
+        if !d.weighted_precise(p, None)? {
             return Ok(min);
         }
         let extra_max = feasible_max - min;
         let scale = ((extra_max + 1) as f64).ln();
-        let u = spanned(d, LABEL_INTEGER, |d| {
-            d.draw_integer_uniform(0, COUNT_RESOLUTION)
-        })?;
+        let u = d.draw_integer_uniform(0, COUNT_RESOLUTION)?;
         let extra = (u as f64 / COUNT_RESOLUTION as f64 * scale).exp() as u64;
         Ok(min + extra.clamp(1, extra_max))
     }
@@ -1694,12 +1727,10 @@ impl Generation<'_> {
             TerminalGen::Pattern(spec) => {
                 let mut attempt = 0;
                 loop {
-                    d.start_span(LABEL_TERMINAL);
                     generate_string_into(d, spec, &mut self.text)?;
                     attempt += 1;
                     if !self.fits(self.text.len()) {
                         self.text.truncate(start);
-                        d.stop_span(true);
                         if attempt > LEX_RETRIES {
                             return Err(Step::TooLong);
                         }
@@ -1723,9 +1754,7 @@ impl Generation<'_> {
                             .read_token(self.spec, id, &self.text[start..], None)
                     });
                     let token = self.token(id, start, scans);
-                    let accept = token.lexable(&self.readings.findings) || attempt > LEX_RETRIES;
-                    d.stop_span(!accept);
-                    if accept {
+                    if token.lexable(&self.readings.findings) || attempt > LEX_RETRIES {
                         return Ok(token);
                     }
                     self.text.truncate(start);
@@ -1763,14 +1792,10 @@ impl Generation<'_> {
         self.candidates.extend_from_slice(&self.spec.ignore);
         let mut oversize = false;
         for _ in 0..IGNORE_ATTEMPTS {
-            d.start_span(LABEL_IGNORE);
             let mut draws = IGNORE_CHAIN_DRAWS;
             let index = draw_index(d, self.candidates.len())?;
             let id = self.candidates[index];
-            let placement = self.place_ignore(d, id, from, pending, 0, &mut draws);
-            let accept = !matches!(placement, Ok(Placement::Rejected { .. }));
-            d.stop_span(!accept);
-            match placement? {
+            match self.place_ignore(d, id, from, pending, 0, &mut draws)? {
                 Placement::Placed(_) => return Ok(true),
                 Placement::Rejected { oversize: true, .. } => oversize = true,
                 Placement::Rejected { id, lexable, .. } => {
@@ -1824,13 +1849,9 @@ impl Generation<'_> {
                 break;
             }
             *draws -= 1;
-            d.start_span(LABEL_IGNORE);
             let index = draw_index(d, count)?;
             let id = nth_candidate(candidates(), index)?;
-            let placement = self.place_ignore(d, id, from, pending, depth, draws);
-            let accept = !matches!(placement, Ok(Placement::Rejected { .. }));
-            d.stop_span(!accept);
-            if let Placement::Placed(fit) = placement? {
+            if let Placement::Placed(fit) = self.place_ignore(d, id, from, pending, depth, draws)? {
                 return Ok(fit);
             }
         }
@@ -2031,34 +2052,47 @@ impl Generation<'_> {
     }
 }
 
-/// Draw a string from `spec`, in a span of its own.
-pub fn generate_grammar<D: Draws>(d: &mut D, spec: &GrammarSpec) -> Result<String, EngineError> {
-    spanned(d, LABEL_GRAMMAR, |d| draw_grammar(d, spec))
+/// Draw a string from `spec` as one choice of `ntc`, in a span of its
+/// own: the walk draws its decisions from the test case's RNG alone (see
+/// [`NativeTestCase::draw_string_from`]), and the string is recorded
+/// under the grammar's constraint, which a replay checks it against.
+pub fn generate_grammar(
+    ntc: &mut NativeTestCase,
+    spec: &GrammarSpec,
+) -> Result<String, EngineError> {
+    spec.ensure_simplest()?;
+    spanned(ntc, LABEL_GRAMMAR, |ntc| {
+        ntc.draw_string_from(Arc::clone(&spec.kind), |d| draw_grammar(d, spec))
+    })
 }
 
-fn draw_grammar<D: Draws>(d: &mut D, spec: &GrammarSpec) -> Result<String, EngineError> {
+/// Draw a string from `spec`, every decision from `d`.
+fn draw_grammar<D: Draws>(d: &mut D, spec: &GrammarSpec) -> Result<Vec<u32>, EngineError> {
     let min = spec.min_size();
-    let target = if spec.max_size > min
-        && spanned(d, LABEL_BOOLEAN, |d| {
-            d.weighted_precise(LARGE_TARGET_PROBABILITY, None)
-        })? {
-        spanned(d, LABEL_INTEGER, |d| {
-            d.draw_integer_uniform(min, spec.max_size)
-        })?
+    let target = if spec.max_size > min && d.weighted_precise(LARGE_TARGET_PROBABILITY, None)? {
+        d.draw_integer_uniform(min, spec.max_size)?
     } else {
         min
     };
     let ignore_rate = if spec.ignore.is_empty() {
         0.0
     } else {
-        let step = spanned(d, LABEL_INTEGER, |d| {
-            d.draw_integer_uniform(0, IGNORE_RATE_STEPS - 1)
-        })?;
+        let step = d.draw_integer_uniform(0, IGNORE_RATE_STEPS - 1)?;
         let fraction = step as f64 / (IGNORE_RATE_STEPS - 1) as f64;
         fraction * fraction
     };
     let mut generation = Generation::new(spec, ignore_rate);
     let result = generation.attempts(d, target, min);
+    generation.recycle();
+    result
+}
+
+/// A string of the grammar's smallest size, every decision from `d`,
+/// with no optional ignorables.
+fn smallest_string<D: Draws>(d: &mut D, spec: &GrammarSpec) -> Result<Vec<u32>, EngineError> {
+    let min = spec.min_size();
+    let mut generation = Generation::new(spec, 0.0);
+    let result = generation.attempts(d, min, min);
     generation.recycle();
     result
 }
@@ -2072,12 +2106,12 @@ impl Generation<'_> {
         d: &mut D,
         mut target: u64,
         min: u64,
-    ) -> Result<String, EngineError> {
+    ) -> Result<Vec<u32>, EngineError> {
         let mut attempt = 0;
         loop {
             let budget = token_budget(target, min, self.ignore_rate, self.spec.ignore_cost);
             match self.run(d, budget) {
-                Ok(()) => return Ok(self.text.iter().collect()),
+                Ok(()) => return Ok(self.text.iter().map(|&c| u32::from(c)).collect()),
                 Err(Step::Engine(e)) => return Err(e),
                 Err(step) => {
                     attempt += 1;

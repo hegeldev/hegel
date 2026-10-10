@@ -3,7 +3,8 @@
 //! terminals are placed, and the lexer-fit checks that decide it.
 
 use super::*;
-use crate::native::core::{ChoiceValue, GenerationParameters, NativeTestCase};
+use crate::native::core::state::codepoints_to_string;
+use crate::native::core::{ChoiceKind, ChoiceValue, GenerationParameters, NativeTestCase};
 use crate::native::draws::TextAlphabet;
 use crate::native::draws::source::{RngDraws, SimplestDraws};
 use crate::native::lark::analysis::Bound;
@@ -54,7 +55,7 @@ fn draw_from_rng(spec: &GrammarSpec, seed: u64) -> (Result<String, EngineError>,
     let mut rng = EngineRng::seeded(seed);
     let params = GenerationParameters::draw(&mut rng).unwrap();
     let mut draws = RngDraws::new(&mut rng, params.integer);
-    let result = generate_grammar(&mut draws, spec);
+    let result = draw_grammar(&mut draws, spec).map(|cps| codepoints_to_string(&cps));
     (result, draws.status())
 }
 
@@ -397,8 +398,8 @@ fn oversize_strings_are_regenerated_then_rejected() {
     )
     .unwrap();
     let (result, status) = draw(&spec, 0);
-    assert!(matches!(result, Err(EngineError::InvalidTestCase)));
-    assert_eq!(status, Some(Status::Invalid));
+    assert!(matches!(result, Err(EngineError::InvalidArgument(_))));
+    assert_eq!(status, None);
 }
 
 #[test]
@@ -445,11 +446,11 @@ fn separators_the_basic_lexer_alone_needs_are_optional() {
 }
 
 #[test]
-fn unseparable_merging_tokens_make_the_test_case_invalid() {
+fn unseparable_merging_tokens_leave_no_string_to_generate() {
     let spec = grammar("start: NAME NAME\nNAME: /[a-z]+/\n%ignore COMMENT\nCOMMENT: /#[a-z]*/\n");
     let (result, status) = draw(&spec, 0);
-    assert!(matches!(result, Err(EngineError::InvalidTestCase)));
-    assert_eq!(status, Some(Status::Invalid));
+    assert!(matches!(result, Err(EngineError::InvalidArgument(_))));
+    assert_eq!(status, None);
 }
 
 #[test]
@@ -808,8 +809,8 @@ fn strings_that_do_not_lex_back_whole_are_regenerated() {
     )
     .unwrap();
     let (result, status) = draw(&spec, 0);
-    assert!(matches!(result, Err(EngineError::InvalidTestCase)));
-    assert_eq!(status, Some(Status::Invalid));
+    assert!(matches!(result, Err(EngineError::InvalidArgument(_))));
+    assert_eq!(status, None);
 }
 
 struct FixtureImports;
@@ -1100,19 +1101,20 @@ fn draws_work_in_the_buffers_the_spec_has_to_spare() {
     assert_eq!(unkept.text.capacity(), 0);
     assert!(spec.buffers.lock().as_ref().unwrap().text.capacity() >= 1 << 16);
 
-    let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::Boolean(false)], None, None);
+    let mut ntc = NativeTestCase::for_choices(&[], None, None);
     assert!(generate_grammar(&mut ntc, &spec).is_err());
     assert!(spec.buffers.lock().is_some());
 }
 
 #[test]
-fn engine_errors_inside_the_walk_propagate() {
+fn engine_errors_before_the_walk_propagate() {
     let spec = grammar("start: \"a\" | \"b\"\n");
-    let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::Boolean(false)], None, None);
+    let mut ntc = NativeTestCase::for_choices(&[], None, None);
     assert!(matches!(
         generate_grammar(&mut ntc, &spec),
         Err(EngineError::Overrun)
     ));
+    assert!(ntc.nodes.is_empty());
 }
 
 #[test]
@@ -1639,8 +1641,14 @@ fn simplest_string(grammar: Grammar, options: GrammarOptions) -> (String, u64) {
     let parser = Parser::new(&grammar, grammar.start[0]);
     let spec = GrammarSpec::new(grammar, options).unwrap();
     let mut draws = SimplestDraws::default();
-    let s = generate_grammar(&mut draws, &spec).unwrap();
+    let s = codepoints_to_string(&smallest_string(&mut draws, &spec).unwrap());
     assert_eq!(draws.status(), None);
+    assert_eq!(spec.constraint().simplest(), None);
+    assert_eq!(codepoints_to_string(spec.ensure_simplest().unwrap()), s);
+    assert_eq!(
+        spec.kind.simplest().unwrap(),
+        spec.constraint().simplest().unwrap()
+    );
     let chars: Vec<char> = s.chars().collect();
     assert!(parser.accepts(&lexer, &chars), "{s:?}");
     (s, spec.min_size())
@@ -1697,4 +1705,92 @@ fn a_terminal_whose_first_alternative_is_not_its_shortest_draws_longer_than_the_
         let (s, min) = simplest_string(fixture_grammar(name, start), fixture_options(start));
         assert_eq!((s.as_str(), min), ("0e0", 1), "{name}");
     }
+}
+
+#[test]
+fn a_grammar_string_is_one_choice_under_the_grammar_constraint() {
+    let spec =
+        grammar("start: item (\",\" item)*\nitem: NAME | \"[\" start \"]\"\nNAME: /[a-z]+/\n");
+    for seed in 0..5 {
+        let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+        let s = generate_grammar(&mut ntc, &spec).unwrap();
+        assert_eq!(ntc.nodes.len(), 1);
+        let node = &ntc.nodes[0];
+        assert_eq!(node.value(), ChoiceValue::String(cps(&s)));
+        let ChoiceKind::String(kind) = node.kind() else {
+            panic!("{node:?}");
+        };
+        assert_eq!(kind, *spec.kind);
+        assert_eq!(kind.grammar.as_deref(), Some(spec.constraint().as_ref()));
+        assert!(kind.validate(&cps(&s)));
+        assert_eq!(ntc.spans.len(), 1);
+        assert_eq!(ntc.spans[0].label, LABEL_GRAMMAR);
+        let mut replay = NativeTestCase::for_choices(&[ChoiceValue::String(cps(&s))], None, None);
+        assert_eq!(generate_grammar(&mut replay, &spec).unwrap(), s);
+        assert_eq!(replay.nodes[0].value(), ChoiceValue::String(cps(&s)));
+    }
+}
+
+#[test]
+fn a_replayed_string_the_grammar_rejects_is_punned_to_the_simplest() {
+    let spec = grammar("start: \"a\" \"b\"*\n");
+    let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::String(cps("abbb"))], None, None);
+    assert_eq!(generate_grammar(&mut ntc, &spec).unwrap(), "abbb");
+    let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::String(cps("ba"))], None, None);
+    assert_eq!(generate_grammar(&mut ntc, &spec).unwrap(), "a");
+    assert_eq!(ntc.nodes[0].value(), ChoiceValue::String(cps("a")));
+    let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::Boolean(true)], None, None);
+    assert_eq!(generate_grammar(&mut ntc, &spec).unwrap(), "a");
+    let mut ntc = NativeTestCase::for_simplest(10).unwrap();
+    assert_eq!(generate_grammar(&mut ntc, &spec).unwrap(), "a");
+}
+
+#[test]
+fn a_failed_draw_concludes_the_test_case_invalid_through_the_rng_source() {
+    let spec = grammar("start: NAME OP\nNAME: /[a-z]+/\nOP: /[a-z~]/\n");
+    let (mut valid, mut invalid) = (0, 0);
+    for seed in 0..40 {
+        let (result, status) = draw(&spec, seed);
+        match result {
+            Ok(s) => {
+                assert!(s.ends_with('~'), "{s:?}");
+                assert_eq!(status, None);
+                valid += 1;
+            }
+            Err(EngineError::InvalidTestCase) => {
+                assert_eq!(status, Some(Status::Invalid));
+                invalid += 1;
+            }
+            Err(e) => panic!("{e:?}"),
+        }
+    }
+    assert!(valid > 0 && invalid > 0, "{valid} valid, {invalid} invalid");
+}
+
+#[test]
+fn the_simplest_string_falls_back_on_a_seeded_draw_when_the_simplest_walk_cannot_lex() {
+    let spec = grammar("start: a | b\na: NAME NAME\nb: \"xy\"\nNAME: /[a-z]+/\n");
+    assert!(smallest_string(&mut SimplestDraws::default(), &spec).is_err());
+    assert_eq!(codepoints_to_string(spec.ensure_simplest().unwrap()), "xy");
+    assert_eq!(codepoints_to_string(&spec.kind.simplest().unwrap()), "xy");
+}
+
+#[test]
+fn a_grammar_no_draw_can_generate_from_reports_so_at_the_first_draw() {
+    let spec = grammar("start: NAME NAME\nNAME: /[a-z]+/\n");
+    let mut ntc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
+    let Err(EngineError::InvalidArgument(message)) = generate_grammar(&mut ntc, &spec) else {
+        panic!("expected an invalid argument");
+    };
+    assert!(
+        message.contains("no string of 'start' could be generated"),
+        "{message}"
+    );
+    assert!(ntc.nodes.is_empty());
+    assert_eq!(ntc.status(), None);
+    assert!(spec.constraint().simplest().is_none());
+}
+
+fn cps(s: &str) -> Vec<u32> {
+    s.chars().map(u32::from).collect()
 }

@@ -3,6 +3,7 @@
 //! compilations.
 
 use super::*;
+use crate::control::InternalError;
 use crate::native::lark::builder::{NoImports, load_grammar};
 use crate::native::lark::compile::compile;
 use core::hash::BuildHasher;
@@ -15,7 +16,10 @@ fn compiled(text: &str, start: &str) -> Grammar {
 fn constraint(text: &str, start: &str, max_size: usize, simplest: &str) -> GrammarConstraint {
     let grammar = compiled(text, start);
     let start = grammar.start[0];
-    GrammarConstraint::new(grammar, &[], start, max_size, cps(simplest)).unwrap()
+    let c = GrammarConstraint::new(grammar, &[], start, max_size).unwrap();
+    c.simplest_or_init(|| Ok::<_, InternalError>(cps(simplest)))
+        .unwrap();
+    c
 }
 
 fn cps(s: &str) -> Vec<u32> {
@@ -34,7 +38,7 @@ fn accepts_the_strings_the_grammar_derives_and_rejects_the_rest() {
     assert!(!c.accepts(&cps("b")));
     assert!(!c.accepts(&cps("ba")));
     assert!(!c.accepts(&cps("abc")));
-    assert_eq!(c.simplest(), cps("a"));
+    assert_eq!(c.simplest(), Some(cps("a").as_slice()));
     assert_eq!(c.max_size(), 16);
     assert_eq!(c.grammar().rules[c.start()].name, "start");
 }
@@ -109,8 +113,23 @@ fn the_grammar_the_start_rule_and_the_size_cap_each_tell_constraints_apart() {
     let grammar = compiled(two, "start");
     let start = grammar.rule_id("start").unwrap();
     let other = grammar.rule_id("other").unwrap();
-    let from_start = GrammarConstraint::new(grammar.clone(), &[], start, 16, cps("ab")).unwrap();
-    let from_other = GrammarConstraint::new(grammar, &[], other, 16, cps("b")).unwrap();
+    let from_start = GrammarConstraint::new(grammar.clone(), &[], start, 16).unwrap();
+    let from_other = GrammarConstraint::new(grammar, &[], other, 16).unwrap();
+    assert_eq!(from_start.simplest(), None);
+    assert_eq!(from_start.simplest_or_init(|| Err(7)), Err(7));
+    assert_eq!(from_start.simplest(), None);
+    assert_eq!(
+        from_start.simplest_or_init(|| Ok::<_, u8>(cps("ab"))),
+        Ok(cps("ab").as_slice())
+    );
+    assert_eq!(
+        from_start.simplest_or_init(|| Ok::<_, u8>(cps("zzz"))),
+        Ok(cps("ab").as_slice())
+    );
+    from_other
+        .simplest_or_init(|| Ok::<_, u8>(cps("b")))
+        .unwrap();
+    assert_eq!(from_start.simplest(), Some(cps("ab").as_slice()));
     assert_ne!(from_start, from_other);
     assert!(from_start.accepts(&cps("ab")));
     assert!(from_other.accepts(&cps("b")));

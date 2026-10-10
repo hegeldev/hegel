@@ -242,14 +242,11 @@ fn grammar_node(text: &str, simplest: &str, value: &str) -> ChoiceNode {
     .unwrap();
     let grammar = crate::native::lark::compile::compile(&built, &["start"]).unwrap();
     let start = grammar.start[0];
-    let constraint = crate::native::lark::constraint::GrammarConstraint::new(
-        grammar,
-        &[],
-        start,
-        32,
-        cps(simplest),
-    )
-    .unwrap();
+    let constraint =
+        crate::native::lark::constraint::GrammarConstraint::new(grammar, &[], start, 32).unwrap();
+    constraint
+        .simplest_or_init(|| Ok::<_, crate::control::InternalError>(cps(simplest)))
+        .unwrap();
     ChoiceNode::string(
         StringChoice {
             intervals: intervals(0, 0x10FFFF).into(),

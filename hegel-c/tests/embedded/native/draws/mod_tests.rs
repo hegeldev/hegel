@@ -96,20 +96,15 @@ fn many_more_respects_fixed_and_bounded_sizes() {
     assert!((1..=4).contains(&count));
 }
 
-/// A repetition's continue decisions are the weighted draws of its
-/// continue probability, whether that is the one its sizes set or one
-/// set afterwards, which the threshold kept with it follows.
+/// A repetition's continue decisions are the weighted draws of the
+/// continue probability its sizes set, which the threshold kept with it
+/// follows.
 #[test]
 fn many_more_draws_against_the_continue_probability_set() {
     let mut state = ManyState::new(0, None);
-    assert_eq!(state.p_continue(), length_p_continue(0, None));
-    assert_eq!(
-        state.continue_threshold(),
-        boolean_threshold(state.p_continue())
-    );
-    state.set_p_continue(0.3);
-    assert_eq!(state.p_continue(), 0.3);
-    assert_eq!(state.continue_threshold(), boolean_threshold(0.3));
+    let p = length_p_continue(0, None);
+    assert_eq!(state.p_continue(), p);
+    assert_eq!(state.continue_threshold(), boolean_threshold(p));
     let mut a = NativeTestCase::new_random(EngineRng::seeded(4)).unwrap();
     let mut b = NativeTestCase::new_random(EngineRng::seeded(4)).unwrap();
     let mut elements = 0;
@@ -120,7 +115,7 @@ fn many_more_draws_against_the_continue_probability_set() {
             run += 1;
         }
         let mut expected = 0;
-        while b.weighted(0.3, None).unwrap() {
+        while b.weighted(p, None).unwrap() {
             expected += 1;
         }
         assert_eq!(run, expected);

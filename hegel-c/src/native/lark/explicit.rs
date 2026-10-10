@@ -198,6 +198,7 @@ impl GrammarTerminals {
     }
 
     /// The lexer simulation over the pattern terminals.
+    #[cfg(test)]
     pub fn lexer(&self) -> &Lexer {
         &self.lexer
     }

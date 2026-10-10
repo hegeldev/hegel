@@ -18,9 +18,9 @@ use crate::native::rng::EngineRng;
 use super::ExternalReplay;
 use super::MAX_CLONE_DEPTH;
 use super::choices::{
-    BooleanChoice, BytesChoice, ChoiceNode, ChoiceTemplate, ChoiceTemplateKind, ChoiceValue,
-    EngineError, FloatChoice, IntegerChoice, InterestingOrigin, RealizedStream, Status,
-    StringChoice,
+    BooleanChoice, BytesChoice, ChoiceData, ChoiceNode, ChoiceTemplate, ChoiceTemplateKind,
+    ChoiceValue, EngineError, FloatChoice, IntegerChoice, InterestingOrigin, RealizedStream,
+    Status, StringChoice,
 };
 use super::replay::{Divergence, Replay, Resolved};
 use super::{
@@ -39,6 +39,7 @@ use crate::control::{
     InternalError, hegel_internal_assert, hegel_internal_debug_assert, hegel_internal_unwrap,
 };
 use crate::native::bignum::{BigInt, BigUint, ToPrimitive, Zero};
+use crate::native::draws::source::RngDraws;
 use crate::native::graph::DRAW_LABEL;
 use crate::native::intervalsets::IntervalSet;
 use crate::native::statistics::{
@@ -144,12 +145,6 @@ impl ManyState {
     /// [`Self::p_continue`].
     pub(crate) fn continue_threshold(&self) -> u8 {
         self.continue_threshold
-    }
-
-    /// Set the probability of drawing another element past the minimum.
-    pub fn set_p_continue(&mut self, p: f64) {
-        self.p_continue = p;
-        self.continue_threshold = boolean_threshold(p);
     }
 }
 
@@ -2985,6 +2980,64 @@ impl NativeTestCase {
         )?;
 
         self.record(ChoiceNode::string(kind, v.clone(), was_forced));
+
+        let s = codepoints_to_string(&v);
+        if let Some(ref mut obs) = self.observer {
+            obs.draw_string(&s, was_forced);
+        }
+
+        Ok(s)
+    }
+
+    /// Draw a string under `kind`, a string choice carrying a grammar (see
+    /// [`GrammarConstraint`](crate::native::lark::constraint::GrammarConstraint)),
+    /// as one choice: replayed like any string, with a stored value the
+    /// kind accepts kept and any other punned, and otherwise drawn by
+    /// `random` from a source over this test case's RNG and integer
+    /// parameters. A conclusion `random` reaches is this test case's.
+    pub fn draw_string_from(
+        &mut self,
+        kind: Arc<StringChoice>,
+        random: impl FnOnce(&mut RngDraws<'_>) -> Result<Vec<u32>, EngineError>,
+    ) -> Result<String, EngineError> {
+        self.pre_choice()?;
+
+        let idx = self.nodes.len();
+        let replayed = if idx < self.replay.plain_from() || self.trailing_template.is_some() {
+            self.resolve_choice_replayed(
+                idx,
+                || kind.simplest(),
+                || kind.unit(),
+                |v| match v {
+                    ChoiceValue::String(s) if kind.validate(s) => Some(s.clone()),
+                    _ => None,
+                },
+            )?
+        } else {
+            None
+        };
+        let (v, was_forced) = match replayed {
+            Some(decided) => decided,
+            None => {
+                let params = self.family.generation_parameters().integer;
+                let rng = hegel_internal_unwrap!(
+                    self.rng.as_mut(),
+                    "draw_string_from: no RNG available for random generation"
+                );
+                let mut draws = RngDraws::new(rng, params);
+                let drawn = random(&mut draws);
+                let status = draws.status();
+                if let Some(status) = status {
+                    self.conclude(status, None);
+                }
+                (drawn?, false)
+            }
+        };
+
+        self.record(ChoiceNode::new(
+            ChoiceData::String(kind, v.clone()),
+            was_forced,
+        ));
 
         let s = codepoints_to_string(&v);
         if let Some(ref mut obs) = self.observer {

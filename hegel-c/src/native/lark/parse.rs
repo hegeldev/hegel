@@ -209,6 +209,7 @@ impl Parser {
 
     /// Whether `text` is in the grammar, matching terminals with
     /// `terminals` (over the same grammar's terminals).
+    #[cfg(test)]
     pub fn accepts<T: Terminals>(&self, terminals: &T, text: &[char]) -> bool {
         self.parse(terminals, text).is_ok()
     }

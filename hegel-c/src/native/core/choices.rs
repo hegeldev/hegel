@@ -381,7 +381,11 @@ impl StringChoice {
     /// Under a grammar, the grammar's simplest string.
     pub fn simplest(&self) -> Result<Vec<u32>, InternalError> {
         if let Some(grammar) = &self.grammar {
-            return Ok(grammar.simplest().to_vec());
+            let simplest = hegel_internal_unwrap!(
+                grammar.simplest(),
+                "StringChoice::simplest: the grammar's simplest string is not set"
+            );
+            return Ok(simplest.to_vec());
         }
         if self.min_size == 0 {
             return Ok(Vec::new());

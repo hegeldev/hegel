@@ -17,22 +17,13 @@ pub mod analysis;
 pub mod ast;
 pub mod builder;
 pub mod compile;
-/// The generator and the grammar shrink pass will seed the memo and read
-/// derivations back; until they do, only validation is reached.
-#[cfg_attr(not(test), allow(dead_code))]
 pub mod constraint;
 pub mod escape;
-/// Matched by [`constraint`] alone until the generator wires it in.
-#[cfg_attr(not(test), allow(dead_code))]
 pub mod explicit;
 pub mod generate;
 pub mod lexer;
 pub mod lexsim;
-/// Nothing in the engine parses yet: database validation and the grammar
-/// shrink pass will, and lift the allowance.
-#[cfg_attr(not(test), allow(dead_code))]
 pub mod lower;
-#[cfg_attr(not(test), allow(dead_code))]
 pub mod parse;
 pub mod parser;
 

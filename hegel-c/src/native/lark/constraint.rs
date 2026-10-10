@@ -22,11 +22,13 @@ use crate::control::InternalError;
 use crate::native::HashMap;
 use crate::native::draws::StringSpec;
 use crate::sys::sync::Mutex;
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::fmt;
 use core::hash::{Hash, Hasher};
+use once_cell::race::OnceBox;
 use rustc_hash::FxHasher;
 
 /// How many derivations a constraint remembers before forgetting them all
@@ -41,23 +43,24 @@ pub struct GrammarConstraint {
     start: RuleId,
     identity: u64,
     max_size: usize,
-    simplest: Vec<u32>,
+    /// The simplest string, computed by the generator at the first draw
+    /// (see [`GrammarConstraint::simplest_or_init`]).
+    simplest: OnceBox<Vec<u32>>,
     known: Mutex<HashMap<(u64, usize), Arc<Tree>>>,
 }
 
 impl GrammarConstraint {
     /// The constraint accepting the strings `grammar` derives from the
     /// rule `start` within `max_size` characters, with the terminals in
-    /// `explicit` matched by the generators given for them, whose
-    /// simplest string is `simplest`: the shortest the grammar derives,
-    /// first in the string shrink order among those, supplied by the
-    /// caller.
+    /// `explicit` matched by the generators given for them. Its simplest
+    /// string is the generator's to supply (see
+    /// [`simplest_or_init`](Self::simplest_or_init)) before any choice
+    /// is drawn under it.
     pub fn new(
         grammar: Grammar,
         explicit: &[(TermId, Arc<StringSpec>)],
         start: RuleId,
         max_size: usize,
-        simplest: Vec<u32>,
     ) -> Result<GrammarConstraint, InternalError> {
         let terminals = GrammarTerminals::new(&grammar, explicit)?;
         let parser = Parser::new(&grammar, start);
@@ -72,9 +75,22 @@ impl GrammarConstraint {
             start,
             identity: hasher.finish(),
             max_size,
-            simplest,
+            simplest: OnceBox::new(),
             known: Mutex::new(HashMap::default()),
         })
+    }
+
+    /// The simplest string the grammar derives, computing it with `init`
+    /// when it is not set yet: the one the generator draws when every
+    /// decision goes the simplest way, which stands in for a replayed
+    /// string the grammar rejects. Once set it is never computed again.
+    pub fn simplest_or_init<E>(
+        &self,
+        init: impl FnOnce() -> Result<Vec<u32>, E>,
+    ) -> Result<&[u32], E> {
+        self.simplest
+            .get_or_try_init(|| init().map(Box::new))
+            .map(|simplest| simplest.as_slice())
     }
 
     /// Whether `text` is in the grammar: known to derive, or parsed now
@@ -115,9 +131,9 @@ impl GrammarConstraint {
         known.insert(key, tree);
     }
 
-    /// The simplest string the grammar derives.
-    pub fn simplest(&self) -> &[u32] {
-        &self.simplest
+    /// The simplest string the grammar derives, once set.
+    pub fn simplest(&self) -> Option<&[u32]> {
+        self.simplest.get().map(|simplest| simplest.as_slice())
     }
 
     /// The hash of the compiled grammar, start rule and size cap that
