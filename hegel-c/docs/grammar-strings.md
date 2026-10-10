@@ -1,0 +1,138 @@
+# Strings under a grammar
+
+How a string drawn from a Lark grammar (`from_lark`) lives in the choice
+sequence: one string choice whose kind carries the grammar, generated
+directly against the RNG, checked by parsing on replay and shrunk through
+its derivation. Module docs in `hegel-c/src/native/lark/` carry the
+per-function detail; this document is the map. File names below are
+relative to `hegel-c/src/native/`.
+
+## The problem
+
+The first `from_lark` recorded every decision of the grammar walk — which
+alternative, how many repetitions, each terminal's characters — as a
+choice of its own, the way any composite generator does. That made a
+grammar string a long stretch of the choice sequence, and shrinking it
+meant re-running the walk against edited choices: a shrinker pass that
+deletes a few choices has no idea that it is deleting half a repetition,
+and the walk's response to a change is whatever cascade the remaining
+choices happen to produce. Database entries were as long as the walk,
+and any change to the grammar (or to the walk's sizing) turned a stored
+failure into noise.
+
+## The model
+
+A string drawn from a grammar is one `ChoiceData::String` node whose
+`StringChoice` has `grammar: Some(constraint)` (`core/choices.rs`). The
+node's value is the text itself, its alphabet is every Unicode scalar
+value and its only bounds are the empty string and the size cap: the
+grammar alone decides which strings are in (`StringChoice::validate`
+asks `GrammarConstraint::accepts`). Everything that works on string nodes
+and does not know about grammars keeps working — the database stores the
+text, a reproduce blob carries it, the execution cache keys on it, and a
+stored failure survives an edit to the grammar as long as the text still
+parses — while a string the grammar does not derive is an ordinary misfit
+and is punned to the grammar's simplest string on replay
+(`core/state.rs`, `resolve_choice_replayed`).
+
+The pieces:
+
+- **The constraint** (`lark/constraint.rs`): `GrammarConstraint` owns the
+  compiled `Grammar`, its terminals as the parser matches them, a
+  `Parser` from the start rule, and the size cap. It compares and hashes
+  by an identity hashed from the compiled grammar, the start rule and the
+  cap, so two runs that compile the same grammar afresh have the same
+  kind (the `KindLedger` compares kinds across executions). It remembers
+  the derivations it has found (up to `KNOWN_CAPACITY`, then forgets them
+  all) so that a text known to derive is never parsed twice, and learns
+  from every derivation the smallest text it has seen each rule and each
+  terminal derive, for the shrinker. Its simplest string is set once, by
+  the generator, at the first draw.
+- **The generator** (`lark/generate.rs`): `generate_grammar` draws the
+  string through `NativeTestCase::draw_string_from`, which hands the walk
+  an `RngDraws` source over the test case's RNG (`draws/source.rs`) and
+  records the text it returns as one node. On replay the stored text is
+  validated instead, and the walk never runs. The walk is unchanged in
+  what it produces — sizing, lexability checks and `%ignore` insertion as
+  the module docs describe — but opens no spans and uses no collection
+  protocol, since nothing it decides is a choice. The simplest string is
+  the walk with every decision at its simplest (`SimplestDraws`), or, when
+  that string does not lex back as its tokens, the first of a few seeded
+  random walks that does; a grammar with no string either way is reported
+  at the first draw.
+- **The parser** (`lark/parse.rs`, with `lark/lower.rs` desugaring
+  repetitions): an Earley parser with a dynamic lexer, matching Lark's
+  `parser="earley", lexer="dynamic"` on which strings it accepts, which is
+  what `just check-parse` checks against Lark itself. It yields a `Tree`
+  whose leaves cover the text exactly, `%ignore`d stretches included.
+  Pattern terminals match through the lexer simulation with Lark's
+  `match` semantics (one end per terminal, never empty); terminals the
+  user supplies generators for match through `lark/explicit.rs` at every
+  length their generator could draw.
+- **The layout** (`lark/layout.rs`): `Layout` lays a `Tree` over its text,
+  giving every node the range of text it derives (from its first to its
+  last terminal, so ignored text at a node's edges belongs to no node but
+  its own leaf) and answering the structural questions the shrinker asks:
+  the hoists (a rule node containing a smaller node of the same rule),
+  the repetitions of each repeat, the ignored stretches, the leaves and
+  the rule nodes.
+
+## Shrinking
+
+The string passes (`shrinker/strings.rs`) skip a string under a grammar:
+the strings they would propose are hardly ever in the grammar. The
+grammar pass (`shrinker/grammar.rs`, `shrink_grammar_strings`, scheduled
+just before them) edits the text where its derivation says the grammar
+might still accept the result, and every candidate is a splice of the
+text that `replace` then validates by parsing, so an edit the dynamic
+lexer would read differently (two tokens that merge once the text between
+them is gone, say) is simply rejected. For each node it tries, until a
+round changes nothing:
+
+1. the grammar's simplest string;
+2. **hoists**: each rule node's text replaced by that of a smaller node of
+   the same rule inside it, outermost first, starting over after each
+   accepted hoist;
+3. **repetitions**: for each repeat, all its repetitions deleted, then
+   windows of 8, 4, 2 and 1 from the back;
+4. **ignored text**: all of it cut at once, then each stretch from the
+   back;
+5. **smallest rule texts**: each rule node's text replaced by the smallest
+   the constraint has seen that rule derive;
+6. **leaves**: each leaf's text replaced by the smallest seen for its
+   terminal, and otherwise deleted, cut to the shortest prefix that will
+   do (a binary search), shortened one character at a time from the back,
+   and lowered character by character down the alphabet's shrink order
+   (binary search on the shrink key).
+
+A candidate equal to the current text is not run, since the shrinker
+would count it as accepted. The shrink order of the node is the string
+kind's: shorter first, then character by character in the alphabet's
+shrink order, so every edit above that is accepted is a strict
+improvement and the pass terminates.
+
+The nondeterminism graph shrinker (`graph_shrink.rs`) has a ladder per
+kind rather than a searching pass; for a string under a grammar it
+tries, after the simplest string, `Layout::coarse_candidates`: all the
+ignored text cut, every repeat emptied, halved and shortened by one,
+every hoist, and every leaf replaced by the smallest text seen for its
+terminal, each once, and all of them again after one is accepted.
+
+## What the design rules out, and what is left
+
+- A derivation built by the shrinker is never remembered as a derivation
+  of the edited text: the parser decides acceptance, because the
+  grammar's language under a dynamic lexer is not the context-free
+  language of its rules (a terminal's text must be what the lexer reads
+  at that position in the new text). Parses are memoized by text, so the
+  cost is one parse per new candidate.
+- Terminals the user supplies generators for (`explicit`) match any text
+  their generator could draw, which for a regex or alphabet is exactly
+  the generator's language; email, URL and domain generators match an
+  approximation (`lark/explicit.rs`), so a parse could accept a string
+  such a generator would never draw.
+- The constraint's identity does not include the explicit generators, so
+  two grammars that differ only in them compare equal.
+- Not done yet: reusing subtrees of earlier strings at generation time
+  (a grammar-aware mutator), and regex-constrained standalone string
+  nodes (`from_regex` outside a grammar) along the same lines.

@@ -2303,7 +2303,10 @@ hegel_result_t hegel_grammar_free(hegel_context_t *ctx, hegel_grammar_t *grammar
 /*
  Draw a string of a grammar: a string the grammar's start rule accepts,
  aiming at a length drawn up to the grammar's size cap, as many as 8192
- characters by default.
+ characters by default. The string is one choice of the test case,
+ holding the string itself: a replay checks a stored string by parsing
+ it (one the grammar does not derive is replaced by the grammar's
+ simplest string), and the shrinker edits it through its derivation.
 
  Parameters:
  `grammar`: A grammar built by `hegel_grammar_new`.

@@ -161,6 +161,14 @@ impl PrintableGenerator<String> for LarkGenerator {
 /// larger end; use [`max_size`](LarkGenerator::max_size) and
 /// [`max_depth`](LarkGenerator::max_depth) to keep them smaller.
 ///
+/// A drawn string is a single choice holding the string itself, which
+/// the engine checks against the grammar by parsing it when replaying a
+/// saved failure — so the failure survives edits to the grammar as long
+/// as the string still parses — and shrinks through its derivation:
+/// repetitions are deleted, a nested rule is hoisted over the rule
+/// around it, ignored text is cut, and each terminal's text is shortened
+/// and simplified, every step a string of the grammar.
+///
 /// ```no_run
 /// use hegel::generators as gs;
 ///
