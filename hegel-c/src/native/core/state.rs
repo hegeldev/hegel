@@ -10,8 +10,7 @@ use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use once_cell::race::OnceBox;
 
-use rand::RngExt;
-use rand::distr::uniform::{UniformInt, UniformSampler};
+use rand::{Rng, RngExt};
 
 use crate::native::rng::EngineRng;
 
@@ -2557,9 +2556,9 @@ impl NativeTestCase {
     /// recursive draw's target size — where the shaped distribution's bias
     /// toward small magnitudes would defeat the point of drawing at all.
     ///
-    /// A fresh value comes from rand's inclusive-range integer sampler
-    /// called directly, the one `random_range` wraps, so seeded streams are
-    /// unchanged and the draw skips that wrapper's own call and checks.
+    /// A fresh value comes from [`uniform_u64_inclusive`], rand's
+    /// inclusive-range integer sampler written out, so seeded streams are
+    /// unchanged and the draw carries the sampling inline.
     pub fn draw_integer_uniform(
         &mut self,
         min_value: u64,
@@ -2580,12 +2579,7 @@ impl NativeTestCase {
             kind,
             |_, n| n.to_u64().filter(|v| (min_value..=max_value).contains(v)),
             |v| BigInt::from(*v),
-            |_, rng| {
-                Ok(hegel_internal_unwrap!(
-                    UniformInt::<u64>::sample_single_inclusive(min_value, max_value, rng).ok(),
-                    "draw_integer_uniform: the range [{min_value:?}, {max_value:?}] is empty"
-                ))
-            },
+            |_, rng| Ok(uniform_u64_inclusive(min_value, max_value, rng)),
             move |_| small,
         )
     }
@@ -3101,6 +3095,35 @@ impl NativeTestCase {
         );
         Ok((random(rng)?, false))
     }
+}
+
+/// A value drawn uniformly from `[low, high]` (which must not be empty),
+/// exactly as rand's inclusive single-value sampler for `u64` draws it
+/// from the same stream, its default variant that this crate builds: one
+/// 64-bit sample multiplied into the range gives the value, and when its
+/// low word falls in the range's remainder a second sample corrects the
+/// bias. Written out here so the draw hot path always carries the
+/// sampling inline, rather than as the compiler's call-by-call decision
+/// over rand's generic, which the shape of unrelated code could tip.
+#[inline(always)]
+fn uniform_u64_inclusive(low: u64, high: u64, rng: &mut EngineRng) -> u64 {
+    let range = high.wrapping_sub(low).wrapping_add(1);
+    if range == 0 {
+        return rng.next_u64();
+    }
+    let (mut result, lo_order) = widening_mul(rng.next_u64(), range);
+    if lo_order > range.wrapping_neg() {
+        let (new_hi_order, _) = widening_mul(rng.next_u64(), range);
+        result += u64::from(lo_order.checked_add(new_hi_order).is_none());
+    }
+    low.wrapping_add(result)
+}
+
+/// The high and low words of the 128-bit product of `a` and `b`.
+#[inline(always)]
+fn widening_mul(a: u64, b: u64) -> (u64, u64) {
+    let wide = u128::from(a) * u128::from(b);
+    ((wide >> 64) as u64, wide as u64)
 }
 
 pub use float_sample::FloatWidth;

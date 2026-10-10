@@ -3603,3 +3603,33 @@ fn uniform_draws_record_their_bounds_whatever_their_width() {
     );
     assert_eq!(kinds[0], ChoiceKind::Integer(IntegerChoice::small(3, 9, 0)));
 }
+
+#[test]
+fn uniform_u64_inclusive_draws_what_rands_sampler_draws_from_the_same_stream() {
+    use rand::distr::uniform::{UniformInt, UniformSampler};
+    let ranges = [
+        (0, 0),
+        (3, 9),
+        (0, 1 << 32),
+        (0, u64::MAX),
+        (u64::MAX - 1, u64::MAX),
+        (1, 1 << 63),
+        (0, (1 << 63) + 1),
+        (5, u64::MAX - 5),
+    ];
+    for seed in 0..20 {
+        let mut ours = EngineRng::seeded(seed);
+        let mut theirs = EngineRng::seeded(seed);
+        for &(low, high) in &ranges {
+            for _ in 0..50 {
+                let v = uniform_u64_inclusive(low, high, &mut ours);
+                assert!((low..=high).contains(&v));
+                assert_eq!(
+                    v,
+                    UniformInt::<u64>::sample_single_inclusive(low, high, &mut theirs).unwrap()
+                );
+            }
+        }
+        assert_eq!(ours.next_u64(), theirs.next_u64());
+    }
+}

@@ -305,9 +305,22 @@ impl TermPattern {
         }
     }
 
+    /// Whether a match at a position could start with `c`: false only
+    /// when the pattern's first characters rule it out, so that the
+    /// pattern need not be run there at all. Cheap enough to ask before
+    /// [`scan`](Self::scan) builds an outcome the caller would throw away.
+    #[inline]
+    fn may_start(&self, c: char) -> bool {
+        self.first.as_ref().is_none_or(|first| first.contains(c))
+    }
+
     /// The end of the match at `pos`, as CPython's `pattern.match` finds
     /// it.
+    #[inline]
     fn match_at(&self, text: &[char], pos: usize) -> Result<Option<usize>, MatchError> {
+        if text.get(pos).is_some_and(|&c| !self.may_start(c)) {
+            return Ok(None);
+        }
         self.scan(text, pos).result
     }
 
@@ -736,6 +749,7 @@ impl Lexer {
                         Lexed::Unknown => Err(()),
                     }
                 }
+                _ if !term.pattern.may_start(text[pos]) => continue,
                 _ => {
                     let outcome = term.pattern.scan(text, pos);
                     scan.note(term.id, &outcome);
