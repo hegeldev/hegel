@@ -1,16 +1,16 @@
 //! Where the engine's own string generators draw their decisions from.
 //!
-//! The regex generator ([`super::regex`]) and the grammar generator
-//! (`lark::generate`) make every random decision through [`Draws`], so
-//! that the same walk can be driven by a test case, which records each
-//! decision as a choice of its own, or by another source: an RNG alone,
-//! when a whole string is to be one choice, or nothing at all, when the
-//! simplest string is wanted. The trait holds exactly the operations the
-//! two generators need, each mirroring the [`NativeTestCase`] method of
-//! the same name; [`RngDraws`] and [`SimplestDraws`] are the two other
-//! sources.
+//! The regex generator ([`super::regex`]), the internet generators
+//! ([`super::internet`]) and the grammar generator (`lark::generate`)
+//! make every random decision through [`Draws`], so that the same walk
+//! can be driven by a test case, which records each decision as a choice
+//! of its own, or by another source: an RNG alone, when a whole string is
+//! to be one choice, or nothing at all, when the simplest string is
+//! wanted. The trait holds exactly the operations the generators need,
+//! each mirroring the [`NativeTestCase`] method of the same name;
+//! [`RngDraws`] and [`SimplestDraws`] are the two other sources.
 
-use super::{StringSpec, generate_string, regex};
+use super::{StringSpec, generate_string, internet, regex};
 use crate::control::{hegel_internal_assert, hegel_internal_unwrap};
 use crate::native::bignum::ToPrimitive;
 use crate::native::core::choices::{BooleanChoice, IntegerChoice};
@@ -20,8 +20,9 @@ use crate::native::core::state::{
     weighted_boolean_sample_precise,
 };
 use crate::native::core::{EngineError, ManyState, NativeTestCase, Status, StringChoice};
+use crate::native::intervalsets::IntervalSet;
 use crate::native::rng::EngineRng;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::sync::Arc;
 
 /// A source of the decisions the engine's string generators make. Every
@@ -56,10 +57,18 @@ pub(crate) trait Draws {
     /// draws it.
     fn weighted_precise(&mut self, p: f64, forced: Option<bool>) -> Result<bool, EngineError>;
 
+    /// A string of `min_size` to `max_size` codepoints over `intervals`,
+    /// as [`NativeTestCase::draw_string`] draws it.
+    fn draw_string(
+        &mut self,
+        intervals: Arc<IntervalSet>,
+        min_size: usize,
+        max_size: usize,
+    ) -> Result<String, EngineError>;
+
     /// A string of `spec`, as [`generate_string`] draws it from a test
     /// case: what [`super::generate_string_into`] falls back on for the
-    /// specs whose draw is not written against this trait (every kind
-    /// but a regex).
+    /// specs other than a regex.
     fn generate_string(&mut self, spec: &StringSpec) -> Result<String, EngineError>;
 
     /// Open a span labelled `label`, as [`NativeTestCase::start_span`]
@@ -145,6 +154,15 @@ impl Draws for NativeTestCase {
         NativeTestCase::weighted_precise(self, p, forced)
     }
 
+    fn draw_string(
+        &mut self,
+        intervals: Arc<IntervalSet>,
+        min_size: usize,
+        max_size: usize,
+    ) -> Result<String, EngineError> {
+        NativeTestCase::draw_string(self, intervals, min_size, max_size)
+    }
+
     fn generate_string(&mut self, spec: &StringSpec) -> Result<String, EngineError> {
         generate_string(self, spec)
     }
@@ -170,13 +188,24 @@ fn record_conclusion(slot: &mut Option<Status>, status: Status) {
     }
 }
 
-/// The error for a string spec the sources without a test case cannot
-/// draw: the internet specs, whose generators draw from a test case
-/// alone.
-fn only_from_a_test_case() -> EngineError {
-    EngineError::InvalidArgument(
-        "email, URL and domain strings are drawn from a test case only".to_string(),
-    )
+/// A string of `spec` from a source other than a test case: each kind
+/// through the generator a test case draws it with, written against
+/// [`Draws`], without the span a test case puts around it.
+fn generate_string_from<D: Draws>(d: &mut D, spec: &StringSpec) -> Result<String, EngineError> {
+    match spec {
+        StringSpec::Text {
+            intervals,
+            min_size,
+            max_size,
+        } => d.draw_string(Arc::clone(intervals), *min_size, *max_size),
+        StringSpec::Regex {
+            compiled,
+            fullmatch,
+        } => regex::generate_regex(d, compiled, *fullmatch),
+        StringSpec::Email => internet::generate_email(d),
+        StringSpec::Url => internet::generate_url(d),
+        StringSpec::Domain(spec) => internet::generate_domain(d, spec),
+    }
 }
 
 /// A source that samples every decision from an RNG alone, as a test case
@@ -248,31 +277,25 @@ impl Draws for RngDraws<'_> {
             .unwrap_or_else(|| weighted_boolean_sample_precise(p, self.rng)))
     }
 
+    fn draw_string(
+        &mut self,
+        intervals: Arc<IntervalSet>,
+        min_size: usize,
+        max_size: usize,
+    ) -> Result<String, EngineError> {
+        let kind = StringChoice {
+            intervals,
+            min_size,
+            max_size,
+            grammar: None,
+        };
+        Ok(codepoints_to_string(&biased_string_sample(
+            &kind, self.rng,
+        )?))
+    }
+
     fn generate_string(&mut self, spec: &StringSpec) -> Result<String, EngineError> {
-        match spec {
-            StringSpec::Text {
-                intervals,
-                min_size,
-                max_size,
-            } => {
-                let kind = StringChoice {
-                    intervals: Arc::clone(intervals),
-                    min_size: *min_size,
-                    max_size: *max_size,
-                    grammar: None,
-                };
-                Ok(codepoints_to_string(&biased_string_sample(
-                    &kind, self.rng,
-                )?))
-            }
-            StringSpec::Regex {
-                compiled,
-                fullmatch,
-            } => regex::generate_regex(self, compiled, *fullmatch),
-            StringSpec::Email | StringSpec::Url | StringSpec::Domain(_) => {
-                Err(only_from_a_test_case())
-            }
-        }
+        generate_string_from(self, spec)
     }
 
     fn start_span(&mut self, _label: u64) {}
@@ -345,29 +368,23 @@ impl Draws for SimplestDraws {
         self.weighted(p, forced)
     }
 
+    fn draw_string(
+        &mut self,
+        intervals: Arc<IntervalSet>,
+        min_size: usize,
+        max_size: usize,
+    ) -> Result<String, EngineError> {
+        let kind = StringChoice {
+            intervals,
+            min_size,
+            max_size,
+            grammar: None,
+        };
+        Ok(codepoints_to_string(&kind.simplest()?))
+    }
+
     fn generate_string(&mut self, spec: &StringSpec) -> Result<String, EngineError> {
-        match spec {
-            StringSpec::Text {
-                intervals,
-                min_size,
-                max_size,
-            } => {
-                let kind = StringChoice {
-                    intervals: Arc::clone(intervals),
-                    min_size: *min_size,
-                    max_size: *max_size,
-                    grammar: None,
-                };
-                Ok(codepoints_to_string(&kind.simplest()?))
-            }
-            StringSpec::Regex {
-                compiled,
-                fullmatch,
-            } => regex::generate_regex(self, compiled, *fullmatch),
-            StringSpec::Email | StringSpec::Url | StringSpec::Domain(_) => {
-                Err(only_from_a_test_case())
-            }
-        }
+        generate_string_from(self, spec)
     }
 
     fn start_span(&mut self, _label: u64) {}

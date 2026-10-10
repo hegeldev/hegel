@@ -7,6 +7,7 @@ use super::*;
 use crate::native::core::GenerationParameters;
 use crate::native::draws::{TextAlphabet, many_more};
 use crate::native::rng::EngineRng;
+use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 use rand::TryRng;
@@ -17,6 +18,10 @@ fn text_spec(min_size: usize, max_size: usize) -> StringSpec {
 
 fn regex_spec(pattern: &str) -> StringSpec {
     StringSpec::regex(pattern, true, None).unwrap()
+}
+
+fn letters() -> Arc<IntervalSet> {
+    Arc::new(IntervalSet::new(vec![(u32::from('a'), u32::from('z'))]).unwrap())
 }
 
 /// Every operation of the trait, drawn once each from `d`, as values
@@ -32,6 +37,7 @@ fn exercise<D: Draws>(d: &mut D, state: &mut ManyState) -> Vec<String> {
         d.weighted_against(0.3, 100, None).unwrap().to_string(),
         d.weighted_precise(0.3, None).unwrap().to_string(),
         d.many_more(state).unwrap().to_string(),
+        d.draw_string(letters(), 0, 4).unwrap(),
         d.generate_string(&text_spec(1, 6)).unwrap(),
         d.generate_string(&regex_spec("[a-z]{2,8}[0-9]?")).unwrap(),
     ]
@@ -168,25 +174,49 @@ fn an_rng_source_keeps_its_first_conclusion_and_ignores_spans() {
 }
 
 #[test]
-fn internet_strings_are_drawn_from_a_test_case_only() {
-    let mut rng = EngineRng::seeded(0);
-    let mut from_rng = RngDraws::new(&mut rng, GenerationParameters::default().integer);
-    let mut simplest = SimplestDraws::default();
-    for spec in [
+fn internet_strings_drawn_from_an_rng_are_the_ones_a_fresh_test_case_draws() {
+    let specs = [
         StringSpec::email(),
         StringSpec::url(),
         StringSpec::domain(20).unwrap(),
-    ] {
-        for err in [
-            from_rng.generate_string(&spec).unwrap_err(),
-            simplest.generate_string(&spec).unwrap_err(),
-        ] {
-            let EngineError::InvalidArgument(msg) = err else {
-                panic!("expected InvalidArgument, got {err:?}");
-            };
-            assert!(msg.contains("test case only"), "{msg}");
+    ];
+    for (i, spec) in specs.iter().enumerate() {
+        for seed in 0..10 {
+            let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+            let mut rng = EngineRng::seeded(seed);
+            let params = GenerationParameters::draw(&mut rng).unwrap();
+            let mut draws = RngDraws::new(&mut rng, params.integer);
+            let from_test_case = generate_string(&mut ntc, spec);
+            let from_rng = draws.generate_string(spec);
+            assert_eq!(
+                from_test_case.as_ref().ok(),
+                from_rng.as_ref().ok(),
+                "spec {i} seed {seed}"
+            );
+            assert_eq!(from_test_case.is_err(), from_rng.is_err());
+            assert_eq!(ntc.status(), draws.status());
         }
     }
+}
+
+#[test]
+fn the_simplest_source_draws_the_simplest_internet_strings() {
+    let mut draws = SimplestDraws::default();
+    assert_eq!(
+        draws
+            .generate_string(&StringSpec::domain(20).unwrap())
+            .unwrap(),
+        "a.COM"
+    );
+    assert_eq!(
+        draws.generate_string(&StringSpec::email()).unwrap(),
+        "0@a.COM"
+    );
+    assert_eq!(
+        draws.generate_string(&StringSpec::url()).unwrap(),
+        "http://a.COM/"
+    );
+    assert_eq!(draws.status(), None);
 }
 
 #[test]

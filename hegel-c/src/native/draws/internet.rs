@@ -4,12 +4,11 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::native::bignum::{BigInt, ToPrimitive};
-use crate::native::core::{EngineError, ManyState, NativeTestCase, Status};
+use crate::native::core::{EngineError, ManyState, Status};
 use crate::native::intervalsets::IntervalSet;
 use crate::sys::sync::Lazy;
 
-use super::many_more;
+use super::{Draws, many_more};
 use crate::control::{InternalError, hegel_internal_debug_assert, hegel_internal_unwrap};
 
 /// The IANA top-level-domain list, vendored from
@@ -68,8 +67,8 @@ static PRINTABLE_ASCII_INTERVALS: Lazy<Result<Arc<IntervalSet>, InternalError>> 
 static FRAGMENT_BYTE_INTERVALS: Lazy<Result<Arc<IntervalSet>, InternalError>> =
     Lazy::new(|| Ok(Arc::new(IntervalSet::new(vec![(0, 0xFF)])?)));
 
-fn mark_invalid(ntc: &mut NativeTestCase) -> Result<String, EngineError> {
-    ntc.conclude(Status::Invalid, None);
+fn mark_invalid<D: Draws>(d: &mut D) -> Result<String, EngineError> {
+    d.conclude(Status::Invalid);
     Err(EngineError::InvalidTestCase)
 }
 
@@ -133,32 +132,29 @@ static FULL_LENGTH_DOMAIN: Lazy<Result<DomainSpec, InternalError>> = Lazy::new(|
 /// start with `xn--` (RFC 5890 reserves these for punycode internationalised
 /// domain names — Hypothesis filters them too). `max_length` follows
 /// `DomainNameStrategy.max_length` (RFC 1035 §2.3.4): 4..=255.
-pub(crate) fn generate_domain(
-    ntc: &mut NativeTestCase,
+pub(crate) fn generate_domain<D: Draws>(
+    d: &mut D,
     spec: &DomainSpec,
 ) -> Result<String, EngineError> {
     const MAX_LABEL_LEN: usize = 63;
 
     let max_length = spec.max_length;
     let eligible = &spec.eligible_tlds;
-    let idx = ntc
-        .draw_integer(BigInt::from(0), BigInt::from(eligible.len() as i64 - 1))?
-        .to_i128()
-        .unwrap() as usize;
+    let idx = d.draw_integer_i64(0, eligible.len() as i64 - 1)? as usize;
     let tld = eligible[idx];
 
     let mut domain = String::with_capacity(tld.len());
     for c in tld.chars() {
-        let flip = ntc.weighted(0.5, None)?;
+        let flip = d.weighted(0.5, None)?;
         domain.push(if flip { c.to_ascii_lowercase() } else { c });
     }
 
     let mut state = ManyState::new(1, Some(126));
     loop {
-        if !many_more(ntc, &mut state)? {
+        if !many_more(d, &mut state)? {
             break;
         }
-        let label = draw_dns_label(ntc, MAX_LABEL_LEN)?;
+        let label = draw_dns_label(d, MAX_LABEL_LEN)?;
         if domain.len() + 1 + label.len() > max_length {
             continue;
         }
@@ -182,41 +178,32 @@ pub(crate) fn generate_domain(
 /// alphanumeric, and position 1 is too close to the start. We inline that
 /// constraint by coercing index 3 to alphanumeric whenever index 2 was
 /// drawn as a hyphen, producing the same alphabet without a retry loop.
-fn draw_dns_label(ntc: &mut NativeTestCase, max_len: usize) -> Result<String, EngineError> {
-    let len = ntc
-        .draw_integer(BigInt::from(1), BigInt::from(max_len as i64))?
-        .to_i128()
-        .unwrap() as usize;
+fn draw_dns_label<D: Draws>(d: &mut D, max_len: usize) -> Result<String, EngineError> {
+    let len = d.draw_integer_i64(1, max_len as i64)? as usize;
     let mut s = String::with_capacity(len);
-    s.push(draw_ascii_letter(ntc)?);
+    s.push(draw_ascii_letter(d)?);
     if len > 1 {
         for i in 1..(len - 1) {
             let avoid_dash = i == 3 && s.as_bytes()[2] == b'-';
             s.push(if avoid_dash {
-                draw_ascii_alnum(ntc)?
+                draw_ascii_alnum(d)?
             } else {
-                draw_ascii_alnum_or_hyphen(ntc)?
+                draw_ascii_alnum_or_hyphen(d)?
             });
         }
-        s.push(draw_ascii_alnum(ntc)?);
+        s.push(draw_ascii_alnum(d)?);
     }
     Ok(s)
 }
 
-fn draw_ascii_letter(ntc: &mut NativeTestCase) -> Result<char, EngineError> {
-    let i = ntc
-        .draw_integer(BigInt::from(0), BigInt::from(51))?
-        .to_i128()
-        .unwrap() as u8;
+fn draw_ascii_letter<D: Draws>(d: &mut D) -> Result<char, EngineError> {
+    let i = d.draw_integer_i64(0, 51)? as u8;
     let b = if i < 26 { b'a' + i } else { b'A' + (i - 26) };
     Ok(b as char)
 }
 
-fn draw_ascii_alnum(ntc: &mut NativeTestCase) -> Result<char, EngineError> {
-    let i = ntc
-        .draw_integer(BigInt::from(0), BigInt::from(61))?
-        .to_i128()
-        .unwrap() as u8;
+fn draw_ascii_alnum<D: Draws>(d: &mut D) -> Result<char, EngineError> {
+    let i = d.draw_integer_i64(0, 61)? as u8;
     let b = if i < 26 {
         b'a' + i
     } else if i < 52 {
@@ -227,11 +214,8 @@ fn draw_ascii_alnum(ntc: &mut NativeTestCase) -> Result<char, EngineError> {
     Ok(b as char)
 }
 
-fn draw_ascii_alnum_or_hyphen(ntc: &mut NativeTestCase) -> Result<char, EngineError> {
-    let i = ntc
-        .draw_integer(BigInt::from(0), BigInt::from(62))?
-        .to_i128()
-        .unwrap() as u8;
+fn draw_ascii_alnum_or_hyphen<D: Draws>(d: &mut D) -> Result<char, EngineError> {
+    let i = d.draw_integer_i64(0, 62)? as u8;
     let b = if i < 26 {
         b'a' + i
     } else if i < 52 {
@@ -252,14 +236,14 @@ fn draw_ascii_alnum_or_hyphen(ntc: &mut NativeTestCase) -> Result<char, EngineEr
 ///   - Filter: overall length ≤ 254 (RFC 5321 §4.5.3.1.3). Implemented by
 ///     marking the test case invalid when the filter fails — the engine
 ///     then retries with a different choice prefix.
-pub(crate) fn generate_email(ntc: &mut NativeTestCase) -> Result<String, EngineError> {
+pub(crate) fn generate_email<D: Draws>(d: &mut D) -> Result<String, EngineError> {
     let alphabet = Arc::clone(EMAIL_LOCAL_PART_INTERVALS.as_ref().map_err(Clone::clone)?);
-    let local = ntc.draw_string(alphabet, 1, 64)?;
+    let local = d.draw_string(alphabet, 1, 64)?;
     let domain_spec = FULL_LENGTH_DOMAIN.as_ref().map_err(Clone::clone)?;
-    let domain = generate_domain(ntc, domain_spec)?;
+    let domain = generate_domain(d, domain_spec)?;
     let address = format!("{local}@{domain}");
     if address.len() > 254 {
-        return mark_invalid(ntc);
+        return mark_invalid(d);
     }
     Ok(address)
 }
@@ -274,23 +258,18 @@ pub(crate) fn generate_email(ntc: &mut NativeTestCase) -> Result<String, EngineE
 ///   - `path` is the `/`-join of 0..N path components, each a url-encoded
 ///     `text(string.printable)` value.
 ///   - `fragment` is empty or `#…` of url-encoded chars in `0..=255`.
-pub(crate) fn generate_url(ntc: &mut NativeTestCase) -> Result<String, EngineError> {
-    let scheme = if ntc.weighted(0.5, None)? {
+pub(crate) fn generate_url<D: Draws>(d: &mut D) -> Result<String, EngineError> {
+    let scheme = if d.weighted(0.5, None)? {
         "https"
     } else {
         "http"
     };
 
     let domain_spec = FULL_LENGTH_DOMAIN.as_ref().map_err(Clone::clone)?;
-    let domain = generate_domain(ntc, domain_spec)?;
+    let domain = generate_domain(d, domain_spec)?;
 
-    let port = if ntc.weighted(0.5, None)? {
-        format!(
-            ":{}",
-            ntc.draw_integer(BigInt::from(1), BigInt::from(65535))?
-                .to_i128()
-                .unwrap()
-        )
+    let port = if d.weighted(0.5, None)? {
+        format!(":{}", d.draw_integer_i64(1, 65535)?)
     } else {
         String::new()
     };
@@ -298,19 +277,19 @@ pub(crate) fn generate_url(ntc: &mut NativeTestCase) -> Result<String, EngineErr
     let mut state = ManyState::new(0, None);
     let mut components: Vec<String> = Vec::new();
     loop {
-        if !many_more(ntc, &mut state)? {
+        if !many_more(d, &mut state)? {
             break;
         }
         let alphabet = Arc::clone(PRINTABLE_ASCII_INTERVALS.as_ref().map_err(Clone::clone)?);
-        let raw = ntc.draw_string(alphabet, 0, 100)?;
+        let raw = d.draw_string(alphabet, 0, 100)?;
         components.push(url_encode_path(&raw)?);
     }
     let path = components.join("/");
 
-    let fragment = if ntc.weighted(0.5, None)? {
+    let fragment = if d.weighted(0.5, None)? {
         let alphabet = Arc::clone(FRAGMENT_BYTE_INTERVALS.as_ref().map_err(Clone::clone)?);
-        let raw = ntc.draw_string(alphabet, 1, 100)?;
-        format!("#{}", url_encode_fragment(ntc, &raw)?)
+        let raw = d.draw_string(alphabet, 1, 100)?;
+        format!("#{}", url_encode_fragment(d, &raw)?)
     } else {
         String::new()
     };
@@ -351,10 +330,10 @@ fn url_encode_path(s: &str) -> Result<String, InternalError> {
 /// Apply Hypothesis's `_url_fragments_strategy` per-char rule: with
 /// probability 0.5 force `%XX`, otherwise `%XX` only if the char isn't in
 /// `FRAGMENT_SAFE_CHARACTERS`.
-fn url_encode_fragment(ntc: &mut NativeTestCase, s: &str) -> Result<String, EngineError> {
+fn url_encode_fragment<D: Draws>(d: &mut D, s: &str) -> Result<String, EngineError> {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
-        let force_encode = ntc.weighted(0.5, None)?;
+        let force_encode = d.weighted(0.5, None)?;
         if force_encode || !is_fragment_safe(c) {
             push_percent_encoded(&mut out, c)?;
         } else {
