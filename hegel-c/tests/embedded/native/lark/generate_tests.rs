@@ -1543,3 +1543,36 @@ fn rules_with_more_alternatives_than_a_mask_holds() {
     assert!(drawn.iter().all(|&i| i < 70));
     assert!(drawn.iter().any(|&i| i >= MASKED_ALTS));
 }
+
+#[test]
+fn an_ignorable_skipped_at_a_character_would_not_have_matched_there() {
+    let mut skipped = 0;
+    let mut tried = 0;
+    for (name, start) in [
+        ("json", "value"),
+        ("features", "start"),
+        ("verilog", "start"),
+        ("template_lark", "start"),
+    ] {
+        let spec = fixture_spec(name, start, 400, vec![]);
+        for ch in 0u8..128 {
+            let ch = char::from(ch);
+            let starters = spec.ignore_starters.at(ch);
+            for (n, &ignore) in spec.ignore.iter().enumerate() {
+                if Starters::has(starters, n) {
+                    tried += 1;
+                    continue;
+                }
+                skipped += 1;
+                assert_eq!(
+                    spec.lexer.match_terminal(ignore, &[ch], 0),
+                    Lexed::NoMatch,
+                    "{name} {ch:?} {n}"
+                );
+            }
+        }
+        assert_eq!(spec.ignore_starters.at('\u{3b1}'), u64::MAX);
+    }
+    assert!(skipped > 1000);
+    assert!(tried > 10);
+}

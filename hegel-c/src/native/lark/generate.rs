@@ -45,7 +45,7 @@
 use super::analysis::{Alt, Analysis, Node, NodeKind, analyze};
 use super::builder::{ImportSource, load_grammar};
 use super::compile::{Grammar, RuleId, TermId, compile};
-use super::lexsim::{Lexed, Lexer, Scan};
+use super::lexsim::{Lexed, Lexer, Scan, Starters};
 use super::{GrammarError, GrammarResult};
 use crate::control::{hegel_internal_assert, hegel_internal_unwrap};
 use crate::native::HashMap;
@@ -169,6 +169,9 @@ pub struct GrammarSpec {
     #[cfg(test)]
     terminal_names: Vec<String>,
     ignore: Vec<TermId>,
+    /// Which ignorables could start with each character, for
+    /// [`GrammarSpec::scans`] to try only those.
+    ignore_starters: Starters,
     ignore_cost: f64,
     lexer: Lexer,
     start: RuleId,
@@ -449,6 +452,7 @@ impl GrammarSpec {
         let ignore_cost = ignore_cost(&grammar.ignore, &term_typical);
         let analysis = analyze(&grammar, term_min, term_typical)?;
         let lexer = Lexer::new(&grammar.terminals);
+        let ignore_starters = Starters::new(&lexer, &grammar.ignore);
         let root = &analysis.rules[start];
         if options.max_size < root.min_size {
             return Err(GrammarError::new(format!(
@@ -479,6 +483,7 @@ impl GrammarSpec {
             #[cfg(test)]
             terminal_names: grammar.terminals.iter().map(|t| t.name.clone()).collect(),
             ignore: grammar.ignore,
+            ignore_starters,
             ignore_cost,
             lexer,
             start,
@@ -646,7 +651,8 @@ impl GrammarSpec {
     /// the benefit of the doubt. Where a token starts, its own pattern
     /// is not matched again: what it found on the token's text alone
     /// (see [`TokenScans::own`], in `findings`) is carried over the text
-    /// after it.
+    /// after it; and an ignorable that cannot start with the character
+    /// at a position (see [`Starters`]) is not matched there at all.
     fn scans(&self, text: &[char], tokens: &[Token], findings: &[TokenScans]) -> bool {
         let mut scratch = self.scratch.lock();
         let ScansScratch {
@@ -717,7 +723,11 @@ impl GrammarSpec {
                     break;
                 }
             }
-            for &ignore in &self.ignore {
+            let starters = self.ignore_starters.at(text[p]);
+            for (n, &ignore) in self.ignore.iter().enumerate() {
+                if !Starters::has(starters, n) {
+                    continue;
+                }
                 let lexed = starting
                     .filter(|&s| tokens[s].id == ignore)
                     .and_then(|s| carried(&findings[tokens[s].scans].own, s))

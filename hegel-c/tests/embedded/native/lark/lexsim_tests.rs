@@ -702,3 +702,46 @@ fn a_scan_follows_another_that_left_the_same_steps_open() {
     let basic = lexer.next_token_scan_knowing(&chars("c"), 0, id("C"), &own);
     assert!(basic.follows(&own));
 }
+
+#[test]
+fn starters_rule_terminals_out_by_their_first_character() {
+    let g = compiled("start: A B C D\nA: /a+/\nB: /b|c/\nC: /x/i\n%declare D\n");
+    let lexer = Lexer::new(&g.terminals);
+    let id = |name: &str| g.terminal_id(name).unwrap();
+    let (a, b, c, d) = (id("A"), id("B"), id("C"), id("D"));
+    let starters = Starters::new(&lexer, &[a, b, c, d]);
+    assert_eq!(starters.at('a'), 0b1101);
+    assert_eq!(starters.at('b'), 0b1110);
+    assert_eq!(starters.at('c'), 0b1110);
+    assert_eq!(starters.at('x'), 0b1100);
+    assert_eq!(starters.at('\u{e9}'), u64::MAX);
+    assert!(Starters::has(starters.at('a'), 0));
+    assert!(!Starters::has(starters.at('a'), 1));
+    assert!(Starters::has(starters.at('a'), 2));
+    assert!(Starters::has(starters.at('a'), 3));
+    for ch in 0u8..128 {
+        let ch = char::from(ch);
+        for (n, &term) in [a, b, c, d].iter().enumerate() {
+            if !Starters::has(starters.at(ch), n) {
+                assert_eq!(
+                    lexer.match_terminal(term, &[ch], 0),
+                    Lexed::NoMatch,
+                    "{ch:?} {n}"
+                );
+            }
+        }
+    }
+
+    let mut many = vec![b; 63];
+    many.push(a);
+    let starters = Starters::new(&lexer, &many);
+    assert_eq!(starters.at('a'), 1 << 63);
+    assert_eq!(starters.at('b'), (1 << 63) - 1);
+    assert!(Starters::has(starters.at('a'), 63));
+    assert!(Starters::has(starters.at('a'), 64));
+    assert!(!Starters::has(starters.at('b'), 63));
+    assert!(!Starters::has(starters.at('b'), 100));
+    let starters = Starters::new(&lexer, &vec![b; 70]);
+    assert_eq!(starters.at('a'), 0);
+    assert_eq!(starters.at('b'), u64::MAX);
+}

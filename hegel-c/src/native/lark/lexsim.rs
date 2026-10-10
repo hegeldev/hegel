@@ -36,6 +36,7 @@ use crate::native::re::matcher::{
 use crate::native::re::parser::{OpCode, ParsedPattern, SetItem, SubPattern};
 use crate::native::re::vm::{Program, Resume, has_nested_repeats};
 use crate::native::re::width::get_width;
+use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -873,6 +874,52 @@ impl Lexer {
             Lexed::Token(id, end) => Lexed::Token(id, pos + end),
             other => other,
         })
+    }
+}
+
+/// Which of a list of terminals a match could start with each ASCII
+/// character, so that a walk trying the whole list at a position skips
+/// the ones that cannot without asking each pattern (see
+/// [`TermPattern::may_start`]): bit `n` of a character's word stands for
+/// the `n`th terminal of the list, and the last bit for every terminal
+/// from the 64th on together.
+pub struct Starters {
+    ascii: Box<[u64; 128]>,
+}
+
+impl Starters {
+    /// The starters of the terminals `ids` under `lexer`; a terminal
+    /// without a pattern could start anywhere.
+    pub fn new(lexer: &Lexer, ids: &[TermId]) -> Starters {
+        let mut ascii = Box::new([0u64; 128]);
+        for (n, &id) in ids.iter().enumerate() {
+            let bit = 1u64 << n.min(63);
+            for (c, word) in ascii.iter_mut().enumerate() {
+                let c = char::from(c as u8);
+                if lexer.patterns[id]
+                    .as_ref()
+                    .is_none_or(|pattern| pattern.may_start(c))
+                {
+                    *word |= bit;
+                }
+            }
+        }
+        Starters { ascii }
+    }
+
+    /// The terminals that could match starting at `c`, as a bit for each
+    /// (see [`Starters::has`]); every one of them for a character beyond
+    /// ASCII.
+    #[inline]
+    pub fn at(&self, c: char) -> u64 {
+        self.ascii.get(c as usize).copied().unwrap_or(u64::MAX)
+    }
+
+    /// Whether the `n`th terminal is among the `word` [`at`](Self::at) a
+    /// character.
+    #[inline]
+    pub fn has(word: u64, n: usize) -> bool {
+        word >> n.min(63) & 1 == 1
     }
 }
 
