@@ -72,8 +72,12 @@ pub const DEFAULT_MAX_DEPTH: u32 = 200;
 
 /// How many distinct token texts a generation remembers the lexing of
 /// (see [`ReadingsCache::read_token`]) before the next draw forgets
-/// them all.
+/// them all, and how many its cache has room for from the start.
 const READINGS_CAPACITY: usize = 1 << 13;
+
+/// How many characters of remembered texts a generation's cache has room
+/// for from the start: a typical token text is a few characters long.
+const READINGS_TEXT_CAPACITY: usize = READINGS_CAPACITY * 16;
 
 /// The number of strings one draw discards, for being oversize (halving
 /// its target each time) or for not lexing back as their tokens, before
@@ -197,15 +201,15 @@ struct Buffers {
 }
 
 impl Buffers {
-    /// Empty buffers for a grammar of `terminals` terminals.
-    fn new(terminals: usize) -> Buffers {
+    /// Empty buffers.
+    fn new() -> Buffers {
         Buffers {
             text: Vec::new(),
             tokens: Vec::new(),
             budgets: Vec::new(),
             candidates: Vec::new(),
             chains: HashMap::default(),
-            readings: ReadingsCache::new(terminals),
+            readings: ReadingsCache::new(),
         }
     }
 
@@ -232,16 +236,14 @@ struct ScansScratch {
     observed: Vec<(TermId, usize, usize)>,
 }
 
-/// What the lexers found in each distinct text drawn for one terminal,
-/// by the text's hash.
-type Readings = HashTable<Remembered>;
-
-/// One text remembered, which lies at `start..end` of the cache's
-/// `texts`, with the text's hash, so that the table grows without
-/// hashing its texts again, and where in the cache's `findings` what
-/// the lexers found in it is.
+/// One text remembered as a token of terminal `id`, which lies at
+/// `start..end` of the cache's `texts`, with the hash it is held under
+/// (see [`text_hash`]), so that the table can grow without hashing its
+/// texts again, and where in the cache's `findings` what the lexers
+/// found in it is.
 struct Remembered {
     hash: u64,
+    id: TermId,
     start: usize,
     end: usize,
     scans: usize,
@@ -253,9 +255,13 @@ struct Remembered {
 /// generation's own (see [`Buffers`]), so that its tokens refer to the
 /// findings by index (see [`Token::scans`]) and the cache is emptied
 /// only between one draw and the next, when no token does (see
-/// [`ReadingsCache::forget_when_full`]).
+/// [`ReadingsCache::forget_when_full`]). The table and the vectors are
+/// made with room for [`READINGS_CAPACITY`] texts (of
+/// [`READINGS_TEXT_CAPACITY`] characters in all), so that filling the
+/// cache moves nothing it holds.
 struct ReadingsCache {
-    by_terminal: Vec<Readings>,
+    /// The remembered texts by terminal and text (see [`text_hash`]).
+    table: HashTable<Remembered>,
     /// The remembered texts, one after another, so that remembering a
     /// text allocates nothing of its own.
     texts: Vec<char>,
@@ -265,10 +271,12 @@ struct ReadingsCache {
     len: usize,
 }
 
-/// The hash of a text in [`ReadingsCache`]: of its characters two at a
-/// time, since the hasher takes a word per write.
-fn text_hash(text: &[char]) -> u64 {
+/// The hash a text drawn as a token of terminal `id` is held under in
+/// [`ReadingsCache`]: of the terminal, then of the text's characters two
+/// at a time, since the hasher takes a word per write.
+fn text_hash(id: TermId, text: &[char]) -> u64 {
     let mut hasher = FxHasher::default();
+    hasher.write_usize(id);
     let mut pairs = text.chunks_exact(2);
     for pair in &mut pairs {
         hasher.write_u64(u64::from(pair[0]) << 32 | u64::from(pair[1]));
@@ -280,12 +288,12 @@ fn text_hash(text: &[char]) -> u64 {
 }
 
 impl ReadingsCache {
-    /// An empty cache for a grammar of `terminals` terminals.
-    fn new(terminals: usize) -> ReadingsCache {
+    /// An empty cache with room for its capacity.
+    fn new() -> ReadingsCache {
         ReadingsCache {
-            by_terminal: (0..terminals).map(|_| HashTable::new()).collect(),
-            texts: Vec::new(),
-            findings: Vec::new(),
+            table: HashTable::with_capacity(READINGS_CAPACITY),
+            texts: Vec::with_capacity(READINGS_TEXT_CAPACITY),
+            findings: Vec::with_capacity(READINGS_CAPACITY),
             len: 0,
         }
     }
@@ -295,7 +303,7 @@ impl ReadingsCache {
     /// to the findings.
     fn forget_when_full(&mut self) {
         if self.len >= READINGS_CAPACITY {
-            self.by_terminal.iter_mut().for_each(HashTable::clear);
+            self.table.clear();
             self.texts.clear();
             self.findings.clear();
             self.len = 0;
@@ -306,8 +314,10 @@ impl ReadingsCache {
     /// [`text_hash`] is `hash`, as a token of terminal `id` is.
     fn find(&self, id: TermId, hash: u64, text: &[char]) -> Option<usize> {
         let texts = &self.texts;
-        self.by_terminal[id]
-            .find(hash, |held| texts[held.start..held.end] == *text)
+        self.table
+            .find(hash, |held| {
+                held.id == id && texts[held.start..held.end] == *text
+            })
             .map(|held| held.scans)
     }
 
@@ -316,21 +326,22 @@ impl ReadingsCache {
     /// before, if anything: where in `findings` it is.
     fn remember(&mut self, id: TermId, hash: u64, text: &[char], scans: TokenScans) -> usize {
         let Self {
-            by_terminal,
+            table,
             texts,
             findings,
             len,
         } = self;
         let at = findings.len();
         findings.push(scans);
-        let eq = |held: &Remembered| texts[held.start..held.end] == *text;
-        match by_terminal[id].entry(hash, eq, |held| held.hash) {
+        let eq = |held: &Remembered| held.id == id && texts[held.start..held.end] == *text;
+        match table.entry(hash, eq, |held| held.hash) {
             Entry::Occupied(mut held) => held.get_mut().scans = at,
             Entry::Vacant(slot) => {
                 let start = texts.len();
                 texts.extend_from_slice(text);
                 slot.insert(Remembered {
                     hash,
+                    id,
                     start,
                     end: texts.len(),
                     scans: at,
@@ -364,7 +375,7 @@ impl ReadingsCache {
     /// are, or, when it was not, the text's hash, for
     /// [`ReadingsCache::learn`].
     fn recall(&self, id: TermId, text: &[char]) -> Result<usize, u64> {
-        let hash = text_hash(text);
+        let hash = text_hash(id, text);
         self.find(id, hash, text).ok_or(hash)
     }
 
@@ -1055,11 +1066,7 @@ struct Generation<'s> {
 impl<'s> Generation<'s> {
     /// A generation working in the buffers `spec` has to spare.
     fn new(spec: &'s GrammarSpec, ignore_rate: f64) -> Generation<'s> {
-        let mut buffers = spec
-            .buffers
-            .lock()
-            .take()
-            .unwrap_or_else(|| Buffers::new(spec.terminals.len()));
+        let mut buffers = spec.buffers.lock().take().unwrap_or_else(Buffers::new);
         buffers.readings.forget_when_full();
         Generation {
             spec,

@@ -1073,16 +1073,14 @@ fn draws_work_in_the_buffers_the_spec_has_to_spare() {
     };
     let roomy = Buffers {
         text: Vec::with_capacity(1 << 16),
-        ..Buffers::new(spec.terminals.len())
+        ..Buffers::new()
     };
     let displaced = roomy.offer(&mut spec.buffers.lock()).unwrap();
     assert_eq!(displaced.text.capacity(), used);
     draw(&spec, 1).0.unwrap();
     assert!(spec.buffers.lock().as_ref().unwrap().text.capacity() >= 1 << 16);
 
-    let unkept = Buffers::new(spec.terminals.len())
-        .offer(&mut spec.buffers.lock())
-        .unwrap();
+    let unkept = Buffers::new().offer(&mut spec.buffers.lock()).unwrap();
     assert_eq!(unkept.text.capacity(), 0);
     assert!(spec.buffers.lock().as_ref().unwrap().text.capacity() >= 1 << 16);
 
@@ -1177,6 +1175,17 @@ fn a_generation_remembers_the_lexing_of_its_token_texts_until_a_draw_finds_too_m
             .collect()
     };
     let mut generation = Generation::new(&spec, 0.0);
+    let room = |readings: &ReadingsCache| {
+        (
+            readings.table.capacity(),
+            readings.texts.capacity(),
+            readings.findings.capacity(),
+        )
+    };
+    let fresh = room(&generation.readings);
+    assert!(fresh.0 >= READINGS_CAPACITY, "{fresh:?}");
+    assert_eq!(fresh.1, READINGS_TEXT_CAPACITY);
+    assert_eq!(fresh.2, READINGS_CAPACITY);
     let first = generation.readings.read_token(&spec, name, &text(0), None);
     assert_eq!(generation.readings.findings[first].reading, Reading::Itself);
     assert_eq!(generation.readings.len, 1);
@@ -1190,6 +1199,7 @@ fn a_generation_remembers_the_lexing_of_its_token_texts_until_a_draw_finds_too_m
         generation.readings.read_token(&spec, name, &text(n), None);
     }
     assert_eq!(generation.readings.len, READINGS_CAPACITY - 1);
+    assert_eq!(room(&generation.readings), fresh);
     generation.recycle();
     let mut generation = Generation::new(&spec, 0.0);
     assert_eq!(generation.readings.len, READINGS_CAPACITY - 1);
@@ -1210,6 +1220,8 @@ fn a_generation_remembers_the_lexing_of_its_token_texts_until_a_draw_finds_too_m
     assert_eq!(generation.readings.len, 0);
     assert!(generation.readings.findings.is_empty());
     assert!(generation.readings.texts.is_empty());
+    assert_eq!(generation.readings.table.len(), 0);
+    assert!(room(&generation.readings) >= fresh);
     let after = generation.readings.read_token(&spec, name, &text(0), None);
     assert_eq!(after, 0);
     assert_eq!(generation.readings.findings[after].reading, Reading::Itself);
@@ -1222,9 +1234,9 @@ fn a_text_remembered_again_takes_the_place_of_what_was_held() {
     let spec = grammar("start: NAME+\nNAME: /[a-z]+/\n");
     let name = tid(&spec, "NAME");
     let text: Vec<char> = "abc".chars().collect();
-    let mut readings = ReadingsCache::new(spec.terminals.len());
+    let mut readings = ReadingsCache::new();
     let first = readings.read_token(&spec, name, &text, None);
-    let hash = text_hash(&text);
+    let hash = text_hash(name, &text);
     let again = readings.remember(name, hash, &text, spec.scan_token(name, &text, None));
     assert_ne!(again, first);
     assert_eq!(readings.find(name, hash, &text), Some(again));
@@ -1232,7 +1244,34 @@ fn a_text_remembered_again_takes_the_place_of_what_was_held() {
     assert_eq!(readings.findings.len(), 2);
     assert_eq!(readings.texts, text);
     let shorter = &text[..2];
-    assert!(readings.find(name, text_hash(shorter), shorter).is_none());
+    assert!(
+        readings
+            .find(name, text_hash(name, shorter), shorter)
+            .is_none()
+    );
+}
+
+#[test]
+fn a_text_is_remembered_apart_for_each_terminal_drawn_as() {
+    let spec = grammar("start: NAME | ABC\nNAME: /[a-z]+/\nABC: \"abc\"\n");
+    let name = tid(&spec, "NAME");
+    let abc = tid(&spec, "ABC");
+    let text: Vec<char> = "abc".chars().collect();
+    let mut readings = ReadingsCache::new();
+    let as_name = readings.read_token(&spec, name, &text, None);
+    let as_abc = readings.read_token(&spec, abc, &text, None);
+    assert_ne!(as_name, as_abc);
+    assert_eq!(readings.len, 2);
+    assert_eq!(readings.findings.len(), 2);
+    assert_eq!(readings.texts.len(), 2 * text.len());
+    assert_eq!(readings.recall(name, &text), Ok(as_name));
+    assert_eq!(readings.recall(abc, &text), Ok(as_abc));
+    assert_eq!(readings.read_token(&spec, name, &text, None), as_name);
+    assert_eq!(readings.read_token(&spec, abc, &text, None), as_abc);
+    assert_eq!(readings.len, 2);
+    let hash = text_hash(name, &text);
+    assert_eq!(readings.find(abc, hash, &text), None);
+    assert_eq!(readings.find(name, text_hash(abc, &text), &text), None);
 }
 
 #[test]
@@ -1240,11 +1279,11 @@ fn a_text_recalled_is_what_was_learnt_of_it() {
     let spec = grammar("start: NAME+\nNAME: /[a-z]+/\n");
     let name = tid(&spec, "NAME");
     let text: Vec<char> = "abc".chars().collect();
-    let mut readings = ReadingsCache::new(spec.terminals.len());
+    let mut readings = ReadingsCache::new();
     let Err(hash) = readings.recall(name, &text) else {
         panic!("a text not drawn yet was recalled");
     };
-    assert_eq!(hash, text_hash(&text));
+    assert_eq!(hash, text_hash(name, &text));
     let learnt = readings.learn(&spec, name, hash, &text, None);
     assert_eq!(readings.findings[learnt].reading, Reading::Itself);
     assert_eq!(readings.recall(name, &text), Ok(learnt));
@@ -1281,11 +1320,12 @@ fn a_text_hashes_the_same_however_it_was_built_and_unlike_its_prefixes() {
     let texts: Vec<Vec<char>> = (0..6).map(|n| "abcde"[..n].chars().collect()).collect();
     for text in &texts {
         let copy = text.to_vec();
-        assert_eq!(text_hash(text), text_hash(&copy));
+        assert_eq!(text_hash(0, text), text_hash(0, &copy));
+        assert_ne!(text_hash(0, text), text_hash(1, text));
     }
     for (i, text) in texts.iter().enumerate() {
         for shorter in &texts[..i] {
-            assert_ne!(text_hash(text), text_hash(shorter));
+            assert_ne!(text_hash(0, text), text_hash(0, shorter));
         }
     }
 }
