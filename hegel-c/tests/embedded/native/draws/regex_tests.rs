@@ -1207,6 +1207,28 @@ fn reference_in_set(items: &[SetItem], flags: u32, alphabet: &Option<IntervalSet
 }
 
 #[test]
+fn category_in_agrees_with_in_category_from_the_category_alone_codepoint_up() {
+    use ChCode::*;
+    let cats = [Digit, NotDigit, Space, NotSpace, Word, NotWord];
+    for c in (CATEGORY_ALONE_FROM..=0x10FFFF).filter_map(char::from_u32) {
+        let category = unicodedata::general_category_char(c);
+        for cat in cats {
+            assert_eq!(
+                category_in(category, cat),
+                in_category(c, category, cat),
+                "{c:?} {cat:?}"
+            );
+        }
+    }
+    let differs = |c: char, cat: ChCode| {
+        let category = unicodedata::general_category_char(c);
+        category_in(category, cat) != in_category(c, category, cat)
+    };
+    assert!(differs('\t', Space));
+    assert!(differs('_', Word));
+}
+
+#[test]
 fn build_in_set_category_classes_match_a_lookup_per_character() {
     use ChCode::*;
     let alphabets = [
@@ -1243,6 +1265,17 @@ fn build_in_set_category_classes_match_a_lookup_per_character() {
                 SetItem::Literal('a' as u32),
                 SetItem::Category(Word),
                 SetItem::Category(Space),
+            ],
+            vec![SetItem::Literal('α' as u32), SetItem::Category(Word)],
+            vec![
+                SetItem::Negate,
+                SetItem::Literal('α' as u32),
+                SetItem::Category(Space),
+            ],
+            vec![
+                SetItem::Negate,
+                SetItem::Literal('α' as u32),
+                SetItem::Category(Word),
             ],
         ])
         .collect();

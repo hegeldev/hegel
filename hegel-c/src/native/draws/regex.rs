@@ -782,17 +782,13 @@ fn build_in_set(
             }
         }
         if !categories.is_empty() {
-            let cat_chars = gather_chars_by_category(alphabet, |c, category| {
-                categories.iter().any(|cat| in_category(c, category, *cat))
-            });
-            for c in cat_chars {
-                if ascii_only && (c as u32) >= 128 {
-                    continue;
-                }
-                if seen.is_empty() || !seen.contains(&c) {
-                    out.push(c);
-                }
-            }
+            out.extend(gather_category_class(
+                alphabet,
+                &categories,
+                false,
+                &seen,
+                ascii_only,
+            ));
         }
         Ok(InSet::Listed(out.into()))
     } else {
@@ -814,10 +810,8 @@ fn build_in_set(
             Ok(InSet::Listed(gather_chars(alphabet, allowed).into()))
         } else {
             Ok(InSet::Listed(
-                gather_chars_by_category(alphabet, |c, category| {
-                    allowed(c) && !cat_blocks.iter().any(|cat| in_category(c, category, *cat))
-                })
-                .into(),
+                gather_category_class(alphabet, &cat_blocks, true, &positive_set, ascii_only)
+                    .into(),
             ))
         }
     }
@@ -860,21 +854,62 @@ fn in_category_char(c: char, cat: ChCode) -> bool {
     in_category(c, unicodedata::general_category_char(c), cat)
 }
 
-/// Gather all characters in `alphabet` (or BMP-minus-surrogates when no
-/// alphabet is given) that satisfy `predicate`, which is also told each
-/// character's General Category. Walks the category runs instead of looking
-/// each character up, so a category-driven class costs a few instructions
-/// per codepoint rather than a table search.
-fn gather_chars_by_category<F: Fn(char, Category) -> bool>(
+/// Return whether the characters of General Category `category` are in the
+/// given CPython character category, going by the General Category alone.
+/// Agrees with [`in_category`] for every character from
+/// [`CATEGORY_ALONE_FROM`] up: the characters that function singles out
+/// (the control and Latin-1 whitespace, `_`) all lie below it.
+fn category_in(category: Category, cat: ChCode) -> bool {
+    let major = category.as_str().as_bytes()[0];
+    let letter_or_number = major == b'L' || major == b'N';
+    match cat {
+        ChCode::Digit => category == Category::Nd,
+        ChCode::NotDigit => category != Category::Nd,
+        ChCode::Space => major == b'Z',
+        ChCode::NotSpace => major != b'Z',
+        ChCode::Word => letter_or_number,
+        ChCode::NotWord => !letter_or_number,
+    }
+}
+
+/// The first codepoint from which [`in_category`] depends on a character's
+/// General Category alone, so that [`category_in`] answers for it.
+const CATEGORY_ALONE_FROM: u32 = 0x100;
+
+/// Gather, in codepoint order, the characters of `alphabet` (or of the BMP
+/// minus the surrogates when no alphabet is given) that are in any of
+/// `categories` — or, with `negate`, in none of them — leaving out
+/// `excluded` and, with `ascii_only`, everything beyond ASCII. Walks the
+/// General Category runs and decides each run at once by [`category_in`]
+/// when nothing distinguishes its characters: it starts at or after
+/// [`CATEGORY_ALONE_FROM`] and contains no excluded character. The runs
+/// below that, and those containing an exclusion, are checked character by
+/// character with [`in_category`].
+fn gather_category_class(
     alphabet: &Option<IntervalSet>,
-    predicate: F,
+    categories: &[ChCode],
+    negate: bool,
+    excluded: &HashSet<char>,
+    ascii_only: bool,
 ) -> Vec<char> {
+    let mut excluded: Vec<u32> = excluded.iter().map(|c| *c as u32).collect();
+    excluded.sort_unstable();
     let mut out = Vec::new();
     let mut gather = |lo: u32, hi: u32| {
+        let hi = if ascii_only { hi.min(127) } else { hi };
         for (start, end, category) in unicodedata::category_runs_in(lo, hi) {
-            for cp in start..=end {
-                if let Some(c) = char::from_u32(cp) {
-                    if predicate(c, category) {
+            let next_excluded = excluded.partition_point(|&cp| cp < start);
+            let uniform = start >= CATEGORY_ALONE_FROM
+                && excluded.get(next_excluded).is_none_or(|&cp| cp > end);
+            if uniform {
+                if categories.iter().any(|cat| category_in(category, *cat)) != negate {
+                    out.extend((start..=end).filter_map(char::from_u32));
+                }
+            } else {
+                for c in (start..=end).filter_map(char::from_u32) {
+                    if excluded.binary_search(&(c as u32)).is_err()
+                        && categories.iter().any(|cat| in_category(c, category, *cat)) != negate
+                    {
                         out.push(c);
                     }
                 }
