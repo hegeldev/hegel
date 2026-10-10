@@ -2543,10 +2543,10 @@ impl NativeTestCase {
         };
         self.draw_integer_as(
             kind,
-            |_, n| n.to_i64().filter(|v| (min_value..=max_value).contains(v)),
+            move |_, n| n.to_i64().filter(|v| (min_value..=max_value).contains(v)),
             |v| BigInt::from(*v),
-            |_, rng| biased_i64_sample(min_value, max_value, narrow.as_ref(), rng, params),
-            |_| true,
+            move |_, rng| biased_i64_sample(min_value, max_value, narrow.as_ref(), rng, params),
+            |_, _| true,
         )
     }
 
@@ -2569,18 +2569,34 @@ impl NativeTestCase {
             "Invalid range [{min_value:?}, {max_value:?}]"
         );
 
-        let kind = match i64::try_from(max_value) {
-            Ok(max) => IntegerChoice::small(min_value as i64, max, 0),
-            Err(_) => IntegerChoice::new(min_value, max_value, 0u64),
+        let Ok(max) = i64::try_from(max_value) else {
+            return self.draw_integer_uniform_wide(min_value, max_value);
         };
-        let small = kind.is_small();
-
         self.draw_integer_as(
-            kind,
-            |_, n| n.to_u64().filter(|v| (min_value..=max_value).contains(v)),
+            IntegerChoice::small(min_value as i64, max, 0),
+            move |_, n| n.to_u64().filter(|v| (min_value..=max_value).contains(v)),
             |v| BigInt::from(*v),
-            |_, rng| Ok(uniform_u64_inclusive(min_value, max_value, rng)),
-            move |_| small,
+            move |_, rng| Ok(uniform_u64_inclusive(min_value, max_value, rng)),
+            |_, _| true,
+        )
+    }
+
+    /// [`Self::draw_integer_uniform`] for a range whose upper bound does
+    /// not fit `i64`, whose kind is held boxed. Kept out of line so that
+    /// the draws within a machine word, which nearly all are, build their
+    /// kind in place.
+    #[inline(never)]
+    fn draw_integer_uniform_wide(
+        &mut self,
+        min_value: u64,
+        max_value: u64,
+    ) -> Result<u64, EngineError> {
+        self.draw_integer_as(
+            IntegerChoice::new(min_value, max_value, 0u64),
+            move |_, n| n.to_u64().filter(|v| (min_value..=max_value).contains(v)),
+            |v| BigInt::from(*v),
+            move |_, rng| Ok(uniform_u64_inclusive(min_value, max_value, rng)),
+            |_, _| false,
         )
     }
 
@@ -2619,7 +2635,7 @@ impl NativeTestCase {
             |kind, n| kind.validate(n).then(|| n.clone()),
             BigInt::clone,
             sample,
-            ChoiceNode::owns_no_heap,
+            |kind, value| kind.is_small() && value.is_inline(),
         )
     }
 
@@ -2629,16 +2645,16 @@ impl NativeTestCase {
     /// the choice against the prefix, reading a stored integer with
     /// `narrow` (which answers `None` for a value `kind` does not admit),
     /// falling back to `sample` for fresh generation, then record and
-    /// observe it. `plain` answers whether the recorded node owns no heap
-    /// memory (a draw within a native width knows without looking at the
-    /// node), for [`Self::plain`].
+    /// observe it. `plain` answers, from the kind and the recorded value,
+    /// whether the recorded node owns no heap memory (a draw within a
+    /// native width knows without looking at either), for [`Self::plain`].
     fn draw_integer_as<V>(
         &mut self,
         kind: IntegerChoice,
         narrow: impl Fn(&IntegerChoice, &BigInt) -> Option<V>,
         widen: impl FnOnce(&V) -> BigInt,
         sample: impl FnOnce(&IntegerChoice, &mut EngineRng) -> Result<V, InternalError>,
-        plain: impl FnOnce(&ChoiceNode) -> bool,
+        plain: impl FnOnce(&IntegerChoice, &BigInt) -> bool,
     ) -> Result<V, EngineError> {
         let (v, was_forced) = self.resolve_choice(
             || {
@@ -2665,9 +2681,9 @@ impl NativeTestCase {
             obs.draw_integer(&recorded, was_forced);
         }
 
-        let node = ChoiceNode::integer(kind, recorded, was_forced);
-        self.plain &= plain(&node);
-        self.nodes.push(node);
+        self.plain &= plain(&kind, &recorded);
+        self.nodes
+            .push(ChoiceNode::integer(kind, recorded, was_forced));
 
         Ok(v)
     }
