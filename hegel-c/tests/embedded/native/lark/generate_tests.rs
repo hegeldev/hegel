@@ -594,7 +594,7 @@ fn a_reading_is_how_the_basic_lexer_reads_the_text_afresh() {
             for token in &generation.tokens {
                 let text = &generation.text[token.start..token.end];
                 let mut fresh = Vec::new();
-                let lexed = spec.lex_all(text, &[], &mut fresh);
+                let lexed = spec.lex_all(text, &[], &[], &mut fresh);
                 let ids: Vec<TermId> = fresh.iter().map(|&(g, _, _)| g).collect();
                 read += 1;
                 match token.reading(&generation.readings.findings) {

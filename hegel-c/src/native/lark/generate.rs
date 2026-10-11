@@ -238,7 +238,8 @@ impl Buffers {
 /// The vectors [`GrammarSpec::scans`] works in: where each token lies,
 /// which tokens the parser needs, the positions the lexer can reach and
 /// the terminals tried at the position being walked; and the tokens
-/// [`GrammarSpec::lex_all`] observes, with their extents.
+/// [`GrammarSpec::lex_all`] observes, with their extents, and what
+/// [`GrammarSpec::basic_fit`] hands it and holds them against.
 #[derive(Default)]
 struct ScansScratch {
     bounds: Vec<(usize, usize)>,
@@ -246,6 +247,8 @@ struct ScansScratch {
     reachable: Vec<bool>,
     tried: Vec<(TermId, Lexed)>,
     observed: Vec<(TermId, usize, usize)>,
+    known: Vec<(usize, usize, usize)>,
+    regions: Vec<(usize, usize, usize)>,
 }
 
 /// One text remembered as a token of terminal `id`, which lies at
@@ -608,17 +611,19 @@ impl GrammarSpec {
 
     /// The tokens the basic lexer reads `text` as, with their extents,
     /// into `observed`. `known` lists, in order, where the tokens that
-    /// make up `text` start, how long each is and what the lexer found at
-    /// its start on its own, for the lexer to carry over where it arrives
-    /// at such a start (see [`Lexer::extend`]).
+    /// make up `text` start, how long each is and where in `findings`
+    /// what the lexer found at its start on its own is, for the lexer to
+    /// carry over where it arrives at such a start (see
+    /// [`Lexer::extend`]).
     fn lex_all(
         &self,
         text: &[char],
-        known: &[(usize, usize, &Scan)],
+        known: &[(usize, usize, usize)],
+        findings: &[TokenScans],
         observed: &mut Vec<(TermId, usize, usize)>,
     ) -> Result<(), Lexed> {
         observed.clear();
-        self.lex_from(text, 0, known, observed)
+        self.lex_from(text, 0, known, findings, observed)
     }
 
     /// [`lex_all`](Self::lex_all) from `pos` on, after the tokens
@@ -627,7 +632,8 @@ impl GrammarSpec {
         &self,
         text: &[char],
         mut pos: usize,
-        known: &[(usize, usize, &Scan)],
+        known: &[(usize, usize, usize)],
+        findings: &[TokenScans],
         observed: &mut Vec<(TermId, usize, usize)>,
     ) -> Result<(), Lexed> {
         let mut k = 0;
@@ -636,8 +642,9 @@ impl GrammarSpec {
                 k += 1;
             }
             let lexed = match known.get(k) {
-                Some(&(start, len, scan)) if start == pos => {
-                    self.lexer.extend(scan, text, pos, len, true)
+                Some(&(start, len, scans)) if start == pos => {
+                    self.lexer
+                        .extend(&findings[scans].basic, text, pos, len, true)
                 }
                 _ => None,
             }
@@ -699,7 +706,7 @@ impl GrammarSpec {
             got.push((read, 0, end));
             pos = end;
         }
-        if self.lex_from(text, pos, &[], got).is_err() {
+        if self.lex_from(text, pos, &[], &[], got).is_err() {
             return Reading::Opaque;
         }
         if got.len() == 1 && self.same_type(id, got[0].0) {
@@ -734,7 +741,7 @@ impl GrammarSpec {
             significant,
             reachable,
             tried,
-            observed: _,
+            ..
         } = &mut *scratch;
         bounds.clear();
         let mut pos = 0;
@@ -893,25 +900,30 @@ impl GrammarSpec {
         {
             return Fit::Exact;
         }
-        let mut known = Vec::with_capacity(tokens.len());
+        let mut scratch = self.scratch.lock();
+        let ScansScratch {
+            observed,
+            known,
+            regions,
+            ..
+        } = &mut *scratch;
+        known.clear();
         let mut start = 0;
         for token in tokens {
-            known.push((start, token.len(), &findings[token.scans].basic));
+            known.push((start, token.len(), token.scans));
             start += token.len();
         }
-        let mut scratch = self.scratch.lock();
-        let observed = &mut scratch.observed;
-        match self.lex_all(text, &known, observed) {
+        match self.lex_all(text, known, findings, observed) {
             Ok(()) => {}
             Err(Lexed::NoMatch) => return Fit::Wrong,
             Err(_) => return Fit::Exact,
         }
-        let mut regions = Vec::with_capacity(tokens.len());
+        regions.clear();
         let mut pos = 0;
-        for token in tokens {
+        for (t, token) in tokens.iter().enumerate() {
             let end = pos + token.len();
             if !(token.lexable(findings) && self.is_ignore(token.id)) {
-                regions.push((pos, end, token));
+                regions.push((pos, end, t));
             }
             pos = end;
         }
@@ -925,7 +937,7 @@ impl GrammarSpec {
         while i < observed.len() {
             let (got, start, end) = observed[i];
             let mut hits = overlapping(start, end);
-            let Some(&(s, e, token)) = hits.next() else {
+            let Some(&(s, e, t)) = hits.next() else {
                 if !self.is_ignore(got) {
                     fit = Fit::Retyped;
                 }
@@ -935,6 +947,7 @@ impl GrammarSpec {
             if hits.next().is_some() {
                 return Fit::Wrong;
             }
+            let token = &tokens[t];
             if self.is_ignore(token.id) {
                 while i < observed.len() && observed[i].1 < e {
                     if overlapping(observed[i].1, observed[i].2).nth(1).is_some() {
