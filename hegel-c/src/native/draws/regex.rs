@@ -613,8 +613,8 @@ fn generate_op<'a, D: Draws>(
             let c = codepoint_to_char(*cp)?;
             if state.flags & SRE_FLAG_IGNORECASE != 0 {
                 if let Some(sw) = char_swapcase(c) {
-                    let which = d.draw_integer_i64(0, 1)?;
-                    let pick = if which == 0 { c } else { sw };
+                    let swap = d.weighted_against(0.5, SWAP_CASE_THRESHOLD, None)?;
+                    let pick = if swap { sw } else { c };
                     if !alphabet_allows(alphabet, pick) {
                         return Err(mark_invalid(d));
                     }
@@ -1231,6 +1231,10 @@ fn emit_from_set<D: Draws>(d: &mut D, set: &InSet, out: &mut Vec<char>) -> Resul
         }
     }
 }
+
+/// The byte the engine compares against for the coin flip that picks a
+/// case-folded literal's other case (see [`boolean_threshold`]).
+const SWAP_CASE_THRESHOLD: u8 = boolean_threshold(0.5);
 
 /// How likely a character drawn from a set of more than 256 is one of
 /// its first 256, with the byte the engine compares against for it (see

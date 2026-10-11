@@ -742,7 +742,7 @@ fn generate_op_empty_in_set_marks_invalid() {
 
 #[test]
 fn generate_op_ignorecase_literal_outside_alphabet_marks_invalid() {
-    let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::Integer(BigInt::from(0))], None, None);
+    let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::Boolean(false)], None, None);
     let cache = Mutex::new(HashMap::default());
     let char_cache = Mutex::new(HashMap::default());
     let mut state = ignorecase_state(&cache, &char_cache);
