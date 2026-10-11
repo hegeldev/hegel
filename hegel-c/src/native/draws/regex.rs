@@ -96,6 +96,9 @@ pub struct CompiledRegex {
     pattern: String,
     parsed: ParsedPattern,
     alphabet: Option<IntervalSet>,
+    /// The one string the pattern matches whole, when it is a literal
+    /// (see [`literal_of`]).
+    literal: Option<Box<[char]>>,
     in_cache: Mutex<HashMap<InKey, InSet>>,
     char_cache: Mutex<HashMap<CharKey, Arc<[char]>>>,
 }
@@ -121,10 +124,12 @@ impl CompiledRegex {
         let parsed = parse_pattern(pattern, 0).map_err(|e| {
             EngineError::InvalidArgument(format!("invalid regex pattern {pattern:?}: {e}"))
         })?;
+        let literal = literal_of(&parsed, &alphabet);
         Ok(CompiledRegex {
             pattern: pattern.to_string(),
             parsed,
             alphabet,
+            literal,
             in_cache: Mutex::new(HashMap::default()),
             char_cache: Mutex::new(HashMap::default()),
         })
@@ -250,6 +255,12 @@ pub(crate) fn generate_regex_into<D: Draws>(
     out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
     const MAX_ATTEMPTS: usize = 5;
+    if fullmatch {
+        if let Some(literal) = &re.literal {
+            out.extend_from_slice(literal);
+            return Ok(());
+        }
+    }
     let base = out.len();
     for _ in 0..MAX_ATTEMPTS {
         match generate_regex_attempt(d, re, fullmatch, out, base) {
@@ -262,6 +273,25 @@ pub(crate) fn generate_regex_into<D: Draws>(
         }
     }
     Err(mark_invalid(d))
+}
+
+/// The text a pattern of literal characters alone, under no case
+/// folding, matches whole, when every character is in the alphabet: what
+/// a whole-match draw from it emits without walking it. `None` for any
+/// other pattern, which is walked.
+fn literal_of(parsed: &ParsedPattern, alphabet: &Option<IntervalSet>) -> Option<Box<[char]>> {
+    if parsed.flags & SRE_FLAG_IGNORECASE != 0 {
+        return None;
+    }
+    parsed
+        .pattern
+        .data
+        .iter()
+        .map(|op| match op {
+            OpCode::Literal(cp) => char::from_u32(*cp).filter(|&c| alphabet_allows(alphabet, c)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// One generation attempt, appending to `out` from `base` on. Returns
@@ -1245,9 +1275,16 @@ fn codepoint_to_char(cp: u32) -> Result<char, InternalError> {
 /// as equal to `'ß'` — Hypothesis guards this with an explicit `re.match`
 /// check before offering the swapped form).
 fn char_swapcase(c: char) -> Option<char> {
-    match swapcase_chars(c).as_slice() {
-        [sw] if *sw != c => Some(*sw),
-        _ => None,
+    fn single(mut swapped: impl Iterator<Item = char>, c: char) -> Option<char> {
+        let first = swapped.next()?;
+        (swapped.next().is_none() && first != c).then_some(first)
+    }
+    if c.is_lowercase() {
+        single(c.to_uppercase(), c)
+    } else if c.is_uppercase() {
+        single(c.to_lowercase(), c)
+    } else {
+        None
     }
 }
 

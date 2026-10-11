@@ -1644,3 +1644,33 @@ fn ensuring_the_simplest_string_of_a_kind_under_no_regex_is_an_internal_error() 
         Err(EngineError::Internal(_))
     ));
 }
+
+/// A pattern of literal characters alone is emitted as the text it
+/// matches without a walk, so drawing it takes nothing from the source;
+/// any case folding, other construct or character outside the alphabet
+/// leaves the pattern to the walk.
+#[test]
+fn a_literal_pattern_is_emitted_without_a_walk() {
+    let compiled = |pattern: &str, alphabet: Option<IntervalSet>| {
+        CompiledRegex::compile(pattern, alphabet).unwrap()
+    };
+    assert_eq!(
+        compiled("abc", None).literal.as_deref(),
+        Some(&chars("abc")[..])
+    );
+    assert_eq!(compiled("", None).literal.as_deref(), Some(&[][..]));
+    assert!(compiled("(?i)abc", None).literal.is_none());
+    assert!(compiled("a.c", None).literal.is_none());
+    let letters = IntervalSet::new(vec![(u32::from('a'), u32::from('b'))]).unwrap();
+    assert!(compiled("abc", Some(letters)).literal.is_none());
+
+    let re = compiled("abc", None);
+    let mut rng = EngineRng::seeded(3);
+    let mut draws = RngDraws::new(&mut rng, Default::default());
+    assert_eq!(generate_regex(&mut draws, &re, true).unwrap(), "abc");
+    assert_eq!(
+        rng.next_byte(),
+        EngineRng::seeded(3).next_byte(),
+        "the draw consumed randomness"
+    );
+}

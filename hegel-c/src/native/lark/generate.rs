@@ -206,6 +206,7 @@ struct Buffers {
     tokens: Vec<Token>,
     budgets: Vec<u64>,
     candidates: Vec<TermId>,
+    chain_candidates: Vec<TermId>,
     chains: HashMap<(TermId, TermId), (u32, u32)>,
     readings: ReadingsCache,
 }
@@ -218,6 +219,7 @@ impl Buffers {
             tokens: Vec::new(),
             budgets: Vec::new(),
             candidates: Vec::new(),
+            chain_candidates: Vec::new(),
             chains: HashMap::default(),
             readings: ReadingsCache::new(),
         }
@@ -1139,6 +1141,10 @@ struct Generation<'s> {
     /// Scratch for [`Generation::insert_ignore`]: the ignorables still
     /// worth drawing.
     candidates: Vec<TermId>,
+    /// Scratch for [`Generation::ignore_chain`]: the ignorables that
+    /// could end the last one's match, for each chain being drawn,
+    /// innermost last.
+    chain_candidates: Vec<TermId>,
     /// How often each ignorable drawn to end another's match in a chain
     /// (see [`Generation::ignore_chain`]) has failed and succeeded at
     /// it, by the pair of terminals.
@@ -1164,6 +1170,7 @@ impl<'s> Generation<'s> {
             unsettled: false,
             budgets: buffers.budgets,
             candidates: buffers.candidates,
+            chain_candidates: buffers.chain_candidates,
             chains: buffers.chains,
             readings: buffers.readings,
         }
@@ -1177,6 +1184,7 @@ impl<'s> Generation<'s> {
             mut tokens,
             mut budgets,
             mut candidates,
+            mut chain_candidates,
             mut chains,
             readings,
             ..
@@ -1185,12 +1193,14 @@ impl<'s> Generation<'s> {
         tokens.clear();
         budgets.clear();
         candidates.clear();
+        chain_candidates.clear();
         chains.clear();
         let buffers = Buffers {
             text,
             tokens,
             budgets,
             candidates,
+            chain_candidates,
             chains,
             readings,
         };
@@ -1847,19 +1857,41 @@ impl Generation<'_> {
         depth: u32,
         draws: &mut u32,
     ) -> Result<Fit, Step> {
+        let prev = self.before(pending).map(|prev| (prev.id, prev.scans));
+        let base = self.chain_candidates.len();
+        for &id in &self.spec.ignore {
+            let stoppable = prev.is_none_or(|(_, scans)| {
+                let own = &self.readings.findings[scans].own;
+                self.spec.lexer.can_stop(own, id)
+            });
+            if stoppable {
+                self.chain_candidates.push(id);
+            }
+        }
+        let fit = self.ignore_chain_from(d, base, from, pending, depth, draws);
+        self.chain_candidates.truncate(base);
+        fit
+    }
+
+    /// [`Generation::ignore_chain`] over the candidates from `base` on
+    /// in `chain_candidates`.
+    fn ignore_chain_from<D: Draws>(
+        &mut self,
+        d: &mut D,
+        base: usize,
+        from: usize,
+        pending: usize,
+        depth: u32,
+        draws: &mut u32,
+    ) -> Result<Fit, Step> {
+        let prev = self.before(pending).map(|prev| prev.id);
         while *draws > 0 {
-            let fitting = |this: &Self, id: TermId| {
-                this.before(pending).is_none_or(|prev| {
-                    let own = &this.readings.findings[prev.scans].own;
-                    this.spec.lexer.can_stop(own, id) && this.hopeful(prev.id, id)
-                })
-            };
+            let hopeful = |this: &Self, id: TermId| prev.is_none_or(|prev| this.hopeful(prev, id));
             let candidates = || {
-                self.spec
-                    .ignore
+                self.chain_candidates[base..]
                     .iter()
                     .copied()
-                    .filter(|&id| fitting(self, id))
+                    .filter(|&id| hopeful(self, id))
             };
             let count = candidates().count();
             if count == 0 {
