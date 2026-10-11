@@ -1185,6 +1185,69 @@ fn chain_pairs_that_keep_failing_are_given_up_on() {
 }
 
 #[test]
+fn a_chained_ignorable_the_one_before_it_swallows_the_next_token_through_is_not_checked() {
+    let spec = grammar(
+        "start: NUM+\nNUM: /[0-9]/\nWS: / +/\nNL: /\\n/\nCOMMENT: /#[^\\n]*/\n\
+         %ignore WS\n%ignore NL\n%ignore COMMENT\n",
+    );
+    let (num, ws, nl, comment) = (
+        tid(&spec, "NUM"),
+        tid(&spec, "WS"),
+        tid(&spec, "NL"),
+        tid(&spec, "COMMENT"),
+    );
+    let mut generation = Generation::new(&spec, 0.0);
+    let push = |generation: &mut Generation, id: TermId, text: &str| {
+        let chars: Vec<char> = text.chars().collect();
+        let scans = generation.readings.read_token(&spec, id, &chars, None);
+        let token = generation.token(id, generation.text.len(), scans);
+        generation.text.extend(chars);
+        generation.tokens.push(Token {
+            end: generation.text.len(),
+            ..token
+        });
+    };
+    push(&mut generation, num, "1");
+    push(&mut generation, comment, "#");
+    push(&mut generation, num, "2");
+    let text = |generation: &Generation| generation.text.iter().collect::<String>();
+    let mut d = SimplestDraws::default();
+    assert!(matches!(
+        generation.draw_ignore(&mut d, ws, 0, 1, 1).ok().unwrap(),
+        Drawn::Swallowed
+    ));
+    assert_eq!(text(&generation), "1# 2");
+    assert_eq!(generation.tokens.len(), 4);
+    generation.remove(1);
+    assert!(matches!(
+        generation.draw_ignore(&mut d, nl, 0, 1, 1).ok().unwrap(),
+        Drawn::Fits(fit) if fit > Fit::Wrong
+    ));
+    assert_eq!(text(&generation), "1#\n2");
+    generation.remove(1);
+    assert!(matches!(
+        generation.draw_ignore(&mut d, ws, 0, 1, 0).ok().unwrap(),
+        Drawn::Fits(Fit::Wrong)
+    ));
+    assert_eq!(text(&generation), "1# 2");
+    generation.remove(1);
+    generation.tokens[2].droppable = true;
+    assert!(matches!(
+        generation.draw_ignore(&mut d, ws, 0, 1, 1).ok().unwrap(),
+        Drawn::Fits(_)
+    ));
+    generation.remove(1);
+    generation.tokens.pop();
+    generation.text.pop();
+    push(&mut generation, ws, " ");
+    assert!(matches!(
+        generation.draw_ignore(&mut d, ws, 0, 1, 1).ok().unwrap(),
+        Drawn::Fits(_)
+    ));
+    assert_eq!(text(&generation), "1#  ");
+}
+
+#[test]
 fn a_generation_remembers_the_lexing_of_its_token_texts_until_a_draw_finds_too_many() {
     let spec = grammar("start: NAME+\nNAME: /[a-z]+/\n");
     let name = tid(&spec, "NAME");

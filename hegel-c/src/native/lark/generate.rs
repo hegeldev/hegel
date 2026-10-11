@@ -993,6 +993,21 @@ impl GrammarSpec {
     }
 }
 
+/// What drawing one ignorable into the string came to.
+enum Drawn {
+    /// It is in the string, and the lexer reads the tokens around it
+    /// back this well.
+    Fits(Fit),
+    /// It alone would have taken the string past the size cap, and was
+    /// left out.
+    Oversize,
+    /// It is in the string, but the ignorable before it, matched on
+    /// over it, still takes all of the token the chain is to free (see
+    /// [`Generation::swallowed`]), so the lexer cannot read the tokens
+    /// around it back, and was not asked.
+    Swallowed,
+}
+
 /// The outcome of placing one ignorable (and any chain after it).
 enum Placement {
     /// The tokens are in the string and the lexer reads them this well.
@@ -1947,12 +1962,24 @@ impl Generation<'_> {
         draws: &mut u32,
     ) -> Result<Placement, Step> {
         let prev = self.before(pending).map(|prev| prev.id);
-        let fit = self.draw_ignore(d, id, from, pending)?;
+        let drawn = self.draw_ignore(d, id, from, pending, depth)?;
         let pair = prev.filter(|_| depth > 0).map(|prev| (prev, id));
         if let Some(pair) = pair {
             self.chains.entry(pair).or_default().0 += 1;
         }
-        let placement = self.place_drawn(d, id, fit, from, pending, depth, draws)?;
+        let placement = match drawn {
+            Drawn::Oversize => Placement::Rejected {
+                id,
+                lexable: false,
+                oversize: true,
+            },
+            Drawn::Fits(fit) if fit > Fit::Wrong => {
+                self.unsettled |= fit < Fit::Settled;
+                Placement::Placed(fit)
+            }
+            Drawn::Fits(_) => self.chain_or_remove(d, from, pending, depth, draws, false)?,
+            Drawn::Swallowed => self.chain_or_remove(d, from, pending, depth, draws, true)?,
+        };
         if let (Some(pair), Placement::Placed(_)) = (pair, &placement) {
             let (failed, succeeded) = self.chains.entry(pair).or_default();
             *failed -= 1;
@@ -1961,34 +1988,27 @@ impl Generation<'_> {
         Ok(placement)
     }
 
-    /// Keep or remove the ignorable of terminal `id` just inserted
-    /// before the last `pending` tokens, which the lexer reads back this
-    /// well with its neighbours, or `None` when it was too long for the
-    /// string and never inserted.
-    fn place_drawn<D: Draws>(
+    /// Chain further ignorables after the one just inserted before the
+    /// last `pending` tokens, which the lexer does not read back with
+    /// its neighbours, when it is read into the token after it but not
+    /// into the tokens before it, or remove it. That the token after it
+    /// is the trouble is already known when the ignorable before it
+    /// `swallowed` that token (see [`Drawn::Swallowed`]).
+    fn chain_or_remove<D: Draws>(
         &mut self,
         d: &mut D,
-        id: TermId,
-        fit: Option<Fit>,
         from: usize,
         pending: usize,
         depth: u32,
         draws: &mut u32,
+        swallowed: bool,
     ) -> Result<Placement, Step> {
-        let Some(fit) = fit else {
-            return Ok(Placement::Rejected {
-                id,
-                lexable: false,
-                oversize: true,
-            });
-        };
-        if fit > Fit::Wrong {
-            self.unsettled |= fit < Fit::Settled;
-            return Ok(Placement::Placed(fit));
-        }
         if depth < IGNORE_CHAIN && *draws > 0 {
-            let (text, tokens) = self.window(from, pending);
-            if self.spec.fit(text, tokens, &self.readings.findings) > Fit::Wrong {
+            let after_only = swallowed || {
+                let (text, tokens) = self.window(from, pending);
+                self.spec.fit(text, tokens, &self.readings.findings) > Fit::Wrong
+            };
+            if after_only {
                 let fit = self.ignore_chain(d, from, pending, depth + 1, draws)?;
                 if fit > Fit::Wrong {
                     return Ok(Placement::Placed(fit));
@@ -2005,15 +2025,20 @@ impl Generation<'_> {
 
     /// Draw an ignorable of terminal `id` into the string before the
     /// last `pending` tokens: how the lexer reads the tokens from `from`
-    /// on with it in place, or `None` when it alone would take the
-    /// string past the size cap and is left out.
+    /// on with it in place, unless that is known without looking (see
+    /// [`Drawn`]). In a chain (at a `depth` above zero), the ignorable
+    /// before it was drawn to be read into the token after it, and is
+    /// matched on over the new text first: when it still takes all of a
+    /// token the parser needs, the new text has not freed that token,
+    /// and the lexing check with the neighbours is spared.
     fn draw_ignore<D: Draws>(
         &mut self,
         d: &mut D,
         id: TermId,
         from: usize,
         pending: usize,
-    ) -> Result<Option<Fit>, Step> {
+        depth: u32,
+    ) -> Result<Drawn, Step> {
         let at = self.tokens.len() - pending;
         let start = self
             .tokens
@@ -2027,12 +2052,13 @@ impl Generation<'_> {
         let len = self.text.len() - drawn;
         if !self.fits(start + len) {
             self.text.truncate(drawn);
-            return Ok(None);
+            return Ok(Drawn::Oversize);
         }
+        self.text[start..].rotate_left(drawn - start);
+        let swallowed = depth > 0 && pending > 0 && self.swallowed(at, len);
         let scans = self
             .readings
-            .read_token(self.spec, id, &self.text[drawn..], None);
-        self.text[start..].rotate_left(drawn - start);
+            .read_token(self.spec, id, &self.text[start..start + len], None);
         for later in &mut self.tokens[at..] {
             later.start += len;
             later.end += len;
@@ -2045,8 +2071,32 @@ impl Generation<'_> {
             scans,
         };
         self.tokens.insert(at, token);
+        if swallowed {
+            return Ok(Drawn::Swallowed);
+        }
         let (text, tokens) = self.window(from, 0);
-        Ok(Some(self.spec.fit(text, tokens, &self.readings.findings)))
+        Ok(Drawn::Fits(self.spec.fit(
+            text,
+            tokens,
+            &self.readings.findings,
+        )))
+    }
+
+    /// Whether the token before index `at`, matched on over the `len`
+    /// characters of new text now at the start of the token at `at`,
+    /// takes all of that token, one the parser needs.
+    fn swallowed(&self, at: usize, len: usize) -> bool {
+        let (prev, next) = (&self.tokens[at - 1], &self.tokens[at]);
+        if next.droppable || self.spec.is_ignore(next.id) {
+            return false;
+        }
+        let through = next.start + len + next.len();
+        let own = &self.readings.findings[prev.scans].own;
+        let got = self
+            .spec
+            .lexer
+            .extend(own, &self.text[..through], prev.start, prev.len(), false);
+        matches!(got, Some(Lexed::Token(_, end)) if end >= through)
     }
 
     /// Take the token before the last `pending` out of the string.
