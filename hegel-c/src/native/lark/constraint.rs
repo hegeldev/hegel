@@ -54,7 +54,7 @@ pub struct GrammarConstraint {
     /// The simplest string, computed by the generator at the first draw
     /// (see [`GrammarConstraint::simplest_or_init`]).
     simplest: OnceBox<Vec<u32>>,
-    known: Mutex<HashMap<(u64, usize), Arc<Tree>>>,
+    known: Mutex<HashMap<Vec<u32>, Arc<Tree>>>,
     intervals: Arc<IntervalSet>,
     smallest: Mutex<Smallest>,
 }
@@ -140,8 +140,7 @@ impl GrammarConstraint {
     /// A derivation of `text`, remembered or found now, or `None` when
     /// the grammar does not derive it.
     pub fn tree(&self, text: &[u32]) -> Option<Arc<Tree>> {
-        let key = text_key(text);
-        if let Some(tree) = self.known.lock().get(&key) {
+        if let Some(tree) = self.known.lock().get(text) {
             return Some(Arc::clone(tree));
         }
         let chars: Vec<char> = text
@@ -154,7 +153,7 @@ impl GrammarConstraint {
         if known.len() >= KNOWN_CAPACITY {
             known.clear();
         }
-        known.insert(key, Arc::clone(&tree));
+        known.insert(text.to_vec(), Arc::clone(&tree));
         Some(tree)
     }
 
@@ -231,16 +230,6 @@ impl GrammarConstraint {
     pub fn known_len(&self) -> usize {
         self.known.lock().len()
     }
-}
-
-/// The key `text` is remembered under: its hash, and its length so that
-/// a string of another length never reads as it.
-fn text_key(text: &[u32]) -> (u64, usize) {
-    let mut hasher = FxHasher::default();
-    for &cp in text {
-        hasher.write_u32(cp);
-    }
-    (hasher.finish(), text.len())
 }
 
 impl PartialEq for GrammarConstraint {

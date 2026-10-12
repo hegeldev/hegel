@@ -49,7 +49,8 @@ impl Layout {
 
     /// Lay `tree` out from text position `at`, returning the position
     /// after it; `derives` records per node whether it derives any text
-    /// of its own, which is what its range covers.
+    /// of its own, which is what its range covers. The leaves of a tree
+    /// cover its text in order, so a leaf's `start` is `at`.
     fn place(&mut self, tree: &Tree, at: usize, derives: &mut Vec<bool>) -> usize {
         let index = self.nodes.len();
         let part = match tree {
@@ -67,8 +68,8 @@ impl Layout {
         });
         derives.push(false);
         match tree {
-            Tree::Terminal { start, end, .. } | Tree::Ignored { start, end, .. } => {
-                self.nodes[index].end = at + end - start;
+            Tree::Terminal { end, .. } | Tree::Ignored { end, .. } => {
+                self.nodes[index].end = *end;
                 derives[index] = matches!(tree, Tree::Terminal { .. });
                 self.nodes[index].end
             }
