@@ -8,9 +8,13 @@
 //! production per alternative, and an [`Item::Repeat`] a fresh
 //! nonterminal producing exactly the counts it allows: one production of
 //! each count up to a bound, or the minimum count plus a left-recursive
-//! production adding one more when there is none. The lowering makes no
-//! attempt to follow Lark's own EBNF expansion; it only needs to accept
-//! the same strings.
+//! production adding one more when there is none. Unrolling a bound
+//! takes a number of symbols quadratic in it, so a wide range becomes a
+//! chain instead: a nonterminal for the minimum count, then one for each
+//! further count allowed, producing the one before it with or without
+//! one more item; whichever of the two takes fewer symbols is used. The
+//! lowering makes no attempt to follow Lark's own EBNF expansion; it only
+//! needs to accept the same strings.
 
 use super::compile::{Grammar, Item, RuleId, Sequence, TermId};
 use alloc::vec::Vec;
@@ -38,8 +42,8 @@ pub enum Provenance {
     /// Some number of repetitions of a repeated item, one per symbol of
     /// the right-hand side.
     Repeat,
-    /// One more repetition: the repetition's nonterminal followed by its
-    /// item.
+    /// The repetitions so far, as a nonterminal standing for fewer of
+    /// them, followed by one more item or by nothing.
     RepeatMore,
 }
 
@@ -91,29 +95,69 @@ impl Lowering {
             }
             Item::Repeat { inner, min, max } => {
                 let symbol = self.item(inner);
-                let lhs = self.fresh();
-                let counts = match max {
-                    Some(max) => *min..=*max,
-                    None => *min..=*min,
-                };
-                for count in counts {
-                    self.productions.push(Production {
-                        lhs,
-                        rhs: alloc::vec![symbol; count as usize],
-                        provenance: Provenance::Repeat,
-                    });
+                match *max {
+                    None => {
+                        let lhs = self.fresh();
+                        self.counts(lhs, symbol, *min, *min);
+                        self.more(lhs, lhs, Some(symbol));
+                        Symbol::Nonterminal(lhs)
+                    }
+                    Some(max) if unrolled_symbols(*min, max) <= chained_symbols(*min, max) => {
+                        let lhs = self.fresh();
+                        self.counts(lhs, symbol, *min, max);
+                        Symbol::Nonterminal(lhs)
+                    }
+                    Some(max) => {
+                        let mut lhs = self.fresh();
+                        self.counts(lhs, symbol, *min, *min);
+                        for _ in *min..max {
+                            let next = self.fresh();
+                            self.more(next, lhs, None);
+                            self.more(next, lhs, Some(symbol));
+                            lhs = next;
+                        }
+                        Symbol::Nonterminal(lhs)
+                    }
                 }
-                if max.is_none() {
-                    self.productions.push(Production {
-                        lhs,
-                        rhs: alloc::vec![Symbol::Nonterminal(lhs), symbol],
-                        provenance: Provenance::RepeatMore,
-                    });
-                }
-                Symbol::Nonterminal(lhs)
             }
         }
     }
+
+    /// One production of `lhs` for each count from `min` to `max` copies
+    /// of `symbol`.
+    fn counts(&mut self, lhs: NtId, symbol: Symbol, min: u32, max: u32) {
+        for count in min..=max {
+            self.productions.push(Production {
+                lhs,
+                rhs: alloc::vec![symbol; count as usize],
+                provenance: Provenance::Repeat,
+            });
+        }
+    }
+
+    /// A production of `lhs` deriving `fewer` repetitions and then
+    /// `symbol`, when there is one.
+    fn more(&mut self, lhs: NtId, fewer: NtId, symbol: Option<Symbol>) {
+        let mut rhs = alloc::vec![Symbol::Nonterminal(fewer)];
+        rhs.extend(symbol);
+        self.productions.push(Production {
+            lhs,
+            rhs,
+            provenance: Provenance::RepeatMore,
+        });
+    }
+}
+
+/// The right-hand-side symbols of a repetition of `min` to `max` items
+/// unrolled to one production per count.
+fn unrolled_symbols(min: u32, max: u32) -> u64 {
+    (u64::from(min) + u64::from(max)) * (u64::from(max - min) + 1) / 2
+}
+
+/// The right-hand-side symbols of a repetition of `min` to `max` items
+/// chained one count at a time.
+fn chained_symbols(min: u32, max: u32) -> u64 {
+    u64::from(min) + 3 * u64::from(max - min)
 }
 
 /// Lower `grammar` to BNF.
