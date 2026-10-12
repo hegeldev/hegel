@@ -4865,8 +4865,8 @@ pub unsafe extern "C" fn hegel_generate_string_result_free(
 /// Import callback for `hegel_grammar_new`, asked for every `%import` that
 /// the grammar, or a grammar it imports, makes. `user_data` is the pointer
 /// supplied alongside the callback. `base_path` is the directory of the
-/// importing grammar (the directory part of the `out_path` this callback
-/// gave for it) for a relative import (`%import .common.INT`) made by a
+/// importing grammar (the `out_path` this callback gave for it, cut at its
+/// last `/` or `\`) for a relative import (`%import .common.INT`) made by a
 /// grammar this callback supplied, and NULL otherwise: for every absolute
 /// import (`%import common.INT`), and for a relative import made by the
 /// text passed to `hegel_grammar_new`. `grammar_path` is the file the

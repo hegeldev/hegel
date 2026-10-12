@@ -280,6 +280,18 @@ fn relative_imports_resolve_against_the_importing_file() {
 }
 
 #[test]
+fn relative_imports_resolve_against_a_backslash_separated_importing_file() {
+    let sources = Sources(vec![("C:\\sub/lib.lark", "a: \"a\"\n")]);
+    let built = load_grammar(
+        "%import .lib.a\nstart: a",
+        Some("C:\\sub\\main.lark"),
+        &sources,
+    )
+    .unwrap();
+    assert_eq!(rule_names(&built), vec!["a", "start"]);
+}
+
+#[test]
 fn bundled_grammars_are_the_last_resort_for_relative_imports_too() {
     let built = load_grammar(
         "%import .common.INT\nstart: INT",

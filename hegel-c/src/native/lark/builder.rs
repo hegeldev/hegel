@@ -565,7 +565,7 @@ impl<'s> GrammarBuilder<'s> {
         mangle: Option<&Mangle>,
     ) -> GrammarResult<()> {
         let statements = parse_grammar(text)?;
-        let base_path = source_path.map(|p| match p.rfind('/') {
+        let base_path = source_path.map(|p| match p.rfind(['/', '\\']) {
             Some(i) => p[..i].to_string(),
             None => String::new(),
         });
