@@ -643,8 +643,9 @@ impl<'a> Engine<'a> {
                 if run.status == Status::Valid
                     && (self.valid_test_cases >= HEALTH_CHECK_MAX_VALID || self.origins.any_live())
                 {
-                    self.try_span_mutation(&run.nodes, &run.spans).await?;
-                    self.try_grammar_mutation(&run.nodes).await?;
+                    if !self.try_span_mutation(&run.nodes, &run.spans).await? {
+                        self.try_grammar_mutation(&run.nodes).await?;
+                    }
                 }
 
                 self.first_check_sweep().await?;
@@ -3307,7 +3308,8 @@ impl GraphProbe for EngineGraphProbe<'_, '_> {
 /// the parent's prefix (when one contains the other, e.g. recursive tree
 /// structures) or replace both with identical choices from one donor.
 /// Anything interesting it finds lands in the engine's `interesting` map;
-/// the probe loop stops at the first such find.
+/// the probe loop stops at the first such find, and returns whether
+/// there was one.
 ///
 /// Makes up to [`SPAN_MUTATION_ATTEMPTS`] probes through
 /// [`Engine::cached_test_function`], so a proposal repeating an executed
@@ -3328,7 +3330,7 @@ impl<'a> Engine<'a> {
         &mut self,
         nodes: &[ChoiceNode],
         spans: &[Span],
-    ) -> Result<(), RunError> {
+    ) -> Result<bool, RunError> {
         let mut by_label: crate::native::HashMap<u64, crate::native::HashSet<(usize, usize)>> =
             crate::native::HashMap::default();
         for span in spans.iter() {
@@ -3347,7 +3349,7 @@ impl<'a> Engine<'a> {
             })
             .collect();
         if multi.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
 
         let values: Vec<ChoiceValue> = nodes.iter().map(|n| n.value()).collect();
@@ -3402,27 +3404,25 @@ impl<'a> Engine<'a> {
                 .saturating_sub(crate::native::core::flattened_values_len(&attempt));
             let run = self.cached_test_function(&attempt, None, extend).await?;
             if run.status == Status::Interesting {
-                return Ok(());
+                return Ok(true);
             }
         }
-        Ok(())
+        Ok(false)
     }
-}
 
-/// Try grammar mutation: grow one of the strings drawn under a grammar out
-/// of its own derivation (`lark::mutate`) — a rule's text copied over
-/// another node of the same rule, or a repetition duplicated — the way
-/// [`Engine::try_span_mutation`] duplicates and swaps the choices under
-/// same-label spans, which a grammar string, being one choice, has none of.
-/// A proposal the grammar does not derive, or that is over the string's
-/// size cap, would only be punned on replay and is not run; nor is one
-/// whose derivation nests rules deeper than the grammar's depth cap, which
-/// the generator keeps to.
-///
-/// Makes up to [`GRAMMAR_MUTATION_ATTEMPTS`] probes through
-/// [`Engine::cached_test_function`] on the same terms as span mutation,
-/// stopping at the first interesting one.
-impl<'a> Engine<'a> {
+    /// Try grammar mutation: grow one of the strings drawn under a grammar out
+    /// of its own derivation (`lark::mutate`) — a rule's text copied over
+    /// another node of the same rule, or a repetition duplicated — the way
+    /// [`Engine::try_span_mutation`] duplicates and swaps the choices under
+    /// same-label spans, which a grammar string, being one choice, has none of.
+    /// A proposal the grammar does not derive, or that is over the string's
+    /// size cap, would only be punned on replay and is not run; nor is one
+    /// whose derivation nests rules deeper than the grammar's depth cap, which
+    /// the generator keeps to.
+    ///
+    /// Makes up to [`GRAMMAR_MUTATION_ATTEMPTS`] probes through
+    /// [`Engine::cached_test_function`] on the same terms as span mutation,
+    /// stopping at the first interesting one.
     async fn try_grammar_mutation(&mut self, nodes: &[ChoiceNode]) -> Result<(), RunError> {
         let targets: Vec<(usize, &StringChoice, &[u32], &GrammarConstraint)> = nodes
             .iter()
