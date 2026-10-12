@@ -28,14 +28,22 @@
 //! the structure only: each terminal is drawn by its own regex generator
 //! (redrawn a few times when it alone overruns the size cap), and a
 //! string that overruns the cap regardless is discarded and regenerated
-//! with half the target, up to [`MAX_ATTEMPTS`] times.
+//! with half the target, until [`MAX_ATTEMPTS`] strings have been
+//! discarded and the test case is rejected. A budget never rules an
+//! alternative out: a rule none of whose alternatives fit theirs (the
+//! depth cap can leave only costlier ones) takes the cheapest the depth
+//! allows.
 //!
 //! Between adjacent tokens the generator inserts a `%ignore` terminal
 //! either when the simulated lexer says the two would otherwise lex
 //! differently, or at random with a rate drawn once per string. Each
 //! terminal string is checked to lex back as itself, and each inserted
 //! ignorable to be skipped between its neighbours, with a few retries
-//! before the string is accepted as it is. Every token keeps what the
+//! before the string is accepted as it is. Each terminal is drawn on
+//! its own, with the text before it out of its pattern's sight, so a
+//! terminal whose pattern asserts on that text (a lookbehind at its
+//! start, say) never lexes back and cannot be generated; the grammar is
+//! reported as having no string. Every token keeps what the
 //! lexers found at the start of its text on its own ([`TokenScans`]),
 //! with how that depended on the text's edges, and most stretches of
 //! tokens are settled from those findings alone ([`GrammarSpec::settled`]):
@@ -54,7 +62,7 @@ use super::compile::{Grammar, RuleId, TermId, compile};
 use super::constraint::GrammarConstraint;
 use super::lexsim::{Lexed, Lexer, Scan, Starters};
 use super::{GrammarError, GrammarResult};
-use crate::control::{hegel_internal_assert, hegel_internal_unwrap};
+use crate::control::hegel_internal_unwrap;
 use crate::native::HashMap;
 use crate::native::core::Constraint;
 use crate::native::core::state::boolean_threshold;
@@ -101,7 +109,10 @@ const LEX_RETRIES: u32 = 3;
 /// an optional one, or keeping the last when the lexer needs one),
 /// how many may follow one another to keep an ignorable the lexer would
 /// otherwise run into the next token (a comment, which only a newline
-/// ends) apart from it, and how many strings one such chain may draw.
+/// ends) apart from it, how many strings one such chain may draw, and
+/// how many times drawing an ignorable after a given one in a chain
+/// may fail, for each time it has succeeded, before it is given up on
+/// for the rest of the string (see [`Generation::hopeful`]).
 const IGNORE_ATTEMPTS: u32 = 4;
 const IGNORE_CHAIN: u32 = 2;
 const IGNORE_CHAIN_DRAWS: u32 = 4;
@@ -139,6 +150,16 @@ enum TerminalGen {
     /// From a generator supplied for a `%declare`d (or overridden)
     /// terminal, taken as it comes.
     Explicit(Arc<StringSpec>),
+}
+
+impl TerminalGen {
+    /// The generator the terminal's strings are drawn from.
+    fn spec(&self) -> &StringSpec {
+        match self {
+            TerminalGen::Pattern(spec) => spec,
+            TerminalGen::Explicit(spec) => spec,
+        }
+    }
 }
 
 /// Options for building a [`GrammarSpec`].
@@ -548,8 +569,8 @@ impl GrammarSpec {
                 return Ok(simplest);
             }
             Err(EngineError::InvalidArgument(format!(
-                "no string of '{}' could be generated: its strings do not fit the size cap or \
-                 do not lex back as their tokens",
+                "no string of '{}' could be generated: its strings do not fit the size cap, \
+                 do not lex back as their tokens, or a terminal looks behind its own start",
                 self.analysis.rules[self.start].name
             )))
         })
@@ -1466,8 +1487,6 @@ fn grow_probability(spare: u64) -> f64 {
     spare / (spare + GROW_SCALE)
 }
 
-/// Split `total` into `parts` non-negative shares at uniformly drawn cut
-/// points.
 impl Generation<'_> {
     /// Draw one of `alts` for a rule reached at `depth` with `budget`
     /// characters to spend: between the alternatives that close the
@@ -1476,7 +1495,9 @@ impl Generation<'_> {
     /// a rule like `sum: product | sum "+" product` does not recurse
     /// regardless of its budget) with a probability that rises with the
     /// budget to spare beyond the cheapest growing alternative, then
-    /// uniformly within the class.
+    /// uniformly within the class. When no alternative the depth allows
+    /// fits the budget, the cheapest of them is taken (see
+    /// [`Generation::cheapest_in_depth`]).
     ///
     /// The classes are kept as bit masks over the alternatives, so that
     /// each is sized and indexed without another pass over them, and
@@ -1499,7 +1520,9 @@ impl Generation<'_> {
         let (feasible, growing, cheapest_growing) = classes
             .and_then(|classes| classes.at(alts, budget, depth, max_depth))
             .unwrap_or_else(|| feasible_classes(alts, budget, depth, max_depth));
-        hegel_internal_assert!(feasible != 0);
+        if feasible == 0 {
+            return self.cheapest_in_depth(alts, depth);
+        }
         let grow = if growing == 0 {
             false
         } else {
@@ -1535,7 +1558,9 @@ impl Generation<'_> {
             typical = typical.min(alt.typical_size);
             any_closing |= !alt.growing();
         }
-        hegel_internal_assert!(count > 0);
+        if count == 0 {
+            return self.cheapest_in_depth(alts, depth);
+        }
         let closing = |alt: &Alt| {
             if any_closing {
                 !alt.growing()
@@ -1562,17 +1587,24 @@ impl Generation<'_> {
         ))
     }
 
-    fn rule<D: Draws>(
-        &mut self,
-        d: &mut D,
-        id: RuleId,
-        budget: u64,
-        depth: u32,
-    ) -> Result<(), Step> {
-        self.rule_body(d, id, budget, depth)
+    /// The alternative of `alts` with the smallest minimum size among
+    /// those the depth cap leaves room for at `depth`, which there must
+    /// be one of: what a rule takes when none of them fits its budget,
+    /// since a budget steers the structure and never rules it out. The
+    /// smallest string the grammar can produce is worked out without
+    /// regard to the depth cap (see [`analyze`]), so the budget of a
+    /// draw aiming at it can be below what the cap leaves.
+    fn cheapest_in_depth<'a>(&self, alts: &'a [Alt], depth: u32) -> Result<&'a Alt, EngineError> {
+        let max_depth = self.spec.max_depth;
+        Ok(hegel_internal_unwrap!(
+            alts.iter()
+                .filter(|alt| depth.saturating_add(alt.min_depth) <= max_depth)
+                .min_by_key(|alt| alt.min_size),
+            "choose_alt: no alternative fits the depth cap"
+        ))
     }
 
-    fn rule_body<D: Draws>(
+    fn rule<D: Draws>(
         &mut self,
         d: &mut D,
         id: RuleId,
@@ -2045,12 +2077,9 @@ impl Generation<'_> {
             .get(at)
             .map_or(self.text.len(), |next| next.start);
         let drawn = self.text.len();
-        match &self.spec.terminals[id] {
-            TerminalGen::Explicit(spec) => generate_string_into(d, spec, &mut self.text)?,
-            TerminalGen::Pattern(spec) => generate_string_into(d, spec, &mut self.text)?,
-        }
+        generate_string_into(d, self.spec.terminals[id].spec(), &mut self.text)?;
         let len = self.text.len() - drawn;
-        if !self.fits(start + len) {
+        if !self.fits(self.text.len()) {
             self.text.truncate(drawn);
             return Ok(Drawn::Oversize);
         }
@@ -2116,9 +2145,10 @@ impl Generation<'_> {
     /// when a lexer would otherwise read that token and the one before
     /// it differently, otherwise at the string's ignore rate. A
     /// separator the basic lexer needs but none of the ignorables can
-    /// provide is left out; one the dynamic lexer needs too makes the
-    /// test case invalid, since the string would not be in the grammar.
-    /// A grammar without ignorables has nothing to insert, and leaves
+    /// provide is left out; one the dynamic lexer needs too leaves a
+    /// string that is not in the grammar, which is discarded for another
+    /// attempt, like a string that does not lex back as a whole. A
+    /// grammar without ignorables has nothing to insert, and leaves
     /// what the pair checks cannot settle to the lexing of the whole
     /// string.
     fn maybe_ignore<D: Draws>(&mut self, d: &mut D, pending: usize) -> Result<(), Step> {
@@ -2142,8 +2172,7 @@ impl Generation<'_> {
             return Ok(());
         }
         if pair == Fit::Wrong {
-            d.conclude(Status::Invalid);
-            return Err(Step::Engine(EngineError::InvalidTestCase));
+            return Err(Step::Misread);
         }
         self.unsettled |= pair < Fit::Settled;
         Ok(())

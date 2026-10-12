@@ -323,6 +323,39 @@ fn depth_cap_bounds_the_nesting() {
     assert!(strings.iter().any(|s| s.starts_with("(((")));
 }
 
+/// The smallest string of `start` is `b`, through `y`, which the depth
+/// cap leaves no room for; the budget of a draw aiming at the smallest
+/// string is then below the two characters of the alternative the cap
+/// allows, which the rule takes regardless.
+#[test]
+fn a_rule_none_of_whose_alternatives_fit_the_budget_takes_the_cheapest_the_depth_allows() {
+    let options = || GrammarOptions {
+        max_depth: 1,
+        ..GrammarOptions::default()
+    };
+    let text = "start: (\"aa\" | y)\ny: \"b\"\n";
+    assert_eq!(
+        simplest_string(simple_grammar(text), options()),
+        ("aa".to_string(), 1)
+    );
+    let spec = spec_with(text, options()).unwrap();
+    let strings = samples(&spec, 50);
+    assert!(strings.iter().all(|s| s == "aa"), "{strings:?}");
+    let keywords: Vec<String> = (0..70).map(|i| format!("\"k{i}\"")).collect();
+    let text = format!("start: ({} | y)\ny: \"b\"\n", keywords.join(" | "));
+    assert_eq!(
+        simplest_string(simple_grammar(&text), options()),
+        ("k0".to_string(), 1)
+    );
+    let spec = spec_with(&text, options()).unwrap();
+    let strings = samples(&spec, 50);
+    assert!(strings.iter().all(|s| s.starts_with('k')), "{strings:?}");
+    assert!(
+        strings.iter().filter(|s| *s == "k0").count() >= 10,
+        "{strings:?}"
+    );
+}
+
 #[test]
 fn repetitions_cover_their_whole_range() {
     let spec = small("start: \"a\"~1..3 \"b\"* \"c\"+ [\"d\"] (\"e\"?)*\n", 40);
@@ -453,6 +486,34 @@ fn unseparable_merging_tokens_leave_no_string_to_generate() {
     let (result, status) = draw(&spec, 0);
     assert!(matches!(result, Err(EngineError::InvalidArgument(_))));
     assert_eq!(status, None);
+}
+
+/// `X` drawn as `a` merges with `Y` into one `X`, and the comment that
+/// is the only ignorable would swallow `Y` instead of separating them;
+/// the string is discarded for another attempt, which draws `X` afresh,
+/// rather than concluding the test case invalid at once, as it is in a
+/// grammar with no ignorable to try.
+#[test]
+fn merging_tokens_no_ignorable_can_separate_are_redrawn_like_a_misread_string() {
+    let spec = grammar("start: X Y\nX: /ab?/\nY: /b/\n%ignore COMMENT\nCOMMENT: /#[a-z]*/\n");
+    let (mut valid, mut invalid) = (0, 0);
+    for seed in 0..100 {
+        let (result, status) = draw(&spec, seed);
+        match result {
+            Ok(s) => {
+                assert!(spec.kind.validate(&cps(&s)), "{s:?}");
+                assert!(s.starts_with("abb"), "{s:?}");
+                assert_eq!(status, None);
+                valid += 1;
+            }
+            Err(EngineError::InvalidTestCase) => {
+                assert_eq!(status, Some(Status::Invalid));
+                invalid += 1;
+            }
+            Err(e) => panic!("{e:?}"),
+        }
+    }
+    assert!(valid >= 95, "{valid} valid, {invalid} invalid");
 }
 
 #[test]
@@ -1184,6 +1245,54 @@ fn chain_pairs_that_keep_failing_are_given_up_on() {
     assert!(!generation.hopeful(comment, sep));
 }
 
+/// Put a token of terminal `id` with `text` at the end of `generation`'s
+/// string, as a draw would.
+fn push(generation: &mut Generation, id: TermId, text: &str) {
+    let chars: Vec<char> = text.chars().collect();
+    let scans = generation
+        .readings
+        .read_token(generation.spec, id, &chars, None);
+    let token = generation.token(id, generation.text.len(), scans);
+    generation.text.extend(chars);
+    generation.tokens.push(Token {
+        end: generation.text.len(),
+        ..token
+    });
+}
+
+/// The characters of `generation`'s string.
+fn text(generation: &Generation) -> String {
+    generation.text.iter().collect()
+}
+
+/// An ignorable drawn before a pending token takes the whole string past
+/// the size cap or not, however far from the end it goes.
+#[test]
+fn an_ignorable_before_a_pending_token_counts_against_the_whole_string() {
+    let spec = small("start: A B\nA: /a/\nB: /b/\n%ignore WS\nWS: /  /\n", 3);
+    let ws = tid(&spec, "WS");
+    let mut generation = Generation::new(&spec, 0.0);
+    push(&mut generation, tid(&spec, "A"), "a");
+    push(&mut generation, tid(&spec, "B"), "b");
+    let mut d = SimplestDraws::default();
+    assert!(matches!(
+        generation.draw_ignore(&mut d, ws, 0, 1, 0).ok().unwrap(),
+        Drawn::Oversize
+    ));
+    assert_eq!(text(&generation), "ab");
+    assert_eq!(generation.tokens.len(), 2);
+    let spec = small("start: A B\nA: /a/\nB: /b/\n%ignore WS\nWS: /  /\n", 4);
+    let mut generation = Generation::new(&spec, 0.0);
+    push(&mut generation, tid(&spec, "A"), "a");
+    push(&mut generation, tid(&spec, "B"), "b");
+    assert!(matches!(
+        generation.draw_ignore(&mut d, ws, 0, 1, 0).ok().unwrap(),
+        Drawn::Fits(Fit::Settled)
+    ));
+    assert_eq!(text(&generation), "a  b");
+    assert_eq!(generation.tokens.len(), 3);
+}
+
 #[test]
 fn a_chained_ignorable_the_one_before_it_swallows_the_next_token_through_is_not_checked() {
     let spec = grammar(
@@ -1197,20 +1306,9 @@ fn a_chained_ignorable_the_one_before_it_swallows_the_next_token_through_is_not_
         tid(&spec, "COMMENT"),
     );
     let mut generation = Generation::new(&spec, 0.0);
-    let push = |generation: &mut Generation, id: TermId, text: &str| {
-        let chars: Vec<char> = text.chars().collect();
-        let scans = generation.readings.read_token(&spec, id, &chars, None);
-        let token = generation.token(id, generation.text.len(), scans);
-        generation.text.extend(chars);
-        generation.tokens.push(Token {
-            end: generation.text.len(),
-            ..token
-        });
-    };
     push(&mut generation, num, "1");
     push(&mut generation, comment, "#");
     push(&mut generation, num, "2");
-    let text = |generation: &Generation| generation.text.iter().collect::<String>();
     let mut d = SimplestDraws::default();
     assert!(matches!(
         generation.draw_ignore(&mut d, ws, 0, 1, 1).ok().unwrap(),
@@ -1540,7 +1638,7 @@ fn choosing_an_alternative_by_mask_agrees_with_scanning() {
     )
     .unwrap();
     let mut rng = EngineRng::seeded(0);
-    let (mut chosen, mut infeasible, mut beyond_mask, mut grew) = (0, 0, 0, 0);
+    let (mut chosen, mut fell_back, mut infeasible, mut beyond_mask, mut grew) = (0, 0, 0, 0, 0);
     let (mut all, mut some, mut too_deep) = (0, 0, 0);
     for case in 0..600u64 {
         let n = 1 + usize::from(rng.next_byte()) % 70;
@@ -1590,14 +1688,28 @@ fn choosing_an_alternative_by_mask_agrees_with_scanning() {
         let scanned = generation
             .choose_alt_scanning(&mut by_scan, &alts, budget, depth)
             .map(position);
+        let in_depth = |alt: &Alt| depth.saturating_add(alt.min_depth) <= spec.max_depth;
+        let fits = |alt: &Alt| in_depth(alt) && alt.min_size <= budget;
         match (masked, classed, scanned) {
             (Ok(a), Ok(b), Ok(c)) => {
                 assert_eq!((a, b), (c, c));
-                chosen += 1;
+                if alts.iter().any(fits) {
+                    chosen += 1;
+                } else {
+                    let cheapest = alts
+                        .iter()
+                        .filter(|alt| in_depth(alt))
+                        .min_by_key(|alt| alt.min_size);
+                    assert_eq!(a, position(cheapest.unwrap()));
+                    fell_back += 1;
+                }
                 beyond_mask += usize::from(n > MASKED_ALTS);
                 grew += usize::from(alts[a].growing());
             }
-            (Err(_), Err(_), Err(_)) => infeasible += 1,
+            (Err(_), Err(_), Err(_)) => {
+                assert!(!alts.iter().any(in_depth));
+                infeasible += 1;
+            }
             (masked, classed, scanned) => {
                 panic!("{masked:?} by mask, {classed:?} by classes but {scanned:?} by scanning")
             }
@@ -1606,8 +1718,8 @@ fn choosing_an_alternative_by_mask_agrees_with_scanning() {
         assert_eq!(by_classes.nodes, by_scan.nodes);
     }
     assert!(
-        chosen > 500 && infeasible >= 10 && beyond_mask > 30 && grew > 200,
-        "{chosen} {infeasible} {beyond_mask} {grew}"
+        chosen > 500 && fell_back >= 10 && infeasible >= 1 && beyond_mask > 30 && grew > 200,
+        "{chosen} {fell_back} {infeasible} {beyond_mask} {grew}"
     );
     assert!(
         all > 50 && some > 50 && too_deep > 50,
@@ -1867,6 +1979,24 @@ fn a_grammar_no_draw_can_generate_from_reports_so_at_the_first_draw() {
     assert!(ntc.nodes.is_empty());
     assert_eq!(ntc.status(), None);
     assert!(spec.constraint().simplest().is_none());
+}
+
+/// A terminal is drawn on its own, with the text before it out of its
+/// pattern's sight, so one that looks behind its own start never lexes
+/// back, and the grammar is reported as having no string.
+#[test]
+fn a_terminal_that_looks_behind_its_own_start_cannot_be_generated() {
+    let spec = grammar("start: \"x\" B\nB: /(?<=x)a/\n");
+    let (result, status) = draw(&spec, 0);
+    let Err(EngineError::InvalidArgument(message)) = result else {
+        panic!("{result:?}");
+    };
+    assert_eq!(
+        message,
+        "no string of 'start' could be generated: its strings do not fit the size cap, do not \
+         lex back as their tokens, or a terminal looks behind its own start"
+    );
+    assert_eq!(status, None);
 }
 
 fn cps(s: &str) -> Vec<u32> {

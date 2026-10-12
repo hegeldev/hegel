@@ -57,7 +57,8 @@ The pieces:
   records the text it returns as one node. On replay the stored text is
   validated instead, and the walk never runs. The walk is unchanged in
   what it produces — sizing, lexability checks and `%ignore` insertion as
-  the module docs describe — but opens no spans and uses no collection
+  the module docs describe — but opens no spans within the `hegel.lark`
+  span `generate_grammar` puts the choice in, and uses no collection
   protocol, since nothing it decides is a choice. The simplest string is
   the walk with every decision at its simplest (`SimplestDraws`), or, when
   that string does not lex back as its tokens, the first of a few seeded
@@ -126,13 +127,13 @@ terminal, each once, and all of them again after one is accepted.
 Span mutation (`test_runner.rs`, `try_span_mutation`) proposes new test
 cases after a valid one by duplicating and swapping the choices under
 same-label spans, which is how the engine reuses parts of one value in
-another. A string under a grammar is one choice and opens no spans, so
-the same moves are made on its text through its layout
-(`lark/mutate.rs`): the text of a rule node copied over another node of
-the same rule (over a nested one to deepen a recursion, or over the
-whole to cut it), or a repetition duplicated along with the text that
-separates it from its neighbour. `try_grammar_mutation` runs after span
-mutation on the same terms: a few random moves on a random string under
+another. A string under a grammar is one choice, in a span of its own
+with none within it, so the same moves are made on its text through its
+layout (`lark/mutate.rs`): the text of a rule node copied over another
+node of the same rule (over a nested one to deepen a recursion, or over
+the whole to cut it), or a repetition duplicated along with the text
+that separates it from its neighbour. `try_grammar_mutation` runs after
+span mutation on the same terms: a few random moves on a random string under
 a grammar, each proposed through the execution cache, stopping at the
 first interesting one. A move's result is parsed first, and one the
 grammar does not derive or that is over the size cap is not run, since
