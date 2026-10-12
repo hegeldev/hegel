@@ -4,7 +4,9 @@ with Lark itself.
 
 Runs the engine's `write_corpus` test, which draws strings from every
 fixture grammar in `hegel-c/tests/fixtures/lark/` that Lark can parse
-without a postlexer (grammars that `%declare` terminals need one), then
+without a postlexer (grammars that `%declare` terminals need one) and in
+reasonable time (a grammar whose strings take Lark cubic time to parse
+says so with a `// corpus: no` line), then
 parses each string with Lark's Earley parser and dynamic lexer — the
 most permissive configuration, whose accepted language is the grammar's.
 Any string that fails to parse fails the check. Lark 1.3.1 raises a
@@ -29,12 +31,14 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "hegel-c" / "tests" / "fixtures" / "lark"
 LARK_BUG = "multiple start symbol"
 DECLARE = re.compile(r"^\s*%declare\b", re.MULTILINE)
+NO_CORPUS = re.compile(r"^\s*// corpus: no$", re.MULTILINE)
 
 
 def corpus_grammars() -> list[str]:
     names = []
     for path in sorted(FIXTURES.glob("*.lark")):
-        if path.stem.startswith("err_") or DECLARE.search(path.read_text()):
+        text = path.read_text()
+        if path.stem.startswith("err_") or DECLARE.search(text) or NO_CORPUS.search(text):
             continue
         names.append(path.stem)
     return names

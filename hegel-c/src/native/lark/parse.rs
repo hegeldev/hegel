@@ -38,17 +38,36 @@ use alloc::vec::Vec;
 /// What matches a grammar's terminals in a text, for the parser to scan
 /// with.
 pub trait Terminals {
+    /// What the matching keeps about one text from position to position:
+    /// what [`begin`](Self::begin) returns for a text is handed to
+    /// [`ends`](Self::ends) at every position of that text.
+    type Memo;
+
+    /// Begin matching in `text`.
+    fn begin(&self, text: &[char]) -> Self::Memo;
+
     /// The positions where a token of `id` starting at `pos` may end, in
     /// increasing order, appended to `out`: none when the terminal does
     /// not match there, `pos` itself for an empty token.
-    fn ends(&self, id: TermId, text: &[char], pos: usize, out: &mut Vec<usize>);
+    fn ends(
+        &self,
+        memo: &mut Self::Memo,
+        id: TermId,
+        text: &[char],
+        pos: usize,
+        out: &mut Vec<usize>,
+    );
 }
 
 /// Each terminal's own pattern matched at the position, as CPython's
 /// `pattern.match` and so Lark's dynamic lexer match it: one end, and
 /// never an empty one.
 impl Terminals for Lexer {
-    fn ends(&self, id: TermId, text: &[char], pos: usize, out: &mut Vec<usize>) {
+    type Memo = ();
+
+    fn begin(&self, _text: &[char]) {}
+
+    fn ends(&self, _memo: &mut (), id: TermId, text: &[char], pos: usize, out: &mut Vec<usize>) {
         if let Lexed::Token(_, end) = self.match_terminal(id, text, pos) {
             if end > pos {
                 out.push(end);
@@ -101,34 +120,38 @@ impl Tree {
             Tree::Terminal { .. } | Tree::Ignored { .. } => &[],
         }
     }
-
-    /// The [`Tree::Terminal`] and [`Tree::Ignored`] leaves, in text order.
-    pub fn leaves(&self) -> Vec<&Tree> {
-        let mut leaves = Vec::new();
-        let mut stack = alloc::vec![self];
-        while let Some(tree) = stack.pop() {
-            match tree {
-                Tree::Terminal { .. } | Tree::Ignored { .. } => leaves.push(tree),
-                _ => stack.extend(tree.children().iter().rev()),
-            }
-        }
-        leaves
-    }
 }
 
 /// Where a parse failed: the position past which no item could be
-/// carried, or the end of the text when it ended before the start rule
-/// was complete.
+/// carried, the end of the text when it ended before the start rule was
+/// complete, or the position reached when the parse ran out of its
+/// budget (see [`PARSE_BUDGET`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParseError {
     pub position: usize,
 }
+
+/// How many items a parse may propose before it is given up, counting
+/// an item as often as it is proposed, since proposing an item its
+/// column already holds is most of the work on an ambiguous grammar: an
+/// Earley parse is cubic in the text on one (`e: e "+" e | "1"` proposes
+/// about n³/6 items for n tokens, which is the budget at some 850
+/// tokens and a second of parsing, and tens of billions at the default
+/// string size), so a string that would take minutes to check is
+/// rejected instead, as a string the grammar does not derive is. The
+/// fixture grammars' strings at the default size propose under a
+/// hundred thousand.
+pub const PARSE_BUDGET: usize = 100_000_000;
 
 /// A parser for one start rule of a compiled grammar.
 pub struct Parser {
     lowered: Lowered,
     start: NtId,
     ignore: Vec<TermId>,
+    /// How many terminals the grammar has, for the memo of what each
+    /// matched at a column.
+    terminals: usize,
+    budget: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -154,6 +177,11 @@ struct Column {
     active: Vec<u32>,
     /// Items waiting on a terminal, with that terminal.
     scan: Vec<(u32, TermId)>,
+    /// Items waiting on a nonterminal, with that nonterminal first: in
+    /// the order they were added while the column is the one being
+    /// worked on, and sorted once it is left, so that completing a
+    /// nonterminal finds the items waiting on it by binary search.
+    waiting: Vec<(u32, u32)>,
 }
 
 struct Delayed {
@@ -173,8 +201,12 @@ struct Frame {
     children: Vec<Tree>,
 }
 
-struct Parse<'p> {
+struct Parse<'p, T: Terminals> {
     parser: &'p Parser,
+    terminals: &'p T,
+    text: &'p [char],
+    /// What `terminals` keeps about the text while matching in it.
+    memo: T::Memo,
     items: Vec<Item>,
     columns: Vec<Column>,
     seen: HashSet<(u32, u32, u32, u32)>,
@@ -191,10 +223,12 @@ struct Parse<'p> {
     processed: usize,
     scanned: usize,
     carried: usize,
-    /// The ends found for each terminal tried at the column, as a range
-    /// of `ends`.
-    tried: Vec<(TermId, usize, usize)>,
+    /// The ends found for each terminal tried at the column, by terminal,
+    /// as a range of `ends`.
+    tried: Vec<Option<(usize, usize)>>,
     ends: Vec<usize>,
+    /// How many items have been proposed, against the budget.
+    proposed: usize,
 }
 
 impl Parser {
@@ -204,7 +238,17 @@ impl Parser {
             lowered: lower(grammar),
             start,
             ignore: grammar.ignore.clone(),
+            terminals: grammar.terminals.len(),
+            budget: PARSE_BUDGET,
         }
+    }
+
+    /// The parser giving up after `budget` proposed items instead of
+    /// [`PARSE_BUDGET`].
+    #[cfg(test)]
+    pub fn with_budget(mut self, budget: usize) -> Parser {
+        self.budget = budget;
+        self
     }
 
     /// Whether `text` is in the grammar, matching terminals with
@@ -220,6 +264,9 @@ impl Parser {
         let n = text.len();
         let mut parse = Parse {
             parser: self,
+            terminals,
+            text,
+            memo: terminals.begin(text),
             items: Vec::new(),
             columns: (0..=n).map(|_| Column::default()).collect(),
             seen: HashSet::default(),
@@ -229,8 +276,9 @@ impl Parser {
             processed: 0,
             scanned: 0,
             carried: 0,
-            tried: Vec::new(),
+            tried: alloc::vec![None; self.terminals],
             ends: Vec::new(),
+            proposed: 0,
         };
         for &prod in &self.lowered.by_lhs[self.start] {
             parse.add(0, prod as u32, 0, 0, Back::Predicted);
@@ -242,15 +290,16 @@ impl Parser {
             parse.processed = 0;
             parse.scanned = 0;
             parse.carried = 0;
-            parse.tried.clear();
+            parse.tried.fill(None);
             parse.ends.clear();
             loop {
                 parse.predict_and_complete(col);
-                if !parse.scan(col, terminals, text) {
+                if !parse.scan(col) {
                     break;
                 }
             }
-            if col < n && parse.pending == 0 {
+            parse.columns[col].waiting.sort_unstable();
+            if parse.proposed > self.budget || (col < n && parse.pending == 0) {
                 return Err(ParseError { position: col });
             }
         }
@@ -270,7 +319,7 @@ impl Parser {
     }
 }
 
-impl Parse<'_> {
+impl<T: Terminals> Parse<'_, T> {
     fn next_symbol(&self, item: &Item) -> Option<Symbol> {
         self.parser.lowered.productions[item.prod as usize]
             .rhs
@@ -279,6 +328,7 @@ impl Parse<'_> {
     }
 
     fn add(&mut self, col: usize, prod: u32, dot: u32, origin: u32, back: Back) -> bool {
+        self.proposed += 1;
         if !self.seen.insert((col as u32, prod, dot, origin)) {
             return false;
         }
@@ -293,7 +343,11 @@ impl Parse<'_> {
         self.items.push(item);
         match self.next_symbol(&item) {
             Some(Symbol::Terminal(term)) => self.columns[col].scan.push((idx, term)),
-            _ => self.columns[col].active.push(idx),
+            Some(Symbol::Nonterminal(nt)) => {
+                self.columns[col].active.push(idx);
+                self.columns[col].waiting.push((nt as u32, idx));
+            }
+            None => self.columns[col].active.push(idx),
         }
         true
     }
@@ -347,20 +401,29 @@ impl Parse<'_> {
                     self.held[lhs] = Some((col as u32, idx));
                 }
                 let origin = item.origin as usize;
-                let originators = self.columns[origin].active.len();
-                for j in 0..originators {
-                    let pred = self.columns[origin].active[j];
-                    let originator = self.items[pred as usize];
-                    if self.next_symbol(&originator) == Some(Symbol::Nonterminal(lhs)) {
-                        let back = Back::Child { pred, child: idx };
-                        self.add(
-                            col,
-                            originator.prod,
-                            originator.dot + 1,
-                            originator.origin,
-                            back,
-                        );
+                let waiting = &self.columns[origin].waiting;
+                let (from, to) = if origin == col {
+                    (0, waiting.len())
+                } else {
+                    (
+                        waiting.partition_point(|&(nt, _)| (nt as usize) < lhs),
+                        waiting.partition_point(|&(nt, _)| nt as usize <= lhs),
+                    )
+                };
+                for j in from..to {
+                    let (nt, pred) = self.columns[origin].waiting[j];
+                    if nt as usize != lhs {
+                        continue;
                     }
+                    let originator = self.items[pred as usize];
+                    let back = Back::Child { pred, child: idx };
+                    self.add(
+                        col,
+                        originator.prod,
+                        originator.dot + 1,
+                        originator.origin,
+                        back,
+                    );
                 }
             }
         }
@@ -368,20 +431,15 @@ impl Parse<'_> {
 
     /// Where `term` matched at `col` can end, as a range of `ends`,
     /// matched once per column.
-    fn lex<T: Terminals>(
-        &mut self,
-        terminals: &T,
-        text: &[char],
-        col: usize,
-        term: TermId,
-    ) -> (usize, usize) {
-        if let Some(&(_, from, to)) = self.tried.iter().find(|(tried, ..)| *tried == term) {
-            return (from, to);
+    fn lex(&mut self, col: usize, term: TermId) -> (usize, usize) {
+        if let Some(range) = self.tried[term] {
+            return range;
         }
         let from = self.ends.len();
-        terminals.ends(term, text, col, &mut self.ends);
+        self.terminals
+            .ends(&mut self.memo, term, self.text, col, &mut self.ends);
         let to = self.ends.len();
-        self.tried.push((term, from, to));
+        self.tried[term] = Some((from, to));
         (from, to)
     }
 
@@ -398,13 +456,13 @@ impl Parse<'_> {
     /// and any newly complete start item past the ignored text matched
     /// at the column; whether an item was added to the column itself,
     /// by an empty token, so that there is more to predict and scan.
-    fn scan<T: Terminals>(&mut self, col: usize, terminals: &T, text: &[char]) -> bool {
+    fn scan(&mut self, col: usize) -> bool {
         let parser = self.parser;
         let mut added = false;
         let waiting = self.columns[col].scan.len();
         for j in self.scanned..waiting {
             let (idx, term) = self.columns[col].scan[j];
-            let (from, to) = self.lex(terminals, text, col, term);
+            let (from, to) = self.lex(col, term);
             for k in from..to {
                 let end = self.ends[k];
                 if end == col {
@@ -421,7 +479,7 @@ impl Parse<'_> {
         }
         let active = self.columns[col].active.len();
         for &ignore in &parser.ignore {
-            let (from, to) = self.lex(terminals, text, col, ignore);
+            let (from, to) = self.lex(col, ignore);
             for k in from..to {
                 let end = self.ends[k];
                 if end == col {

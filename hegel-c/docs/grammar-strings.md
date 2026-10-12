@@ -69,6 +69,10 @@ The pieces:
   `parser="earley", lexer="dynamic"` on which strings it accepts, which is
   what `just check-parse` checks against Lark itself. It yields a `Tree`
   whose leaves cover the text exactly, `%ignore`d stretches included.
+  An Earley parse is cubic in the text on an ambiguous grammar, so a
+  parse that proposes more items than `PARSE_BUDGET` allows is given up
+  and the text rejected, as one the grammar does not derive is, rather
+  than take minutes.
   Pattern terminals match through the lexer simulation with Lark's
   `match` semantics (one end per terminal, never empty); terminals the
   user supplies generators for match through `lark/explicit.rs` at every

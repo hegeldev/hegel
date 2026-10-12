@@ -43,11 +43,25 @@ fn chars(s: &str) -> Vec<char> {
     s.chars().collect()
 }
 
+/// The [`Tree::Terminal`] and [`Tree::Ignored`] leaves of `tree`, in text
+/// order.
+fn leaves(tree: &Tree) -> Vec<&Tree> {
+    let mut leaves = Vec::new();
+    let mut stack = vec![tree];
+    while let Some(tree) = stack.pop() {
+        match tree {
+            Tree::Terminal { .. } | Tree::Ignored { .. } => leaves.push(tree),
+            _ => stack.extend(tree.children().iter().rev()),
+        }
+    }
+    leaves
+}
+
 /// The text a tree's leaves cover, read back from `text`, with each
 /// ignored stretch in brackets.
 fn read_back(tree: &Tree, text: &[char]) -> String {
     let mut out = String::new();
-    for leaf in tree.leaves() {
+    for leaf in leaves(tree) {
         match leaf {
             Tree::Terminal { start, end, .. } => out.extend(&text[*start..*end]),
             Tree::Ignored { start, end, .. } => {
@@ -63,7 +77,7 @@ fn read_back(tree: &Tree, text: &[char]) -> String {
 
 fn covers(tree: &Tree, text: &[char]) -> bool {
     let mut pos = 0;
-    for leaf in tree.leaves() {
+    for leaf in leaves(tree) {
         let (Tree::Terminal { start, end, .. } | Tree::Ignored { start, end, .. }) = leaf else {
             panic!("{leaf:?}");
         };
@@ -198,7 +212,7 @@ fn nullable_rules_and_the_empty_string() {
             ],
         }
     );
-    assert!(tree.leaves().is_empty());
+    assert!(leaves(&tree).is_empty());
 }
 
 #[test]
@@ -257,7 +271,7 @@ fn long_repeats_flatten_into_one_node() {
         panic!("{tree:?}");
     };
     assert!(matches!(&children[0], Tree::Repeat { children } if children.len() == 5000));
-    let leaves = tree.leaves();
+    let leaves = leaves(&tree);
     assert_eq!(leaves.len(), 5000);
     assert!(leaves[0].children().is_empty());
 }
@@ -273,8 +287,8 @@ fn left_and_right_recursion() {
         assert!(!s.accepts("aaab"));
     }
     let text: String = core::iter::repeat_n('a', 3000).collect();
-    assert_eq!(left.tree(&text).leaves().len(), 3000);
-    assert_eq!(right.tree(&text).leaves().len(), 3000);
+    assert_eq!(leaves(&left.tree(&text)).len(), 3000);
+    assert_eq!(leaves(&right.tree(&text)).len(), 3000);
 }
 
 #[test]
@@ -385,8 +399,24 @@ fn ambiguous_grammars_parse_once() {
     let text: String = core::iter::repeat_n("1+", 200)
         .chain(core::iter::once("1"))
         .collect();
-    assert_eq!(s.tree(&text).leaves().len(), 401);
+    assert_eq!(leaves(&s.tree(&text)).len(), 401);
     assert!(!s.accepts("1+1+"));
+}
+
+#[test]
+fn an_ambiguous_grammar_parses_a_long_string_within_its_budget() {
+    let s = setup("start: e\ne: e \"+\" e | \"1\"\n");
+    let text: String = core::iter::repeat_n("1+", 99)
+        .chain(core::iter::once("1"))
+        .collect();
+    assert_eq!(leaves(&s.tree(&text)).len(), 199);
+    let strict = Parser::new(&s.grammar, s.grammar.start[0]).with_budget(1000);
+    let err = strict.parse(&s.lexer, &chars(&text)).unwrap_err();
+    assert!(err.position > 0 && err.position < text.len(), "{err:?}");
+    let short: String = core::iter::repeat_n("1+", 4)
+        .chain(core::iter::once("1"))
+        .collect();
+    assert!(strict.accepts(&s.lexer, &chars(&short)));
 }
 
 struct FixtureImports;
@@ -405,8 +435,9 @@ fn fixtures() -> std::path::PathBuf {
 }
 
 /// The fixture grammars whose strings Lark can parse without a
-/// postlexer (those that `%declare` terminals need one), each with its
-/// first start rule.
+/// postlexer (those that `%declare` terminals need one) and in
+/// reasonable time (one it cannot says so with a `// corpus: no` line),
+/// each with its first start rule.
 fn corpus_grammars() -> Vec<(String, String)> {
     let mut names: Vec<String> = std::fs::read_dir(fixtures())
         .unwrap()
@@ -420,9 +451,10 @@ fn corpus_grammars() -> Vec<(String, String)> {
         .into_iter()
         .filter(|name| {
             let text = std::fs::read_to_string(fixtures().join(format!("{name}.lark"))).unwrap();
-            !text
-                .lines()
-                .any(|line| line.trim_start().starts_with("%declare"))
+            !text.lines().any(|line| {
+                let line = line.trim_start();
+                line.starts_with("%declare") || line == "// corpus: no"
+            })
         })
         .map(|name| {
             let expected =
@@ -507,6 +539,32 @@ fn check_fixtures(max_size: u64, seeds: core::ops::Range<u64>) {
 #[test]
 fn fixture_grammars_parse_their_own_strings() {
     check_fixtures(2000, 0..4);
+}
+
+/// The ambiguous fixture is kept out of the corpus, Lark's own parse
+/// of its strings being cubic too; the engine parses a string of over a
+/// thousand characters from it within its budget, in well under a
+/// second.
+#[test]
+fn the_ambiguous_fixture_parses_its_own_strings() {
+    assert!(
+        !corpus_grammars()
+            .iter()
+            .any(|(name, _)| name == "ambiguous")
+    );
+    let grammar = fixture("ambiguous", "start");
+    let s = build(grammar);
+    let strings = generated(&s.grammar, "start", 3000, 0..30);
+    let longest = strings
+        .iter()
+        .filter(|s| s.len() <= 1600)
+        .max_by_key(|s| s.len())
+        .unwrap();
+    assert!(longest.len() > 1000, "{}", longest.len());
+    let text = chars(longest);
+    let tree = s.parser.parse(&s.lexer, &text).unwrap();
+    assert!(covers(&tree, &text));
+    assert_eq!(leaves(&tree).len(), text.len());
 }
 
 #[test]
@@ -667,6 +725,32 @@ fn an_explicit_terminal_whose_generator_draws_the_empty_string_matches_an_empty_
         assert!(parser.accepts(&terminals, &chars(s)), "{s:?}");
     }
     assert!(!parser.accepts(&terminals, &chars(" x")));
+}
+
+/// A searching explicit terminal is tried at every column of a long
+/// text it never matches, and matched once for the text.
+#[test]
+fn a_searching_explicit_terminal_is_matched_once_for_the_text() {
+    let (_, terminals, parser) = explicit_setup(
+        "start: \"a\"* X\n%declare X\n",
+        &[(
+            "X",
+            Arc::new(StringSpec::regex(".*x", false, None).unwrap()),
+        )],
+    );
+    let text: Vec<char> = core::iter::repeat_n('a', 3000).collect();
+    let started = std::time::Instant::now();
+    assert_eq!(
+        parser.parse(&terminals, &text),
+        Err(ParseError { position: 3000 })
+    );
+    assert!(started.elapsed() < core::time::Duration::from_secs(5));
+    let mut text = text;
+    text[1500] = 'x';
+    let tree = parser.parse(&terminals, &text).unwrap();
+    assert_eq!(read_back(&tree, &text).len(), text.len());
+    assert!(parser.accepts(&terminals, &chars("xa")));
+    assert!(!parser.accepts(&terminals, &chars("")));
 }
 
 /// An ignorable that can match nothing (a `%declare`d terminal whose

@@ -104,8 +104,19 @@ impl ExplicitMatcher {
 
     /// The positions where a token of the terminal starting at `pos` may
     /// end, in increasing order, appended to `out`; `pos` itself when the
-    /// generator can draw the empty string.
-    pub fn ends(&self, text: &[char], pos: usize, out: &mut Vec<usize>) {
+    /// generator can draw the empty string. A searching regex terminal
+    /// ends anywhere from the end of the earliest match starting at or
+    /// after `pos` on, and since that end only grows with `pos` it is
+    /// found for every position of `text` at once, right to left, the
+    /// first time the terminal is tried in the text, and kept in
+    /// `searched` for the other positions.
+    pub fn ends(
+        &self,
+        searched: &mut Option<Vec<usize>>,
+        text: &[char],
+        pos: usize,
+        out: &mut Vec<usize>,
+    ) {
         match &self.kind {
             Kind::Text {
                 intervals,
@@ -129,24 +140,29 @@ impl ExplicitMatcher {
                 program,
                 fullmatch: false,
             } => {
-                let mut first: Option<usize> = None;
-                let mut found = Vec::new();
-                for start in pos..=text.len() {
-                    if first.is_some_and(|first| start >= first) {
-                        break;
-                    }
-                    found.clear();
-                    whole_ends(parsed, program, text, start, &mut found);
-                    if let Some(&end) = found.first() {
-                        first = Some(first.map_or(end, |first| first.min(end)));
-                    }
-                }
-                if let Some(first) = first {
-                    out.extend(first..=text.len());
+                let first = searched.get_or_insert_with(|| earliest_ends(parsed, program, text));
+                if first[pos] <= text.len() {
+                    out.extend(first[pos]..=text.len());
                 }
             }
         }
     }
+}
+
+/// Where the earliest match of `parsed` starting at or after each
+/// position of `text` ends, or one past the end of the text where there
+/// is none: the end at a position is the lesser of the first end of a
+/// match starting there and the end at the next position.
+fn earliest_ends(parsed: &ParsedPattern, program: &Option<Program>, text: &[char]) -> Vec<usize> {
+    let mut first = alloc::vec![text.len() + 1; text.len() + 1];
+    let mut found = Vec::new();
+    for start in (0..=text.len()).rev() {
+        found.clear();
+        whole_ends(parsed, program, text, start, &mut found);
+        let after = first.get(start + 1).copied().unwrap_or(text.len() + 1);
+        first[start] = found.first().map_or(after, |&end| end.min(after));
+    }
+    first
 }
 
 /// The positions where `parsed`, matched from `pos`, can end, through
@@ -206,10 +222,23 @@ impl GrammarTerminals {
 }
 
 impl Terminals for GrammarTerminals {
-    fn ends(&self, id: TermId, text: &[char], pos: usize, out: &mut Vec<usize>) {
+    type Memo = Vec<Option<Vec<usize>>>;
+
+    fn begin(&self, _text: &[char]) -> Self::Memo {
+        alloc::vec![None; self.explicit.len()]
+    }
+
+    fn ends(
+        &self,
+        memo: &mut Self::Memo,
+        id: TermId,
+        text: &[char],
+        pos: usize,
+        out: &mut Vec<usize>,
+    ) {
         match &self.explicit[id] {
-            Some(matcher) => matcher.ends(text, pos, out),
-            None => self.lexer.ends(id, text, pos, out),
+            Some(matcher) => matcher.ends(&mut memo[id], text, pos, out),
+            None => self.lexer.ends(&mut (), id, text, pos, out),
         }
     }
 }

@@ -18,7 +18,7 @@ fn chars(s: &str) -> Vec<char> {
 
 fn ends_of(matcher: &ExplicitMatcher, text: &str, pos: usize) -> Vec<usize> {
     let mut out = Vec::new();
-    matcher.ends(&chars(text), pos, &mut out);
+    matcher.ends(&mut None, &chars(text), pos, &mut out);
     out
 }
 
@@ -91,6 +91,35 @@ fn a_searching_regex_terminal_ends_anywhere_from_the_first_match_on() {
 }
 
 #[test]
+fn a_searching_regex_terminal_finds_its_earliest_ends_once_for_the_text() {
+    let m = regex_matcher(".*x", false);
+    let mut searched = None;
+    let text = chars("aaxaaaax");
+    let mut out = Vec::new();
+    m.ends(&mut searched, &text, 0, &mut out);
+    assert_eq!(out, vec![3, 4, 5, 6, 7, 8]);
+    assert_eq!(searched, Some(vec![3, 3, 3, 8, 8, 8, 8, 8, 9]));
+    out.clear();
+    m.ends(&mut searched, &text, 4, &mut out);
+    assert_eq!(out, vec![8]);
+    out.clear();
+    m.ends(&mut searched, &text, 8, &mut out);
+    assert_eq!(out, Vec::<usize>::new());
+    let long: Vec<char> = core::iter::repeat_n('a', 4000).collect();
+    let started = std::time::Instant::now();
+    let mut searched = None;
+    for pos in 0..=long.len() {
+        out.clear();
+        m.ends(&mut searched, &long, pos, &mut out);
+        assert!(out.is_empty());
+    }
+    assert!(started.elapsed() < core::time::Duration::from_secs(5));
+    let searched = searched.unwrap();
+    assert_eq!(searched.len(), long.len() + 1);
+    assert!(searched.iter().all(|&end| end == long.len() + 1));
+}
+
+#[test]
 fn every_internet_string_drawn_is_matched_whole() {
     let specs = [
         StringSpec::email(),
@@ -109,7 +138,7 @@ fn every_internet_string_drawn_is_matched_whole() {
             };
             let text = chars(&s);
             let mut ends = Vec::new();
-            matcher.ends(&text, 0, &mut ends);
+            matcher.ends(&mut None, &text, 0, &mut ends);
             assert!(ends.contains(&text.len()), "{s:?} {ends:?}");
             whole += 1;
         }
@@ -157,21 +186,23 @@ fn grammar_terminals_match_explicit_terminals_by_their_generators_and_the_rest_b
     )];
     let terminals = GrammarTerminals::new(&grammar, &explicit).unwrap();
     let text = chars("abc!12");
+    let mut memo = terminals.begin(&text);
     let mut out = Vec::new();
-    terminals.ends(word, &text, 0, &mut out);
+    terminals.ends(&mut memo, word, &text, 0, &mut out);
     assert_eq!(out, vec![3]);
     out.clear();
-    terminals.ends(bang, &text, 3, &mut out);
+    terminals.ends(&mut memo, bang, &text, 3, &mut out);
     assert_eq!(out, vec![4]);
     out.clear();
-    terminals.ends(num, &text, 4, &mut out);
+    terminals.ends(&mut memo, num, &text, 4, &mut out);
     assert_eq!(out, Vec::<usize>::new());
     let explicit = [(
         num,
         Arc::new(StringSpec::text(&alphabet("0123456789"), 1, 8).unwrap()),
     )];
     let terminals = GrammarTerminals::new(&grammar, &explicit).unwrap();
-    terminals.ends(num, &text, 4, &mut out);
+    let mut memo = terminals.begin(&text);
+    terminals.ends(&mut memo, num, &text, 4, &mut out);
     assert_eq!(out, vec![5, 6]);
     assert!(matches!(
         terminals.lexer().match_terminal(bang, &text, 3),

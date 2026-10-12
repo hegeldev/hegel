@@ -4,11 +4,11 @@ does.
 
 Runs the engine's `write_corpus` test to draw strings from every fixture
 grammar in `hegel-c/tests/fixtures/lark/` that Lark can parse without a
-postlexer, mutates each string a few ways (a character deleted,
-duplicated, swapped with its neighbour, or the string truncated), and
-asks both Lark's Earley parser with its dynamic lexer and the engine's
-parser (through the `write_verdicts` test) whether each original and
-mutant parses. Any disagreement fails the check. Lark 1.3.1 raises a
+postlexer and in reasonable time (see `check-lark.py`), mutates each
+string a few ways (a character deleted, duplicated, swapped with its
+neighbour, or the string truncated), and asks both Lark's Earley parser
+with its dynamic lexer and the engine's parser (through the
+`write_verdicts` test) whether each original and mutant parses. Any disagreement fails the check. Lark 1.3.1 raises a
 `RuntimeError` of its own on input ending in an ignored terminal; the
 engine accepts those strings, as Lark means to, so they count as
 accepted here.
@@ -33,12 +33,14 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "hegel-c" / "tests" / "fixtures" / "lark"
 LARK_BUG = "multiple start symbol"
 DECLARE = re.compile(r"^\s*%declare\b", re.MULTILINE)
+NO_CORPUS = re.compile(r"^\s*// corpus: no$", re.MULTILINE)
 
 
 def corpus_grammars() -> list[str]:
     names = []
     for path in sorted(FIXTURES.glob("*.lark")):
-        if path.stem.startswith("err_") or DECLARE.search(path.read_text()):
+        text = path.read_text()
+        if path.stem.startswith("err_") or DECLARE.search(text) or NO_CORPUS.search(text):
             continue
         names.append(path.stem)
     return names
