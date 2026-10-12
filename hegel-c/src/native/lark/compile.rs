@@ -150,14 +150,15 @@ fn pattern_widths(name: &str, pattern: &Pattern) -> GrammarResult<(u64, Option<u
     Ok(get_width(&parse_terminal_pattern(name, pattern)?.pattern))
 }
 
+/// The regex quantifier for a repetition. The parser builds an unbounded
+/// one only from `*` or `+`.
 fn repeat_suffix(min: u32, max: Option<u32>) -> String {
     match (min, max) {
         (0, Some(1)) => "?".to_string(),
         (0, None) => "*".to_string(),
-        (1, None) => "+".to_string(),
+        (_, None) => "+".to_string(),
         (n, Some(m)) if n == m => format!("{{{n}}}"),
         (n, Some(m)) => format!("{{{n},{m}}}"),
-        (n, None) => format!("{{{n},}}"),
     }
 }
 
@@ -234,6 +235,8 @@ fn contains_template(expr: &Expr) -> bool {
 struct Compiler {
     terminals: Vec<TerminalDef>,
     term_ids: HashMap<String, TermId>,
+    /// The named terminal a literal in a rule stands for, by pattern: the
+    /// last one defined with that pattern, as in Lark's `term_reverse`.
     term_by_pattern: HashMap<Pattern, TermId>,
     anon_counter: usize,
     rules: Vec<Option<Rule>>,
@@ -275,7 +278,7 @@ impl Compiler {
         };
         let id = self.terminals.len();
         if let Some(p) = &pattern {
-            self.term_by_pattern.entry(p.clone()).or_insert(id);
+            self.term_by_pattern.insert(p.clone(), id);
         }
         self.term_ids.insert(name.clone(), id);
         self.terminals.push(TerminalDef {

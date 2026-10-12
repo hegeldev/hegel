@@ -153,11 +153,12 @@ pub fn range_literal(start: &str, end: &str) -> GrammarResult<Pattern> {
     Ok(Pattern::re(format!("[{start}-{end}]")))
 }
 
-/// Escape a string for use in a regex, as Python's `re.escape` does: every
-/// character that is not alphanumeric or `_` is backslash-escaped, except
-/// that Python only escapes the characters that are special somewhere in
-/// its regex syntax. The result is matched by the engine's own regex
-/// parser, which follows Python's.
+/// Escape a string for use in a regex, as Python's `re.escape` does: only
+/// the characters in its `_special_chars_map` (those special somewhere in
+/// its regex syntax, plus whitespace, `#`, `&`, `~` and `-`) are
+/// backslash-escaped, and every other character is left as it is. The
+/// result is matched by the engine's own regex parser, which follows
+/// Python's.
 pub fn re_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 2);
     for c in s.chars() {

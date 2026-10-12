@@ -263,12 +263,21 @@ fn terminal_widths_are_recorded() {
     let grammar = compiled("start: A B\nA: \"ab\" | \"abc\"\nB: /x+/");
     let a = &grammar.terminals[grammar.terminal_id("A").unwrap()];
     assert_eq!((a.min_width, a.max_width), (2, Some(3)));
-    let b = &grammar.terminals[grammal_b_index(&grammar)];
+    let b = &grammar.terminals[grammar.terminal_id("B").unwrap()];
     assert_eq!((b.min_width, b.max_width), (1, None));
 }
 
-fn grammal_b_index(grammar: &Grammar) -> usize {
-    grammar.terminal_id("B").unwrap()
+#[test]
+fn a_literal_shared_by_named_terminals_resolves_to_the_last_defined() {
+    let grammar = compiled("start: \"x\" \"y\"\nA: \"x\"\nB: \"x\"\nC: \"y\"");
+    let start = &grammar.rules[grammar.rule_id("start").unwrap()];
+    assert_eq!(
+        start.alternatives[0].items,
+        vec![
+            Item::Terminal(grammar.terminal_id("B").unwrap()),
+            Item::Terminal(grammar.terminal_id("C").unwrap()),
+        ]
+    );
 }
 
 #[test]
@@ -387,7 +396,6 @@ fn repeat_suffixes() {
     assert_eq!(repeat_suffix(1, None), "+");
     assert_eq!(repeat_suffix(3, Some(3)), "{3}");
     assert_eq!(repeat_suffix(1, Some(3)), "{1,3}");
-    assert_eq!(repeat_suffix(2, None), "{2,}");
 }
 
 #[test]
