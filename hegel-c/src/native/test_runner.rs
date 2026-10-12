@@ -642,10 +642,9 @@ impl<'a> Engine<'a> {
 
                 if run.status == Status::Valid
                     && (self.valid_test_cases >= HEALTH_CHECK_MAX_VALID || self.origins.any_live())
+                    && !self.try_span_mutation(&run.nodes, &run.spans).await?
                 {
-                    if !self.try_span_mutation(&run.nodes, &run.spans).await? {
-                        self.try_grammar_mutation(&run.nodes).await?;
-                    }
+                    self.try_grammar_mutation(&run.nodes).await?;
                 }
 
                 self.first_check_sweep().await?;

@@ -66,6 +66,20 @@ pub(crate) struct Caches {
     producible: Mutex<HashMap<ProducibleKey, bool>>,
 }
 
+impl Caches {
+    /// The characters a `(IN, items)` node can emit under `flags`, from
+    /// the cache or worked out now and cached, copied out so that the
+    /// cache is not held while they are drawn from.
+    fn in_set(
+        &self,
+        items: &[SetItem],
+        flags: u32,
+        alphabet: &Option<IntervalSet>,
+    ) -> Result<InSet, InternalError> {
+        Ok(in_set(&mut self.in_cache.lock(), items, flags, alphabet)?.clone())
+    }
+}
+
 impl Default for Caches {
     fn default() -> Self {
         Caches {
@@ -743,9 +757,8 @@ fn generate_op<'a, D: Draws>(
             }
         },
         OpCode::In(items) => {
-            let mut cache = state.caches.in_cache.lock();
-            let set = in_set(&mut cache, items, state.flags, alphabet)?;
-            emit_from_set(d, set, out)?;
+            let set = state.caches.in_set(items, state.flags, alphabet)?;
+            emit_from_set(d, &set, out)?;
         }
         OpCode::Branch(items) => {
             let item = if state.unproducible {
@@ -879,8 +892,7 @@ fn repeat_in<D: Draws>(
     if !many_more(d, ms)? {
         return Ok(());
     }
-    let mut cache = state.caches.in_cache.lock();
-    match in_set(&mut cache, items, state.flags, alphabet)? {
+    match state.caches.in_set(items, state.flags, alphabet)? {
         InSet::Listed(chars) => {
             if chars.is_empty() {
                 return Err(mark_invalid(d));
@@ -966,10 +978,7 @@ fn producible_op(
             !not_literal_chars(codepoint_to_char(*cp)?, flags, alphabet, caches).is_empty()
         }
         OpCode::Any => alphabet.is_none() || !any_chars(flags, alphabet, caches).is_empty(),
-        OpCode::In(items) => {
-            let mut cache = caches.in_cache.lock();
-            !in_set(&mut cache, items, flags, alphabet)?.is_empty()
-        }
+        OpCode::In(items) => !caches.in_set(items, flags, alphabet)?.is_empty(),
         OpCode::At(_) | OpCode::GroupRef(_) | OpCode::AssertNot { .. } => true,
         OpCode::Failure => false,
         OpCode::Branch(items) => {
