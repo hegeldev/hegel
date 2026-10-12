@@ -227,6 +227,27 @@ fn placeholders_count_for_nothing_toward_the_size_cap() {
     assert!(strings.iter().any(|s| s.len() > 3), "{strings:?}");
 }
 
+#[test]
+fn a_repeated_placeholder_repeats() {
+    let marker = placeholder("ITEM");
+    for (text, min) in [("start: ITEM+\n", 1), ("start: ITEM*\n", 0)] {
+        let spec = spec_with(
+            &format!("{text}%declare ITEM\n"),
+            GrammarOptions {
+                explicit: explicit(&["ITEM"]),
+                ..GrammarOptions::default()
+            },
+        )
+        .unwrap();
+        let counts: Vec<usize> = samples(&spec, 50)
+            .iter()
+            .map(|s| s.matches(&marker).count())
+            .collect();
+        assert!(counts.iter().all(|&n| n >= min), "{counts:?}");
+        assert!(counts.iter().any(|&n| n > 1), "{counts:?}");
+    }
+}
+
 /// A draw's own cap holds it under the grammar's; one outside the
 /// grammar's range is read as the nearer end of it.
 #[test]

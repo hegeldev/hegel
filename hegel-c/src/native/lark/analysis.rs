@@ -197,10 +197,12 @@ impl Analyzer<'_> {
     /// The largest string an item can produce under the current estimates
     /// of the rules' maxima, or `None` when it is known to be unbounded. An
     /// unproductive rule contributes nothing, since no finite string can
-    /// pass through it.
+    /// pass through it. A terminal counts for at least one character: only
+    /// a placeholder's is counted as shorter, and its value is the
+    /// caller's, so a repetition of one still produces something.
     fn item_max_size(&self, item: &Item) -> Bound {
         match item {
-            Item::Terminal(t) => Some(self.term_min[*t]),
+            Item::Terminal(t) => Some(self.term_min[*t].max(1)),
             Item::Rule(r) => {
                 let facts = &self.facts[*r];
                 if facts.min_size.is_none() {
