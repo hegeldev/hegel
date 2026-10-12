@@ -18,6 +18,7 @@ just check-coverage                 # check coverage (requires cargo-llvm-cov + 
 just c-test                         # hegel-c smoke tests + example C programs
 just miri                           # fast core of the suite under Miri
 just check-lark                     # parse engine-generated strings from the Lark fixture grammars with Lark itself (needs uv)
+just check-parse                    # compare the engine's grammar parser with Lark's on generated strings and mutants of them (needs uv)
 just lark-fixtures                  # regenerate the Lark fixtures' .expected files from Lark (needs uv)
 cargo test test_name                # run a single test
 ```

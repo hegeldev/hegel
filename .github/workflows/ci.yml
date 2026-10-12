@@ -489,7 +489,7 @@ jobs:
   release:
     name: release
     if: github.event_name == 'push' && github.repository == 'hegeldev/hegel-rust'
-    needs: [lint, test, test-wasm, test-all-features, test-minimal-versions, test-c-bindings, test-c-runtime, compile-examples, docs, coverage, nix, miri]
+    needs: [lint, test, test-wasm, test-all-features, test-minimal-versions, test-c-bindings, test-c-runtime, compile-examples, docs, coverage, nix, miri, lark]
     runs-on: ubuntu-latest
     permissions:
       contents: write

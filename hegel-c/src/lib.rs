@@ -4655,8 +4655,8 @@ pub unsafe extern "C" fn hegel_string_generator_text(
 ///   pattern may contain the NUL character, which `re` accepts.
 /// `fullmatch`: When true, the whole string must match the pattern.
 ///   Otherwise, the match may be padded on either side.
-/// `alphabet`: Optional (NULL for none). Must be a text generator. Its
-///   character set constrains the padding and wildcard characters.
+/// `alphabet`: Optional (NULL for none). Must be a text generator. Every
+///   character of the string, padding included, is one of its characters.
 ///
 /// A string drawn from the generator is recorded as one string choice the
 /// pattern constrains, replayed as long as it still matches and shrunk
@@ -4866,10 +4866,13 @@ pub unsafe extern "C" fn hegel_generate_string_result_free(
 /// the grammar, or a grammar it imports, makes. `user_data` is the pointer
 /// supplied alongside the callback. `base_path` is the directory of the
 /// importing grammar (the directory part of the `out_path` this callback
-/// gave for it), or NULL when the importing grammar is the text passed to
-/// `hegel_grammar_new`; `grammar_path` is the file the import names
-/// relative to it (`common.lark` for `%import common.INT`, `a/b.lark` for
-/// `%import a.b.rule`). Both are NUL-terminated UTF-8 valid only for the
+/// gave for it) for a relative import (`%import .common.INT`) made by a
+/// grammar this callback supplied, and NULL otherwise: for every absolute
+/// import (`%import common.INT`), and for a relative import made by the
+/// text passed to `hegel_grammar_new`. `grammar_path` is the file the
+/// import names relative to it (`common.lark` for `%import common.INT`,
+/// `a/b.lark` for `%import a.b.rule`). Both are NUL-terminated UTF-8 valid
+/// only for the
 /// duration of the call. To supply the grammar, set `out_path` to the
 /// NUL-terminated path it was found at, `out_text` and `out_text_len` to
 /// its UTF-8 text, all kept alive until `hegel_grammar_new` returns, and
@@ -4909,6 +4912,8 @@ impl crate::native::lark::builder::ImportSource for CallbackImports {
         let mut out_path: *const c_char = ptr::null();
         let mut out_text: *const c_char = ptr::null();
         let mut out_text_len = 0usize;
+        // SAFETY: the two paths are NUL-terminated `CString`s alive across
+        // the call, and the out-pointers are to locals the callback writes.
         let found = unsafe {
             (self.callback)(
                 self.user_data,
@@ -4922,6 +4927,10 @@ impl crate::native::lark::builder::ImportSource for CallbackImports {
         if !found || out_path.is_null() || out_text.is_null() {
             return None;
         }
+        // SAFETY: per the `hegel_grammar_import_t` contract, a callback that
+        // returned true set `out_path` to a NUL-terminated string and
+        // `out_text` to `out_text_len` bytes, both alive until
+        // `hegel_grammar_new` returns; they are copied out here.
         let path = unsafe { CStr::from_ptr(out_path) }
             .to_string_lossy()
             .into_owned();
@@ -4953,9 +4962,9 @@ pub struct HegelGrammar {
 ///   produce.
 /// `max_depth`: How deeply rules may nest, or 0 for the default of 200.
 ///   Must not be below the shallowest nesting the start rule can produce.
-/// `alphabet`: Optional (NULL for none). Must be a text generator; its
-///   characters are the ones the terminals' patterns may draw where they
-///   leave the choice open (wildcards, negated classes).
+/// `alphabet`: Optional (NULL for none). Must be a text generator; every
+///   character a terminal's pattern draws is one of its characters, so a
+///   character class, wildcard or literal outside it is never drawn.
 /// `explicit_names`, `explicit_generators`, `explicit_len`: `explicit_len`
 ///   terminals to draw from the given string generators instead of their
 ///   patterns. Every terminal the grammar `%declare`s must be given one;
@@ -4966,11 +4975,12 @@ pub struct HegelGrammar {
 ///   grammars.
 /// `out_grammar`: Receives the grammar handle.
 ///
-/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` with a message describing
+/// Returns `HEGEL_OK`; `HEGEL_E_INVALID_ARG` with a message describing
 /// what is wrong with the grammar or the options: a syntax error, an
 /// undefined or unused symbol, a rule that can never produce a finite
 /// string, a `%declare`d terminal without a generator, or a cap below the
-/// smallest string.
+/// smallest string; or `HEGEL_E_INVALID_HANDLE` for a NULL entry in
+/// `explicit_generators`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_grammar_new(
     ctx: *mut HegelContext,

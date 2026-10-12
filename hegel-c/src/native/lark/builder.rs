@@ -33,8 +33,9 @@ impl ImportSource for NoImports {
     }
 }
 
-/// The grammars Lark ships in `lark/grammars/`, reachable as
-/// `%import common.X` and so on.
+/// The grammars Lark 1.3.1 ships in `lark/grammars/`, copied verbatim
+/// under `grammars/` with Lark's licence, reachable as `%import common.X`
+/// and so on.
 pub fn bundled_grammar(grammar_path: &str) -> Option<&'static str> {
     match grammar_path {
         "common.lark" => Some(include_str!("grammars/common.lark")),

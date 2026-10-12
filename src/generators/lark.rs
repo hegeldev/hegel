@@ -41,8 +41,8 @@ fn lark_label(text: &str, start: Option<&str>) -> u64 {
 }
 
 impl LarkGenerator {
-    /// Generate strings of the rule `start` instead of the rule named
-    /// `start`.
+    /// Generate strings of the rule named `start` rather than of Lark's
+    /// default start rule, `start`.
     pub fn start(mut self, start: &str) -> Self {
         self.handle = OnceLock::new();
         self.start = Some(start.to_string());
@@ -155,7 +155,10 @@ impl PrintableGenerator<String> for LarkGenerator {
 /// ones Lark's Earley parser accepts for the grammar, with `%ignore`d
 /// terminals such as whitespace and comments inserted wherever a lexer
 /// would skip them; a string Lark's basic lexer would read differently is
-/// avoided where the grammar allows it.
+/// avoided where the grammar allows it. A draw that cannot produce such
+/// a string after several attempts rejects the test case, as a failed
+/// [`assume`](crate::TestCase::assume) does, so a grammar that often
+/// needs that fails the filter health check.
 ///
 /// Strings range up to 8192 characters by default, biased toward the
 /// larger end; use [`max_size`](LarkGenerator::max_size) and

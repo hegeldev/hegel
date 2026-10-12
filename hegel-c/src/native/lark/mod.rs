@@ -1,5 +1,6 @@
-//! Port of Lark's grammar language (`lark/load_grammar.py`) for generating
-//! strings from a grammar.
+//! Port of Lark's grammar language (`lark/load_grammar.py` in Lark 1.3.1,
+//! MIT licensed: see `grammars/LICENSE`) for generating strings from a
+//! grammar.
 //!
 //! Lark grammars are parsed by [`parser`] into the [`ast`] types, assembled
 //! by [`builder`] (imports, templates, directives, validation, exactly as

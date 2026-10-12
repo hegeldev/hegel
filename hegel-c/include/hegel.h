@@ -671,10 +671,13 @@ typedef struct {
  the grammar, or a grammar it imports, makes. `user_data` is the pointer
  supplied alongside the callback. `base_path` is the directory of the
  importing grammar (the directory part of the `out_path` this callback
- gave for it), or NULL when the importing grammar is the text passed to
- `hegel_grammar_new`; `grammar_path` is the file the import names
- relative to it (`common.lark` for `%import common.INT`, `a/b.lark` for
- `%import a.b.rule`). Both are NUL-terminated UTF-8 valid only for the
+ gave for it) for a relative import (`%import .common.INT`) made by a
+ grammar this callback supplied, and NULL otherwise: for every absolute
+ import (`%import common.INT`), and for a relative import made by the
+ text passed to `hegel_grammar_new`. `grammar_path` is the file the
+ import names relative to it (`common.lark` for `%import common.INT`,
+ `a/b.lark` for `%import a.b.rule`). Both are NUL-terminated UTF-8 valid
+ only for the
  duration of the call. To supply the grammar, set `out_path` to the
  NUL-terminated path it was found at, `out_text` and `out_text_len` to
  its UTF-8 text, all kept alive until `hegel_grammar_new` returns, and
@@ -2165,8 +2168,8 @@ hegel_result_t hegel_string_generator_text(hegel_context_t *ctx,
    pattern may contain the NUL character, which `re` accepts.
  `fullmatch`: When true, the whole string must match the pattern.
    Otherwise, the match may be padded on either side.
- `alphabet`: Optional (NULL for none). Must be a text generator. Its
-   character set constrains the padding and wildcard characters.
+ `alphabet`: Optional (NULL for none). Must be a text generator. Every
+   character of the string, padding included, is one of its characters.
 
  Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an invalid string
  buffer, a pattern that does not parse, or an alphabet that is not a
@@ -2257,9 +2260,9 @@ hegel_result_t hegel_generate_string_result_free(hegel_context_t *ctx,
    produce.
  `max_depth`: How deeply rules may nest, or 0 for the default of 200.
    Must not be below the shallowest nesting the start rule can produce.
- `alphabet`: Optional (NULL for none). Must be a text generator; its
-   characters are the ones the terminals' patterns may draw where they
-   leave the choice open (wildcards, negated classes).
+ `alphabet`: Optional (NULL for none). Must be a text generator; every
+   character a terminal's pattern draws is one of its characters, so a
+   character class, wildcard or literal outside it is never drawn.
  `explicit_names`, `explicit_generators`, `explicit_len`: `explicit_len`
    terminals to draw from the given string generators instead of their
    patterns. Every terminal the grammar `%declare`s must be given one;
@@ -2270,11 +2273,12 @@ hegel_result_t hegel_generate_string_result_free(hegel_context_t *ctx,
    grammars.
  `out_grammar`: Receives the grammar handle.
 
- Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` with a message describing
+ Returns `HEGEL_OK`; `HEGEL_E_INVALID_ARG` with a message describing
  what is wrong with the grammar or the options: a syntax error, an
  undefined or unused symbol, a rule that can never produce a finite
  string, a `%declare`d terminal without a generator, or a cap below the
- smallest string.
+ smallest string; or `HEGEL_E_INVALID_HANDLE` for a NULL entry in
+ `explicit_generators`.
  */
 hegel_result_t hegel_grammar_new(hegel_context_t *ctx,
                                  const char *text,
