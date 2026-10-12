@@ -177,6 +177,12 @@ fn priority_beats_width() {
 }
 
 #[test]
+fn the_lowest_priority_there_is_comes_last() {
+    let g = compiled("start: A B\nA.-9223372036854775808: /a/\nB: /a+/\n");
+    assert_eq!(lex(&g, "aa"), vec![("B", 2)]);
+}
+
+#[test]
 fn unlexable_text_is_no_match() {
     let g = compiled("start: A\nA: /a/\n");
     let lexer = Lexer::new(&g.terminals);

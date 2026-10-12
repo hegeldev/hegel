@@ -40,6 +40,7 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::cmp::Reverse;
 
 /// The characters a pattern can start with, as sorted disjoint ranges;
 /// `None` when the analysis gave up (so any character might start it).
@@ -598,11 +599,11 @@ impl Lexer {
         order.sort_by(|(_, a, _), (_, b, _)| {
             let key = |t: &TerminalDef| {
                 let pattern = t.pattern.as_ref().unwrap();
-                (
-                    -t.priority,
-                    -(t.max_width.map_or(i128::from(MAXREPEAT), i128::from)),
-                    -(pattern.value.chars().count() as i128),
-                )
+                Reverse((
+                    t.priority,
+                    t.max_width.unwrap_or(u64::from(MAXREPEAT)),
+                    pattern.value.chars().count(),
+                ))
             };
             key(a).cmp(&key(b)).then_with(|| a.name.cmp(&b.name))
         });
