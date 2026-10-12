@@ -513,21 +513,16 @@ pub struct EmailGenerator {
 
 const EMAIL_LABEL: u64 = label_from_name("hegel.emails");
 
-impl EmailGenerator {
-    fn handle(&self) -> &ffi::StringGenerator {
-        self.handle.get_or_init(|| {
-            ffi::StringGenerator::email().unwrap_or_else(|msg| invalid_argument!("{msg}"))
-        })
-    }
-}
-
 impl Generator<String> for EmailGenerator {
     fn label(&self) -> u64 {
         EMAIL_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
-        tc.generate_string(self.handle())
+        let handle = self.handle.get_or_init(|| {
+            ffi::StringGenerator::email().unwrap_or_else(|msg| invalid_argument!("{msg}"))
+        });
+        tc.generate_string(handle)
     }
 }
 
@@ -545,21 +540,16 @@ pub struct UrlGenerator {
 
 const URL_LABEL: u64 = label_from_name("hegel.urls");
 
-impl UrlGenerator {
-    fn handle(&self) -> &ffi::StringGenerator {
-        self.handle.get_or_init(|| {
-            ffi::StringGenerator::url().unwrap_or_else(|msg| invalid_argument!("{msg}"))
-        })
-    }
-}
-
 impl Generator<String> for UrlGenerator {
     fn label(&self) -> u64 {
         URL_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
-        tc.generate_string(self.handle())
+        let handle = self.handle.get_or_init(|| {
+            ffi::StringGenerator::url().unwrap_or_else(|msg| invalid_argument!("{msg}"))
+        });
+        tc.generate_string(handle)
     }
 }
 
@@ -587,25 +577,20 @@ impl DomainGenerator {
 
 const DOMAIN_LABEL: u64 = label_from_name("hegel.domains");
 
-impl DomainGenerator {
-    fn handle(&self) -> &ffi::StringGenerator {
-        self.handle.get_or_init(|| {
-            if !(self.max_length >= 4 && self.max_length <= 255) {
-                invalid_argument!("max_length must be between 4 and 255");
-            }
-            ffi::StringGenerator::domain(self.max_length as u64)
-                .unwrap_or_else(|msg| invalid_argument!("{msg}"))
-        })
-    }
-}
-
 impl Generator<String> for DomainGenerator {
     fn label(&self) -> u64 {
         DOMAIN_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
-        tc.generate_string(self.handle())
+        let handle = self.handle.get_or_init(|| {
+            if !(self.max_length >= 4 && self.max_length <= 255) {
+                invalid_argument!("max_length must be between 4 and 255");
+            }
+            ffi::StringGenerator::domain(self.max_length as u64)
+                .unwrap_or_else(|msg| invalid_argument!("{msg}"))
+        });
+        tc.generate_string(handle)
     }
 }
 

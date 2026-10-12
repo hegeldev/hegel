@@ -1350,7 +1350,7 @@ impl Drop for StateMachineHandle {
 /// eagerly and returns `Err` with libhegel's diagnostic on invalid input.
 /// The handle is immutable after construction, so it may be shared across
 /// test cases and threads; generators cache one per configuration.
-pub struct StringGenerator {
+pub(crate) struct StringGenerator {
     raw: *mut hegel_c::HegelStringGenerator,
 }
 
