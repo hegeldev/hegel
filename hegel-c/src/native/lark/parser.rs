@@ -1,27 +1,34 @@
 //! Recursive-descent parser for `.lark` grammar text, following the
 //! meta-grammar in Lark's `load_grammar.py` (`RULES`).
 
-#[cfg(test)]
-use super::ast::Pattern;
 use super::ast::{
-    Alternative, Definition, Expr, ImportNames, ImportStmt, RuleDef, RuleModifiers, Statement,
-    Symbol, TermDef,
+    Alternative, Definition, Expr, ImportNames, ImportStmt, Pattern, PatternKind, RuleDef,
+    RuleModifiers, Statement, Symbol, TermDef,
 };
 use super::escape::{range_literal, regex_literal, string_literal};
 use super::lexer::{Pos, Tok, Token, tokenize};
 use super::{GrammarError, GrammarResult};
 use alloc::boxed::Box;
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 struct Parser<'a> {
     tokens: Vec<Token>,
     i: usize,
     text: &'a str,
+    /// How many parentheses and brackets are open around the current
+    /// position.
+    depth: usize,
 }
 
+/// The most repetitions a `~` count may ask for.
 const REPEAT_LIMIT: u32 = 1 << 20;
+
+/// How deeply parentheses and brackets may nest. The parser and every
+/// pass after it walk the tree recursively, so a grammar nested past this
+/// is rejected rather than left to overflow the stack.
+const MAX_NESTING: usize = 200;
 
 impl<'a> Parser<'a> {
     fn peek(&self) -> Option<&Tok> {
@@ -37,10 +44,10 @@ impl<'a> Parser<'a> {
         token.map_or(Pos { line: 1, column: 1 }, |t| t.pos)
     }
 
-    fn advance(&mut self) -> Tok {
-        let tok = self.tokens[self.i].tok.clone();
+    fn advance(&mut self) -> Option<Tok> {
+        let tok = self.tokens.get(self.i)?.tok.clone();
         self.i += 1;
-        tok
+        Some(tok)
     }
 
     fn error_at(&self, pos: Pos, what: &str) -> GrammarError {
@@ -234,9 +241,11 @@ impl<'a> Parser<'a> {
             modifiers.keep_all_tokens = m.contains('!');
             self.advance();
         }
-        let Tok::Rule(name) = self.advance() else {
-            unreachable!("rule modifiers are lexed only before a rule name")
+        let name = match self.peek() {
+            Some(Tok::Rule(name)) => name.clone(),
+            _ => return Err(self.error("Expecting rule or terminal definition")),
         };
+        self.advance();
         if modifiers.expand1 && name.starts_with('_') {
             return Err(GrammarError::new(
                 "Inlined rules (_rule) cannot use the ?rule modifier.",
@@ -272,7 +281,7 @@ impl<'a> Parser<'a> {
     }
 
     fn term_def(&mut self) -> GrammarResult<TermDef> {
-        let Tok::Terminal(name) = self.advance() else {
+        let Some(Tok::Terminal(name)) = self.advance() else {
             unreachable!("term_def is entered on a terminal name")
         };
         if self.peek() == Some(&Tok::Dot) && matches!(self.peek_at(1), Some(Tok::Terminal(_))) {
@@ -294,7 +303,7 @@ impl<'a> Parser<'a> {
             return Ok(None);
         }
         match self.advance() {
-            Tok::Number(n) => Ok(Some(n)),
+            Some(Tok::Number(n)) => Ok(Some(n)),
             _ => Err(self.error("Expecting a priority number after '.'")),
         }
     }
@@ -368,8 +377,8 @@ impl<'a> Parser<'a> {
     fn repeat_count(&mut self) -> GrammarResult<u32> {
         let pos = self.pos();
         match self.advance() {
-            Tok::Number(n) if (0..=REPEAT_LIMIT as i64).contains(&n) => Ok(n as u32),
-            Tok::Number(n) => Err(self.error_at(
+            Some(Tok::Number(n)) if (0..=REPEAT_LIMIT as i64).contains(&n) => Ok(n as u32),
+            Some(Tok::Number(n)) => Err(self.error_at(
                 pos,
                 &format!("Bad Range for repetition ({n} isn't allowed)"),
             )),
@@ -403,7 +412,10 @@ impl<'a> Parser<'a> {
                     if max < min {
                         return Err(self.error_at(
                             pos,
-                            &format!("Bad Range for {atom:?} ({min}..{max} isn't allowed)"),
+                            &format!(
+                                "Bad Range for {} ({min}..{max} isn't allowed)",
+                                atom_text(&atom)
+                            ),
                         ));
                     }
                     max
@@ -424,8 +436,8 @@ impl<'a> Parser<'a> {
     fn atom(&mut self) -> GrammarResult<Expr> {
         let pos = self.pos();
         match self.advance() {
-            Tok::LPar => {
-                let inner = self.expansions()?;
+            Some(Tok::LPar) => {
+                let inner = self.group(pos)?;
                 match self.peek() {
                     Some(Tok::RPar) => {
                         self.advance();
@@ -435,8 +447,8 @@ impl<'a> Parser<'a> {
                     _ => Err(self.error_at(pos, "Unclosed parenthesis")),
                 }
             }
-            Tok::LBra => {
-                let inner = self.expansions()?;
+            Some(Tok::LBra) => {
+                let inner = self.group(pos)?;
                 match self.peek() {
                     Some(Tok::RBra) => {
                         self.advance();
@@ -450,8 +462,8 @@ impl<'a> Parser<'a> {
                     _ => Err(self.error_at(pos, "Unclosed parenthesis")),
                 }
             }
-            Tok::Terminal(name) => Ok(Expr::Symbol(Symbol::Terminal(name))),
-            Tok::Rule(name) => {
+            Some(Tok::Terminal(name)) => Ok(Expr::Symbol(Symbol::Terminal(name))),
+            Some(Tok::Rule(name)) => {
                 if self.eat(&Tok::LBrace) {
                     let mut args = Vec::new();
                     args.push(self.value()?);
@@ -464,10 +476,10 @@ impl<'a> Parser<'a> {
                     Ok(Expr::Symbol(Symbol::Rule(name)))
                 }
             }
-            Tok::Str { body, flags } => {
+            Some(Tok::Str { body, flags }) => {
                 if self.eat(&Tok::DotDot) {
                     match self.advance() {
-                        Tok::Str { body: end, .. } => {
+                        Some(Tok::Str { body: end, .. }) => {
                             Ok(Expr::Literal(range_literal(&body, &end)?))
                         }
                         _ => Err(self.error("Expecting a string literal after '..'")),
@@ -476,9 +488,24 @@ impl<'a> Parser<'a> {
                     Ok(Expr::Literal(string_literal(&body, &flags)?))
                 }
             }
-            Tok::Regexp { body, flags } => Ok(Expr::Literal(regex_literal(&body, &flags)?)),
+            Some(Tok::Regexp { body, flags }) => Ok(Expr::Literal(regex_literal(&body, &flags)?)),
             _ => unreachable!("atom is entered only on a token that starts one"),
         }
+    }
+
+    /// The expansions inside a parenthesis or bracket opened at `pos`,
+    /// one level deeper.
+    fn group(&mut self, pos: Pos) -> GrammarResult<Expr> {
+        if self.depth == MAX_NESTING {
+            return Err(self.error_at(
+                pos,
+                &format!("Grammar nests more than {MAX_NESTING} levels of parentheses"),
+            ));
+        }
+        self.depth += 1;
+        let inner = self.expansions();
+        self.depth -= 1;
+        inner
     }
 
     /// `value: terminal | nonterminal | literal | range | template_usage`
@@ -496,15 +523,33 @@ impl<'a> Parser<'a> {
 /// Parse grammar text into its statements.
 pub fn parse_grammar(text: &str) -> GrammarResult<Vec<Statement>> {
     let tokens = tokenize(text)?;
-    let mut parser = Parser { tokens, i: 0, text };
+    let mut parser = Parser {
+        tokens,
+        i: 0,
+        text,
+        depth: 0,
+    };
     parser.parse_grammar()
 }
 
-/// A literal as the parser produces it, for tests that build patterns by
-/// hand.
-#[cfg(test)]
-pub fn literal(pattern: Pattern) -> Expr {
-    Expr::Literal(pattern)
+/// How an atom is named in a repeat-range error: a symbol or template by
+/// its name, a literal as it is written.
+fn atom_text(atom: &Expr) -> String {
+    match atom {
+        Expr::Symbol(symbol) => symbol.name().to_string(),
+        Expr::Literal(Pattern {
+            kind: PatternKind::Str,
+            value,
+            ..
+        }) => format!("\"{value}\""),
+        Expr::Literal(Pattern {
+            kind: PatternKind::Re,
+            value,
+            ..
+        }) => format!("/{value}/"),
+        Expr::Template { name, .. } => name.clone(),
+        Expr::Alternatives(_) | Expr::Repeat { .. } => "group".to_string(),
+    }
 }
 
 #[cfg(test)]

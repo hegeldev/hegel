@@ -115,10 +115,48 @@ fn operators() {
 
 #[test]
 fn bad_repeat_ranges() {
-    assert!(err("a: b~3..2").contains("Bad Range"));
-    assert!(err("a: b~-1").contains("Bad Range"));
-    assert!(err("a: b~2000000").contains("Bad Range"));
+    assert!(err("a: b~3..2").contains("Bad Range for b (3..2 isn't allowed)"));
+    assert!(err("a: B~3..2").contains("Bad Range for B (3..2 isn't allowed)"));
+    assert!(err("a: \"x\"~3..2").contains("Bad Range for \"x\" (3..2 isn't allowed)"));
+    assert!(err("a: /x/~3..2").contains("Bad Range for /x/ (3..2 isn't allowed)"));
+    assert!(err("a: t{b}~3..2").contains("Bad Range for t (3..2 isn't allowed)"));
+    assert!(err("a: (b c)~3..2").contains("Bad Range for group (3..2 isn't allowed)"));
+    assert!(err("a: [b]~3..2").contains("Bad Range for group (3..2 isn't allowed)"));
+    assert!(err("a: b~-1").contains("Bad Range for repetition (-1 isn't allowed)"));
+    assert!(err("a: b~2000000").contains("Bad Range for repetition (2000000 isn't allowed)"));
     assert!(err("a: b~x").contains("Expecting a number after '~'"));
+}
+
+#[test]
+fn a_line_continuation_ending_the_grammar_leaves_a_definition_unfinished() {
+    assert!(err("a.\\").contains("Expecting a priority number after '.'"));
+    assert!(err("a: b ~ \\").contains("Expecting a number after '~'"));
+    assert!(err("a: \"a\"..\\").contains("Expecting a string literal after '..'"));
+}
+
+#[test]
+fn rule_modifiers_before_a_terminal_name_are_rejected() {
+    for text in ["?_A: \"x\"", "!_A: \"x\"", "%override ?_A: \"x\""] {
+        let message = err(text);
+        assert!(
+            message.contains("Expecting rule or terminal definition"),
+            "{text:?}: {message}"
+        );
+    }
+}
+
+#[test]
+fn nesting_is_capped() {
+    let nested = |depth: usize| format!("a: {}b{}", "(".repeat(depth), ")".repeat(depth));
+    let rule = single_rule(&nested(MAX_NESTING));
+    assert_eq!(rule.name, "a");
+    let message = err(&nested(MAX_NESTING + 1));
+    assert!(
+        message.contains("Grammar nests more than 200 levels of parentheses"),
+        "{message}"
+    );
+    assert!(message.contains("line 1 column 204"), "{message}");
+    assert!(err(&format!("a: {}b", "[".repeat(MAX_NESTING + 1))).contains("nests more than"));
 }
 
 #[test]
@@ -343,11 +381,6 @@ fn import_errors() {
 fn blank_lines_and_comments_between_statements() {
     let statements = parse("\n\n// c\na: b\n\n# d\n\nA: \"a\"\n\n");
     assert_eq!(statements.len(), 2);
-}
-
-#[test]
-fn literal_helper_wraps_a_pattern() {
-    assert_eq!(literal(Pattern::str("x")), lit("x"));
 }
 
 #[test]
