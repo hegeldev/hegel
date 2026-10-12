@@ -18,14 +18,13 @@
 
 use alloc::vec::Vec;
 
+use super::casefold;
 use super::categories;
 use super::constants::{
-    AtCode, ChCode, MAXREPEAT, SRE_FLAG_DOTALL, SRE_FLAG_IGNORECASE, SRE_FLAG_MULTILINE,
-    SRE_FLAG_UNICODE, TYPE_FLAGS,
+    AtCode, ChCode, MAXREPEAT, SRE_FLAG_ASCII, SRE_FLAG_DOTALL, SRE_FLAG_IGNORECASE,
+    SRE_FLAG_MULTILINE, TYPE_FLAGS,
 };
 use super::parser::{OpCode, ParsedPattern, SetItem, SubPattern};
-use crate::native::HashMap;
-use crate::sys::sync::Lazy;
 
 /// The default number of matching steps one match may take before it is
 /// abandoned with [`MatchError::StepLimit`].
@@ -599,7 +598,8 @@ impl<'p> Matcher<'p> {
                     return Ok(false);
                 }
                 for offset in 0..len {
-                    if !backref_eq(st.text[start + offset], st.text[pos + offset], flags) {
+                    if !casefold::groupref_eq(st.text[start + offset], st.text[pos + offset], flags)
+                    {
                         return Ok(false);
                     }
                 }
@@ -1233,191 +1233,37 @@ pub fn literal_sequence(parsed: &ParsedPattern) -> Option<(Vec<u32>, u32)> {
         .map(|literals| (literals, flags))
 }
 
-/// CPython's `LITERAL` / `LITERAL_IGNORE` / `LITERAL_UNI_IGNORE` test:
-/// an uncased pattern character matches exactly; a cased one matches any
-/// text character with the same lowercase form, or (Unicode mode) one of
-/// its `_casefix` equivalents. The parser only emits valid codepoints.
+/// CPython's `LITERAL` / `LITERAL_IGNORE` / `LITERAL_UNI_IGNORE` test
+/// (see [`casefold::literal_matches`]). The parser only emits valid
+/// codepoints.
 pub fn literal_eq(cp: u32, c: char, flags: u32) -> bool {
-    char::from_u32(cp).is_some_and(|l| char_eq(l, c, flags))
+    char::from_u32(cp).is_some_and(|l| casefold::literal_matches(l, c, flags))
 }
 
-fn char_eq(l: char, c: char, flags: u32) -> bool {
-    if flags & SRE_FLAG_IGNORECASE == 0 {
-        return c == l;
-    }
-    let unicode = flags & SRE_FLAG_UNICODE != 0;
-    if !is_cased(l, unicode) {
-        return c == l;
-    }
-    let lo = fold(l, unicode);
-    let probe = fold(c, unicode);
-    probe == lo || (unicode && extra_cases(lo).contains(&probe))
+/// Whether the categories and word boundaries take their Unicode
+/// definitions under `flags`: every mode but the ASCII flag's.
+fn unicode(flags: u32) -> bool {
+    flags & SRE_FLAG_ASCII == 0
 }
 
-/// CPython's `GROUPREF_IGNORE` / `GROUPREF_UNI_IGNORE` test: lowercase
-/// forms must agree, with no `_casefix` equivalents.
-fn backref_eq(a: char, b: char, flags: u32) -> bool {
-    if flags & SRE_FLAG_IGNORECASE == 0 {
-        return a == b;
-    }
-    let unicode = flags & SRE_FLAG_UNICODE != 0;
-    fold(a, unicode) == fold(b, unicode)
-}
-
-/// CPython's `IN` / `IN_IGNORE` / `IN_UNI_IGNORE` test. Under IGNORECASE
-/// the set is tested against the lowercase form of the character, and
-/// contains the lowercase forms of its members plus their `_casefix`
-/// equivalents.
-pub(super) fn set_matches(items: &[SetItem], c: char, flags: u32) -> bool {
+/// CPython's `IN` / `IN_IGNORE` / `IN_UNI_IGNORE` test: a literal or
+/// range matches every character case-equal to one of its members under
+/// IGNORECASE (see [`casefold`]), and a category is tested against the
+/// lowercase form of the character, as CPython tests the whole set.
+pub(crate) fn set_matches(items: &[SetItem], c: char, flags: u32) -> bool {
     let negate = matches!(items.first(), Some(SetItem::Negate));
-    let ignore_case = flags & SRE_FLAG_IGNORECASE != 0;
-    let unicode = flags & SRE_FLAG_UNICODE != 0;
-    let probe = if ignore_case { fold(c, unicode) } else { c };
-    let mut equivalents = [probe; 3];
-    let mut count = 1;
-    if ignore_case && unicode {
-        for &extra in extra_cases(probe) {
-            equivalents[count] = extra;
-            count += 1;
-        }
-    }
-    let equivalents = &equivalents[..count];
+    let probe = if flags & SRE_FLAG_IGNORECASE != 0 {
+        casefold::lower(c, flags)
+    } else {
+        c
+    };
     let contained = items.iter().any(|item| match item {
         SetItem::Negate => false,
-        SetItem::Literal(cp) => char::from_u32(*cp).is_some_and(|member| {
-            let member = if ignore_case {
-                fold(member, unicode)
-            } else {
-                member
-            };
-            equivalents.contains(&member)
-        }),
-        SetItem::Range(lo, hi) => equivalents
-            .iter()
-            .any(|&e| range_contains_folded(*lo, *hi, e, ignore_case, unicode)),
-        SetItem::Category(category) => in_category(probe, *category, unicode),
+        SetItem::Literal(cp) => literal_eq(*cp, c, flags),
+        SetItem::Range(lo, hi) => casefold::range_matches(*lo, *hi, c, flags),
+        SetItem::Category(category) => in_category(probe, *category, unicode(flags)),
     });
     contained != negate
-}
-
-/// Whether some member of the range `[lo, hi]` has lowercase form `e`
-/// (or is `e` itself, which is all that counts without IGNORECASE).
-fn range_contains_folded(lo: u32, hi: u32, e: char, ignore_case: bool, unicode: bool) -> bool {
-    let in_range = |x: char| (lo..=hi).contains(&(x as u32));
-    if in_range(e) {
-        return true;
-    }
-    if !ignore_case {
-        return false;
-    }
-    if unicode {
-        return unfold(e).iter().any(|&x| in_range(x));
-    }
-    e.is_ascii_lowercase() && in_range(e.to_ascii_uppercase())
-}
-
-/// CPython's `sre_lower_unicode` / `sre_lower_ascii`: the simple
-/// lowercase mapping. Rust's full mapping agrees with the simple one
-/// everywhere except `İ`, whose full mapping is `i` plus a combining dot
-/// and whose simple mapping is `i`: taking the first character covers it.
-fn fold(c: char, unicode: bool) -> char {
-    if unicode {
-        c.to_lowercase().next().unwrap_or(c)
-    } else {
-        c.to_ascii_lowercase()
-    }
-}
-
-/// CPython's `unicode_iscased` / `ascii_iscased`.
-fn is_cased(c: char, unicode: bool) -> bool {
-    if !unicode {
-        return c.is_ascii_alphabetic();
-    }
-    if fold(c, true) != c {
-        return true;
-    }
-    let mut upper = c.to_uppercase();
-    !(upper.next() == Some(c) && upper.next().is_none())
-}
-
-/// Every character other than `l` whose simple lowercase form is `l`,
-/// from a table built on first use by folding the whole codespace.
-fn unfold(l: char) -> &'static [char] {
-    static UNFOLD: Lazy<HashMap<char, Vec<char>>> = Lazy::new(|| {
-        let mut table: HashMap<char, Vec<char>> = HashMap::default();
-        for c in (0u32..=0x10FFFF).filter_map(char::from_u32) {
-            let folded = fold(c, true);
-            if folded != c {
-                table.entry(folded).or_default().push(c);
-            }
-        }
-        table
-    });
-    UNFOLD.get(&l).map_or(&[], Vec::as_slice)
-}
-
-const EXTRA_CASES: &[(char, &[char])] = &[
-    ('\u{69}', &['\u{131}']),
-    ('\u{73}', &['\u{17f}']),
-    ('\u{b5}', &['\u{3bc}']),
-    ('\u{131}', &['\u{69}']),
-    ('\u{17f}', &['\u{73}']),
-    ('\u{345}', &['\u{3b9}', '\u{1fbe}']),
-    ('\u{390}', &['\u{1fd3}']),
-    ('\u{3b0}', &['\u{1fe3}']),
-    ('\u{3b2}', &['\u{3d0}']),
-    ('\u{3b5}', &['\u{3f5}']),
-    ('\u{3b8}', &['\u{3d1}']),
-    ('\u{3b9}', &['\u{345}', '\u{1fbe}']),
-    ('\u{3ba}', &['\u{3f0}']),
-    ('\u{3bc}', &['\u{b5}']),
-    ('\u{3c0}', &['\u{3d6}']),
-    ('\u{3c1}', &['\u{3f1}']),
-    ('\u{3c2}', &['\u{3c3}']),
-    ('\u{3c3}', &['\u{3c2}']),
-    ('\u{3c6}', &['\u{3d5}']),
-    ('\u{3d0}', &['\u{3b2}']),
-    ('\u{3d1}', &['\u{3b8}']),
-    ('\u{3d5}', &['\u{3c6}']),
-    ('\u{3d6}', &['\u{3c0}']),
-    ('\u{3f0}', &['\u{3ba}']),
-    ('\u{3f1}', &['\u{3c1}']),
-    ('\u{3f5}', &['\u{3b5}']),
-    ('\u{432}', &['\u{1c80}']),
-    ('\u{434}', &['\u{1c81}']),
-    ('\u{43e}', &['\u{1c82}']),
-    ('\u{441}', &['\u{1c83}']),
-    ('\u{442}', &['\u{1c84}', '\u{1c85}']),
-    ('\u{44a}', &['\u{1c86}']),
-    ('\u{463}', &['\u{1c87}']),
-    ('\u{1c80}', &['\u{432}']),
-    ('\u{1c81}', &['\u{434}']),
-    ('\u{1c82}', &['\u{43e}']),
-    ('\u{1c83}', &['\u{441}']),
-    ('\u{1c84}', &['\u{442}', '\u{1c85}']),
-    ('\u{1c85}', &['\u{442}', '\u{1c84}']),
-    ('\u{1c86}', &['\u{44a}']),
-    ('\u{1c87}', &['\u{463}']),
-    ('\u{1c88}', &['\u{a64b}']),
-    ('\u{1e61}', &['\u{1e9b}']),
-    ('\u{1e9b}', &['\u{1e61}']),
-    ('\u{1fbe}', &['\u{345}', '\u{3b9}']),
-    ('\u{1fd3}', &['\u{390}']),
-    ('\u{1fe3}', &['\u{3b0}']),
-    ('\u{a64b}', &['\u{1c88}']),
-    ('\u{fb05}', &['\u{fb06}']),
-    ('\u{fb06}', &['\u{fb05}']),
-];
-
-/// CPython's `re._casefix._EXTRA_CASES`: pairs of lowercase characters
-/// that `re.IGNORECASE` treats as equal although their lowercase forms
-/// differ, because they share an uppercase form (`s` and `ſ`, `k` and
-/// the Kelvin sign's lowercase `k`, the Greek symbol variants, ...).
-fn extra_cases(l: char) -> &'static [char] {
-    EXTRA_CASES
-        .iter()
-        .find(|(c, _)| *c == l)
-        .map_or(&[], |(_, cases)| cases)
 }
 
 /// CPython's category tests: the `UNI_` variants in Unicode mode, the
@@ -1484,7 +1330,7 @@ pub(super) fn at_matches(at: AtCode, text: &[char], pos: usize, flags: u32) -> b
 }
 
 fn is_word_boundary(text: &[char], pos: usize, flags: u32) -> bool {
-    let unicode = flags & SRE_FLAG_UNICODE != 0;
+    let unicode = unicode(flags);
     let before = pos > 0 && is_word(text[pos - 1], unicode);
     let after = pos < text.len() && is_word(text[pos], unicode);
     before != after

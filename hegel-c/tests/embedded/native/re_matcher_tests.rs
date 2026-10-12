@@ -453,34 +453,6 @@ fn errors_display() {
 }
 
 #[test]
-fn case_folding_helpers_match_cpython() {
-    assert_eq!(fold('\u{130}', true), 'i');
-    assert_eq!(fold('A', true), 'a');
-    assert_eq!(fold('\u{c9}', false), '\u{c9}');
-    assert!(is_cased('\u{df}', true));
-    assert!(is_cased('\u{1e9e}', true));
-    assert!(!is_cased('1', true));
-    assert!(!is_cased('\u{e9}', false));
-    assert!(is_cased('a', false));
-    assert_eq!(unfold('k'), &['K', '\u{212a}']);
-    assert_eq!(unfold('1'), &[] as &[char]);
-    assert!(unfold('\u{1c6}').contains(&'\u{1c5}'));
-    assert_eq!(extra_cases('s'), &['\u{17f}']);
-    assert_eq!(extra_cases('a'), &[] as &[char]);
-    for &(c, cases) in EXTRA_CASES {
-        assert!(cases.len() <= 2, "{c:?}");
-        for &other in cases {
-            assert!(extra_cases(other).contains(&c), "{c:?} <-> {other:?}");
-            assert_eq!(
-                fold(c, true).to_uppercase().next(),
-                fold(other, true).to_uppercase().next(),
-                "{c:?} <-> {other:?}"
-            );
-        }
-    }
-}
-
-#[test]
 fn width_of_patterns() {
     let widths = |pattern: &str| {
         let parsed = parse_pattern(pattern, 0).unwrap();

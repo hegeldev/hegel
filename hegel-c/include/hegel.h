@@ -2171,6 +2171,10 @@ hegel_result_t hegel_string_generator_text(hegel_context_t *ctx,
  `alphabet`: Optional (NULL for none). Must be a text generator. Every
    character of the string, padding included, is one of its characters.
 
+ A string drawn from the generator is recorded as one string choice the
+ pattern constrains, replayed as long as it still matches and shrunk
+ within the pattern.
+
  Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an invalid string
  buffer, a pattern that does not parse, or an alphabet that is not a
  text generator.
