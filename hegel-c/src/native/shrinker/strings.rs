@@ -95,16 +95,20 @@ impl<'a> Shrinker<'a> {
                     }
                 }
                 let simplest = kind.simplest()?;
-                let cur = self.current_string(i).ok_or(PassExit::NodeGone)?;
-                for k in 1..=cur.len().min(simplest.len()) {
+                let mut k = 0;
+                loop {
+                    k += 1;
                     let cur = self.current_string(i).ok_or(PassExit::NodeGone)?;
+                    if k > cur.len().min(simplest.len()) {
+                        break;
+                    }
                     let mut tail = cur[..cur.len() - k].to_vec();
                     tail.extend_from_slice(&simplest[simplest.len() - k..]);
                     self.replace(&HashMap::from_iter([(i, ChoiceValue::String(tail))]))
                         .await?;
                     let cur = self.current_string(i).ok_or(PassExit::NodeGone)?;
                     let mut head = simplest[..k].to_vec();
-                    head.extend_from_slice(&cur[k..]);
+                    head.extend_from_slice(cur.get(k..).unwrap_or_default());
                     self.replace(&HashMap::from_iter([(i, ChoiceValue::String(head))]))
                         .await?;
                 }
@@ -455,7 +459,6 @@ impl<'a> Shrinker<'a> {
     }
 }
 
-/// "Obvious smaller" replacement codepoints to try for a character with
 /// The kind and value of a string node under no grammar (a string under a
 /// regex is one: its candidates are cheap to check against the pattern); see
 /// [`Shrinker::string_at`].
@@ -468,12 +471,6 @@ fn plain_string(data: &ChoiceData) -> Option<(&StringChoice, &[u32])> {
     })
 }
 
-/// codepoint `cp` in a [`StringChoice`] with the given alphabet, in
-/// shrink-key order. Walks the first 62 alphabet positions (digits + ASCII
-/// letters when present) and then the NFD base of `cp` (e.g. `'À' → 'A'`)
-/// if it's a non-ASCII codepoint with a canonical decomposition that lands
-/// in-alphabet.
-///
 /// Cross-string codepoint candidates from natural text transformations.
 ///
 /// For codepoint `cp` under alphabet `intervals`, returns the
