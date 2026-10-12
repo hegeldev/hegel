@@ -1,118 +1,44 @@
 # AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code), Codex 5.5, and other coding agents when working with code in this repository. The legacy `.claude` path is a symlink to `.agents`, and `.claude/CLAUDE.md` resolves back to this file so Claude and Codex share the same instructions.
+Hegel for Rust: the `hegeltest` frontend (root crate) drives the `hegel-c` engine (built as the `libhegel` C-ABI library) in-process through the same C ABI as every other language binding. `hegel-macros/` is the proc-macro crate.
 
-## Overview
-
-This repository is the Rust implementation of Hegel, a universal property-based testing framework. It contains two crates: the native engine (a port of Hypothesis's conjecture engine) lives in the `hegel-c` workspace member and is built as the `libhegel` C-ABI library, and the `hegeltest` frontend (the root crate) drives that engine through the same C ABI every other language binding uses. Everything runs in-process — there is no external server or Python dependency.
-
-## Build & Test Commands
+## Commands
 
 ```bash
-just check                          # run full CI checks (lint + tests + all-features tests)
-just test                           # run tests
-just lint                           # run clippy, rustfmt --check, and the repo lint scripts
-just format                         # format
-just docs                           # build and open docs
-just check-coverage                 # check coverage (requires cargo-llvm-cov + llvm-tools-preview)
-just c-test                         # hegel-c smoke tests + example C programs
-just miri                           # fast core of the suite under Miri
-cargo test test_name                # run a single test
+just check                # definition of done: lint + tests + all-features tests
+just test                 # cargo test
+just lint                 # clippy, rustfmt --check, and the scripts/check-*.py lints
+just format
+just check-coverage       # needs cargo-llvm-cov + llvm-tools-preview
+just c-test               # hegel-c smoke tests + example C programs
+just miri                 # fast core of the suite under Miri (nightly + miri component)
+just c-header             # regenerate hegel-c/include/hegel.h and src/ffi/sys/fns.rs
+cargo test test_name      # one test
 ```
 
-MSRV is 1.86 (enforced in CI and Cargo.toml). If you bump it, also bump `ci.yml`, `hegel-macros/Cargo.toml`, and `hegel-c/Cargo.toml`.
+## Gotchas
 
-## Workspace Structure
+- `hegel-c/include/hegel.h` and `src/ffi/sys/fns.rs` are generated from `hegel-c/src/lib.rs`; never edit them by hand, run `just c-header` after changing an exported `hegel_*` function.
+- MSRV is 1.86. Bumping it means bumping `Cargo.toml`, `hegel-macros/Cargo.toml`, `hegel-c/Cargo.toml`, and `ci.yml` together.
+- The engine must never panic across the FFI boundary: use the `hegel_internal_assert!` family instead of `assert!` in `src/` and `hegel-c/src/`, `invalid_argument!` / `EngineError::InvalidArgument` for argument validation (`scripts/check-internal-asserts.py` enforces this).
+- Generators never open a span around their own body (`TestCase` does), and composites draw components through `tc.draw_silent` / `tc.draw_and_print`, never a component's `do_draw`. Span labels are opaque `u64`s; there is no enumeration of them anywhere and you must not add one. Details in the `new-generator` skill.
+- A new setting is not done until it is reachable every way the others are (builder, `hegel.toml`, C ABI, `HEGEL_*` env var, docs); follow the `new-setting` skill.
+- Nondeterministic-test handling in the engine is documented in `hegel-c/docs/nondeterminism.md`; read it before touching `counterexample.rs`, `graph*.rs`, `nd/`, or `core/replay.rs`.
+- The `__` feature prefix marks a feature as internal; coverage enables every other root-crate feature automatically.
 
-### `hegeltest` (root crate) — the Rust frontend
+## Conventions
 
-- `src/lib.rs` — Public API surface: `hegel()`, the `Hegel` builder, `TestCase`, the `Generator` trait, and the proc-macro re-exports (`#[hegel::test]`, `#[hegel::main]`, `#[derive(DefaultGenerator)]`, `#[composite]`, `#[state_machine]`, `#[reproduce_failure]`, …)
-- `src/ffi.rs` — The libhegel C-ABI boundary: the only module that touches the raw `hegel_*` functions; the rest of the frontend works against its safe wrappers (`SettingsHandle`, `RunHandle`, `CTestCase`, `RunResult`)
-- `src/ffi/sys.rs` — Where the `hegel_*` functions come from, in two interchangeable forms: by default mirrored `repr(C)` types (`sys/types.rs`) plus a runtime loader (`sys/loader.rs`) that dlopens the `libhegel_c` cdylib `build.rs` built, so `hegeltest-c` and its dependencies stay out of consumers' cargo graphs; with the public `static-engine` feature, a re-export of the `hegel_c` rlib (self-contained binaries, visible engine dependencies — also what Miri and the coverage workspace pass use). One macro, `for_each_hegel_fn!` in `sys/fns.rs`, is the single list of functions, generated from `hegel-c/src/lib.rs` by `scripts/gen-ffi-list.py` (`just c-header` refreshes it, `just check-ffi-list` checks it); embedded drift tests compile-assert it and the mirrors against `hegel_c` under `static-engine`
-- `src/run_lifecycle.rs` — Cross-cutting per-test-case lifecycle: panic hook, `catch_unwind` wrapping, translating panics into `TestCaseResult`, and the final re-raise
-- `src/backend.rs` — The result types the lifecycle speaks (`TestCaseResult`, `Failure`)
-- `src/test_case.rs` — `TestCase` (the handle test bodies draw from) and its thread-local state, and the `Collection` helper
-- `src/runner.rs` — `Hegel` builder plus `Settings`, `HealthCheck`, `Phase`, `Backend`, `Verbosity`
-- `src/cli.rs` — CLI argument parsing for standalone `#[hegel::main]` binaries
-- `src/generators/` — All first-party generator implementations (the `Generator` trait lives in `generators.rs`)
-- `src/extras/` — Feature-gated third-party integrations (`chrono`, `jiff`, `serde_json`, `rand`)
-- `src/stateful.rs` — Stateful (model-based) testing via `#[state_machine]`
-- `src/explicit_test_case.rs` — Explicit test-case support (`#[explicit_test_case]`)
-- `src/control.rs` — Control-flow unwind payloads (`AssumeFailed`, `StopTest`) and their handling
-- `hegel-macros/` — Proc-macro crate (sub-crate with its own `Cargo.toml`)
+- Tests live in `tests/`, never inline in source. Tests needing private items go in `tests/embedded/`, mirroring `src/`, wired in with `#[cfg(test)] #[path = "..."] mod tests;` from the source file (both crates, e.g. `src/ffi.rs` → `tests/embedded/ffi_tests.rs`).
+- Import generators as `use hegel::generators as gs;` and call them as `gs::booleans()`, including inside string-literal code snippets. `gs::booleans()` is the default throwaway generator.
+- In tests prefer `.unwrap()` over `.expect("static message")`; use `.expect` only with a formatted value.
+- Don't bind unused results to `_`; `let _ =` only to silence `#[must_use]`.
+- No comments other than `// nocov` and ones with a specific function. Before committing, delete any comments you wrote.
 
-### `hegel-c` — the engine, built as `libhegel`
+## Boundaries
 
-- `src/lib.rs` — The exported `hegel_*` C functions: settings, run lifecycle, test-case handles (including clones), draws, spans, collections, pools, state machines, targeting, results/failures. The checked-in header `hegel-c/include/hegel.h` is generated from this file by cbindgen (`just c-header`)
-- `src/backend.rs` — The `DataSource` trait the engine implements and the C ABI drives
-- `src/native/` — The engine proper: `core/` (choice sequence, test-case state, shrink ordering), `draws/` (the typed draw implementations: float specs, string generators, regex, internet, date/time/uuid/ip), `shrinker/`, `test_runner.rs` (owns a run: database replay, generation, targeting, shrinking, final replay), plus the failure database, the execution cache, RNG, regex generation (`re/`), interval sets + Unicode tables, and blob encoding. Nondeterministic-test handling (`counterexample.rs`, `graph.rs`, `graph_shrink.rs`, `nd/`, the graph walk in `core/replay.rs`) is described in `hegel-c/docs/nondeterminism.md`
-- `src/embed.rs` — Low-level embedding entry point for driving the engine natively from Rust
-- `src/antithesis.rs` — The Antithesis integration: detection from `ANTITHESIS_OUTPUT_DIR` (selects the `workload` profile) and reporting each run's verdict to `sdk.jsonl` for tests whose settings carry a location (`hegel_settings_set_test_location`, which the frontend's macros supply)
-- `benches/` — Microbenchmarks of engine internals, exposed through the internal `__bench` feature
-- Released as `libhegel-<goos>-<goarch>.<ext>` assets on each `libhegel-v<version>`-tagged GitHub release (hegel-rust's own releases are the plain `v<version>` tags and get no GitHub release); the source is published to crates.io as `hegeltest-c` — the crate the frontend's `build.rs` builds the shared library from (and links directly under `static-engine`)
+- Never add `// nocov` without explicit human permission. New code needs 100% line coverage; see the `coverage` skill.
+- Never increase the numbers in `.github/coverage-ratchet.json` without explicit human permission.
 
-### Feature Flags (root crate)
+## Skills
 
-- **`rand`**, **`chrono`**, **`jiff`**, **`serde_json`**, **`serde_json_raw_value`**: gate the corresponding `extras::` generator modules
-- **`static-engine`**: links the engine in as an rlib instead of loading the `libhegel_c` shared library at runtime; see `src/ffi/sys.rs` above
-
-The `__` prefix marks a feature as internal. The coverage run enables every root-crate feature except internal ones, computed from `cargo metadata` by `public_features()` in `scripts/check-coverage.py`, so a new feature needs no coverage wiring.
-
-## Architecture
-
-### How It Works
-
-The engine owns a test run. `hegel_run_start` starts an engine worker; the frontend pulls test cases off it with `hegel_next_test_case`, runs the user's test body against each test-case handle, and reports each outcome back with `hegel_mark_complete`. Database replay, generation, targeting, shrinking, and the final replay all happen inside the engine (`hegel-c/src/native/test_runner.rs`); the frontend's `run_lifecycle::drive` wires the pull loop to the user's test function, catches panics, and reads the aggregate result — including reproduce blobs — off the finished run.
-
-### The C ABI
-
-The frontend and engine communicate exclusively through the `hegel_*` functions wrapped by `src/ffi.rs`. Draws are typed: `hegel_generate_integer` / `hegel_generate_integer_big`, `hegel_generate_float`, `hegel_generate_boolean`, `hegel_generate_bytes`, `hegel_generate_string` (through an opaque `hegel_string_generator_t` handle built by typed constructors for text/regex/email/url/domain), and structured `hegel_generate_date`/`_time`/`_datetime`/`_uuid`/`_ipv4`/`_ipv6`. Alongside the draws: `hegel_start_span`/`hegel_stop_span` group related draws for the shrinker, `hegel_new_collection`/`hegel_collection_more`/`hegel_collection_reject` drive dynamically-sized collections, `hegel_target` records targeting scores, and `hegel_mark_complete` reports the outcome (VALID, INVALID, OVERRUN, or INTERESTING). Failed calls report diagnostics on an explicit `HegelContext` handle rather than thread-local state.
-
-### Generator Trait
-
-Generators implement `Generator<T>` (`src/generators/generators.rs`) with one required method, `do_draw(&self, tc: &TestCase) -> T`, and one provided method, `label(&self) -> u64`. Leaf generators call the typed draw methods on `TestCase` (`generate_integer_i64`, `generate_float`, `generate_string`, …), which wrap the C ABI; composite generators (tuples, collections, `one_of`, `map`/`filter`/`flat_map`) draw their component generators through `tc.draw_silent` / `tc.draw_and_print`, never by calling a component's `do_draw` directly — only a wrapper that forwards to a single inner generator without drawing anything else does that, so it doesn't register as a span of its own. String-shaped generators cache a validated `ffi::StringGenerator` handle in a `OnceLock` so the alphabet/pattern work happens once, not per draw.
-
-### Span System
-
-Spans (`start_span`/`stop_span`) group related generation calls so the shrinker can shrink effectively. Every `TestCase` draw entry point (`draw`, `draw_named`, `draw_silent`, `draw_and_print`) opens one span labelled with `generator.label()` around `do_draw`, so generators never open a span around their own body; the only hand-written spans left are ones a generator must close with `discard = true` (a rejected `filter` attempt) and the stateful runner's per-rule spans. A span's label is an opaque `u64` identifying the generator that opened it, and nothing more: the engine treats same-label spans as coming from the same generator (candidates for swapping, duplicating and reordering) and never interprets a label. Labels are hashed from names with `generators::label_from_name` (FNV-1a 64, `const fn`) and folded together with `generators::combine_labels`; every generator reports its own through `Generator::label`, which defaults to a hash of the type name and which combinators override to combine a label of their own kind (`hegel.vec`, `hegel.one_of`, …) with their components' labels, so `vecs(integers())` and `vecs(text())` differ. `label` is called on every draw, so first-party generators never compute it there: a leaf returns a module `const` from `label_from_name`, and a generator with components (including the derive-macro output) combines its label once when it is built and stores it in a field, recomputing it in any builder that swaps a component. A deferred handle asked before its definition is set answers with the fixed `hegel.deferred` label. The engine exposes the same two functions over the C ABI as `hegel_label_from_name` / `hegel_label_combine` (`hegel-c/src/native/labels.rs`) and labels its own spans around every draw with names like `hegel.integer` (`hegel-c/src/native/draws/mod.rs`): same-label spans are what the engine's mutation machinery duplicates to propose repeated values, so leaf draws each get a kind-specific span. There is no enumeration of labels anywhere; do not add one.
-
-### Collections
-
-Engine-managed collections use the `new_collection`/`collection_more`/`collection_reject` calls: the engine decides how many elements to produce and the client pulls them one at a time. The `Collection` struct in `src/test_case.rs` handles dynamic sizing via the `more()` protocol with lazy initialization.
-
-## Key Patterns
-
-### Adding a New Generator
-
-Follow the skills: **new-generator** for the generator itself (struct, builder methods, `Generator` impl, wiring, rustdoc, required tests), **new-default-generator** to wire up `gs::default::<T>()` / `#[derive(DefaultGenerator)]` support, and **add-library-support** for a whole third-party crate integration under `src/extras/`.
-
-### Adding a Setting
-
-A setting is not done until it is reachable every way the others are: a `Settings` builder method in both crates, a `hegel.toml` profile key (`hegel-c/src/config.rs`), `hegel_settings_set_*`/`hegel_settings_get_*` over the C ABI (with `src/ffi.rs` round-tripping it), and a `HEGEL_<SETTING>` environment variable applied in `Settings::with_env_overrides_from` (`hegel-c/src/settings.rs`) with the same vocabulary as the profile key, an empty value ignored and a malformed one rejected with a message naming the variable. Document all of them in `src/docs/settings.md` (the settings table and both environment-variable tables) and the `hegel_settings_new` doc in `hegel-c/src/lib.rs`. Never add a setting without its environment variable: libtest owns the command line, so the variable is the only way to change a setting for one run of a `#[hegel::test]` without editing it.
-
-### Derive Macro
-
-`#[derive(DefaultGenerator)]` (in `hegel-macros/`) creates a `<Type>Generator` struct with:
-- `new()`: Uses `DefaultGenerator` for all fields
-- `<field>(gen)`: Builder methods to customize field generators
-
-For enums, it also creates `<Enum><Variant>Generator` for each data variant. Implementation is split across `struct_gen.rs`, `enum_gen.rs`, and `utils.rs`.
-
-### Testing Conventions
-
-- All tests go in `tests/`, never inline in source files. Tests that don't need access to private functions go directly in `tests/` as integration tests. Tests that need access to private functions go in `tests/embedded/`, mirroring the `src/` directory structure. This applies to both crates (e.g. `src/ffi.rs` → `tests/embedded/ffi_tests.rs`; `hegel-c/src/native/core/state.rs` → `hegel-c/tests/embedded/native/state_tests.rs`). Embedded tests are included as child modules of their source file via `#[cfg(test)] #[path = "..."] mod tests;`, which gives them access to private items through `use super::*`. This keeps test code out of source files while preserving access to internals that Rust would otherwise forbid.
-- Always import generators as `use hegel::generators as gs;` (or `use hegel::generators::{self as gs, Generator};` when the `Generator` trait is needed). Use `gs::` in all generator calls, e.g. `gs::booleans()`, `gs::integers::<i32>()`. This applies to code inside string literals (e.g. `TempRustProject` snippets) as well.
-- When a test needs a throwaway generator, prefer `gs::booleans()` as the simplest option (unless the test needs a larger value space).
-- In test code, prefer `.unwrap()` over `.expect("static message")`. A static expect message rarely adds information beyond what the panic already provides (error type + source location). Only use `.expect()` when the message includes a formatted value that aids debugging (e.g., `.expect(&format!("failed to open {}", path))`).
-- When a return value isn't used, don't bind it to `_` — just call the function as a bare statement. Only use `let _ =` when needed to suppress a `#[must_use]` warning.
-
-### Code Coverage
-
-This project enforces 100% line coverage for new code. You may not add `// nocov` annotations without explicit human permission. See the `coverage` skill for full details on the coverage philosophy, ratchet mechanism, and how to make code testable.
-
-**CRITICAL: You MUST NOT increase the numbers in `.github/coverage-ratchet.json` without first asking for and then receiving explicit human permission to do so.**
-
-
-### Comments
-
-Do not write comments other than nocov and other comments that have specific functions. Before committing, check if you are about to stage comments you have written, and if you are then delete them before committing.
+`new-generator`, `new-default-generator`, `add-library-support`, `new-setting`, `coverage`, `changelog` (for `RELEASE.md`), `self-review`. Use them when the task matches.
