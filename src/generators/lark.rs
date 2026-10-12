@@ -235,20 +235,7 @@ impl PrintableGenerator<String> for LarkGenerator {
 ///
 /// Strings range up to 8192 characters by default, biased toward the
 /// larger end; use [`max_size`](LarkGenerator::max_size) and
-/// [`max_depth`](LarkGenerator::max_depth) to keep them smaller. Keep
-/// them small for an ambiguous grammar: checking a string against one,
-/// when a saved failure is replayed or a string is shrunk, is an Earley
-/// parse cubic in the string's length, as it is in Lark itself, and a
-/// parse that grows past the engine's budget (some hundreds of tokens of
-/// a highly ambiguous grammar) treats the string as outside the grammar.
-///
-/// A drawn string is a single choice holding the string itself, which
-/// the engine checks against the grammar by parsing it when replaying a
-/// saved failure — so the failure survives edits to the grammar as long
-/// as the string still parses — and shrinks through its derivation:
-/// repetitions are deleted, a nested rule is hoisted over the rule
-/// around it, ignored text is cut, and each terminal's text is shortened
-/// and simplified, every step a string of the grammar.
+/// [`max_depth`](LarkGenerator::max_depth) to keep them smaller.
 ///
 /// ```no_run
 /// use hegel::generators as gs;
