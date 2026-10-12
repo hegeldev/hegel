@@ -296,7 +296,7 @@ impl LeafStage {
                 }
                 LeafStage::Back(p) => {
                     *p = (*p).min(len);
-                    if *p <= 1 {
+                    if *p == 0 {
                         *self = LeafStage::Lower { p: 0, search: None };
                     } else {
                         *p -= 1;

@@ -170,6 +170,14 @@ fn ignored_text_is_cut_and_what_must_stay_is_shortened() {
 }
 
 #[test]
+fn a_leaf_is_shortened_from_the_back_down_to_its_first_character() {
+    let node = grammar_node("start: /x?[a-z]/\n", "a", "xb", false);
+    let mut shrinker = shrinker_where(vec![node], |s| s.contains('b'));
+    drive_no_yield(shrinker.shrink_grammar_strings()).unwrap();
+    assert_eq!(text_of(&shrinker.current_nodes[0].value()), "b");
+}
+
+#[test]
 fn a_leaf_is_lowered_character_by_character() {
     let node = grammar_node("start: /[a-z]+/\n", "a", "zqz", false);
     let mut shrinker = shrinker_where(vec![node], |s| s.len() == 3);
