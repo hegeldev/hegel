@@ -161,7 +161,7 @@ impl LarkGenerator {
                 invalid_argument!("explicit terminal '{name}' is given more than one generator");
             }
             let alphabet = self.alphabet.as_ref().map(|a| a.build_alphabet_handle());
-            let grammar = ffi::Grammar::new(
+            ffi::Grammar::new(
                 &self.text,
                 self.start.as_deref(),
                 self.max_size.map_or(0, |n| n as u64),
@@ -170,13 +170,14 @@ impl LarkGenerator {
                 &names,
                 &self.import_paths,
             )
-            .unwrap_or_else(|msg| invalid_argument!("{msg}"));
-            let markers = names
-                .iter()
-                .map(|name| grammar.placeholder(name))
-                .collect::<Result<_, _>>()
-                .unwrap_or_else(|msg| invalid_argument!("{msg}"));
-            Compiled { grammar, markers }
+            .and_then(|grammar| {
+                let markers = names
+                    .iter()
+                    .map(|name| grammar.placeholder(name))
+                    .collect::<Result<_, _>>()?;
+                Ok(Compiled { grammar, markers })
+            })
+            .unwrap_or_else(|msg| invalid_argument!("{msg}"))
         })
     }
 }
