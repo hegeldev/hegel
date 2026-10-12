@@ -16,7 +16,8 @@ use crate::native::re::constants::{
     AtCode, ChCode, MAXREPEAT, SRE_FLAG_ASCII, SRE_FLAG_DOTALL, SRE_FLAG_IGNORECASE,
     SRE_FLAG_MULTILINE,
 };
-use crate::native::re::constraint::RegexConstraint;
+use crate::native::re::constraint::{RegexConstraint, matches as pattern_matches};
+use crate::native::re::matcher::combine_flags;
 use crate::native::re::parser::{OpCode, ParsedPattern, SetItem, SubPattern, parse_pattern};
 use crate::native::rng::EngineRng;
 use crate::sys::sync::{Lazy, Mutex};
@@ -99,6 +100,9 @@ pub struct CompiledRegex {
     /// The one string the pattern matches whole, when it is a literal
     /// (see [`literal_of`]).
     literal: Option<Box<[char]>>,
+    /// Whether a drawn string is checked against the pattern with the
+    /// matcher before it is accepted (see [`approximated`]).
+    verified: bool,
     in_cache: Mutex<HashMap<InKey, InSet>>,
     char_cache: Mutex<HashMap<CharKey, Arc<[char]>>>,
 }
@@ -125,11 +129,13 @@ impl CompiledRegex {
             EngineError::InvalidArgument(format!("invalid regex pattern {pattern:?}: {e}"))
         })?;
         let literal = literal_of(&parsed, &alphabet);
+        let verified = approximated(&parsed.pattern, parsed.flags);
         Ok(CompiledRegex {
             pattern: pattern.to_string(),
             parsed,
             alphabet,
             literal,
+            verified,
             in_cache: Mutex::new(HashMap::default()),
             char_cache: Mutex::new(HashMap::default()),
         })
@@ -221,6 +227,10 @@ pub(crate) fn draw_regex<D: Draws>(
     Ok(out.into_iter().map(u32::from).collect())
 }
 
+/// The characters a drawn string starts out with room for, so that one
+/// of ordinary length is built without the buffer growing.
+const TYPICAL_CAPACITY: usize = 64;
+
 /// Draw a string matching `re`, anchored at both ends when `fullmatch`
 /// and otherwise padded with draws from the compiled alphabet (or the full
 /// codespace when it has none).
@@ -230,10 +240,6 @@ pub(crate) fn draw_regex<D: Draws>(
 /// match, ...) are retried a few times within the same test case — the
 /// analogue of Hypothesis's strategy-level `.filter(re.search)` retries —
 /// before the whole test case is marked invalid.
-/// The characters a drawn string starts out with room for, so that one
-/// of ordinary length is built without the buffer growing.
-const TYPICAL_CAPACITY: usize = 64;
-
 pub(crate) fn generate_regex<D: Draws>(
     d: &mut D,
     re: &CompiledRegex,
@@ -390,37 +396,49 @@ fn generate_regex_attempt<D: Draws>(
                 return Ok(false);
             }
         }
-        if deferred.needs_whole_match && !whole_match(parsed, fullmatch, final_chars, &state.groups)
-        {
-            return Ok(false);
-        }
+    }
+    if re.verified && !pattern_matches(parsed, fullmatch, &out[base..]) {
+        return Ok(false);
     }
 
     Ok(true)
 }
 
-/// Whether the pattern matches `chars` — anywhere for search semantics, or
-/// spanning the whole string for `fullmatch`. Used as a post-generation
-/// filter (Hypothesis filters every candidate through `re.search`) for the
-/// constructs whose generated output is not a match by construction: atomic
-/// groups and possessive repeats commit to a repetition count during
-/// generation that the pattern's real (non-backtracking) semantics may not
-/// admit.
-fn whole_match(
-    parsed: &ParsedPattern,
-    fullmatch: bool,
-    chars: &[char],
-    groups: &HashMap<u32, Vec<char>>,
-) -> bool {
-    if fullmatch {
-        let mut anchored = parsed.pattern.data.clone();
-        anchored.push(OpCode::At(AtCode::EndString));
-        match_seq(&anchored, 0, chars, parsed.flags, groups).is_some()
-    } else {
-        (0..=chars.len()).any(|start| {
-            match_seq(&parsed.pattern.data, start, chars, parsed.flags, groups).is_some()
-        })
-    }
+/// Whether `ops`, under `flags`, has a construct the generator only
+/// approximates, so that what it draws has to be checked with the
+/// matcher: position assertions on word boundaries and lookarounds,
+/// whose deferred checks are an approximation of the matcher's; back
+/// references and conditionals, compared by swapping case rather than
+/// folding it; atomic groups and possessive repeats, which commit to a
+/// count the pattern need not admit; and, when case is ignored, negated
+/// classes and literals, which exclude the swap-case chain of their
+/// characters where CPython excludes every character folding to one of
+/// them (so `(?i)[^k]` must not draw the Kelvin sign).
+fn approximated(ops: &SubPattern, flags: u32) -> bool {
+    ops.data.iter().any(|op| match op {
+        OpCode::At(AtCode::Boundary | AtCode::NonBoundary)
+        | OpCode::GroupRef(_)
+        | OpCode::Assert { .. }
+        | OpCode::AssertNot { .. }
+        | OpCode::AtomicGroup(_)
+        | OpCode::PossessiveRepeat { .. } => true,
+        OpCode::GroupRefExists { .. } => true,
+        OpCode::NotLiteral(_) => flags & SRE_FLAG_IGNORECASE != 0,
+        OpCode::In(items) => {
+            flags & SRE_FLAG_IGNORECASE != 0 && matches!(items.first(), Some(SetItem::Negate))
+        }
+        OpCode::Subpattern {
+            add_flags,
+            del_flags,
+            p,
+            ..
+        } => approximated(p, combine_flags(flags, *add_flags, *del_flags)),
+        OpCode::Branch(items) => items.iter().any(|p| approximated(p, flags)),
+        OpCode::MaxRepeat { item, .. } | OpCode::MinRepeat { item, .. } => {
+            approximated(item, flags)
+        }
+        OpCode::Literal(_) | OpCode::Any | OpCode::At(_) | OpCode::Failure => false,
+    })
 }
 
 /// Mutable state threaded through generation: captured groups (for
@@ -475,9 +493,6 @@ struct Deferred<'a> {
     /// captures the assertion body, the active flags, and a snapshot of the
     /// groups at the point of the assertion.
     pending_lookaheads: Vec<PendingAssertNot<'a>>,
-    /// Set when the pattern contains an atomic group or possessive repeat,
-    /// whose generated output must be re-validated against the whole pattern.
-    needs_whole_match: bool,
 }
 
 struct PendingAnchor {
@@ -515,9 +530,9 @@ fn draw_pad<D: Draws>(
 /// and ATOMIC_GROUP nodes (which don't consume characters themselves).
 ///
 /// Python's `regex_strategy` doesn't descend like this — it relies on
-/// `regex.search` as a post-generation filter. We don't have a Python-compatible
-/// regex matcher to filter against, so we peek through non-consuming wrappers
-/// instead, which handles the common `(\Afoo\Z)` shape.
+/// `regex.search` as a post-generation filter. Peeking through the
+/// non-consuming wrappers instead handles the common `(\Afoo\Z)` shape
+/// without a candidate having to be matched and redrawn.
 fn effective_first(sp: &SubPattern) -> Option<&OpCode> {
     let first = sp.data.first()?;
     match first {
@@ -698,7 +713,7 @@ fn generate_op<'a, D: Draws>(
             p,
         } => {
             let saved_flags = state.flags;
-            state.flags = (state.flags | *add_flags) & !*del_flags;
+            state.flags = combine_flags(state.flags, *add_flags, *del_flags);
             let before = out.len();
             generate_subpattern(d, p, state, alphabet, out)?;
             state.flags = saved_flags;
@@ -753,15 +768,11 @@ fn generate_op<'a, D: Draws>(
             return Err(mark_invalid(d));
         }
         OpCode::AtomicGroup(p) => {
-            state.deferred().needs_whole_match = true;
             generate_subpattern(d, p, state, alphabet, out)?;
         }
         OpCode::MaxRepeat { min, max, item }
         | OpCode::MinRepeat { min, max, item }
         | OpCode::PossessiveRepeat { min, max, item } => {
-            if matches!(op, OpCode::PossessiveRepeat { .. }) {
-                state.deferred().needs_whole_match = true;
-            }
             let min = *min as usize;
             let max = if *max == u32::MAX {
                 None
@@ -1236,20 +1247,21 @@ fn emit_from_set<D: Draws>(d: &mut D, set: &InSet, out: &mut Vec<char>) -> Resul
 /// case-folded literal's other case (see [`boolean_threshold`]).
 const SWAP_CASE_THRESHOLD: u8 = boolean_threshold(0.5);
 
-/// How likely a character drawn from a set of more than 256 is one of
+/// How likely a character drawn from a set of more than 256 is beyond
 /// its first 256, with the byte the engine compares against for it (see
-/// [`boolean_threshold`]).
-const FIRST_256_PROBABILITY: f64 = 0.8;
-const FIRST_256_THRESHOLD: u8 = boolean_threshold(FIRST_256_PROBABILITY);
+/// [`boolean_threshold`]). The coin is for going beyond, so that its
+/// simplest answer, no, keeps the simplest character the set's first.
+const BEYOND_256_PROBABILITY: f64 = 0.2;
+const BEYOND_256_THRESHOLD: u8 = boolean_threshold(BEYOND_256_PROBABILITY);
 
 /// Draw an index into a character set of `n` (non-zero) characters, biased
 /// towards the first 256 when the set is larger than that.
 #[inline]
 fn draw_char_index<D: Draws>(d: &mut D, n: u64) -> Result<u64, EngineError> {
-    if n > 256 && d.weighted_against(FIRST_256_PROBABILITY, FIRST_256_THRESHOLD, None)? {
-        d.draw_integer_uniform(0, 255)
-    } else if n > 256 {
+    if n > 256 && d.weighted_against(BEYOND_256_PROBABILITY, BEYOND_256_THRESHOLD, None)? {
         d.draw_integer_uniform(256, n - 1)
+    } else if n > 256 {
+        d.draw_integer_uniform(0, 255)
     } else {
         d.draw_integer_uniform(0, n - 1)
     }

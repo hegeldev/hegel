@@ -170,6 +170,7 @@ pub struct Program {
 
 /// How a program tells the characters beyond ASCII apart for its
 /// [`Dfa`].
+#[derive(Clone)]
 enum Classes {
     /// By where they fall among these sorted codepoints, at each of
     /// which some test's answer changes.
@@ -212,7 +213,7 @@ impl Clone for Program {
             insts: self.insts.clone(),
             scratch: Mutex::new(Vec::new()),
             dfa: self.dfa.clone(),
-            classes: Classes::of(&self.insts),
+            classes: self.classes.clone(),
         }
     }
 }
@@ -901,7 +902,6 @@ impl Program {
 
     /// Work out and remember where `c`, of `class`, leads from `state`
     /// at `pos`, forgetting every state first when there are too many.
-    #[allow(clippy::too_many_arguments)]
     fn dfa_transition(
         &self,
         dfa: &mut Dfa,
@@ -948,7 +948,6 @@ impl Program {
 
     /// Advance the threads in `scratch.current` from `pos` to the end of
     /// the text or until none is left.
-    #[allow(clippy::too_many_arguments)]
     fn steps(
         &self,
         text: &[char],

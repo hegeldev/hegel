@@ -403,7 +403,7 @@ fn first_alternative(
 
 /// CPython's `_combine_flags`: a scoped type flag (`a`/`u`/`L`) replaces
 /// the inherited one rather than adding to it.
-pub(super) fn combine_flags(mut flags: u32, add_flags: u32, del_flags: u32) -> u32 {
+pub(crate) fn combine_flags(mut flags: u32, add_flags: u32, del_flags: u32) -> u32 {
     if add_flags & TYPE_FLAGS != 0 {
         flags &= !TYPE_FLAGS;
     }

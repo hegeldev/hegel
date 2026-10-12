@@ -61,12 +61,7 @@ impl RegexConstraint {
         else {
             return false;
         };
-        let matcher = Matcher::new(&self.parsed);
-        if self.fullmatch {
-            return matches!(matcher.fullmatch(&chars), Ok(true));
-        }
-        (0..=chars.len())
-            .any(|start| matches!(matcher.match_at_touch(&chars, start), Ok((Some(_), _))))
+        matches(&self.parsed, self.fullmatch, &chars)
     }
 
     /// The simplest string of the pattern, computing it with `init` when
@@ -107,6 +102,18 @@ impl Hash for RegexConstraint {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.identity.hash(state);
     }
+}
+
+/// Whether `chars` is one of `parsed`'s strings: matched whole by it
+/// when `fullmatch`, and otherwise matched somewhere in it, as CPython's
+/// `fullmatch` and `search` decide. A match the matcher cannot finish
+/// within its limits is no match.
+pub(crate) fn matches(parsed: &ParsedPattern, fullmatch: bool, chars: &[char]) -> bool {
+    let matcher = Matcher::new(parsed);
+    if fullmatch {
+        return matches!(matcher.fullmatch(chars), Ok(true));
+    }
+    (0..=chars.len()).any(|start| matches!(matcher.match_at_touch(chars, start), Ok((Some(_), _))))
 }
 
 impl fmt::Debug for RegexConstraint {

@@ -323,6 +323,7 @@ pub(crate) struct SimplestDraws {
 
 impl SimplestDraws {
     /// The status the draws concluded with, or `None` while none has.
+    #[cfg(test)]
     pub(crate) fn status(&self) -> Option<Status> {
         self.status
     }

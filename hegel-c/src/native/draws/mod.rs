@@ -2,9 +2,6 @@
 
 pub mod internet;
 pub mod regex;
-/// Only a test case draws yet: generating a grammar string as one choice
-/// will draw from the other sources, and lift the allowance.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod source;
 pub mod special;
 pub mod text;

@@ -1674,3 +1674,118 @@ fn a_literal_pattern_is_emitted_without_a_walk() {
         "the draw consumed randomness"
     );
 }
+
+#[test]
+fn every_string_drawn_is_one_the_pattern_matches() {
+    for pattern in [
+        r"\bfoo\b",
+        r"a\Bb",
+        r"(a)\1",
+        r"(a)?(?(1)b|cc)",
+        r"(?=a)a",
+        r"(?!z)[^a].",
+        r"(?<=a)b",
+        r"(?>ab)c",
+        r"a*+b",
+        r"(?i)[^k]",
+        r"(?i)[^ks]",
+        r"(?i:[^k])",
+        r"(?:[^k]|\b)+",
+        r"(?:\ba)*",
+        r"(?:\ba)*?",
+        r"(?a)\w+",
+        r"[a-z]+",
+        r"^a.$",
+    ] {
+        let re = CompiledRegex::compile(pattern, None).unwrap();
+        for fullmatch in [true, false] {
+            for seed in 0..100 {
+                let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+                let Ok(s) = generate_regex(&mut ntc, &re, fullmatch) else {
+                    continue;
+                };
+                assert!(
+                    pattern_matches(re.parsed(), fullmatch, &chars(&s)),
+                    "{pattern:?} drew {s:?} (fullmatch {fullmatch})"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_negated_class_under_ignorecase_never_draws_a_character_folding_into_it() {
+    for (pattern, lookalike) in [("(?i)[^k]", '\u{212a}'), ("(?i)[^sx]", '\u{17f}')] {
+        let alphabet = IntervalSet::new(vec![
+            (u32::from('a'), u32::from('a')),
+            (u32::from(lookalike), u32::from(lookalike)),
+        ])
+        .unwrap();
+        let re = CompiledRegex::compile(pattern, Some(alphabet)).unwrap();
+        let mut drawn = 0;
+        for seed in 0..40 {
+            let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+            if let Ok(s) = generate_regex(&mut ntc, &re, true) {
+                assert_eq!(s, "a", "{pattern:?}");
+                drawn += 1;
+            }
+        }
+        assert!(drawn > 20, "{pattern:?}: {drawn} draws succeeded");
+    }
+}
+
+#[test]
+fn a_pattern_no_string_matches_rejects_the_test_case_instead_of_drawing_one() {
+    for (pattern, fullmatch) in [(r"(?=a)b", false), (r"(?a)\bé", true)] {
+        let re = CompiledRegex::compile(pattern, None).unwrap();
+        for seed in 0..10 {
+            let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+            assert!(
+                matches!(
+                    generate_regex(&mut ntc, &re, fullmatch),
+                    Err(EngineError::InvalidTestCase)
+                ),
+                "{pattern:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn only_patterns_the_generator_approximates_are_verified_by_the_matcher() {
+    for (pattern, verified) in [
+        (r"[a-z]+", false),
+        (r"^a.$", false),
+        (r"[^k]", false),
+        (r"(?i)[^k]", true),
+        (r"(?i)[^ks]", true),
+        (r"(?i:[^k])", true),
+        (r"(?i)(?-i:[^k])", false),
+        (r"a|\b", true),
+        (r"(?:\ba)*", true),
+        (r"(?:\ba)*?", true),
+        (r"(a)\1", true),
+        (r"(a)?(?(1)b|c)", true),
+        (r"(?=a)a", true),
+        (r"(?!a)b", true),
+        (r"(?>a)", true),
+        (r"a*+", true),
+        (r"(?!)", false),
+    ] {
+        let re = CompiledRegex::compile(pattern, None).unwrap();
+        assert_eq!(re.verified, verified, "{pattern:?}");
+    }
+}
+
+#[test]
+fn the_simplest_character_of_a_large_class_is_its_first() {
+    for (pattern, expected) in [(r"\w", "0"), (r"\d", "0"), (r"[^\n]", "\0")] {
+        let re = CompiledRegex::compile(pattern, None).unwrap();
+        let mut draws = SimplestDraws::default();
+        assert_eq!(
+            generate_regex(&mut draws, &re, true).unwrap(),
+            expected,
+            "{pattern:?}"
+        );
+    }
+}
