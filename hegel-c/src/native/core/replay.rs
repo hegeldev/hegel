@@ -380,8 +380,6 @@ impl Replay {
         self.timelines[0].as_deref().unwrap_or(&[])
     }
 
-    /// The realized node of timeline `timeline`'s proposal at `position`,
-    /// when known.
     /// Whether draws are served by their structural address, so that a
     /// stream has to know each draw's address as it is made: a graph walk
     /// and an external resolver are, the timelines of a live set are not.
@@ -389,6 +387,8 @@ impl Replay {
         self.graph.is_some() || self.external.is_some()
     }
 
+    /// The realized node of timeline `timeline`'s proposal at `position`,
+    /// when known.
     pub(crate) fn proposal_node(&self, timeline: usize, position: usize) -> Option<&ChoiceNode> {
         self.nodes[timeline].as_ref().and_then(|n| n.get(position))
     }

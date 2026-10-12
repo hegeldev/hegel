@@ -3221,9 +3221,10 @@ fn a_dropped_test_case_hands_its_vectors_on_emptied() {
     }
     tc.freeze();
     drop(tc);
-    let taken = SpareVectors::take(&mut SPARE_VECTORS.lock(), usize::MAX, 0, 0);
+    let mut slot = SPARE_VECTORS.lock();
+    let taken = SpareVectors::take(&mut slot, usize::MAX, 0, 0);
     assert!(taken.nodes.is_empty() && taken.spans.is_empty());
-    assert!(SpareVectors::offer(&mut SPARE_VECTORS.lock(), taken.nodes, taken.spans).is_none());
+    assert!(SpareVectors::offer(&mut slot, taken.nodes, taken.spans).is_none());
 }
 
 #[test]
@@ -3299,9 +3300,10 @@ fn a_dropped_test_case_releases_the_streams_its_clone_nodes_hold() {
     assert_eq!(Arc::strong_count(&stream), 2);
     drop(tc);
     assert_eq!(Arc::strong_count(&stream), 1);
-    let taken = SpareVectors::take(&mut SPARE_VECTORS.lock(), usize::MAX, 0, 0);
+    let mut slot = SPARE_VECTORS.lock();
+    let taken = SpareVectors::take(&mut slot, usize::MAX, 0, 0);
     assert!(taken.nodes.is_empty() && taken.spans.is_empty());
-    assert!(SpareVectors::offer(&mut SPARE_VECTORS.lock(), taken.nodes, taken.spans).is_none());
+    assert!(SpareVectors::offer(&mut slot, taken.nodes, taken.spans).is_none());
 }
 
 struct Unscripted;

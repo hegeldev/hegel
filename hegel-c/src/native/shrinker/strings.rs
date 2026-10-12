@@ -19,6 +19,14 @@ impl<'a> Shrinker<'a> {
         Ok(())
     }
 
+    /// Shrink the string at node `i`: try the kind's simplest string,
+    /// then cut it to a shorter prefix by binary search and by scanning
+    /// the shortest lengths, delete single characters, and for a string
+    /// under a constraint (a regex pattern, as grammar strings have a
+    /// pass of their own) also delete short windows anywhere in it and
+    /// copy the simplest string's ends over its own, since a constrained
+    /// string rarely survives losing one character at a time; finally
+    /// replace repeated characters together and minimize each character.
     async fn shrink_string_node(&mut self, i: usize) -> Result<(), PassExit> {
         {
             let (kind, current) = self.string_at(i).ok_or(PassExit::NodeGone)?;

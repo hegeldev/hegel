@@ -1269,7 +1269,7 @@ impl ChoiceKind {
 
     /// Largest valid index for [`from_index`](Self::from_index), or `None`
     /// for a kind without a dense index: a clone, or a string under a
-    /// grammar.
+    /// constraint.
     pub fn max_index(&self) -> Option<crate::native::bignum::BigUint> {
         match self {
             ChoiceKind::Integer(ic) => Some(ic.max_index()),
@@ -1283,7 +1283,7 @@ impl ChoiceKind {
 
     /// The value at `index` under this kind's sort order. Returns `None`
     /// when the index is out of range; a clone kind and a string kind
-    /// under a grammar have no dense index, so every index is out of
+    /// under a constraint have no dense index, so every index is out of
     /// range for them.
     #[allow(clippy::wrong_self_convention)]
     pub fn from_index(
@@ -1466,7 +1466,7 @@ impl ChoiceData {
     }
 
     /// The value's dense index under its constraint's sort order, or `None`
-    /// for a clone or a string under a grammar (no dense index).
+    /// for a clone or a string under a constraint (no dense index).
     pub fn to_index(&self) -> Result<Option<crate::native::bignum::BigUint>, InternalError> {
         Ok(match self {
             ChoiceData::Integer(ic, v) => Some(ic.to_index(v)),

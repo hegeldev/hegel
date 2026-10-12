@@ -155,12 +155,13 @@ impl BigInt {
     }
 
     /// Whether the value lives inline rather than in a heap buffer, so that
-    /// dropping it frees nothing. The backend keeps up to two machine words
-    /// inline and only ever moves three or more words to the heap, so the
+    /// dropping it frees nothing. The backend keeps up to two of its words
+    /// inline (64-bit words on a 64-bit target, 32-bit words on a 32-bit
+    /// one) and only ever moves three or more words to the heap, so the
     /// bit length answers exactly.
     #[inline]
     pub fn is_inline(&self) -> bool {
-        self.0.bit_len() <= 128
+        self.0.bit_len() <= 2 * dashu_int::Word::BITS as usize
     }
 }
 

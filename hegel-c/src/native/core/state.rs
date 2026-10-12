@@ -54,6 +54,11 @@ use crate::sys::sync::{Lazy, Mutex};
 static MOST_NODES: AtomicUsize = AtomicUsize::new(0);
 static MOST_SPANS: AtomicUsize = AtomicUsize::new(0);
 
+/// The most choices or spans [`MOST_NODES`] and [`MOST_SPANS`] reserve
+/// up front, so that one test case that overran keeps every later one,
+/// on every thread, from starting with a vector of the whole buffer.
+const MOST_RESERVED: usize = 1 << 16;
+
 /// The emptied choice and span vectors of the roomiest test case dropped
 /// so far, for the next test case to record into instead of allocating
 /// and growing vectors of its own.
@@ -2118,8 +2123,14 @@ impl NativeTestCase {
         family: Arc<FamilyCore>,
         clone_id: Vec<usize>,
     ) -> Self {
-        let nodes = MOST_NODES.load(Ordering::Relaxed).min(max_size);
-        let spans = MOST_SPANS.load(Ordering::Relaxed).min(max_size);
+        let nodes = MOST_NODES
+            .load(Ordering::Relaxed)
+            .min(max_size)
+            .min(MOST_RESERVED);
+        let spans = MOST_SPANS
+            .load(Ordering::Relaxed)
+            .min(max_size)
+            .min(MOST_RESERVED);
         let addressed = replay.addressed();
         let bookkept = if addressed { spans } else { 0 };
         let spare = SpareVectors::take(&mut SPARE_VECTORS.lock(), max_size, nodes, spans);
@@ -3007,7 +3018,7 @@ impl NativeTestCase {
         self.pre_choice()?;
 
         let idx = self.nodes.len();
-        let replayed = if idx < self.replay.plain_from() || self.trailing_template.is_some() {
+        let replayed = if self.must_ask_replay(idx) {
             self.resolve_choice_replayed(
                 idx,
                 || kind.simplest(),
@@ -3155,7 +3166,7 @@ impl NativeTestCase {
 
         let idx = self.nodes.len();
 
-        if idx < self.replay.plain_from() || self.trailing_template.is_some() {
+        if self.must_ask_replay(idx) {
             if let Some(decided) = self.resolve_choice_replayed(idx, simplest, unit, from_prefix)? {
                 return Ok(decided);
             }
@@ -3166,6 +3177,15 @@ impl NativeTestCase {
             "resolve_choice: no RNG available for random generation"
         );
         Ok((random(rng)?, false))
+    }
+
+    /// Whether the draw at `idx` has to ask the replay or the trailing
+    /// template for its value: it does before the position the replay
+    /// leaves every draw to the RNG from, and whenever a trailing
+    /// template stands ready to answer draws past it.
+    #[inline]
+    fn must_ask_replay(&self, idx: usize) -> bool {
+        idx < self.replay.plain_from() || self.trailing_template.is_some()
     }
 
     /// [`Self::resolve_choice`] for a draw at `idx` the replay or the
