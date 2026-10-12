@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use super::generators::draw_and_print_value;
-use super::strings::{CharactersGenerator, TerminalGenerator};
+use super::strings::CharactersGenerator;
 use super::{Generator, PrintableGenerator, TestCase, combine_labels, label_from_name};
 use crate::ffi;
 use crate::pretty::PrettyPrinter;
@@ -11,7 +11,35 @@ use crate::test_case::invalid_argument;
 
 const LARK_LABEL: u64 = label_from_name("hegel.from_lark");
 
-type ExplicitTerminal = dyn TerminalGenerator + Send + Sync + UnwindSafe + RefUnwindSafe;
+type ExplicitTerminal = dyn Generator<String> + Send + Sync + UnwindSafe + RefUnwindSafe;
+
+/// A terminal whose values come from a generator of the user's rather
+/// than from the grammar.
+struct Explicit {
+    name: String,
+    generator: Box<ExplicitTerminal>,
+}
+
+/// The compiled grammar, with the marker that stands for each explicit
+/// terminal in the strings drawn from it, in the order of `explicit`.
+struct Compiled {
+    grammar: ffi::Grammar,
+    markers: Vec<String>,
+}
+
+/// One explicit terminal's generator as the test case draws it: a
+/// forwarding wrapper, so the value gets the generator's own span.
+struct Terminal<'a>(&'a ExplicitTerminal);
+
+impl Generator<String> for Terminal<'_> {
+    fn label(&self) -> u64 {
+        self.0.label()
+    }
+
+    fn do_draw(&self, tc: &TestCase) -> String {
+        self.0.do_draw(tc)
+    }
+}
 
 /// Generator for strings matching a grammar written in Lark's syntax.
 /// Created by [`from_lark()`].
@@ -23,21 +51,13 @@ type ExplicitTerminal = dyn TerminalGenerator + Send + Sync + UnwindSafe + RefUn
 pub struct LarkGenerator {
     text: String,
     start: Option<String>,
-    explicit: Vec<(String, Box<ExplicitTerminal>)>,
+    explicit: Vec<Explicit>,
     alphabet: Option<CharactersGenerator>,
     max_size: Option<usize>,
     max_depth: Option<u32>,
     import_paths: Vec<PathBuf>,
     label: u64,
-    handle: OnceLock<ffi::Grammar>,
-}
-
-fn lark_label(text: &str, start: Option<&str>) -> u64 {
-    combine_labels(&[
-        LARK_LABEL,
-        label_from_name(text),
-        label_from_name(start.unwrap_or("start")),
-    ])
+    handle: OnceLock<Compiled>,
 }
 
 impl LarkGenerator {
@@ -46,22 +66,47 @@ impl LarkGenerator {
     pub fn start(mut self, start: &str) -> Self {
         self.handle = OnceLock::new();
         self.start = Some(start.to_string());
-        self.label = lark_label(&self.text, self.start.as_deref());
+        self.relabel();
         self
     }
 
     /// Draw the terminal `name` from `generator` instead of from the
     /// terminal's own pattern. Required for a terminal the grammar
-    /// `%declare`s without defining; for any other terminal the strings
-    /// drawn should match its pattern, or the result may not be in the
-    /// grammar.
+    /// `%declare`s without defining; any other terminal may be overridden.
+    ///
+    /// The grammar string is drawn with a marker standing for each
+    /// occurrence of the terminal, then a value is drawn from `generator`
+    /// for each marker, in order, and spliced in. The values are beyond
+    /// the lexing checks the engine makes on the rest of the string: an
+    /// `%ignore`d terminal goes on either side of each where the grammar
+    /// has one, and it is the generator's part to draw values that read
+    /// as the terminal where they land (a value under a quoted-string
+    /// terminal should contain no quote, say). Each marker counts about
+    /// thirty characters toward [`max_size`](Self::max_size).
     pub fn explicit<G>(mut self, name: &str, generator: G) -> Self
     where
-        G: TerminalGenerator + Send + Sync + UnwindSafe + RefUnwindSafe + 'static,
+        G: Generator<String> + Send + Sync + UnwindSafe + RefUnwindSafe + 'static,
     {
         self.handle = OnceLock::new();
-        self.explicit.push((name.to_string(), Box::new(generator)));
+        self.explicit.push(Explicit {
+            name: name.to_string(),
+            generator: Box::new(generator),
+        });
+        self.relabel();
         self
+    }
+
+    fn relabel(&mut self) {
+        let mut labels = vec![
+            LARK_LABEL,
+            label_from_name(&self.text),
+            label_from_name(self.start.as_deref().unwrap_or("start")),
+        ];
+        for explicit in &self.explicit {
+            labels.push(label_from_name(&explicit.name));
+            labels.push(explicit.generator.label());
+        }
+        self.label = combine_labels(&labels);
     }
 
     /// Constrain which characters terminals drawn from their patterns may
@@ -100,7 +145,7 @@ impl LarkGenerator {
         self
     }
 
-    fn handle(&self) -> &ffi::Grammar {
+    fn handle(&self) -> &Compiled {
         self.handle.get_or_init(|| {
             if self.max_size == Some(0) {
                 invalid_argument!("max_size must be at least 1");
@@ -108,22 +153,30 @@ impl LarkGenerator {
             if self.max_depth == Some(0) {
                 invalid_argument!("max_depth must be at least 1");
             }
-            let alphabet = self.alphabet.as_ref().map(|a| a.build_alphabet_handle());
-            let explicit: Vec<(String, &ffi::StringGenerator)> = self
-                .explicit
+            let names: Vec<String> = self.explicit.iter().map(|e| e.name.clone()).collect();
+            if let Some(name) = names
                 .iter()
-                .map(|(name, g)| (name.clone(), g.terminal_handle()))
-                .collect();
-            ffi::Grammar::new(
+                .find(|name| names.iter().filter(|n| n == name).count() > 1)
+            {
+                invalid_argument!("explicit terminal '{name}' is given more than one generator");
+            }
+            let alphabet = self.alphabet.as_ref().map(|a| a.build_alphabet_handle());
+            let grammar = ffi::Grammar::new(
                 &self.text,
                 self.start.as_deref(),
                 self.max_size.map_or(0, |n| n as u64),
                 self.max_depth.unwrap_or(0),
                 alphabet.as_ref(),
-                &explicit,
+                &names,
                 &self.import_paths,
             )
-            .unwrap_or_else(|msg| invalid_argument!("{msg}"))
+            .unwrap_or_else(|msg| invalid_argument!("{msg}"));
+            let markers = names
+                .iter()
+                .map(|name| grammar.placeholder(name))
+                .collect::<Result<_, _>>()
+                .unwrap_or_else(|msg| invalid_argument!("{msg}"));
+            Compiled { grammar, markers }
         })
     }
 }
@@ -134,7 +187,26 @@ impl Generator<String> for LarkGenerator {
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
-        tc.generate_grammar(self.handle())
+        let compiled = self.handle();
+        let drawn = tc.generate_grammar(&compiled.grammar);
+        if compiled.markers.is_empty() {
+            return drawn;
+        }
+        let mut out = String::with_capacity(drawn.len());
+        let mut rest = drawn.as_str();
+        while let Some((at, i)) = compiled
+            .markers
+            .iter()
+            .enumerate()
+            .filter_map(|(i, marker)| rest.find(marker.as_str()).map(|at| (at, i)))
+            .min()
+        {
+            out.push_str(&rest[..at]);
+            out.push_str(&tc.draw_silent(Terminal(&*self.explicit[i].generator)));
+            rest = &rest[at + compiled.markers[i].len()..];
+        }
+        out.push_str(rest);
+        out
     }
 }
 
@@ -200,7 +272,7 @@ impl PrintableGenerator<String> for LarkGenerator {
 ///
 /// See [`LarkGenerator`] for builder methods.
 pub fn from_lark(grammar: &str) -> LarkGenerator {
-    LarkGenerator {
+    let mut generator = LarkGenerator {
         text: grammar.to_string(),
         start: None,
         explicit: Vec::new(),
@@ -208,7 +280,9 @@ pub fn from_lark(grammar: &str) -> LarkGenerator {
         max_size: None,
         max_depth: None,
         import_paths: Vec::new(),
-        label: lark_label(grammar, None),
+        label: 0,
         handle: OnceLock::new(),
-    }
+    };
+    generator.relabel();
+    generator
 }

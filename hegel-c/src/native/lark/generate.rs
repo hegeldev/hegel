@@ -55,10 +55,23 @@
 //! then lets it reach the next delimiter in the string), so a finished
 //! string with such a stretch is lexed once more as a whole and
 //! regenerated when it does not read back as its tokens.
+//!
+//! A terminal whose strings come from outside the engine (an explicit
+//! one, see [`GrammarOptions::explicit`]) stands in a drawn string as a
+//! placeholder: a fixed marker, [`placeholder`], that the caller
+//! replaces with a value of its own at each occurrence, in order. The
+//! marker is a string terminal of the compiled grammar, above every
+//! other in priority so that the lexers read it as itself wherever it
+//! starts, and is what the parser matches on replay. The value spliced
+//! in is out of the engine's sight, so a grammar with an ignorable has
+//! one on either side of every marker: the generator insists on it, and
+//! the constraint accepts no string without (see
+//! [`GrammarConstraint::tree`]), so that shrinking and mutation keep it.
+//! Keeping the values lexable in place is the caller's affair.
 
 use super::analysis::{Alt, Analysis, Node, NodeKind, analyze};
 use super::builder::{ImportSource, load_grammar};
-use super::compile::{Grammar, RuleId, TermId, compile};
+use super::compile::{Grammar, RuleId, TermId, TerminalDef, compile, placeholder};
 use super::constraint::GrammarConstraint;
 use super::lexsim::{Lexed, Lexer, Scan, Starters};
 use super::{GrammarError, GrammarResult};
@@ -147,25 +160,18 @@ const LABEL_GRAMMAR: u64 = label_from_name("hegel.lark");
 enum TerminalGen {
     /// From the terminal's own pattern, checked against the lexer.
     Pattern(StringSpec),
-    /// From a generator supplied for a `%declare`d (or overridden)
-    /// terminal, taken as it comes.
-    Explicit(Arc<StringSpec>),
-}
-
-impl TerminalGen {
-    /// The generator the terminal's strings are drawn from.
-    fn spec(&self) -> &StringSpec {
-        match self {
-            TerminalGen::Pattern(spec) => spec,
-            TerminalGen::Explicit(spec) => spec,
-        }
-    }
+    /// A placeholder for a terminal whose strings the caller supplies
+    /// (see [`placeholder`]): its marker, as it is.
+    Placeholder(Vec<char>),
 }
 
 /// Options for building a [`GrammarSpec`].
 pub struct GrammarOptions {
     pub start: String,
-    pub explicit: Vec<(String, Arc<StringSpec>)>,
+    /// The terminals whose strings the caller supplies: each occurrence
+    /// in a drawn string is the terminal's [`placeholder`] marker, for
+    /// the caller to replace.
+    pub explicit: Vec<String>,
     pub alphabet: Option<Arc<StringSpec>>,
     pub max_size: u64,
     pub max_depth: u32,
@@ -191,6 +197,8 @@ pub struct GrammarSpec {
     terminals: Vec<TerminalGen>,
     #[cfg(test)]
     terminal_names: Vec<String>,
+    /// The explicit terminals' names and markers.
+    placeholders: Vec<(String, String)>,
     ignore: Vec<TermId>,
     /// Which ignorables could start with each character, for
     /// [`GrammarSpec::scans`] to try only those.
@@ -436,31 +444,31 @@ impl ReadingsCache {
 impl GrammarSpec {
     /// Build a spec from a compiled grammar whose start rules are exactly
     /// the one named in `options`.
-    pub fn new(grammar: Grammar, mut options: GrammarOptions) -> GrammarResult<GrammarSpec> {
+    pub fn new(mut grammar: Grammar, options: GrammarOptions) -> GrammarResult<GrammarSpec> {
         let start = grammar.start[0];
-        for (name, _) in &options.explicit {
-            if grammar.terminal_id(name).is_none() {
+        let mut placeholders = Vec::with_capacity(options.explicit.len());
+        let mut markers: Vec<(TermId, Vec<char>)> = Vec::with_capacity(options.explicit.len());
+        for name in &options.explicit {
+            let Some(id) = grammar.terminal_id(name) else {
                 return Err(GrammarError::new(format!(
-                    "explicit generator for terminal '{name}', which the grammar does not use"
+                    "explicit terminal '{name}', which the grammar does not use"
                 )));
-            }
+            };
+            let marker = placeholder(name);
+            grammar.terminals[id] = TerminalDef::placeholder(name)?;
+            markers.push((id, marker.chars().collect()));
+            placeholders.push((name.clone(), marker));
         }
         let mut terminals = Vec::with_capacity(grammar.terminals.len());
         let mut term_min = Vec::with_capacity(grammar.terminals.len());
         let mut term_typical = Vec::with_capacity(grammar.terminals.len());
-        let mut explicit_specs = Vec::new();
         for (id, term) in grammar.terminals.iter().enumerate() {
-            let explicit = options
-                .explicit
-                .iter()
-                .position(|(name, _)| *name == term.name)
-                .map(|i| options.explicit.swap_remove(i).1);
-            match (explicit, &term.regexp) {
-                (Some(spec), _) => {
-                    term_min.push(1);
-                    term_typical.push(typical_size(&spec, 1));
-                    explicit_specs.push((id, Arc::clone(&spec)));
-                    terminals.push(TerminalGen::Explicit(spec));
+            let marker = markers.iter().find(|(m, _)| *m == id).map(|(_, m)| m);
+            match (marker, &term.regexp) {
+                (Some(marker), _) => {
+                    term_min.push(marker.len() as u64);
+                    term_typical.push(marker.len() as u64);
+                    terminals.push(TerminalGen::Placeholder(marker.clone()));
                 }
                 (None, Some(regexp)) => {
                     let spec = StringSpec::regex(regexp, true, options.alphabet.as_deref())
@@ -512,7 +520,7 @@ impl GrammarSpec {
         let terminal_names = grammar.terminals.iter().map(|t| t.name.clone()).collect();
         let ignore = grammar.ignore.clone();
         let constraint = Arc::new(
-            GrammarConstraint::new(grammar, &explicit_specs, start, max_size, options.max_depth)
+            GrammarConstraint::new(grammar, start, max_size, options.max_depth)
                 .map_err(internal)?,
         );
         let kind = Arc::new(StringChoice {
@@ -526,6 +534,7 @@ impl GrammarSpec {
             terminals,
             #[cfg(test)]
             terminal_names,
+            placeholders,
             ignore,
             ignore_starters,
             ignore_cost,
@@ -606,16 +615,22 @@ impl GrammarSpec {
         &self.terminal_names
     }
 
+    /// The explicit terminals' names, each with the marker standing for
+    /// its values in a drawn string (see [`placeholder`]).
+    pub fn placeholders(&self) -> &[(String, String)] {
+        &self.placeholders
+    }
+
+    fn is_placeholder(&self, id: TermId) -> bool {
+        matches!(self.terminals[id], TerminalGen::Placeholder(_))
+    }
+
     fn is_ignore(&self, id: TermId) -> bool {
         self.ignore.contains(&id)
     }
 
     fn same_type(&self, expected: TermId, got: TermId) -> bool {
         expected == got || (self.is_ignore(expected) && self.is_ignore(got))
-    }
-
-    fn is_pattern(&self, id: TermId) -> bool {
-        matches!(self.terminals[id], TerminalGen::Pattern(_))
     }
 
     /// Whether the basic lexer reads `token`'s text on its own as one
@@ -713,9 +728,6 @@ impl GrammarSpec {
     /// [`Lexer::extend`]) can only find it again, then the rest of the
     /// text lexed afresh.
     fn reading(&self, id: TermId, text: &[char], basic: &Scan) -> Reading {
-        if !self.is_pattern(id) {
-            return Reading::Opaque;
-        }
         let mut scratch = self.scratch.lock();
         let got = &mut scratch.observed;
         got.clear();
@@ -1795,17 +1807,33 @@ impl Generation<'_> {
         Ok(min + extra.clamp(1, extra_max))
     }
 
+    /// Draw a string of terminal `id` onto the end of the text: from its
+    /// pattern, or its placeholder's marker.
+    fn draw_text<D: Draws>(&mut self, d: &mut D, id: TermId) -> Result<(), EngineError> {
+        match &self.spec.terminals[id] {
+            TerminalGen::Pattern(spec) => generate_string_into(d, spec, &mut self.text),
+            TerminalGen::Placeholder(marker) => {
+                self.text.extend_from_slice(marker);
+                Ok(())
+            }
+        }
+    }
+
     /// Draw a string for terminal `id`: from its pattern, cut to what the
     /// pattern reads back from the front and redrawn a few times while
-    /// the basic lexer would not read it back as that terminal, or from
-    /// its explicit generator as it comes. A text drawn before is not
+    /// the basic lexer would not read it back as that terminal, or its
+    /// placeholder's marker as it is. A text drawn before is not
     /// matched again: what was remembered of it (see
     /// [`ReadingsCache::recall`]) says how much of it the pattern takes.
     fn draw_terminal<D: Draws>(&mut self, d: &mut D, id: TermId) -> Result<Token, Step> {
         let start = self.text.len();
         match &self.spec.terminals[id] {
-            TerminalGen::Explicit(spec) => {
-                generate_string_into(d, spec, &mut self.text)?;
+            TerminalGen::Placeholder(_) => {
+                self.draw_text(d, id)?;
+                if !self.fits(self.text.len()) {
+                    self.text.truncate(start);
+                    return Err(Step::TooLong);
+                }
                 let scans = self
                     .readings
                     .read_token(self.spec, id, &self.text[start..], None);
@@ -2077,7 +2105,7 @@ impl Generation<'_> {
             .get(at)
             .map_or(self.text.len(), |next| next.start);
         let drawn = self.text.len();
-        generate_string_into(d, self.spec.terminals[id].spec(), &mut self.text)?;
+        self.draw_text(d, id)?;
         let len = self.text.len() - drawn;
         if !self.fits(self.text.len()) {
             self.text.truncate(drawn);
@@ -2165,13 +2193,21 @@ impl Generation<'_> {
             let (text, tokens) = self.window(from, 0);
             self.spec.fit(text, tokens, &self.readings.findings)
         });
-        let forced = if pair < Fit::Exact { Some(true) } else { None };
+        let beside_placeholder = adjacent.is_some_and(|from| {
+            self.spec.is_placeholder(self.tokens[from].id)
+                || self.spec.is_placeholder(self.tokens[at].id)
+        });
+        let forced = if pair < Fit::Exact || beside_placeholder {
+            Some(true)
+        } else {
+            None
+        };
         if d.weighted_against(self.ignore_rate, self.ignore_threshold, forced)?
             && self.insert_ignore(d, pending)?
         {
             return Ok(());
         }
-        if pair == Fit::Wrong {
+        if pair == Fit::Wrong || beside_placeholder {
             return Err(Step::Misread);
         }
         self.unsettled |= pair < Fit::Settled;

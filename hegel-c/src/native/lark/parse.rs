@@ -17,11 +17,7 @@
 //! caller's to say ([`Terminals`]): a [`Lexer`] matches each terminal's
 //! own pattern as Lark does, and never a terminal without a pattern (one
 //! `%declare`d) or one whose regex is too involved to run within the
-//! matcher's budget, while [`GrammarTerminals`](super::explicit::GrammarTerminals)
-//! also matches the terminals the user supplied a generator for, at
-//! every length the generator could have drawn, including none: an
-//! empty token advances its item in place, where Lark, which forbids
-//! empty terminals, would lose it.
+//! matcher's budget.
 //!
 //! The tree recovered is the first derivation found, with the grammar's
 //! own structure: a node per rule alternative, per parenthesised group
@@ -47,8 +43,8 @@ pub trait Terminals {
     fn begin(&self, text: &[char]) -> Self::Memo;
 
     /// The positions where a token of `id` starting at `pos` may end, in
-    /// increasing order, appended to `out`: none when the terminal does
-    /// not match there, `pos` itself for an empty token.
+    /// increasing order, appended to `out`, each past `pos`: none when
+    /// the terminal does not match there.
     fn ends(
         &self,
         memo: &mut Self::Memo,
@@ -292,12 +288,8 @@ impl Parser {
             parse.carried = 0;
             parse.tried.fill(None);
             parse.ends.clear();
-            loop {
-                parse.predict_and_complete(col);
-                if !parse.scan(col) {
-                    break;
-                }
-            }
+            parse.predict_and_complete(col);
+            parse.scan(col);
             parse.columns[col].waiting.sort_unstable();
             if parse.proposed > self.budget || (col < n && parse.pending == 0) {
                 return Err(ParseError { position: col });
@@ -454,27 +446,15 @@ impl<T: Terminals> Parse<'_, T> {
 
     /// Scan the column's waiting items not yet scanned, and carry those
     /// and any newly complete start item past the ignored text matched
-    /// at the column; whether an item was added to the column itself,
-    /// by an empty token, so that there is more to predict and scan.
-    fn scan(&mut self, col: usize) -> bool {
+    /// at the column.
+    fn scan(&mut self, col: usize) {
         let parser = self.parser;
-        let mut added = false;
         let waiting = self.columns[col].scan.len();
         for j in self.scanned..waiting {
             let (idx, term) = self.columns[col].scan[j];
             let (from, to) = self.lex(col, term);
             for k in from..to {
-                let end = self.ends[k];
-                if end == col {
-                    let pred = self.items[idx as usize];
-                    let back = Back::Token {
-                        pred: idx,
-                        term: term as u32,
-                    };
-                    added |= self.add(col, pred.prod, pred.dot + 1, pred.origin, back);
-                } else {
-                    self.delay(end, idx, term, true);
-                }
+                self.delay(self.ends[k], idx, term, true);
             }
         }
         let active = self.columns[col].active.len();
@@ -482,9 +462,6 @@ impl<T: Terminals> Parse<'_, T> {
             let (from, to) = self.lex(col, ignore);
             for k in from..to {
                 let end = self.ends[k];
-                if end == col {
-                    continue;
-                }
                 for j in self.scanned..waiting {
                     let (idx, _) = self.columns[col].scan[j];
                     self.delay(end, idx, ignore, false);
@@ -501,7 +478,6 @@ impl<T: Terminals> Parse<'_, T> {
         }
         self.scanned = waiting;
         self.carried = active;
-        added
     }
 
     fn provenance(&self, idx: u32) -> Provenance {

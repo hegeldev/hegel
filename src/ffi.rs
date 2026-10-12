@@ -1549,26 +1549,22 @@ impl Grammar {
     /// rule `start` (`None` for Lark's default, `start`). `max_size` and
     /// `max_depth` of `0` take the engine's defaults. `alphabet` constrains
     /// the characters of every terminal drawn from its pattern, `explicit`
-    /// supplies the generators for the named terminals, and `import_paths`
-    /// are the directories `%import`ed grammars are read from.
+    /// names the terminals whose values the caller splices in for their
+    /// [`placeholder`](Self::placeholder) markers, and `import_paths` are
+    /// the directories `%import`ed grammars are read from.
     pub(crate) fn new(
         text: &str,
         start: Option<&str>,
         max_size: u64,
         max_depth: u32,
         alphabet: Option<&StringGenerator>,
-        explicit: &[(String, &StringGenerator)],
+        explicit: &[String],
         import_paths: &[PathBuf],
     ) -> Result<Self, String> {
         let c_text = cstring_lossy(text);
         let c_start = start.map(cstring_lossy);
-        let names: Vec<CString> = explicit
-            .iter()
-            .map(|(name, _)| cstring_lossy(name))
-            .collect();
+        let names: Vec<CString> = explicit.iter().map(|name| cstring_lossy(name)).collect();
         let name_ptrs: Vec<*const c_char> = names.iter().map(|n| n.as_ptr()).collect();
-        let generator_ptrs: Vec<*const hegel_c::HegelStringGenerator> =
-            explicit.iter().map(|(_, g)| g.raw.cast_const()).collect();
         let mut imports = GrammarImports {
             dirs: import_paths,
             loaded: Vec::new(),
@@ -1583,7 +1579,6 @@ impl Grammar {
                 max_depth,
                 alphabet.map_or(ptr::null(), |a| a.raw.cast_const()),
                 name_ptrs.as_ptr(),
-                generator_ptrs.as_ptr(),
                 explicit.len(),
                 Some(load_grammar_import),
                 (&raw mut imports).cast::<c_void>(),
@@ -1594,6 +1589,24 @@ impl Grammar {
             return Err(last_error_string());
         }
         Ok(Grammar { raw })
+    }
+
+    /// The marker standing for each value of the explicit terminal `name`
+    /// in the strings drawn from the grammar.
+    pub(crate) fn placeholder(&self, name: &str) -> Result<String, String> {
+        let c_name = cstring_lossy(name);
+        let mut marker: *const c_char = ptr::null();
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_grammar_placeholder(ctx, self.raw, c_name.as_ptr(), &mut marker)
+        });
+        if rc != hegel_result_t::HEGEL_OK {
+            return Err(last_error_string());
+        }
+        // SAFETY: on success the engine set `marker` to a NUL-terminated
+        // string the grammar owns, alive for as long as `self` is.
+        Ok(unsafe { CStr::from_ptr(marker) }
+            .to_string_lossy()
+            .into_owned())
     }
 }
 

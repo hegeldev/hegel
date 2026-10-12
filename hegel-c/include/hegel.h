@@ -2267,11 +2267,11 @@ hegel_result_t hegel_generate_string_result_free(hegel_context_t *ctx,
  `alphabet`: Optional (NULL for none). Must be a text generator; every
    character a terminal's pattern draws is one of its characters, so a
    character class, wildcard or literal outside it is never drawn.
- `explicit_names`, `explicit_generators`, `explicit_len`: `explicit_len`
-   terminals to draw from the given string generators instead of their
-   patterns. Every terminal the grammar `%declare`s must be given one;
-   a terminal with a pattern may be overridden. Each generator must
-   outlive this call only.
+ `explicit_names`, `explicit_len`: `explicit_len` terminals whose values
+   the caller supplies. Every terminal the grammar `%declare`s must be
+   named; a terminal with a pattern may be named to override it. Each
+   occurrence of such a terminal in a drawn string is a placeholder
+   marker (see `hegel_grammar_placeholder`) for the caller to replace.
  `import_callback`, `import_data`: How `%import`s are resolved (see
    `hegel_grammar_import_t`); NULL to resolve only against the bundled
    grammars.
@@ -2280,9 +2280,8 @@ hegel_result_t hegel_generate_string_result_free(hegel_context_t *ctx,
  Returns `HEGEL_OK`; `HEGEL_E_INVALID_ARG` with a message describing
  what is wrong with the grammar or the options: a syntax error, an
  undefined or unused symbol, a rule that can never produce a finite
- string, a `%declare`d terminal without a generator, or a cap below the
- smallest string; or `HEGEL_E_INVALID_HANDLE` for a NULL entry in
- `explicit_generators`.
+ string, a `%declare`d terminal not named in `explicit_names`, or a
+ cap below the smallest string.
  */
 hegel_result_t hegel_grammar_new(hegel_context_t *ctx,
                                  const char *text,
@@ -2291,7 +2290,6 @@ hegel_result_t hegel_grammar_new(hegel_context_t *ctx,
                                  uint32_t max_depth,
                                  const hegel_string_generator_t *alphabet,
                                  const char *const *explicit_names,
-                                 const hegel_string_generator_t *const *explicit_generators,
                                  size_t explicit_len,
                                  hegel_grammar_import_t import_callback,
                                  void *import_data,
@@ -2309,12 +2307,36 @@ hegel_result_t hegel_grammar_new(hegel_context_t *ctx,
 hegel_result_t hegel_grammar_free(hegel_context_t *ctx, hegel_grammar_t *grammar);
 
 /*
+ The marker standing for each value of the explicit terminal `name` in
+ the strings `hegel_generate_grammar` draws of `grammar`:
+ `<<EXPLICIT_<name>_<noise>>>`, with `<noise>` fixed hexadecimal, for
+ the caller to replace, in order, with values of its own.
+
+ Parameters:
+ `grammar`: A grammar built by `hegel_grammar_new`.
+ `name`: The terminal's name, as given in `explicit_names`.
+ `out_marker`: Receives a NUL-terminated string the grammar owns, valid
+   until the grammar is freed.
+
+ Returns `HEGEL_OK`; `HEGEL_E_INVALID_HANDLE` for a NULL grammar;
+ `HEGEL_E_INVALID_ARG` for a NULL `name` or `out_marker`, a `name` that
+ is not valid UTF-8, or one that is not an explicit terminal of the
+ grammar.
+ */
+hegel_result_t hegel_grammar_placeholder(hegel_context_t *ctx,
+                                         const hegel_grammar_t *grammar,
+                                         const char *name,
+                                         const char **out_marker);
+
+/*
  Draw a string of a grammar: a string the grammar's start rule accepts,
  aiming at a length drawn up to the grammar's size cap, as many as 8192
- characters by default. The string is one choice of the test case,
- holding the string itself: a replay checks a stored string by parsing
- it (one the grammar does not derive is replaced by the grammar's
- simplest string), and the shrinker edits it through its derivation.
+ characters by default, with each explicit terminal standing as its
+ placeholder marker (see `hegel_grammar_placeholder`). The string is
+ one choice of the test case, holding the string itself: a replay
+ checks a stored string by parsing it (one the grammar does not derive
+ is replaced by the grammar's simplest string), and the shrinker edits
+ it through its derivation.
 
  Parameters:
  `grammar`: A grammar built by `hegel_grammar_new`.

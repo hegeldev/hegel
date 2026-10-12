@@ -160,19 +160,25 @@ fn ffi_grammar_construction_reports_engine_diagnostics() {
     assert!(err.contains("line 1"), "{err}");
     let err = Grammar::new("start: \"ab\"", None, 1, 0, None, &[], &[]).unwrap_err();
     assert!(err.contains("max_size is 1"), "{err}");
-    let digits = StringGenerator::regex("[0-9]+", true, None).unwrap();
     let alphabet =
         StringGenerator::text(0, 0, None, 0, Some(0x7F), None, None, None, None).unwrap();
-    Grammar::new(
+    let grammar = Grammar::new(
         "start: NUM WORD\n%declare NUM\nWORD: /[a-z]+/",
         Some("start"),
         100,
         10,
         Some(&alphabet),
-        &[("NUM".to_string(), &digits)],
+        &["NUM".to_string()],
         &[],
     )
     .unwrap();
+    let marker = grammar.placeholder("NUM").unwrap();
+    assert!(
+        marker.starts_with("<<EXPLICIT_NUM_") && marker.ends_with(">>"),
+        "{marker}"
+    );
+    let err = grammar.placeholder("WORD").unwrap_err();
+    assert!(err.contains("not an explicit terminal"), "{err}");
 }
 
 #[test]

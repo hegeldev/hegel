@@ -714,64 +714,6 @@ impl Program {
         found
     }
 
-    /// Every position where a match of the whole of `text[start..end]`
-    /// can end, in increasing order, appended to `out`: the ends CPython's
-    /// `pattern.fullmatch(text, start, end)` would find for every `end`.
-    /// Unlike [`scan`](Self::scan), no alternative takes precedence over
-    /// another: a thread keeps running past a match another found, so
-    /// that a shorter alternative listed first hides no longer one.
-    pub fn ends(&self, text: &[char], start: usize, out: &mut Vec<usize>) {
-        let start = start.min(text.len());
-        let mut scratch = self.take_scratch();
-        let Scratch {
-            current,
-            next,
-            stack,
-            generation,
-        } = &mut scratch;
-        let mut touch = Touch::Never;
-        *generation += 1;
-        current.pcs.clear();
-        self.follow(current, stack, *generation, 0, text, start, &mut touch);
-        let mut pos = start;
-        while !current.pcs.is_empty() {
-            *generation += 1;
-            next.pcs.clear();
-            let c = text.get(pos).copied();
-            for i in 0..current.pcs.len() {
-                let pc = current.pcs[i];
-                let target = match &self.insts[pc] {
-                    Inst::Match => {
-                        out.push(pos);
-                        continue;
-                    }
-                    Inst::Unit(unit, flags) => {
-                        c.is_some_and(|c| unit.matches(c, *flags)).then_some(pc + 1)
-                    }
-                    Inst::Loop(unit, flags, _) => {
-                        c.is_some_and(|c| unit.matches(c, *flags)).then_some(pc)
-                    }
-                    Inst::At(..)
-                    | Inst::Look { .. }
-                    | Inst::Split(..)
-                    | Inst::Jmp(_)
-                    | Inst::Fail => {
-                        unreachable!("only characters and matches wait for input")
-                    }
-                };
-                if let Some(target) = target {
-                    self.follow(next, stack, *generation, target, text, pos + 1, &mut touch);
-                }
-            }
-            if c.is_none() {
-                break;
-            }
-            core::mem::swap(current, next);
-            pos += 1;
-        }
-        self.return_scratch(scratch);
-    }
-
     /// Carry on a run that [`scan`](Self::scan) started at `start` of a
     /// text of `consumed` characters, on `text`, which continues that
     /// text after `start + consumed`: the match and touch a run over all

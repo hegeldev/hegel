@@ -73,10 +73,11 @@ The pieces:
   parse that proposes more items than `PARSE_BUDGET` allows is given up
   and the text rejected, as one the grammar does not derive is, rather
   than take minutes.
-  Pattern terminals match through the lexer simulation with Lark's
-  `match` semantics (one end per terminal, never empty); terminals the
-  user supplies generators for match through `lark/explicit.rs` at every
-  length their generator could draw.
+  Terminals match through the lexer simulation with Lark's `match`
+  semantics (one end per terminal, never empty); a terminal the user
+  supplies the values of (`explicit`) is a string terminal in the
+  compiled grammar whose text is its placeholder marker, so it matches
+  like any literal.
 - **The layout** (`lark/layout.rs`): `Layout` lays a `Tree` over its text,
   giving every node the range of text it derives (from its first to its
   last terminal, so ignored text at a node's edges belongs to no node but
@@ -154,13 +155,14 @@ derive a generated string more deeply than the walk did) does not.
   language of its rules (a terminal's text must be what the lexer reads
   at that position in the new text). Parses are memoized by text, so the
   cost is one parse per new candidate.
-- Terminals the user supplies generators for (`explicit`) match any text
-  their generator could draw, which for a regex or alphabet is exactly
-  the generator's language; email, URL and domain generators match an
-  approximation (`lark/explicit.rs`), so a parse could accept a string
-  such a generator would never draw.
-- The constraint's identity does not include the explicit generators, so
-  two grammars that differ only in them compare equal.
+- A terminal the user supplies the values of (`explicit`) stands in the
+  string as a placeholder marker (`generate::placeholder`): the string
+  holds the marker, the values are drawn as choices of their own after
+  it and spliced in by the frontend, and the lexing checks never see
+  them. A grammar with an ignorable has one on either side of every
+  marker: the generator insists on it, the constraint accepts no string
+  without, and the shrinker never cuts one; whether a value reads as its
+  terminal where it lands is the user's generator's affair.
 - Mutation only reuses parts of the string being mutated, not of other
   strings under the same grammar seen earlier in the run.
 

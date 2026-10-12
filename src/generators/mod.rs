@@ -58,9 +58,9 @@ pub use sequences::{
 pub use strings::{
     BinaryGenerator, CharactersGenerator, DateStringGenerator, DateTimeStringGenerator,
     DomainGenerator, EmailGenerator, IpAddressGenerator, Ipv4AddressGenerator,
-    Ipv6AddressGenerator, RegexGenerator, TerminalGenerator, TextGenerator, TimeStringGenerator,
-    UrlGenerator, UuidsGenerator, binary, characters, date_strings, datetime_strings, domains,
-    emails, from_regex, ip_addresses, text, time_strings, urls, uuids,
+    Ipv6AddressGenerator, RegexGenerator, TextGenerator, TimeStringGenerator, UrlGenerator,
+    UuidsGenerator, binary, characters, date_strings, datetime_strings, domains, emails,
+    from_regex, ip_addresses, text, time_strings, urls, uuids,
 };
 pub use time::{DurationGenerator, durations};
 pub use tuples::{

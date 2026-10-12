@@ -120,3 +120,72 @@ fn test_from_lark_labels_distinguish_grammars_and_start_rules() {
     );
     assert_eq!(a.label(), gs::from_lark("start: \"a\"").label());
 }
+
+#[test]
+fn test_from_lark_explicit_takes_any_string_generator() {
+    let grammar = || {
+        gs::from_lark("start: \"[\" NUM (\",\" NUM)* \"]\"\n%declare NUM\n")
+            .explicit("NUM", gs::integers::<u8>().map(|n| n.to_string()))
+    };
+    assert_all_examples(grammar(), |s: &String| {
+        let inner = s.strip_prefix('[').unwrap().strip_suffix(']').unwrap();
+        inner.split(',').all(|part| part.parse::<u8>().is_ok())
+    });
+    find_any(grammar(), |s: &String| {
+        let inner = &s[1..s.len() - 1];
+        let mut parts = inner.split(',');
+        let first = parts.next().unwrap();
+        parts.any(|part| part != first)
+    });
+}
+
+#[test]
+fn test_from_lark_explicit_values_shrink_with_the_grammar() {
+    assert_eq!(
+        minimal(
+            gs::from_lark("start: NUM (\",\" NUM)*\n%declare NUM\n")
+                .explicit("NUM", gs::integers::<u32>().map(|n| n.to_string())),
+            |s: &String| s.contains(',')
+        ),
+        "0,0"
+    );
+}
+
+#[test]
+fn test_from_lark_explicit_values_get_ignored_text_either_side() {
+    assert_all_examples(
+        gs::from_lark(
+            "start: \"let\" NAME \"=\" NUM\n%declare NAME\nNUM: /[0-9]+/\n%import common.WS\n%ignore WS\n",
+        )
+        .explicit("NAME", gs::text().alphabet("abc").max_size(3)),
+        |s: &String| {
+            let rest = s.trim_start().strip_prefix("let").unwrap();
+            let (name, after) = rest.split_once('=').unwrap();
+            name.starts_with(char::is_whitespace)
+                && name.ends_with(char::is_whitespace)
+                && name.trim().chars().all(|c| "abc".contains(c))
+                && !after.trim().is_empty()
+                && after.trim().chars().all(|c| c.is_ascii_digit())
+        },
+    );
+}
+
+#[test]
+#[should_panic(expected = "explicit terminal 'NUM' is given more than one generator")]
+fn test_from_lark_rejects_a_terminal_given_two_generators() {
+    find_any(
+        gs::from_lark("start: NUM\n%declare NUM\n")
+            .explicit("NUM", gs::text())
+            .explicit("NUM", gs::text()),
+        |_: &String| true,
+    );
+}
+
+#[test]
+fn test_from_lark_labels_include_the_explicit_generators() {
+    let grammar = "start: NUM\n%declare NUM\n";
+    let a = gs::from_lark(grammar).explicit("NUM", gs::text());
+    let b = gs::from_lark(grammar).explicit("NUM", gs::from_regex("[0-9]+"));
+    assert_ne!(a.label(), b.label());
+    assert_ne!(a.label(), gs::from_lark(grammar).label());
+}

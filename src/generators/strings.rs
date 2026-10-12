@@ -619,43 +619,6 @@ pub fn domains() -> DomainGenerator {
     }
 }
 
-mod sealed {
-    pub trait Sealed {}
-}
-
-/// A string generator the engine draws directly, usable as the generator of
-/// a terminal in a Lark grammar through
-/// [`LarkGenerator::explicit`](super::LarkGenerator::explicit).
-///
-/// Implemented by [`TextGenerator`], [`RegexGenerator`], [`EmailGenerator`],
-/// [`UrlGenerator`] and [`DomainGenerator`]; this trait is sealed.
-pub trait TerminalGenerator: sealed::Sealed {
-    #[doc(hidden)]
-    fn terminal_handle(&self) -> &ffi::StringGenerator;
-}
-
-macro_rules! terminal_generators {
-    ($($ty:ident),* $(,)?) => {
-        $(
-            impl sealed::Sealed for $ty {}
-
-            impl TerminalGenerator for $ty {
-                fn terminal_handle(&self) -> &ffi::StringGenerator {
-                    self.handle()
-                }
-            }
-        )*
-    };
-}
-
-terminal_generators!(
-    TextGenerator,
-    RegexGenerator,
-    EmailGenerator,
-    UrlGenerator,
-    DomainGenerator,
-);
-
 /// Generator for IP addresses. Created by [`ip_addresses()`].
 ///
 /// Generates both IPv4 and IPv6 addresses.

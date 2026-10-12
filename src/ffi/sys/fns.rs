@@ -35,7 +35,8 @@ macro_rules! for_each_hegel_fn {
             fn hegel_generate_time(ctx: *mut HegelContext, tc: *mut HegelTestCase, min_value: hegel_time_t, max_value: hegel_time_t, out_value: *mut hegel_time_t) -> hegel_result_t;
             fn hegel_generate_uuid(ctx: *mut HegelContext, tc: *mut HegelTestCase, version: u8, has_version: bool, out_bytes: *mut u8) -> hegel_result_t;
             fn hegel_grammar_free(ctx: *mut HegelContext, grammar: *mut HegelGrammar) -> hegel_result_t;
-            fn hegel_grammar_new(ctx: *mut HegelContext, text: *const c_char, start: *const c_char, max_size: u64, max_depth: u32, alphabet: *const HegelStringGenerator, explicit_names: *const *const c_char, explicit_generators: *const *const HegelStringGenerator, explicit_len: usize, import_callback: hegel_grammar_import_t, import_data: *mut c_void, out_grammar: *mut *mut HegelGrammar) -> hegel_result_t;
+            fn hegel_grammar_new(ctx: *mut HegelContext, text: *const c_char, start: *const c_char, max_size: u64, max_depth: u32, alphabet: *const HegelStringGenerator, explicit_names: *const *const c_char, explicit_len: usize, import_callback: hegel_grammar_import_t, import_data: *mut c_void, out_grammar: *mut *mut HegelGrammar) -> hegel_result_t;
+            fn hegel_grammar_placeholder(ctx: *mut HegelContext, grammar: *const HegelGrammar, name: *const c_char, out_marker: *mut *const c_char) -> hegel_result_t;
             fn hegel_label_combine(ctx: *mut HegelContext, labels: *const u64, len: usize, out_label: *mut u64) -> hegel_result_t;
             fn hegel_label_from_name(ctx: *mut HegelContext, name: *const c_char, out_label: *mut u64) -> hegel_result_t;
             fn hegel_mark_complete(ctx: *mut HegelContext, tc: *mut HegelTestCase, status: u32, origin: *const c_char) -> hegel_result_t;

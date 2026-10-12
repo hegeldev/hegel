@@ -5,7 +5,11 @@
 use super::*;
 use crate::control::InternalError;
 use crate::native::lark::builder::{NoImports, load_grammar};
-use crate::native::lark::compile::compile;
+use crate::native::lark::compile::{compile, placeholder};
+use crate::native::lark::generate::{GrammarOptions, from_lark};
+use alloc::format;
+use alloc::string::ToString;
+use alloc::vec;
 use core::hash::BuildHasher;
 
 fn compiled(text: &str, start: &str) -> Grammar {
@@ -16,7 +20,7 @@ fn compiled(text: &str, start: &str) -> Grammar {
 fn constraint(text: &str, start: &str, max_size: usize, simplest: &str) -> GrammarConstraint {
     let grammar = compiled(text, start);
     let start = grammar.start[0];
-    let c = GrammarConstraint::new(grammar, &[], start, max_size, u32::MAX).unwrap();
+    let c = GrammarConstraint::new(grammar, start, max_size, u32::MAX).unwrap();
     c.simplest_or_init(|| Ok::<_, InternalError>(cps(simplest)))
         .unwrap();
     c
@@ -89,7 +93,7 @@ fn the_smallest_text_each_rule_and_terminal_derives_is_learned() {
     let item = grammar.rule_id("item").unwrap();
     let int = grammar.terminal_id("INT").unwrap();
     let space = grammar.ignore[0];
-    let c = GrammarConstraint::new(grammar, &[], start, 64, u32::MAX).unwrap();
+    let c = GrammarConstraint::new(grammar, start, 64, u32::MAX).unwrap();
     assert_eq!(c.smallest_for_rule(start), None);
     assert_eq!(c.smallest_for_terminal(int), None);
     assert!(c.accepts(&cps("12,  [7, 3]")));
@@ -113,7 +117,7 @@ fn the_simplest_string_teaches_its_derivation() {
     let grammar = compiled(LIST, "start");
     let start = grammar.start[0];
     let int = grammar.terminal_id("INT").unwrap();
-    let c = GrammarConstraint::new(grammar, &[], start, 64, u32::MAX).unwrap();
+    let c = GrammarConstraint::new(grammar, start, 64, u32::MAX).unwrap();
     c.simplest_or_init(|| Ok::<_, u8>(cps("0"))).unwrap();
     assert_eq!(c.smallest_for_terminal(int), Some(cps("0")));
     assert_eq!(c.known_len(), 1);
@@ -151,8 +155,8 @@ fn the_grammar_the_start_rule_and_the_size_cap_each_tell_constraints_apart() {
     let grammar = compiled(two, "start");
     let start = grammar.rule_id("start").unwrap();
     let other = grammar.rule_id("other").unwrap();
-    let from_start = GrammarConstraint::new(grammar.clone(), &[], start, 16, u32::MAX).unwrap();
-    let from_other = GrammarConstraint::new(grammar, &[], other, 16, u32::MAX).unwrap();
+    let from_start = GrammarConstraint::new(grammar.clone(), start, 16, u32::MAX).unwrap();
+    let from_other = GrammarConstraint::new(grammar, other, 16, u32::MAX).unwrap();
     assert_eq!(from_start.simplest(), None);
     assert_eq!(from_start.simplest_or_init(|| Err(7)), Err(7));
     assert_eq!(from_start.simplest(), None);
@@ -185,4 +189,38 @@ fn debug_names_the_identity_and_the_start_rule() {
             c.identity()
         )
     );
+}
+
+/// A string with a placeholder right beside a token is not one the
+/// grammar draws when it ignores a terminal, and is when it does not.
+#[test]
+fn placeholders_are_kept_apart_from_tokens_where_the_grammar_ignores_text() {
+    let spec = |text: &str| {
+        from_lark(
+            text,
+            &NoImports,
+            GrammarOptions {
+                explicit: vec!["X".to_string()],
+                ..GrammarOptions::default()
+            },
+        )
+        .unwrap()
+    };
+    let marker = placeholder("X");
+    let with_ws = spec("start: \"a\" X \"b\"\n%declare X\n%import common.WS\n%ignore WS\n");
+    let c = with_ws.constraint();
+    assert!(c.accepts(&cps(&format!("a {marker} b"))));
+    assert!(c.accepts(&cps(&format!(" a {marker} b "))));
+    assert!(!c.accepts(&cps(&format!("a{marker} b"))));
+    assert!(!c.accepts(&cps(&format!("a {marker}b"))));
+    assert!(!c.accepts(&cps(&format!("a{marker}b"))));
+    let tree = c.tree(&cps(&format!("a  {marker} b"))).unwrap();
+    assert_eq!(
+        c.separators(&Layout::new(&tree)),
+        vec![(1, 3), (3 + marker.len(), 4 + marker.len())]
+    );
+    let plain = spec("start: \"a\" X \"b\"\n%declare X\n");
+    assert!(plain.constraint().accepts(&cps(&format!("a{marker}b"))));
+    let ignored = spec("start: \"a\" \"b\"\n%declare X\n%ignore X\n");
+    assert!(ignored.constraint().accepts(&cps(&format!("a{marker}b"))));
 }

@@ -6,7 +6,6 @@ use super::*;
 use crate::native::core::Constraint;
 use crate::native::core::state::codepoints_to_string;
 use crate::native::core::{ChoiceKind, ChoiceValue, GenerationParameters, NativeTestCase};
-use crate::native::draws::TextAlphabet;
 use crate::native::draws::source::{RngDraws, SimplestDraws};
 use crate::native::intervalsets::IntervalSet;
 use crate::native::lark::analysis::Bound;
@@ -38,11 +37,8 @@ fn small(text: &str, max_size: u64) -> GrammarSpec {
     .unwrap()
 }
 
-fn explicit(name: &str, pattern: &str) -> (String, Arc<StringSpec>) {
-    (
-        name.to_string(),
-        Arc::new(StringSpec::regex(pattern, true, None).unwrap()),
-    )
+fn explicit(names: &[&str]) -> Vec<String> {
+    names.iter().map(|name| name.to_string()).collect()
 }
 
 fn draw(spec: &GrammarSpec, seed: u64) -> (Result<String, EngineError>, Option<Status>) {
@@ -168,11 +164,11 @@ fn balanced(s: &str) -> bool {
 }
 
 #[test]
-fn explicit_generator_for_an_unused_terminal_is_an_error() {
+fn explicit_terminal_the_grammar_does_not_use_is_an_error() {
     let err = spec_with(
         "start: \"a\"\n",
         GrammarOptions {
-            explicit: vec![explicit("NOPE", "x")],
+            explicit: explicit(&["NOPE"]),
             ..GrammarOptions::default()
         },
     )
@@ -180,7 +176,102 @@ fn explicit_generator_for_an_unused_terminal_is_an_error() {
     .unwrap();
     assert_eq!(
         err.message,
-        "explicit generator for terminal 'NOPE', which the grammar does not use"
+        "explicit terminal 'NOPE', which the grammar does not use"
+    );
+}
+
+#[test]
+fn explicit_terminals_are_drawn_as_their_placeholders() {
+    assert_eq!(placeholder("WORD"), "<<EXPLICIT_WORD_392f5a5e9326>>");
+    let spec = spec_with(
+        "start: WORD \"!\" NUM\n%declare WORD\nNUM: /[0-9]+/\n",
+        GrammarOptions {
+            explicit: explicit(&["WORD", "NUM"]),
+            ..GrammarOptions::default()
+        },
+    )
+    .unwrap();
+    let expected = format!("{}!{}", placeholder("WORD"), placeholder("NUM"));
+    assert!(samples(&spec, 20).iter().all(|s| *s == expected));
+    assert_eq!(
+        spec.placeholders(),
+        &[
+            ("WORD".to_string(), placeholder("WORD")),
+            ("NUM".to_string(), placeholder("NUM")),
+        ]
+    );
+    let err = spec_with(
+        "start: WORD\n%declare WORD\n",
+        GrammarOptions {
+            explicit: explicit(&["WORD"]),
+            max_size: 5,
+            ..GrammarOptions::default()
+        },
+    )
+    .err()
+    .unwrap();
+    assert_eq!(
+        err.message,
+        format!(
+            "max_size is 5 but the smallest string 'start' can produce has {} characters",
+            placeholder("WORD").len()
+        )
+    );
+}
+
+/// The lexers try a placeholder before any other terminal, so a regex
+/// that would read it as something else does not.
+#[test]
+fn a_placeholder_is_read_as_itself_before_any_other_terminal() {
+    let spec = spec_with(
+        "start: X TAG\nTAG: /<[^>]*>/\n%declare X\n",
+        GrammarOptions {
+            explicit: explicit(&["X"]),
+            ..GrammarOptions::default()
+        },
+    )
+    .unwrap();
+    let marker = placeholder("X");
+    let strings = samples(&spec, 20);
+    assert!(
+        strings
+            .iter()
+            .all(|s| s.starts_with(&marker) && s[marker.len()..].starts_with('<')),
+        "{strings:?}"
+    );
+    assert_eq!(*tok(&spec, "X", &marker).reading(), Reading::Itself);
+}
+
+#[test]
+fn ignorables_go_either_side_of_a_placeholder() {
+    let spec = spec_with(
+        "start: NAME X NAME\nNAME: /[a-z]+/\n%declare X\n%import common.WS\n%ignore WS\n",
+        GrammarOptions {
+            explicit: explicit(&["X"]),
+            max_size: 200,
+            ..GrammarOptions::default()
+        },
+    )
+    .unwrap();
+    let marker = placeholder("X");
+    for s in samples(&spec, 30) {
+        let at = s.find(&marker).unwrap();
+        let before = s[..at].chars().last().unwrap();
+        let after = s[at + marker.len()..].chars().next().unwrap();
+        assert!(before.is_whitespace() && after.is_whitespace(), "{s:?}");
+    }
+    let spec = spec_with(
+        "start: \"a\" X \"b\"\n%declare X\n",
+        GrammarOptions {
+            explicit: explicit(&["X"]),
+            ..GrammarOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        samples(&spec, 10)
+            .iter()
+            .all(|s| *s == format!("a{marker}b"))
     );
 }
 
@@ -410,31 +501,11 @@ fn bounded_items_leave_their_leftover_to_growing_ones() {
 }
 
 #[test]
-fn oversize_strings_are_regenerated_then_rejected() {
-    let spec = spec_with(
-        "start: X\n%declare X\n",
-        GrammarOptions {
-            explicit: vec![explicit("X", "a{1,3}")],
-            max_size: 2,
-            ..GrammarOptions::default()
-        },
-    )
-    .unwrap();
+fn oversize_strings_are_regenerated() {
+    let spec = small("start: X\nX: /a{1,3}/\n", 2);
     let strings = samples(&spec, 50);
     assert!(strings.iter().all(|s| s == "a" || s == "aa"));
     assert!(strings.iter().any(|s| s == "aa"));
-    let spec = spec_with(
-        "start: X\n%declare X\n",
-        GrammarOptions {
-            explicit: vec![explicit("X", "aaaaa")],
-            max_size: 1,
-            ..GrammarOptions::default()
-        },
-    )
-    .unwrap();
-    let (result, status) = draw(&spec, 0);
-    assert!(matches!(result, Err(EngineError::InvalidArgument(_))));
-    assert_eq!(status, None);
 }
 
 #[test]
@@ -555,28 +626,29 @@ fn comments_without_a_newline_are_dropped_for_whitespace() {
 }
 
 #[test]
-fn declared_ignorables_are_trusted() {
+fn declared_ignorables_are_placeholders() {
     let spec = spec_with(
         "start: NAME NAME\nNAME: /[a-z]+/\n%declare WS\n%ignore WS\n",
         GrammarOptions {
-            explicit: vec![explicit("WS", " ")],
-            max_size: 30,
+            explicit: explicit(&["WS"]),
+            max_size: 200,
             ..GrammarOptions::default()
         },
     )
     .unwrap();
+    let marker = placeholder("WS");
     let strings = samples(&spec, 30);
     assert!(
         strings
             .iter()
-            .all(|s| s.split(' ').filter(|w| !w.is_empty()).count() == 2),
+            .all(|s| s.split(marker.as_str()).filter(|w| !w.is_empty()).count() == 2),
         "{strings:?}"
     );
-    let ws = tok(&spec, "WS", " ");
-    assert_eq!(*ws.reading(), Reading::Opaque);
+    let ws = tok(&spec, "WS", &marker);
+    assert_eq!(*ws.reading(), Reading::Itself);
     let a = tok(&spec, "NAME", "ab");
     let b = tok(&spec, "NAME", "cd");
-    assert_eq!(fit(&spec, &[a, ws, b]), Fit::Exact);
+    assert!(fit(&spec, &[a, ws, b]) >= Fit::Exact);
 }
 
 #[test]
@@ -850,27 +922,20 @@ fn a_regex_may_run_on_past_the_next_token_to_a_later_one() {
     assert_eq!(fit(&spec, &[longer, b, c]), Fit::Settled);
 }
 
+/// A greedy `A` runs through `B` to a `C` that starts with `x`, which
+/// the pairwise checks, each blind to the token after the pair, cannot
+/// see; the whole string is lexed again and regenerated when it does.
 #[test]
 fn strings_that_do_not_lex_back_whole_are_regenerated() {
-    let text = "start: A B C\nA: /a(\\\\x|.)*?x/\nB: /y/\nC: /x/\n";
-    let spec = spec_with(
-        text,
-        GrammarOptions {
-            explicit: vec![explicit("A", "a\\\\x|a\\\\xx")],
-            ..GrammarOptions::default()
-        },
-    )
-    .unwrap();
+    let spec = grammar("start: A B C\nA: /a.*x/\nB: /y/\nC: /x?z/\n");
     let strings = samples(&spec, 30);
-    assert!(strings.iter().all(|s| s == "a\\xxyx"), "{strings:?}");
-    let spec = spec_with(
-        text,
-        GrammarOptions {
-            explicit: vec![explicit("A", "a\\\\x")],
-            ..GrammarOptions::default()
-        },
-    )
-    .unwrap();
+    assert!(
+        strings
+            .iter()
+            .all(|s| s.ends_with("yz") && !s.ends_with("yxz")),
+        "{strings:?}"
+    );
+    let spec = grammar("start: A B C\nA: /a.*x/\nB: /y/\nC: /x/\n");
     let (result, status) = draw(&spec, 0);
     assert!(matches!(result, Err(EngineError::InvalidArgument(_))));
     assert_eq!(status, None);
@@ -896,12 +961,7 @@ fn fixture_grammar(name: &str, start: &str) -> Grammar {
     compile(&built, &[start]).unwrap()
 }
 
-fn fixture_spec(
-    name: &str,
-    start: &str,
-    max_size: u64,
-    explicit: Vec<(String, Arc<StringSpec>)>,
-) -> GrammarSpec {
+fn fixture_spec(name: &str, start: &str, max_size: u64, explicit: Vec<String>) -> GrammarSpec {
     GrammarSpec::new(
         fixture_grammar(name, start),
         GrammarOptions {
@@ -937,9 +997,7 @@ fn cached_scans_extend_as_fresh_matches_do() {
     ] {
         let spec = fixture_spec(name, start, 48, vec![]);
         let lexer = &spec.lexer;
-        let terminals: Vec<TermId> = (0..spec.terminal_names().len())
-            .filter(|&id| spec.is_pattern(id))
-            .collect();
+        let terminals: Vec<TermId> = (0..spec.terminal_names().len()).collect();
         for seed in 0..6 {
             let Ok(sample) = draw(&spec, seed).0 else {
                 continue;
@@ -1774,10 +1832,6 @@ fn an_ignorable_skipped_at_a_character_would_not_have_matched_there() {
 
 #[test]
 fn drawing_from_an_rng_gives_the_strings_a_fresh_test_case_draws() {
-    let text = (
-        "TEXT".to_string(),
-        Arc::new(StringSpec::text(&TextAlphabet::default(), 1, 5).unwrap()),
-    );
     let specs = [
         grammar("start: \"a\" \"b\"* | \"c\"+"),
         grammar(
@@ -1787,7 +1841,7 @@ fn drawing_from_an_rng_gives_the_strings_a_fresh_test_case_draws() {
         spec_with(
             "start: (TEXT \";\")+\n%declare TEXT",
             GrammarOptions {
-                explicit: vec![text],
+                explicit: explicit(&["TEXT"]),
                 ..GrammarOptions::default()
             },
         )

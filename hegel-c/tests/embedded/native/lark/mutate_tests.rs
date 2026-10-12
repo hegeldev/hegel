@@ -20,7 +20,7 @@ fn laid_out(grammar_text: &str, text: &str) -> (GrammarConstraint, Layout, Vec<u
     let built = load_grammar(grammar_text, None, &NoImports).unwrap();
     let grammar = compile(&built, &["start"]).unwrap();
     let start = grammar.start[0];
-    let constraint = GrammarConstraint::new(grammar, &[], start, 64, u32::MAX).unwrap();
+    let constraint = GrammarConstraint::new(grammar, start, 64, u32::MAX).unwrap();
     let text = cps(text);
     let tree = constraint.tree(&text).unwrap();
     (constraint, Layout::new(&tree), text)

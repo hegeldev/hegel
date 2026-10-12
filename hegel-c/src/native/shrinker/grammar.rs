@@ -153,11 +153,23 @@ impl<'a> Shrinker<'a> {
         }
     }
 
-    /// Cut all the ignored text at once, then each stretch of it from the
-    /// back.
+    /// The ignored stretches of `d` that may go: all but those keeping a
+    /// placeholder apart from the token beside it (see
+    /// [`GrammarConstraint::separators`]).
+    fn cuttable(d: &Derived) -> Vec<(usize, usize)> {
+        let kept = d.constraint.separators(&d.layout);
+        d.layout
+            .ignored()
+            .into_iter()
+            .filter(|stretch| !kept.contains(stretch))
+            .collect()
+    }
+
+    /// Cut all the ignored text that may go at once, then each stretch of
+    /// it from the back.
     async fn delete_ignored(&mut self, i: usize) -> Result<bool, PassExit> {
         let d = self.derivation(i)?;
-        let ignored = d.layout.ignored();
+        let ignored = Self::cuttable(&d);
         if ignored.is_empty() {
             return Ok(false);
         }
@@ -165,7 +177,7 @@ impl<'a> Shrinker<'a> {
         let mut j = usize::MAX;
         loop {
             let d = self.derivation(i)?;
-            let ignored = d.layout.ignored();
+            let ignored = Self::cuttable(&d);
             j = j.min(ignored.len());
             if j == 0 {
                 return Ok(changed);
@@ -200,7 +212,8 @@ impl<'a> Shrinker<'a> {
     }
 
     /// Replace each leaf's text with the smallest the constraint has seen
-    /// its terminal match, and shrink the text of those it cannot.
+    /// its terminal match, and shrink the text of those it cannot; a leaf
+    /// of a terminal with one text only is left as it is.
     async fn shrink_leaves(&mut self, i: usize) -> Result<bool, PassExit> {
         let mut changed = false;
         let mut j = 0;
@@ -210,6 +223,9 @@ impl<'a> Shrinker<'a> {
                 return Ok(changed);
             };
             j += 1;
+            if d.constraint.fixed_text(terminal) {
+                continue;
+            }
             if let Some(small) = d.constraint.smallest_for_terminal(terminal) {
                 if d.constraint.smaller(&small, &d.text[start..end])
                     && self

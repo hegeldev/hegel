@@ -5,7 +5,6 @@
 use super::*;
 use crate::native::re::matcher::Matcher;
 use crate::native::re::parser::parse_pattern;
-use alloc::vec;
 
 fn chars(text: &str) -> Vec<char> {
     text.chars().collect()
@@ -435,63 +434,4 @@ fn a_program_that_looks_around_it_never_knows_what_it_swallows() {
     assert_eq!(p.resume(&resume, &chars("ab"), 0, 1).0, Some(2));
     assert!(!p.swallows(&resume, 'b'));
     assert!(!p.swallows(&resume, 'x'));
-}
-
-/// The ends CPython's `fullmatch(text, start, end)` finds for every
-/// `end`, by the backtracking matcher on each prefix.
-fn fullmatch_ends(pattern: &str, text: &[char], start: usize) -> Vec<usize> {
-    let parsed = parse_pattern(pattern, 0).unwrap();
-    let matcher = Matcher::new(&parsed);
-    (start..=text.len())
-        .filter(|&end| matcher.fullmatch(&text[start..end]).unwrap())
-        .collect()
-}
-
-#[test]
-fn ends_are_every_prefix_the_pattern_matches_whole_whatever_the_alternatives_order() {
-    let cases = [
-        ("a|ab", "abab"),
-        ("ab|a", "abab"),
-        ("(?:ab)*", "ababx"),
-        ("[a-z]{2,3}", "abcd"),
-        ("a*?b", "aaab"),
-        ("x*", "ab"),
-        ("(?:a|b)+c?", "abac"),
-        ("foo|bar|ba", "bar"),
-        ("a[^a]", "ab"),
-    ];
-    for (pattern, text) in cases {
-        let p = program(pattern).unwrap();
-        let text = chars(text);
-        for start in 0..=text.len() {
-            let mut ends = Vec::new();
-            p.ends(&text, start, &mut ends);
-            assert_eq!(
-                ends,
-                fullmatch_ends(pattern, &text, start),
-                "{pattern:?} at {start}"
-            );
-        }
-    }
-}
-
-#[test]
-fn ends_of_a_positional_pattern_see_the_whole_text() {
-    let p = program("a+$").unwrap();
-    let mut ends = Vec::new();
-    p.ends(&chars("aaa"), 0, &mut ends);
-    assert_eq!(ends, vec![3]);
-    ends.clear();
-    p.ends(&chars("aab"), 0, &mut ends);
-    assert_eq!(ends, Vec::<usize>::new());
-    ends.clear();
-    p.ends(&chars("aaa"), 7, &mut ends);
-    assert_eq!(ends, Vec::<usize>::new());
-    let p = program("(?<=x)a").unwrap();
-    ends.clear();
-    p.ends(&chars("xa"), 1, &mut ends);
-    assert_eq!(ends, vec![2]);
-    ends.clear();
-    p.ends(&chars("ya"), 1, &mut ends);
-    assert_eq!(ends, Vec::<usize>::new());
 }

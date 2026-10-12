@@ -16,12 +16,13 @@ use hegel_c::{
     hegel_generate_datetime, hegel_generate_float, hegel_generate_grammar, hegel_generate_integer,
     hegel_generate_integer_big, hegel_generate_ipv4, hegel_generate_ipv6, hegel_generate_string,
     hegel_generate_string_result_free, hegel_generate_string_result_t, hegel_generate_time,
-    hegel_generate_uuid, hegel_grammar_free, hegel_grammar_new, hegel_mark_complete,
-    hegel_run_free, hegel_settings_free, hegel_settings_set_test_cases, hegel_status_t,
-    hegel_string_generator_domain, hegel_string_generator_email, hegel_string_generator_free,
-    hegel_string_generator_regex, hegel_string_generator_text, hegel_string_generator_url,
+    hegel_generate_uuid, hegel_grammar_free, hegel_grammar_new, hegel_grammar_placeholder,
+    hegel_mark_complete, hegel_run_free, hegel_settings_free, hegel_settings_set_test_cases,
+    hegel_status_t, hegel_string_generator_domain, hegel_string_generator_email,
+    hegel_string_generator_free, hegel_string_generator_regex, hegel_string_generator_text,
+    hegel_string_generator_url,
 };
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::ptr;
 
@@ -1858,16 +1859,15 @@ unsafe fn grammar(
     ctx: *mut HegelContext,
     text: &str,
     start: Option<&str>,
-    explicit: &[(&str, *const HegelStringGenerator)],
+    explicit: &[&str],
 ) -> Result<*mut HegelGrammar, String> {
     let text = CString::new(text).unwrap();
     let start = start.map(|s| CString::new(s).unwrap());
     let names: Vec<CString> = explicit
         .iter()
-        .map(|(name, _)| CString::new(*name).unwrap())
+        .map(|name| CString::new(*name).unwrap())
         .collect();
     let name_ptrs: Vec<*const c_char> = names.iter().map(|n| n.as_ptr()).collect();
-    let generators: Vec<*const HegelStringGenerator> = explicit.iter().map(|(_, g)| *g).collect();
     let mut g: *mut HegelGrammar = ptr::null_mut();
     let rc = unsafe {
         hegel_grammar_new(
@@ -1878,7 +1878,6 @@ unsafe fn grammar(
             0,
             ptr::null(),
             name_ptrs.as_ptr(),
-            generators.as_ptr(),
             explicit.len(),
             None,
             ptr::null_mut(),
@@ -1951,6 +1950,75 @@ fn grammar_draws_strings_of_the_grammar() {
 }
 
 #[test]
+fn grammar_placeholders_stand_for_explicit_terminals() {
+    let ctx = hegel_context_new();
+    unsafe {
+        let g = grammar(
+            ctx,
+            "start: X \"!\" Y\n%declare X\nY: /[0-9]+/\n",
+            None,
+            &["X", "Y"],
+        )
+        .unwrap();
+        let marker_of = |name: &str| {
+            let name = CString::new(name).unwrap();
+            let mut marker: *const c_char = ptr::null();
+            ok(hegel_grammar_placeholder(
+                ctx,
+                g,
+                name.as_ptr(),
+                &mut marker,
+            ));
+            CStr::from_ptr(marker).to_str().unwrap().to_string()
+        };
+        let x = marker_of("X");
+        let y = marker_of("Y");
+        assert!(x.starts_with("<<EXPLICIT_X_") && x.ends_with(">>"), "{x}");
+        assert!(y.starts_with("<<EXPLICIT_Y_") && y.ends_with(">>"), "{y}");
+        let s = make_settings_no_db(ctx);
+        ok(hegel_settings_set_test_cases(ctx, s, 1));
+        let run = start(ctx, s);
+        let tc = next_case(ctx, run);
+        assert_eq!(draw_grammar(ctx, tc, g), format!("{x}!{y}"));
+        ok(hegel_mark_complete(
+            ctx,
+            tc,
+            hegel_status_t::HEGEL_STATUS_VALID as u32,
+            ptr::null(),
+        ));
+        ok(hegel_c::hegel_test_case_free(ctx, tc));
+        drain(ctx, run);
+        ok(hegel_run_free(ctx, run));
+        ok(hegel_settings_free(ctx, s));
+
+        let name = CString::new("Z").unwrap();
+        let mut marker: *const c_char = ptr::null();
+        assert_eq!(
+            hegel_grammar_placeholder(ctx, g, name.as_ptr(), &mut marker),
+            HEGEL_E_INVALID_ARG
+        );
+        assert!(last_error(ctx).contains("'Z' is not an explicit terminal"));
+        assert_eq!(
+            hegel_grammar_placeholder(ctx, ptr::null(), name.as_ptr(), &mut marker),
+            HEGEL_E_INVALID_HANDLE
+        );
+        assert!(last_error(ctx).contains("grammar handle is null"));
+        assert_eq!(
+            hegel_grammar_placeholder(ctx, g, ptr::null(), &mut marker),
+            HEGEL_E_INVALID_ARG
+        );
+        assert!(last_error(ctx).contains("name is null"));
+        assert_eq!(
+            hegel_grammar_placeholder(ctx, g, name.as_ptr(), ptr::null_mut()),
+            HEGEL_E_INVALID_ARG
+        );
+        assert!(last_error(ctx).contains("out parameter is null"));
+        ok(hegel_grammar_free(ctx, g));
+    }
+    unsafe { ok(hegel_context_free(ctx)) };
+}
+
+#[test]
 fn grammar_new_validates_the_grammar_and_its_arguments() {
     let ctx = hegel_context_new();
     unsafe {
@@ -1965,52 +2033,13 @@ fn grammar_new_validates_the_grammar_and_its_arguments() {
         );
 
         let digits = text_generator(ctx, 1, 3);
-        let g = grammar(ctx, "start: X \"!\"\n%declare X\n", None, &[("X", digits)]).unwrap();
+        let g = grammar(ctx, "start: X \"!\"\n%declare X\n", None, &["X"]).unwrap();
         ok(hegel_grammar_free(ctx, g));
-        let err = grammar(ctx, "start: \"a\"\n", None, &[("X", digits)]).unwrap_err();
-        assert!(err.contains("explicit generator for terminal 'X'"), "{err}");
+        let err = grammar(ctx, "start: \"a\"\n", None, &["X"]).unwrap_err();
+        assert!(err.contains("explicit terminal 'X'"), "{err}");
 
         let mut g: *mut HegelGrammar = ptr::null_mut();
         let text = CString::new("start: \"a\"\n").unwrap();
-        let name = CString::new("X").unwrap();
-        let names = [name.as_ptr()];
-        let generators: [*const HegelStringGenerator; 1] = [ptr::null()];
-        assert_eq!(
-            hegel_grammar_new(
-                ctx,
-                text.as_ptr(),
-                ptr::null(),
-                0,
-                0,
-                ptr::null(),
-                names.as_ptr(),
-                generators.as_ptr(),
-                1,
-                None,
-                ptr::null_mut(),
-                &mut g,
-            ),
-            HEGEL_E_INVALID_HANDLE
-        );
-        assert!(last_error(ctx).contains("explicit_generators[0] is null"));
-        assert_eq!(
-            hegel_grammar_new(
-                ctx,
-                text.as_ptr(),
-                ptr::null(),
-                0,
-                0,
-                ptr::null(),
-                names.as_ptr(),
-                ptr::null(),
-                1,
-                None,
-                ptr::null_mut(),
-                &mut g,
-            ),
-            HEGEL_E_INVALID_ARG
-        );
-        assert!(last_error(ctx).contains("explicit_generators pointer is null"));
         let invalid = [0xffu8, 0];
         assert_eq!(
             hegel_grammar_new(
@@ -2019,7 +2048,6 @@ fn grammar_new_validates_the_grammar_and_its_arguments() {
                 invalid.as_ptr().cast::<c_char>(),
                 0,
                 0,
-                ptr::null(),
                 ptr::null(),
                 ptr::null(),
                 0,
@@ -2040,7 +2068,6 @@ fn grammar_new_validates_the_grammar_and_its_arguments() {
                 0,
                 ptr::null(),
                 null_names.as_ptr(),
-                generators.as_ptr(),
                 1,
                 None,
                 ptr::null_mut(),
@@ -2056,7 +2083,6 @@ fn grammar_new_validates_the_grammar_and_its_arguments() {
                 ptr::null(),
                 0,
                 0,
-                ptr::null(),
                 ptr::null(),
                 ptr::null(),
                 0,
@@ -2076,7 +2102,6 @@ fn grammar_new_validates_the_grammar_and_its_arguments() {
                 0,
                 digits,
                 ptr::null(),
-                ptr::null(),
                 0,
                 None,
                 ptr::null_mut(),
@@ -2092,7 +2117,6 @@ fn grammar_new_validates_the_grammar_and_its_arguments() {
                 ptr::null(),
                 0,
                 0,
-                ptr::null(),
                 ptr::null(),
                 ptr::null(),
                 0,
@@ -2165,7 +2189,6 @@ fn grammar_imports_resolve_through_the_callback() {
                 0,
                 ptr::null(),
                 ptr::null(),
-                ptr::null(),
                 0,
                 Some(import_lib),
                 (&raw mut imports).cast::<c_void>(),
@@ -2191,7 +2214,6 @@ fn grammar_imports_resolve_through_the_callback() {
                 ptr::null(),
                 0,
                 0,
-                ptr::null(),
                 ptr::null(),
                 ptr::null(),
                 0,

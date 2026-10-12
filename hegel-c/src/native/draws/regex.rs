@@ -174,6 +174,7 @@ impl CompiledRegex {
     }
 
     /// The parsed pattern.
+    #[cfg(test)]
     pub(crate) fn parsed(&self) -> &ParsedPattern {
         &self.parsed
     }

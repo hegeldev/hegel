@@ -4,13 +4,14 @@
 use crate::exchange::drive_no_yield;
 use crate::native::core::Constraint;
 use crate::native::core::{ChoiceNode, ChoiceValue, Spans, StringChoice};
-use crate::native::draws::{StringSpec, TextAlphabet};
 use crate::native::lark::builder::{NoImports, load_grammar};
-use crate::native::lark::compile::compile;
+use crate::native::lark::compile::{compile, placeholder};
 use crate::native::lark::constraint::GrammarConstraint;
+use crate::native::lark::generate::{GrammarOptions, from_lark};
 use crate::native::shrinker::{ShrinkRun, Shrinker};
 use alloc::boxed::Box;
-use alloc::string::String;
+use alloc::format;
+use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -34,26 +35,10 @@ fn first_text(nodes: &[ChoiceNode]) -> Option<String> {
 }
 
 fn grammar_node(grammar_text: &str, simplest: &str, value: &str, forced: bool) -> ChoiceNode {
-    grammar_node_with(grammar_text, &[], simplest, value, forced)
-}
-
-/// A string node under `grammar_text` whose `%declare`d terminals in
-/// `explicit` match what the given generators draw.
-fn grammar_node_with(
-    grammar_text: &str,
-    explicit: &[(&str, Arc<StringSpec>)],
-    simplest: &str,
-    value: &str,
-    forced: bool,
-) -> ChoiceNode {
     let built = load_grammar(grammar_text, None, &NoImports).unwrap();
     let grammar = compile(&built, &["start"]).unwrap();
     let start = grammar.start[0];
-    let explicit: Vec<_> = explicit
-        .iter()
-        .map(|(name, spec)| (grammar.terminal_id(name).unwrap(), Arc::clone(spec)))
-        .collect();
-    let constraint = GrammarConstraint::new(grammar, &explicit, start, 64, u32::MAX).unwrap();
+    let constraint = GrammarConstraint::new(grammar, start, 64, u32::MAX).unwrap();
     constraint
         .simplest_or_init(|| Ok::<_, crate::control::InternalError>(cps(simplest)))
         .unwrap();
@@ -114,30 +99,36 @@ fn every_repetition_is_deleted_at_once_when_the_result_is_still_interesting() {
     assert_eq!(text_of(&shrinker.current_nodes[0].value()), "[]");
 }
 
-/// A string of up to three of `c`, or none at all.
-fn up_to_three(c: char) -> Arc<StringSpec> {
-    let alphabet = TextAlphabet {
-        categories: Some(vec![]),
-        include_characters: Some(String::from(c)),
-        ..TextAlphabet::default()
-    };
-    Arc::new(StringSpec::text(&alphabet, 0, 3).unwrap())
-}
-
-/// X's text is deleted outright, Y's cannot be, and the empty X left
-/// behind is passed over on the next round.
+/// X's text is deleted outright, Y's cannot be.
 #[test]
 fn a_leaf_is_deleted_when_the_grammar_still_accepts_the_text() {
-    let node = grammar_node_with(
-        "start: \"a\" X Y \"c\"\n%declare X Y\n",
-        &[("X", up_to_three('x')), ("Y", up_to_three('y'))],
-        "axc",
+    let node = grammar_node(
+        "start: \"a\" X? Y \"c\"\nX: /x+/\nY: /y+/\n",
+        "ayc",
         "axyc",
         false,
     );
     let mut shrinker = shrinker_where(vec![node], |s| s.contains('y'));
     drive_no_yield(shrinker.shrink_grammar_strings()).unwrap();
     assert_eq!(text_of(&shrinker.current_nodes[0].value()), "ayc");
+}
+
+/// No edit of a string literal's text is in the grammar, so none is
+/// tried: every candidate keeps the literal whole.
+#[test]
+fn a_leaf_of_a_literal_is_left_as_it_is() {
+    let node = grammar_node("start: \"key\" /[a-z]+/\n", "keya", "keyzz", false);
+    let seen = Arc::new(crate::sys::sync::Mutex::new(Vec::new()));
+    let log = Arc::clone(&seen);
+    let mut shrinker = shrinker_where(vec![node], move |s| {
+        log.lock().push(String::from(s));
+        true
+    });
+    drive_no_yield(shrinker.shrink_grammar_strings()).unwrap();
+    assert_eq!(text_of(&shrinker.current_nodes[0].value()), "keya");
+    let seen: Vec<String> = seen.lock().clone();
+    assert!(!seen.is_empty());
+    assert!(seen.iter().all(|s| s.starts_with("key")), "{seen:?}");
 }
 
 #[test]
@@ -221,4 +212,38 @@ fn a_forced_string_and_a_string_without_a_grammar_are_left_alone() {
     drive_no_yield(shrinker.shrink_grammar_strings()).unwrap();
     assert_eq!(text_of(&shrinker.current_nodes[0].value()), "12,3");
     assert_eq!(text_of(&shrinker.current_nodes[1].value()), "zz");
+}
+
+/// The ignored text either side of a placeholder is shortened but
+/// never cut, and the rest of the ignored text goes.
+#[test]
+fn ignored_text_beside_a_placeholder_stays() {
+    let spec = from_lark(
+        "start: \"a\" X \"b\" \"c\"\n%declare X\nWS: / +/\n%ignore WS\n",
+        &NoImports,
+        GrammarOptions {
+            explicit: vec!["X".to_string()],
+            ..GrammarOptions::default()
+        },
+    )
+    .unwrap();
+    let constraint = Arc::clone(spec.constraint());
+    let marker = placeholder("X");
+    let simplest = format!("a {marker} bc");
+    constraint
+        .simplest_or_init(|| Ok::<_, crate::control::InternalError>(cps(&simplest)))
+        .unwrap();
+    let node = ChoiceNode::string(
+        StringChoice {
+            intervals: Arc::clone(constraint.intervals()),
+            min_size: 0,
+            max_size: 64,
+            constraint: Some(Constraint::Grammar(constraint)),
+        },
+        cps(&format!("a   {marker}   b   c")),
+        false,
+    );
+    let mut shrinker = shrinker_where(vec![node], |s| s.ends_with("bc") || s.ends_with("c"));
+    drive_no_yield(shrinker.shrink_grammar_strings()).unwrap();
+    assert_eq!(text_of(&shrinker.current_nodes[0].value()), simplest);
 }

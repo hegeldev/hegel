@@ -3,8 +3,8 @@
 //! kind, a [`StringChoice`](crate::native::core::StringChoice) with a
 //! [`GrammarConstraint`], accepts exactly the strings the grammar derives.
 //! Validating a replayed string means parsing it, so the constraint owns
-//! the compiled grammar, its terminals as the parser matches them (see
-//! [`GrammarTerminals`]) and a [`Parser`] from its start rule, and
+//! the compiled grammar, the [`Lexer`] the parser matches its terminals
+//! through and a [`Parser`] from its start rule, and
 //! remembers the derivations it has found so that a string known to
 //! derive is never parsed twice. From every derivation it also learns
 //! the smallest text it has seen each rule and each terminal derive,
@@ -16,13 +16,13 @@
 //! [`KindLedger`](crate::native::exec_cache::KindLedger)), and a test
 //! that compiles its grammar afresh each run must not look nondeterministic.
 
+use super::ast::PatternKind;
 use super::compile::{Grammar, RuleId, TermId};
-use super::explicit::GrammarTerminals;
-use super::layout::{Layout, Part};
+use super::layout::{Layout, Node, Part};
+use super::lexsim::Lexer;
 use super::parse::{Parser, Tree};
 use crate::control::InternalError;
 use crate::native::HashMap;
-use crate::native::draws::StringSpec;
 use crate::native::intervalsets::IntervalSet;
 use crate::sys::sync::Mutex;
 use alloc::boxed::Box;
@@ -41,8 +41,12 @@ pub const KNOWN_CAPACITY: usize = 512;
 /// A grammar constraint on a string choice; see the module docs.
 pub struct GrammarConstraint {
     grammar: Grammar,
-    terminals: GrammarTerminals,
+    lexer: Lexer,
     parser: Parser,
+    /// The placeholders of the explicit terminals the grammar does not
+    /// ignore, which a string keeps apart from the tokens beside them
+    /// (see [`GrammarConstraint::tree`]).
+    placeholders: Vec<TermId>,
     start: RuleId,
     identity: u64,
     max_size: usize,
@@ -70,20 +74,25 @@ struct Smallest {
 
 impl GrammarConstraint {
     /// The constraint accepting the strings `grammar` derives from the
-    /// rule `start` within `max_size` characters, with the terminals in
-    /// `explicit` matched by the generators given for them. Its simplest
-    /// string is the generator's to supply (see
+    /// rule `start` within `max_size` characters. Its simplest string is
+    /// the generator's to supply (see
     /// [`simplest_or_init`](Self::simplest_or_init)) before any choice
     /// is drawn under it.
     pub fn new(
         grammar: Grammar,
-        explicit: &[(TermId, Arc<StringSpec>)],
         start: RuleId,
         max_size: usize,
         max_depth: u32,
     ) -> Result<GrammarConstraint, InternalError> {
-        let terminals = GrammarTerminals::new(&grammar, explicit)?;
+        let lexer = Lexer::new(&grammar.terminals);
         let parser = Parser::new(&grammar, start);
+        let placeholders = grammar
+            .terminals
+            .iter()
+            .enumerate()
+            .filter(|(id, term)| term.is_placeholder() && !grammar.ignore.contains(id))
+            .map(|(id, _)| id)
+            .collect();
         let intervals = IntervalSet::unicode_scalars()?;
         let mut hasher = FxHasher::default();
         format!("{grammar:?}").hash(&mut hasher);
@@ -95,8 +104,9 @@ impl GrammarConstraint {
         };
         Ok(GrammarConstraint {
             grammar,
-            terminals,
+            lexer,
             parser,
+            placeholders,
             start,
             identity: hasher.finish(),
             max_size,
@@ -138,7 +148,11 @@ impl GrammarConstraint {
     }
 
     /// A derivation of `text`, remembered or found now, or `None` when
-    /// the grammar does not derive it.
+    /// the grammar does not derive it, or when the grammar ignores some
+    /// terminal and a placeholder in `text` has a token right beside it:
+    /// the generator keeps ignored text between them, since what the
+    /// caller puts in for the placeholder is beyond its lexing checks,
+    /// so such a string is not one the grammar draws.
     pub fn tree(&self, text: &[u32]) -> Option<Arc<Tree>> {
         if let Some(tree) = self.known.lock().get(text) {
             return Some(Arc::clone(tree));
@@ -147,8 +161,12 @@ impl GrammarConstraint {
             .iter()
             .map(|&cp| char::from_u32(cp))
             .collect::<Option<_>>()?;
-        let tree = Arc::new(self.parser.parse(&self.terminals, &chars).ok()?);
-        self.learn(&tree, text);
+        let tree = Arc::new(self.parser.parse(&self.lexer, &chars).ok()?);
+        let layout = Layout::new(&tree);
+        if !self.placeholders_apart(&layout) {
+            return None;
+        }
+        self.learn(&layout, text);
         let mut known = self.known.lock();
         if known.len() >= KNOWN_CAPACITY {
             known.clear();
@@ -157,11 +175,68 @@ impl GrammarConstraint {
         Some(tree)
     }
 
-    /// Note the text each rule and terminal derives in `tree`, a
+    /// The leaves of `layout`, in text order.
+    fn leaves(layout: &Layout) -> Vec<&Node> {
+        layout
+            .nodes()
+            .iter()
+            .filter(|node| matches!(node.part, Part::Terminal(_) | Part::Ignored(_)))
+            .collect()
+    }
+
+    fn is_placeholder_leaf(&self, node: &Node) -> bool {
+        matches!(node.part, Part::Terminal(id) if self.placeholders.contains(&id))
+    }
+
+    /// Whether every placeholder leaf of `layout` has ignored text, or
+    /// the end of the string, on either side; trivially so when the
+    /// grammar ignores nothing.
+    fn placeholders_apart(&self, layout: &Layout) -> bool {
+        if self.placeholders.is_empty() || self.grammar.ignore.is_empty() {
+            return true;
+        }
+        let leaves = Self::leaves(layout);
+        leaves.iter().enumerate().all(|(i, leaf)| {
+            !self.is_placeholder_leaf(leaf)
+                || [i.checked_sub(1), Some(i + 1)]
+                    .into_iter()
+                    .flatten()
+                    .all(|j| {
+                        leaves
+                            .get(j)
+                            .is_none_or(|beside| matches!(beside.part, Part::Ignored(_)))
+                    })
+        })
+    }
+
+    /// The ignored stretches of `layout` that keep a placeholder apart
+    /// from the token beside it, which no string of the grammar is
+    /// without (see [`GrammarConstraint::tree`]).
+    pub fn separators(&self, layout: &Layout) -> Vec<(usize, usize)> {
+        let leaves = Self::leaves(layout);
+        leaves
+            .iter()
+            .enumerate()
+            .filter(|(i, leaf)| {
+                matches!(leaf.part, Part::Ignored(_))
+                    && [i.checked_sub(1), Some(i + 1)]
+                        .into_iter()
+                        .flatten()
+                        .any(|j| {
+                            leaves
+                                .get(j)
+                                .is_some_and(|beside| self.is_placeholder_leaf(beside))
+                        })
+            })
+            .map(|(_, leaf)| (leaf.start, leaf.end))
+            .collect()
+    }
+
+    /// Note the text each rule and terminal derives in `layout`, a
     /// derivation of `text`, where it is smaller than any seen before.
-    fn learn(&self, tree: &Tree, text: &[u32]) {
+    fn learn(&self, layout: &Layout, text: &[u32]) {
         let mut smallest = self.smallest.lock();
-        for node in Layout::new(tree).nodes() {
+        for node in layout.nodes() {
             let slot = match node.part {
                 Part::Rule(id) => &mut smallest.rules[id],
                 Part::Terminal(id) | Part::Ignored(id) => &mut smallest.terminals[id],
@@ -192,6 +267,15 @@ impl GrammarConstraint {
     /// The smallest text seen matched by `terminal`.
     pub fn smallest_for_terminal(&self, terminal: TermId) -> Option<Vec<u32>> {
         self.smallest.lock().terminals[terminal].clone()
+    }
+
+    /// Whether `terminal` matches one text only: a string literal with
+    /// no flags, which no edit of its text keeps in the grammar.
+    pub fn fixed_text(&self, terminal: TermId) -> bool {
+        self.grammar.terminals[terminal]
+            .pattern
+            .as_ref()
+            .is_some_and(|pattern| pattern.kind == PatternKind::Str && pattern.flags.is_empty())
     }
 
     /// The simplest string the grammar derives, once set.

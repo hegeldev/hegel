@@ -37,6 +37,69 @@ pub struct TerminalDef {
     pub max_width: Option<u64>,
 }
 
+/// The noise every placeholder marker carries, so that a grammar's own
+/// text coincides with one only by design.
+const PLACEHOLDER_NONCE: &str = "392f5a5e9326";
+
+/// The marker standing for each value of the explicit terminal `name`
+/// in a drawn string (see [`TerminalDef::placeholder`]).
+pub fn placeholder(name: &str) -> String {
+    format!("<<EXPLICIT_{name}_{PLACEHOLDER_NONCE}>>")
+}
+
+impl TerminalDef {
+    /// The string terminal standing for the explicit terminal `name`:
+    /// its [`placeholder`] marker, above every other terminal in
+    /// priority so that the lexers read it as itself wherever it starts.
+    pub fn placeholder(name: &str) -> GrammarResult<TerminalDef> {
+        let pattern = Pattern {
+            kind: PatternKind::Str,
+            value: placeholder(name),
+            flags: String::new(),
+        };
+        TerminalDef::new(name.to_string(), Some(pattern), i64::MAX)
+    }
+
+    /// Whether the terminal is an explicit terminal's placeholder.
+    pub fn is_placeholder(&self) -> bool {
+        self.pattern
+            .as_ref()
+            .is_some_and(|p| p.kind == PatternKind::Str && p.value == placeholder(&self.name))
+    }
+
+    /// The terminal `name` matching `pattern` (`None` for a `%declare`d
+    /// one) with `priority`.
+    pub fn new(
+        name: String,
+        pattern: Option<Pattern>,
+        priority: i64,
+    ) -> GrammarResult<TerminalDef> {
+        let (regexp, parsed, min_width, max_width) = match &pattern {
+            Some(p) => {
+                let parsed = parse_terminal_pattern(&name, p)?;
+                let (min, max) = get_width(&parsed.pattern);
+                if min == 0 {
+                    return Err(GrammarError::new(format!(
+                        "Zero-width terminals are not allowed ({name}: {})",
+                        pattern_to_regexp(p)
+                    )));
+                }
+                (Some(pattern_to_regexp(p)), Some(parsed), min, max)
+            }
+            None => (None, None, 0, Some(0)),
+        };
+        Ok(TerminalDef {
+            name,
+            pattern,
+            regexp,
+            parsed,
+            priority,
+            min_width,
+            max_width,
+        })
+    }
+}
+
 /// One element of a rule's right-hand side.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
@@ -262,34 +325,13 @@ impl Compiler {
         pattern: Option<Pattern>,
         priority: i64,
     ) -> GrammarResult<TermId> {
-        let (regexp, parsed, min_width, max_width) = match &pattern {
-            Some(p) => {
-                let parsed = parse_terminal_pattern(&name, p)?;
-                let (min, max) = get_width(&parsed.pattern);
-                if min == 0 {
-                    return Err(GrammarError::new(format!(
-                        "Zero-width terminals are not allowed ({name}: {})",
-                        pattern_to_regexp(p)
-                    )));
-                }
-                (Some(pattern_to_regexp(p)), Some(parsed), min, max)
-            }
-            None => (None, None, 0, Some(0)),
-        };
+        let term = TerminalDef::new(name, pattern, priority)?;
         let id = self.terminals.len();
-        if let Some(p) = &pattern {
+        if let Some(p) = &term.pattern {
             self.term_by_pattern.insert(p.clone(), id);
         }
-        self.term_ids.insert(name.clone(), id);
-        self.terminals.push(TerminalDef {
-            name,
-            pattern,
-            regexp,
-            parsed,
-            priority,
-            min_width,
-            max_width,
-        });
+        self.term_ids.insert(term.name.clone(), id);
+        self.terminals.push(term);
         Ok(id)
     }
 
