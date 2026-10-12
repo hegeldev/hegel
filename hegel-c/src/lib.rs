@@ -4877,9 +4877,9 @@ pub unsafe extern "C" fn hegel_generate_string_result_free(
 /// NUL-terminated path it was found at, `out_text` and `out_text_len` to
 /// its UTF-8 text, all kept alive until `hegel_grammar_new` returns, and
 /// return true; return false when there is no such grammar, in which case
-/// an absolute import (`%import common.INT`, as opposed to the relative
-/// `%import .common.INT`) still resolves against the grammars bundled with
-/// libhegel: `common`, `lark`, `python` and `unicode`.
+/// the import, absolute or relative, still resolves against the grammars
+/// bundled with libhegel, as Lark's does: `common`, `lark`, `python` and
+/// `unicode`.
 #[allow(non_camel_case_types)]
 pub type hegel_grammar_import_t = Option<
     unsafe extern "C" fn(
@@ -5157,7 +5157,11 @@ pub unsafe extern "C" fn hegel_grammar_placeholder(
 ///
 /// Returns `HEGEL_OK`, `HEGEL_E_STOP_TEST`, or `HEGEL_E_ASSUME` when the
 /// draw could not produce a string that lexes back as the grammar's
-/// tokens, which rejects the test case.
+/// tokens, which rejects the test case. Returns `HEGEL_E_INVALID_ARG`
+/// when no string of the grammar can be generated at all (none fits the
+/// size cap or lexes back as its tokens; the context's last error says
+/// which rule), and `HEGEL_E_INVALID_HANDLE` or `HEGEL_E_INVALID_ARG`
+/// for a null handle or out parameter.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_generate_grammar(
     ctx: *mut HegelContext,

@@ -682,9 +682,9 @@ typedef struct {
  NUL-terminated path it was found at, `out_text` and `out_text_len` to
  its UTF-8 text, all kept alive until `hegel_grammar_new` returns, and
  return true; return false when there is no such grammar, in which case
- an absolute import (`%import common.INT`, as opposed to the relative
- `%import .common.INT`) still resolves against the grammars bundled with
- libhegel: `common`, `lark`, `python` and `unicode`.
+ the import, absolute or relative, still resolves against the grammars
+ bundled with libhegel, as Lark's does: `common`, `lark`, `python` and
+ `unicode`.
  */
 typedef bool (*hegel_grammar_import_t)(void *user_data,
                                        const char *base_path,
@@ -2354,7 +2354,11 @@ hegel_result_t hegel_grammar_placeholder(hegel_context_t *ctx,
 
  Returns `HEGEL_OK`, `HEGEL_E_STOP_TEST`, or `HEGEL_E_ASSUME` when the
  draw could not produce a string that lexes back as the grammar's
- tokens, which rejects the test case.
+ tokens, which rejects the test case. Returns `HEGEL_E_INVALID_ARG`
+ when no string of the grammar can be generated at all (none fits the
+ size cap or lexes back as its tokens; the context's last error says
+ which rule), and `HEGEL_E_INVALID_HANDLE` or `HEGEL_E_INVALID_ARG`
+ for a null handle or out parameter.
  */
 hegel_result_t hegel_generate_grammar(hegel_context_t *ctx,
                                       hegel_test_case_t *tc,
