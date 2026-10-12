@@ -5,8 +5,7 @@
 //! terminals, and the validation Lark performs before compiling.
 
 use super::ast::{
-    Alternative, Definition as DefStmt, Expr, ImportNames, ImportStmt, RuleModifiers, Statement,
-    Symbol,
+    Definition as DefStmt, Expr, ImportNames, ImportStmt, RuleModifiers, Statement, Symbol,
 };
 use super::parser::parse_grammar;
 use super::{GrammarError, GrammarResult};
@@ -315,16 +314,10 @@ impl<'s> GrammarBuilder<'s> {
                 type_name(is_term)
             )));
         };
-        let Expr::Alternatives(alts) = base else {
+        let (Expr::Alternatives(alts), Expr::Alternatives(extension)) = (base, tree) else {
             unreachable!("definition bodies are always alternatives")
         };
-        alts.insert(
-            0,
-            Alternative {
-                items: alloc::vec![tree],
-                alias: None,
-            },
-        );
+        alts.splice(0..0, extension);
         Ok(())
     }
 
@@ -428,11 +421,7 @@ impl<'s> GrammarBuilder<'s> {
         };
         let grammar_path = format!("{}.lark", stmt.path.join("/"));
         let loaded = self.source.load(base_path, &grammar_path).or_else(|| {
-            if stmt.relative {
-                None
-            } else {
-                bundled_grammar(&grammar_path).map(|text| (grammar_path.clone(), text.to_string()))
-            }
+            bundled_grammar(&grammar_path).map(|text| (grammar_path.clone(), text.to_string()))
         });
         let Some((joined_path, text)) = loaded else {
             return Err(GrammarError::new(format!(

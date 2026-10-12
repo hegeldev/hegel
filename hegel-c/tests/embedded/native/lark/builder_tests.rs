@@ -1,7 +1,8 @@
 //! Direct-equivalent tests for `src/native/lark/builder.rs`.
 
 use super::*;
-use crate::native::lark::ast::Pattern;
+use crate::native::lark::ast::{Alternative, Pattern};
+use crate::native::lark::compile::compile;
 use alloc::vec;
 
 /// An in-memory import source: grammar texts by path.
@@ -83,21 +84,37 @@ fn override_and_extend() {
     assert_eq!(
         a,
         &Expr::Alternatives(vec![
-            alt(vec![Expr::Alternatives(vec![alt(vec![Expr::Literal(
-                Pattern::str("z")
-            )])])]),
+            alt(vec![Expr::Literal(Pattern::str("z"))]),
             alt(vec![Expr::Literal(Pattern::str("y"))]),
         ])
     );
     assert_eq!(
         term_body(&built, "A"),
         &Expr::Alternatives(vec![
-            alt(vec![Expr::Alternatives(vec![alt(vec![Expr::Literal(
-                Pattern::str("2")
-            )])])]),
+            alt(vec![Expr::Literal(Pattern::str("2"))]),
             alt(vec![Expr::Literal(Pattern::str("1"))]),
         ])
     );
+}
+
+#[test]
+fn extend_puts_the_new_alternatives_first_with_their_aliases() {
+    let built = build("start: a\na: \"x\" -> x\n%extend a: \"y\" -> y | \"z\"");
+    assert_eq!(
+        &built.rule_defs[1].2,
+        &Expr::Alternatives(vec![
+            Alternative {
+                items: vec![Expr::Literal(Pattern::str("y"))],
+                alias: Some(String::from("y")),
+            },
+            alt(vec![Expr::Literal(Pattern::str("z"))]),
+            Alternative {
+                items: vec![Expr::Literal(Pattern::str("x"))],
+                alias: Some(String::from("x")),
+            },
+        ])
+    );
+    compile(&built, &["start"]).unwrap();
 }
 
 #[test]
@@ -119,7 +136,7 @@ fn override_and_extend_errors() {
 }
 
 #[test]
-fn extend_mismatched_kind_through_imports() {
+fn extend_applies_to_imported_rules() {
     let sources = Sources(vec![("other.lark", "a: \"x\"\n")]);
     let result = build_with("%import other.a\n%extend a: \"y\"\nstart: a", &sources);
     assert!(result.is_ok());
@@ -260,15 +277,26 @@ fn relative_imports_resolve_against_the_importing_file() {
     )
     .unwrap();
     assert_eq!(rule_names(&built), vec!["a", "start"]);
+}
+
+#[test]
+fn bundled_grammars_are_the_last_resort_for_relative_imports_too() {
+    let built = load_grammar(
+        "%import .common.INT\nstart: INT",
+        Some("main.lark"),
+        &NoImports,
+    )
+    .unwrap();
+    assert_eq!(term_names(&built), vec!["INT"]);
     assert!(
         load_grammar(
-            "%import .common.INT\nstart: INT",
+            "%import .missing.INT\nstart: INT",
             Some("main.lark"),
             &NoImports
         )
         .unwrap_err()
         .message
-        .contains("Could not find grammar `common.lark`")
+        .contains("Could not find grammar `missing.lark`")
     );
 }
 

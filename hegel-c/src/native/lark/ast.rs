@@ -153,7 +153,8 @@ pub struct ImportStmt {
     /// name for a single import.
     pub path: Vec<String>,
     /// `%import .path` (relative to the importing grammar) rather than
-    /// `%import path` (from the import paths and the bundled grammars).
+    /// `%import path` (from the import paths); the bundled grammars are
+    /// the last resort for both.
     pub relative: bool,
     pub names: ImportNames,
 }
