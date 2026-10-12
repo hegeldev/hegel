@@ -21,7 +21,7 @@ import hedgel from '../../assets/hedgel-small.webp';
   <h1 style="margin-top: 1rem;">Hegel</h1>
 </div>
 
-Hegel is a universal property-based testing engine and family of libraries, built on [Hypothesis](https://github.com/hypothesisworks/hypothesis).
+Hegel is a universal property-based testing engine and family of libraries, inspired by [Hypothesis](https://github.com/hypothesisworks/hypothesis), developed in part by Hypothesis developers as part of their work at [Antithesis](https://antithesis.com/).
 
 First time here? We recommend starting with the [Getting started](/intro/getting-started) guide, or reading through the example Hegel code below.
 
@@ -58,11 +58,11 @@ import (
 )
 
 func TestRespectsLRUCapacity(t *testing.T) {
-	t.Run("MyLRUCache respects capacity", hegel.Case(func(ht *hegel.T) {
+	hegel.Test(t, func(ht *hegel.T) {
 		capacity := hegel.Draw(ht, hegel.Integers(0, math.MaxInt))
 		cache := NewMyLRUCache[string, int](capacity)
 
-		keys := hegel.Draw(ht, hegel.Lists(hegel.Text(0, math.MaxInt)))
+		keys := hegel.Draw(ht, hegel.Lists(hegel.Text()))
 		for _, key := range keys {
 			value := hegel.Draw(ht, hegel.Integers(math.MinInt, math.MaxInt))
 			cache.Put(key, value)
@@ -71,7 +71,7 @@ func TestRespectsLRUCapacity(t *testing.T) {
 		if cache.Size() > capacity {
 			ht.Fatalf("cache size exceeds capacity")
 		}
-	}))
+	})
 }
 ```
   </TabItem>
@@ -80,22 +80,25 @@ func TestRespectsLRUCapacity(t *testing.T) {
 #include <hegel/hegel.h>
 namespace gs = hegel::generators;
 
+HEGEL_TEST(respects_lru_capacity)(hegel::TestCase& tc) {
+	auto capacity = tc.draw("capacity", gs::integers<size_t>({.min_value = 0}));
+	MyLRUCache<std::string, int> cache(capacity);
+
+	auto entries = tc.draw(
+	  "entries",
+	  gs::vectors(gs::tuples(gs::text(), gs::integers<int>()))
+	);
+	for (const auto& [key, value] : entries) {
+		cache.put(key, value);
+	}
+
+	if (cache.size() > capacity) {
+		throw std::runtime_error("cache size exceeded capacity");
+	}
+}
+
 int main() {
-	hegel::test([](hegel::TestCase& tc) {
-		auto capacity = tc.draw(gs::integers<size_t>({.min_value = 0}));
-		MyLRUCache<std::string, int> cache(capacity);
-
-		auto entries = tc.draw(
-		  gs::vectors(gs::tuples(gs::text(), gs::integers<int>()))
-		);
-		for (const auto& [key, value] : entries) {
-			cache.put(key, value);
-		}
-
-		if (cache.size() > capacity) {
-			throw std::runtime_error("cache size exceeded capacity");
-		}
-	});
+	respects_lru_capacity();
 }
 ```
   </TabItem>
@@ -133,10 +136,10 @@ import dev.hegel.TestCase;
 class LRUCacheTest {
 	@HegelTest
 	void respectsLRUCapacity(TestCase tc) {
-		int capacity = tc.draw(integers().min(0));
+		int capacity = tc.draw(integers().min(0), "capacity");
 		var cache = new MyLRUCache<String, Integer>(capacity);
 
-		var entries = tc.draw(lists(tuples(text(), integers())));
+		var entries = tc.draw(lists(tuples(text(), integers())), "entries");
 		for (var entry : entries) {
 			cache.put(entry.value1(), entry.value2());
 		}
@@ -161,6 +164,11 @@ let%hegel_test respects_lru_capacity tc =
 
 	assert (MyLRUCache.size cache <= capacity)
 ;;
+
+let () =
+	Alcotest.run "lru_cache"
+		[ "properties", [ Alcotest.test_case "respects capacity" `Quick respects_lru_capacity ] ]
+;;
 ```
   </TabItem>
 </Tabs>
@@ -169,14 +177,8 @@ let%hegel_test respects_lru_capacity tc =
   <Card title="Introduction">
    - [Getting started](/intro/getting-started)
   </Card>
-  <Card title="How-to guides">
-    *coming soon!*
-  </Card>
   <Card title="Explanation">
     - [How Hegel works](/explanation/how-hegel-works)
     - [Why Hegel?](/explanation/why-hegel)
-  </Card>
-  <Card title="Reference">
-    - [libhegel reference](/reference/libhegel)
   </Card>
 </CardGrid>
