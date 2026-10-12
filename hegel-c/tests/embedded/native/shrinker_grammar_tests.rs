@@ -148,6 +148,24 @@ fn repetitions_are_deleted_in_windows() {
     assert_eq!(text_of(&shrinker.current_nodes[0].value()), "a".repeat(10));
 }
 
+/// Deleting every "b" takes the other alternative of `bs`, which has no
+/// repeat; the repeat after the one that went is looked at all the same.
+#[test]
+fn a_repeat_that_goes_with_its_repetitions_does_not_hide_the_next() {
+    let node = grammar_node(
+        "start: bs \"c\"* \"d\"\nbs: \"b\"+ |\n",
+        "d",
+        "bbcccd",
+        false,
+    );
+    let mut shrinker = shrinker_where(vec![node], |_| true);
+    assert!(matches!(
+        drive_no_yield(shrinker.delete_repetitions(0)),
+        Ok(true)
+    ));
+    assert_eq!(text_of(&shrinker.current_nodes[0].value()), "d");
+}
+
 #[test]
 fn ignored_text_is_cut_and_what_must_stay_is_shortened() {
     let grammar = "start: \"a\" \"b\" \"c\"\n%ignore WS\nWS: / +/\n";

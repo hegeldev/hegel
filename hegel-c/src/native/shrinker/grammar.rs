@@ -114,7 +114,9 @@ impl<'a> Shrinker<'a> {
     }
 
     /// For each repeat, delete all its repetitions, then windows of 8, 4,
-    /// 2 and 1 of them from the back.
+    /// 2 and 1 of them from the back. A repeat left with no repetitions
+    /// may be gone from the new derivation, so the one now in its place
+    /// is looked at next.
     async fn delete_repetitions(&mut self, i: usize) -> Result<bool, PassExit> {
         let mut changed = false;
         let mut r = 0;
@@ -129,6 +131,7 @@ impl<'a> Shrinker<'a> {
                     .await?
                 {
                     changed = true;
+                    continue;
                 }
             }
             for k in [8usize, 4, 2, 1] {
