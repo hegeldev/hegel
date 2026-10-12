@@ -832,7 +832,7 @@ fn drawing(
     let spec = Rc::clone(spec);
     let seen = Rc::clone(seen);
     move |ds: &dyn DataSource| {
-        let text = ds.generate_grammar(&spec).map_err(|_| ())?;
+        let text = ds.generate_grammar(&spec, None).map_err(|_| ())?;
         seen.borrow_mut().push(text.clone());
         Ok(text)
     }

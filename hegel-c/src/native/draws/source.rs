@@ -10,7 +10,6 @@
 //! each mirroring the [`NativeTestCase`] method of the same name;
 //! [`RngDraws`] and [`SimplestDraws`] are the two other sources.
 
-use super::{StringSpec, generate_string, internet, regex};
 use crate::control::{hegel_internal_assert, hegel_internal_unwrap};
 use crate::native::bignum::ToPrimitive;
 use crate::native::core::choices::{BooleanChoice, IntegerChoice};
@@ -65,11 +64,6 @@ pub(crate) trait Draws {
         min_size: usize,
         max_size: usize,
     ) -> Result<String, EngineError>;
-
-    /// A string of `spec`, as [`generate_string`] draws it from a test
-    /// case: what [`super::generate_string_into`] falls back on for the
-    /// specs other than a regex.
-    fn generate_string(&mut self, spec: &StringSpec) -> Result<String, EngineError>;
 
     /// Open a span labelled `label`, as [`NativeTestCase::start_span`]
     /// does.
@@ -163,10 +157,6 @@ impl Draws for NativeTestCase {
         NativeTestCase::draw_string(self, intervals, min_size, max_size)
     }
 
-    fn generate_string(&mut self, spec: &StringSpec) -> Result<String, EngineError> {
-        generate_string(self, spec)
-    }
-
     fn start_span(&mut self, label: u64) {
         NativeTestCase::start_span(self, label);
     }
@@ -185,27 +175,6 @@ impl Draws for NativeTestCase {
 fn record_conclusion(slot: &mut Option<Status>, status: Status) {
     if slot.is_none() {
         *slot = Some(status);
-    }
-}
-
-/// A string of `spec` from a source other than a test case: each kind
-/// through the generator a test case draws it with, written against
-/// [`Draws`], without the span a test case puts around it.
-fn generate_string_from<D: Draws>(d: &mut D, spec: &StringSpec) -> Result<String, EngineError> {
-    match spec {
-        StringSpec::Text {
-            intervals,
-            min_size,
-            max_size,
-        } => d.draw_string(Arc::clone(intervals), *min_size, *max_size),
-        StringSpec::Regex {
-            compiled,
-            fullmatch,
-            ..
-        } => regex::generate_regex(d, compiled, *fullmatch),
-        StringSpec::Email => internet::generate_email(d),
-        StringSpec::Url => internet::generate_url(d),
-        StringSpec::Domain(spec) => internet::generate_domain(d, spec),
     }
 }
 
@@ -296,10 +265,6 @@ impl Draws for RngDraws<'_> {
         Ok(codepoints_to_string(&codepoints))
     }
 
-    fn generate_string(&mut self, spec: &StringSpec) -> Result<String, EngineError> {
-        generate_string_from(self, spec)
-    }
-
     fn start_span(&mut self, _label: u64) {}
 
     fn stop_span(&mut self, _discard: bool) {}
@@ -384,10 +349,6 @@ impl Draws for SimplestDraws {
             constraint: None,
         };
         Ok(codepoints_to_string(&kind.simplest()?))
-    }
-
-    fn generate_string(&mut self, spec: &StringSpec) -> Result<String, EngineError> {
-        generate_string_from(self, spec)
     }
 
     fn start_span(&mut self, _label: u64) {}

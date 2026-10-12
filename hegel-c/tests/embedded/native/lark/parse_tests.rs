@@ -493,7 +493,7 @@ fn generated(
     seeds
         .filter_map(|seed| {
             let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
-            generate_grammar(&mut ntc, &spec).ok()
+            generate_grammar(&mut ntc, &spec, None).ok()
         })
         .collect()
 }

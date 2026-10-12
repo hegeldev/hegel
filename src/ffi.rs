@@ -795,14 +795,20 @@ impl CTestCase {
         take_string_result(rc, result)
     }
 
-    /// Draw a string of the grammar described by a prebuilt libhegel grammar.
-    pub(crate) fn generate_grammar(&self, grammar: &Grammar) -> Result<String, hegel_result_t> {
+    /// Draw a string of the grammar described by a prebuilt libhegel
+    /// grammar, of at most `max_size` characters (placeholder markers
+    /// counting as none), or up to the grammar's own cap for 0.
+    pub(crate) fn generate_grammar(
+        &self,
+        grammar: &Grammar,
+        max_size: u64,
+    ) -> Result<String, hegel_result_t> {
         let mut result = hegel_c::hegel_generate_string_result_t {
             data: ptr::null_mut(),
             len: 0,
         };
         let rc = with_context(|ctx| unsafe {
-            hegel_c::hegel_generate_grammar(ctx, self.raw, grammar.raw, &mut result)
+            hegel_c::hegel_generate_grammar(ctx, self.raw, grammar.raw, max_size, &mut result)
         });
         take_string_result(rc, result)
     }

@@ -162,7 +162,13 @@ derive a generated string more deeply than the walk did) does not.
   them. A grammar with an ignorable has one on either side of every
   marker: the generator insists on it, the constraint accepts no string
   without, and the shrinker never cuts one; whether a value reads as its
-  terminal where it lands is the user's generator's affair.
+  terminal where it lands is the user's generator's affair. So is its
+  size: a marker counts for nothing toward the grammar's size cap, which
+  is on the characters outside the markers (the string choice's own
+  length bound is left open for such a grammar), and the frontend keeps
+  the spliced string under the cap the user set by drawing again under a
+  smaller cap of its own (`hegel_generate_grammar`'s `max_size`) when
+  the values pushed it over, in a span it discards, as a filter does.
 - Mutation only reuses parts of the string being mutated, not of other
   strings under the same grammar seen earlier in the run.
 

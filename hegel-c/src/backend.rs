@@ -87,8 +87,14 @@ pub trait DataSource: Send + Sync {
     /// email, url, or domain).
     fn generate_string(&self, spec: &StringSpec) -> Result<String, DataSourceError>;
 
-    /// Draw a string of the grammar described by a [`GrammarSpec`].
-    fn generate_grammar(&self, spec: &GrammarSpec) -> Result<String, DataSourceError>;
+    /// Draw a string of the grammar described by a [`GrammarSpec`], of at
+    /// most `max_size` characters (placeholder markers counting as none)
+    /// when given, otherwise up to the grammar's own cap.
+    fn generate_grammar(
+        &self,
+        spec: &GrammarSpec,
+        max_size: Option<u64>,
+    ) -> Result<String, DataSourceError>;
 
     /// Draw a Gregorian calendar [`Date`] in `[min, max]`, shrinking toward
     /// 2000-01-01 (clamped into range). Errors with `InvalidArgument` for

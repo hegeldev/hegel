@@ -192,8 +192,9 @@ impl DataSource for NativeDataSource {
     fn generate_grammar(
         &self,
         spec: &crate::native::lark::generate::GrammarSpec,
+        max_size: Option<u64>,
     ) -> Result<String, DataSourceError> {
-        self.with_ntc(|ntc| crate::native::lark::generate::generate_grammar(ntc, spec))
+        self.with_ntc(|ntc| crate::native::lark::generate::generate_grammar(ntc, spec, max_size))
     }
 
     fn generate_date(

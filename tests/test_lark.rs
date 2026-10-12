@@ -1,7 +1,8 @@
 mod common;
 
-use common::utils::{assert_all_examples, find_any, minimal};
+use common::utils::{assert_all_examples, expect_panic, find_any, minimal};
 use hegel::generators::{self as gs, Generator};
+use hegel::{Hegel, Settings, TestCase};
 
 const INT_LIST: &str = "start: INT (\",\" INT)*\n%import common.INT\n";
 
@@ -167,6 +168,43 @@ fn test_from_lark_explicit_values_get_ignored_text_either_side() {
                 && !after.trim().is_empty()
                 && after.trim().chars().all(|c| c.is_ascii_digit())
         },
+    );
+}
+
+/// The values spliced in count toward `max_size` like the grammar's own
+/// text, and the cap is on the string with them in, not on the markers.
+#[test]
+fn test_from_lark_max_size_counts_explicit_values() {
+    let grammar = || {
+        gs::from_lark("start: NUM (\",\" NUM)*\n%declare NUM\n")
+            .explicit(
+                "NUM",
+                gs::text().alphabet("0123456789").min_size(1).max_size(6),
+            )
+            .max_size(12)
+    };
+    assert_all_examples(grammar(), |s: &String| s.len() <= 12);
+    find_any(grammar(), |s: &String| s.len() >= 10);
+    find_any(grammar(), |s: &String| s.matches(',').count() >= 3);
+}
+
+/// A string whose values cannot fit under `max_size` however little the
+/// grammar's own text takes is rejected, as a failed filter is.
+#[test]
+fn test_from_lark_rejects_a_string_whose_explicit_values_cannot_fit() {
+    expect_panic(
+        || {
+            Hegel::new(|tc: TestCase| {
+                tc.draw(
+                    gs::from_lark("start: NUM\n%declare NUM\n")
+                        .explicit("NUM", gs::text().min_size(20))
+                        .max_size(10),
+                );
+            })
+            .settings(Settings::new().database(None))
+            .run();
+        },
+        "FilterTooMuch",
     );
 }
 

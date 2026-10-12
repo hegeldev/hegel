@@ -2261,7 +2261,9 @@ hegel_result_t hegel_generate_string_result_free(hegel_context_t *ctx,
  `start`: The rule whose strings to generate, or NULL for `start`.
  `max_size`: The most characters a string may have, or 0 for the default
    of 8192. Must not be below the shortest string the start rule can
-   produce.
+   produce. A placeholder marker counts as no characters: what the
+   caller puts in for it is the caller's to fit, with the `max_size` of
+   `hegel_generate_grammar`.
  `max_depth`: How deeply rules may nest, or 0 for the default of 200.
    Must not be below the shallowest nesting the start rule can produce.
  `alphabet`: Optional (NULL for none). Must be a text generator; every
@@ -2330,7 +2332,7 @@ hegel_result_t hegel_grammar_placeholder(hegel_context_t *ctx,
 
 /*
  Draw a string of a grammar: a string the grammar's start rule accepts,
- aiming at a length drawn up to the grammar's size cap, as many as 8192
+ aiming at a length drawn up to the size cap, as many as 8192
  characters by default, with each explicit terminal standing as its
  placeholder marker (see `hegel_grammar_placeholder`). The string is
  one choice of the test case, holding the string itself: a replay
@@ -2340,6 +2342,12 @@ hegel_result_t hegel_grammar_placeholder(hegel_context_t *ctx,
 
  Parameters:
  `grammar`: A grammar built by `hegel_grammar_new`.
+ `max_size`: A cap on this draw's characters, placeholder markers
+   counting as none, or 0 for the grammar's own cap. One below the
+   grammar's smallest string, or above its cap, is read as that. A
+   caller replacing markers with values of its own uses it to draw
+   again, under a smaller cap, when the values pushed the string past
+   the cap it has in mind.
  `out_result`: Receives a libhegel-allocated UTF-8 buffer (not
    NUL-terminated) with the string. Release with
    `hegel_generate_string_result_free`.
@@ -2351,6 +2359,7 @@ hegel_result_t hegel_grammar_placeholder(hegel_context_t *ctx,
 hegel_result_t hegel_generate_grammar(hegel_context_t *ctx,
                                       hegel_test_case_t *tc,
                                       const hegel_grammar_t *grammar,
+                                      uint64_t max_size,
                                       hegel_generate_string_result_t *out_result);
 
 /*

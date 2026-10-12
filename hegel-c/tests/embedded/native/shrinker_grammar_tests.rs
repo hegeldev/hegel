@@ -99,12 +99,13 @@ fn every_repetition_is_deleted_at_once_when_the_result_is_still_interesting() {
     assert_eq!(text_of(&shrinker.current_nodes[0].value()), "[]");
 }
 
-/// X's text is deleted outright, Y's cannot be.
+/// X's text is deleted outright, since the other alternative accepts
+/// the text without it; Y's cannot be.
 #[test]
 fn a_leaf_is_deleted_when_the_grammar_still_accepts_the_text() {
     let node = grammar_node(
-        "start: \"a\" X? Y \"c\"\nX: /x+/\nY: /y+/\n",
-        "ayc",
+        "start: \"a\" X Y \"c\" | \"a\" Y \"c\"\nX: /x+/\nY: /y+/\n",
+        "axyc",
         "axyc",
         false,
     );

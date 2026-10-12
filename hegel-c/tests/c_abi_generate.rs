@@ -1899,12 +1899,21 @@ unsafe fn draw_grammar(
     tc: *mut HegelTestCase,
     g: *const HegelGrammar,
 ) -> String {
+    unsafe { draw_grammar_capped(ctx, tc, g, 0) }
+}
+
+unsafe fn draw_grammar_capped(
+    ctx: *mut HegelContext,
+    tc: *mut HegelTestCase,
+    g: *const HegelGrammar,
+    max_size: u64,
+) -> String {
     let mut result = hegel_generate_string_result_t {
         data: ptr::null_mut(),
         len: 0,
     };
     assert_eq!(
-        unsafe { hegel_generate_grammar(ctx, tc, g, &mut result) },
+        unsafe { hegel_generate_grammar(ctx, tc, g, max_size, &mut result) },
         HEGEL_OK
     );
     let s = String::from_utf8(
@@ -1945,6 +1954,36 @@ fn grammar_draws_strings_of_the_grammar() {
         ok(hegel_grammar_free(ctx, g));
         ok(hegel_grammar_free(ctx, other));
         ok(hegel_grammar_free(ctx, ptr::null_mut()));
+    }
+    unsafe { ok(hegel_context_free(ctx)) };
+}
+
+#[test]
+fn a_grammar_draw_may_be_capped_below_the_grammar() {
+    let ctx = hegel_context_new();
+    unsafe {
+        let g = grammar(ctx, "start: \"ab\" /c+/\n", None, &[]).unwrap();
+        let s = make_settings_no_db(ctx);
+        ok(hegel_settings_set_test_cases(ctx, s, 1));
+        let run = start(ctx, s);
+        let tc = next_case(ctx, run);
+        let capped: Vec<String> = (0..30)
+            .map(|_| draw_grammar_capped(ctx, tc, g, 5))
+            .collect();
+        assert!(capped.iter().all(|s| s.len() <= 5), "{capped:?}");
+        assert!(capped.iter().any(|s| s.len() == 5), "{capped:?}");
+        assert!((0..30).any(|_| draw_grammar(ctx, tc, g).len() > 5));
+        ok(hegel_mark_complete(
+            ctx,
+            tc,
+            hegel_status_t::HEGEL_STATUS_VALID as u32,
+            ptr::null(),
+        ));
+        ok(hegel_c::hegel_test_case_free(ctx, tc));
+        drain(ctx, run);
+        ok(hegel_run_free(ctx, run));
+        ok(hegel_settings_free(ctx, s));
+        ok(hegel_grammar_free(ctx, g));
     }
     unsafe { ok(hegel_context_free(ctx)) };
 }
@@ -2255,7 +2294,7 @@ fn generate_grammar_validates_handles_and_reports_stop_test() {
             len: 0,
         };
         assert_eq!(
-            hegel_generate_grammar(ctx, ptr::null_mut(), g, &mut result),
+            hegel_generate_grammar(ctx, ptr::null_mut(), g, 0, &mut result),
             HEGEL_E_INVALID_HANDLE
         );
         let s = make_settings_no_db(ctx);
@@ -2263,11 +2302,11 @@ fn generate_grammar_validates_handles_and_reports_stop_test() {
         let run = start(ctx, s);
         let tc = next_case(ctx, run);
         assert_eq!(
-            hegel_generate_grammar(ctx, tc, ptr::null(), &mut result),
+            hegel_generate_grammar(ctx, tc, ptr::null(), 0, &mut result),
             HEGEL_E_INVALID_HANDLE
         );
         assert_eq!(
-            hegel_generate_grammar(ctx, tc, g, ptr::null_mut()),
+            hegel_generate_grammar(ctx, tc, g, 0, ptr::null_mut()),
             HEGEL_E_INVALID_ARG
         );
         assert!(last_error(ctx).contains("out parameter is null"));
@@ -2280,7 +2319,7 @@ fn generate_grammar_validates_handles_and_reports_stop_test() {
             }
         }
         assert_eq!(
-            hegel_generate_grammar(ctx, tc, g, &mut result),
+            hegel_generate_grammar(ctx, tc, g, 0, &mut result),
             HEGEL_E_STOP_TEST
         );
         ok(hegel_mark_complete(

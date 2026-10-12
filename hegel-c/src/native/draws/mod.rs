@@ -243,10 +243,6 @@ pub fn generate_boolean(
     spanned(ntc, LABEL_BOOLEAN, |ntc| ntc.weighted_precise(p, forced))
 }
 
-/// The length taken for the strings of the internet specs on average
-/// (see [`StringSpec::typical_width`]).
-const INTERNET_TYPICAL_WIDTH: f64 = 24.0;
-
 /// A validated string-draw specification, the payload of a
 /// `hegel_string_generator_t` handle. Built once via the smart constructors
 /// (which report invalid parameters immediately), then drawn from any number
@@ -271,19 +267,6 @@ pub enum StringSpec {
 }
 
 impl StringSpec {
-    /// The length of the strings the spec draws on average, in codepoints
-    /// (see [`regex::typical_width`]); a round figure for the internet
-    /// specs, whose draws are assembled from several parts.
-    pub(crate) fn typical_width(&self) -> f64 {
-        match self {
-            StringSpec::Text {
-                min_size, max_size, ..
-            } => regex::typical_count(*min_size, Some(*max_size)),
-            StringSpec::Regex { compiled, .. } => compiled.typical_width(),
-            StringSpec::Email | StringSpec::Url | StringSpec::Domain(_) => INTERNET_TYPICAL_WIDTH,
-        }
-    }
-
     /// A text draw: strings of length `[min_size, max_size]` over the
     /// alphabet described by `alphabet`. Errors when `min_size > max_size`
     /// or the alphabet constraints leave no characters (unless
@@ -386,28 +369,6 @@ pub fn generate_string(ntc: &mut NativeTestCase, spec: &StringSpec) -> Result<St
             internet::generate_domain(ntc, spec)
         }),
     }
-}
-
-/// Draw a string according to `spec` as [`generate_string`] does, onto
-/// the end of `out`, from any source of draws: a regex is drawn through
-/// the source, the other kinds as [`Draws::generate_string`] has it.
-pub fn generate_string_into<D: Draws>(
-    d: &mut D,
-    spec: &StringSpec,
-    out: &mut Vec<char>,
-) -> Result<(), EngineError> {
-    if let StringSpec::Regex {
-        compiled,
-        fullmatch,
-        ..
-    } = spec
-    {
-        return spanned(d, LABEL_REGEX, |d| {
-            regex::generate_regex_into(d, compiled, *fullmatch, out)
-        });
-    }
-    out.extend(d.generate_string(spec)?.chars());
-    Ok(())
 }
 
 /// Run `f` inside a `label`ed span. The span is closed whether or not `f`

@@ -11,7 +11,7 @@
 //! uniform between the smallest string the start rule can produce and
 //! the size cap, otherwise the smallest. The grammar is then walked top
 //! down with a character budget, in which every terminal counts for the
-//! length of its strings on average ([`StringSpec::typical_width`]), so
+//! length of its strings on average ([`CompiledRegex::typical_width`]), so
 //! that the structure a budget buys comes out near the budget. The
 //! budget is the target less what the `%ignore` insertions between
 //! tokens will add at the string's insertion rate
@@ -67,7 +67,11 @@
 //! one on either side of every marker: the generator insists on it, and
 //! the constraint accepts no string without (see
 //! [`GrammarConstraint::tree`]), so that shrinking and mutation keep it.
-//! Keeping the values lexable in place is the caller's affair.
+//! Keeping the values lexable in place is the caller's affair, and so
+//! is their size: a marker counts for nothing toward the size cap, which
+//! is on the characters outside the markers, and a caller whose values
+//! overran the cap it has in mind draws again under a smaller one of its
+//! own (the `max_size` of [`generate_grammar`]).
 
 use super::analysis::{Alt, Analysis, Node, NodeKind, analyze};
 use super::builder::{ImportSource, load_grammar};
@@ -80,11 +84,13 @@ use crate::native::HashMap;
 use crate::native::core::Constraint;
 use crate::native::core::state::boolean_threshold;
 use crate::native::core::{EngineError, NativeTestCase, Status, StringChoice};
+use crate::native::draws::regex::{CompiledRegex, generate_regex_into};
 use crate::native::draws::source::{RngDraws, SimplestDraws};
-use crate::native::draws::{Draws, StringSpec, generate_string_into, spanned};
+use crate::native::draws::{Draws, LABEL_REGEX, StringSpec, spanned};
 use crate::native::labels::label_from_name;
 use crate::native::rng::EngineRng;
 use crate::sys::sync::Mutex;
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -159,7 +165,7 @@ const LABEL_GRAMMAR: u64 = label_from_name("hegel.lark");
 /// How the strings of one terminal are drawn.
 enum TerminalGen {
     /// From the terminal's own pattern, checked against the lexer.
-    Pattern(StringSpec),
+    Pattern(Box<CompiledRegex>),
     /// A placeholder for a terminal whose strings the caller supplies
     /// (see [`placeholder`]): its marker, as it is.
     Placeholder(Vec<char>),
@@ -173,6 +179,8 @@ pub struct GrammarOptions {
     /// the caller to replace.
     pub explicit: Vec<String>,
     pub alphabet: Option<Arc<StringSpec>>,
+    /// The most characters a string may have, a placeholder marker
+    /// counting as none.
     pub max_size: u64,
     pub max_depth: u32,
 }
@@ -466,8 +474,8 @@ impl GrammarSpec {
             let marker = markers.iter().find(|(m, _)| *m == id).map(|(_, m)| m);
             match (marker, &term.regexp) {
                 (Some(marker), _) => {
-                    term_min.push(marker.len() as u64);
-                    term_typical.push(marker.len() as u64);
+                    term_min.push(0);
+                    term_typical.push(0);
                     terminals.push(TerminalGen::Placeholder(marker.clone()));
                 }
                 (None, Some(regexp)) => {
@@ -478,9 +486,12 @@ impl GrammarSpec {
                                 term.name
                             ))
                         })?;
+                    let StringSpec::Regex { compiled, .. } = spec else {
+                        unreachable!("StringSpec::regex builds a regex spec")
+                    };
                     term_min.push(term.min_width);
-                    term_typical.push(typical_size(&spec, term.min_width));
-                    terminals.push(TerminalGen::Pattern(spec));
+                    term_typical.push(typical_size(&compiled, term.min_width));
+                    terminals.push(TerminalGen::Pattern(compiled));
                 }
                 (None, None) => {
                     return Err(GrammarError::new(format!(
@@ -526,7 +537,11 @@ impl GrammarSpec {
         let kind = Arc::new(StringChoice {
             intervals: Arc::clone(constraint.intervals()),
             min_size: 0,
-            max_size,
+            max_size: if placeholders.is_empty() {
+                max_size
+            } else {
+                usize::MAX
+            },
             constraint: Some(Constraint::Grammar(Arc::clone(&constraint))),
         });
         let spec = GrammarSpec {
@@ -595,7 +610,7 @@ impl GrammarSpec {
             let drawn = if smallest {
                 smallest_string(&mut draws, self)
             } else {
-                draw_grammar(&mut draws, self)
+                draw_grammar(&mut draws, self, self.max_size)
             };
             if let Ok(string) = drawn {
                 return Some(string);
@@ -1187,6 +1202,11 @@ struct Generation<'s> {
     /// kept is cut off again.
     text: Vec<char>,
     tokens: Vec<Token>,
+    /// The size cap this draw is under (see [`Generation::fits`]).
+    max_size: u64,
+    /// How many characters of `text` are placeholder markers, which
+    /// count for nothing toward the cap.
+    markers: usize,
     /// How likely an ignorable goes before a token (see
     /// [`Generation::maybe_ignore`]), with the byte the engine compares
     /// against for it (see [`boolean_threshold`]).
@@ -1219,13 +1239,15 @@ struct Generation<'s> {
 
 impl<'s> Generation<'s> {
     /// A generation working in the buffers `spec` has to spare.
-    fn new(spec: &'s GrammarSpec, ignore_rate: f64) -> Generation<'s> {
+    fn new(spec: &'s GrammarSpec, ignore_rate: f64, max_size: u64) -> Generation<'s> {
         let mut buffers = spec.buffers.lock().take().unwrap_or_else(Buffers::new);
         buffers.readings.forget_when_full();
         Generation {
             spec,
             text: buffers.text,
             tokens: buffers.tokens,
+            max_size,
+            markers: 0,
             ignore_rate,
             ignore_threshold: boolean_threshold(ignore_rate),
             unsettled: false,
@@ -1273,6 +1295,7 @@ impl<'s> Generation<'s> {
     fn reset(&mut self) {
         self.text.clear();
         self.tokens.clear();
+        self.markers = 0;
         self.unsettled = false;
         self.chains.clear();
     }
@@ -1290,9 +1313,10 @@ impl<'s> Generation<'s> {
         }
     }
 
-    /// Whether a string `len` characters long is within the size cap.
-    fn fits(&self, len: usize) -> bool {
-        len as u64 <= self.spec.max_size
+    /// Whether the string is within the size cap, its placeholder
+    /// markers counting for nothing.
+    fn fits(&self) -> bool {
+        (self.text.len() - self.markers) as u64 <= self.max_size
     }
 
     /// The tokens from index `from` on, leaving out the last `pending`
@@ -1332,8 +1356,8 @@ fn draw_index<D: Draws>(d: &mut D, count: usize) -> Result<usize, Step> {
 
 /// The length of `spec`'s strings on average, as a whole number of
 /// characters and never below `min`, the shortest string it can produce.
-fn typical_size(spec: &StringSpec, min: u64) -> u64 {
-    (libm::round(spec.typical_width()) as u64).max(min)
+fn typical_size(re: &CompiledRegex, min: u64) -> u64 {
+    (libm::round(re.typical_width()) as u64).max(min)
 }
 
 /// The characters a `%ignore` insertion adds for each character a
@@ -1811,9 +1835,12 @@ impl Generation<'_> {
     /// pattern, or its placeholder's marker.
     fn draw_text<D: Draws>(&mut self, d: &mut D, id: TermId) -> Result<(), EngineError> {
         match &self.spec.terminals[id] {
-            TerminalGen::Pattern(spec) => generate_string_into(d, spec, &mut self.text),
+            TerminalGen::Pattern(re) => spanned(d, LABEL_REGEX, |d| {
+                generate_regex_into(d, re, true, &mut self.text)
+            }),
             TerminalGen::Placeholder(marker) => {
                 self.text.extend_from_slice(marker);
+                self.markers += marker.len();
                 Ok(())
             }
         }
@@ -1830,21 +1857,17 @@ impl Generation<'_> {
         match &self.spec.terminals[id] {
             TerminalGen::Placeholder(_) => {
                 self.draw_text(d, id)?;
-                if !self.fits(self.text.len()) {
-                    self.text.truncate(start);
-                    return Err(Step::TooLong);
-                }
                 let scans = self
                     .readings
                     .read_token(self.spec, id, &self.text[start..], None);
                 Ok(self.token(id, start, scans))
             }
-            TerminalGen::Pattern(spec) => {
+            TerminalGen::Pattern(_) => {
                 let mut attempt = 0;
                 loop {
-                    generate_string_into(d, spec, &mut self.text)?;
+                    self.draw_text(d, id)?;
                     attempt += 1;
-                    if !self.fits(self.text.len()) {
+                    if !self.fits() {
                         self.text.truncate(start);
                         if attempt > LEX_RETRIES {
                             return Err(Step::TooLong);
@@ -1879,16 +1902,11 @@ impl Generation<'_> {
     }
 
     /// Draw a token of terminal `id` onto the end of the string, with
-    /// any ignorables that go before it, and fail when the string has
-    /// outgrown the size cap.
+    /// any ignorables that go before it.
     fn terminal<D: Draws>(&mut self, d: &mut D, id: TermId) -> Result<(), Step> {
         let token = self.draw_terminal(d, id)?;
         self.tokens.push(token);
-        self.maybe_ignore(d, 1)?;
-        if !self.fits(self.text.len()) {
-            return Err(Step::TooLong);
-        }
-        Ok(())
+        self.maybe_ignore(d, 1)
     }
 
     /// Insert ignorable tokens before the last `pending` tokens of the
@@ -2107,7 +2125,7 @@ impl Generation<'_> {
         let drawn = self.text.len();
         self.draw_text(d, id)?;
         let len = self.text.len() - drawn;
-        if !self.fits(self.text.len()) {
+        if !self.fits() {
             self.text.truncate(drawn);
             return Ok(Drawn::Oversize);
         }
@@ -2160,6 +2178,9 @@ impl Generation<'_> {
     fn remove(&mut self, pending: usize) -> Token {
         let at = self.tokens.len() - pending - 1;
         let token = self.tokens.remove(at);
+        if self.spec.is_placeholder(token.id) {
+            self.markers -= token.len();
+        }
         self.text.drain(token.start..token.end);
         for later in &mut self.tokens[at..] {
             later.start -= token.len();
@@ -2233,21 +2254,33 @@ impl Generation<'_> {
 /// own: the walk draws its decisions from the test case's RNG alone (see
 /// [`NativeTestCase::draw_string_from`]), and the string is recorded
 /// under the grammar's constraint, which a replay checks it against.
+/// `max_size` caps this draw below the grammar's own cap, for a caller
+/// whose placeholder values have to fit alongside the string; one below
+/// the smallest string, or above the grammar's cap, is read as that.
 pub fn generate_grammar(
     ntc: &mut NativeTestCase,
     spec: &GrammarSpec,
+    max_size: Option<u64>,
 ) -> Result<String, EngineError> {
     spec.ensure_simplest()?;
+    let max_size = max_size.map_or(spec.max_size, |cap| {
+        cap.clamp(spec.min_size(), spec.max_size)
+    });
     spanned(ntc, LABEL_GRAMMAR, |ntc| {
-        ntc.draw_string_from(Arc::clone(&spec.kind), |d| draw_grammar(d, spec))
+        ntc.draw_string_from(Arc::clone(&spec.kind), |d| draw_grammar(d, spec, max_size))
     })
 }
 
-/// Draw a string from `spec`, every decision from `d`.
-fn draw_grammar<D: Draws>(d: &mut D, spec: &GrammarSpec) -> Result<Vec<u32>, EngineError> {
+/// Draw a string of at most `max_size` characters from `spec`, every
+/// decision from `d`.
+fn draw_grammar<D: Draws>(
+    d: &mut D,
+    spec: &GrammarSpec,
+    max_size: u64,
+) -> Result<Vec<u32>, EngineError> {
     let min = spec.min_size();
-    let target = if spec.max_size > min && d.weighted_precise(LARGE_TARGET_PROBABILITY, None)? {
-        d.draw_integer_uniform(min, spec.max_size)?
+    let target = if max_size > min && d.weighted_precise(LARGE_TARGET_PROBABILITY, None)? {
+        d.draw_integer_uniform(min, max_size)?
     } else {
         min
     };
@@ -2258,7 +2291,7 @@ fn draw_grammar<D: Draws>(d: &mut D, spec: &GrammarSpec) -> Result<Vec<u32>, Eng
         let fraction = step as f64 / (IGNORE_RATE_STEPS - 1) as f64;
         fraction * fraction
     };
-    let mut generation = Generation::new(spec, ignore_rate);
+    let mut generation = Generation::new(spec, ignore_rate, max_size);
     let result = generation.attempts(d, target, min);
     generation.recycle();
     result
@@ -2268,7 +2301,7 @@ fn draw_grammar<D: Draws>(d: &mut D, spec: &GrammarSpec) -> Result<Vec<u32>, Eng
 /// with no optional ignorables.
 fn smallest_string<D: Draws>(d: &mut D, spec: &GrammarSpec) -> Result<Vec<u32>, EngineError> {
     let min = spec.min_size();
-    let mut generation = Generation::new(spec, 0.0);
+    let mut generation = Generation::new(spec, 0.0, spec.max_size);
     let result = generation.attempts(d, min, min);
     generation.recycle();
     result

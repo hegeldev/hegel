@@ -25,7 +25,7 @@ macro_rules! for_each_hegel_fn {
             fn hegel_generate_date(ctx: *mut HegelContext, tc: *mut HegelTestCase, min_value: hegel_date_t, max_value: hegel_date_t, out_value: *mut hegel_date_t) -> hegel_result_t;
             fn hegel_generate_datetime(ctx: *mut HegelContext, tc: *mut HegelTestCase, min_value: hegel_datetime_t, max_value: hegel_datetime_t, out_value: *mut hegel_datetime_t) -> hegel_result_t;
             fn hegel_generate_float(ctx: *mut HegelContext, tc: *mut HegelTestCase, width: u32, min_value: f64, max_value: f64, allow_nan: bool, allow_infinity: bool, exclude_min: bool, exclude_max: bool, smallest_nonzero_magnitude: f64, out_value: *mut f64) -> hegel_result_t;
-            fn hegel_generate_grammar(ctx: *mut HegelContext, tc: *mut HegelTestCase, grammar: *const HegelGrammar, out_result: *mut hegel_generate_string_result_t) -> hegel_result_t;
+            fn hegel_generate_grammar(ctx: *mut HegelContext, tc: *mut HegelTestCase, grammar: *const HegelGrammar, max_size: u64, out_result: *mut hegel_generate_string_result_t) -> hegel_result_t;
             fn hegel_generate_integer(ctx: *mut HegelContext, tc: *mut HegelTestCase, min_value: i64, max_value: i64, out_value: *mut i64) -> hegel_result_t;
             fn hegel_generate_integer_big(ctx: *mut HegelContext, tc: *mut HegelTestCase, min_value: *const u8, min_value_len: usize, max_value: *const u8, max_value_len: usize, out_value: *mut u8, out_value_cap: usize, out_value_len: *mut usize) -> hegel_result_t;
             fn hegel_generate_ipv4(ctx: *mut HegelContext, tc: *mut HegelTestCase, out_bytes: *mut u8) -> hegel_result_t;

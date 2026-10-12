@@ -510,9 +510,3 @@ fn recursion_retry_discards_partial_observations_and_halves_the_target() {
         recursion_branch_probability(3.0, 20)
     );
 }
-
-#[test]
-fn typical_width_of_internet_specs_is_a_round_figure() {
-    assert_eq!(StringSpec::email().typical_width(), INTERNET_TYPICAL_WIDTH);
-    assert_eq!(StringSpec::url().typical_width(), INTERNET_TYPICAL_WIDTH);
-}

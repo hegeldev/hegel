@@ -10,6 +10,9 @@ use crate::pretty::PrettyPrinter;
 use crate::test_case::invalid_argument;
 
 const LARK_LABEL: u64 = label_from_name("hegel.from_lark");
+const ATTEMPT_LABEL: u64 = label_from_name("hegel.from_lark.attempt");
+const DEFAULT_MAX_SIZE: usize = 8192;
+const ATTEMPTS: usize = 3;
 
 type ExplicitTerminal = dyn Generator<String> + Send + Sync + UnwindSafe + RefUnwindSafe;
 
@@ -81,8 +84,11 @@ impl LarkGenerator {
     /// `%ignore`d terminal goes on either side of each where the grammar
     /// has one, and it is the generator's part to draw values that read
     /// as the terminal where they land (a value under a quoted-string
-    /// terminal should contain no quote, say). Each marker counts about
-    /// thirty characters toward [`max_size`](Self::max_size).
+    /// terminal should contain no quote, say). The values count toward
+    /// [`max_size`](Self::max_size) like any other characters: a string
+    /// they push over it is drawn again, with less of the cap for the
+    /// grammar's own text, and a draw that cannot fit the values after a
+    /// few tries rejects the test case.
     pub fn explicit<G>(mut self, name: &str, generator: G) -> Self
     where
         G: Generator<String> + Send + Sync + UnwindSafe + RefUnwindSafe + 'static,
@@ -145,6 +151,34 @@ impl LarkGenerator {
         self
     }
 
+    /// Draw a grammar string of at most `budget` characters outside its
+    /// markers and a value for each marker, spliced in: the string, how
+    /// many of its characters the grammar drew, and how many it has.
+    fn splice(&self, tc: &TestCase, compiled: &Compiled, budget: usize) -> (String, usize, usize) {
+        let drawn = tc.generate_grammar(&compiled.grammar, budget as u64);
+        let mut out = String::with_capacity(drawn.len());
+        let mut own = 0;
+        let mut size = 0;
+        let mut rest = drawn.as_str();
+        while let Some((at, i)) = compiled
+            .markers
+            .iter()
+            .enumerate()
+            .filter_map(|(i, marker)| rest.find(marker.as_str()).map(|at| (at, i)))
+            .min()
+        {
+            own += rest[..at].chars().count();
+            out.push_str(&rest[..at]);
+            let value = tc.draw_silent(Terminal(&*self.explicit[i].generator));
+            size += value.chars().count();
+            out.push_str(&value);
+            rest = &rest[at + compiled.markers[i].len()..];
+        }
+        own += rest.chars().count();
+        out.push_str(rest);
+        (out, own, size + own)
+    }
+
     fn handle(&self) -> &Compiled {
         self.handle.get_or_init(|| {
             if self.max_size == Some(0) {
@@ -164,7 +198,7 @@ impl LarkGenerator {
             ffi::Grammar::new(
                 &self.text,
                 self.start.as_deref(),
-                self.max_size.map_or(0, |n| n as u64),
+                self.max_size.unwrap_or(DEFAULT_MAX_SIZE) as u64,
                 self.max_depth.unwrap_or(0),
                 alphabet.as_ref(),
                 &names,
@@ -189,25 +223,24 @@ impl Generator<String> for LarkGenerator {
 
     fn do_draw(&self, tc: &TestCase) -> String {
         let compiled = self.handle();
-        let drawn = tc.generate_grammar(&compiled.grammar);
         if compiled.markers.is_empty() {
-            return drawn;
+            return tc.generate_grammar(&compiled.grammar, 0);
         }
-        let mut out = String::with_capacity(drawn.len());
-        let mut rest = drawn.as_str();
-        while let Some((at, i)) = compiled
-            .markers
-            .iter()
-            .enumerate()
-            .filter_map(|(i, marker)| rest.find(marker.as_str()).map(|at| (at, i)))
-            .min()
-        {
-            out.push_str(&rest[..at]);
-            out.push_str(&tc.draw_silent(Terminal(&*self.explicit[i].generator)));
-            rest = &rest[at + compiled.markers[i].len()..];
+        let max_size = self.max_size.unwrap_or(DEFAULT_MAX_SIZE);
+        let mut budget = max_size;
+        for _ in 0..ATTEMPTS {
+            tc.start_span(ATTEMPT_LABEL);
+            let (out, own, size) = self.splice(tc, compiled, budget);
+            if size <= max_size {
+                tc.stop_span(false);
+                return out;
+            }
+            tc.stop_span(true);
+            budget = ((max_size as u128 * own as u128 / size as u128) as usize)
+                .min(budget.saturating_sub(1))
+                .max(1);
         }
-        out.push_str(rest);
-        out
+        tc.reject()
     }
 }
 

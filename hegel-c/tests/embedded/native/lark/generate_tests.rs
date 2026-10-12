@@ -43,7 +43,7 @@ fn explicit(names: &[&str]) -> Vec<String> {
 
 fn draw(spec: &GrammarSpec, seed: u64) -> (Result<String, EngineError>, Option<Status>) {
     let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
-    let result = generate_grammar(&mut ntc, spec);
+    let result = generate_grammar(&mut ntc, spec, None);
     (result, ntc.status())
 }
 
@@ -53,7 +53,8 @@ fn draw_from_rng(spec: &GrammarSpec, seed: u64) -> (Result<String, EngineError>,
     let mut rng = EngineRng::seeded(seed);
     let params = GenerationParameters::draw(&mut rng).unwrap();
     let mut draws = RngDraws::new(&mut rng, params.integer);
-    let result = draw_grammar(&mut draws, spec).map(|cps| codepoints_to_string(&cps));
+    let result =
+        draw_grammar(&mut draws, spec, spec.max_size).map(|cps| codepoints_to_string(&cps));
     (result, draws.status())
 }
 
@@ -200,23 +201,47 @@ fn explicit_terminals_are_drawn_as_their_placeholders() {
             ("NUM".to_string(), placeholder("NUM")),
         ]
     );
-    let err = spec_with(
-        "start: WORD\n%declare WORD\n",
+}
+
+/// A marker counts for nothing toward the size cap: the caller's value
+/// is what the string will have there, and the caller fits it.
+#[test]
+fn placeholders_count_for_nothing_toward_the_size_cap() {
+    let spec = spec_with(
+        "start: \"a\" WORD (\",\" WORD)* \"b\"\n%declare WORD\n",
         GrammarOptions {
             explicit: explicit(&["WORD"]),
-            max_size: 5,
+            max_size: 3,
             ..GrammarOptions::default()
         },
     )
-    .err()
     .unwrap();
-    assert_eq!(
-        err.message,
-        format!(
-            "max_size is 5 but the smallest string 'start' can produce has {} characters",
-            placeholder("WORD").len()
-        )
-    );
+    assert_eq!(spec.min_size(), 2);
+    let marker = placeholder("WORD");
+    let strings = samples(&spec, 50);
+    assert!(strings.iter().all(|s| {
+        let outside = s.replace(&marker, "");
+        outside.len() <= 3 && outside.starts_with('a') && outside.ends_with('b')
+    }));
+    assert!(strings.iter().any(|s| s.contains(',')), "{strings:?}");
+    assert!(strings.iter().any(|s| s.len() > 3), "{strings:?}");
+}
+
+/// A draw's own cap holds it under the grammar's; one outside the
+/// grammar's range is read as the nearer end of it.
+#[test]
+fn a_draw_may_be_capped_below_the_grammar() {
+    let spec = small("start: \"ab\" /c+/\n", 100);
+    let drawn = |cap: Option<u64>, seed: u64| {
+        let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+        generate_grammar(&mut ntc, &spec, cap).unwrap()
+    };
+    let capped: Vec<String> = (0..40).map(|seed| drawn(Some(5), seed)).collect();
+    assert!(capped.iter().all(|s| s.len() <= 5), "{capped:?}");
+    assert!(capped.iter().any(|s| s.len() == 5), "{capped:?}");
+    assert!((0..40).any(|seed| drawn(None, seed).len() > 5));
+    assert!((0..40).any(|seed| drawn(Some(1000), seed).len() > 5));
+    assert!((0..40).all(|seed| drawn(Some(1), seed) == "abc"));
 }
 
 /// The lexers try a placeholder before any other terminal, so a regex
@@ -340,7 +365,7 @@ fn budgets_count_terminals_at_their_typical_length() {
     assert_eq!(spec.analysis.rules[spec.start].typical_size, 7);
     for seed in 0..32 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
-        let mut generation = Generation::new(&spec, 0.0);
+        let mut generation = Generation::new(&spec, 0.0, spec.max_size);
         assert!(generation.run(&mut ntc, 70).is_ok());
         assert!(
             generation.tokens.len() <= 10,
@@ -355,7 +380,7 @@ fn rules_whose_alternatives_all_grow_still_keep_to_their_budget() {
     let spec = fixture_spec("calc", "start", 4000, vec![]);
     for seed in 0..32 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
-        let mut generation = Generation::new(&spec, 0.0);
+        let mut generation = Generation::new(&spec, 0.0, spec.max_size);
         assert!(generation.run(&mut ntc, 500).is_ok(), "seed {seed}");
         assert!(
             (250..=1500).contains(&generation.text.len()),
@@ -662,7 +687,7 @@ fn optional_tokens_may_be_swallowed_by_their_neighbours() {
         "{strings:?}"
     );
     assert!(strings.iter().any(|s| s == "abc"));
-    let mut generation = Generation::new(&spec, 0.0);
+    let mut generation = Generation::new(&spec, 0.0, spec.max_size);
     (
         generation.text,
         generation.tokens,
@@ -720,7 +745,7 @@ fn a_reading_is_how_the_basic_lexer_reads_the_text_afresh() {
         let spec = fixture_spec(name, start, 400, vec![]);
         for seed in 0..8 {
             let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
-            let mut generation = Generation::new(&spec, 0.25);
+            let mut generation = Generation::new(&spec, 0.25, spec.max_size);
             if generation.run(&mut ntc, 200).is_err() {
                 continue;
             }
@@ -1046,7 +1071,7 @@ fn settled_stretches_read_back_exactly_and_settled_strings_lex_as_wholes() {
         let spec = fixture_spec(name, start, 400, vec![]);
         for seed in 0..8 {
             let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
-            let mut generation = Generation::new(&spec, 0.25);
+            let mut generation = Generation::new(&spec, 0.25, spec.max_size);
             if generation.run(&mut ntc, 200).is_err() {
                 continue;
             }
@@ -1109,7 +1134,7 @@ fn settling_a_basic_scan_that_follows_the_own_one_never_changes_the_answer() {
         let spec = fixture_spec(name, start, 400, vec![]);
         for seed in 0..8 {
             let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
-            let mut generation = Generation::new(&spec, 0.25);
+            let mut generation = Generation::new(&spec, 0.25, spec.max_size);
             if generation.run(&mut ntc, 200).is_err() {
                 continue;
             }
@@ -1174,7 +1199,7 @@ fn write_corpus() {
         let started = std::time::Instant::now();
         for seed in 0..n {
             let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
-            let outcome = generate_grammar(&mut ntc, &spec);
+            let outcome = generate_grammar(&mut ntc, &spec, None);
             ntc.freeze();
             match outcome {
                 Ok(s) => {
@@ -1223,7 +1248,7 @@ fn draws_work_in_the_buffers_the_spec_has_to_spare() {
     assert!(spec.buffers.lock().as_ref().unwrap().text.capacity() >= 1 << 16);
 
     let mut ntc = NativeTestCase::for_choices(&[], None, None);
-    assert!(generate_grammar(&mut ntc, &spec).is_err());
+    assert!(generate_grammar(&mut ntc, &spec, None).is_err());
     assert!(spec.buffers.lock().is_some());
 }
 
@@ -1232,7 +1257,7 @@ fn engine_errors_before_the_walk_propagate() {
     let spec = grammar("start: \"a\" | \"b\"\n");
     let mut ntc = NativeTestCase::for_choices(&[], None, None);
     assert!(matches!(
-        generate_grammar(&mut ntc, &spec),
+        generate_grammar(&mut ntc, &spec, None),
         Err(EngineError::Overrun)
     ));
     assert!(ntc.nodes.is_empty());
@@ -1283,7 +1308,7 @@ fn chain_pairs_that_keep_failing_are_given_up_on() {
     let mut given_up = 0;
     for seed in 0..64 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
-        let mut generation = Generation::new(&spec, 0.5);
+        let mut generation = Generation::new(&spec, 0.5, spec.max_size);
         if generation.run(&mut ntc, 2000).is_err() {
             continue;
         }
@@ -1296,7 +1321,7 @@ fn chain_pairs_that_keep_failing_are_given_up_on() {
         }
     }
     assert!(given_up > 8, "{given_up}");
-    let mut generation = Generation::new(&spec, 0.5);
+    let mut generation = Generation::new(&spec, 0.5, spec.max_size);
     generation.chains.insert((comment, sep), (7, 1));
     assert!(generation.hopeful(comment, sep));
     generation.chains.insert((comment, sep), (8, 1));
@@ -1329,7 +1354,7 @@ fn text(generation: &Generation) -> String {
 fn an_ignorable_before_a_pending_token_counts_against_the_whole_string() {
     let spec = small("start: A B\nA: /a/\nB: /b/\n%ignore WS\nWS: /  /\n", 3);
     let ws = tid(&spec, "WS");
-    let mut generation = Generation::new(&spec, 0.0);
+    let mut generation = Generation::new(&spec, 0.0, spec.max_size);
     push(&mut generation, tid(&spec, "A"), "a");
     push(&mut generation, tid(&spec, "B"), "b");
     let mut d = SimplestDraws::default();
@@ -1340,7 +1365,7 @@ fn an_ignorable_before_a_pending_token_counts_against_the_whole_string() {
     assert_eq!(text(&generation), "ab");
     assert_eq!(generation.tokens.len(), 2);
     let spec = small("start: A B\nA: /a/\nB: /b/\n%ignore WS\nWS: /  /\n", 4);
-    let mut generation = Generation::new(&spec, 0.0);
+    let mut generation = Generation::new(&spec, 0.0, spec.max_size);
     push(&mut generation, tid(&spec, "A"), "a");
     push(&mut generation, tid(&spec, "B"), "b");
     assert!(matches!(
@@ -1363,7 +1388,7 @@ fn a_chained_ignorable_the_one_before_it_swallows_the_next_token_through_is_not_
         tid(&spec, "NL"),
         tid(&spec, "COMMENT"),
     );
-    let mut generation = Generation::new(&spec, 0.0);
+    let mut generation = Generation::new(&spec, 0.0, spec.max_size);
     push(&mut generation, num, "1");
     push(&mut generation, comment, "#");
     push(&mut generation, num, "2");
@@ -1413,7 +1438,7 @@ fn a_generation_remembers_the_lexing_of_its_token_texts_until_a_draw_finds_too_m
             .map(|c| c.to_digit(10).map_or(c, |d| (b'a' + d as u8) as char))
             .collect()
     };
-    let mut generation = Generation::new(&spec, 0.0);
+    let mut generation = Generation::new(&spec, 0.0, spec.max_size);
     let room = |readings: &ReadingsCache| {
         (
             readings.table.capacity(),
@@ -1440,7 +1465,7 @@ fn a_generation_remembers_the_lexing_of_its_token_texts_until_a_draw_finds_too_m
     assert_eq!(generation.readings.len, READINGS_CAPACITY - 1);
     assert_eq!(room(&generation.readings), fresh);
     generation.recycle();
-    let mut generation = Generation::new(&spec, 0.0);
+    let mut generation = Generation::new(&spec, 0.0, spec.max_size);
     assert_eq!(generation.readings.len, READINGS_CAPACITY - 1);
     assert_eq!(
         generation.readings.read_token(&spec, name, &text(0), None),
@@ -1455,7 +1480,7 @@ fn a_generation_remembers_the_lexing_of_its_token_texts_until_a_draw_finds_too_m
         first
     );
     generation.recycle();
-    let mut generation = Generation::new(&spec, 0.0);
+    let mut generation = Generation::new(&spec, 0.0, spec.max_size);
     assert_eq!(generation.readings.len, 0);
     assert!(generation.readings.findings.is_empty());
     assert!(generation.readings.texts.is_empty());
@@ -1538,7 +1563,7 @@ fn a_remembered_text_the_pattern_does_not_take_whole_is_cut_like_a_fresh_one() {
     let seeded = grammar(text);
     let a = tid(&seeded, "A");
     let ab: Vec<char> = "ab".chars().collect();
-    let mut generation = Generation::new(&seeded, 0.0);
+    let mut generation = Generation::new(&seeded, 0.0, seeded.max_size);
     let remembered = generation.readings.read_token(&seeded, a, &ab, None);
     assert_eq!(
         taken(&generation.readings.findings[remembered].own, ab.len()),
@@ -1548,10 +1573,10 @@ fn a_remembered_text_the_pattern_does_not_take_whole_is_cut_like_a_fresh_one() {
     let strings = samples(&seeded, 50);
     assert_eq!(strings, samples(&fresh, 50));
     assert!(strings.iter().all(|s| s == "a"), "{strings:?}");
-    let generation = Generation::new(&seeded, 0.0);
+    let generation = Generation::new(&seeded, 0.0, seeded.max_size);
     assert_eq!(generation.readings.recall(a, &ab), Ok(remembered));
     assert_eq!(generation.readings.len, 2);
-    assert_eq!(Generation::new(&fresh, 0.0).readings.len, 1);
+    assert_eq!(Generation::new(&fresh, 0.0, fresh.max_size).readings.len, 1);
 }
 
 #[test]
@@ -1725,7 +1750,7 @@ fn choosing_an_alternative_by_mask_agrees_with_scanning() {
         let mut by_mask = NativeTestCase::new_random(EngineRng::seeded(case)).unwrap();
         let mut by_classes = NativeTestCase::new_random(EngineRng::seeded(case)).unwrap();
         let mut by_scan = NativeTestCase::new_random(EngineRng::seeded(case)).unwrap();
-        let mut generation = Generation::new(&spec, 0.0);
+        let mut generation = Generation::new(&spec, 0.0, spec.max_size);
         let position = |alt: &Alt| alts.iter().position(|a| core::ptr::eq(a, alt)).unwrap();
         let masked = generation
             .choose_alt(&mut by_mask, &alts, None, budget, depth)
@@ -1944,7 +1969,7 @@ fn a_grammar_string_is_one_choice_under_the_grammar_constraint() {
         grammar("start: item (\",\" item)*\nitem: NAME | \"[\" start \"]\"\nNAME: /[a-z]+/\n");
     for seed in 0..5 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
-        let s = generate_grammar(&mut ntc, &spec).unwrap();
+        let s = generate_grammar(&mut ntc, &spec, None).unwrap();
         assert_eq!(ntc.nodes.len(), 1);
         let node = &ntc.nodes[0];
         assert_eq!(node.value(), ChoiceValue::String(cps(&s)));
@@ -1960,7 +1985,7 @@ fn a_grammar_string_is_one_choice_under_the_grammar_constraint() {
         assert_eq!(ntc.spans.len(), 1);
         assert_eq!(ntc.spans[0].label, LABEL_GRAMMAR);
         let mut replay = NativeTestCase::for_choices(&[ChoiceValue::String(cps(&s))], None, None);
-        assert_eq!(generate_grammar(&mut replay, &spec).unwrap(), s);
+        assert_eq!(generate_grammar(&mut replay, &spec, None).unwrap(), s);
         assert_eq!(replay.nodes[0].value(), ChoiceValue::String(cps(&s)));
     }
 }
@@ -1969,14 +1994,14 @@ fn a_grammar_string_is_one_choice_under_the_grammar_constraint() {
 fn a_replayed_string_the_grammar_rejects_is_punned_to_the_simplest() {
     let spec = grammar("start: \"a\" \"b\"*\n");
     let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::String(cps("abbb"))], None, None);
-    assert_eq!(generate_grammar(&mut ntc, &spec).unwrap(), "abbb");
+    assert_eq!(generate_grammar(&mut ntc, &spec, None).unwrap(), "abbb");
     let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::String(cps("ba"))], None, None);
-    assert_eq!(generate_grammar(&mut ntc, &spec).unwrap(), "a");
+    assert_eq!(generate_grammar(&mut ntc, &spec, None).unwrap(), "a");
     assert_eq!(ntc.nodes[0].value(), ChoiceValue::String(cps("a")));
     let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::Boolean(true)], None, None);
-    assert_eq!(generate_grammar(&mut ntc, &spec).unwrap(), "a");
+    assert_eq!(generate_grammar(&mut ntc, &spec, None).unwrap(), "a");
     let mut ntc = NativeTestCase::for_simplest(10).unwrap();
-    assert_eq!(generate_grammar(&mut ntc, &spec).unwrap(), "a");
+    assert_eq!(generate_grammar(&mut ntc, &spec, None).unwrap(), "a");
 }
 
 #[test]
@@ -2023,7 +2048,7 @@ fn the_simplest_string_falls_back_on_a_full_draw_when_no_smallest_string_lexes()
 fn a_grammar_no_draw_can_generate_from_reports_so_at_the_first_draw() {
     let spec = grammar("start: NAME NAME\nNAME: /[a-z]+/\n");
     let mut ntc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
-    let Err(EngineError::InvalidArgument(message)) = generate_grammar(&mut ntc, &spec) else {
+    let Err(EngineError::InvalidArgument(message)) = generate_grammar(&mut ntc, &spec, None) else {
         panic!("expected an invalid argument");
     };
     assert!(
@@ -2088,10 +2113,6 @@ impl Draws for Failing {
         _: usize,
         _: usize,
     ) -> Result<String, EngineError> {
-        Err(EngineError::Overrun)
-    }
-
-    fn generate_string(&mut self, _: &StringSpec) -> Result<String, EngineError> {
         Err(EngineError::Overrun)
     }
 

@@ -99,7 +99,7 @@ fn ffi_drives_a_passing_run_exercising_every_primitive() {
         let s = tc.generate_string(&text)?;
         assert!(s.chars().count() <= 5);
 
-        let drawn = tc.generate_grammar(&grammar)?;
+        let drawn = tc.generate_grammar(&grammar, 0)?;
         assert!(drawn.chars().all(|c| c == 'a' || c == 'b'));
 
         use crate::test_case::full_ranges;
