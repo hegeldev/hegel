@@ -204,7 +204,7 @@ fn the_kind_ledger_names_a_grammar_constraint_by_its_identity() {
     let built = load_grammar("start: \"a\"\n", None, &NoImports).unwrap();
     let grammar = compile(&built, &["start"]).unwrap();
     let start = grammar.start[0];
-    let constraint = GrammarConstraint::new(grammar, start, 4, u32::MAX).unwrap();
+    let constraint = GrammarConstraint::new(grammar, start, 4, u32::MAX, None).unwrap();
     constraint
         .simplest_or_init(|| Ok::<_, crate::control::InternalError>(alloc::vec![b'a' as u32]))
         .unwrap();

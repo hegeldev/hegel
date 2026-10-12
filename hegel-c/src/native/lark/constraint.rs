@@ -11,13 +11,13 @@
 //! which grammar-directed shrinking proposes in place of a larger one.
 //!
 //! Two constraints compare equal when they were compiled from the same
-//! grammar, for the same start rule and size cap: the engine compares
+//! grammar, for the same start rule, size cap and alphabet: the engine compares
 //! kinds across executions (see
 //! [`KindLedger`](crate::native::exec_cache::KindLedger)), and a test
 //! that compiles its grammar afresh each run must not look nondeterministic.
 
 use super::ast::PatternKind;
-use super::compile::{Grammar, RuleId, TermId};
+use super::compile::{Grammar, RuleId, TermId, placeholder};
 use super::layout::{Layout, Node, Part};
 use super::lexsim::Lexer;
 use super::parse::{Parser, Tree};
@@ -61,6 +61,9 @@ pub struct GrammarConstraint {
     known: Mutex<HashMap<Vec<u32>, Arc<Tree>>>,
     intervals: Arc<IntervalSet>,
     smallest: Mutex<Smallest>,
+    /// The characters terminals other than placeholders may contain, when
+    /// the generator was given an alphabet.
+    alphabet: Option<IntervalSet>,
 }
 
 /// The smallest text seen derived by each rule and each terminal, in
@@ -74,7 +77,8 @@ struct Smallest {
 
 impl GrammarConstraint {
     /// The constraint accepting the strings `grammar` derives from the
-    /// rule `start` within `max_size` characters. Its simplest string is
+    /// rule `start` within `max_size` characters whose terminals, other
+    /// than placeholders, are over `alphabet`. Its simplest string is
     /// the generator's to supply (see
     /// [`simplest_or_init`](Self::simplest_or_init)) before any choice
     /// is drawn under it.
@@ -83,6 +87,7 @@ impl GrammarConstraint {
         start: RuleId,
         max_size: usize,
         max_depth: u32,
+        alphabet: Option<&IntervalSet>,
     ) -> Result<GrammarConstraint, InternalError> {
         let lexer = Lexer::new(&grammar.terminals);
         let parser = Parser::new(&grammar, start);
@@ -93,11 +98,32 @@ impl GrammarConstraint {
             .filter(|(id, term)| term.is_placeholder() && !grammar.ignore.contains(id))
             .map(|(id, _)| id)
             .collect();
-        let intervals = IntervalSet::unicode_scalars()?;
+        let intervals = match alphabet {
+            None => IntervalSet::unicode_scalars()?,
+            Some(alphabet) => {
+                let mut marked: Vec<u32> = grammar
+                    .terminals
+                    .iter()
+                    .filter(|term| term.is_placeholder())
+                    .flat_map(|term| {
+                        placeholder(&term.name)
+                            .chars()
+                            .map(u32::from)
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                marked.sort_unstable();
+                marked.dedup();
+                alphabet.union(&IntervalSet::new(
+                    marked.into_iter().map(|cp| (cp, cp)).collect(),
+                )?)?
+            }
+        };
         let mut hasher = FxHasher::default();
         format!("{grammar:?}").hash(&mut hasher);
         start.hash(&mut hasher);
         max_size.hash(&mut hasher);
+        alphabet.map(|a| &a.intervals).hash(&mut hasher);
         let smallest = Smallest {
             rules: alloc::vec![None; grammar.rules.len()],
             terminals: alloc::vec![None; grammar.terminals.len()],
@@ -115,11 +141,14 @@ impl GrammarConstraint {
             known: Mutex::new(HashMap::default()),
             intervals: Arc::new(intervals),
             smallest: Mutex::new(smallest),
+            alphabet: alphabet.cloned(),
         })
     }
 
     /// The alphabet of the strings the constraint is on: every Unicode
-    /// scalar value, the grammar alone deciding which strings are in.
+    /// scalar value, the grammar alone deciding which strings are in, or,
+    /// under an alphabet, that alphabet and the characters of the
+    /// placeholders' markers.
     pub fn intervals(&self) -> &Arc<IntervalSet> {
         &self.intervals
     }
@@ -148,7 +177,8 @@ impl GrammarConstraint {
     }
 
     /// A derivation of `text`, remembered or found now, or `None` when
-    /// the grammar does not derive it, or when the grammar ignores some
+    /// the grammar does not derive it, when a terminal other than a
+    /// placeholder has a character outside the alphabet, or when the grammar ignores some
     /// terminal and a placeholder in `text` has a token right beside it:
     /// the generator keeps ignored text between them, since what the
     /// caller puts in for the placeholder is beyond its lexing checks,
@@ -163,7 +193,7 @@ impl GrammarConstraint {
             .collect::<Option<_>>()?;
         let tree = Arc::new(self.parser.parse(&self.lexer, &chars).ok()?);
         let layout = Layout::new(&tree);
-        if !self.placeholders_apart(&layout) {
+        if !self.placeholders_apart(&layout) || !self.over_alphabet(&layout, text) {
             return None;
         }
         self.learn(&layout, text);
@@ -206,6 +236,23 @@ impl GrammarConstraint {
                             .get(j)
                             .is_none_or(|beside| matches!(beside.part, Part::Ignored(_)))
                     })
+        })
+    }
+
+    /// Whether every terminal of `layout`, a derivation of `text`, other
+    /// than a placeholder, is over the alphabet; trivially so without one.
+    fn over_alphabet(&self, layout: &Layout, text: &[u32]) -> bool {
+        let Some(alphabet) = &self.alphabet else {
+            return true;
+        };
+        Self::leaves(layout).iter().all(|leaf| {
+            let (Part::Terminal(id) | Part::Ignored(id)) = leaf.part else {
+                return true;
+            };
+            self.grammar.terminals[id].is_placeholder()
+                || text[leaf.start..leaf.end]
+                    .iter()
+                    .all(|&cp| alphabet.contains(cp))
         })
     }
 
@@ -283,8 +330,8 @@ impl GrammarConstraint {
         self.simplest.get().map(|simplest| simplest.as_slice())
     }
 
-    /// The hash of the compiled grammar, start rule and size cap that
-    /// the constraint compares and hashes by.
+    /// The hash of the compiled grammar, start rule, size cap and
+    /// alphabet that the constraint compares and hashes by.
     pub fn identity(&self) -> u64 {
         self.identity
     }

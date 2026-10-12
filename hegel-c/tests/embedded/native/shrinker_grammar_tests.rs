@@ -38,7 +38,7 @@ fn grammar_node(grammar_text: &str, simplest: &str, value: &str, forced: bool) -
     let built = load_grammar(grammar_text, None, &NoImports).unwrap();
     let grammar = compile(&built, &["start"]).unwrap();
     let start = grammar.start[0];
-    let constraint = GrammarConstraint::new(grammar, start, 64, u32::MAX).unwrap();
+    let constraint = GrammarConstraint::new(grammar, start, 64, u32::MAX, None).unwrap();
     constraint
         .simplest_or_init(|| Ok::<_, crate::control::InternalError>(cps(simplest)))
         .unwrap();
