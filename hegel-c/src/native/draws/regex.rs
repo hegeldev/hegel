@@ -983,12 +983,10 @@ fn producible_op(
             del_flags,
             p,
             ..
-        } => producible_sub(
-            p,
-            combine_flags(flags, *add_flags, *del_flags),
-            alphabet,
-            caches,
-        )?,
+        } => {
+            let flags = combine_flags(flags, *add_flags, *del_flags);
+            producible_sub(p, flags, alphabet, caches)?
+        }
         OpCode::GroupRefExists { yes, no, .. } => {
             let yes = producible_sub(yes, flags, alphabet, caches)?;
             let no = match no {
@@ -1827,7 +1825,7 @@ pub(crate) fn typical_count(min_size: usize, max_size: Option<usize>) -> f64 {
     let p = length_p_continue(min_size, max_size);
     let extra = match max_size {
         None => p / (1.0 - p),
-        Some(max_size) => p * (1.0 - p.powf((max_size - min_size) as f64)) / (1.0 - p),
+        Some(max_size) => p * (1.0 - libm::pow(p, (max_size - min_size) as f64)) / (1.0 - p),
     };
     min_size as f64 + extra
 }

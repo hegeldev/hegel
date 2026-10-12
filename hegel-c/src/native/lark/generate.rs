@@ -1321,7 +1321,7 @@ fn draw_index<D: Draws>(d: &mut D, count: usize) -> Result<usize, Step> {
 /// The length of `spec`'s strings on average, as a whole number of
 /// characters and never below `min`, the shortest string it can produce.
 fn typical_size(spec: &StringSpec, min: u64) -> u64 {
-    (spec.typical_width().round() as u64).max(min)
+    (libm::round(spec.typical_width()) as u64).max(min)
 }
 
 /// The characters a `%ignore` insertion adds for each character a
@@ -1789,9 +1789,9 @@ impl Generation<'_> {
             return Ok(min);
         }
         let extra_max = feasible_max - min;
-        let scale = ((extra_max + 1) as f64).ln();
+        let scale = libm::log((extra_max + 1) as f64);
         let u = d.draw_integer_uniform(0, COUNT_RESOLUTION)?;
-        let extra = (u as f64 / COUNT_RESOLUTION as f64 * scale).exp() as u64;
+        let extra = libm::exp(u as f64 / COUNT_RESOLUTION as f64 * scale) as u64;
         Ok(min + extra.clamp(1, extra_max))
     }
 
