@@ -179,6 +179,8 @@ fn the_simplest_source_answers_every_choice_at_its_simplest() {
     assert!(draws.many_more(&mut state).unwrap());
     assert!(!draws.many_more(&mut state).unwrap());
     assert_eq!(state.count, 2);
+    assert_eq!(draws.draw_string(letters(), 3, 8).unwrap(), "aaa");
+    assert_eq!(draws.draw_string(letters(), 0, 8).unwrap(), "");
     assert_eq!(draws.status(), None);
 }
 

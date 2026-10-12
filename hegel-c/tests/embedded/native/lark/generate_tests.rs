@@ -676,6 +676,24 @@ fn declared_ignorables_are_placeholders() {
     assert!(fit(&spec, &[a, ws, b]) >= Fit::Exact);
 }
 
+/// An ignorable placeholder put between two tokens one of which reads
+/// across its marker is taken out again, and with no other ignorable
+/// to keep the tokens apart the grammar has no string at all.
+#[test]
+fn an_ignorable_placeholder_a_token_reads_across_is_removed_again() {
+    let spec = spec_with(
+        "start: NAME NAME\nNAME: /[a-zA-Z0-9_<>]+/\n%declare WS\n%ignore WS\n",
+        GrammarOptions {
+            explicit: explicit(&["WS"]),
+            max_size: 200,
+            ..GrammarOptions::default()
+        },
+    )
+    .unwrap();
+    let (result, _) = draw(&spec, 0);
+    assert!(result.is_err());
+}
+
 #[test]
 fn optional_tokens_may_be_swallowed_by_their_neighbours() {
     let spec = small("start: A B? C\nA: /a/\nB: /b/\nC: /b?c/\n", 10);
