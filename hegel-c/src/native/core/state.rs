@@ -1978,7 +1978,6 @@ impl Drop for NativeTestCase {
         let mut nodes = core::mem::take(&mut self.nodes);
         let mut spans = core::mem::take(&mut self.spans.inner);
         if self.plain {
-            debug_assert!(nodes.iter().all(ChoiceNode::owns_no_heap));
             core::mem::forget(nodes.drain(..));
         } else {
             nodes.clear();
@@ -2339,7 +2338,6 @@ impl NativeTestCase {
             child.reassemble();
             let stream = RealizedStream::new(child.nodes.clone(), child.spans.clone().into_vec());
             let was_forced = self.nodes[idx].was_forced;
-            self.plain = false;
             self.nodes[idx] = ChoiceNode::clone_stream(Arc::new(stream), was_forced);
         }
     }

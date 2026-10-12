@@ -116,9 +116,8 @@ impl GrammarConstraint {
                     .collect();
                 marked.sort_unstable();
                 marked.dedup();
-                alphabet.union(&IntervalSet::new(
-                    marked.into_iter().map(|cp| (cp, cp)).collect(),
-                )?)?
+                let marks = IntervalSet::new(marked.into_iter().map(|cp| (cp, cp)).collect())?;
+                alphabet.union(&marks)?
             }
         };
         let mut hasher = FxHasher::default();
@@ -253,14 +252,9 @@ impl GrammarConstraint {
         let Some(alphabet) = &self.alphabet else {
             return true;
         };
-        Self::leaves(layout).iter().all(|leaf| {
-            let (Part::Terminal(id) | Part::Ignored(id)) = leaf.part else {
-                return true;
-            };
+        layout.leaves().into_iter().all(|(id, start, end)| {
             self.grammar.terminals[id].is_placeholder()
-                || text[leaf.start..leaf.end]
-                    .iter()
-                    .all(|&cp| alphabet.contains(cp))
+                || text[start..end].iter().all(|&cp| alphabet.contains(cp))
         })
     }
 
