@@ -153,30 +153,45 @@ impl LarkGenerator {
 
     /// Draw a grammar string of at most `budget` characters outside its
     /// markers and a value for each marker, spliced in: the string, how
-    /// many of its characters the grammar drew, and how many it has.
-    fn splice(&self, tc: &TestCase, compiled: &Compiled, budget: usize) -> (String, usize, usize) {
+    /// many of its characters the grammar drew and how many markers, and
+    /// how many characters it has.
+    fn splice(
+        &self,
+        tc: &TestCase,
+        compiled: &Compiled,
+        budget: usize,
+    ) -> (String, usize, usize, usize) {
         let drawn = tc.generate_grammar(&compiled.grammar, budget as u64);
         let mut out = String::with_capacity(drawn.len());
         let mut own = 0;
+        let mut markers = 0;
         let mut size = 0;
         let mut rest = drawn.as_str();
-        while let Some((at, i)) = compiled
-            .markers
-            .iter()
-            .enumerate()
-            .filter_map(|(i, marker)| rest.find(marker.as_str()).map(|at| (at, i)))
-            .min()
+        let mut from = 0;
+        while let Some(at) = rest[from..]
+            .find(|c| compiled.markers.iter().any(|m| m.starts_with(c)))
+            .map(|at| from + at)
         {
+            let Some(i) = compiled
+                .markers
+                .iter()
+                .position(|marker| rest[at..].starts_with(marker.as_str()))
+            else {
+                from = at + rest[at..].chars().next().unwrap().len_utf8();
+                continue;
+            };
             own += rest[..at].chars().count();
             out.push_str(&rest[..at]);
             let value = tc.draw_silent(Terminal(&*self.explicit[i].generator));
             size += value.chars().count();
+            markers += 1;
             out.push_str(&value);
             rest = &rest[at + compiled.markers[i].len()..];
+            from = 0;
         }
         own += rest.chars().count();
         out.push_str(rest);
-        (out, own, size + own)
+        (out, own, markers, size + own)
     }
 
     fn handle(&self) -> &Compiled {
@@ -230,13 +245,13 @@ impl Generator<String> for LarkGenerator {
         let mut budget = max_size;
         for _ in 0..ATTEMPTS {
             tc.start_span(ATTEMPT_LABEL);
-            let (out, own, size) = self.splice(tc, compiled, budget);
+            let (out, own, markers, size) = self.splice(tc, compiled, budget);
             if size <= max_size {
                 tc.stop_span(false);
                 return out;
             }
             tc.stop_span(true);
-            budget = ((max_size as u128 * own as u128 / size as u128) as usize)
+            budget = ((max_size as u128 * (own + markers) as u128 / size as u128) as usize)
                 .min(budget.saturating_sub(1))
                 .max(1);
         }

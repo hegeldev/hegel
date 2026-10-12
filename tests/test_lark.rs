@@ -188,6 +188,36 @@ fn test_from_lark_max_size_counts_explicit_values() {
     find_any(grammar(), |s: &String| s.matches(',').count() >= 3);
 }
 
+/// A string of nothing but explicit values is cut down to fit by drawing
+/// fewer of them.
+#[test]
+fn test_from_lark_fits_a_string_of_explicit_values_alone() {
+    let grammar = || {
+        gs::from_lark("start: NUM+\n%declare NUM\n")
+            .explicit(
+                "NUM",
+                gs::text().alphabet("0123456789").min_size(4).max_size(4),
+            )
+            .max_size(20)
+    };
+    assert_all_examples(grammar(), |s: &String| s.len() <= 20 && s.len() % 4 == 0);
+    find_any(grammar(), |s: &String| s.len() == 20);
+}
+
+#[test]
+fn test_from_lark_explicit_values_go_beside_text_like_a_marker() {
+    assert_all_examples(
+        gs::from_lark("start: \"<\" NUM \">\" \"<<\"\n%declare NUM\n").explicit(
+            "NUM",
+            gs::text().alphabet("0123456789").min_size(1).max_size(3),
+        ),
+        |s: &String| {
+            let inner = s.strip_prefix('<').unwrap().strip_suffix("><<").unwrap();
+            !inner.is_empty() && inner.chars().all(|c| c.is_ascii_digit())
+        },
+    );
+}
+
 /// A string whose values cannot fit under `max_size` however little the
 /// grammar's own text takes is rejected, as a failed filter is.
 #[test]
