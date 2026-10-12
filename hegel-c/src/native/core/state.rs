@@ -3009,7 +3009,9 @@ impl NativeTestCase {
     /// as one choice: replayed like any string, with a stored value the
     /// kind accepts kept and any other punned, and otherwise drawn by
     /// `random` from a source over this test case's RNG and integer
-    /// parameters. A conclusion `random` reaches is this test case's.
+    /// parameters, which the kind's constraint then accepts on replay
+    /// without checking it again (see [`Drawn`](crate::native::core::Drawn)).
+    /// A conclusion `random` reaches is this test case's.
     pub(crate) fn draw_string_from(
         &mut self,
         kind: Arc<StringChoice>,
@@ -3045,7 +3047,11 @@ impl NativeTestCase {
                 if let Some(status) = status {
                     self.conclude(status, None);
                 }
-                (drawn?, false)
+                let drawn = drawn?;
+                if let Some(constraint) = &kind.constraint {
+                    constraint.note_drawn(&drawn);
+                }
+                (drawn, false)
             }
         };
 

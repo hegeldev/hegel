@@ -7,11 +7,13 @@ use super::state::Span;
 use crate::control::{
     InternalError, hegel_internal_assert, hegel_internal_error, hegel_internal_unwrap,
 };
+use crate::native::HashSet;
 use crate::native::bignum::{BigInt, BigUint, ToPrimitive, Zero};
 use crate::native::floats::sign_aware_lte;
 use crate::native::intervalsets::IntervalSet;
 use crate::native::lark::constraint::GrammarConstraint;
 use crate::native::re::constraint::RegexConstraint;
+use crate::sys::sync::Mutex;
 use alloc::boxed::Box;
 
 /// An integer choice with bounded range. Bounds that fit a machine word
@@ -343,12 +345,61 @@ pub enum Constraint {
     Regex(Arc<RegexConstraint>),
 }
 
+/// How many codepoints of drawn strings a constraint remembers before
+/// forgetting them all to make room.
+pub const DRAWN_CAPACITY: usize = 1 << 20;
+
+/// The strings a constraint's generator drew, which are its strings
+/// whether or not checking them would finish within the check's budget:
+/// a replay of one is accepted without the check, so that a string the
+/// generator produced is never lost to a parse or match that gives up.
+pub struct Drawn {
+    strings: Mutex<(HashSet<Vec<u32>>, usize)>,
+}
+
+impl Default for Drawn {
+    fn default() -> Drawn {
+        Drawn {
+            strings: Mutex::new((HashSet::default(), 0)),
+        }
+    }
+}
+
+impl Drawn {
+    /// Remember `text` as a string the generator drew.
+    pub fn note(&self, text: &[u32]) {
+        let mut guard = self.strings.lock();
+        let (strings, size) = &mut *guard;
+        if *size + text.len() > DRAWN_CAPACITY {
+            strings.clear();
+            *size = 0;
+        }
+        if strings.insert(text.to_vec()) {
+            *size += text.len();
+        }
+    }
+
+    /// Whether `text` is a string the generator drew.
+    pub fn contains(&self, text: &[u32]) -> bool {
+        self.strings.lock().0.contains(text)
+    }
+}
+
 impl Constraint {
     /// Whether `text` is one of the constraint's strings.
     pub fn accepts(&self, text: &[u32]) -> bool {
         match self {
             Constraint::Grammar(grammar) => grammar.accepts(text),
             Constraint::Regex(regex) => regex.accepts(text),
+        }
+    }
+
+    /// Note `text` as a string the constraint's generator drew (see
+    /// [`Drawn`]).
+    pub fn note_drawn(&self, text: &[u32]) {
+        match self {
+            Constraint::Grammar(grammar) => grammar.note_drawn(text),
+            Constraint::Regex(regex) => regex.note_drawn(text),
         }
     }
 

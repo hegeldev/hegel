@@ -8,8 +8,11 @@
 //! over, so that two runs compiling the same pattern afresh agree on the
 //! kind.
 
+use super::constants::{MAXREPEAT, SRE_FLAG_DOTALL};
 use super::matcher::Matcher;
-use super::parser::ParsedPattern;
+use super::parser::{OpCode, ParsedPattern, SubPattern};
+use super::vm::Program;
+use crate::native::core::Drawn;
 use crate::native::intervalsets::IntervalSet;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -21,10 +24,17 @@ use rustc_hash::FxHasher;
 pub struct RegexConstraint {
     parsed: ParsedPattern,
     fullmatch: bool,
+    /// The pattern as a [`Program`], which checks a string without the
+    /// matcher's step and depth limits, when the program can express it:
+    /// the pattern itself under `fullmatch`, and otherwise the pattern
+    /// after a lazy run of any characters, which matches at the start
+    /// exactly when the pattern matches somewhere.
+    program: Option<Program>,
     identity: u64,
     /// The simplest string of the pattern, set once by the generator at
     /// the first draw (see [`simplest_or_init`](Self::simplest_or_init)).
     simplest: OnceBox<Vec<u32>>,
+    drawn: Drawn,
 }
 
 impl RegexConstraint {
@@ -39,21 +49,33 @@ impl RegexConstraint {
         parsed.flags.hash(&mut hasher);
         fullmatch.hash(&mut hasher);
         alphabet.map(|a| &a.intervals).hash(&mut hasher);
+        let program = if fullmatch {
+            Program::compile(&parsed)
+        } else {
+            Program::compile(&anywhere(&parsed))
+        }
+        .ok();
         RegexConstraint {
             parsed,
             fullmatch,
+            program,
             identity: hasher.finish(),
             simplest: OnceBox::new(),
+            drawn: Drawn::default(),
         }
     }
 
     /// Whether `text` is one of the pattern's strings: matched whole by
     /// it, or, when the pattern need not match the whole string,
     /// matched somewhere in it, as CPython's `fullmatch` and `search`
-    /// decide. A codepoint that is not a Unicode scalar value is in no
-    /// pattern, and a match the matcher cannot finish within its limits
-    /// is no match.
+    /// decide. A string the generator drew is one (see [`Drawn`]); of any
+    /// other, a codepoint that is not a Unicode scalar value is in no
+    /// pattern, and, for a pattern the [`Program`] cannot express, a
+    /// match the matcher cannot finish within its limits is no match.
     pub fn accepts(&self, text: &[u32]) -> bool {
+        if self.drawn.contains(text) {
+            return true;
+        }
         let Some(chars) = text
             .iter()
             .map(|&cp| char::from_u32(cp))
@@ -61,7 +83,13 @@ impl RegexConstraint {
         else {
             return false;
         };
-        matches(&self.parsed, self.fullmatch, &chars)
+        match &self.program {
+            Some(program) => {
+                let end = self.fullmatch.then_some(chars.len());
+                program.scan(&chars, 0, end).0.is_some()
+            }
+            None => matches(&self.parsed, self.fullmatch, &chars),
+        }
     }
 
     /// The simplest string of the pattern, computing it with `init` when
@@ -84,6 +112,11 @@ impl RegexConstraint {
         self.identity
     }
 
+    /// Note `text` as a string the generator drew (see [`Drawn`]).
+    pub fn note_drawn(&self, text: &[u32]) {
+        self.drawn.note(text);
+    }
+
     /// Whether the pattern must match the whole string.
     pub fn fullmatch(&self) -> bool {
         self.fullmatch
@@ -101,6 +134,39 @@ impl Eq for RegexConstraint {}
 impl Hash for RegexConstraint {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.identity.hash(state);
+    }
+}
+
+/// `parsed` after a lazy run of any characters: a pattern matching at
+/// the start of a text exactly when `parsed` matches somewhere in it.
+fn anywhere(parsed: &ParsedPattern) -> ParsedPattern {
+    let any = OpCode::Subpattern {
+        group: None,
+        add_flags: SRE_FLAG_DOTALL,
+        del_flags: 0,
+        p: SubPattern {
+            data: alloc::vec![OpCode::Any],
+        },
+    };
+    let skip = OpCode::MinRepeat {
+        min: 0,
+        max: MAXREPEAT,
+        item: SubPattern {
+            data: alloc::vec![any],
+        },
+    };
+    let inner = OpCode::Subpattern {
+        group: None,
+        add_flags: 0,
+        del_flags: 0,
+        p: parsed.pattern.clone(),
+    };
+    ParsedPattern {
+        pattern: SubPattern {
+            data: alloc::vec![skip, inner],
+        },
+        flags: parsed.flags,
+        group_refs: parsed.group_refs,
     }
 }
 

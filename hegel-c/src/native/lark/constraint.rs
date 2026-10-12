@@ -23,6 +23,7 @@ use super::lexsim::Lexer;
 use super::parse::{Parser, Tree};
 use crate::control::InternalError;
 use crate::native::HashMap;
+use crate::native::core::Drawn;
 use crate::native::intervalsets::IntervalSet;
 use crate::sys::sync::Mutex;
 use alloc::boxed::Box;
@@ -64,6 +65,7 @@ pub struct GrammarConstraint {
     /// The characters terminals other than placeholders may contain, when
     /// the generator was given an alphabet.
     alphabet: Option<IntervalSet>,
+    drawn: Drawn,
 }
 
 /// The smallest text seen derived by each rule and each terminal, in
@@ -142,6 +144,7 @@ impl GrammarConstraint {
             intervals: Arc::new(intervals),
             smallest: Mutex::new(smallest),
             alphabet: alphabet.cloned(),
+            drawn: Drawn::default(),
         })
     }
 
@@ -169,11 +172,16 @@ impl GrammarConstraint {
         Ok(simplest)
     }
 
-    /// Whether `text` is in the grammar: known to derive, or parsed now
-    /// and remembered. A codepoint that is not a Unicode scalar value is
-    /// in no grammar.
+    /// Whether `text` is in the grammar: drawn by the generator, known to
+    /// derive, or parsed now and remembered. A codepoint that is not a
+    /// Unicode scalar value is in no grammar.
     pub fn accepts(&self, text: &[u32]) -> bool {
-        self.tree(text).is_some()
+        self.drawn.contains(text) || self.tree(text).is_some()
+    }
+
+    /// Note `text` as a string the generator drew (see [`Drawn`]).
+    pub fn note_drawn(&self, text: &[u32]) {
+        self.drawn.note(text);
     }
 
     /// A derivation of `text`, remembered or found now, or `None` when

@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::native::re::parser::parse_pattern;
+use alloc::format;
 use alloc::vec;
 
 fn constraint(pattern: &str, fullmatch: bool) -> RegexConstraint {
@@ -71,4 +72,46 @@ fn identity_follows_the_pattern_its_flags_the_match_mode_and_the_alphabet() {
         RegexConstraint::new("a+", parse_pattern("a+", 0).unwrap(), true, Some(&letters))
     );
     assert!(alloc::format!("{whole:?}").contains("RegexConstraint"));
+}
+
+#[test]
+fn a_long_repeat_of_a_group_is_accepted_whole_and_anywhere() {
+    let many = "ab".repeat(2000);
+    assert!(constraint("(ab)+", true).accepts(&cps(&many)));
+    assert!(constraint("(a|bc)+", true).accepts(&cps(&"abc".repeat(1000))));
+    assert!(constraint("([ab]){400}", true).accepts(&cps(&"a".repeat(400))));
+    assert!(!constraint("([ab]){400}", true).accepts(&cps(&"a".repeat(399))));
+    let search = constraint("x(ab)+y", false);
+    assert!(search.accepts(&cps(&format!("..x{many}y.."))));
+    assert!(!search.accepts(&cps(&format!("..x{many}.."))));
+}
+
+#[test]
+fn a_search_keeps_its_anchors_at_the_edges_of_the_text() {
+    let start = constraint("^a", false);
+    assert!(start.accepts(&cps("ab")));
+    assert!(!start.accepts(&cps("ba")));
+    let end = constraint("a$", false);
+    assert!(end.accepts(&cps("ba")));
+    assert!(!end.accepts(&cps("ab")));
+    assert!(constraint("\\bab", false).accepts(&cps("x ab")));
+    assert!(!constraint("\\bab", false).accepts(&cps("xab")));
+}
+
+#[test]
+fn a_pattern_the_program_cannot_express_is_checked_by_the_matcher() {
+    let c = constraint("(a)\\1", true);
+    assert!(c.accepts(&cps("aa")));
+    assert!(!c.accepts(&cps("ab")));
+    let c = constraint("(a)\\1", false);
+    assert!(c.accepts(&cps("xaax")));
+    assert!(!c.accepts(&cps("xabx")));
+}
+
+#[test]
+fn a_string_the_generator_drew_is_accepted_without_a_check() {
+    let c = constraint("(a)\\1", true);
+    assert!(!c.accepts(&cps("ab")));
+    c.note_drawn(&cps("ab"));
+    assert!(c.accepts(&cps("ab")));
 }

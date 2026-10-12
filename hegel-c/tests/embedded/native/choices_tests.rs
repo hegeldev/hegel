@@ -1431,3 +1431,15 @@ fn a_grammar_strings_value_serialises_like_any_string() {
         vec![ChoiceValue::String(cps("abb"))]
     );
 }
+
+#[test]
+fn drawn_strings_are_forgotten_all_at_once_past_the_capacity() {
+    let drawn = Drawn::default();
+    drawn.note(&[1, 2]);
+    drawn.note(&[1, 2]);
+    drawn.note(&vec![0; DRAWN_CAPACITY - 2]);
+    assert!(drawn.contains(&[1, 2]));
+    drawn.note(&[3]);
+    assert!(!drawn.contains(&[1, 2]));
+    assert!(drawn.contains(&[3]));
+}

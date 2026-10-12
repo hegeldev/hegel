@@ -3726,3 +3726,29 @@ fn a_string_drawn_from_the_rng_notifies_the_observer() {
     let recorded = captured.lock().unwrap().take();
     assert_eq!(recorded, Some((String::from("ab"), false)));
 }
+
+#[test]
+fn a_string_drawn_from_the_rng_replays_though_its_check_would_reject_it() {
+    use crate::native::re::constraint::RegexConstraint;
+    use crate::native::re::parser::parse_pattern;
+    let constraint =
+        RegexConstraint::new("(a)\\1", parse_pattern("(a)\\1", 0).unwrap(), true, None);
+    let kind = Arc::new(StringChoice {
+        intervals: crate::native::intervalsets::IntervalSet::new(vec![(0, 0x7F)])
+            .unwrap()
+            .into(),
+        min_size: 0,
+        max_size: 10,
+        constraint: Some(crate::native::core::Constraint::Regex(Arc::new(constraint))),
+    });
+    let ab: Vec<u32> = "ab".chars().map(u32::from).collect();
+    assert!(!kind.validate(&ab));
+    let mut tc = NativeTestCase::for_choices_and_template(&[], None, None, BUFFER_SIZE, None)
+        .with_random(EngineRng::seeded(0))
+        .unwrap();
+    let drawn = tc
+        .draw_string_from(Arc::clone(&kind), |_| Ok(ab.clone()))
+        .unwrap();
+    assert_eq!(drawn, "ab");
+    assert!(kind.validate(&ab));
+}
