@@ -161,8 +161,8 @@ impl Drop for Tree {
 
 /// Where a parse failed: the position past which no item could be
 /// carried, the end of the text when it ended before the start rule was
-/// complete, or the position reached when the parse ran out of its
-/// budget (see [`PARSE_BUDGET`]).
+/// complete, or the position reached when the parse ran out of a budget
+/// (see [`PARSE_BUDGET`] and [`ITEM_BUDGET`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParseError {
     pub position: usize,
@@ -281,22 +281,17 @@ struct Parse<'p, T: Terminals> {
     /// worked on, with that column.
     held: Vec<Option<(u32, u32)>>,
     /// Per column and nonterminal asked about, the production and origin
-    /// of the item completing that nonterminal there can only lead to
-    /// (see [`Self::leo_top`]), or `None` when it leads to several or
-    /// stops short.
-    leo: HashMap<(u32, u32), Option<(u32, u32)>>,
-    /// How many of the column's active items have been predicted from or
-    /// completed, how many of its waiting items scanned, and how many of
-    /// its active items checked for carrying past ignored text.
-    processed: usize,
-    scanned: usize,
-    carried: usize,
+    /// of the topmost item completing that nonterminal there can only
+    /// lead to (see [`Self::leo_top`]), once it has been found.
+    leo: HashMap<(u32, u32), (u32, u32)>,
     /// The ends found for each terminal tried at the column, by terminal,
     /// as a range of `ends`.
     tried: Vec<Option<(usize, usize)>>,
     ends: Vec<usize>,
     /// How many items have been proposed, against the budget.
     proposed: usize,
+    /// How many items reading the derivation has visited, against the
+    /// item budget.
     built: usize,
 }
 
@@ -352,9 +347,6 @@ impl Parser {
             pending: 0,
             held: alloc::vec![None; self.lowered.by_lhs.len()],
             leo: HashMap::default(),
-            processed: 0,
-            scanned: 0,
-            carried: 0,
             tried: alloc::vec![None; self.terminals],
             ends: Vec::new(),
             proposed: 0,
@@ -367,9 +359,6 @@ impl Parser {
             if col > 0 {
                 parse.arrive(col)?;
             }
-            parse.processed = 0;
-            parse.scanned = 0;
-            parse.carried = 0;
             parse.tried.fill(None);
             parse.ends.clear();
             parse.predict_and_complete(col)?;
@@ -464,13 +453,14 @@ impl<T: Terminals> Parse<'_, T> {
         Ok(())
     }
 
-    /// Predict from and complete the column's active items not yet
-    /// processed, and whatever that adds.
+    /// Predict from and complete the column's active items, and whatever
+    /// that adds.
     fn predict_and_complete(&mut self, col: usize) -> Result<(), ParseError> {
         let parser = self.parser;
-        while self.processed < self.columns[col].active.len() {
-            let idx = self.columns[col].active[self.processed];
-            self.processed += 1;
+        let mut processed = 0;
+        while processed < self.columns[col].active.len() {
+            let idx = self.columns[col].active[processed];
+            processed += 1;
             let item = self.items[idx as usize];
             let next = self.next_symbol(&item);
             if let Some(Symbol::Nonterminal(nt)) = next {
@@ -561,7 +551,7 @@ impl<T: Terminals> Parse<'_, T> {
             }
             let key = (col as u32, nt as u32);
             if let Some(&top) = self.leo.get(&key) {
-                break top;
+                break Some(top);
             }
             if chain.iter().any(|&(seen, _)| seen == key) {
                 break None;
@@ -576,8 +566,7 @@ impl<T: Terminals> Parse<'_, T> {
         };
         let mut top = top;
         for &(key, link) in chain.iter().rev() {
-            top = top.or(Some(link));
-            self.leo.insert(key, top);
+            self.leo.insert(key, *top.get_or_insert(link));
         }
         top
     }
@@ -617,13 +606,13 @@ impl<T: Terminals> Parse<'_, T> {
         Ok(())
     }
 
-    /// Scan the column's waiting items not yet scanned, and carry those
-    /// and any newly complete start item past the ignored text matched
-    /// at the column.
+    /// Scan the column's items waiting on a terminal, and carry those and
+    /// any complete start item past the ignored text matched at the
+    /// column.
     fn scan(&mut self, col: usize) -> Result<(), ParseError> {
         let parser = self.parser;
         let waiting = self.columns[col].scan.len();
-        for j in self.scanned..waiting {
+        for j in 0..waiting {
             let (idx, term) = self.columns[col].scan[j];
             let (from, to) = self.lex(col, term);
             for k in from..to {
@@ -635,11 +624,11 @@ impl<T: Terminals> Parse<'_, T> {
             let (from, to) = self.lex(col, ignore);
             for k in from..to {
                 let end = self.ends[k];
-                for j in self.scanned..waiting {
+                for j in 0..waiting {
                     let (idx, _) = self.columns[col].scan[j];
                     self.delay(end, idx, ignore, false)?;
                 }
-                for j in self.carried..active {
+                for j in 0..active {
                     let idx = self.columns[col].active[j];
                     let item = self.items[idx as usize];
                     let production = &parser.lowered.productions[item.prod as usize];
@@ -649,8 +638,6 @@ impl<T: Terminals> Parse<'_, T> {
                 }
             }
         }
-        self.scanned = waiting;
-        self.carried = active;
         Ok(())
     }
 
