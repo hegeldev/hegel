@@ -235,17 +235,8 @@ fn lookbehind() {
     check("(ab)(c)?(?<=\\2)d", "abd", 0, None, false);
     check("(?:(a))+?(?<=\\1)b", "ab", 0, Some(2), true);
     check("(?:(ab))+?(?<=\\1)c", "ababc", 0, Some(5), true);
-}
-
-#[test]
-fn variable_width_lookbehind_accepts_any_of_its_widths() {
-    check("(?<=a|bc)d", "bcd", 2, Some(3), false);
-    check("(?<=a|bc)d", "ad", 1, Some(2), false);
-    check("(?<!a|bc)d", "bcd", 2, None, false);
-    check("(?<!a|bc)d", "xd", 1, Some(2), false);
-    check("(?<=a+)d", "aaad", 3, Some(4), false);
-    check("(?<=(?:ab){1,2}|x)d", "ababd", 4, Some(5), false);
-    check("(?<=a+?)d", "aad", 2, Some(3), false);
+    check("(?<=(?:)*a)b", "ab", 1, Some(2), true);
+    check("(?<=ab)c", "c", 0, None, false);
 }
 
 #[test]
@@ -417,6 +408,27 @@ fn depth_limit_fires_on_long_repeats_of_capturing_items() {
     );
 }
 
+/// The default depth limit keeps the deepest recursion the matcher
+/// allows (a repeat of a capturing alternation, which recurses several
+/// levels per iteration) within a 1 MiB stack, the smallest a thread
+/// commonly gets, in an unoptimised build too.
+#[test]
+fn the_depth_limit_fires_before_a_small_stack_overflows() {
+    let parsed = parse_pattern("(?:(a)|(b))*", 0).unwrap();
+    let text = chars(&"ab".repeat(2000));
+    let worker = std::thread::Builder::new()
+        .stack_size(1 << 20)
+        .spawn(move || {
+            let matcher = Matcher::new(&parsed);
+            (match_at(&matcher, &text, 0), matcher.fullmatch(&text))
+        })
+        .unwrap();
+    assert_eq!(
+        worker.join().unwrap(),
+        (Err(MatchError::DepthLimit), Err(MatchError::DepthLimit))
+    );
+}
+
 #[test]
 fn default_limits_handle_long_unit_sequence_repeats() {
     let parsed = parse_pattern("\"(?:\\\\.|[^\"\\\\])*\"", 0).unwrap();
@@ -453,22 +465,26 @@ fn errors_display() {
 }
 
 #[test]
-fn width_of_patterns() {
-    let widths = |pattern: &str| {
+fn least_width_of_patterns() {
+    let least = |pattern: &str| {
         let parsed = parse_pattern(pattern, 0).unwrap();
-        Matcher::new(&parsed).width(&parsed.pattern)
+        Matcher::new(&parsed).least_width(&parsed.pattern)
     };
-    assert_eq!(widths("abc"), (3, 3));
-    assert_eq!(widths("a|bc"), (1, 2));
-    assert_eq!(widths("(ab)*"), (0, usize::MAX));
-    assert_eq!(widths("(?:ab){2,3}"), (4, 6));
-    assert_eq!(widths("(?>ab)"), (2, 2));
-    assert_eq!(widths("(a)\\1"), (2, 2));
-    assert_eq!(widths("(a)?(?(1)bc|d)"), (1, 3));
-    assert_eq!(widths("(a)?(?(1)bc)"), (0, 3));
-    assert_eq!(widths("^$\\b(?=a)(?!b)"), (0, 0));
-    assert_eq!(widths("a*+"), (0, usize::MAX));
-    assert_eq!(widths("(a)(?:b)?\\1"), (2, 3));
+    assert_eq!(least("abc"), 3);
+    assert_eq!(least("a|bc"), 1);
+    assert_eq!(least("(ab)*"), 0);
+    assert_eq!(least("(?:ab){2,3}"), 4);
+    assert_eq!(least("(?>ab)"), 2);
+    assert_eq!(least("(a)\\1"), 2);
+    assert_eq!(least("(a)?(?(1)bc|d)"), 1);
+    assert_eq!(least("(a)?(?(1)bc)"), 0);
+    assert_eq!(least("^$\\b(?=a)(?!b)"), 0);
+    assert_eq!(least("a*+"), 0);
+    assert_eq!(least("(a)(?:b)?\\1"), 2);
+    assert_eq!(
+        least("(?:(?:a{4294967294}){4294967294}){4294967294}"),
+        usize::MAX
+    );
 }
 
 #[test]
@@ -527,11 +543,15 @@ fn unit_alternatives_recognises_only_unit_sequences() {
     assert!(single_unit(&parse_pattern("ab", 0).unwrap().pattern, 0).is_none());
 }
 
-fn touch(pattern: &str, text: &str) -> (Option<usize>, Touch) {
+fn touch_at(pattern: &str, text: &str, pos: usize) -> (Option<usize>, Touch) {
     let parsed = parse_pattern(pattern, 0).unwrap();
     Matcher::new(&parsed)
-        .match_at_touch(&chars(text), 0)
+        .match_at_touch(&chars(text), pos)
         .unwrap()
+}
+
+fn touch(pattern: &str, text: &str) -> (Option<usize>, Touch) {
+    touch_at(pattern, text, 0)
 }
 
 #[test]
@@ -598,6 +618,126 @@ fn touch_reports_how_a_match_depended_on_the_edges_of_the_text() {
     assert_eq!(touch("(a)\\1", "a"), (None, Touch::End));
     assert_eq!(touch("a*?b", "aab"), (Some(3), Touch::Never));
     assert_eq!(touch("a*?", "aa"), (Some(0), Touch::Never));
+    for (pattern, text, pos) in [
+        ("b+B|", "b", 1),
+        ("(?>b+)B|", "b", 1),
+        ("(?>b*)(?!)|", "b", 1),
+        ("(?:b*)++(?!)|", "b", 1),
+        ("b*(?!)|", "b", 1),
+        ("b*(?<=a)", "a", 1),
+        ("(?m)b*^", "\n", 1),
+        ("(b*)\\1", "", 0),
+    ] {
+        assert!(
+            matches!(
+                touch_at(pattern, text, pos),
+                (Some(end), Touch::Unless(probes))
+                    if end == text.len() && matches!(probes[..], [Probe::Run(_)])
+            ),
+            "{pattern:?} on {text:?} at {pos}: {:?}",
+            touch_at(pattern, text, pos)
+        );
+    }
+}
+
+/// Every claim a touch makes about a longer text, checked against a
+/// match of that longer text: a `Never` result stands with anything
+/// before or after the text, a `Tail` match goes on through the run, and
+/// an `Unless` result stands when the next character passes none of
+/// the probes.
+#[test]
+fn touch_claims_hold_on_longer_texts() {
+    let cases = [
+        ("abc", "abc", 0),
+        ("abc", "ab", 0),
+        ("a*", "aa", 0),
+        ("x?a*", "a", 0),
+        ("(?:a*)*", "aa", 0),
+        ("a*b*", "aa", 0),
+        ("a{1,3}", "aa", 0),
+        ("a(?:.|b)?", "a", 0),
+        ("[a-z]+(?<=a)", "abc", 0),
+        ("a*(?!)", "aa", 0),
+        ("[ab]*a*", "a", 0),
+        ("a$", "a", 0),
+        ("\\ba", "a", 0),
+        ("(?<=x)a", "xa", 1),
+        ("x(?=a*)", "x", 0),
+        ("x(?=a)", "xa", 0),
+        ("a*?b", "aab", 0),
+        ("a*?", "aa", 0),
+        ("(?:a|b)*c", "ab", 0),
+        ("\"[^\"]*\"", "\"ab\"", 0),
+        ("(a)\\1", "a", 0),
+        ("(b*)\\1", "", 0),
+        ("b*(?<=b)", "b", 0),
+        ("b*(?<=a)", "a", 1),
+        ("(?m)b*^", "\n", 1),
+        ("b+B|", "b", 1),
+        ("(?>b+)B|", "b", 1),
+        ("(?>b*)(?!)|", "b", 1),
+        ("(?:b*)++(?!)|", "b", 1),
+        ("b*(?!)|", "b", 1),
+        ("(?:ab|a)*", "aba", 0),
+        ("(?i)a*", "aA", 0),
+        ("a*+", "a", 0),
+        ("(?:a*)++b?", "a", 0),
+        ("(a*)(?(1)b|c)", "a", 0),
+        ("a*\\Z", "a", 0),
+        ("[a-z]+\\b", "ab", 0),
+        ("(?>a*)b", "a", 0),
+        ("(?>a*)", "a", 0),
+        ("(?:a*)++", "a", 0),
+    ];
+    let extensions = ["", "a", "b", "x", "\n", "B", "ab", "ba", "bb", "aa", "b\n"];
+    let mut seen = [0usize; 4];
+    for (pattern, text, pos) in cases {
+        let parsed = parse_pattern(pattern, 0).unwrap();
+        let matcher = Matcher::new(&parsed);
+        let text = chars(text);
+        let (end, touch) = matcher.match_at_touch(&text, pos).unwrap();
+        seen[touch.stamp().0 as usize] += 1;
+        for extension in extensions {
+            let mut longer = text.clone();
+            longer.extend(extension.chars());
+            let actual = match_at(&matcher, &longer, pos).unwrap();
+            let claimed = match &touch {
+                Touch::Never => Some(end),
+                Touch::Tail(run_id) => {
+                    let more = run_len(&parsed, *run_id, &longer, text.len()).unwrap();
+                    Some(Some(text.len() + more))
+                }
+                Touch::Unless(probes) => extension
+                    .chars()
+                    .next()
+                    .is_none_or(|c| {
+                        !probes
+                            .iter()
+                            .any(|probe| probe_matches(&parsed, probe, c).unwrap())
+                    })
+                    .then_some(end),
+                Touch::End => None,
+            };
+            if let Some(claimed) = claimed {
+                assert_eq!(
+                    actual, claimed,
+                    "{pattern:?} on {text:?} at {pos} then {extension:?}: {touch:?}"
+                );
+            }
+        }
+        if touch == Touch::Never {
+            for prefix in ["a", "b", "x", "\n"] {
+                let mut longer = chars(prefix);
+                longer.extend(&text);
+                assert_eq!(
+                    match_at(&matcher, &longer, pos + 1).unwrap(),
+                    end.map(|end| end + 1),
+                    "{pattern:?} on {text:?} at {pos} after {prefix:?}"
+                );
+            }
+        }
+    }
+    assert!(seen.iter().all(|&count| count > 0), "{seen:?}");
 }
 
 fn tail_len(pattern: &str, text: &str, longer: &str) -> Option<usize> {
@@ -635,8 +775,8 @@ fn probes_run_their_tests_again_on_the_next_character() {
         ("x(?:[ab]|c)?", "x", "abc", "d"),
         ("x(?:[ab]y|cz)?", "x", "abc", "d"),
         ("x(?>[ab])?", "x", "ab", "c"),
-        ("xa(?<=a[bc]?)", "xa", "bc", "d"),
-        ("xa(?<!a[bc]?)", "xa", "bc", "d"),
+        ("xa(?<=a)[bc]?", "xa", "bc", "d"),
+        ("xa(?<!b)[bc]?", "xa", "bc", "d"),
         ("x[ab]*?y", "x", "aby", "c"),
         ("(a)?(?(1)[bc]|d)", "a", "bc", "ad"),
         ("(a)?(?(1)b|[cd])", "", "acd", "b"),

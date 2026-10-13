@@ -8,10 +8,12 @@
 //! proportional to the text rather than to the paths through it.
 //!
 //! The program can express patterns without backreferences, conditional
-//! groups, atomic groups or possessive repeats, whose repeated items
-//! cannot match empty (where CPython has special rules for stopping),
-//! and whose unrolled size stays within [`PROGRAM_LIMIT`]; anything else
-//! is [`Unsupported`] and stays with the backtracking matcher. The
+//! groups, atomic groups or possessive repeats, and whose unrolled size
+//! stays within [`PROGRAM_LIMIT`]; anything else is [`Unsupported`] and
+//! stays with the backtracking matcher. A repeat of an item that can
+//! match empty follows CPython's rule for it: once an iteration consumes
+//! nothing, the repeat stops iterating and the rest of the pattern
+//! follows from there (see [`Inst::Repeat`]). The
 //! simulation on its own costs more per character than backtracking
 //! does on the common run of a pattern, so a program whose instructions
 //! never look at the text around a position (no anchors or lookarounds)
@@ -137,15 +139,26 @@ enum Inst {
     Loop(Unit, u32, bool),
     At(AtCode, u32),
     /// A lookaround: whether the program at `entry` matches at this
-    /// position (ahead), or ends exactly here from one of the widths
-    /// `behind` back.
+    /// position (ahead), or ends exactly here from `behind` characters
+    /// back.
     Look {
         negate: bool,
-        behind: Option<(usize, usize)>,
+        behind: Option<usize>,
         entry: usize,
     },
     /// Continue at both targets, the first in preference.
     Split(usize, usize),
+    /// The head of an unbounded repeat of a compound item: continue into
+    /// the item at `body` and after the repeat at `exit`, the body first
+    /// when `greedy`. Reached again at the same position, after an
+    /// iteration that consumed nothing, it continues at the exit only,
+    /// as CPython's `MAX_UNTIL` and `MIN_UNTIL` stop iterating once an
+    /// iteration matches empty.
+    Repeat {
+        body: usize,
+        exit: usize,
+        greedy: bool,
+    },
     Jmp(usize),
     Fail,
     Match,
@@ -435,12 +448,7 @@ impl<'p> Compiler<'p> {
         p: &'p SubPattern,
         flags: u32,
     ) -> Result<usize, Unsupported> {
-        let behind = (direction < 0).then(|| {
-            let (lo, hi) = get_width(p);
-            let lo = usize::try_from(lo).unwrap_or(usize::MAX);
-            let hi = hi.map_or(usize::MAX, |hi| usize::try_from(hi).unwrap_or(usize::MAX));
-            (lo, hi)
-        });
+        let behind = (direction < 0).then(|| usize::try_from(get_width(p).0).unwrap_or(usize::MAX));
         let index = self.emit(Inst::Look {
             negate,
             behind,
@@ -458,9 +466,6 @@ impl<'p> Compiler<'p> {
         greedy: bool,
         flags: u32,
     ) -> Result<(), Unsupported> {
-        if get_width(item).0 == 0 {
-            return Err(Unsupported);
-        }
         for _ in 0..min {
             self.seq(item, flags)?;
         }
@@ -469,10 +474,18 @@ impl<'p> Compiler<'p> {
                 self.emit(Inst::Loop(unit, unit_flags, greedy))?;
                 return Ok(());
             }
-            let split = self.emit(Inst::Split(0, 0))?;
+            let head = self.emit(Inst::Repeat {
+                body: 0,
+                exit: 0,
+                greedy,
+            })?;
             self.seq(item, flags)?;
-            self.emit(Inst::Jmp(split))?;
-            self.insts[split] = split_inst(split + 1, self.insts.len(), greedy);
+            self.emit(Inst::Jmp(head))?;
+            self.insts[head] = Inst::Repeat {
+                body: head + 1,
+                exit: self.insts.len(),
+                greedy,
+            };
             return Ok(());
         }
         let mut splits = Vec::new();
@@ -930,6 +943,7 @@ impl Program {
                     Inst::At(..)
                     | Inst::Look { .. }
                     | Inst::Split(..)
+                    | Inst::Repeat { .. }
                     | Inst::Jmp(_)
                     | Inst::Fail => {
                         unreachable!("only characters and matches wait for input")
@@ -977,6 +991,9 @@ impl Program {
                 continue;
             }
             if list.marks[pc] == generation {
+                if let Inst::Repeat { exit, .. } = &self.insts[pc] {
+                    stack.push(*exit);
+                }
                 continue;
             }
             list.marks[pc] = generation;
@@ -985,6 +1002,15 @@ impl Program {
                 Inst::Split(first, second) => {
                     stack.push(*second);
                     stack.push(*first);
+                }
+                Inst::Repeat { body, exit, greedy } => {
+                    if *greedy {
+                        stack.push(*exit);
+                        stack.push(*body);
+                    } else {
+                        stack.push(*body);
+                        stack.push(*exit);
+                    }
                 }
                 Inst::At(at, flags) => {
                     if pos == 0
@@ -1003,7 +1029,7 @@ impl Program {
                     entry,
                 } => {
                     let (matched, inner) = self.look(*behind, *entry, text, pos);
-                    if behind.is_some_and(|(_, hi)| hi > pos) || inner != Touch::Never {
+                    if behind.is_some_and(|w| w > pos) || inner != Touch::Never {
                         *touch = Touch::End;
                     }
                     if matched != *negate {
@@ -1026,12 +1052,10 @@ impl Program {
     }
 
     /// Whether the lookaround body at `entry` matches at `pos`: ahead of
-    /// it, or ending exactly at it from one of its widths `behind` back
-    /// (CPython only accepts fixed-width lookbehinds, which the matcher
-    /// extends to any of a variable width's widths).
+    /// it, or ending exactly at it from its fixed width `behind` back.
     fn look(
         &self,
-        behind: Option<(usize, usize)>,
+        behind: Option<usize>,
         entry: usize,
         text: &[char],
         pos: usize,
@@ -1047,7 +1071,7 @@ impl Program {
         };
         let found = match behind {
             None => run(pos, None),
-            Some((lo, hi)) => (lo..=hi.min(pos)).any(|w| run(pos - w, Some(pos))),
+            Some(w) => w <= pos && run(pos - w, Some(pos)),
         };
         self.return_scratch(scratch);
         (found, touch)

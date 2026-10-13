@@ -218,7 +218,7 @@ fn match_terminal_reports_its_own_pattern_only() {
 
 #[test]
 fn matcher_running_out_of_budget_is_unknown() {
-    let g = compiled("start: A\nA: /(a*)*b/\n");
+    let g = compiled("start: A\nA: /(a*)*b\\1/\n");
     let lexer = Lexer::new(&g.terminals);
     let text = chars(&"a".repeat(40));
     assert_eq!(lexer.match_terminal(0, &text, 0), Lexed::Unknown);
@@ -393,8 +393,9 @@ fn anchored_patterns_may_look_before_their_start() {
         "a*\\b",
         "(a|)\\b",
         "(a)?(?(1)b)\\b",
-        "(?<=a+)b",
-        "a(?<=a+)b",
+        "(?<=aa)b",
+        "a(?<=aa)b",
+        "(a)(?<=\\1)b",
         "a*+\\b",
     ] {
         assert!(anchored_pattern(pattern), "{pattern}");
@@ -603,7 +604,7 @@ fn only_candidates_that_can_end_the_previous_match_are_worth_trying() {
 
 #[test]
 fn a_known_own_scan_stands_in_for_running_its_pattern_again() {
-    let g = compiled("start: A B C\nA: /a+/\nB: /ab/\nC: /(c*)*d/\n");
+    let g = compiled("start: A B C\nA: /a+/\nB: /ab/\nC: /(c*)*d\\1/\n");
     let lexer = Lexer::new(&g.terminals);
     let (a, b, c) = (
         g.terminal_id("A").unwrap(),

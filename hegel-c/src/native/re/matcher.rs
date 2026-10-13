@@ -33,11 +33,17 @@ pub const DEFAULT_STEP_LIMIT: u64 = 1_000_000;
 /// The default nesting depth of pattern sequences one match may reach
 /// before it is abandoned with [`MatchError::DepthLimit`]. Only repeats of
 /// items with capture groups, assertions or nested repeats recurse per
-/// iteration (two levels each); repeats of single characters and of
-/// alternations of plain character sequences run on an explicit stack.
-/// Unoptimised builds use about 1 KiB of stack per level, so this keeps a
-/// match within half of a 2 MiB thread stack.
-pub const DEFAULT_DEPTH_LIMIT: usize = 1_000;
+/// iteration (several levels each); repeats of single characters and of
+/// alternations of plain character sequences run on an explicit stack,
+/// and a string checked against a pattern as its constraint goes to the
+/// simulation in [`vm`](super::vm) for every pattern that can express,
+/// so the limit bears on patterns with backreferences, conditional
+/// groups, atomic groups or possessive repeats, and on the lexer
+/// simulation's own matches. A level takes up to about 1.5 KiB of stack
+/// in an unoptimised build (about 0.5 KiB at opt-level 1), so this
+/// keeps a match within 600 KiB: inside a 1 MiB thread stack, the
+/// smallest a thread commonly gets, with room to spare.
+pub const DEFAULT_DEPTH_LIMIT: usize = 400;
 
 /// Why a match was abandoned without an answer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -111,9 +117,10 @@ pub enum Touch {
     Never,
     /// The only thing that looked at the end was the forward scan of one
     /// unbounded greedy repeat of a single unit (identified by the
-    /// `run_id` of [`find_run`]), and the match ends at the end of the
-    /// text: on a longer text it ends after the run of that unit
-    /// continuing from there.
+    /// `run_id` of [`find_run`]), the match took the whole run and ends
+    /// at the end of the text, and nothing after the run read a
+    /// character the run covered: on a longer text it ends after the run
+    /// of that unit continuing from there.
     Tail(usize),
     /// Only tests of single characters looked at the end, and every one
     /// found no character there: on a longer text whose next character
@@ -181,6 +188,18 @@ impl Touch {
             }
             Touch::End => Touch::End,
         };
+    }
+
+    /// Record that the match no longer follows the run whose forward
+    /// scan reached the end: the rest of the pattern failed after the
+    /// whole run, or read a character the run covered (a lookbehind, a
+    /// backreference, a multiline `^`), which a longer run would have
+    /// moved. A longer text then matches the same way only when the run
+    /// does not go on.
+    fn untail(&mut self) {
+        if let Touch::Tail(run_id) = *self {
+            *self = Touch::Unless(alloc::vec![Probe::Run(run_id)]);
+        }
     }
 
     /// Record the forward scan of the unbounded greedy unit repeat
@@ -258,13 +277,15 @@ impl State<'_> {
     }
 
     /// [`at_matches`] at `pos`, noting when the verdict depends on where
-    /// the text ends.
+    /// the text ends, and that `^` reads the character before `pos`.
     fn at(&mut self, at: AtCode, pos: usize, flags: u32) -> bool {
         if pos == 0
             || (!matches!(at, AtCode::Beginning | AtCode::BeginningString)
                 && pos + 1 >= self.text.len())
         {
             self.touch.end();
+        } else if at == AtCode::Beginning {
+            self.touch.untail();
         }
         at_matches(at, self.text, pos, flags)
     }
@@ -467,13 +488,7 @@ impl<'p> Matcher<'p> {
         );
         let matched = matched?;
         let end = if matched { end } else { None };
-        let touch = match state.touch {
-            Touch::Tail(run_id) if end != Some(text.len()) => {
-                Touch::Unless(alloc::vec![Probe::Run(run_id)])
-            }
-            touch => touch,
-        };
-        Ok((end, touch))
+        Ok((end, state.touch))
     }
 
     /// Whether the pattern matches the whole of `text`, like CPython's
@@ -592,6 +607,7 @@ impl<'p> Matcher<'p> {
                 let Some((start, end)) = st.group(*g) else {
                     return Ok(false);
                 };
+                st.touch.untail();
                 let len = end - start;
                 if pos + len > st.text.len() {
                     st.touch.end();
@@ -649,6 +665,7 @@ impl<'p> Matcher<'p> {
                 if self.seq(st, rest, end, flags, k)? {
                     return Ok(true);
                 }
+                st.touch.untail();
                 st.restore_marks(saved);
                 Ok(false)
             }
@@ -715,9 +732,9 @@ impl<'p> Matcher<'p> {
     }
 
     /// Whether the lookaround body `p` matches at `pos`: ahead of it for a
-    /// positive `direction`, ending exactly at it for a negative one.
-    /// CPython only accepts fixed-width lookbehinds; a variable-width one
-    /// (which the parser does not reject) is accepted at any of its widths.
+    /// positive `direction`, ending exactly at it for a negative one,
+    /// having started its fixed width before (the parser rejects a
+    /// lookbehind of any other kind, as CPython does).
     fn lookaround<'t>(
         &self,
         st: &mut State<'t>,
@@ -734,18 +751,15 @@ impl<'p> Matcher<'p> {
             }
             return Ok(found);
         }
-        let (lo, hi) = self.width(p);
-        if hi > pos {
+        let w = self.least_width(p);
+        if w > pos {
             st.touch.end();
+            return Ok(false);
         }
-        let mut w = lo;
-        while w <= hi && w <= pos {
-            if self.seq(st, &p.data, pos - w, flags, &mut |_, end| Ok(end == pos))? {
-                return Ok(true);
-            }
-            w += 1;
+        if w > 0 {
+            st.touch.untail();
         }
-        Ok(false)
+        self.seq(st, &p.data, pos - w, flags, &mut |_, end| Ok(end == pos))
     }
 
     /// CPython's `MAX_UNTIL`: `count` iterations of `item` are done; take
@@ -860,7 +874,10 @@ impl<'p> Matcher<'p> {
     }
 
     /// CPython's `REPEAT_ONE`: count the most units that match, then give
-    /// them back one at a time.
+    /// them back one at a time. A scan that reaches the end of the text
+    /// records a [`Touch::Tail`], which stands only while the match
+    /// follows the whole run: once the rest fails after it, the touch
+    /// is downgraded.
     fn greedy_unit<'t>(
         &self,
         st: &mut State<'t>,
@@ -896,6 +913,7 @@ impl<'p> Matcher<'p> {
             st.run = Some((run_id, pos, pos + count));
         }
         if count < min as usize {
+            st.touch.untail();
             return Ok(false);
         }
         loop {
@@ -903,6 +921,7 @@ impl<'p> Matcher<'p> {
             if self.seq(st, rest, pos + count, flags, k)? {
                 return Ok(true);
             }
+            st.touch.untail();
             if count == min as usize {
                 return Ok(false);
             }
@@ -1078,63 +1097,46 @@ impl<'p> Matcher<'p> {
         if self.seq(st, rest, cur, flags, k)? {
             return Ok(true);
         }
+        st.touch.untail();
         st.restore_marks(saved);
         Ok(false)
     }
 
-    /// CPython's `getwidth`: the least and most characters `p` can match,
-    /// saturating. A backreference has the width of its group.
-    fn width(&self, p: &SubPattern) -> (usize, usize) {
+    /// The lower bound of CPython's `getwidth`: the least characters `p`
+    /// can match, saturating, with a backreference as wide as its group.
+    /// For the body of a lookbehind, whose least and most widths the
+    /// parser requires to agree, this is its width.
+    fn least_width(&self, p: &SubPattern) -> usize {
         let mut lo = 0usize;
-        let mut hi = 0usize;
         for op in &p.data {
-            let (l, h) = match op {
-                OpCode::Branch(alternatives) => {
-                    let mut l = usize::MAX;
-                    let mut h = 0;
-                    for alternative in alternatives {
-                        let (al, ah) = self.width(alternative);
-                        l = l.min(al);
-                        h = h.max(ah);
-                    }
-                    (l, h)
-                }
-                OpCode::Subpattern { p, .. } | OpCode::AtomicGroup(p) => self.width(p),
-                OpCode::MaxRepeat { min, max, item }
-                | OpCode::MinRepeat { min, max, item }
-                | OpCode::PossessiveRepeat { min, max, item } => {
-                    let (il, ih) = self.width(item);
-                    let h = if *max == MAXREPEAT {
-                        usize::MAX
-                    } else {
-                        ih.saturating_mul(*max as usize)
-                    };
-                    (il.saturating_mul(*min as usize), h)
+            let l = match op {
+                OpCode::Branch(alternatives) => alternatives
+                    .iter()
+                    .map(|alternative| self.least_width(alternative))
+                    .min()
+                    .unwrap_or(0),
+                OpCode::Subpattern { p, .. } | OpCode::AtomicGroup(p) => self.least_width(p),
+                OpCode::MaxRepeat { min, item, .. }
+                | OpCode::MinRepeat { min, item, .. }
+                | OpCode::PossessiveRepeat { min, item, .. } => {
+                    self.least_width(item).saturating_mul(*min as usize)
                 }
                 OpCode::GroupRef(g) => match find_group(self.pattern, *g) {
-                    Some(group) => self.width(group),
+                    Some(group) => self.least_width(group),
                     None => unreachable!("the parser rejects references to undefined groups"),
                 },
                 OpCode::GroupRefExists { yes, no, .. } => {
-                    let (yl, yh) = self.width(yes);
-                    let (nl, nh) = match no {
-                        Some(no) => self.width(no),
-                        None => (0, 0),
-                    };
-                    (yl.min(nl), yh.max(nh))
-                }
-                _ => {
-                    if as_unit(op).is_some() {
-                        (1, 1)
-                    } else {
-                        (0, 0)
+                    let yes = self.least_width(yes);
+                    match no {
+                        Some(no) => yes.min(self.least_width(no)),
+                        None => 0,
                     }
                 }
+                _ => usize::from(as_unit(op).is_some()),
             };
             lo = lo.saturating_add(l);
-            hi = hi.saturating_add(h);
         }
-        (lo, hi)
+        lo
     }
 }
 

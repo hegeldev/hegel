@@ -1,12 +1,11 @@
-//! Embedded tests for the SRE-style matcher in `src/native/draws/regex.rs`.
-//!
-//! The matcher (`match_seq`) is internal: it's only exercised through
-//! negative-lookahead validation, where the body shape determines which
-//! arms get evaluated. End-to-end tests cover the literal-only path
-//! comfortably, but the more complex arms (`Branch`, `MaxRepeat`,
-//! `GroupRef`, etc.) need patterns that the generator may rarely emit
-//! against. These direct-call tests pin each arm independently of the
-//! generator's draw distribution.
+//! Embedded tests for the regex generator in `src/native/draws/regex.rs`:
+//! the strings it draws for a pattern (and that every one matches the
+//! pattern), the character sets it builds for classes under each flag,
+//! how it records a drawn string as one choice under the pattern's
+//! constraint, and `match_seq`, its own check of a deferred lookaround or
+//! anchor against the string it drew. `match_seq` is only reached through
+//! patterns with such assertions, so each of its arms is pinned by a
+//! direct call rather than left to the generator's draw distribution.
 
 use super::*;
 use crate::native::HashMap;
@@ -1223,7 +1222,7 @@ fn generate_regex_fullmatch_lookbehind_is_validated_against_the_final_string() {
         );
     }
 
-    let re = CompiledRegex::compile("(?<=a*)b", None).unwrap();
+    let re = CompiledRegex::compile("(?<=^)b", None).unwrap();
     let mut produced = 0;
     for seed in 0..20 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
@@ -1232,7 +1231,10 @@ fn generate_regex_fullmatch_lookbehind_is_validated_against_the_final_string() {
             assert_eq!(s, "b");
         }
     }
-    assert!(produced > 0, "an empty-matching lookbehind body must pass");
+    assert!(
+        produced > 0,
+        "a zero-width lookbehind body that holds must pass"
+    );
 }
 
 #[test]

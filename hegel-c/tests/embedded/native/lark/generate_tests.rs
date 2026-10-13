@@ -900,7 +900,7 @@ fn scans_follows_the_dynamic_lexer() {
 
 #[test]
 fn scans_gives_involved_patterns_the_benefit_of_the_doubt() {
-    let spec = grammar("start: A B\nA: /(a*)*b/\nB: /c/\n%ignore WS\nWS: /( *)*\\t/\n");
+    let spec = grammar("start: A B\nA: /(a*)*b\\1/\nB: /c/\n%ignore WS\nWS: /( *)*\\t\\1/\n");
     let a = tok(&spec, "A", &"a".repeat(40));
     let b = tok(&spec, "B", "c");
     let ws = tok(&spec, "WS", &" ".repeat(40));
@@ -985,7 +985,7 @@ fn basic_fit_reads_ignorable_stretches_loosely() {
 
 #[test]
 fn basic_fit_trusts_what_it_cannot_lex() {
-    let spec = grammar("start: A B\nA: /(a*)*b/\nB: /c/\n");
+    let spec = grammar("start: A B\nA: /(a*)*b\\1/\nB: /c/\n");
     let a = tok(&spec, "A", &"a".repeat(40));
     assert_eq!(*a.reading(), Reading::Opaque);
     let short = tok(&spec, "A", "ab");
