@@ -11,6 +11,8 @@ use super::compile::{RuleId, TermId};
 use super::parse::Tree;
 use crate::native::HashSet;
 use alloc::vec::Vec;
+use core::hash::{Hash, Hasher};
+use rustc_hash::FxHasher;
 
 /// What a node of the layout is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,19 +42,52 @@ pub struct Layout {
 }
 
 impl Layout {
+    /// Lay `tree` out over its text: a node per subtree in pre-order, each
+    /// with the range of text its leaves cover, which is empty for a node
+    /// deriving no text of its own. The leaves of a tree cover its text
+    /// in order, so a leaf starts where the one before it ends. The walk
+    /// keeps its own stack of open subtrees, so a derivation nesting as
+    /// deeply as its text is long costs no call stack.
     pub fn new(tree: &Tree) -> Layout {
         let mut layout = Layout { nodes: Vec::new() };
-        let mut derives = Vec::new();
-        layout.place(tree, 0, &mut derives);
+        let mut derives: Vec<bool> = Vec::new();
+        let mut open: Vec<(&Tree, usize, usize)> = Vec::new();
+        let mut cursor = 0;
+        layout.open(tree, cursor, &mut derives);
+        open.push((tree, 0, 0));
+        while let Some(&(subtree, index, next)) = open.last() {
+            let children = subtree.children();
+            if next < children.len() {
+                let top = open.len() - 1;
+                open[top].2 += 1;
+                let child = &children[next];
+                let child_index = layout.open(child, cursor, &mut derives);
+                layout.nodes[index].children.push(child_index);
+                open.push((child, child_index, 0));
+                continue;
+            }
+            open.pop();
+            if let Tree::Terminal { end, .. } | Tree::Ignored { end, .. } = subtree {
+                layout.nodes[index].end = *end;
+                derives[index] = matches!(subtree, Tree::Terminal { .. });
+                cursor = *end;
+            }
+            if let Some(&(_, parent, _)) = open.last() {
+                if derives[index] {
+                    if !derives[parent] {
+                        layout.nodes[parent].start = layout.nodes[index].start;
+                        derives[parent] = true;
+                    }
+                    layout.nodes[parent].end = layout.nodes[index].end;
+                }
+            }
+        }
         layout
     }
 
-    /// Lay `tree` out from text position `at`, returning the position
-    /// after it; `derives` records per node whether it derives any text
-    /// of its own, which is what its range covers. The leaves of a tree
-    /// cover its text in order, so a leaf's `start` is `at`.
-    fn place(&mut self, tree: &Tree, at: usize, derives: &mut Vec<bool>) -> usize {
-        let index = self.nodes.len();
+    /// Add the node for `tree`, starting at text position `at` with no
+    /// children yet, and return its index.
+    fn open(&mut self, tree: &Tree, at: usize, derives: &mut Vec<bool>) -> usize {
         let part = match tree {
             Tree::Terminal { id, .. } => Part::Terminal(*id),
             Tree::Ignored { id, .. } => Part::Ignored(*id),
@@ -67,29 +102,7 @@ impl Layout {
             children: Vec::new(),
         });
         derives.push(false);
-        match tree {
-            Tree::Terminal { end, .. } | Tree::Ignored { end, .. } => {
-                self.nodes[index].end = *end;
-                derives[index] = matches!(tree, Tree::Terminal { .. });
-                self.nodes[index].end
-            }
-            Tree::Rule { .. } | Tree::Group { .. } | Tree::Repeat { .. } => {
-                let mut cursor = at;
-                for child in tree.children() {
-                    let child_index = self.nodes.len();
-                    cursor = self.place(child, cursor, derives);
-                    self.nodes[index].children.push(child_index);
-                    if derives[child_index] {
-                        if !derives[index] {
-                            self.nodes[index].start = self.nodes[child_index].start;
-                            derives[index] = true;
-                        }
-                        self.nodes[index].end = self.nodes[child_index].end;
-                    }
-                }
-                cursor
-            }
-        }
+        self.nodes.len() - 1
     }
 
     pub fn nodes(&self) -> &[Node] {
@@ -99,41 +112,62 @@ impl Layout {
     /// The pairs of a rule node and a node of the same rule inside it
     /// covering strictly less text, as `(ancestor, descendant)` indices:
     /// outermost ancestor first, and for each ancestor the descendant
-    /// covering the least text first.
+    /// covering the least text first. A node is paired with the 1st,
+    /// 2nd, 4th, 8th, … nodes of its rule above it rather than every
+    /// one: `d` nodes of one rule nested in a chain would otherwise make
+    /// `d²/2` pairs, each a whole text for a shrinker to try, where these
+    /// make `d log d` and still reach any node from the outermost in a
+    /// few accepted hoists.
     pub fn hoists(&self) -> Vec<(usize, usize)> {
         let mut pairs = Vec::new();
         let mut ancestors: Vec<(usize, RuleId)> = Vec::new();
-        self.collect_hoists(0, &mut ancestors, &mut pairs);
+        let mut open: Vec<(usize, usize)> = Vec::new();
+        self.enter_hoists(0, &mut ancestors, &mut pairs);
+        open.push((0, 0));
+        while let Some(&(index, next)) = open.last() {
+            let node = &self.nodes[index];
+            if next < node.children.len() {
+                let top = open.len() - 1;
+                open[top].1 += 1;
+                let child = node.children[next];
+                self.enter_hoists(child, &mut ancestors, &mut pairs);
+                open.push((child, 0));
+                continue;
+            }
+            open.pop();
+            if matches!(node.part, Part::Rule(_)) {
+                ancestors.pop();
+            }
+        }
         pairs.sort_by_key(|&(a, d)| (a, self.nodes[d].end - self.nodes[d].start));
         pairs
     }
 
-    fn collect_hoists(
+    /// Pair the node at `index`, when it is a rule node, with the nodes
+    /// of its rule among `ancestors` at the distances [`Self::hoists`]
+    /// takes, and make it an ancestor of the nodes within it.
+    fn enter_hoists(
         &self,
         index: usize,
         ancestors: &mut Vec<(usize, RuleId)>,
         pairs: &mut Vec<(usize, usize)>,
     ) {
         let node = &self.nodes[index];
-        let rule = match node.part {
-            Part::Rule(id) => Some(id),
-            _ => None,
+        let Part::Rule(id) = node.part else {
+            return;
         };
-        if let Some(id) = rule {
-            for &(ancestor, ancestor_rule) in ancestors.iter() {
-                let above = &self.nodes[ancestor];
-                if ancestor_rule == id && node.end - node.start < above.end - above.start {
-                    pairs.push((ancestor, index));
-                }
+        let mut distance = 0usize;
+        for &(ancestor, ancestor_rule) in ancestors.iter().rev() {
+            if ancestor_rule != id {
+                continue;
             }
-            ancestors.push((index, id));
+            distance += 1;
+            let above = &self.nodes[ancestor];
+            if distance.is_power_of_two() && node.end - node.start < above.end - above.start {
+                pairs.push((ancestor, index));
+            }
         }
-        for &child in &node.children {
-            self.collect_hoists(child, ancestors, pairs);
-        }
-        if rule.is_some() {
-            ancestors.pop();
-        }
+        ancestors.push((index, id));
     }
 
     /// For each repeat node in pre-order, the ranges of its repetitions
@@ -177,18 +211,12 @@ impl Layout {
     /// How deeply the rules nest: the most rule nodes on any path from
     /// the root to a leaf.
     pub fn depth(&self) -> u32 {
-        self.depth_below(0)
-    }
-
-    fn depth_below(&self, index: usize) -> u32 {
-        let node = &self.nodes[index];
-        let own = u32::from(matches!(node.part, Part::Rule(_)));
-        own + node
-            .children
-            .iter()
-            .map(|&child| self.depth_below(child))
-            .max()
-            .unwrap_or(0)
+        let mut depths = alloc::vec![0u32; self.nodes.len()];
+        for (index, node) in self.nodes.iter().enumerate().rev() {
+            let below = node.children.iter().map(|&c| depths[c]).max().unwrap_or(0);
+            depths[index] = u32::from(matches!(node.part, Part::Rule(_))) + below;
+        }
+        depths[0]
     }
 
     /// Every rule node with its rule, in pre-order.
@@ -202,49 +230,103 @@ impl Layout {
             .collect()
     }
 
-    /// The coarse moves on `text` for a shrinker that tries each once
+    /// The coarse moves on the text for a shrinker that tries each once
     /// rather than searching: all the ignored text cut, every repeat
     /// emptied, halved and shortened by one, every hoist, and every leaf
-    /// replaced by the smallest text `smallest` knows for its terminal;
-    /// each once, and none that leaves `text` as it is.
-    pub fn coarse_candidates(
-        &self,
-        text: &[u32],
-        smallest: impl Fn(TermId) -> Option<Vec<u32>>,
-    ) -> Vec<Vec<u32>> {
-        let mut candidates = Vec::new();
-        let mut seen: HashSet<Vec<u32>> = HashSet::default();
-        let mut propose = |candidate: Vec<u32>| {
-            if candidate != text && seen.insert(candidate.clone()) {
-                candidates.push(candidate);
-            }
-        };
-        let ignored = self.ignored();
-        if !ignored.is_empty() {
-            propose(cut(text, &ignored));
+    /// replaced by the smallest text known for its terminal.
+    pub fn coarse_moves(&self) -> Vec<Coarse> {
+        let mut moves = Vec::new();
+        if !self.ignored().is_empty() {
+            moves.push(Coarse::Ignored);
         }
         for items in self.repeats() {
             let Some(last) = items.last() else {
                 continue;
             };
             let half = items.len() / 2;
-            propose(splice(text, items[0].0, last.1, &[]));
+            moves.push(Coarse::Delete {
+                start: items[0].0,
+                end: last.1,
+            });
             if half > 0 {
-                propose(splice(text, items[items.len() - half].0, last.1, &[]));
-                propose(splice(text, items[items.len() - 1].0, last.1, &[]));
+                moves.push(Coarse::Delete {
+                    start: items[items.len() - half].0,
+                    end: last.1,
+                });
+                moves.push(Coarse::Delete {
+                    start: items[items.len() - 1].0,
+                    end: last.1,
+                });
             }
         }
         for (ancestor, descendant) in self.hoists() {
             let (a, d) = (&self.nodes[ancestor], &self.nodes[descendant]);
-            propose(splice(text, a.start, a.end, &text[d.start..d.end]));
+            moves.push(Coarse::Hoist {
+                start: a.start,
+                end: a.end,
+                from: d.start,
+                to: d.end,
+            });
         }
         for (id, start, end) in self.leaves() {
-            if let Some(small) = smallest(id) {
-                propose(splice(text, start, end, &small));
-            }
+            moves.push(Coarse::Smallest { id, start, end });
         }
-        candidates
+        moves
     }
+
+    /// The texts the coarse moves (see [`Self::coarse_moves`]) make of
+    /// `text`, with `smallest` the smallest text known for a terminal:
+    /// each distinct one once, none equal to `text`, and each made only
+    /// as it is asked for, since every one is as long as the text and
+    /// there are as many as the derivation has nodes.
+    pub fn coarse_candidates<'a>(
+        &'a self,
+        text: &'a [u32],
+        smallest: impl Fn(TermId) -> Option<Vec<u32>> + 'a,
+    ) -> impl Iterator<Item = Vec<u32>> + 'a {
+        let mut seen: HashSet<u64> = HashSet::default();
+        self.coarse_moves().into_iter().filter_map(move |mv| {
+            let candidate = match mv {
+                Coarse::Ignored => cut(text, &self.ignored()),
+                Coarse::Delete { start, end } => splice(text, start, end, &[]),
+                Coarse::Hoist {
+                    start,
+                    end,
+                    from,
+                    to,
+                } => splice(text, start, end, &text[from..to]),
+                Coarse::Smallest { id, start, end } => splice(text, start, end, &smallest(id)?),
+            };
+            let mut hasher = FxHasher::default();
+            candidate.hash(&mut hasher);
+            (candidate != text && seen.insert(hasher.finish())).then_some(candidate)
+        })
+    }
+}
+
+/// A coarse move on a text (see [`Layout::coarse_moves`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Coarse {
+    /// All the ignored text cut.
+    Ignored,
+    /// The text from `start` to `end`, some of a repeat's repetitions,
+    /// deleted.
+    Delete { start: usize, end: usize },
+    /// The text from `start` to `end` replaced by the text from `from` to
+    /// `to` within it, a node of the same rule.
+    Hoist {
+        start: usize,
+        end: usize,
+        from: usize,
+        to: usize,
+    },
+    /// The leaf from `start` to `end` replaced by the smallest text known
+    /// for its terminal.
+    Smallest {
+        id: TermId,
+        start: usize,
+        end: usize,
+    },
 }
 
 /// `text` with `start..end` replaced by `with`.

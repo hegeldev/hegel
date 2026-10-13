@@ -167,6 +167,36 @@ fn hoists_pair_each_rule_node_with_the_smaller_same_rule_nodes_inside_it() {
 }
 
 #[test]
+fn hoists_skip_the_same_rule_nodes_at_distances_that_are_no_power_of_two() {
+    let (_, _, layout, text) = laid_out(NESTED, "[[[[x]]]]");
+    let shown: Vec<(String, String)> = layout
+        .hoists()
+        .into_iter()
+        .map(|(a, d)| {
+            let (a, d) = (&layout.nodes()[a], &layout.nodes()[d]);
+            (
+                text_of(&text, (a.start, a.end)),
+                text_of(&text, (d.start, d.end)),
+            )
+        })
+        .collect();
+    let pair = |a: &str, d: &str| (String::from(a), String::from(d));
+    assert_eq!(
+        shown,
+        vec![
+            pair("[[[[x]]]]", "x"),
+            pair("[[[[x]]]]", "[[x]]"),
+            pair("[[[[x]]]]", "[[[x]]]"),
+            pair("[[[x]]]", "[x]"),
+            pair("[[[x]]]", "[[x]]"),
+            pair("[[x]]", "x"),
+            pair("[[x]]", "[x]"),
+            pair("[x]", "x"),
+        ]
+    );
+}
+
+#[test]
 fn repeats_list_the_repetitions_of_each_repeat_without_the_ignored_text() {
     let (_, _, layout, text) = laid_out("start: \"a\" (\"b\" | \"cc\")*\n", "abccb");
     assert_eq!(layout.repeats(), vec![vec![(1, 2), (2, 4), (4, 5)]]);
@@ -219,7 +249,6 @@ fn coarse_candidates_are_each_move_once_and_never_the_text_itself() {
     let x = grammar.terminal_id("X").unwrap();
     let candidates: Vec<String> = layout
         .coarse_candidates(&text, |id| (id == x).then(|| cps("y")))
-        .into_iter()
         .map(|c| text_of(&c, (0, c.len())))
         .collect();
     for candidate in &candidates {
@@ -243,7 +272,6 @@ fn coarse_candidates_cut_the_ignored_text_and_shorten_repeats() {
     );
     let candidates: Vec<String> = layout
         .coarse_candidates(&text, |_| None)
-        .into_iter()
         .map(|c| text_of(&c, (0, c.len())))
         .collect();
     assert_eq!(candidates, vec!["1,2,3,4,5", "1", "1, 2, 3", "1, 2, 3, 4"]);

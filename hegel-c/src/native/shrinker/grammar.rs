@@ -282,11 +282,19 @@ enum LeafStage {
     Delete,
     Prefix(Option<BinSearchDown>),
     Back(usize),
-    Lower {
-        p: usize,
-        search: Option<BinSearchDown>,
-    },
+    Lower { p: usize, search: Option<Lowering> },
     Done,
+}
+
+/// The binary search lowering one character: the codepoint the search's
+/// bounds are about, which the text should have there (the one it began
+/// from, then each one accepted in its place), and the last one probed.
+/// Should the text have another there, which an accepted replacement
+/// re-derived differently can leave, the search starts over from it.
+struct Lowering {
+    expected: u32,
+    probed: u32,
+    search: BinSearchDown,
 }
 
 impl LeafStage {
@@ -327,14 +335,26 @@ impl LeafStage {
                         *self = LeafStage::Done;
                         continue;
                     }
-                    let key = d.kind.codepoint_key(d.text[start + *p]);
-                    let search = slot.get_or_insert_with(|| BinSearchDown::new(0, i128::from(key)));
-                    match search.probe() {
+                    let codepoint = d.text[start + *p];
+                    if slot
+                        .as_ref()
+                        .is_some_and(|lowering| lowering.expected != codepoint)
+                    {
+                        *slot = None;
+                    }
+                    let key = d.kind.codepoint_key(codepoint);
+                    let lowering = slot.get_or_insert_with(|| Lowering {
+                        expected: codepoint,
+                        probed: codepoint,
+                        search: BinSearchDown::new(0, i128::from(key)),
+                    });
+                    match lowering.search.probe() {
                         Some(k) => {
                             let codepoint = hegel_internal_unwrap!(
                                 d.kind.key_to_codepoint(k as u32),
                                 "shrink_leaf: a key below a character's is in the alphabet"
                             );
+                            lowering.probed = codepoint;
                             return Ok(Some(splice(
                                 &d.text,
                                 start + *p,
@@ -363,11 +383,16 @@ impl LeafStage {
                     LeafStage::Prefix(None)
                 }
             }
-            LeafStage::Prefix(Some(search))
-            | LeafStage::Lower {
-                search: Some(search),
+            LeafStage::Prefix(Some(search)) => search.record(ok),
+            LeafStage::Lower {
+                search: Some(lowering),
                 ..
-            } => search.record(ok),
+            } => {
+                if ok {
+                    lowering.expected = lowering.probed;
+                }
+                lowering.search.record(ok);
+            }
             _ => {}
         }
     }

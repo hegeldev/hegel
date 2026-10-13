@@ -36,8 +36,18 @@ use once_cell::race::OnceBox;
 use rustc_hash::FxHasher;
 
 /// How many derivations a constraint remembers before forgetting them all
-/// to make room.
+/// to make room, and how many nodes they may have between them: a
+/// derivation of a string at the default size cap has thousands, each a
+/// few words.
 pub const KNOWN_CAPACITY: usize = 512;
+pub const KNOWN_NODES: usize = 1 << 20;
+
+/// The derivations a constraint remembers, with their nodes counted.
+struct Known {
+    trees: HashMap<Vec<u32>, Arc<Tree>>,
+    nodes: usize,
+    node_cap: usize,
+}
 
 /// A grammar constraint on a string choice; see the module docs.
 pub struct GrammarConstraint {
@@ -54,12 +64,14 @@ pub struct GrammarConstraint {
     /// How deep the rules of a string's derivation may nest, for
     /// mutation (see [`crate::native::lark::mutate`]); the generator keeps
     /// to it, and the parser does not, since an ambiguous grammar may
-    /// derive a generated string more deeply than the walk did.
+    /// derive a generated string more deeply than the walk did. It is no
+    /// part of the identity: which strings the grammar accepts does not
+    /// depend on it.
     max_depth: u32,
     /// The simplest string, computed by the generator at the first draw
     /// (see [`GrammarConstraint::simplest_or_init`]).
     simplest: OnceBox<Vec<u32>>,
-    known: Mutex<HashMap<Vec<u32>, Arc<Tree>>>,
+    known: Mutex<Known>,
     intervals: Arc<IntervalSet>,
     smallest: Mutex<Smallest>,
     /// The characters terminals other than placeholders may contain, when
@@ -139,7 +151,11 @@ impl GrammarConstraint {
             max_size,
             max_depth,
             simplest: OnceBox::new(),
-            known: Mutex::new(HashMap::default()),
+            known: Mutex::new(Known {
+                trees: HashMap::default(),
+                nodes: 0,
+                node_cap: KNOWN_NODES,
+            }),
             intervals: Arc::new(intervals),
             smallest: Mutex::new(smallest),
             alphabet: alphabet.cloned(),
@@ -191,7 +207,7 @@ impl GrammarConstraint {
     /// caller puts in for the placeholder is beyond its lexing checks,
     /// so such a string is not one the grammar draws.
     pub fn tree(&self, text: &[u32]) -> Option<Arc<Tree>> {
-        if let Some(tree) = self.known.lock().get(text) {
+        if let Some(tree) = self.known.lock().trees.get(text) {
             return Some(Arc::clone(tree));
         }
         let chars: Vec<char> = text
@@ -205,10 +221,13 @@ impl GrammarConstraint {
         }
         self.learn(&layout, text);
         let mut known = self.known.lock();
-        if known.len() >= KNOWN_CAPACITY {
-            known.clear();
+        let size = tree.size();
+        if known.trees.len() >= KNOWN_CAPACITY || known.nodes + size > known.node_cap {
+            known.trees.clear();
+            known.nodes = 0;
         }
-        known.insert(text.to_vec(), Arc::clone(&tree));
+        known.nodes += size;
+        known.trees.insert(text.to_vec(), Arc::clone(&tree));
         Some(tree)
     }
 
@@ -343,6 +362,18 @@ impl GrammarConstraint {
         self.max_size
     }
 
+    /// Whether `text`, laid out by `layout`, is within the size cap, its
+    /// placeholder markers counting for nothing (see
+    /// [`crate::native::lark::generate`]).
+    pub fn within_cap(&self, layout: &Layout, text: &[u32]) -> bool {
+        let markers: usize = Self::leaves(layout)
+            .into_iter()
+            .filter(|leaf| self.is_placeholder_leaf(leaf))
+            .map(|leaf| leaf.end - leaf.start)
+            .sum();
+        text.len() - markers <= self.max_size
+    }
+
     /// How deep the rules of a derivation may nest, for mutation.
     pub fn max_depth(&self) -> u32 {
         self.max_depth
@@ -361,7 +392,14 @@ impl GrammarConstraint {
     /// How many derivations are remembered.
     #[cfg(test)]
     pub fn known_len(&self) -> usize {
-        self.known.lock().len()
+        self.known.lock().trees.len()
+    }
+
+    /// Cap the nodes of the remembered derivations at `cap` instead of
+    /// [`KNOWN_NODES`].
+    #[cfg(test)]
+    pub fn cap_known_nodes(&self, cap: usize) {
+        self.known.lock().node_cap = cap;
     }
 }
 

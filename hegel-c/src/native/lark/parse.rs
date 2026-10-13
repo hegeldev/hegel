@@ -19,6 +19,14 @@
 //! `%declare`d) or one whose regex is too involved to run within the
 //! matcher's budget.
 //!
+//! Right recursion is taken with Leo's shortcut, which plain Earley
+//! lacks (and Lark's too): completing `x` at a column whose only item
+//! waiting on it ends with that `x` can only complete that item, and so
+//! on up, so the parser adds the topmost item of such a chain at once
+//! (its [`Back::Leo`]) instead of one item per link in every column,
+//! which would be a square of the text's length for `start: "a" start |
+//! "a"`. The links are put back when the derivation is built.
+//!
 //! The tree recovered is the first derivation found, with the grammar's
 //! own structure: a node per rule alternative, per parenthesised group
 //! and per repetition, and leaves for the terminals and for the ignored
@@ -28,7 +36,8 @@
 use super::compile::{Grammar, RuleId, TermId};
 use super::lexsim::{Lexed, Lexer};
 use super::lower::{Lowered, NtId, Provenance, Symbol, lower};
-use crate::native::HashSet;
+use crate::control::{InternalError, hegel_internal_error, hegel_internal_unwrap};
+use crate::native::{HashMap, HashSet};
 use alloc::vec::Vec;
 
 /// What matches a grammar's terminals in a text, for the parser to scan
@@ -116,15 +125,60 @@ impl Tree {
             Tree::Terminal { .. } | Tree::Ignored { .. } => &[],
         }
     }
+
+    fn take_children(&mut self) -> Vec<Tree> {
+        match self {
+            Tree::Rule { children, .. }
+            | Tree::Group { children, .. }
+            | Tree::Repeat { children } => core::mem::take(children),
+            Tree::Terminal { .. } | Tree::Ignored { .. } => Vec::new(),
+        }
+    }
+
+    /// How many nodes the tree has, leaves included.
+    pub fn size(&self) -> usize {
+        let mut count = 0;
+        let mut pending = alloc::vec![self];
+        while let Some(tree) = pending.pop() {
+            count += 1;
+            pending.extend(tree.children());
+        }
+        count
+    }
+}
+
+impl Drop for Tree {
+    /// Frees the subtrees from a stack of its own, so a derivation
+    /// nesting as deeply as its text is long is freed without a call
+    /// stack frame per level.
+    fn drop(&mut self) {
+        let mut pending = self.take_children();
+        while let Some(mut subtree) = pending.pop() {
+            let mut children = subtree.take_children();
+            pending.append(&mut children);
+        }
+    }
 }
 
 /// Where a parse failed: the position past which no item could be
 /// carried, the end of the text when it ended before the start rule was
 /// complete, or the position reached when the parse ran out of its
 /// budget (see [`PARSE_BUDGET`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
     pub position: usize,
+    /// The invariant of the parser's own that was found broken, when
+    /// the parse failed on one rather than on the text.
+    pub internal: Option<InternalError>,
+}
+
+impl ParseError {
+    fn at(position: usize) -> ParseError {
+        ParseError {
+            position,
+            internal: None,
+        }
+    }
 }
 
 /// How many items a parse may propose before it is given up, counting
@@ -139,6 +193,14 @@ pub struct ParseError {
 /// hundred thousand.
 pub const PARSE_BUDGET: usize = 100_000_000;
 
+/// How many distinct items a parse may hold before it is given up the
+/// same way. The proposal budget bounds the time, since on an ambiguous
+/// grammar most proposals find their item in the column already, but a
+/// deep derivation proposes mostly new ones — a rule nested `d` deep
+/// over `n` tokens holds about `n·d` — at some hundred bytes each; the
+/// strings the default caps allow hold a few million.
+pub const ITEM_BUDGET: usize = 1 << 22;
+
 /// A parser for one start rule of a compiled grammar.
 pub struct Parser {
     lowered: Lowered,
@@ -148,14 +210,30 @@ pub struct Parser {
     /// matched at a column.
     terminals: usize,
     budget: usize,
+    item_budget: usize,
 }
 
 #[derive(Clone, Copy)]
 enum Back {
     Predicted,
-    Token { pred: u32, term: u32 },
-    Child { pred: u32, child: u32 },
-    Ignored { pred: u32, term: u32 },
+    Token {
+        pred: u32,
+        term: u32,
+    },
+    Child {
+        pred: u32,
+        child: u32,
+    },
+    Ignored {
+        pred: u32,
+        term: u32,
+    },
+    /// The topmost item of the chain of items that completing `child`
+    /// can only complete, one after the other (see [`Parse::leo_top`]);
+    /// [`Parse::link`] turns it into the `Child` it would have been.
+    Leo {
+        child: u32,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -213,6 +291,11 @@ struct Parse<'p, T: Terminals> {
     /// The completed empty item of each nonterminal in the column being
     /// worked on, with that column.
     held: Vec<Option<(u32, u32)>>,
+    /// Per column and nonterminal asked about, the production and origin
+    /// of the item completing that nonterminal there can only lead to
+    /// (see [`Self::leo_top`]), or `None` when it leads to several or
+    /// stops short.
+    leo: HashMap<(u32, u32), Option<(u32, u32)>>,
     /// How many of the column's active items have been predicted from or
     /// completed, how many of its waiting items scanned, and how many of
     /// its active items checked for carrying past ignored text.
@@ -236,6 +319,7 @@ impl Parser {
             ignore: grammar.ignore.clone(),
             terminals: grammar.terminals.len(),
             budget: PARSE_BUDGET,
+            item_budget: ITEM_BUDGET,
         }
     }
 
@@ -244,6 +328,14 @@ impl Parser {
     #[cfg(test)]
     pub fn with_budget(mut self, budget: usize) -> Parser {
         self.budget = budget;
+        self
+    }
+
+    /// The parser giving up once it holds more than `item_budget` items,
+    /// instead of [`ITEM_BUDGET`].
+    #[cfg(test)]
+    pub fn with_item_budget(mut self, item_budget: usize) -> Parser {
+        self.item_budget = item_budget;
         self
     }
 
@@ -269,6 +361,7 @@ impl Parser {
             delayed: (0..=n).map(|_| Vec::new()).collect(),
             pending: 0,
             held: alloc::vec![None; self.lowered.by_lhs.len()],
+            leo: HashMap::default(),
             processed: 0,
             scanned: 0,
             carried: 0,
@@ -291,8 +384,11 @@ impl Parser {
             parse.predict_and_complete(col);
             parse.scan(col);
             parse.columns[col].waiting.sort_unstable();
-            if parse.proposed > self.budget || (col < n && parse.pending == 0) {
-                return Err(ParseError { position: col });
+            if parse.proposed > self.budget
+                || parse.items.len() > self.item_budget
+                || (col < n && parse.pending == 0)
+            {
+                return Err(ParseError::at(col));
             }
         }
         let root = parse.columns[n]
@@ -306,8 +402,11 @@ impl Parser {
                     && production.lhs == self.start
                     && item.dot as usize == production.rhs.len()
             })
-            .ok_or(ParseError { position: n })?;
-        Ok(parse.build(root))
+            .ok_or(ParseError::at(n))?;
+        parse.build(root).map_err(|internal| ParseError {
+            position: n,
+            internal: Some(internal),
+        })
     }
 }
 
@@ -393,6 +492,13 @@ impl<T: Terminals> Parse<'_, T> {
                     self.held[lhs] = Some((col as u32, idx));
                 }
                 let origin = item.origin as usize;
+                if origin != col {
+                    if let Some((prod, top_origin)) = self.leo_top(origin, lhs) {
+                        let dot = parser.lowered.productions[prod as usize].rhs.len() as u32;
+                        self.add(col, prod, dot, top_origin, Back::Leo { child: idx });
+                        continue;
+                    }
+                }
                 let waiting = &self.columns[origin].waiting;
                 let (from, to) = if origin == col {
                     (0, waiting.len())
@@ -419,6 +525,55 @@ impl<T: Terminals> Parse<'_, T> {
                 }
             }
         }
+    }
+
+    /// The one item of a column already left that waits on `nt` and ends
+    /// with it, when there is exactly one such item and nothing else
+    /// waits on `nt` there.
+    fn sole_waiter(&self, col: usize, nt: usize) -> Option<u32> {
+        let waiting = &self.columns[col].waiting;
+        let from = waiting.partition_point(|&(x, _)| (x as usize) < nt);
+        let to = waiting.partition_point(|&(x, _)| x as usize <= nt);
+        if to != from + 1 {
+            return None;
+        }
+        let idx = waiting[from].1;
+        let item = &self.items[idx as usize];
+        let rhs = &self.parser.lowered.productions[item.prod as usize].rhs;
+        (item.dot as usize + 1 == rhs.len()).then_some(idx)
+    }
+
+    /// The production and origin of the topmost item that completing
+    /// `nt` from `col` can only complete: when the sole item waiting on
+    /// `nt` there ends with it, completing `nt` completes that item and
+    /// nothing else, and if its own nonterminal is in the same position
+    /// at its origin the chain goes on. `None` when there is no such
+    /// chain, or when it comes round to where it began.
+    fn leo_top(&mut self, col: usize, nt: usize) -> Option<(u32, u32)> {
+        let mut chain: Vec<((u32, u32), (u32, u32))> = Vec::new();
+        let (mut col, mut nt) = (col, nt);
+        let top = loop {
+            let key = (col as u32, nt as u32);
+            if let Some(&top) = self.leo.get(&key) {
+                break top;
+            }
+            if chain.iter().any(|&(seen, _)| seen == key) {
+                break None;
+            }
+            let Some(waiter) = self.sole_waiter(col, nt) else {
+                break None;
+            };
+            let item = &self.items[waiter as usize];
+            chain.push((key, (item.prod, item.origin)));
+            col = item.origin as usize;
+            nt = self.parser.lowered.productions[item.prod as usize].lhs;
+        };
+        let mut top = top;
+        for &(key, link) in chain.iter().rev() {
+            top = top.or(Some(link));
+            self.leo.insert(key, top);
+        }
+        top
     }
 
     /// Where `term` matched at `col` can end, as a range of `ends`,
@@ -488,13 +643,14 @@ impl<T: Terminals> Parse<'_, T> {
     /// for each terminal and ignored stretch, and the completed item for
     /// each nonterminal. A repetition's chain of one-more productions is
     /// flattened into the steps of the whole repetition.
-    fn steps(&self, idx: u32) -> Vec<Step> {
+    fn steps(&mut self, idx: u32) -> Result<Vec<Step>, InternalError> {
         let mut segments = Vec::new();
         let mut cur = idx;
         loop {
             let mut steps = Vec::new();
             let mut at = cur;
             loop {
+                self.link(at)?;
                 let item = &self.items[at as usize];
                 let end = item.col as usize;
                 match item.back {
@@ -515,6 +671,7 @@ impl<T: Terminals> Parse<'_, T> {
                         steps.push(Step::Child(child));
                         at = pred;
                     }
+                    Back::Leo { .. } => hegel_internal_error!("steps: a Leo item still unlinked"),
                 }
             }
             steps.reverse();
@@ -532,15 +689,48 @@ impl<T: Terminals> Parse<'_, T> {
         for (k, segment) in segments.into_iter().rev().enumerate() {
             out.extend(segment.into_iter().skip(usize::from(k > 0)));
         }
-        out
+        Ok(out)
     }
 
-    fn frame(&self, item: u32) -> Frame {
-        Frame {
-            item,
-            steps: self.steps(item).into_iter(),
-            children: Vec::new(),
+    /// Put back the items a `Leo` chain skipped, from `child` up to the
+    /// item at `idx`, as the `Child` items plain completion would have
+    /// added, so that the derivation can be read off their steps.
+    fn link(&mut self, idx: u32) -> Result<(), InternalError> {
+        let Back::Leo { child } = self.items[idx as usize].back else {
+            return Ok(());
+        };
+        let top = self.items[idx as usize];
+        let mut child = child;
+        loop {
+            let completed = self.items[child as usize];
+            let lhs = self.parser.lowered.productions[completed.prod as usize].lhs;
+            let pred = hegel_internal_unwrap!(
+                self.sole_waiter(completed.origin as usize, lhs),
+                "link: a Leo chain's link has no sole waiter"
+            );
+            let waiter = self.items[pred as usize];
+            let back = Back::Child { pred, child };
+            if (waiter.prod, waiter.origin) == (top.prod, top.origin) {
+                self.items[idx as usize].back = back;
+                return Ok(());
+            }
+            self.items.push(Item {
+                prod: waiter.prod,
+                dot: waiter.dot + 1,
+                origin: waiter.origin,
+                col: top.col,
+                back,
+            });
+            child = self.items.len() as u32 - 1;
         }
+    }
+
+    fn frame(&mut self, item: u32) -> Result<Frame, InternalError> {
+        Ok(Frame {
+            item,
+            steps: self.steps(item)?.into_iter(),
+            children: Vec::new(),
+        })
     }
 
     fn node(&self, frame: Frame) -> Tree {
@@ -552,15 +742,15 @@ impl<T: Terminals> Parse<'_, T> {
         }
     }
 
-    fn build(&self, root: u32) -> Tree {
-        let mut root_frame = self.frame(root);
+    fn build(&mut self, root: u32) -> Result<Tree, InternalError> {
+        let mut root_frame = self.frame(root)?;
         let mut stack: Vec<Frame> = Vec::new();
         loop {
             let frame = stack.last_mut().unwrap_or(&mut root_frame);
             match frame.steps.next() {
                 Some(Step::Leaf(tree)) => frame.children.push(tree),
                 Some(Step::Child(child)) => {
-                    let next = self.frame(child);
+                    let next = self.frame(child)?;
                     stack.push(next);
                 }
                 None => match stack.pop() {
@@ -572,7 +762,7 @@ impl<T: Terminals> Parse<'_, T> {
                             .children
                             .push(tree);
                     }
-                    None => return self.node(root_frame),
+                    None => return Ok(self.node(root_frame)),
                 },
             }
         }

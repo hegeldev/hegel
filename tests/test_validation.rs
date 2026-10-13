@@ -413,4 +413,8 @@ fn test_from_lark_rejects_impossible_caps() {
         gs::from_lark("start: x\nx: \"a\"").max_depth(1),
         "max_depth is 1",
     );
+    expect_draw_panic(
+        gs::from_lark("start: \"a\"").max_depth(u32::MAX),
+        "may be at most 1000",
+    );
 }

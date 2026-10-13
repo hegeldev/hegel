@@ -12,7 +12,8 @@ use crate::native::lark::analysis::Bound;
 use crate::native::lark::builder::{ImportSource, NoImports};
 use crate::native::lark::parse::Parser;
 use crate::native::rng::EngineRng;
-use alloc::string::ToString;
+use alloc::format;
+use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec;
 use core::ops::{Deref, DerefMut};
@@ -377,6 +378,16 @@ fn caps_below_the_smallest_string_are_errors() {
         err.message,
         "max_size is 1048577 but may be at most 1048576"
     );
+    let err = spec_with(
+        "start: \"a\"*\n",
+        GrammarOptions {
+            max_depth: MAX_MAX_DEPTH + 1,
+            ..GrammarOptions::default()
+        },
+    )
+    .err()
+    .unwrap();
+    assert_eq!(err.message, "max_depth is 1001 but may be at most 1000");
     let err = spec_with(
         "start: a\na: b\nb: \"x\"\n",
         GrammarOptions {
@@ -2179,4 +2190,33 @@ fn an_error_from_the_source_ends_the_walk_with_that_error() {
     let spec = grammar("start: \"a\" | \"b\"\n");
     let result = smallest_string(&mut Failing, &spec);
     assert!(matches!(result, Err(EngineError::Overrun)), "{result:?}");
+}
+
+#[test]
+fn a_grammar_nesting_as_deeply_as_allowed_is_drawn_on_a_small_stack() {
+    std::thread::Builder::new()
+        .stack_size(1 << 20)
+        .spawn(|| {
+            let last = MAX_MAX_DEPTH - 1;
+            let mut text = String::from("start: r1\n");
+            for i in 1..last {
+                text.push_str(&format!("r{i}: \"(\" r{} \")\"\n", i + 1));
+            }
+            text.push_str(&format!("r{last}: \"a\"\n"));
+            let spec = spec_with(
+                &text,
+                GrammarOptions {
+                    max_depth: MAX_MAX_DEPTH,
+                    ..GrammarOptions::default()
+                },
+            )
+            .unwrap();
+            let (drawn, _) = draw(&spec, 1);
+            let drawn = drawn.unwrap();
+            assert_eq!(drawn.len(), 2 * MAX_MAX_DEPTH as usize - 3);
+            assert!(spec.constraint().accepts(&cps(&drawn)));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

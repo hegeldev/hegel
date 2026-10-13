@@ -252,3 +252,18 @@ fn placeholders_are_kept_apart_from_tokens_where_the_grammar_ignores_text() {
     let ignored = spec("start: \"a\" \"b\"\n%declare X\n%ignore X\n");
     assert!(ignored.constraint().accepts(&cps(&format!("a{marker}b"))));
 }
+
+#[test]
+fn the_memo_is_emptied_when_its_derivations_have_too_many_nodes() {
+    let c = constraint("start: /[a-z]+/\n", "start", 16, "a");
+    assert_eq!(c.known_len(), 1);
+    let nodes = c.tree(&cps("a")).unwrap().size();
+    c.cap_known_nodes(3 * nodes);
+    assert!(c.accepts(&cps("ab")));
+    assert!(c.accepts(&cps("ac")));
+    assert_eq!(c.known_len(), 3);
+    assert!(c.accepts(&cps("ad")));
+    assert_eq!(c.known_len(), 1);
+    assert!(c.accepts(&cps("ab")));
+    assert_eq!(c.known_len(), 2);
+}

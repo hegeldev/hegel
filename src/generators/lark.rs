@@ -133,7 +133,7 @@ impl LarkGenerator {
     }
 
     /// Set how deeply rules may nest in a generated string. The default is
-    /// 200.
+    /// 200, and the most allowed is 1000.
     pub fn max_depth(mut self, max_depth: u32) -> Self {
         self.handle = OnceLock::new();
         self.max_depth = Some(max_depth);

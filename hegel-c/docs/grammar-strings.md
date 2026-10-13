@@ -100,8 +100,9 @@ round changes nothing:
 
 1. the grammar's simplest string;
 2. **hoists**: each rule node's text replaced by that of a smaller node of
-   the same rule inside it, outermost first, starting over after each
-   accepted hoist;
+   the same rule inside it (the 1st, 2nd, 4th, 8th, … such node below
+   it, so a deep chain of one rule makes `d log d` pairs rather than
+   `d²`), outermost first, starting over after each accepted hoist;
 3. **repetitions**: for each repeat, all its repetitions deleted, then
    windows of 8, 4, 2 and 1 from the back;
 4. **ignored text**: all of it cut at once, then each stretch from the

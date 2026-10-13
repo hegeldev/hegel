@@ -110,6 +110,10 @@ pub const MAX_MAX_SIZE: u64 = 1 << 20;
 /// The default cap on how deeply rules nest.
 pub const DEFAULT_MAX_DEPTH: u32 = 200;
 
+/// The most deeply a grammar's rules may be allowed to nest: the walk
+/// that generates a string recurses a few frames per level.
+pub const MAX_MAX_DEPTH: u32 = 1000;
+
 /// How many distinct token texts a generation remembers the lexing of
 /// (see [`ReadingsCache::read_token`]) before the next draw forgets
 /// them all, and how many its cache has room for from the start.
@@ -530,6 +534,12 @@ impl GrammarSpec {
             return Err(GrammarError::new(format!(
                 "max_size is {} but the smallest string '{}' can produce has {} characters",
                 options.max_size, root.name, root.min_size
+            )));
+        }
+        if options.max_depth > MAX_MAX_DEPTH {
+            return Err(GrammarError::new(format!(
+                "max_depth is {} but may be at most {MAX_MAX_DEPTH}",
+                options.max_depth
             )));
         }
         if options.max_depth < root.min_depth {

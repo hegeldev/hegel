@@ -624,19 +624,26 @@ impl GraphShrinker {
                 return Ok(changed);
             };
             let layout = Layout::new(&tree);
-            let candidates =
-                layout.coarse_candidates(&text, |id| constraint.smallest_for_terminal(id));
-            for candidate in candidates {
+            let mut accepted = None;
+            for candidate in
+                layout.coarse_candidates(&text, |id| constraint.smallest_for_terminal(id))
+            {
                 if self
                     .try_value(probe, key, data, ChoiceValue::String(candidate.clone()))
                     .await?
                 {
+                    accepted = Some(candidate);
+                    break;
+                }
+            }
+            match accepted {
+                Some(candidate) => {
                     text = candidate;
                     changed = true;
                     continue 'again;
                 }
+                None => return Ok(changed),
             }
-            return Ok(changed);
         }
     }
 

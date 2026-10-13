@@ -9,6 +9,7 @@ use crate::native::lark::compile::compile;
 use crate::native::lark::generate::{
     DEFAULT_MAX_SIZE, GrammarOptions, GrammarSpec, generate_grammar,
 };
+use crate::native::lark::layout::Layout;
 use crate::native::rng::EngineRng;
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -126,9 +127,9 @@ fn accepts_and_rejects_simple_strings() {
     assert!(!s.accepts("a"));
     assert!(!s.accepts("abc"));
     assert!(!s.accepts(""));
-    assert_eq!(s.parse("a"), Err(ParseError { position: 1 }));
-    assert_eq!(s.parse("abc"), Err(ParseError { position: 2 }));
-    assert_eq!(s.parse("x"), Err(ParseError { position: 0 }));
+    assert_eq!(s.parse("a"), Err(ParseError::at(1)));
+    assert_eq!(s.parse("abc"), Err(ParseError::at(2)));
+    assert_eq!(s.parse("x"), Err(ParseError::at(0)));
 }
 
 #[test]
@@ -352,8 +353,8 @@ fn terminals_match_greedily_as_lark_does() {
     assert!(!s.accepts("ac"));
     assert!(!s.accepts("abc"));
     assert!(!s.accepts("ab"));
-    assert_eq!(s.parse("abc"), Err(ParseError { position: 3 }));
-    assert_eq!(s.parse("abcd"), Err(ParseError { position: 3 }));
+    assert_eq!(s.parse("abc"), Err(ParseError::at(3)));
+    assert_eq!(s.parse("abcd"), Err(ParseError::at(3)));
 }
 
 #[test]
@@ -375,10 +376,10 @@ fn prefixes_and_trailing_text_are_rejected() {
     let s = setup("start: \"(\" (\"a\" | start) \")\"\n");
     assert!(s.accepts("(a)"));
     assert!(s.accepts("(((a)))"));
-    assert_eq!(s.parse("(((a))"), Err(ParseError { position: 6 }));
-    assert_eq!(s.parse("(((a))))"), Err(ParseError { position: 7 }));
-    assert_eq!(s.parse("(((a)b"), Err(ParseError { position: 5 }));
-    assert_eq!(s.parse("(("), Err(ParseError { position: 2 }));
+    assert_eq!(s.parse("(((a))"), Err(ParseError::at(6)));
+    assert_eq!(s.parse("(((a))))"), Err(ParseError::at(7)));
+    assert_eq!(s.parse("(((a)b"), Err(ParseError::at(5)));
+    assert_eq!(s.parse("(("), Err(ParseError::at(2)));
 }
 
 #[test]
@@ -610,4 +611,66 @@ fn write_verdicts() {
         .unwrap();
         std::eprintln!("{name}: {count} candidates, {:?}", started.elapsed());
     }
+}
+
+#[test]
+fn right_recursion_takes_a_column_of_items_per_character() {
+    let right = setup("start: \"a\" start | \"a\"\n");
+    let list = setup("start: list\nlist: item \",\" list | item\nitem: \"a\"\n");
+    let text: String = core::iter::repeat_n('a', 8192).collect();
+    let items: String = core::iter::repeat_n("a,", 4095)
+        .chain(core::iter::once("a"))
+        .collect();
+    for (s, text) in [(&right, &text), (&list, &items)] {
+        let lean = Parser::new(&s.grammar, s.grammar.start[0]).with_item_budget(100_000);
+        let tree = lean.parse(&s.lexer, &chars(text)).unwrap();
+        assert!(covers(&tree, &chars(text)));
+        assert_eq!(
+            read_back(&tree, &chars(text)).replace(['[', ']'], ""),
+            *text
+        );
+    }
+    let cycle = setup("start: x\nx: x | \"a\" x | \"a\"\n");
+    assert!(cycle.accepts("aaa"));
+    assert_eq!(leaves(&cycle.tree("aaa")).len(), 3);
+    assert!(!cycle.accepts("aab"));
+}
+
+#[test]
+fn a_parse_holding_too_many_items_is_given_up() {
+    let s = setup("start: e\ne: e \"+\" e | \"1\"\n");
+    let text: String = core::iter::repeat_n("1+", 20)
+        .chain(core::iter::once("1"))
+        .collect();
+    let strict = Parser::new(&s.grammar, s.grammar.start[0]).with_item_budget(200);
+    let err = strict.parse(&s.lexer, &chars(&text)).unwrap_err();
+    assert!(err.position > 0 && err.position < text.len(), "{err:?}");
+    assert!(strict.accepts(&s.lexer, &chars("1+1")));
+}
+
+#[test]
+fn a_derivation_as_deep_as_its_text_is_long_needs_no_call_stack() {
+    std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            let s = setup("start: \"(\" start \")\" | \"a\"\n");
+            let depth = 20_000;
+            let text: String = core::iter::repeat_n('(', depth)
+                .chain(core::iter::once('a'))
+                .chain(core::iter::repeat_n(')', depth))
+                .collect();
+            let tree = s.tree(&text);
+            assert_eq!(tree.size(), 3 * depth + 2);
+            let layout = Layout::new(&tree);
+            assert_eq!(layout.depth() as usize, depth + 1);
+            let pairs: u32 = (1..=depth as u32)
+                .map(|i| u32::BITS - i.leading_zeros())
+                .sum();
+            assert_eq!(layout.hoists().len(), pairs as usize);
+            drop(layout);
+            drop(tree);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

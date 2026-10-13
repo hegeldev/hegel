@@ -3450,9 +3450,11 @@ impl<'a> Engine<'a> {
                 continue;
             };
             let within_cap = grown.len() <= kind.max_size
-                && constraint
-                    .tree(&grown)
-                    .is_some_and(|tree| Layout::new(&tree).depth() <= constraint.max_depth());
+                && constraint.tree(&grown).is_some_and(|tree| {
+                    let layout = Layout::new(&tree);
+                    layout.depth() <= constraint.max_depth()
+                        && constraint.within_cap(&layout, &grown)
+                });
             if !within_cap {
                 continue;
             }
