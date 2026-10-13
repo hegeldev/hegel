@@ -33,10 +33,15 @@ pub const DEFAULT_STEP_LIMIT: u64 = 1_000_000;
 /// The default nesting depth of pattern sequences one match may reach
 /// before it is abandoned with [`MatchError::DepthLimit`]. Only repeats of
 /// items with capture groups, assertions or nested repeats recurse per
-/// iteration (two levels each); repeats of single characters and of
-/// alternations of plain character sequences run on an explicit stack.
-/// Unoptimised builds use about 1 KiB of stack per level, so this keeps a
-/// match within half of a 2 MiB thread stack.
+/// iteration (several levels each); repeats of single characters and of
+/// alternations of plain character sequences run on an explicit stack,
+/// and a string checked against a pattern as its constraint goes to the
+/// simulation in [`vm`](super::vm) for every pattern that can express,
+/// so the limit bears on patterns with backreferences, conditional
+/// groups, atomic groups or possessive repeats, and on the lexer
+/// simulation's own matches. Unoptimised builds use about 1 KiB of
+/// stack per level, so this keeps a match within half of a 2 MiB thread
+/// stack.
 pub const DEFAULT_DEPTH_LIMIT: usize = 1_000;
 
 /// Why a match was abandoned without an answer.

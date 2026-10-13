@@ -87,6 +87,17 @@ fn a_long_repeat_of_a_group_is_accepted_whole_and_anywhere() {
 }
 
 #[test]
+fn a_long_repeat_of_an_item_that_can_match_empty_is_accepted_whole_and_anywhere() {
+    let many = "a".repeat(5000);
+    assert!(constraint("(?:a|b?)*", true).accepts(&cps(&many)));
+    assert!(constraint("(?:(a)|b?)*", true).accepts(&cps(&many)));
+    assert!(!constraint("(?:a|b?)*", true).accepts(&cps(&format!("{many}c"))));
+    let search = constraint("x(?:a|b?)*y", false);
+    assert!(search.accepts(&cps(&format!("..x{many}y.."))));
+    assert!(!search.accepts(&cps(&format!("..x{many}.."))));
+}
+
+#[test]
 fn a_search_keeps_its_anchors_at_the_edges_of_the_text() {
     let start = constraint("^a", false);
     assert!(start.accepts(&cps("ab")));

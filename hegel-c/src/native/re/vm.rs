@@ -8,10 +8,12 @@
 //! proportional to the text rather than to the paths through it.
 //!
 //! The program can express patterns without backreferences, conditional
-//! groups, atomic groups or possessive repeats, whose repeated items
-//! cannot match empty (where CPython has special rules for stopping),
-//! and whose unrolled size stays within [`PROGRAM_LIMIT`]; anything else
-//! is [`Unsupported`] and stays with the backtracking matcher. The
+//! groups, atomic groups or possessive repeats, and whose unrolled size
+//! stays within [`PROGRAM_LIMIT`]; anything else is [`Unsupported`] and
+//! stays with the backtracking matcher. A repeat of an item that can
+//! match empty follows CPython's rule for it: once an iteration consumes
+//! nothing, the repeat stops iterating and the rest of the pattern
+//! follows from there (see [`Inst::Repeat`]). The
 //! simulation on its own costs more per character than backtracking
 //! does on the common run of a pattern, so a program whose instructions
 //! never look at the text around a position (no anchors or lookarounds)
@@ -146,6 +148,17 @@ enum Inst {
     },
     /// Continue at both targets, the first in preference.
     Split(usize, usize),
+    /// The head of an unbounded repeat of a compound item: continue into
+    /// the item at `body` and after the repeat at `exit`, the body first
+    /// when `greedy`. Reached again at the same position, after an
+    /// iteration that consumed nothing, it continues at the exit only,
+    /// as CPython's `MAX_UNTIL` and `MIN_UNTIL` stop iterating once an
+    /// iteration matches empty.
+    Repeat {
+        body: usize,
+        exit: usize,
+        greedy: bool,
+    },
     Jmp(usize),
     Fail,
     Match,
@@ -453,9 +466,6 @@ impl<'p> Compiler<'p> {
         greedy: bool,
         flags: u32,
     ) -> Result<(), Unsupported> {
-        if get_width(item).0 == 0 {
-            return Err(Unsupported);
-        }
         for _ in 0..min {
             self.seq(item, flags)?;
         }
@@ -464,10 +474,18 @@ impl<'p> Compiler<'p> {
                 self.emit(Inst::Loop(unit, unit_flags, greedy))?;
                 return Ok(());
             }
-            let split = self.emit(Inst::Split(0, 0))?;
+            let head = self.emit(Inst::Repeat {
+                body: 0,
+                exit: 0,
+                greedy,
+            })?;
             self.seq(item, flags)?;
-            self.emit(Inst::Jmp(split))?;
-            self.insts[split] = split_inst(split + 1, self.insts.len(), greedy);
+            self.emit(Inst::Jmp(head))?;
+            self.insts[head] = Inst::Repeat {
+                body: head + 1,
+                exit: self.insts.len(),
+                greedy,
+            };
             return Ok(());
         }
         let mut splits = Vec::new();
@@ -925,6 +943,7 @@ impl Program {
                     Inst::At(..)
                     | Inst::Look { .. }
                     | Inst::Split(..)
+                    | Inst::Repeat { .. }
                     | Inst::Jmp(_)
                     | Inst::Fail => {
                         unreachable!("only characters and matches wait for input")
@@ -972,6 +991,9 @@ impl Program {
                 continue;
             }
             if list.marks[pc] == generation {
+                if let Inst::Repeat { exit, .. } = &self.insts[pc] {
+                    stack.push(*exit);
+                }
                 continue;
             }
             list.marks[pc] = generation;
@@ -980,6 +1002,15 @@ impl Program {
                 Inst::Split(first, second) => {
                     stack.push(*second);
                     stack.push(*first);
+                }
+                Inst::Repeat { body, exit, greedy } => {
+                    if *greedy {
+                        stack.push(*exit);
+                        stack.push(*body);
+                    } else {
+                        stack.push(*body);
+                        stack.push(*exit);
+                    }
                 }
                 Inst::At(at, flags) => {
                     if pos == 0

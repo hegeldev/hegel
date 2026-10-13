@@ -25,12 +25,55 @@ fn declines_constructs_whose_matching_depends_on_captures_or_commitment() {
     }
 }
 
+/// Expected ends and fullmatch verdicts from CPython 3.14's
+/// `re.compile(pattern).match(text).end()` / `.fullmatch(text)`.
 #[test]
-fn declines_repeats_of_items_that_can_match_empty() {
-    for pattern in ["(a?)*", "(a|)+b", "(?:a*)*?", "(\\b)*", "(?:(?=a))+"] {
-        assert_eq!(program(pattern).err(), Some(Unsupported), "{pattern}");
+fn repeats_stop_iterating_after_an_iteration_that_matches_empty() {
+    for (pattern, text, end, full) in [
+        ("(?:|a)*", "a", Some(0), true),
+        ("(?:a|)*", "a", Some(1), true),
+        ("(a?)*", "aa", Some(2), true),
+        ("(a|)+b", "aab", Some(3), true),
+        ("(?:a*)*?", "aa", Some(0), true),
+        ("(\\b)*", "a", Some(0), false),
+        ("(?:(?=a))+", "a", Some(0), false),
+        ("(?:|a)*b", "ab", Some(2), true),
+        ("(?:a|b?)*", "aab", Some(3), true),
+        ("(?:|a)*?b", "aab", Some(3), true),
+        ("(?:a|)*?", "aa", Some(0), true),
+        ("(?:|a){2,}", "aa", Some(0), true),
+        ("(?:a|)+?a", "aa", Some(2), true),
+        ("(?:a?b?)*c", "abac", Some(4), true),
+        ("(?:a?b?)*", "abba", Some(4), true),
+        ("(?:(?:a|)*b)*", "abb", Some(3), true),
+        ("(?:a|)*?$", "aa", Some(2), true),
+        ("(?:x*)*y", "xxy", Some(3), true),
+        ("(?:x*?)*y", "xxy", Some(3), true),
+        ("(?:x*?)*", "xx", Some(0), true),
+        ("(?:|x)*?x", "xx", Some(1), true),
+        ("(?:(?:|a)*|b)*c", "aabc", Some(4), true),
+    ] {
+        let parsed = parse_pattern(pattern, 0).unwrap();
+        let p = Program::compile(&parsed).unwrap();
+        let text = chars(text);
+        assert_eq!(run(&p, &text, 0, None), end, "{pattern:?} on {text:?}");
+        assert_eq!(
+            run(&p, &text, 0, Some(text.len())).is_some(),
+            full,
+            "{pattern:?} whole {text:?}"
+        );
+        let matcher = Matcher::new(&parsed);
+        assert_eq!(
+            matcher.match_at_touch(&text, 0).unwrap().0,
+            end,
+            "{pattern:?}"
+        );
+        assert_eq!(matcher.fullmatch(&text).unwrap(), full, "{pattern:?}");
     }
-    assert!(program("(a?b)*").is_ok());
+    let long = chars(&"a".repeat(5000));
+    let p = program("(?:(a)|b?)*").unwrap();
+    assert_eq!(run(&p, &long, 0, None), Some(5000));
+    assert_eq!(run(&p, &long, 0, Some(5000)), Some(5000));
 }
 
 #[test]
