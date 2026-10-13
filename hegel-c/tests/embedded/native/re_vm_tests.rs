@@ -414,7 +414,12 @@ fn characters_beyond_ascii_share_transitions_by_class() {
     assert!(matches!(folded.classes, Classes::Tests(_)));
     assert_eq!(run(&folded, &chars("αΒΓX"), 0, None), Some(4));
     assert!(folded.class('Β') == folded.class('γ') && folded.class('Β') != folded.class('À'));
-    let many = program(&["(?i)", &"[^a]".repeat(70)].concat()).unwrap();
+    let copies = program("(?i)[^a]{70}").unwrap();
+    assert!(matches!(&copies.classes, Classes::Tests(units) if units.len() == 1));
+    let distinct: alloc::string::String = (0..70)
+        .map(|i| alloc::format!("[^{}]", char::from_u32(0x100 + i).unwrap()))
+        .collect();
+    let many = program(&["(?i)", &distinct].concat()).unwrap();
     assert!(matches!(many.classes, Classes::ByChar));
     assert_eq!(many.class('α'), u64::from('α'));
     let text: Vec<char> = "αβ".repeat(35).chars().collect();

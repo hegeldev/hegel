@@ -39,7 +39,7 @@ use super::constants::{
 use super::matcher::{Touch, at_matches, combine_flags, literal_eq, set_matches};
 use super::parser::{OpCode, ParsedPattern, SetItem, SubPattern};
 use super::width::get_width;
-use crate::native::HashMap;
+use crate::native::{HashMap, HashSet};
 use crate::sys::sync::Mutex;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -65,14 +65,14 @@ const EMIT: usize = 1 << (usize::BITS - 1);
 pub struct Unsupported;
 
 /// A single-character test.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 enum Unit {
     Literal(u32),
     NotLiteral(u32),
     Any,
     /// A set, with which ASCII characters it holds (under the flags of
-    /// the instruction it belongs to) as a bitmap, filled in by
-    /// [`Compiler::emit`].
+    /// the instruction it belongs to) as a bitmap (see
+    /// [`Compiler::unit_of`]).
     In(Vec<SetItem>, [u64; 2]),
 }
 
@@ -189,9 +189,16 @@ enum Classes {
 }
 
 impl Classes {
+    /// The classes of `insts`, from one instruction of each distinct
+    /// character test: the copies an unrolled repeat emits tell the
+    /// characters apart no further.
     fn of(insts: &[Inst]) -> Classes {
+        let mut seen: HashSet<(&Unit, u32)> = HashSet::default();
         let units: Vec<usize> = (0..insts.len())
-            .filter(|&pc| matches!(insts[pc], Inst::Unit(..) | Inst::Loop(..)))
+            .filter(|&pc| match &insts[pc] {
+                Inst::Unit(unit, flags) | Inst::Loop(unit, flags, _) => seen.insert((unit, *flags)),
+                _ => false,
+            })
             .collect();
         let mut bounds = Vec::new();
         for &pc in &units {
@@ -352,25 +359,62 @@ fn has_repeat(p: &SubPattern) -> bool {
 
 struct Compiler<'p> {
     insts: Vec<Inst>,
+    /// How many more sequences may be compiled: the unrolling of a
+    /// counted repeat of an empty sequence emits nothing, so the
+    /// instruction limit alone would not bound it.
     remaining: usize,
     recognition_only: bool,
     /// Lookaround bodies still to compile, with the instruction that
     /// refers to each.
     pending: Vec<(usize, &'p SubPattern, u32)>,
+    /// The ASCII bitmap of each set already emitted, by the address of
+    /// its items and the flags in force, so that the copies an unrolled
+    /// repeat emits share one test of the 128 characters.
+    tables: HashMap<(usize, u32), [u64; 2]>,
 }
 
 impl<'p> Compiler<'p> {
-    fn emit(&mut self, mut inst: Inst) -> Result<usize, Unsupported> {
+    fn emit(&mut self, inst: Inst) -> Result<usize, Unsupported> {
         if self.insts.len() >= PROGRAM_LIMIT {
             return Err(Unsupported);
         }
-        if let Inst::Unit(Unit::In(items, ascii), flags)
-        | Inst::Loop(Unit::In(items, ascii), flags, _) = &mut inst
-        {
-            *ascii = ascii_table(items, *flags);
-        }
         self.insts.push(inst);
         Ok(self.insts.len() - 1)
+    }
+
+    /// The single-character test `op` is, under `flags`, or `None` for
+    /// any other op.
+    fn unit_of(&mut self, op: &OpCode, flags: u32) -> Option<Unit> {
+        Some(match op {
+            OpCode::Literal(cp) => Unit::Literal(*cp),
+            OpCode::NotLiteral(cp) => Unit::NotLiteral(*cp),
+            OpCode::Any => Unit::Any,
+            OpCode::In(items) => {
+                let ascii = *self
+                    .tables
+                    .entry((items.as_ptr() as usize, flags))
+                    .or_insert_with(|| ascii_table(items, flags));
+                Unit::In(items.clone(), ascii)
+            }
+            _ => return None,
+        })
+    }
+
+    /// CPython's `_simple`: a one-op pattern that is a unit, or a
+    /// non-capturing group around one, with the flags in force inside it.
+    fn single_unit(&mut self, p: &SubPattern, flags: u32) -> Option<(Unit, u32)> {
+        match p.data.as_slice() {
+            [
+                OpCode::Subpattern {
+                    group: None,
+                    add_flags,
+                    del_flags,
+                    p,
+                },
+            ] => self.single_unit(p, combine_flags(flags, *add_flags, *del_flags)),
+            [op] => self.unit_of(op, flags).map(|unit| (unit, flags)),
+            _ => None,
+        }
     }
 
     fn seq(&mut self, p: &'p SubPattern, flags: u32) -> Result<(), Unsupported> {
@@ -379,7 +423,7 @@ impl<'p> Compiler<'p> {
         }
         self.remaining -= 1;
         for op in &p.data {
-            if let Some(unit) = unit_of(op) {
+            if let Some(unit) = self.unit_of(op, flags) {
                 self.emit(Inst::Unit(unit, flags))?;
                 continue;
             }
@@ -472,7 +516,7 @@ impl<'p> Compiler<'p> {
             self.seq(item, flags)?;
         }
         if max == MAXREPEAT {
-            if let Some((unit, unit_flags)) = single_unit(item, flags) {
+            if let Some((unit, unit_flags)) = self.single_unit(item, flags) {
                 self.emit(Inst::Loop(unit, unit_flags, greedy))?;
                 return Ok(());
             }
@@ -492,33 +536,6 @@ impl<'p> Compiler<'p> {
             self.insts[split] = split_inst(split + 1, exit, greedy);
         }
         Ok(())
-    }
-}
-
-fn unit_of(op: &OpCode) -> Option<Unit> {
-    match op {
-        OpCode::Literal(cp) => Some(Unit::Literal(*cp)),
-        OpCode::NotLiteral(cp) => Some(Unit::NotLiteral(*cp)),
-        OpCode::Any => Some(Unit::Any),
-        OpCode::In(items) => Some(Unit::In(items.clone(), [0; 2])),
-        _ => None,
-    }
-}
-
-/// CPython's `_simple`: a one-op pattern that is a unit, or a
-/// non-capturing group around one, with the flags in force inside it.
-fn single_unit(p: &SubPattern, flags: u32) -> Option<(Unit, u32)> {
-    match p.data.as_slice() {
-        [
-            OpCode::Subpattern {
-                group: None,
-                add_flags,
-                del_flags,
-                p,
-            },
-        ] => single_unit(p, combine_flags(flags, *add_flags, *del_flags)),
-        [op] => unit_of(op).map(|unit| (unit, flags)),
-        _ => None,
     }
 }
 
@@ -606,6 +623,7 @@ impl Program {
             remaining: PROGRAM_LIMIT,
             recognition_only,
             pending: Vec::new(),
+            tables: HashMap::default(),
         };
         compiler.seq(&parsed.pattern, parsed.flags)?;
         compiler.emit(Inst::Match)?;
