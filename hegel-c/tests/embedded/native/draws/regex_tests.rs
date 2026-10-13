@@ -1591,6 +1591,9 @@ fn generate_regex_branch_picks_only_producible_alternatives() {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
         assert!(generate_regex(&mut ntc, &re, true).is_err(), "seed {seed}");
     }
+    let mut draws = SimplestDraws::default();
+    assert!(generate_regex(&mut draws, &re, true).is_err());
+    assert_eq!(draws.status(), Some(Status::Invalid));
 }
 
 #[test]
