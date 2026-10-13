@@ -123,6 +123,7 @@ pub struct BuiltGrammar {
 
 pub struct GrammarBuilder<'s> {
     source: &'s dyn ImportSource,
+    import_stack: Vec<String>,
     names: Vec<String>,
     definitions: HashMap<String, Definition>,
     ignore_names: Vec<String>,
@@ -228,6 +229,8 @@ fn symbol_references<'e>(expr: &'e Expr, out: &mut Vec<&'e Symbol>) {
 /// one before it twice doubles in length at every link, and Lark builds
 /// the whole of it; here it is an error instead.
 const MAX_TERMINAL_PATTERN_LEN: usize = 1 << 16;
+
+const MAX_IMPORT_NESTING: usize = 64;
 
 fn contains_template(expr: &Expr) -> bool {
     match expr {
@@ -350,6 +353,7 @@ impl<'s> GrammarBuilder<'s> {
     pub fn new(source: &'s dyn ImportSource) -> Self {
         GrammarBuilder {
             source,
+            import_stack: Vec::new(),
             names: Vec::new(),
             definitions: HashMap::default(),
             ignore_names: Vec::new(),
@@ -522,6 +526,11 @@ impl<'s> GrammarBuilder<'s> {
         base_path: Option<&str>,
         base_mangle: Option<&Mangle>,
     ) -> GrammarResult<()> {
+        if self.import_stack.len() >= MAX_IMPORT_NESTING {
+            return Err(GrammarError::new(format!(
+                "Grammar imports nest more than {MAX_IMPORT_NESTING} levels deep"
+            )));
+        }
         let mangle = Mangle {
             prefix: stmt.path.join("__"),
             aliases,
@@ -536,7 +545,15 @@ impl<'s> GrammarBuilder<'s> {
                 "Could not find grammar `{grammar_path}` to import"
             )));
         };
+        if self.import_stack.contains(&joined_path) {
+            return Err(GrammarError::new(format!(
+                "Circular grammar import: {} -> {joined_path}",
+                self.import_stack.join(" -> ")
+            )));
+        }
         let mut imported = GrammarBuilder::new(self.source);
+        imported.import_stack = self.import_stack.clone();
+        imported.import_stack.push(joined_path.clone());
         imported.load_grammar(&text, Some(&joined_path), Some(&mangle))?;
         let used: Vec<String> = mangle
             .aliases

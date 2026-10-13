@@ -29,6 +29,59 @@ fn build_with(text: &str, sources: &Sources) -> GrammarResult<BuiltGrammar> {
     load_grammar(text, Some("main.lark"), sources)
 }
 
+#[test]
+fn circular_imports_report_the_cycle() {
+    struct Circular {
+        calls: core::cell::Cell<usize>,
+    }
+
+    impl ImportSource for Circular {
+        fn load(&self, _: Option<&str>, path: &str) -> Option<(String, String)> {
+            self.calls.set(self.calls.get() + 1);
+            assert!(self.calls.get() < 10);
+            let next = if path == "a.lark" { "b" } else { "a" };
+            Some((path.to_string(), format!("%import {next}.value\n")))
+        }
+    }
+
+    let source = Circular {
+        calls: core::cell::Cell::new(0),
+    };
+    let error = load_grammar("%import a.value\nstart: value", None, &source).unwrap_err();
+    assert!(error.message.contains("Circular grammar import"));
+    assert!(error.message.contains("a.lark -> b.lark -> a.lark"));
+    assert_eq!(source.calls.get(), 3);
+}
+
+#[test]
+fn import_depth_is_bounded_even_when_paths_never_repeat() {
+    struct Chain(core::cell::Cell<usize>);
+
+    impl ImportSource for Chain {
+        fn load(&self, _: Option<&str>, _: &str) -> Option<(String, String)> {
+            let i = self.0.get();
+            self.0.set(i + 1);
+            assert!(i < 100);
+            Some((format!("{i}.lark"), String::from("%import next.value\n")))
+        }
+    }
+
+    let source = Chain(core::cell::Cell::new(0));
+    let error = load_grammar("%import next.value\nstart: value", None, &source).unwrap_err();
+    assert!(error.message.contains("Grammar imports nest more than"));
+}
+
+#[test]
+fn independent_imports_can_share_a_dependency() {
+    let sources = Sources(vec![
+        ("a.lark", "%import shared.VALUE -> A\n"),
+        ("b.lark", "%import shared.VALUE -> B\n"),
+        ("shared.lark", "VALUE: \"x\"\n"),
+    ]);
+    let built = build_with("%import a.A\n%import b.B\nstart: A B", &sources).unwrap();
+    assert_eq!(term_names(&built), vec!["A", "B"]);
+}
+
 fn err(text: &str) -> String {
     load_grammar(text, None, &NoImports).unwrap_err().message
 }
