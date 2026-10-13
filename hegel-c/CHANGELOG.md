@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.45.3 - 2026-10-13
+
+This patch makes the urandom backend draw its entropy from the Antithesis fuzzer directly when running inside Antithesis. Each draw now calls `fuzz_get_random` from Antithesis's instrumentation library (`/usr/lib/libvoidstar.so`), the function its own SDKs take their randomness from, so the fuzzer sees every draw as a request of its own rather than inferring them from reads of `/dev/urandom`. When the library cannot be loaded, and everywhere outside Antithesis, the backend reads `/dev/urandom` as before; the `HEGEL_BACKEND_URANDOM` setting, the `workload` profile and the `backend = "urandom"` profile key are unchanged.
+
 ## 0.45.2 - 2026-10-13
 
 This patch fixes a run whose every test case is rejected ending as passed. A run that generates no valid test case now ends with `Unsatisfiable` (an error result over the C ABI, as for a test that draws no data and rejects its only input), however the health checks are configured: with `filter_too_much` suppressed, a test whose assumptions always fail used to spend its invalid budget and pass; with `test_cases_too_large` suppressed, a test whose every case overran the choice limit did the same.
