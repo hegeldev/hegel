@@ -27,6 +27,7 @@ use crate::test_case::OutputSink;
 use hegel_c::hegel_result_t;
 use std::ffi::{CStr, CString, c_void};
 use std::os::raw::c_char;
+use std::path::PathBuf;
 use std::ptr;
 
 /// Owns a `*mut HegelContext` — libhegel's explicit per-call error channel —
@@ -124,6 +125,27 @@ fn string_from_engine_bytes(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes).unwrap_or_else(|e| {
         crate::control::hegel_internal_error!("libhegel returned invalid UTF-8: {e}")
     })
+}
+
+/// Copy the string a `hegel_generate_*` call that fills a
+/// `hegel_generate_string_result_t` produced, freeing the engine's buffer, or
+/// pass the call's failure code through.
+fn take_string_result(
+    rc: hegel_result_t,
+    mut result: hegel_c::hegel_generate_string_result_t,
+) -> Result<String, hegel_result_t> {
+    if rc != hegel_result_t::HEGEL_OK {
+        return Err(rc);
+    }
+    // SAFETY: on success the result holds a valid engine-allocated UTF-8
+    // buffer that this frontend owns; it is copied out and freed exactly
+    // once.
+    let bytes =
+        unsafe { std::slice::from_raw_parts(result.data.cast::<u8>(), result.len) }.to_vec();
+    require_ok(with_context(|ctx| unsafe {
+        hegel_c::hegel_generate_string_result_free(ctx, &mut result)
+    }));
+    Ok(string_from_engine_bytes(bytes))
 }
 
 /// Owns a `*mut HegelSettings` and frees it on drop. Built from a frontend
@@ -770,18 +792,25 @@ impl CTestCase {
         let rc = with_context(|ctx| unsafe {
             hegel_c::hegel_generate_string(ctx, self.raw, generator.raw, &mut result)
         });
-        if rc != hegel_result_t::HEGEL_OK {
-            return Err(rc);
-        }
-        // SAFETY: on success the result holds a valid engine-allocated UTF-8
-        // buffer that this frontend owns; it is copied out and freed exactly
-        // once.
-        let bytes =
-            unsafe { std::slice::from_raw_parts(result.data.cast::<u8>(), result.len) }.to_vec();
-        require_ok(with_context(|ctx| unsafe {
-            hegel_c::hegel_generate_string_result_free(ctx, &mut result)
-        }));
-        Ok(string_from_engine_bytes(bytes))
+        take_string_result(rc, result)
+    }
+
+    /// Draw a string of the grammar described by a prebuilt libhegel
+    /// grammar, of at most `max_size` characters (placeholder markers
+    /// counting as none), or up to the grammar's own cap for 0.
+    pub(crate) fn generate_grammar(
+        &self,
+        grammar: &Grammar,
+        max_size: u64,
+    ) -> Result<String, hegel_result_t> {
+        let mut result = hegel_c::hegel_generate_string_result_t {
+            data: ptr::null_mut(),
+            len: 0,
+        };
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_generate_grammar(ctx, self.raw, grammar.raw, max_size, &mut result)
+        });
+        take_string_result(rc, result)
     }
 
     /// Draw a Gregorian calendar date in `[min, max]`.
@@ -1445,6 +1474,151 @@ impl Drop for StringGenerator {
         // SAFETY: `raw` came from a hegel_string_generator_* constructor and
         // is freed exactly once.
         free_on_drop(|ctx| unsafe { hegel_c::hegel_string_generator_free(ctx, self.raw) });
+    }
+}
+
+/// An owned libhegel grammar handle (`hegel_grammar_t`), freed on drop.
+///
+/// Built by [`Grammar::new`] from a grammar in Lark's syntax, which libhegel
+/// checks and compiles eagerly, returning `Err` with its diagnostic on a bad
+/// grammar or option. The handle is immutable after construction, so it may
+/// be shared across test cases and threads; the generator caches one per
+/// configuration.
+pub(crate) struct Grammar {
+    raw: *mut hegel_c::HegelGrammar,
+}
+
+// SAFETY: `hegel_grammar_new` allocates the handle through libhegel's
+// `into_raw_send_sync`, which requires the engine's grammar to be `Send`
+// and `Sync`, so sharing the pointer across threads is sound.
+unsafe impl Send for Grammar {}
+unsafe impl Sync for Grammar {}
+
+impl std::fmt::Debug for Grammar {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Grammar").finish_non_exhaustive()
+    }
+}
+
+/// The state behind the import callback handed to `hegel_grammar_new`: the
+/// directories to search, and every grammar file read so far, kept alive so
+/// the pointers handed to the engine stay valid until construction returns.
+struct GrammarImports<'a> {
+    dirs: &'a [PathBuf],
+    loaded: Vec<(CString, String)>,
+}
+
+/// Resolve an `%import` for the engine, as Lark does: the import
+/// directories in order, then the directory of the importing grammar for a
+/// relative import (`base_path`, `NULL` for the grammar text itself). The
+/// path reported back keeps the directory exactly as given, so the engine
+/// can recover it for the imported file's own relative imports.
+unsafe extern "C" fn load_grammar_import(
+    user_data: *mut c_void,
+    base_path: *const c_char,
+    grammar_path: *const c_char,
+    out_path: *mut *const c_char,
+    out_text: *mut *const c_char,
+    out_text_len: *mut usize,
+) -> bool {
+    // SAFETY: `hegel_grammar_new` calls this only while the `GrammarImports`
+    // that `Grammar::new` passed as `user_data` is alive, and the two C
+    // strings are valid for the duration of the call.
+    let imports = unsafe { &mut *user_data.cast::<GrammarImports<'_>>() };
+    let grammar_path = unsafe { CStr::from_ptr(grammar_path) }.to_string_lossy();
+    let base = unsafe { base_path.as_ref() }
+        .map(|p| unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned());
+    let dirs = imports.dirs.iter().cloned().chain(base.map(PathBuf::from));
+    for dir in dirs {
+        let joined = dir.join(&*grammar_path);
+        let Ok(text) = std::fs::read_to_string(&joined) else {
+            continue;
+        };
+        imports
+            .loaded
+            .push((cstring_lossy(&joined.to_string_lossy()), text));
+        let (path, text) = imports.loaded.last().unwrap();
+        unsafe {
+            *out_path = path.as_ptr();
+            *out_text = text.as_ptr().cast::<c_char>();
+            *out_text_len = text.len();
+        }
+        return true;
+    }
+    false
+}
+
+impl Grammar {
+    /// Compile `text`, a grammar in Lark's syntax, generating strings of the
+    /// rule `start` (`None` for Lark's default, `start`). `max_size` and
+    /// `max_depth` of `0` take the engine's defaults. `alphabet` constrains
+    /// the characters of every terminal drawn from its pattern, `explicit`
+    /// names the terminals whose values the caller splices in for their
+    /// [`placeholder`](Self::placeholder) markers, and `import_paths` are
+    /// the directories `%import`ed grammars are read from.
+    pub(crate) fn new(
+        text: &str,
+        start: Option<&str>,
+        max_size: u64,
+        max_depth: u32,
+        alphabet: Option<&StringGenerator>,
+        explicit: &[String],
+        import_paths: &[PathBuf],
+    ) -> Result<Self, String> {
+        let c_text = cstring_lossy(text);
+        let c_start = start.map(cstring_lossy);
+        let names: Vec<CString> = explicit.iter().map(|name| cstring_lossy(name)).collect();
+        let name_ptrs: Vec<*const c_char> = names.iter().map(|n| n.as_ptr()).collect();
+        let mut imports = GrammarImports {
+            dirs: import_paths,
+            loaded: Vec::new(),
+        };
+        let mut raw: *mut hegel_c::HegelGrammar = ptr::null_mut();
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_grammar_new(
+                ctx,
+                c_text.as_ptr(),
+                c_start.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
+                max_size,
+                max_depth,
+                alphabet.map_or(ptr::null(), |a| a.raw.cast_const()),
+                name_ptrs.as_ptr(),
+                explicit.len(),
+                Some(load_grammar_import),
+                (&raw mut imports).cast::<c_void>(),
+                &mut raw,
+            )
+        });
+        if rc != hegel_result_t::HEGEL_OK {
+            return Err(last_error_string());
+        }
+        Ok(Grammar { raw })
+    }
+
+    /// The marker standing for each value of the explicit terminal `name`
+    /// in the strings drawn from the grammar.
+    pub(crate) fn placeholder(&self, name: &str) -> Result<String, String> {
+        let c_name = cstring_lossy(name);
+        let mut marker: *const c_char = ptr::null();
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_grammar_placeholder(ctx, self.raw, c_name.as_ptr(), &mut marker)
+        });
+        if rc != hegel_result_t::HEGEL_OK {
+            return Err(last_error_string());
+        }
+        // SAFETY: on success the engine set `marker` to a NUL-terminated
+        // string the grammar owns, alive for as long as `self` is.
+        Ok(unsafe { CStr::from_ptr(marker) }
+            .to_string_lossy()
+            .into_owned())
+    }
+}
+
+impl Drop for Grammar {
+    fn drop(&mut self) {
+        // SAFETY: `raw` came from `hegel_grammar_new` and is freed exactly
+        // once.
+        free_on_drop(|ctx| unsafe { hegel_c::hegel_grammar_free(ctx, self.raw) });
     }
 }
 

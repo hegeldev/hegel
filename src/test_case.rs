@@ -1087,6 +1087,11 @@ impl TestCase {
         self.draw_or_raise(|ctc| ctc.generate_string(generator))
     }
 
+    /// Draw a string of the grammar described by a prebuilt libhegel grammar.
+    pub(crate) fn generate_grammar(&self, grammar: &crate::ffi::Grammar, max_size: u64) -> String {
+        self.draw_or_raise(|ctc| ctc.generate_grammar(grammar, max_size))
+    }
+
     /// Draw a Gregorian calendar date in `[min, max]`.
     pub(crate) fn generate_date(
         &self,

@@ -1,6 +1,6 @@
 mod common;
 
-use common::utils::{assert_all_examples, assert_no_examples, find_any};
+use common::utils::{assert_all_examples, assert_no_examples, find_any, known_to_std};
 use hegel::generators as gs;
 
 #[test]
@@ -26,7 +26,7 @@ fn test_characters_codepoint_range(tc: hegel::TestCase) {
 #[test]
 fn test_characters_lu() {
     assert_all_examples(gs::characters().categories(&["Lu"]), |c: &char| {
-        c.is_uppercase()
+        c.is_uppercase() || !known_to_std(*c)
     });
 }
 
@@ -98,7 +98,7 @@ fn test_text_codepoint_range(tc: hegel::TestCase) {
 #[test]
 fn test_text_categories() {
     assert_all_examples(gs::text().categories(&["Lu"]).max_size(20), |s: &String| {
-        s.chars().all(|c| c.is_uppercase())
+        s.chars().all(|c| c.is_uppercase() || !known_to_std(c))
     });
 }
 
@@ -1284,6 +1284,7 @@ mod regex_tests {
     #[test]
     fn lookahead_with_set_ranges_and_ignorecase() {
         check_can_generate_examples(gs::from_regex(r"(?i)x(?![a-c])Y"));
+        assert_no_examples(gs::from_regex(r"(?i)x(?![a-z])Y"), |_: &String| true);
     }
 
     #[test]
@@ -1519,5 +1520,56 @@ mod nocover_bad_repr {
             "✐", "✑", "✒", "✓", "✔", "✕", "✖", "✗", "✘", "✙", "✚", "✛", "✜", "✝", "✞", "✟", "✠",
             "✡", "✢", "✣",
         ]));
+    }
+}
+
+mod regex_shrinking {
+    use crate::common::utils::minimal;
+    use hegel::generators as gs;
+
+    #[test]
+    fn digits_shrink_to_ascii_zero() {
+        assert_eq!(
+            minimal(gs::from_regex(r"\d{3}-\d{4}"), |_: &String| true),
+            "000-0000"
+        );
+    }
+
+    #[test]
+    fn word_characters_shrink_to_ascii_zero() {
+        assert_eq!(
+            minimal(gs::from_regex(r"(\w+ )*\w+"), |s: &String| s
+                .matches(' ')
+                .count()
+                >= 3),
+            "0 0 0 0"
+        );
+    }
+
+    #[test]
+    fn an_alternative_the_pattern_needs_whole_is_deleted_at_once() {
+        assert_eq!(
+            minimal(gs::from_regex("(foo|barbaz)+"), |s: &String| s
+                .contains("barbaz")),
+            "barbaz"
+        );
+    }
+
+    #[test]
+    fn an_alternative_is_replaced_from_the_simplest_string() {
+        assert_eq!(
+            minimal(gs::from_regex(r"[a-z]+@[a-z]+\.(com|org)"), |s: &String| s
+                .len()
+                >= 12),
+            "a@aaaaaa.com"
+        );
+    }
+
+    #[test]
+    fn a_negated_class_shrinks_to_its_simplest_character() {
+        assert_eq!(
+            minimal(gs::from_regex("[^a]+"), |s: &String| s.chars().count() >= 3),
+            "000"
+        );
     }
 }

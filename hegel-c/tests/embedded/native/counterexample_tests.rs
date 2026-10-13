@@ -24,11 +24,11 @@ fn witness(origin: &str) -> RunResult {
 
 fn int_node(value: i128) -> ChoiceNode {
     ChoiceNode::integer(
-        crate::native::core::choices::IntegerChoice {
-            min_value: BigInt::from(0),
-            max_value: BigInt::from(100),
-            shrink_towards: BigInt::from(0),
-        },
+        crate::native::core::choices::IntegerChoice::new(
+            BigInt::from(0),
+            BigInt::from(100),
+            BigInt::from(0),
+        ),
         BigInt::from(value),
         false,
     )
@@ -520,7 +520,7 @@ fn the_map_reports_live_and_unconfirmed_origins_in_origin_order() {
 #[test]
 fn the_history_thins_raws_first_then_old_accepts_once_over_its_byte_bound() {
     let mut c = Counterexample::default();
-    let big = 100_000;
+    let big = HISTORY_BYTES / (5 * core::mem::size_of::<ChoiceNode>()) - 2;
     let mut record = |first: i128, accept: bool| {
         let mut nodes = vec![int_node(0); big];
         nodes[0] = int_node(first);

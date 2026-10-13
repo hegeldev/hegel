@@ -620,14 +620,11 @@ fn template_concrete_prefix_with_punning_then_template() {
         None,
     );
     let v = tc.draw_integer::<i128>(-100, 100).ok().unwrap();
-    let expected_unit: i128 = IntegerChoice {
-        min_value: BigInt::from(-100),
-        max_value: BigInt::from(100),
-        shrink_towards: BigInt::from(0),
-    }
-    .unit()
-    .try_into()
-    .unwrap();
+    let expected_unit: i128 =
+        IntegerChoice::new(BigInt::from(-100), BigInt::from(100), BigInt::from(0))
+            .unit()
+            .try_into()
+            .unwrap();
     assert_eq!(v, expected_unit);
     assert_eq!(tc.draw_integer::<i128>(0, 100).ok().unwrap(), 0);
 }
@@ -1151,6 +1148,7 @@ fn biased_string_sample_caps_constant_pool_probability() {
         .into(),
         min_size: 0,
         max_size: 100,
+        constraint: None,
     };
     let mut rng = EngineRng::seeded(9);
     let pool = &*GLOBAL_CONSTANTS_STRINGS;
@@ -1201,6 +1199,7 @@ fn biased_string_sample_empty_alphabet_returns_empty_string() {
             .into(),
         min_size: 0,
         max_size: 0,
+        constraint: None,
     };
     let mut rng = EngineRng::seeded(7);
     for _ in 0..200 {
@@ -1277,11 +1276,7 @@ fn biased_integer_sample_narrow_range_uses_uniform_fallback() {
 /// fast path and must produce values in range.
 #[test]
 fn biased_integer_sample_erased_small_width_stays_in_range() {
-    let kind = IntegerChoice {
-        min_value: BigInt::from(0u8),
-        max_value: BigInt::from(200u8),
-        shrink_towards: BigInt::from(0u8),
-    };
+    let kind = IntegerChoice::new(BigInt::from(0u8), BigInt::from(200u8), BigInt::from(0u8));
     let mut rng = EngineRng::seeded(21);
     for _ in 0..500 {
         let params = GenerationParameters::draw(&mut rng).unwrap().integer;
@@ -1296,11 +1291,7 @@ fn biased_integer_sample_erased_small_width_stays_in_range() {
 fn biased_integer_sample_erased_bigint_beyond_i128_stays_in_range() {
     let min = BigInt::from(i128::MIN) * BigInt::from(1_000_000);
     let max = BigInt::from(i128::MAX) * BigInt::from(1_000_000);
-    let kind = IntegerChoice {
-        min_value: min,
-        max_value: max,
-        shrink_towards: BigInt::from(0),
-    };
+    let kind = IntegerChoice::new(min, max, BigInt::from(0));
     let mut rng = EngineRng::seeded(22);
     for _ in 0..500 {
         let params = GenerationParameters::draw(&mut rng).unwrap().integer;
@@ -1333,11 +1324,7 @@ fn integer_sample_from_distribution_uniform_fallback_for_indistinguishable_bound
 #[test]
 fn biased_integer_sample_erased_bigint_single_value() {
     let fixed = BigInt::from(i128::MAX) * BigInt::from(1_000_000);
-    let kind = IntegerChoice {
-        min_value: fixed.clone(),
-        max_value: fixed.clone(),
-        shrink_towards: BigInt::from(0),
-    };
+    let kind = IntegerChoice::new(fixed.clone(), fixed.clone(), BigInt::from(0));
     let mut rng = EngineRng::seeded(23);
     for _ in 0..20 {
         let params = GenerationParameters::draw(&mut rng).unwrap().integer;
@@ -1366,6 +1353,38 @@ fn weighted_boolean_sample_consumes_exactly_one_byte() {
     assert_eq!(a.next_u64(), b.next_u64());
 }
 
+/// The threshold is `min(255, max(1, floor(256 * (1 - p))))`; the
+/// implementation reaches it by a truncating cast and a clamp, which must
+/// agree with the floored formula for every `p` in `(0, 1)`, from the
+/// `1.0 - p == 1.0` edge up to probabilities a hair below one.
+#[test]
+fn weighted_boolean_sample_matches_the_floored_threshold() {
+    use rand::Rng;
+    for p in [
+        1e-300,
+        1e-9,
+        1.0 / 512.0,
+        0.1,
+        0.5,
+        0.9,
+        1.0 - 1.0 / 512.0,
+        1.0 - 1e-12,
+    ] {
+        let mut a = EngineRng::seeded(77);
+        let mut b = EngineRng::seeded(77);
+        let falsey = ((256.0_f64 * (1.0 - p)).floor().max(1.0) as u32).min(255);
+        for _ in 0..256 {
+            let mut byte = [0u8; 1];
+            b.fill_bytes(&mut byte);
+            assert_eq!(
+                weighted_boolean_sample(p, &mut a),
+                u32::from(byte[0]) >= falsey,
+                "p={p}"
+            );
+        }
+    }
+}
+
 /// `p` still controls the probability of `true` under the byte-based draw.
 #[test]
 fn weighted_boolean_sample_respects_probability() {
@@ -1379,6 +1398,37 @@ fn weighted_boolean_sample_respects_probability() {
         .count();
     assert!(high > n * 3 / 4, "p=0.9 produced only {high}/{n} trues");
     assert!(low < n / 4, "p=0.1 produced {low}/{n} trues");
+}
+
+/// A draw against a threshold worked out beforehand is the draw
+/// [`NativeTestCase::weighted`] makes for the probability: the same
+/// value from the same byte, recorded the same, forced or not, and the
+/// threshold is the floored one the sampler compares against.
+#[test]
+fn weighted_against_a_worked_out_threshold_draws_what_weighted_draws() {
+    for p in [0.0, 1e-9, 1.0 / 512.0, 0.1, 0.5, 0.9, 1.0 - 1e-12, 1.0] {
+        let threshold = boolean_threshold(p);
+        assert_eq!(
+            u32::from(threshold),
+            ((256.0_f64 * (1.0 - p)).floor().max(1.0) as u32).min(255),
+            "p={p}"
+        );
+        let mut a = NativeTestCase::new_random(EngineRng::seeded(5)).unwrap();
+        let mut b = NativeTestCase::new_random(EngineRng::seeded(5)).unwrap();
+        let mut seen = [false; 2];
+        for i in 0..300 {
+            let forced = [Some(true), Some(false), None][i % 3];
+            let drawn = a.weighted(p, forced).unwrap();
+            assert_eq!(
+                drawn,
+                b.weighted_against(p, threshold, forced).unwrap(),
+                "p={p}"
+            );
+            seen[usize::from(drawn)] = true;
+        }
+        assert_eq!(a.nodes, b.nodes);
+        assert_eq!(seen, [true, true], "p={p}");
+    }
 }
 
 #[test]
@@ -1496,7 +1546,7 @@ fn spans_trivial_returns_false_for_a_stale_out_of_range_span() {
 fn fresh_id_kind_max(tc: &NativeTestCase, i: usize) -> BigInt {
     use crate::native::core::choices::ChoiceKind;
     match tc.nodes[i].kind() {
-        ChoiceKind::Integer(ic) => ic.max_value.clone(),
+        ChoiceKind::Integer(ic) => ic.max_value(),
         other => panic!("expected an integer kind, got {other:?}"),
     }
 }
@@ -3074,7 +3124,7 @@ fn draw_index_weighted_records_an_ordinary_index_choice() {
     assert!(!node.was_forced);
     assert!(matches!(
         node.kind(),
-        ChoiceKind::Integer(k) if k.min_value == BigInt::zero() && k.max_value == BigInt::from(2)
+        ChoiceKind::Integer(k) if k.min_value() == BigInt::zero() && k.max_value() == BigInt::from(2)
     ));
 }
 
@@ -3088,7 +3138,7 @@ fn draw_index_weighted_forces_the_only_positive_entry() {
     assert_eq!(node.value(), ChoiceValue::Integer(BigInt::from(1)));
     assert!(matches!(
         node.kind(),
-        ChoiceKind::Integer(k) if k.min_value == BigInt::zero() && k.max_value == BigInt::from(2)
+        ChoiceKind::Integer(k) if k.min_value() == BigInt::zero() && k.max_value() == BigInt::from(2)
     ));
 }
 
@@ -3102,4 +3152,616 @@ fn draw_index_weighted_replays_the_prefix_even_for_an_excluded_entry() {
 fn draw_index_weighted_simplest_is_zero() {
     let mut ntc = NativeTestCase::for_simplest(8).unwrap();
     assert_eq!(ntc.draw_index_weighted(&[0.0, 1.0, 1.0]).unwrap(), 0);
+}
+
+#[test]
+fn a_test_case_reserves_room_for_the_most_choices_and_spans_seen() {
+    let mut tc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
+    for _ in 0..300 {
+        tc.start_span(7);
+        tc.draw_integer_uniform(0, 9).unwrap();
+        tc.stop_span(false);
+    }
+    tc.freeze();
+    let next = NativeTestCase::new_random(EngineRng::seeded(1)).unwrap();
+    assert!(next.nodes.capacity() >= 300);
+    assert!(next.spans.inner.capacity() >= 300);
+    assert_eq!(next.span_ordinals.capacity(), 0);
+    assert_eq!(next.child_nodes.capacity(), 0);
+    let addressed = unscripted(1);
+    assert!(addressed.span_ordinals.capacity() >= 300);
+    assert!(addressed.child_nodes.capacity() >= 300);
+    let small = NativeTestCase::for_choices_and_template(&[], None, None, 5, None);
+    assert!(small.nodes.capacity() <= 5);
+}
+
+#[test]
+fn spare_vectors_keep_the_roomiest_offer_for_a_test_case_that_can_fill_them() {
+    let pair = |nodes: usize, spans: usize| {
+        (
+            Vec::<ChoiceNode>::with_capacity(nodes),
+            Vec::<Span>::with_capacity(spans),
+        )
+    };
+    let mut slot = None;
+    let fresh = SpareVectors::take(&mut slot, 1000, 5, 7);
+    assert!(fresh.nodes.capacity() >= 5 && fresh.nodes.capacity() <= 1000);
+    assert!(fresh.spans.capacity() >= 7);
+    assert!(slot.is_none());
+
+    let (nodes, spans) = pair(64, 8);
+    assert!(SpareVectors::offer(&mut slot, nodes, spans, usize::MAX).is_none());
+    assert_eq!(slot.as_ref().unwrap().nodes.capacity(), 64);
+    let (nodes, spans) = pair(16, 16);
+    let unkept = SpareVectors::offer(&mut slot, nodes, spans, usize::MAX).unwrap();
+    assert_eq!(unkept.nodes.capacity(), 16);
+    assert_eq!(slot.as_ref().unwrap().nodes.capacity(), 64);
+    let (nodes, spans) = pair(128, 4);
+    let unkept = SpareVectors::offer(&mut slot, nodes, spans, usize::MAX).unwrap();
+    assert_eq!(unkept.nodes.capacity(), 64);
+    assert_eq!(slot.as_ref().unwrap().nodes.capacity(), 128);
+
+    let small = SpareVectors::take(&mut slot, 100, 3, 3);
+    assert!(small.nodes.capacity() >= 3 && small.nodes.capacity() < 128);
+    assert_eq!(slot.as_ref().unwrap().nodes.capacity(), 128);
+    let taken = SpareVectors::take(&mut slot, 1000, 200, 300);
+    assert!(taken.nodes.is_empty() && taken.spans.is_empty());
+    assert!(taken.nodes.capacity() >= 200);
+    assert!(taken.spans.capacity() >= 300);
+    assert!(slot.is_none());
+}
+
+#[test]
+fn an_offer_grown_past_its_test_case_is_cut_to_what_one_could_fill() {
+    let mut slot = None;
+    let nodes = Vec::<ChoiceNode>::with_capacity(1000);
+    let spans = Vec::<Span>::with_capacity(1000);
+    assert!(SpareVectors::offer(&mut slot, nodes, spans, 100).is_none());
+    assert_eq!(slot.as_ref().unwrap().nodes.capacity(), 100);
+    assert_eq!(slot.as_ref().unwrap().spans.capacity(), 100);
+    let taken = SpareVectors::take(&mut slot, 100, 3, 3);
+    assert_eq!(taken.nodes.capacity(), 100);
+    assert!(slot.is_none());
+}
+
+#[test]
+fn a_dropped_test_case_hands_its_vectors_on_emptied() {
+    let mut tc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
+    for _ in 0..40 {
+        tc.start_span(3);
+        tc.weighted(0.5, None).unwrap();
+        tc.stop_span(false);
+    }
+    tc.freeze();
+    drop(tc);
+    let mut slot = SPARE_VECTORS.lock();
+    let taken = SpareVectors::take(&mut slot, usize::MAX, 0, 0);
+    assert!(taken.nodes.is_empty() && taken.spans.is_empty());
+    assert!(SpareVectors::offer(&mut slot, taken.nodes, taken.spans, usize::MAX).is_none());
+}
+
+#[test]
+fn draws_of_booleans_floats_and_native_integers_keep_the_choice_sequence_plain() {
+    let mut tc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
+    tc.weighted(0.5, None).unwrap();
+    tc.weighted(0.5, Some(true)).unwrap();
+    tc.draw_integer_uniform(0, 10).unwrap();
+    tc.draw_integer_uniform(0, i64::MAX as u64).unwrap();
+    tc.draw_integer_i64(-5, 5).unwrap();
+    tc.draw_integer::<i64>(0, 10).unwrap();
+    tc.draw_integer::<u128>(0, 1000).unwrap();
+    tc.draw_integer_forced(0, 10, 3).unwrap();
+    tc.draw_fresh_id().unwrap();
+    tc.draw_from_set(&[0, 1]).unwrap();
+    tc.draw_float(FloatWidth::F64, 0.0, 1.0, false, false, 5e-324)
+        .unwrap();
+    assert!(tc.plain);
+    assert_eq!(tc.nodes.len(), 11);
+    assert!(tc.nodes.iter().all(ChoiceNode::owns_no_heap));
+}
+
+#[test]
+fn a_recorded_node_that_owns_heap_memory_makes_the_choice_sequence_not_plain() {
+    let intervals =
+        crate::native::intervalsets::IntervalSet::new(vec![('a' as u32, 'z' as u32)]).unwrap();
+    let intervals: Arc<_> = intervals.into();
+    let heap_owning: [&dyn Fn(&mut NativeTestCase); 6] = [
+        &|tc| {
+            tc.draw_integer_uniform(0, u64::MAX).unwrap();
+        },
+        &|tc| {
+            tc.draw_integer::<u128>(0, u128::MAX).unwrap();
+        },
+        &|tc| {
+            tc.draw_integer_forced(
+                BigInt::zero(),
+                BigInt::from(u128::MAX) + BigInt::from(1),
+                BigInt::from(u128::MAX) + BigInt::from(1),
+            )
+            .unwrap();
+        },
+        &|tc| {
+            tc.draw_bytes(1, 4).unwrap();
+        },
+        &|tc| {
+            tc.draw_string(Arc::clone(&intervals), 1, 4).unwrap();
+        },
+        &|tc| {
+            tc.clone_stream().unwrap();
+        },
+    ];
+    for draw in heap_owning {
+        let mut tc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
+        tc.weighted(0.5, None).unwrap();
+        assert!(tc.plain);
+        draw(&mut tc);
+        assert!(!tc.plain);
+        assert!(!tc.nodes.iter().all(ChoiceNode::owns_no_heap));
+        tc.weighted(0.5, None).unwrap();
+        assert!(!tc.plain);
+    }
+}
+
+#[test]
+fn a_dropped_test_case_releases_the_streams_its_clone_nodes_hold() {
+    let stream = Arc::new(RealizedStream::empty());
+    let mut tc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
+    tc.weighted(0.5, None).unwrap();
+    tc.clone_stream().unwrap();
+    tc.nodes
+        .push(ChoiceNode::clone_stream(Arc::clone(&stream), false));
+    assert_eq!(Arc::strong_count(&stream), 2);
+    drop(tc);
+    assert_eq!(Arc::strong_count(&stream), 1);
+    let mut slot = SPARE_VECTORS.lock();
+    let taken = SpareVectors::take(&mut slot, usize::MAX, 0, 0);
+    assert!(taken.nodes.is_empty() && taken.spans.is_empty());
+    assert!(SpareVectors::offer(&mut slot, taken.nodes, taken.spans, usize::MAX).is_none());
+}
+
+struct Unscripted;
+
+impl ExternalReplay for Unscripted {
+    fn resolve(
+        &mut self,
+        _stream: &[usize],
+        _position: usize,
+        _frames: &[(u64, usize)],
+        _fits: &dyn Fn(&ChoiceValue) -> bool,
+    ) -> Option<ChoiceValue> {
+        None
+    }
+
+    fn divergence(&self) -> Option<Divergence> {
+        None
+    }
+
+    fn longest(&self) -> usize {
+        0
+    }
+}
+
+fn unscripted(seed: u64) -> NativeTestCase {
+    NativeTestCase::for_external(Box::new(Unscripted), EngineRng::seeded(seed), 1000).unwrap()
+}
+
+#[test]
+fn an_unaddressed_stream_works_its_draw_addresses_out_from_its_spans() {
+    let mut addressed = unscripted(0);
+    let mut plain = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
+    assert!(addressed.addressed && !plain.addressed);
+    let script: [(u8, u64); 24] = [
+        (2, 0),
+        (0, 1),
+        (2, 0),
+        (0, 5),
+        (1, 0),
+        (0, 7),
+        (1, 0),
+        (0, 7),
+        (0, 7),
+        (1, 0),
+        (0, 7),
+        (0, 7),
+        (2, 0),
+        (1, 0),
+        (1, 0),
+        (0, 5),
+        (2, 0),
+        (1, 0),
+        (2, 0),
+        (2, 0),
+        (0, 7),
+        (0, 7),
+        (1, 0),
+        (2, 0),
+    ];
+    for (step, label) in script {
+        for tc in [&mut addressed, &mut plain] {
+            match step {
+                0 => {
+                    tc.start_span(label);
+                }
+                1 => tc.stop_span(false),
+                _ => {
+                    tc.draw_integer_uniform(0, 9).unwrap();
+                }
+            }
+        }
+        assert_eq!(addressed.draw_address(), plain.draw_address(), "{script:?}");
+    }
+    assert!(plain.span_ordinals.is_empty() && plain.child_nodes.is_empty());
+    assert_eq!(addressed.span_ordinals.len(), plain.spans.len());
+}
+
+#[test]
+fn uniform_draws_replay_misfit_and_template_the_prefix_in_their_own_width() {
+    let prefix = vec![
+        ChoiceValue::Integer(BigInt::from(7u64)),
+        ChoiceValue::Integer(BigInt::from(u64::MAX)),
+        ChoiceValue::Integer(BigInt::from(12u64)),
+        ChoiceValue::Boolean(false),
+        ChoiceValue::Boolean(true),
+    ];
+    let prefix_nodes = vec![
+        ChoiceNode::integer(IntegerChoice::small(0, 9, 0), BigInt::from(7u64), false),
+        ChoiceNode::integer(
+            IntegerChoice::new(0u64, u64::MAX, 0u64),
+            BigInt::from(u64::MAX),
+            false,
+        ),
+        ChoiceNode::integer(IntegerChoice::small(0, 99, 0), BigInt::from(12u64), false),
+        ChoiceNode::boolean(BooleanChoice { p: 0.5 }, false, false),
+        ChoiceNode::boolean(BooleanChoice { p: 0.5 }, true, false),
+    ];
+    let mut tc = NativeTestCase::for_choices_and_template(
+        &prefix,
+        Some(&prefix_nodes),
+        Some(ChoiceTemplate::simplest(None).unwrap()),
+        10,
+        None,
+    );
+    assert_eq!(tc.draw_integer_uniform(3, 9).unwrap(), 7);
+    assert_eq!(
+        tc.draw_integer_uniform(u64::MAX - 1, u64::MAX).unwrap(),
+        u64::MAX
+    );
+    assert_eq!(tc.draw_integer_uniform(3, 9).unwrap(), 4);
+    assert_eq!(tc.draw_integer_uniform(3, 9).unwrap(), 3);
+    assert_eq!(tc.draw_integer_uniform(3, 9).unwrap(), 4);
+    assert_eq!(tc.draw_integer_uniform(3, 9).unwrap(), 3);
+    let values: Vec<ChoiceValue> = tc.nodes.iter().map(|n| n.data.value()).collect();
+    assert_eq!(
+        values,
+        [7, u64::MAX, 4, 3, 4, 3].map(|v| ChoiceValue::Integer(BigInt::from(v)))
+    );
+}
+
+#[test]
+fn i64_draws_match_the_bigint_draw_choice_for_choice() {
+    let mut wide = NativeTestCase::new_random(EngineRng::seeded(5)).unwrap();
+    let mut narrow = NativeTestCase::new_random(EngineRng::seeded(5)).unwrap();
+    for (min, max) in [
+        (0, 1),
+        (0, 10),
+        (32, 126),
+        (-100, 100),
+        (i64::MAX - 3, i64::MAX),
+        (i64::MIN, i64::MAX),
+        (0, 1),
+    ] {
+        for _ in 0..40 {
+            let expected = wide.draw_integer::<i64>(min, max).unwrap();
+            assert_eq!(narrow.draw_integer_i64(min, max).unwrap(), expected);
+        }
+    }
+    assert_eq!(wide.nodes.len(), narrow.nodes.len());
+    for (w, n) in wide.nodes.iter().zip(narrow.nodes.iter()) {
+        assert_eq!(w.data, n.data);
+        assert_eq!(w.was_forced, n.was_forced);
+    }
+}
+
+#[test]
+fn i64_draws_replay_misfit_and_template_the_prefix() {
+    let prefix = vec![
+        ChoiceValue::Integer(BigInt::from(7)),
+        ChoiceValue::Integer(BigInt::from(i64::MIN)),
+        ChoiceValue::Integer(BigInt::from(12)),
+        ChoiceValue::Integer(BigInt::from(i64::MAX) + BigInt::from(1)),
+        ChoiceValue::Boolean(false),
+        ChoiceValue::Boolean(true),
+    ];
+    let prefix_nodes = vec![
+        ChoiceNode::integer(IntegerChoice::small(0, 9, 0), BigInt::from(7), false),
+        ChoiceNode::integer(
+            IntegerChoice::small(i64::MIN, i64::MIN + 1, 0),
+            BigInt::from(i64::MIN),
+            false,
+        ),
+        ChoiceNode::integer(IntegerChoice::small(0, 99, 0), BigInt::from(12), false),
+        ChoiceNode::integer(
+            IntegerChoice::new(0, BigInt::from(i64::MAX) + BigInt::from(1), 0),
+            BigInt::from(i64::MAX) + BigInt::from(1),
+            false,
+        ),
+        ChoiceNode::boolean(BooleanChoice { p: 0.5 }, false, false),
+        ChoiceNode::boolean(BooleanChoice { p: 0.5 }, true, false),
+    ];
+    let mut tc = NativeTestCase::for_choices_and_template(
+        &prefix,
+        Some(&prefix_nodes),
+        Some(ChoiceTemplate::simplest(None).unwrap()),
+        10,
+        None,
+    );
+    assert_eq!(tc.draw_integer_i64(3, 9).unwrap(), 7);
+    assert_eq!(
+        tc.draw_integer_i64(i64::MIN, i64::MIN + 1).unwrap(),
+        i64::MIN
+    );
+    assert_eq!(tc.draw_integer_i64(3, 9).unwrap(), 4);
+    assert_eq!(tc.draw_integer_i64(3, 9).unwrap(), 4);
+    assert_eq!(tc.draw_integer_i64(3, 9).unwrap(), 3);
+    assert_eq!(tc.draw_integer_i64(3, 9).unwrap(), 4);
+    assert_eq!(tc.draw_integer_i64(3, 9).unwrap(), 3);
+    let values: Vec<ChoiceValue> = tc.nodes.iter().map(|n| n.data.value()).collect();
+    assert_eq!(
+        values,
+        [7, i64::MIN, 4, 4, 3, 4, 3].map(|v| ChoiceValue::Integer(BigInt::from(v)))
+    );
+    let kinds: Vec<ChoiceKind> = tc.nodes.iter().map(|n| n.data.kind()).collect();
+    assert_eq!(
+        kinds[1],
+        ChoiceKind::Integer(IntegerChoice::small(i64::MIN, i64::MIN + 1, 0))
+    );
+}
+
+#[test]
+fn i64_draws_reject_an_inverted_range() {
+    let mut tc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
+    assert!(tc.draw_integer_i64(5, 4).is_err());
+}
+
+#[test]
+fn biased_i64_sample_matches_the_i128_sampler() {
+    for (min, max, narrow) in [
+        (0, 1, true),
+        (0, 254, true),
+        (0, 255, true),
+        (0, 256, false),
+        (i64::MIN, i64::MAX, false),
+        (7, 7, false),
+    ] {
+        assert_eq!(is_narrow(i128::from(min), i128::from(max)), narrow);
+        let range = narrow.then(|| NarrowRange::new(i128::from(min), i128::from(max)).unwrap());
+        let mut a = EngineRng::seeded(9);
+        let mut b = EngineRng::seeded(9);
+        for _ in 0..100 {
+            let params = GenerationParameters::draw(&mut a).unwrap().integer;
+            GenerationParameters::draw(&mut b).unwrap();
+            let expected =
+                biased_i128_sample(i128::from(min), i128::from(max), &mut a, params).unwrap();
+            let v = biased_i64_sample(min, max, range.as_ref(), &mut b, params).unwrap();
+            assert_eq!(i128::from(v), expected);
+            assert!((min..=max).contains(&v));
+        }
+    }
+    assert!(!is_narrow(i128::MIN, i128::MAX));
+}
+
+#[test]
+fn a_test_case_works_out_each_narrow_range_once_until_another_takes_its_slot() {
+    let mut ranges = NarrowRanges::default();
+    let slot = NarrowRanges::slot(0, 1);
+    let first = ranges.get(0, 1).unwrap();
+    assert_eq!(first, NarrowRange::new(0, 1).unwrap());
+    assert_eq!(ranges.0[slot], first);
+    assert_eq!(ranges.get(0, 1).unwrap(), first);
+    assert_eq!(ranges.0[slot], first);
+    let unused = NarrowRange::default();
+    assert_eq!(
+        ranges.0.iter().filter(|held| **held == unused).count(),
+        ranges.0.len() - 1
+    );
+
+    let other = (2..256)
+        .find(|&max| NarrowRanges::slot(0, max) == slot)
+        .unwrap();
+    let second = ranges.get(0, other).unwrap();
+    assert_eq!(second, NarrowRange::new(0, other).unwrap());
+    assert_ne!(second, first);
+    assert_eq!(ranges.0[slot], second);
+    assert_eq!(ranges.get(0, 1).unwrap(), first);
+    assert_eq!(ranges.0[slot], first);
+
+    let distinct = (2..256)
+        .find(|&max| NarrowRanges::slot(0, max) != slot)
+        .unwrap();
+    ranges.get(0, distinct).unwrap();
+    assert_eq!(ranges.0[slot], first);
+    assert_eq!(
+        ranges.0.iter().filter(|held| **held == unused).count(),
+        ranges.0.len() - 2
+    );
+
+    let mut a = EngineRng::seeded(3);
+    let mut b = EngineRng::seeded(3);
+    for _ in 0..50 {
+        assert_eq!(
+            ranges.get(0, other).unwrap().sample(&mut a).unwrap(),
+            narrow_nasty_sample(0, other, &mut b).unwrap()
+        );
+    }
+}
+
+#[test]
+fn i128_to_f64_agrees_with_the_cast_either_side_of_i64() {
+    for v in [
+        0,
+        1,
+        -1,
+        255,
+        i128::from(i64::MAX),
+        i128::from(i64::MIN),
+        i128::from(i64::MAX) + 1,
+        i128::from(i64::MIN) - 1,
+        9_007_199_254_740_993,
+        -9_007_199_254_740_993,
+        i128::MAX,
+        i128::MIN,
+    ] {
+        assert_eq!(i128_to_f64(v).to_bits(), (v as f64).to_bits(), "{v}");
+    }
+}
+
+#[test]
+fn f64_to_i128_agrees_with_the_cast_either_side_of_i64() {
+    for r in [
+        0.0,
+        -0.0,
+        0.5,
+        -2.5,
+        1e18,
+        -1e18,
+        I64_LIMIT,
+        -I64_LIMIT,
+        I64_LIMIT * 2.0,
+        -I64_LIMIT * 2.0,
+        1e40,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+    ] {
+        assert_eq!(f64_to_i128(r), r as i128, "{r}");
+    }
+}
+
+#[test]
+fn uniform_draws_record_their_bounds_whatever_their_width() {
+    let mut tc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
+    tc.draw_integer_uniform(3, 9).unwrap();
+    tc.draw_integer_uniform(0, u64::MAX).unwrap();
+    tc.draw_integer_uniform(u64::MAX - 1, u64::MAX).unwrap();
+    let kinds: Vec<ChoiceKind> = tc.nodes.iter().map(|n| n.data.kind()).collect();
+    assert_eq!(
+        kinds,
+        [(3, 9), (0, u64::MAX), (u64::MAX - 1, u64::MAX)]
+            .map(|(min, max)| ChoiceKind::Integer(IntegerChoice::new(min, max, 0u64)))
+    );
+    assert_eq!(kinds[0], ChoiceKind::Integer(IntegerChoice::small(3, 9, 0)));
+}
+
+#[test]
+fn uniform_u64_inclusive_draws_what_rands_sampler_draws_from_the_same_stream() {
+    use rand::distr::uniform::{UniformInt, UniformSampler};
+    let ranges = [
+        (0, 0),
+        (3, 9),
+        (0, 1 << 32),
+        (0, u64::MAX),
+        (u64::MAX - 1, u64::MAX),
+        (1, 1 << 63),
+        (0, (1 << 63) + 1),
+        (5, u64::MAX - 5),
+    ];
+    for seed in 0..20 {
+        let mut ours = EngineRng::seeded(seed);
+        let mut theirs = EngineRng::seeded(seed);
+        for &(low, high) in &ranges {
+            for _ in 0..50 {
+                let v = uniform_u64_inclusive(low, high, &mut ours);
+                assert!((low..=high).contains(&v));
+                assert_eq!(
+                    v,
+                    UniformInt::<u64>::sample_single_inclusive(low, high, &mut theirs).unwrap()
+                );
+            }
+        }
+        assert_eq!(ours.next_u64(), theirs.next_u64());
+    }
+}
+
+#[test]
+fn a_spent_template_stops_a_string_drawn_from_the_rng_early() {
+    let kind = Arc::new(StringChoice {
+        intervals: crate::native::intervalsets::IntervalSet::new(vec![(0, 0x7F)])
+            .unwrap()
+            .into(),
+        min_size: 0,
+        max_size: 10,
+        constraint: None,
+    });
+    let mut tc = NativeTestCase::for_choices_and_template(
+        &[],
+        None,
+        Some(ChoiceTemplate::simplest(Some(1)).unwrap()),
+        100,
+        None,
+    );
+    assert!(!tc.weighted(0.5, None).unwrap());
+    let drawn = tc.draw_string_from(kind, |_| Ok(vec![u32::from('a')]));
+    assert!(matches!(drawn, Err(EngineError::Overrun)), "{drawn:?}");
+    assert_eq!(tc.status(), Some(Status::EarlyStop));
+    assert_eq!(tc.nodes.len(), 1);
+}
+
+#[test]
+fn a_string_drawn_from_the_rng_notifies_the_observer() {
+    use std::sync::{Arc as SyncArc, Mutex};
+    struct StringObserver {
+        captured: SyncArc<Mutex<Option<(String, bool)>>>,
+    }
+    impl DataObserver for StringObserver {
+        fn draw_string(&mut self, value: &str, was_forced: bool) {
+            *self.captured.lock().unwrap() = Some((value.to_string(), was_forced));
+        }
+    }
+    let captured = SyncArc::new(Mutex::new(None));
+    let obs = Box::new(StringObserver {
+        captured: captured.clone(),
+    });
+    let kind = Arc::new(StringChoice {
+        intervals: crate::native::intervalsets::IntervalSet::new(vec![(0, 0x7F)])
+            .unwrap()
+            .into(),
+        min_size: 0,
+        max_size: 10,
+        constraint: None,
+    });
+    let mut tc = NativeTestCase::for_choices_and_template(&[], None, None, BUFFER_SIZE, Some(obs))
+        .with_random(EngineRng::seeded(0))
+        .unwrap();
+    let drawn = tc
+        .draw_string_from(kind, |_| Ok("ab".chars().map(u32::from).collect()))
+        .unwrap();
+    assert_eq!(drawn, "ab");
+    let recorded = captured.lock().unwrap().take();
+    assert_eq!(recorded, Some((String::from("ab"), false)));
+}
+
+#[test]
+fn a_string_drawn_from_the_rng_replays_though_its_check_would_reject_it() {
+    use crate::native::re::constraint::RegexConstraint;
+    use crate::native::re::parser::parse_pattern;
+    let constraint =
+        RegexConstraint::new("(a)\\1", parse_pattern("(a)\\1", 0).unwrap(), true, None);
+    let kind = Arc::new(StringChoice {
+        intervals: crate::native::intervalsets::IntervalSet::new(vec![(0, 0x7F)])
+            .unwrap()
+            .into(),
+        min_size: 0,
+        max_size: 10,
+        constraint: Some(crate::native::core::Constraint::Regex(Arc::new(constraint))),
+    });
+    let ab: Vec<u32> = "ab".chars().map(u32::from).collect();
+    assert!(!kind.validate(&ab));
+    let mut tc = NativeTestCase::for_choices_and_template(&[], None, None, BUFFER_SIZE, None)
+        .with_random(EngineRng::seeded(0))
+        .unwrap();
+    let drawn = tc
+        .draw_string_from(Arc::clone(&kind), |_| Ok(ab.clone()))
+        .unwrap();
+    assert_eq!(drawn, "ab");
+    assert!(kind.validate(&ab));
 }

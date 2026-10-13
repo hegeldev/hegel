@@ -1,5 +1,6 @@
 use super::*;
 use alloc::string::ToString;
+use alloc::vec;
 
 const PYTHON_RANGES: &[(u32, &str)] = &include!("unicodedata_python_reference_data.rs");
 
@@ -63,9 +64,9 @@ fn char_variants_agree_with_the_u32_lookups() {
         general_category_char('\u{10FFFF}'),
         general_category(0x10FFFF).unwrap()
     );
-    assert!(is_in_group_char('A', "Lu"));
-    assert!(is_in_group_char('A', "L"));
-    assert!(!is_in_group_char('A', "N"));
+    assert!(is_in_group('A' as u32, "Lu").unwrap());
+    assert!(is_in_group('A' as u32, "L").unwrap());
+    assert!(!is_in_group('A' as u32, "N").unwrap());
 }
 
 #[test]
@@ -181,4 +182,76 @@ fn category_from_code_rejects_unknown() {
     assert_eq!(Category::from_code("Xx"), None);
     assert_eq!(Category::from_code("lu"), None);
     assert_eq!(Category::from_code("Luu"), None);
+}
+
+#[test]
+fn category_runs_tile_the_codespace() {
+    let mut next = 0;
+    for (start, end, cat) in category_runs() {
+        assert_eq!(start, next);
+        assert!(start <= end);
+        assert_eq!(general_category(start).unwrap(), cat);
+        assert_eq!(general_category(end).unwrap(), cat);
+        next = end + 1;
+    }
+    assert_eq!(next, 0x10FFFF + 1);
+}
+
+#[test]
+fn category_runs_in_clip_the_runs_to_the_range() {
+    for &(lo, hi) in &[
+        (0, 0xFFFF),
+        (0x41, 0x5A),
+        (0x30, 0x7F),
+        (0x3A, 0x3A),
+        (0x10FFFF, 0x10FFFF),
+        (0x10FF00, 0x11FFFF),
+        (0, 0x10FFFF),
+    ] {
+        let top = hi.min(0x10FFFF);
+        let mut next = lo;
+        for (start, end, cat) in category_runs_in(lo, hi) {
+            assert_eq!(start, next);
+            assert!(start <= end && end <= top);
+            assert_eq!(general_category(start).unwrap(), cat);
+            assert_eq!(general_category(end).unwrap(), cat);
+            next = end + 1;
+        }
+        assert_eq!(next, top + 1, "runs over {lo:#x}..={hi:#x}");
+    }
+    assert!(category_runs_in(0, 0x10FFFF).eq(category_runs()));
+    assert_eq!(
+        category_runs_in(0x41, 0x5A).collect::<Vec<_>>(),
+        vec![(0x41, 0x5A, Category::Lu)]
+    );
+    assert!(category_runs_in(0x30, 0x7F).count() > 1);
+    assert_eq!(category_runs_in(5, 3).count(), 0);
+    assert_eq!(category_runs_in(0x110000, 0x110005).count(), 0);
+}
+
+/// Expected values from CPython 3.14's `_sre.unicode_tolower` and
+/// `_sre.unicode_iscased`, which the table derivation was checked against
+/// for every codepoint of Unicode 16.0.
+#[test]
+fn case_mappings_follow_cpython() {
+    assert_eq!(to_lower('A'), 'a');
+    assert_eq!(to_upper('a'), 'A');
+    assert_eq!(to_lower('\u{130}'), 'i');
+    assert_eq!(to_upper('\u{130}'), '\u{130}');
+    assert_eq!(to_lower('\u{DF}'), '\u{DF}');
+    assert_eq!(to_upper('\u{DF}'), 'S');
+    assert_eq!(to_upper('\u{149}'), '\u{2BC}');
+    assert_eq!(to_lower('\u{212A}'), 'k');
+    assert_eq!(to_upper('\u{1C8A}'), '\u{1C89}');
+    assert_eq!(to_lower('1'), '1');
+    assert_eq!(to_upper('1'), '1');
+    assert_eq!(to_lower('\u{4E00}'), '\u{4E00}');
+    assert_eq!(to_lower('\u{10FFFF}'), '\u{10FFFF}');
+}
+
+#[test]
+fn unicode_17_case_mappings_are_known() {
+    assert_eq!(to_upper('\u{A7CF}'), '\u{A7CE}');
+    assert_eq!(to_lower('\u{A7CE}'), '\u{A7CF}');
+    assert_eq!(general_category(0x105C0).unwrap(), Category::Lo);
 }

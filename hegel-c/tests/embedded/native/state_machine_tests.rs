@@ -104,14 +104,14 @@ fn assert_forced_index_node(ntc: &NativeTestCase, pos: usize, n: i64, index: i64
     let node = &ntc.nodes[pos];
     assert!(node.was_forced);
     assert_eq!(node.value(), ChoiceValue::Integer(BigInt::from(index)));
-    assert!(matches!(&node.kind(), ChoiceKind::Integer(k) if k.max_value == BigInt::from(n - 1)));
+    assert!(matches!(&node.kind(), ChoiceKind::Integer(k) if k.max_value() == BigInt::from(n - 1)));
 }
 
 fn count_draws_with_max(ntc: &NativeTestCase, max_value: i64) -> usize {
     ntc.nodes
         .iter()
         .filter(
-            |n| matches!(&n.kind(), ChoiceKind::Integer(k) if k.max_value == BigInt::from(max_value)),
+            |n| matches!(&n.kind(), ChoiceKind::Integer(k) if k.max_value() == BigInt::from(max_value)),
         )
         .count()
 }
@@ -333,7 +333,7 @@ fn fallback_draws_among_every_enabled_remaining_candidate() {
     assert!(!ntc.nodes[7].was_forced);
     assert!(!ntc.nodes[8].was_forced);
     assert!(
-        matches!(&ntc.nodes[9].kind(), ChoiceKind::Integer(k) if k.max_value == BigInt::from(1))
+        matches!(&ntc.nodes[9].kind(), ChoiceKind::Integer(k) if k.max_value() == BigInt::from(1))
     );
     assert_forced_index_node(&ntc, 10, 4, 3);
 }

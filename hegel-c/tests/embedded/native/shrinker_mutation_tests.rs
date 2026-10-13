@@ -13,11 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn ranged_int_node(min: i128, max: i128, value: i128) -> ChoiceNode {
     ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(min),
-            max_value: BigInt::from(max),
-            shrink_towards: BigInt::from(0),
-        },
+        IntegerChoice::new(BigInt::from(min), BigInt::from(max), BigInt::from(0)),
         BigInt::from(value),
         false,
     )

@@ -22,6 +22,12 @@ pub struct IntervalSet {
 }
 
 impl IntervalSet {
+    /// Every Unicode scalar value: the alphabet of a string whose
+    /// constraint alone decides which strings are in.
+    pub fn unicode_scalars() -> Result<Self, InternalError> {
+        Self::new(alloc::vec![(0, 0xD7FF), (0xE000, 0x10FFFF)])
+    }
+
     /// Build from a list of `(start, end)` intervals. Each must satisfy
     /// `start <= end` (an inverted interval is an internal error); the
     /// caller is expected to pass disjoint, sorted intervals (as all

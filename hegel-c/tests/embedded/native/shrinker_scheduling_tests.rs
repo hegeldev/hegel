@@ -1,6 +1,7 @@
 //! Unit tests for `Shrinker::fixate_shrink_passes`.
 
 use crate::exchange::drive_no_yield;
+use crate::native::HashMap;
 use crate::native::bignum::BigInt;
 use crate::native::core::choices::IntegerChoice;
 use crate::native::core::{ChoiceNode, ChoiceValue, Spans};
@@ -13,11 +14,7 @@ use alloc::vec::Vec;
 
 fn int_node(value: i128) -> ChoiceNode {
     ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(0),
-            max_value: BigInt::from(100),
-            shrink_towards: BigInt::from(0),
-        },
+        IntegerChoice::new(BigInt::from(0), BigInt::from(100), BigInt::from(0)),
         BigInt::from(value),
         false,
     )
@@ -649,6 +646,8 @@ fn past_deadline_latches_and_short_circuits_consider_and_probe() {
     assert!(shrinker.timed_out);
     assert!(drive_no_yield(shrinker.consider(&[int_node(0)])).is_err());
     assert!(drive_no_yield(shrinker.probe(&[ChoiceValue::Integer(BigInt::from(0))], 8)).is_err());
+    let replacement = HashMap::from_iter([(0, ChoiceValue::Integer(BigInt::from(0)))]);
+    assert!(drive_no_yield(shrinker.replace(&replacement)).is_err());
     assert_eq!(shrinker.calls, 0, "nothing should have been executed");
 }
 

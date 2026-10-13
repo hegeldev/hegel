@@ -200,6 +200,27 @@ lint: check-lint
 miri: check-miri
 check: check-lint check-tests check-tests-all-features
 
+# Parse strings generated from the fixture grammars with Lark itself
+# (needs uv, which fetches the pinned lark).
+check-lark:
+    scripts/check-lark.py
+
+# Compare the engine's grammar parser with Lark's Earley parser on strings
+# generated from the fixture grammars and mutations of them (needs uv).
+check-parse:
+    scripts/check-parse.py
+
+# Regenerate the `.expected` files for the Lark fixture grammars from Lark.
+lark-fixtures:
+    scripts/gen-lark-fixtures.py
+
+# Regenerate the engine's Unicode tables from the vendored UCD files in
+# hegel-c/src/unicodedata/, and the Python reference they are tested
+# against (needs uv, which fetches unicodedata2 for that Unicode version).
+unicodedata:
+    python3 scripts/generate_unicodedata_tables.py
+    scripts/generate_unicodedata_python_reference.py
+
 # Run cargo-insta, installing it first if it's missing. Pinned to the same
 # version as the `insta` dev-dependency so snapshot format stays consistent.
 INSTA_VERSION := "1.47.2"

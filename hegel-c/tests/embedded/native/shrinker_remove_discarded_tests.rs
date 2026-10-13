@@ -14,11 +14,11 @@ use crate::native::shrinker::{ShrinkProbe, ShrinkRun, Shrinker};
 
 fn int_node(value: i128) -> ChoiceNode {
     ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(i128::MIN),
-            max_value: BigInt::from(i128::MAX),
-            shrink_towards: BigInt::from(0),
-        },
+        IntegerChoice::new(
+            BigInt::from(i128::MIN),
+            BigInt::from(i128::MAX),
+            BigInt::from(0),
+        ),
         BigInt::from(value),
         false,
     )

@@ -17,11 +17,11 @@ use alloc::vec::Vec;
 
 fn int_node_st(value: i128, min: i128, max: i128, shrink_towards: i128) -> ChoiceNode {
     ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(min),
-            max_value: BigInt::from(max),
-            shrink_towards: BigInt::from(shrink_towards),
-        },
+        IntegerChoice::new(
+            BigInt::from(min),
+            BigInt::from(max),
+            BigInt::from(shrink_towards),
+        ),
         BigInt::from(value),
         false,
     )

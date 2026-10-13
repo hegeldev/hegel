@@ -8,11 +8,11 @@ use alloc::vec;
 
 fn integer_node(value: i128, min_value: i128, max_value: i128) -> ChoiceNode {
     ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(min_value),
-            max_value: BigInt::from(max_value),
-            shrink_towards: BigInt::from(0),
-        },
+        IntegerChoice::new(
+            BigInt::from(min_value),
+            BigInt::from(max_value),
+            BigInt::from(0),
+        ),
         BigInt::from(value),
         false,
     )
@@ -204,6 +204,7 @@ fn is_climbable_rejects_strings() {
         intervals: IntervalSet::new(vec![(0x20, 0x7E)]).unwrap().into(),
         min_size: 0,
         max_size: 10,
+        constraint: None,
     };
     let node = ChoiceNode::string(sc, vec![b'a' as u32], false);
     assert!(!is_climbable(&node.data));
@@ -305,6 +306,7 @@ fn step_choice_rejects_unsteppable_kinds() {
             intervals: IntervalSet::new(vec![(97, 122)]).unwrap().into(),
             min_size: 0,
             max_size: 4,
+            constraint: None,
         },
         vec![97],
         false,

@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Generate src/unicodedata/{categories,nfd_bases}.txt from UnicodeData.txt.
+"""Generate hegel-c/src/unicodedata/{categories,nfd_bases,case}.txt from the UCD.
 
 Run from the repo root:
 
     python scripts/generate_unicodedata_tables.py
 
-Reads `src/unicodedata/UnicodeData.txt` (vendored from
-https://www.unicode.org/Public/15.1.0/ucd/UnicodeData.txt) and writes two
-compact text files included into the Rust crate via `include_str!`:
+Reads `hegel-c/src/unicodedata/UnicodeData.txt` and `SpecialCasing.txt`
+(vendored from https://www.unicode.org/Public/<UNICODE_VERSION>/ucd/) and
+writes three compact text files included into the Rust crate via
+`include_str!`:
 
   - `categories.txt`: one line per contiguous run, `<hex_end> <cat>`,
     where `cat` is a two-character General Category code. Entries are
@@ -19,7 +20,16 @@ compact text files included into the Rust crate via `include_str!`:
     `<hex_cp> <hex_base>`, sorted by `cp`. The base is the recursive NFD
     base (chain followed to its fixed point).
 
-Both files are parsed lazily into `OnceLock`s at first lookup.
+  - `case.txt`: one line per codepoint with a lowercase or uppercase form
+    other than itself, `<hex_cp> <hex_lower> <hex_upper>`, sorted by `cp`,
+    as CPython's `_PyUnicode_ToLowercase` and `_PyUnicode_ToUppercase`
+    (which `re.IGNORECASE` matches by) map it: the simple mapping from
+    UnicodeData.txt, or the first codepoint of the full mapping for a
+    codepoint SpecialCasing.txt lists unconditionally.
+
+All three files are parsed lazily at first lookup. The test reference in
+`scripts/generate_unicodedata_python_reference.py` must be regenerated for
+the same Unicode version.
 """
 
 from __future__ import annotations
@@ -27,10 +37,15 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+UNICODE_VERSION = "17.0.0"
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
-UCD_PATH = REPO_ROOT / "src" / "unicodedata" / "UnicodeData.txt"
-CATEGORIES_PATH = REPO_ROOT / "src" / "unicodedata" / "categories.txt"
-NFD_BASES_PATH = REPO_ROOT / "src" / "unicodedata" / "nfd_bases.txt"
+UCD_DIR = REPO_ROOT / "hegel-c" / "src" / "unicodedata"
+UCD_PATH = UCD_DIR / "UnicodeData.txt"
+SPECIAL_CASING_PATH = UCD_DIR / "SpecialCasing.txt"
+CATEGORIES_PATH = UCD_DIR / "categories.txt"
+NFD_BASES_PATH = UCD_DIR / "nfd_bases.txt"
+CASE_PATH = UCD_DIR / "case.txt"
 
 # Categories in the same order as the Rust enum. Keeping them in a stable
 # order means the generated file only churns when the underlying data
@@ -114,6 +129,54 @@ def parse_canonical_decompositions(path: Path) -> dict[int, int]:
     return recursive
 
 
+def parse_special_casing(path: Path) -> dict[int, tuple[list[int], list[int]]]:
+    """Parse the unconditional entries of SpecialCasing.txt into
+    {codepoint: (full_lowercase, full_uppercase)}.
+
+    Conditional entries depend on language or context and are left to the
+    simple mappings, as CPython leaves them.
+    """
+    entries: dict[int, tuple[list[int], list[int]]] = {}
+    for line in path.read_text().splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        fields = [f.strip() for f in line.split(";")]
+        if len(fields) > 4 and fields[4]:
+            continue
+        cp = int(fields[0], 16)
+        lower = [int(c, 16) for c in fields[1].split()]
+        upper = [int(c, 16) for c in fields[3].split()]
+        entries[cp] = (lower, upper)
+    return entries
+
+
+def case_mappings(ucd_path: Path, special_casing_path: Path) -> dict[int, tuple[int, int]]:
+    """The lowercase and uppercase form of each codepoint that has one other
+    than itself, as CPython maps them: the simple mappings of UnicodeData.txt
+    fields 13 and 12, replaced for a codepoint SpecialCasing.txt lists
+    unconditionally by the first codepoint of its full mapping (the
+    `_PyUnicode_ExtendedCase` entry `_PyUnicode_ToLowercase` and
+    `_PyUnicode_ToUppercase` return).
+    """
+    special = parse_special_casing(special_casing_path)
+    mappings: dict[int, tuple[int, int]] = {}
+    for line in ucd_path.read_text().splitlines():
+        if not line:
+            continue
+        fields = line.split(";")
+        cp = int(fields[0], 16)
+        upper = int(fields[12], 16) if fields[12] else cp
+        lower = int(fields[13], 16) if fields[13] else cp
+        if cp in special:
+            full_lower, full_upper = special[cp]
+            lower = full_lower[0] if full_lower else lower
+            upper = full_upper[0] if full_upper else upper
+        if lower != cp or upper != cp:
+            mappings[cp] = (lower, upper)
+    return mappings
+
+
 def build_ranges(entries: dict[int, str]) -> list[tuple[int, int, str]]:
     """Collapse per-codepoint categories into contiguous runs.
 
@@ -148,15 +211,23 @@ def emit_nfd_bases(nfd_bases: dict[int, int], path: Path) -> None:
     path.write_text("\n".join(lines) + "\n")
 
 
+def emit_case(mappings: dict[int, tuple[int, int]], path: Path) -> None:
+    lines = [f"{cp:x} {lower:x} {upper:x}" for cp, (lower, upper) in sorted(mappings.items())]
+    path.write_text("\n".join(lines) + "\n")
+
+
 def main() -> None:
     entries = parse_unicode_data(UCD_PATH)
     ranges = build_ranges(entries)
     nfd_bases = parse_canonical_decompositions(UCD_PATH)
     emit_categories(ranges, CATEGORIES_PATH)
     emit_nfd_bases(nfd_bases, NFD_BASES_PATH)
+    mappings = case_mappings(UCD_PATH, SPECIAL_CASING_PATH)
+    emit_case(mappings, CASE_PATH)
     print(
-        f"Wrote {CATEGORIES_PATH} ({len(ranges)} ranges) and "
-        f"{NFD_BASES_PATH} ({len(nfd_bases)} NFD base entries)."
+        f"Wrote {CATEGORIES_PATH} ({len(ranges)} ranges), "
+        f"{NFD_BASES_PATH} ({len(nfd_bases)} NFD base entries) and "
+        f"{CASE_PATH} ({len(mappings)} case mappings)."
     )
 
 

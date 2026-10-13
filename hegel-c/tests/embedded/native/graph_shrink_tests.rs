@@ -719,3 +719,62 @@ fn a_forced_draw_is_not_an_edge_and_cannot_cycle_the_shrink() {
     assert_eq!(witness, vec![0, 0]);
     assert!(shrinker.replays() < 2000, "{} replays", shrinker.replays());
 }
+
+fn ab_string_body(tc: &mut NativeTestCase, _: &mut Lcg) -> Option<bool> {
+    let s = draw(tc, 1, |tc| {
+        tc.draw_string(
+            Arc::new(IntervalSet::new(vec![(b'a' as u32, b'c' as u32)]).unwrap()),
+            0,
+            8,
+        )
+    })?;
+    Some(s.chars().count() >= 2)
+}
+
+fn under_grammar(text: &str, simplest: &str, value: &str) -> ChoiceData {
+    use crate::native::lark::builder::{NoImports, load_grammar};
+    let built = load_grammar(text, None, &NoImports).unwrap();
+    let grammar = crate::native::lark::compile::compile(&built, &["start"]).unwrap();
+    let start = grammar.start[0];
+    let cps = |s: &str| s.chars().map(u32::from).collect::<Vec<u32>>();
+    let constraint =
+        crate::native::lark::constraint::GrammarConstraint::new(grammar, start, 8, u32::MAX, None)
+            .unwrap();
+    constraint
+        .simplest_or_init(|| Ok::<_, crate::control::InternalError>(cps(simplest)))
+        .unwrap();
+    ChoiceData::String(
+        Arc::new(crate::native::core::StringChoice {
+            intervals: Arc::new(IntervalSet::new(vec![(b'a' as u32, b'c' as u32)]).unwrap()),
+            min_size: 0,
+            max_size: 8,
+            constraint: Some(Constraint::Grammar(Arc::new(constraint))),
+        }),
+        cps(value),
+    )
+}
+
+#[test]
+fn a_string_under_a_grammar_moves_to_its_simplest_or_down_its_derivation() {
+    let cb = |s: &str| ChoiceValue::String(s.chars().map(|c| c as u32).collect());
+    let (mut shrinker, mut probe) = start(ab_string_body, &[run(&[(A, cb("abababab"))])], 0.5);
+    let key = edge_keys(shrinker.graph()).remove(0);
+    let constrained = under_grammar("start: \"ab\"*\n", "", "abababab");
+    let moved = drive_no_yield(shrinker.shrink_value(&mut probe, &key, &constrained)).unwrap();
+    assert!(moved);
+    assert_eq!(shrinker.witness().0[0].value(), cb("ab"));
+
+    let (mut shrinker, mut probe) = start(ab_string_body, &[run(&[(A, cb("cc"))])], 0.5);
+    let key = edge_keys(shrinker.graph()).remove(0);
+    let constrained = under_grammar("start: \"ab\"*\n", "", "cc");
+    let moved = drive_no_yield(shrinker.shrink_value(&mut probe, &key, &constrained)).unwrap();
+    assert!(!moved);
+    assert_eq!(shrinker.witness().0[0].value(), cb("cc"));
+
+    let (mut shrinker, mut probe) = start(ab_string_body, &[run(&[(A, cb("cbcb"))])], 0.5);
+    let key = edge_keys(shrinker.graph()).remove(0);
+    let constrained = under_grammar("start: \"c\" \"b\"*\n", "cb", "cbcb");
+    let moved = drive_no_yield(shrinker.shrink_value(&mut probe, &key, &constrained)).unwrap();
+    assert!(moved);
+    assert_eq!(shrinker.witness().0[0].value(), cb("cb"));
+}

@@ -1,16 +1,13 @@
 use super::*;
 use crate::native::core::choices::BooleanChoice;
+use crate::native::lark::builder::{NoImports, load_grammar};
+use crate::native::lark::compile::compile;
 use alloc::string::ToString;
 
 #[test]
 fn integer_choice_simplest_spans_zero() {
     assert_eq!(
-        IntegerChoice {
-            min_value: BigInt::from(-10),
-            max_value: BigInt::from(10),
-            shrink_towards: BigInt::from(0),
-        }
-        .simplest(),
+        IntegerChoice::new(BigInt::from(-10), BigInt::from(10), BigInt::from(0)).simplest(),
         BigInt::from(0)
     );
 }
@@ -18,12 +15,7 @@ fn integer_choice_simplest_spans_zero() {
 #[test]
 fn integer_choice_simplest_all_positive() {
     assert_eq!(
-        IntegerChoice {
-            min_value: BigInt::from(5),
-            max_value: BigInt::from(100),
-            shrink_towards: BigInt::from(0),
-        }
-        .simplest(),
+        IntegerChoice::new(BigInt::from(5), BigInt::from(100), BigInt::from(0)).simplest(),
         BigInt::from(5)
     );
 }
@@ -31,25 +23,37 @@ fn integer_choice_simplest_all_positive() {
 #[test]
 fn integer_choice_simplest_all_negative() {
     assert_eq!(
-        IntegerChoice {
-            min_value: BigInt::from(-100),
-            max_value: BigInt::from(-5),
-            shrink_towards: BigInt::from(0),
-        }
-        .simplest(),
+        IntegerChoice::new(BigInt::from(-100), BigInt::from(-5), BigInt::from(0)).simplest(),
         BigInt::from(-5)
     );
 }
 
 #[test]
+fn integer_choice_shrink_towards_is_kept_unclamped_whatever_the_width() {
+    let small = IntegerChoice::new(BigInt::from(5), BigInt::from(10), BigInt::from(-3));
+    assert!(small.is_small());
+    assert_eq!(small.shrink_towards(), BigInt::from(-3));
+    assert_eq!(small.simplest(), BigInt::from(5));
+    let wide = integer_choice(0, 1 << 100);
+    assert!(!wide.is_small());
+    assert_eq!(wide.shrink_towards(), BigInt::from(0));
+    let towards = IntegerChoice::new(
+        BigInt::from(i128::MIN),
+        BigInt::from(i128::MAX),
+        BigInt::from(1i128 << 90),
+    );
+    assert!(!towards.is_small());
+    assert_eq!(towards.shrink_towards(), BigInt::from(1i128 << 90));
+    assert_eq!(towards.simplest(), BigInt::from(1i128 << 90));
+    let far = IntegerChoice::new(BigInt::from(1), BigInt::from(1i128 << 80), BigInt::from(-1));
+    assert_eq!(far.shrink_towards(), BigInt::from(-1));
+    assert_eq!(far.simplest(), BigInt::from(1));
+}
+
+#[test]
 fn integer_choice_unit_spans_zero() {
     assert_eq!(
-        IntegerChoice {
-            min_value: BigInt::from(-10),
-            max_value: BigInt::from(10),
-            shrink_towards: BigInt::from(0),
-        }
-        .unit(),
+        IntegerChoice::new(BigInt::from(-10), BigInt::from(10), BigInt::from(0)).unit(),
         BigInt::from(1)
     );
 }
@@ -57,12 +61,7 @@ fn integer_choice_unit_spans_zero() {
 #[test]
 fn integer_choice_unit_all_positive() {
     assert_eq!(
-        IntegerChoice {
-            min_value: BigInt::from(5),
-            max_value: BigInt::from(100),
-            shrink_towards: BigInt::from(0),
-        }
-        .unit(),
+        IntegerChoice::new(BigInt::from(5), BigInt::from(100), BigInt::from(0)).unit(),
         BigInt::from(6)
     );
 }
@@ -70,12 +69,7 @@ fn integer_choice_unit_all_positive() {
 #[test]
 fn integer_choice_unit_all_negative() {
     assert_eq!(
-        IntegerChoice {
-            min_value: BigInt::from(-100),
-            max_value: BigInt::from(-5),
-            shrink_towards: BigInt::from(0),
-        }
-        .unit(),
+        IntegerChoice::new(BigInt::from(-100), BigInt::from(-5), BigInt::from(0)).unit(),
         BigInt::from(-6)
     );
 }
@@ -83,23 +77,18 @@ fn integer_choice_unit_all_negative() {
 #[test]
 fn integer_choice_unit_single_value_range() {
     assert_eq!(
-        IntegerChoice {
-            min_value: BigInt::from(5),
-            max_value: BigInt::from(5),
-            shrink_towards: BigInt::from(0),
-        }
-        .unit(),
+        IntegerChoice::new(BigInt::from(5), BigInt::from(5), BigInt::from(0)).unit(),
         BigInt::from(5)
     );
 }
 
 #[test]
 fn choice_kind_resolve_rejects_kind_value_mismatch() {
-    let kind = ChoiceKind::Integer(std::sync::Arc::new(IntegerChoice {
-        min_value: BigInt::from(0),
-        max_value: BigInt::from(100),
-        shrink_towards: BigInt::from(0),
-    }));
+    let kind = ChoiceKind::Integer(IntegerChoice::new(
+        BigInt::from(0),
+        BigInt::from(100),
+        BigInt::from(0),
+    ));
     assert_eq!(kind.resolve(&ChoiceValue::Boolean(true)), None);
 }
 
@@ -108,11 +97,7 @@ fn bu(n: u64) -> crate::native::bignum::BigUint {
 }
 
 fn integer_choice(min: i128, max: i128) -> IntegerChoice {
-    IntegerChoice {
-        min_value: BigInt::from(min),
-        max_value: BigInt::from(max),
-        shrink_towards: BigInt::from(0),
-    }
+    IntegerChoice::new(BigInt::from(min), BigInt::from(max), BigInt::from(0))
 }
 
 #[test]
@@ -200,11 +185,7 @@ fn integer_choice_from_index_overflowing_u128_returns_none() {
 
 #[test]
 fn integer_choice_index_round_trip_nonzero_shrink_towards() {
-    let ic = IntegerChoice {
-        min_value: BigInt::from(-5),
-        max_value: BigInt::from(40),
-        shrink_towards: BigInt::from(7),
-    };
+    let ic = IntegerChoice::new(BigInt::from(-5), BigInt::from(40), BigInt::from(7));
     for v in -5i128..=40 {
         let bv = BigInt::from(v);
         let idx = ic.to_index(&bv);
@@ -214,11 +195,7 @@ fn integer_choice_index_round_trip_nonzero_shrink_towards() {
 
 #[test]
 fn integer_choice_index_round_trip_shrink_towards_clamped_outside_range() {
-    let ic = IntegerChoice {
-        min_value: BigInt::from(10),
-        max_value: BigInt::from(30),
-        shrink_towards: BigInt::from(-100),
-    };
+    let ic = IntegerChoice::new(BigInt::from(10), BigInt::from(30), BigInt::from(-100));
     for v in 10i128..=30 {
         let bv = BigInt::from(v);
         let idx = ic.to_index(&bv);
@@ -566,6 +543,7 @@ fn string_choice(intervals: Vec<(u32, u32)>, min_size: usize, max_size: usize) -
             .into(),
         min_size,
         max_size,
+        constraint: None,
     }
 }
 
@@ -633,11 +611,7 @@ fn string_choice_from_index_past_max_returns_none() {
 
 fn integer_node(min: i128, max: i128, value: i128) -> ChoiceNode {
     ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(min),
-            max_value: BigInt::from(max),
-            shrink_towards: BigInt::from(0),
-        },
+        IntegerChoice::new(BigInt::from(min), BigInt::from(max), BigInt::from(0)),
         BigInt::from(value),
         false,
     )
@@ -737,15 +711,9 @@ fn nodes_sort_key_shortlex_orders_by_length_then_element() {
 
 #[test]
 fn choice_kind_unit_dispatches_to_each_sub_kind() {
-    let ic = IntegerChoice {
-        min_value: BigInt::from(0),
-        max_value: BigInt::from(10),
-        shrink_towards: BigInt::from(0),
-    };
+    let ic = IntegerChoice::new(BigInt::from(0), BigInt::from(10), BigInt::from(0));
     assert_eq!(
-        ChoiceKind::Integer(std::sync::Arc::new(ic.clone()))
-            .unit()
-            .unwrap(),
+        ChoiceKind::Integer(ic.clone()).unit().unwrap(),
         ChoiceValue::Integer(ic.unit())
     );
 
@@ -797,11 +765,7 @@ fn engine_error_display_covers_all_variants() {
 fn big_integer_node(distance_beyond_u128: u32) -> ChoiceNode {
     let huge = BigInt::from(u128::MAX) * BigInt::from(4) + BigInt::from(distance_beyond_u128);
     ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(0),
-            max_value: huge.clone(),
-            shrink_towards: BigInt::from(0),
-        },
+        IntegerChoice::new(BigInt::from(0), huge.clone(), BigInt::from(0)),
         huge,
         false,
     )
@@ -844,6 +808,7 @@ fn string_max_index() {
             .into(),
         min_size: 0,
         max_size: 2,
+        constraint: None,
     });
     assert_eq!(kind.max_index(), Some(bu(12)));
 }
@@ -867,6 +832,7 @@ fn string_to_index_via_dispatch() {
             .into(),
         min_size: 0,
         max_size: 4,
+        constraint: None,
     });
     let data = kind.resolve(&ChoiceValue::String(vec![])).unwrap();
     assert_eq!(data.to_index().unwrap(), Some(bu(0)));
@@ -1269,4 +1235,211 @@ fn clone_kind_has_no_dense_index() {
         None
     );
     assert_eq!(ChoiceKind::Clone.max_index(), None);
+}
+
+#[test]
+fn a_choice_node_is_a_few_words() {
+    assert_eq!(core::mem::size_of::<IntegerChoice>(), 32);
+    assert_eq!(core::mem::size_of::<ChoiceNode>(), 64);
+    let wide = IntegerChoice::new(BigInt::from(0), BigInt::from(u128::MAX), BigInt::from(0));
+    let small = IntegerChoice::new(BigInt::from(0), BigInt::from(i64::MAX), BigInt::from(0));
+    assert_eq!(small, IntegerChoice::small(0, i64::MAX, 0));
+    assert_ne!(wide, small);
+    assert_eq!(wide.max_value(), BigInt::from(u128::MAX));
+    assert!(wide.validate(&BigInt::from(u64::MAX)) && !wide.validate(&BigInt::from(-1)));
+    assert!(small.validate(&BigInt::from(i64::MAX)) && !small.validate(&BigInt::from(u64::MAX)));
+    assert_eq!(
+        small.sort_key(&BigInt::from(-3)),
+        (BigUint::from(3u32), true)
+    );
+    assert_eq!(
+        wide.sort_key(&BigInt::from(-3)),
+        (BigUint::from(3u32), true)
+    );
+    assert_eq!(
+        IntegerChoice::new(5, 9, 0).clamped_shrink_towards(),
+        IntegerChoice::new(BigInt::from(5), BigInt::from(u128::MAX), BigInt::from(0))
+            .clamped_shrink_towards()
+    );
+}
+
+#[test]
+fn small_bounds_are_the_ones_held_inline() {
+    assert!(IntegerChoice::small(-3, 3, 0).is_small());
+    assert!(IntegerChoice::new(i64::MIN, i64::MAX, 0).is_small());
+    assert!(!IntegerChoice::new(0, BigInt::from(u64::MAX), 0).is_small());
+    assert!(!IntegerChoice::new(BigInt::from(i128::MIN), 0, 0).is_small());
+}
+
+#[test]
+fn nodes_that_own_no_heap_are_booleans_floats_and_inline_integers() {
+    assert!(ChoiceNode::boolean(BooleanChoice { p: 0.5 }, true, false).owns_no_heap());
+    assert!(ChoiceNode::float(fc(0.0, 1.0, false, false), 0.5, true).owns_no_heap());
+    assert!(integer_node(0, 10, 3).owns_no_heap());
+    assert!(integer_node(i64::MIN as i128, i64::MAX as i128, -7).owns_no_heap());
+    assert!(!integer_node(0, u64::MAX as i128, 3).owns_no_heap());
+    let beyond_inline = BigInt::from(u128::MAX) + BigInt::from(1);
+    assert!(
+        !ChoiceNode::integer(IntegerChoice::small(0, 1, 0), beyond_inline, false).owns_no_heap()
+    );
+    assert!(!bytes_node(0, 2, Vec::new()).owns_no_heap());
+    assert!(!string_node(vec![(97, 122)], 0, 2, Vec::new()).owns_no_heap());
+    assert!(!ChoiceNode::clone_stream(Arc::new(RealizedStream::empty()), false).owns_no_heap());
+}
+
+fn grammar_constraint(text: &str, max_size: usize, simplest: &str) -> Arc<GrammarConstraint> {
+    let built = load_grammar(text, None, &NoImports).unwrap();
+    let grammar = compile(&built, &["start"]).unwrap();
+    let start = grammar.start[0];
+    let constraint = GrammarConstraint::new(grammar, start, max_size, u32::MAX, None).unwrap();
+    constraint
+        .simplest_or_init(|| Ok::<_, crate::control::InternalError>(cps(simplest)))
+        .unwrap();
+    Arc::new(constraint)
+}
+
+fn cps(s: &str) -> Vec<u32> {
+    s.chars().map(u32::from).collect()
+}
+
+fn grammar_string_choice(text: &str, max_size: usize, simplest: &str) -> StringChoice {
+    StringChoice {
+        intervals: crate::native::intervalsets::IntervalSet::new(vec![
+            (0, 0xD7FF),
+            (0xE000, 0x10FFFF),
+        ])
+        .unwrap()
+        .into(),
+        min_size: 0,
+        max_size,
+        constraint: Some(Constraint::Grammar(grammar_constraint(
+            text, max_size, simplest,
+        ))),
+    }
+}
+
+const AB: &str = "start: \"a\" \"b\"*\n";
+
+#[test]
+fn a_grammar_string_choice_accepts_only_the_strings_the_grammar_derives() {
+    let sc = grammar_string_choice(AB, 4, "a");
+    assert!(sc.validate(&cps("a")));
+    assert!(sc.validate(&cps("abbb")));
+    assert!(!sc.validate(&cps("b")));
+    assert!(!sc.validate(&cps("")));
+    assert!(!sc.validate(&cps("abbbb")));
+    let narrow = StringChoice {
+        intervals: crate::native::intervalsets::IntervalSet::new(vec![(b'a' as u32, b'a' as u32)])
+            .unwrap()
+            .into(),
+        ..sc
+    };
+    assert!(narrow.validate(&cps("a")));
+    assert!(!narrow.validate(&cps("ab")));
+}
+
+#[test]
+fn a_grammar_string_choices_simplest_and_unit_are_the_grammars_simplest_string() {
+    let sc = grammar_string_choice(AB, 4, "a");
+    assert_eq!(sc.simplest().unwrap(), cps("a"));
+    assert_eq!(sc.unit().unwrap(), cps("a"));
+    let kind = ChoiceKind::String(sc.clone());
+    assert_eq!(kind.simplest().unwrap(), ChoiceValue::String(cps("a")));
+    assert_eq!(kind.unit().unwrap(), ChoiceValue::String(cps("a")));
+    let node = ChoiceNode::string(sc, cps("ab"), false);
+    assert_eq!(
+        node.data.simplest_value().unwrap(),
+        ChoiceValue::String(cps("a"))
+    );
+    assert!(!node.data.is_simplest().unwrap());
+    let simplest = node.with_simplest().unwrap();
+    assert!(simplest.data.is_simplest().unwrap());
+    assert_eq!(simplest.value(), ChoiceValue::String(cps("a")));
+    assert_eq!(simplest.kind(), node.kind());
+}
+
+#[test]
+fn a_grammar_string_choice_resolves_only_values_in_the_grammar() {
+    let sc = grammar_string_choice(AB, 4, "a");
+    let kind = ChoiceKind::String(sc.clone());
+    assert!(kind.resolve(&ChoiceValue::String(cps("ab"))).is_some());
+    assert!(kind.resolve(&ChoiceValue::String(cps("ba"))).is_none());
+    assert!(kind.resolve(&ChoiceValue::Bytes(vec![b'a'])).is_none());
+    let node = ChoiceNode::string(sc, cps("a"), false);
+    let moved = node.with_value(&ChoiceValue::String(cps("abb"))).unwrap();
+    assert_eq!(moved.value(), ChoiceValue::String(cps("abb")));
+    assert_eq!(moved.kind(), node.kind());
+    assert!(node.with_value(&ChoiceValue::String(cps("bb"))).is_none());
+    assert!(node.with_value(&ChoiceValue::Boolean(true)).is_none());
+    let plain = string_node(vec![(b'a' as u32, b'b' as u32)], 0, 4, cps("a"));
+    assert!(plain.with_value(&ChoiceValue::String(cps("ba"))).is_some());
+    assert!(plain.with_value(&ChoiceValue::String(cps("c"))).is_none());
+}
+
+#[test]
+fn a_grammar_string_choice_has_no_dense_index() {
+    let sc = grammar_string_choice(AB, 4, "a");
+    assert!(!sc.indexed());
+    assert!(string_choice(vec![(b'a' as u32, b'b' as u32)], 0, 4).indexed());
+    let kind = ChoiceKind::String(sc.clone());
+    assert_eq!(kind.max_index(), None);
+    assert_eq!(kind.from_index(bu(0)).unwrap(), None);
+    let node = ChoiceNode::string(sc, cps("ab"), false);
+    assert_eq!(node.data.to_index().unwrap(), None);
+    assert_eq!(node.data.max_index(), None);
+    assert_eq!(node.data.from_index(bu(1)).unwrap(), None);
+}
+
+#[test]
+fn grammar_string_choices_compare_by_the_grammars_identity() {
+    let a = grammar_string_choice(AB, 4, "a");
+    let b = grammar_string_choice(AB, 4, "a");
+    assert_eq!(a, b);
+    assert_eq!(ChoiceKind::String(a.clone()), ChoiceKind::String(b.clone()));
+    assert_eq!(
+        ChoiceNode::string(a.clone(), cps("a"), false),
+        ChoiceNode::string(b, cps("a"), false)
+    );
+    assert_ne!(a, grammar_string_choice("start: \"a\" \"c\"*\n", 4, "a"));
+    assert_ne!(
+        a,
+        StringChoice {
+            constraint: None,
+            ..a.clone()
+        }
+    );
+    let shown = alloc::format!("{a:?}");
+    let identity = alloc::format!(
+        "{:016x}",
+        a.constraint.as_ref().unwrap().grammar().unwrap().identity()
+    );
+    assert!(shown.contains("GrammarConstraint"), "{shown}");
+    assert!(shown.contains(&identity), "{shown}");
+}
+
+#[test]
+fn a_grammar_strings_value_serialises_like_any_string() {
+    let node = ChoiceNode::string(grammar_string_choice(AB, 4, "a"), cps("abb"), false);
+    let bytes = crate::native::database::serialize_choices(&[node.value()]).unwrap();
+    let plain = string_node(vec![(b'a' as u32, b'b' as u32)], 0, 4, cps("abb"));
+    assert_eq!(
+        bytes,
+        crate::native::database::serialize_choices(&[plain.value()]).unwrap()
+    );
+    assert_eq!(
+        crate::native::database::deserialize_choices_exact(&bytes).unwrap(),
+        vec![ChoiceValue::String(cps("abb"))]
+    );
+}
+
+#[test]
+fn drawn_strings_are_forgotten_all_at_once_past_the_capacity() {
+    let drawn = Drawn::default();
+    drawn.note(&[1, 2]);
+    drawn.note(&[1, 2]);
+    drawn.note(&vec![0; DRAWN_CAPACITY - 2]);
+    assert!(drawn.contains(&[1, 2]));
+    drawn.note(&[3]);
+    assert!(!drawn.contains(&[1, 2]));
+    assert!(drawn.contains(&[3]));
 }

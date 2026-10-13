@@ -18,6 +18,7 @@ fn string_node_with(min_cp: u32, max_cp: u32, value: Vec<u32>) -> ChoiceNode {
             intervals: IntervalSet::new(vec![(min_cp, max_cp)]).unwrap().into(),
             min_size: 0,
             max_size: 32,
+            constraint: None,
         },
         value,
         false,
@@ -53,11 +54,7 @@ fn lower_duplicated_characters_skips_non_string_neighbour() {
     let initial = vec![
         string_node_with(b'a' as u32, b'z' as u32, vec![b'b' as u32]),
         ChoiceNode::integer(
-            IntegerChoice {
-                min_value: BigInt::from(0),
-                max_value: BigInt::from(100),
-                shrink_towards: BigInt::from(0),
-            },
+            IntegerChoice::new(BigInt::from(0), BigInt::from(100), BigInt::from(0)),
             BigInt::from(7),
             false,
         ),

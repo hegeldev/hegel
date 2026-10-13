@@ -11,11 +11,7 @@ use alloc::vec::Vec;
 
 fn small_int_node(value: i128) -> ChoiceNode {
     ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(0),
-            max_value: BigInt::from(10),
-            shrink_towards: BigInt::from(0),
-        },
+        IntegerChoice::new(BigInt::from(0), BigInt::from(10), BigInt::from(0)),
         BigInt::from(value),
         false,
     )
@@ -23,11 +19,7 @@ fn small_int_node(value: i128) -> ChoiceNode {
 
 fn big_range_int_node(value: i128) -> ChoiceNode {
     ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(0),
-            max_value: BigInt::from(1_000_000),
-            shrink_towards: BigInt::from(0),
-        },
+        IntegerChoice::new(BigInt::from(0), BigInt::from(1_000_000), BigInt::from(0)),
         BigInt::from(value),
         false,
     )
@@ -101,7 +93,7 @@ fn initial_coarse_reduction_skips_large_values() {
 fn initial_coarse_reduction_skips_non_zero_min_value() {
     let mut node = small_int_node(3);
     if let crate::native::core::ChoiceData::Integer(ic, _) = &mut node.data {
-        std::sync::Arc::make_mut(ic).min_value = BigInt::from(1);
+        *ic = IntegerChoice::new(BigInt::from(1), ic.max_value(), ic.shrink_towards());
     }
     let initial = vec![node];
     let mut shrinker = Shrinker::with_probe(

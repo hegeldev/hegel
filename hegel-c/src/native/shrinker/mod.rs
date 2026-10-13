@@ -3,6 +3,7 @@ mod clones;
 mod coarse;
 mod deletion;
 mod floats;
+mod grammar;
 mod index_passes;
 mod integers;
 mod mutation;
@@ -553,6 +554,9 @@ impl<'a> Shrinker<'a> {
     /// matches the semantic invariant: a value that doesn't fit the node's
     /// kind can't be assigned to it.
     pub async fn replace(&mut self, values: &HashMap<usize, ChoiceValue>) -> ShrinkResult<bool> {
+        if self.past_deadline() {
+            return Err(ShrinkHalt::Stop);
+        }
         let mut attempt: Vec<ChoiceNode> = self.current_nodes.clone();
         for (&i, v) in values {
             if i >= attempt.len() {
@@ -750,6 +754,10 @@ impl<'a> Shrinker<'a> {
             ShrinkPass::new(
                 "redistribute_bytes_pairs",
                 Box::new(|sh| boxed_pass(sh.redistribute_bytes_pairs())),
+            ),
+            ShrinkPass::new(
+                "shrink_grammar_strings",
+                Box::new(|sh| boxed_pass(sh.shrink_grammar_strings())),
             ),
             ShrinkPass::new(
                 "shrink_strings",

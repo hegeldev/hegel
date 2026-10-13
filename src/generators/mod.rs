@@ -14,6 +14,7 @@ mod deferred;
 #[allow(clippy::module_inception)]
 mod generators;
 mod labels;
+mod lark;
 mod misc;
 mod numeric;
 mod recursive;
@@ -46,6 +47,7 @@ pub use generators::{
     PrintableGenerator, PrintedAsCall, PrintedAsDebug, PrintedWith,
 };
 pub use labels::{combine_labels, label_from_name};
+pub use lark::{LarkGenerator, from_lark};
 pub use misc::{BoolGenerator, JustGenerator, booleans, just, unit, weighted_booleans};
 pub use numeric::{Float, FloatGenerator, Integer, IntegerGenerator, floats, integers};
 pub use recursive::{RecursiveGenerator, SubtreeGenerator, recursive};

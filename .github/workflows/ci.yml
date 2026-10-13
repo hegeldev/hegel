@@ -277,6 +277,29 @@ jobs:
       - name: Run no-std runtime C bindings recipe
         run: just c-test-runtime
 
+  lark:
+    name: lark
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - uses: ./.github/actions/install-tools
+        with:
+          # `uv` is needed for the `check-lark.py` script's
+          # `#!/usr/bin/env -S uv run --script` shebang.
+          tools: just uv
+
+      - name: Check generated strings parse with Lark
+        run: just check-lark
+
   docs:
     name: docs
     runs-on: ubuntu-latest
@@ -466,7 +489,7 @@ jobs:
   release:
     name: release
     if: github.event_name == 'push' && github.repository == 'hegeldev/hegel-rust'
-    needs: [lint, test, test-wasm, test-all-features, test-minimal-versions, test-c-bindings, test-c-runtime, compile-examples, docs, coverage, nix, miri]
+    needs: [lint, test, test-wasm, test-all-features, test-minimal-versions, test-c-bindings, test-c-runtime, compile-examples, docs, coverage, nix, miri, lark]
     runs-on: ubuntu-latest
     permissions:
       contents: write

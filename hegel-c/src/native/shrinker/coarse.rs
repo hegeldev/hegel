@@ -40,17 +40,17 @@ impl<'a> Shrinker<'a> {
                 i += 1;
                 continue;
             };
-            let (ic, current_val) = (alloc::sync::Arc::clone(ic), current_val.clone());
+            let (ic, current_val) = (ic.clone(), current_val.clone());
             if node.was_forced
                 || current_val > BigInt::from(10)
-                || ic.min_value.clone() != BigInt::from(0)
+                || ic.min_value() != BigInt::from(0)
             {
                 i += 1;
                 continue;
             }
             let mut zeroed = self.current_nodes.clone();
             zeroed[i] = ChoiceNode::new(
-                ChoiceData::Integer(alloc::sync::Arc::clone(&ic), BigInt::from(0)),
+                ChoiceData::Integer(ic.clone(), BigInt::from(0)),
                 zeroed[i].was_forced,
             );
             let (_, zero_actual, _) = self.run_test_fn(ShrinkRun::Full(&zeroed)).await?;

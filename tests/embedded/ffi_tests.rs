@@ -51,6 +51,7 @@ fn ffi_drives_a_passing_run_exercising_every_primitive() {
     let sh = SettingsHandle::build(&settings, None, None);
     let run = RunHandle::start(&sh, None).unwrap();
     let text = StringGenerator::text(0, 5, None, 0, None, None, None, None, None).unwrap();
+    let grammar = Grammar::new("start: \"a\"+ \"b\"", None, 0, 0, None, &[], &[]).unwrap();
 
     let mut cases = 0usize;
     drive_run(&run, |tc| {
@@ -98,6 +99,9 @@ fn ffi_drives_a_passing_run_exercising_every_primitive() {
         let s = tc.generate_string(&text)?;
         assert!(s.chars().count() <= 5);
 
+        let drawn = tc.generate_grammar(&grammar, 0)?;
+        assert!(drawn.chars().all(|c| c == 'a' || c == 'b'));
+
         use crate::test_case::full_ranges;
         let d = tc.generate_date(full_ranges::MIN_DATE, full_ranges::MAX_DATE)?;
         assert!((1..=9999).contains(&d.year));
@@ -142,6 +146,69 @@ fn ffi_object_constructors_error_on_a_completed_case() {
             Err(ALREADY_COMPLETE)
         ));
     }
+}
+
+#[test]
+fn ffi_grammar_debug_is_opaque() {
+    let g = Grammar::new("start: \"a\"", None, 0, 0, None, &[], &[]).unwrap();
+    assert_eq!(format!("{g:?}"), "Grammar { .. }");
+}
+
+#[test]
+fn ffi_grammar_construction_reports_engine_diagnostics() {
+    let err = Grammar::new("start: )", None, 0, 0, None, &[], &[]).unwrap_err();
+    assert!(err.contains("line 1"), "{err}");
+    let err = Grammar::new("start: \"ab\"", None, 1, 0, None, &[], &[]).unwrap_err();
+    assert!(err.contains("max_size is 1"), "{err}");
+    let alphabet =
+        StringGenerator::text(0, 0, None, 0, Some(0x7F), None, None, None, None).unwrap();
+    let grammar = Grammar::new(
+        "start: NUM WORD\n%declare NUM\nWORD: /[a-z]+/",
+        Some("start"),
+        100,
+        10,
+        Some(&alphabet),
+        &["NUM".to_string()],
+        &[],
+    )
+    .unwrap();
+    let marker = grammar.placeholder("NUM").unwrap();
+    assert!(
+        marker.starts_with("<<EXPLICIT_NUM_") && marker.ends_with(">>"),
+        "{marker}"
+    );
+    let err = grammar.placeholder("WORD").unwrap_err();
+    assert!(err.contains("not an explicit terminal"), "{err}");
+}
+
+#[test]
+fn ffi_grammar_imports_are_read_from_import_paths_then_beside_the_importer() {
+    let root = tempfile::TempDir::new().unwrap();
+    let sub = root.path().join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    std::fs::write(sub.join("lib.lark"), "%import .inner.DIGIT\nNUM: DIGIT+\n").unwrap();
+    std::fs::write(sub.join("inner.lark"), "DIGIT: /[0-9]/\n").unwrap();
+    let text = "%import sub.lib.NUM\n%import common.WS\nstart: NUM\n%ignore WS\n";
+    let paths = [root.path().to_path_buf()];
+    Grammar::new(text, None, 0, 0, None, &[], &paths).unwrap();
+
+    let err = Grammar::new(text, None, 0, 0, None, &[], &[]).unwrap_err();
+    assert!(
+        err.contains("Could not find grammar `sub/lib.lark`"),
+        "{err}"
+    );
+
+    let err = Grammar::new(
+        "%import .inner.DIGIT\nstart: DIGIT",
+        None,
+        0,
+        0,
+        None,
+        &[],
+        &paths,
+    )
+    .unwrap_err();
+    assert!(err.contains("Could not find grammar `inner.lark`"), "{err}");
 }
 
 #[test]

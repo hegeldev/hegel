@@ -29,6 +29,7 @@ opaque_handles!(
     HegelCollection,
     HegelContext,
     HegelFailure,
+    HegelGrammar,
     HegelPool,
     HegelPrinter,
     HegelPrinterOptions,
@@ -122,6 +123,17 @@ pub(crate) enum hegel_health_check_t {
 
 pub(crate) type hegel_output_callback_t =
     Option<unsafe extern "C" fn(user_data: *mut c_void, line: *const c_char, len: usize)>;
+
+pub(crate) type hegel_grammar_import_t = Option<
+    unsafe extern "C" fn(
+        user_data: *mut c_void,
+        base_path: *const c_char,
+        grammar_path: *const c_char,
+        out_path: *mut *const c_char,
+        out_text: *mut *const c_char,
+        out_text_len: *mut usize,
+    ) -> bool,
+>;
 
 pub(crate) const HEGEL_STATE_MACHINE_DONE: i64 = i64::MIN;
 

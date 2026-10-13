@@ -1,14 +1,13 @@
 use crate::native::HashMap;
 use alloc::vec::Vec;
 
-use crate::native::core::{ChoiceValue, StringChoice};
+use crate::native::core::Constraint;
+use crate::native::core::{ChoiceData, ChoiceValue, StringChoice};
 use crate::unicodedata;
 
 use super::search::{BinSearchDown, FindInteger};
 use super::{PassExit, ShrinkResult, Shrinker, absorb_node_gone};
-use crate::control::{
-    hegel_internal_debug_assert, hegel_internal_debug_assert_ne, hegel_internal_unwrap,
-};
+use crate::control::{hegel_internal_debug_assert_ne, hegel_internal_unwrap};
 
 impl<'a> Shrinker<'a> {
     pub(super) async fn shrink_strings(&mut self) -> ShrinkResult<()> {
@@ -20,6 +19,19 @@ impl<'a> Shrinker<'a> {
         Ok(())
     }
 
+    /// Shrink the string at node `i`: try the kind's simplest string,
+    /// then cut it to a shorter prefix by binary search and by scanning
+    /// the shortest lengths, delete single characters, and for a string
+    /// under a constraint (a regex pattern, as grammar strings have a
+    /// pass of their own) also delete short windows anywhere in it and
+    /// copy the simplest string's ends over its own, since a constrained
+    /// string rarely survives losing one character at a time; finally
+    /// replace repeated characters together and minimize each character.
+    /// The windows stop once `max_stall` of them in a row have failed,
+    /// whether the constraint or the test refused them: there are a few
+    /// per character, each checked against the constraint over the whole
+    /// string, and only those the test runs count towards the shrinker's
+    /// own stall.
     async fn shrink_string_node(&mut self, i: usize) -> Result<(), PassExit> {
         {
             let (kind, current) = self.string_at(i).ok_or(PassExit::NodeGone)?;
@@ -67,6 +79,50 @@ impl<'a> Shrinker<'a> {
                 cand.remove(j);
                 self.replace(&HashMap::from_iter([(i, ChoiceValue::String(cand))]))
                     .await?;
+            }
+
+            if kind.constraint.is_some() {
+                let mut stalled = 0;
+                'windows: for width in (2..=8).rev() {
+                    let cur = self.current_string(i).ok_or(PassExit::NodeGone)?;
+                    let mut start = cur.len().saturating_sub(width);
+                    loop {
+                        let cur = self.current_string(i).ok_or(PassExit::NodeGone)?;
+                        if start + width <= cur.len() {
+                            let mut cand = cur.clone();
+                            cand.drain(start..start + width);
+                            let ok = self
+                                .replace(&HashMap::from_iter([(i, ChoiceValue::String(cand))]))
+                                .await?;
+                            stalled = if ok { 0 } else { stalled + 1 };
+                            if stalled >= self.max_stall {
+                                break 'windows;
+                            }
+                        }
+                        if start == 0 {
+                            break;
+                        }
+                        start -= 1;
+                    }
+                }
+                let simplest = kind.simplest()?;
+                let mut k = 0;
+                loop {
+                    k += 1;
+                    let cur = self.current_string(i).ok_or(PassExit::NodeGone)?;
+                    if k > cur.len().min(simplest.len()) {
+                        break;
+                    }
+                    let mut tail = cur[..cur.len() - k].to_vec();
+                    tail.extend_from_slice(&simplest[simplest.len() - k..]);
+                    self.replace(&HashMap::from_iter([(i, ChoiceValue::String(tail))]))
+                        .await?;
+                    let cur = self.current_string(i).ok_or(PassExit::NodeGone)?;
+                    let mut head = simplest[..k].to_vec();
+                    head.extend_from_slice(cur.get(k..).unwrap_or_default());
+                    self.replace(&HashMap::from_iter([(i, ChoiceValue::String(head))]))
+                        .await?;
+                }
             }
 
             let cur = self.current_string(i).ok_or(PassExit::NodeGone)?;
@@ -208,9 +264,11 @@ impl<'a> Shrinker<'a> {
 
     /// The string constraint and value at node `i`, or `None` when the node
     /// is not (or no longer) a string — a concurrent shrink can pun the kind
-    /// at any position between probes.
+    /// at any position between probes — or is a string under a grammar,
+    /// which these passes leave to a grammar-directed pass: the strings
+    /// they would propose are hardly ever in the grammar.
     fn string_at(&self, i: usize) -> Option<(StringChoice, Vec<u32>)> {
-        let (sc, v) = self.current_nodes.get(i)?.data.as_string()?;
+        let (sc, v) = plain_string(&self.current_nodes.get(i)?.data)?;
         Some((sc.clone(), v.to_vec()))
     }
 
@@ -247,7 +305,7 @@ impl<'a> Shrinker<'a> {
         self.current_nodes
             .iter()
             .enumerate()
-            .filter_map(|(i, n)| n.data.as_string().map(|_| i))
+            .filter_map(|(i, n)| plain_string(&n.data).map(|_| i))
             .collect()
     }
 
@@ -397,7 +455,9 @@ impl<'a> Shrinker<'a> {
             for replacement in candidates {
                 let mut new_value = cur.clone();
                 new_value[pos] = replacement;
-                hegel_internal_debug_assert!(kind.validate(&new_value));
+                if !kind.validate(&new_value) {
+                    continue;
+                }
                 if self
                     .replace(&HashMap::from_iter([(i, ChoiceValue::String(new_value))]))
                     .await?
@@ -410,13 +470,18 @@ impl<'a> Shrinker<'a> {
     }
 }
 
-/// "Obvious smaller" replacement codepoints to try for a character with
-/// codepoint `cp` in a [`StringChoice`] with the given alphabet, in
-/// shrink-key order. Walks the first 62 alphabet positions (digits + ASCII
-/// letters when present) and then the NFD base of `cp` (e.g. `'À' → 'A'`)
-/// if it's a non-ASCII codepoint with a canonical decomposition that lands
-/// in-alphabet.
-///
+/// The kind and value of a string node under no grammar (a string under a
+/// regex is one: its candidates are cheap to check against the pattern); see
+/// [`Shrinker::string_at`].
+fn plain_string(data: &ChoiceData) -> Option<(&StringChoice, &[u32])> {
+    data.as_string().filter(|(sc, _)| {
+        sc.constraint
+            .as_ref()
+            .and_then(Constraint::grammar)
+            .is_none()
+    })
+}
+
 /// Cross-string codepoint candidates from natural text transformations.
 ///
 /// For codepoint `cp` under alphabet `intervals`, returns the

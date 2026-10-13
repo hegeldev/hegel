@@ -142,6 +142,36 @@ impl EngineRng {
         }
     }
 
+    /// One byte of randomness: exactly the byte a one-byte `fill_bytes` would
+    /// write, without the slice bookkeeping that call pays.
+    ///
+    /// For [`EngineRng::Prng`] this is the low byte of one native word of the
+    /// inner `SmallRng`, which is what `SmallRng::fill_bytes` writes for a
+    /// one-byte destination (it fills little-endian words and truncates the
+    /// last one), so seeded streams are unchanged. The word width mirrors
+    /// `SmallRng`'s own choice of generator: 64 bits on 64-bit targets, 32
+    /// bits elsewhere. The other variants read one byte from their external
+    /// source, so the fuzzer still sees a one-byte request.
+    #[inline]
+    pub fn next_byte(&mut self) -> u8 {
+        match self {
+            #[cfg(target_pointer_width = "64")]
+            EngineRng::Prng(rng) => rng.next_u64() as u8,
+            #[cfg(not(target_pointer_width = "64"))]
+            EngineRng::Prng(rng) => rng.next_u32() as u8,
+            _ => self.external_byte(),
+        }
+    }
+
+    /// One byte from the external source, the non-PRNG arm of
+    /// [`Self::next_byte`].
+    #[inline(never)]
+    fn external_byte(&self) -> u8 {
+        let mut buf = [0u8; 1];
+        self.fill_external(&mut buf);
+        buf[0]
+    }
+
     /// Fill `dst` from the external source, for the two non-PRNG variants.
     fn fill_external(&self, dst: &mut [u8]) {
         match self {

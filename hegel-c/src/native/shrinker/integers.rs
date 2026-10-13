@@ -271,12 +271,12 @@ impl<'a> Shrinker<'a> {
     /// The integer nodes of the current shrink target: index, constraint,
     /// and value, snapshotted together so pair passes work from a proven
     /// view instead of re-matching each node.
-    fn integer_entries(&self) -> Vec<(usize, alloc::sync::Arc<IntegerChoice>, BigInt)> {
+    fn integer_entries(&self) -> Vec<(usize, IntegerChoice, BigInt)> {
         self.current_nodes
             .iter()
             .enumerate()
             .filter_map(|(i, n)| match &n.data {
-                ChoiceData::Integer(ic, v) => Some((i, alloc::sync::Arc::clone(ic), v.clone())),
+                ChoiceData::Integer(ic, v) => Some((i, ic.clone(), v.clone())),
                 _ => None,
             })
             .collect()
@@ -435,16 +435,16 @@ impl<'a> Shrinker<'a> {
                 continue;
             }
             if let ChoiceData::Integer(ic, value) = &self.current_nodes[valid[0]].data {
-                let (ic, value) = (alloc::sync::Arc::clone(ic), value.clone());
+                let (ic, value) = (ic.clone(), value.clone());
                 absorb_node_gone(self.shrink_int_duplicate_group(&value, &valid, &ic).await)?;
                 if self.int_value_bigint(valid[0]).as_ref() != Some(&value) {
                     continue;
                 }
-                let members: Vec<(usize, alloc::sync::Arc<IntegerChoice>)> = valid
+                let members: Vec<(usize, IntegerChoice)> = valid
                     .iter()
                     .filter_map(|&i| {
                         let (ic, _) = self.current_nodes.get(i)?.data.as_integer()?;
-                        Some((i, alloc::sync::Arc::new(ic.clone())))
+                        Some((i, ic.clone()))
                     })
                     .collect();
                 self.shrink_stalled_duplicate_subgroups(&value, &members)
@@ -469,13 +469,13 @@ impl<'a> Shrinker<'a> {
     async fn shrink_stalled_duplicate_subgroups(
         &mut self,
         value: &BigInt,
-        members: &[(usize, alloc::sync::Arc<IntegerChoice>)],
+        members: &[(usize, IntegerChoice)],
     ) -> ShrinkResult<()> {
-        let mut partitions: Vec<(alloc::sync::Arc<IntegerChoice>, Vec<usize>)> = Vec::new();
+        let mut partitions: Vec<(IntegerChoice, Vec<usize>)> = Vec::new();
         for (i, ic) in members {
-            match partitions.iter_mut().find(|(p_ic, _)| **p_ic == **ic) {
+            match partitions.iter_mut().find(|(p_ic, _)| p_ic == ic) {
                 Some((_, indices)) => indices.push(*i),
-                None => partitions.push((alloc::sync::Arc::clone(ic), alloc::vec![*i])),
+                None => partitions.push((ic.clone(), alloc::vec![*i])),
             }
         }
         for (ic, mut indices) in partitions {

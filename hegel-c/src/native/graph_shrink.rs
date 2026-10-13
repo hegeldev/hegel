@@ -37,6 +37,8 @@
 //! learned from every replay; a clone's record is not shrunk (only
 //! deleted) in this cut.
 
+use crate::native::lark::constraint::GrammarConstraint;
+use crate::native::lark::layout::Layout;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -47,6 +49,7 @@ use crate::backend::RunError;
 use crate::control::hegel_internal_unwrap;
 use crate::native::HashMap;
 use crate::native::bignum::{BigInt, ToPrimitive};
+use crate::native::core::Constraint;
 use crate::native::core::{ChoiceData, ChoiceNode, ChoiceValue, Span, flattened_len, sort_key};
 use crate::native::graph::{Addr, Frame, Graph, Ident, Run, Step, Walked};
 use crate::native::nd::{self, Evidence, GauntletVerdict};
@@ -514,7 +517,8 @@ impl GraphShrinker {
     /// The value moves for one draw: its constraint's simplest value, then
     /// a kind-specific ladder toward it — a binary search for integers,
     /// the integer part for floats, shorter then simpler elements for
-    /// sequences.
+    /// sequences, and for a string under a grammar the coarse moves its
+    /// derivation allows (see [`Self::shrink_grammar_string`]).
     async fn shrink_value(
         &mut self,
         probe: &mut dyn GraphProbe,
@@ -572,17 +576,75 @@ impl GraphShrinker {
                     .await?;
             }
             (ChoiceData::String(sc, _), ChoiceValue::String(v)) => {
-                let mut v = v;
-                let simplest = sc.simplest_codepoint()?;
-                changed |= self
-                    .shrink_sequence(probe, &mut key, data, &mut v, sc.min_size, simplest, |s| {
-                        ChoiceValue::String(s.to_vec())
-                    })
-                    .await?;
+                match sc.constraint.as_ref().and_then(Constraint::grammar) {
+                    Some(constraint) => {
+                        let constraint = Arc::clone(constraint);
+                        changed |= self
+                            .shrink_grammar_string(probe, &mut key, data, &constraint, v)
+                            .await?;
+                    }
+                    None => {
+                        let mut v = v;
+                        let simplest = sc.simplest_codepoint()?;
+                        changed |= self
+                            .shrink_sequence(
+                                probe,
+                                &mut key,
+                                data,
+                                &mut v,
+                                sc.min_size,
+                                simplest,
+                                |s| ChoiceValue::String(s.to_vec()),
+                            )
+                            .await?;
+                    }
+                }
             }
             _ => {}
         }
         Ok(changed)
+    }
+
+    /// The ladder for a string under a grammar, `text` now: the coarse
+    /// moves on its derivation (see
+    /// [`Layout::coarse_candidates`]), each tried once in turn and all of
+    /// them again after one is accepted. A text the grammar does not
+    /// derive has no derivation to move along.
+    async fn shrink_grammar_string(
+        &mut self,
+        probe: &mut dyn GraphProbe,
+        key: &mut EdgeKey,
+        data: &ChoiceData,
+        constraint: &GrammarConstraint,
+        mut text: Vec<u32>,
+    ) -> Result<bool, RunError> {
+        let mut changed = false;
+        'again: loop {
+            let Some(tree) = constraint.tree(&text) else {
+                return Ok(changed);
+            };
+            let layout = Layout::new(&tree);
+            let mut accepted = None;
+            for candidate in
+                layout.coarse_candidates(&text, |id| constraint.smallest_for_terminal(id))
+            {
+                if self
+                    .try_value(probe, key, data, ChoiceValue::String(candidate.clone()))
+                    .await?
+                {
+                    accepted = Some(candidate);
+                    break;
+                }
+            }
+            match accepted {
+                Some(candidate) => {
+                    text = candidate;
+                    changed = true;
+                    continue 'again;
+                }
+                None => return Ok(changed),
+            }
+        }
     }
 
     /// The ladder for a sequence value: halve its length toward `min_len`,

@@ -12,6 +12,7 @@ both crates' test trees:
 - `tests/common/**` (shared helper modules) likewise from their `mod.rs`.
 - `tests/embedded/**` files have no main.rs: each must be the target of a
   `#[cfg(test)] #[path = "…"]` include somewhere in the crate's `src/`.
+- Directories holding no .rs files at all (data fixtures) are skipped.
 - Files that are explicit cargo targets (e.g. the `[[bin]]` fixtures under
   `tests/fixtures/`, declared with `path = "tests/…"` in the crate's
   Cargo.toml) are wired by cargo itself.
@@ -131,6 +132,9 @@ def check() -> int:
                 continue
             if lib_dir.name == "embedded":
                 check_embedded(lib_dir, src_roots, violations)
+                continue
+            if not any(lib_dir.rglob("*.rs")):
+                # Data fixtures (grammars, expected outputs): nothing to compile.
                 continue
             if lib_dir.name == "ui" or lib_dir.name.startswith("ui-"):
                 # trybuild UI cases: the driver's `compile_fail("tests/<dir>/*.rs")`

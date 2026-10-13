@@ -1,6 +1,8 @@
 //! Embedded tests for `src/native/re/casefold.rs`. The expectations were
-//! checked against CPython 3.12's `_sre.unicode_tolower`,
-//! `_sre.unicode_iscased`, `re._casefix._EXTRA_CASES` and `re.fullmatch`.
+//! checked against CPython 3.14's `_sre.unicode_tolower`,
+//! `_sre.unicode_iscased`, `re._casefix._EXTRA_CASES` and `re.fullmatch`;
+//! the case mappings themselves come from the engine's Unicode tables
+//! (see `unicodedata_tests.rs`).
 
 use super::*;
 use crate::native::re::constants::{SRE_FLAG_ASCII, SRE_FLAG_IGNORECASE};

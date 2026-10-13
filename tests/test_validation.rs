@@ -382,3 +382,39 @@ mod given_error_conditions {
         .run();
     }
 }
+
+#[test]
+fn test_from_lark_rejects_grammar_errors() {
+    expect_draw_panic(gs::from_lark("start: )"), "line 1");
+    expect_draw_panic(gs::from_lark("start: missing"), "missing");
+    expect_draw_panic(gs::from_lark("rule: \"a\""), "start");
+    expect_draw_panic(
+        gs::from_lark("start: \"a\"").explicit("B", gs::text()),
+        "does not use explicit terminal 'B'",
+    );
+}
+
+#[test]
+fn test_from_lark_rejects_impossible_caps() {
+    expect_draw_panic(
+        gs::from_lark("start: \"a\"").max_size(0),
+        "max_size must be at least 1",
+    );
+    expect_draw_panic(
+        gs::from_lark("start: \"a\"").max_depth(0),
+        "max_depth must be at least 1",
+    );
+    expect_draw_panic(gs::from_lark("start: \"ab\"").max_size(1), "max_size is 1");
+    expect_draw_panic(
+        gs::from_lark("start: \"a\"*").max_size(usize::MAX),
+        "may be at most 1048576",
+    );
+    expect_draw_panic(
+        gs::from_lark("start: x\nx: \"a\"").max_depth(1),
+        "max_depth is 1",
+    );
+    expect_draw_panic(
+        gs::from_lark("start: \"a\"").max_depth(u32::MAX),
+        "may be at most 500",
+    );
+}

@@ -11,9 +11,16 @@
 
 use super::*;
 use crate::native::core::BUFFER_SIZE;
+use crate::native::core::Constraint;
+use crate::native::core::StringChoice;
 use crate::native::core::choices::BooleanChoice;
 use crate::native::graph::DRAW_LABEL;
+use crate::native::lark::builder::NoImports;
+use crate::native::lark::generate::{GrammarOptions, GrammarSpec, from_lark};
+use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec;
+use core::cell::RefCell;
 
 use crate::backend::{DataSource, Failure, TestCaseResult};
 use crate::native::bignum::{BigInt, ToPrimitive};
@@ -120,14 +127,22 @@ use std::rc::Rc;
 /// case's outcome) and counts how many times the body actually executed,
 /// then hand both to `after`, driving the whole interaction through a
 /// [`CaseExchange`].
-fn with_counting_ctx<T, B>(mut body: T, after: B)
+fn with_counting_ctx<T, B>(body: T, after: B)
+where
+    T: FnMut(&dyn DataSource) -> TestCaseResult,
+    B: AsyncFnOnce(&mut Engine<'_>, &Rc<Cell<usize>>),
+{
+    with_counting_ctx_under(Settings::new().database(None), body, after);
+}
+
+/// [`with_counting_ctx`] with the engine under `settings`.
+fn with_counting_ctx_under<T, B>(settings: Settings, mut body: T, after: B)
 where
     T: FnMut(&dyn DataSource) -> TestCaseResult,
     B: AsyncFnOnce(&mut Engine<'_>, &Rc<Cell<usize>>),
 {
     let exec_count = Rc::new(Cell::new(0usize));
     let counter = exec_count.clone();
-    let settings = Settings::new().database(None);
     let exchange = CaseExchange::new();
     let fut = async {
         let mut ctx = Engine::new(&settings, None, &exchange).unwrap();
@@ -163,11 +178,11 @@ fn bool_node(value: bool) -> ChoiceNode {
 
 fn int_node(value: i128) -> ChoiceNode {
     ChoiceNode::integer(
-        crate::native::core::choices::IntegerChoice {
-            min_value: BigInt::from(0),
-            max_value: BigInt::from(100),
-            shrink_towards: BigInt::from(0),
-        },
+        crate::native::core::choices::IntegerChoice::new(
+            BigInt::from(0),
+            BigInt::from(100),
+            BigInt::from(0),
+        ),
         BigInt::from(value),
         false,
     )
@@ -800,6 +815,175 @@ fn span_mutation_returns_interesting_proposal() {
             let origins = ctx.origins.live_origins();
             assert_eq!(origins.len(), 1, "the first proposal should be Interesting");
             assert!(origins[0].contains("Panic"));
+        },
+    );
+}
+
+const NESTED: &str = "start: \"[\" (start (\",\" start)*)? \"]\" | \"x\"\n";
+
+/// A grammar spec for `text`, strings capped at `max_size`, with its
+/// simplest string found so that nodes can be recorded under it.
+fn grammar_spec(text: &str, max_size: u64) -> Rc<GrammarSpec> {
+    grammar_spec_with(
+        text,
+        GrammarOptions {
+            max_size,
+            ..GrammarOptions::default()
+        },
+    )
+}
+
+fn grammar_spec_with(text: &str, options: GrammarOptions) -> Rc<GrammarSpec> {
+    let spec = from_lark(text, &NoImports, options).unwrap();
+    spec.ensure_simplest().unwrap();
+    Rc::new(spec)
+}
+
+fn grammar_node(spec: &GrammarSpec, text: &str, forced: bool) -> ChoiceNode {
+    let constraint = spec.constraint();
+    ChoiceNode::string(
+        StringChoice {
+            intervals: Arc::clone(constraint.intervals()),
+            min_size: 0,
+            max_size: constraint.max_size(),
+            constraint: Some(Constraint::Grammar(Arc::clone(constraint))),
+        },
+        text.chars().map(u32::from).collect(),
+        forced,
+    )
+}
+
+/// A body's draw from `spec`, recording every text it sees in `seen`.
+fn drawing(
+    spec: &Rc<GrammarSpec>,
+    seen: &Rc<RefCell<Vec<String>>>,
+) -> impl FnMut(&dyn DataSource) -> Result<String, ()> {
+    let spec = Rc::clone(spec);
+    let seen = Rc::clone(seen);
+    move |ds: &dyn DataSource| {
+        let text = ds.generate_grammar(&spec, None).map_err(|_| ())?;
+        seen.borrow_mut().push(text.clone());
+        Ok(text)
+    }
+}
+
+/// Every executed proposal is a different string of the grammar than
+/// the seed, within the cap; the moves that leave it are never run.
+#[test]
+fn grammar_mutation_runs_only_changed_strings_the_grammar_derives() {
+    let spec = grammar_spec(NESTED, 64);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let mut draw = drawing(&spec, &seen);
+    with_counting_ctx_under(
+        Settings::new().database(None).seed(Some(11)),
+        move |ds| match draw(ds) {
+            Ok(_) => TestCaseResult::Valid,
+            Err(()) => TestCaseResult::Overrun,
+        },
+        async |ctx, count| {
+            let nodes = vec![bool_node(true), grammar_node(&spec, "[x,[x]]", false)];
+            ctx.try_grammar_mutation(&nodes).await.unwrap();
+
+            let seen = seen.borrow();
+            assert_eq!(count.get(), seen.len());
+            assert!(!seen.is_empty(), "no proposal of five was run");
+            for text in seen.iter() {
+                assert_ne!(text, "[x,[x]]");
+                let cps: Vec<u32> = text.chars().map(u32::from).collect();
+                assert!(spec.constraint().accepts(&cps), "{text:?}");
+            }
+            assert_eq!(ctx.valid_test_cases as usize, seen.len());
+            assert!(!ctx.origins.any_live());
+        },
+    );
+}
+
+#[test]
+fn grammar_mutation_returns_at_the_first_interesting_proposal() {
+    let spec = grammar_spec(NESTED, 64);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let mut draw = drawing(&spec, &seen);
+    with_counting_ctx_under(
+        Settings::new().database(None).seed(Some(11)),
+        move |ds| match draw(ds) {
+            Ok(text) if text == "[x,[x]]" => TestCaseResult::Valid,
+            Ok(_) => boom("grown"),
+            Err(()) => TestCaseResult::Overrun,
+        },
+        async |ctx, count| {
+            let nodes = vec![grammar_node(&spec, "[x,[x]]", false)];
+            ctx.try_grammar_mutation(&nodes).await.unwrap();
+
+            assert_eq!(count.get(), 1);
+            assert_eq!(ctx.valid_test_cases, 0);
+            let origins = ctx.origins.live_origins();
+            assert_eq!(origins.len(), 1);
+            assert!(origins[0].contains("Panic"));
+        },
+    );
+}
+
+/// Deepening the recursion past the grammar's depth cap is never
+/// proposed; the moves that stay within it are.
+#[test]
+fn grammar_mutation_keeps_within_the_depth_cap() {
+    let spec = grammar_spec_with(
+        "start: \"(\" start \")\" | \"x\"\n",
+        GrammarOptions {
+            max_depth: 3,
+            ..GrammarOptions::default()
+        },
+    );
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let mut draw = drawing(&spec, &seen);
+    with_counting_ctx_under(
+        Settings::new().database(None).seed(Some(5)),
+        move |ds| match draw(ds) {
+            Ok(_) => TestCaseResult::Valid,
+            Err(()) => TestCaseResult::Overrun,
+        },
+        async |ctx, count| {
+            for _ in 0..10 {
+                let nodes = vec![grammar_node(&spec, "((x))", false)];
+                ctx.try_grammar_mutation(&nodes).await.unwrap();
+            }
+            let seen = seen.borrow();
+            assert!(count.get() > 0);
+            for text in seen.iter() {
+                assert!(["x", "(x)"].contains(&text.as_str()), "{text:?}");
+            }
+            assert!(seen.iter().any(|text| text == "(x)"), "{seen:?}");
+        },
+    );
+}
+
+/// Nothing is proposed from a forced string, a string the grammar does
+/// not derive, a derivation with no moves, a move over the size cap, or
+/// once the test-case budget is spent.
+#[test]
+fn grammar_mutation_leaves_what_it_cannot_grow_alone() {
+    let nested = grammar_spec(NESTED, 64);
+    let single = grammar_spec("start: \"x\"\n", 64);
+    let capped = grammar_spec("start: WORD+\nWORD: /[a-z]+/\n", 3);
+    with_counting_ctx_under(
+        Settings::new().database(None).seed(Some(11)),
+        |_| TestCaseResult::Valid,
+        async |ctx, count| {
+            let mut nodes = vec![
+                bool_node(true),
+                grammar_node(&nested, "[x,[x]]", true),
+                grammar_node(&nested, "zzz", false),
+                grammar_node(&single, "x", false),
+                grammar_node(&capped, "ab", false),
+            ];
+            ctx.try_grammar_mutation(&nodes).await.unwrap();
+            ctx.try_grammar_mutation(&nodes[..1]).await.unwrap();
+            assert_eq!(count.get(), 0);
+
+            nodes[1] = grammar_node(&nested, "[x,[x]]", false);
+            ctx.valid_test_cases = ctx.settings.test_cases;
+            ctx.try_grammar_mutation(&nodes).await.unwrap();
+            assert_eq!(count.get(), 0);
         },
     );
 }
@@ -7484,11 +7668,11 @@ fn an_exhausted_backtrack_after_a_dry_pooled_review_rejects_the_origin() {
         async |ctx| {
             let wide_node = |v: i128| {
                 ChoiceNode::integer(
-                    crate::native::core::choices::IntegerChoice {
-                        min_value: BigInt::from(0),
-                        max_value: BigInt::from(1_000_000),
-                        shrink_towards: BigInt::from(0),
-                    },
+                    crate::native::core::choices::IntegerChoice::new(
+                        BigInt::from(0),
+                        BigInt::from(1_000_000),
+                        BigInt::from(0),
+                    ),
                     BigInt::from(v),
                     false,
                 )

@@ -18,9 +18,9 @@ use crate::native::rng::EngineRng;
 use super::ExternalReplay;
 use super::MAX_CLONE_DEPTH;
 use super::choices::{
-    BooleanChoice, BytesChoice, ChoiceNode, ChoiceTemplate, ChoiceTemplateKind, ChoiceValue,
-    EngineError, FloatChoice, IntegerChoice, InterestingOrigin, RealizedStream, Status,
-    StringChoice,
+    BooleanChoice, BytesChoice, ChoiceData, ChoiceNode, ChoiceTemplate, ChoiceTemplateKind,
+    ChoiceValue, EngineError, FloatChoice, IntegerChoice, InterestingOrigin, RealizedStream,
+    Status, StringChoice,
 };
 use super::replay::{Divergence, Replay, Resolved};
 use super::{
@@ -39,6 +39,7 @@ use crate::control::{
     InternalError, hegel_internal_assert, hegel_internal_debug_assert, hegel_internal_unwrap,
 };
 use crate::native::bignum::{BigInt, BigUint, ToPrimitive, Zero};
+use crate::native::draws::source::RngDraws;
 use crate::native::graph::DRAW_LABEL;
 use crate::native::intervalsets::IntervalSet;
 use crate::native::statistics::{
@@ -46,11 +47,88 @@ use crate::native::statistics::{
 };
 use crate::sys::sync::{Lazy, Mutex};
 
+/// The most choices and the most spans a test case in this process has
+/// recorded so far, as capacity hints for the next one: its choice and
+/// span vectors would otherwise grow by doubling, and copying the large
+/// vectors of a long test case costs more than its draws.
+static MOST_NODES: AtomicUsize = AtomicUsize::new(0);
+static MOST_SPANS: AtomicUsize = AtomicUsize::new(0);
+
+/// The most choices or spans [`MOST_NODES`] and [`MOST_SPANS`] reserve
+/// up front, so that one test case that overran keeps every later one,
+/// on every thread, from starting with a vector of the whole buffer.
+const MOST_RESERVED: usize = 1 << 16;
+
+/// The emptied choice and span vectors of the roomiest test case dropped
+/// so far, for the next test case to record into instead of allocating
+/// and growing vectors of its own.
+static SPARE_VECTORS: Mutex<Option<SpareVectors>> = Mutex::new(None);
+
+/// A dropped test case's choice and span vectors, emptied.
+struct SpareVectors {
+    nodes: Vec<ChoiceNode>,
+    spans: Vec<Span>,
+}
+
+impl SpareVectors {
+    /// Put the emptied `nodes` and `spans` in `slot` when they have room
+    /// for more choices than the vectors there, handing back whichever
+    /// pair is not kept. The vectors are cut to room for `max_size`, the
+    /// most choices the test case they come from could have recorded:
+    /// one grown past that by doubling would be turned down by every
+    /// test case of the size that asks for the slot (see [`Self::take`])
+    /// and hold it against every smaller offer.
+    fn offer(
+        slot: &mut Option<SpareVectors>,
+        mut nodes: Vec<ChoiceNode>,
+        mut spans: Vec<Span>,
+        max_size: usize,
+    ) -> Option<SpareVectors> {
+        nodes.shrink_to(max_size);
+        spans.shrink_to(max_size);
+        let offered = SpareVectors { nodes, spans };
+        match slot {
+            Some(held) if held.nodes.capacity() >= offered.nodes.capacity() => Some(offered),
+            _ => slot.replace(offered),
+        }
+    }
+
+    /// The vectors in `slot` when a test case of up to `max_size` choices
+    /// could fill them, else fresh ones; either way with room for at least
+    /// `nodes` choices and `spans` spans.
+    fn take(
+        slot: &mut Option<SpareVectors>,
+        max_size: usize,
+        nodes: usize,
+        spans: usize,
+    ) -> SpareVectors {
+        match slot.take() {
+            Some(mut held) if held.nodes.capacity() <= max_size => {
+                held.nodes.reserve_exact(nodes);
+                held.spans.reserve_exact(spans);
+                held
+            }
+            left => {
+                *slot = left;
+                SpareVectors {
+                    nodes: Vec::with_capacity(nodes),
+                    spans: Vec::with_capacity(spans),
+                }
+            }
+        }
+    }
+}
+
 /// State for a variable-length collection.
 pub struct ManyState {
     pub min_size: usize,
     pub max_size: f64,
-    pub p_continue: f64,
+    /// The probability of drawing another element past the minimum,
+    /// with the byte [`weighted_boolean_sample`] compares against for it
+    /// (see [`boolean_threshold`]), worked out when it is set rather
+    /// than at every element.
+    p_continue: f64,
+    continue_threshold: u8,
     pub count: usize,
     pub rejections: usize,
     pub force_stop: bool,
@@ -58,14 +136,27 @@ pub struct ManyState {
 
 impl ManyState {
     pub fn new(min_size: usize, max_size: Option<usize>) -> Self {
+        let p_continue = length_p_continue(min_size, max_size);
         ManyState {
             min_size,
             max_size: max_size.map_or(f64::INFINITY, |n| n as f64),
-            p_continue: length_p_continue(min_size, max_size),
+            p_continue,
+            continue_threshold: boolean_threshold(p_continue),
             count: 0,
             rejections: 0,
             force_stop: false,
         }
+    }
+
+    /// The probability of drawing another element past the minimum.
+    pub fn p_continue(&self) -> f64 {
+        self.p_continue
+    }
+
+    /// The byte [`weighted_boolean_sample`] compares against for
+    /// [`Self::p_continue`].
+    pub(crate) fn continue_threshold(&self) -> u8 {
+        self.continue_threshold
     }
 }
 
@@ -264,26 +355,72 @@ static INTEGERS_DISTRIBUTION: Lazy<
     )
 });
 
+/// The CDF of [`INTEGERS_DISTRIBUTION`] half a step either side of
+/// `[min_value, max_value]`: the window a draw from that range inverts.
+fn distribution_window(min_value: i128, max_value: i128) -> Result<(f64, f64), InternalError> {
+    let dist = INTEGERS_DISTRIBUTION.as_ref().map_err(Clone::clone)?;
+    let lo = dist.cdf(i128_to_f64(min_value) - 0.5)?;
+    let hi = dist.cdf(i128_to_f64(max_value) + 0.5)?;
+    Ok((lo, hi))
+}
+
 /// Draw an integer in `[min_value, max_value]` from
-/// [`INTEGERS_DISTRIBUTION`] restricted to that range.
+/// [`INTEGERS_DISTRIBUTION`] restricted to that range, given the range's
+/// [`distribution_window`].
 ///
 /// Falls back to a plain uniform draw when the CDF window across the
 /// requested range is too narrow for inverse-CDF sampling to be stable.
 /// Callers must ensure `min_value < max_value`; the `min == max` early
 /// return is handled at the [`biased_integer_sample`] call site.
+fn sample_distribution_window(
+    min_value: i128,
+    max_value: i128,
+    (lo, hi): (f64, f64),
+    rng: &mut EngineRng,
+) -> Result<i128, InternalError> {
+    if hi - lo < 1e-13 {
+        return Ok(rng.random_range(min_value..=max_value));
+    }
+    let dist = INTEGERS_DISTRIBUTION.as_ref().map_err(Clone::clone)?;
+    let p = (lo + rng.random::<f64>() * (hi - lo)).max(f64::MIN_POSITIVE);
+    Ok(f64_to_i128(libm::round(dist.inverse_cdf(p)?)).clamp(min_value, max_value))
+}
+
+/// Draw an integer in `[min_value, max_value]` from
+/// [`INTEGERS_DISTRIBUTION`] restricted to that range: the range's
+/// [`distribution_window`], sampled by [`sample_distribution_window`].
 fn integer_sample_from_distribution(
     min_value: i128,
     max_value: i128,
     rng: &mut EngineRng,
 ) -> Result<i128, InternalError> {
-    let dist = INTEGERS_DISTRIBUTION.as_ref().map_err(Clone::clone)?;
-    let lo = dist.cdf(min_value as f64 - 0.5)?;
-    let hi = dist.cdf(max_value as f64 + 0.5)?;
-    if hi - lo < 1e-13 {
-        return Ok(rng.random_range(min_value..=max_value));
+    let window = distribution_window(min_value, max_value)?;
+    sample_distribution_window(min_value, max_value, window, rng)
+}
+
+/// `v as f64`, converted from `i64` when `v` fits one. The two conversions
+/// round to the nearest `f64` alike, but the `i128` one is an out-of-line
+/// call where the `i64` one is a single instruction, and nearly every
+/// draw's bounds fit `i64`.
+fn i128_to_f64(v: i128) -> f64 {
+    match i64::try_from(v) {
+        Ok(v) => v as f64,
+        Err(_) => v as f64,
     }
-    let p = (lo + rng.random::<f64>() * (hi - lo)).max(f64::MIN_POSITIVE);
-    Ok((libm::round(dist.inverse_cdf(p)?) as i128).clamp(min_value, max_value))
+}
+
+/// `2^63`, the first magnitude `i64` cannot hold.
+const I64_LIMIT: f64 = (1u128 << 63) as f64;
+
+/// `r as i128`, converted through `i64` when `r` lies within its range.
+/// Both conversions truncate towards zero, saturate at the bounds and
+/// take `NaN` to zero; the `i64` one is a single instruction.
+fn f64_to_i128(r: f64) -> i128 {
+    if (-I64_LIMIT..I64_LIMIT).contains(&r) {
+        i128::from(r as i64)
+    } else {
+        r as i128
+    }
 }
 
 /// Hand-picked "interesting" boundary values: the small magnitudes `0..=±8`,
@@ -687,39 +824,151 @@ pub(crate) fn biased_integer_sample(
     rng: &mut EngineRng,
     params: IntegerGenerationParameters,
 ) -> Result<BigInt, InternalError> {
-    Ok(match (ic.min_value.to_i128(), ic.max_value.to_i128()) {
+    Ok(match (ic.min_value().to_i128(), ic.max_value().to_i128()) {
         (Some(min_i), Some(max_i)) => BigInt::from(biased_i128_sample(min_i, max_i, rng, params)?),
-        _ => biguint_sample_in_range(&ic.min_value, &ic.max_value, rng, params),
+        _ => biguint_sample_in_range(&ic.min_value(), &ic.max_value(), rng, params),
     })
 }
 
-/// Narrow-range sampler: the original nasty-pool + distribution behaviour,
-/// unchanged, so ranges below [`CURATED_MIN_WIDTH`] keep their exact previous
-/// generation and shrink behaviour.
+/// [`biased_i128_sample`] for a range within `i64`, with `narrow` the
+/// range's [`NarrowRange`] when [`is_narrow`] says it has one. Every
+/// category of that sampler answers a value inside the range, so the
+/// result narrows exactly.
+pub(crate) fn biased_i64_sample(
+    min_value: i64,
+    max_value: i64,
+    narrow: Option<&NarrowRange>,
+    rng: &mut EngineRng,
+    params: IntegerGenerationParameters,
+) -> Result<i64, InternalError> {
+    let v = match narrow {
+        Some(range) => range.sample(rng)?,
+        None => biased_i128_sample(i128::from(min_value), i128::from(max_value), rng, params)?,
+    };
+    Ok(hegel_internal_unwrap!(
+        i64::try_from(v).ok(),
+        "biased_i64_sample: sampled {v} outside [{min_value}, {max_value}]"
+    ))
+}
+
+/// Whether `[min_value, max_value]` holds more than one value and is
+/// narrower than [`CURATED_MIN_WIDTH`]: the ranges [`biased_i128_sample`]
+/// hands to the narrow-range sampler, [`NarrowRange`]. A width that
+/// overflows `i128` is unambiguously wide.
+pub(crate) fn is_narrow(min_value: i128, max_value: i128) -> bool {
+    min_value < max_value
+        && max_value
+            .checked_sub(min_value)
+            .is_some_and(|w| (w as u128) < CURATED_MIN_WIDTH)
+}
+
+/// What the narrow-range sampler works out from a range's bounds alone:
+/// the run of [`SORTED_NASTY_POOL`] inside the range and whether the
+/// bounds themselves are missing from it, the chance of drawing one of
+/// those boundary values, and the range's [`distribution_window`]. Worked
+/// out once per range a test case draws from (see [`NarrowRanges`])
+/// rather than at every draw, since a grammar's regex terminals draw from
+/// the same few ranges thousands of times.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct NarrowRange {
+    min_value: i128,
+    max_value: i128,
+    /// Where the pool's values inside the range start.
+    pool_start: usize,
+    /// Whether `min_value` is missing from the pool, so counts on its own.
+    need_min: bool,
+    /// Whether `max_value` is missing from the pool, so counts on its own.
+    need_max: bool,
+    /// The boundary values to choose from: the pool's run plus the bounds
+    /// it lacks.
+    count: usize,
+    /// The chance a draw answers a boundary value.
+    threshold: f64,
+    window: (f64, f64),
+}
+
+impl NarrowRange {
+    /// Works out `[min_value, max_value]`, a range [`is_narrow`] admits.
+    fn new(min_value: i128, max_value: i128) -> Result<Self, InternalError> {
+        let pool = &*SORTED_NASTY_POOL;
+        let lo = pool.partition_point(|&v| v < min_value);
+        let hi = pool.partition_point(|&v| v <= max_value);
+        let static_slice = &pool[lo..hi];
+        let need_min = static_slice.first() != Some(&min_value);
+        let need_max = static_slice.last() != Some(&max_value);
+        let count = static_slice.len() + (need_min as usize) + (need_max as usize);
+        Ok(NarrowRange {
+            min_value,
+            max_value,
+            pool_start: lo,
+            need_min,
+            need_max,
+            count,
+            threshold: (count as f64 * BOUNDARY_PROBABILITY).min(0.5),
+            window: distribution_window(min_value, max_value)?,
+        })
+    }
+
+    /// Narrow-range sampler: the original nasty-pool + distribution
+    /// behaviour, unchanged, so ranges below [`CURATED_MIN_WIDTH`] keep
+    /// their exact previous generation and shrink behaviour.
+    fn sample(&self, rng: &mut EngineRng) -> Result<i128, InternalError> {
+        if rng.random::<f64>() < self.threshold {
+            let idx = rng.random_range(0..self.count);
+            Ok(if self.need_min && idx == 0 {
+                self.min_value
+            } else if self.need_max && idx == self.count - 1 {
+                self.max_value
+            } else {
+                SORTED_NASTY_POOL[self.pool_start + idx - self.need_min as usize]
+            })
+        } else {
+            sample_distribution_window(self.min_value, self.max_value, self.window, rng)
+        }
+    }
+}
+
+/// [`NarrowRange::sample`] for a range worked out on the spot.
 fn narrow_nasty_sample(
     min_value: i128,
     max_value: i128,
     rng: &mut EngineRng,
 ) -> Result<i128, InternalError> {
-    let pool = &*SORTED_NASTY_POOL;
-    let lo = pool.partition_point(|&v| v < min_value);
-    let hi = pool.partition_point(|&v| v <= max_value);
-    let static_slice = &pool[lo..hi];
-    let need_min = static_slice.first() != Some(&min_value);
-    let need_max = static_slice.last() != Some(&max_value);
-    let count = static_slice.len() + (need_min as usize) + (need_max as usize);
-    let threshold = (count as f64 * BOUNDARY_PROBABILITY).min(0.5);
-    if rng.random::<f64>() < threshold {
-        let idx = rng.random_range(0..count);
-        Ok(if need_min && idx == 0 {
-            min_value
-        } else if need_max && idx == count - 1 {
-            max_value
-        } else {
-            static_slice[idx - need_min as usize]
-        })
-    } else {
-        integer_sample_from_distribution(min_value, max_value, rng)
+    NarrowRange::new(min_value, max_value)?.sample(rng)
+}
+
+/// How many bits of a range's mixed bounds pick its slot in
+/// [`NarrowRanges`]; the table holds one slot per value of them.
+const NARROW_RANGE_SLOT_BITS: u32 = 3;
+
+/// The narrow ranges a test case has drawn from lately, each worked out
+/// once: a table with a slot per mix of the bounds, where a range takes
+/// the slot of whatever range it shares it with. An unused slot holds the
+/// default range, whose equal bounds no range [`is_narrow`] admits has.
+#[derive(Debug, Default)]
+pub(crate) struct NarrowRanges([NarrowRange; 1 << NARROW_RANGE_SLOT_BITS]);
+
+impl NarrowRanges {
+    /// The slot for `[min_value, max_value]`.
+    fn slot(min_value: i128, max_value: i128) -> usize {
+        let mixed = (max_value as u64)
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add((min_value as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93));
+        (mixed >> (u64::BITS - NARROW_RANGE_SLOT_BITS)) as usize
+    }
+
+    /// `[min_value, max_value]`, a range [`is_narrow`] admits, worked out
+    /// now unless its slot already holds it.
+    pub(crate) fn get(
+        &mut self,
+        min_value: i128,
+        max_value: i128,
+    ) -> Result<NarrowRange, InternalError> {
+        let held = &mut self.0[Self::slot(min_value, max_value)];
+        if held.min_value != min_value || held.max_value != max_value {
+            *held = NarrowRange::new(min_value, max_value)?;
+        }
+        Ok(*held)
     }
 }
 
@@ -747,12 +996,7 @@ fn biased_i128_sample(
         return Ok(min_value);
     }
 
-    // `checked_sub` returning `None` means the width overflows `i128`, so the
-    // range is unambiguously wide.
-    let is_wide = max_value
-        .checked_sub(min_value)
-        .is_none_or(|w| w as u128 >= CURATED_MIN_WIDTH);
-    if !is_wide {
+    if is_narrow(min_value, max_value) {
         return narrow_nasty_sample(min_value, max_value, rng);
     }
 
@@ -1034,6 +1278,9 @@ pub(crate) fn biased_bytes_sample(
 /// to exactly `1.0` and the floor alone would make `true` unreachable), and
 /// the `max(1, …)` keeps at least `n == 0` falsey for `p` near one. A
 /// probability needing more than 8 bits is approximated, but only slightly.
+/// The floor is the truncating `as u32` cast: its argument is never negative
+/// for a valid `p`, and the clamp absorbs the saturated cases (`NaN` to 0 and
+/// anything from 256 up), so the threshold is the one the formula names.
 ///
 /// Callers must pass `0.0 < p < 1.0`; the `p <= 0` / `p >= 1` cases are forced
 /// without consuming entropy by [`NativeTestCase::weighted`].
@@ -1042,10 +1289,22 @@ pub(crate) fn biased_bytes_sample(
 /// boolean) matters for the urandom backend, where every byte is
 /// fuzzer-controlled entropy and a one-bit decision should cost one byte.
 pub(crate) fn weighted_boolean_sample(p: f64, rng: &mut EngineRng) -> bool {
-    let falsey = (libm::floor(256.0 * (1.0 - p)).max(1.0) as u32).min(255);
-    let mut byte = [0u8; 1];
-    rng.fill_bytes(&mut byte);
-    u32::from(byte[0]) >= falsey
+    rng.next_byte() >= boolean_threshold(p)
+}
+
+/// The byte below which [`weighted_boolean_sample`] answers `false` for
+/// `p`: `min(255, max(1, floor(256 * (1 - p))))`. A caller that draws
+/// against one probability many times works it out once, for
+/// [`NativeTestCase::weighted_against`], instead of at every draw.
+pub(crate) const fn boolean_threshold(p: f64) -> u8 {
+    let threshold = (256.0 * (1.0 - p)) as u32;
+    if threshold < 1 {
+        1
+    } else if threshold > 255 {
+        255
+    } else {
+        threshold as u8
+    }
 }
 
 /// Full-precision weighted boolean: `true` with probability `p`, faithful to
@@ -1645,7 +1904,17 @@ pub struct NativeTestCase {
     replay: Replay,
     rng: Option<EngineRng>,
     max_size: usize,
+    /// The choice sequence so far, appended to only by the draw methods
+    /// here (which keep `plain` current): a node written any other way
+    /// must clear `plain` if it owns heap memory, or it leaks on drop.
     pub nodes: Vec<ChoiceNode>,
+    /// Whether every node recorded so far owns no heap memory (see
+    /// [`ChoiceNode::owns_no_heap`]), so that dropping the test case can
+    /// forget its choice sequence instead of running the drop glue over
+    /// it: nearly every node a run records is a boolean or a small integer
+    /// whose drop frees nothing, and running the glue over those is the
+    /// bulk of what emptying a finished test case's choice sequence costs.
+    plain: bool,
     /// Set to `true` by [`Self::freeze`] on the first call; subsequent calls
     /// are no-ops. A dedicated boolean (rather than checking the family's
     /// status) lets `conclude_test` conclude before calling `freeze()`
@@ -1670,6 +1939,12 @@ pub struct NativeTestCase {
     /// Each entry was pushed by `start_span` and is awaiting a matching
     /// `stop_span` call.
     pub span_stack: Vec<usize>,
+    /// Whether the replay serves draws by address (see
+    /// [`Replay::addressed`]), so that [`Self::draw_address`] is asked at
+    /// every draw and the per-span bookkeeping below is kept; otherwise it
+    /// is left empty and an address, should one be asked for, is worked
+    /// out from the spans.
+    addressed: bool,
     /// Per span, the number of earlier siblings under the same parent with
     /// the same label: its frame ordinal in a draw's address. Computed at
     /// `start_span` from `sibling_counts` so an address costs one lookup
@@ -1696,6 +1971,28 @@ pub struct NativeTestCase {
     /// (`Status::EarlyStop` + `EngineError`). `None` means "no template" —
     /// draws past the prefix go to `rng` or panic, as before.
     trailing_template: Option<ChoiceTemplate>,
+    /// The narrow ranges [`Self::draw_integer_i64`] has drawn from lately,
+    /// worked out once each.
+    narrow_ranges: NarrowRanges,
+}
+
+impl Drop for NativeTestCase {
+    /// Hands the choice sequence's and spans' vectors on emptied. A plain
+    /// choice sequence (see [`Self::plain`]) is emptied by leaking a drain
+    /// of the whole of it, which forgets every node at once instead of
+    /// visiting each: a drain empties the vector as it is made.
+    fn drop(&mut self) {
+        let mut nodes = core::mem::take(&mut self.nodes);
+        let mut spans = core::mem::take(&mut self.spans.inner);
+        if self.plain {
+            core::mem::forget(nodes.drain(..));
+        } else {
+            nodes.clear();
+        }
+        spans.clear();
+        let unkept = SpareVectors::offer(&mut SPARE_VECTORS.lock(), nodes, spans, self.max_size);
+        drop(unkept);
+    }
 }
 
 impl NativeTestCase {
@@ -1834,26 +2131,40 @@ impl NativeTestCase {
         family: Arc<FamilyCore>,
         clone_id: Vec<usize>,
     ) -> Self {
+        let nodes = MOST_NODES
+            .load(Ordering::Relaxed)
+            .min(max_size)
+            .min(MOST_RESERVED);
+        let spans = MOST_SPANS
+            .load(Ordering::Relaxed)
+            .min(max_size)
+            .min(MOST_RESERVED);
+        let addressed = replay.addressed();
+        let bookkept = if addressed { spans } else { 0 };
+        let spare = SpareVectors::take(&mut SPARE_VECTORS.lock(), max_size, nodes, spans);
         NativeTestCase {
             replay,
             rng,
             max_size,
-            nodes: Vec::new(),
+            nodes: spare.nodes,
+            plain: true,
             frozen: false,
             should_capture,
             family,
             clone_id,
             clone_counter: 0,
             clone_children: Vec::new(),
-            spans: Spans::new(),
+            spans: Spans { inner: spare.spans },
             span_stack: Vec::new(),
-            span_ordinals: Vec::new(),
-            sibling_counts: HashMap::default(),
-            child_nodes: Vec::new(),
+            addressed,
+            span_ordinals: Vec::with_capacity(bookkept),
+            sibling_counts: HashMap::with_capacity_and_hasher(bookkept, Default::default()),
+            child_nodes: Vec::with_capacity(bookkept),
             top_child_nodes: 0,
             has_discards: false,
             observer,
             trailing_template,
+            narrow_ranges: NarrowRanges::default(),
         }
     }
 
@@ -2008,7 +2319,7 @@ impl NativeTestCase {
             child_id,
         );
         let handle = Arc::new(Mutex::new(child));
-        self.nodes.push(ChoiceNode::clone_stream(
+        self.record(ChoiceNode::clone_stream(
             Arc::new(RealizedStream::empty()),
             false,
         ));
@@ -2038,6 +2349,14 @@ impl NativeTestCase {
         }
     }
 
+    /// Append `node` to the choice sequence, noting when it owns heap
+    /// memory. The draws that record only booleans, floats and native-width
+    /// integers push straight onto `nodes` instead.
+    fn record(&mut self, node: ChoiceNode) {
+        self.plain &= node.owns_no_heap();
+        self.nodes.push(node);
+    }
+
     /// Open a new span at the current choice position, labelled with `label`.
     ///
     /// Returns the index assigned to the span in `self.spans`.  The span's
@@ -2061,16 +2380,34 @@ impl NativeTestCase {
             parent,
             discarded: false,
         });
+        if self.addressed {
+            self.address_span(parent, label);
+        }
+        self.span_stack.push(idx);
+        if depth + 1 > MAX_DEPTH {
+            self.span_overflow();
+        }
+        idx
+    }
+
+    /// The address bookkeeping of a span just opened under `parent` with
+    /// `label` on an addressed stream: its ordinal among its siblings and
+    /// an empty count of its children's draws. Kept out of
+    /// [`Self::start_span`] so the hashing stays off the plain path.
+    #[inline(never)]
+    fn address_span(&mut self, parent: Option<usize>, label: u64) {
         let siblings = self.sibling_counts.entry((parent, label)).or_insert(0);
         self.span_ordinals.push(*siblings);
         *siblings += 1;
         self.child_nodes.push(0);
-        self.span_stack.push(idx);
-        if depth + 1 > MAX_DEPTH {
-            self.conclude(Status::Invalid, None);
-            self.freeze();
-        }
-        idx
+    }
+
+    /// Mark the test case invalid for a span opened past [`MAX_DEPTH`].
+    #[cold]
+    #[inline(never)]
+    fn span_overflow(&mut self) {
+        self.conclude(Status::Invalid, None);
+        self.freeze();
     }
 
     /// The number of currently-open spans.
@@ -2089,15 +2426,46 @@ impl NativeTestCase {
     /// them into one state could serve the wrong one. Agrees with
     /// `graph::draw_addresses` over the recorded spans.
     pub fn draw_address(&self) -> Vec<(u64, usize)> {
-        let direct = match self.span_stack.last() {
-            Some(&idx) => self.nodes.len() - self.spans[idx].start - self.child_nodes[idx],
-            None => self.nodes.len() - self.top_child_nodes,
-        };
+        let innermost = self.span_stack.last().copied();
+        let start = innermost.map_or(0, |idx| self.spans[idx].start);
+        let direct = self.nodes.len() - start - self.child_draws(innermost);
         self.span_stack
             .iter()
-            .map(|&idx| (self.spans[idx].label, self.span_ordinals[idx]))
+            .map(|&idx| (self.spans[idx].label, self.ordinal(idx)))
             .chain(core::iter::once((DRAW_LABEL, direct)))
             .collect()
+    }
+
+    /// The number of earlier siblings of span `idx` with its label: kept
+    /// per span when the stream is addressed, else counted.
+    fn ordinal(&self, idx: usize) -> usize {
+        if self.addressed {
+            return self.span_ordinals[idx];
+        }
+        let span = &self.spans[idx];
+        self.spans
+            .iter()
+            .take(idx)
+            .filter(|s| s.parent == span.parent && s.label == span.label)
+            .count()
+    }
+
+    /// The number of draws inside the closed children of span `parent`
+    /// (of no span, for `None`): kept per span when the stream is
+    /// addressed, else summed. An open span is on the span stack, so the
+    /// innermost open span has no open child to miscount.
+    fn child_draws(&self, parent: Option<usize>) -> usize {
+        if self.addressed {
+            return match parent {
+                Some(idx) => self.child_nodes[idx],
+                None => self.top_child_nodes,
+            };
+        }
+        self.spans
+            .iter()
+            .filter(|s| s.parent == parent)
+            .map(|s| s.end - s.start)
+            .sum()
     }
 
     /// Close the innermost currently-open span.
@@ -2124,9 +2492,11 @@ impl NativeTestCase {
         let span = &mut self.spans[idx];
         span.end = end;
         let inside = end - span.start;
-        match span.parent {
-            Some(parent) => self.child_nodes[parent] += inside,
-            None => self.top_child_nodes += inside,
+        if self.addressed {
+            match span.parent {
+                Some(parent) => self.child_nodes[parent] += inside,
+                None => self.top_child_nodes += inside,
+            }
         }
     }
 
@@ -2148,6 +2518,8 @@ impl NativeTestCase {
         while let Some(idx) = self.span_stack.pop() {
             self.close_span(idx, end);
         }
+        MOST_NODES.fetch_max(end, Ordering::Relaxed);
+        MOST_SPANS.fetch_max(self.spans.len(), Ordering::Relaxed);
         self.conclude(Status::Valid, None);
         if let Some(ref mut obs) = self.observer {
             let (status, origin) = self
@@ -2191,15 +2563,11 @@ impl NativeTestCase {
             "Invalid range [{min_value:?}, {max_value:?}]"
         );
 
-        let kind = IntegerChoice {
-            min_value,
-            max_value,
-            shrink_towards: BigInt::zero(),
-        };
+        let kind = IntegerChoice::new(min_value, max_value, BigInt::zero());
 
         let params = self.family.generation_parameters().integer;
         let v =
-            self.draw_integer_from(&kind, |kind, rng| biased_integer_sample(kind, rng, params))?;
+            self.draw_integer_from(kind, |kind, rng| biased_integer_sample(kind, rng, params))?;
 
         Ok(hegel_internal_unwrap!(
             T::try_from(v).ok(),
@@ -2207,11 +2575,46 @@ impl NativeTestCase {
         ))
     }
 
+    /// [`Self::draw_integer`] for a range within `i64`, which nearly every
+    /// draw the engine's own generators make is: the same choice, the same
+    /// distribution and the same recorded node, but the bounds and the value
+    /// never pass through `BigInt` on the way (the recorded node still holds
+    /// a `BigInt`, as every integer node does).
+    pub fn draw_integer_i64(&mut self, min_value: i64, max_value: i64) -> Result<i64, EngineError> {
+        hegel_internal_assert!(
+            min_value <= max_value,
+            "Invalid range [{min_value:?}, {max_value:?}]"
+        );
+
+        let kind = IntegerChoice::small(min_value, max_value, 0);
+
+        let params = self.family.generation_parameters().integer;
+        let narrow = if is_narrow(i128::from(min_value), i128::from(max_value)) {
+            Some(
+                self.narrow_ranges
+                    .get(i128::from(min_value), i128::from(max_value))?,
+            )
+        } else {
+            None
+        };
+        self.draw_integer_as(
+            kind,
+            move |_, n| n.to_i64().filter(|v| (min_value..=max_value).contains(v)),
+            |v| BigInt::from(*v),
+            move |_, rng| biased_i64_sample(min_value, max_value, narrow.as_ref(), rng, params),
+            |_, _| true,
+        )
+    }
+
     /// Draw a random integer *uniformly* from `[min_value, max_value]`,
     /// without the boundary-and-distribution shaping of [`Self::draw_integer`].
     /// For draws whose value parameterizes later generation — such as a
     /// recursive draw's target size — where the shaped distribution's bias
     /// toward small magnitudes would defeat the point of drawing at all.
+    ///
+    /// A fresh value comes from [`uniform_u64_inclusive`], rand's
+    /// inclusive-range integer sampler written out, so seeded streams are
+    /// unchanged and the draw carries the sampling inline.
     pub fn draw_integer_uniform(
         &mut self,
         min_value: u64,
@@ -2222,20 +2625,35 @@ impl NativeTestCase {
             "Invalid range [{min_value:?}, {max_value:?}]"
         );
 
-        let kind = IntegerChoice {
-            min_value: min_value.into(),
-            max_value: max_value.into(),
-            shrink_towards: BigInt::zero(),
+        let Ok(max) = i64::try_from(max_value) else {
+            return self.draw_integer_uniform_wide(min_value, max_value);
         };
+        self.draw_integer_as(
+            IntegerChoice::small(min_value as i64, max, 0),
+            move |_, n| n.to_u64().filter(|v| (min_value..=max_value).contains(v)),
+            |v| BigInt::from(*v),
+            move |_, rng| Ok(uniform_u64_inclusive(min_value, max_value, rng)),
+            |_, _| true,
+        )
+    }
 
-        let v = self.draw_integer_from(&kind, |_, rng| {
-            Ok(BigInt::from(rng.random_range(min_value..=max_value)))
-        })?;
-
-        Ok(hegel_internal_unwrap!(
-            u64::try_from(v).ok(),
-            "draw_integer_uniform: validated value does not fit u64"
-        ))
+    /// [`Self::draw_integer_uniform`] for a range whose upper bound does
+    /// not fit `i64`, whose kind is held boxed. Kept out of line so that
+    /// the draws within a machine word, which nearly all are, build their
+    /// kind in place.
+    #[inline(never)]
+    fn draw_integer_uniform_wide(
+        &mut self,
+        min_value: u64,
+        max_value: u64,
+    ) -> Result<u64, EngineError> {
+        self.draw_integer_as(
+            IntegerChoice::new(min_value, max_value, 0u64),
+            move |_, n| n.to_u64().filter(|v| (min_value..=max_value).contains(v)),
+            |v| BigInt::from(*v),
+            move |_, rng| Ok(uniform_u64_inclusive(min_value, max_value, rng)),
+            |_, _| false,
+        )
     }
 
     /// Draw an index in `[0, weights.len())` with probability proportional
@@ -2249,13 +2667,9 @@ impl NativeTestCase {
             return Ok(only);
         }
 
-        let kind = IntegerChoice {
-            min_value: BigInt::zero(),
-            max_value: BigInt::from(max_index),
-            shrink_towards: BigInt::zero(),
-        };
+        let kind = IntegerChoice::new(BigInt::zero(), BigInt::from(max_index), BigInt::zero());
 
-        let v = self.draw_integer_from(&kind, |_, rng| {
+        let v = self.draw_integer_from(kind, |_, rng| {
             Ok(BigInt::from(weighted_index_sample(weights, rng) as u64))
         })?;
 
@@ -2265,30 +2679,67 @@ impl NativeTestCase {
         ))
     }
 
-    /// Shared body of the integer draws: resolve the choice against the
-    /// prefix, falling back to `sample` for fresh generation, then record
-    /// and observe it.
+    /// [`draw_integer_as`](Self::draw_integer_as) for a draw that works in
+    /// `BigInt` throughout.
     fn draw_integer_from(
         &mut self,
-        kind: &IntegerChoice,
+        kind: IntegerChoice,
         sample: impl Fn(&IntegerChoice, &mut EngineRng) -> Result<BigInt, InternalError>,
     ) -> Result<BigInt, EngineError> {
+        self.draw_integer_as(
+            kind,
+            |kind, n| kind.validate(n).then(|| n.clone()),
+            BigInt::clone,
+            sample,
+            |kind, value| kind.is_small() && value.is_inline(),
+        )
+    }
+
+    /// Shared body of the integer draws, for a draw whose values are a type
+    /// `V` the recorded `BigInt` is `widen`ed from (so that a draw within a
+    /// native width never round-trips its value through `BigInt`): resolve
+    /// the choice against the prefix, reading a stored integer with
+    /// `narrow` (which answers `None` for a value `kind` does not admit),
+    /// falling back to `sample` for fresh generation, then record and
+    /// observe it. `plain` answers, from the kind and the recorded value,
+    /// whether the recorded node owns no heap memory (a draw within a
+    /// native width knows without looking at either), for [`Self::plain`].
+    fn draw_integer_as<V>(
+        &mut self,
+        kind: IntegerChoice,
+        narrow: impl Fn(&IntegerChoice, &BigInt) -> Option<V>,
+        widen: impl FnOnce(&V) -> BigInt,
+        sample: impl FnOnce(&IntegerChoice, &mut EngineRng) -> Result<V, InternalError>,
+        plain: impl FnOnce(&IntegerChoice, &BigInt) -> bool,
+    ) -> Result<V, EngineError> {
         let (v, was_forced) = self.resolve_choice(
-            || Ok(kind.simplest()),
-            || Ok(kind.unit()),
-            |v| match v {
-                ChoiceValue::Integer(n) if kind.validate(n) => Some(n.clone()),
+            || {
+                Ok(hegel_internal_unwrap!(
+                    narrow(&kind, &kind.simplest()),
+                    "draw_integer_as: the simplest value is outside its own range"
+                ))
+            },
+            || {
+                Ok(hegel_internal_unwrap!(
+                    narrow(&kind, &kind.unit()),
+                    "draw_integer_as: the unit value is outside its own range"
+                ))
+            },
+            |value| match value {
+                ChoiceValue::Integer(n) => narrow(&kind, n),
                 _ => None,
             },
-            |rng| sample(kind, rng),
+            |rng| sample(&kind, rng),
         )?;
 
+        let recorded = widen(&v);
         if let Some(ref mut obs) = self.observer {
-            obs.draw_integer(&v, was_forced);
+            obs.draw_integer(&recorded, was_forced);
         }
 
+        self.plain &= plain(&kind, &recorded);
         self.nodes
-            .push(ChoiceNode::integer(kind.clone(), v.clone(), was_forced));
+            .push(ChoiceNode::integer(kind, recorded, was_forced));
 
         Ok(v)
     }
@@ -2304,17 +2755,13 @@ impl NativeTestCase {
         max_value: T,
         forced: T,
     ) -> Result<(), EngineError> {
-        let kind = IntegerChoice {
-            min_value: min_value.into(),
-            max_value: max_value.into(),
-            shrink_towards: BigInt::zero(),
-        };
+        let kind = IntegerChoice::new(min_value, max_value, BigInt::zero());
         let v: BigInt = forced.into();
         hegel_internal_assert!(
-            kind.min_value <= v && v <= kind.max_value,
+            kind.validate(&v),
             "forced value {v:?} outside [{:?}, {:?}]",
-            kind.min_value,
-            kind.max_value
+            kind.min_value(),
+            kind.max_value()
         );
 
         self.pre_choice()?;
@@ -2323,7 +2770,7 @@ impl NativeTestCase {
             obs.draw_integer(&v, true);
         }
 
-        self.nodes.push(ChoiceNode::integer(kind, v, true));
+        self.record(ChoiceNode::integer(kind, v, true));
 
         Ok(())
     }
@@ -2379,12 +2826,8 @@ impl NativeTestCase {
         }
 
         let id = hegel_internal_unwrap!(v.to_i64(), "draw_fresh_id: id does not fit i64");
-        let kind = IntegerChoice {
-            min_value: BigInt::zero(),
-            max_value: BigInt::from(window_hi),
-            shrink_towards: BigInt::zero(),
-        };
-        self.nodes.push(ChoiceNode::integer(kind, v, was_forced));
+        let kind = IntegerChoice::new(BigInt::zero(), BigInt::from(window_hi), BigInt::zero());
+        self.record(ChoiceNode::integer(kind, v, was_forced));
         used.insert(id);
         Ok(id)
     }
@@ -2446,19 +2889,14 @@ impl NativeTestCase {
             Err(0) => sorted[0],
             Err(idx) => sorted[idx - 1],
         };
-        let kind = IntegerChoice {
-            min_value: BigInt::zero(),
-            max_value: BigInt::from(window_hi),
-            shrink_towards: BigInt::zero(),
-        };
+        let kind = IntegerChoice::new(BigInt::zero(), BigInt::from(window_hi), BigInt::zero());
         let value = BigInt::from(chosen);
 
         if let Some(ref mut obs) = self.observer {
             obs.draw_integer(&value, was_forced);
         }
 
-        self.nodes
-            .push(ChoiceNode::integer(kind, value, was_forced));
+        self.record(ChoiceNode::integer(kind, value, was_forced));
         Ok(chosen)
     }
 
@@ -2524,8 +2962,7 @@ impl NativeTestCase {
             |rng| biased_bytes_sample(&kind, rng),
         )?;
 
-        self.nodes
-            .push(ChoiceNode::bytes(kind, v.clone(), was_forced));
+        self.record(ChoiceNode::bytes(kind, v.clone(), was_forced));
 
         if let Some(ref mut obs) = self.observer {
             obs.draw_bytes(&v, was_forced);
@@ -2552,6 +2989,7 @@ impl NativeTestCase {
             intervals,
             min_size,
             max_size,
+            constraint: None,
         };
 
         let (v, was_forced) = self.resolve_choice(
@@ -2564,8 +3002,71 @@ impl NativeTestCase {
             |rng| biased_string_sample(&kind, rng),
         )?;
 
-        self.nodes
-            .push(ChoiceNode::string(kind, v.clone(), was_forced));
+        self.record(ChoiceNode::string(kind, v.clone(), was_forced));
+
+        let s = codepoints_to_string(&v);
+        if let Some(ref mut obs) = self.observer {
+            obs.draw_string(&s, was_forced);
+        }
+
+        Ok(s)
+    }
+
+    /// Draw a string under `kind`, a string choice carrying a grammar (see
+    /// [`GrammarConstraint`](crate::native::lark::constraint::GrammarConstraint)),
+    /// as one choice: replayed like any string, with a stored value the
+    /// kind accepts kept and any other punned, and otherwise drawn by
+    /// `random` from a source over this test case's RNG and integer
+    /// parameters, which the kind's constraint then accepts on replay
+    /// without checking it again (see [`Drawn`](crate::native::core::Drawn)).
+    /// A conclusion `random` reaches is this test case's.
+    pub(crate) fn draw_string_from(
+        &mut self,
+        kind: Arc<StringChoice>,
+        random: impl FnOnce(&mut RngDraws<'_>) -> Result<Vec<u32>, EngineError>,
+    ) -> Result<String, EngineError> {
+        self.pre_choice()?;
+
+        let idx = self.nodes.len();
+        let replayed = if self.must_ask_replay(idx) {
+            self.resolve_choice_replayed(
+                idx,
+                || kind.simplest(),
+                || kind.unit(),
+                |v| match v {
+                    ChoiceValue::String(s) if kind.validate(s) => Some(s.clone()),
+                    _ => None,
+                },
+            )?
+        } else {
+            None
+        };
+        let (v, was_forced) = match replayed {
+            Some(decided) => decided,
+            None => {
+                let params = self.family.generation_parameters().integer;
+                let rng = hegel_internal_unwrap!(
+                    self.rng.as_mut(),
+                    "draw_string_from: no RNG available for random generation"
+                );
+                let mut draws = RngDraws::new(rng, params);
+                let drawn = random(&mut draws);
+                let status = draws.status();
+                if let Some(status) = status {
+                    self.conclude(status, None);
+                }
+                let drawn = drawn?;
+                if let Some(constraint) = &kind.constraint {
+                    constraint.note_drawn(&drawn);
+                }
+                (drawn, false)
+            }
+        };
+
+        self.record(ChoiceNode::new(
+            ChoiceData::String(kind, v.clone()),
+            was_forced,
+        ));
 
         let s = codepoints_to_string(&v);
         if let Some(ref mut obs) = self.observer {
@@ -2580,6 +3081,19 @@ impl NativeTestCase {
     /// forced to that value.
     pub fn weighted(&mut self, p: f64, forced: Option<bool>) -> Result<bool, EngineError> {
         self.weighted_with(p, forced, weighted_boolean_sample)
+    }
+
+    /// [`Self::weighted`] with `p`'s one-byte `threshold` worked out by
+    /// the caller (see [`boolean_threshold`]), for a probability drawn
+    /// against many times, as a repetition's continue decision is: the
+    /// same draw from the same byte, recorded the same.
+    pub(crate) fn weighted_against(
+        &mut self,
+        p: f64,
+        threshold: u8,
+        forced: Option<bool>,
+    ) -> Result<bool, EngineError> {
+        self.weighted_with(p, forced, move |_, rng| rng.next_byte() >= threshold)
     }
 
     /// Like [`Self::weighted`], but samples with the full-precision
@@ -2598,15 +3112,7 @@ impl NativeTestCase {
     ) -> Result<bool, EngineError> {
         let kind = BooleanChoice { p };
 
-        let forced_value = forced.or(if p <= 0.0 {
-            Some(false)
-        } else if p >= 1.0 {
-            Some(true)
-        } else {
-            None
-        });
-
-        let (v, was_forced) = if let Some(f) = forced_value {
+        let (v, was_forced) = if let Some(f) = boolean_forced(p, forced) {
             self.pre_choice()?;
             (f, true)
         } else {
@@ -2637,10 +3143,18 @@ impl NativeTestCase {
             });
         }
         if self.nodes.len() >= self.max_size || !self.family.try_take_draw() {
-            self.conclude(Status::EarlyStop, None);
-            return Err(EngineError::Overrun);
+            return Err(self.early_stop());
         }
         Ok(())
+    }
+
+    /// Conclude the test case early, for a draw there is no room for, and
+    /// the error that draw reports.
+    #[cold]
+    #[inline(never)]
+    fn early_stop(&mut self) -> EngineError {
+        self.conclude(Status::EarlyStop, None);
+        EngineError::Overrun
     }
 
     /// Resolve a typed choice value from the replay, the trailing template,
@@ -2651,7 +3165,10 @@ impl NativeTestCase {
     /// hands back a value proven to fit the draw. Under [`Rescue::Pun`] a
     /// stored value that doesn't fit puns exactly as before: to the draw's
     /// `simplest()` when the stale value was its original kind's simplest,
-    /// and to `unit()` otherwise.
+    /// and to `unit()` otherwise. A draw the replay has nothing to say
+    /// about (see [`Replay::plain_from`]) and no template decides goes
+    /// straight to the RNG. `random` is called from here alone, so that
+    /// the compiler inlines it into the draw whatever its size.
     fn resolve_choice<V>(
         &mut self,
         simplest: impl FnOnce() -> Result<V, InternalError>,
@@ -2663,33 +3180,10 @@ impl NativeTestCase {
 
         let idx = self.nodes.len();
 
-        match self
-            .replay
-            .resolve(&self.clone_id, idx, || self.draw_address(), from_prefix)
-        {
-            Resolved::Served(v) => return Ok((v, false)),
-            Resolved::Misfit(stored, timeline) => {
-                let is_simplest = match self.replay.proposal_node(timeline, idx) {
-                    Some(pn) => *stored == pn.data.simplest_value()?,
-                    None => false,
-                };
-                return Ok((if is_simplest { simplest()? } else { unit()? }, false));
+        if self.must_ask_replay(idx) {
+            if let Some(decided) = self.resolve_choice_replayed(idx, simplest, unit, from_prefix)? {
+                return Ok(decided);
             }
-            Resolved::Exhausted => {}
-        }
-
-        if let Some(template) = self.trailing_template.as_mut() {
-            if matches!(template.count, Some(0)) {
-                self.conclude(Status::EarlyStop, None);
-                return Err(EngineError::Overrun);
-            }
-            let value = match template.kind {
-                ChoiceTemplateKind::Simplest => simplest()?,
-            };
-            if let Some(c) = template.count.as_mut() {
-                *c -= 1;
-            }
-            return Ok((value, false));
         }
 
         let rng = hegel_internal_unwrap!(
@@ -2698,6 +3192,106 @@ impl NativeTestCase {
         );
         Ok((random(rng)?, false))
     }
+
+    /// Whether the draw at `idx` has to ask the replay or the trailing
+    /// template for its value: it does before the position the replay
+    /// leaves every draw to the RNG from, and whenever a trailing
+    /// template stands ready to answer draws past it.
+    #[inline]
+    fn must_ask_replay(&self, idx: usize) -> bool {
+        idx < self.replay.plain_from() || self.trailing_template.is_some()
+    }
+
+    /// [`Self::resolve_choice`] for a draw at `idx` the replay or the
+    /// trailing template may decide: the value and whether it was forced,
+    /// or `None` when neither decides it. Kept out of line so that the
+    /// plain path, which every draw past the proposal takes, carries none
+    /// of its machinery.
+    #[inline(never)]
+    fn resolve_choice_replayed<V>(
+        &mut self,
+        idx: usize,
+        simplest: impl FnOnce() -> Result<V, InternalError>,
+        unit: impl FnOnce() -> Result<V, InternalError>,
+        from_prefix: impl Fn(&ChoiceValue) -> Option<V>,
+    ) -> Result<Option<(V, bool)>, EngineError> {
+        match self
+            .replay
+            .resolve(&self.clone_id, idx, || self.draw_address(), from_prefix)
+        {
+            Resolved::Served(v) => return Ok(Some((v, false))),
+            Resolved::Misfit(stored, timeline) => {
+                let is_simplest = match self.replay.proposal_node(timeline, idx) {
+                    Some(pn) => *stored == pn.data.simplest_value()?,
+                    None => false,
+                };
+                return Ok(Some((
+                    if is_simplest { simplest()? } else { unit()? },
+                    false,
+                )));
+            }
+            Resolved::Exhausted => {}
+        }
+
+        if let Some(template) = self.trailing_template.as_mut() {
+            if matches!(template.count, Some(0)) {
+                return Err(self.early_stop());
+            }
+            let value = match template.kind {
+                ChoiceTemplateKind::Simplest => simplest()?,
+            };
+            if let Some(c) = template.count.as_mut() {
+                *c -= 1;
+            }
+            return Ok(Some((value, false)));
+        }
+
+        Ok(None)
+    }
+}
+
+/// The value a weighted boolean draw with probability `p` is forced to,
+/// if any: the value `forced` names, else `false` at `p <= 0` and `true`
+/// at `p >= 1`, which consume no entropy; at any other probability the
+/// draw is sampled. Shared by [`NativeTestCase::weighted`] and the other
+/// sources the engine's generators draw from (see `draws::source`).
+pub(crate) fn boolean_forced(p: f64, forced: Option<bool>) -> Option<bool> {
+    forced.or(if p <= 0.0 {
+        Some(false)
+    } else if p >= 1.0 {
+        Some(true)
+    } else {
+        None
+    })
+}
+
+/// A value drawn uniformly from `[low, high]` (which must not be empty),
+/// exactly as rand's inclusive single-value sampler for `u64` draws it
+/// from the same stream, its default variant that this crate builds: one
+/// 64-bit sample multiplied into the range gives the value, and when its
+/// low word falls in the range's remainder a second sample corrects the
+/// bias. Written out here so the draw hot path always carries the
+/// sampling inline, rather than as the compiler's call-by-call decision
+/// over rand's generic, which the shape of unrelated code could tip.
+#[inline(always)]
+pub(crate) fn uniform_u64_inclusive(low: u64, high: u64, rng: &mut EngineRng) -> u64 {
+    let range = high.wrapping_sub(low).wrapping_add(1);
+    if range == 0 {
+        return rng.next_u64();
+    }
+    let (mut result, lo_order) = widening_mul(rng.next_u64(), range);
+    if lo_order > range.wrapping_neg() {
+        let (new_hi_order, _) = widening_mul(rng.next_u64(), range);
+        result += u64::from(lo_order.checked_add(new_hi_order).is_none());
+    }
+    low.wrapping_add(result)
+}
+
+/// The high and low words of the 128-bit product of `a` and `b`.
+#[inline(always)]
+fn widening_mul(a: u64, b: u64) -> (u64, u64) {
+    let wide = u128::from(a) * u128::from(b);
+    ((wide >> 64) as u64, wide as u64)
 }
 
 pub use float_sample::FloatWidth;

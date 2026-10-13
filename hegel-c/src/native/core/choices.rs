@@ -7,27 +7,97 @@ use super::state::Span;
 use crate::control::{
     InternalError, hegel_internal_assert, hegel_internal_error, hegel_internal_unwrap,
 };
-use crate::native::bignum::{BigInt, BigUint, Zero};
+use crate::native::HashSet;
+use crate::native::bignum::{BigInt, BigUint, ToPrimitive, Zero};
 use crate::native::floats::sign_aware_lte;
 use crate::native::intervalsets::IntervalSet;
+use crate::native::lark::constraint::GrammarConstraint;
+use crate::native::re::constraint::RegexConstraint;
+use crate::sys::sync::Mutex;
+use alloc::boxed::Box;
 
-/// An integer choice with bounded range, using `BigInt` for all widths.
+/// An integer choice with bounded range. Bounds that fit a machine word
+/// are kept inline, as nearly every draw's do; wider ones are boxed, so
+/// the kind is a few words to store and copy in every choice node. The
+/// representation is canonical, so equal bounds compare equal however
+/// they were given.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IntegerChoice {
-    pub min_value: BigInt,
-    pub max_value: BigInt,
-    /// The "preferred" value the shrinker aims at (default 0). All of
-    /// [`Self::simplest`], [`Self::unit`], and [`Self::sort_key`] are
-    /// anchored at `shrink_towards.clamp(min_value, max_value)`, so
-    /// integer-shrinking passes converge on this value rather than on 0.
-    pub shrink_towards: BigInt,
+pub struct IntegerChoice(Bounds);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Bounds {
+    Small { min: i64, max: i64, towards: i64 },
+    Wide(Box<WideBounds>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WideBounds {
+    min: BigInt,
+    max: BigInt,
+    towards: BigInt,
 }
 
 impl IntegerChoice {
+    /// The choice of a value in `min_value..=max_value` that shrinks
+    /// towards `shrink_towards` (clamped into the range). All of
+    /// [`Self::simplest`], [`Self::unit`], and [`Self::sort_key`] are
+    /// anchored at that clamped value, so integer-shrinking passes
+    /// converge on it rather than on 0.
+    pub fn new(
+        min_value: impl Into<BigInt>,
+        max_value: impl Into<BigInt>,
+        shrink_towards: impl Into<BigInt>,
+    ) -> Self {
+        let (min, max, towards) = (min_value.into(), max_value.into(), shrink_towards.into());
+        match (min.to_i64(), max.to_i64(), towards.to_i64()) {
+            (Some(min), Some(max), Some(towards)) => Self::small(min, max, towards),
+            _ => IntegerChoice(Bounds::Wide(Box::new(WideBounds { min, max, towards }))),
+        }
+    }
+
+    /// [`Self::new`] for bounds that fit a machine word.
+    pub fn small(min: i64, max: i64, towards: i64) -> Self {
+        IntegerChoice(Bounds::Small { min, max, towards })
+    }
+
+    /// Whether the bounds fit a machine word and so are held inline.
+    #[inline]
+    pub fn is_small(&self) -> bool {
+        matches!(self.0, Bounds::Small { .. })
+    }
+
+    /// The inclusive lower bound.
+    pub fn min_value(&self) -> BigInt {
+        match &self.0 {
+            Bounds::Small { min, .. } => BigInt::from(*min),
+            Bounds::Wide(wide) => wide.min.clone(),
+        }
+    }
+
+    /// The inclusive upper bound.
+    pub fn max_value(&self) -> BigInt {
+        match &self.0 {
+            Bounds::Small { max, .. } => BigInt::from(*max),
+            Bounds::Wide(wide) => wide.max.clone(),
+        }
+    }
+
+    /// The value the shrinker aims at, before clamping into the range.
+    pub fn shrink_towards(&self) -> BigInt {
+        match &self.0 {
+            Bounds::Small { towards, .. } => BigInt::from(*towards),
+            Bounds::Wide(wide) => wide.towards.clone(),
+        }
+    }
+
     pub(crate) fn clamped_shrink_towards(&self) -> BigInt {
-        self.shrink_towards
-            .clone()
-            .clamp(self.min_value.clone(), self.max_value.clone())
+        match &self.0 {
+            Bounds::Small { min, max, towards } => BigInt::from((*towards).clamp(*min, *max)),
+            Bounds::Wide(wide) => wide
+                .towards
+                .clone()
+                .clamp(wide.min.clone(), wide.max.clone()),
+        }
     }
 
     pub fn simplest(&self) -> BigInt {
@@ -48,17 +118,26 @@ impl IntegerChoice {
     }
 
     pub fn validate(&self, value: &BigInt) -> bool {
-        self.min_value <= *value && *value <= self.max_value
+        match &self.0 {
+            Bounds::Small { min, max, .. } => {
+                value.to_i64().is_some_and(|v| *min <= v && v <= *max)
+            }
+            Bounds::Wide(wide) => wide.min <= *value && *value <= wide.max,
+        }
     }
 
     pub fn sort_key(&self, value: &BigInt) -> (BigUint, bool) {
+        if let (Bounds::Small { min, max, towards }, Some(v)) = (&self.0, value.to_i64()) {
+            let target = (*towards).clamp(*min, *max);
+            return (BigUint::from(v.abs_diff(target)), v < target);
+        }
         let target = self.clamped_shrink_towards();
         let distance = (value - &target).magnitude();
         (distance, *value < target)
     }
 
     pub fn max_index(&self) -> BigUint {
-        (&self.max_value - &self.min_value).magnitude()
+        (self.max_value() - self.min_value()).magnitude()
     }
 
     pub fn to_index(&self, value: &BigInt) -> BigUint {
@@ -66,8 +145,8 @@ impl IntegerChoice {
         if *value == s {
             return BigUint::zero();
         }
-        let above = (&self.max_value - &s).magnitude();
-        let below = (&s - &self.min_value).magnitude();
+        let above = (self.max_value() - &s).magnitude();
+        let below = (&s - self.min_value()).magnitude();
         let d_abs = (value - &s).magnitude();
         let one = BigUint::from(1u32);
         let d_minus_one = &d_abs - &one;
@@ -87,8 +166,8 @@ impl IntegerChoice {
         if index.is_zero() {
             return Some(s);
         }
-        let above = (&self.max_value - &s).magnitude();
-        let below = (&s - &self.min_value).magnitude();
+        let above = (self.max_value() - &s).magnitude();
+        let below = (&s - self.min_value()).magnitude();
         if index > &above + &below {
             return None;
         }
@@ -256,11 +335,103 @@ impl BytesChoice {
 /// `'0'` is the simplest character whenever the alphabet contains it,
 /// followed by `'1'`..`'9'`, `'A'`..`'Z'`, then characters below `'0'` in
 /// reverse, then characters above `'Z'` in natural order.
+///
+/// What narrows a string choice beyond its length bounds and alphabet: a
+/// grammar that must derive the string, or a regex that must match it.
+/// Either compares and hashes by identity.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Constraint {
+    Grammar(Arc<GrammarConstraint>),
+    Regex(Arc<RegexConstraint>),
+}
+
+/// How many codepoints of drawn strings a constraint remembers before
+/// forgetting them all to make room.
+pub const DRAWN_CAPACITY: usize = 1 << 20;
+
+/// The strings a constraint's generator drew, which are its strings
+/// whether or not checking them would finish within the check's budget:
+/// a replay of one is accepted without the check, so that a string the
+/// generator produced is never lost to a parse or match that gives up.
+pub struct Drawn {
+    strings: Mutex<(HashSet<Vec<u32>>, usize)>,
+}
+
+impl Default for Drawn {
+    fn default() -> Drawn {
+        Drawn {
+            strings: Mutex::new((HashSet::default(), 0)),
+        }
+    }
+}
+
+impl Drawn {
+    /// Remember `text` as a string the generator drew.
+    pub fn note(&self, text: &[u32]) {
+        let mut guard = self.strings.lock();
+        let (strings, size) = &mut *guard;
+        if *size + text.len() > DRAWN_CAPACITY {
+            strings.clear();
+            *size = 0;
+        }
+        if strings.insert(text.to_vec()) {
+            *size += text.len();
+        }
+    }
+
+    /// Whether `text` is a string the generator drew.
+    pub fn contains(&self, text: &[u32]) -> bool {
+        self.strings.lock().0.contains(text)
+    }
+}
+
+impl Constraint {
+    /// Whether `text` is one of the constraint's strings.
+    pub fn accepts(&self, text: &[u32]) -> bool {
+        match self {
+            Constraint::Grammar(grammar) => grammar.accepts(text),
+            Constraint::Regex(regex) => regex.accepts(text),
+        }
+    }
+
+    /// Note `text` as a string the constraint's generator drew (see
+    /// [`Drawn`]).
+    pub fn note_drawn(&self, text: &[u32]) {
+        match self {
+            Constraint::Grammar(grammar) => grammar.note_drawn(text),
+            Constraint::Regex(regex) => regex.note_drawn(text),
+        }
+    }
+
+    /// The constraint's simplest string, once the generator has set it.
+    pub fn simplest(&self) -> Option<&[u32]> {
+        match self {
+            Constraint::Grammar(grammar) => grammar.simplest(),
+            Constraint::Regex(regex) => regex.simplest(),
+        }
+    }
+
+    /// The grammar, when the constraint is one.
+    pub fn grammar(&self) -> Option<&Arc<GrammarConstraint>> {
+        match self {
+            Constraint::Grammar(grammar) => Some(grammar),
+            Constraint::Regex(_) => None,
+        }
+    }
+}
+
+/// A choice with a `constraint` accepts only the strings the constraint
+/// does (within the length bounds and alphabet, which still apply): its
+/// simplest value is the constraint's, the constraint takes part in
+/// equality by identity, and the choice has no dense index, since
+/// shortlex position says nothing about which strings the constraint
+/// accepts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StringChoice {
     pub intervals: Arc<IntervalSet>,
     pub min_size: usize,
     pub max_size: usize,
+    pub constraint: Option<Constraint>,
 }
 
 impl StringChoice {
@@ -295,7 +466,15 @@ impl StringChoice {
     /// The simplest sequence of codepoints of length `min_size`, built
     /// from repeated [`simplest_codepoint`]. An empty alphabet is legal when
     /// `min_size == 0` (the empty string is then the choice's only value).
+    /// Under a constraint, the constraint's simplest string.
     pub fn simplest(&self) -> Result<Vec<u32>, InternalError> {
+        if let Some(constraint) = &self.constraint {
+            let simplest = hegel_internal_unwrap!(
+                constraint.simplest(),
+                "StringChoice::simplest: the constraint's simplest string is not set"
+            );
+            return Ok(simplest.to_vec());
+        }
         if self.min_size == 0 {
             return Ok(Vec::new());
         }
@@ -303,8 +482,10 @@ impl StringChoice {
     }
 
     /// Second-simplest codepoint sequence, used for type-punning during replay.
+    /// Under a constraint this is the simplest string for now: the
+    /// constraint's second-simplest string is a later stage's to compute.
     pub fn unit(&self) -> Result<Vec<u32>, InternalError> {
-        if self.intervals.is_empty() {
+        if self.constraint.is_some() || self.intervals.is_empty() {
             return self.simplest();
         }
         let simplest_cp = self.simplest_codepoint()?;
@@ -331,11 +512,21 @@ impl StringChoice {
         }
     }
 
+    /// Whether `value` is one of this choice's strings: within the length
+    /// bounds, over the alphabet, and accepted by the constraint if any.
     pub fn validate(&self, value: &[u32]) -> bool {
         if !(self.min_size <= value.len() && value.len() <= self.max_size) {
             return false;
         }
         value.iter().all(|&cp| self.intervals.contains(cp))
+            && self.constraint.as_ref().is_none_or(|c| c.accepts(value))
+    }
+
+    /// Whether the shortlex index ([`to_index`](Self::to_index) and
+    /// [`from_index`](Self::from_index)) ranges over exactly this choice's
+    /// strings, which it does unless a constraint narrows them.
+    pub fn indexed(&self) -> bool {
+        self.constraint.is_none()
     }
 
     /// Cardinality of the alphabet.
@@ -693,13 +884,12 @@ fn max_finite_global_rank() -> crate::native::bignum::BigUint {
 
 /// The kind of choice made at a particular point.
 ///
-/// The `IntegerChoice` payload is shared via `Arc`: the shrinker and data
-/// tree clone kinds constantly, and the integer constraint holds three
-/// `BigInt`s, so sharing turns those deep clones into a pointer bump. The
-/// other constraints are a few machine words and are carried by value.
+/// Every constraint is carried by value: the integer constraint's bounds
+/// are machine words unless one is wider than `i64`, so cloning one
+/// copies a few words, as for the other constraints.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChoiceKind {
-    Integer(Arc<IntegerChoice>),
+    Integer(IntegerChoice),
     Boolean(BooleanChoice),
     Float(FloatChoice),
     Bytes(BytesChoice),
@@ -1129,21 +1319,23 @@ impl ChoiceKind {
     }
 
     /// Largest valid index for [`from_index`](Self::from_index), or `None`
-    /// for a clone kind (clone choices have no dense index).
+    /// for a kind without a dense index: a clone, or a string under a
+    /// constraint.
     pub fn max_index(&self) -> Option<crate::native::bignum::BigUint> {
         match self {
             ChoiceKind::Integer(ic) => Some(ic.max_index()),
             ChoiceKind::Boolean(bc) => Some(bc.max_index()),
             ChoiceKind::Float(fc) => Some(fc.max_index()),
             ChoiceKind::Bytes(bc) => Some(bc.max_index()),
-            ChoiceKind::String(sc) => Some(sc.max_index()),
-            ChoiceKind::Clone => None,
+            ChoiceKind::String(sc) if sc.indexed() => Some(sc.max_index()),
+            ChoiceKind::String(_) | ChoiceKind::Clone => None,
         }
     }
 
     /// The value at `index` under this kind's sort order. Returns `None`
-    /// when the index is out of range; a clone kind has no dense index, so
-    /// every index is out of range for it.
+    /// when the index is out of range; a clone kind and a string kind
+    /// under a constraint have no dense index, so every index is out of
+    /// range for them.
     #[allow(clippy::wrong_self_convention)]
     pub fn from_index(
         &self,
@@ -1154,8 +1346,10 @@ impl ChoiceKind {
             ChoiceKind::Boolean(bc) => bc.from_index(index).map(ChoiceValue::Boolean),
             ChoiceKind::Float(fc) => fc.from_index(index)?.map(ChoiceValue::Float),
             ChoiceKind::Bytes(bc) => bc.from_index(index)?.map(ChoiceValue::Bytes),
-            ChoiceKind::String(sc) => sc.from_index(index)?.map(ChoiceValue::String),
-            ChoiceKind::Clone => None,
+            ChoiceKind::String(sc) if sc.indexed() => {
+                sc.from_index(index)?.map(ChoiceValue::String)
+            }
+            ChoiceKind::String(_) | ChoiceKind::Clone => None,
         })
     }
 
@@ -1167,7 +1361,7 @@ impl ChoiceKind {
     pub fn resolve(&self, value: &ChoiceValue) -> Option<ChoiceData> {
         match (self, value) {
             (ChoiceKind::Integer(ic), ChoiceValue::Integer(v)) if ic.validate(v) => {
-                Some(ChoiceData::Integer(Arc::clone(ic), v.clone()))
+                Some(ChoiceData::Integer(ic.clone(), v.clone()))
             }
             (ChoiceKind::Boolean(bc), ChoiceValue::Boolean(v)) => {
                 Some(ChoiceData::Boolean(bc.clone(), *v))
@@ -1179,7 +1373,7 @@ impl ChoiceKind {
                 Some(ChoiceData::Bytes(bc.clone(), v.clone()))
             }
             (ChoiceKind::String(sc), ChoiceValue::String(v)) if sc.validate(v) => {
-                Some(ChoiceData::String(sc.clone(), v.clone()))
+                Some(ChoiceData::String(Arc::new(sc.clone()), v.clone()))
             }
             _ => None,
         }
@@ -1191,23 +1385,24 @@ impl ChoiceKind {
 /// mismatch unrepresentable: a consumer that needs both matches a single
 /// variant and gets a proven-consistent pair.
 ///
-/// The `IntegerChoice` constraint is shared via `Arc` because the shrinker
-/// clones entire `Vec<ChoiceNode>` vectors thousands of times per shrink
-/// run, while the constraint almost never changes; this turns three
-/// `BigInt` deep-clones per integer node into a pointer bump. A clone
-/// node's payload is the realized stream of its execution — realized by
-/// construction, so consumers never re-prove it.
+/// The `IntegerChoice` constraint is carried by value: its bounds are
+/// machine words for every width a draw ordinarily asks for, so a node
+/// is a few words to clone and costs no allocation to record. The
+/// `StringChoice` constraint is shared behind an `Arc`: with its grammar
+/// it is wider than the integer payload, and a node is kept to a few
+/// words. A clone node's payload is the realized stream of its execution
+/// — realized by construction, so consumers never re-prove it.
 ///
 /// Equality mirrors the value semantics of [`ChoiceValue`] plus constraint
 /// equality: floats (both bounds and value) compare bit-exactly, and clone
 /// payloads compare by child values recursively.
 #[derive(Clone, Debug)]
 pub enum ChoiceData {
-    Integer(Arc<IntegerChoice>, BigInt),
+    Integer(IntegerChoice, BigInt),
     Boolean(BooleanChoice, bool),
     Float(FloatChoice, f64),
     Bytes(BytesChoice, Vec<u8>),
-    String(StringChoice, Vec<u32>),
+    String(Arc<StringChoice>, Vec<u32>),
     Clone(Arc<RealizedStream>),
 }
 
@@ -1233,15 +1428,14 @@ impl Eq for ChoiceData {}
 
 impl ChoiceData {
     /// The constraint half of the pair, as a standalone [`ChoiceKind`].
-    /// Cheap: the integer constraint shares its `Arc` and the others are a
-    /// few machine words.
+    /// Cheap: every constraint is a few machine words.
     pub fn kind(&self) -> ChoiceKind {
         match self {
-            ChoiceData::Integer(ic, _) => ChoiceKind::Integer(Arc::clone(ic)),
+            ChoiceData::Integer(ic, _) => ChoiceKind::Integer(ic.clone()),
             ChoiceData::Boolean(bc, _) => ChoiceKind::Boolean(bc.clone()),
             ChoiceData::Float(fc, _) => ChoiceKind::Float(fc.clone()),
             ChoiceData::Bytes(bc, _) => ChoiceKind::Bytes(bc.clone()),
-            ChoiceData::String(sc, _) => ChoiceKind::String(sc.clone()),
+            ChoiceData::String(sc, _) => ChoiceKind::String(StringChoice::clone(sc)),
             ChoiceData::Clone(_) => ChoiceKind::Clone,
         }
     }
@@ -1297,11 +1491,11 @@ impl ChoiceData {
     /// The same constraint paired with its simplest value.
     pub fn with_simplest(&self) -> Result<ChoiceData, InternalError> {
         Ok(match self {
-            ChoiceData::Integer(ic, _) => ChoiceData::Integer(Arc::clone(ic), ic.simplest()),
+            ChoiceData::Integer(ic, _) => ChoiceData::Integer(ic.clone(), ic.simplest()),
             ChoiceData::Boolean(bc, _) => ChoiceData::Boolean(bc.clone(), false),
             ChoiceData::Float(fc, _) => ChoiceData::Float(fc.clone(), fc.simplest()?),
             ChoiceData::Bytes(bc, _) => ChoiceData::Bytes(bc.clone(), bc.simplest()),
-            ChoiceData::String(sc, _) => ChoiceData::String(sc.clone(), sc.simplest()?),
+            ChoiceData::String(sc, _) => ChoiceData::String(Arc::clone(sc), sc.simplest()?),
             ChoiceData::Clone(_) => ChoiceData::Clone(Arc::new(RealizedStream::empty())),
         })
     }
@@ -1315,20 +1509,23 @@ impl ChoiceData {
             (ChoiceData::Clone(_), ChoiceValue::Clone(r)) => {
                 r.realized().map(|rs| ChoiceData::Clone(Arc::clone(rs)))
             }
+            (ChoiceData::String(sc, _), ChoiceValue::String(v)) => sc
+                .validate(v)
+                .then(|| ChoiceData::String(Arc::clone(sc), v.clone())),
             _ => self.kind().resolve(value),
         }
     }
 
     /// The value's dense index under its constraint's sort order, or `None`
-    /// for a clone (no dense index).
+    /// for a clone or a string under a constraint (no dense index).
     pub fn to_index(&self) -> Result<Option<crate::native::bignum::BigUint>, InternalError> {
         Ok(match self {
             ChoiceData::Integer(ic, v) => Some(ic.to_index(v)),
             ChoiceData::Boolean(bc, v) => Some(bc.to_index(*v)),
             ChoiceData::Float(fc, v) => Some(fc.to_index(*v)?),
             ChoiceData::Bytes(bc, v) => Some(bc.to_index(v)),
-            ChoiceData::String(sc, v) => Some(sc.to_index(v)),
-            ChoiceData::Clone(_) => None,
+            ChoiceData::String(sc, v) if sc.indexed() => Some(sc.to_index(v)),
+            ChoiceData::String(..) | ChoiceData::Clone(_) => None,
         })
     }
 
@@ -1373,7 +1570,7 @@ impl ChoiceData {
     /// The string constraint and value, when this is a string pair.
     pub fn as_string(&self) -> Option<(&StringChoice, &[u32])> {
         match self {
-            ChoiceData::String(sc, v) => Some((sc, v)),
+            ChoiceData::String(sc, v) => Some((sc.as_ref(), v)),
             _ => None,
         }
     }
@@ -1439,7 +1636,7 @@ impl ChoiceNode {
 
     /// An integer node.
     pub fn integer(constraint: IntegerChoice, value: BigInt, was_forced: bool) -> Self {
-        Self::new(ChoiceData::Integer(Arc::new(constraint), value), was_forced)
+        Self::new(ChoiceData::Integer(constraint, value), was_forced)
     }
 
     /// A boolean node.
@@ -1457,14 +1654,28 @@ impl ChoiceNode {
         Self::new(ChoiceData::Bytes(constraint, value), was_forced)
     }
 
-    /// A string node.
+    /// A string node; see [`StringChoice`] for the constraint, grammar
+    /// included.
     pub fn string(constraint: StringChoice, value: Vec<u32>, was_forced: bool) -> Self {
-        Self::new(ChoiceData::String(constraint, value), was_forced)
+        Self::new(ChoiceData::String(Arc::new(constraint), value), was_forced)
     }
 
     /// A clone node carrying the realized stream of its execution.
     pub fn clone_stream(stream: Arc<RealizedStream>, was_forced: bool) -> Self {
         Self::new(ChoiceData::Clone(stream), was_forced)
+    }
+
+    /// Whether dropping the node frees nothing, so it can be forgotten
+    /// instead: a boolean or float node, or an integer node whose bounds
+    /// and value are both held inline. Every other node owns a heap block
+    /// or a reference count.
+    #[inline]
+    pub fn owns_no_heap(&self) -> bool {
+        match &self.data {
+            ChoiceData::Boolean(..) | ChoiceData::Float(..) => true,
+            ChoiceData::Integer(kind, value) => kind.is_small() && value.is_inline(),
+            ChoiceData::Bytes(..) | ChoiceData::String(..) | ChoiceData::Clone(..) => false,
+        }
     }
 
     /// The node's constraint, as a standalone [`ChoiceKind`].
@@ -1627,7 +1838,7 @@ impl ChoiceNode {
                 NodeSortKeyRef::Scalar(BigUint::from(mag), neg)
             }
             ChoiceData::Bytes(_, v) => NodeSortKeyRef::Seq(SeqKeys::Bytes(v)),
-            ChoiceData::String(sc, v) => NodeSortKeyRef::Seq(SeqKeys::String(sc, v)),
+            ChoiceData::String(sc, v) => NodeSortKeyRef::Seq(SeqKeys::String(sc.as_ref(), v)),
             ChoiceData::Clone(rs) => NodeSortKeyRef::Clone(rs),
         }
     }

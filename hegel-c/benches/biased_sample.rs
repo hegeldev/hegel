@@ -23,35 +23,27 @@ fn integer_cases() -> Vec<(&'static str, IntegerChoice)> {
     vec![
         (
             "i64_unbounded",
-            IntegerChoice {
-                min_value: BigInt::from(i64::MIN),
-                max_value: BigInt::from(i64::MAX),
-                shrink_towards: BigInt::from(0),
-            },
+            IntegerChoice::new(
+                BigInt::from(i64::MIN),
+                BigInt::from(i64::MAX),
+                BigInt::from(0),
+            ),
         ),
         (
             "i32_unbounded",
-            IntegerChoice {
-                min_value: BigInt::from(i32::MIN),
-                max_value: BigInt::from(i32::MAX),
-                shrink_towards: BigInt::from(0),
-            },
+            IntegerChoice::new(
+                BigInt::from(i32::MIN),
+                BigInt::from(i32::MAX),
+                BigInt::from(0),
+            ),
         ),
         (
             "small_window_0_100",
-            IntegerChoice {
-                min_value: BigInt::from(0),
-                max_value: BigInt::from(100),
-                shrink_towards: BigInt::from(0),
-            },
+            IntegerChoice::new(BigInt::from(0), BigInt::from(100), BigInt::from(0)),
         ),
         (
             "tight_window_42_43",
-            IntegerChoice {
-                min_value: BigInt::from(42),
-                max_value: BigInt::from(43),
-                shrink_towards: BigInt::from(42),
-            },
+            IntegerChoice::new(BigInt::from(42), BigInt::from(43), BigInt::from(42)),
         ),
     ]
 }
@@ -73,6 +65,7 @@ fn ascii_string_choice() -> StringChoice {
         intervals: IntervalSet::new(vec![(0x20, 0x7E)]).unwrap().into(),
         min_size: 0,
         max_size: 100,
+        constraint: None,
     }
 }
 
@@ -83,6 +76,7 @@ fn unicode_string_choice() -> StringChoice {
             .into(),
         min_size: 0,
         max_size: 100,
+        constraint: None,
     }
 }
 

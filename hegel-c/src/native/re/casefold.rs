@@ -5,13 +5,17 @@
 //! under `re.ASCII`), only for characters that have a case at all
 //! (`_sre.unicode_iscased`), and additionally treats the lowercase pairs in
 //! `Lib/re/_casefix.py` as equal. This module ports those three pieces and
-//! the queries the generator and matcher need on top of them.
+//! the queries the generator and matcher need on top of them, with the
+//! case mappings taken from the engine's own Unicode tables
+//! ([`unicodedata::to_lower`]) so that they are the same whatever the
+//! Rust toolchain's Unicode version.
 
 use alloc::vec::Vec;
 
 use super::constants::{SRE_FLAG_ASCII, SRE_FLAG_IGNORECASE};
 use crate::native::HashMap;
 use crate::sys::sync::Lazy;
+use crate::unicodedata;
 
 fn ignorecase(flags: u32) -> bool {
     flags & SRE_FLAG_IGNORECASE != 0
@@ -22,13 +26,13 @@ fn ascii(flags: u32) -> bool {
 }
 
 /// `_sre.unicode_tolower` (or `_sre.ascii_tolower` under the ASCII flag):
-/// the first character of the full lowercase mapping, which is the simple
-/// mapping for every character but U+0130.
+/// the simple lowercase mapping, or the first character of a special-cased
+/// full mapping (see [`unicodedata::to_lower`]).
 pub fn lower(c: char, flags: u32) -> char {
     if ascii(flags) {
         c.to_ascii_lowercase()
     } else {
-        c.to_lowercase().next().unwrap_or(c)
+        unicodedata::to_lower(c)
     }
 }
 
@@ -39,7 +43,7 @@ pub fn is_cased(c: char, flags: u32) -> bool {
     if ascii(flags) {
         c.is_ascii_alphabetic()
     } else {
-        lower(c, flags) != c || c.to_uppercase().next().unwrap_or(c) != c
+        lower(c, flags) != c || unicodedata::to_upper(c) != c
     }
 }
 

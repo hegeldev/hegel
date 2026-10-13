@@ -34,7 +34,7 @@ use crate::control::InternalError;
 use crate::exchange::CaseExchange;
 use crate::native::core::{
     ChoiceNode, ChoiceValue, Divergence, MAX_SHRINKING_SECONDS, NativeTestCase, Span, Spans,
-    Status, sort_key,
+    Status, StringChoice, sort_key,
 };
 use crate::native::counterexample::{Counterexample, Counterexamples};
 use crate::native::data_source::NativeDataSource;
@@ -48,6 +48,9 @@ use crate::native::graph::{Graph, Run, Walked};
 use crate::native::graph_shrink::{
     GraphProbe, GraphShrinker, Outcome as GraphOutcome, ProbeFuture as GraphProbeFuture,
 };
+use crate::native::lark::constraint::GrammarConstraint;
+use crate::native::lark::layout::Layout;
+use crate::native::lark::mutate::grow;
 use crate::native::nd;
 use crate::native::rng::EngineRng;
 use crate::native::shrinker::{ShrinkHalt, ShrinkProbe, ShrinkRun, Shrinker, absorb_stop};
@@ -104,6 +107,10 @@ const FIRST_CHECK_REPLAYS: u64 = 4;
 const BACKTRACK_SCAN_REPLAYS: u64 = nd::CONFIRM_CAP;
 
 const SPAN_MUTATION_ATTEMPTS: usize = 5;
+
+/// Number of grammar-mutation probes attempted after a valid test case
+/// that drew a string under a grammar; see [`Engine::try_grammar_mutation`].
+const GRAMMAR_MUTATION_ATTEMPTS: usize = 5;
 
 /// Outcome of one measurement replay.
 struct NdReplay {
@@ -621,8 +628,9 @@ impl<'a> Engine<'a> {
 
                 if run.status == Status::Valid
                     && (self.valid_test_cases >= HEALTH_CHECK_MAX_VALID || self.origins.any_live())
+                    && !self.try_span_mutation(&run.nodes, &run.spans).await?
                 {
-                    self.try_span_mutation(&run.nodes, &run.spans).await?;
+                    self.try_grammar_mutation(&run.nodes).await?;
                 }
 
                 self.first_check_sweep().await?;
@@ -3255,7 +3263,8 @@ impl GraphProbe for EngineGraphProbe<'_, '_> {
 /// the parent's prefix (when one contains the other, e.g. recursive tree
 /// structures) or replace both with identical choices from one donor.
 /// Anything interesting it finds lands in the engine's `interesting` map;
-/// the probe loop stops at the first such find.
+/// the probe loop stops at the first such find, and returns whether
+/// there was one.
 ///
 /// Makes up to [`SPAN_MUTATION_ATTEMPTS`] probes through
 /// [`Engine::cached_test_function`], so a proposal repeating an executed
@@ -3276,7 +3285,7 @@ impl<'a> Engine<'a> {
         &mut self,
         nodes: &[ChoiceNode],
         spans: &[Span],
-    ) -> Result<(), RunError> {
+    ) -> Result<bool, RunError> {
         let mut by_label: crate::native::HashMap<u64, crate::native::HashSet<(usize, usize)>> =
             crate::native::HashMap::default();
         for span in spans.iter() {
@@ -3295,7 +3304,7 @@ impl<'a> Engine<'a> {
             })
             .collect();
         if multi.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
 
         let values: Vec<ChoiceValue> = nodes.iter().map(|n| n.value()).collect();
@@ -3345,6 +3354,68 @@ impl<'a> Engine<'a> {
                 out
             };
 
+            let extend = self
+                .choice_bound()
+                .saturating_sub(crate::native::core::flattened_values_len(&attempt));
+            let run = self.cached_test_function(&attempt, None, extend).await?;
+            if run.status == Status::Interesting {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Try grammar mutation: grow one of the strings drawn under a grammar out
+    /// of its own derivation (`lark::mutate`) — a rule's text copied over
+    /// another node of the same rule, or a repetition duplicated — the way
+    /// [`Engine::try_span_mutation`] duplicates and swaps the choices under
+    /// same-label spans, which a grammar string, being one choice, has none of.
+    /// A proposal the grammar does not derive, or that is over the string's
+    /// size cap, would only be punned on replay and is not run; nor is one
+    /// whose derivation nests rules deeper than the grammar's depth cap, which
+    /// the generator keeps to.
+    ///
+    /// Makes up to [`GRAMMAR_MUTATION_ATTEMPTS`] probes through
+    /// [`Engine::cached_test_function`] on the same terms as span mutation,
+    /// stopping at the first interesting one.
+    async fn try_grammar_mutation(&mut self, nodes: &[ChoiceNode]) -> Result<(), RunError> {
+        let targets: Vec<(usize, &StringChoice, &[u32], &GrammarConstraint)> = nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| !node.was_forced)
+            .filter_map(|(i, node)| {
+                let (kind, text) = node.data.as_string()?;
+                Some((i, kind, text, &**kind.constraint.as_ref()?.grammar()?))
+            })
+            .collect();
+        if targets.is_empty() {
+            return Ok(());
+        }
+        let values: Vec<ChoiceValue> = nodes.iter().map(|n| n.value()).collect();
+
+        for _ in 0..GRAMMAR_MUTATION_ATTEMPTS {
+            if self.valid_test_cases >= self.settings.test_cases {
+                break;
+            }
+            let (i, kind, text, constraint) = targets[self.rng.random_range(0..targets.len())];
+            let Some(tree) = constraint.tree(text) else {
+                continue;
+            };
+            let layout = Layout::new(&tree);
+            let Some(grown) = grow(&layout, text, &mut self.rng) else {
+                continue;
+            };
+            let within_cap = grown.len() <= kind.max_size
+                && constraint.tree(&grown).is_some_and(|tree| {
+                    let layout = Layout::new(&tree);
+                    layout.depth() <= constraint.max_depth()
+                        && constraint.within_cap(&layout, &grown)
+                });
+            if !within_cap {
+                continue;
+            }
+            let mut attempt = values.clone();
+            attempt[i] = ChoiceValue::String(grown);
             let extend = self
                 .choice_bound()
                 .saturating_sub(crate::native::core::flattened_values_len(&attempt));

@@ -124,11 +124,7 @@ fn run_from_nodes_pairs_values_with_addresses() {
     let nodes = vec![
         ChoiceNode::boolean(BooleanChoice { p: 0.5 }, true, false),
         ChoiceNode::integer(
-            IntegerChoice {
-                min_value: BigInt::from(0),
-                max_value: BigInt::from(9),
-                shrink_towards: BigInt::from(0),
-            },
+            IntegerChoice::new(BigInt::from(0), BigInt::from(9), BigInt::from(0)),
             BigInt::from(4),
             false,
         ),
@@ -629,11 +625,7 @@ fn run_from_nodes_leaves_out_forced_draws() {
     let nodes = vec![
         ChoiceNode::boolean(BooleanChoice { p: 0.5 }, true, true),
         ChoiceNode::integer(
-            IntegerChoice {
-                min_value: BigInt::from(0),
-                max_value: BigInt::from(9),
-                shrink_towards: BigInt::from(0),
-            },
+            IntegerChoice::new(BigInt::from(0), BigInt::from(9), BigInt::from(0)),
             BigInt::from(4),
             false,
         ),

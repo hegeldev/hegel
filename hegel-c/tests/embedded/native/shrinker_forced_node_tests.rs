@@ -14,11 +14,11 @@ use alloc::vec::Vec;
 
 fn int_node(value: i128, was_forced: bool) -> ChoiceNode {
     ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(i128::MIN + 1),
-            max_value: BigInt::from(i128::MAX),
-            shrink_towards: BigInt::from(0),
-        },
+        IntegerChoice::new(
+            BigInt::from(i128::MIN + 1),
+            BigInt::from(i128::MAX),
+            BigInt::from(0),
+        ),
         BigInt::from(value),
         was_forced,
     )
@@ -165,11 +165,7 @@ fn redistribute_numeric_pairs_skips_forced_integer() {
         vec![
             int_node(15, false),
             ChoiceNode::integer(
-                IntegerChoice {
-                    min_value: BigInt::from(0),
-                    max_value: BigInt::from(100),
-                    shrink_towards: BigInt::from(0),
-                },
+                IntegerChoice::new(BigInt::from(0), BigInt::from(100), BigInt::from(0)),
                 BigInt::from(10),
                 true,
             ),
@@ -190,6 +186,7 @@ fn normalize_unicode_chars_skips_forced_node() {
             intervals: IntervalSet::new(vec![(0, 0x10FFFF)]).unwrap().into(),
             min_size: 0,
             max_size: 16,
+            constraint: None,
         },
         vec![0xE9],
         true,
@@ -199,6 +196,7 @@ fn normalize_unicode_chars_skips_forced_node() {
             intervals: IntervalSet::new(vec![(0, 0x10FFFF)]).unwrap().into(),
             min_size: 0,
             max_size: 16,
+            constraint: None,
         },
         vec![0xE9],
         false,

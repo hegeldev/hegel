@@ -73,11 +73,13 @@
  *     hegel_run_result           ->  hegel_run_result_free
  *     hegel_run_result_failure   ->  hegel_failure_free
  *     hegel_string_generator_*   ->  hegel_string_generator_free
+ *     hegel_grammar_new          ->  hegel_grammar_free
  *     hegel_new_collection       ->  hegel_collection_free
  *     hegel_new_pool             ->  hegel_pool_free
  *     hegel_new_state_machine    ->  hegel_state_machine_free
  *     hegel_generate_bytes       ->  hegel_generate_bytes_result_free
  *     hegel_generate_string      ->  hegel_generate_string_result_free
+ *     hegel_generate_grammar     ->  hegel_generate_string_result_free
  *     hegel_printer_options_new  ->  hegel_printer_options_free
  *     hegel_reflow_options_new   ->  hegel_reflow_options_free
  *     hegel_printer_new          ->  hegel_printer_free
@@ -414,6 +416,17 @@ typedef struct hegel_context_t hegel_context_t;
 typedef struct hegel_failure_t hegel_failure_t;
 
 /*
+ A grammar to draw strings of
+
+ Build one with `hegel_grammar_new` from a grammar in Lark's syntax; the
+ grammar is checked and compiled at construction. A grammar is immutable
+ after construction and may be shared freely across test cases and
+ threads. Free it with `hegel_grammar_free` once no draws will use it
+ again.
+ */
+typedef struct hegel_grammar_t hegel_grammar_t;
+
+/*
  Opaque handle to an engine-managed *variable pool* for stateful testing.
 
  Created by `hegel_new_pool` on a test case; driven by `hegel_pool_add` /
@@ -654,6 +667,35 @@ typedef struct {
     char *data;
     size_t len;
 } hegel_generate_string_result_t;
+
+/*
+ Import callback for `hegel_grammar_new`, asked for every `%import` that
+ the grammar, or a grammar it imports, makes. `user_data` is the pointer
+ supplied alongside the callback. `base_path` is the directory of the
+ importing grammar (the `out_path` this callback gave for it, cut at its
+ last `/` or `\`, so empty for a path with neither) for a relative
+ import (`%import .common.INT`) made by a grammar this callback
+ supplied, and NULL otherwise: for every absolute import
+ (`%import common.INT`), and for a relative import made by the text
+ passed to `hegel_grammar_new`. `grammar_path` is the file the import
+ names relative to it (`common.lark` for `%import common.INT`,
+ `a/b.lark` for `%import a.b.rule`). Both are NUL-terminated UTF-8
+ valid only for the duration of the call. To supply the grammar, set
+ `out_path` to the NUL-terminated path it was found at, `out_text` and
+ `out_text_len` to its UTF-8 text (bytes that are not UTF-8 are read
+ with each invalid sequence replaced by U+FFFD), all kept alive until
+ `hegel_grammar_new` returns, and return true; return false when there
+ is no such grammar (a true return that leaves `out_path` or `out_text`
+ NULL counts as false), in which case the import, absolute or relative,
+ still resolves against the grammars bundled with libhegel, as Lark's
+ does: `common`, `lark`, `python` and `unicode`.
+ */
+typedef bool (*hegel_grammar_import_t)(void *user_data,
+                                       const char *base_path,
+                                       const char *grammar_path,
+                                       const char **out_path,
+                                       const char **out_text,
+                                       size_t *out_text_len);
 
 /*
  A drawn proleptic Gregorian calendar date: `year` in
@@ -2130,8 +2172,12 @@ hegel_result_t hegel_string_generator_text(hegel_context_t *ctx,
    pattern may contain the NUL character, which `re` accepts.
  `fullmatch`: When true, the whole string must match the pattern.
    Otherwise, the match may be padded on either side.
- `alphabet`: Optional (NULL for none). Must be a text generator. Its
-   character set constrains the padding and wildcard characters.
+ `alphabet`: Optional (NULL for none). Must be a text generator. Every
+   character of the string, padding included, is one of its characters.
+
+ A string drawn from the generator is recorded as one string choice the
+ pattern constrains, replayed as long as it still matches and shrunk
+ within the pattern.
 
  Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an invalid string
  buffer, a pattern that does not parse, or an alphabet that is not a
@@ -2208,6 +2254,124 @@ hegel_result_t hegel_generate_string(hegel_context_t *ctx,
  */
 hegel_result_t hegel_generate_string_result_free(hegel_context_t *ctx,
                                                  hegel_generate_string_result_t *result);
+
+/*
+ Compile a grammar written in Lark's syntax (see
+ <https://lark-parser.readthedocs.io/en/stable/grammar.html>) into a
+ generator of the strings it accepts, drawn with `hegel_generate_grammar`.
+
+ Parameters:
+ `text`: The grammar, NUL-terminated UTF-8.
+ `start`: The rule whose strings to generate, or NULL for `start`.
+ `max_size`: The most characters a string may have, or 0 for the default
+   of 8192. Must not be below the shortest string the start rule can
+   produce, nor above 1048576. A placeholder marker counts as no
+   characters: what the caller puts in for it is the caller's to fit,
+   with the `max_size` of `hegel_generate_grammar`.
+ `max_depth`: How deeply rules may nest, or 0 for the default of 200.
+   Must not be below the shallowest nesting the start rule can produce,
+   nor above 500.
+ `alphabet`: Optional (NULL for none). Must be a text generator; every
+   character a terminal's pattern draws is one of its characters, so a
+   character class, wildcard or literal outside it is never drawn.
+ `explicit_names`, `explicit_len`: `explicit_len` terminals whose values
+   the caller supplies. Every terminal the grammar `%declare`s must be
+   named; a terminal with a pattern may be named to override it. Each
+   occurrence of such a terminal in a drawn string is a placeholder
+   marker (see `hegel_grammar_placeholder`) for the caller to replace.
+ `import_callback`, `import_data`: How `%import`s are resolved (see
+   `hegel_grammar_import_t`); NULL to resolve only against the bundled
+   grammars.
+ `out_grammar`: Receives the grammar handle.
+
+ Returns `HEGEL_OK`; `HEGEL_E_INVALID_ARG` with a message describing
+ what is wrong with the grammar or the options: a syntax error, an
+ undefined or unused symbol, a rule that can never produce a finite
+ string, a `%declare`d terminal not named in `explicit_names`, or a
+ cap below the smallest string.
+ */
+hegel_result_t hegel_grammar_new(hegel_context_t *ctx,
+                                 const char *text,
+                                 const char *start,
+                                 uint64_t max_size,
+                                 uint32_t max_depth,
+                                 const hegel_string_generator_t *alphabet,
+                                 const char *const *explicit_names,
+                                 size_t explicit_len,
+                                 hegel_grammar_import_t import_callback,
+                                 void *import_data,
+                                 hegel_grammar_t **out_grammar);
+
+/*
+ Parameters:
+ `grammar`: The grammar to release. Safe to call with NULL.
+
+ Returns `HEGEL_OK`.
+
+ Each grammar must be freed exactly once, and only after every draw
+ using it has completed.
+ */
+hegel_result_t hegel_grammar_free(hegel_context_t *ctx, hegel_grammar_t *grammar);
+
+/*
+ The marker standing for each value of the explicit terminal `name` in
+ the strings `hegel_generate_grammar` draws of `grammar`:
+ `<<EXPLICIT_<name>_<noise>>>`, with `<noise>` fixed hexadecimal, for
+ the caller to replace, in order, with values of its own.
+
+ Parameters:
+ `grammar`: A grammar built by `hegel_grammar_new`.
+ `name`: The terminal's name, as given in `explicit_names`.
+ `out_marker`: Receives a NUL-terminated string the grammar owns, valid
+   until the grammar is freed.
+
+ Returns `HEGEL_OK`; `HEGEL_E_INVALID_HANDLE` for a NULL grammar;
+ `HEGEL_E_INVALID_ARG` for a NULL `name` or `out_marker`, a `name` that
+ is not valid UTF-8, or one that is not an explicit terminal of the
+ grammar.
+ */
+hegel_result_t hegel_grammar_placeholder(hegel_context_t *ctx,
+                                         const hegel_grammar_t *grammar,
+                                         const char *name,
+                                         const char **out_marker);
+
+/*
+ Draw a string of a grammar: a string the grammar's start rule accepts,
+ aiming at a length drawn up to the size cap, as many as 8192
+ characters by default, with each explicit terminal standing as its
+ placeholder marker (see `hegel_grammar_placeholder`). The string is
+ one choice of the test case, holding the string itself: a replay
+ checks a stored string by parsing it (one the grammar does not derive
+ is replaced by the grammar's simplest string), and the shrinker edits
+ it through its derivation.
+
+ Parameters:
+ `grammar`: A grammar built by `hegel_grammar_new`.
+ `max_size`: A cap on this draw's characters, placeholder markers
+   counting as none, or 0 for the grammar's own cap. One below the
+   grammar's smallest string, or above its cap, is read as that. A
+   caller replacing markers with values of its own uses it to draw
+   again, under a smaller cap, when the values pushed the string past
+   the cap it has in mind.
+ `out_result`: Receives a libhegel-allocated UTF-8 buffer (not
+   NUL-terminated) with the string. Release with
+   `hegel_generate_string_result_free`.
+
+ Returns `HEGEL_OK`, `HEGEL_E_STOP_TEST`, or `HEGEL_E_ASSUME`, which
+ rejects the test case, when the draw could not produce a string that
+ lexes back as the grammar's tokens within the work a draw is allowed,
+ or when a replayed string is over this draw's `max_size`. Returns
+ `HEGEL_E_INVALID_ARG` when no string of the grammar can be generated
+ at all (none fits the size cap or the work limit, or lexes back as
+ its tokens; the context's last error says which rule), and
+ `HEGEL_E_INVALID_HANDLE` or `HEGEL_E_INVALID_ARG` for a null handle
+ or out parameter.
+ */
+hegel_result_t hegel_generate_grammar(hegel_context_t *ctx,
+                                      hegel_test_case_t *tc,
+                                      const hegel_grammar_t *grammar,
+                                      uint64_t max_size,
+                                      hegel_generate_string_result_t *out_result);
 
 /*
  Parameters:

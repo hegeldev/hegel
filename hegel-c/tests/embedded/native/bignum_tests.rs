@@ -272,3 +272,26 @@ fn display_matches_value() {
     assert_eq!(format!("{}", i(-123)), "-123");
     assert_eq!(format!("{}", u(123)), "123");
 }
+
+#[test]
+fn values_of_at_most_two_words_are_inline() {
+    for v in [
+        0,
+        1,
+        -1,
+        i64::MAX as i128,
+        i64::MIN as i128,
+        i128::MAX,
+        i128::MIN,
+    ] {
+        assert!(i(v).is_inline(), "{v}");
+    }
+    assert!(BigInt::from(u128::MAX).is_inline());
+    assert!((-BigInt::from(u128::MAX)).is_inline());
+    let beyond = BigInt::from(u128::MAX) + i(1);
+    assert!(!beyond.is_inline());
+    assert!(!(-&beyond).is_inline());
+    assert!(!(&beyond * i(1)).is_inline());
+    assert!((&beyond - i(1)).is_inline());
+    assert!((&beyond >> 1).is_inline());
+}

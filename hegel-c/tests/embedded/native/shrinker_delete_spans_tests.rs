@@ -28,11 +28,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 fn int_node(value: i128) -> ChoiceNode {
     ChoiceNode::integer(
-        IntegerChoice {
-            min_value: BigInt::from(0),
-            max_value: BigInt::from(i128::MAX),
-            shrink_towards: BigInt::from(0),
-        },
+        IntegerChoice::new(BigInt::from(0), BigInt::from(i128::MAX), BigInt::from(0)),
         BigInt::from(value),
         false,
     )
@@ -200,6 +196,7 @@ fn string_node(value: &str) -> ChoiceNode {
                 .into(),
             min_size: 0,
             max_size: 16,
+            constraint: None,
         },
         value.chars().map(|c| c as u32).collect(),
         false,

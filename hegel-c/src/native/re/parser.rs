@@ -5,11 +5,10 @@
 //! variant names track the Python OPCODES/ATCODES/CHCODES constants so
 //! cross-referencing stays trivial.
 //!
-//! Matching is NOT ported; the pattern crate handles execution at
-//! test-runtime. This module only produces the AST that
-//! Hypothesis's `strategies._internal.regex` walks to build a generator.
-//!
-//! Source: `resources/cpython/Lib/re/_parser.py`.
+//! This module only produces the AST: the regex generator
+//! (`draws/regex.rs`) walks it the way Hypothesis's
+//! `strategies._internal.regex` walks CPython's, and [`matcher`](super::matcher)
+//! and [`vm`](super::vm) match text against it.
 
 use crate::native::HashMap;
 use alloc::format;
@@ -19,6 +18,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::constants::*;
+use super::width::get_width_within;
 use crate::control::{
     InternalError, hegel_internal_assert_eq, hegel_internal_debug_assert,
     hegel_internal_debug_assert_eq, hegel_internal_unwrap,
@@ -136,10 +136,30 @@ impl SubPattern {
 
 /// Top-level output of [`parse`]: the parsed pattern tree plus the
 /// active flags inherited from inline modifiers and call-site arguments.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedPattern {
     pub pattern: SubPattern,
     pub flags: u32,
+    /// Whether the pattern contains a backreference or conditional group
+    /// anywhere, which makes how a part of it matches depend on what was
+    /// captured on the way there.
+    pub group_refs: bool,
+}
+
+/// Whether `p` contains a backreference or conditional group anywhere.
+fn has_group_refs(p: &SubPattern) -> bool {
+    p.data.iter().any(|op| match op {
+        OpCode::GroupRef(_) | OpCode::GroupRefExists { .. } => true,
+        OpCode::Branch(alternatives) => alternatives.iter().any(has_group_refs),
+        OpCode::Subpattern { p, .. }
+        | OpCode::AtomicGroup(p)
+        | OpCode::Assert { p, .. }
+        | OpCode::AssertNot { p, .. } => has_group_refs(p),
+        OpCode::MaxRepeat { item, .. }
+        | OpCode::MinRepeat { item, .. }
+        | OpCode::PossessiveRepeat { item, .. } => has_group_refs(item),
+        _ => false,
+    })
 }
 
 /// Parsing error with an offset into the original pattern string. Mirrors
@@ -178,7 +198,7 @@ struct State {
     flags: u32,
     groupdict: HashMap<String, u32>,
     /// `Some(width)` once a group has been closed, `None` while open.
-    groupwidths: Vec<Option<(u64, u64)>>,
+    groupwidths: Vec<Option<(u64, Option<u64>)>>,
     lookbehindgroups: Option<u32>,
     grouprefpos: HashMap<u32, usize>,
 }
@@ -220,9 +240,10 @@ impl State {
         }
         Ok(gid)
     }
-    fn closegroup(&mut self, gid: u32) {
+    fn closegroup(&mut self, gid: u32, p: &SubPattern) {
+        let width = get_width_within(p, &self.groupwidths);
         if let Some(slot) = self.groupwidths.get_mut(gid as usize) {
-            *slot = Some((0, 0));
+            *slot = Some(width);
         }
     }
 
@@ -1164,6 +1185,15 @@ fn parse(
                             source.tell().saturating_sub(start),
                         ));
                     }
+                    if dir < 0 {
+                        let (lo, hi) = get_width_within(&p, &state.groupwidths);
+                        if hi != Some(lo) {
+                            return Err(source.error(
+                                "look-behind requires fixed-width pattern",
+                                source.tell().saturating_sub(start),
+                            ));
+                        }
+                    }
                     if marker == "=" {
                         subpattern.push(OpCode::Assert { direction: dir, p });
                     } else if !p.is_empty() {
@@ -1278,7 +1308,7 @@ fn parse(
                 ));
             }
             if let Some(g) = group {
-                state.closegroup(g);
+                state.closegroup(g, &p);
             }
             if atomic {
                 hegel_internal_debug_assert!(group.is_none());
@@ -1490,6 +1520,7 @@ pub fn parse_pattern(pattern: &str, flags: u32) -> ParseResult<ParsedPattern> {
     }
 
     Ok(ParsedPattern {
+        group_refs: has_group_refs(&p),
         pattern: p,
         flags: state.flags,
     })
