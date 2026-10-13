@@ -538,10 +538,13 @@ impl<T: Terminals> Parse<'_, T> {
     /// `nt` there ends with it, completing `nt` completes that item and
     /// nothing else, and if its own nonterminal is in the same position
     /// at its origin the chain goes on. `None` when there is no such
-    /// chain, or when it comes round to where it began. The chain stops
-    /// short of completing the start rule from the first column, since
-    /// that item is the one a parse of the whole text is found by, and
-    /// the one carried past ignored text at its end.
+    /// chain. The chain stops short of completing the start rule from
+    /// the first column, since that item is the one a parse of the whole
+    /// text is found by, and the one carried past ignored text at its
+    /// end; it cannot come round otherwise, because the first item of a
+    /// cycle to be predicted in a column was predicted by an item outside
+    /// it that waits on the same nonterminal, so that nonterminal has two
+    /// waiters, and only the seeded start items are predicted by nothing.
     fn leo_top(&mut self, col: usize, nt: usize) -> Option<(u32, u32)> {
         let mut chain: Vec<((u32, u32), (u32, u32))> = Vec::new();
         let (mut col, mut nt) = (col, nt);
@@ -552,9 +555,6 @@ impl<T: Terminals> Parse<'_, T> {
             let key = (col as u32, nt as u32);
             if let Some(&top) = self.leo.get(&key) {
                 break Some(top);
-            }
-            if chain.iter().any(|&(seen, _)| seen == key) {
-                break None;
             }
             let Some(waiter) = self.sole_waiter(col, nt) else {
                 break None;

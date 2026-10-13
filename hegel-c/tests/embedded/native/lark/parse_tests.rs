@@ -776,3 +776,21 @@ fn the_right_recursion_shortcut_keeps_a_completed_start_rule() {
     assert!(ignoring.accepts(" a c"));
     assert_eq!(ignoring.read_back("a "), "a[ ]");
 }
+
+#[test]
+fn unit_cycles_have_two_waiters_wherever_they_are_entered() {
+    for (g, text) in [
+        ("start: a\na: b | \"y\"\nb: a\n", "y"),
+        ("start: \"x\" a\na: b | \"y\"\nb: a\n", "xy"),
+        (
+            "start: \"x\" a \"z\"\na: b | \"y\"\nb: a | n a\nn:\n",
+            "xyz",
+        ),
+        ("start: a | \"x\" start\na: start | \"y\"\n", "xxy"),
+    ] {
+        let s = setup(g);
+        assert!(s.accepts(text), "{g}");
+        assert_eq!(s.read_back(text), text, "{g}");
+        assert!(!s.accepts("yy"), "{g}");
+    }
+}
