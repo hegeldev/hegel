@@ -11,7 +11,7 @@ import threading
 import traceback
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, NoReturn, TypeVar
 
 from hegel import _native
 from hegel.errors import (
@@ -106,6 +106,29 @@ def _user_location(exception: BaseException) -> str:
     return location or "<unknown>"
 
 
+def _origin(exception: BaseException, seen: tuple[BaseException, ...] = ()) -> str:
+    """The origin the engine groups failures by: the exception's type and
+    user location, followed by the exception it was raised from (its cause,
+    or the one it was handling) and, for an exception group, its members,
+    so that one ``raise`` reached by different routes counts as different
+    bugs. One line, as it is also shown in messages."""
+    seen = (*seen, exception)
+    origin = f"{type(exception).__qualname__} at {_user_location(exception)}"
+    chained = exception.__cause__
+    if chained is None:
+        chained = exception.__context__
+    if chained is not None and not _is_in(chained, seen):
+        origin += f" (from {_origin(chained, seen)})"
+    if isinstance(exception, BaseExceptionGroup):
+        members = (_origin(e, seen) for e in exception.exceptions if not _is_in(e, seen))
+        origin += f" [{', '.join(members)}]"
+    return origin
+
+
+def _is_in(exception: BaseException, seen: tuple[BaseException, ...]) -> bool:
+    return any(exception is s for s in seen)
+
+
 def _inside_hegel(filename: str) -> bool:
     return os.path.abspath(filename).startswith(_HEGEL_DIR + os.sep)
 
@@ -136,7 +159,7 @@ def _run_test_case(
     tc = TestCase(handle, should_emit, case_sink or output.resolved_sink(), is_final=stamped)
     outcome = _CaseOutcome(_native.STATUS_VALID, None, None, stamped)
     try:
-        _check_not_awaitable(test_fn(tc))
+        _call_test(test_fn, tc)
     except (AssumeFailed, LoopDone) as signal:
         if isinstance(signal, AssumeFailed):
             outcome.status = _native.STATUS_INVALID
@@ -151,7 +174,7 @@ def _run_test_case(
         raise
     except BaseException as exception:
         outcome.status = _native.STATUS_INTERESTING
-        outcome.origin = f"{type(exception).__qualname__} at {_user_location(exception)}"
+        outcome.origin = _origin(exception)
         outcome.exception = exception
         if verbose:
             output.block(_format_exception(exception))
@@ -160,6 +183,38 @@ def _run_test_case(
         output.line(_stop_reason(outcome))
     handle.mark_complete(outcome.status, outcome.origin)
     return outcome
+
+
+# Exceptions that steer a test case rather than fail it: the ones
+# ``_run_test_case`` handles by kind.
+_CONTROL_EXCEPTIONS = (AssumeFailed, LoopDone, StopTest, InvalidArgument, InternalError)
+
+
+def _call_test(test_fn: Callable[[TestCase], Any], tc: TestCase) -> None:
+    """Call the test, unwrapping an exception group of nothing but control
+    exceptions (from a ``TaskGroup`` whose tasks drew or rejected, say) to
+    the one to handle: the first member that is not a ``StopTest``, else the
+    first ``StopTest``. A group with any other exception in it is a failure
+    like any other."""
+    try:
+        _check_not_awaitable(test_fn(tc))
+    except BaseExceptionGroup as group:
+        signals, others = group.split(_CONTROL_EXCEPTIONS)
+        if others is not None or signals is None:
+            raise
+        leaves = _leaves(signals)
+        signal = next((e for e in leaves if not isinstance(e, StopTest)), leaves[0])
+        raise signal from signal.__cause__
+
+
+def _leaves(group: BaseExceptionGroup[Any]) -> list[BaseException]:
+    leaves: list[BaseException] = []
+    for member in group.exceptions:
+        if isinstance(member, BaseExceptionGroup):
+            leaves.extend(_leaves(member))
+        else:
+            leaves.append(member)
+    return leaves
 
 
 def _check_not_awaitable(result: object) -> None:
@@ -387,30 +442,99 @@ def _drive_run(
         _annotate(report.exception, report.lines, None if quiet else caveat, note)
         _trim_traceback(report.exception)
         exceptions.append(report.exception)
-    if count > 1:
-        raise MultipleFailures(
-            f"Property-based test failed with {count} distinct failures.",
-            exceptions,  # type: ignore[arg-type]
-        )
-    raise exceptions[0]
+    _raise_failures(exceptions, None)
 
 
 def _run_explicit(
-    test_fn: Callable[[TestCase], Any], case: ExplicitCase, output: RunOutput
-) -> None:
+    test_fn: Callable[[TestCase], Any],
+    case: ExplicitCase,
+    verbosity: Verbosity,
+    output: RunOutput,
+) -> _CaseOutcome:
+    """Run one explicit test case. A failure is returned in the outcome
+    rather than raised, annotated with the case's drawn values and notes,
+    so the caller can raise it or collect it with further failures. A
+    verbose run reports the case as it does a generated one: a heading,
+    the drawn values, and how it ended."""
+    verbose = verbosity in (Verbosity.verbose, Verbosity.debug)
     explicit = ExplicitTestCase(case)
     tc = TestCase(NO_HANDLE, True, output.resolved_sink(), explicit, is_final=True)
+    if verbose:
+        output.line(f"Running explicit test case: {case!r}")
+    outcome = _CaseOutcome(_native.STATUS_VALID, None, None, True)
     try:
         _check_not_awaitable(test_fn(tc))
     except LoopDone:
         pass
-    except (KeyboardInterrupt, SystemExit, InvalidArgument, InternalError):
+    except (InvalidArgument, InternalError):
+        if verbose:
+            output.lines(explicit.lines)
+        raise
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except _skip_exceptions():
         raise
     except BaseException as exception:
-        _annotate(exception, explicit.lines, None, None)
-        _trim_traceback(exception)
+        outcome.status = _native.STATUS_INTERESTING
+        outcome.origin = _origin(exception)
+        outcome.exception = exception
+    if verbose:
+        output.lines(explicit.lines)
+        if outcome.exception is not None:
+            output.block(_format_exception(outcome.exception))
+        output.line(_stop_reason(outcome))
+    if outcome.exception is None:
+        explicit.check_consumed()
+        return outcome
+    _annotate(outcome.exception, explicit.lines, None, None)
+    _trim_traceback(outcome.exception)
+    return outcome
+
+
+def _drive_after_explicit_failures(
+    failures: dict[str, BaseException],
+    test_fn: Callable[[TestCase], Any],
+    settings: Settings,
+    database_key: str | None,
+    test_location: TestLocation | None,
+    reproducer: Reproducer,
+) -> NoReturn:
+    """Under ``report_multiple_failures``, explicit cases failing (keyed by
+    origin in ``failures``) do not end the run: the engine's phases still
+    look for other bugs, and every distinct failure is then reported
+    together, the explicit ones first. An error ending the engine's run
+    is chained onto the failures rather than hiding them."""
+    __tracebackhide__ = True
+    cause: BaseException | None = None
+    generated: list[BaseException] = []
+    try:
+        _drive(test_fn, settings, database_key, test_location, reproducer)
+    except (InvalidArgument, InternalError, KeyboardInterrupt, SystemExit):
         raise
-    explicit.check_consumed()
+    except _skip_exceptions():
+        raise
+    except RunError as error:
+        cause = error
+    except MultipleFailures as group:
+        generated = list(group.exceptions)
+    except BaseException as exception:
+        generated = [exception]
+    for found in generated:
+        failures.setdefault(_origin(found), found)
+    _raise_failures(list(failures.values()), cause)
+
+
+def _raise_failures(exceptions: list[BaseException], cause: BaseException | None) -> NoReturn:
+    __tracebackhide__ = True
+    failure = exceptions[0]
+    if len(exceptions) > 1:
+        failure = MultipleFailures(
+            f"Property-based test failed with {len(exceptions)} distinct failures.",
+            exceptions,  # type: ignore[arg-type]
+        )
+    if cause is not None:
+        failure.__cause__ = cause
+    raise failure
 
 
 def run(
@@ -439,6 +563,7 @@ def run(
     __tracebackhide__ = True
     if not callable(test_fn):
         raise InvalidArgument("run() takes a test function")
+    _check_settings(settings)
     resolved = (
         Settings(settings, **overrides) if (settings is not None or overrides) else Settings()
     )
@@ -448,10 +573,22 @@ def run(
             _drive_blob_replay(
                 test_fn, resolved, database_key, test_location, reproducer, reproduce_blob
             )
+        # Explicit failures, by origin: the first explicit case failing ends
+        # the run, unless every distinct failure is to be reported.
+        failures: dict[str, BaseException] = {}
         if Phase.explicit in resolved.phases:
             output = RunOutput.resolve()
             for case in explicit_cases:
-                _run_explicit(test_fn, case, output)
+                outcome = _run_explicit(test_fn, case, resolved.verbosity, output)
+                if outcome.exception is None:
+                    continue
+                if not resolved.report_multiple_failures:
+                    raise outcome.exception
+                failures.setdefault(outcome.origin or "", outcome.exception)
+        if failures:
+            _drive_after_explicit_failures(
+                failures, test_fn, resolved, database_key, test_location, reproducer
+            )
         _drive(test_fn, resolved, database_key, test_location, reproducer)
     finally:
         _running.depth -= 1
@@ -459,6 +596,11 @@ def run(
 
 def _inside_a_run() -> bool:
     return getattr(_running, "depth", 0) > 0
+
+
+def _check_settings(settings: Any) -> None:
+    if settings is not None and not isinstance(settings, Settings):
+        raise InvalidArgument(f"settings={settings!r} must be a Settings object or None")
 
 
 def _location_of(fn: Callable[..., Any]) -> TestLocation | None:
@@ -492,10 +634,16 @@ def test(
     Settings may be given as ``settings=`` or as individual fields, e.g.
     ``@hegel.test(test_cases=500)``.
     """
+    _check_settings(settings)
 
     def decorate(inner: Callable[..., Any]) -> Callable[..., Any]:
         if not callable(inner):
             raise InvalidArgument("@hegel.test must decorate a function")
+        if inspect.isclass(inner):
+            raise InvalidArgument(
+                f"@hegel.test decorates a test function, not the class {inner.__name__}. "
+                "Decorate its test methods instead."
+            )
         if inspect.iscoroutinefunction(inner) or inspect.isasyncgenfunction(inner):
             raise InvalidArgument(
                 f"{inner.__name__} is async, and Hegel does not run async tests. Make it "
@@ -503,14 +651,22 @@ def test(
             )
         signature = inspect.signature(inner)
         parameters = list(signature.parameters.values())
-        if not parameters:
-            raise InvalidArgument(f"{inner.__name__} must take the test case as its first argument")
+        # A method takes the test case after ``self``.
+        tc_index = 1 if parameters and parameters[0].name in ("self", "cls") else 0
+        if tc_index >= len(parameters):
+            after = f" after {parameters[0].name}" if parameters else ""
+            raise InvalidArgument(
+                f"{inner.__name__} must take the test case as its first argument{after}"
+            )
+        if "POSITIONAL" not in parameters[tc_index].kind.name:
+            raise InvalidArgument(
+                f"{inner.__name__} must take the test case as a positional parameter, but "
+                f"{parameters[tc_index].name!r} cannot be passed positionally"
+            )
         location = _location_of(inner)
         database_key = _database_key_of(inner)
         reproducer = getattr(inner, "hegel_reproducer", default_reproducer)
         base_settings = settings
-        # A method takes the test case after ``self``.
-        tc_index = 1 if parameters[0].name in ("self", "cls") and len(parameters) > 1 else 0
 
         remaining = parameters[:tc_index] + parameters[tc_index + 1 :]
         outer_signature = signature.replace(parameters=remaining)

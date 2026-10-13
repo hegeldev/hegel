@@ -119,12 +119,6 @@ def test_valid_sizes(generator, min_size, max_size):
         generator(min_size=min_size, max_size=max_size)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=hegel.FailedHealthCheck,
-    reason="Hegel's lists(nothing(), min_size=1) is not rejected: every draw is rejected "
-    "instead, failing the FilterTooMuch health check",
-)
 def test_validation_happens_on_draw():
     @hegel.test
     def test(tc):
@@ -134,11 +128,6 @@ def test_validation_happens_on_draw():
         test()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=TypeError,
-    reason="Hegel's text() iterates alphabet=123 and raises TypeError, not InvalidArgument",
-)
 def test_text_alphabet_must_be_collection_or_generator():
     with pytest.raises(InvalidArgument, match="alphabet"):
         gs.text(alphabet=123)

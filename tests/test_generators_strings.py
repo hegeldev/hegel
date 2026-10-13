@@ -64,15 +64,50 @@ def test_text_alphabets():
     assert repr(gs.characters()) == "characters()"
 
 
+def test_empty_alphabet_spells_only_the_empty_string():
+    check_all(gs.text(""), lambda s: s == "")
+    check_all(gs.text([]), lambda s: s == "")
+    with pytest.raises(hegel.InvalidArgument, match="empty alphabet"):
+        gs.text("", min_size=1)
+
+
+def test_text_and_characters_repr_their_arguments():
+    assert repr(gs.text("abc", min_size=2)) == "text(alphabet='abc', min_size=2, max_size=100)"
+    assert (
+        repr(gs.text(gs.sampled_from("ab")))
+        == "text(alphabet=sampled_from('ab'), min_size=0, max_size=100)"
+    )
+    assert (
+        repr(gs.text(gs.characters(codec="ascii")))
+        == "text(alphabet=characters(max_codepoint=127), min_size=0, max_size=100)"
+    )
+    assert repr(gs.text(codec="utf-8")) == "text(codec='utf-8', min_size=0, max_size=100)"
+    assert repr(gs.characters(codec="ascii", max_codepoint=200)) == "characters(max_codepoint=127)"
+    assert repr(gs.characters(codec="ascii", max_codepoint=50)) == "characters(max_codepoint=50)"
+    assert (
+        repr(gs.characters(exclude_categories=["Lu"])) == "characters(exclude_categories=('Lu',))"
+    )
+    assert (
+        repr(gs.characters(categories=["Lu"], min_codepoint=65, exclude_characters="AZ"))
+        == "characters(min_codepoint=65, categories=('Lu',), exclude_characters='AZ')"
+    )
+    assert (
+        repr(gs.characters(categories=(), include_characters=["a", "b"]))
+        == "characters(categories=(), include_characters='ab')"
+    )
+
+
 def test_text_alphabet_errors():
     with pytest.raises(hegel.InvalidArgument):
         gs.text("abc", codec="ascii")
     with pytest.raises(hegel.InvalidArgument):
         gs.text(["ab"])
     with pytest.raises(hegel.InvalidArgument):
-        gs.text("")
-    with pytest.raises(hegel.InvalidArgument):
         gs.text([1])
+    with pytest.raises(hegel.InvalidArgument, match="alphabet=123 must be a collection"):
+        gs.text(123)
+    with pytest.raises(hegel.InvalidArgument, match="alphabet=b'abc' must be a collection"):
+        gs.text(b"abc")
     with pytest.raises(hegel.InvalidArgument):
         gs.text(min_size=-1)
     with pytest.raises(hegel.InvalidArgument):
@@ -95,11 +130,21 @@ def test_text_alphabet_errors():
         dict(min_codepoint=-1),
         dict(max_codepoint=0x110000),
         dict(min_codepoint=5, max_codepoint=4),
+        dict(min_codepoint="1"),
+        dict(max_codepoint=True),
+        dict(include_characters=5),
+        dict(include_characters=["ab"]),
+        dict(exclude_characters=[1]),
     ],
 )
 def test_character_spec_errors(kwargs):
     with pytest.raises(hegel.InvalidArgument):
         CharacterSpec(**kwargs)
+
+
+def test_character_collections():
+    check_all(gs.characters(categories=[], include_characters=["a", "b"]), lambda c: c in "ab")
+    check_all(gs.text(codec="ascii", exclude_characters={"a"}), lambda s: "a" not in s)
 
 
 def test_characters():
@@ -151,6 +196,10 @@ def test_from_regex():
         gs.from_regex(5)
     with pytest.raises(hegel.InvalidArgument):
         gs.from_regex("a", alphabet=gs.just("a"))
+    with pytest.raises(hegel.InvalidArgument, match="alphabet with a bytes pattern"):
+        gs.from_regex(b"a", alphabet="a")
+    with pytest.raises(hegel.InvalidArgument):
+        gs.from_regex("a", alphabet="")
     with pytest.raises(hegel.InvalidArgument):
         gs.from_regex("(unclosed")
 
@@ -184,12 +233,19 @@ def test_ip_addresses():
     check_all(gs.ip_addresses(network="10.0.0.0/30"), lambda a: a in net)
     check_all(gs.ip_addresses(network=net, v=4), lambda a: a in net)
     check_all(gs.ip_addresses(network="::1/128"), lambda a: str(a) == "::1")
+    check_all(gs.ip_addresses(network=ipaddress.ip_network("::1/128")), lambda a: str(a) == "::1")
     assert repr(gs.ip_addresses()) == "ip_addresses()"
     assert repr(gs.ip_addresses(v=4)) == "ip_addresses(v=4)"
     with pytest.raises(hegel.InvalidArgument):
         gs.ip_addresses(v=5)
     with pytest.raises(hegel.InvalidArgument):
+        gs.ip_addresses(v=4.0)
+    with pytest.raises(hegel.InvalidArgument):
+        gs.ip_addresses(v=True)
+    with pytest.raises(hegel.InvalidArgument):
         gs.ip_addresses(network="10.0.0.0/8", v=6)
+    with pytest.raises(hegel.InvalidArgument, match="must be a string"):
+        gs.ip_addresses(network=b"10.0.0.0/8")
 
 
 def test_uuids():
@@ -203,3 +259,7 @@ def test_uuids():
     assert repr(gs.uuids(version=3)) == "uuids(version=3)"
     with pytest.raises(hegel.InvalidArgument):
         gs.uuids(version=7)
+    with pytest.raises(hegel.InvalidArgument, match="must be a bool"):
+        gs.uuids(allow_nil=1)
+    with pytest.raises(hegel.InvalidArgument, match="nil UUID has no version"):
+        gs.uuids(version=4, allow_nil=True)

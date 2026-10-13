@@ -89,10 +89,7 @@ def test_repr_evals_to_thing_with_same_repr(tc):
 @pytest.mark.parametrize(
     "r",
     [
-        pytest.param(
-            "none().filter(foo).map(bar)",
-            marks=pytest.mark.xfail(strict=True, reason="Hegel's none() reprs as just(None)"),
-        ),
+        "none().filter(foo).map(bar)",
         "just(1).filter(foo).map(bar)",
         "sampled_from([1, 2, 3]).filter(foo).map(bar)",
     ],

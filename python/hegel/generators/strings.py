@@ -57,6 +57,58 @@ def _check_size(name: str, value: object) -> int:
     return value
 
 
+def _check_codepoint(name: str, value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise InvalidArgument(f"{name}={value!r} must be an integer")
+    if value < 0 or value > 0x10FFFF:
+        raise InvalidArgument(f"{name}={value!r} is out of range")
+    return value
+
+
+def _check_characters(name: str, value: Any) -> str | None:
+    """``value`` (a string or other collection of single characters) as a
+    string; ``None`` stays ``None``."""
+    if value is None or isinstance(value, str):
+        return value
+    try:
+        items = list(value)
+    except TypeError:
+        raise InvalidArgument(f"{name}={value!r} must be a collection of characters") from None
+    for item in items:
+        if not isinstance(item, str) or len(item) != 1:
+            raise InvalidArgument(f"{name} must contain single characters, got {item!r}")
+    return "".join(items)
+
+
+def _describe_character_args(
+    codec: str | None,
+    min_codepoint: int | None,
+    max_codepoint: int | None,
+    categories: Iterable[str] | None,
+    exclude_categories: Iterable[str] | None,
+    include_characters: str | None,
+    exclude_characters: str | None,
+) -> str:
+    """The non-default arguments of a ``characters()`` call, as its repr
+    shows them. An ASCII codec is shown as the codepoint bound it is."""
+    if codec == "ascii":
+        codec = None
+        if max_codepoint is None or max_codepoint > 127:
+            max_codepoint = 127
+    args = [
+        ("codec", codec),
+        ("min_codepoint", min_codepoint),
+        ("max_codepoint", max_codepoint),
+        ("categories", None if categories is None else tuple(categories)),
+        ("exclude_categories", None if exclude_categories is None else tuple(exclude_categories)),
+        ("include_characters", include_characters),
+        ("exclude_characters", exclude_characters),
+    ]
+    return ", ".join(f"{name}={value!r}" for name, value in args if value not in (None, ""))
+
+
 class CharacterSpec:
     """The character filtering parameters shared by ``text`` and
     ``characters``."""
@@ -69,8 +121,8 @@ class CharacterSpec:
         max_codepoint: int | None = None,
         categories: Iterable[str] | None = None,
         exclude_categories: Iterable[str] | None = None,
-        include_characters: str | None = None,
-        exclude_characters: str | None = None,
+        include_characters: Iterable[str] | None = None,
+        exclude_characters: Iterable[str] | None = None,
     ) -> None:
         if codec is not None and codec not in SUPPORTED_CODECS:
             raise InvalidArgument(
@@ -78,10 +130,8 @@ class CharacterSpec:
             )
         if categories is not None and exclude_categories is not None:
             raise InvalidArgument("Cannot pass both categories and exclude_categories")
-        if min_codepoint is not None and (min_codepoint < 0 or min_codepoint > 0x10FFFF):
-            raise InvalidArgument(f"min_codepoint={min_codepoint!r} is out of range")
-        if max_codepoint is not None and (max_codepoint < 0 or max_codepoint > 0x10FFFF):
-            raise InvalidArgument(f"max_codepoint={max_codepoint!r} is out of range")
+        min_codepoint = _check_codepoint("min_codepoint", min_codepoint)
+        max_codepoint = _check_codepoint("max_codepoint", max_codepoint)
         if (
             min_codepoint is not None
             and max_codepoint is not None
@@ -97,8 +147,8 @@ class CharacterSpec:
         self.exclude_categories = (
             None if exclude_categories is None else [str(c) for c in exclude_categories]
         )
-        self.include_characters = include_characters
-        self.exclude_characters = exclude_characters
+        self.include_characters = _check_characters("include_characters", include_characters)
+        self.exclude_characters = _check_characters("exclude_characters", exclude_characters)
 
     def build(self, min_size: int, max_size: int) -> _native.StringGenerator:
         return _native.StringGenerator.text(
@@ -119,28 +169,26 @@ def _alphabet_spec(alphabet: Any) -> CharacterSpec | Generator[str]:
         return alphabet.spec
     if isinstance(alphabet, Generator):
         return alphabet
-    items = list(alphabet)
-    for item in items:
-        if not isinstance(item, str) or len(item) != 1:
-            raise InvalidArgument(f"alphabet must contain single characters, got {item!r}")
-    if not items:
-        raise InvalidArgument("alphabet must not be empty")
-    return CharacterSpec(categories=[], include_characters="".join(items))
+    if isinstance(alphabet, (bytes, bytearray)):
+        raise InvalidArgument(f"alphabet={alphabet!r} must be a collection of characters")
+    return CharacterSpec(categories=[], include_characters=_check_characters("alphabet", alphabet))
 
 
 class Text(Generator[str]):
-    def __init__(self, spec: CharacterSpec, min_size: int, max_size: int) -> None:
+    def __init__(self, spec: CharacterSpec, min_size: int, max_size: int, args: str = "") -> None:
         self.spec = spec
         self.min_size = min_size
         self.max_size = max_size
         self._handle = spec.build(min_size, max_size)
+        self._args = args
         self.label = TEXT_LABEL
 
     def do_draw(self, tc: TestCase) -> str:
         return tc._generate_string(self._handle)
 
     def __repr__(self) -> str:
-        return f"text(min_size={self.min_size}, max_size={self.max_size})"
+        prefix = f"{self._args}, " if self._args else ""
+        return f"text({prefix}min_size={self.min_size}, max_size={self.max_size})"
 
 
 class TextFromAlphabet(Generator[str]):
@@ -154,6 +202,11 @@ class TextFromAlphabet(Generator[str]):
         self.max_size = max_size
         self._lists = lists(alphabet, min_size=min_size, max_size=max_size)
         self.label = TEXT_LABEL
+
+    def __repr__(self) -> str:
+        return (
+            f"text(alphabet={self.alphabet!r}, min_size={self.min_size}, max_size={self.max_size})"
+        )
 
     def do_draw(self, tc: TestCase) -> str:
         chars = tc.draw_silent(self._lists)
@@ -176,8 +229,8 @@ def text(
     max_codepoint: int | None = None,
     categories: Iterable[str] | None = None,
     exclude_categories: Iterable[str] | None = None,
-    include_characters: str | None = None,
-    exclude_characters: str | None = None,
+    include_characters: Iterable[str] | None = None,
+    exclude_characters: Iterable[str] | None = None,
 ) -> Generator[str]:
     """Generate Unicode strings.
 
@@ -210,7 +263,14 @@ def text(
         spec = _alphabet_spec(alphabet)
         if isinstance(spec, Generator):
             return TextFromAlphabet(spec, min_size, max_size)
-        return Text(spec, min_size, max_size)
+        if not isinstance(alphabet, Characters) and not spec.include_characters:
+            # An empty alphabet spells only the empty string.
+            if min_size > 0:
+                raise InvalidArgument(f"Cannot have min_size={min_size!r} with an empty alphabet")
+            from hegel.generators.combinators import just
+
+            return just("")
+        return Text(spec, min_size, max_size, f"alphabet={alphabet!r}")
     spec = _default_spec(
         codec,
         min_codepoint,
@@ -220,7 +280,16 @@ def text(
         include_characters,
         exclude_characters,
     )
-    return Text(spec, min_size, max_size)
+    args = _describe_character_args(
+        codec,
+        min_codepoint,
+        max_codepoint,
+        categories,
+        exclude_categories,
+        spec.include_characters,
+        spec.exclude_characters,
+    )
+    return Text(spec, min_size, max_size, args)
 
 
 def _default_spec(
@@ -229,8 +298,8 @@ def _default_spec(
     max_codepoint: int | None,
     categories: Iterable[str] | None,
     exclude_categories: Iterable[str] | None,
-    include_characters: str | None,
-    exclude_characters: str | None,
+    include_characters: Iterable[str] | None,
+    exclude_characters: Iterable[str] | None,
 ) -> CharacterSpec:
     if categories is None:
         excluded = list(exclude_categories) if exclude_categories is not None else []
@@ -249,16 +318,17 @@ def _default_spec(
 
 
 class Characters(Generator[str]):
-    def __init__(self, spec: CharacterSpec) -> None:
+    def __init__(self, spec: CharacterSpec, args: str = "") -> None:
         self.spec = spec
         self._handle = spec.build(1, 1)
+        self._args = args
         self.label = CHARACTERS_LABEL
 
     def do_draw(self, tc: TestCase) -> str:
         return tc._generate_string(self._handle)
 
     def __repr__(self) -> str:
-        return "characters()"
+        return f"characters({self._args})"
 
 
 def characters(
@@ -268,22 +338,30 @@ def characters(
     max_codepoint: int | None = None,
     categories: Iterable[str] | None = None,
     exclude_categories: Iterable[str] | None = None,
-    include_characters: str | None = None,
-    exclude_characters: str | None = None,
+    include_characters: Iterable[str] | None = None,
+    exclude_characters: Iterable[str] | None = None,
 ) -> Generator[str]:
     """Generate single characters, filtered by codec, codepoint range,
     Unicode general category, and explicit inclusions and exclusions."""
-    return Characters(
-        _default_spec(
-            codec,
-            min_codepoint,
-            max_codepoint,
-            categories,
-            exclude_categories,
-            include_characters,
-            exclude_characters,
-        )
+    spec = _default_spec(
+        codec,
+        min_codepoint,
+        max_codepoint,
+        categories,
+        exclude_categories,
+        include_characters,
+        exclude_characters,
     )
+    args = _describe_character_args(
+        codec,
+        min_codepoint,
+        max_codepoint,
+        categories,
+        exclude_categories,
+        spec.include_characters,
+        spec.exclude_characters,
+    )
+    return Characters(spec, args)
 
 
 class Regex(Generator[str]):
@@ -297,6 +375,8 @@ class Regex(Generator[str]):
                 raise InvalidArgument(
                     "from_regex alphabet must be a string of characters or characters()"
                 )
+            if not isinstance(alphabet, Characters) and not spec.include_characters:
+                raise InvalidArgument("from_regex alphabet must not be empty")
             alphabet_handle = spec.build(0, 0)
         self._handle = _native.StringGenerator.regex(pattern, fullmatch, alphabet_handle)
         self.label = REGEX_LABEL
@@ -317,11 +397,11 @@ def from_regex(regex: Any, *, fullmatch: bool = True, alphabet: Any = None) -> G
     pattern = getattr(regex, "pattern", regex)
     flags = getattr(regex, "flags", 0)
     if isinstance(pattern, bytes):
+        if alphabet is not None:
+            raise InvalidArgument("Cannot use an alphabet with a bytes pattern")
         # Bytes patterns are ASCII-only for \\w and friends, as in Python.
         pattern = _inline_flags(flags | re.ASCII) + pattern.decode("latin-1")
-        latin: Generator[Any] = Regex(
-            pattern, bool(fullmatch), alphabet or characters(max_codepoint=255)
-        )
+        latin: Generator[Any] = Regex(pattern, bool(fullmatch), characters(max_codepoint=255))
         return latin.map(lambda s: s.encode("latin-1"))
     if not isinstance(pattern, str):
         raise InvalidArgument(f"regex={regex!r} must be a string or compiled pattern")
@@ -421,8 +501,17 @@ class IpAddresses(Generator[Any]):
 def ip_addresses(*, v: int | None = None, network: Any = None) -> Generator[Any]:
     """Generate IP addresses: IPv4 or IPv6 (``v=4`` or ``v=6`` to pick), or
     addresses within ``network``."""
+    if v is not None and (isinstance(v, bool) or not isinstance(v, int) or v not in (4, 6)):
+        raise InvalidArgument(f"v={v!r} must be 4 or 6")
     if network is not None:
-        net = ipaddress.ip_network(network) if isinstance(network, str) else network
+        if isinstance(network, str):
+            net = ipaddress.ip_network(network)
+        elif isinstance(network, (ipaddress.IPv4Network, ipaddress.IPv6Network)):
+            net = network
+        else:
+            raise InvalidArgument(
+                f"network={network!r} must be a string, an IPv4Network or an IPv6Network"
+            )
         if v is not None and v != net.version:
             raise InvalidArgument(f"network={network!r} is IPv{net.version} but v={v!r}")
         from hegel.generators.numeric import integers
@@ -430,8 +519,6 @@ def ip_addresses(*, v: int | None = None, network: Any = None) -> Generator[Any]
         first = int(net.network_address)
         last = int(net.broadcast_address)
         return integers(first, last).map(net.network_address.__class__)
-    if v not in (None, 4, 6):
-        raise InvalidArgument(f"v={v!r} must be 4 or 6")
     return IpAddresses(v)
 
 
@@ -454,4 +541,10 @@ def uuids(*, version: int | None = None, allow_nil: bool = False) -> Generator[_
     """Generate UUIDs, of any RFC 4122 version or the given one (1 to 5)."""
     if version is not None and version not in (1, 2, 3, 4, 5):
         raise InvalidArgument(f"version={version!r} must be between 1 and 5")
-    return Uuids(version, bool(allow_nil))
+    if not isinstance(allow_nil, bool):
+        raise InvalidArgument(f"allow_nil={allow_nil!r} must be a bool")
+    if allow_nil and version is not None:
+        raise InvalidArgument(
+            f"Cannot have allow_nil=True with version={version!r}: the nil UUID has no version"
+        )
+    return Uuids(version, allow_nil)

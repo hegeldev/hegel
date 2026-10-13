@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import math
+import re
 import struct
+import sys
+from fractions import Fraction
 
 import pytest
 
 import hegel
 from hegel import generators as gs
-from hegel.generators.numeric import UNBOUNDED_MAGNITUDE, Booleans, Integers
+from hegel.generators.numeric import UNBOUNDED_MAGNITUDE, Booleans, Integers, _next_up
 from tests.helpers import failing, find_example, notes, run_test
 
 
@@ -40,11 +43,27 @@ def test_integers_bounds_and_repr():
 
 def test_integer_bounds_beyond_unbounded_magnitude():
     huge = UNBOUNDED_MAGNITUDE * 4
-    assert Integers(None, -huge)._lo == -huge
-    assert Integers(huge, None)._hi == huge
-    check_all(gs.integers(min_value=huge), lambda x: x >= huge)
-    check_all(gs.integers(max_value=-huge), lambda x: x <= -huge)
+    assert Integers(None, -huge)._lo == -huge - UNBOUNDED_MAGNITUDE + 1
+    assert Integers(huge, None)._hi == huge + UNBOUNDED_MAGNITUDE - 1
+    assert Integers(None, 0)._lo == -UNBOUNDED_MAGNITUDE
+    assert Integers(0, None)._hi == UNBOUNDED_MAGNITUDE - 1
     check_all(gs.integers(-(10**40), 10**40), lambda x: abs(x) <= 10**40)
+
+
+@pytest.mark.parametrize("sign", [1, -1])
+def test_half_bounded_integers_beyond_unbounded_magnitude_are_spread(sign):
+    bound = sign * 2**200
+    generator = gs.integers(min_value=bound) if sign > 0 else gs.integers(max_value=bound)
+    seen = set()
+
+    def body(tc):
+        value = tc.draw(generator)
+        assert sign * value >= sign * bound
+        seen.add(value)
+
+    run_test(body, test_cases=50)
+    assert len(seen) > 1
+    assert find_example(generator) == bound
 
 
 def test_integers_shrink_toward_zero_and_bounds():
@@ -129,12 +148,104 @@ def test_floats_shrink_to_simple_values():
         dict(width=16),
         dict(min_value=math.nan),
         dict(min_value="x"),
+        dict(min_value="0"),
+        dict(max_value=True),
         dict(min_value=0.1, width=32),
+        dict(exclude_min=None),
+        dict(min_value=0.0, exclude_max=1),
     ],
 )
 def test_floats_invalid_arguments(kwargs):
     with pytest.raises(hegel.InvalidArgument):
         gs.floats(**kwargs)
+
+
+LARGEST = math.nextafter(math.inf, 0)
+BELOW_NORMAL = math.nextafter(sys.float_info.min, 0)
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        (dict(min_value=math.inf, allow_infinity=False), "excludes min_value=inf"),
+        (dict(max_value=-math.inf, allow_infinity=False), "excludes max_value=-inf"),
+        (
+            dict(min_value=LARGEST, exclude_min=True, allow_infinity=False),
+            "exclude_min=True turns min_value=1.7976931348623157e+308 into inf",
+        ),
+        (
+            dict(max_value=-LARGEST, exclude_max=True, allow_infinity=False),
+            "exclude_max=True turns max_value=-1.7976931348623157e+308 into -inf",
+        ),
+        (
+            dict(min_value=LARGEST, max_value=LARGEST, exclude_min=True),
+            "exclude_min/exclude_max leave no 64-bit floating-point values",
+        ),
+        (
+            dict(min_value=BELOW_NORMAL, exclude_min=True, allow_subnormal=True),
+            f"allow_subnormal=True, but min_value={BELOW_NORMAL!r} excludes",
+        ),
+        (
+            dict(max_value=-BELOW_NORMAL, exclude_max=True, allow_subnormal=True),
+            f"allow_subnormal=True, but max_value={-BELOW_NORMAL!r} excludes",
+        ),
+        (
+            dict(min_value=1e-320, max_value=1e-320, exclude_min=True, allow_subnormal=False),
+            "exclude_min/exclude_max leave no 64-bit floating-point values",
+        ),
+    ],
+)
+def test_floats_validate_the_bounds_after_exclusion(kwargs, message):
+    with pytest.raises(hegel.InvalidArgument, match=re.escape(message)):
+        gs.floats(**kwargs)
+
+
+def test_floats_infinite_bounds_bound_nothing():
+    # An infinite bound on its own side is like no bound at all, so the
+    # infinity stays allowed and can be found.
+    assert gs.floats(min_value=-math.inf, max_value=0.0).allow_infinity is True
+    assert gs.floats(min_value=-math.inf, max_value=math.inf).allow_nan is False
+    assert find_example(gs.floats(min_value=-math.inf, max_value=0.0), math.isinf) == -math.inf
+    assert find_example(gs.floats(math.inf, math.inf)) == math.inf
+    assert find_example(gs.floats(-math.inf, -math.inf, width=32)) == -math.inf
+    check_all(gs.floats(min_value=-math.inf, max_value=0.0, allow_infinity=False), math.isfinite)
+    check_all(gs.floats(min_value=-math.inf, exclude_min=True, allow_infinity=False), math.isfinite)
+    # exclude_min at -inf keeps -inf out but is otherwise unbounded below.
+    check_all(gs.floats(min_value=-math.inf, exclude_min=True), lambda x: x > -math.inf)
+    check_all(gs.floats(min_value=LARGEST, exclude_min=True), lambda x: x == math.inf)
+    # Fractions are real numbers too.
+    assert gs.floats(Fraction(1, 2)).min_value == 0.5
+
+
+def test_floats_apply_exclusion_before_subnormal_defaults():
+    smallest_normal = sys.float_info.min
+    below = math.nextafter(smallest_normal, 0)
+    assert gs.floats(min_value=below).allow_subnormal is True
+    assert gs.floats(min_value=below, exclude_min=True).allow_subnormal is False
+    assert gs.floats(max_value=-below, exclude_max=True).allow_subnormal is False
+    # Without subnormals, excluding a subnormal bound steps over them.
+    check_all(
+        gs.floats(min_value=0.0, exclude_min=True, allow_subnormal=False),
+        lambda x: x >= smallest_normal,
+    )
+    check_all(
+        gs.floats(min_value=-1e-310, max_value=0.0, exclude_min=True, allow_subnormal=False),
+        lambda x: x == 0.0,
+    )
+
+
+@pytest.mark.parametrize("width", [64, 32])
+def test_next_up(width):
+    tiny = {64: 5e-324, 32: 2.0**-149}[width]
+    largest = {64: LARGEST, 32: 3.4028234663852886e38}[width]
+    assert _next_up(math.inf, width) == math.inf
+    assert _next_up(-math.inf, width) == -largest
+    assert _next_up(largest, width) == math.inf
+    assert _next_up(-0.0, width) == tiny
+    assert _next_up(0.0, width) == tiny
+    assert _next_up(-tiny, width) == 0.0
+    assert _next_up(1.0, width) > 1.0
+    assert -1.0 < _next_up(-1.0, width) < -0.99
 
 
 def test_floats_subnormal_defaults():

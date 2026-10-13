@@ -148,5 +148,7 @@ def test_can_resolve_registered_protocol(tc):
 
 
 def test_cannot_resolve_un_registered_protocol():
-    with pytest.raises(TypeError, match="[Pp]rotocol"):
+    # Hypothesis builds the Protocol and reports the TypeError from instantiating
+    # it; Hegel refuses to resolve a Protocol without subclasses.
+    with pytest.raises(hegel.ResolutionFailed, match="[Pp]rotocol"):
         check_can_generate_examples(from_type(BarProtocol))

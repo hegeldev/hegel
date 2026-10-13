@@ -288,6 +288,10 @@ class TestCase:
     def target(self, score: float, label: str = "") -> None:
         """Guide generation toward maximising ``score`` (once per label per
         test case)."""
+        if not isinstance(label, str):
+            raise InvalidArgument(f"label={label!r} must be a string")
+        if isinstance(score, bool) or not isinstance(score, (int, float)):
+            raise InvalidArgument(f"score={score!r} must be an int or float")
         if self._global.explicit is not None:
             return
         self._handle.target(float(score), label)
@@ -300,6 +304,8 @@ class TestCase:
 
     def event_value(self, label: str, value: float) -> None:
         """Record a numeric observation for the run's statistics."""
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise InvalidArgument(f"value={value!r} must be an int or float")
         if self._global.explicit is not None:
             return
         self._handle.event_value(float(value), str(label))

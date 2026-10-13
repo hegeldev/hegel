@@ -86,19 +86,6 @@ def accepted(reason):
     return pytest.mark.xfail(strict=True, reason=f"Hegel accepts this: {reason}")
 
 
-def wrong_error(exc, reason):
-    """Arguments Hegel rejects, but with ``exc`` rather than InvalidArgument."""
-    return pytest.mark.xfail(
-        strict=True, raises=exc, reason=f"Hegel raises {exc.__name__}: {reason}"
-    )
-
-
-NOT_TYPE_CHECKED = accepted("the argument's type is not checked")
-UNIQUE_UNCHECKED = accepted(
-    "too few distinct elements for a unique list is not detected; every test case is rejected"
-)
-
-
 @fn_ktest(
     (gs.integers, {"min_value": math.nan}),
     (gs.integers, {"min_value": 2, "max_value": 1}),
@@ -113,7 +100,7 @@ UNIQUE_UNCHECKED = accepted(
     (gs.dates, {"max_value": datetime(2017, 8, 21)}),
     (gs.datetimes, {"min_value": "fish"}),
     (gs.datetimes, {"max_value": "fish"}),
-    pytest.param(gs.datetimes, {"allow_imaginary": 0}, marks=NOT_TYPE_CHECKED),
+    (gs.datetimes, {"allow_imaginary": 0}),
     (
         gs.datetimes,
         {"min_value": datetime(2017, 8, 22), "max_value": datetime(2017, 8, 21)},
@@ -126,8 +113,8 @@ UNIQUE_UNCHECKED = accepted(
     (gs.floats, {"max_value": math.nan}),
     (gs.floats, {"min_value": complex(1, 2)}),
     (gs.floats, {"max_value": complex(1, 2)}),
-    pytest.param(gs.floats, {"exclude_min": None}, marks=NOT_TYPE_CHECKED),
-    pytest.param(gs.floats, {"exclude_max": None}, marks=NOT_TYPE_CHECKED),
+    (gs.floats, {"exclude_min": None}),
+    (gs.floats, {"exclude_max": None}),
     (gs.floats, {"exclude_min": True}),  # because min_value=None
     (gs.floats, {"exclude_max": True}),  # because max_value=None
     (gs.floats, {"min_value": 1.8, "width": 32}),
@@ -143,23 +130,11 @@ UNIQUE_UNCHECKED = accepted(
         marks=accepted("lists(nothing(), max_size=1) generates empty lists"),
     ),
     (gs.lists, {"elements": "hi"}),
-    pytest.param(
-        gs.lists,
-        {"elements": gs.integers(), "unique_by": 1},
-        marks=wrong_error(TypeError, "unique_by=1 is iterated"),
-    ),
+    (gs.lists, {"elements": gs.integers(), "unique_by": 1}),
     (gs.lists, {"elements": gs.integers(), "unique_by": ()}),
     (gs.lists, {"elements": gs.integers(), "unique_by": (1,)}),
-    pytest.param(
-        gs.lists,
-        {"elements": gs.sampled_from([0, 1]), "min_size": 3, "unique": True},
-        marks=UNIQUE_UNCHECKED,
-    ),
-    pytest.param(
-        gs.lists,
-        {"elements": gs.sampled_from([1, 2]), "min_size": 100_000, "unique": True},
-        marks=UNIQUE_UNCHECKED,
-    ),
+    (gs.lists, {"elements": gs.sampled_from([0, 1]), "min_size": 3, "unique": True}),
+    (gs.lists, {"elements": gs.sampled_from([1, 2]), "min_size": 100_000, "unique": True}),
     (gs.text, {"min_size": 10, "max_size": 9}),
     (gs.text, {"alphabet": [1]}),
     (gs.text, {"alphabet": ["abc"]}),
@@ -170,11 +145,7 @@ UNIQUE_UNCHECKED = accepted(
     (gs.text, {"alphabet": gs.builds(lambda: "abc")}),
     (gs.text, {"alphabet": gs.builds(lambda: 123)}),
     (gs.from_regex, {"regex": 123}),
-    pytest.param(
-        gs.from_regex,
-        {"regex": b"abc", "alphabet": "abc"},
-        marks=accepted("a str alphabet for a bytes pattern"),
-    ),
+    (gs.from_regex, {"regex": b"abc", "alphabet": "abc"}),
     (gs.from_regex, {"regex": b"abc", "alphabet": b"def"}),
     pytest.param(
         gs.from_regex, {"regex": "abc", "alphabet": "def"}, marks=REGEX_ALPHABET_UNCHECKED
@@ -195,21 +166,13 @@ UNIQUE_UNCHECKED = accepted(
         {"regex": "abc", "alphabet": gs.characters(min_codepoint=128)},
         marks=REGEX_ALPHABET_UNCHECKED,
     ),
-    pytest.param(
-        gs.from_regex,
-        {"regex": "abc", "alphabet": 123},
-        marks=wrong_error(TypeError, "alphabet=123 is iterated"),
-    ),
+    (gs.from_regex, {"regex": "abc", "alphabet": 123}),
     (gs.from_regex, {"regex": "abc", "alphabet": [1]}),
     (gs.from_regex, {"regex": "abc", "alphabet": ["abc"]}),
     (gs.binary, {"min_size": 10, "max_size": 9}),
     (gs.floats, {"min_value": math.nan}),
-    pytest.param(
-        gs.floats, {"min_value": "0"}, marks=accepted("numeric strings are converted by float()")
-    ),
-    pytest.param(
-        gs.floats, {"max_value": "0"}, marks=accepted("numeric strings are converted by float()")
-    ),
+    (gs.floats, {"min_value": "0"}),
+    (gs.floats, {"max_value": "0"}),
     (gs.floats, {"min_value": 0.0, "max_value": -0.0}),
     (gs.floats, {"min_value": 0.0, "max_value": 1.0, "allow_infinity": True}),
     (gs.floats, {"max_value": 0.0, "min_value": 1.0}),
@@ -218,17 +181,9 @@ UNIQUE_UNCHECKED = accepted(
     (gs.floats, {"min_value": 0.0, "max_value": 1.0, "allow_infinity": True}),
     (gs.floats, {"min_value": math.inf, "allow_infinity": False}),
     (gs.floats, {"max_value": -math.inf, "allow_infinity": False}),
-    pytest.param(
-        gs.fixed_dicts,
-        {"mapping": "fish"},
-        marks=wrong_error(ValueError, "mapping='fish' is passed to dict()"),
-    ),
+    (gs.fixed_dicts, {"mapping": "fish"}),
     (gs.fixed_dicts, {"mapping": {1: "fish"}}),
-    pytest.param(
-        gs.fixed_dicts,
-        {"mapping": {}, "optional": "fish"},
-        marks=wrong_error(ValueError, "optional='fish' is passed to dict()"),
-    ),
+    (gs.fixed_dicts, {"mapping": {}, "optional": "fish"}),
     (gs.fixed_dicts, {"mapping": {}, "optional": {1: "fish"}}),
     (gs.fixed_dicts, {"mapping": {1: gs.none()}, "optional": {1: gs.none()}}),
     (gs.dicts, {"keys": gs.integers(), "values": 1}),
@@ -245,17 +200,9 @@ UNIQUE_UNCHECKED = accepted(
     (gs.times, {"min_value": time(2, 0), "max_value": time(1, 0)}),
     (gs.uuids, {"version": 6}),
     (gs.characters, {"min_codepoint": -1}),
-    pytest.param(
-        gs.characters,
-        {"min_codepoint": "1"},
-        marks=wrong_error(TypeError, "min_codepoint='1' is compared with an int"),
-    ),
+    (gs.characters, {"min_codepoint": "1"}),
     (gs.characters, {"max_codepoint": -1}),
-    pytest.param(
-        gs.characters,
-        {"max_codepoint": "1"},
-        marks=wrong_error(TypeError, "max_codepoint='1' is compared with an int"),
-    ),
+    (gs.characters, {"max_codepoint": "1"}),
     (gs.characters, {"categories": []}),
     (gs.characters, {"categories": ["Nd"], "exclude_categories": ["Nd"]}),
     (gs.characters, {"codec": 100}),
@@ -264,21 +211,13 @@ UNIQUE_UNCHECKED = accepted(
     (gs.characters, {"codec": "utf-8", "categories": "Cs"}),
     (gs.sampled_from, {"elements": ()}),
     (gs.ip_addresses, {"v": "4"}),
-    pytest.param(gs.ip_addresses, {"v": 4.0}, marks=accepted("v=4.0 == 4")),
+    (gs.ip_addresses, {"v": 4.0}),
     (gs.ip_addresses, {"v": 5}),
     (gs.ip_addresses, {"v": 4, "network": "::/64"}),
     (gs.ip_addresses, {"v": 6, "network": "127.0.0.0/8"}),
     # only unicode strings are valid
-    pytest.param(
-        gs.ip_addresses,
-        {"network": b"127.0.0.0/8"},
-        marks=wrong_error(AttributeError, "a bytes network is used as a network object"),
-    ),
-    pytest.param(
-        gs.ip_addresses,
-        {"network": b"::/64"},
-        marks=wrong_error(AttributeError, "a bytes network is used as a network object"),
-    ),
+    (gs.ip_addresses, {"network": b"127.0.0.0/8"}),
+    (gs.ip_addresses, {"network": b"::/64"}),
 )
 def test_validates_keyword_arguments(fn, kwargs):
     with pytest.raises(InvalidArgument):
@@ -353,7 +292,7 @@ def test_produces_valid_examples_from_keyword(fn, kwargs):
 
 
 @fn_test(
-    pytest.param(gs.one_of, (1,), marks=wrong_error(TypeError, "a lone argument is iterated")),
+    (gs.one_of, (1,)),
     (gs.one_of, (1, gs.integers())),
     (gs.tuples, (1,)),
 )
@@ -431,12 +370,6 @@ def test_float_can_find_max_value_inf():
     assert minimal(gs.floats(min_value=0.0), math.isinf) == math.inf
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=hegel.Unsatisfiable,
-    reason="floats(min_value=-inf, max_value=0.0) defaults allow_infinity to False, so -inf is "
-    "never generated (floats(max_value=0.0) does generate it)",
-)
 def test_float_can_find_min_value_inf():
     minimal(gs.floats(), lambda x: x < 0 and math.isinf(x))
     minimal(gs.floats(min_value=-math.inf, max_value=0.0), math.isinf)
@@ -477,11 +410,6 @@ def test_none_lists_respect_max_and_min_size(tc):
     assert 1 <= len(ls) <= 5
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="iterables() values are documented as one-shot, but iter() restarts them: "
-    "the second list(it) is not empty",
-)
 @hegel.test
 def test_iterables_are_exhaustible(tc):
     it = tc.draw(gs.iterables(gs.integers(), max_size=5, min_size=1))

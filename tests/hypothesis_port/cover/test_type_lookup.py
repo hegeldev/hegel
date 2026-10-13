@@ -11,8 +11,7 @@
 # Dropped from the Hypothesis original: test_given_can_infer_from_manual_annotations,
 # test_infer_all (@given argument binding and infer);
 # test_does_not_add_param_empty_to_type_hints (hypothesis.internal.compat.get_type_hints);
-# test_generic_sequence_of_integers_may_be_lists_or_bytes (from_type(Sequence[int]) never
-# yields bytes); test_can_generate_from_all_registered_types for the bare abstract origins
+# test_can_generate_from_all_registered_types for the bare abstract origins
 # Collection, Iterable, Iterator, Mapping, MutableSet and Set (from_type never instantiates
 # them); test_generic_origin_empty (from_type builds an unregistered generic's origin rather
 # than failing); test_generic_origin_with_type_args (register_type_generator does not reject
@@ -59,6 +58,12 @@ def test_resolve_core_strategies(typ):
     inner()
 
 
+def test_generic_sequence_of_integers_may_be_lists_or_bytes():
+    strat = gs.from_type(Sequence[int])
+    find_any(strat, lambda x: isinstance(x, bytes))
+    find_any(strat, lambda x: isinstance(x, list))
+
+
 def test_lookup_knows_about_all_core_strategies():
     # Build a set of all types output by core generators
     blocklist = {
@@ -95,10 +100,6 @@ def test_lookup_knows_about_all_core_strategies():
     assert not cannot_lookup
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="register_type_generator accepts a string key",
-)
 def test_lookup_keys_are_types():
     try:
         with pytest.raises(InvalidArgument):
@@ -194,10 +195,6 @@ def test_errors_if_generic_resolves_empty():
             check_can_generate_examples(gs.from_type(ParentUnknownType))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="register_type_generator accepts an empty generator (from_type then fails)",
-)
 def test_cannot_register_empty():
     # Cannot register and did not register
     try:
@@ -251,29 +248,10 @@ def _check_instances(t):
     )
 
 
-# Concrete generic origins from_type resolves only when parametrised
-# (dict[int, int]), not as bare classes.
-_UNRESOLVABLE_BARE = {"collections.OrderedDict", "collections.deque", "dict"}
-
-
-def _registered_type_param(typ):
-    name = f"{typ.__module__}.{typ.__qualname__}".removeprefix("builtins.")
-    if name in _UNRESOLVABLE_BARE:
-        return pytest.param(
-            typ,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=f"from_type({name}) resolves the parametrised form but not the bare "
-                "class (ResolutionFailed: no usable signature)",
-            ),
-        )
-    return typ
-
-
 @pytest.mark.parametrize(
     "typ",
     [
-        _registered_type_param(x)
+        x
         for x in sorted((x for x in _global_type_lookup if _check_instances(x)), key=str)
         if not inspect.isabstract(x)
     ],

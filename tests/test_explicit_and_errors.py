@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 
 import hegel
@@ -94,3 +96,21 @@ def test_multiple_failures_is_an_exception_group_only_of_exceptions():
     mixed = hegel.MultipleFailures("two", [KeyboardInterrupt(), ValueError()])
     assert isinstance(mixed, hegel.MultipleFailures)
     assert not isinstance(mixed, Exception)
+
+
+def test_multiple_failures_derives_its_own_type():
+    group = hegel.MultipleFailures("two", [KeyError(), ValueError()])
+    group.add_note("note")
+    match, rest = group.split(KeyError)
+    assert isinstance(match, hegel.MultipleFailures) and isinstance(rest, hegel.MultipleFailures)
+    assert match.message == rest.message == "two"
+    assert match.__notes__ == rest.__notes__ == ["note"]
+    assert [type(e) for e in match.exceptions] == [KeyError]
+    assert [type(e) for e in rest.exceptions] == [ValueError]
+    assert isinstance(group.subgroup(ValueError), ExceptionGroup)
+    with pytest.raises(hegel.MultipleFailures), contextlib.suppress(KeyError):
+        raise group
+    mixed = hegel.MultipleFailures("two", [KeyboardInterrupt(), ValueError()])
+    match, rest = mixed.split(ValueError)
+    assert isinstance(match, ExceptionGroup) and isinstance(match, hegel.MultipleFailures)
+    assert isinstance(rest, hegel.MultipleFailures) and not isinstance(rest, Exception)

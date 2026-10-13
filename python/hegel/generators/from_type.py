@@ -47,11 +47,27 @@ def register_type_generator(
 ) -> None:
     """Make ``from_type(type_)`` (and ``builds`` inference) use
     ``generator``, or the generator the callable returns for the type."""
+    if isinstance(type_, str):
+        raise InvalidArgument(
+            f"register_type_generator takes a type, not the string {type_!r}: "
+            "register the type the annotation names"
+        )
     if not isinstance(generator, Generator) and not callable(generator):
         raise InvalidArgument(
             "register_type_generator takes a generator or a callable returning one"
         )
+    if isinstance(generator, Generator) and generator.is_empty:
+        raise InvalidArgument(f"Cannot register an empty generator for {type_!r}")
     _registry[type_] = generator
+
+
+def _known(mapping: dict[Any, Any], key: Any) -> bool:
+    """``key in mapping``, treating an unhashable key (a class whose metaclass
+    sets ``__hash__ = None``) as unknown."""
+    try:
+        return key in mapping
+    except TypeError:
+        return False
 
 
 def _decimals() -> Generator[decimal.Decimal]:
@@ -117,9 +133,13 @@ def _generic(origin: Any, args: tuple[Any, ...]) -> Generator[Any] | None:
         collections.abc.Sequence,
         collections.deque,
     ):
-        inner = from_type(args[0]) if args else from_type(object)
-        result = lists(inner)
-        return result.map(collections.deque) if origin is collections.deque else result
+        element = args[0] if args else object
+        result = lists(from_type(element))
+        if origin is collections.deque:
+            return result.map(collections.deque)
+        if origin is collections.abc.Sequence and _bytes_satisfies(element):
+            return one_of(result, binary())
+        return result
     if origin in (set, collections.abc.MutableSet):
         return sets(from_type(args[0]) if args else integers())
     if origin in (frozenset, collections.abc.Set):
@@ -137,7 +157,11 @@ def _generic(origin: Any, args: tuple[Any, ...]) -> Generator[Any] | None:
             mapping.map(collections.OrderedDict) if origin is collections.OrderedDict else mapping
         )
     if origin in (collections.abc.Iterable, collections.abc.Iterator, collections.abc.Collection):
-        return iterables(from_type(args[0]) if args else integers())
+        element = args[0] if args else int
+        iterable = iterables(from_type(element))
+        if origin is not collections.abc.Iterator and _bytes_satisfies(element):
+            return one_of(iterable, binary())
+        return iterable
     if origin is tuple:
         if not args:
             return lists(integers()).map(tuple)
@@ -155,12 +179,21 @@ def _generic(origin: Any, args: tuple[Any, ...]) -> Generator[Any] | None:
     return None
 
 
+def _bytes_satisfies(element: Any) -> bool:
+    """Whether a ``bytes`` object is a sequence of ``element``: it is one of
+    ``int``s, so it is also one of any supertype of ``int`` (``object``,
+    ``numbers.Real``, ...) and of any union with such a member."""
+    if typing.get_origin(element) in (typing.Union, types.UnionType):
+        return any(_bytes_satisfies(member) for member in typing.get_args(element))
+    return isinstance(element, type) and _safe_issubclass(int, element)
+
+
 def from_type(type_: Any) -> Generator[Any]:
     """A generator of instances of ``type_``: builtins, standard-library
     value types, ``typing`` constructs, enums, dataclasses and classes with
     annotated constructors, or anything registered with
     :func:`register_type_generator`."""
-    if type_ in _registry:
+    if _known(_registry, type_):
         return _registered(type_, type_)
     if isinstance(type_, str):
         raise ResolutionFailed(f"from_type({type_!r}): string annotations must be resolved first")
@@ -170,11 +203,13 @@ def from_type(type_: Any) -> Generator[Any]:
         return none()
     if _TypeAliasType is not None and isinstance(type_, _TypeAliasType):
         return from_type(type_.__value__)
-    if type_ in _BUILTINS:
+    if _known(_BUILTINS, type_):
         return _BUILTINS[type_]()
     if type_ is type:
         return just(object)
     origin = typing.get_origin(type_)
+    if origin is tuple and hasattr(type_, "__args__") and not type_.__args__:
+        return tuples()  # ``tuple[()]``, unlike a bare ``typing.Tuple``, is the empty tuple
     if _TypeAliasType is not None and isinstance(origin, _TypeAliasType):
         if origin in _registry:
             return _registered(origin, type_)
@@ -212,14 +247,24 @@ def from_type(type_: Any) -> Generator[Any]:
         from hegel.generators.composite import builds
 
         return builds(type_)
-    if inspect.isabstract(type_):
+    if inspect.isabstract(type_) or getattr(type_, "_is_protocol", False):
+        # Neither an abstract class nor a Protocol can be instantiated.
         return _abstract(type_)
     if hasattr(type_, "__annotations__") and typing.is_typeddict(type_):
-        hints = typing.get_type_hints(type_)
+        try:
+            hints = typing.get_type_hints(type_)
+        except Exception as error:
+            raise ResolutionFailed(
+                f"Cannot infer a generator for {type_!r}: its annotations could not "
+                f"be resolved ({error})"
+            ) from None
         required = getattr(type_, "__required_keys__", set(hints))
         mapping = {k: from_type(v) for k, v in hints.items() if k in required}
         extras = {k: from_type(v) for k, v in hints.items() if k not in required}
         return fixed_dicts(mapping, optional=extras).map(type_)
+    generic = _generic(type_, ())
+    if generic is not None:
+        return generic  # a bare collection class, such as ``dict`` or ``deque``
     try:
         signature = _signature(type_)
     except (TypeError, ValueError):
@@ -277,7 +322,8 @@ def _signature(target: Any) -> inspect.Signature:
 
 def _type_hints(target: Any) -> dict[str, Any]:
     """Resolved annotations of ``target``: for a class, its own annotations
-    overlaid with those of ``__init__``."""
+    overlaid with those of ``__init__``; an explicit ``__signature__``
+    overrides both, as it is what ``target`` says it accepts."""
     hints: dict[str, Any] = {}
     sources = [target, target.__init__] if isinstance(target, type) else [target]  # type: ignore[misc]
     for source in sources:
@@ -286,6 +332,19 @@ def _type_hints(target: Any) -> dict[str, Any]:
         except Exception:
             pass
     hints.pop("return", None)
+    signature = getattr(target, "__signature__", None)
+    if isinstance(signature, inspect.Signature):
+        for parameter in signature.parameters.values():
+            annotation = parameter.annotation
+            if isinstance(annotation, str):
+                annotation = typing.ForwardRef(annotation)
+            if isinstance(annotation, typing.ForwardRef):
+                try:
+                    annotation = _resolve_forward_ref(annotation, target)
+                except ResolutionFailed:
+                    continue  # keep whatever the annotations say
+            if annotation is not inspect.Parameter.empty:
+                hints[parameter.name] = annotation
     return hints
 
 
@@ -334,10 +393,11 @@ def _safe_issubclass(cls: Any, base: Any) -> bool:
 
 
 def _abstract(type_: Any) -> Generator[Any]:
+    kind = "a Protocol" if getattr(type_, "_is_protocol", False) else "abstract"
     subclasses = type_.__subclasses__()
     if not subclasses:
         raise ResolutionFailed(
-            f"Could not resolve {type_!r} to a generator: it is abstract and has no subclasses"
+            f"Could not resolve {type_!r} to a generator: it is {kind} and has no subclasses"
         )
     options = []
     for subclass in subclasses:
@@ -347,7 +407,8 @@ def _abstract(type_: Any) -> Generator[Any]:
             continue
     if not options:
         raise ResolutionFailed(
-            f"Could not resolve {type_!r} to a generator: no subclass can be resolved"
+            f"Could not resolve {type_!r} to a generator: it is {kind} and no subclass "
+            "can be resolved"
         )
     return one_of(*options)
 
@@ -369,15 +430,20 @@ def _resolve_forward_ref(ref: typing.ForwardRef, owner: Any) -> Any:
 
 
 def infer_missing_arguments(
-    target: Callable[..., Any], positional_count: int, kwargs: dict[str, Generator[Any]]
-) -> dict[str, Generator[Any]]:
+    target: Callable[..., Any],
+    args: tuple[Generator[Any], ...],
+    kwargs: dict[str, Generator[Any]],
+) -> tuple[tuple[Generator[Any], ...], dict[str, Generator[Any]]]:
     """Fill in generators for required parameters of ``target`` that have
-    type annotations and were not supplied."""
+    type annotations and were not supplied: positional-only parameters are
+    appended to ``args`` (while every earlier one is filled), the others
+    added to ``kwargs``."""
     try:
         signature = _signature(target)
     except (TypeError, ValueError):
-        return kwargs
+        return args, kwargs
     hints = _type_hints(target)
+    positional = list(args)
     result = dict(kwargs)
     parameters = list(signature.parameters.values())
     for index, parameter in enumerate(parameters):
@@ -385,9 +451,11 @@ def infer_missing_arguments(
             continue
         if parameter.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
             continue
-        if parameter.kind is inspect.Parameter.POSITIONAL_ONLY or (
-            parameter.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD and index < positional_count
-        ):
+        if parameter.kind is not inspect.Parameter.KEYWORD_ONLY and index < len(args):
+            continue
+        if parameter.kind is inspect.Parameter.POSITIONAL_ONLY and index != len(positional):
+            # An earlier positional-only parameter could not be inferred, so
+            # this one cannot be passed either.
             continue
         annotation = hints.get(parameter.name, parameter.annotation)
         if annotation is inspect.Parameter.empty:
@@ -402,5 +470,8 @@ def infer_missing_arguments(
         if not _looks_like_a_type(annotation):
             # Not a type (e.g. ``x: 1``); leave it for the caller to supply.
             continue
-        result[parameter.name] = from_type(annotation)
-    return result
+        if parameter.kind is inspect.Parameter.POSITIONAL_ONLY:
+            positional.append(from_type(annotation))
+        else:
+            result[parameter.name] = from_type(annotation)
+    return tuple(positional), result

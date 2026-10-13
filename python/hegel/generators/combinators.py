@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import enum
+from collections.abc import Callable, Iterable, MutableSequence, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from hegel.errors import InvalidArgument
@@ -10,6 +11,7 @@ from hegel.generators.base import (
     FILTER_LABEL,
     NOOP_PRINTER,
     Generator,
+    _name,
     combine_labels,
     label_from_name,
 )
@@ -54,9 +56,17 @@ def just(value: T) -> Generator[T]:
     return Just(value)
 
 
+class NoneGenerator(Just[None]):
+    def __init__(self) -> None:
+        super().__init__(None)
+
+    def __repr__(self) -> str:
+        return "none()"
+
+
 def none() -> Generator[None]:
     """Always generate ``None``."""
-    return Just(None)
+    return NoneGenerator()
 
 
 class Nothing(Generator[Any]):
@@ -80,9 +90,10 @@ def nothing() -> Generator[Any]:
 
 
 class SampledFrom(Generator[T]):
-    def __init__(self, elements: Sequence[T]) -> None:
+    def __init__(self, elements: Sequence[T], repr_: str | None = None) -> None:
         self.elements = elements
         self.label = SAMPLED_FROM_LABEL
+        self._repr = repr_
 
     def do_draw(self, tc: TestCase) -> T:
         index = tc._generate_integer(0, len(self.elements) - 1)
@@ -99,7 +110,9 @@ class SampledFrom(Generator[T]):
         return not self.elements
 
     def __repr__(self) -> str:
-        return f"sampled_from({list(self.elements)!r})"
+        if self._repr is not None:
+            return self._repr
+        return f"sampled_from({self.elements!r})"
 
 
 FILTERED_SAMPLE_ATTEMPTS = 3
@@ -142,43 +155,56 @@ class FilteredSample(Generator[T]):
 
 
 def sampled_from(elements: Any) -> Generator[Any]:
-    """Pick one of ``elements`` (a sequence, or an ``Enum`` class)."""
-    import enum
-
+    """Pick one of ``elements`` (a sequence, or an ``Enum`` class). A
+    ``Flag`` class also yields the empty flag and combinations of its
+    members."""
     if isinstance(elements, type) and issubclass(elements, enum.Enum):
+        if not elements.__members__:
+            raise InvalidArgument(f"Cannot sample from {_name(elements)}: it has no members")
         if issubclass(elements, enum.Flag):
-            members = list(elements)
-            if members:
-                return FlagCombinations(elements, members)
-        elements = list(elements)
-    elif isinstance(elements, (set, frozenset)):
+            return FlagCombinations(elements)
+        return SampledFrom(tuple(elements), f"sampled_from({_name(elements)})")
+    if isinstance(elements, (set, frozenset)):
         raise InvalidArgument(
             "Cannot sample from a set: it has no stable order. Pass a sorted list instead."
         )
-    else:
+    if isinstance(elements, MutableSequence):
+        # A copy, so that later changes to the argument leave the generator alone.
         elements = list(elements)
+    elif not isinstance(elements, Sequence):
+        elements = tuple(elements)
     if not elements:
         raise InvalidArgument("Cannot sample from an empty sequence")
     return SampledFrom(elements)
 
 
 class FlagCombinations(Generator[Any]):
-    """``sampled_from`` a flag enum: any combination of its members."""
+    """``sampled_from`` a flag enum: one of its named members, the empty
+    flag, or any combination of the named members."""
 
-    def __init__(self, cls: type, members: list[Any]) -> None:
+    def __init__(self, cls: type[enum.Flag]) -> None:
         self.cls = cls
-        self.members = members
+        # Every named member, aliases and the zero member included (iterating
+        # the class skips those), fewest bits first so that the smallest
+        # value is the first single-bit member, or the empty flag if named.
+        named = sorted(set(cls.__members__.values()), key=lambda m: (m.value.bit_count(), m.value))
+        self.values = named if named[0].value == 0 else [*named, cls(0)]
+        self.flags = [m for m in named if m.value]
         self.label = combine_labels([SAMPLED_FROM_LABEL, label_from_name("hegel.flags")])
 
     def do_draw(self, tc: TestCase) -> Any:
-        # One bit per member, so every non-empty combination is reachable
-        # and the smallest value is the first member alone.
-        mask = tc._generate_integer(1, (1 << len(self.members)) - 1)
-        result = self.cls(0)
-        for index, member in enumerate(self.members):
-            if mask >> index & 1:
-                result |= member
-        return result
+        if len(self.flags) > 1 and tc._generate_boolean(0.5):
+            # One bit per named flag, so every combination is reachable.
+            mask = tc._generate_integer(1, (1 << len(self.flags)) - 1)
+            result = self.cls(0)
+            for index, flag in enumerate(self.flags):
+                if mask >> index & 1:
+                    result |= flag
+            return result
+        return self.values[tc._generate_integer(0, len(self.values) - 1)]
+
+    def __repr__(self) -> str:
+        return f"sampled_from({_name(self.cls)})"
 
 
 class OneOf(Generator[Any]):
@@ -219,7 +245,11 @@ class OneOf(Generator[Any]):
 def one_of(*generators: Any) -> Generator[Any]:
     """Draw from one of ``generators``, chosen uniformly. Accepts the
     generators as separate arguments or as one iterable."""
-    if len(generators) == 1 and not isinstance(generators[0], Generator):
+    if (
+        len(generators) == 1
+        and not isinstance(generators[0], Generator)
+        and isinstance(generators[0], Iterable)
+    ):
         generators = tuple(generators[0])
     flat: list[Generator[Any]] = []
     for generator in generators:

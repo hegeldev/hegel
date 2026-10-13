@@ -45,12 +45,6 @@ for ex in [
 test_raise_invalid_argument = argument_validation_test(BAD_ARGS)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=hegel.FailedHealthCheck,
-    reason="Hegel's lists(nothing(), min_size=1) is not rejected: every draw is rejected "
-    "instead, failing the FilterTooMuch health check",
-)
 def test_raise_invalid_argument_for_nonempty_list_of_nothing():
     with pytest.raises(InvalidArgument):
         generator = gs.lists(gs.nothing(), unique=True, min_size=1)

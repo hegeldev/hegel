@@ -28,8 +28,7 @@ def test_just_frosty():
 
 
 def test_sampling_snowmen():
-    # Hegel's sampled_from stores its elements in a list.
-    assert repr(gs.sampled_from((Frosty, "hi"))) == "sampled_from([☃, 'hi'])"
+    assert repr(gs.sampled_from((Frosty, "hi"))) == "sampled_from((☃, 'hi'))"
 
 
 def varargs(*args, **kwargs):

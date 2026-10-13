@@ -369,3 +369,25 @@ def test_a_rejected_draw_reports_nothing():
 
     with pytest.raises(hegel.FailedHealthCheck):
         hegel.run(body, database="")
+
+
+@pytest.mark.parametrize("score", ["1", None, [0.0], True])
+def test_target_rejects_a_non_numeric_score(score):
+    def body(tc):
+        tc.draw(gs.none())
+        with pytest.raises(hegel.InvalidArgument, match="must be an int or float"):
+            tc.target(score, label="score")
+        with pytest.raises(hegel.InvalidArgument, match="must be an int or float"):
+            tc.event_value("value", score)
+
+    run_test(body, test_cases=1)
+
+
+@pytest.mark.parametrize("label", [["a"], 1, None])
+def test_target_rejects_a_non_string_label(label):
+    def body(tc):
+        tc.draw(gs.none())
+        with pytest.raises(hegel.InvalidArgument, match="must be a string"):
+            tc.target(0.0, label=label)
+
+    run_test(body, test_cases=1)

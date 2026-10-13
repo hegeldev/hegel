@@ -50,11 +50,6 @@ def test_errors_if_define_does_not_return_search_strategy():
         check_can_generate_examples(x)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel's deferred() does not detect a definition as itself: drawing from "
-    "deferred(lambda: x) recurses until RecursionError instead of raising InvalidArgument",
-)
 def test_errors_on_definition_as_self():
     x = gs.deferred(lambda: x)
     with pytest.raises(InvalidArgument):

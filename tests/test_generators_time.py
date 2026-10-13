@@ -66,6 +66,8 @@ def test_datetimes():
         gs.datetimes(dt.datetime(2020, 1, 1, tzinfo=dt.UTC))
     with pytest.raises(hegel.InvalidArgument):
         gs.datetimes(dt.date(2020, 1, 1))
+    with pytest.raises(hegel.InvalidArgument, match="allow_imaginary=0 must be a bool"):
+        gs.datetimes(allow_imaginary=0)
 
     def bad_tz(tc):
         tc.draw(gs.datetimes(timezones=gs.just("UTC")))
@@ -95,12 +97,32 @@ def test_imaginary_datetimes():
     )
 
 
+def test_timedeltas_shrink_towards_whole_units():
+    assert find_example(gs.timedeltas(), lambda d: d.days > 0) == dt.timedelta(1)
+    assert find_example(gs.timedeltas(), lambda d: d.days < 0) == dt.timedelta(-1)
+    assert find_example(gs.timedeltas(), lambda d: d > dt.timedelta(0)) == dt.timedelta(
+        microseconds=1
+    )
+    assert find_example(gs.timedeltas(), lambda d: d.microseconds > 0) == dt.timedelta(
+        microseconds=1
+    )
+    assert find_example(
+        gs.timedeltas(dt.timedelta(minutes=-1), dt.timedelta(minutes=1)), lambda d: d.days < 0
+    ) == dt.timedelta(minutes=-1)
+
+
 def test_timedeltas():
     check_all(gs.timedeltas(), lambda d: isinstance(d, dt.timedelta))
     lo, hi = dt.timedelta(seconds=-1), dt.timedelta(seconds=1)
     check_all(gs.timedeltas(lo, hi), lambda d: lo <= d <= hi)
     assert find_example(gs.timedeltas()) == dt.timedelta(0)
     assert repr(gs.timedeltas(lo, hi)) == f"timedeltas(min_value={lo!r}, max_value={hi!r})"
+    check_all(gs.timedeltas(lo, lo), lambda d: d == lo)
+    bounded_above = gs.timedeltas(max_value=dt.timedelta(10**6))
+    check_all(bounded_above, lambda d: d <= dt.timedelta(10**6))
+    assert find_example(bounded_above, lambda d: d > dt.timedelta(hours=1)) == dt.timedelta(
+        hours=1, microseconds=1
+    )
     with pytest.raises(hegel.InvalidArgument):
         gs.timedeltas(hi, lo)
     with pytest.raises(hegel.InvalidArgument):
@@ -110,4 +132,6 @@ def test_timedeltas():
 def test_timezones():
     check_all(gs.timezones(), lambda z: isinstance(z, zoneinfo.ZoneInfo))
     check_all(gs.timezones(no_cache=True), lambda z: isinstance(z, zoneinfo.ZoneInfo))
+    with pytest.raises(hegel.InvalidArgument, match="no_cache=1 must be a bool"):
+        gs.timezones(no_cache=1)
     assert str(find_example(gs.timezones())) == "UTC"

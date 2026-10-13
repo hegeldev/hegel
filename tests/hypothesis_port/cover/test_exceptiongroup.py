@@ -21,14 +21,7 @@ import pytest
 
 import hegel
 
-_no_derive = pytest.mark.xfail(
-    strict=True,
-    reason="hegel.MultipleFailures does not implement .derive(), so .split() returns a "
-    "plain ExceptionGroup",
-)
 
-
-@_no_derive
 @pytest.mark.parametrize("ExceptionClass", [hegel.MultipleFailures])
 def test_exceptiongroups_reconstruct_original_type(ExceptionClass):
     # contextlib.suppress uses .split, and if ExceptionClass does not implement
@@ -42,7 +35,6 @@ def test_exceptiongroups_reconstruct_original_type(ExceptionClass):
         raise ExceptionClass("exception message", [Exception()])
 
 
-@_no_derive
 @pytest.mark.parametrize("ExceptionClass", [hegel.MultipleFailures])
 def test_derived_exception_group(ExceptionClass):
     exception = ExceptionClass("exception message", [Exception()])

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 import struct
+from decimal import Decimal
+from fractions import Fraction
 from typing import TYPE_CHECKING
 
 from hegel.errors import InvalidArgument
@@ -38,16 +40,18 @@ class Integers(Generator[int]):
             raise InvalidArgument(f"Cannot have max_value={max_value!r} < min_value={min_value!r}")
         self.min_value = min_value
         self.max_value = max_value
+        # A missing bound is replaced by one UNBOUNDED_MAGNITUDE values beyond
+        # the other bound (or beyond zero, when that is further).
         if min_value is None:
-            lo = -UNBOUNDED_MAGNITUDE if max_value is None else min(-UNBOUNDED_MAGNITUDE, max_value)
+            lo = -UNBOUNDED_MAGNITUDE
+            if max_value is not None:
+                lo = min(lo, max_value - UNBOUNDED_MAGNITUDE + 1)
         else:
             lo = min_value
         if max_value is None:
-            hi = (
-                UNBOUNDED_MAGNITUDE - 1
-                if min_value is None
-                else max(UNBOUNDED_MAGNITUDE - 1, min_value)
-            )
+            hi = UNBOUNDED_MAGNITUDE - 1
+            if min_value is not None:
+                hi = max(hi, min_value + UNBOUNDED_MAGNITUDE - 1)
         else:
             hi = max_value
         self._lo = lo
@@ -112,6 +116,33 @@ _MAX = {
     64: struct.unpack("<d", b"\xff\xff\xff\xff\xff\xff\xef\x7f")[0],
     32: struct.unpack("<f", b"\xff\xff\x7f\x7f")[0],
 }
+_FLOAT_FORMATS = {64: ("<d", "<q"), 32: ("<f", "<i")}
+
+
+def _next_up(value: float, width: int) -> float:
+    """The smallest ``width``-bit float greater than ``value``."""
+    if value == math.inf:
+        return value
+    if value == 0.0:
+        value = 0.0  # -0.0 steps up to the smallest positive subnormal
+    float_fmt, int_fmt = _FLOAT_FORMATS[width]
+    (bits,) = struct.unpack(int_fmt, struct.pack(float_fmt, value))
+    # The sign bit makes negative floats negative integers, whose magnitude
+    # (and so the float's) shrinks as the integer decreases.
+    bits += 1 if bits >= 0 else -1
+    return struct.unpack(float_fmt, struct.pack(int_fmt, bits))[0]
+
+
+def _next_up_normal(value: float, width: int, allow_subnormal: bool) -> float:
+    """``_next_up``, skipping the subnormals when they are not allowed."""
+    result = _next_up(value, width)
+    if not allow_subnormal and 0 < abs(result) < _SMALLEST_NORMAL[width]:
+        return 0.0 if result < 0 else _SMALLEST_NORMAL[width]
+    return result
+
+
+def _next_down_normal(value: float, width: int, allow_subnormal: bool) -> float:
+    return -_next_up_normal(-value, width, allow_subnormal)
 
 
 class Floats(Generator[float]):
@@ -135,21 +166,8 @@ class Floats(Generator[float]):
         self.exclude_max = exclude_max
         has_min = min_value is not None
         has_max = max_value is not None
-        if has_min and has_max:
-            if not (min_value <= max_value):  # type: ignore[operator]
-                raise InvalidArgument(
-                    f"Cannot have max_value={max_value!r} < min_value={min_value!r}"
-                )
-            if not _sign_aware_lte(min_value, max_value):  # type: ignore[arg-type]
-                raise InvalidArgument(
-                    f"There are no {width}-bit floating-point values between "
-                    f"min_value={min_value!r} and max_value={max_value!r}"
-                )
-            if (min_value == max_value) and (exclude_min or exclude_max):
-                raise InvalidArgument(
-                    f"exclude_min/exclude_max leave no {width}-bit floating-point "
-                    f"values in [{min_value!r}, {max_value!r}]"
-                )
+        if has_min and has_max and not (min_value <= max_value):  # type: ignore[operator]
+            raise InvalidArgument(f"Cannot have max_value={max_value!r} < min_value={min_value!r}")
         if exclude_min and not has_min:
             raise InvalidArgument("Cannot exclude min_value=None")
         if exclude_max and not has_max:
@@ -160,41 +178,78 @@ class Floats(Generator[float]):
             raise InvalidArgument("exclude_max with max_value=-inf leaves no values")
         if allow_nan is None:
             allow_nan = not has_min and not has_max
-        if allow_infinity is None:
-            allow_infinity = not has_min or not has_max
         if allow_nan and (has_min or has_max):
             raise InvalidArgument("Cannot have allow_nan=True with min_value or max_value")
-        if allow_infinity and has_min and has_max:
-            raise InvalidArgument(
-                "Cannot have allow_infinity=True with both min_value and max_value"
-            )
         smallest_normal = _SMALLEST_NORMAL[width]
+        # The bounds the generated values actually obey: the given ones with
+        # exclude_min/exclude_max applied. An infinite bound on its own side
+        # (-inf below, inf above) bounds nothing, like a missing one.
+        lo = min_value
+        hi = max_value
+        assumed_subnormal = allow_subnormal is None or allow_subnormal
+        if lo is not None and exclude_min:
+            lo = _next_up_normal(lo, width, assumed_subnormal)
+        if hi is not None and exclude_max:
+            hi = _next_down_normal(hi, width, assumed_subnormal)
+        bounded_lo = lo is not None and lo != -math.inf
+        bounded_hi = hi is not None and hi != math.inf
+        if bounded_lo and bounded_hi and not _sign_aware_lte(lo, hi):  # type: ignore[arg-type]
+            if exclude_min or exclude_max:
+                raise InvalidArgument(
+                    f"exclude_min/exclude_max leave no {width}-bit floating-point "
+                    f"values in [{min_value!r}, {max_value!r}]"
+                )
+            raise InvalidArgument(
+                f"There are no {width}-bit floating-point values between "
+                f"min_value={min_value!r} and max_value={max_value!r}"
+            )
+        if allow_infinity is None:
+            allow_infinity = not bounded_lo or not bounded_hi
+        elif allow_infinity:
+            if bounded_lo and bounded_hi:
+                raise InvalidArgument(
+                    "Cannot have allow_infinity=True with both min_value and max_value"
+                )
+        elif lo == math.inf:
+            if min_value == math.inf:
+                raise InvalidArgument("allow_infinity=False excludes min_value=inf")
+            raise InvalidArgument(
+                f"exclude_min=True turns min_value={min_value!r} into inf, "
+                "but allow_infinity=False excludes it"
+            )
+        elif hi == -math.inf:
+            if max_value == -math.inf:
+                raise InvalidArgument("allow_infinity=False excludes max_value=-inf")
+            raise InvalidArgument(
+                f"exclude_max=True turns max_value={max_value!r} into -inf, "
+                "but allow_infinity=False excludes it"
+            )
         if allow_subnormal is None:
-            if has_min and has_max:
-                if min_value == max_value:
-                    allow_subnormal = -smallest_normal < min_value < smallest_normal  # type: ignore[operator]
+            if bounded_lo and bounded_hi:
+                if lo == hi:
+                    allow_subnormal = -smallest_normal < lo < smallest_normal  # type: ignore[operator]
                 else:
-                    allow_subnormal = min_value < smallest_normal and max_value > -smallest_normal  # type: ignore[operator]
-            elif has_min:
-                allow_subnormal = min_value < smallest_normal  # type: ignore[operator]
-            elif has_max:
-                allow_subnormal = max_value > -smallest_normal  # type: ignore[operator]
+                    allow_subnormal = lo < smallest_normal and hi > -smallest_normal  # type: ignore[operator]
+            elif bounded_lo:
+                allow_subnormal = lo < smallest_normal  # type: ignore[operator]
+            elif bounded_hi:
+                allow_subnormal = hi > -smallest_normal  # type: ignore[operator]
             else:
                 allow_subnormal = True
         if allow_subnormal:
-            if has_min and min_value >= smallest_normal:  # type: ignore[operator]
+            if bounded_lo and lo >= smallest_normal:  # type: ignore[operator]
                 raise InvalidArgument(
                     f"allow_subnormal=True, but min_value={min_value!r} excludes all "
                     f"values below the smallest positive normal {smallest_normal!r}"
                 )
-            if has_max and max_value <= -smallest_normal:  # type: ignore[operator]
+            if bounded_hi and hi <= -smallest_normal:  # type: ignore[operator]
                 raise InvalidArgument(
                     f"allow_subnormal=True, but max_value={max_value!r} excludes all "
                     f"values above the smallest negative normal {-smallest_normal!r}"
                 )
-        elif has_min and has_max:
-            contains_zero = min_value <= 0.0 <= max_value  # type: ignore[operator]
-            if not contains_zero and max_value < smallest_normal and min_value > -smallest_normal:  # type: ignore[operator]
+        elif bounded_lo and bounded_hi:
+            contains_zero = lo <= 0.0 <= hi  # type: ignore[operator]
+            if not contains_zero and hi < smallest_normal and lo > -smallest_normal:  # type: ignore[operator]
                 raise InvalidArgument(
                     f"allow_subnormal=False leaves no {width}-bit floating-point "
                     f"values in [{min_value!r}, {max_value!r}]"
@@ -203,11 +258,11 @@ class Floats(Generator[float]):
         self.allow_infinity = allow_infinity
         self.allow_subnormal = allow_subnormal
         bounded_default = not allow_nan and not allow_infinity
-        if has_min:
+        if bounded_lo:
             self._min = float(min_value)  # type: ignore[arg-type]
         else:
             self._min = -_MAX[width] if bounded_default else -math.inf
-        if has_max:
+        if bounded_hi:
             self._max = float(max_value)  # type: ignore[arg-type]
         else:
             self._max = _MAX[width] if bounded_default else math.inf
@@ -238,11 +293,8 @@ class Floats(Generator[float]):
 
 
 def _check_float(name: str, value: object, width: int) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        try:
-            value = float(value)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            raise InvalidArgument(f"{name}={value!r} must be a real number") from None
+    if isinstance(value, bool) or not isinstance(value, (int, float, Fraction, Decimal)):
+        raise InvalidArgument(f"{name}={value!r} must be a real number")
     result = float(value)
     if math.isnan(result):
         raise InvalidArgument(f"{name}={value!r} must not be NaN")
@@ -277,6 +329,10 @@ def floats(
         min_value = _check_float("min_value", min_value, width)
     if max_value is not None:
         max_value = _check_float("max_value", max_value, width)
+    if not isinstance(exclude_min, bool):
+        raise InvalidArgument(f"exclude_min={exclude_min!r} must be a bool")
+    if not isinstance(exclude_max, bool):
+        raise InvalidArgument(f"exclude_max={exclude_max!r} must be a bool")
     return Floats(
         min_value,
         max_value,
@@ -284,6 +340,6 @@ def floats(
         allow_infinity,
         allow_subnormal,
         width,
-        bool(exclude_min),
-        bool(exclude_max),
+        exclude_min,
+        exclude_max,
     )

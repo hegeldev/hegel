@@ -37,15 +37,7 @@ def kw(marks=(), **kwargs):
         kw(min_value=1),
         kw(max_value=-1),
         kw(min_value=float_info.min),
-        kw(
-            min_value=next_down(float_info.min),
-            exclude_min=True,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="gs.floats() validates allow_subnormal=True against min_value before "
-                "exclude_min is applied, so a bound that excludes every subnormal is accepted",
-            ),
-        ),
+        kw(min_value=next_down(float_info.min), exclude_min=True),
         kw(max_value=-float_info.min),
         kw(min_value=next_up(-float_info.min), exclude_max=True),
     ],

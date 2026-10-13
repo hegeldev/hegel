@@ -58,15 +58,7 @@ def test_can_sample_ordereddict_without_warning():
     [
         an_enum,
         a_flag,
-        pytest.param(
-            an_empty_flag,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="hegel's sampled_from iterates a Flag class, which yields no members "
-                "for a flag with only a zero member, so it raises InvalidArgument",
-                raises=hegel.InvalidArgument,
-            ),
-        ),
+        an_empty_flag,
     ],
 )
 def test_can_sample_enums(enum_class):

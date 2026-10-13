@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable, Iterable, Sequence
+from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from hegel.errors import InvalidArgument
 from hegel.generators.base import NOOP_PRINTER, Generator, combine_labels, label_from_name
-from hegel.generators.combinators import as_generator
+from hegel.generators.combinators import Just, SampledFrom, as_generator
+from hegel.generators.numeric import Booleans, Integers
 from hegel.pretty import PrettyPrinter
 from hegel.test_case import Collection
 
@@ -54,10 +55,54 @@ def _check_sizes(min_size: int, max_size: int | None) -> tuple[int, int | None]:
 def _as_key_tuple(unique_by: Any) -> tuple[Callable[[Any], Hashable], ...]:
     if callable(unique_by):
         return (unique_by,)
-    keys = tuple(unique_by)
+    keys = tuple(unique_by) if isinstance(unique_by, Iterable) else ()
     if not keys or not all(callable(k) for k in keys):
         raise InvalidArgument("unique_by must be a callable or a non-empty tuple of callables")
     return keys
+
+
+def _no_values(kind: str, elements: Generator[Any], min_size: int) -> bool:
+    """Whether ``elements`` has no values, so that only the empty collection
+    can be drawn from it; an error when the collection must be non-empty."""
+    if not elements.is_empty:
+        return False
+    if min_size > 0:
+        raise InvalidArgument(
+            f"Cannot generate non-empty {kind} from {elements!r}: it has no values"
+        )
+    return True
+
+
+def _distinct_values(generator: Generator[Any]) -> int | None:
+    """How many distinct values ``generator`` can produce, when its
+    definition says."""
+    if isinstance(generator, Just):
+        return 1
+    if isinstance(generator, Booleans):
+        return 1 if generator.p in (0.0, 1.0) else 2
+    if isinstance(generator, SampledFrom):
+        try:
+            return len(set(generator.elements))
+        except TypeError:
+            return len(generator.elements)
+    if (
+        isinstance(generator, Integers)
+        and generator.min_value is not None
+        and generator.max_value is not None
+    ):
+        return generator.max_value - generator.min_value + 1
+    return None
+
+
+def _check_distinct(what: str, elements: Generator[Any], min_size: int) -> None:
+    """A collection of ``min_size`` distinct values needs that many to
+    choose from."""
+    count = _distinct_values(elements)
+    if count is not None and count < min_size:
+        raise InvalidArgument(
+            f"Cannot generate {min_size} unique {what} from {elements!r}, which has only "
+            f"{count} distinct value{'' if count == 1 else 's'}"
+        )
 
 
 class Lists(Generator[list[T]]):
@@ -76,6 +121,9 @@ class Lists(Generator[list[T]]):
 
     def _draw(self, tc: TestCase, printer: PrettyPrinter) -> list[T]:
         printer.begin_group(1, "[")
+        if _no_values("lists", self.elements, self.min_size):
+            printer.end_group("]")
+            return []
         currently_empty = getattr(self.elements, "is_currently_empty", None)
         if currently_empty is not None and currently_empty(tc):
             # The element generator has no values right now (a stateful
@@ -136,6 +184,7 @@ def lists(
     """
     elements = as_generator(elements)
     min_size, max_size = _check_sizes(min_size, max_size)
+    _no_values("lists", elements, min_size)
     if unique and unique_by is not None:
         raise InvalidArgument("Cannot pass both unique and unique_by")
     keys: tuple[Callable[[Any], Hashable], ...] | None = None
@@ -143,6 +192,8 @@ def lists(
         keys = (_identity,)
     elif unique_by is not None:
         keys = _as_key_tuple(unique_by)
+    if keys is not None:
+        _check_distinct("elements", elements, min_size)
     return Lists(elements, min_size, max_size, keys)
 
 
@@ -163,8 +214,12 @@ class Sets(Generator[Any]):
     def _draw(self, tc: TestCase, printer: PrettyPrinter) -> Any:
         open_, close = ("frozenset({", "})") if self.frozen else ("{", "}")
         printer.begin_group(len(open_), open_)
-        collection = Collection(tc, self.min_size, self.max_size)
         result: set[Any] = set()
+        if _no_values(self._name, self.elements, self.min_size):
+            printer.if_break("")
+            printer.end_group(close)
+            return frozenset() if self.frozen else result
+        collection = Collection(tc, self.min_size, self.max_size)
         while collection.more():
             with printer.speculate() as speculation:
                 if result:
@@ -188,29 +243,40 @@ class Sets(Generator[Any]):
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> Any:
         return self._draw(tc, printer)
 
+    @property
+    def _name(self) -> str:
+        return "frozensets" if self.frozen else "sets"
+
     def __repr__(self) -> str:
-        name = "frozensets" if self.frozen else "sets"
-        return f"{name}({self.elements!r}, min_size={self.min_size}, max_size={self.max_size})"
+        return (
+            f"{self._name}({self.elements!r}, min_size={self.min_size}, max_size={self.max_size})"
+        )
 
     @property
     def is_empty(self) -> bool:
         return self.min_size > 0 and self.elements.is_empty
 
 
+def _sets(elements: Any, min_size: int, max_size: int | None, frozen: bool) -> Sets:
+    elements = as_generator(elements)
+    min_size, max_size = _check_sizes(min_size, max_size)
+    _no_values("frozensets" if frozen else "sets", elements, min_size)
+    _check_distinct("elements", elements, min_size)
+    return Sets(elements, min_size, max_size, frozen)
+
+
 def sets(
     elements: Generator[T], *, min_size: int = 0, max_size: int | None = None
 ) -> Generator[set[T]]:
     """Generate sets of distinct values from ``elements``."""
-    min_size, max_size = _check_sizes(min_size, max_size)
-    return Sets(as_generator(elements), min_size, max_size, False)
+    return _sets(elements, min_size, max_size, False)
 
 
 def frozensets(
     elements: Generator[T], *, min_size: int = 0, max_size: int | None = None
 ) -> Generator[frozenset[T]]:
     """Generate frozensets of distinct values from ``elements``."""
-    min_size, max_size = _check_sizes(min_size, max_size)
-    return Sets(as_generator(elements), min_size, max_size, True)
+    return _sets(elements, min_size, max_size, True)
 
 
 def iterables(
@@ -229,11 +295,18 @@ def iterables(
 
 
 class _OneShot:
+    """The iterator ``iterables`` hands to the test: one pass exhausts it,
+    and it is reported as the values it started with."""
+
     def __init__(self, values: list[Any]) -> None:
         self._values = values
+        self._iterator = iter(values)
 
-    def __iter__(self) -> Any:
-        return iter(self._values)
+    def __iter__(self) -> _OneShot:
+        return self
+
+    def __next__(self) -> Any:
+        return next(self._iterator)
 
     def __repr__(self) -> str:
         return f"iter({self._values!r})"
@@ -255,8 +328,13 @@ class Dicts(Generator[dict[Any, Any]]):
 
     def _draw(self, tc: TestCase, printer: PrettyPrinter) -> dict[Any, Any]:
         printer.begin_group(1, "{")
-        collection = Collection(tc, self.min_size, self.max_size)
         result: dict[Any, Any] = {}
+        if _no_values("dicts with keys", self.keys, self.min_size) or _no_values(
+            "dicts with values", self.values, self.min_size
+        ):
+            printer.end_group("}")
+            return result
+        collection = Collection(tc, self.min_size, self.max_size)
         while collection.more():
             with printer.speculate() as speculation:
                 if result:
@@ -299,8 +377,12 @@ def dicts(
     max_size: int | None = None,
 ) -> Generator[dict[Any, Any]]:
     """Generate dicts with keys and values from the given generators."""
+    keys, values = as_generator(keys), as_generator(values)
     min_size, max_size = _check_sizes(min_size, max_size)
-    return Dicts(as_generator(keys), as_generator(values), min_size, max_size)
+    _no_values("dicts with keys", keys, min_size)
+    _no_values("dicts with values", values, min_size)
+    _check_distinct("keys", keys, min_size)
+    return Dicts(keys, values, min_size, max_size)
 
 
 class FixedDicts(Generator[dict[Any, Any]]):
@@ -359,8 +441,12 @@ def fixed_dicts(
 ) -> Generator[dict[Any, Any]]:
     """Generate dicts with the fixed keys of ``mapping``, each value drawn
     from its generator; keys in ``optional`` are present or absent."""
-    fixed = {k: as_generator(v) for k, v in dict(mapping).items()}
-    opt = {k: as_generator(v) for k, v in dict(optional or {}).items()}
+    if not isinstance(mapping, Mapping):
+        raise InvalidArgument(f"mapping={mapping!r} must be a dict of generators")
+    if optional is not None and not isinstance(optional, Mapping):
+        raise InvalidArgument(f"optional={optional!r} must be a dict of generators")
+    fixed = {k: as_generator(v) for k, v in mapping.items()}
+    opt = {k: as_generator(v) for k, v in (optional or {}).items()}
     for key in opt:
         if key in fixed:
             raise InvalidArgument(f"key {key!r} is both required and optional")
@@ -432,6 +518,12 @@ class Subsequences(Generator[list[T]]):
         indices = sorted(_draw_index_sample(tc, n, self.min_size, max_size))
         return [self.elements[i] for i in indices]
 
+    def __repr__(self) -> str:
+        return (
+            f"subsequences({list(self.elements)!r}, "
+            f"min_size={self.min_size}, max_size={self.max_size})"
+        )
+
 
 def subsequences(
     elements: Iterable[T], *, min_size: int = 0, max_size: int | None = None
@@ -450,6 +542,9 @@ class Permutations(Generator[list[T]]):
     def do_draw(self, tc: TestCase) -> list[T]:
         n = len(self.elements)
         return [self.elements[i] for i in _draw_index_sample(tc, n, n, n)]
+
+    def __repr__(self) -> str:
+        return f"permutations({list(self.elements)!r})"
 
 
 def permutations(elements: Iterable[T]) -> Generator[list[T]]:
@@ -486,6 +581,12 @@ class Samples(Generator[list[T]]):
             )
         max_size = n if self.max_size is None else min(self.max_size, n)
         return [self.elements[i] for i in _draw_index_sample(tc, n, self.min_size, max_size)]
+
+    def __repr__(self) -> str:
+        return (
+            f"samples({list(self.elements)!r}, min_size={self.min_size}, "
+            f"max_size={self.max_size}, replacement={self.replacement})"
+        )
 
 
 def samples(

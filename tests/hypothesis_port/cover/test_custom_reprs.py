@@ -43,9 +43,6 @@ def test_supports_positional_and_keyword_args_in_builds():
     )
 
 
-@pytest.mark.xfail(
-    strict=True, reason="sampled_from copies its elements into a list, so its repr shows a list"
-)
 def test_preserves_sequence_type_of_argument():
     assert repr(gs.sampled_from([0, 1])) == "sampled_from([0, 1])"
     assert repr(gs.sampled_from((0, 1))) == "sampled_from((0, 1))"
@@ -134,46 +131,26 @@ def test_reprs_as_created_consistent_calls_despite_indentation():
     )
 
 
-_no_arg_repr = pytest.mark.xfail(
-    strict=True, reason="Hegel's characters() generator does not repr its arguments"
-)
-
-
 @pytest.mark.parametrize(
     "strategy, expected_repr",
     [
         (gs.characters(), "characters()"),
-        pytest.param(gs.characters(codec="utf-8"), "characters(codec='utf-8')", marks=_no_arg_repr),
-        pytest.param(
-            gs.characters(min_codepoint=65), "characters(min_codepoint=65)", marks=_no_arg_repr
-        ),
-        pytest.param(
-            gs.characters(max_codepoint=127), "characters(max_codepoint=127)", marks=_no_arg_repr
-        ),
-        pytest.param(
-            gs.characters(categories=["Lu", "Ll"]),
-            "characters(categories=('Lu', 'Ll'))",
-            marks=_no_arg_repr,
-        ),
-        pytest.param(
-            gs.characters(exclude_characters="abc"),
-            "characters(exclude_characters='abc')",
-            marks=_no_arg_repr,
-        ),
-        pytest.param(
+        (gs.characters(codec="utf-8"), "characters(codec='utf-8')"),
+        (gs.characters(min_codepoint=65), "characters(min_codepoint=65)"),
+        (gs.characters(max_codepoint=127), "characters(max_codepoint=127)"),
+        (gs.characters(categories=["Lu", "Ll"]), "characters(categories=('Lu', 'Ll'))"),
+        (gs.characters(exclude_characters="abc"), "characters(exclude_characters='abc')"),
+        (
             gs.characters(min_codepoint=65, max_codepoint=90),
             "characters(min_codepoint=65, max_codepoint=90)",
-            marks=_no_arg_repr,
         ),
-        pytest.param(
+        (
             gs.characters(codec="ascii", min_codepoint=32, max_codepoint=126),
             "characters(min_codepoint=32, max_codepoint=126)",
-            marks=_no_arg_repr,
         ),
-        pytest.param(
+        (
             gs.characters(categories=["Lu"], exclude_characters="AZ"),
             "characters(categories=('Lu',), exclude_characters='AZ')",
-            marks=_no_arg_repr,
         ),
     ],
 )

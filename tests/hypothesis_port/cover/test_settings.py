@@ -144,11 +144,11 @@ def test_load_profile():
 
 
 def test_profile_names_must_be_strings():
-    with pytest.raises(TypeError):
+    with pytest.raises(InvalidArgument):
         Settings.register_profile(5)
-    with pytest.raises(TypeError):
+    with pytest.raises(InvalidArgument):
         Settings.from_profile(5)
-    with pytest.raises(TypeError):
+    with pytest.raises(InvalidArgument):
         Settings.set_default_profile(5)
 
 
@@ -247,12 +247,6 @@ def test_invalid_settings_are_errors(kwargs):
         Settings(**kwargs)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Settings(parent) with something that is not a Settings raises "
-    "AttributeError ('NotSettings' object has no attribute 'test_cases'), "
-    "not InvalidArgument naming the parent",
-)
 def test_invalid_parent():
     class NotSettings:
         def __repr__(self):

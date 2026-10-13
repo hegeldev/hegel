@@ -382,11 +382,6 @@ def test_a_text(tc):
     assert set(x).issubset(set("a"))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="generator: text('') is rejected with InvalidArgument ('alphabet must not be "
-    "empty') where Hypothesis generates only the empty string",
-)
 @hegel.test
 def test_empty_text(tc):
     x = tc.draw(gs.text(""))

@@ -137,6 +137,11 @@ def _check_int(field: str, value: Any) -> int:
     return value
 
 
+def _check_profile_name(name: Any) -> None:
+    if not isinstance(name, str):
+        raise InvalidArgument(f"name={name!r} must be a string naming a profile")
+
+
 @dataclass(frozen=True)
 class Settings:
     """Configuration for a run.
@@ -172,6 +177,8 @@ class Settings:
     nondeterminism_strictness: NondeterminismStrictness
 
     def __init__(self, parent: Settings | None = None, **overrides: Any) -> None:
+        if parent is not None and not isinstance(parent, Settings):
+            raise InvalidArgument(f"parent={parent!r} must be a Settings object or None")
         base = _from_native(_native.Settings.new()) if parent is None else parent
         values = {name: getattr(base, name) for name in _FIELDS}
         for name, value in overrides.items():
@@ -183,12 +190,16 @@ class Settings:
     @classmethod
     def from_profile(cls, name: str, **overrides: Any) -> Settings:
         """Settings initialised from the named profile."""
+        _check_profile_name(name)
         return cls(_from_native(_native.Settings.for_profile(name)), **overrides)
 
     @staticmethod
     def register_profile(name: str, settings: Settings | None = None, **overrides: Any) -> None:
         """Register (or replace) a named profile, from ``settings`` (the
         default profile when omitted) with ``overrides`` applied."""
+        _check_profile_name(name)
+        if settings is not None and not isinstance(settings, Settings):
+            raise InvalidArgument(f"settings={settings!r} must be a Settings object or None")
         base = Settings() if settings is None else settings
         _native.register_profile(name, Settings(base, **overrides)._build())
 
@@ -198,6 +209,7 @@ class Settings:
         ``Settings()`` resolves, for the whole process. ``None`` restores
         the engine's own choice (see :class:`Settings`)."""
         if name is not None:
+            _check_profile_name(name)
             _native.Settings.for_profile(name)  # raises for an unknown profile
         _native.set_default_profile(name)
 
@@ -241,6 +253,8 @@ def _assign(settings: Settings, values: dict[str, Any]) -> None:
     test_cases = _check_int("test_cases", values["test_cases"])
     if test_cases < 0:
         raise InvalidArgument(f"test_cases={test_cases} must be non-negative")
+    if test_cases >= 1 << 64:
+        raise InvalidArgument(f"test_cases={test_cases} must be less than 2**64")
     seed = values["seed"]
     if seed is not None:
         seed = _check_int("seed", seed) & ((1 << 64) - 1)

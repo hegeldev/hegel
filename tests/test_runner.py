@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import re
 import sys
 import threading
 
@@ -8,9 +9,11 @@ import pytest
 
 import hegel
 from hegel import generators as gs
+from hegel.errors import LoopDone
 from hegel.runner import (
     RunOutput,
     _location_of,
+    _origin,
     _user_location,
     with_output_override,
 )
@@ -485,6 +488,101 @@ def test_user_location_skips_hegel_frames():
     assert _user_location(ValueError()) == "<unknown>"
 
 
+def test_origin_includes_the_chain_and_group_members():
+    def wrapped(cause):
+        try:
+            raise cause
+        except LookupError as error:
+            raise ValueError("wrapped") from error
+
+    def caught(fn, *args):
+        try:
+            fn(*args)
+        except BaseException as error:
+            return error
+        raise AssertionError("did not raise")  # nocov
+
+    here = __file__
+    origin = _origin(caught(wrapped, KeyError()))
+    assert re.fullmatch(rf"ValueError at {here}:\d+ \(from KeyError at {here}:\d+\)", origin)
+    assert origin != _origin(caught(wrapped, IndexError()))
+    # The exception being handled counts too, even when its display is
+    # suppressed (``raise ... from None``).
+    covered = caught(wrapped, KeyError())
+    covered.__cause__ = None
+    assert "(from KeyError at" in _origin(covered)
+    # A group is distinguished by its members, and a chain never loops.
+    inner, outer = KeyError(), ValueError()
+    inner.__context__, outer.__context__ = outer, inner
+    group = caught(lambda: (_ for _ in ()).throw(ExceptionGroup("g", [inner, outer])))
+    assert _origin(group) == (
+        f"ExceptionGroup at {_user_location(group)} "
+        "[KeyError at <unknown> (from ValueError at <unknown>), "
+        "ValueError at <unknown> (from KeyError at <unknown>)]"
+    )
+
+
+def test_failures_with_different_causes_are_distinct_bugs():
+    def body(tc):
+        x = tc.draw(gs.integers(0, 1))
+        try:
+            if x:
+                raise KeyError(x)
+            raise IndexError(x)
+        except LookupError as error:
+            raise ValueError("wrapped") from error
+
+    error = failing(body, hegel.MultipleFailures, report_multiple_failures=True, test_cases=50)
+    assert {type(e.__cause__) for e in error.exceptions} == {KeyError, IndexError}
+
+
+def test_a_group_of_control_exceptions_is_handled_as_one(output):
+    # Rejected, as the assumption is preferred to the StopTest; nested
+    # groups are unwrapped too.
+    def rejecting(tc):
+        x = tc.draw(gs.integers(0, 1))
+        if x:
+            raise BaseExceptionGroup("tasks", [hegel.StopTest(), hegel.AssumeFailed()])
+        raise BaseExceptionGroup("tasks", [BaseExceptionGroup("inner", [hegel.AssumeFailed()])])
+
+    failing(rejecting, hegel.FailedHealthCheck, verbosity=Verbosity.verbose, test_cases=10)
+    assert "Test case stopped: the engine abandoned it" not in output.lines
+    assert "Test case rejected: assumption failed" in output.lines
+
+    def stopping(tc):
+        tc.draw(gs.integers())
+        raise BaseExceptionGroup("tasks", [hegel.StopTest()])
+
+    failing(stopping, hegel.RunError, verbosity=Verbosity.verbose, test_cases=10)
+    assert "Test case stopped: the engine abandoned it" in output.lines
+
+    def done(tc):
+        tc.draw(gs.integers())
+        raise BaseExceptionGroup("tasks", [LoopDone()])
+
+    run_test(done, test_cases=3)
+
+    def invalid(tc):
+        tc.draw(gs.integers())
+        raise ExceptionGroup("tasks", [hegel.InvalidArgument("bad")])
+
+    error = failing(invalid, hegel.InvalidArgument)
+    assert str(error) == "bad" and error.__suppress_context__
+
+
+def test_a_group_with_a_user_error_in_it_is_a_failure(output):
+    def body(tc):
+        tc.draw(gs.integers())
+        raise BaseExceptionGroup("tasks", [hegel.AssumeFailed(), ValueError("boom")])
+
+    error = failing(body, BaseExceptionGroup, verbosity=Verbosity.verbose)
+    assert [type(e) for e in error.exceptions] == [hegel.AssumeFailed, ValueError]
+    assert any(
+        line.startswith("Test case failed: BaseExceptionGroup at") and "ValueError at" in line
+        for line in output.lines
+    )
+
+
 def test_location_of():
     location = _location_of(test_location_of)
     assert location is not None
@@ -737,3 +835,227 @@ def test_drawing_from_something_other_than_a_generator_is_an_error():
         hegel.run(from_int, database="")
     with pytest.raises(hegel.InvalidArgument, match="Did you forget to call it"):
         hegel.run(from_function, database="")
+
+
+def test_settings_argument_must_be_a_settings_object():
+    with pytest.raises(hegel.InvalidArgument, match="settings=5 must be a Settings object or None"):
+        hegel.run(lambda tc: None, settings=5)
+    with pytest.raises(hegel.InvalidArgument, match="settings=5 must be a Settings object or None"):
+        hegel.test(settings=5)
+
+
+def test_test_decorator_rejects_a_class():
+    with pytest.raises(hegel.InvalidArgument, match="not the class Suite"):
+
+        @hegel.test
+        class Suite:
+            def test_method(self, tc):
+                pass
+
+
+def test_test_decorator_requires_a_positional_test_case():
+    with pytest.raises(hegel.InvalidArgument, match="'tc' cannot be passed positionally"):
+
+        @hegel.test
+        def keyword_only(*, tc):
+            pass
+
+    with pytest.raises(hegel.InvalidArgument, match="'kwargs' cannot be passed positionally"):
+
+        @hegel.test
+        def only_kwargs(**kwargs):
+            pass
+
+    with pytest.raises(hegel.InvalidArgument, match="first argument after self"):
+
+        @hegel.test
+        def method_without_test_case(self):
+            pass
+
+    @hegel.test(test_cases=2)
+    def variadic(*args):
+        assert isinstance(args[0], hegel.TestCase)
+
+    variadic()
+
+
+def test_explicit_cases_are_reported_in_verbose_mode(output):
+    @hegel.explicit_test_case(x=1)
+    @hegel.explicit_test_case(x=2)
+    @hegel.test(verbosity=Verbosity.verbose, test_cases=1)
+    def test_it(tc):
+        x = tc.draw(gs.integers())
+        tc.note(f"noted {x}")
+        assert x != 2
+
+    with pytest.raises(AssertionError):
+        test_it()
+    first = output.lines.index("Running explicit test case: explicit_test_case(x=1)")
+    assert output.lines[first : first + 4] == [
+        "Running explicit test case: explicit_test_case(x=1)",
+        "x = 1",
+        "noted 1",
+        "Test case passed",
+    ]
+    second = output.lines.index("Running explicit test case: explicit_test_case(x=2)")
+    assert output.lines[second + 1 : second + 3] == ["x = 2", "noted 2"]
+    assert "Traceback (most recent call last):" in output.lines[second:]
+    assert any(line.startswith("Test case failed: AssertionError at") for line in output.lines)
+
+
+def test_explicit_case_misuse_is_reported_in_verbose_mode(output):
+    @hegel.explicit_test_case(x=1)
+    @hegel.test(verbosity=Verbosity.verbose, test_cases=1)
+    def test_it(tc):
+        x = tc.draw(gs.integers())  # noqa: F841
+        tc.draw(gs.integers())
+
+    with pytest.raises(hegel.InvalidArgument, match="has no value for draw"):
+        test_it()
+    assert output.lines[-1] == "x = 1"
+
+
+def test_explicit_cases_print_nothing_unless_verbose(output):
+    @hegel.explicit_test_case(x=1)
+    @hegel.test(test_cases=1)
+    def test_it(tc):
+        x = tc.draw(gs.integers())  # noqa: F841
+
+    test_it()
+    assert output.lines == []
+
+
+def test_first_explicit_failure_ends_the_run_by_default():
+    seen = []
+
+    @hegel.explicit_test_case(x=1)
+    @hegel.explicit_test_case(x=2)
+    @hegel.test(test_cases=1)
+    def test_it(tc):
+        x = tc.draw(gs.integers())
+        seen.append(x)
+        raise ValueError
+
+    with pytest.raises(ValueError):
+        test_it()
+    assert seen == [1]
+
+
+def test_explicit_failures_are_collected_with_generated_ones(output):
+    seen = []
+
+    @hegel.explicit_test_case(x=1)
+    @hegel.explicit_test_case(x=2)
+    @hegel.explicit_test_case(x=3)
+    @hegel.test(report_multiple_failures=True, test_cases=200)
+    def test_it(tc):
+        x = tc.draw(gs.integers(-100, 100))
+        seen.append(x)
+        if x == 1:
+            raise ValueError(x)
+        if x == 2:
+            raise KeyError(x)
+        if x < 0:
+            raise TypeError(x)
+
+    with pytest.raises(hegel.MultipleFailures) as info:
+        test_it()
+    assert seen[:3] == [1, 2, 3] and len(seen) > 3
+    assert [type(e) for e in info.value.exceptions] == [ValueError, KeyError, TypeError]
+    assert notes(info.value.exceptions[0]) == ["Falsifying example:\nx = 1"]
+    assert notes(info.value.exceptions[2]) == ["Falsifying example:\nx = -1"]
+    assert str(info.value).startswith("Property-based test failed with 3 distinct failures.")
+    assert output.lines == []
+
+
+def test_a_generated_failure_with_an_explicit_failures_origin_is_the_same_bug():
+    @hegel.explicit_test_case(x=7)
+    @hegel.explicit_test_case(x=8)
+    @hegel.test(report_multiple_failures=True)
+    def test_it(tc):
+        x = tc.draw(gs.integers())
+        assert x < 0
+
+    # The two explicit cases and the generated one all fail at the same
+    # assertion: one bug, reported from the first explicit case.
+    with pytest.raises(AssertionError) as info:
+        test_it()
+    assert notes(info.value) == ["Falsifying example:\nx = 7"]
+
+
+def test_a_single_explicit_failure_is_raised_after_a_passing_generate_phase():
+    @hegel.explicit_test_case(x=7)
+    @hegel.test(report_multiple_failures=True)
+    def test_it(tc):
+        x = tc.draw(gs.integers())
+        assert x != 7
+
+    with pytest.raises(AssertionError) as info:
+        test_it()
+    assert info.value.__cause__ is None
+    assert notes(info.value) == ["Falsifying example:\nx = 7"]
+
+
+def test_a_run_error_after_explicit_failures_is_chained_onto_them():
+    @hegel.explicit_test_case(x=7)
+    @hegel.test(report_multiple_failures=True, test_cases=100)
+    def test_it(tc):
+        x = tc.draw(gs.integers().filter(lambda x: x == 12345))
+        assert x != 7
+
+    with pytest.raises(AssertionError) as info:
+        test_it()
+    assert isinstance(info.value.__cause__, hegel.FailedHealthCheck)
+
+
+def test_errors_and_skips_in_explicit_cases_are_not_collected():
+    import unittest
+
+    @hegel.explicit_test_case(x=7)
+    @hegel.explicit_test_case(x=8)
+    @hegel.test(report_multiple_failures=True)
+    def skips(tc):
+        x = tc.draw(gs.integers())  # noqa: F841
+        raise unittest.SkipTest("not today")
+
+    with pytest.raises(unittest.SkipTest) as info:
+        skips()
+    assert notes(info.value) == []
+
+    @hegel.explicit_test_case(x=7)
+    @hegel.explicit_test_case(x=8)
+    @hegel.test(report_multiple_failures=True)
+    def interrupts(tc):
+        x = tc.draw(gs.integers())  # noqa: F841
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        interrupts()
+
+    def generate_phase_misuse(tc):
+        x = tc.draw(gs.integers())
+        if x != 7:
+            raise hegel.InvalidArgument("bad")
+        raise ValueError
+
+    with pytest.raises(hegel.InvalidArgument, match="bad"):
+        hegel.run(
+            generate_phase_misuse,
+            report_multiple_failures=True,
+            explicit_cases=[hegel.ExplicitCase((7,), {})],
+            database="",
+        )
+
+    def generate_phase_skip(tc):
+        x = tc.draw(gs.integers())
+        if x != 7:
+            pytest.skip("not today")
+        raise ValueError
+
+    with pytest.raises(pytest.skip.Exception):
+        hegel.run(
+            generate_phase_skip,
+            report_multiple_failures=True,
+            explicit_cases=[hegel.ExplicitCase((7,), {})],
+            database="",
+        )

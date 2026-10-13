@@ -84,10 +84,6 @@ def test_fold_inverted_bounds_are_invalid(key, day):
 
 
 @pytest.mark.parametrize("kwargs", [{"no_cache": 1}])
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel's timezones() accepts any truthy no_cache rather than requiring a bool",
-)
 def test_timezones_argument_validation(kwargs):
     with pytest.raises(InvalidArgument):
         gs.timezones(**kwargs)

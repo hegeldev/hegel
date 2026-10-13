@@ -33,11 +33,6 @@ def test_can_allow_nil_uuid_with_none_version():
     check_can_generate_examples(gs.uuids(version=None, allow_nil=True))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel uuids() accepts allow_nil=True with a version (the nil UUID has no "
-    "version) and coerces allow_nil to bool rather than validating it",
-)
 def test_can_only_allow_nil_uuid_with_none_version():
     with pytest.raises(InvalidArgument):
         check_can_generate_examples(gs.uuids(version=4, allow_nil=True))

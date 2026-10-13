@@ -150,11 +150,30 @@ class Deferred(Generator[T]):
         self._generator: Generator[T] | None = None
         self._label: int | None = None
         self._lock = threading.RLock()
+        self._defining = 0
 
     def _get(self) -> Generator[T]:
         with self._lock:
             if self._generator is None:
-                self._generator = as_generator(self.definition())
+                # A count, since a definition referring to itself re-enters.
+                self._defining += 1
+                try:
+                    generator = as_generator(self.definition())
+                finally:
+                    self._defining -= 1
+                # Follow a definition that is itself deferred to the generator
+                # it stands for, so a definition that only leads back to this
+                # one is an error rather than an endless draw.
+                seen = {id(self)}
+                while isinstance(generator, Deferred):
+                    if id(generator) in seen:
+                        raise InvalidArgument("Cannot define a deferred generator as itself")
+                    seen.add(id(generator))
+                    resolved = generator._generator
+                    generator = (
+                        as_generator(generator.definition()) if resolved is None else resolved
+                    )
+                self._generator = generator
             return self._generator
 
     @property  # type: ignore[override]
@@ -188,6 +207,12 @@ class Deferred(Generator[T]):
         """Whether the definition can never produce a value. A definition
         that reaches itself while this is computed is taken to be empty on
         that path, so only self-references with another way out count."""
+        with self._lock:
+            if self._defining:
+                # Asked from inside the definition itself (by a collection
+                # built there checking its elements): not known yet, and
+                # checked again when the definition is drawn from.
+                return False
         in_progress: set[int] = getattr(_calculating, "empty", None) or set()
         _calculating.empty = in_progress
         if id(self) in in_progress:

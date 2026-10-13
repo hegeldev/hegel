@@ -8,7 +8,9 @@ import datetime as dt
 import decimal
 import enum
 import fractions
+import inspect
 import ipaddress
+import numbers
 import typing
 import uuid
 
@@ -96,9 +98,11 @@ CASES = [
     (list, lambda v: isinstance(v, list)),
     (list[int], lambda v: isinstance(v, list) and all(isinstance(x, int) for x in v)),
     (list[str], lambda v: all(isinstance(x, str) for x in v)),
-    (collections.abc.Sequence[int], lambda v: isinstance(v, list)),
+    (collections.abc.Sequence[int], lambda v: isinstance(v, (list, bytes))),
+    (collections.abc.Sequence[str], lambda v: isinstance(v, list)),
     (collections.abc.MutableSequence[int], lambda v: isinstance(v, list)),
     (collections.deque[int], lambda v: isinstance(v, collections.deque)),
+    (collections.deque, lambda v: isinstance(v, collections.deque)),
     (set[int], lambda v: isinstance(v, set)),
     (collections.abc.MutableSet[int], lambda v: isinstance(v, set)),
     (frozenset[int], lambda v: isinstance(v, frozenset)),
@@ -108,13 +112,17 @@ CASES = [
         lambda v: all(isinstance(k, str) and isinstance(x, int) for k, x in v.items()),
     ),
     (dict[int, int], lambda v: isinstance(v, dict)),
+    (dict, lambda v: isinstance(v, dict)),
     (collections.abc.Mapping[int, int], lambda v: isinstance(v, dict)),
     (collections.abc.MutableMapping[int, int], lambda v: isinstance(v, dict)),
     (collections.OrderedDict[int, int], lambda v: isinstance(v, collections.OrderedDict)),
+    (collections.OrderedDict, lambda v: isinstance(v, collections.OrderedDict)),
     (collections.abc.Iterable[int], lambda v: all(isinstance(x, int) for x in v)),
-    (collections.abc.Iterator[int], lambda v: iter(v) is not None),
+    (collections.abc.Iterator[int], lambda v: not isinstance(v, bytes) and iter(v) is not None),
     (collections.abc.Collection[int], lambda v: iter(v) is not None),
     (tuple, lambda v: isinstance(v, tuple)),
+    (tuple[()], lambda v: v == ()),
+    (typing.Tuple[()], lambda v: v == ()),  # noqa: UP006
     (typing.Tuple, lambda v: isinstance(v, tuple)),  # noqa: UP006
     (tuple[int, ...], lambda v: isinstance(v, tuple) and all(isinstance(x, int) for x in v)),
     (tuple[int, str], lambda v: len(v) == 2 and isinstance(v[1], str)),
@@ -177,21 +185,47 @@ def test_builds_infers_annotated_arguments():
     def positional_only(a: int, /, b: str, *args, c: bytes, **kwargs):
         return (a, b, c)
 
-    inferred = infer_missing_arguments(positional_only, 1, {})
-    assert set(inferred) == {"b", "c"}
-    assert infer_missing_arguments(len, 0, {}) == {}
+    supplied = (gs.just(1),)
+    args, kwargs = infer_missing_arguments(positional_only, supplied, {})
+    assert args == supplied
+    assert set(kwargs) == {"b", "c"}
+    assert infer_missing_arguments(len, (), {}) == ((), {})
 
     def no_annotation(a, b: ...):  # type: ignore[valid-type]
         return a
 
-    assert infer_missing_arguments(no_annotation, 0, {}) == {}
+    assert infer_missing_arguments(no_annotation, (), {}) == ((), {})
 
     class BadHints:
         def __init__(self, a: NoSuchType):  # noqa: F821
             pass
 
     with pytest.raises(hegel.InvalidArgument, match="could not be resolved"):
-        infer_missing_arguments(BadHints, 0, {})
+        infer_missing_arguments(BadHints, (), {})
+
+
+def test_builds_infers_positional_only_arguments():
+    def positional_only(a: int, b: str, /, c: bytes = b"", *, d: float):
+        return (a, b, c, d)
+
+    check_all(
+        gs.builds(positional_only),
+        lambda v: isinstance(v[0], int) and isinstance(v[1], str) and v[2] == b"",
+    )
+    check_all(gs.builds(positional_only, gs.just(1)), lambda v: v[0] == 1 and isinstance(v[1], str))
+
+    def unannotated_first(a, b: str, /):
+        return (a, b)
+
+    # ``b`` cannot be passed without ``a``, so neither is inferred.
+    assert infer_missing_arguments(unannotated_first, (), {}) == ((), {})
+
+    class PositionalOnly:
+        def __init__(self, a: int, /, b: str = "b"):
+            self.a = a
+            self.b = b
+
+    check_all(gs.from_type(PositionalOnly), lambda v: isinstance(v.a, int) and isinstance(v.b, str))
 
 
 def test_from_type_networks_and_interfaces():
@@ -320,12 +354,18 @@ def test_registered_generators_are_checked():
             gs.from_type(Shape)
     finally:
         del gs.from_type.__globals__["_registry"][Shape]
-    gs.register_type_generator(Shape, gs.nothing())
+    gs.register_type_generator(Shape, lambda t: gs.nothing())
     try:
         with pytest.raises(hegel.errors.ResolutionFailed, match="is empty"):
             gs.from_type(Shape)
     finally:
         del gs.from_type.__globals__["_registry"][Shape]
+    with pytest.raises(hegel.InvalidArgument, match="empty generator"):
+        gs.register_type_generator(Shape, gs.nothing())
+    with pytest.raises(hegel.InvalidArgument, match="not the string 'Shape'"):
+        gs.register_type_generator("Shape", gs.just(Square(4)))
+    assert Shape not in gs.from_type.__globals__["_registry"]
+    assert "Shape" not in gs.from_type.__globals__["_registry"]
 
 
 class HasMethod(typing.Protocol):
@@ -352,3 +392,140 @@ def test_type_variables_bound_to_registered_forward_references():
         check_all(gs.from_type(BoundToRegistered), lambda v: v == "registered")
     finally:
         del gs.from_type.__globals__["_registry"][typing.ForwardRef("RegisteredName")]
+
+
+class UnhashableMeta(type):
+    __hash__ = None  # type: ignore[assignment]
+
+
+class Unhashable(metaclass=UnhashableMeta):
+    pass
+
+
+def test_from_type_resolves_unhashable_types():
+    check_all(gs.from_type(Unhashable), lambda v: isinstance(v, Unhashable))
+
+
+def takes_str(value: str, extra=None) -> None: ...
+
+
+class SignedConstructor:
+    value: int
+
+    __signature__ = inspect.signature(takes_str)
+
+    def __init__(self, value: int):
+        self.value = value
+
+
+def takes_int(value: int) -> None:
+    assert isinstance(value, int)
+
+
+takes_int.__signature__ = inspect.signature(takes_str)  # type: ignore[attr-defined]
+
+
+def test_explicit_signature_outranks_annotations():
+    check_all(gs.from_type(SignedConstructor), lambda v: isinstance(v.value, str))
+    check_all(gs.builds(SignedConstructor), lambda v: isinstance(v.value, str))
+    with pytest.raises(AssertionError):
+        check_all(gs.builds(takes_int), lambda v: True)
+
+    def forward(value: NoSuchName) -> None: ...  # noqa: F821
+
+    def resolved(value: int) -> None:
+        return value
+
+    resolved.__signature__ = inspect.signature(forward)  # type: ignore[attr-defined]
+    # An unresolvable annotation in the signature defers to the resolved one.
+    check_all(gs.builds(resolved), lambda v: isinstance(v, int))
+
+
+class Greets(typing.Protocol):
+    def greet(self) -> str: ...
+
+
+class Greeter(Greets):
+    def __init__(self, name: str):
+        self.name = name
+
+    def greet(self) -> str:
+        return self.name
+
+
+class Sized(typing.Protocol):
+    def size(self) -> int: ...
+
+
+class Measured(abc.ABC):
+    @abc.abstractmethod
+    def method(self): ...
+
+
+class Ruler(Measured):
+    def __init__(self, sized: Sized):
+        self.sized = sized
+
+    def method(self):
+        return self.sized
+
+
+class Yardstick(Measured):
+    def method(self):
+        return 3
+
+
+def test_from_type_resolves_protocols_through_their_subclasses():
+    check_all(gs.from_type(Greets), lambda v: isinstance(v, Greeter))
+    with pytest.raises(hegel.errors.ResolutionFailed, match="no subclasses"):
+        gs.from_type(Sized)
+    # A subclass needing an unresolvable protocol is skipped, not instantiated.
+    check_all(gs.from_type(Measured), lambda v: isinstance(v, Yardstick))
+
+
+def test_typed_dict_with_unresolvable_annotations():
+    Alias = int
+
+    class Local(typing.TypedDict):
+        value: Alias
+
+    with pytest.raises(hegel.errors.ResolutionFailed, match="annotations could not be resolved"):
+        gs.from_type(Local)
+
+
+@pytest.mark.parametrize(
+    "type_",
+    [
+        collections.abc.Sequence[int],
+        collections.abc.Sequence[object],
+        collections.abc.Sequence[numbers.Real],
+        collections.abc.Sequence[int | str],
+        collections.abc.Sequence[typing.Union[str, numbers.Real]],  # noqa: UP007
+        collections.abc.Iterable[int],
+        collections.abc.Collection[int],
+        typing.Sequence,  # noqa: UP006
+    ],
+    ids=repr,
+)
+def test_bytes_are_sequences_of_integers(type_):
+    assert isinstance(find_example(gs.from_type(type_), lambda v: isinstance(v, bytes)), bytes)
+    assert not isinstance(
+        find_example(gs.from_type(type_), lambda v: not isinstance(v, bytes)), bytes
+    )
+
+
+@pytest.mark.parametrize(
+    "type_",
+    [
+        collections.abc.Sequence[str],
+        collections.abc.Sequence[bool],
+        collections.abc.Sequence[str | bytes],
+        collections.abc.Sequence[typing.Any],
+        collections.abc.MutableSequence[int],
+        collections.abc.Iterator[int],
+        list[int],
+    ],
+    ids=repr,
+)
+def test_bytes_are_not_sequences_of_other_things(type_):
+    check_all(gs.from_type(type_), lambda v: not isinstance(v, bytes))

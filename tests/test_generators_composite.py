@@ -103,3 +103,25 @@ def test_builds_prints_as_call():
 def test_builds_without_signature():
     assert find_example(gs.builds(int)) == 0
     check_all(gs.builds(dict), lambda d: d == {})
+
+
+def test_composite_validates_its_function():
+    with pytest.raises(hegel.InvalidArgument, match="not the class Point"):
+        hegel.composite(Point)
+    with pytest.raises(hegel.InvalidArgument, match="first positional parameter"):
+
+        @hegel.composite
+        def keyword_only(*, tc):
+            pass
+
+    with pytest.raises(hegel.InvalidArgument, match="first positional parameter"):
+
+        @hegel.composite
+        def only_kwargs(**kwargs):
+            pass
+
+    @hegel.composite
+    def variadic(*args):
+        return args[0].draw(gs.just(args[1]))
+
+    assert find_example(variadic(3)) == 3

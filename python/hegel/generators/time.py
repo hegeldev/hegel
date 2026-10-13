@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 from hegel.errors import InvalidArgument
 from hegel.generators.base import Generator, combine_labels, label_from_name
 from hegel.generators.combinators import as_generator, just
-from hegel.generators.numeric import integers
 
 if TYPE_CHECKING:
     from hegel.test_case import TestCase
@@ -147,27 +146,36 @@ def datetimes(
         raise InvalidArgument("datetimes() bounds must be naive")
     if min_value > max_value:
         raise InvalidArgument(f"Cannot have max_value={max_value!r} < min_value={min_value!r}")
+    _check_type("allow_imaginary", allow_imaginary, bool)
     return Datetimes(
         min_value,
         max_value,
         None if timezones is None else as_generator(timezones),
-        bool(allow_imaginary),
+        allow_imaginary,
     )
-
-
-def _to_micros(delta: dt.timedelta) -> int:
-    return (delta.days * 86400 + delta.seconds) * 1_000_000 + delta.microseconds
 
 
 class Timedeltas(Generator[dt.timedelta]):
     def __init__(self, min_value: dt.timedelta, max_value: dt.timedelta) -> None:
         self.min_value = min_value
         self.max_value = max_value
-        self._micros = integers(_to_micros(min_value), _to_micros(max_value))
         self.label = TIMEDELTA_LABEL
 
     def do_draw(self, tc: TestCase) -> dt.timedelta:
-        return dt.timedelta(microseconds=tc.draw_silent(self._micros))
+        # Days, then seconds, then microseconds, as timedelta normalises
+        # them, so a delta shrinks to whole days before whole seconds. Each
+        # component is bounded by the matching bound's component only while
+        # the components drawn so far sit on that bound.
+        components = {}
+        on_min = on_max = True
+        for name in ("days", "seconds", "microseconds"):
+            low = getattr(self.min_value if on_min else dt.timedelta.min, name)
+            high = getattr(self.max_value if on_max else dt.timedelta.max, name)
+            value = tc._generate_integer(low, high)
+            components[name] = value
+            on_min = on_min and value == low
+            on_max = on_max and value == high
+        return dt.timedelta(**components)
 
     def __repr__(self) -> str:
         return f"timedeltas(min_value={self.min_value!r}, max_value={self.max_value!r})"
@@ -191,6 +199,7 @@ def timezones(*, no_cache: bool = False) -> Generator[dt.tzinfo]:
 
     from hegel.generators.combinators import sampled_from
 
+    _check_type("no_cache", no_cache, bool)
     try:
         keys = sorted(zoneinfo.available_timezones())
     except Exception:  # nocov

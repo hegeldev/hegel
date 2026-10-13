@@ -44,11 +44,6 @@ def go_wrong_coverup(a, b):
         raise ValueError("Something went wrong") from None
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel distinguishes failures by exception type and location only, not by "
-    "the cause chain, so both errors are reported as one",
-)
 @pytest.mark.parametrize(
     "function",
     [go_wrong_naive, go_wrong_with_cause, go_wrong_coverup],

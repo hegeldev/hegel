@@ -79,11 +79,6 @@ def test_disallowed_non_finite_observations(observation):
     test()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel's TestCase.target coerces the score with float(), so a numeric "
-    "string is accepted and other non-numbers raise TypeError rather than InvalidArgument",
-)
 @pytest.mark.parametrize("observation", ["1", None, [0.0]])
 def test_disallowed_non_numeric_observations(observation):
     @hegel.test
@@ -95,11 +90,6 @@ def test_disallowed_non_numeric_observations(observation):
     test()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel's TestCase.target raises TypeError rather than InvalidArgument "
-    "for a label that is not a string",
-)
 @pytest.mark.parametrize("label", [["a list of strings is not a valid label"], 1, None])
 def test_disallowed_labels(label):
     @hegel.test

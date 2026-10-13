@@ -262,14 +262,6 @@ def test_cannot_exclude_endpoint_with_zero_interval(lo, hi, exmin, exmax):
 WIDTHS = (64, 32)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=(hegel.InternalError, hegel.InvalidArgument),
-    reason="the engine cannot draw from an interval whose only value is an infinity: "
-    "floats(inf, inf) is an InternalError (FloatChoice::simplest: no valid float for this "
-    "choice) at width 64, and at width 32 the bound is clamped to the largest finite float "
-    "and rejected as min_value (inf) > max_value",
-)
 @pytest.mark.parametrize("width", WIDTHS)
 @pytest.mark.parametrize("bound", [math.inf, -math.inf])
 def test_interval_of_a_single_infinity(bound, width):

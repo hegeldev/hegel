@@ -181,3 +181,24 @@ def test_settings_are_frozen():
     settings = Settings()
     with pytest.raises(AttributeError):
         settings.test_cases = 3  # type: ignore[misc]
+
+
+def test_parent_and_profile_arguments_are_validated():
+    class NotSettings:
+        def __repr__(self):
+            return "(not settings)"
+
+    with pytest.raises(hegel.InvalidArgument, match=r"parent=\(not settings\) must be a Settings"):
+        Settings(NotSettings())
+    with pytest.raises(
+        hegel.InvalidArgument, match=r"settings=\(not settings\) must be a Settings"
+    ):
+        Settings.register_profile("bad", NotSettings())
+    for call in (Settings.register_profile, Settings.from_profile, Settings.set_default_profile):
+        with pytest.raises(hegel.InvalidArgument, match="name=5 must be a string naming a profile"):
+            call(5)
+    with pytest.raises(
+        hegel.InvalidArgument, match=r"test_cases=18446744073709551616 must be less"
+    ):
+        Settings(test_cases=1 << 64)
+    assert Settings(test_cases=(1 << 64) - 1)._build().get_test_cases() == (1 << 64) - 1

@@ -64,12 +64,6 @@ def test_fuzz_floats_bounds(tc):
         assert high != val
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="gs.floats() does not reject an infinite bound (or a bound that exclude_min/"
-    "exclude_max turns infinite) together with allow_infinity=False; the generator is built "
-    "without error",
-)
 @pytest.mark.parametrize(
     "kwargs",
     [

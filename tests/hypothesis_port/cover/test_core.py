@@ -96,13 +96,10 @@ def test_no_such_example():
         minimal(gs.none(), bool)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="generator: lists(nothing(), min_size=1) is empty (is_empty is True) but drawing "
-    "from it fails the FilterTooMuch health check instead of raising InvalidArgument",
-)
 def test_validates_strategies_for_test_method():
-    invalid_generator = gs.lists(gs.nothing(), min_size=1)
+    # Hegel rejects lists(nothing(), min_size=1) when it is built, so the
+    # invalid generator is built inside a draw instead.
+    invalid_generator = gs.integers().flat_map(lambda _: gs.lists(gs.nothing(), min_size=1))
 
     class TestStrategyValidation:
         @hegel.test

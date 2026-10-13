@@ -39,6 +39,7 @@ def test_just_and_none():
     check_all(gs.just([1]), lambda v: v == [1])
     check_all(gs.none(), lambda v: v is None)
     assert repr(gs.just(3)) == "just(3)"
+    assert repr(gs.none()) == "none()"
 
 
 def test_nothing_rejects():
@@ -57,22 +58,72 @@ def test_sampled_from():
     check_all(gs.sampled_from("ab"), lambda v: v in "ab")
     check_all(gs.sampled_from(range(3)), lambda v: v in range(3))
     check_all(gs.sampled_from(Colour), lambda v: isinstance(v, Colour))
-    check_all(gs.sampled_from(Perm), lambda v: isinstance(v, Perm) and v.value != 0)
+    check_all(gs.sampled_from({"a": 1, "b": 2}), lambda v: v in "ab")
+    check_all(gs.sampled_from(x for x in (1, 2)), lambda v: v in (1, 2))
+    assert find_example(gs.sampled_from([3, 2, 1])) == 3
+    with pytest.raises(hegel.InvalidArgument):
+        gs.sampled_from([])
+    with pytest.raises(hegel.InvalidArgument):
+        gs.sampled_from({1, 2})
+
+
+def test_sampled_from_repr_preserves_the_argument():
+    assert repr(gs.sampled_from([1, 2])) == "sampled_from([1, 2])"
+    assert repr(gs.sampled_from((1, 2))) == "sampled_from((1, 2))"
+    assert repr(gs.sampled_from("ab")) == "sampled_from('ab')"
+    assert repr(gs.sampled_from(range(2**40))) == "sampled_from(range(0, 1099511627776))"
+    assert repr(gs.sampled_from({"a": 1})) == "sampled_from(('a',))"
+    assert repr(gs.sampled_from(Colour)) == "sampled_from(Colour)"
+    assert repr(gs.sampled_from(Perm)) == "sampled_from(Perm)"
+
+
+def test_sampled_from_copies_a_list():
+    elements = [1, 2]
+    generator = gs.sampled_from(elements)
+    elements.append(3)
+    check_all(generator, lambda v: v in (1, 2))
+
+
+class Unnamed(enum.Flag):
+    # The zero member and the multi-bit member are skipped when iterating
+    # the class; `__members__` has them.
+    zero = 0
+    both = 3
+
+
+class Aliased(enum.Flag):
+    a = 1
+    b = 2
+    both = 3
+    also_a = 1
+
+
+def test_sampled_from_flags():
+    check_all(gs.sampled_from(Perm), lambda v: isinstance(v, Perm))
     combinations = set()
 
     def collect(tc):
         combinations.add(tc.draw(gs.sampled_from(Perm)))
 
     run_test(collect, test_cases=200)
-    assert combinations == {Perm(bits) for bits in range(1, 8)}
-    assert repr(gs.sampled_from((1, 2))) == "sampled_from([1, 2])"
-    assert find_example(gs.sampled_from([3, 2, 1])) == 3
-    with pytest.raises(hegel.InvalidArgument):
-        gs.sampled_from([])
-    with pytest.raises(hegel.InvalidArgument):
+    assert combinations == {Perm(bits) for bits in range(8)}
+    assert find_example(gs.sampled_from(Perm)) == Perm.read
+    assert find_example(gs.sampled_from(Perm), lambda v: v.value.bit_count() > 1) == (
+        Perm.read | Perm.write
+    )
+    assert find_example(gs.sampled_from(Perm), lambda v: not v) == Perm(0)
+    # Named members that iterating the class skips are still sampled, and
+    # the empty flag shrinks to its name.
+    check_all(gs.sampled_from(Unnamed), lambda v: v in (Unnamed.zero, Unnamed.both))
+    assert find_example(gs.sampled_from(Unnamed), lambda v: v) == Unnamed.both
+    assert find_example(gs.sampled_from(Unnamed)) == Unnamed.zero
+    zero_only = enum.Flag("ZeroOnly", {"nothing": 0})
+    check_all(gs.sampled_from(zero_only), lambda v: v is zero_only.nothing)
+    assert find_example(gs.sampled_from(Aliased), lambda v: v.value == 3) == Aliased.both
+    with pytest.raises(hegel.InvalidArgument, match="Empty: it has no members"):
         gs.sampled_from(Empty)
-    with pytest.raises(hegel.InvalidArgument):
-        gs.sampled_from({1, 2})
+    with pytest.raises(hegel.InvalidArgument, match="no members"):
+        gs.sampled_from(enum.Enum("Nothing", {}))
 
 
 def test_one_of():
@@ -89,6 +140,8 @@ def test_one_of():
         gs.one_of()
     with pytest.raises(hegel.InvalidArgument):
         gs.one_of(gs.just(1), 5)
+    with pytest.raises(hegel.InvalidArgument, match="expected a Generator but got 1"):
+        gs.one_of(1)
 
 
 def test_one_of_prints_chosen_branch():
@@ -255,11 +308,16 @@ def test_emptiness_propagates_through_wrappers_and_collections():
     assert empty.flat_map(lambda v: gs.just(v)).is_empty
     assert empty.filter(bool).is_empty
     assert not gs.integers().filter(bool).is_empty
-    assert gs.lists(empty, min_size=1).is_empty
     assert not gs.lists(empty).is_empty
-    assert gs.sets(empty, min_size=1).is_empty
-    assert gs.dicts(empty, gs.integers(), min_size=1).is_empty
+    assert not gs.sets(empty).is_empty
+    assert not gs.sets(gs.integers(), min_size=1).is_empty
     assert not gs.dicts(gs.integers(), empty).is_empty
+    with pytest.raises(hegel.InvalidArgument):
+        gs.lists(empty, min_size=1)
+    with pytest.raises(hegel.InvalidArgument):
+        gs.sets(empty, min_size=1)
+    with pytest.raises(hegel.InvalidArgument):
+        gs.dicts(empty, gs.integers(), min_size=1)
     assert gs.fixed_dicts({"a": empty}).is_empty
     assert not gs.fixed_dicts({"a": gs.integers()}).is_empty
     assert gs.tuples(gs.integers(), empty).is_empty

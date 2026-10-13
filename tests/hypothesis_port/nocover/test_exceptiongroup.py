@@ -16,14 +16,14 @@ import pytest
 import hegel
 from hegel import generators as gs
 
-_no_unwrap = pytest.mark.xfail(
+_filter_too_much = pytest.mark.xfail(
     strict=True,
-    reason="Hegel does not unwrap its control-flow exceptions (AssumeFailed, "
-    "InvalidArgument) from an exception group: the group is reported as a failure",
+    reason="engine: rejecting every input after a draw fails the FilterTooMuch health "
+    "check rather than raising Unsatisfiable (docs/engine-issues.md)",
 )
 
 
-@_no_unwrap
+@_filter_too_much
 def test_exceptiongroup_discard_frozen():
     """Basic test that raises Frozen+Unsatisfiable.
     Frozen is thrown out, and Unsatisfiable is raised"""
@@ -44,7 +44,7 @@ def test_exceptiongroup_discard_frozen():
         test_function()
 
 
-@_no_unwrap
+@_filter_too_much
 def test_exceptiongroup_nested() -> None:
     @hegel.test
     def test_function(tc: hegel.TestCase) -> None:
@@ -88,7 +88,6 @@ def test_exceptiongroup_user_originated() -> None:
     assert isinstance(e.exceptions[0], ValueError)
 
 
-@_no_unwrap
 def test_exceptiongroup_multiple_stop() -> None:
     @hegel.test
     def test_function(tc):
@@ -107,7 +106,6 @@ def test_exceptiongroup_multiple_stop() -> None:
         test_function()
 
 
-@_no_unwrap
 def test_exceptiongroup_stop_and_hypothesisexception() -> None:
     # group with rejection+invalidargument -> invalidargument
     @hegel.test
@@ -131,7 +129,6 @@ def test_exceptiongroup_stop_and_hypothesisexception() -> None:
         test_function()
 
 
-@_no_unwrap
 def test_exceptiongroup_multiple_hypothesisexception() -> None:
     # multiple AssumeFailed => first one is reraised => engine suppresses it
 
@@ -153,7 +150,6 @@ def test_exceptiongroup_multiple_hypothesisexception() -> None:
     test_function()
 
 
-@_no_unwrap
 def test_exceptiongroup_multiple_InvalidArgument() -> None:
     # multiple InvalidArgument => only first one is reraised... which seems bad.
     # But raising a group might break ghostwriter(?)

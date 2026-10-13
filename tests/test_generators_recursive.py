@@ -143,6 +143,15 @@ def test_deferred_label_of_direct_cycle_and_errors():
         gs.deferred(5)
 
 
+def test_deferred_definition_can_build_non_empty_collections_of_itself():
+    # lists(x, min_size=1) checks x.is_empty when built, which happens while
+    # x's definition runs: that is not yet known, and must not count as empty.
+    x = gs.deferred(lambda: gs.none() | gs.lists(x, min_size=1))
+    assert not x.is_empty
+    check_all(x, lambda v: v is None or isinstance(v, list), test_cases=50)
+    assert find_example(x, lambda v: v is not None) == [None]
+
+
 def test_deferred_mutual_recursion_and_threads():
     a = gs.deferred(lambda: gs.just("a") | b)
     b = gs.deferred(lambda: gs.just("b") | a)
@@ -183,3 +192,27 @@ def test_deferred_self_reference_without_a_way_out_is_rejected():
 
     with pytest.raises(hegel.errors.Unsatisfiable):
         run_test(body, test_cases=20)
+
+
+def test_deferred_defined_as_itself_is_an_error():
+    direct = gs.deferred(lambda: direct)
+    first = gs.deferred(lambda: second)
+    second = gs.deferred(lambda: first)
+    for cyclic in (direct, first):
+        assert cyclic.label == DEFERRED_LABEL
+        with pytest.raises(hegel.InvalidArgument, match="Cannot define a deferred generator"):
+            cyclic.is_empty  # noqa: B018
+        with pytest.raises(hegel.InvalidArgument, match="Cannot define a deferred generator"):
+            find_example(cyclic)
+    assert repr(direct) == "deferred('<lambda>')"
+
+
+def test_deferred_defined_as_another_deferred_resolves_through_it():
+    outer = gs.deferred(lambda: inner)
+    inner = gs.deferred(lambda: gs.just(3))
+    assert find_example(outer) == 3
+    assert repr(outer) == "just(3)"
+    resolved_outer = gs.deferred(lambda: resolved_inner)
+    resolved_inner = gs.deferred(lambda: gs.just(4))
+    assert find_example(resolved_inner) == 4
+    assert find_example(resolved_outer) == 4

@@ -52,11 +52,17 @@ def composite(function: Callable[..., T]) -> Callable[..., Generator[T]]:
     """
     if not callable(function):
         raise InvalidArgument("composite() takes a function")
+    if inspect.isclass(function):
+        raise InvalidArgument(
+            f"composite() takes a function, not the class {function.__name__}. To generate "
+            "instances, use builds()."
+        )
     signature = inspect.signature(function)
-    if not signature.parameters:
+    parameters = list(signature.parameters.values())
+    if not parameters or "POSITIONAL" not in parameters[0].kind.name:
         raise InvalidArgument(
             f"{getattr(function, '__name__', function)} must take the test case "
-            "as its first argument"
+            "as its first positional parameter"
         )
 
     @functools.wraps(function)
@@ -130,5 +136,5 @@ def builds(target: Callable[..., T], /, *args: Any, **kwargs: Any) -> Generator[
     kw_gens = {k: as_generator(v) for k, v in kwargs.items()}
     from hegel.generators.from_type import infer_missing_arguments
 
-    kw_gens = infer_missing_arguments(target, len(arg_gens), kw_gens)
+    arg_gens, kw_gens = infer_missing_arguments(target, arg_gens, kw_gens)
     return Builds(target, arg_gens, kw_gens)

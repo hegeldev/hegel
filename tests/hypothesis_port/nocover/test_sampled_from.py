@@ -78,8 +78,7 @@ class AnEnum(enum.Enum):
 
 
 def test_enum_repr_names_the_class():
-    # The repr should have enough detail to find the class again. Hypothesis
-    # reprs the class itself; hegel lists the members, whose reprs name it.
+    # The repr should have enough detail to find the class again.
     assert "AnEnum" in repr(gs.sampled_from(AnEnum))
 
 
@@ -98,19 +97,10 @@ class UnnamedFlag(enum.Flag):
     b = 7
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel's sampled_from of a Flag class has no repr of its own (FlagCombinations())",
-)
 def test_flag_enum_repr_names_the_class():
     assert "AFlag" in repr(gs.sampled_from(AFlag))
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="Engine: about 4% of runs never draw the empty flag, as the engine "
-    "over-draws the all-zero choice sequence (docs/engine-issues.md)",
-)
 def test_exhaustive_flags():
     # Generate powerset of flag combinations. There are only 2^3 of them, so
     # we can reasonably expect that they are all are found.
@@ -145,21 +135,9 @@ def test_flags_finds_all_bits_set():
     assert find_any(gs.sampled_from(LargeFlag), lambda f: f == ~LargeFlag(0))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel's sampled_from iterates a Flag class, which skips the non-canonical member b=7 "
-    "and the zero member, so UnnamedFlag raises InvalidArgument",
-    raises=hegel.InvalidArgument,
-)
 def test_sample_unnamed_alias():
     assert find_any(gs.sampled_from(UnnamedFlag), lambda f: f == UnnamedFlag.b)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel's sampled_from iterates a Flag class, which skips the non-canonical member b=7 "
-    "and the zero member, so UnnamedFlag raises InvalidArgument",
-    raises=hegel.InvalidArgument,
-)
 def test_shrink_to_named_empty():
     assert minimal(gs.sampled_from(UnnamedFlag)) == UnnamedFlag(0)

@@ -77,7 +77,9 @@ differently marked `xfail` and a note per file of what was dropped.
   implementations and annotated constructors: builtins without annotations
   (exceptions, `range`, `slice`, ...), typing special forms such as
   `Callable[...]` and `Final`, and forward references found in caller
-  frames. Recursive types are resolved eagerly rather than deferred.
+  frames. Recursive types are resolved eagerly rather than deferred, and a
+  `Protocol` with no resolvable subclass is `ResolutionFailed` when the
+  generator is built rather than a `TypeError` when drawn.
   `characters(codec=...)` beyond ascii, latin-1 and utf-8.
 - Lambda source in reprs: a filtered or mapped generator reprs with the
   function's `__name__`, so `<lambda>` rather than the lambda's text.
@@ -100,10 +102,11 @@ differently marked `xfail` and a note per file of what was dropped.
 - `target()` steers generation, but the engine only starts targeting halfway
   through the run's budget, so a target-driven failure takes more test cases
   to find than in Hypothesis (see `docs/engine-issues.md`).
-- Failures are told apart by exception type and location, not by the cause
-  chain. By default a failure that does not reproduce on replay is confirmed
-  by repeated replay and reported with a caveat, rather than aborting the run
+- By default a failure that does not reproduce on replay is confirmed by
+  repeated replay and reported with a caveat, rather than aborting the run
   as `Flaky`; non-deterministic data generation is reported as a run error.
+  A failure that reproduces only once is dropped once another failure is
+  confirmed (see `docs/engine-issues.md`).
 - A finite search space is not detected as exhausted early; the engine runs
   up to `test_cases` and does not suppress duplicate inputs. There is no
   shrinking time limit.
@@ -115,9 +118,8 @@ differently marked `xfail` and a note per file of what was dropped.
 - A skipped test ends the run before anything is saved to the database.
 - Generator arguments are validated when the generator is built, not when
   the test runs.
-- The repr of a `sampled_from` of an enum lists the members, and
-  `characters()` reprs without its arguments. `sets(sampled_from(...),
-  min_size=n)` does not sample without replacement.
+- `sets(sampled_from(...), min_size=n)` and the keys of a `dicts` do not
+  sample without replacement.
 - `datetimes()` and `times()` never set `fold`, and there is no targeting of
   DST folds, gaps or leap seconds.
 - `from_regex` depends on the engine's regex generator; see
@@ -126,6 +128,13 @@ differently marked `xfail` and a note per file of what was dropped.
   alphabet, are not reported up front.
 - Deeply self-referential `recursive(deferred(...))` generators hit Python's
   recursion limit.
+- A test whose every input is rejected fails the `FilterTooMuch` health
+  check (or passes quietly when that check is suppressed) rather than
+  raising `Unsatisfiable`.
+- `Pool.values_consumed()` removes a value from the pool as soon as it is
+  drawn, so a rule rejected by `tc.assume` afterwards, or a `.filter` on the
+  consumed values, loses values that a Hypothesis `consumes(bundle)` would
+  keep.
 
 ## Output format
 

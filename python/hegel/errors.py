@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from hegel._native import (
@@ -76,6 +77,12 @@ class MultipleFailures(BaseExceptionGroup):  # type: ignore[type-arg]
         if cls is MultipleFailures and all(isinstance(e, Exception) for e in exceptions):
             cls = _MultipleExceptions
         return super().__new__(cls, message, exceptions)  # type: ignore[no-any-return]
+
+    def derive(self, excs: Sequence[BaseException], /) -> MultipleFailures:  # type: ignore[override]
+        """The group ``split`` and ``subgroup`` (and so ``except*`` and
+        ``contextlib.suppress``) build from a subset of the failures: another
+        ``MultipleFailures``, where the default would be a plain group."""
+        return MultipleFailures(self.message, excs)
 
 
 class _MultipleExceptions(MultipleFailures, ExceptionGroup):  # type: ignore[misc]

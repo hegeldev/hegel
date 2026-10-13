@@ -98,16 +98,6 @@ from tests.hypothesis_port.common.utils import temp_registered
 # we'll continue testing the typing variants until their removal from the stdlib
 # ruff: noqa: UP006, UP035, UP045, UP007
 
-RUNTIME_SUBCLASSES = (
-    "Hegel resolves an abstract collections.abc type by its runtime subclasses, which "
-    "under pytest include an uninstantiable Protocol"
-)
-
-
-def xfail(reason):
-    return pytest.mark.xfail(strict=True, reason=reason)
-
-
 sentinel = object()
 # The builtins from_type can resolve: those with their own generator, plus the
 # few whose constructor takes no required arguments.
@@ -116,6 +106,7 @@ RESOLVABLE_BUILTINS = {
     bytearray,
     bytes,
     complex,
+    dict,
     float,
     frozenset,
     int,
@@ -257,9 +248,7 @@ def test_lookup_overrides_defaults():
     "typ",
     [
         typing.Sequence,
-        pytest.param(
-            typing.Container, marks=pytest.mark.xfail(strict=False, reason=RUNTIME_SUBCLASSES)
-        ),
+        typing.Container,
         typing.Mapping,
         typing.Reversible,
     ],
@@ -511,7 +500,6 @@ def test_resolving_mutually_recursive_types_with_defaults(tc):
         i += 1
 
 
-@xfail("Hegel's from_type treats tuple[()] like a bare tuple, so it yields non-empty tuples")
 @hegel.test
 def test_resolves_empty_Tuple_issue_1583_regression(tc):
     # See e.g. https://github.com/python/mypy/commit/71332d58
@@ -558,9 +546,7 @@ def test_cannot_resolve_abstract_class_with_no_concrete_subclass():
     "typ",
     [
         typing.Hashable,  # resolved through the registered Bar and Baz
-        pytest.param(
-            typing.Sized, marks=pytest.mark.xfail(strict=False, reason=RUNTIME_SUBCLASSES)
-        ),
+        typing.Sized,
     ],
 )
 @hegel.test
@@ -587,7 +573,6 @@ def test_bytestring_not_treated_as_generic_sequence(tc):
 @pytest.mark.parametrize(
     "type_", [int, Real, object, typing.Union[int, str], typing.Union[Real, str]]
 )
-@xfail("Hegel's from_type(Sequence[T]) only ever generates lists")
 def test_bytestring_is_valid_sequence_of_int_and_parent_classes(type_):
     find_any(
         from_type(typing.Sequence[type_]),
@@ -621,7 +606,6 @@ def test_no_byteswarning(tc):
     tc.draw(gs.sets(gs.integers() | gs.binary(), min_size=2))
 
 
-@xfail("Hegel's from_type looks the type up in a dict, so an unhashable type is a TypeError")
 def test_unhashable_type():
     class UnhashableMeta(type):
         __hash__ = None
@@ -736,7 +720,6 @@ really_takes_str.__signature__ = signature(selfless_signature)
         really_takes_str,
     ],
 )
-@xfail("Hegel's builds prefers __annotations__ to the annotations of an explicit __signature__")
 def test_signature_is_the_most_important_source(thing):
     """Signature types should take precedence over all other annotations."""
     check_can_generate_examples(gs.builds(thing))

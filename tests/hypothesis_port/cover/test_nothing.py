@@ -23,37 +23,18 @@ def test_resampling():
     assert x == [0] * 10
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="hegel's lists() do not short-circuit on an empty element generator: whenever the "
-    "engine chooses to draw an element the case is rejected, and about a quarter of runs "
-    "fail FilterTooMuch",
-    raises=hegel.FailedHealthCheck,
-)
 @hegel.test
 def test_list_of_nothing(tc):
     xs = tc.draw(gs.lists(gs.nothing()))
     assert xs == []
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="hegel's sets() do not short-circuit on an empty element generator: whenever the "
-    "engine chooses to draw an element the case is rejected, and about a quarter of runs "
-    "fail FilterTooMuch",
-    raises=hegel.FailedHealthCheck,
-)
 @hegel.test
 def test_set_of_nothing(tc):
     xs = tc.draw(gs.sets(gs.nothing()))
     assert xs == set()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel's lists(nothing(), min_size=1) is built without complaint (is_empty is True) "
-    "and fails FilterTooMuch when drawn, rather than raising InvalidArgument",
-)
 def test_validates_min_size():
     with pytest.raises(hegel.InvalidArgument):
         gs.lists(gs.nothing(), min_size=1)
