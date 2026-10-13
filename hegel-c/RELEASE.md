@@ -1,0 +1,5 @@
+RELEASE_TYPE: patch
+
+This patch fixes two skews in generation. Span mutation, which copies one span's values onto another span with the same label, no longer pairs spans whose first draws are of different kinds (such as a `one_of` index and the draw it selects, whose copied values could only collapse to the simplest value) and no longer re-runs a proposal that has already been executed, so a hundred cases over a small finite space now reach every value instead of drawing the all-zero sequence far more often than its share.
+
+Integer ranges too wide for `i128` now draw their ordinary values with the same bit-width shape as narrower ranges, an offset from the shrink target whose magnitude spreads over the range's orders, instead of uniformly over the span; `integers(0, 10**100)` previously produced values above `10**25` about two thirds of the time. Boundary values keep their weight. Seeded runs that draw such integers, or that spend cases on span mutation, generate different values from this version on.
