@@ -7,16 +7,17 @@
 //! match end as [`Matcher`](super::matcher::Matcher) does, in time
 //! proportional to the text rather than to the paths through it.
 //!
-//! The program can express patterns without backreferences, conditional
-//! groups, atomic groups, possessive repeats or unbounded repeats whose
-//! body can match empty, and whose unrolled size
-//! stays within [`PROGRAM_LIMIT`]; anything else is [`Unsupported`] and
-//! stays with the backtracking matcher. Stopping an unbounded repeat
-//! after an empty iteration requires distinguishing paths that reach
-//! the same instruction with different progress through the repeat;
-//! merging those paths can change the preferred match end. The
-//! recognition-only compiler allows these repeats: merging changes
-//! preference but preserves whether a match exists.
+//! The program can express a pattern whose unrolled size stays within
+//! [`PROGRAM_LIMIT`] and that has no backreference, conditional group,
+//! atomic group, possessive repeat or unbounded repeat of something
+//! that can match empty; anything else is [`Unsupported`] and stays
+//! with the backtracking matcher. CPython stops such a repeat after an
+//! iteration that consumed nothing, which tells apart paths that reach
+//! the same instruction with different progress through the repeat,
+//! while the simulation merges them, and that can change which match
+//! end is preferred. A program compiled for recognition alone
+//! ([`Program::compile_recognizer`]) admits these repeats: merging
+//! changes the preferred end but not whether a match exists.
 //!
 //! The simulation on its own costs more per character than backtracking
 //! does on the common run of a pattern, so a program whose instructions
@@ -606,10 +607,12 @@ impl Program {
         Self::compile_with(parsed, false)
     }
 
-    /// Compile for checking whether a match exists. Unlike [`Self::compile`],
-    /// this accepts nullable unbounded repeats, but the returned match end
-    /// need not be CPython's preferred one. Callers must use only whether
-    /// [`Self::scan`] finds a match, with an exact end for whole-string checks.
+    /// Compile `parsed` for checking whether a match exists: unlike
+    /// [`compile`](Self::compile) this admits an unbounded repeat of
+    /// something that can match empty, at the price that the end
+    /// [`scan`](Self::scan) finds need not be the one CPython prefers. A
+    /// caller reads only whether a match was found, giving an exact end
+    /// to check the whole of a string.
     pub fn compile_recognizer(parsed: &ParsedPattern) -> Result<Program, Unsupported> {
         Self::compile_with(parsed, true)
     }

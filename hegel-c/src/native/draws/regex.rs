@@ -347,6 +347,9 @@ impl CompiledRegex {
 /// the choice recording it has a bound; a draw past it is invalid.
 pub(crate) const REGEX_MAX_SIZE: usize = 1 << 16;
 
+/// The most sequences one draw may walk, so that a repeat of something
+/// that emits nothing (`(?:){100000000}`) ends: a draw past it is
+/// invalid, as one past [`REGEX_MAX_SIZE`] is.
 const GENERATION_BUDGET: usize = 1 << 22;
 
 /// Seeds tried for the simplest string when the matcher rejects the
@@ -408,15 +411,8 @@ pub(crate) fn draw_regex<D: Draws>(
 /// of ordinary length is built without the buffer growing.
 const TYPICAL_CAPACITY: usize = 64;
 
-/// Draw a string matching `re`, anchored at both ends when `fullmatch`
-/// and otherwise padded with draws from the compiled alphabet (or the full
-/// codespace when it has none).
-///
-/// Candidates the matcher rejects (a `\b` that the padding broke, a
-/// possessive repeat whose committed count the pattern can't actually
-/// match, ...) are retried a few times within the same test case — the
-/// analogue of Hypothesis's strategy-level `.filter(re.search)` retries —
-/// before the whole test case is marked invalid.
+/// [`generate_regex_into`] a fresh string, up to [`REGEX_MAX_SIZE`]
+/// long.
 #[cfg(test)]
 pub(crate) fn generate_regex<D: Draws>(
     d: &mut D,
@@ -430,8 +426,16 @@ pub(crate) fn generate_regex<D: Draws>(
 
 /// Draw a string matching `re` onto the end of `out`, whose earlier text
 /// the pattern never sees: an anchor at the start of the pattern is at
-/// the start of the drawn string. What an attempt the matcher rejects or
-/// that errors added is removed again.
+/// the start of the drawn string. The string is anchored at both ends
+/// when `fullmatch`, and otherwise padded with draws from the compiled
+/// alphabet (or printable ASCII when it has none); one over `max_size`
+/// concludes the test case invalid. A candidate the matcher rejects (a
+/// `\b` that the padding broke, a possessive repeat whose committed
+/// count the pattern cannot match, ...) is redrawn a few times within
+/// the same test case, the analogue of Hypothesis's strategy-level
+/// `.filter(re.search)` retries, before the test case is marked
+/// invalid; what an attempt the matcher rejects or that errors added is
+/// removed again.
 pub(crate) fn generate_regex_into<D: Draws>(
     d: &mut D,
     re: &CompiledRegex,

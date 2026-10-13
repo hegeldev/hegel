@@ -24,11 +24,12 @@ use rustc_hash::FxHasher;
 pub struct RegexConstraint {
     parsed: ParsedPattern,
     fullmatch: bool,
-    /// The pattern as a [`Program`], which checks a string without the
-    /// matcher's step and depth limits, when the program can express it:
-    /// the pattern itself under `fullmatch`, and otherwise the pattern
-    /// after a lazy run of any characters, which matches at the start
-    /// exactly when the pattern matches somewhere.
+    /// The pattern as a [`Program`] compiled for recognition alone (see
+    /// [`Program::compile_recognizer`]), which checks a string without
+    /// the matcher's step and depth limits, when the program can express
+    /// it: the pattern itself under `fullmatch`, and otherwise the
+    /// pattern after a lazy run of any characters, which matches at the
+    /// start exactly when the pattern matches somewhere.
     program: Option<Program>,
     identity: u64,
     /// The simplest string of the pattern, set once by the generator at
