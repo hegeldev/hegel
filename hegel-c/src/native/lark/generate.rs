@@ -23,8 +23,11 @@
 //! and the alternative is drawn uniformly from the class; a sequence
 //! splits its spare budget between its flexible items at uniformly drawn
 //! cut points, so no position is systematically larger than another; a
-//! repetition draws a count that fits its budget and shares the budget
-//! equally between the elements. Budgets steer
+//! repetition of elements that can grow draws a log-uniform count that
+//! fits its budget and shares the budget equally between the elements,
+//! and one of elements that cannot grow takes as many as its budget buys
+//! (or any count the grammar allows, when the grammar allows fewer), so
+//! that a string of `"a"+` comes out near the target. Budgets steer
 //! the structure only: each terminal is drawn by its own regex generator
 //! (redrawn a few times when it alone overruns the size cap), and a
 //! string that overruns the cap regardless is discarded and regenerated
@@ -1945,8 +1948,14 @@ impl Generation<'_> {
             let cap = min.saturating_add(extra);
             max.map_or(cap, |max| cap.min(u64::from(max)))
         };
-        let count = if feasible_max > min {
+        let count = if feasible_max <= min {
+            min
+        } else if inner.max_size.is_none() {
             self.draw_count(d, min, feasible_max, spare)?
+        } else if max.is_some_and(|max| u64::from(max) == feasible_max) {
+            d.draw_integer_uniform(min, feasible_max)?
+        } else if d.weighted_precise(grow_probability(spare), None)? {
+            feasible_max
         } else {
             min
         };
@@ -1974,11 +1983,14 @@ impl Generation<'_> {
         }
     }
 
-    /// Draw how many elements a repetition gets, between `min` and
-    /// `feasible_max`: whether to go beyond the minimum at all is decided
-    /// like a growing alternative, from the spare budget, and the number
-    /// of extra elements is then log-uniform, so a large budget is as
-    /// likely to go into a few long elements as into many short ones.
+    /// Draw how many elements a repetition of elements that can grow
+    /// gets, between `min` and `feasible_max`: whether to go beyond the
+    /// minimum at all is decided like a growing alternative, from the
+    /// spare budget, and the number of extra elements is then
+    /// log-uniform, so a large budget is as likely to go into a few long
+    /// elements as into many short ones. A repetition of elements that
+    /// cannot grow has only its count to spend the budget on, so it takes
+    /// as many as the budget buys (see [`Generation::repeat`]).
     fn draw_count<D: Draws>(
         &mut self,
         d: &mut D,

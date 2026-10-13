@@ -353,6 +353,53 @@ fn a_draw_may_be_capped_below_the_grammar() {
 }
 
 #[test]
+fn a_repetition_of_elements_that_cannot_grow_fills_its_budget() {
+    let lengths = |text: &str, max_size: u64| -> Vec<usize> {
+        let spec = small(text, max_size);
+        (0..200)
+            .map(|seed| {
+                let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+                generate_grammar(&mut ntc, &spec, None).unwrap().len()
+            })
+            .collect()
+    };
+    for text in [
+        "start: \"a\"+\n",
+        "start: (\"a\" | \"bb\")+\n",
+        "start: /[ab]/+\n",
+    ] {
+        let mut lengths = lengths(text, 8192);
+        lengths.sort_unstable();
+        assert!(lengths[100] > 3000, "{text}: median {}", lengths[100]);
+        assert!(
+            lengths[180] > 7000,
+            "{text}: 90th percentile {}",
+            lengths[180]
+        );
+        assert!(
+            lengths[60] < 2500,
+            "{text}: 30th percentile {}",
+            lengths[60]
+        );
+        assert!(lengths.iter().all(|&n| n <= 8192), "{text}");
+    }
+    let bounded = lengths("start: \"a\" ~ 1..5\n", 8192);
+    for n in 1..=5 {
+        assert!(bounded.contains(&n), "{bounded:?}");
+    }
+    assert_eq!(
+        codepoints_to_string(
+            &smallest_string(
+                &mut SimplestDraws::default(),
+                &small("start: \"a\"+\n", 8192)
+            )
+            .unwrap()
+        ),
+        "a"
+    );
+}
+
+#[test]
 fn a_replay_must_respect_the_draws_own_cap() {
     let plain = small("start: \"ab\" /c+/\n", 100);
     let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::String(cps("abcccc"))], None, None);
