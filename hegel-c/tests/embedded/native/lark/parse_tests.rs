@@ -41,6 +41,13 @@ fn chars(s: &str) -> Vec<char> {
     s.chars().collect()
 }
 
+#[test]
+fn a_regex_repeat_stops_at_an_empty_iteration_after_consuming_text() {
+    let s = setup("start: TOKEN \"a\"\nTOKEN: /b(?:(?=a)|.)*/\n");
+    assert!(s.parser.accepts(&s.lexer, &chars("bba")));
+    assert!(!s.parser.accepts(&s.lexer, &chars("baba")));
+}
+
 /// The [`Tree::Terminal`] and [`Tree::Ignored`] leaves of `tree`, in text
 /// order.
 fn leaves(tree: &Tree) -> Vec<&Tree> {

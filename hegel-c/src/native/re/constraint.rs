@@ -50,9 +50,9 @@ impl RegexConstraint {
         fullmatch.hash(&mut hasher);
         alphabet.map(|a| &a.intervals).hash(&mut hasher);
         let program = if fullmatch {
-            Program::compile(&parsed)
+            Program::compile_recognizer(&parsed)
         } else {
-            Program::compile(&anywhere(&parsed))
+            Program::compile_recognizer(&anywhere(&parsed))
         }
         .ok();
         RegexConstraint {

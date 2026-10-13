@@ -8,13 +8,17 @@
 //! proportional to the text rather than to the paths through it.
 //!
 //! The program can express patterns without backreferences, conditional
-//! groups, atomic groups or possessive repeats, and whose unrolled size
+//! groups, atomic groups, possessive repeats or unbounded repeats whose
+//! body can match empty, and whose unrolled size
 //! stays within [`PROGRAM_LIMIT`]; anything else is [`Unsupported`] and
-//! stays with the backtracking matcher. A repeat of an item that can
-//! match empty follows CPython's rule for it: once an iteration consumes
-//! nothing, the repeat stops iterating and the rest of the pattern
-//! follows from there (see [`Inst::Repeat`]). The
-//! simulation on its own costs more per character than backtracking
+//! stays with the backtracking matcher. Stopping an unbounded repeat
+//! after an empty iteration requires distinguishing paths that reach
+//! the same instruction with different progress through the repeat;
+//! merging those paths can change the preferred match end. The
+//! recognition-only compiler allows these repeats: merging changes
+//! preference but preserves whether a match exists.
+//!
+//! The simulation on its own costs more per character than backtracking
 //! does on the common run of a pattern, so a program whose instructions
 //! never look at the text around a position (no anchors or lookarounds)
 //! remembers the thread lists it passes through as the states of a
@@ -148,17 +152,6 @@ enum Inst {
     },
     /// Continue at both targets, the first in preference.
     Split(usize, usize),
-    /// The head of an unbounded repeat of a compound item: continue into
-    /// the item at `body` and after the repeat at `exit`, the body first
-    /// when `greedy`. Reached again at the same position, after an
-    /// iteration that consumed nothing, it continues at the exit only,
-    /// as CPython's `MAX_UNTIL` and `MIN_UNTIL` stop iterating once an
-    /// iteration matches empty.
-    Repeat {
-        body: usize,
-        exit: usize,
-        greedy: bool,
-    },
     Jmp(usize),
     Fail,
     Match,
@@ -359,6 +352,8 @@ fn has_repeat(p: &SubPattern) -> bool {
 
 struct Compiler<'p> {
     insts: Vec<Inst>,
+    remaining: usize,
+    recognition_only: bool,
     /// Lookaround bodies still to compile, with the instruction that
     /// refers to each.
     pending: Vec<(usize, &'p SubPattern, u32)>,
@@ -379,6 +374,10 @@ impl<'p> Compiler<'p> {
     }
 
     fn seq(&mut self, p: &'p SubPattern, flags: u32) -> Result<(), Unsupported> {
+        if self.remaining == 0 {
+            return Err(Unsupported);
+        }
+        self.remaining -= 1;
         for op in &p.data {
             if let Some(unit) = unit_of(op) {
                 self.emit(Inst::Unit(unit, flags))?;
@@ -466,6 +465,9 @@ impl<'p> Compiler<'p> {
         greedy: bool,
         flags: u32,
     ) -> Result<(), Unsupported> {
+        if !self.recognition_only && max == MAXREPEAT && get_width(item).0 == 0 {
+            return Err(Unsupported);
+        }
         for _ in 0..min {
             self.seq(item, flags)?;
         }
@@ -474,18 +476,10 @@ impl<'p> Compiler<'p> {
                 self.emit(Inst::Loop(unit, unit_flags, greedy))?;
                 return Ok(());
             }
-            let head = self.emit(Inst::Repeat {
-                body: 0,
-                exit: 0,
-                greedy,
-            })?;
+            let head = self.emit(Inst::Split(0, 0))?;
             self.seq(item, flags)?;
             self.emit(Inst::Jmp(head))?;
-            self.insts[head] = Inst::Repeat {
-                body: head + 1,
-                exit: self.insts.len(),
-                greedy,
-            };
+            self.insts[head] = split_inst(head + 1, self.insts.len(), greedy);
             return Ok(());
         }
         let mut splits = Vec::new();
@@ -592,8 +586,25 @@ impl Program {
     /// Compile `parsed`, or report that it uses something the program
     /// cannot express.
     pub fn compile(parsed: &ParsedPattern) -> Result<Program, Unsupported> {
+        Self::compile_with(parsed, false)
+    }
+
+    /// Compile for checking whether a match exists. Unlike [`Self::compile`],
+    /// this accepts nullable unbounded repeats, but the returned match end
+    /// need not be CPython's preferred one. Callers must use only whether
+    /// [`Self::scan`] finds a match, with an exact end for whole-string checks.
+    pub fn compile_recognizer(parsed: &ParsedPattern) -> Result<Program, Unsupported> {
+        Self::compile_with(parsed, true)
+    }
+
+    fn compile_with(
+        parsed: &ParsedPattern,
+        recognition_only: bool,
+    ) -> Result<Program, Unsupported> {
         let mut compiler = Compiler {
             insts: Vec::new(),
+            remaining: PROGRAM_LIMIT,
+            recognition_only,
             pending: Vec::new(),
         };
         compiler.seq(&parsed.pattern, parsed.flags)?;
@@ -943,7 +954,6 @@ impl Program {
                     Inst::At(..)
                     | Inst::Look { .. }
                     | Inst::Split(..)
-                    | Inst::Repeat { .. }
                     | Inst::Jmp(_)
                     | Inst::Fail => {
                         unreachable!("only characters and matches wait for input")
@@ -991,9 +1001,6 @@ impl Program {
                 continue;
             }
             if list.marks[pc] == generation {
-                if let Inst::Repeat { exit, .. } = &self.insts[pc] {
-                    stack.push(*exit);
-                }
                 continue;
             }
             list.marks[pc] = generation;
@@ -1002,15 +1009,6 @@ impl Program {
                 Inst::Split(first, second) => {
                     stack.push(*second);
                     stack.push(*first);
-                }
-                Inst::Repeat { body, exit, greedy } => {
-                    if *greedy {
-                        stack.push(*exit);
-                        stack.push(*body);
-                    } else {
-                        stack.push(*body);
-                        stack.push(*exit);
-                    }
                 }
                 Inst::At(at, flags) => {
                     if pos == 0

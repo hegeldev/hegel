@@ -28,7 +28,7 @@ fn declines_constructs_whose_matching_depends_on_captures_or_commitment() {
 /// Expected ends and fullmatch verdicts from CPython 3.14's
 /// `re.compile(pattern).match(text).end()` / `.fullmatch(text)`.
 #[test]
-fn repeats_stop_iterating_after_an_iteration_that_matches_empty() {
+fn nullable_unbounded_repeats_stay_with_the_backtracking_matcher() {
     for (pattern, text, end, full) in [
         ("(?:|a)*", "a", Some(0), true),
         ("(?:a|)*", "a", Some(1), true),
@@ -52,15 +52,25 @@ fn repeats_stop_iterating_after_an_iteration_that_matches_empty() {
         ("(?:x*?)*", "xx", Some(0), true),
         ("(?:|x)*?x", "xx", Some(1), true),
         ("(?:(?:|a)*|b)*c", "aabc", Some(4), true),
+        ("(?:(?=a)|.)*", "baba", Some(1), true),
+        ("(?:(?=a)|.)+", "bba", Some(2), true),
+        ("(?:(?!b)|.)*", "bba", Some(2), true),
+        ("(?:(?:(?!b)|[ab])\\B|a)*", "aaa", Some(1), true),
+        ("(?:(?:\\B)*?|(?:(?<!b)|[ab]))(?<!b)", "aa", Some(0), false),
     ] {
         let parsed = parse_pattern(pattern, 0).unwrap();
-        let p = Program::compile(&parsed).unwrap();
+        assert_eq!(Program::compile(&parsed).err(), Some(Unsupported));
         let text = chars(text);
-        assert_eq!(run(&p, &text, 0, None), end, "{pattern:?} on {text:?}");
+        let p = Program::compile_recognizer(&parsed).unwrap();
+        assert_eq!(
+            run(&p, &text, 0, None).is_some(),
+            end.is_some(),
+            "{pattern}"
+        );
         assert_eq!(
             run(&p, &text, 0, Some(text.len())).is_some(),
             full,
-            "{pattern:?} whole {text:?}"
+            "{pattern}"
         );
         let matcher = Matcher::new(&parsed);
         assert_eq!(
@@ -71,7 +81,7 @@ fn repeats_stop_iterating_after_an_iteration_that_matches_empty() {
         assert_eq!(matcher.fullmatch(&text).unwrap(), full, "{pattern:?}");
     }
     let long = chars(&"a".repeat(5000));
-    let p = program("(?:(a)|b?)*").unwrap();
+    let p = Program::compile_recognizer(&parse_pattern("(?:(a)|b?)*", 0).unwrap()).unwrap();
     assert_eq!(run(&p, &long, 0, None), Some(5000));
     assert_eq!(run(&p, &long, 0, Some(5000)), Some(5000));
 }
@@ -82,6 +92,8 @@ fn declines_programs_that_unroll_too_far() {
     assert_eq!(program("(?:ab){0,3000}").err(), Some(Unsupported));
     assert_eq!(program("a{100}(?=b{4000})").err(), Some(Unsupported));
     assert!(program("(?:ab){1000}").is_ok());
+    assert_eq!(program("(?:){100000000}").err(), Some(Unsupported));
+    assert_eq!(program("(){100000000}").err(), Some(Unsupported));
 }
 
 #[test]
