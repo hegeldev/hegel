@@ -111,6 +111,7 @@ fn tok(spec: &GrammarSpec, name: &str, text: &str) -> Tok {
         start: 0,
         end: text.len(),
         droppable: false,
+        needed: !spec.is_ignore(id),
         scans: 0,
     };
     Tok { token, text, scans }
@@ -1474,6 +1475,13 @@ fn a_chained_ignorable_the_one_before_it_swallows_the_next_token_through_is_not_
     push(&mut generation, ws, " ");
     assert!(matches!(
         generation.draw_ignore(&mut d, ws, 0, 1, 1).ok().unwrap(),
+        Drawn::Swallowed
+    ));
+    assert_eq!(text(&generation), "1#  ");
+    generation.remove(1);
+    generation.tokens[2].needed = false;
+    assert!(matches!(
+        generation.draw_ignore(&mut d, ws, 0, 1, 1).ok().unwrap(),
         Drawn::Fits(_)
     ));
     assert_eq!(text(&generation), "1#  ");
@@ -2111,22 +2119,125 @@ fn a_grammar_no_draw_can_generate_from_reports_so_at_the_first_draw() {
     assert!(spec.constraint().simplest().is_none());
 }
 
-/// A terminal is drawn on its own, with the text before it out of its
-/// pattern's sight, so one that looks behind its own start never lexes
-/// back, and the grammar is reported as having no string.
+/// A terminal is drawn on its own, with the text around it out of its
+/// pattern's sight, so one that asserts on that text, behind its start
+/// or beyond its end, never lexes back, and the grammar is reported as
+/// having no string.
 #[test]
-fn a_terminal_that_looks_behind_its_own_start_cannot_be_generated() {
-    let spec = grammar("start: \"x\" B\nB: /(?<=x)a/\n");
+fn a_terminal_that_asserts_on_the_text_around_it_cannot_be_generated() {
+    for text in [
+        "start: \"x\" B\nB: /(?<=x)a/\n",
+        "start: A \"b\"\nA: /a(?=b)/\n",
+        "start: \"a\" B\nB: /\\Bb/\n",
+    ] {
+        let spec = grammar(text);
+        let (result, status) = draw(&spec, 0);
+        let Err(EngineError::InvalidArgument(message)) = result else {
+            panic!("{text}: {result:?}");
+        };
+        assert_eq!(
+            message,
+            "no string of 'start' could be generated: its strings do not fit the size cap, do \
+             not lex back as their tokens, or a terminal asserts on the text around it (a \
+             lookbehind at its start, a lookahead or `\\B` at its end)"
+        );
+        assert_eq!(status, None);
+    }
+}
+
+/// A token of an `%ignore`d terminal that a rule draws is one the parser
+/// needs, which an ignorable inserted between tokens is not: the token
+/// before it may not run on through it, and the string is in the
+/// grammar only when the parser finds it where the rule put it. Every
+/// string drawn parses (`accepts` would not say: it takes the
+/// generator's word for a string it drew), and the draws that find no
+/// such string are rejected rather than kept.
+#[test]
+fn tokens_of_ignored_terminals_that_rules_draw_are_needed() {
+    let grammars = [
+        "start: A WS \"b\"\nA: /a {0,2}/\nWS: / +/\n%ignore WS\n",
+        "start: A \"b\"\nA: /a */\n%ignore \" \"\n",
+        "start: X WS Y\nX: /[a-z]+/\nY: /[a-z]+/\nWS: / +/\n%ignore WS\n",
+        "start: \"a\" (WS \"b\")*\nWS: / +/\n%ignore WS\n",
+        "start: \"a\" WS\nWS: / +/\n%ignore WS\n",
+        "start: \"x\" WS \"y\"\nWS: /\\s+/\nCOMMENT: /#[^\\n]*/\n%ignore WS\n%ignore COMMENT\n",
+    ];
+    for text in grammars {
+        let spec = small(text, 64);
+        let simplest = codepoints_to_string(spec.ensure_simplest().unwrap());
+        assert!(
+            spec.constraint().tree(&cps(&simplest)).is_some(),
+            "{text}: {simplest:?}"
+        );
+        let mut drawn = 0;
+        for seed in 0..300 {
+            let (result, status) = draw(&spec, seed);
+            let s = match result {
+                Ok(s) => s,
+                Err(EngineError::InvalidTestCase) => {
+                    assert_eq!(status, Some(Status::Invalid));
+                    continue;
+                }
+                Err(e) => panic!("{text}: {e:?}"),
+            };
+            assert_eq!(status, None);
+            assert!(spec.constraint().tree(&cps(&s)).is_some(), "{text}: {s:?}");
+            drawn += 1;
+        }
+        assert!(drawn >= 250, "{text}: {drawn} strings drawn");
+    }
+}
+
+/// `A` takes every space after its `a`, so the `WS` the rule needs next
+/// has nothing left to match: Lark derives no string of the grammar,
+/// and the engine finds none either, rather than drawing an `a`, a
+/// space and a `b` that the parser then rejects.
+#[test]
+fn a_needed_ignorable_the_token_before_it_always_takes_leaves_no_string() {
+    let spec = grammar("start: A WS \"b\"\nA: /a */\nWS: / +/\n%ignore WS\n");
+    assert!(smallest_string(&mut SimplestDraws::default(), &spec).is_err());
     let (result, status) = draw(&spec, 0);
-    let Err(EngineError::InvalidArgument(message)) = result else {
-        panic!("{result:?}");
-    };
-    assert_eq!(
-        message,
-        "no string of 'start' could be generated: its strings do not fit the size cap, do not \
-         lex back as their tokens, or a terminal looks behind its own start"
+    assert!(
+        matches!(&result, Err(EngineError::InvalidArgument(m)) if m.starts_with("no string of 'start'")),
+        "{result:?}"
     );
     assert_eq!(status, None);
+}
+
+/// The lexing checks keep a needed ignorable apart from an inserted
+/// one: `A` may run on through a space inserted before `b`, but not
+/// through one the rule needs next.
+#[test]
+fn a_needed_ignorable_is_not_run_through_but_an_inserted_one_is() {
+    let spec = grammar("start: A WS \"b\" | A \"b\"\nA: /a {0,2}/\nWS: / +/\n%ignore WS\n");
+    let a = tok(&spec, "A", "a");
+    let b = tok(&spec, "B", "b");
+    let mut ws = tok(&spec, "WS", " ");
+    assert!(!ws.needed);
+    assert!(fit(&spec, &[a.clone(), ws.clone(), b.clone()]) > Fit::Wrong);
+    ws.needed = true;
+    assert_eq!(fit(&spec, &[a.clone(), ws, b.clone()]), Fit::Wrong);
+    let mut long = tok(&spec, "WS", "   ");
+    long.needed = true;
+    assert!(fit(&spec, &[a, long, b]) > Fit::Wrong);
+}
+
+/// An element of an optional repetition whose tokens are a needed
+/// ignorable and another is not one the grammar can do without.
+#[test]
+fn a_needed_ignorable_counts_toward_whether_an_element_is_droppable() {
+    let spec = grammar("start: \"a\" (WS \"b\")*\nWS: / +/\n%ignore WS\n");
+    let mut generation = Generation::new(&spec, 0.0, spec.max_size);
+    push(&mut generation, tid(&spec, "A"), "a");
+    let from = generation.tokens.len();
+    push(&mut generation, tid(&spec, "WS"), " ");
+    push(&mut generation, tid(&spec, "B"), "b");
+    generation.mark_droppable(from);
+    assert!(generation.tokens.iter().all(|t| !t.droppable));
+    generation.tokens[from].needed = false;
+    generation.mark_droppable(from);
+    assert!(generation.tokens[from + 1].droppable);
+    assert_eq!(text(&generation), "a b");
 }
 
 fn cps(s: &str) -> Vec<u32> {

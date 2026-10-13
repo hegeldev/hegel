@@ -39,11 +39,15 @@
 //! differently, or at random with a rate drawn once per string. Each
 //! terminal string is checked to lex back as itself, and each inserted
 //! ignorable to be skipped between its neighbours, with a few retries
-//! before the string is accepted as it is. Each terminal is drawn on
-//! its own, with the text before it out of its pattern's sight, so a
-//! terminal whose pattern asserts on that text (a lookbehind at its
-//! start, say) never lexes back and cannot be generated; the grammar is
-//! reported as having no string. Every token keeps what the
+//! before the string is accepted as it is. A token of an ignored
+//! terminal that a rule itself draws is one the parser needs, and the
+//! checks treat it as any other token (see [`Token::needed`]): only the
+//! inserted ones may be skipped or run through. Each terminal is drawn
+//! on its own, with the text around it out of its pattern's sight, so a
+//! terminal whose pattern asserts on the text around it (a lookbehind
+//! at its start, a lookahead or `\B` at its end) never lexes back and
+//! cannot be generated; the grammar is reported as having no string.
+//! Every token keeps what the
 //! lexers found at the start of its text on its own ([`TokenScans`]),
 //! with how that depended on the text's edges, and most stretches of
 //! tokens are settled from those findings alone ([`GrammarSpec::settled`]):
@@ -604,11 +608,16 @@ impl GrammarSpec {
     /// because the string it heads for cannot be lexed back, the first
     /// string a few fixed seeded random walks draw — of the smallest size
     /// first, then of any size — so that the choice is the same in every
-    /// run. A grammar none of them draws from cannot be drawn from at
-    /// all.
+    /// run. Each is checked to derive under the constraint (see
+    /// [`GrammarSpec::derivable`]) before it is taken: the walk's lexing
+    /// checks approximate the parser, and the parser decides. A grammar
+    /// none of them draws from cannot be drawn from at all.
     pub fn ensure_simplest(&self) -> Result<&[u32], EngineError> {
         self.constraint.simplest_or_init(|| {
-            if let Ok(simplest) = smallest_string(&mut SimplestDraws::default(), self) {
+            if let Some(simplest) = smallest_string(&mut SimplestDraws::default(), self)
+                .ok()
+                .and_then(|string| self.derivable(string))
+            {
                 return Ok(simplest);
             }
             if let Some(simplest) = self
@@ -619,15 +628,16 @@ impl GrammarSpec {
             }
             Err(EngineError::InvalidArgument(format!(
                 "no string of '{}' could be generated: its strings do not fit the size cap, \
-                 do not lex back as their tokens, or a terminal looks behind its own start",
+                 do not lex back as their tokens, or a terminal asserts on the text around it \
+                 (a lookbehind at its start, a lookahead or `\\B` at its end)",
                 self.analysis.rules[self.start].name
             )))
         })
     }
 
     /// The first string of [`SIMPLEST_FALLBACK_SEEDS`] seeded random
-    /// walks that draws one: walks for a string of the smallest size when
-    /// `smallest`, otherwise ordinary draws.
+    /// walks that draws one the constraint derives: walks for a string
+    /// of the smallest size when `smallest`, otherwise ordinary draws.
     fn seeded_string(&self, smallest: bool) -> Option<Vec<u32>> {
         for seed in 0..SIMPLEST_FALLBACK_SEEDS {
             let mut rng = EngineRng::seeded(seed);
@@ -637,11 +647,16 @@ impl GrammarSpec {
             } else {
                 draw_grammar(&mut draws, self, self.max_size)
             };
-            if let Ok(string) = drawn {
+            if let Some(string) = drawn.ok().and_then(|string| self.derivable(string)) {
                 return Some(string);
             }
         }
         None
+    }
+
+    /// `string` when the constraint derives it, parsing it now.
+    fn derivable(&self, string: Vec<u32>) -> Option<Vec<u32>> {
+        self.constraint.tree(&string).is_some().then_some(string)
     }
 
     /// The smallest string the grammar can produce, in characters.
@@ -675,12 +690,12 @@ impl GrammarSpec {
 
     /// Whether the basic lexer reads `token`'s text on its own as one
     /// token: of its own type, or for a token the grammar needs, of
-    /// another type (an ignorable read as something the parser would
-    /// see is not skipped, see [`GrammarSpec::basic_fit`]).
+    /// another type (an inserted ignorable read as something the parser
+    /// would see is not skipped, see [`GrammarSpec::basic_fit`]).
     fn single(&self, token: &Token, findings: &[TokenScans]) -> bool {
         match token.reading(findings) {
             Reading::Itself => true,
-            Reading::Tokens(read) => read.len() == 1 && !self.is_ignore(token.id),
+            Reading::Tokens(read) => read.len() == 1 && token.needed,
             Reading::Ignorables | Reading::Opaque => false,
         }
     }
@@ -793,15 +808,17 @@ impl GrammarSpec {
 
     /// Whether the dynamic lexer reads `text` back as `tokens`: it
     /// matches each token's own pattern where the parser expects the
-    /// token and the ignorable patterns anywhere between, so the check
-    /// walks the positions the lexer can reach. A token's pattern may
-    /// start early, inside the ignorables before it, and may run on past
-    /// its end, as may an ignorable's: through ignorables and tokens the
-    /// grammar can do without (see [`Token::droppable`]), and into the
-    /// next token the grammar needs as long as that token's own pattern
-    /// still reaches its end from where the run-in stops (a comment that
-    /// takes the `\r` of the `\r\n` after it, say); it may never take
-    /// all of a needed token. A pattern too involved to match is given
+    /// token (a token of an ignored terminal the grammar needs, see
+    /// [`Token::needed`], like any other) and the ignorable patterns
+    /// anywhere between, so the check walks the positions the lexer can
+    /// reach. A token's pattern may start early, inside the ignorables
+    /// before it, and may run on past its end, as may an ignorable's:
+    /// through inserted ignorables and tokens the grammar can do without
+    /// (see [`Token::droppable`]), and into the next token the grammar
+    /// needs as long as that token's own pattern still reaches its end
+    /// from where the run-in stops (a comment that takes the `\r` of
+    /// the `\r\n` after it, say); it may never take all of a needed
+    /// token. A pattern too involved to match is given
     /// the benefit of the doubt. Where a token starts, its own pattern
     /// is not matched again: what it found on the token's text alone
     /// (see [`TokenScans::own`], in `findings`) is carried over the text
@@ -823,7 +840,7 @@ impl GrammarSpec {
             pos += token.len();
         }
         significant.clear();
-        significant.extend((0..tokens.len()).filter(|&i| !self.is_ignore(tokens[i].id)));
+        significant.extend((0..tokens.len()).filter(|&i| tokens[i].needed));
         let kept = |k: usize| {
             significant[k..]
                 .iter()
@@ -957,12 +974,12 @@ impl GrammarSpec {
     }
 
     /// How the basic lexer reads the concatenation of `tokens`: every
-    /// token that is not ignorable must come out as the token it is, with
+    /// token the grammar needs must come out as the token it is, with
     /// the same type and at least the same extent (a newline terminal may
     /// take over the whitespace that begins a comment after it), a token
     /// the lexer reads differently even on its own must come out as that
-    /// same reading, and the stretches of ignorable tokens may be read as
-    /// any ignorable tokens. The lexer reading a token with another type
+    /// same reading, and the stretches of inserted ignorables may be
+    /// read as any ignorable tokens. The lexer reading a token with another type
     /// but the exact extent is only [`Fit::Retyped`]; anything else that
     /// differs is [`Fit::Wrong`]. A token the lexer cannot read at all
     /// makes the whole check moot.
@@ -995,7 +1012,7 @@ impl GrammarSpec {
         let mut pos = 0;
         for (t, token) in tokens.iter().enumerate() {
             let end = pos + token.len();
-            if !(token.lexable(findings) && self.is_ignore(token.id)) {
+            if token.needed || !token.lexable(findings) {
                 regions.push((pos, end, t));
             }
             pos = end;
@@ -1021,7 +1038,7 @@ impl GrammarSpec {
                 return Fit::Wrong;
             }
             let token = &tokens[t];
-            if self.is_ignore(token.id) {
+            if !token.needed {
                 while i < observed.len() && observed[i].1 < e {
                     if overlapping(observed[i].1, observed[i].2).nth(1).is_some() {
                         return Fit::Wrong;
@@ -1144,6 +1161,12 @@ struct Token {
     /// (`x?`, `[x]`, `x*`), so a lexer that runs it into its neighbour
     /// or skips it leaves a string the parser still accepts.
     droppable: bool,
+    /// Whether the parser needs this token: a rule drew it, as against
+    /// an ignorable inserted between tokens (see
+    /// [`Generation::maybe_ignore`]), which the lexer may skip. A rule
+    /// may draw a terminal the grammar ignores, and its token is then
+    /// one the parser needs like any other.
+    needed: bool,
     /// Where in the generation's findings (see
     /// [`ReadingsCache::findings`]) what the lexers found in its text is.
     scans: usize,
@@ -1334,6 +1357,7 @@ impl<'s> Generation<'s> {
             start,
             end: self.text.len(),
             droppable: false,
+            needed: true,
             scans,
         }
     }
@@ -1822,12 +1846,10 @@ impl Generation<'_> {
     }
 
     /// Mark the token an element of an optional repetition produced as
-    /// one the grammar can do without, when it produced exactly one.
+    /// one the grammar can do without, when it produced exactly one
+    /// (inserted ignorables aside).
     fn mark_droppable(&mut self, from: usize) {
-        let ignore = &self.spec.ignore;
-        let mut significant = self.tokens[from..]
-            .iter_mut()
-            .filter(|t| !ignore.contains(&t.id));
+        let mut significant = self.tokens[from..].iter_mut().filter(|t| t.needed);
         if let (Some(token), None) = (significant.next(), significant.next()) {
             token.droppable = true;
         }
@@ -2168,6 +2190,7 @@ impl Generation<'_> {
             start,
             end: start + len,
             droppable: false,
+            needed: false,
             scans,
         };
         self.tokens.insert(at, token);
@@ -2187,7 +2210,7 @@ impl Generation<'_> {
     /// takes all of that token, one the parser needs.
     fn swallowed(&self, at: usize, len: usize) -> bool {
         let (prev, next) = (&self.tokens[at - 1], &self.tokens[at]);
-        if next.droppable || self.spec.is_ignore(next.id) {
+        if next.droppable || !next.needed {
             return false;
         }
         let through = next.start + len + next.len();

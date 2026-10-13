@@ -59,11 +59,16 @@ The pieces:
   what it produces — sizing, lexability checks and `%ignore` insertion as
   the module docs describe — but opens no spans within the `hegel.lark`
   span `generate_grammar` puts the choice in, and uses no collection
-  protocol, since nothing it decides is a choice. The simplest string is
+  protocol, since nothing it decides is a choice. A token of an
+  `%ignore`d terminal that a rule itself draws is one the parser needs,
+  and the lexing checks keep it apart from the ignorables they insert
+  between tokens (`Token::needed`): only the inserted ones may be
+  skipped or run through. The simplest string is
   the walk with every decision at its simplest (`SimplestDraws`), or, when
   that string does not lex back as its tokens, the first of a few seeded
-  random walks that does; a grammar with no string either way is reported
-  at the first draw.
+  random walks that does, each candidate checked by parsing since the
+  lexing checks only approximate the parser; a grammar with no string
+  either way is reported at the first draw.
 - **The parser** (`lark/parse.rs`, with `lark/lower.rs` desugaring
   repetitions): an Earley parser with a dynamic lexer, matching Lark's
   `parser="earley", lexer="dynamic"` on which strings it accepts, which is
