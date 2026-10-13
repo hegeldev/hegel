@@ -1229,19 +1229,7 @@ fn is_digit(c: char, unicode: bool) -> bool {
 
 fn is_space(c: char, unicode: bool) -> bool {
     if unicode {
-        matches!(
-            c,
-            ' ' | '\t'
-                | '\n'
-                | '\r'
-                | '\x0b'
-                | '\x0c'
-                | '\x1c'
-                | '\x1d'
-                | '\x1e'
-                | '\x1f'
-                | '\u{85}'
-        ) || (!c.is_ascii() && categories::in_class(c, ChCode::Space))
+        categories::is_space_by_code(c) || (!c.is_ascii() && categories::in_class(c, ChCode::Space))
     } else {
         matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c')
     }
