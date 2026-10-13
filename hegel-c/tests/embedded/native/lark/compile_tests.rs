@@ -447,3 +447,24 @@ fn only_the_terminals_kept_are_compiled_and_checked_for_width() {
             .contains("Zero-width terminals are not allowed (EMPTY: a*)")
     );
 }
+
+#[test]
+fn the_number_of_template_instantiations_is_capped() {
+    let chain = |instantiations: usize| {
+        let mut text = String::from("t{x}: x\nstart:");
+        for i in 0..instantiations {
+            text.push_str(&format!(" t{{a{i}}}"));
+        }
+        text.push('\n');
+        for i in 0..instantiations {
+            text.push_str(&format!("a{i}: \"a\"\n"));
+        }
+        text
+    };
+    let grammar = compiled(&chain(4096));
+    assert_eq!(grammar.rules.len(), 1 + 2 * 4096);
+    assert_eq!(
+        compile_err(&chain(4097)),
+        "Templates are instantiated more than 4096 times (instantiating 't' in rule start)"
+    );
+}

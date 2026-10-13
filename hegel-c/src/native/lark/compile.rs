@@ -30,6 +30,14 @@ pub type TermId = usize;
 /// be instantiated without end, one level deeper each time, as Lark does.
 const MAX_TEMPLATE_NESTING: usize = 200;
 
+/// How many rules a grammar's templates may be instantiated to between
+/// them. A template whose alternatives instantiate it again with one
+/// argument changed reaches every combination of its arguments, and
+/// Lark builds all of them: a template of fourteen parameters each
+/// taking one of two values, in a kilobyte of grammar, takes hundreds
+/// of megabytes that way.
+const MAX_TEMPLATE_INSTANTIATIONS: usize = 1 << 12;
+
 /// A compiled terminal. `pattern` is `None` for a `%declare`d terminal,
 /// whose strings must be supplied from outside the grammar.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -231,6 +239,7 @@ struct Compiler {
     rule_ids: HashMap<String, RuleId>,
     templates: HashMap<String, (Vec<String>, Expr)>,
     pending: Vec<(String, Expr)>,
+    instantiations: usize,
 }
 
 impl Compiler {
@@ -329,6 +338,12 @@ impl Compiler {
                 "Template '{name}' nests its instantiations more than {MAX_TEMPLATE_NESTING} levels deep (in rule {rule_name})"
             )));
         }
+        if self.instantiations == MAX_TEMPLATE_INSTANTIATIONS {
+            return Err(GrammarError::new(format!(
+                "Templates are instantiated more than {MAX_TEMPLATE_INSTANTIATIONS} times (instantiating '{name}' in rule {rule_name})"
+            )));
+        }
+        self.instantiations += 1;
         let substitutions: HashMap<&str, Symbol> = params
             .iter()
             .map(|p| p.as_str())
@@ -495,6 +510,7 @@ pub fn compile(built: &BuiltGrammar, start: &[&str]) -> GrammarResult<Grammar> {
         rule_ids: HashMap::default(),
         templates: HashMap::default(),
         pending: Vec::new(),
+        instantiations: 0,
     };
     for (name, body, priority) in &built.term_defs {
         let pattern = body
