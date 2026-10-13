@@ -262,6 +262,28 @@ fn hash_comments_and_comment_only_lines() {
 }
 
 #[test]
+fn a_newline_swallows_any_unicode_whitespace_after_it() {
+    for space in ['\u{a0}', '\u{3000}', '\u{1c}', '\u{85}'] {
+        assert_eq!(
+            toks(&format!("a: b\n{space}| c\n{space}# x\nd: e")),
+            vec![
+                rule("a"),
+                Tok::Colon,
+                rule("b"),
+                Tok::NlOr,
+                rule("c"),
+                Tok::Nl,
+                rule("d"),
+                Tok::Colon,
+                rule("e"),
+                Tok::Nl
+            ]
+        );
+        assert!(err(&format!("a: b{space}| c")).contains("Unexpected input"));
+    }
+}
+
+#[test]
 fn newline_or_continuation() {
     assert_eq!(
         toks("a: b\n  | c\n\n  | d\n"),

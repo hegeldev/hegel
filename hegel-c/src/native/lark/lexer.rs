@@ -92,8 +92,11 @@ fn is_upper_continue(c: char) -> bool {
     c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'
 }
 
+/// Python's `\s` on a `str` pattern: the characters `str.isspace` is
+/// true of, which are Rust's whitespace and the four separators
+/// `\x1c` to `\x1f`.
 fn is_space(c: char) -> bool {
-    matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c')
+    c.is_whitespace() || matches!(c, '\x1c'..='\x1f')
 }
 
 impl<'a> Scanner<'a> {
