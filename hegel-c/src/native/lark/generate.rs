@@ -68,8 +68,9 @@
 //! other in priority so that the lexers read it as itself wherever it
 //! starts, and is what the parser matches on replay. The value spliced
 //! in is out of the engine's sight, so a grammar with an ignorable has
-//! one on either side of every marker: the generator insists on it, and
-//! the constraint accepts no string without (see
+//! one between every marker and any token beside it (a marker at an
+//! edge of the string has nothing on that side): the generator insists
+//! on it, and the constraint accepts no string without (see
 //! [`GrammarConstraint::tree`]), so that shrinking and mutation keep it.
 //! Keeping the values lexable in place is the caller's affair, and so
 //! is their size: a marker counts for nothing toward the size cap, which
@@ -102,7 +103,6 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::hash::Hasher;
 use hashbrown::HashTable;
-use hashbrown::hash_table::Entry;
 use rustc_hash::FxHasher;
 
 /// The default cap on the length of a generated string, in characters.
@@ -121,7 +121,10 @@ pub const DEFAULT_MAX_DEPTH: u32 = 200;
 const READINGS_CAPACITY: usize = 1 << 13;
 
 /// How many characters of remembered texts a generation's cache has room
-/// for from the start: a typical token text is a few characters long.
+/// for from the start, and how many it holds before the next draw
+/// forgets them all likewise: a typical token text is a few characters
+/// long, and a grammar whose tokens are long would otherwise fill the
+/// cache with them.
 const READINGS_TEXT_CAPACITY: usize = READINGS_CAPACITY * 16;
 
 /// The number of strings one draw discards, for being oversize (halving
@@ -315,7 +318,8 @@ struct Remembered {
 /// drawn again, in the same string or a later one, is lexed once. A
 /// generation's own (see [`Buffers`]), so that its tokens refer to the
 /// findings by index (see [`Token::scans`]) and the cache is emptied
-/// only between one draw and the next, when no token does (see
+/// only between one draw and the next, when no token does, once it
+/// holds too many texts or too many characters of them (see
 /// [`ReadingsCache::forget_when_full`]). The table and the vectors are
 /// made with room for [`READINGS_CAPACITY`] texts (of
 /// [`READINGS_TEXT_CAPACITY`] characters in all), so that filling the
@@ -360,10 +364,11 @@ impl ReadingsCache {
     }
 
     /// Forget everything when the cache holds [`READINGS_CAPACITY`]
-    /// texts or more, for a draw about to start, while no token refers
-    /// to the findings.
+    /// texts or more, or [`READINGS_TEXT_CAPACITY`] characters of them
+    /// or more, for a draw about to start, while no token refers to the
+    /// findings.
     fn forget_when_full(&mut self) {
-        if self.len >= READINGS_CAPACITY {
+        if self.len >= READINGS_CAPACITY || self.texts.len() >= READINGS_TEXT_CAPACITY {
             self.table.clear();
             self.texts.clear();
             self.findings.clear();
@@ -383,33 +388,25 @@ impl ReadingsCache {
     }
 
     /// Remember `scans` for `text`, whose [`text_hash`] is `hash`, as a
-    /// token of terminal `id`, in place of what was remembered for it
-    /// before, if anything: where in `findings` it is.
+    /// token of terminal `id`, which nothing is remembered for yet (see
+    /// [`ReadingsCache::recall`]): where in `findings` it is.
     fn remember(&mut self, id: TermId, hash: u64, text: &[char], scans: TokenScans) -> usize {
-        let Self {
-            table,
-            texts,
-            findings,
-            len,
-        } = self;
-        let at = findings.len();
-        findings.push(scans);
-        let eq = |held: &Remembered| held.id == id && texts[held.start..held.end] == *text;
-        match table.entry(hash, eq, |held| held.hash) {
-            Entry::Occupied(mut held) => held.get_mut().scans = at,
-            Entry::Vacant(slot) => {
-                let start = texts.len();
-                texts.extend_from_slice(text);
-                slot.insert(Remembered {
-                    hash,
-                    id,
-                    start,
-                    end: texts.len(),
-                    scans: at,
-                });
-                *len += 1;
-            }
-        }
+        let at = self.findings.len();
+        self.findings.push(scans);
+        let start = self.texts.len();
+        self.texts.extend_from_slice(text);
+        self.table.insert_unique(
+            hash,
+            Remembered {
+                hash,
+                id,
+                start,
+                end: self.texts.len(),
+                scans: at,
+            },
+            |held| held.hash,
+        );
+        self.len += 1;
         at
     }
 

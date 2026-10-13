@@ -1553,28 +1553,6 @@ fn a_generation_remembers_the_lexing_of_its_token_texts_until_a_draw_finds_too_m
 }
 
 #[test]
-fn a_text_remembered_again_takes_the_place_of_what_was_held() {
-    let spec = grammar("start: NAME+\nNAME: /[a-z]+/\n");
-    let name = tid(&spec, "NAME");
-    let text: Vec<char> = "abc".chars().collect();
-    let mut readings = ReadingsCache::new();
-    let first = readings.read_token(&spec, name, &text, None);
-    let hash = text_hash(name, &text);
-    let again = readings.remember(name, hash, &text, spec.scan_token(name, &text, None));
-    assert_ne!(again, first);
-    assert_eq!(readings.find(name, hash, &text), Some(again));
-    assert_eq!(readings.len, 1);
-    assert_eq!(readings.findings.len(), 2);
-    assert_eq!(readings.texts, text);
-    let shorter = &text[..2];
-    assert!(
-        readings
-            .find(name, text_hash(name, shorter), shorter)
-            .is_none()
-    );
-}
-
-#[test]
 fn a_text_is_remembered_apart_for_each_terminal_drawn_as() {
     let spec = grammar("start: NAME | ABC\nNAME: /[a-z]+/\nABC: \"abc\"\n");
     let name = tid(&spec, "NAME");
@@ -2315,6 +2293,38 @@ fn an_alphabet_is_described_by_its_first_ranges() {
         describe_alphabet(&IntervalSet::new(vec![(0xD800, 0xD800)]).unwrap()),
         "U+D800"
     );
+}
+
+/// The cache is bounded by the characters of the texts it holds as well
+/// as by their number: a grammar whose tokens are long fills it with a
+/// few.
+#[test]
+fn a_generation_forgets_its_readings_when_their_texts_hold_too_many_characters() {
+    let spec = grammar("start: NAME+\nNAME: /[a-z]+/\n");
+    let name = tid(&spec, "NAME");
+    let long = |first: char| -> Vec<char> {
+        core::iter::once(first)
+            .chain(core::iter::repeat_n('a', READINGS_TEXT_CAPACITY / 4))
+            .collect()
+    };
+    let mut generation = Generation::new(&spec, 0.0, spec.max_size);
+    for first in ['b', 'c', 'd'] {
+        generation
+            .readings
+            .read_token(&spec, name, &long(first), None);
+    }
+    generation.recycle();
+    let mut generation = Generation::new(&spec, 0.0, spec.max_size);
+    assert_eq!(generation.readings.len, 3);
+    generation
+        .readings
+        .read_token(&spec, name, &long('e'), None);
+    assert!(generation.readings.texts.len() > READINGS_TEXT_CAPACITY);
+    generation.recycle();
+    let generation = Generation::new(&spec, 0.0, spec.max_size);
+    assert_eq!(generation.readings.len, 0);
+    assert!(generation.readings.texts.is_empty());
+    assert!(generation.readings.findings.is_empty());
 }
 
 fn cps(s: &str) -> Vec<u32> {

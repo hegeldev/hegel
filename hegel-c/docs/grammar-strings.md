@@ -166,9 +166,10 @@ derive a generated string more deeply than the walk did) does not.
   string as a placeholder marker (`generate::placeholder`): the string
   holds the marker, the values are drawn as choices of their own after
   it and spliced in by the frontend, and the lexing checks never see
-  them. A grammar with an ignorable has one on either side of every
-  marker: the generator insists on it, the constraint accepts no string
-  without, and the shrinker never cuts one; whether a value reads as its
+  them. A grammar with an ignorable has one between every marker and
+  any token beside it (a marker at an edge of the string has nothing on
+  that side): the generator insists on it, the constraint accepts no
+  string without, and the shrinker never cuts one; whether a value reads as its
   terminal where it lands is the user's generator's affair. So is its
   size: a marker counts for nothing toward the grammar's size cap, which
   is on the characters outside the markers (the string choice's own
