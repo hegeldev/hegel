@@ -2284,6 +2284,84 @@ fn grammar_imports_resolve_through_the_callback() {
     unsafe { ok(hegel_context_free(ctx)) };
 }
 
+struct SloppyImports {
+    path: CString,
+    text: Vec<u8>,
+}
+
+unsafe extern "C" fn import_sloppy(
+    user_data: *mut c_void,
+    _base_path: *const c_char,
+    grammar_path: *const c_char,
+    out_path: *mut *const c_char,
+    out_text: *mut *const c_char,
+    out_text_len: *mut usize,
+) -> bool {
+    let imports = unsafe { &*user_data.cast::<SloppyImports>() };
+    let path = unsafe { std::ffi::CStr::from_ptr(grammar_path) }
+        .to_str()
+        .unwrap();
+    if path == "lib.lark" {
+        unsafe {
+            *out_path = imports.path.as_ptr();
+            *out_text = imports.text.as_ptr().cast::<c_char>();
+            *out_text_len = imports.text.len();
+        }
+    }
+    true
+}
+
+#[test]
+fn grammar_imports_fall_back_to_the_bundled_grammars_and_read_text_lossily() {
+    let ctx = hegel_context_new();
+    let mut imports = SloppyImports {
+        path: CString::new("lib.lark").unwrap(),
+        text: b"WORD: \"caf\xff\"\n".to_vec(),
+    };
+    unsafe {
+        let text = CString::new("%import common.INT\n%import lib.WORD\nstart: INT WORD\n").unwrap();
+        let mut g: *mut HegelGrammar = ptr::null_mut();
+        assert_eq!(
+            hegel_grammar_new(
+                ctx,
+                text.as_ptr(),
+                ptr::null(),
+                0,
+                0,
+                ptr::null(),
+                ptr::null(),
+                0,
+                Some(import_sloppy),
+                (&raw mut imports).cast::<c_void>(),
+                &mut g,
+            ),
+            HEGEL_OK
+        );
+        let s = make_settings_no_db(ctx);
+        ok(hegel_settings_set_test_cases(ctx, s, 1));
+        let run = start(ctx, s);
+        let tc = next_case(ctx, run);
+        let drawn = draw_grammar(ctx, tc, g);
+        let digits = drawn.strip_suffix("caf\u{FFFD}").unwrap();
+        assert!(
+            !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()),
+            "{drawn:?}"
+        );
+        ok(hegel_mark_complete(
+            ctx,
+            tc,
+            hegel_status_t::HEGEL_STATUS_VALID as u32,
+            ptr::null(),
+        ));
+        ok(hegel_c::hegel_test_case_free(ctx, tc));
+        drain(ctx, run);
+        ok(hegel_run_free(ctx, run));
+        ok(hegel_settings_free(ctx, s));
+        ok(hegel_grammar_free(ctx, g));
+    }
+    unsafe { ok(hegel_context_free(ctx)) };
+}
+
 #[test]
 fn generate_grammar_validates_handles_and_reports_stop_test() {
     let ctx = hegel_context_new();
