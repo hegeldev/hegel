@@ -1,12 +1,16 @@
 //! Compiling a built grammar into the form the generator walks: Lark's
 //! `Grammar.compile`, minus the EBNF-to-BNF desugaring. Terminals become a
-//! single regex each (`TerminalTreeToPattern`), literals inside rules
-//! become anonymous terminals (`PrepareAnonTerminals`), templates are
-//! instantiated (`ApplyTemplates`), and rules unreachable from the start
-//! symbols are dropped along with the terminals only they used.
+//! single regex each (`TerminalTreeToPattern`, folded by the builder),
+//! literals inside rules become anonymous terminals
+//! (`PrepareAnonTerminals`), templates are instantiated
+//! (`ApplyTemplates`), and rules unreachable from the start symbols are
+//! dropped along with the terminals only they used. Only the terminals
+//! kept have their regex compiled and checked, as in Lark, so a helper
+//! terminal that is zero-width on its own, or one nothing uses, does not
+//! reject the grammar.
 
 use super::ast::{Expr, Pattern, PatternKind, Symbol};
-use super::builder::BuiltGrammar;
+use super::builder::{BuiltGrammar, terminal_pattern};
 use super::escape::pattern_to_regexp;
 use super::{GrammarError, GrammarResult};
 use crate::native::re::parser::{ParsedPattern, parse_pattern};
@@ -25,6 +29,14 @@ pub type TermId = usize;
 /// itself around its own parameter (`t{x}: x | t{t{x}}`) would otherwise
 /// be instantiated without end, one level deeper each time, as Lark does.
 const MAX_TEMPLATE_NESTING: usize = 200;
+
+/// How many rules a grammar's templates may be instantiated to between
+/// them. A template whose alternatives instantiate it again with one
+/// argument changed reaches every combination of its arguments, and
+/// Lark builds all of them: a template of fourteen parameters each
+/// taking one of two values, in a kilobyte of grammar, takes hundreds
+/// of megabytes that way.
+const MAX_TEMPLATE_INSTANTIATIONS: usize = 1 << 12;
 
 /// A compiled terminal. `pattern` is `None` for a `%declare`d terminal,
 /// whose strings must be supplied from outside the grammar.
@@ -209,109 +221,26 @@ fn is_identifier(value: &str) -> bool {
 
 /// A pattern's regex form parsed with the engine's Python-syntax regex
 /// parser.
-fn parse_terminal_pattern(name: &str, pattern: &Pattern) -> GrammarResult<ParsedPattern> {
+pub fn parse_terminal_pattern(name: &str, pattern: &Pattern) -> GrammarResult<ParsedPattern> {
     parse_pattern(&pattern_to_regexp(pattern), 0)
         .map_err(|e| GrammarError::new(format!("Cannot compile token {name}: {e}")))
 }
 
-/// The widths of a pattern.
-fn pattern_widths(name: &str, pattern: &Pattern) -> GrammarResult<(u64, Option<u64>)> {
-    Ok(get_width(&parse_terminal_pattern(name, pattern)?.pattern))
-}
-
-/// The regex quantifier for a repetition. The parser builds an unbounded
-/// one only from `*` or `+`.
-fn repeat_suffix(min: u32, max: Option<u32>) -> String {
-    match (min, max) {
-        (0, Some(1)) => "?".to_string(),
-        (0, None) => "*".to_string(),
-        (_, None) => "+".to_string(),
-        (n, Some(m)) if n == m => format!("{{{n}}}"),
-        (n, Some(m)) => format!("{{{n},{m}}}"),
-    }
-}
-
-/// Lark's `TerminalTreeToPattern`: fold a terminal's body into one
-/// pattern. `name` is for diagnostics.
-fn terminal_tree_to_pattern(name: &str, expr: &Expr) -> GrammarResult<Pattern> {
-    match expr {
-        Expr::Alternatives(alts) => {
-            if alts.iter().any(|a| a.alias.is_some()) {
-                return Err(GrammarError::new(
-                    "Aliasing not allowed in terminals (You used -> in the wrong place)",
-                ));
-            }
-            let mut patterns = Vec::with_capacity(alts.len());
-            for alt in alts {
-                patterns.push(sequence_to_pattern(name, &alt.items)?);
-            }
-            if patterns.len() == 1 {
-                return Ok(patterns.pop().unwrap());
-            }
-            let mut keyed = Vec::with_capacity(patterns.len());
-            for pattern in patterns {
-                let (min, max) = pattern_widths(name, &pattern)?;
-                keyed.push((
-                    max.unwrap_or(u64::MAX),
-                    min,
-                    pattern.value.chars().count(),
-                    pattern,
-                ));
-            }
-            keyed.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(b.2.cmp(&a.2)));
-            let joined: Vec<String> = keyed.iter().map(|k| pattern_to_regexp(&k.3)).collect();
-            Ok(Pattern::re(format!("(?:{})", joined.join("|"))))
-        }
-        Expr::Literal(pattern) => Ok(pattern.clone()),
-        Expr::Repeat { inner, min, max } => {
-            let inner = terminal_tree_to_pattern(name, inner)?;
-            Ok(Pattern::re(format!(
-                "(?:{}){}",
-                pattern_to_regexp(&inner),
-                repeat_suffix(*min, *max)
-            ))
-            .with_flags(&inner.flags))
-        }
-        Expr::Symbol(_) | Expr::Template { .. } => {
-            unreachable!("terminal bodies have their symbols inlined and templates rejected")
-        }
-    }
-}
-
-fn sequence_to_pattern(name: &str, items: &[Expr]) -> GrammarResult<Pattern> {
-    match items {
-        [] => Ok(Pattern::str("")),
-        [item] => terminal_tree_to_pattern(name, item),
-        _ => {
-            let mut joined = String::new();
-            for item in items {
-                joined.push_str(&pattern_to_regexp(&terminal_tree_to_pattern(name, item)?));
-            }
-            Ok(Pattern::re(joined))
-        }
-    }
-}
-
-fn contains_template(expr: &Expr) -> bool {
-    match expr {
-        Expr::Alternatives(alts) => alts.iter().any(|a| a.items.iter().any(contains_template)),
-        Expr::Symbol(_) | Expr::Literal(_) => false,
-        Expr::Repeat { inner, .. } => contains_template(inner),
-        Expr::Template { .. } => true,
-    }
-}
-
 struct Compiler {
-    terminals: Vec<TerminalDef>,
+    /// The terminals as `(name, pattern, priority)`, compiled once the
+    /// unused ones are dropped.
+    terminals: Vec<(String, Option<Pattern>, i64)>,
     term_ids: HashMap<String, TermId>,
     /// The named terminal a literal in a rule stands for, by pattern: the
     /// last one defined with that pattern, as in Lark's `term_reverse`.
     term_by_pattern: HashMap<Pattern, TermId>,
     anon_counter: usize,
     rules: Vec<Option<Rule>>,
+    rule_names: Vec<String>,
     rule_ids: HashMap<String, RuleId>,
     templates: HashMap<String, (Vec<String>, Expr)>,
     pending: Vec<(String, Expr)>,
+    instantiations: usize,
 }
 
 impl Compiler {
@@ -321,31 +250,26 @@ impl Compiler {
         }
         let id = self.rules.len();
         self.rules.push(None);
+        self.rule_names.push(name.to_string());
         self.rule_ids.insert(name.to_string(), id);
         id
     }
 
-    fn add_terminal(
-        &mut self,
-        name: String,
-        pattern: Option<Pattern>,
-        priority: i64,
-    ) -> GrammarResult<TermId> {
-        let term = TerminalDef::new(name, pattern, priority)?;
+    fn add_terminal(&mut self, name: String, pattern: Option<Pattern>, priority: i64) -> TermId {
         let id = self.terminals.len();
-        if let Some(p) = &term.pattern {
+        if let Some(p) = &pattern {
             self.term_by_pattern.insert(p.clone(), id);
         }
-        self.term_ids.insert(term.name.clone(), id);
-        self.terminals.push(term);
-        Ok(id)
+        self.term_ids.insert(name.clone(), id);
+        self.terminals.push((name, pattern, priority));
+        id
     }
 
     /// Lark's `PrepareAnonTerminals.pattern`: the terminal for a literal
     /// used inside a rule, created and named on first use.
-    fn anonymous_terminal(&mut self, pattern: &Pattern) -> GrammarResult<TermId> {
+    fn anonymous_terminal(&mut self, pattern: &Pattern) -> TermId {
         if let Some(&id) = self.term_by_pattern.get(pattern) {
-            return Ok(id);
+            return id;
         }
         let mut name = None;
         if pattern.kind == PatternKind::Str {
@@ -376,13 +300,8 @@ impl Compiler {
 
     fn symbol_name(&self, item: &Item) -> String {
         match item {
-            Item::Terminal(id) => self.terminals[*id].name.clone(),
-            Item::Rule(id) => self
-                .rule_ids
-                .iter()
-                .find(|(_, v)| **v == *id)
-                .map(|(k, _)| k.clone())
-                .unwrap(),
+            Item::Terminal(id) => self.terminals[*id].0.clone(),
+            Item::Rule(id) => self.rule_names[*id].clone(),
             Item::Group(_) | Item::Repeat { .. } => {
                 unreachable!("template arguments are always symbols")
             }
@@ -416,11 +335,17 @@ impl Compiler {
                 "Template '{name}' nests its instantiations more than {MAX_TEMPLATE_NESTING} levels deep (in rule {rule_name})"
             )));
         }
+        if self.instantiations == MAX_TEMPLATE_INSTANTIATIONS {
+            return Err(GrammarError::new(format!(
+                "Templates are instantiated more than {MAX_TEMPLATE_INSTANTIATIONS} times (instantiating '{name}' in rule {rule_name})"
+            )));
+        }
+        self.instantiations += 1;
         let substitutions: HashMap<&str, Symbol> = params
             .iter()
             .map(|p| p.as_str())
             .zip(arg_items.iter().map(|a| match a {
-                Item::Terminal(id) => Symbol::Terminal(self.terminals[*id].name.clone()),
+                Item::Terminal(id) => Symbol::Terminal(self.terminals[*id].0.clone()),
                 Item::Rule(_) => Symbol::Rule(self.symbol_name(a)),
                 _ => unreachable!("template arguments are always symbols"),
             }))
@@ -451,7 +376,7 @@ impl Compiler {
                 None => unreachable!("undefined terminals are rejected before compiling"),
             },
             Expr::Symbol(Symbol::Rule(name)) => Item::Rule(self.rule_id(name)),
-            Expr::Literal(pattern) => Item::Terminal(self.anonymous_terminal(pattern)?),
+            Expr::Literal(pattern) => Item::Terminal(self.anonymous_terminal(pattern)),
             Expr::Repeat { inner, min, max } => Item::Repeat {
                 inner: Box::new(self.prepare(rule_name, inner)?),
                 min: *min,
@@ -522,7 +447,7 @@ fn substitute(expr: &mut Expr, substitutions: &HashMap<&str, Symbol>) {
     }
 }
 
-fn collect_rule_refs(item: &Item, out: &mut Vec<RuleId>) {
+pub fn collect_rule_refs(item: &Item, out: &mut Vec<RuleId>) {
     match item {
         Item::Terminal(_) => {}
         Item::Rule(id) => out.push(*id),
@@ -579,28 +504,18 @@ pub fn compile(built: &BuiltGrammar, start: &[&str]) -> GrammarResult<Grammar> {
         term_by_pattern: HashMap::default(),
         anon_counter: 0,
         rules: Vec::new(),
+        rule_names: Vec::new(),
         rule_ids: HashMap::default(),
         templates: HashMap::default(),
         pending: Vec::new(),
+        instantiations: 0,
     };
     for (name, body, priority) in &built.term_defs {
-        let pattern = match body {
-            Some(body) => {
-                if contains_template(body) {
-                    return Err(GrammarError::new(format!(
-                        "Templates cannot be used inside terminals ({name})"
-                    )));
-                }
-                if body.is_single_empty() {
-                    return Err(GrammarError::new(format!(
-                        "Terminals cannot be empty ({name})"
-                    )));
-                }
-                Some(terminal_tree_to_pattern(name, body)?)
-            }
-            None => None,
-        };
-        compiler.add_terminal(name.clone(), pattern, *priority)?;
+        let pattern = body
+            .as_ref()
+            .map(|body| terminal_pattern(name, body))
+            .transpose()?;
+        compiler.add_terminal(name.clone(), pattern, *priority);
     }
     for (name, params, body, _) in &built.rule_defs {
         if params.is_empty() {
@@ -679,10 +594,10 @@ pub fn compile(built: &BuiltGrammar, start: &[&str]) -> GrammarResult<Grammar> {
     }
     let mut term_map: HashMap<TermId, TermId> = HashMap::default();
     let mut kept_terms = Vec::new();
-    for (id, term) in compiler.terminals.into_iter().enumerate() {
+    for (id, (name, pattern, priority)) in compiler.terminals.into_iter().enumerate() {
         if used_terms.contains(&id) {
             term_map.insert(id, kept_terms.len());
-            kept_terms.push(term);
+            kept_terms.push(TerminalDef::new(name, pattern, priority)?);
         }
     }
     for rule in &mut kept_rules {

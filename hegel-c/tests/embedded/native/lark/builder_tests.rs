@@ -159,9 +159,10 @@ fn double_underscore_names_cannot_be_written() {
 #[test]
 fn ignore_by_name_and_by_expression() {
     let built =
-        build("start: \"a\"\nWS: \" \"\n%ignore WS\n%ignore \"\\t\" | /#.*/\n%ignore \"x\" -> y");
+        build("start: \"a\"\nWS: \" \"\n%ignore WS\n%ignore \"\\t\" | /#.*/\n%ignore \"x\"");
     assert_eq!(built.ignore, vec!["WS", "__IGNORE_1", "__IGNORE_2"]);
     assert_eq!(term_names(&built), vec!["WS", "__IGNORE_1", "__IGNORE_2"]);
+    assert!(err("start: \"a\"\n%ignore \"x\" -> y").contains("Aliasing not allowed in terminals"));
 }
 
 #[test]
@@ -198,20 +199,64 @@ fn template_parameters_are_not_undefined_symbols() {
 }
 
 #[test]
-fn terminals_inline_their_references() {
+fn terminals_fold_their_references_into_one_literal_per_alternative() {
     let built = build("start: C\nA: \"a\"\nB: A \"b\"\nC: B | A");
     assert_eq!(
         term_body(&built, "B"),
-        &Expr::Alternatives(vec![alt(vec![
-            Expr::Alternatives(vec![alt(vec![Expr::Literal(Pattern::str("a"))])]),
-            Expr::Literal(Pattern::str("b")),
-        ])])
+        &Expr::Alternatives(vec![alt(vec![Expr::Literal(Pattern::re("ab"))])])
     );
-    let c = term_body(&built, "C");
-    let Expr::Alternatives(alts) = c else {
-        unreachable!()
-    };
-    assert_eq!(alts.len(), 2);
+    assert_eq!(
+        term_body(&built, "C"),
+        &Expr::Alternatives(vec![
+            alt(vec![Expr::Literal(Pattern::re("ab"))]),
+            alt(vec![Expr::Literal(Pattern::str("a"))]),
+        ])
+    );
+    let grammar = compile(&built, &["start"]).unwrap();
+    let c = &grammar.terminals[grammar.terminal_id("C").unwrap()];
+    assert_eq!(c.regexp.as_deref(), Some("(?:ab|a)"));
+}
+
+#[test]
+fn an_extended_imported_terminal_sorts_its_new_alternatives_with_the_old() {
+    let sources = Sources(vec![("lib.lark", "A: B \"b\" | \"c\"\nB: \"a\"\n")]);
+    let built = build_with(
+        "%import lib.A\n%extend A: \"xyz\" | \"q\"\nstart: A",
+        &sources,
+    )
+    .unwrap();
+    assert_eq!(term_names(&built), vec!["A"]);
+    let grammar = compile(&built, &["start"]).unwrap();
+    let a = &grammar.terminals[grammar.terminal_id("A").unwrap()];
+    assert_eq!(a.regexp.as_deref(), Some("(?:xyz|ab|q|c)"));
+}
+
+#[test]
+fn a_long_chain_of_terminal_references_resolves_without_growing() {
+    let mut text = String::from("start: T3000\nT0: \"a\"\n");
+    for i in 1..=3000 {
+        text.push_str(&format!("T{i}: T{}\n", i - 1));
+    }
+    let built = build(&text);
+    assert_eq!(
+        term_body(&built, "T3000"),
+        &Expr::Alternatives(vec![alt(vec![Expr::Literal(Pattern::str("a"))])])
+    );
+    let mut text = String::from("start: T0\n");
+    for i in 0..3000 {
+        text.push_str(&format!("T{i}: T{}\n", i + 1));
+    }
+    text.push_str("T3000: \"a\"\n");
+    build(&text);
+}
+
+#[test]
+fn repeat_suffixes() {
+    assert_eq!(repeat_suffix(0, Some(1)), "?");
+    assert_eq!(repeat_suffix(0, None), "*");
+    assert_eq!(repeat_suffix(1, None), "+");
+    assert_eq!(repeat_suffix(3, Some(3)), "{3}");
+    assert_eq!(repeat_suffix(1, Some(3)), "{1,3}");
 }
 
 #[test]
@@ -236,10 +281,10 @@ fn a_terminal_doubling_at_every_link_of_a_chain_is_capped() {
         text.push_str(&format!("T{links}: \"a\"\n"));
         text
     };
-    build(&chain(12));
+    build(&chain(16));
     assert_eq!(
         err(&chain(17)),
-        "Terminal T3 has more than 65536 elements once the terminals it uses are inlined"
+        "Terminal T0 has a pattern longer than 65536 characters once the terminals it uses are inlined"
     );
 }
 
@@ -438,4 +483,44 @@ fn undefined_symbols_are_found_inside_repeats_and_template_arguments() {
         message.contains("Rule 'nope' used but not defined"),
         "{message}"
     );
+}
+
+#[test]
+fn a_rule_imported_under_a_terminal_name_is_not_a_terminal() {
+    let import = "%import python.starguard -> STARGUARD\n";
+    assert_eq!(
+        err(&format!("{import}start: STARGUARD\n")),
+        "Rule 'STARGUARD' used as a terminal (in rule start)"
+    );
+    assert_eq!(
+        err(&format!("{import}start: \"a\"\n%ignore STARGUARD\n")),
+        "Rule 'STARGUARD' marked to ignore, but only terminals can be ignored"
+    );
+    assert_eq!(
+        err(&format!("{import}start: A\nA: STARGUARD \"x\"\n")),
+        "Terminal used but not defined: STARGUARD"
+    );
+    assert_eq!(
+        err("%import python.lambda_kwparams -> LK\nstart: A\nA: LK\n"),
+        "Terminal used but not defined: LK"
+    );
+}
+
+#[test]
+fn a_terminal_imported_under_a_rule_name_is_not_a_rule() {
+    assert_eq!(
+        err("%import common.INT -> int\nstart: int\n"),
+        "Terminal 'int' used as a rule (in rule start)"
+    );
+    assert_eq!(
+        err("%import common.INT -> int\nstart: int{\"a\"}\n"),
+        "Terminal 'int' used as a template (in rule start)"
+    );
+}
+
+#[test]
+fn an_imported_rule_used_as_a_terminal_is_rejected_before_its_own_references_are_checked() {
+    let sources = Sources(vec![("g.lark", "foo: undefined_rule\n")]);
+    let err = build_with("%import .g.foo -> FOO\nstart: A\nA: FOO\n", &sources).unwrap_err();
+    assert_eq!(err.message, "Terminal used but not defined: FOO");
 }

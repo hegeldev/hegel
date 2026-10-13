@@ -4,6 +4,8 @@
 use super::*;
 use crate::native::lark::builder::{NoImports, load_grammar};
 use crate::native::lark::compile::compile;
+use alloc::format;
+use alloc::string::String;
 use alloc::vec;
 
 fn analyzed(text: &str) -> (Grammar, Analysis) {
@@ -192,4 +194,38 @@ fn bounds_saturate_instead_of_overflowing() {
     assert_eq!(add_bound(None, Some(1)), None);
     assert_eq!(max_bound(Some(3), Some(5)), Some(5));
     assert_eq!(max_bound(Some(3), None), None);
+}
+
+#[test]
+fn rules_are_visited_after_the_rules_they_use() {
+    let (g, _) = analyzed("start: a b\na: b | a \"x\"\nb: c\nc: \"c\"\n");
+    let order = dependency_order(&g);
+    let position = |name: &str| {
+        order
+            .iter()
+            .position(|&r| r == g.rule_id(name).unwrap())
+            .unwrap()
+    };
+    assert_eq!(order.len(), 4);
+    assert!(position("c") < position("b"));
+    assert!(position("b") < position("a"));
+    assert!(position("a") < position("start"));
+}
+
+#[test]
+fn a_long_chain_defined_from_the_top_down_is_analysed_in_one_round() {
+    let mut text = String::from("start: r0\n");
+    for i in 0..3000 {
+        text.push_str(&format!("r{i}: r{}\n", i + 1));
+    }
+    text.push_str("r3000: \"a\"\n");
+    let (g, a) = analyzed(&text);
+    assert_eq!(
+        dependency_order(&g).last(),
+        Some(&g.rule_id("start").unwrap())
+    );
+    let start = rule(&g, &a, "start");
+    assert_eq!(start.min_size, 1);
+    assert_eq!(start.min_depth, 3002);
+    assert_eq!(start.alternatives[0].max_size, Some(1));
 }

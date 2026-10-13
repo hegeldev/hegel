@@ -390,15 +390,6 @@ fn anonymous_terminal_naming() {
 }
 
 #[test]
-fn repeat_suffixes() {
-    assert_eq!(repeat_suffix(0, Some(1)), "?");
-    assert_eq!(repeat_suffix(0, None), "*");
-    assert_eq!(repeat_suffix(1, None), "+");
-    assert_eq!(repeat_suffix(3, Some(3)), "{3}");
-    assert_eq!(repeat_suffix(1, Some(3)), "{1,3}");
-}
-
-#[test]
 fn grammar_lookups() {
     let grammar = compiled("start: A\nA: \"a\"");
     assert_eq!(grammar.rule_id("missing"), None);
@@ -438,4 +429,42 @@ fn a_template_instantiating_itself_ever_deeper_is_rejected() {
         "{err}"
     );
     compiled("start: t{t{t{\"a\"}}}\nt{x}: x | \"(\" x \")\"\n");
+}
+
+#[test]
+fn only_the_terminals_kept_are_compiled_and_checked_for_width() {
+    let grammar = compiled("start: A\n_INNER: /.*?/\nA: \"x\" _INNER \"y\"");
+    assert_eq!(grammar.terminals.len(), 1);
+    assert_eq!(grammar.terminals[0].regexp.as_deref(), Some("x.*?y"));
+    compiled("start: \"a\"\nUNUSED: /a*/");
+    compiled("start: \"a\"\nUNUSED: /(/");
+    compiled("start: \"a\"\nx: BAD\nBAD: /(/");
+    assert!(
+        compile_err("start: \"a\"\n%ignore BAD\nBAD: /(/").contains("Cannot compile token BAD")
+    );
+    assert!(
+        compile_err("start: \"a\"\n%ignore EMPTY\nEMPTY: /a*/")
+            .contains("Zero-width terminals are not allowed (EMPTY: a*)")
+    );
+}
+
+#[test]
+fn the_number_of_template_instantiations_is_capped() {
+    let chain = |instantiations: usize| {
+        let mut text = String::from("t{x}: x\nstart:");
+        for i in 0..instantiations {
+            text.push_str(&format!(" t{{a{i}}}"));
+        }
+        text.push('\n');
+        for i in 0..instantiations {
+            text.push_str(&format!("a{i}: \"a\"\n"));
+        }
+        text
+    };
+    let grammar = compiled(&chain(4096));
+    assert_eq!(grammar.rules.len(), 1 + 2 * 4096);
+    assert_eq!(
+        compile_err(&chain(4097)),
+        "Templates are instantiated more than 4096 times (instantiating 't' in rule start)"
+    );
 }

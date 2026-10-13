@@ -42,12 +42,23 @@ fn eval_escaping_rejects_bad_hex() {
             .message
             .contains("Truncated")
     );
-    assert!(
-        eval_escaping(r"\xzz")
-            .unwrap_err()
-            .message
-            .contains("Invalid")
-    );
+    for literal in [
+        r"\xzz",
+        r"\x+1",
+        r"\x-1",
+        r"\u+123",
+        r"\U+123456a",
+        r"\U 1234567",
+    ] {
+        assert!(
+            eval_escaping(literal)
+                .unwrap_err()
+                .message
+                .contains("Truncated"),
+            "{literal}"
+        );
+    }
+    assert_eq!(eval_escaping(r"\x41\u0042\U00000043").unwrap(), "ABC");
     assert!(
         eval_escaping(r"\ud800")
             .unwrap_err()

@@ -13,7 +13,7 @@ fn hex_escape(
     literal: &str,
 ) -> GrammarResult<(char, usize)> {
     let end = i + digits;
-    if end > chars.len() {
+    if end > chars.len() || !chars[i..end].iter().all(char::is_ascii_hexdigit) {
         return Err(GrammarError::new(format!(
             "Truncated escape sequence in literal `{literal}`"
         )));
