@@ -7,12 +7,14 @@ use super::parser::{OpCode, SubPattern};
 use alloc::vec::Vec;
 
 /// The widths of the capture groups seen so far, indexed by group number,
-/// for backreferences.
-struct GroupWidths {
+/// for backreferences, and the pattern a group not seen is found in when
+/// a part of one is being measured (see [`get_width_in`]).
+struct GroupWidths<'a> {
     widths: Vec<Option<(u64, Option<u64>)>>,
+    pattern: Option<&'a SubPattern>,
 }
 
-impl GroupWidths {
+impl GroupWidths<'_> {
     fn record(&mut self, group: u32, width: (u64, Option<u64>)) {
         let index = group as usize;
         if self.widths.len() <= index {
@@ -21,20 +23,48 @@ impl GroupWidths {
         self.widths[index] = Some(width);
     }
 
-    fn get(&self, group: u32) -> (u64, Option<u64>) {
-        self.widths
-            .get(group as usize)
-            .copied()
-            .flatten()
-            .unwrap_or((0, None))
+    fn get(&mut self, group: u32) -> (u64, Option<u64>) {
+        if let Some(width) = self.widths.get(group as usize).copied().flatten() {
+            return width;
+        }
+        match self.pattern.and_then(|pattern| find_group(pattern, group)) {
+            Some(p) => width_of(p, self),
+            None => (0, None),
+        }
     }
+}
+
+/// The subpattern of capture group `g`, searched for through the whole
+/// of `p`.
+fn find_group(p: &SubPattern, g: u32) -> Option<&SubPattern> {
+    for op in &p.data {
+        let found = match op {
+            OpCode::Subpattern {
+                group: Some(id), p, ..
+            } if *id == g => Some(p),
+            OpCode::Subpattern { p, .. } | OpCode::AtomicGroup(p) => find_group(p, g),
+            OpCode::Branch(alternatives) => alternatives.iter().find_map(|a| find_group(a, g)),
+            OpCode::MaxRepeat { item, .. }
+            | OpCode::MinRepeat { item, .. }
+            | OpCode::PossessiveRepeat { item, .. } => find_group(item, g),
+            OpCode::GroupRefExists { yes, no, .. } => {
+                find_group(yes, g).or_else(|| no.as_ref().and_then(|no| find_group(no, g)))
+            }
+            OpCode::Assert { p, .. } | OpCode::AssertNot { p, .. } => find_group(p, g),
+            _ => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
 }
 
 fn add_max(a: Option<u64>, b: Option<u64>) -> Option<u64> {
     Some(a?.saturating_add(b?))
 }
 
-fn width_of(p: &SubPattern, groups: &mut GroupWidths) -> (u64, Option<u64>) {
+fn width_of(p: &SubPattern, groups: &mut GroupWidths<'_>) -> (u64, Option<u64>) {
     let mut lo: u64 = 0;
     let mut hi: Option<u64> = Some(0);
     for op in &p.data {
@@ -120,6 +150,19 @@ pub fn get_width_within(
 ) -> (u64, Option<u64>) {
     let mut groups = GroupWidths {
         widths: groups.to_vec(),
+        pattern: None,
+    };
+    width_of(p, &mut groups)
+}
+
+/// [`get_width`] for the subpattern `p` of `pattern`, with a
+/// backreference in `p` as wide as its group wherever in `pattern` the
+/// group is: the width of a lookbehind's body, which the parser requires
+/// to be one number, where the matcher starts it.
+pub fn get_width_in(p: &SubPattern, pattern: &SubPattern) -> (u64, Option<u64>) {
+    let mut groups = GroupWidths {
+        widths: Vec::new(),
+        pattern: Some(pattern),
     };
     width_of(p, &mut groups)
 }

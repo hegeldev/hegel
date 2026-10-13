@@ -232,6 +232,7 @@ pub fn general_category(cp: u32) -> Result<Category, InternalError> {
 
 /// [`general_category`] for a `char`, whose type already guarantees a
 /// codepoint in range — so the lookup cannot fail.
+#[cfg(test)]
 pub fn general_category_char(c: char) -> Category {
     category_lookup(c as u32)
 }

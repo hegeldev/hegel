@@ -60,9 +60,18 @@ impl ClassTable {
 fn classify(cp: u32, category: Category) -> [bool; 3] {
     let major = category.as_str().as_bytes()[0];
     let digit = category == Category::Nd;
-    let space = matches!(cp, 0x9..=0xd | 0x1c..=0x20 | 0x85) || major == b'Z';
+    let space = char::from_u32(cp).is_some_and(is_space_by_code) || major == b'Z';
     let word = cp == u32::from(b'_') || major == b'L' || major == b'N';
     [digit, space, word]
+}
+
+/// Whether `c` is whitespace to CPython's Unicode-mode `\s` by its code
+/// rather than its General Category, as CPython decides every ASCII
+/// character: the ASCII whitespace (`\t` to `\r` and `\x1c` to the
+/// space) and U+0085. Every other space character is in the `Z`
+/// categories.
+pub fn is_space_by_code(c: char) -> bool {
+    matches!(c, '\t'..='\r' | '\x1c'..=' ' | '\u{85}')
 }
 
 static TABLES: Lazy<[ClassTable; 3]> = Lazy::new(|| {

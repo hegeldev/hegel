@@ -9,6 +9,20 @@ fn width(pattern: &str) -> (u64, Option<u64>) {
     get_width(&parse_pattern(pattern, 0).unwrap().pattern)
 }
 
+fn lookbehind_width(pattern: &str) -> (u64, Option<u64>) {
+    let parsed = parse_pattern(pattern, 0).unwrap();
+    let body = parsed
+        .pattern
+        .data
+        .iter()
+        .find_map(|op| match op {
+            OpCode::Assert { direction: -1, p } => Some(p),
+            _ => None,
+        })
+        .unwrap();
+    get_width_in(body, &parsed.pattern)
+}
+
 #[test]
 fn literals_and_classes_are_one_wide() {
     assert_eq!(width("abc"), (3, Some(3)));
@@ -78,4 +92,24 @@ fn saturates_instead_of_overflowing() {
         width("(?:(?:a{4294967294}){4294967294}){4294967294}"),
         (u64::MAX, Some(u64::MAX))
     );
+}
+
+#[test]
+fn a_part_of_a_pattern_takes_the_widths_of_the_groups_anywhere_in_it() {
+    assert_eq!(lookbehind_width(r"(a)(?<=\1)b"), (1, Some(1)));
+    assert_eq!(lookbehind_width(r"(ab)(c)?(?<=\2)d"), (1, Some(1)));
+    assert_eq!(
+        lookbehind_width(r"(?:x|(a))(?>(b))(c)*(?(1)(d)|(e))(?=(f))(?!(g))(?<=\1\2\3\4\5\6\7)"),
+        (7, Some(7))
+    );
+    assert_eq!(lookbehind_width(r"(?<=(a)b)c"), (2, Some(2)));
+}
+
+#[test]
+fn a_reference_to_no_group_of_the_pattern_is_unbounded() {
+    let reference = SubPattern {
+        data: alloc::vec![OpCode::GroupRef(1)],
+    };
+    let empty = SubPattern { data: Vec::new() };
+    assert_eq!(get_width_in(&reference, &empty), (0, None));
 }

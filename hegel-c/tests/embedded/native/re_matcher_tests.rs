@@ -465,44 +465,6 @@ fn errors_display() {
 }
 
 #[test]
-fn least_width_of_patterns() {
-    let least = |pattern: &str| {
-        let parsed = parse_pattern(pattern, 0).unwrap();
-        Matcher::new(&parsed).least_width(&parsed.pattern)
-    };
-    assert_eq!(least("abc"), 3);
-    assert_eq!(least("a|bc"), 1);
-    assert_eq!(least("(ab)*"), 0);
-    assert_eq!(least("(?:ab){2,3}"), 4);
-    assert_eq!(least("(?>ab)"), 2);
-    assert_eq!(least("(a)\\1"), 2);
-    assert_eq!(least("(a)?(?(1)bc|d)"), 1);
-    assert_eq!(least("(a)?(?(1)bc)"), 0);
-    assert_eq!(least("^$\\b(?=a)(?!b)"), 0);
-    assert_eq!(least("a*+"), 0);
-    assert_eq!(least("a+?b"), 2);
-    assert_eq!(least("(a)(?:b)?\\1"), 2);
-    assert_eq!(
-        least("(?:(?:a{4294967294}){4294967294}){4294967294}"),
-        usize::MAX
-    );
-}
-
-#[test]
-fn find_group_searches_every_construct() {
-    let parsed = parse_pattern("(?:x|(a))(?>(b))(c)*(?(1)(d)|(e))(?=(f))(?!(g))\\1", 0).unwrap();
-    let pattern = &parsed.pattern;
-    for g in 1..=7 {
-        assert!(find_group(pattern, g).is_some(), "group {g}");
-    }
-    assert!(find_group(pattern, 8).is_none());
-    let lookbehind = parse_pattern("(?<=(a))b", 0).unwrap();
-    assert!(find_group(&lookbehind.pattern, 1).is_some());
-    let conditional = parse_pattern("(a)?(?(1)b|(c))", 0).unwrap();
-    assert!(find_group(&conditional.pattern, 2).is_some());
-}
-
-#[test]
 fn match_end_prefers_first_successful_alternative_with_fullmatch_backtracking() {
     let parsed = parse_pattern("(?:a|ab)(?:c|bcd)", 0).unwrap();
     let matcher = Matcher::new(&parsed);

@@ -1,10 +1,23 @@
+//! The regex string generator: a walk of a pattern's AST (see
+//! [`parse_pattern`]) that emits, for each construct, exactly the
+//! characters CPython's `re` accepts for it, so that a pattern of
+//! characters, classes, alternations and repeats alone needs no check.
+//! Of the constructs the walk only approximates it emits what it can,
+//! nothing for an anchor or a lookaround, a group's text for a back
+//! reference, one count for a possessive repeat, and the drawn string is
+//! then checked with the engine's matcher (see [`approximated`] and
+//! [`pattern_matches`]) and redrawn a few times while it is rejected;
+//! the generator has no matcher of its own. A whole-match draw emits the
+//! pattern alone, and a search draw pads it on both sides as far as its
+//! anchors allow. What is drawn is recorded as one string choice under
+//! the pattern as its constraint (see [`CompiledRegex::kind`]).
+
 use crate::control::{InternalError, hegel_internal_error, hegel_internal_unwrap};
 use crate::native::{HashMap, HashSet};
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
-use alloc::vec;
 use alloc::vec::Vec;
 use hashbrown::hash_map::Entry;
 
@@ -18,7 +31,7 @@ use crate::native::re::constants::{
     SRE_FLAG_MULTILINE,
 };
 use crate::native::re::constraint::{RegexConstraint, matches as pattern_matches};
-use crate::native::re::matcher::combine_flags;
+use crate::native::re::matcher::{combine_flags, in_category};
 use crate::native::re::parser::{OpCode, ParsedPattern, SetItem, SubPattern, parse_pattern};
 use crate::native::rng::EngineRng;
 use crate::sys::sync::{Lazy, Mutex};
@@ -212,7 +225,7 @@ impl CompiledRegex {
             EngineError::InvalidArgument(format!("invalid regex pattern {pattern:?}: {e}"))
         })?;
         let literal = literal_of(&parsed, &alphabet);
-        let verified = approximated(&parsed.pattern);
+        let verified = approximated(&parsed.pattern, true);
         let caches = Caches::default();
         let producible = producible_sub(&parsed.pattern, parsed.flags, &alphabet, &caches)?;
         let unproducible = caches
@@ -261,14 +274,14 @@ impl CompiledRegex {
 /// the choice recording it has a bound; a draw past it is invalid.
 pub(crate) const REGEX_MAX_SIZE: usize = 1 << 16;
 
-/// Seeds tried for the simplest string when the simplest walk fails a
-/// deferred check, before giving the pattern up.
+/// Seeds tried for the simplest string when the matcher rejects the
+/// simplest walk, before giving the pattern up.
 const SIMPLEST_FALLBACK_SEEDS: u64 = 8;
 
 /// Set `kind`'s constraint's simplest string if it is not yet: the
-/// string drawn when every decision goes the simplest way, or, when that
-/// fails a deferred check (padding a `\b` needs, say), the first of a
-/// few seeded draws that does not. A pattern with no string either way
+/// string drawn when every decision goes the simplest way, or, when the
+/// matcher rejects that (for the padding a `\b` needs, say), the first
+/// of a few seeded draws it accepts. A pattern with no string either way
 /// concludes the test case invalid, as a draw that finds no string does.
 pub(crate) fn ensure_simplest<D: Draws>(
     d: &mut D,
@@ -326,7 +339,7 @@ const TYPICAL_CAPACITY: usize = 64;
 /// and otherwise padded with draws from the compiled alphabet (or the full
 /// codespace when it has none).
 ///
-/// Candidates whose deferred checks fail (a `\b` that the padding broke, a
+/// Candidates the matcher rejects (a `\b` that the padding broke, a
 /// possessive repeat whose committed count the pattern can't actually
 /// match, ...) are retried a few times within the same test case — the
 /// analogue of Hypothesis's strategy-level `.filter(re.search)` retries —
@@ -343,8 +356,8 @@ pub(crate) fn generate_regex<D: Draws>(
 
 /// Draw a string matching `re` onto the end of `out`, whose earlier text
 /// the pattern never sees: an anchor at the start of the pattern is at
-/// the start of the drawn string. What an attempt that fails a deferred
-/// check or errors added is removed again.
+/// the start of the drawn string. What an attempt the matcher rejects or
+/// that errors added is removed again.
 pub(crate) fn generate_regex_into<D: Draws>(
     d: &mut D,
     re: &CompiledRegex,
@@ -392,8 +405,8 @@ fn literal_of(parsed: &ParsedPattern, alphabet: &Option<IntervalSet>) -> Option<
 }
 
 /// One generation attempt, appending to `out` from `base` on. Returns
-/// `Ok(false)` when the candidate was generated but failed a deferred
-/// check against the final string.
+/// `Ok(false)` when the candidate was generated but the matcher rejects
+/// it (see [`approximated`]).
 fn generate_regex_attempt<D: Draws>(
     d: &mut D,
     re: &CompiledRegex,
@@ -410,7 +423,6 @@ fn generate_regex_attempt<D: Draws>(
         flags: parsed.flags,
         fullmatch,
         base,
-        deferred: None,
         unproducible: re.unproducible,
         caches: &re.caches,
     };
@@ -429,99 +441,46 @@ fn generate_regex_attempt<D: Draws>(
     if !fullmatch {
         draw_suffix(d, parsed, alphabet, out)?;
     }
-
-    if let Some(deferred) = &state.deferred {
-        let final_chars = &out[base..];
-        for anchor in &deferred.pending_anchors {
-            if !at_matches(&anchor.at, final_chars, anchor.char_pos, anchor.flags) {
-                return Ok(false);
-            }
-        }
-        for pending in &deferred.pending_asserts {
-            let holds = if pending.direction >= 0 {
-                match_seq(
-                    &pending.pattern.data,
-                    pending.char_pos,
-                    final_chars,
-                    pending.flags,
-                    &pending.groups,
-                )
-                .is_some()
-            } else {
-                (0..=pending.char_pos).any(|start| {
-                    match_seq(
-                        &pending.pattern.data,
-                        start,
-                        final_chars,
-                        pending.flags,
-                        &pending.groups,
-                    ) == Some(pending.char_pos)
-                })
-            };
-            if !holds {
-                return Ok(false);
-            }
-        }
-        for pending in &deferred.pending_lookaheads {
-            let matches = if pending.direction >= 0 {
-                match_seq(
-                    &pending.pattern.data,
-                    pending.char_pos,
-                    final_chars,
-                    pending.flags,
-                    &pending.groups,
-                )
-                .is_some()
-            } else {
-                (0..=pending.char_pos).any(|start| {
-                    match_seq(
-                        &pending.pattern.data,
-                        start,
-                        final_chars,
-                        pending.flags,
-                        &pending.groups,
-                    ) == Some(pending.char_pos)
-                })
-            };
-            if matches {
-                return Ok(false);
-            }
-        }
-    }
-    if re.verified && !pattern_matches(parsed, fullmatch, &out[base..]) {
-        return Ok(false);
-    }
-
-    Ok(true)
+    Ok(!re.verified || pattern_matches(parsed, fullmatch, &out[base..]))
 }
 
-/// Whether `ops` has a construct the generator only approximates, so that
-/// what it draws has to be checked with the matcher: position assertions
-/// on word boundaries and lookarounds, whose deferred checks are an
-/// approximation of the matcher's; back references and conditionals,
-/// whose text is copied from a group the pattern need not match the same
-/// way; and atomic groups and possessive repeats, which commit to a count
-/// the pattern need not admit. Characters, classes and literals are drawn
-/// from exactly the characters the matcher accepts (see [`casefold`]),
-/// so a pattern of those alone is not checked.
-fn approximated(ops: &SubPattern) -> bool {
-    ops.data.iter().any(|op| match op {
-        OpCode::At(AtCode::Boundary | AtCode::NonBoundary)
-        | OpCode::GroupRef(_)
-        | OpCode::GroupRefExists { .. }
-        | OpCode::Assert { .. }
-        | OpCode::AssertNot { .. }
-        | OpCode::AtomicGroup(_)
-        | OpCode::PossessiveRepeat { .. } => true,
-        OpCode::Subpattern { p, .. } => approximated(p),
-        OpCode::Branch(items) => items.iter().any(approximated),
-        OpCode::MaxRepeat { item, .. } | OpCode::MinRepeat { item, .. } => approximated(item),
-        OpCode::Literal(_)
-        | OpCode::NotLiteral(_)
-        | OpCode::In(_)
-        | OpCode::Any
-        | OpCode::At(_)
-        | OpCode::Failure => false,
+/// Whether `ops`, which ends the pattern when `tail`, has a construct the
+/// generator only approximates, so that what it draws has to be checked
+/// with the matcher: `$` and `\Z` anywhere but at the end of the pattern
+/// (where nothing, or the padding [`draw_suffix`] chooses for them,
+/// follows), word boundaries and lookarounds, which the walk emits
+/// nothing for; back references and conditionals, whose text is copied
+/// from a group the pattern need not match the same way; and atomic
+/// groups and possessive repeats, which commit to a count the pattern
+/// need not admit. Characters, classes and literals are drawn from
+/// exactly the characters the matcher accepts (see [`casefold`]), and
+/// `^` and `\A` are met only where they hold, so a pattern of those alone
+/// is not checked.
+fn approximated(ops: &SubPattern, tail: bool) -> bool {
+    let last = ops.data.len().checked_sub(1);
+    ops.data.iter().enumerate().any(|(i, op)| {
+        let tail = tail && Some(i) == last;
+        match op {
+            OpCode::At(AtCode::End | AtCode::EndString) => !tail,
+            OpCode::At(AtCode::Boundary | AtCode::NonBoundary)
+            | OpCode::GroupRef(_)
+            | OpCode::GroupRefExists { .. }
+            | OpCode::Assert { .. }
+            | OpCode::AssertNot { .. }
+            | OpCode::AtomicGroup(_)
+            | OpCode::PossessiveRepeat { .. } => true,
+            OpCode::Subpattern { p, .. } => approximated(p, tail),
+            OpCode::Branch(items) => items.iter().any(|item| approximated(item, false)),
+            OpCode::MaxRepeat { item, .. } | OpCode::MinRepeat { item, .. } => {
+                approximated(item, false)
+            }
+            OpCode::Literal(_)
+            | OpCode::NotLiteral(_)
+            | OpCode::In(_)
+            | OpCode::Any
+            | OpCode::At(_)
+            | OpCode::Failure => false,
+        }
     })
 }
 
@@ -537,60 +496,18 @@ struct GenState<'a> {
     flags: u32,
     /// Whether the draw is anchored at both ends. Affects how lookaround
     /// assertions are generated: in fullmatch mode their bodies must not be
-    /// emitted (the pattern has to consume the entire output), so they become
-    /// deferred checks instead.
+    /// emitted (the pattern has to consume the entire output), so they are
+    /// left to the matcher's check instead.
     fullmatch: bool,
     /// Where in the output buffer the drawn string starts: the text
-    /// before it belongs to the caller, and the anchors and deferred
-    /// checks never look at it.
+    /// before it belongs to the caller, and the anchors and the matcher's
+    /// check never look at it.
     base: usize,
-    /// The checks against the final string the draw has recorded so far,
-    /// once it has recorded one; most patterns record none, so the draw
-    /// neither builds nor drops them.
-    deferred: Option<Box<Deferred<'a>>>,
     /// Whether some subpattern is unproducible (see
     /// [`CompiledRegex::unproducible`]).
     unproducible: bool,
     /// The enclosing [`CompiledRegex`]'s cross-draw caches.
     caches: &'a Caches,
-}
-
-impl<'a> GenState<'a> {
-    /// The draw's deferred checks, to record one.
-    fn deferred(&mut self) -> &mut Deferred<'a> {
-        self.deferred.get_or_insert_with(Default::default)
-    }
-}
-
-/// What a draw checks against its final string once that is known, since
-/// the content after an anchor or a lookaround is not known when they are
-/// reached; a candidate that fails one is redrawn.
-#[derive(Default)]
-struct Deferred<'a> {
-    /// Zero-width anchors (`\b`, `\B`, and `$`/`\Z` in non-final positions)
-    /// recorded during generation.
-    pending_anchors: Vec<PendingAnchor>,
-    /// Positive lookaround assertions deferred in fullmatch mode.
-    pending_asserts: Vec<PendingAssertNot<'a>>,
-    /// Negative lookaround assertions recorded during generation. Each entry
-    /// captures the assertion body, the active flags, and a snapshot of the
-    /// groups at the point of the assertion.
-    pending_lookaheads: Vec<PendingAssertNot<'a>>,
-}
-
-struct PendingAnchor {
-    char_pos: usize,
-    at: AtCode,
-    flags: u32,
-}
-
-struct PendingAssertNot<'a> {
-    char_pos: usize,
-    direction: i32,
-    /// The assertion's body, in the pattern being drawn from.
-    pattern: &'a SubPattern,
-    flags: u32,
-    groups: HashMap<u32, Vec<char>>,
 }
 
 /// Draw 0..10 arbitrary characters from `alphabet` (or ASCII 32..126 when
@@ -687,10 +604,10 @@ fn draw_suffix<D: Draws>(
 }
 
 /// Recursively generate a string from a `SubPattern`, appending to `out`.
-fn generate_subpattern<'a, D: Draws>(
+fn generate_subpattern<D: Draws>(
     d: &mut D,
-    sp: &'a SubPattern,
-    state: &mut GenState<'a>,
+    sp: &SubPattern,
+    state: &mut GenState<'_>,
     alphabet: &Option<IntervalSet>,
     out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
@@ -699,10 +616,10 @@ fn generate_subpattern<'a, D: Draws>(
     }
     Ok(())
 }
-fn generate_op<'a, D: Draws>(
+fn generate_op<D: Draws>(
     d: &mut D,
-    op: &'a OpCode,
-    state: &mut GenState<'a>,
+    op: &OpCode,
+    state: &mut GenState<'_>,
     alphabet: &Option<IntervalSet>,
     out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
@@ -757,14 +674,7 @@ fn generate_op<'a, D: Draws>(
                     return Err(mark_invalid(d));
                 }
             }
-            AtCode::End | AtCode::EndString | AtCode::Boundary | AtCode::NonBoundary => {
-                let anchor = PendingAnchor {
-                    char_pos: out.len() - state.base,
-                    at: *at,
-                    flags: state.flags,
-                };
-                state.deferred().pending_anchors.push(anchor);
-            }
+            AtCode::End | AtCode::EndString | AtCode::Boundary | AtCode::NonBoundary => {}
         },
         OpCode::In(items) => {
             let set = state.caches.in_set(items, state.flags, alphabet)?;
@@ -821,30 +731,12 @@ fn generate_op<'a, D: Draws>(
                 generate_subpattern(d, no, state, alphabet, out)?;
             }
         }
-        OpCode::Assert { direction, p } => {
-            if state.fullmatch {
-                let pending = PendingAssertNot {
-                    char_pos: out.len() - state.base,
-                    direction: *direction,
-                    pattern: p,
-                    flags: state.flags,
-                    groups: state.groups.clone(),
-                };
-                state.deferred().pending_asserts.push(pending);
-            } else {
+        OpCode::Assert { p, .. } => {
+            if !state.fullmatch {
                 generate_subpattern(d, p, state, alphabet, out)?;
             }
         }
-        OpCode::AssertNot { direction, p } => {
-            let pending = PendingAssertNot {
-                char_pos: out.len() - state.base,
-                direction: *direction,
-                pattern: p,
-                flags: state.flags,
-                groups: state.groups.clone(),
-            };
-            state.deferred().pending_lookaheads.push(pending);
-        }
+        OpCode::AssertNot { .. } => {}
         OpCode::Failure => {
             return Err(mark_invalid(d));
         }
@@ -1250,50 +1142,9 @@ fn build_in_set(
     }
 }
 
-/// Return whether `c` is in the given CPython character category, with the
-/// ASCII flag's narrower definitions (`\d` is `[0-9]`, `\s` is
-/// `[ \t\n\r\f\v]`, `\w` is `[a-zA-Z0-9_]`) when `ascii`.
-fn in_category(c: char, cat: ChCode, ascii: bool) -> bool {
-    in_category_of(c, unicodedata::general_category_char(c), cat, ascii)
-}
-
-/// [`in_category`] for a character whose General Category is already
-/// known.
-fn in_category_of(c: char, category: Category, cat: ChCode, ascii: bool) -> bool {
-    let major = category.as_str().as_bytes()[0];
-    match cat {
-        ChCode::Digit if ascii => c.is_ascii_digit(),
-        ChCode::Digit => category == Category::Nd,
-        ChCode::NotDigit => !in_category_of(c, category, ChCode::Digit, ascii),
-        ChCode::Space if ascii => matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c'),
-        ChCode::Space => is_uni_space(c, major),
-        ChCode::NotSpace => !in_category_of(c, category, ChCode::Space, ascii),
-        ChCode::Word if ascii => c == '_' || c.is_ascii_alphanumeric(),
-        ChCode::Word => is_uni_word(c, major),
-        ChCode::NotWord => !in_category_of(c, category, ChCode::Word, ascii),
-    }
-}
-
-fn is_uni_space(c: char, major: u8) -> bool {
-    matches!(
-        c,
-        ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c' | '\x1c' | '\x1d' | '\x1e' | '\x1f' | '\u{85}'
-    ) || major == b'Z'
-}
-
-fn is_uni_word(c: char, major: u8) -> bool {
-    c == '_' || major == b'L' || major == b'N'
-}
-
-/// Whether `c` is a word character for `\b`, under the ASCII flag's
-/// definition when `ascii`.
-fn is_word(c: char, ascii: bool) -> bool {
-    in_category(c, ChCode::Word, ascii)
-}
-
 /// Return whether the characters of General Category `category` are in the
 /// given CPython character category, going by the General Category alone.
-/// Agrees with [`in_category_of`] for every character from
+/// Agrees with the matcher's [`in_category`] for every character from
 /// [`CATEGORY_ALONE_FROM`] up: the characters that function singles out
 /// (the control and Latin-1 whitespace, `_`) all lie below it, and under
 /// the ASCII flag no character from there up is a digit, a space or a
@@ -1314,7 +1165,7 @@ fn category_in(category: Category, cat: ChCode, ascii: bool) -> bool {
     }
 }
 
-/// The first codepoint from which [`in_category_of`] depends on a
+/// The first codepoint from which [`in_category`] depends on a
 /// character's General Category alone, so that [`category_in`] answers
 /// for it.
 const CATEGORY_ALONE_FROM: u32 = 0x100;
@@ -1327,7 +1178,7 @@ const CATEGORY_ALONE_FROM: u32 = 0x100;
 /// [`category_in`] when nothing distinguishes its characters: it starts at
 /// or after [`CATEGORY_ALONE_FROM`] and contains no excluded character.
 /// The runs below that, and those containing an exclusion, are checked
-/// character by character with [`in_category_of`].
+/// character by character with [`in_category`].
 fn gather_category_class(
     alphabet: &Option<IntervalSet>,
     categories: &[ChCode],
@@ -1354,10 +1205,7 @@ fn gather_category_class(
             } else {
                 for c in (start..=end).filter_map(char::from_u32) {
                     if excluded.binary_search(&(c as u32)).is_err()
-                        && categories
-                            .iter()
-                            .any(|cat| in_category_of(c, category, *cat, ascii))
-                            != negate
+                        && categories.iter().any(|cat| in_category(c, *cat, !ascii)) != negate
                     {
                         out.push(c);
                     }
@@ -1500,288 +1348,6 @@ fn codepoint_to_char(cp: u32) -> Result<char, InternalError> {
         char::from_u32(cp),
         "invalid codepoint in regex AST: {cp:#x}"
     ))
-}
-
-/// Where the ops `ops` match in `chars` from `pos`, with CPython's
-/// semantics for the characters they consume (see [`casefold`]) and the
-/// positions they assert; the end of the match, or `None`. The generator's
-/// own check of a deferred lookaround or anchor against the string it
-/// drew, not a full matcher: the patterns it approximates are verified by
-/// the engine's (see [`approximated`]).
-fn match_seq(
-    ops: &[OpCode],
-    pos: usize,
-    chars: &[char],
-    flags: u32,
-    groups: &HashMap<u32, Vec<char>>,
-) -> Option<usize> {
-    let Some((first, rest)) = ops.split_first() else {
-        return Some(pos);
-    };
-    match first {
-        OpCode::Literal(cp) => {
-            let want = char::from_u32(*cp)?;
-            let got = *chars.get(pos)?;
-            if casefold::literal_matches(want, got, flags) {
-                match_seq(rest, pos + 1, chars, flags, groups)
-            } else {
-                None
-            }
-        }
-        OpCode::NotLiteral(cp) => {
-            let banned = char::from_u32(*cp)?;
-            let got = *chars.get(pos)?;
-            if casefold::literal_matches(banned, got, flags) {
-                None
-            } else {
-                match_seq(rest, pos + 1, chars, flags, groups)
-            }
-        }
-        OpCode::Any => {
-            let got = *chars.get(pos)?;
-            if got == '\n' && flags & SRE_FLAG_DOTALL == 0 {
-                None
-            } else {
-                match_seq(rest, pos + 1, chars, flags, groups)
-            }
-        }
-        OpCode::In(items) => {
-            let got = *chars.get(pos)?;
-            if char_matches_set(items, got, flags) {
-                match_seq(rest, pos + 1, chars, flags, groups)
-            } else {
-                None
-            }
-        }
-        OpCode::At(at) => {
-            if at_matches(at, chars, pos, flags) {
-                match_seq(rest, pos, chars, flags, groups)
-            } else {
-                None
-            }
-        }
-        OpCode::Branch(branches) => {
-            for br in branches {
-                let mut combined = br.data.clone();
-                combined.extend_from_slice(rest);
-                if let Some(end) = match_seq(&combined, pos, chars, flags, groups) {
-                    return Some(end);
-                }
-            }
-            None
-        }
-        OpCode::Subpattern {
-            add_flags,
-            del_flags,
-            p,
-            ..
-        } => {
-            let inner_flags = combine_flags(flags, *add_flags, *del_flags);
-            let end = match_seq(&p.data, pos, chars, inner_flags, groups)?;
-            match_seq(rest, end, chars, flags, groups)
-        }
-        OpCode::AtomicGroup(p) => {
-            let end = match_seq(&p.data, pos, chars, flags, groups)?;
-            match_seq(rest, end, chars, flags, groups)
-        }
-        OpCode::GroupRef(gid) => {
-            let val = groups.get(gid)?;
-            if pos + val.len() > chars.len() {
-                return None;
-            }
-            for (i, vc) in val.iter().enumerate() {
-                if !casefold::groupref_eq(chars[pos + i], *vc, flags) {
-                    return None;
-                }
-            }
-            match_seq(rest, pos + val.len(), chars, flags, groups)
-        }
-        OpCode::GroupRefExists {
-            cond_group,
-            yes,
-            no,
-        } => {
-            let mut combined = if groups.contains_key(cond_group) {
-                yes.data.clone()
-            } else if let Some(n) = no {
-                n.data.clone()
-            } else {
-                Vec::new()
-            };
-            combined.extend_from_slice(rest);
-            match_seq(&combined, pos, chars, flags, groups)
-        }
-        OpCode::Assert { p, .. } => {
-            if match_seq(&p.data, pos, chars, flags, groups).is_some() {
-                match_seq(rest, pos, chars, flags, groups)
-            } else {
-                None
-            }
-        }
-        OpCode::AssertNot { p, .. } => {
-            if match_seq(&p.data, pos, chars, flags, groups).is_none() {
-                match_seq(rest, pos, chars, flags, groups)
-            } else {
-                None
-            }
-        }
-        OpCode::Failure => None,
-        OpCode::MaxRepeat { min, max, item } => {
-            let mn = *min as usize;
-            let mx = if *max == u32::MAX {
-                None
-            } else {
-                Some(*max as usize)
-            };
-            let mut positions = vec![pos];
-            let mut cur = pos;
-            let mut zero_width = false;
-            loop {
-                if let Some(m) = mx {
-                    if positions.len() > m {
-                        break;
-                    }
-                }
-                match match_seq(&item.data, cur, chars, flags, groups) {
-                    Some(next) if next > cur => {
-                        cur = next;
-                        positions.push(cur);
-                    }
-                    Some(_) => {
-                        zero_width = true;
-                        break;
-                    }
-                    None => break,
-                }
-            }
-            let mn_eff = if zero_width { 0 } else { mn };
-            if positions.len() - 1 < mn_eff {
-                return None;
-            }
-            for i in (mn_eff..positions.len()).rev() {
-                if let Some(end) = match_seq(rest, positions[i], chars, flags, groups) {
-                    return Some(end);
-                }
-            }
-            None
-        }
-        OpCode::MinRepeat { min, max, item } => {
-            let mn = *min as usize;
-            let mx = if *max == u32::MAX {
-                None
-            } else {
-                Some(*max as usize)
-            };
-            let mut cur = pos;
-            let mut count = 0usize;
-            while count < mn {
-                let next = match_seq(&item.data, cur, chars, flags, groups)?;
-                if next <= cur {
-                    count = mn;
-                    break;
-                }
-                cur = next;
-                count += 1;
-            }
-            loop {
-                if let Some(end) = match_seq(rest, cur, chars, flags, groups) {
-                    return Some(end);
-                }
-                if let Some(m) = mx {
-                    if count >= m {
-                        return None;
-                    }
-                }
-                let next = match_seq(&item.data, cur, chars, flags, groups)?;
-                if next <= cur {
-                    return None;
-                }
-                cur = next;
-                count += 1;
-            }
-        }
-        OpCode::PossessiveRepeat { min, max, item } => {
-            let mn = *min as usize;
-            let mx = if *max == u32::MAX {
-                None
-            } else {
-                Some(*max as usize)
-            };
-            let mut cur = pos;
-            let mut count = 0usize;
-            let mut zero_width = false;
-            loop {
-                if let Some(m) = mx {
-                    if count >= m {
-                        break;
-                    }
-                }
-                match match_seq(&item.data, cur, chars, flags, groups) {
-                    Some(next) if next > cur => {
-                        cur = next;
-                        count += 1;
-                    }
-                    Some(_) => {
-                        zero_width = true;
-                        break;
-                    }
-                    None => break,
-                }
-            }
-            if count < mn && !zero_width {
-                return None;
-            }
-            match_seq(rest, cur, chars, flags, groups)
-        }
-    }
-}
-/// Whether `c` matches the character class `items` under `flags`, with
-/// Python's semantics: under IGNORECASE a literal or range matches every
-/// character case-equal to one of its members (see [`casefold`]), and under
-/// the ASCII flag the categories narrow to their ASCII definitions while
-/// explicit characters and ranges keep matching outside ASCII.
-fn char_matches_set(items: &[SetItem], c: char, flags: u32) -> bool {
-    let negate = matches!(items.first(), Some(SetItem::Negate));
-    let ascii = flags & SRE_FLAG_ASCII != 0;
-    let contained = items.iter().any(|item| match item {
-        SetItem::Negate => false,
-        SetItem::Literal(cp) => {
-            char::from_u32(*cp).is_some_and(|lc| casefold::literal_matches(lc, c, flags))
-        }
-        SetItem::Range(lo, hi) => casefold::range_matches(*lo, *hi, c, flags),
-        SetItem::Category(cat) => in_category(c, *cat, ascii),
-    });
-    negate != contained
-}
-
-fn at_matches(at: &AtCode, chars: &[char], pos: usize, flags: u32) -> bool {
-    let ascii = flags & SRE_FLAG_ASCII != 0;
-    match at {
-        AtCode::BeginningString => pos == 0,
-        AtCode::Beginning => {
-            if flags & SRE_FLAG_MULTILINE != 0 {
-                pos == 0 || chars[pos - 1] == '\n'
-            } else {
-                pos == 0
-            }
-        }
-        AtCode::End => {
-            if flags & SRE_FLAG_MULTILINE != 0 {
-                pos == chars.len() || chars[pos] == '\n'
-            } else {
-                pos == chars.len() || (pos + 1 == chars.len() && chars[pos] == '\n')
-            }
-        }
-        AtCode::EndString => pos == chars.len(),
-        AtCode::Boundary => is_word_boundary(chars, pos, ascii),
-        AtCode::NonBoundary => !is_word_boundary(chars, pos, ascii),
-    }
-}
-
-fn is_word_boundary(chars: &[char], pos: usize, ascii: bool) -> bool {
-    let before = pos > 0 && is_word(chars[pos - 1], ascii);
-    let after = pos < chars.len() && is_word(chars[pos], ascii);
-    before != after
 }
 
 /// The length of the strings the generator draws from `p` on average, in
