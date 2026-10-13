@@ -6,6 +6,7 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::mem;
 use hashbrown::hash_map::Entry;
 
 use crate::native::core::state::{boolean_threshold, length_p_continue};
@@ -155,6 +156,24 @@ impl Complement {
         }
         codepoint_to_char(cp)
     }
+
+    /// Whether `cp` is outside the complement.
+    fn excludes(&self, cp: u32) -> bool {
+        cp > 0xFFFF || self.excluded.iter().any(|&(lo, hi)| lo <= cp && cp <= hi)
+    }
+
+    /// The least remaining character in the shrink order of
+    /// `intervals`, the alphabet the complement is of; the complement
+    /// must have a character left for there to be one.
+    fn least(&self, intervals: &IntervalSet) -> Result<char, InternalError> {
+        let least = (0..intervals.len())
+            .map(|i| intervals.char_in_shrink_order(i))
+            .find(|&c| !self.excludes(u32::from(c)));
+        Ok(hegel_internal_unwrap!(
+            least,
+            "Complement::least: no character remains"
+        ))
+    }
 }
 
 /// A regex pattern compiled once at string-generator construction time:
@@ -165,6 +184,12 @@ pub struct CompiledRegex {
     pattern: String,
     parsed: ParsedPattern,
     alphabet: Option<IntervalSet>,
+    /// The alphabet of the string choice a drawn string is recorded as:
+    /// `alphabet`, or every Unicode scalar value when there is none. Its
+    /// shrink order is the order the simplest walk chooses the least of
+    /// an alternation's strings (see [`generate_least`]) and the least
+    /// character of a class (see [`least_char`]) by.
+    intervals: Arc<IntervalSet>,
     /// The one string the pattern matches whole, when it is a literal
     /// (see [`literal_of`]).
     literal: Option<Box<[char]>>,
@@ -211,6 +236,10 @@ impl CompiledRegex {
         let parsed = parse_pattern(pattern, 0).map_err(|e| {
             EngineError::InvalidArgument(format!("invalid regex pattern {pattern:?}: {e}"))
         })?;
+        let intervals = match &alphabet {
+            Some(alphabet) => alphabet.clone(),
+            None => IntervalSet::unicode_scalars()?,
+        };
         let literal = literal_of(&parsed, &alphabet);
         let verified = approximated(&parsed.pattern);
         let caches = Caches::default();
@@ -224,6 +253,7 @@ impl CompiledRegex {
             pattern: pattern.to_string(),
             parsed,
             alphabet,
+            intervals: Arc::new(intervals),
             literal,
             verified,
             producible,
@@ -238,10 +268,6 @@ impl CompiledRegex {
     /// over the alphabet (every scalar value when there is none), up to
     /// [`REGEX_MAX_SIZE`] long, and under the pattern as its constraint.
     pub(crate) fn kind(&self, fullmatch: bool) -> Result<StringChoice, EngineError> {
-        let intervals = match &self.alphabet {
-            Some(alphabet) => alphabet.clone(),
-            None => IntervalSet::unicode_scalars()?,
-        };
         let constraint = RegexConstraint::new(
             &self.pattern,
             self.parsed.clone(),
@@ -249,7 +275,7 @@ impl CompiledRegex {
             self.alphabet.as_ref(),
         );
         Ok(StringChoice {
-            intervals: Arc::new(intervals),
+            intervals: Arc::clone(&self.intervals),
             min_size: 0,
             max_size: REGEX_MAX_SIZE,
             constraint: Some(Constraint::Regex(Arc::new(constraint))),
@@ -266,10 +292,13 @@ pub(crate) const REGEX_MAX_SIZE: usize = 1 << 16;
 const SIMPLEST_FALLBACK_SEEDS: u64 = 8;
 
 /// Set `kind`'s constraint's simplest string if it is not yet: the
-/// string drawn when every decision goes the simplest way, or, when that
-/// fails a deferred check (padding a `\b` needs, say), the first of a
-/// few seeded draws that does not. A pattern with no string either way
-/// concludes the test case invalid, as a draw that finds no string does.
+/// string drawn when every decision goes the simplest way — the fewest
+/// repetitions, the least character of every class and literal (see
+/// [`least_char`]) and the alternative whose simplest string is least
+/// (see [`generate_least`]) — or, when that fails a deferred check
+/// (padding a `\b` needs, say), the first of a few seeded draws that
+/// does not. A pattern with no string either way concludes the test
+/// case invalid, as a draw that finds no string does.
 pub(crate) fn ensure_simplest<D: Draws>(
     d: &mut D,
     re: &CompiledRegex,
@@ -410,6 +439,7 @@ fn generate_regex_attempt<D: Draws>(
         flags: parsed.flags,
         fullmatch,
         base,
+        intervals: &re.intervals,
         deferred: None,
         unproducible: re.unproducible,
         caches: &re.caches,
@@ -544,6 +574,9 @@ struct GenState<'a> {
     /// before it belongs to the caller, and the anchors and deferred
     /// checks never look at it.
     base: usize,
+    /// The alphabet of the string choice the draw is recorded as (see
+    /// [`CompiledRegex::intervals`]).
+    intervals: &'a IntervalSet,
     /// The checks against the final string the draw has recorded so far,
     /// once it has recorded one; most patterns record none, so the draw
     /// neither builds nor drops them.
@@ -565,7 +598,7 @@ impl<'a> GenState<'a> {
 /// What a draw checks against its final string once that is known, since
 /// the content after an anchor or a lookaround is not known when they are
 /// reached; a candidate that fails one is redrawn.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Deferred<'a> {
     /// Zero-width anchors (`\b`, `\B`, and `$`/`\Z` in non-final positions)
     /// recorded during generation.
@@ -578,12 +611,14 @@ struct Deferred<'a> {
     pending_lookaheads: Vec<PendingAssertNot<'a>>,
 }
 
+#[derive(Clone)]
 struct PendingAnchor {
     char_pos: usize,
     at: AtCode,
     flags: u32,
 }
 
+#[derive(Clone)]
 struct PendingAssertNot<'a> {
     char_pos: usize,
     direction: i32,
@@ -724,23 +759,35 @@ fn generate_op<'a, D: Draws>(
             if candidates.is_empty() {
                 return Err(mark_invalid(d));
             }
-            let idx = pick_index(d, candidates.len())?;
-            out.push(candidates[idx]);
+            let c = if d.simplest() {
+                least_char(&candidates, state.intervals)?
+            } else {
+                candidates[pick_index(d, candidates.len())?]
+            };
+            out.push(c);
         }
         OpCode::NotLiteral(cp) => {
             let c = codepoint_to_char(*cp)?;
             let chars = not_literal_chars(c, state.flags, alphabet, state.caches);
-            emit_from_chars(d, &chars, out)?;
+            emit_from_chars(d, &chars, state.intervals, out)?;
         }
         OpCode::Any => {
-            if alphabet.is_none() {
+            if alphabet.is_some() {
+                let chars = any_chars(state.flags, alphabet, state.caches);
+                emit_from_chars(d, &chars, state.intervals, out)?;
+            } else if d.simplest() {
+                let newline = u32::from('\n');
+                let excluded = if state.flags & SRE_FLAG_DOTALL != 0 {
+                    Vec::new()
+                } else {
+                    vec![(newline, newline)]
+                };
+                out.push(Complement::new(excluded).least(state.intervals)?);
+            } else {
                 let allow_newline = state.flags & SRE_FLAG_DOTALL != 0;
                 let n = DEFAULT_ANY_LEN - u64::from(!allow_newline);
                 let idx = draw_char_index(d, n)?;
                 out.push(default_any_char(idx, allow_newline)?);
-            } else {
-                let chars = any_chars(state.flags, alphabet, state.caches);
-                emit_from_chars(d, &chars, out)?;
             }
         }
         OpCode::At(at) => match at {
@@ -768,9 +815,12 @@ fn generate_op<'a, D: Draws>(
         },
         OpCode::In(items) => {
             let set = state.caches.in_set(items, state.flags, alphabet)?;
-            emit_from_set(d, &set, out)?;
+            emit_from_set(d, &set, state.intervals, out)?;
         }
         OpCode::Branch(items) => {
+            if d.simplest() {
+                return generate_least(d, items, state, alphabet, out);
+            }
             let item = if state.unproducible {
                 let mut live: Vec<&SubPattern> = Vec::with_capacity(items.len());
                 for item in items {
@@ -868,7 +918,9 @@ fn generate_op<'a, D: Draws>(
             };
             let mut ms = ManyState::new(min, max);
             if let [OpCode::In(items)] = item.data.as_slice() {
-                return repeat_in(d, &mut ms, items, state, alphabet, out);
+                if !d.simplest() {
+                    return repeat_in(d, &mut ms, items, state, alphabet, out);
+                }
             }
             loop {
                 if !many_more(d, &mut ms)? {
@@ -881,10 +933,12 @@ fn generate_op<'a, D: Draws>(
     Ok(())
 }
 
-/// Draw a repeat whose item is one character class: the class's set is
-/// looked up once and every repetition emits from it, drawing exactly
-/// what [`generate_op`] on the item would draw at each repetition without
-/// its lookup. The first repetition is decided before the set is looked
+/// Draw a repeat whose item is one character class from a source that
+/// draws at random: the class's set is looked up once and every
+/// repetition emits from it, drawing exactly what [`generate_op`] on the
+/// item would draw at each repetition without its lookup (the simplest
+/// walk, which emits the class's least character instead, takes the
+/// generic loop). The first repetition is decided before the set is looked
 /// up, as the generic loop would, so a repeat of nothing never builds it,
 /// and an empty set marks the test case invalid where its first emission
 /// would have. The set's form is settled once too, and the loop over the
@@ -929,6 +983,76 @@ fn repeat_in<D: Draws>(
             }
         }
     }
+}
+
+/// Draw the least string of the alternation `items` for the simplest
+/// walk: every producible alternative's simplest string is drawn in
+/// turn, each where the alternation's string goes so that the checks it
+/// defers see its position, and the least in the shrink order of the
+/// string choice (shorter first, then by each character's place in the
+/// alphabet's shrink order, see [`shrinks_before`]) is kept, the earliest
+/// among equals, along with the groups and deferred checks it recorded.
+/// Each alternative is drawn once, so an alternation nested in another
+/// costs its own draws and no more, and the walk stays linear in the
+/// pattern. An alternation with no producible alternative has no string,
+/// and an alternative that cannot be drawn where it stands (an anchor
+/// mid-string, a reference to a group not yet captured) fails the walk
+/// as it fails any draw.
+fn generate_least<'a, D: Draws>(
+    d: &mut D,
+    items: &'a [SubPattern],
+    state: &mut GenState<'a>,
+    alphabet: &Option<IntervalSet>,
+    out: &mut Vec<char>,
+) -> Result<(), EngineError> {
+    let mark = out.len();
+    let groups = state.groups.clone();
+    let deferred = state.deferred.clone();
+    let mut least: Option<Alternative<'a>> = None;
+    for item in items {
+        if !producible_sub(item, state.flags, alphabet, state.caches)? {
+            continue;
+        }
+        generate_subpattern(d, item, state, alphabet, out)?;
+        let drawn = Alternative {
+            text: out[mark..].to_vec(),
+            groups: mem::replace(&mut state.groups, groups.clone()),
+            deferred: mem::replace(&mut state.deferred, deferred.clone()),
+        };
+        out.truncate(mark);
+        if least
+            .as_ref()
+            .is_none_or(|known| shrinks_before(&drawn.text, &known.text, state.intervals))
+        {
+            least = Some(drawn);
+        }
+    }
+    let Some(least) = least else {
+        return Err(mark_invalid(d));
+    };
+    out.extend_from_slice(&least.text);
+    state.groups = least.groups;
+    state.deferred = least.deferred;
+    Ok(())
+}
+
+/// What drawing one alternative of an alternation recorded (see
+/// [`generate_least`]): its text, and the groups and deferred checks
+/// the walk holds after it.
+struct Alternative<'a> {
+    text: Vec<char>,
+    groups: HashMap<u32, Vec<char>>,
+    deferred: Option<Box<Deferred<'a>>>,
+}
+
+/// Whether `a` comes strictly before `b` in the shrink order of the
+/// strings of a choice over `intervals`: shortlex, by each character's
+/// position in the alphabet's shrink order (see
+/// [`IntervalSet::index_from_codepoint_in_shrink_order`]), as the
+/// shrinker orders string choices.
+fn shrinks_before(a: &[char], b: &[char], intervals: &IntervalSet) -> bool {
+    let key = |c: &char| intervals.index_from_codepoint_in_shrink_order(u32::from(*c));
+    a.len() < b.len() || (a.len() == b.len() && a.iter().map(key).lt(b.iter().map(key)))
 }
 
 /// Draw an index into `n` (non-zero) candidates, without drawing at all
@@ -1443,25 +1567,43 @@ fn draw_any_char<D: Draws>(d: &mut D, alphabet: &Option<IntervalSet>) -> Result<
         }
     }
 }
+/// Emit one of `chars` (which must not be empty, or the test case is
+/// invalid): drawn by index, or the least in the shrink order of
+/// `intervals` (see [`least_char`]) from the simplest source.
 fn emit_from_chars<D: Draws>(
     d: &mut D,
     chars: &[char],
+    intervals: &IntervalSet,
     out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
     if chars.is_empty() {
         return Err(mark_invalid(d));
+    }
+    if d.simplest() {
+        out.push(least_char(chars, intervals)?);
+        return Ok(());
     }
     let idx = draw_char_index(d, chars.len() as u64)?;
     out.push(chars[idx as usize]);
     Ok(())
 }
 
-fn emit_from_set<D: Draws>(d: &mut D, set: &InSet, out: &mut Vec<char>) -> Result<(), EngineError> {
+/// [`emit_from_chars`] for a set in either form.
+fn emit_from_set<D: Draws>(
+    d: &mut D,
+    set: &InSet,
+    intervals: &IntervalSet,
+    out: &mut Vec<char>,
+) -> Result<(), EngineError> {
     match set {
-        InSet::Listed(chars) => emit_from_chars(d, chars, out),
+        InSet::Listed(chars) => emit_from_chars(d, chars, intervals, out),
         InSet::Complement(complement) => {
             if complement.len == 0 {
                 return Err(mark_invalid(d));
+            }
+            if d.simplest() {
+                out.push(complement.least(intervals)?);
+                return Ok(());
             }
             let idx = draw_char_index(d, complement.len)?;
             out.push(complement.get(idx)?);
@@ -1470,10 +1612,23 @@ fn emit_from_set<D: Draws>(d: &mut D, set: &InSet, out: &mut Vec<char>) -> Resul
     }
 }
 
+/// The least of `chars` (not empty) in the shrink order of `intervals`,
+/// the alphabet of the string choice (see
+/// [`IntervalSet::index_from_codepoint_in_shrink_order`]): the character
+/// the simplest walk emits for a class, so that the simplest string is
+/// the least string of the pattern, as it is for an alternation (see
+/// [`generate_least`]).
+fn least_char(chars: &[char], intervals: &IntervalSet) -> Result<char, InternalError> {
+    let least = chars
+        .iter()
+        .copied()
+        .min_by_key(|&c| intervals.index_from_codepoint_in_shrink_order(u32::from(c)));
+    Ok(hegel_internal_unwrap!(least, "least_char: no characters"))
+}
+
 /// How likely a character drawn from a set of more than 256 is beyond
 /// its first 256, with the byte the engine compares against for it (see
-/// [`boolean_threshold`]). The coin is for going beyond, so that its
-/// simplest answer, no, keeps the simplest character the set's first.
+/// [`boolean_threshold`]).
 const BEYOND_256_PROBABILITY: f64 = 0.2;
 const BEYOND_256_THRESHOLD: u8 = boolean_threshold(BEYOND_256_PROBABILITY);
 

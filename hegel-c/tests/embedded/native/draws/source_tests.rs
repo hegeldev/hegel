@@ -182,6 +182,21 @@ fn the_simplest_source_answers_every_choice_at_its_simplest() {
     assert_eq!(draws.draw_string(letters(), 3, 8).unwrap(), "aaa");
     assert_eq!(draws.draw_string(letters(), 0, 8).unwrap(), "");
     assert_eq!(draws.status(), None);
+    assert!(draws.simplest());
+}
+
+/// Only the simplest source says it is, so only it has a walk take the
+/// least of an alternation's strings.
+#[test]
+fn only_the_simplest_source_answers_that_it_is() {
+    let mut rng = EngineRng::seeded(0);
+    assert!(!RngDraws::new(&mut rng, GenerationParameters::default().integer).simplest());
+    assert!(
+        !NativeTestCase::new_random(EngineRng::seeded(0))
+            .unwrap()
+            .simplest()
+    );
+    assert!(SimplestDraws::default().simplest());
 }
 
 #[test]

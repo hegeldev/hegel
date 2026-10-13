@@ -1999,16 +1999,25 @@ fn the_simplest_source_draws_the_smallest_string_of_a_grammar() {
     assert_eq!(s.chars().count() as u64, min, "{s:?}");
 }
 
-/// A terminal's simplest match takes the first alternative of its
-/// pattern, which need not be the shortest: `SIGNED_NUMBER` lists
-/// `FLOAT` before `INT`, so the simplest number is `0e0` where the
-/// smallest is one digit.
+/// A terminal's simplest match is the least string of its pattern,
+/// whichever alternative gives it: `SIGNED_NUMBER` lists `FLOAT` before
+/// `INT`, and the simplest number is still one digit. The least string
+/// is also the smallest text the constraint learns for the terminal.
 #[test]
-fn a_terminal_whose_first_alternative_is_not_its_shortest_draws_longer_than_the_minimum() {
+fn a_terminal_whose_first_alternative_is_not_its_shortest_draws_its_least() {
     for (name, start) in [("json", "value"), ("calc", "start")] {
         let (s, min) = simplest_string(fixture_grammar(name, start), fixture_options(start));
-        assert_eq!((s.as_str(), min), ("0e0", 1), "{name}");
+        assert_eq!((s.as_str(), min), ("0", 1), "{name}");
     }
+    let text = "start: T\nT: /(?:bbbb|a)/\n";
+    let (s, min) = simplest_string(simple_grammar(text), GrammarOptions::default());
+    assert_eq!((s.as_str(), min), ("a", 1));
+    let spec = grammar(text);
+    spec.ensure_simplest().unwrap();
+    assert_eq!(
+        spec.constraint().smallest_for_terminal(tid(&spec, "T")),
+        Some(cps("a"))
+    );
 }
 
 #[test]
