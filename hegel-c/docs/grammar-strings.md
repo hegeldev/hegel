@@ -102,21 +102,20 @@ just before them) edits the text where its derivation says the grammar
 might still accept the result, and every candidate is a splice of the
 text that `replace` then validates by parsing, so an edit the dynamic
 lexer would read differently (two tokens that merge once the text between
-them is gone, say) is simply rejected. For each node it tries, until a
-round changes nothing:
+them is gone, say) is simply rejected. For each node it tries the
+grammar's simplest string, then, until a round changes nothing:
 
-1. the grammar's simplest string;
-2. **hoists**: each rule node's text replaced by that of a smaller node of
+1. **hoists**: each rule node's text replaced by that of a smaller node of
    the same rule inside it (the 1st, 2nd, 4th, 8th, … such node below
    it, so a deep chain of one rule makes `d log d` pairs rather than
    `d²`), outermost first, starting over after each accepted hoist;
-3. **repetitions**: for each repeat, all its repetitions deleted, then
+2. **repetitions**: for each repeat, all its repetitions deleted, then
    windows of 8, 4, 2 and 1 from the back;
-4. **ignored text**: all of it cut at once, then each stretch from the
+3. **ignored text**: all of it cut at once, then each stretch from the
    back;
-5. **smallest rule texts**: each rule node's text replaced by the smallest
+4. **smallest rule texts**: each rule node's text replaced by the smallest
    the constraint has seen that rule derive;
-6. **leaves**: each leaf's text replaced by the smallest seen for its
+5. **leaves**: each leaf's text replaced by the smallest seen for its
    terminal, and otherwise deleted, cut to the shortest prefix that will
    do (a binary search), shortened one character at a time from the back,
    and lowered character by character down the alphabet's shrink order
@@ -145,15 +144,16 @@ with none within it, so the same moves are made on its text through its
 layout (`lark/mutate.rs`): the text of a rule node copied over another
 node of the same rule (over a nested one to deepen a recursion, or over
 the whole to cut it), or a repetition duplicated along with the text
-that separates it from its neighbour. `try_grammar_mutation` runs after
-span mutation on the same terms: a few random moves on a random string under
-a grammar, each proposed through the execution cache, stopping at the
-first interesting one. A move's result is parsed first, and one the
-grammar does not derive or that is over the size cap is not run, since
-replay would only pun it to the simplest string; nor is one whose
-derivation nests rules deeper than the grammar's depth cap, which the
-generator keeps to and the parser (which an ambiguous grammar may let
-derive a generated string more deeply than the walk did) does not.
+that separates it from its neighbour. `try_grammar_mutation` runs on
+the same terms when span mutation has found nothing: a few random moves
+on a random string under a grammar, each proposed through the execution
+cache, stopping at the first interesting one. A move's result is parsed
+first, and one the grammar does not derive or that is over the size cap
+is not run, since replay would only pun it to the simplest string; nor
+is one whose derivation nests rules deeper than the grammar's depth cap,
+which the generator keeps to and the parser (which an ambiguous grammar
+may let derive a generated string more deeply than the walk did) does
+not.
 
 ## What the design rules out, and what is left
 
@@ -188,8 +188,10 @@ derive a generated string more deeply than the walk did) does not.
 A string drawn from a regex is one string node whose kind has
 `constraint: Some(Constraint::Regex(..))`: a `RegexConstraint`
 (`re/constraint.rs`) over the parsed pattern, whose `accepts` runs the
-backtracking matcher (`re/matcher.rs`) — the whole string must match, or
-under `fullmatch(false)` some substring must — and whose identity is
+pattern as a program (`re/vm.rs`), or through the backtracking matcher
+(`re/matcher.rs`) where the program cannot express it — the whole string
+must match, or under `fullmatch(false)` some substring must — and whose
+identity is
 hashed from the pattern, its flags, the match mode and the alphabet. The
 alphabet is the one the generator was given, or every scalar value; the
 size cap is `REGEX_MAX_SIZE` (`draws/regex.rs`), and a draw over it
@@ -197,8 +199,8 @@ concludes the test case invalid, so a recorded string always validates.
 `generate_string` draws it through `draw_string_from` like a grammar
 string, with the regex walk (`draws/regex.rs`) as the random source, and
 sets the simplest string at the first draw the same way: the walk with
-every decision at its simplest, or the first of a few seeded walks that
-passes the pattern's deferred checks; a pattern no walk satisfies
+every decision at its simplest, or, when the matcher rejects that, the
+first of a few seeded walks it accepts; a pattern no walk satisfies
 concludes the test case invalid, as a draw that finds no string does.
 
 There is no derivation pass: the string passes (`shrinker/strings.rs`)
@@ -207,8 +209,9 @@ pattern when the node takes its new value, with two stages they run only
 under a constraint — deleting runs of two to eight characters, which
 removes an alternative the pattern only admits whole, and copying either
 end of the simplest string over the current one, which reaches an
-alternative that differs in several characters at once. A shrink that
-needs several characters changed together anywhere else is out of reach.
+alternative that differs in several characters at once, the windows
+given up once a run of them has failed. A shrink that needs several
+characters changed together anywhere else is out of reach.
 Nor is there mutation within a regex string; span mutation still copies
 one whole regex string over another drawn under the same label, as it
 does any choice, and a copy the other pattern rejects is punned to that
