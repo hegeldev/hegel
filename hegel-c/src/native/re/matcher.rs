@@ -25,6 +25,7 @@ use super::constants::{
     SRE_FLAG_MULTILINE, TYPE_FLAGS,
 };
 use super::parser::{OpCode, ParsedPattern, SetItem, SubPattern};
+use super::width::get_width_in;
 
 /// The default number of matching steps one match may take before it is
 /// abandoned with [`MatchError::StepLimit`].
@@ -751,7 +752,7 @@ impl<'p> Matcher<'p> {
             }
             return Ok(found);
         }
-        let w = self.least_width(p);
+        let w = usize::try_from(get_width_in(p, self.pattern).0).unwrap_or(usize::MAX);
         if w > pos {
             st.touch.end();
             return Ok(false);
@@ -1101,69 +1102,6 @@ impl<'p> Matcher<'p> {
         st.restore_marks(saved);
         Ok(false)
     }
-
-    /// The lower bound of CPython's `getwidth`: the least characters `p`
-    /// can match, saturating, with a backreference as wide as its group.
-    /// For the body of a lookbehind, whose least and most widths the
-    /// parser requires to agree, this is its width.
-    fn least_width(&self, p: &SubPattern) -> usize {
-        let mut lo = 0usize;
-        for op in &p.data {
-            let l = match op {
-                OpCode::Branch(alternatives) => alternatives
-                    .iter()
-                    .map(|alternative| self.least_width(alternative))
-                    .min()
-                    .unwrap_or(0),
-                OpCode::Subpattern { p, .. } | OpCode::AtomicGroup(p) => self.least_width(p),
-                OpCode::MaxRepeat { min, item, .. }
-                | OpCode::MinRepeat { min, item, .. }
-                | OpCode::PossessiveRepeat { min, item, .. } => {
-                    self.least_width(item).saturating_mul(*min as usize)
-                }
-                OpCode::GroupRef(g) => match find_group(self.pattern, *g) {
-                    Some(group) => self.least_width(group),
-                    None => unreachable!("the parser rejects references to undefined groups"),
-                },
-                OpCode::GroupRefExists { yes, no, .. } => {
-                    let yes = self.least_width(yes);
-                    match no {
-                        Some(no) => yes.min(self.least_width(no)),
-                        None => 0,
-                    }
-                }
-                _ => usize::from(as_unit(op).is_some()),
-            };
-            lo = lo.saturating_add(l);
-        }
-        lo
-    }
-}
-
-/// The subpattern of capture group `g`, searched for through the whole
-/// pattern.
-fn find_group(p: &SubPattern, g: u32) -> Option<&SubPattern> {
-    for op in &p.data {
-        let found = match op {
-            OpCode::Subpattern {
-                group: Some(id), p, ..
-            } if *id == g => Some(p),
-            OpCode::Subpattern { p, .. } | OpCode::AtomicGroup(p) => find_group(p, g),
-            OpCode::Branch(alternatives) => alternatives.iter().find_map(|a| find_group(a, g)),
-            OpCode::MaxRepeat { item, .. }
-            | OpCode::MinRepeat { item, .. }
-            | OpCode::PossessiveRepeat { item, .. } => find_group(item, g),
-            OpCode::GroupRefExists { yes, no, .. } => {
-                find_group(yes, g).or_else(|| no.as_ref().and_then(|no| find_group(no, g)))
-            }
-            OpCode::Assert { p, .. } | OpCode::AssertNot { p, .. } => find_group(p, g),
-            _ => None,
-        };
-        if found.is_some() {
-            return found;
-        }
-    }
-    None
 }
 
 fn repeat_limit(max: u32) -> usize {
