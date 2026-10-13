@@ -227,6 +227,23 @@ fn terminal_reference_errors() {
 }
 
 #[test]
+fn a_terminal_doubling_at_every_link_of_a_chain_is_capped() {
+    let chain = |links: usize| {
+        let mut text = String::from("start: T0\n");
+        for i in 0..links {
+            text.push_str(&format!("T{i}: T{} T{}\n", i + 1, i + 1));
+        }
+        text.push_str(&format!("T{links}: \"a\"\n"));
+        text
+    };
+    build(&chain(12));
+    assert_eq!(
+        err(&chain(17)),
+        "Terminal T3 has more than 65536 elements once the terminals it uses are inlined"
+    );
+}
+
+#[test]
 fn imports_from_bundled_grammars() {
     let built = build("start: INT WS\n%import common.INT\n%import common.WS");
     assert_eq!(term_names(&built), vec!["INT", "WS"]);

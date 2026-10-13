@@ -3190,14 +3190,14 @@ fn spare_vectors_keep_the_roomiest_offer_for_a_test_case_that_can_fill_them() {
     assert!(slot.is_none());
 
     let (nodes, spans) = pair(64, 8);
-    assert!(SpareVectors::offer(&mut slot, nodes, spans).is_none());
+    assert!(SpareVectors::offer(&mut slot, nodes, spans, usize::MAX).is_none());
     assert_eq!(slot.as_ref().unwrap().nodes.capacity(), 64);
     let (nodes, spans) = pair(16, 16);
-    let unkept = SpareVectors::offer(&mut slot, nodes, spans).unwrap();
+    let unkept = SpareVectors::offer(&mut slot, nodes, spans, usize::MAX).unwrap();
     assert_eq!(unkept.nodes.capacity(), 16);
     assert_eq!(slot.as_ref().unwrap().nodes.capacity(), 64);
     let (nodes, spans) = pair(128, 4);
-    let unkept = SpareVectors::offer(&mut slot, nodes, spans).unwrap();
+    let unkept = SpareVectors::offer(&mut slot, nodes, spans, usize::MAX).unwrap();
     assert_eq!(unkept.nodes.capacity(), 64);
     assert_eq!(slot.as_ref().unwrap().nodes.capacity(), 128);
 
@@ -3208,6 +3208,19 @@ fn spare_vectors_keep_the_roomiest_offer_for_a_test_case_that_can_fill_them() {
     assert!(taken.nodes.is_empty() && taken.spans.is_empty());
     assert!(taken.nodes.capacity() >= 200);
     assert!(taken.spans.capacity() >= 300);
+    assert!(slot.is_none());
+}
+
+#[test]
+fn an_offer_grown_past_its_test_case_is_cut_to_what_one_could_fill() {
+    let mut slot = None;
+    let nodes = Vec::<ChoiceNode>::with_capacity(1000);
+    let spans = Vec::<Span>::with_capacity(1000);
+    assert!(SpareVectors::offer(&mut slot, nodes, spans, 100).is_none());
+    assert_eq!(slot.as_ref().unwrap().nodes.capacity(), 100);
+    assert_eq!(slot.as_ref().unwrap().spans.capacity(), 100);
+    let taken = SpareVectors::take(&mut slot, 100, 3, 3);
+    assert_eq!(taken.nodes.capacity(), 100);
     assert!(slot.is_none());
 }
 
@@ -3224,7 +3237,7 @@ fn a_dropped_test_case_hands_its_vectors_on_emptied() {
     let mut slot = SPARE_VECTORS.lock();
     let taken = SpareVectors::take(&mut slot, usize::MAX, 0, 0);
     assert!(taken.nodes.is_empty() && taken.spans.is_empty());
-    assert!(SpareVectors::offer(&mut slot, taken.nodes, taken.spans).is_none());
+    assert!(SpareVectors::offer(&mut slot, taken.nodes, taken.spans, usize::MAX).is_none());
 }
 
 #[test]
@@ -3303,7 +3316,7 @@ fn a_dropped_test_case_releases_the_streams_its_clone_nodes_hold() {
     let mut slot = SPARE_VECTORS.lock();
     let taken = SpareVectors::take(&mut slot, usize::MAX, 0, 0);
     assert!(taken.nodes.is_empty() && taken.spans.is_empty());
-    assert!(SpareVectors::offer(&mut slot, taken.nodes, taken.spans).is_none());
+    assert!(SpareVectors::offer(&mut slot, taken.nodes, taken.spans, usize::MAX).is_none());
 }
 
 struct Unscripted;

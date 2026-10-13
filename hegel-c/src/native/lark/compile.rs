@@ -20,6 +20,12 @@ use alloc::vec::Vec;
 pub type RuleId = usize;
 pub type TermId = usize;
 
+/// How deeply a template instantiation may nest other instantiations in
+/// its arguments (`t{t{t{x}}}`). A template whose body instantiates
+/// itself around its own parameter (`t{x}: x | t{t{x}}`) would otherwise
+/// be instantiated without end, one level deeper each time, as Lark does.
+const MAX_TEMPLATE_NESTING: usize = 200;
+
 /// A compiled terminal. `pattern` is `None` for a `%declare`d terminal,
 /// whose strings must be supplied from outside the grammar.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -405,6 +411,11 @@ impl Compiler {
                 "Template '{name}' used but not defined (in rule {rule_name})"
             )));
         };
+        if result_name.matches('{').count() > MAX_TEMPLATE_NESTING {
+            return Err(GrammarError::new(format!(
+                "Template '{name}' nests its instantiations more than {MAX_TEMPLATE_NESTING} levels deep (in rule {rule_name})"
+            )));
+        }
         let substitutions: HashMap<&str, Symbol> = params
             .iter()
             .map(|p| p.as_str())

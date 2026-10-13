@@ -123,6 +123,24 @@ fn test_from_lark_labels_distinguish_grammars_and_start_rules() {
 }
 
 #[test]
+fn test_from_lark_explicit_overrides_a_pattern_terminal() {
+    assert_all_examples(
+        gs::from_lark("start: \"a\" NUM\nNUM: /[0-9]+/\n")
+            .explicit("NUM", gs::just("xyz".to_string())),
+        |s: &String| s == "axyz",
+    );
+}
+
+#[test]
+fn test_from_lark_explicit_values_are_spliced_in_as_drawn() {
+    let marker = "<<EXPLICIT_NUM_392f5a5e9326>>".to_string();
+    assert_all_examples(
+        gs::from_lark("start: \"a\" NUM\n%declare NUM\n").explicit("NUM", gs::just(marker.clone())),
+        move |s: &String| *s == format!("a{marker}"),
+    );
+}
+
+#[test]
 fn test_from_lark_explicit_takes_any_string_generator() {
     let grammar = || {
         gs::from_lark("start: \"[\" NUM (\",\" NUM)* \"]\"\n%declare NUM\n")

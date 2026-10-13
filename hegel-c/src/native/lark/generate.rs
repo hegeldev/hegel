@@ -103,6 +103,10 @@ use rustc_hash::FxHasher;
 /// The default cap on the length of a generated string, in characters.
 pub const DEFAULT_MAX_SIZE: u64 = 8192;
 
+/// The most characters a grammar's strings may be allowed: the generator
+/// aims at the cap, so a cap without bound would have it fill memory.
+pub const MAX_MAX_SIZE: u64 = 1 << 20;
+
 /// The default cap on how deeply rules nest.
 pub const DEFAULT_MAX_DEPTH: u32 = 200;
 
@@ -454,12 +458,21 @@ impl GrammarSpec {
     /// the one named in `options`.
     pub fn new(mut grammar: Grammar, options: GrammarOptions) -> GrammarResult<GrammarSpec> {
         let start = grammar.start[0];
+        let alphabet = match options.alphabet.as_deref() {
+            None => None,
+            Some(StringSpec::Text { intervals, .. }) => Some((**intervals).clone()),
+            Some(_) => {
+                return Err(GrammarError::new(String::from(
+                    "alphabet must be a text string generator",
+                )));
+            }
+        };
         let mut placeholders = Vec::with_capacity(options.explicit.len());
         let mut markers: Vec<(TermId, Vec<char>)> = Vec::with_capacity(options.explicit.len());
         for name in &options.explicit {
             let Some(id) = grammar.terminal_id(name) else {
                 return Err(GrammarError::new(format!(
-                    "explicit terminal '{name}', which the grammar does not use"
+                    "the grammar does not use explicit terminal '{name}'"
                 )));
             };
             let marker = placeholder(name);
@@ -507,6 +520,12 @@ impl GrammarSpec {
         let lexer = Lexer::new(&grammar.terminals);
         let ignore_starters = Starters::new(&lexer, &grammar.ignore);
         let root = &analysis.rules[start];
+        if options.max_size > MAX_MAX_SIZE {
+            return Err(GrammarError::new(format!(
+                "max_size is {} but may be at most {MAX_MAX_SIZE}",
+                options.max_size
+            )));
+        }
         if options.max_size < root.min_size {
             return Err(GrammarError::new(format!(
                 "max_size is {} but the smallest string '{}' can produce has {} characters",
@@ -530,10 +549,6 @@ impl GrammarSpec {
         #[cfg(test)]
         let terminal_names = grammar.terminals.iter().map(|t| t.name.clone()).collect();
         let ignore = grammar.ignore.clone();
-        let alphabet = match options.alphabet.as_deref() {
-            Some(StringSpec::Text { intervals, .. }) => Some((**intervals).clone()),
-            _ => None,
-        };
         let constraint = Arc::new(
             GrammarConstraint::new(
                 grammar,

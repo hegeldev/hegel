@@ -390,7 +390,7 @@ fn test_from_lark_rejects_grammar_errors() {
     expect_draw_panic(gs::from_lark("rule: \"a\""), "start");
     expect_draw_panic(
         gs::from_lark("start: \"a\"").explicit("B", gs::text()),
-        "which the grammar does not use",
+        "does not use explicit terminal 'B'",
     );
 }
 
@@ -405,6 +405,10 @@ fn test_from_lark_rejects_impossible_caps() {
         "max_depth must be at least 1",
     );
     expect_draw_panic(gs::from_lark("start: \"ab\"").max_size(1), "max_size is 1");
+    expect_draw_panic(
+        gs::from_lark("start: \"a\"*").max_size(usize::MAX),
+        "may be at most 1048576",
+    );
     expect_draw_panic(
         gs::from_lark("start: x\nx: \"a\"").max_depth(1),
         "max_depth is 1",

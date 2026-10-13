@@ -25,9 +25,9 @@ struct Parser<'a> {
 /// The most repetitions a `~` count may ask for.
 const REPEAT_LIMIT: u32 = 1 << 20;
 
-/// How deeply parentheses and brackets may nest. The parser and every
-/// pass after it walk the tree recursively, so a grammar nested past this
-/// is rejected rather than left to overflow the stack.
+/// How deeply parentheses, brackets and template arguments may nest. The
+/// parser and every pass after it walk the tree recursively, so a grammar
+/// nested past this is rejected rather than left to overflow the stack.
 const MAX_NESTING: usize = 200;
 
 impl<'a> Parser<'a> {
@@ -465,11 +465,13 @@ impl<'a> Parser<'a> {
             Some(Tok::Terminal(name)) => Ok(Expr::Symbol(Symbol::Terminal(name))),
             Some(Tok::Rule(name)) => {
                 if self.eat(&Tok::LBrace) {
+                    self.enter(pos)?;
                     let mut args = Vec::new();
                     args.push(self.value()?);
                     while self.eat(&Tok::Comma) {
                         args.push(self.value()?);
                     }
+                    self.depth -= 1;
                     self.expect(&Tok::RBrace, "Expecting '}' after template arguments")?;
                     Ok(Expr::Template { name, args })
                 } else {
@@ -496,16 +498,25 @@ impl<'a> Parser<'a> {
     /// The expansions inside a parenthesis or bracket opened at `pos`,
     /// one level deeper.
     fn group(&mut self, pos: Pos) -> GrammarResult<Expr> {
-        if self.depth == MAX_NESTING {
-            return Err(self.error_at(
-                pos,
-                &format!("Grammar nests more than {MAX_NESTING} levels of parentheses"),
-            ));
-        }
-        self.depth += 1;
+        self.enter(pos)?;
         let inner = self.expansions();
         self.depth -= 1;
         inner
+    }
+
+    /// Go one level deeper, at the group or template arguments opened at
+    /// `pos`, unless the grammar is already at [`MAX_NESTING`].
+    fn enter(&mut self, pos: Pos) -> GrammarResult<()> {
+        if self.depth == MAX_NESTING {
+            return Err(self.error_at(
+                pos,
+                &format!(
+                    "Grammar nests more than {MAX_NESTING} levels of parentheses or template arguments"
+                ),
+            ));
+        }
+        self.depth += 1;
+        Ok(())
     }
 
     /// `value: terminal | nonterminal | literal | range | template_usage`

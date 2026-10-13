@@ -421,3 +421,21 @@ fn a_template_parameter_used_as_a_template_is_rejected_like_lark() {
         "Template 'r' used but not defined (in rule tmpl{r})"
     );
 }
+
+#[test]
+fn a_template_instantiating_itself_ever_deeper_is_rejected() {
+    let err = compile_err("start: t{\"a\"}\nt{x}: x | t{t{x}}\n");
+    assert!(
+        err.starts_with(
+            "Template 't' nests its instantiations more than 200 levels deep (in rule t{t{t{"
+        ) && err.ends_with("})")
+            && err.matches('{').count() == 200,
+        "{err}"
+    );
+    let err = compile_err("start: t{\"a\"}\nt{x}: x | u{t{x}}\nu{y}: y | t{u{y}}\n");
+    assert!(
+        err.contains("nests its instantiations more than 200 levels deep"),
+        "{err}"
+    );
+    compiled("start: t{t{t{\"a\"}}}\nt{x}: x | \"(\" x \")\"\n");
+}

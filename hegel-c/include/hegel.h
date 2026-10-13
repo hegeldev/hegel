@@ -671,20 +671,22 @@ typedef struct {
  the grammar, or a grammar it imports, makes. `user_data` is the pointer
  supplied alongside the callback. `base_path` is the directory of the
  importing grammar (the `out_path` this callback gave for it, cut at its
- last `/` or `\`) for a relative import (`%import .common.INT`) made by a
- grammar this callback supplied, and NULL otherwise: for every absolute
- import (`%import common.INT`), and for a relative import made by the
- text passed to `hegel_grammar_new`. `grammar_path` is the file the
- import names relative to it (`common.lark` for `%import common.INT`,
- `a/b.lark` for `%import a.b.rule`). Both are NUL-terminated UTF-8 valid
- only for the
- duration of the call. To supply the grammar, set `out_path` to the
- NUL-terminated path it was found at, `out_text` and `out_text_len` to
- its UTF-8 text, all kept alive until `hegel_grammar_new` returns, and
- return true; return false when there is no such grammar, in which case
- the import, absolute or relative, still resolves against the grammars
- bundled with libhegel, as Lark's does: `common`, `lark`, `python` and
- `unicode`.
+ last `/` or `\`, so empty for a path with neither) for a relative
+ import (`%import .common.INT`) made by a grammar this callback
+ supplied, and NULL otherwise: for every absolute import
+ (`%import common.INT`), and for a relative import made by the text
+ passed to `hegel_grammar_new`. `grammar_path` is the file the import
+ names relative to it (`common.lark` for `%import common.INT`,
+ `a/b.lark` for `%import a.b.rule`). Both are NUL-terminated UTF-8
+ valid only for the duration of the call. To supply the grammar, set
+ `out_path` to the NUL-terminated path it was found at, `out_text` and
+ `out_text_len` to its UTF-8 text (bytes that are not UTF-8 are read
+ with each invalid sequence replaced by U+FFFD), all kept alive until
+ `hegel_grammar_new` returns, and return true; return false when there
+ is no such grammar (a true return that leaves `out_path` or `out_text`
+ NULL counts as false), in which case the import, absolute or relative,
+ still resolves against the grammars bundled with libhegel, as Lark's
+ does: `common`, `lark`, `python` and `unicode`.
  */
 typedef bool (*hegel_grammar_import_t)(void *user_data,
                                        const char *base_path,
@@ -2261,9 +2263,9 @@ hegel_result_t hegel_generate_string_result_free(hegel_context_t *ctx,
  `start`: The rule whose strings to generate, or NULL for `start`.
  `max_size`: The most characters a string may have, or 0 for the default
    of 8192. Must not be below the shortest string the start rule can
-   produce. A placeholder marker counts as no characters: what the
-   caller puts in for it is the caller's to fit, with the `max_size` of
-   `hegel_generate_grammar`.
+   produce, nor above 1048576. A placeholder marker counts as no
+   characters: what the caller puts in for it is the caller's to fit,
+   with the `max_size` of `hegel_generate_grammar`.
  `max_depth`: How deeply rules may nest, or 0 for the default of 200.
    Must not be below the shallowest nesting the start rule can produce.
  `alphabet`: Optional (NULL for none). Must be a text generator; every

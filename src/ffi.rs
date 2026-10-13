@@ -1488,8 +1488,9 @@ pub(crate) struct Grammar {
     raw: *mut hegel_c::HegelGrammar,
 }
 
-// SAFETY: a grammar is immutable after construction — libhegel only ever
-// reads through the pointer — so sharing across threads is sound.
+// SAFETY: `hegel_grammar_new` allocates the handle through libhegel's
+// `into_raw_send_sync`, which requires the engine's grammar to be `Send`
+// and `Sync`, so sharing the pointer across threads is sound.
 unsafe impl Send for Grammar {}
 unsafe impl Sync for Grammar {}
 
@@ -1510,9 +1511,8 @@ struct GrammarImports<'a> {
 /// Resolve an `%import` for the engine, as Lark does: the import
 /// directories in order, then the directory of the importing grammar for a
 /// relative import (`base_path`, `NULL` for the grammar text itself). The
-/// path reported back keeps the directory exactly as given, joined with a
-/// `/`, so the engine can recover it for the imported file's own relative
-/// imports.
+/// path reported back keeps the directory exactly as given, so the engine
+/// can recover it for the imported file's own relative imports.
 unsafe extern "C" fn load_grammar_import(
     user_data: *mut c_void,
     base_path: *const c_char,
@@ -1528,17 +1528,15 @@ unsafe extern "C" fn load_grammar_import(
     let grammar_path = unsafe { CStr::from_ptr(grammar_path) }.to_string_lossy();
     let base = unsafe { base_path.as_ref() }
         .map(|p| unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned());
-    let dirs = imports
-        .dirs
-        .iter()
-        .map(|dir| dir.to_string_lossy().into_owned())
-        .chain(base);
+    let dirs = imports.dirs.iter().cloned().chain(base.map(PathBuf::from));
     for dir in dirs {
-        let joined = format!("{dir}/{grammar_path}");
+        let joined = dir.join(&*grammar_path);
         let Ok(text) = std::fs::read_to_string(&joined) else {
             continue;
         };
-        imports.loaded.push((cstring_lossy(&joined), text));
+        imports
+            .loaded
+            .push((cstring_lossy(&joined.to_string_lossy()), text));
         let (path, text) = imports.loaded.last().unwrap();
         unsafe {
             *out_path = path.as_ptr();

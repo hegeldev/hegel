@@ -73,12 +73,19 @@ struct SpareVectors {
 impl SpareVectors {
     /// Put the emptied `nodes` and `spans` in `slot` when they have room
     /// for more choices than the vectors there, handing back whichever
-    /// pair is not kept.
+    /// pair is not kept. The vectors are cut to room for `max_size`, the
+    /// most choices the test case they come from could have recorded:
+    /// one grown past that by doubling would be turned down by every
+    /// test case of the size that asks for the slot (see [`Self::take`])
+    /// and hold it against every smaller offer.
     fn offer(
         slot: &mut Option<SpareVectors>,
-        nodes: Vec<ChoiceNode>,
-        spans: Vec<Span>,
+        mut nodes: Vec<ChoiceNode>,
+        mut spans: Vec<Span>,
+        max_size: usize,
     ) -> Option<SpareVectors> {
+        nodes.shrink_to(max_size);
+        spans.shrink_to(max_size);
         let offered = SpareVectors { nodes, spans };
         match slot {
             Some(held) if held.nodes.capacity() >= offered.nodes.capacity() => Some(offered),
@@ -1983,7 +1990,7 @@ impl Drop for NativeTestCase {
             nodes.clear();
         }
         spans.clear();
-        let unkept = SpareVectors::offer(&mut SPARE_VECTORS.lock(), nodes, spans);
+        let unkept = SpareVectors::offer(&mut SPARE_VECTORS.lock(), nodes, spans, self.max_size);
         drop(unkept);
     }
 }

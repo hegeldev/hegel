@@ -884,9 +884,9 @@ fn max_finite_global_rank() -> crate::native::bignum::BigUint {
 
 /// The kind of choice made at a particular point.
 ///
-/// Every constraint is carried by value: the integer constraint's three
-/// `BigInt`s live inline unless a bound is wider than a machine word, so
-/// cloning one copies a few words, as for the other constraints.
+/// Every constraint is carried by value: the integer constraint's bounds
+/// are machine words unless one is wider than `i64`, so cloning one
+/// copies a few words, as for the other constraints.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChoiceKind {
     Integer(IntegerChoice),
@@ -1386,7 +1386,7 @@ impl ChoiceKind {
 /// variant and gets a proven-consistent pair.
 ///
 /// The `IntegerChoice` constraint is carried by value: its bounds are
-/// inline `BigInt`s for every width a draw ordinarily asks for, so a node
+/// machine words for every width a draw ordinarily asks for, so a node
 /// is a few words to clone and costs no allocation to record. The
 /// `StringChoice` constraint is shared behind an `Arc`: with its grammar
 /// it is wider than the integer payload, and a node is kept to a few

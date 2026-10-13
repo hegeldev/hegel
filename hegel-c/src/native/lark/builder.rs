@@ -218,6 +218,28 @@ fn symbol_references<'e>(expr: &'e Expr, out: &mut Vec<&'e Symbol>) {
     }
 }
 
+/// The most elements a terminal's body may have once the terminals it
+/// references are inlined into it. A chain of terminals each using the
+/// one before it twice doubles in size at every link, and Lark builds
+/// the whole of it; here it is an error instead.
+const MAX_TERMINAL_SIZE: usize = 1 << 16;
+
+/// How many elements `expr` has: its literals and symbols, and the
+/// alternatives, sequences and repeats grouping them.
+fn expr_size(expr: &Expr) -> usize {
+    match expr {
+        Expr::Alternatives(alts) => {
+            1 + alts
+                .iter()
+                .map(|alt| 1 + alt.items.iter().map(expr_size).sum::<usize>())
+                .sum::<usize>()
+        }
+        Expr::Symbol(_) | Expr::Literal(_) => 1,
+        Expr::Repeat { inner, .. } => 1 + expr_size(inner),
+        Expr::Template { args, .. } => 1 + args.iter().map(expr_size).sum::<usize>(),
+    }
+}
+
 /// Replace every terminal reference in `expr` with the referenced
 /// terminal's body, as Lark's `resolve_term_references` does. Bodies are
 /// taken from `resolved`, which the caller fills in dependency order.
@@ -544,10 +566,20 @@ impl<'s> GrammarBuilder<'s> {
         visiting.push(name.to_string());
         let mut references = Vec::new();
         symbol_references(tree, &mut references);
-        for reference in references {
+        for reference in &references {
             self.resolve_terminal(reference.name(), resolved, visiting)?;
         }
         visiting.pop();
+        let size = expr_size(tree)
+            + references
+                .iter()
+                .map(|reference| expr_size(&resolved[reference.name()]))
+                .sum::<usize>();
+        if size > MAX_TERMINAL_SIZE {
+            return Err(GrammarError::new(format!(
+                "Terminal {name} has more than {MAX_TERMINAL_SIZE} elements once the terminals it uses are inlined"
+            )));
+        }
         let mut tree = tree.clone();
         inline_terminals(&mut tree, resolved);
         resolved.insert(name.to_string(), tree);

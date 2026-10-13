@@ -125,7 +125,7 @@ impl LarkGenerator {
     }
 
     /// Set the maximum length in characters of the generated strings. The
-    /// default is 8192.
+    /// default is 8192, and the most allowed is 1048576.
     pub fn max_size(mut self, max_size: usize) -> Self {
         self.handle = OnceLock::new();
         self.max_size = Some(max_size);

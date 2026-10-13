@@ -157,6 +157,11 @@ fn nesting_is_capped() {
     );
     assert!(message.contains("line 1 column 204"), "{message}");
     assert!(err(&format!("a: {}b", "[".repeat(MAX_NESTING + 1))).contains("nests more than"));
+    let templated = |depth: usize| format!("a: {}b{}", "t{".repeat(depth), "}".repeat(depth));
+    assert_eq!(single_rule(&templated(MAX_NESTING)).name, "a");
+    let message = err(&templated(MAX_NESTING + 1));
+    assert!(message.contains("nests more than"), "{message}");
+    assert!(message.contains("line 1 column 404"), "{message}");
 }
 
 #[test]

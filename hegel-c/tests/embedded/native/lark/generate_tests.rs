@@ -177,7 +177,7 @@ fn explicit_terminal_the_grammar_does_not_use_is_an_error() {
     .unwrap();
     assert_eq!(
         err.message,
-        "explicit terminal 'NOPE', which the grammar does not use"
+        "the grammar does not use explicit terminal 'NOPE'"
     );
 }
 
@@ -335,19 +335,18 @@ fn declared_terminal_without_a_generator_is_an_error() {
 
 #[test]
 fn alphabet_must_be_a_text_generator() {
-    let err = spec_with(
-        "start: A\nA: /a+/\n",
-        GrammarOptions {
-            alphabet: Some(Arc::new(StringSpec::regex("a", true, None).unwrap())),
-            ..GrammarOptions::default()
-        },
-    )
-    .err()
-    .unwrap();
-    assert_eq!(
-        err.message,
-        "Cannot generate terminal A from a+: regex alphabet must be a text string generator"
-    );
+    for text in ["start: A\nA: /a+/\n", "start: \"a\"\n"] {
+        let err = spec_with(
+            text,
+            GrammarOptions {
+                alphabet: Some(Arc::new(StringSpec::regex("a", true, None).unwrap())),
+                ..GrammarOptions::default()
+            },
+        )
+        .err()
+        .unwrap();
+        assert_eq!(err.message, "alphabet must be a text string generator");
+    }
 }
 
 #[test]
@@ -364,6 +363,19 @@ fn caps_below_the_smallest_string_are_errors() {
     assert_eq!(
         err.message,
         "max_size is 2 but the smallest string 'start' can produce has 3 characters"
+    );
+    let err = spec_with(
+        "start: \"a\"*\n",
+        GrammarOptions {
+            max_size: MAX_MAX_SIZE + 1,
+            ..GrammarOptions::default()
+        },
+    )
+    .err()
+    .unwrap();
+    assert_eq!(
+        err.message,
+        "max_size is 1048577 but may be at most 1048576"
     );
     let err = spec_with(
         "start: a\na: b\nb: \"x\"\n",
