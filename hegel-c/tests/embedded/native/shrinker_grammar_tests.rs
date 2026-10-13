@@ -5,6 +5,8 @@ use super::{Derived, LeafStage};
 use crate::exchange::drive_no_yield;
 use crate::native::core::Constraint;
 use crate::native::core::{ChoiceNode, ChoiceValue, Spans, StringChoice};
+use crate::native::draws::StringSpec;
+use crate::native::draws::text::TextAlphabet;
 use crate::native::intervalsets::IntervalSet;
 use crate::native::lark::builder::{NoImports, load_grammar};
 use crate::native::lark::compile::{compile, placeholder};
@@ -312,4 +314,59 @@ fn lowering_starts_over_when_the_character_under_it_has_changed() {
     stage.record(true);
     let moved = derived("start: /[a-z]+/\n", "zc");
     assert_eq!(candidate(&mut stage, &moved, 1, 2), Some(cps("za")));
+}
+
+#[test]
+fn an_ambiguous_grammar_shrinks_through_its_changing_derivations() {
+    let node = grammar_node("start: A+\nA: /x+/\n", "x", "xxxxxxx", false);
+    let mut shrinker = shrinker_where(vec![node], |s| s.len() >= 2);
+    drive_no_yield(shrinker.shrink_grammar_strings()).unwrap();
+    assert_eq!(text_of(&shrinker.current_nodes[0].value()), "xx");
+}
+
+#[test]
+fn a_string_under_an_alphabet_with_a_placeholder_shrinks_within_both() {
+    let abc = StringSpec::text(
+        &TextAlphabet {
+            min_codepoint: u32::from('a'),
+            max_codepoint: u32::from('c'),
+            include_characters: Some(" ".to_string()),
+            ..TextAlphabet::default()
+        },
+        0,
+        8,
+    )
+    .unwrap();
+    let spec = from_lark(
+        "start: WORD X WORD\nWORD: /[a-z]+/\n%declare X\nWS: / +/\n%ignore WS\n",
+        &NoImports,
+        GrammarOptions {
+            explicit: vec!["X".to_string()],
+            alphabet: Some(Arc::new(abc)),
+            ..GrammarOptions::default()
+        },
+    )
+    .unwrap();
+    let constraint = Arc::clone(spec.constraint());
+    let marker = placeholder("X");
+    let simplest = format!("a {marker} a");
+    constraint
+        .simplest_or_init(|| Ok::<_, crate::control::InternalError>(cps(&simplest)))
+        .unwrap();
+    let node = ChoiceNode::string(
+        StringChoice {
+            intervals: Arc::clone(constraint.intervals()),
+            min_size: 0,
+            max_size: usize::MAX,
+            constraint: Some(Constraint::Grammar(constraint)),
+        },
+        cps(&format!("cba  {marker}  bcc")),
+        false,
+    );
+    let mut shrinker = shrinker_where(vec![node], |s| s.contains('c'));
+    drive_no_yield(shrinker.shrink_grammar_strings()).unwrap();
+    assert_eq!(
+        text_of(&shrinker.current_nodes[0].value()),
+        format!("a {marker} c")
+    );
 }

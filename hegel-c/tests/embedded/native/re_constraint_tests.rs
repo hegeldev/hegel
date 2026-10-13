@@ -126,3 +126,42 @@ fn a_string_the_generator_drew_is_accepted_without_a_check() {
     c.note_drawn(&cps("ab"));
     assert!(c.accepts(&cps("ab")));
 }
+
+#[test]
+fn the_program_and_the_matcher_agree_on_what_a_constraint_accepts() {
+    let texts = [
+        "", "a", "b", "ab", "ba", "aab", "bba", "abab", "baba", "xx", "aaa", "aa",
+    ];
+    for pattern in [
+        "(?:|a)*",
+        "(?:a|)*",
+        "(?:a*)*",
+        "(?:a*)+b",
+        "(?:x*?)*",
+        "(?:|x)*?x",
+        "(?:(?:|a)*|b)*c",
+        "(?:(?=a)|.)*",
+        "(?:(?=a)|.)+",
+        "(?:(?!b)|.)*",
+        "(?:(?:(?!b)|[ab])\\B|a)*",
+        "(?:(?:\\B)*?|(?:(?<!b)|[ab]))(?<!b)",
+        "(?:a?)*b",
+        "(?:(?:a|)(?:b|))*",
+        "^(?:|a)*$",
+        "(?:|a)*\\b",
+    ] {
+        let parsed = parse_pattern(pattern, 0).unwrap();
+        for fullmatch in [true, false] {
+            let c = constraint(pattern, fullmatch);
+            assert!(c.program.is_some(), "{pattern}");
+            for text in texts {
+                let chars: Vec<char> = text.chars().collect();
+                assert_eq!(
+                    c.accepts(&cps(text)),
+                    matches(&parsed, fullmatch, &chars),
+                    "{pattern} on {text:?} whole={fullmatch}"
+                );
+            }
+        }
+    }
+}
