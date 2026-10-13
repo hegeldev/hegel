@@ -103,6 +103,17 @@ fn the_simplest_regex_string_must_fit_the_choice() {
     assert!(kind.constraint.as_ref().unwrap().simplest().is_none());
 }
 
+#[test]
+fn a_character_set_remembers_its_least_character() {
+    let intervals = IntervalSet::unicode_scalars().unwrap();
+    let chars = Chars::from(vec!['b', 'a', '1']);
+    assert!(chars.least.get().is_none());
+    assert_eq!(chars.least(&intervals).unwrap(), '1');
+    assert_eq!(chars.least.get(), Some(&'1'));
+    assert_eq!(chars.least(&intervals).unwrap(), '1');
+    assert_eq!(&*chars, &['b', 'a', '1']);
+}
+
 fn lit(cp: char) -> OpCode {
     OpCode::Literal(cp as u32)
 }
@@ -131,7 +142,7 @@ fn listed(set: &InSet) -> Vec<char> {
 fn build_in_set_ascii_flag_keeps_nonascii_positive_literal() {
     let items = vec![SetItem::Literal('a' as u32), SetItem::Literal(0xFF)];
     let out = build_in_set(&items, SRE_FLAG_ASCII, &None).unwrap();
-    assert_eq!(out, InSet::Listed(vec!['a', '\u{FF}'].into()));
+    assert_eq!(out, InSet::Listed(Arc::new(vec!['a', '\u{FF}'].into())));
 }
 
 #[test]
@@ -233,7 +244,7 @@ fn build_in_set_alphabet_drops_disallowed_positive_literal() {
     let items = vec![SetItem::Literal('a' as u32), SetItem::Literal('b' as u32)];
     let alphabet = IntervalSet::new(vec![('a' as u32, 'a' as u32)]).unwrap();
     let out = build_in_set(&items, 0, &Some(alphabet)).unwrap();
-    assert_eq!(out, InSet::Listed(vec!['a'].into()));
+    assert_eq!(out, InSet::Listed(Arc::new(vec!['a'].into())));
 }
 
 #[test]

@@ -22,6 +22,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
 use hashbrown::hash_map::Entry;
+use once_cell::race::OnceBox;
 
 use crate::native::core::state::{boolean_threshold, length_p_continue};
 use crate::native::core::{Constraint, EngineError, ManyState, Status, StringChoice};
@@ -77,7 +78,7 @@ type ProducibleKey = (usize, u32);
 #[derive(Debug)]
 pub(crate) struct Caches {
     in_cache: Mutex<HashMap<InKey, InSet>>,
-    char_cache: Mutex<HashMap<CharKey, Arc<[char]>>>,
+    char_cache: Mutex<HashMap<CharKey, Arc<Chars>>>,
     producible: Mutex<HashMap<ProducibleKey, bool>>,
 }
 
@@ -105,11 +106,56 @@ impl Default for Caches {
     }
 }
 
+/// The characters a node can emit, listed in codepoint order, with the
+/// least of them in the shrink order of the string choice's alphabet
+/// (see [`least_char`]) remembered from the first simplest emission, so
+/// that a repeat of the node costs the search once rather than once per
+/// repetition.
+#[derive(Debug)]
+struct Chars {
+    chars: Box<[char]>,
+    least: OnceBox<char>,
+}
+
+impl Chars {
+    /// The least of the characters in the shrink order of `intervals`,
+    /// the alphabet of every string choice the set serves (see
+    /// [`CompiledRegex::intervals`]); the set must not be empty.
+    fn least(&self, intervals: &IntervalSet) -> Result<char, InternalError> {
+        self.least
+            .get_or_try_init(|| least_char(&self.chars, intervals).map(Box::new))
+            .copied()
+    }
+}
+
+impl From<Vec<char>> for Chars {
+    fn from(chars: Vec<char>) -> Chars {
+        Chars {
+            chars: chars.into_boxed_slice(),
+            least: OnceBox::new(),
+        }
+    }
+}
+
+impl core::ops::Deref for Chars {
+    type Target = [char];
+
+    fn deref(&self) -> &[char] {
+        &self.chars
+    }
+}
+
+impl PartialEq for Chars {
+    fn eq(&self, other: &Chars) -> bool {
+        self.chars == other.chars
+    }
+}
+
 /// The characters a `(IN, items)` node can emit, in codepoint order.
 #[derive(Debug, Clone, PartialEq)]
 enum InSet {
     /// Every character the node can emit, listed.
-    Listed(Arc<[char]>),
+    Listed(Arc<Chars>),
     /// The BMP minus a few excluded codepoints: what a negated class
     /// without categories rules out under the default alphabet, indexed in
     /// closed form like [`default_any_char`] so the 64K-codepoint scan that
@@ -696,7 +742,7 @@ fn generate_op<D: Draws>(
                 return Err(mark_invalid(d));
             }
             let c = if d.simplest() {
-                least_char(&candidates, state.intervals)?
+                candidates.least(state.intervals)?
             } else {
                 candidates[pick_index(d, candidates.len())?]
             };
@@ -1085,7 +1131,7 @@ fn not_literal_chars(
     flags: u32,
     alphabet: &Option<IntervalSet>,
     caches: &Caches,
-) -> Arc<[char]> {
+) -> Arc<Chars> {
     if alphabet.is_none() {
         return cached_default_not_literal(c, flags);
     }
@@ -1100,7 +1146,7 @@ fn not_literal_chars(
 /// the alphabet minus the newline unless DOTALL. Under the default
 /// alphabet the node indexes its characters in closed form instead (see
 /// [`default_any_char`]).
-fn any_chars(flags: u32, alphabet: &Option<IntervalSet>, caches: &Caches) -> Arc<[char]> {
+fn any_chars(flags: u32, alphabet: &Option<IntervalSet>, caches: &Caches) -> Arc<Chars> {
     let allow_newline = flags & SRE_FLAG_DOTALL != 0;
     cached_chars(&caches.char_cache, CharKey::Any(allow_newline), || {
         gather_chars(alphabet, |c| allow_newline || c != '\n')
@@ -1180,17 +1226,17 @@ fn default_any_char(idx: u64, allow_newline: bool) -> Result<char, InternalError
 /// Look up `key` in a per-[`CompiledRegex`] character-set cache, computing
 /// and inserting it on a miss.
 fn cached_chars<F: FnOnce() -> Vec<char>>(
-    cache: &Mutex<HashMap<CharKey, Arc<[char]>>>,
+    cache: &Mutex<HashMap<CharKey, Arc<Chars>>>,
     key: CharKey,
     compute: F,
-) -> Arc<[char]> {
+) -> Arc<Chars> {
     {
         let guard = cache.lock();
         if let Some(cached) = guard.get(&key) {
             return Arc::clone(cached);
         }
     }
-    let computed: Arc<[char]> = compute().into();
+    let computed = Arc::new(Chars::from(compute()));
     cache.lock().insert(key, Arc::clone(&computed));
     computed
 }
@@ -1198,8 +1244,8 @@ fn cached_chars<F: FnOnce() -> Vec<char>>(
 /// Cached character set for `NotLiteral` nodes with the default alphabet.
 /// Same rationale as `cached_default_in_set`: `gather_chars` scans the
 /// entire BMP (~64K codepoints) and is too expensive to repeat per draw.
-fn cached_default_not_literal(c: char, flags: u32) -> Arc<[char]> {
-    type Cache = Mutex<HashMap<(u32, u32), Arc<[char]>>>;
+fn cached_default_not_literal(c: char, flags: u32) -> Arc<Chars> {
+    type Cache = Mutex<HashMap<(u32, u32), Arc<Chars>>>;
     static CACHE: Lazy<Cache> = Lazy::new(|| Mutex::new(HashMap::default()));
     let cache_key = (c as u32, flags & CASE_FLAGS);
     {
@@ -1208,8 +1254,9 @@ fn cached_default_not_literal(c: char, flags: u32) -> Arc<[char]> {
             return Arc::clone(cached);
         }
     }
-    let computed: Arc<[char]> =
-        gather_chars(&None, |x| !casefold::literal_matches(c, x, flags)).into();
+    let computed = Arc::new(Chars::from(gather_chars(&None, |x| {
+        !casefold::literal_matches(c, x, flags)
+    })));
     CACHE.lock().insert(cache_key, Arc::clone(&computed));
     computed
 }
@@ -1268,7 +1315,7 @@ fn build_in_set(
                 ascii,
             ));
         }
-        Ok(InSet::Listed(out.into()))
+        Ok(InSet::Listed(Arc::new(Chars::from(out))))
     } else {
         let excluded: HashSet<char> = members.into_iter().collect();
         if categories.is_empty() && alphabet.is_none() {
@@ -1280,13 +1327,18 @@ fn build_in_set(
                 .collect();
             Ok(InSet::Complement(Arc::new(Complement::new(excluded))))
         } else if categories.is_empty() {
-            Ok(InSet::Listed(
-                gather_chars(alphabet, |c| !excluded.contains(&c)).into(),
-            ))
+            Ok(InSet::Listed(Arc::new(Chars::from(gather_chars(
+                alphabet,
+                |c| !excluded.contains(&c),
+            )))))
         } else {
-            Ok(InSet::Listed(
-                gather_category_class(alphabet, &categories, true, &excluded, ascii).into(),
-            ))
+            Ok(InSet::Listed(Arc::new(Chars::from(gather_category_class(
+                alphabet,
+                &categories,
+                true,
+                &excluded,
+                ascii,
+            )))))
         }
     }
 }
@@ -1442,10 +1494,10 @@ fn draw_any_char<D: Draws>(d: &mut D, alphabet: &Option<IntervalSet>) -> Result<
 }
 /// Emit one of `chars` (which must not be empty, or the test case is
 /// invalid): drawn by index, or the least in the shrink order of
-/// `intervals` (see [`least_char`]) from the simplest source.
+/// `intervals` (see [`Chars::least`]) from the simplest source.
 fn emit_from_chars<D: Draws>(
     d: &mut D,
-    chars: &[char],
+    chars: &Chars,
     intervals: &IntervalSet,
     out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
@@ -1453,7 +1505,7 @@ fn emit_from_chars<D: Draws>(
         return Err(mark_invalid(d));
     }
     if d.simplest() {
-        out.push(least_char(chars, intervals)?);
+        out.push(chars.least(intervals)?);
         return Ok(());
     }
     let idx = draw_char_index(d, chars.len() as u64)?;
@@ -1488,8 +1540,9 @@ fn emit_from_set<D: Draws>(
 /// The least of `chars` (not empty) in the shrink order of `intervals`,
 /// the alphabet of the string choice (see
 /// [`IntervalSet::index_from_codepoint_in_shrink_order`]): the character
-/// the simplest walk emits for a class. Alternations likewise choose
-/// locally by shrink order (see [`generate_least`]).
+/// the simplest walk emits for a class, which [`Chars`] remembers.
+/// Alternations likewise choose locally by shrink order (see
+/// [`generate_least`]).
 fn least_char(chars: &[char], intervals: &IntervalSet) -> Result<char, InternalError> {
     let least = chars
         .iter()
