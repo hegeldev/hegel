@@ -91,6 +91,7 @@ use crate::native::core::{EngineError, NativeTestCase, Status, StringChoice};
 use crate::native::draws::regex::{CompiledRegex, generate_regex_into};
 use crate::native::draws::source::{RngDraws, SimplestDraws};
 use crate::native::draws::{Draws, LABEL_REGEX, StringSpec, spanned};
+use crate::native::intervalsets::IntervalSet;
 use crate::native::labels::label_from_name;
 use crate::native::rng::EngineRng;
 use crate::sys::sync::Mutex;
@@ -521,6 +522,24 @@ impl GrammarSpec {
         }
         let ignore_cost = ignore_cost(&grammar.ignore, &term_typical);
         let analysis = analyze(&grammar, term_min, term_typical)?;
+        if let Some(alphabet) = &alphabet {
+            let mut used = reachable_terminals(&analysis, start, terminals.len());
+            for &id in &grammar.ignore {
+                used[id] = true;
+            }
+            let unproducible = used.iter().enumerate().find(|&(id, &used)| {
+                used && matches!(&terminals[id], TerminalGen::Pattern(re) if !re.producible())
+            });
+            if let Some((id, _)) = unproducible {
+                let term = &grammar.terminals[id];
+                return Err(GrammarError::new(format!(
+                    "terminal {} ({}) cannot be produced over the alphabet {}",
+                    term.name,
+                    term.regexp.as_deref().unwrap_or_default(),
+                    describe_alphabet(alphabet)
+                )));
+            }
+        }
         let lexer = Lexer::new(&grammar.terminals);
         let ignore_starters = Starters::new(&lexer, &grammar.ignore);
         let root = &analysis.rules[start];
@@ -1383,6 +1402,64 @@ impl<'s> Generation<'s> {
             .len()
             .checked_sub(pending + 1)
             .map(|i| &self.tokens[i])
+    }
+}
+
+/// Which of `count` terminals (by [`TermId`]) the rule `start` of
+/// `analysis` can reach.
+fn reachable_terminals(analysis: &Analysis, start: RuleId, count: usize) -> Vec<bool> {
+    fn walk(items: &[Node], rules: &mut [bool], terminals: &mut [bool], analysis: &Analysis) {
+        for node in items {
+            match &node.kind {
+                NodeKind::Terminal(id) => terminals[*id] = true,
+                NodeKind::Rule(id) => visit(*id, rules, terminals, analysis),
+                NodeKind::Group(_, alts) => {
+                    for alt in alts {
+                        walk(&alt.items, rules, terminals, analysis);
+                    }
+                }
+                NodeKind::Repeat { inner, .. } => {
+                    walk(core::slice::from_ref(inner), rules, terminals, analysis);
+                }
+            }
+        }
+    }
+    fn visit(id: RuleId, rules: &mut [bool], terminals: &mut [bool], analysis: &Analysis) {
+        if core::mem::replace(&mut rules[id], true) {
+            return;
+        }
+        for alt in &analysis.rules[id].alternatives {
+            walk(&alt.items, rules, terminals, analysis);
+        }
+    }
+    let mut rules = alloc::vec![false; analysis.rules.len()];
+    let mut terminals = alloc::vec![false; count];
+    visit(start, &mut rules, &mut terminals, analysis);
+    terminals
+}
+
+/// `alphabet` for an error message: its first few ranges of characters,
+/// and how many more it has.
+fn describe_alphabet(alphabet: &IntervalSet) -> String {
+    const SHOWN: usize = 4;
+    let show =
+        |cp: u32| char::from_u32(cp).map_or_else(|| format!("U+{cp:04X}"), |c| format!("{c:?}"));
+    let ranges: Vec<String> = alphabet
+        .intervals
+        .iter()
+        .take(SHOWN)
+        .map(|&(lo, hi)| {
+            if lo == hi {
+                show(lo)
+            } else {
+                format!("{}..={}", show(lo), show(hi))
+            }
+        })
+        .collect();
+    match alphabet.intervals.len().saturating_sub(SHOWN) {
+        0 if ranges.is_empty() => String::from("of no characters"),
+        0 => ranges.join(", "),
+        more => format!("{}, and {more} more ranges", ranges.join(", ")),
     }
 }
 

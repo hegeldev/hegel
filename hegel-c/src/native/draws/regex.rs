@@ -171,6 +171,9 @@ pub struct CompiledRegex {
     /// Whether a drawn string is checked against the pattern with the
     /// matcher before it is accepted (see [`approximated`]).
     verified: bool,
+    /// Whether the alphabet can supply the whole pattern (see
+    /// [`producible_sub`]), so that it has strings to draw at all.
+    producible: bool,
     /// Whether the alphabet cannot supply some subpattern (see
     /// [`producible_sub`]), so that a draw chooses among an alternation's
     /// producible branches and skips an optional repeat of an
@@ -193,6 +196,12 @@ impl CompiledRegex {
         &self.parsed
     }
 
+    /// Whether the alphabet can supply some string of the pattern (see
+    /// [`producible_sub`]).
+    pub(crate) fn producible(&self) -> bool {
+        self.producible
+    }
+
     /// Parse `pattern`, reporting an invalid-argument diagnostic so a bad
     /// pattern surfaces at construction time rather than mid-draw.
     pub(crate) fn compile(
@@ -205,7 +214,7 @@ impl CompiledRegex {
         let literal = literal_of(&parsed, &alphabet);
         let verified = approximated(&parsed.pattern);
         let caches = Caches::default();
-        producible_sub(&parsed.pattern, parsed.flags, &alphabet, &caches)?;
+        let producible = producible_sub(&parsed.pattern, parsed.flags, &alphabet, &caches)?;
         let unproducible = caches
             .producible
             .lock()
@@ -217,6 +226,7 @@ impl CompiledRegex {
             alphabet,
             literal,
             verified,
+            producible,
             unproducible,
             caches,
         })

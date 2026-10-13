@@ -2240,6 +2240,83 @@ fn a_needed_ignorable_counts_toward_whether_an_element_is_droppable() {
     assert_eq!(text(&generation), "a b");
 }
 
+fn digits() -> Option<Arc<StringSpec>> {
+    Some(Arc::new(StringSpec::Text {
+        intervals: Arc::new(IntervalSet::new(vec![('0' as u32, '9' as u32)]).unwrap()),
+        min_size: 0,
+        max_size: 10,
+    }))
+}
+
+/// A terminal the start rule reaches, or an ignorable, that the alphabet
+/// cannot produce is an error when the spec is built, naming both, rather
+/// than a draw that finds no string or one rejected at nearly every
+/// `%ignore` insertion.
+#[test]
+fn terminals_the_alphabet_cannot_produce_are_errors() {
+    for (text, message) in [
+        (
+            "start: \"a\" B\nB: /[a-z0-9]+/\n",
+            "terminal A (a) cannot be produced over the alphabet '0'..='9'",
+        ),
+        (
+            "start: B+\nB: /[0-9]+/\n%ignore \" \"\n",
+            "terminal __IGNORE_0 (\\ ) cannot be produced over the alphabet '0'..='9'",
+        ),
+    ] {
+        let err = spec_with(
+            text,
+            GrammarOptions {
+                alphabet: digits(),
+                ..GrammarOptions::default()
+            },
+        )
+        .err()
+        .unwrap();
+        assert_eq!(err.message, message, "{text}");
+    }
+    let spec = spec_with(
+        "start: B\nB: /[0-9]+/\nC: /[a-z]+/\n",
+        GrammarOptions {
+            alphabet: digits(),
+            ..GrammarOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        samples(&spec, 20)
+            .iter()
+            .all(|s| s.chars().all(|c| c.is_ascii_digit()))
+    );
+}
+
+#[test]
+fn an_alphabet_is_described_by_its_first_ranges() {
+    let set = |ranges: &[(char, char)]| {
+        IntervalSet::new(ranges.iter().map(|&(a, b)| (a as u32, b as u32)).collect()).unwrap()
+    };
+    assert_eq!(describe_alphabet(&set(&[])), "of no characters");
+    assert_eq!(describe_alphabet(&set(&[('a', 'a')])), "'a'");
+    assert_eq!(
+        describe_alphabet(&set(&[('0', '9'), ('a', 'f')])),
+        "'0'..='9', 'a'..='f'"
+    );
+    assert_eq!(
+        describe_alphabet(&set(&[
+            ('0', '9'),
+            ('a', 'f'),
+            ('g', 'g'),
+            ('p', 'q'),
+            ('x', 'z')
+        ])),
+        "'0'..='9', 'a'..='f', 'g', 'p'..='q', and 1 more ranges"
+    );
+    assert_eq!(
+        describe_alphabet(&IntervalSet::new(vec![(0xD800, 0xD800)]).unwrap()),
+        "U+D800"
+    );
+}
+
 fn cps(s: &str) -> Vec<u32> {
     s.chars().map(u32::from).collect()
 }

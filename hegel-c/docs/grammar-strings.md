@@ -68,7 +68,9 @@ The pieces:
   that string does not lex back as its tokens, the first of a few seeded
   random walks that does, each candidate checked by parsing since the
   lexing checks only approximate the parser; a grammar with no string
-  either way is reported at the first draw.
+  either way is reported at the first draw. A terminal the start rule
+  reaches, or an ignorable, that the alphabet cannot produce is reported
+  when the spec is built.
 - **The parser** (`lark/parse.rs`, with `lark/lower.rs` desugaring
   repetitions): an Earley parser with a dynamic lexer, matching Lark's
   `parser="earley", lexer="dynamic"` on which strings it accepts, which is
