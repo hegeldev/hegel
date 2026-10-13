@@ -59,11 +59,18 @@ The pieces:
   what it produces — sizing, lexability checks and `%ignore` insertion as
   the module docs describe — but opens no spans within the `hegel.lark`
   span `generate_grammar` puts the choice in, and uses no collection
-  protocol, since nothing it decides is a choice. The simplest string is
+  protocol, since nothing it decides is a choice. A token of an
+  `%ignore`d terminal that a rule itself draws is one the parser needs,
+  and the lexing checks keep it apart from the ignorables they insert
+  between tokens (`Token::needed`): only the inserted ones may be
+  skipped or run through. The simplest string is
   the walk with every decision at its simplest (`SimplestDraws`), or, when
   that string does not lex back as its tokens, the first of a few seeded
-  random walks that does; a grammar with no string either way is reported
-  at the first draw.
+  random walks that does, each candidate checked by parsing since the
+  lexing checks only approximate the parser; a grammar with no string
+  either way is reported at the first draw. A terminal the start rule
+  reaches, or an ignorable, that the alphabet cannot produce is reported
+  when the spec is built.
 - **The parser** (`lark/parse.rs`, with `lark/lower.rs` desugaring
   repetitions): an Earley parser with a dynamic lexer, matching Lark's
   `parser="earley", lexer="dynamic"` on which strings it accepts, which is
@@ -160,9 +167,10 @@ derive a generated string more deeply than the walk did) does not.
   string as a placeholder marker (`generate::placeholder`): the string
   holds the marker, the values are drawn as choices of their own after
   it and spliced in by the frontend, and the lexing checks never see
-  them. A grammar with an ignorable has one on either side of every
-  marker: the generator insists on it, the constraint accepts no string
-  without, and the shrinker never cuts one; whether a value reads as its
+  them. A grammar with an ignorable has one between every marker and
+  any token beside it (a marker at an edge of the string has nothing on
+  that side): the generator insists on it, the constraint accepts no
+  string without, and the shrinker never cuts one; whether a value reads as its
   terminal where it lands is the user's generator's affair. So is its
   size: a marker counts for nothing toward the grammar's size cap, which
   is on the characters outside the markers (the string choice's own
