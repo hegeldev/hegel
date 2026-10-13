@@ -8,7 +8,7 @@
 //! string with these numbers and leaves the length of each terminal to the
 //! terminal's own draw.
 
-use super::compile::{Grammar, Item, RuleId, Sequence, TermId};
+use super::compile::{Grammar, Item, RuleId, Sequence, TermId, collect_rule_refs};
 use super::{GrammarError, GrammarResult};
 use alloc::boxed::Box;
 use alloc::format;
@@ -124,8 +124,53 @@ struct Analyzer<'g> {
     /// The length of each terminal's strings on average.
     term_typical: Vec<u64>,
     facts: Vec<RuleFacts>,
+    /// The rules in the order the fixpoints visit them: the rules a rule
+    /// uses before it, as far as the grammar's cycles allow.
+    order: Vec<RuleId>,
     /// The groups numbered so far.
     groups: Cell<usize>,
+}
+
+/// The rules in postorder of a walk from each along the rules it uses,
+/// so that a rule comes after every rule it uses except through a
+/// cycle. One round of a fixpoint in this order settles every rule not
+/// on a cycle, however the grammar orders its definitions.
+fn dependency_order(grammar: &Grammar) -> Vec<RuleId> {
+    let uses: Vec<Vec<RuleId>> = grammar
+        .rules
+        .iter()
+        .map(|rule| {
+            let mut refs = Vec::new();
+            for seq in &rule.alternatives {
+                for item in &seq.items {
+                    collect_rule_refs(item, &mut refs);
+                }
+            }
+            refs
+        })
+        .collect();
+    let mut order = Vec::with_capacity(grammar.rules.len());
+    let mut visited = alloc::vec![false; grammar.rules.len()];
+    for root in 0..grammar.rules.len() {
+        if visited[root] {
+            continue;
+        }
+        visited[root] = true;
+        let mut stack = alloc::vec![(root, 0)];
+        while let Some((rule, next)) = stack.last_mut() {
+            if let Some(&used) = uses[*rule].get(*next) {
+                *next += 1;
+                if !visited[used] {
+                    visited[used] = true;
+                    stack.push((used, 0));
+                }
+            } else {
+                order.push(*rule);
+                stack.pop();
+            }
+        }
+    }
+    order
 }
 
 impl Analyzer<'_> {
@@ -254,7 +299,8 @@ impl Analyzer<'_> {
     fn solve_minima(&mut self) {
         loop {
             let mut changed = false;
-            for r in 0..self.grammar.rules.len() {
+            for i in 0..self.order.len() {
+                let r = self.order[i];
                 let alternatives = &self.grammar.rules[r].alternatives;
                 let min_size = alternatives
                     .iter()
@@ -299,7 +345,8 @@ impl Analyzer<'_> {
         }
         loop {
             let mut changed = false;
-            for r in 0..self.grammar.rules.len() {
+            for i in 0..self.order.len() {
+                let r = self.order[i];
                 if self.facts[r].unbounded || self.facts[r].min_size.is_none() {
                     continue;
                 }
@@ -325,7 +372,8 @@ impl Analyzer<'_> {
 
     fn max_round(&mut self) -> bool {
         let mut changed = false;
-        for r in 0..self.grammar.rules.len() {
+        for i in 0..self.order.len() {
+            let r = self.order[i];
             if self.facts[r].min_size.is_none() {
                 continue;
             }
@@ -403,6 +451,7 @@ pub fn analyze(
             };
             grammar.rules.len()
         ],
+        order: dependency_order(grammar),
         groups: Cell::new(0),
     };
     analyzer.solve_minima();
