@@ -2252,6 +2252,10 @@ fn terminals_the_alphabet_cannot_produce_are_errors() {
             "start: B+\nB: /[0-9]+/\n%ignore \" \"\n",
             "terminal __IGNORE_0 (\\ ) cannot be produced over the alphabet '0'..='9'",
         ),
+        (
+            "start: (x | y)+ x\nx: \"0\"? y\ny: LETTER\nLETTER: /[a-z]/\n",
+            "terminal LETTER ([a-z]) cannot be produced over the alphabet '0'..='9'",
+        ),
     ] {
         let err = spec_with(
             text,

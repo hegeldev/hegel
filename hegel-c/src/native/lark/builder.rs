@@ -332,9 +332,8 @@ fn sequence_to_pattern(
         _ => {
             let mut joined = String::new();
             for item in items {
-                joined.push_str(&pattern_to_regexp(&terminal_tree_to_pattern(
-                    name, item, resolved,
-                )?));
+                let pattern = terminal_tree_to_pattern(name, item, resolved)?;
+                joined.push_str(&pattern_to_regexp(&pattern));
             }
             Ok(Pattern::re(joined))
         }

@@ -127,9 +127,9 @@ fn accepts_and_rejects_simple_strings() {
     assert!(!s.accepts("a"));
     assert!(!s.accepts("abc"));
     assert!(!s.accepts(""));
-    assert_eq!(s.parse("a"), Err(ParseError::at(1)));
-    assert_eq!(s.parse("abc"), Err(ParseError::at(2)));
-    assert_eq!(s.parse("x"), Err(ParseError::at(0)));
+    assert_eq!(s.parse("a"), Err(ParseError { position: 1 }));
+    assert_eq!(s.parse("abc"), Err(ParseError { position: 2 }));
+    assert_eq!(s.parse("x"), Err(ParseError { position: 0 }));
 }
 
 #[test]
@@ -353,8 +353,8 @@ fn terminals_match_greedily_as_lark_does() {
     assert!(!s.accepts("ac"));
     assert!(!s.accepts("abc"));
     assert!(!s.accepts("ab"));
-    assert_eq!(s.parse("abc"), Err(ParseError::at(3)));
-    assert_eq!(s.parse("abcd"), Err(ParseError::at(3)));
+    assert_eq!(s.parse("abc"), Err(ParseError { position: 3 }));
+    assert_eq!(s.parse("abcd"), Err(ParseError { position: 3 }));
 }
 
 #[test]
@@ -376,10 +376,10 @@ fn prefixes_and_trailing_text_are_rejected() {
     let s = setup("start: \"(\" (\"a\" | start) \")\"\n");
     assert!(s.accepts("(a)"));
     assert!(s.accepts("(((a)))"));
-    assert_eq!(s.parse("(((a))"), Err(ParseError::at(6)));
-    assert_eq!(s.parse("(((a))))"), Err(ParseError::at(7)));
-    assert_eq!(s.parse("(((a)b"), Err(ParseError::at(5)));
-    assert_eq!(s.parse("(("), Err(ParseError::at(2)));
+    assert_eq!(s.parse("(((a))"), Err(ParseError { position: 6 }));
+    assert_eq!(s.parse("(((a))))"), Err(ParseError { position: 7 }));
+    assert_eq!(s.parse("(((a)b"), Err(ParseError { position: 5 }));
+    assert_eq!(s.parse("(("), Err(ParseError { position: 2 }));
 }
 
 #[test]
@@ -630,10 +630,15 @@ fn right_recursion_takes_a_column_of_items_per_character() {
             *text
         );
     }
-    let cycle = setup("start: x\nx: x | \"a\" x | \"a\"\n");
-    assert!(cycle.accepts("aaa"));
-    assert_eq!(leaves(&cycle.tree("aaa")).len(), 3);
-    assert!(!cycle.accepts("aab"));
+    for g in [
+        "start: x\nx: x | \"a\" x | \"a\"\n",
+        "start: start | \"a\" start | \"a\"\n",
+    ] {
+        let cycle = setup(g);
+        assert!(cycle.accepts("aaa"));
+        assert_eq!(leaves(&cycle.tree("aaa")).len(), 3);
+        assert!(!cycle.accepts("aab"));
+    }
 }
 
 #[test]

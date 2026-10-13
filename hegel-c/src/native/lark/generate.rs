@@ -500,12 +500,7 @@ impl GrammarSpec {
                 }
                 (None, Some(regexp)) => {
                     let spec = StringSpec::regex(regexp, true, options.alphabet.as_deref())
-                        .map_err(|e| {
-                            GrammarError::new(format!(
-                                "Cannot generate terminal {} from {regexp}: {e}",
-                                term.name
-                            ))
-                        })?;
+                        .map_err(|e| GrammarError::new(format!("{e}")))?;
                     let StringSpec::Regex { compiled, .. } = spec else {
                         unreachable!("StringSpec::regex builds a regex spec")
                     };

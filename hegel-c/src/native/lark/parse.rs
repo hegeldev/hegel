@@ -36,7 +36,6 @@
 use super::compile::{Grammar, RuleId, TermId};
 use super::lexsim::{Lexed, Lexer};
 use super::lower::{Lowered, NtId, Provenance, Symbol, lower};
-use crate::control::{InternalError, hegel_internal_error, hegel_internal_unwrap};
 use crate::native::{HashMap, HashSet};
 use alloc::vec::Vec;
 
@@ -164,21 +163,9 @@ impl Drop for Tree {
 /// carried, the end of the text when it ended before the start rule was
 /// complete, or the position reached when the parse ran out of its
 /// budget (see [`PARSE_BUDGET`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParseError {
     pub position: usize,
-    /// The invariant of the parser's own that was found broken, when
-    /// the parse failed on one rather than on the text.
-    pub internal: Option<InternalError>,
-}
-
-impl ParseError {
-    fn at(position: usize) -> ParseError {
-        ParseError {
-            position,
-            internal: None,
-        }
-    }
 }
 
 /// How many items a parse may propose before it is given up, counting
@@ -388,7 +375,7 @@ impl Parser {
                 || parse.items.len() > self.item_budget
                 || (col < n && parse.pending == 0)
             {
-                return Err(ParseError::at(col));
+                return Err(ParseError { position: col });
             }
         }
         let root = parse.columns[n]
@@ -402,11 +389,8 @@ impl Parser {
                     && production.lhs == self.start
                     && item.dot as usize == production.rhs.len()
             })
-            .ok_or(ParseError::at(n))?;
-        parse.build(root).map_err(|internal| ParseError {
-            position: n,
-            internal: Some(internal),
-        })
+            .ok_or(ParseError { position: n })?;
+        Ok(parse.build(root))
     }
 }
 
@@ -643,42 +627,41 @@ impl<T: Terminals> Parse<'_, T> {
     /// for each terminal and ignored stretch, and the completed item for
     /// each nonterminal, with the steps of each part of a repetition
     /// spliced in place of the part.
-    fn steps(&mut self, idx: u32) -> Result<Vec<Step>, InternalError> {
+    fn steps(&mut self, idx: u32) -> Vec<Step> {
         let mut out = Vec::new();
         let mut pending = Vec::new();
-        self.own_steps(idx, &mut pending)?;
+        self.own_steps(idx, &mut pending);
         while let Some(step) = pending.pop() {
             match step {
                 Step::Child(child) if self.provenance(child) == Provenance::RepeatPart => {
-                    self.own_steps(child, &mut pending)?;
+                    self.own_steps(child, &mut pending);
                 }
                 step => out.push(step),
             }
         }
-        Ok(out)
+        out
     }
 
     /// Put back the items a `Leo` chain skipped, from `child` up to the
     /// item at `idx`, as the `Child` items plain completion would have
     /// added, so that the derivation can be read off their steps.
-    fn link(&mut self, idx: u32) -> Result<(), InternalError> {
+    fn link(&mut self, idx: u32) {
         let Back::Leo { child } = self.items[idx as usize].back else {
-            return Ok(());
+            return;
         };
         let top = self.items[idx as usize];
         let mut child = child;
         loop {
             let completed = self.items[child as usize];
             let lhs = self.parser.lowered.productions[completed.prod as usize].lhs;
-            let pred = hegel_internal_unwrap!(
-                self.sole_waiter(completed.origin as usize, lhs),
-                "link: a Leo chain's link has no sole waiter"
-            );
+            let Some(pred) = self.sole_waiter(completed.origin as usize, lhs) else {
+                unreachable!("every link of a Leo chain has a sole waiter")
+            };
             let waiter = self.items[pred as usize];
             let back = Back::Child { pred, child };
             if (waiter.prod, waiter.origin) == (top.prod, top.origin) {
                 self.items[idx as usize].back = back;
-                return Ok(());
+                return;
             }
             self.items.push(Item {
                 prod: waiter.prod,
@@ -693,14 +676,14 @@ impl<T: Terminals> Parse<'_, T> {
 
     /// The steps of a complete item's own production, pushed last first
     /// so that the first is on top.
-    fn own_steps(&mut self, idx: u32, pending: &mut Vec<Step>) -> Result<(), InternalError> {
+    fn own_steps(&mut self, idx: u32, pending: &mut Vec<Step>) {
         let mut at = idx;
         loop {
-            self.link(at)?;
+            self.link(at);
             let item = &self.items[at as usize];
             let end = item.col as usize;
             match item.back {
-                Back::Predicted => return Ok(()),
+                Back::Predicted => return,
                 Back::Token { pred, term } => {
                     let start = self.items[pred as usize].col as usize;
                     let id = term as TermId;
@@ -717,17 +700,17 @@ impl<T: Terminals> Parse<'_, T> {
                     pending.push(Step::Child(child));
                     at = pred;
                 }
-                Back::Leo { .. } => hegel_internal_error!("own_steps: a Leo item still unlinked"),
+                Back::Leo { .. } => unreachable!("a Leo item is linked before it is read"),
             }
         }
     }
 
-    fn frame(&mut self, item: u32) -> Result<Frame, InternalError> {
-        Ok(Frame {
+    fn frame(&mut self, item: u32) -> Frame {
+        Frame {
             item,
-            steps: self.steps(item)?.into_iter(),
+            steps: self.steps(item).into_iter(),
             children: Vec::new(),
-        })
+        }
     }
 
     fn node(&self, frame: Frame) -> Tree {
@@ -739,15 +722,15 @@ impl<T: Terminals> Parse<'_, T> {
         }
     }
 
-    fn build(&mut self, root: u32) -> Result<Tree, InternalError> {
-        let mut root_frame = self.frame(root)?;
+    fn build(&mut self, root: u32) -> Tree {
+        let mut root_frame = self.frame(root);
         let mut stack: Vec<Frame> = Vec::new();
         loop {
             let frame = stack.last_mut().unwrap_or(&mut root_frame);
             match frame.steps.next() {
                 Some(Step::Leaf(tree)) => frame.children.push(tree),
                 Some(Step::Child(child)) => {
-                    let next = self.frame(child)?;
+                    let next = self.frame(child);
                     stack.push(next);
                 }
                 None => match stack.pop() {
@@ -759,7 +742,7 @@ impl<T: Terminals> Parse<'_, T> {
                             .children
                             .push(tree);
                     }
-                    None => return Ok(self.node(root_frame)),
+                    None => return self.node(root_frame),
                 },
             }
         }

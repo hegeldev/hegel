@@ -480,6 +480,7 @@ fn least_width_of_patterns() {
     assert_eq!(least("(a)?(?(1)bc)"), 0);
     assert_eq!(least("^$\\b(?=a)(?!b)"), 0);
     assert_eq!(least("a*+"), 0);
+    assert_eq!(least("a+?b"), 2);
     assert_eq!(least("(a)(?:b)?\\1"), 2);
     assert_eq!(
         least("(?:(?:a{4294967294}){4294967294}){4294967294}"),
