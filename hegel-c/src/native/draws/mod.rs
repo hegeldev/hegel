@@ -299,7 +299,10 @@ impl StringSpec {
 
     /// A regex draw: strings matching `pattern`. `alphabet`, when given,
     /// must be a text spec; its intervals constrain the padding and
-    /// wildcard characters. Errors on an invalid pattern.
+    /// wildcard characters. Errors on an invalid pattern, and on one the
+    /// alphabet can supply no string of (see
+    /// [`CompiledRegex::producible`](regex::CompiledRegex::producible)),
+    /// which would otherwise reject every draw.
     pub fn regex(
         pattern: &str,
         fullmatch: bool,
@@ -315,6 +318,9 @@ impl StringSpec {
             }
         };
         let compiled = regex::CompiledRegex::compile(pattern, alphabet)?;
+        if !compiled.producible() {
+            return Err(compiled.unproducible_error());
+        }
         let kind = Arc::new(compiled.kind(fullmatch)?);
         Ok(StringSpec::Regex {
             compiled: Box::new(compiled),

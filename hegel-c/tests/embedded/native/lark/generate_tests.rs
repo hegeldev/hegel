@@ -2462,33 +2462,6 @@ fn terminals_the_alphabet_cannot_produce_are_errors() {
     );
 }
 
-#[test]
-fn an_alphabet_is_described_by_its_first_ranges() {
-    let set = |ranges: &[(char, char)]| {
-        IntervalSet::new(ranges.iter().map(|&(a, b)| (a as u32, b as u32)).collect()).unwrap()
-    };
-    assert_eq!(describe_alphabet(&set(&[])), "of no characters");
-    assert_eq!(describe_alphabet(&set(&[('a', 'a')])), "'a'");
-    assert_eq!(
-        describe_alphabet(&set(&[('0', '9'), ('a', 'f')])),
-        "'0'..='9', 'a'..='f'"
-    );
-    assert_eq!(
-        describe_alphabet(&set(&[
-            ('0', '9'),
-            ('a', 'f'),
-            ('g', 'g'),
-            ('p', 'q'),
-            ('x', 'z')
-        ])),
-        "'0'..='9', 'a'..='f', 'g', 'p'..='q', and 1 more ranges"
-    );
-    assert_eq!(
-        describe_alphabet(&IntervalSet::new(vec![(0xD800, 0xD800)]).unwrap()),
-        "U+D800"
-    );
-}
-
 /// The cache is bounded by the characters of the texts it holds as well
 /// as by their number: a grammar whose tokens are long fills it with a
 /// few.

@@ -287,6 +287,23 @@ impl CompiledRegex {
         self.producible
     }
 
+    /// The invalid-argument error for a pattern the alphabet can supply
+    /// no string of (see [`producible`](Self::producible)), naming the
+    /// pattern and the alphabet.
+    pub(crate) fn unproducible_error(&self) -> EngineError {
+        EngineError::InvalidArgument(match &self.alphabet {
+            None => format!(
+                "regex pattern {:?} matches no string the generator can produce",
+                self.pattern
+            ),
+            Some(alphabet) => format!(
+                "regex pattern {:?} matches no string over the alphabet {}",
+                self.pattern,
+                describe_alphabet(alphabet)
+            ),
+        })
+    }
+
     /// Parse `pattern`, reporting an invalid-argument diagnostic so a bad
     /// pattern surfaces at construction time rather than mid-draw.
     pub(crate) fn compile(
@@ -1029,6 +1046,31 @@ fn pick_index<D: Draws>(d: &mut D, n: usize) -> Result<usize, EngineError> {
         return Ok(0);
     }
     Ok(d.draw_integer_i64(0, n as i64 - 1)? as usize)
+}
+
+/// `alphabet` for an error message: its first few ranges of characters,
+/// and how many more it has.
+pub(crate) fn describe_alphabet(alphabet: &IntervalSet) -> String {
+    const SHOWN: usize = 4;
+    let show =
+        |cp: u32| char::from_u32(cp).map_or_else(|| format!("U+{cp:04X}"), |c| format!("{c:?}"));
+    let ranges: Vec<String> = alphabet
+        .intervals
+        .iter()
+        .take(SHOWN)
+        .map(|&(lo, hi)| {
+            if lo == hi {
+                show(lo)
+            } else {
+                format!("{}..={}", show(lo), show(hi))
+            }
+        })
+        .collect();
+    match alphabet.intervals.len().saturating_sub(SHOWN) {
+        0 if ranges.is_empty() => String::from("of no characters"),
+        0 => ranges.join(", "),
+        more => format!("{}, and {more} more ranges", ranges.join(", ")),
+    }
 }
 
 /// Whether the alphabet can supply every character `sp` needs, under

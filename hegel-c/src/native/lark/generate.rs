@@ -95,10 +95,9 @@ use crate::native::HashMap;
 use crate::native::core::Constraint;
 use crate::native::core::state::boolean_threshold;
 use crate::native::core::{EngineError, NativeTestCase, Status, StringChoice};
-use crate::native::draws::regex::{CompiledRegex, generate_regex_into};
+use crate::native::draws::regex::{CompiledRegex, describe_alphabet, generate_regex_into};
 use crate::native::draws::source::{RngDraws, SimplestDraws};
 use crate::native::draws::{Draws, LABEL_REGEX, StringSpec, spanned};
-use crate::native::intervalsets::IntervalSet;
 use crate::native::labels::label_from_name;
 use crate::native::rng::EngineRng;
 use crate::sys::sync::Mutex;
@@ -514,14 +513,11 @@ impl GrammarSpec {
                     terminals.push(TerminalGen::Placeholder(marker.clone()));
                 }
                 (None, Some(regexp)) => {
-                    let spec = StringSpec::regex(regexp, true, options.alphabet.as_deref())
+                    let compiled = CompiledRegex::compile(regexp, alphabet.clone())
                         .map_err(|e| GrammarError::new(format!("{e}")))?;
-                    let StringSpec::Regex { compiled, .. } = spec else {
-                        unreachable!("StringSpec::regex builds a regex spec")
-                    };
                     term_min.push(term.min_width);
                     term_typical.push(typical_size(&compiled, term.min_width));
-                    terminals.push(TerminalGen::Pattern(compiled));
+                    terminals.push(TerminalGen::Pattern(Box::new(compiled)));
                 }
                 (None, None) => {
                     return Err(GrammarError::new(format!(
@@ -1457,31 +1453,6 @@ fn reachable_terminals(analysis: &Analysis, start: RuleId, count: usize) -> Vec<
     let mut terminals = alloc::vec![false; count];
     visit(start, &mut rules, &mut terminals, analysis);
     terminals
-}
-
-/// `alphabet` for an error message: its first few ranges of characters,
-/// and how many more it has.
-fn describe_alphabet(alphabet: &IntervalSet) -> String {
-    const SHOWN: usize = 4;
-    let show =
-        |cp: u32| char::from_u32(cp).map_or_else(|| format!("U+{cp:04X}"), |c| format!("{c:?}"));
-    let ranges: Vec<String> = alphabet
-        .intervals
-        .iter()
-        .take(SHOWN)
-        .map(|&(lo, hi)| {
-            if lo == hi {
-                show(lo)
-            } else {
-                format!("{}..={}", show(lo), show(hi))
-            }
-        })
-        .collect();
-    match alphabet.intervals.len().saturating_sub(SHOWN) {
-        0 if ranges.is_empty() => String::from("of no characters"),
-        0 => ranges.join(", "),
-        more => format!("{}, and {more} more ranges", ranges.join(", ")),
-    }
 }
 
 /// The `index`th of `candidates`, which there must be.

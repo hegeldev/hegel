@@ -1843,3 +1843,174 @@ fn a_wildcard_over_an_alphabet_draws_from_it_and_leaves_the_newline_to_dotall() 
     assert!(seen.contains(&'\n'), "saw {seen:?}");
     assert_eq!(re.caches.char_cache.lock().len(), 2);
 }
+
+#[test]
+fn an_alphabet_is_described_by_its_first_ranges() {
+    let set = |ranges: &[(char, char)]| {
+        IntervalSet::new(ranges.iter().map(|&(a, b)| (a as u32, b as u32)).collect()).unwrap()
+    };
+    assert_eq!(describe_alphabet(&set(&[])), "of no characters");
+    assert_eq!(describe_alphabet(&set(&[('a', 'a')])), "'a'");
+    assert_eq!(
+        describe_alphabet(&set(&[('0', '9'), ('a', 'f')])),
+        "'0'..='9', 'a'..='f'"
+    );
+    assert_eq!(
+        describe_alphabet(&set(&[
+            ('0', '9'),
+            ('a', 'f'),
+            ('g', 'g'),
+            ('p', 'q'),
+            ('x', 'z')
+        ])),
+        "'0'..='9', 'a'..='f', 'g', 'p'..='q', and 1 more ranges"
+    );
+    assert_eq!(
+        describe_alphabet(&IntervalSet::new(vec![(0xD800, 0xD800)]).unwrap()),
+        "U+D800"
+    );
+}
+
+fn text_alphabet(chars: &str) -> StringSpec {
+    StringSpec::text(
+        &TextAlphabet {
+            categories: Some(vec![]),
+            include_characters: Some(chars.to_string()),
+            ..TextAlphabet::default()
+        },
+        0,
+        0,
+    )
+    .unwrap()
+}
+
+fn codepoint_alphabet(min: u32, max: u32) -> StringSpec {
+    StringSpec::text(
+        &TextAlphabet {
+            min_codepoint: min,
+            max_codepoint: max,
+            ..TextAlphabet::default()
+        },
+        0,
+        0,
+    )
+    .unwrap()
+}
+
+/// A regex generator over an alphabet that can supply no string of its
+/// pattern fails to build with an invalid-argument error naming the
+/// pattern and the alphabet, instead of rejecting every draw.
+#[test]
+fn a_regex_generator_over_an_alphabet_that_cannot_match_its_pattern_is_rejected() {
+    for (pattern, alphabet, expected) in [
+        (
+            "abc",
+            text_alphabet("def"),
+            "regex pattern \"abc\" matches no string over the alphabet 'd'..='f'",
+        ),
+        (
+            "aa|bb",
+            text_alphabet("c"),
+            "regex pattern \"aa|bb\" matches no string over the alphabet 'c'",
+        ),
+        (
+            "[abc]",
+            text_alphabet("def"),
+            "regex pattern \"[abc]\" matches no string over the alphabet 'd'..='f'",
+        ),
+        (
+            "[ab]x[de]",
+            text_alphabet("abcdef"),
+            "regex pattern \"[ab]x[de]\" matches no string over the alphabet 'a'..='f'",
+        ),
+        (
+            "[a-z]",
+            text_alphabet("02468"),
+            "regex pattern \"[a-z]\" matches no string over the alphabet '0', '2', '4', '6', and 1 more ranges",
+        ),
+        (
+            r"\d",
+            text_alphabet("abc"),
+            "regex pattern \"\\\\d\" matches no string over the alphabet 'a'..='c'",
+        ),
+        (
+            "[^a]",
+            text_alphabet("a"),
+            "regex pattern \"[^a]\" matches no string over the alphabet 'a'",
+        ),
+        (
+            "[ĀĒ]",
+            codepoint_alphabet(0, 127),
+            "regex pattern \"[ĀĒ]\" matches no string over the alphabet '\\0'..='\\u{7f}'",
+        ),
+        (
+            "abc",
+            codepoint_alphabet(128, 0x10FFFF),
+            "regex pattern \"abc\" matches no string over the alphabet '\\u{80}'..='\\u{d7ff}', '\\u{e000}'..='\\u{10ffff}'",
+        ),
+        (
+            "a",
+            text_alphabet(""),
+            "regex pattern \"a\" matches no string over the alphabet of no characters",
+        ),
+    ] {
+        for fullmatch in [true, false] {
+            let Err(err) = StringSpec::regex(pattern, fullmatch, Some(&alphabet)) else {
+                panic!("{pattern:?} was built");
+            };
+            assert!(
+                matches!(err, EngineError::InvalidArgument(_)),
+                "{pattern:?}"
+            );
+            assert_eq!(err.to_string(), expected, "{pattern:?}");
+        }
+    }
+}
+
+/// A pattern the alphabet can supply some string of builds, however
+/// many of its subpatterns it cannot supply.
+#[test]
+fn a_regex_generator_over_an_alphabet_that_can_match_its_pattern_is_built() {
+    for (pattern, alphabet) in [
+        ("[^a]|a", text_alphabet("a")),
+        ("[^a]*a", text_alphabet("a")),
+        ("(?-i:Ā)*k", codepoint_alphabet(0, 127)),
+        ("(a)?(?(1)(?!)|k)", codepoint_alphabet(0, 127)),
+        ("a?", text_alphabet("bcd")),
+        ("(?i)A", text_alphabet("a")),
+        ("", text_alphabet("a")),
+        ("", text_alphabet("")),
+    ] {
+        for fullmatch in [true, false] {
+            assert!(
+                StringSpec::regex(pattern, fullmatch, Some(&alphabet)).is_ok(),
+                "{pattern:?}"
+            );
+        }
+    }
+}
+
+/// A pattern no string matches at all is rejected over the default
+/// alphabet too, as matching nothing the generator can produce.
+#[test]
+fn a_regex_generator_whose_pattern_matches_nothing_is_rejected() {
+    for pattern in ["(?!)", "a(?!)b", "(?:(?!)|(?!))x", "(?!)+"] {
+        let Err(err) = StringSpec::regex(pattern, true, None) else {
+            panic!("{pattern:?} was built");
+        };
+        assert!(
+            matches!(err, EngineError::InvalidArgument(_)),
+            "{pattern:?}"
+        );
+        assert_eq!(
+            err.to_string(),
+            format!("regex pattern {pattern:?} matches no string the generator can produce")
+        );
+    }
+    for pattern in ["(?!)?", "x(?!(?!))y", "(?!)|a", "(a)?(?(1)(?!)|k)", "(?!)*"] {
+        assert!(
+            StringSpec::regex(pattern, true, None).is_ok(),
+            "{pattern:?}"
+        );
+    }
+}
