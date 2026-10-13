@@ -176,8 +176,8 @@ fn test_nonexistent_antithesis_output_dir_panics() {
 
 /// Filters out every input. Outside Antithesis this trips the
 /// `FilterTooMuch` health check; inside Antithesis the `workload` profile
-/// suppresses every health check, so the run ends quietly with no valid
-/// inputs.
+/// suppresses every health check, so the run spends its invalid budget and
+/// then fails as Unsatisfiable, which is not a health check.
 #[hegel::test]
 #[ignore = "fixture: run via exec::self_test"]
 fn antithesis_filter_everything_fixture(tc: hegel::TestCase) {
@@ -190,6 +190,7 @@ fn test_health_checks_are_disabled_in_antithesis() {
     let output_dir = TempDir::new().unwrap();
     self_test("antithesis_filter_everything_fixture")
         .env("ANTITHESIS_OUTPUT_DIR", output_dir.path().to_str().unwrap())
+        .expect_failure("Unsatisfiable")
         .run();
 }
 

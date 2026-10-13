@@ -553,33 +553,6 @@ fn the_execution_cache_is_flushed_and_serving_stops_at_the_flip() {
     );
 }
 
-/// A generation-window duplicate advances the counter; a novel conclusion
-/// resets it.
-#[test]
-fn duplicate_counter_resets_on_a_novel_case() {
-    with_counting_ctx(
-        |ds| match rbool(ds) {
-            Ok(_) => TestCaseResult::Valid,
-            Err(()) => TestCaseResult::Overrun,
-        },
-        async |ctx, _count| {
-            ctx.collect_statistics = true;
-            let run = |v: bool| NativeTestCase::for_choices(&[ChoiceValue::Boolean(v)], None, None);
-            ctx.test_function(run(true)).await.unwrap();
-            assert_eq!(ctx.consecutive_duplicates, 0);
-            ctx.test_function(run(true)).await.unwrap();
-            assert_eq!(ctx.consecutive_duplicates, 1);
-            ctx.test_function(run(true)).await.unwrap();
-            assert_eq!(ctx.consecutive_duplicates, 2);
-            ctx.test_function(run(false)).await.unwrap();
-            assert_eq!(
-                ctx.consecutive_duplicates, 0,
-                "a novel case resets the streak"
-            );
-        },
-    );
-}
-
 fn tiny_invalid_run(
     settings: Settings,
     body_status: TestCaseResult,
@@ -606,34 +579,28 @@ fn tiny_invalid_run(
     (result, execs.get())
 }
 
-/// A two-value space whose every case is filtered reaches ten consecutive
-/// duplicates long before the 50-invalid threshold, and the exhausted-space
-/// FilterTooMuch variant reports it.
+/// A two-value space whose every case is filtered trips FilterTooMuch at
+/// the 50-invalid threshold.
 #[test]
-fn filter_too_much_fires_via_the_threshold_variant_on_an_exhausted_space() {
+fn filter_too_much_fires_on_an_exhausted_space() {
     let (result, execs) = tiny_invalid_run(
         Settings::new().database(None).test_cases(10_000),
         TestCaseResult::Invalid,
     );
     match result {
         Err(RunError::HealthCheck(msg)) => {
-            assert!(
-                msg.contains("every reachable input was filtered out"),
-                "{msg}"
-            );
+            assert!(msg.contains("FilterTooMuch"), "{msg}");
         }
-        other => panic!("expected the exhausted-space FilterTooMuch, got {other:?}"),
+        other => panic!("expected FilterTooMuch, got {other:?}"),
     }
-    assert!(
-        execs < 50,
-        "the stop fires before the invalid threshold: {execs}"
-    );
+    assert_eq!(execs, FILTER_TOO_MUCH_THRESHOLD);
 }
 
-/// Suppressing FilterTooMuch must not send a tiny filtered space grinding
-/// through the whole invalid budget: the duplicate stop stays active.
+/// With FilterTooMuch suppressed an all-invalid run spends the whole
+/// invalid budget and then fails as Unsatisfiable: no valid input was ever
+/// generated, so passing would be vacuous.
 #[test]
-fn duplicate_stop_stays_active_under_health_check_suppression() {
+fn an_all_invalid_run_under_suppression_is_unsatisfiable() {
     let (result, execs) = tiny_invalid_run(
         Settings::new()
             .database(None)
@@ -641,32 +608,97 @@ fn duplicate_stop_stays_active_under_health_check_suppression() {
             .suppress_health_check([HealthCheck::FilterTooMuch]),
         TestCaseResult::Invalid,
     );
-    assert!(result.unwrap().failures.is_empty());
-    assert!(
-        execs < 50,
-        "stopped by duplicates, not the invalid budget: {execs}"
-    );
+    match result {
+        Err(RunError::Unsatisfiable(msg)) => {
+            assert!(msg.contains("459 inputs were filtered out"), "{msg}");
+        }
+        other => panic!("expected Unsatisfiable, got {other:?}"),
+    }
+    assert_eq!(execs, 459, "the invalid budget bounds the run");
 }
 
-/// Under nondeterministic handling identical values need not repeat
-/// identical outcomes, so the duplicate stop is suspended and the run
-/// grinds to its invalid budget instead.
+/// An all-overrun run with TestCasesTooLarge suppressed is Unsatisfiable
+/// too: an overrun is no more a valid input than a rejection is.
 #[test]
-fn duplicate_stop_is_disabled_under_nd_handling() {
+fn an_all_overrun_run_under_suppression_is_unsatisfiable() {
+    let (result, execs) = tiny_invalid_run(
+        Settings::new()
+            .database(None)
+            .test_cases(10_000)
+            .suppress_health_check([
+                HealthCheck::TestCasesTooLarge,
+                HealthCheck::LargeInitialTestCase,
+            ]),
+        TestCaseResult::Overrun,
+    );
+    match result {
+        Err(RunError::Unsatisfiable(msg)) => {
+            assert!(msg.contains("459 overran the choice limit"), "{msg}");
+        }
+        other => panic!("expected Unsatisfiable, got {other:?}"),
+    }
+    assert_eq!(execs, 459, "the invalid budget bounds the run");
+}
+
+/// Under nondeterministic handling an all-invalid run is Unsatisfiable just
+/// the same.
+#[test]
+fn an_all_invalid_run_is_unsatisfiable_under_nd_handling() {
     let mut settings = Settings::new()
         .database(None)
         .test_cases(10_000)
         .verbosity(Verbosity::Quiet)
         .suppress_health_check([HealthCheck::FilterTooMuch]);
     settings.nd_force = true;
-    let (result, execs) = tiny_invalid_run(settings, TestCaseResult::Invalid);
-    assert!(result.unwrap().failures.is_empty());
-    assert!(execs > 100, "no duplicate stop under nd handling: {execs}");
+    let (result, _) = tiny_invalid_run(settings, TestCaseResult::Invalid);
+    assert!(
+        matches!(result, Err(RunError::Unsatisfiable(_))),
+        "{result:?}"
+    );
 }
 
-/// A tiny space whose cases are valid runs to its test-case budget: the
-/// duplicate stop only guards the all-invalid grind, and stopping a valid
-/// space early would leave `one_of` alternatives unreached.
+/// A test accepting one of seven equally likely values, with FilterTooMuch
+/// suppressed, reaches its test-case budget on every seed: generation keeps
+/// going until the invalid budget runs out, never stopping early on a
+/// streak of already-seen rejections and ending the run as passed.
+#[test]
+fn a_rare_valid_value_is_reached_under_suppression() {
+    for seed in 0..100u64 {
+        let execs = Cell::new(0u64);
+        let valid = Cell::new(0u64);
+        let mut run_case = |ds: Box<dyn DataSource + Send + Sync>| {
+            execs.set(execs.get() + 1);
+            let result = match rint(&*ds, 0, 6) {
+                Ok(6) => {
+                    valid.set(valid.get() + 1);
+                    TestCaseResult::Valid
+                }
+                Ok(_) => TestCaseResult::Invalid,
+                Err(()) => TestCaseResult::Overrun,
+            };
+            ds.mark_complete(&result);
+        };
+        let settings = Settings::new()
+            .database(None)
+            .test_cases(5)
+            .seed(Some(seed))
+            .suppress_health_check([HealthCheck::FilterTooMuch]);
+        let result = run_main_sync(
+            &settings,
+            None,
+            &mut run_case,
+            Duration::from_secs(30),
+            Duration::from_secs(300),
+        );
+        assert!(
+            result.as_ref().is_ok_and(|r| r.failures.is_empty()),
+            "seed {seed}: {result:?}"
+        );
+        assert_eq!(valid.get(), 5, "seed {seed} after {} cases", execs.get());
+    }
+}
+
+/// A tiny space whose cases are valid runs to its test-case budget.
 #[test]
 fn a_tiny_passing_space_generates_to_its_test_case_budget() {
     let (result, execs) = tiny_invalid_run(
@@ -674,10 +706,7 @@ fn a_tiny_passing_space_generates_to_its_test_case_budget() {
         TestCaseResult::Valid,
     );
     assert!(result.unwrap().failures.is_empty());
-    assert!(
-        execs >= 50,
-        "a valid space is budget-bounded, never duplicate-stopped: {execs}"
-    );
+    assert!(execs >= 50, "a valid space is budget-bounded: {execs}");
 }
 
 #[test]
@@ -8060,41 +8089,6 @@ fn derandomize_is_keyed_by_test_identity() {
     let b = draw_with_key(Some("test-b"));
     assert_eq!(a1, a2, "the same key must replay the same draws");
     assert_ne!(a1, b, "different keys must not share a derandomized stream");
-}
-
-/// A run under nondeterministic handling trusts no repeat, so the duplicate
-/// stop is off and an all-invalid two-value space grinds to its invalid
-/// budget instead of stopping after ten duplicates.
-#[test]
-fn duplicate_stop_is_disabled_for_a_nondeterministic_run() {
-    let execs = Cell::new(0u64);
-    let mut run_case = |ds: Box<dyn DataSource + Send + Sync>| {
-        execs.set(execs.get() + 1);
-        let result = match rbool(&*ds) {
-            Ok(_) => TestCaseResult::Invalid,
-            Err(()) => TestCaseResult::Overrun,
-        };
-        ds.mark_complete(&result);
-    };
-    let mut settings = Settings::new()
-        .database(None)
-        .test_cases(10_000)
-        .verbosity(Verbosity::Quiet)
-        .suppress_health_check([HealthCheck::FilterTooMuch]);
-    settings.nd_force = true;
-    let result = run_main_sync(
-        &settings,
-        None,
-        &mut run_case,
-        Duration::from_secs(30),
-        Duration::from_secs(300),
-    );
-    assert!(result.unwrap().failures.is_empty());
-    assert!(
-        execs.get() > 100,
-        "no duplicate stop under nondeterministic handling: {}",
-        execs.get()
-    );
 }
 
 #[test]

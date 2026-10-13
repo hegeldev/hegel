@@ -27,7 +27,6 @@ fn a_recorded_conclusion_is_served_on_exact_repeat() {
         &[],
         true,
     );
-    assert!(!recorded.duplicate);
     assert!(!recorded.verdict_mismatch);
     let hit = cache.serve(&[1, 2, 3]).unwrap();
     assert_eq!(hit.status, Status::Interesting);
@@ -37,13 +36,12 @@ fn a_recorded_conclusion_is_served_on_exact_repeat() {
 }
 
 #[test]
-fn the_generation_tier_detects_duplicates_without_keeping_serving_entries() {
+fn the_generation_tier_checks_verdicts_without_keeping_serving_entries() {
     let mut cache = ExecCache::default();
     let first = cache.record(alloc::vec![7], Status::Valid, None, &[], &[], false);
-    assert!(!first.duplicate);
+    assert!(!first.verdict_mismatch);
     assert!(cache.serve(&[7]).is_none());
     let repeat = cache.record(alloc::vec![7], Status::Valid, None, &[], &[], false);
-    assert!(repeat.duplicate);
     assert!(!repeat.verdict_mismatch);
 }
 
@@ -59,7 +57,6 @@ fn a_verdict_change_on_a_repeat_is_a_mismatch() {
         &[],
         true,
     );
-    assert!(flipped.duplicate);
     assert!(flipped.verdict_mismatch);
     assert!(
         cache.serve(&[7]).is_none(),
@@ -128,7 +125,6 @@ fn clear_drops_both_tiers() {
         &[],
         true,
     );
-    assert!(!again.duplicate);
     assert!(!again.verdict_mismatch);
 }
 

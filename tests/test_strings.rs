@@ -1283,6 +1283,7 @@ mod regex_tests {
 
     #[test]
     fn lookahead_with_set_ranges_and_ignorecase() {
+        check_can_generate_examples(gs::from_regex(r"(?i)x(?![a-c])Y"));
         assert_no_examples(gs::from_regex(r"(?i)x(?![a-z])Y"), |_: &String| true);
     }
 

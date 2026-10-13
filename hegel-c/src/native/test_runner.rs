@@ -92,18 +92,6 @@ pub struct RunResult {
 
 const RANDOM_GENERATION_BATCH: u64 = 10;
 
-/// Stop generating after this many consecutive generation-phase cases whose
-/// realized values had been executed before — the flat-cache replacement for
-/// the tree's exhaustion stop, applied only while no valid case has
-/// been generated. The stop exists so a tiny fully-filtered space reaches
-/// the exhausted-space FilterTooMuch instead of grinding out the whole
-/// invalid budget; once anything is valid the test-case budget bounds the
-/// run, and a duplicate streak is routine mid-size-space behavior (at k of
-/// S values seen, a streak of N duplicates has probability (k/S)^N, near 1
-/// late in coupon collection — an unconditional stop would end a 32-way
-/// `one_of` before reaching every alternative).
-const DUPLICATE_STOP: u64 = RANDOM_GENERATION_BATCH;
-
 /// Replays in the first-interesting determinism check, stop on first miss:
 /// the discovering case is selection, not evidence, so all four replays
 /// are fresh observations. Detection is
@@ -538,7 +526,6 @@ impl<'a> Engine<'a> {
             && !self.test_is_trivial
             && self.valid_test_cases < max_test_cases
             && self.within_invalid_budget(invalid_budget)
-            && !(self.valid_test_cases == 0 && self.consecutive_duplicates >= DUPLICATE_STOP)
             && should_generate_more(
                 !self.origins.any_live(),
                 self.calls,
@@ -553,7 +540,6 @@ impl<'a> Engine<'a> {
                 if self.test_is_trivial
                     || self.valid_test_cases >= max_test_cases
                     || !self.within_invalid_budget(invalid_budget)
-                    || (self.valid_test_cases == 0 && self.consecutive_duplicates >= DUPLICATE_STOP)
                     || !should_generate_more(
                         !self.origins.any_live(),
                         self.calls,
@@ -656,32 +642,22 @@ impl<'a> Engine<'a> {
         self.nd_discovery_sweep(verbosity, &output).await?;
         self.capture_discoveries = false;
 
-        if self.test_is_trivial
-            && self.valid_test_cases == 0
+        if self.valid_test_cases == 0
             && !self.origins.any_live()
-            && self.invalid_test_cases > 0
+            && self.invalid_test_cases + self.overrun_test_cases > 0
         {
-            return Err(RunError::Unsatisfiable(
-                "Unsatisfiable: unable to satisfy the test's assumptions. The \
-             test draws no data, and assume() rejected its only possible input."
-                    .to_string(),
-            ));
-        }
-
-        if self.consecutive_duplicates >= DUPLICATE_STOP
-            && self.valid_test_cases == 0
-            && !self.origins.any_live()
-            && !self.test_is_trivial
-            && !settings.health_check_suppressed(HealthCheck::FilterTooMuch)
-            && self.invalid_test_cases > 0
-        {
-            return Err(RunError::HealthCheck(format!(
-                "FailedHealthCheck: FilterTooMuch — every reachable input was \
-             filtered out by assume() before any valid input was generated. \
-             {} inputs were filtered out across the full search \
-             space. If this is expected, suppress the check with \
-             suppress_health_check = [HealthCheck::FilterTooMuch].",
-                self.invalid_test_cases
+            if self.test_is_trivial {
+                return Err(RunError::Unsatisfiable(
+                    "Unsatisfiable: unable to satisfy the test's assumptions. The \
+                 test draws no data, and assume() rejected its only possible input."
+                        .to_string(),
+                ));
+            }
+            return Err(RunError::Unsatisfiable(format!(
+                "Unsatisfiable: unable to satisfy the test's assumptions. No valid \
+             input was generated: {} inputs were filtered out by assume() and {} \
+             overran the choice limit.",
+                self.invalid_test_cases, self.overrun_test_cases
             )));
         }
 
@@ -1382,15 +1358,14 @@ impl<'a> Persister<'a> {
 /// the execution cache, the per-origin interesting map, targeting
 /// observations, and all run-level counters. The [`ExecCache`] keys every
 /// executed conclusion on its realized choice values: exact repeats are
-/// served without re-running the body, a repeat concluding differently is
-/// nondeterminism evidence, and the consecutive-duplicate counter it feeds
-/// is what stops generation on an exhausted space.
+/// served without re-running the body, and a repeat concluding differently is
+/// nondeterminism evidence.
 ///
 /// Every execution records into the cache via [`Self::record_run`].
 /// [`Self::test_function`] is the raw executor+recorder (generation goes
-/// straight through it — its duplicates must execute, they are the stop
-/// signal); [`Self::cached_test_function`] is the single replay chokepoint
-/// shared by generation-phase span mutation and shrinking — it serves an
+/// straight through it); [`Self::cached_test_function`] is the single
+/// replay chokepoint shared by generation-phase span mutation and
+/// shrinking — it serves an
 /// exact repeat from the cache and otherwise falls through to
 /// `test_function`. `cached_test_function` returns the realised result; the
 /// interesting-origin filter is applied by its caller, and bugs with new
@@ -1411,11 +1386,6 @@ pub(crate) struct Engine<'a> {
     /// never fed between runs: a stored entry that stops reproducing is
     /// staleness, not nondeterminism.
     kind_ledger: KindLedger,
-    /// Consecutive generation-phase conclusions whose realized values had
-    /// been executed before. [`DUPLICATE_STOP`] of these ends generation
-    /// while no valid case exists; a novel conclusion resets it. Frozen
-    /// (at zero) under `nd_active`.
-    pub(crate) consecutive_duplicates: u64,
     /// Per-origin tracking: each distinct panic site (file:line:col captured
     /// by [`crate::run_lifecycle::run_test_case`]) gets its own
     /// [`Counterexample`](crate::native::counterexample::Counterexample) —
@@ -1444,7 +1414,7 @@ pub(crate) struct Engine<'a> {
     /// behavior — a cache verdict mismatch or a verify status/origin
     /// flake — or `Settings::nd_force` started it flipped. While set, the
     /// run trusts no cached prediction: execution-cache recording and
-    /// serving and the duplicate stop are off, and targeting switches from
+    /// serving are off, and targeting switches from
     /// single-run hill climbing to the measured race
     /// ([`Self::optimise_targets_nd`]). Never cleared within a run.
     pub(crate) nd_active: bool,
@@ -1499,7 +1469,6 @@ impl<'a> Engine<'a> {
             persister: Persister::new(db, database_key),
             exec_cache: ExecCache::default(),
             kind_ledger: KindLedger::default(),
-            consecutive_duplicates: 0,
             origins: Counterexamples::default(),
             targeting: crate::native::targeting::TargetingState::new(),
             statistics: crate::native::events::RunStatistics::default(),
@@ -1539,7 +1508,6 @@ impl<'a> Engine<'a> {
         self.nd_active = true;
         self.exec_cache.clear();
         self.kind_ledger.clear();
-        self.consecutive_duplicates = 0;
         if self.settings.nondeterminism_strictness == NondeterminismStrictness::Warn
             && self.settings.verbosity != Verbosity::Quiet
             && !self.settings.in_antithesis
@@ -2956,7 +2924,7 @@ impl<'a> Engine<'a> {
         let mismatch = if self.nd_active {
             None
         } else {
-            self.record_execution(run, measurement)?
+            self.record_execution(run)?
         };
         if measurement {
             if self.nd_active || self.check_window {
@@ -3010,17 +2978,12 @@ impl<'a> Engine<'a> {
 
     /// Feed one executed run to the detectors the tree used to be: the kind
     /// ledger (`error` strictness only), then — for conclusions; an overrun
-    /// concluded nothing — the execution cache, whose digest hit both drives
-    /// the duplicate-stop counter (generation-window, non-measurement cases
-    /// only) and, on a verdict change, reports the flake the tree could
-    /// never see. The returned error is `NonDeterministic` for kind drift
-    /// and `Flaky` for a verdict change; the caller
-    /// keeps it under `error` strictness and flips otherwise.
-    fn record_execution(
-        &mut self,
-        run: &RunResult,
-        measurement: bool,
-    ) -> Result<Option<RunError>, InternalError> {
+    /// concluded nothing — the execution cache, whose digest hit reports, on
+    /// a verdict change, the flake the tree could never see. The returned
+    /// error is `NonDeterministic` for kind drift and `Flaky` for a verdict
+    /// change; the caller keeps it under `error` strictness and flips
+    /// otherwise.
+    fn record_execution(&mut self, run: &RunResult) -> Result<Option<RunError>, InternalError> {
         if self.settings.nondeterminism_strictness == NondeterminismStrictness::Error {
             if let Some(msg) = self.kind_ledger.observe(&run.nodes)? {
                 return Ok(Some(RunError::NonDeterministic(msg)));
@@ -3037,13 +3000,6 @@ impl<'a> Engine<'a> {
             &run.spans,
             !self.collect_statistics,
         );
-        if self.collect_statistics && !measurement {
-            if recorded.duplicate {
-                self.consecutive_duplicates += 1;
-            } else {
-                self.consecutive_duplicates = 0;
-            }
-        }
         Ok(recorded.verdict_mismatch.then(|| {
             RunError::Flaky(match &recorded.mismatched_origin {
                 Some(origin) => flaky_diagnostic_for(origin),
