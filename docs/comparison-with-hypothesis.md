@@ -85,6 +85,10 @@ differently marked `xfail` and a note per file of what was dropped.
   function's `__name__`, so `<lambda>` rather than the lambda's text.
 - Strategy objects cached by argument: two calls of `gs.integers()` are two
   objects.
+- Empty-strategy detection (`is_empty`): `nothing()` only rejects when it is
+  drawn, so `lists(nothing())` can reject test cases rather than always
+  giving `[]`, `lists(nothing(), min_size=1)` is not an error when built,
+  and an empty registration for `from_type` is not detected.
 - The pytest plugin's `--hypothesis-*` options and statistics in the terminal
   summary; Hegel's plugin has `--hegel-profile`, `--hegel-seed`,
   `--hegel-verbosity`, `--hegel-derandomize` and `--hegel-database`.

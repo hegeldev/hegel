@@ -112,10 +112,6 @@ class Recursive(Generator[T]):
     def __repr__(self) -> str:
         return f"recursive({self.leaf!r}, {getattr(self.branch, '__name__', self.branch)!r})"
 
-    @property
-    def is_empty(self) -> bool:
-        return self.leaf.is_empty
-
 
 def recursive(
     leaf: Generator[T],
@@ -150,17 +146,11 @@ class Deferred(Generator[T]):
         self._generator: Generator[T] | None = None
         self._label: int | None = None
         self._lock = threading.RLock()
-        self._defining = 0
 
     def _get(self) -> Generator[T]:
         with self._lock:
             if self._generator is None:
-                # A count, since a definition referring to itself re-enters.
-                self._defining += 1
-                try:
-                    generator = as_generator(self.definition())
-                finally:
-                    self._defining -= 1
+                generator = as_generator(self.definition())
                 # Follow a definition that is itself deferred to the generator
                 # it stands for, so a definition that only leads back to this
                 # one is an error rather than an endless draw.
@@ -201,27 +191,6 @@ class Deferred(Generator[T]):
     @label.setter
     def label(self, value: int) -> None:  # nocov
         self._label = value
-
-    @property
-    def is_empty(self) -> bool:
-        """Whether the definition can never produce a value. A definition
-        that reaches itself while this is computed is taken to be empty on
-        that path, so only self-references with another way out count."""
-        with self._lock:
-            if self._defining:
-                # Asked from inside the definition itself (by a collection
-                # built there checking its elements): not known yet, and
-                # checked again when the definition is drawn from.
-                return False
-        in_progress: set[int] = getattr(_calculating, "empty", None) or set()
-        _calculating.empty = in_progress
-        if id(self) in in_progress:
-            return True
-        in_progress.add(id(self))
-        try:
-            return self._get().is_empty
-        finally:
-            in_progress.discard(id(self))
 
     def _check_depth(self, tc: TestCase) -> None:
         if tc._open_span_depth > MAX_DEFERRED_DEPTH:

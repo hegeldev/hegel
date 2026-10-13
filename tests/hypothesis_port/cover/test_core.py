@@ -10,6 +10,8 @@
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
+# test_validates_strategies_for_test_method (lists(nothing(), min_size=1) is
+# not an error in Hegel: nothing() only rejects when drawn).
 
 import pytest
 from _pytest.outcomes import Failed, Skipped
@@ -94,21 +96,6 @@ def test_can_find_with_db_eq_none():
 def test_no_such_example():
     with pytest.raises(hegel.Unsatisfiable):
         minimal(gs.none(), bool)
-
-
-def test_validates_strategies_for_test_method():
-    # Hegel rejects lists(nothing(), min_size=1) when it is built, so the
-    # invalid generator is built inside a draw instead.
-    invalid_generator = gs.integers().flat_map(lambda _: gs.lists(gs.nothing(), min_size=1))
-
-    class TestStrategyValidation:
-        @hegel.test
-        def test_method_with_bad_strategy(self, tc):
-            tc.draw(invalid_generator)
-
-    instance = TestStrategyValidation()
-    with pytest.raises(hegel.InvalidArgument):
-        instance.test_method_with_bad_strategy()
 
 
 @pytest.mark.parametrize(

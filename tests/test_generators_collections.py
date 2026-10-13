@@ -107,59 +107,6 @@ def test_iterables_are_one_shot_iterators():
     run_test(body, test_cases=10)
 
 
-def test_collections_of_an_empty_generator_are_empty():
-    check_all(gs.lists(gs.nothing()), lambda xs: xs == [])
-    check_all(gs.lists(gs.nothing(), unique=True), lambda xs: xs == [])
-    check_all(gs.sets(gs.nothing()), lambda s: s == set())
-    check_all(gs.frozensets(gs.nothing()), lambda s: s == frozenset())
-    check_all(gs.dicts(gs.nothing(), gs.none()), lambda d: d == {})
-    check_all(gs.dicts(gs.none(), gs.nothing()), lambda d: d == {})
-
-    def body(tc):
-        xs = tc.draw(gs.lists(gs.nothing()))
-        s = tc.draw(gs.sets(gs.nothing()))
-        f = tc.draw(gs.frozensets(gs.nothing()))
-        d = tc.draw(gs.dicts(gs.nothing(), gs.none()))
-        raise ValueError((xs, s, f, d))
-
-    text = notes(failing(body, ValueError))[0]
-    assert "xs = []" in text
-    assert "s = {}" in text or "s = set()" in text
-    assert "f = frozenset({})" in text or "f = frozenset()" in text
-    assert "d = {}" in text
-
-
-@pytest.mark.parametrize(
-    "build",
-    [
-        lambda: gs.lists(gs.nothing(), min_size=1),
-        lambda: gs.lists(gs.nothing(), min_size=1, unique=True),
-        lambda: gs.sets(gs.nothing(), min_size=1),
-        lambda: gs.frozensets(gs.nothing(), min_size=1),
-        lambda: gs.dicts(gs.nothing(), gs.none(), min_size=1),
-        lambda: gs.dicts(gs.none(), gs.nothing(), min_size=1),
-    ],
-)
-def test_non_empty_collections_of_an_empty_generator_are_rejected(build):
-    with pytest.raises(hegel.InvalidArgument, match="it has no values"):
-        build()
-
-    def body(tc):
-        tc.draw(gs.integers().flat_map(lambda _: build()))
-
-    failing(body, hegel.InvalidArgument)
-
-
-def test_a_definition_whose_elements_turn_out_empty_is_rejected_when_drawn():
-    only_itself = gs.deferred(lambda: gs.lists(only_itself, min_size=1))
-    assert only_itself.is_empty
-
-    def body(tc):
-        tc.draw(only_itself)
-
-    assert "it has no values" in str(failing(body, hegel.InvalidArgument))
-
-
 @pytest.mark.parametrize(
     ("build", "count"),
     [

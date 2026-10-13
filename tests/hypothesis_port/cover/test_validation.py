@@ -22,12 +22,13 @@
 # test_check_type_with_tuple_of_length_two, test_check_type_suggests_check_strategy,
 # test_check_strategy_might_suggest_sampled_from (check_type/check_strategy
 # internals); test_warn_on_strings_matching_common_codecs (HypothesisWarning).
+# test_validation_happens_on_draw (lists(nothing(), min_size=1) is not an
+# error in Hegel).
 
 import functools
 
 import pytest
 
-import hegel
 from hegel import generators as gs
 from hegel.errors import InvalidArgument
 from hegel.generators import (
@@ -37,7 +38,6 @@ from hegel.generators import (
     frozensets,
     integers,
     lists,
-    nothing,
     recursive,
     sets,
     text,
@@ -117,15 +117,6 @@ def test_valid_sizes(generator, min_size, max_size):
     # Hegel validates sizes when the generator is built, not when it is drawn.
     with pytest.raises(InvalidArgument):
         generator(min_size=min_size, max_size=max_size)
-
-
-def test_validation_happens_on_draw():
-    @hegel.test
-    def test(tc):
-        tc.draw(integers().flat_map(lambda _: lists(nothing(), min_size=1)))
-
-    with pytest.raises(InvalidArgument):
-        test()
 
 
 def test_text_alphabet_must_be_collection_or_generator():

@@ -16,6 +16,8 @@
 # them); test_generic_origin_empty (from_type builds an unregistered generic's origin rather
 # than failing); test_generic_origin_with_type_args (register_type_generator does not reject
 # parametrised generics as keys).
+# test_errors_if_generic_resolves_empty, test_cannot_register_empty (Hegel
+# generators have no is_empty, so an empty registration is not detected).
 
 import abc
 import enum
@@ -185,26 +187,6 @@ def test_conditional_type_resolution_with_function(strategy_returned):
         else:
             with pytest.raises(ResolutionFailed):
                 check_can_generate_examples(gs.from_type(UnknownType))
-
-
-def test_errors_if_generic_resolves_empty():
-    with temp_registered(UnknownType, lambda _: gs.nothing()):
-        with pytest.raises(ResolutionFailed):
-            check_can_generate_examples(gs.from_type(UnknownType))
-        with pytest.raises(ResolutionFailed):
-            check_can_generate_examples(gs.from_type(ParentUnknownType))
-
-
-def test_cannot_register_empty():
-    # Cannot register and did not register
-    try:
-        with pytest.raises(InvalidArgument):
-            gs.register_type_generator(UnknownType, gs.nothing())
-        with pytest.raises(ResolutionFailed):
-            check_can_generate_examples(gs.from_type(UnknownType))
-        assert UnknownType not in types._global_type_lookup
-    finally:
-        _registry.pop(UnknownType, None)
 
 
 def test_pulic_interface_works():

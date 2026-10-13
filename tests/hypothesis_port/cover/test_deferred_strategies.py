@@ -10,6 +10,9 @@
 
 # Dropped from the Hypothesis original: test_branches_pass_through_deferred
 # (SearchStrategy.branches internals).
+# test_self_reference_through_one_of_can_detect_emptiness,
+# test_impossible_self_recursion, test_very_deep_deferral, test_recursion_in_middle
+# (Hegel generators have no is_empty).
 
 import pytest
 
@@ -71,11 +74,6 @@ def test_self_recursive_flatmap():
     assert_no_examples(bad)
 
 
-def test_self_reference_through_one_of_can_detect_emptiness():
-    bad = gs.deferred(lambda: gs.one_of(bad, bad))
-    assert bad.is_empty
-
-
 def test_self_tuple_draws_nothing():
     x = gs.deferred(lambda: gs.tuples(x))
     assert_no_examples(x)
@@ -99,38 +97,3 @@ def test_literals_strategy_is_valid():
         tc.draw(literals)
 
     test()
-
-
-def test_impossible_self_recursion():
-    x = gs.deferred(lambda: gs.tuples(gs.none(), x))
-    assert x.is_empty
-
-
-def test_very_deep_deferral():
-    # This test is designed so that the recursive properties take a very long
-    # time to converge: Although we can rapidly determine them for the original
-    # value, each round in the fixed point calculation only manages to update
-    # a single value in the related strategies, so it takes 100 rounds to
-    # update everything. Most importantly this triggers our infinite loop
-    # detection heuristic and we start tracking duplicates, but we shouldn't
-    # see any because this loop isn't infinite, just long.
-    def strat(i):
-        if i == 0:
-            return gs.deferred(lambda: gs.one_of([*strategies, gs.none()]))
-        else:
-            return gs.deferred(lambda: gs.tuples(strategies[(i + 1) % len(strategies)]))
-
-    strategies = list(map(strat, range(100)))
-
-    assert not strategies[0].is_empty
-
-
-def test_recursion_in_middle():
-    # This test is significant because the integers().map(abs) is not checked
-    # in the initial pass - when we recurse into x initially we decide that
-    # x is empty, so the tuple is empty, and don't need to check the third
-    # argument. Then when we do the more refined test we've discovered that x
-    # is non-empty, so we need to check the non-emptiness of the last component
-    # to determine the non-emptiness of the tuples.
-    x = gs.deferred(lambda: gs.tuples(gs.none(), x, gs.integers().map(abs)) | gs.none())
-    assert not x.is_empty

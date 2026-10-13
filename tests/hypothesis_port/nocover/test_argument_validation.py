@@ -7,15 +7,17 @@
 # This Source Code Form is subject to the terms of the Mozilla Public License,
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
+#
+# Dropped from the Hypothesis original:
+# test_raise_invalid_argument_for_nonempty_list_of_nothing (lists(nothing(),
+# min_size=1) is not an error in Hegel).
 
 import inspect
 from inspect import Parameter
 
 import pytest
 
-import hegel
 from hegel import generators as gs
-from hegel.errors import InvalidArgument
 from tests.hypothesis_port.common.arguments import argument_validation_test, e
 
 BAD_ARGS = []
@@ -43,12 +45,6 @@ for ex in [
 
 
 test_raise_invalid_argument = argument_validation_test(BAD_ARGS)
-
-
-def test_raise_invalid_argument_for_nonempty_list_of_nothing():
-    with pytest.raises(InvalidArgument):
-        generator = gs.lists(gs.nothing(), unique=True, min_size=1)
-        hegel.run(lambda tc: tc.draw(generator), report_multiple_failures=False)
 
 
 ALL_GENERATORS_COPY = {

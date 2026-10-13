@@ -354,14 +354,6 @@ def test_registered_generators_are_checked():
             gs.from_type(Shape)
     finally:
         del gs.from_type.__globals__["_registry"][Shape]
-    gs.register_type_generator(Shape, lambda t: gs.nothing())
-    try:
-        with pytest.raises(hegel.errors.ResolutionFailed, match="is empty"):
-            gs.from_type(Shape)
-    finally:
-        del gs.from_type.__globals__["_registry"][Shape]
-    with pytest.raises(hegel.InvalidArgument, match="empty generator"):
-        gs.register_type_generator(Shape, gs.nothing())
     with pytest.raises(hegel.InvalidArgument, match="not the string 'Shape'"):
         gs.register_type_generator("Shape", gs.just(Square(4)))
     assert Shape not in gs.from_type.__globals__["_registry"]

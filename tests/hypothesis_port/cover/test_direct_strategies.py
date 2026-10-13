@@ -450,7 +450,6 @@ def test_no_nan_for_min_max_values(value, parameter_name):
 class Sneaky:
     """It's like a generator, but it's not a generator."""
 
-    is_empty = False
     depth = 0
     label = 0
 

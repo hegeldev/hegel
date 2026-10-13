@@ -144,10 +144,7 @@ def test_deferred_label_of_direct_cycle_and_errors():
 
 
 def test_deferred_definition_can_build_non_empty_collections_of_itself():
-    # lists(x, min_size=1) checks x.is_empty when built, which happens while
-    # x's definition runs: that is not yet known, and must not count as empty.
     x = gs.deferred(lambda: gs.none() | gs.lists(x, min_size=1))
-    assert not x.is_empty
     check_all(x, lambda v: v is None or isinstance(v, list), test_cases=50)
     assert find_example(x, lambda v: v is not None) == [None]
 
@@ -172,18 +169,6 @@ def test_recursive_branches_can_draw_subtrees_silently():
     check_all(wrapped, lambda v: isinstance(v, (int, list)), test_cases=100)
 
 
-def test_emptiness_of_recursive_and_deferred_definitions():
-    assert gs.recursive(gs.nothing(), gs.lists).is_empty
-    assert not gs.recursive(gs.integers(), gs.lists).is_empty
-    bad = Deferred(lambda: gs.one_of(bad, bad))
-    assert bad.is_empty
-    good = Deferred(lambda: gs.one_of(gs.integers(), good))
-    assert not good.is_empty
-    assert not gs.one_of(gs.integers(), gs.nothing()).is_empty
-    assert gs.one_of(gs.nothing(), gs.nothing()).is_empty
-    assert gs.sampled_from([1]).is_empty is False
-
-
 def test_deferred_self_reference_without_a_way_out_is_rejected():
     hidden = Deferred(lambda: gs.none().flat_map(lambda _: hidden))
 
@@ -200,8 +185,6 @@ def test_deferred_defined_as_itself_is_an_error():
     second = gs.deferred(lambda: first)
     for cyclic in (direct, first):
         assert cyclic.label == DEFERRED_LABEL
-        with pytest.raises(hegel.InvalidArgument, match="Cannot define a deferred generator"):
-            cyclic.is_empty  # noqa: B018
         with pytest.raises(hegel.InvalidArgument, match="Cannot define a deferred generator"):
             find_example(cyclic)
     assert repr(direct) == "deferred('<lambda>')"

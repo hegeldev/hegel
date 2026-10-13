@@ -17,6 +17,7 @@
 # (to_jsonable, observability); test_use_of_global_random_is_deprecated_in_given,
 # test_use_of_global_random_is_deprecated_in_interactive_draws (deprecation
 # warnings).
+# test_one_of_is_not_empty_when_an_operand_has_values (no is_empty).
 
 import functools
 
@@ -77,13 +78,6 @@ def test_can_flat_map_nameless():
 def test_flat_map_with_invalid_expand():
     with pytest.raises(InvalidArgument):
         check_can_generate_examples(gs.just(100).flat_map(lambda n: "a"))
-
-
-def test_one_of_is_not_empty_when_an_operand_has_values():
-    assert not (gs.nothing() | gs.integers()).is_empty
-    assert (gs.nothing() | gs.nothing()).is_empty
-    assert gs.nothing().is_empty
-    assert not gs.integers().is_empty
 
 
 @hegel.test

@@ -56,8 +56,6 @@ def register_type_generator(
         raise InvalidArgument(
             "register_type_generator takes a generator or a callable returning one"
         )
-    if isinstance(generator, Generator) and generator.is_empty:
-        raise InvalidArgument(f"Cannot register an empty generator for {type_!r}")
     _registry[type_] = generator
 
 
@@ -364,8 +362,6 @@ def _registered(key: Any, type_: Any) -> Generator[Any]:
         raise ResolutionFailed(
             f"The generator registered for {key!r} returned {result!r}, not a generator"
         )
-    if result.is_empty:
-        raise ResolutionFailed(f"The generator registered for {key!r} is empty")
     return result
 
 

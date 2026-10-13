@@ -91,11 +91,6 @@ class Generator(Generic[T]):
 
         return one_of(self, other)
 
-    @property
-    def is_empty(self) -> bool:
-        """Whether this generator can never produce a value."""
-        return False
-
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"
 
@@ -105,10 +100,6 @@ class Mapped(Generator[U]):
         self.source = source
         self.f = f
         self.label = combine_labels([MAP_LABEL, source.label])
-
-    @property
-    def is_empty(self) -> bool:
-        return self.source.is_empty
 
     def do_draw(self, tc: TestCase) -> U:
         return self.f(tc.draw_silent(self.source))
@@ -131,10 +122,6 @@ class PrintedAsCall(Generator[U]):
         self.open = function + "("
         self.label = label
 
-    @property
-    def is_empty(self) -> bool:
-        return self.source.is_empty
-
     def _draw(self, tc: TestCase, printer: PrettyPrinter) -> U:
         printer.begin_group(len(self.open), self.open)
         value = tc.draw_and_print(self.source, printer)
@@ -154,10 +141,6 @@ class PrintedWith(Generator[T]):
         self.print = print
         self.label = source.label
 
-    @property
-    def is_empty(self) -> bool:
-        return self.source.is_empty
-
     def do_draw(self, tc: TestCase) -> T:
         return self.source.do_draw(tc)
 
@@ -173,10 +156,6 @@ class FlatMapped(Generator[U]):
         self.source = source
         self.f = f
         self.label = combine_labels([FLAT_MAP_LABEL, source.label])
-
-    @property
-    def is_empty(self) -> bool:
-        return self.source.is_empty
 
     def _next(self, tc: TestCase) -> Generator[U]:
         intermediate = tc.draw_silent(self.source)
@@ -215,10 +194,6 @@ class Filtered(Generator[T]):
             return bool(first(value)) and bool(predicate(value))
 
         return Filtered(self.source, both, (*self.names, _name(predicate)))
-
-    @property
-    def is_empty(self) -> bool:
-        return self.source.is_empty
 
     def _draw(self, tc: TestCase, printer: PrettyPrinter, silent: bool) -> T:
         for _ in range(3):

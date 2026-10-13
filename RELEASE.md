@@ -8,15 +8,16 @@ marker. Write tests against the `hegel` API instead; `docs/comparison-with-hypot
 maps Hypothesis's API onto it. Hypothesis's own test suite now runs against the
 `hegel` API directly.
 
+`Generator.is_empty`, Hypothesis's empty-strategy detection, is removed along
+with the checks built on it: `nothing()` only rejects when drawn, and whether a
+collection of it is non-empty is not checked when the generator is built.
+
 It also fixes the bugs that porting that suite turned up:
 
-- `lists`, `sets`, `frozensets` and `dicts` of a generator with no values
-  (`nothing()`) always generate the empty collection instead of rejecting
-  test cases; with `min_size > 0` they raise `InvalidArgument` when built, or
-  when drawn if the element generator is only known to be empty then. Unique
-  collections whose `just`, `booleans`, `sampled_from` or bounded `integers`
-  elements have fewer distinct values than `min_size` are rejected when
-  built. `iterables()` hands the test a one-shot iterator.
+- Unique `lists`, `sets`, `frozensets` and `dicts` whose `just`, `booleans`,
+  `sampled_from` or bounded `integers` elements have fewer distinct values
+  than `min_size` are rejected when built. `iterables()` hands the test a
+  one-shot iterator.
 - `sampled_from` of a `Flag` class samples every named member (the zero
   member and aliases included) and the empty flag as well as combinations; a
   memberless `Enum` or `Flag` raises `InvalidArgument`. `sampled_from` of an
@@ -54,7 +55,7 @@ It also fixes the bugs that porting that suite turned up:
   `allow_nil=True` together with a version; non-bool `allow_imaginary` and
   `no_cache`; `one_of` of a non-generator; `lists` with a non-callable
   `unique_by`; `fixed_dicts` with a non-dict mapping or `optional`;
-  `register_type_generator` with a string key or an empty generator; a
+  `register_type_generator` with a string key; a
   `deferred` generator defined as itself; `Settings` with a non-`Settings`
   parent, a non-string profile name or `test_cases >= 2**64`;
   `hegel.run`/`@hegel.test` with a non-`Settings` `settings`; `tc.target`

@@ -76,10 +76,6 @@ class Nothing(Generator[Any]):
         tc.reject()
         raise AssertionError("unreachable")  # nocov
 
-    @property
-    def is_empty(self) -> bool:
-        return True
-
     def __repr__(self) -> str:
         return "nothing()"
 
@@ -104,10 +100,6 @@ class SampledFrom(Generator[T]):
         draws, so even a predicate that accepts one element in thousands
         finds it."""
         return FilteredSample(self, [predicate])
-
-    @property
-    def is_empty(self) -> bool:
-        return not self.elements
 
     def __repr__(self) -> str:
         if self._repr is not None:
@@ -233,10 +225,6 @@ class OneOf(Generator[Any]):
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> Any:
         return self._draw(tc, printer)
-
-    @property
-    def is_empty(self) -> bool:
-        return all(g.is_empty for g in self.generators)
 
     def __repr__(self) -> str:
         return "one_of(" + ", ".join(repr(g) for g in self.generators) + ")"

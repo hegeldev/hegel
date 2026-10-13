@@ -298,27 +298,3 @@ def test_filtered_samples_narrow_the_elements():
     empty = gs.sampled_from([1, 2]).filter(lambda x: x > 5)
     with pytest.raises(hegel.InvalidArgument, match="Could not find"):
         find_example(empty)
-
-
-def test_emptiness_propagates_through_wrappers_and_collections():
-    empty = gs.nothing()
-    assert empty.map(str).is_empty
-    assert empty.map(str).print_as_call("f").is_empty
-    assert empty.print_with(lambda value, printer: printer.text("x")).is_empty
-    assert empty.flat_map(lambda v: gs.just(v)).is_empty
-    assert empty.filter(bool).is_empty
-    assert not gs.integers().filter(bool).is_empty
-    assert not gs.lists(empty).is_empty
-    assert not gs.sets(empty).is_empty
-    assert not gs.sets(gs.integers(), min_size=1).is_empty
-    assert not gs.dicts(gs.integers(), empty).is_empty
-    with pytest.raises(hegel.InvalidArgument):
-        gs.lists(empty, min_size=1)
-    with pytest.raises(hegel.InvalidArgument):
-        gs.sets(empty, min_size=1)
-    with pytest.raises(hegel.InvalidArgument):
-        gs.dicts(empty, gs.integers(), min_size=1)
-    assert gs.fixed_dicts({"a": empty}).is_empty
-    assert not gs.fixed_dicts({"a": gs.integers()}).is_empty
-    assert gs.tuples(gs.integers(), empty).is_empty
-    assert not gs.tuples().is_empty
