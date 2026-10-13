@@ -4,6 +4,8 @@
 
 use super::*;
 use crate::native::re::parser::parse_pattern;
+use alloc::format;
+use alloc::string::String;
 
 fn width(pattern: &str) -> (u64, Option<u64>) {
     get_width(&parse_pattern(pattern, 0).unwrap().pattern)
@@ -63,6 +65,16 @@ fn groups_and_atomic_groups_pass_through() {
 fn backreferences_use_the_group_width() {
     assert_eq!(width(r"(ab)\1"), (4, Some(4)));
     assert_eq!(width(r"(a+)\1"), (2, None));
+}
+
+#[test]
+fn shared_group_widths_do_not_expand_the_reference_tree() {
+    let mut pattern = String::from("(a)");
+    for group in 1..40 {
+        pattern.push_str(&format!("(\\{group}\\{group})"));
+    }
+    pattern.push_str("(?<=\\40)");
+    assert_eq!(lookbehind_width(&pattern), (1 << 39, Some(1 << 39)));
 }
 
 #[test]

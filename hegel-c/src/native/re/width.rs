@@ -28,7 +28,11 @@ impl GroupWidths<'_> {
             return width;
         }
         match self.pattern.and_then(|pattern| find_group(pattern, group)) {
-            Some(p) => width_of(p, self),
+            Some(p) => {
+                let width = width_of(p, self);
+                self.record(group, width);
+                width
+            }
             None => (0, None),
         }
     }
