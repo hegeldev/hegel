@@ -33,6 +33,32 @@ fn cps(s: &str) -> Vec<u32> {
 const AB: &str = "start: \"a\" \"b\"*\n";
 
 #[test]
+fn size_limits_exclude_both_needed_and_ignored_placeholders() {
+    let plain = constraint(AB, "start", 2, "a");
+    assert!(plain.accepts(&cps("ab")));
+    assert!(!plain.accepts(&cps("abb")));
+    for text in [
+        "start: X /a+/\n%declare X\n",
+        "start: /a+/\n%declare X\n%ignore X\n",
+    ] {
+        let spec = from_lark(
+            text,
+            &NoImports,
+            GrammarOptions {
+                explicit: vec!["X".to_string()],
+                max_size: 2,
+                ..GrammarOptions::default()
+            },
+        )
+        .unwrap();
+        let c = spec.constraint();
+        let marker = placeholder("X");
+        assert!(c.accepts(&cps(&format!("{marker}aa"))));
+        assert!(!c.accepts(&cps(&format!("{marker}aaa"))));
+    }
+}
+
+#[test]
 fn accepts_the_strings_the_grammar_derives_and_rejects_the_rest() {
     let c = constraint(AB, "start", 16, "a");
     assert!(c.accepts(&cps("a")));

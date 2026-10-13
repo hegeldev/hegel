@@ -200,9 +200,10 @@ impl GrammarConstraint {
     }
 
     /// A derivation of `text`, remembered or found now, or `None` when
-    /// the grammar does not derive it, when a terminal other than a
-    /// placeholder has a character outside the alphabet, or when the grammar ignores some
-    /// terminal and a placeholder in `text` has a token right beside it:
+    /// the grammar does not derive it, when it exceeds the size cap,
+    /// when a terminal other than a placeholder has a character outside
+    /// the alphabet, or when the grammar ignores some terminal and a
+    /// placeholder in `text` has a token right beside it:
     /// the generator keeps ignored text between them, since what the
     /// caller puts in for the placeholder is beyond its lexing checks,
     /// so such a string is not one the grammar draws.
@@ -216,7 +217,10 @@ impl GrammarConstraint {
             .collect::<Option<_>>()?;
         let tree = Arc::new(self.parser.parse(&self.lexer, &chars).ok()?);
         let layout = Layout::new(&tree);
-        if !self.placeholders_apart(&layout) || !self.over_alphabet(&layout, text) {
+        if !self.within_cap(&layout, text)
+            || !self.placeholders_apart(&layout)
+            || !self.over_alphabet(&layout, text)
+        {
             return None;
         }
         self.learn(&layout, text);
@@ -366,10 +370,11 @@ impl GrammarConstraint {
     /// placeholder markers counting for nothing (see
     /// [`crate::native::lark::generate`]).
     pub fn within_cap(&self, layout: &Layout, text: &[u32]) -> bool {
-        let markers: usize = Self::leaves(layout)
+        let markers: usize = layout
+            .leaves()
             .into_iter()
-            .filter(|leaf| self.is_placeholder_leaf(leaf))
-            .map(|leaf| leaf.end - leaf.start)
+            .filter(|(id, _, _)| self.grammar.terminals[*id].is_placeholder())
+            .map(|(_, start, end)| end - start)
             .sum();
         text.len() - markers <= self.max_size
     }

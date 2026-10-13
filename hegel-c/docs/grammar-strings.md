@@ -178,6 +178,8 @@ derive a generated string more deeply than the walk did) does not.
   the spliced string under the cap the user set by drawing again under a
   smaller cap of its own (`hegel_generate_grammar`'s `max_size`) when
   the values pushed it over, in a span it discards, as a filter does.
+  Replaying a string that exceeds this smaller cap rejects the test case.
+  Ignored placeholders also count for nothing toward the grammar's cap.
 - Mutation only reuses parts of the string being mutated, not of other
   strings under the same grammar seen earlier in the run.
 

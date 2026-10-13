@@ -38,6 +38,52 @@ fn small(text: &str, max_size: u64) -> GrammarSpec {
     .unwrap()
 }
 
+#[test]
+fn nullable_derivations_have_a_work_limit() {
+    for text in [
+        "start: empty ~ 65536\nempty:\n",
+        "start: a\na: b b\nb: c c\nc: d d\nd: e e\ne: f f\nf:\n",
+    ] {
+        let spec = grammar(text);
+        let mut generation = Generation::new(&spec, 0.0, spec.max_size);
+        generation.remaining = 16;
+        let mut draws = SimplestDraws::default();
+        assert!(matches!(
+            generation.attempts(&mut draws, 0, 0),
+            Err(EngineError::InvalidTestCase)
+        ));
+        assert_eq!(draws.status(), Some(Status::Invalid));
+    }
+}
+
+#[test]
+fn placeholder_text_counts_toward_the_generation_work_limit() {
+    let spec = spec_with(
+        "start: X ~ 3\n%declare X\n",
+        GrammarOptions {
+            explicit: explicit(&["X"]),
+            ..GrammarOptions::default()
+        },
+    )
+    .unwrap();
+    let expected = placeholder("X").repeat(3);
+    let mut draws = SimplestDraws::default();
+    let mut generation = Generation::new(&spec, 0.0, spec.max_size);
+    generation.remaining = expected.len() + 10;
+    assert_eq!(
+        codepoints_to_string(&generation.attempts(&mut draws, 0, 0).unwrap()),
+        expected
+    );
+    let mut generation = Generation::new(&spec, 0.0, spec.max_size);
+    generation.remaining = expected.len() - 1;
+    assert!(matches!(
+        generation.attempts(&mut draws, 0, 0),
+        Err(EngineError::InvalidTestCase)
+    ));
+    assert!(generation.text.len() < expected.len());
+    assert_eq!(draws.status(), Some(Status::Invalid));
+}
+
 fn explicit(names: &[&str]) -> Vec<String> {
     names.iter().map(|name| name.to_string()).collect()
 }
@@ -184,6 +230,21 @@ fn explicit_terminal_the_grammar_does_not_use_is_an_error() {
 }
 
 #[test]
+fn duplicate_explicit_terminals_are_rejected_by_the_engine() {
+    let result = spec_with(
+        "start: X\n%declare X\n",
+        GrammarOptions {
+            explicit: explicit(&["X", "X"]),
+            ..GrammarOptions::default()
+        },
+    );
+    assert_eq!(
+        result.err().unwrap().message,
+        "explicit terminal 'X' is listed more than once"
+    );
+}
+
+#[test]
 fn explicit_terminals_are_drawn_as_their_placeholders() {
     assert_eq!(placeholder("WORD"), "<<EXPLICIT_WORD_392f5a5e9326>>");
     let spec = spec_with(
@@ -265,6 +326,43 @@ fn a_draw_may_be_capped_below_the_grammar() {
     assert!((0..40).any(|seed| drawn(None, seed).len() > 5));
     assert!((0..40).any(|seed| drawn(Some(1000), seed).len() > 5));
     assert!((0..40).all(|seed| drawn(Some(1), seed) == "abc"));
+}
+
+#[test]
+fn a_replay_must_respect_the_draws_own_cap() {
+    let plain = small("start: \"ab\" /c+/\n", 100);
+    let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::String(cps("abcccc"))], None, None);
+    assert!(matches!(
+        generate_grammar(&mut ntc, &plain, Some(3)),
+        Err(EngineError::InvalidTestCase)
+    ));
+    assert_eq!(ntc.status(), Some(Status::Invalid));
+    for text in [
+        "start: X /a+/\n%declare X\n",
+        "start: /a+/\n%declare X\n%ignore X\n",
+    ] {
+        let spec = spec_with(
+            text,
+            GrammarOptions {
+                explicit: explicit(&["X"]),
+                max_size: 100,
+                ..GrammarOptions::default()
+            },
+        )
+        .unwrap();
+        for (suffix, valid) in [("aa", true), ("aaa", false)] {
+            let value = format!("{}{suffix}", placeholder("X"));
+            let mut ntc =
+                NativeTestCase::for_choices(&[ChoiceValue::String(cps(&value))], None, None);
+            let result = generate_grammar(&mut ntc, &spec, Some(2));
+            if valid {
+                assert_eq!(result.unwrap(), value);
+            } else {
+                assert!(matches!(result, Err(EngineError::InvalidTestCase)));
+                assert_eq!(ntc.status(), Some(Status::Invalid));
+            }
+        }
+    }
 }
 
 /// The lexers try a placeholder before any other terminal, so a regex
@@ -2135,7 +2233,8 @@ fn a_terminal_that_asserts_on_the_text_around_it_cannot_be_generated() {
         };
         assert_eq!(
             message,
-            "no string of 'start' could be generated: its strings do not fit the size cap, do \
+            "no string of 'start' could be generated: its strings exceed the generation work limit, \
+             do not fit the size cap, do \
              not lex back as their tokens, or a terminal asserts on the text around it (a \
              lookbehind at its start, a lookahead or `\\B` at its end)"
         );

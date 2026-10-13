@@ -33,6 +33,8 @@
 //! alternative out: a rule none of whose alternatives fit theirs (the
 //! depth cap can leave only costlier ones) takes the cheapest the depth
 //! allows.
+//! A separate work limit bounds the walk even when repetitions and
+//! nested rules derive no text; exhausting it rejects the test case.
 //!
 //! Between adjacent tokens the generator inserts a `%ignore` terminal
 //! either when the simulated lexer says the two would otherwise lex
@@ -176,6 +178,8 @@ const COUNT_RESOLUTION: u64 = 1 << 20;
 /// How many seeded draws stand in for the simplest walk when that one
 /// draws no string (see [`GrammarSpec::ensure_simplest`]).
 const SIMPLEST_FALLBACK_SEEDS: u64 = 8;
+
+const GENERATION_BUDGET: usize = 1 << 20;
 
 const LABEL_GRAMMAR: u64 = label_from_name("hegel.lark");
 
@@ -482,6 +486,11 @@ impl GrammarSpec {
                     "the grammar does not use explicit terminal '{name}'"
                 )));
             };
+            if markers.iter().any(|(seen, _)| *seen == id) {
+                return Err(GrammarError::new(format!(
+                    "explicit terminal '{name}' is listed more than once"
+                )));
+            }
             let marker = placeholder(name);
             grammar.terminals[id] = TerminalDef::placeholder(name)?;
             markers.push((id, marker.chars().collect()));
@@ -649,7 +658,8 @@ impl GrammarSpec {
                 return Ok(simplest);
             }
             Err(EngineError::InvalidArgument(format!(
-                "no string of '{}' could be generated: its strings do not fit the size cap, \
+                "no string of '{}' could be generated: its strings exceed the generation work limit, \
+                 do not fit the size cap, \
                  do not lex back as their tokens, or a terminal asserts on the text around it \
                  (a lookbehind at its start, a lookahead or `\\B` at its end)",
                 self.analysis.rules[self.start].name
@@ -1267,6 +1277,7 @@ impl From<EngineError> for Step {
 
 struct Generation<'s> {
     spec: &'s GrammarSpec,
+    remaining: usize,
     /// The string so far: the text of `tokens`, in order and without
     /// gaps. Terminals are drawn onto its end, and a draw that is not
     /// kept is cut off again.
@@ -1314,6 +1325,7 @@ impl<'s> Generation<'s> {
         buffers.readings.forget_when_full();
         Generation {
             spec,
+            remaining: GENERATION_BUDGET,
             text: buffers.text,
             tokens: buffers.tokens,
             max_size,
@@ -1653,6 +1665,15 @@ fn grow_probability(spare: u64) -> f64 {
 }
 
 impl Generation<'_> {
+    fn spend_work<D: Draws>(&mut self, d: &mut D, amount: usize) -> Result<(), EngineError> {
+        let Some(remaining) = self.remaining.checked_sub(amount) else {
+            d.conclude(Status::Invalid);
+            return Err(EngineError::InvalidTestCase);
+        };
+        self.remaining = remaining;
+        Ok(())
+    }
+
     /// Draw one of `alts` for a rule reached at `depth` with `budget`
     /// characters to spend: between the alternatives that close the
     /// derivation and the ones that can grow without bound (or, when
@@ -1872,6 +1893,7 @@ impl Generation<'_> {
         budget: u64,
         depth: u32,
     ) -> Result<(), Step> {
+        self.spend_work(d, 1)?;
         match &node.kind {
             NodeKind::Terminal(t) => self.terminal(d, *t),
             NodeKind::Rule(r) => self.rule(d, *r, budget, depth),
@@ -1963,9 +1985,10 @@ impl Generation<'_> {
     fn draw_text<D: Draws>(&mut self, d: &mut D, id: TermId) -> Result<(), EngineError> {
         match &self.spec.terminals[id] {
             TerminalGen::Pattern(re) => spanned(d, LABEL_REGEX, |d| {
-                generate_regex_into(d, re, true, &mut self.text)
+                generate_regex_into(d, re, true, &mut self.text, MAX_MAX_SIZE as usize)
             }),
             TerminalGen::Placeholder(marker) => {
+                self.spend_work(d, marker.len())?;
                 self.text.extend_from_slice(marker);
                 self.markers += marker.len();
                 Ok(())
@@ -2385,6 +2408,7 @@ impl Generation<'_> {
 /// `max_size` caps this draw below the grammar's own cap, for a caller
 /// whose placeholder values have to fit alongside the string; one below
 /// the smallest string, or above the grammar's cap, is read as that.
+/// A replayed string over this draw's cap rejects the test case.
 pub fn generate_grammar(
     ntc: &mut NativeTestCase,
     spec: &GrammarSpec,
@@ -2395,7 +2419,20 @@ pub fn generate_grammar(
         cap.clamp(spec.min_size(), spec.max_size)
     });
     spanned(ntc, LABEL_GRAMMAR, |ntc| {
-        ntc.draw_string_from(Arc::clone(&spec.kind), |d| draw_grammar(d, spec, max_size))
+        let text =
+            ntc.draw_string_from(Arc::clone(&spec.kind), |d| draw_grammar(d, spec, max_size))?;
+        if max_size < spec.max_size {
+            let markers: usize = spec
+                .placeholders
+                .iter()
+                .map(|(_, marker)| text.matches(marker.as_str()).count() * marker.chars().count())
+                .sum();
+            if (text.chars().count() - markers) as u64 > max_size {
+                ntc.conclude(Status::Invalid, None);
+                return Err(EngineError::InvalidTestCase);
+            }
+        }
+        Ok(text)
     })
 }
 
