@@ -137,7 +137,6 @@ rule closed_pattern
 rule comp_for
 rule comp_fors
 rule comp_if
-rule comp_ifs
 rule comp_op
 rule comparison
 rule compound_stmt

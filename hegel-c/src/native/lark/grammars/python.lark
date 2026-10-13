@@ -250,10 +250,9 @@ kwargs: "**" test ("," argvalue)*
 ?argvalue: test ("=" test)?
 
 
-comprehension{comp_result}: comp_result comp_fors
+comprehension{comp_result}: comp_result comp_fors [comp_if]
 comp_fors: comp_for+
-comp_for: [ASYNC] "for" exprlist "in" or_test comp_ifs
-comp_ifs: comp_if*
+comp_for: [ASYNC] "for" exprlist "in" or_test
 ASYNC: "async"
 ?comp_if: "if" test_nocond
 
