@@ -1,0 +1,3 @@
+RELEASE_TYPE: patch
+
+This patch makes the urandom backend draw its entropy from the Antithesis fuzzer directly when running inside Antithesis. Each draw now calls `fuzz_get_random` from Antithesis's instrumentation library (`/usr/lib/libvoidstar.so`), the function its own SDKs take their randomness from, so the fuzzer sees every draw as a request of its own rather than inferring them from reads of `/dev/urandom`. When the library cannot be loaded, and everywhere outside Antithesis, the backend reads `/dev/urandom` as before; the `HEGEL_BACKEND_URANDOM` setting, the `workload` profile and the `backend = "urandom"` profile key are unchanged.

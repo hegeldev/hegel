@@ -237,7 +237,7 @@ fn usage() -> String {
         "  --suppress-health-check <NAMES>      Comma-separated health check names, or 'all'\n",
     );
     s.push_str(
-        "  --backend <default|urandom>          Randomness source (urandom reads /dev/urandom)\n",
+        "  --backend <default|urandom>          Randomness source (urandom: the Antithesis fuzzer, else /dev/urandom)\n",
     );
     s.push_str("  -h, --help                           Show this help and exit\n");
     s

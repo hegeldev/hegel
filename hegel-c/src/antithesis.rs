@@ -1,5 +1,6 @@
 //! The [Antithesis](https://antithesis.com/) integration: detecting that the
-//! process runs inside Antithesis, and reporting each test's verdict to it.
+//! process runs inside Antithesis, drawing entropy from its fuzzer, and
+//! reporting each test's verdict to it.
 //!
 //! Antithesis sets `ANTITHESIS_OUTPUT_DIR` for every process it runs and
 //! collects assertions from the `sdk.jsonl` file inside that directory, one
@@ -9,9 +10,18 @@
 //! after the test — declared once and evaluated once, with the run's verdict
 //! as its condition — so Antithesis lists the property alongside the
 //! assertions in the system under test and flags it when it fails.
+//!
+//! Antithesis also installs its instrumentation library, libvoidstar, in
+//! every image it runs, and its language SDKs resolve their randomness
+//! from it rather than from `/dev/urandom`: a call into the library is a
+//! request the fuzzer sees as such, where a read of the random device is
+//! only a side effect it has to infer. The urandom backend does the same
+//! ([`fuzz_source`]), falling back to `/dev/urandom` when the library is
+//! not there.
 
 use crate::backend::RunError;
 use crate::settings::Output;
+use crate::sys::FuzzSource;
 use alloc::format;
 use alloc::string::String;
 
@@ -21,6 +31,30 @@ const OUTPUT_DIR_VAR: &str = "ANTITHESIS_OUTPUT_DIR";
 /// The file inside the output directory that Antithesis reads assertions
 /// from.
 const SDK_FILE: &str = "sdk.jsonl";
+
+/// Where Antithesis installs its instrumentation library, and where its
+/// language SDKs load it from.
+const VOIDSTAR_PATH: &str = "/usr/lib/libvoidstar.so";
+
+/// The library's function returning 64 fuzzer-controlled bits per call,
+/// the one every Antithesis SDK draws its randomness from.
+const FUZZ_GET_RANDOM: &str = "fuzz_get_random";
+
+/// The fuzzer's entropy when running inside Antithesis: `fuzz_get_random`
+/// from libvoidstar. `None` outside Antithesis, or inside it when the
+/// library cannot be loaded, in which case the caller reads `/dev/urandom`
+/// as before.
+pub(crate) fn fuzz_source() -> Option<FuzzSource> {
+    fuzz_source_from(crate::sys::env_var, VOIDSTAR_PATH)
+}
+
+/// [`fuzz_source`] with the environment read and the library path
+/// injected, so the inside-Antithesis path can be unit-tested with a
+/// stand-in library.
+fn fuzz_source_from(env: impl Fn(&str) -> Option<String>, path: &str) -> Option<FuzzSource> {
+    antithesis_output_dir_from(env)?;
+    crate::sys::fuzz_source(path, FUZZ_GET_RANDOM)
+}
 
 /// Where a property test lives, as reported to Antithesis: the function, the
 /// class, module or package enclosing it, and the source position.

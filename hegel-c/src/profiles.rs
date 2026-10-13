@@ -27,12 +27,13 @@
 //! - `development`: an empty delta, the environment profile of local runs.
 //! - `ci`: `derandomize = true`, the database disabled, and the `too_slow`
 //!   health check suppressed.
-//! - `workload`: the urandom backend, the database disabled, and every
-//!   health check suppressed, since Antithesis's thread pausing would trip
-//!   wall-clock checks such as `too_slow` spuriously. Like any profile
-//!   setting these can be changed in `hegel.toml`, and resolving a profile
-//!   that does not extend `workload` inside Antithesis runs the health
-//!   checks on the default backend.
+//! - `workload`: the urandom backend (which inside Antithesis asks its
+//!   fuzzer for every draw), the database disabled, and every health check
+//!   suppressed, since Antithesis's thread pausing would trip wall-clock
+//!   checks such as `too_slow` spuriously. Like any profile setting these
+//!   can be changed in `hegel.toml`, and resolving a profile that does not
+//!   extend `workload` inside Antithesis runs the health checks on the
+//!   default backend.
 //!
 //! Users modify shipped profiles and define new ones in a `hegel.toml`
 //! ([`crate::config`]), or register complete snapshots through the C ABI's
