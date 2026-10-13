@@ -39,10 +39,11 @@ pub const DEFAULT_STEP_LIMIT: u64 = 1_000_000;
 /// simulation in [`vm`](super::vm) for every pattern that can express,
 /// so the limit bears on patterns with backreferences, conditional
 /// groups, atomic groups or possessive repeats, and on the lexer
-/// simulation's own matches. Unoptimised builds use about 1 KiB of
-/// stack per level, so this keeps a match within half of a 2 MiB thread
-/// stack.
-pub const DEFAULT_DEPTH_LIMIT: usize = 1_000;
+/// simulation's own matches. A level takes up to about 1.5 KiB of stack
+/// in an unoptimised build (about 0.5 KiB at opt-level 1), so this
+/// keeps a match within 600 KiB: inside a 1 MiB thread stack, the
+/// smallest a thread commonly gets, with room to spare.
+pub const DEFAULT_DEPTH_LIMIT: usize = 400;
 
 /// Why a match was abandoned without an answer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

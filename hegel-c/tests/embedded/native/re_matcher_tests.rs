@@ -408,6 +408,27 @@ fn depth_limit_fires_on_long_repeats_of_capturing_items() {
     );
 }
 
+/// The default depth limit keeps the deepest recursion the matcher
+/// allows (a repeat of a capturing alternation, which recurses several
+/// levels per iteration) within a 1 MiB stack, the smallest a thread
+/// commonly gets, in an unoptimised build too.
+#[test]
+fn the_depth_limit_fires_before_a_small_stack_overflows() {
+    let parsed = parse_pattern("(?:(a)|(b))*", 0).unwrap();
+    let text = chars(&"ab".repeat(2000));
+    let worker = std::thread::Builder::new()
+        .stack_size(1 << 20)
+        .spawn(move || {
+            let matcher = Matcher::new(&parsed);
+            (match_at(&matcher, &text, 0), matcher.fullmatch(&text))
+        })
+        .unwrap();
+    assert_eq!(
+        worker.join().unwrap(),
+        (Err(MatchError::DepthLimit), Err(MatchError::DepthLimit))
+    );
+}
+
 #[test]
 fn default_limits_handle_long_unit_sequence_repeats() {
     let parsed = parse_pattern("\"(?:\\\\.|[^\"\\\\])*\"", 0).unwrap();
