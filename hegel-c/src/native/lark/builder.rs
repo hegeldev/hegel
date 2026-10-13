@@ -79,6 +79,7 @@ pub struct Definition {
 /// (`_X` becomes `_a__b__X`), except for the names the import asked for,
 /// which take their alias; a nested import composes with the importer's
 /// own mangle.
+#[derive(Clone)]
 pub struct Mangle {
     prefix: String,
     aliases: Vec<(String, String)>,
@@ -99,14 +100,6 @@ impl Mangle {
         }
         out
     }
-
-    fn clone_boxed(&self) -> Box<Mangle> {
-        Box::new(Mangle {
-            prefix: self.prefix.clone(),
-            aliases: self.aliases.clone(),
-            base: self.base.as_ref().map(|b| b.clone_boxed()),
-        })
-    }
 }
 
 /// The grammar as built: Lark's `Grammar(rule_defs, term_defs, ignore)`,
@@ -123,6 +116,8 @@ pub struct BuiltGrammar {
 
 pub struct GrammarBuilder<'s> {
     source: &'s dyn ImportSource,
+    /// The paths of the grammars whose imports led to this one, the
+    /// outermost first: an import of a path already here is a cycle.
     import_stack: Vec<String>,
     names: Vec<String>,
     definitions: HashMap<String, Definition>,
@@ -230,6 +225,9 @@ fn symbol_references<'e>(expr: &'e Expr, out: &mut Vec<&'e Symbol>) {
 /// the whole of it; here it is an error instead.
 const MAX_TERMINAL_PATTERN_LEN: usize = 1 << 16;
 
+/// How deeply imports may lead from grammar to grammar. A cycle is
+/// caught by its path, but a source may answer every path with a new
+/// grammar that imports another.
 const MAX_IMPORT_NESTING: usize = 64;
 
 fn contains_template(expr: &Expr) -> bool {
@@ -540,7 +538,7 @@ impl<'s> GrammarBuilder<'s> {
         let mangle = Mangle {
             prefix: stmt.path.join("__"),
             aliases,
-            base: base_mangle.map(|m| m.clone_boxed()),
+            base: base_mangle.map(|m| Box::new(m.clone())),
         };
         let grammar_path = format!("{}.lark", stmt.path.join("/"));
         let loaded = self.source.load(base_path, &grammar_path).or_else(|| {
