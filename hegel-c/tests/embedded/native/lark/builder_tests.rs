@@ -439,3 +439,43 @@ fn undefined_symbols_are_found_inside_repeats_and_template_arguments() {
         "{message}"
     );
 }
+
+#[test]
+fn a_rule_imported_under_a_terminal_name_is_not_a_terminal() {
+    let import = "%import python.starguard -> STARGUARD\n";
+    assert_eq!(
+        err(&format!("{import}start: STARGUARD\n")),
+        "Rule 'STARGUARD' used as a terminal (in rule start)"
+    );
+    assert_eq!(
+        err(&format!("{import}start: \"a\"\n%ignore STARGUARD\n")),
+        "Rule 'STARGUARD' marked to ignore, but only terminals can be ignored"
+    );
+    assert_eq!(
+        err(&format!("{import}start: A\nA: STARGUARD \"x\"\n")),
+        "Terminal used but not defined: STARGUARD"
+    );
+    assert_eq!(
+        err("%import python.lambda_kwparams -> LK\nstart: A\nA: LK\n"),
+        "Terminal used but not defined: LK"
+    );
+}
+
+#[test]
+fn a_terminal_imported_under_a_rule_name_is_not_a_rule() {
+    assert_eq!(
+        err("%import common.INT -> int\nstart: int\n"),
+        "Terminal 'int' used as a rule (in rule start)"
+    );
+    assert_eq!(
+        err("%import common.INT -> int\nstart: int{\"a\"}\n"),
+        "Terminal 'int' used as a template (in rule start)"
+    );
+}
+
+#[test]
+fn an_imported_rule_used_as_a_terminal_is_rejected_before_its_own_references_are_checked() {
+    let sources = Sources(vec![("g.lark", "foo: undefined_rule\n")]);
+    let err = build_with("%import .g.foo -> FOO\nstart: A\nA: FOO\n", &sources).unwrap_err();
+    assert_eq!(err.message, "Terminal used but not defined: FOO");
+}

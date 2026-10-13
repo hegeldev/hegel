@@ -519,17 +519,17 @@ impl<'s> GrammarBuilder<'s> {
                     )));
                 };
                 match self.definitions.get(reference) {
-                    None => {
-                        return Err(GrammarError::new(format!(
-                            "Terminal used but not defined: {reference}"
-                        )));
-                    }
-                    Some(d) if d.tree.is_none() => {
+                    Some(d) if d.is_term && d.tree.is_none() => {
                         return Err(GrammarError::new(format!(
                             "Terminal {name} uses declared terminal {reference}, which has no definition to inline"
                         )));
                     }
-                    Some(_) => {}
+                    Some(d) if d.is_term => {}
+                    _ => {
+                        return Err(GrammarError::new(format!(
+                            "Terminal used but not defined: {reference}"
+                        )));
+                    }
                 }
             }
         }
@@ -695,6 +695,12 @@ impl<'s> GrammarBuilder<'s> {
                         type_name(d.is_term)
                     )));
                 };
+                if target.is_term {
+                    return Err(GrammarError::new(format!(
+                        "Terminal '{sym}' used as a template (in {} {name})",
+                        type_name(d.is_term)
+                    )));
+                }
                 if arity != target.params.len() {
                     return Err(GrammarError::new(format!(
                         "Wrong number of template arguments used for {sym} (expected {}, got {arity}) (in {} {name})",
@@ -713,6 +719,22 @@ impl<'s> GrammarBuilder<'s> {
                     )));
                 }
             }
+            let mut references = Vec::new();
+            symbol_references(tree, &mut references);
+            for symbol in references {
+                let Some(target) = self.definitions.get(symbol.name()) else {
+                    continue;
+                };
+                if target.is_term != symbol.is_terminal() {
+                    return Err(GrammarError::new(format!(
+                        "{} '{}' used as a {} (in {} {name})",
+                        type_title(target.is_term),
+                        symbol.name(),
+                        type_name(symbol.is_terminal()),
+                        type_name(d.is_term)
+                    )));
+                }
+            }
         }
         let undefined: Vec<&String> = self
             .ignore_names
@@ -725,6 +747,13 @@ impl<'s> GrammarBuilder<'s> {
                 "Terminals {{{}}} were marked to ignore but were not defined!",
                 names.join(", ")
             )));
+        }
+        for name in &self.ignore_names {
+            if !self.definitions[name].is_term {
+                return Err(GrammarError::new(format!(
+                    "Rule '{name}' marked to ignore, but only terminals can be ignored"
+                )));
+            }
         }
         Ok(())
     }
