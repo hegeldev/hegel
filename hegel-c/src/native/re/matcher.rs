@@ -715,9 +715,9 @@ impl<'p> Matcher<'p> {
     }
 
     /// Whether the lookaround body `p` matches at `pos`: ahead of it for a
-    /// positive `direction`, ending exactly at it for a negative one.
-    /// CPython only accepts fixed-width lookbehinds; a variable-width one
-    /// (which the parser does not reject) is accepted at any of its widths.
+    /// positive `direction`, ending exactly at it for a negative one,
+    /// having started its fixed width before (the parser rejects a
+    /// lookbehind of any other kind, as CPython does).
     fn lookaround<'t>(
         &self,
         st: &mut State<'t>,
@@ -734,18 +734,12 @@ impl<'p> Matcher<'p> {
             }
             return Ok(found);
         }
-        let (lo, hi) = self.width(p);
-        if hi > pos {
+        let w = self.least_width(p);
+        if w > pos {
             st.touch.end();
+            return Ok(false);
         }
-        let mut w = lo;
-        while w <= hi && w <= pos {
-            if self.seq(st, &p.data, pos - w, flags, &mut |_, end| Ok(end == pos))? {
-                return Ok(true);
-            }
-            w += 1;
-        }
-        Ok(false)
+        self.seq(st, &p.data, pos - w, flags, &mut |_, end| Ok(end == pos))
     }
 
     /// CPython's `MAX_UNTIL`: `count` iterations of `item` are done; take
@@ -1082,59 +1076,41 @@ impl<'p> Matcher<'p> {
         Ok(false)
     }
 
-    /// CPython's `getwidth`: the least and most characters `p` can match,
-    /// saturating. A backreference has the width of its group.
-    fn width(&self, p: &SubPattern) -> (usize, usize) {
+    /// The lower bound of CPython's `getwidth`: the least characters `p`
+    /// can match, saturating, with a backreference as wide as its group.
+    /// For the body of a lookbehind, whose least and most widths the
+    /// parser requires to agree, this is its width.
+    fn least_width(&self, p: &SubPattern) -> usize {
         let mut lo = 0usize;
-        let mut hi = 0usize;
         for op in &p.data {
-            let (l, h) = match op {
-                OpCode::Branch(alternatives) => {
-                    let mut l = usize::MAX;
-                    let mut h = 0;
-                    for alternative in alternatives {
-                        let (al, ah) = self.width(alternative);
-                        l = l.min(al);
-                        h = h.max(ah);
-                    }
-                    (l, h)
-                }
-                OpCode::Subpattern { p, .. } | OpCode::AtomicGroup(p) => self.width(p),
-                OpCode::MaxRepeat { min, max, item }
-                | OpCode::MinRepeat { min, max, item }
-                | OpCode::PossessiveRepeat { min, max, item } => {
-                    let (il, ih) = self.width(item);
-                    let h = if *max == MAXREPEAT {
-                        usize::MAX
-                    } else {
-                        ih.saturating_mul(*max as usize)
-                    };
-                    (il.saturating_mul(*min as usize), h)
+            let l = match op {
+                OpCode::Branch(alternatives) => alternatives
+                    .iter()
+                    .map(|alternative| self.least_width(alternative))
+                    .min()
+                    .unwrap_or(0),
+                OpCode::Subpattern { p, .. } | OpCode::AtomicGroup(p) => self.least_width(p),
+                OpCode::MaxRepeat { min, item, .. }
+                | OpCode::MinRepeat { min, item, .. }
+                | OpCode::PossessiveRepeat { min, item, .. } => {
+                    self.least_width(item).saturating_mul(*min as usize)
                 }
                 OpCode::GroupRef(g) => match find_group(self.pattern, *g) {
-                    Some(group) => self.width(group),
+                    Some(group) => self.least_width(group),
                     None => unreachable!("the parser rejects references to undefined groups"),
                 },
                 OpCode::GroupRefExists { yes, no, .. } => {
-                    let (yl, yh) = self.width(yes);
-                    let (nl, nh) = match no {
-                        Some(no) => self.width(no),
-                        None => (0, 0),
-                    };
-                    (yl.min(nl), yh.max(nh))
-                }
-                _ => {
-                    if as_unit(op).is_some() {
-                        (1, 1)
-                    } else {
-                        (0, 0)
+                    let yes = self.least_width(yes);
+                    match no {
+                        Some(no) => yes.min(self.least_width(no)),
+                        None => 0,
                     }
                 }
+                _ => usize::from(as_unit(op).is_some()),
             };
             lo = lo.saturating_add(l);
-            hi = hi.saturating_add(h);
         }
-        (lo, hi)
+        lo
     }
 }
 

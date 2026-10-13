@@ -19,6 +19,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::constants::*;
+use super::width::get_width_within;
 use crate::control::{
     InternalError, hegel_internal_assert_eq, hegel_internal_debug_assert,
     hegel_internal_debug_assert_eq, hegel_internal_unwrap,
@@ -198,7 +199,7 @@ struct State {
     flags: u32,
     groupdict: HashMap<String, u32>,
     /// `Some(width)` once a group has been closed, `None` while open.
-    groupwidths: Vec<Option<(u64, u64)>>,
+    groupwidths: Vec<Option<(u64, Option<u64>)>>,
     lookbehindgroups: Option<u32>,
     grouprefpos: HashMap<u32, usize>,
 }
@@ -240,9 +241,10 @@ impl State {
         }
         Ok(gid)
     }
-    fn closegroup(&mut self, gid: u32) {
+    fn closegroup(&mut self, gid: u32, p: &SubPattern) {
+        let width = get_width_within(p, &self.groupwidths);
         if let Some(slot) = self.groupwidths.get_mut(gid as usize) {
-            *slot = Some((0, 0));
+            *slot = Some(width);
         }
     }
 
@@ -1184,6 +1186,15 @@ fn parse(
                             source.tell().saturating_sub(start),
                         ));
                     }
+                    if dir < 0 {
+                        let (lo, hi) = get_width_within(&p, &state.groupwidths);
+                        if hi != Some(lo) {
+                            return Err(source.error(
+                                "look-behind requires fixed-width pattern",
+                                source.tell().saturating_sub(start),
+                            ));
+                        }
+                    }
                     if marker == "=" {
                         subpattern.push(OpCode::Assert { direction: dir, p });
                     } else if !p.is_empty() {
@@ -1298,7 +1309,7 @@ fn parse(
                 ));
             }
             if let Some(g) = group {
-                state.closegroup(g);
+                state.closegroup(g, &p);
             }
             if atomic {
                 hegel_internal_debug_assert!(group.is_none());

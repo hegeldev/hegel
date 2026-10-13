@@ -755,6 +755,38 @@ fn err_unknown_p_extension() {
 }
 
 #[test]
+fn err_variable_width_lookbehind() {
+    for pattern in [
+        "(?<=a*)b",
+        "(?<=a|bc)d",
+        "(?<!a+)b",
+        "(?<=(?:ab){1,2}|x)d",
+        "(?<=(a)|(bc))x",
+        "(a*)(?<=\\1)b",
+    ] {
+        let err = parse_err(pattern);
+        assert_eq!(
+            err.msg, "look-behind requires fixed-width pattern",
+            "{pattern}"
+        );
+        assert_eq!(err.pos, pattern.find("(?<").unwrap(), "{pattern}");
+    }
+    for pattern in [
+        "(?<=ab|cd)e",
+        "(?<=a{2,2})b",
+        "(?<=(?:)*a)b",
+        "(?<=)b",
+        "(?<!^)b",
+        "(a)(?<=\\1)b",
+        "(ab)(c)?(?<=\\2)d",
+        "(a)?(?<=(?(1)a|b))c",
+        "(?:(a))+?(?<=\\1)b",
+    ] {
+        parsed(pattern);
+    }
+}
+
+#[test]
 fn err_unknown_lookaround() {
     let err = parse_err("(?<X)");
     assert!(err.msg.contains("unknown extension"), "{}", err.msg);

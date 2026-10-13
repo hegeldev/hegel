@@ -63,12 +63,14 @@ fn exact_end_backtracks_past_earlier_matches() {
 }
 
 #[test]
-fn lookarounds_nest_and_look_behind_variable_widths() {
+fn lookarounds_nest_and_look_behind_a_fixed_width() {
     let p = program("(?<=a(?=b)b)c").unwrap();
     assert_eq!(run(&p, &chars("abc"), 2, None), Some(3));
     assert_eq!(run(&p, &chars("xbc"), 2, None), None);
-    let p = program("(?<=ab|b)c").unwrap();
+    let p = program("(?<=ab|xb)c").unwrap();
     assert_eq!(run(&p, &chars("abc"), 2, None), Some(3));
+    assert_eq!(run(&p, &chars("xbc"), 2, None), Some(3));
+    assert_eq!(run(&p, &chars("bc"), 1, None), None);
     assert_eq!(run(&p, &chars("c"), 0, None), None);
     let p = program("(?<!ab)c").unwrap();
     assert_eq!(run(&p, &chars("abc"), 2, None), None);

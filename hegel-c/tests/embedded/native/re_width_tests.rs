@@ -59,6 +59,20 @@ fn conditional_groups() {
 }
 
 #[test]
+fn a_nested_subpattern_takes_the_widths_of_the_groups_closed_before_it() {
+    let parsed = parse_pattern(r"(ab)(?<=\1)c", 0).unwrap();
+    let OpCode::Assert { p, .. } = &parsed.pattern.data[1] else {
+        panic!("{:?}", parsed.pattern);
+    };
+    assert_eq!(get_width(p), (0, None));
+    assert_eq!(
+        get_width_within(p, &[None, Some((2, Some(2)))]),
+        (2, Some(2))
+    );
+    assert_eq!(get_width_within(p, &[None, Some((1, None))]), (1, None));
+}
+
+#[test]
 fn saturates_instead_of_overflowing() {
     assert_eq!(
         width("(?:(?:a{4294967294}){4294967294}){4294967294}"),

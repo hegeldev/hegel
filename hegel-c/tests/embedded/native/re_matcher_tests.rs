@@ -235,17 +235,8 @@ fn lookbehind() {
     check("(ab)(c)?(?<=\\2)d", "abd", 0, None, false);
     check("(?:(a))+?(?<=\\1)b", "ab", 0, Some(2), true);
     check("(?:(ab))+?(?<=\\1)c", "ababc", 0, Some(5), true);
-}
-
-#[test]
-fn variable_width_lookbehind_accepts_any_of_its_widths() {
-    check("(?<=a|bc)d", "bcd", 2, Some(3), false);
-    check("(?<=a|bc)d", "ad", 1, Some(2), false);
-    check("(?<!a|bc)d", "bcd", 2, None, false);
-    check("(?<!a|bc)d", "xd", 1, Some(2), false);
-    check("(?<=a+)d", "aaad", 3, Some(4), false);
-    check("(?<=(?:ab){1,2}|x)d", "ababd", 4, Some(5), false);
-    check("(?<=a+?)d", "aad", 2, Some(3), false);
+    check("(?<=(?:)*a)b", "ab", 1, Some(2), true);
+    check("(?<=ab)c", "c", 0, None, false);
 }
 
 #[test]
@@ -453,22 +444,26 @@ fn errors_display() {
 }
 
 #[test]
-fn width_of_patterns() {
-    let widths = |pattern: &str| {
+fn least_width_of_patterns() {
+    let least = |pattern: &str| {
         let parsed = parse_pattern(pattern, 0).unwrap();
-        Matcher::new(&parsed).width(&parsed.pattern)
+        Matcher::new(&parsed).least_width(&parsed.pattern)
     };
-    assert_eq!(widths("abc"), (3, 3));
-    assert_eq!(widths("a|bc"), (1, 2));
-    assert_eq!(widths("(ab)*"), (0, usize::MAX));
-    assert_eq!(widths("(?:ab){2,3}"), (4, 6));
-    assert_eq!(widths("(?>ab)"), (2, 2));
-    assert_eq!(widths("(a)\\1"), (2, 2));
-    assert_eq!(widths("(a)?(?(1)bc|d)"), (1, 3));
-    assert_eq!(widths("(a)?(?(1)bc)"), (0, 3));
-    assert_eq!(widths("^$\\b(?=a)(?!b)"), (0, 0));
-    assert_eq!(widths("a*+"), (0, usize::MAX));
-    assert_eq!(widths("(a)(?:b)?\\1"), (2, 3));
+    assert_eq!(least("abc"), 3);
+    assert_eq!(least("a|bc"), 1);
+    assert_eq!(least("(ab)*"), 0);
+    assert_eq!(least("(?:ab){2,3}"), 4);
+    assert_eq!(least("(?>ab)"), 2);
+    assert_eq!(least("(a)\\1"), 2);
+    assert_eq!(least("(a)?(?(1)bc|d)"), 1);
+    assert_eq!(least("(a)?(?(1)bc)"), 0);
+    assert_eq!(least("^$\\b(?=a)(?!b)"), 0);
+    assert_eq!(least("a*+"), 0);
+    assert_eq!(least("(a)(?:b)?\\1"), 2);
+    assert_eq!(
+        least("(?:(?:a{4294967294}){4294967294}){4294967294}"),
+        usize::MAX
+    );
 }
 
 #[test]
@@ -635,8 +630,8 @@ fn probes_run_their_tests_again_on_the_next_character() {
         ("x(?:[ab]|c)?", "x", "abc", "d"),
         ("x(?:[ab]y|cz)?", "x", "abc", "d"),
         ("x(?>[ab])?", "x", "ab", "c"),
-        ("xa(?<=a[bc]?)", "xa", "bc", "d"),
-        ("xa(?<!a[bc]?)", "xa", "bc", "d"),
+        ("xa(?<=a)[bc]?", "xa", "bc", "d"),
+        ("xa(?<!b)[bc]?", "xa", "bc", "d"),
         ("x[ab]*?y", "x", "aby", "c"),
         ("(a)?(?(1)[bc]|d)", "a", "bc", "ad"),
         ("(a)?(?(1)b|[cd])", "", "acd", "b"),

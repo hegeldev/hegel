@@ -108,7 +108,19 @@ fn width_of(p: &SubPattern, groups: &mut GroupWidths) -> (u64, Option<u64>) {
 /// The shortest and longest strings `p` can match, in codepoints; `None`
 /// for an unbounded maximum.
 pub fn get_width(p: &SubPattern) -> (u64, Option<u64>) {
-    let mut groups = GroupWidths { widths: Vec::new() };
+    get_width_within(p, &[])
+}
+
+/// [`get_width`] for a subpattern nested in a pattern whose capture
+/// groups closed before it have the widths `groups`, by group number:
+/// what the backreferences in `p` to those groups are as wide as.
+pub fn get_width_within(
+    p: &SubPattern,
+    groups: &[Option<(u64, Option<u64>)>],
+) -> (u64, Option<u64>) {
+    let mut groups = GroupWidths {
+        widths: groups.to_vec(),
+    };
     width_of(p, &mut groups)
 }
 

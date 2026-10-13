@@ -1222,7 +1222,7 @@ fn generate_regex_fullmatch_lookbehind_is_validated_against_the_final_string() {
         );
     }
 
-    let re = CompiledRegex::compile("(?<=a*)b", None).unwrap();
+    let re = CompiledRegex::compile("(?<=^)b", None).unwrap();
     let mut produced = 0;
     for seed in 0..20 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
@@ -1231,7 +1231,10 @@ fn generate_regex_fullmatch_lookbehind_is_validated_against_the_final_string() {
             assert_eq!(s, "b");
         }
     }
-    assert!(produced > 0, "an empty-matching lookbehind body must pass");
+    assert!(
+        produced > 0,
+        "a zero-width lookbehind body that holds must pass"
+    );
 }
 
 #[test]

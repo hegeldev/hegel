@@ -137,11 +137,11 @@ enum Inst {
     Loop(Unit, u32, bool),
     At(AtCode, u32),
     /// A lookaround: whether the program at `entry` matches at this
-    /// position (ahead), or ends exactly here from one of the widths
-    /// `behind` back.
+    /// position (ahead), or ends exactly here from `behind` characters
+    /// back.
     Look {
         negate: bool,
-        behind: Option<(usize, usize)>,
+        behind: Option<usize>,
         entry: usize,
     },
     /// Continue at both targets, the first in preference.
@@ -435,12 +435,7 @@ impl<'p> Compiler<'p> {
         p: &'p SubPattern,
         flags: u32,
     ) -> Result<usize, Unsupported> {
-        let behind = (direction < 0).then(|| {
-            let (lo, hi) = get_width(p);
-            let lo = usize::try_from(lo).unwrap_or(usize::MAX);
-            let hi = hi.map_or(usize::MAX, |hi| usize::try_from(hi).unwrap_or(usize::MAX));
-            (lo, hi)
-        });
+        let behind = (direction < 0).then(|| usize::try_from(get_width(p).0).unwrap_or(usize::MAX));
         let index = self.emit(Inst::Look {
             negate,
             behind,
@@ -1003,7 +998,7 @@ impl Program {
                     entry,
                 } => {
                     let (matched, inner) = self.look(*behind, *entry, text, pos);
-                    if behind.is_some_and(|(_, hi)| hi > pos) || inner != Touch::Never {
+                    if behind.is_some_and(|w| w > pos) || inner != Touch::Never {
                         *touch = Touch::End;
                     }
                     if matched != *negate {
@@ -1026,12 +1021,10 @@ impl Program {
     }
 
     /// Whether the lookaround body at `entry` matches at `pos`: ahead of
-    /// it, or ending exactly at it from one of its widths `behind` back
-    /// (CPython only accepts fixed-width lookbehinds, which the matcher
-    /// extends to any of a variable width's widths).
+    /// it, or ending exactly at it from its fixed width `behind` back.
     fn look(
         &self,
-        behind: Option<(usize, usize)>,
+        behind: Option<usize>,
         entry: usize,
         text: &[char],
         pos: usize,
@@ -1047,7 +1040,7 @@ impl Program {
         };
         let found = match behind {
             None => run(pos, None),
-            Some((lo, hi)) => (lo..=hi.min(pos)).any(|w| run(pos - w, Some(pos))),
+            Some(w) => w <= pos && run(pos - w, Some(pos)),
         };
         self.return_scratch(scratch);
         (found, touch)

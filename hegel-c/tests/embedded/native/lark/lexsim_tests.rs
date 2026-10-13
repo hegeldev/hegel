@@ -393,8 +393,9 @@ fn anchored_patterns_may_look_before_their_start() {
         "a*\\b",
         "(a|)\\b",
         "(a)?(?(1)b)\\b",
-        "(?<=a+)b",
-        "a(?<=a+)b",
+        "(?<=aa)b",
+        "a(?<=aa)b",
+        "(a)(?<=\\1)b",
         "a*+\\b",
     ] {
         assert!(anchored_pattern(pattern), "{pattern}");
