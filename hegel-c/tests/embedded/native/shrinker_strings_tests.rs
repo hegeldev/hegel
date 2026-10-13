@@ -349,6 +349,28 @@ fn a_run_of_characters_a_regex_needs_together_is_deleted_at_once() {
     assert_eq!(string_of(&shrinker), "barbaz");
 }
 
+/// The window deletions, a few per character and each a check of the
+/// whole string against the pattern, give up after `max_stall` failures
+/// in a row, and carry on past that many when some succeed.
+#[test]
+fn window_deletions_stop_after_a_stall_and_go_on_while_they_succeed() {
+    let text = "abcdefghijklmnopqrstuvwxyz";
+    let calls_with = |max_stall: usize, accept: fn(&[u32]) -> bool| {
+        let mut shrinker = string_shrinker(vec![regex_node("[a-z]+", "a", text)], accept);
+        shrinker.max_stall = max_stall;
+        drive_no_yield(shrinker.shrink_strings()).unwrap();
+        (shrinker.calls, string_of(&shrinker))
+    };
+    let only_the_whole = |s: &[u32]| s.len() == 26;
+    let (unbudgeted, kept) = calls_with(usize::MAX, only_the_whole);
+    let (budgeted, kept_too) = calls_with(3, only_the_whole);
+    assert_eq!((kept.len(), kept_too.len()), (26, 26));
+    assert!(budgeted < unbudgeted, "{budgeted} {unbudgeted}");
+    let even_up_to_z = |s: &[u32]| s.len() % 2 == 0 && s.last() == Some(&u32::from('z'));
+    let (_, shrunk) = calls_with(3, even_up_to_z);
+    assert_eq!(shrunk, "az");
+}
+
 /// Either end of the simplest string is copied over the string, which
 /// reaches an alternative that differs in several characters at once.
 #[test]

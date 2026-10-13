@@ -27,6 +27,11 @@ impl<'a> Shrinker<'a> {
     /// copy the simplest string's ends over its own, since a constrained
     /// string rarely survives losing one character at a time; finally
     /// replace repeated characters together and minimize each character.
+    /// The windows stop once `max_stall` of them in a row have failed,
+    /// whether the constraint or the test refused them: there are a few
+    /// per character, each checked against the constraint over the whole
+    /// string, and only those the test runs count towards the shrinker's
+    /// own stall.
     async fn shrink_string_node(&mut self, i: usize) -> Result<(), PassExit> {
         {
             let (kind, current) = self.string_at(i).ok_or(PassExit::NodeGone)?;
@@ -77,7 +82,8 @@ impl<'a> Shrinker<'a> {
             }
 
             if kind.constraint.is_some() {
-                for width in (2..=8).rev() {
+                let mut stalled = 0;
+                'windows: for width in (2..=8).rev() {
                     let cur = self.current_string(i).ok_or(PassExit::NodeGone)?;
                     let mut start = cur.len().saturating_sub(width);
                     loop {
@@ -85,8 +91,13 @@ impl<'a> Shrinker<'a> {
                         if start + width <= cur.len() {
                             let mut cand = cur.clone();
                             cand.drain(start..start + width);
-                            self.replace(&HashMap::from_iter([(i, ChoiceValue::String(cand))]))
+                            let ok = self
+                                .replace(&HashMap::from_iter([(i, ChoiceValue::String(cand))]))
                                 .await?;
+                            stalled = if ok { 0 } else { stalled + 1 };
+                            if stalled >= self.max_stall {
+                                break 'windows;
+                            }
                         }
                         if start == 0 {
                             break;
