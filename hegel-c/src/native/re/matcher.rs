@@ -111,9 +111,10 @@ pub enum Touch {
     Never,
     /// The only thing that looked at the end was the forward scan of one
     /// unbounded greedy repeat of a single unit (identified by the
-    /// `run_id` of [`find_run`]), and the match ends at the end of the
-    /// text: on a longer text it ends after the run of that unit
-    /// continuing from there.
+    /// `run_id` of [`find_run`]), the match took the whole run and ends
+    /// at the end of the text, and nothing after the run read a
+    /// character the run covered: on a longer text it ends after the run
+    /// of that unit continuing from there.
     Tail(usize),
     /// Only tests of single characters looked at the end, and every one
     /// found no character there: on a longer text whose next character
@@ -181,6 +182,18 @@ impl Touch {
             }
             Touch::End => Touch::End,
         };
+    }
+
+    /// Record that the match no longer follows the run whose forward
+    /// scan reached the end: the rest of the pattern failed after the
+    /// whole run, or read a character the run covered (a lookbehind, a
+    /// backreference, a multiline `^`), which a longer run would have
+    /// moved. A longer text then matches the same way only when the run
+    /// does not go on.
+    fn untail(&mut self) {
+        if let Touch::Tail(run_id) = *self {
+            *self = Touch::Unless(alloc::vec![Probe::Run(run_id)]);
+        }
     }
 
     /// Record the forward scan of the unbounded greedy unit repeat
@@ -258,13 +271,15 @@ impl State<'_> {
     }
 
     /// [`at_matches`] at `pos`, noting when the verdict depends on where
-    /// the text ends.
+    /// the text ends, and that `^` reads the character before `pos`.
     fn at(&mut self, at: AtCode, pos: usize, flags: u32) -> bool {
         if pos == 0
             || (!matches!(at, AtCode::Beginning | AtCode::BeginningString)
                 && pos + 1 >= self.text.len())
         {
             self.touch.end();
+        } else if at == AtCode::Beginning {
+            self.touch.untail();
         }
         at_matches(at, self.text, pos, flags)
     }
@@ -467,13 +482,7 @@ impl<'p> Matcher<'p> {
         );
         let matched = matched?;
         let end = if matched { end } else { None };
-        let touch = match state.touch {
-            Touch::Tail(run_id) if end != Some(text.len()) => {
-                Touch::Unless(alloc::vec![Probe::Run(run_id)])
-            }
-            touch => touch,
-        };
-        Ok((end, touch))
+        Ok((end, state.touch))
     }
 
     /// Whether the pattern matches the whole of `text`, like CPython's
@@ -592,6 +601,7 @@ impl<'p> Matcher<'p> {
                 let Some((start, end)) = st.group(*g) else {
                     return Ok(false);
                 };
+                st.touch.untail();
                 let len = end - start;
                 if pos + len > st.text.len() {
                     st.touch.end();
@@ -649,6 +659,7 @@ impl<'p> Matcher<'p> {
                 if self.seq(st, rest, end, flags, k)? {
                     return Ok(true);
                 }
+                st.touch.untail();
                 st.restore_marks(saved);
                 Ok(false)
             }
@@ -738,6 +749,9 @@ impl<'p> Matcher<'p> {
         if w > pos {
             st.touch.end();
             return Ok(false);
+        }
+        if w > 0 {
+            st.touch.untail();
         }
         self.seq(st, &p.data, pos - w, flags, &mut |_, end| Ok(end == pos))
     }
@@ -854,7 +868,10 @@ impl<'p> Matcher<'p> {
     }
 
     /// CPython's `REPEAT_ONE`: count the most units that match, then give
-    /// them back one at a time.
+    /// them back one at a time. A scan that reaches the end of the text
+    /// records a [`Touch::Tail`], which stands only while the match
+    /// follows the whole run: once the rest fails after it, the touch
+    /// is downgraded.
     fn greedy_unit<'t>(
         &self,
         st: &mut State<'t>,
@@ -890,6 +907,7 @@ impl<'p> Matcher<'p> {
             st.run = Some((run_id, pos, pos + count));
         }
         if count < min as usize {
+            st.touch.untail();
             return Ok(false);
         }
         loop {
@@ -897,6 +915,7 @@ impl<'p> Matcher<'p> {
             if self.seq(st, rest, pos + count, flags, k)? {
                 return Ok(true);
             }
+            st.touch.untail();
             if count == min as usize {
                 return Ok(false);
             }
@@ -1072,6 +1091,7 @@ impl<'p> Matcher<'p> {
         if self.seq(st, rest, cur, flags, k)? {
             return Ok(true);
         }
+        st.touch.untail();
         st.restore_marks(saved);
         Ok(false)
     }

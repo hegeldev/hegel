@@ -522,11 +522,15 @@ fn unit_alternatives_recognises_only_unit_sequences() {
     assert!(single_unit(&parse_pattern("ab", 0).unwrap().pattern, 0).is_none());
 }
 
-fn touch(pattern: &str, text: &str) -> (Option<usize>, Touch) {
+fn touch_at(pattern: &str, text: &str, pos: usize) -> (Option<usize>, Touch) {
     let parsed = parse_pattern(pattern, 0).unwrap();
     Matcher::new(&parsed)
-        .match_at_touch(&chars(text), 0)
+        .match_at_touch(&chars(text), pos)
         .unwrap()
+}
+
+fn touch(pattern: &str, text: &str) -> (Option<usize>, Touch) {
+    touch_at(pattern, text, 0)
 }
 
 #[test]
@@ -593,6 +597,126 @@ fn touch_reports_how_a_match_depended_on_the_edges_of_the_text() {
     assert_eq!(touch("(a)\\1", "a"), (None, Touch::End));
     assert_eq!(touch("a*?b", "aab"), (Some(3), Touch::Never));
     assert_eq!(touch("a*?", "aa"), (Some(0), Touch::Never));
+    for (pattern, text, pos) in [
+        ("b+B|", "b", 1),
+        ("(?>b+)B|", "b", 1),
+        ("(?>b*)(?!)|", "b", 1),
+        ("(?:b*)++(?!)|", "b", 1),
+        ("b*(?!)|", "b", 1),
+        ("b*(?<=a)", "a", 1),
+        ("(?m)b*^", "\n", 1),
+        ("(b*)\\1", "", 0),
+    ] {
+        assert!(
+            matches!(
+                touch_at(pattern, text, pos),
+                (Some(end), Touch::Unless(probes))
+                    if end == text.len() && matches!(probes[..], [Probe::Run(_)])
+            ),
+            "{pattern:?} on {text:?} at {pos}: {:?}",
+            touch_at(pattern, text, pos)
+        );
+    }
+}
+
+/// Every claim a touch makes about a longer text, checked against a
+/// match of that longer text: a `Never` result stands with anything
+/// before or after the text, a `Tail` match goes on through the run, and
+/// an `Unless` result stands when the next character passes none of
+/// the probes.
+#[test]
+fn touch_claims_hold_on_longer_texts() {
+    let cases = [
+        ("abc", "abc", 0),
+        ("abc", "ab", 0),
+        ("a*", "aa", 0),
+        ("x?a*", "a", 0),
+        ("(?:a*)*", "aa", 0),
+        ("a*b*", "aa", 0),
+        ("a{1,3}", "aa", 0),
+        ("a(?:.|b)?", "a", 0),
+        ("[a-z]+(?<=a)", "abc", 0),
+        ("a*(?!)", "aa", 0),
+        ("[ab]*a*", "a", 0),
+        ("a$", "a", 0),
+        ("\\ba", "a", 0),
+        ("(?<=x)a", "xa", 1),
+        ("x(?=a*)", "x", 0),
+        ("x(?=a)", "xa", 0),
+        ("a*?b", "aab", 0),
+        ("a*?", "aa", 0),
+        ("(?:a|b)*c", "ab", 0),
+        ("\"[^\"]*\"", "\"ab\"", 0),
+        ("(a)\\1", "a", 0),
+        ("(b*)\\1", "", 0),
+        ("b*(?<=b)", "b", 0),
+        ("b*(?<=a)", "a", 1),
+        ("(?m)b*^", "\n", 1),
+        ("b+B|", "b", 1),
+        ("(?>b+)B|", "b", 1),
+        ("(?>b*)(?!)|", "b", 1),
+        ("(?:b*)++(?!)|", "b", 1),
+        ("b*(?!)|", "b", 1),
+        ("(?:ab|a)*", "aba", 0),
+        ("(?i)a*", "aA", 0),
+        ("a*+", "a", 0),
+        ("(?:a*)++b?", "a", 0),
+        ("(a*)(?(1)b|c)", "a", 0),
+        ("a*\\Z", "a", 0),
+        ("[a-z]+\\b", "ab", 0),
+        ("(?>a*)b", "a", 0),
+        ("(?>a*)", "a", 0),
+        ("(?:a*)++", "a", 0),
+    ];
+    let extensions = ["", "a", "b", "x", "\n", "B", "ab", "ba", "bb", "aa", "b\n"];
+    let mut seen = [0usize; 4];
+    for (pattern, text, pos) in cases {
+        let parsed = parse_pattern(pattern, 0).unwrap();
+        let matcher = Matcher::new(&parsed);
+        let text = chars(text);
+        let (end, touch) = matcher.match_at_touch(&text, pos).unwrap();
+        seen[touch.stamp().0 as usize] += 1;
+        for extension in extensions {
+            let mut longer = text.clone();
+            longer.extend(extension.chars());
+            let actual = match_at(&matcher, &longer, pos).unwrap();
+            let claimed = match &touch {
+                Touch::Never => Some(end),
+                Touch::Tail(run_id) => {
+                    let more = run_len(&parsed, *run_id, &longer, text.len()).unwrap();
+                    Some(Some(text.len() + more))
+                }
+                Touch::Unless(probes) => extension
+                    .chars()
+                    .next()
+                    .is_none_or(|c| {
+                        !probes
+                            .iter()
+                            .any(|probe| probe_matches(&parsed, probe, c).unwrap())
+                    })
+                    .then_some(end),
+                Touch::End => None,
+            };
+            if let Some(claimed) = claimed {
+                assert_eq!(
+                    actual, claimed,
+                    "{pattern:?} on {text:?} at {pos} then {extension:?}: {touch:?}"
+                );
+            }
+        }
+        if touch == Touch::Never {
+            for prefix in ["a", "b", "x", "\n"] {
+                let mut longer = chars(prefix);
+                longer.extend(&text);
+                assert_eq!(
+                    match_at(&matcher, &longer, pos + 1).unwrap(),
+                    end.map(|end| end + 1),
+                    "{pattern:?} on {text:?} at {pos} after {prefix:?}"
+                );
+            }
+        }
+    }
+    assert!(seen.iter().all(|&count| count > 0), "{seen:?}");
 }
 
 fn tail_len(pattern: &str, text: &str, longer: &str) -> Option<usize> {
