@@ -16,7 +16,7 @@ those places combine, and how the *profile* a run starts from is chosen.
 | `report_multiple_failures` | boolean | `false` | Report every distinct failure a run finds rather than collapsing to one. |
 | `show_statistics` | boolean | `false` | Print the end-of-run statistics report for events recorded with [`TestCase::event`](crate::TestCase::event) and [`TestCase::event_value`](crate::TestCase::event_value). |
 | `print_blob` | boolean | `true` | On failure, print a copy-pasteable `#[hegel::reproduce_failure("…")]` line. |
-| `backend` | `default`, `urandom` | `default` | The source of randomness ([`Backend`](crate::Backend)): a seeded PRNG, or fresh bytes from `/dev/urandom` on every draw for Antithesis's fuzzer to control. |
+| `backend` | `default`, `urandom` | `default` | The source of randomness ([`Backend`](crate::Backend)): a seeded PRNG, or fresh entropy on every draw for Antithesis's fuzzer to control — asked of the fuzzer directly inside Antithesis, read from `/dev/urandom` elsewhere. |
 | `nondeterminism_strictness` | `quiet`, `warn`, `error` | `quiet` | How a run reacts when it detects nondeterministic test behavior ([`NondeterminismStrictness`](crate::NondeterminismStrictness)): switch to nondeterministic handling silently, switch with a one-line notice, or abort the run with a flaky-test error. |
 
 The "Values" column is the vocabulary `hegel.toml` and the command-line
@@ -143,7 +143,7 @@ they are siblings, and none layers over another.
 |---|---|---|
 | `development` | nothing | Locally: whenever neither of the others applies. |
 | `ci` | `derandomize = true`, `database = "disabled"`, `suppress_health_check = ["too_slow"]` | On a CI server, detected from `CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`, `CIRCLECI`, and the variables other common services set. |
-| `workload` | `backend = "urandom"`, `database = "disabled"`, `suppress_health_check = ["all"]` | Inside [Antithesis](https://antithesis.com/), detected from `ANTITHESIS_OUTPUT_DIR`. Antithesis's fuzzer controls `/dev/urandom`, so the `urandom` backend hands it every choice; and Antithesis pauses threads, which would trip wall-clock health checks such as `too_slow` spuriously. |
+| `workload` | `backend = "urandom"`, `database = "disabled"`, `suppress_health_check = ["all"]` | Inside [Antithesis](https://antithesis.com/), detected from `ANTITHESIS_OUTPUT_DIR`. The `urandom` backend hands Antithesis's fuzzer every choice, asking it for each draw through its instrumentation library (`fuzz_get_random` from `/usr/lib/libvoidstar.so`, as Antithesis's SDKs do) and reading `/dev/urandom`, which the fuzzer also controls, if that library cannot be loaded; and Antithesis pauses threads, which would trip wall-clock health checks such as `too_slow` spuriously. |
 
 `print_blob` is on in the base settings, so a failing test prints a
 `#[hegel::reproduce_failure("…")]` line.

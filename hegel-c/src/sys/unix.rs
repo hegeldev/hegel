@@ -217,16 +217,64 @@ unsafe extern "C" {
     fn getenv(name: *const core::ffi::c_char) -> *const core::ffi::c_char;
 }
 
+#[cfg_attr(all(target_os = "linux", target_env = "gnu"), link(name = "dl"))]
+unsafe extern "C" {
+    fn dlopen(
+        filename: *const core::ffi::c_char,
+        flags: core::ffi::c_int,
+    ) -> *mut core::ffi::c_void;
+    fn dlsym(
+        handle: *mut core::ffi::c_void,
+        symbol: *const core::ffi::c_char,
+    ) -> *mut core::ffi::c_void;
+}
+
+/// `RTLD_NOW`, the same value on every Unix: resolve every symbol at load
+/// time so a library missing one fails here rather than on first use.
+const RTLD_NOW: core::ffi::c_int = 2;
+
+/// `s` as a NUL-terminated byte string, or `None` if it contains an
+/// interior NUL and so has no C representation.
+fn c_string(s: &str) -> Option<Vec<u8>> {
+    if s.as_bytes().contains(&0) {
+        return None;
+    }
+    let mut c = Vec::with_capacity(s.len() + 1);
+    c.extend_from_slice(s.as_bytes());
+    c.push(0);
+    Some(c)
+}
+
+/// The address of `symbol` in the shared library at `path`, loading the
+/// library if it is not already loaded. `None` if the library cannot be
+/// loaded or does not define the symbol. The library is never unloaded.
+///
+/// `dlopen` and `dlsym` live in libc on every Unix but glibc before 2.34,
+/// where they are in libdl; later glibc keeps an empty libdl, so the
+/// extern block links it on glibc regardless.
+pub(super) fn dynamic_symbol(path: &str, symbol: &str) -> Option<*mut core::ffi::c_void> {
+    let cpath = c_string(path)?;
+    let csymbol = c_string(symbol)?;
+    // SAFETY: both strings are NUL-terminated and outlive the calls, and
+    // `dlsym` is only called on a handle `dlopen` returned non-null.
+    unsafe {
+        let handle = dlopen(cpath.as_ptr().cast(), RTLD_NOW);
+        if handle.is_null() {
+            return None;
+        }
+        let address = dlsym(handle, csymbol.as_ptr().cast());
+        if address.is_null() {
+            return None;
+        }
+        Some(address)
+    }
+}
+
 /// The value of the environment variable `name`, decoded lossily from
 /// whatever bytes the environment holds. `None` if unset or if `name`
 /// contains an interior NUL.
 pub(super) fn env_var(name: &str) -> Option<String> {
-    if name.as_bytes().contains(&0) {
-        return None;
-    }
-    let mut cname = Vec::with_capacity(name.len() + 1);
-    cname.extend_from_slice(name.as_bytes());
-    cname.push(0);
+    let cname = c_string(name)?;
     // SAFETY: `cname` is NUL-terminated and outlives the call.
     let ptr = unsafe { getenv(cname.as_ptr().cast()) };
     if ptr.is_null() {

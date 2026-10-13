@@ -244,6 +244,12 @@ pub(super) fn urandom(_buf: &mut [u8]) -> Result<(), Error> {
     Err(Error)
 }
 
+/// Always `None`: the only shared library the engine looks up a symbol in
+/// is Antithesis's, and Antithesis does not run on Windows.
+pub(super) fn dynamic_symbol(_path: &str, _symbol: &str) -> Option<*mut core::ffi::c_void> {
+    None
+}
+
 /// Best-effort single `WriteFile` of `bytes` to stderr; failures and short
 /// writes are ignored.
 pub(super) fn stderr_write(bytes: &[u8]) {

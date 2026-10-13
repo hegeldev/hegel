@@ -62,6 +62,10 @@ pub(super) fn urandom(_buf: &mut [u8]) -> Result<(), Error> {
     Err(Error)
 }
 
+pub(super) fn dynamic_symbol(_path: &str, _symbol: &str) -> Option<*mut core::ffi::c_void> {
+    None
+}
+
 pub(super) fn env_var(_name: &str) -> Option<String> {
     None
 }
