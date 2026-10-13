@@ -1,129 +1,168 @@
-from typing import TypeVar
+"""Searching a generator for a value: the helpers Hypothesis's tests use
+to find a minimal example, any example, or to check every example."""
 
-from hegel.hypothesis import HealthCheck, Phase, Verbosity, given, settings as Settings
-from hegel.hypothesis.control import current_build_context, currently_in_test_context
-from hegel.hypothesis.errors import NoSuchExample, Unsatisfiable
-from hegel.hypothesis.strategies import SearchStrategy
-from hegel.hypothesis.strategies._base import unwrap_strategies
+from __future__ import annotations
 
-from tests.hypothesis_port.common.utils import no_shrink
+from collections.abc import Callable
+from typing import Any, TypeVar
 
-TIME_INCREMENT = 0.00001
+import hegel
+from hegel.generators.combinators import as_generator
+from hegel.runner import with_output_override
+
 T = TypeVar("T")
+
+DEFAULT_SEARCH_CASES = 500
 
 
 class Found(Exception):
+    """Raised by a search's test body once the value is found: the run
+    treats it as a failure, shrinks it, and re-raises it last."""
+
+
+def _discard(line: str) -> None:
     pass
 
 
-def minimal(
-    definition: SearchStrategy[T],
-    condition=lambda x: True,
-    settings: Settings | None = None,
-) -> T:
-    definition.validate()
-    result = None
-
-    def wrapped_condition(x):
-        return condition(x)
-
-    if settings is None:
-        settings = Settings(max_examples=500, phases=(Phase.generate, Phase.shrink))
-
-    verbosity = settings.verbosity
-    if verbosity == Verbosity.normal:
-        verbosity = Verbosity.quiet
-
-    @given(definition)
-    @Settings(
-        parent=settings,
-        suppress_health_check=list(HealthCheck),
-        report_multiple_bugs=False,
+def _search_settings(settings: hegel.Settings | None, overrides: dict[str, Any]) -> hegel.Settings:
+    """Settings for a search: quiet, seeded by the search itself, every
+    health check off, and no database."""
+    base = hegel.Settings(settings, **overrides) if (settings or overrides) else hegel.Settings()
+    return hegel.Settings(
+        base,
+        database="",
         derandomize=True,
-        database=None,
-        verbosity=verbosity,
-        deadline=None,
+        suppress_health_check=hegel.HealthCheck.all(),
+        report_multiple_failures=False,
+        print_blob=False,
+        verbosity=hegel.Verbosity.quiet,
     )
-    def inner(x):
-        if wrapped_condition(x):
-            nonlocal result
-            result = x
+
+
+def minimal(
+    generator: Any,
+    condition: Callable[[Any], bool] = lambda x: True,
+    settings: hegel.Settings | None = None,
+    **overrides: Any,
+) -> Any:
+    """The minimal value from ``generator`` satisfying ``condition``: the
+    search runs as a test whose failure is finding the value, so the result
+    is shrunk. Raises :class:`hegel.Unsatisfiable` when nothing is found.
+    ``settings`` and ``overrides`` are Hegel settings for the search
+    (``test_cases``, ``phases``, ...)."""
+    generator = as_generator(generator)
+    found: list[Any] = []
+
+    def body(tc: hegel.TestCase) -> None:
+        value = tc.draw_silent(generator)
+        if condition(value):
+            found.append(value)
             raise Found
 
+    if settings is None and "test_cases" not in overrides:
+        overrides["test_cases"] = DEFAULT_SEARCH_CASES
+    if settings is None and "phases" not in overrides:
+        overrides["phases"] = (hegel.Phase.generate, hegel.Phase.shrink)
     try:
-        inner()
+        with with_output_override(_discard):
+            hegel.run(body, _search_settings(settings, overrides))
     except Found:
-        return result
-    raise Unsatisfiable(
-        f"Could not find any examples from {definition!r} that satisfied "
+        return found[-1]
+    raise hegel.Unsatisfiable(
+        f"Could not find any examples from {generator!r} that satisfied "
         f"{getattr(condition, '__name__', repr(condition))}"
     )
 
 
-def find_any(definition, condition=lambda _: True, settings=None):
-    # If nested within an existing @given
-    if currently_in_test_context():
-        # Hypothesis's loop ends when the test case overruns its (small)
-        # buffer; Hegel's buffer is far larger, so cap the attempts instead.
-        tc = current_build_context().tc
+def find_any(
+    generator: Any,
+    condition: Callable[[Any], bool] = lambda _: True,
+    settings: hegel.Settings | None = None,
+    *,
+    tc: hegel.TestCase | None = None,
+    **overrides: Any,
+) -> Any:
+    """Any value from ``generator`` satisfying ``condition``, unshrunk.
+    Inside a test, pass its test case as ``tc`` to draw from it instead of
+    starting a search (the test case is rejected if nothing turns up)."""
+    if tc is not None:
+        generator = as_generator(generator)
         for _ in range(1000):
-            if condition(s := tc.draw_silent(unwrap_strategies(definition))):
-                return s
+            if condition(value := tc.draw_silent(generator)):
+                return value
         tc.reject()
-
-    # If top-level
-    settings = settings or Settings.default
+    base = hegel.Settings(settings, **overrides) if (settings or overrides) else hegel.Settings()
     return minimal(
-        definition,
+        generator,
         condition,
-        settings=Settings(
-            settings, phases=no_shrink, max_examples=max(1000, settings.max_examples)
+        settings=hegel.Settings(
+            base,
+            phases=frozenset(base.phases) - {hegel.Phase.shrink},
+            test_cases=max(1000, base.test_cases),
         ),
     )
 
 
-def assert_no_examples(strategy, condition=lambda _: True):
+def assert_no_examples(generator: Any, condition: Callable[[Any], bool] = lambda _: True) -> None:
     try:
-        assert_all_examples(strategy, lambda val: not condition(val))
-    except (Unsatisfiable, NoSuchExample):
+        assert_all_examples(generator, lambda val: not condition(val))
+    except hegel.Unsatisfiable:
         pass
 
 
-def assert_all_examples(strategy, predicate, settings=None):
-    """Asserts that all examples of the given strategy match the predicate."""
-    if currently_in_test_context():
-        tc = current_build_context().tc
+def assert_all_examples(
+    generator: Any,
+    predicate: Callable[[Any], bool],
+    settings: hegel.Settings | None = None,
+    *,
+    tc: hegel.TestCase | None = None,
+    **overrides: Any,
+) -> None:
+    """Asserts that all examples of the given generator match the predicate.
+    Inside a test, pass its test case as ``tc`` to check a few draws from it
+    instead of starting a run."""
+    generator = as_generator(generator)
+    if tc is not None:
         for _ in range(20):
-            s = tc.draw_silent(unwrap_strategies(strategy))
-            msg = f"Found {s!r} using strategy {strategy} which does not match"
-            assert predicate(s), msg
+            value = tc.draw_silent(generator)
+            assert predicate(value), (
+                f"Found {value!r} using generator {generator} which does not match"
+            )
+        return
 
-    else:
+    def body(tc: hegel.TestCase) -> None:
+        value = tc.draw_silent(generator)
+        assert predicate(value), f"Found {value!r} using generator {generator} which does not match"
 
-        @given(strategy)
-        @Settings(parent=settings, database=None, deadline=None)
-        def assert_examples(s):
-            msg = f"Found {s!r} using strategy {strategy} which does not match"
-            assert predicate(s), msg
-
-        assert_examples()
+    base = hegel.Settings(settings, **overrides) if (settings or overrides) else hegel.Settings()
+    with with_output_override(_discard):
+        hegel.run(body, hegel.Settings(base, database="", print_blob=False))
 
 
-def assert_simple_property(strategy, predicate, settings=None):
+def assert_simple_property(
+    generator: Any,
+    predicate: Callable[[Any], bool],
+    settings: hegel.Settings | None = None,
+    **overrides: Any,
+) -> None:
     """Like assert_all_examples, for simple constant properties that a few
     examples verify adequately."""
+    base = hegel.Settings(settings, **overrides) if (settings or overrides) else hegel.Settings()
     assert_all_examples(
-        strategy,
+        generator,
         predicate,
-        Settings(parent=settings, max_examples=15, suppress_health_check=list(HealthCheck)),
+        hegel.Settings(base, test_cases=15, suppress_health_check=hegel.HealthCheck.all()),
     )
 
 
-def check_can_generate_examples(strategy, settings=None):
-    """Generates a few examples from the strategy, checking only that no
+def check_can_generate_examples(
+    generator: Any, settings: hegel.Settings | None = None, **overrides: Any
+) -> None:
+    """Generates a few examples from the generator, checking only that no
     error is raised."""
+    base = hegel.Settings(settings, **overrides) if (settings or overrides) else hegel.Settings()
     assert_simple_property(
-        strategy,
+        generator,
         lambda _: True,
-        settings=Settings(parent=settings, phases=(Phase.generate,)),
+        settings=hegel.Settings(base, phases=(hegel.Phase.generate,)),
     )

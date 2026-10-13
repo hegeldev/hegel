@@ -1,3 +1,5 @@
+# Dropped from the Hypothesis original: test_cannot_target_outside_test
+# (target() is a method of the test case, which only exists inside a test).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -12,99 +14,114 @@ from operator import itemgetter
 
 import pytest
 
-from hegel.hypothesis import example, given, strategies as st, target
-from hegel.hypothesis.errors import InvalidArgument
+import hegel
+from hegel import generators as gs
 
 
-@example(0.0, "this covers the branch where context.data is None")
-@given(
-    observation=st.integers() | st.floats(allow_nan=False, allow_infinity=False),
-    label=st.text(),
-)
-def test_allowed_inputs_to_target(observation, label):
-    target(observation, label=label)
+@hegel.explicit_test_case(0.0, "this covers the branch where target() is ignored")
+@hegel.test
+def test_allowed_inputs_to_target(tc):
+    observation = tc.draw(gs.integers() | gs.floats(allow_nan=False, allow_infinity=False))
+    label = tc.draw(gs.text())
+    tc.target(observation, label=label)
 
 
-@given(
-    observation=st.integers(min_value=1)
-    | st.floats(min_value=1, allow_nan=False, allow_infinity=False),
-    label=st.sampled_from(["a", "few", "labels"]),
-)
-def test_allowed_inputs_to_target_fewer_labels(observation, label):
-    target(observation, label=label)
-
-
-@given(st.floats(min_value=1, max_value=10))
-def test_target_without_label(observation):
-    target(observation)
-
-
-@given(
-    st.lists(
-        st.tuples(st.floats(allow_nan=False, allow_infinity=False), st.text()),
-        min_size=1,
-        unique_by=itemgetter(1),
+@hegel.test
+def test_allowed_inputs_to_target_fewer_labels(tc):
+    observation = tc.draw(
+        gs.integers(min_value=1) | gs.floats(min_value=1, allow_nan=False, allow_infinity=False)
     )
-)
-def test_multiple_target_calls(args):
+    label = tc.draw(gs.sampled_from(["a", "few", "labels"]))
+    tc.target(observation, label=label)
+
+
+@hegel.test
+def test_target_without_label(tc):
+    observation = tc.draw(gs.floats(min_value=1, max_value=10))
+    tc.target(observation)
+
+
+@hegel.test
+def test_multiple_target_calls(tc):
+    args = tc.draw(
+        gs.lists(
+            gs.tuples(gs.floats(allow_nan=False, allow_infinity=False), gs.text()),
+            min_size=1,
+            unique_by=itemgetter(1),
+        )
+    )
     for observation, label in args:
-        target(observation, label=label)
+        tc.target(observation, label=label)
 
 
-@given(st.lists(st.floats(allow_nan=False, allow_infinity=False), min_size=11, max_size=20))
-def test_respects_max_pool_size(observations):
+@hegel.test
+def test_respects_max_pool_size(tc):
     """Using many examples of several labels like this stresses the
     pool-size logic and internal assertions in TargetSelector.
     """
-    for i, obs in enumerate(observations):
-        target(obs, label=str(i))
-
-
-def everything_except(type_):
-    # Note: we would usually stick to faster traditional or parametrized
-    # tests to check that invalid inputs are rejected, but for `target()`
-    # we need to use `@given` (to validate arguments instead of context)
-    # so we might as well apply this neat recipe.
-    # Hegel cannot draw arbitrary types from from_type(type), so the usual
-    # recipe is replaced with a fixed assortment of values.
-    assorted = st.one_of(
-        st.none(),
-        st.booleans(),
-        st.integers(),
-        st.floats(),
-        st.text(),
-        st.binary(),
-        st.lists(st.text()),
-        st.tuples(st.integers()),
+    observations = tc.draw(
+        gs.lists(gs.floats(allow_nan=False, allow_infinity=False), min_size=11, max_size=20)
     )
-    return assorted.filter(lambda x: not isinstance(x, type_))
+    for i, obs in enumerate(observations):
+        tc.target(obs, label=str(i))
 
 
-@example(float("nan"), "")
-@example(float("inf"), "")
-@example(float("-inf"), "")
-@example("1", "Non-float observations are invalid")
-@example(0.0, ["a list of strings is not a valid label"])
-@given(observation=everything_except((float, int)), label=everything_except(str))
-def test_disallowed_inputs_to_target(observation, label):
-    with pytest.raises(InvalidArgument):
-        target(observation, label=label)
+# target() is ignored in an explicit test case, so the invalid inputs are
+# checked in generated ones instead of as @example cases.
+@pytest.mark.parametrize("observation", [float("nan"), float("inf"), float("-inf")])
+def test_disallowed_non_finite_observations(observation):
+    @hegel.test
+    def test(tc):
+        tc.draw(gs.none())
+        with pytest.raises(hegel.InvalidArgument):
+            tc.target(observation, label="")
+
+    test()
 
 
-def test_cannot_target_outside_test():
-    with pytest.raises(InvalidArgument):
-        target(1.0, label="example label")
+@pytest.mark.xfail(
+    strict=True,
+    reason="hegel's TestCase.target coerces the score with float(), so a numeric "
+    "string is accepted and other non-numbers raise TypeError rather than InvalidArgument",
+)
+@pytest.mark.parametrize("observation", ["1", None, [0.0]])
+def test_disallowed_non_numeric_observations(observation):
+    @hegel.test
+    def test(tc):
+        tc.draw(gs.none())
+        with pytest.raises(hegel.InvalidArgument):
+            tc.target(observation, label="Non-float observations are invalid")
+
+    test()
 
 
-@given(st.none())
-def test_cannot_target_same_label_twice(_):
-    target(0.0, label="label")
-    with pytest.raises(InvalidArgument):
-        target(1.0, label="label")
+@pytest.mark.xfail(
+    strict=True,
+    reason="hegel's TestCase.target raises TypeError rather than InvalidArgument "
+    "for a label that is not a string",
+)
+@pytest.mark.parametrize("label", [["a list of strings is not a valid label"], 1, None])
+def test_disallowed_labels(label):
+    @hegel.test
+    def test(tc):
+        tc.draw(gs.none())
+        with pytest.raises(hegel.InvalidArgument):
+            tc.target(0.0, label=label)
+
+    test()
 
 
-@given(st.none())
-def test_cannot_target_default_label_twice(_):
-    target(0.0)
-    with pytest.raises(InvalidArgument):
-        target(1.0)
+@hegel.test
+def test_cannot_target_same_label_twice(tc):
+    tc.draw(gs.none())
+    tc.target(0.0, label="label")
+    with pytest.raises(hegel.InvalidArgument):
+        tc.target(1.0, label="label")
+
+
+@hegel.test
+def test_cannot_target_default_label_twice(tc):
+    tc.draw(gs.none())
+    tc.target(0.0)
+    with pytest.raises(hegel.InvalidArgument):
+        tc.target(1.0)

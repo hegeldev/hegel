@@ -1,11 +1,13 @@
-"""Stand-ins for the Hypothesis internals its tests import: enough of
-``hypothesis.internal.floats``, ``.reflection`` and ``.compat`` for the
-ported tests that only use them as helpers."""
+"""Stand-ins for the Hypothesis internals its tests import as helpers:
+enough of ``hypothesis.internal.floats``, ``.reflection`` and ``.compat``
+for the ported tests."""
 
+import datetime as _dt
 import math
 import struct
 import sys
 import typing
+from calendar import monthrange as _monthrange
 
 PYPY = False
 GRAALPY = False
@@ -45,23 +47,6 @@ def next_up_normal(value: float, width: int, *, allow_subnormal: bool) -> float:
     return -next_down_normal(-value, width, allow_subnormal=allow_subnormal)
 
 
-def get_pretty_function_description(f: object) -> str:
-    from hegel.hypothesis.strategies._base import _describe
-
-    description = getattr(f, "__hegel_description__", None)
-    if description is not None:
-        return description
-    if not callable(f):
-        return repr(f)
-    return _describe(f)
-
-
-def nicerepr(v: object) -> str:
-    if callable(v) and not isinstance(v, type):
-        return get_pretty_function_description(v)
-    return repr(v)
-
-
 get_type_hints = typing.get_type_hints
 
 
@@ -84,6 +69,10 @@ def float_of(x: float, width: int) -> float:
 
 def is_negative(value: float) -> bool:
     return math.copysign(1.0, value) < 0
+
+
+def normalize_zero(f: float) -> float:
+    return 0.0 if f == 0.0 else f
 
 
 def stack_depth_of_caller() -> int:
@@ -124,19 +113,7 @@ class UniqueIdentifier:
         return self.identifier
 
 
-# --- hypothesis.strategies._internal.random ---------------------------------
-
-from hegel.hypothesis.strategies import RANDOM_METHODS, convert_kwargs  # noqa: E402
-
-
-def normalize_zero(f: float) -> float:
-    return 0.0 if f == 0.0 else f
-
-
 # --- hypothesis.strategies._internal.datetime -------------------------------
-
-import datetime as _dt  # noqa: E402
-from calendar import monthrange as _monthrange  # noqa: E402
 
 
 def _instant(value):
@@ -153,7 +130,7 @@ def datetime_does_not_exist(value):
     if value.tzinfo is None:
         return False
     try:
-        roundtrip = value.astimezone(_dt.timezone.utc).astimezone(value.tzinfo)
+        roundtrip = value.astimezone(_dt.UTC).astimezone(value.tzinfo)
     except OverflowError:
         return True
     if value.tzinfo is not roundtrip.tzinfo and value.utcoffset() != roundtrip.utcoffset():

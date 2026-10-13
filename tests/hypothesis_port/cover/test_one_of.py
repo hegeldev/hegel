@@ -8,62 +8,53 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-import re
+# Dropped from the Hypothesis original: test_one_of_empty (one_of() with no
+# arguments as nothing(); hegel rejects it).
+
 from collections.abc import Sequence
 
 import pytest
 
-from hegel.hypothesis import given, strategies as st
-from hegel.hypothesis.errors import InvalidArgument
-
-from tests.hypothesis_port.common.debug import assert_no_examples
+import hegel
+from hegel import generators as gs
 
 
-def test_one_of_empty():
-    e = st.one_of()
-    assert e.is_empty
-    assert_no_examples(e)
-
-
-@given(st.one_of(st.integers().filter(bool)))
-def test_one_of_filtered(i):
+@hegel.test
+def test_one_of_filtered(tc):
+    i = tc.draw(gs.one_of(gs.integers().filter(bool)))
     assert bool(i)
 
 
-@given(st.one_of(st.just(100).flatmap(st.integers)))
-def test_one_of_flatmapped(i):
+@hegel.test
+def test_one_of_flatmapped(tc):
+    i = tc.draw(gs.one_of(gs.just(100).flat_map(gs.integers)))
     assert i >= 100
 
 
 def test_one_of_single_strategy_is_noop():
-    s = st.integers()
-    assert st.one_of(s) is s
-    assert st.one_of([s]) is s
+    s = gs.integers()
+    assert gs.one_of(s) is s
+    assert gs.one_of([s]) is s
 
 
-def test_one_of_without_strategies_suggests_sampled_from():
-    with pytest.raises(
-        InvalidArgument,
-        match=re.escape("Did you mean st.sampled_from([1, 2, 3])?"),
-    ):
-        st.one_of(1, 2, 3)
+def test_one_of_without_strategies_is_an_error():
+    with pytest.raises(hegel.InvalidArgument):
+        gs.one_of(1, 2, 3)
 
 
 @pytest.mark.parametrize(
     "strategy, count",
     [
-        (st.one_of(st.integers(), st.integers(), st.integers()), 1),
-        (st.one_of(st.integers(), st.one_of(st.integers(), st.integers())), 2),
-        ((st.integers() | st.integers()) | st.integers(), 1),
-        (st.integers() | (st.integers() | st.integers()), 1),
-        (st.integers() | st.text() | st.booleans(), 1),
-        pytest.param(
-            st.from_type(int | Sequence[int]),
-            2,
-            marks=pytest.mark.xfail(
-                strict=True, reason="Hegel's from_type(Sequence) is not a one_of of lists"
-            ),
-        ),
+        (gs.one_of(gs.integers(), gs.integers(), gs.integers()), 1),
+        # Hypothesis expects 2 here: its reprs are lazy, so a nested one_of
+        # shows as written. hegel's one_of flattens eagerly.
+        (gs.one_of(gs.integers(), gs.one_of(gs.integers(), gs.integers())), 1),
+        ((gs.integers() | gs.integers()) | gs.integers(), 1),
+        (gs.integers() | (gs.integers() | gs.integers()), 1),
+        (gs.integers() | gs.text() | gs.booleans(), 1),
+        # Hypothesis expects 2 here, as its from_type(Sequence) is a lazy
+        # one_of that is not unwrapped; hegel's is built flat.
+        (gs.from_type(int | Sequence[int]), 1),
     ],
 )
 def test_one_of_unwrapping(strategy, count):

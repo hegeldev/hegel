@@ -1,3 +1,6 @@
+# Dropped from the Hypothesis original: test_does_not_print_debug_in_verbose,
+# test_does_print_debug_in_debug, test_does_print_verbose_in_debug (the reporter API:
+# debug_report/verbose_report).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -13,62 +16,37 @@ import sys
 
 import pytest
 
-from hegel.hypothesis import given, reporting
-from hegel.hypothesis._settings import Verbosity, settings
-from hegel.hypothesis.reporting import debug_report, verbose_report
-from hegel.hypothesis.strategies import integers
-
-from tests.hypothesis_port.common.utils import capture_out
+import hegel
+from hegel import generators as gs
+from tests.helpers import notes
 
 
 def test_prints_output_by_default():
-    @given(integers())
-    def test_int(x):
+    @hegel.test
+    def test_int(tc):
+        tc.draw(gs.integers())
         raise AssertionError
 
     with pytest.raises(AssertionError) as err:
         test_int()
-    assert "Falsifying example" in "\n".join(err.value.__notes__)
-
-
-def test_does_not_print_debug_in_verbose():
-    @given(integers())
-    @settings(verbosity=Verbosity.verbose)
-    def f(x):
-        debug_report("Hi")
-
-    with capture_out() as o:
-        f()
-    assert "Hi" not in o.getvalue()
-
-
-def test_does_print_debug_in_debug():
-    @given(integers())
-    @settings(verbosity=Verbosity.debug)
-    def f(x):
-        debug_report("Hi")
-
-    with capture_out() as o:
-        f()
-    assert "Hi" in o.getvalue()
-
-
-def test_does_print_verbose_in_debug():
-    @given(integers())
-    @settings(verbosity=Verbosity.debug)
-    def f(x):
-        verbose_report("Hi")
-
-    with capture_out() as o:
-        f()
-    assert "Hi" in o.getvalue()
+    assert "Falsifying example" in "\n".join(notes(err.value))
 
 
 def test_can_report_when_system_locale_is_ascii(monkeypatch):
+    # Hegel's default output goes to stderr; a failing example that cannot be
+    # encoded there must still be reported, not turned into a UnicodeEncodeError.
     read, write = os.pipe()
     with (
         open(read, encoding="ascii") as read,
         open(write, "w", encoding="ascii") as write,
     ):
-        monkeypatch.setattr(sys, "stdout", write)
-        reporting.default("☃")
+        monkeypatch.setattr(sys, "stderr", write)
+
+        @hegel.test
+        def test_snowman(tc):
+            x = tc.draw(gs.just("☃"))  # noqa: F841 (names the draw)
+            raise AssertionError
+
+        with pytest.raises(AssertionError) as err:
+            test_snowman()
+        assert "x = '☃'" in "\n".join(notes(err.value))

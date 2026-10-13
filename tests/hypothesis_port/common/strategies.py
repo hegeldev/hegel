@@ -1,25 +1,25 @@
 import time
 
-from hegel.hypothesis.strategies import SearchStrategy, binary, integers
+from hegel.generators import Generator, binary, integers
 
 
-class _Slow(SearchStrategy):
-    def do_draw(self, data):
+class _Slow(Generator):
+    def do_draw(self, tc):
         time.sleep(1.01)
-        data.draw(binary(min_size=2, max_size=2))
+        return tc.draw_silent(binary(min_size=2, max_size=2))
 
 
 SLOW = _Slow()
 
 
-class HardToShrink(SearchStrategy):
+class HardToShrink(Generator):
     def __init__(self):
         super().__init__()
         self.__last = None
         self.accepted = set()
 
-    def do_draw(self, data):
-        x = bytes(data.draw(integers(0, 255)) for _ in range(100))
+    def do_draw(self, tc):
+        x = bytes(tc.draw_silent(integers(0, 255)) for _ in range(100))
         if x in self.accepted:
             return True
         ls = self.__last

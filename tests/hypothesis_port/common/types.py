@@ -4,13 +4,13 @@ lookup tests use."""
 
 import collections
 import collections.abc
+import importlib
 import typing
 from collections.abc import Mapping
 
-import importlib
+from hegel import generators as gs
 
 _from_type = importlib.import_module("hegel.generators.from_type")
-from hegel.hypothesis import strategies as st
 
 
 class _TypeLookup(Mapping):
@@ -60,23 +60,19 @@ _GENERIC_ORIGINS = {
 
 _global_type_lookup = _TypeLookup()
 
-# The builtin types with a Hypothesis-style strategy of their own.
+# The builtin types with a generator of their own.
 core_types = {t for t in _from_type._BUILTINS if isinstance(t, type)}
 
 typing_root_type = (typing._Final, typing._GenericAlias)  # type: ignore[attr-defined]
 
-_NOT_STRATEGIES = {
-    "DataObject",
-    "DrawFn",
-    "SearchStrategy",
+_NOT_GENERATORS = {
+    "Generator",
+    "combine_labels",
     "composite",
-    "register_type_strategy",
-    "HypothesisRandom",
-    "TrueRandom",
-    "RANDOM_METHODS",
-    "convert_kwargs",
+    "label_from_name",
+    "register_type_generator",
 }
-_all_strategies = {name: getattr(st, name) for name in st.__all__ if name not in _NOT_STRATEGIES}
+_all_generators = {name: getattr(gs, name) for name in gs.__all__ if name not in _NOT_GENERATORS}
 
 
 def can_cast(type, value):

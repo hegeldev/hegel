@@ -5,10 +5,9 @@ Guidance for coding agents (and people) working in this repository.
 hegel-python is the Python binding of the Hegel property-based testing engine.
 The engine is libhegel, built from source from the `hegeltest-c` crate (pinned
 exactly in `Cargo.toml`) into a pyo3 extension module, `hegel._native`
-(`src/*.rs`). The Python package lives in `python/hegel/`; `python/hegel/hypothesis/`
-is a compatibility layer reimplementing Hypothesis's API on top of it, and
-`tests/hypothesis_port/` is Hypothesis's own test suite ported to run against
-that layer.
+(`src/*.rs`). The Python package lives in `python/hegel/`, and
+`tests/hypothesis_port/` is Hypothesis's own test suite ported to the Hegel
+API (see its README for the conventions).
 
 ## Workflow
 
@@ -28,9 +27,9 @@ so run `just setup` first.
 ## Rules
 
 - **Coverage is 100%.** `just check-coverage` requires full line and branch
-  coverage of `python/hegel`, excluding the Hypothesis compatibility layer
-  (`python/hegel/hypothesis/`). Cover new code with tests; mark genuinely
-  unreachable lines `# nocov` rather than lowering the bar.
+  coverage of `python/hegel` from the package's own tests (`tests/`, without
+  the ported suite). Cover new code with tests; mark genuinely unreachable
+  lines `# nocov` rather than lowering the bar.
 - **Engine divergences are not worked around.** When libhegel behaves
   differently from what Python's `re` or Hypothesis would do, record it in
   `docs/engine-issues.md` and mark the affected test `xfail` (strict, so it

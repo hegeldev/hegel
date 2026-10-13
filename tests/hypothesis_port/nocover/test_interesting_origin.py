@@ -10,8 +10,8 @@
 
 import pytest
 
-from hegel.hypothesis import given, settings, strategies as st
-
+import hegel
+from hegel import generators as gs
 from tests.hypothesis_port.common.utils import flaky
 
 
@@ -46,7 +46,8 @@ def go_wrong_coverup(a, b):
 
 @pytest.mark.xfail(
     strict=True,
-    reason="hegel distinguishes failures by exception type and location only, not by the cause chain",
+    reason="Hegel distinguishes failures by exception type and location only, not by "
+    "the cause chain, so both errors are reported as one",
 )
 @pytest.mark.parametrize(
     "function",
@@ -55,9 +56,10 @@ def go_wrong_coverup(a, b):
 )
 @flaky(max_runs=3, min_passes=1)
 def test_can_generate_specified_version(function):
-    @given(st.integers(), st.integers())
-    @settings(database=None, report_multiple_bugs=True)
-    def test_fn(x, y):
+    @hegel.test(database="", report_multiple_failures=True)
+    def test_fn(tc):
+        x = tc.draw(gs.integers())
+        y = tc.draw(gs.integers())
         # Indirection to fix https://github.com/HypothesisWorks/hypothesis/issues/2888
         return function(x, y)
 

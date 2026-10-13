@@ -1,5 +1,8 @@
 # Dropped from the Hypothesis original: test_notes_high_overrun_rates_in_unsatisfiable_error
-# (relies on the internal buffer_size_limit of the conjecture engine).
+# (relies on the internal buffer_size_limit of the conjecture engine);
+# TestCases.test_abs_non_negative_varargs, test_abs_non_negative_varargs_kwargs,
+# test_abs_non_negative_varargs_kwargs_only, test_can_test_kwargs_only_methods,
+# test_can_call_an_argument_f (@given's argument binding).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -16,86 +19,72 @@ from collections import namedtuple
 
 import pytest
 
-from hegel.hypothesis import (
-    HealthCheck,
-    Verbosity,
-    assume,
-    given,
-    note,
-    reporting,
-    settings,
-    strategies as st,
-)
-from hegel.hypothesis.errors import Unsatisfiable
-from hegel.hypothesis.strategies import (
-    binary,
-    booleans,
-    builds,
-    data,
-    floats,
-    frozensets,
-    integers,
-    just,
-    lists,
-    one_of,
-    sampled_from,
-    sets,
-    text,
-)
-
+import hegel
+from hegel import generators as gs
 from tests.hypothesis_port.common.utils import (
-    Why,
     assert_failing_output,
     capture_out,
     fails,
     fails_with,
     no_shrink,
+    notes,
     skipif_emscripten,
-    xfail_on_crosshair,
 )
 
 
-@given(integers(), integers())
-def test_int_addition_is_commutative(x, y):
+@hegel.test
+def test_int_addition_is_commutative(tc):
+    x = tc.draw(gs.integers())
+    y = tc.draw(gs.integers())
     assert x + y == y + x
 
 
 @fails
-@given(text(min_size=1), text(min_size=1))
-def test_str_addition_is_commutative(x, y):
+@hegel.test
+def test_str_addition_is_commutative(tc):
+    x = tc.draw(gs.text(min_size=1))
+    y = tc.draw(gs.text(min_size=1))
     assert x + y == y + x
 
 
 @fails
-@given(binary(min_size=1), binary(min_size=1))
-def test_bytes_addition_is_commutative(x, y):
+@hegel.test
+def test_bytes_addition_is_commutative(tc):
     # We enforce min_size=1 here to avoid a rare flakiness, where the
     # test passes if x and/or y are b"" for every generated example.
     # (the internal implementation makes this less rare for bytes)
+    x = tc.draw(gs.binary(min_size=1))
+    y = tc.draw(gs.binary(min_size=1))
     assert x + y == y + x
 
 
-@given(integers(), integers(), integers())
-def test_int_addition_is_associative(x, y, z):
+@hegel.test
+def test_int_addition_is_associative(tc):
+    x = tc.draw(gs.integers())
+    y = tc.draw(gs.integers())
+    z = tc.draw(gs.integers())
     assert x + (y + z) == (x + y) + z
 
 
 @fails
-@given(floats(), floats(), floats())
-@settings(max_examples=2000)
-def test_float_addition_is_associative(x, y, z):
+@hegel.test(test_cases=2000)
+def test_float_addition_is_associative(tc):
+    x = tc.draw(gs.floats())
+    y = tc.draw(gs.floats())
+    z = tc.draw(gs.floats())
     assert x + (y + z) == (x + y) + z
 
 
-@given(lists(integers()))
-def test_reversing_preserves_integer_addition(xs):
+@hegel.test
+def test_reversing_preserves_integer_addition(tc):
+    xs = tc.draw(gs.lists(gs.integers()))
     assert sum(xs) == sum(reversed(xs))
 
 
 def test_still_minimizes_on_non_assertion_failures():
-    @settings(max_examples=50)
-    @given(integers())
-    def is_not_too_large(x):
+    @hegel.test(test_cases=50)
+    def is_not_too_large(tc):
+        x = tc.draw(gs.integers())
         if x >= 10:
             raise ValueError(f"No, {x} is just too large. Sorry")
 
@@ -103,78 +92,76 @@ def test_still_minimizes_on_non_assertion_failures():
         is_not_too_large()
 
 
-@given(integers())
-def test_integer_division_shrinks_positive_integers(n):
-    assume(n > 0)
+@hegel.test
+def test_integer_division_shrinks_positive_integers(tc):
+    n = tc.draw(gs.integers())
+    tc.assume(n > 0)
     assert n / 2 < n
 
 
 class TestCases:
-    @given(integers())
-    def test_abs_non_negative(self, x):
+    @hegel.test
+    def test_abs_non_negative(self, tc):
+        x = tc.draw(gs.integers())
         assert abs(x) >= 0
         assert isinstance(self, TestCases)
-
-    @given(x=integers())
-    def test_abs_non_negative_varargs(self, x, *args):
-        assert abs(x) >= 0
-        assert isinstance(self, TestCases)
-
-    @given(x=integers())
-    def test_abs_non_negative_varargs_kwargs(self, *args, **kw):
-        assert abs(kw["x"]) >= 0
-        assert isinstance(self, TestCases)
-
-    @given(x=integers())
-    def test_abs_non_negative_varargs_kwargs_only(*args, **kw):
-        assert abs(kw["x"]) >= 0
-        assert isinstance(args[0], TestCases)
 
     @fails
-    @given(integers())
-    def test_int_is_always_negative(self, x):
+    @hegel.test
+    def test_int_is_always_negative(self, tc):
+        x = tc.draw(gs.integers())
         assert x < 0
 
     @fails
-    @given(floats(), floats())
-    def test_float_addition_cancels(self, x, y):
+    @hegel.test
+    def test_float_addition_cancels(self, tc):
+        x = tc.draw(gs.floats())
+        y = tc.draw(gs.floats())
         assert x + (y - x) == y
 
 
 @fails
-@given(x=integers(min_value=0, max_value=3), name=text())
-def test_can_be_given_keyword_args(x, name):
-    assume(x > 0)
+@hegel.test
+def test_can_be_given_keyword_args(tc):
+    x = tc.draw(gs.integers(min_value=0, max_value=3))
+    name = tc.draw(gs.text())
+    tc.assume(x > 0)
     assert len(name) < x
 
 
 @fails
-@given(one_of(floats(), booleans()), one_of(floats(), booleans()))
-def test_one_of_produces_different_values(x, y):
-    assert type(x) == type(y)
+@hegel.test
+def test_one_of_produces_different_values(tc):
+    x = tc.draw(gs.one_of(gs.floats(), gs.booleans()))
+    y = tc.draw(gs.one_of(gs.floats(), gs.booleans()))
+    assert type(x) is type(y)
 
 
-@given(just(42))
-def test_is_the_answer(x):
+@hegel.test
+def test_is_the_answer(tc):
+    x = tc.draw(gs.just(42))
     assert x == 42
 
 
-@given(integers(1, 10))
-def test_integers_are_in_range(x):
+@hegel.test
+def test_integers_are_in_range(tc):
+    x = tc.draw(gs.integers(1, 10))
     assert 1 <= x <= 10
 
 
-@given(integers(min_value=100))
-def test_integers_from_are_from(x):
+@hegel.test
+def test_integers_from_are_from(tc):
+    x = tc.draw(gs.integers(min_value=100))
     assert x >= 100
 
 
 def test_does_not_catch_interrupt_during_falsify():
     called = False
 
-    @given(integers())
-    def flaky_base_exception(x):
+    @hegel.test
+    def flaky_base_exception(tc):
         nonlocal called
+        tc.draw(gs.integers())
         if not called:
             called = True
             raise KeyboardInterrupt
@@ -183,9 +170,11 @@ def test_does_not_catch_interrupt_during_falsify():
         flaky_base_exception()
 
 
-@given(lists(integers(), unique=True), integers())
-def test_removing_an_element_from_a_unique_list(xs, y):
-    assume(len(set(xs)) == len(xs))
+@hegel.test
+def test_removing_an_element_from_a_unique_list(tc):
+    xs = tc.draw(gs.lists(gs.integers(), unique=True))
+    y = tc.draw(gs.integers())
+    tc.assume(len(set(xs)) == len(xs))
 
     try:
         xs.remove(y)
@@ -196,48 +185,54 @@ def test_removing_an_element_from_a_unique_list(xs, y):
 
 
 @fails
-@given(lists(integers(), min_size=2), data())
-def test_removing_an_element_from_a_non_unique_list(xs, data):
-    y = data.draw(sampled_from(xs))
+@hegel.test
+def test_removing_an_element_from_a_non_unique_list(tc):
+    xs = tc.draw(gs.lists(gs.integers(), min_size=2))
+    y = tc.draw(gs.sampled_from(xs))
     xs.remove(y)
     assert y not in xs
 
 
-@given(sets(sampled_from(list(range(10)))))
-def test_can_test_sets_sampled_from(xs):
+@hegel.test
+def test_can_test_sets_sampled_from(tc):
+    xs = tc.draw(gs.sets(gs.sampled_from(list(range(10)))))
     assert all(isinstance(x, int) for x in xs)
     assert all(0 <= x < 10 for x in xs)
 
 
-mix = one_of(sampled_from([1, 2, 3]), text())
+mix = gs.one_of(gs.sampled_from([1, 2, 3]), gs.text())
 
 
 @fails
-@given(mix, mix)
-def test_can_mix_sampling_with_generating(x, y):
-    assert type(x) == type(y)
+@hegel.test
+def test_can_mix_sampling_with_generating(tc):
+    x = tc.draw(mix)
+    y = tc.draw(mix)
+    assert type(x) is type(y)
 
 
 @fails
-@given(frozensets(integers()))
-def test_can_find_large_sum_frozenset(xs):
+@hegel.test
+def test_can_find_large_sum_frozenset(tc):
+    xs = tc.draw(gs.frozensets(gs.integers()))
     assert sum(xs) < 100
 
 
 def test_prints_on_failure_by_default():
-    @given(integers(), integers())
-    @settings(max_examples=1000)
-    def test_ints_are_sorted(balthazar, evans):
-        assume(evans >= 0)
+    @hegel.test(test_cases=1000)
+    def test_ints_are_sorted(tc):
+        balthazar = tc.draw(gs.integers())
+        evans = tc.draw(gs.integers())
+        tc.assume(evans >= 0)
         assert balthazar <= evans
 
     assert_failing_output(test_ints_are_sorted, balthazar=1, evans=0)
 
 
 def test_does_not_print_on_success():
-    @settings(verbosity=Verbosity.normal)
-    @given(integers())
-    def test_is_an_int(x):
+    @hegel.test(verbosity=hegel.Verbosity.normal)
+    def test_is_an_int(tc):
+        tc.draw(gs.integers())
         return
 
     with capture_out() as out:
@@ -247,49 +242,48 @@ def test_does_not_print_on_success():
     assert all(not l for l in lines), lines
 
 
-@given(sampled_from([1]))
-def test_can_sample_from_single_element(x):
+@hegel.test
+def test_can_sample_from_single_element(tc):
+    x = tc.draw(gs.sampled_from([1]))
     assert x == 1
 
 
 @fails
-@given(lists(integers()))
-def test_list_is_sorted(xs):
+@hegel.test
+def test_list_is_sorted(tc):
+    xs = tc.draw(gs.lists(gs.integers()))
     assert sorted(xs) == xs
 
 
 @fails
-@given(floats(1.0, 2.0))
-def test_is_an_endpoint(x):
+@hegel.test
+def test_is_an_endpoint(tc):
+    x = tc.draw(gs.floats(1.0, 2.0))
     assert x in {1.0, 2.0}
 
 
 def test_breaks_bounds():
     @fails
-    @given(x=integers())
-    @settings(derandomize=True, max_examples=10_000)
-    def test_is_bounded(t, x):
+    @hegel.test(derandomize=True, test_cases=10_000)
+    def test_is_bounded(tc, t):
+        x = tc.draw(gs.integers())
         assert x < t
 
     for t in [1, 10, 100, 1000]:
         test_is_bounded(t)
 
 
-@given(x=booleans())
-def test_can_test_kwargs_only_methods(**kwargs):
-    assert isinstance(kwargs["x"], bool)
-
-
 @fails_with(UnicodeEncodeError)
-@given(text())
-@settings(max_examples=100)
-def test_is_ascii(x):
+@hegel.test(test_cases=100)
+def test_is_ascii(tc):
+    x = tc.draw(gs.text())
     x.encode("ascii")
 
 
 @fails
-@given(text())
-def test_is_not_ascii(x):
+@hegel.test
+def test_is_not_ascii(tc):
+    x = tc.draw(gs.text())
     try:
         x.encode("ascii")
         raise AssertionError
@@ -298,16 +292,16 @@ def test_is_not_ascii(x):
 
 
 @fails
-@given(text(min_size=2))
-@settings(max_examples=100, derandomize=True)
-def test_can_find_string_with_duplicates(s):
+@hegel.test(test_cases=100, derandomize=True)
+def test_can_find_string_with_duplicates(tc):
+    s = tc.draw(gs.text(min_size=2))
     assert len(set(s)) == len(s)
 
 
 @fails
-@given(text(min_size=1))
-@settings(derandomize=True)
-def test_has_ascii(x):
+@hegel.test(derandomize=True)
+def test_has_ascii(tc):
+    x = tc.draw(gs.text(min_size=1))
     if not x:
         return
     ascii_characters = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ \t\n"
@@ -318,9 +312,9 @@ def test_can_derandomize():
     values = []
 
     @fails
-    @given(integers())
-    @settings(derandomize=True, database=None)
-    def test_blah(x):
+    @hegel.test(derandomize=True, database="")
+    def test_blah(tc):
+        x = tc.draw(gs.integers())
         values.append(x)
         assert x > 0
 
@@ -333,9 +327,9 @@ def test_can_derandomize():
 
 
 def test_can_run_without_database():
-    @given(integers())
-    @settings(database=None)
-    def test_blah(x):
+    @hegel.test(database="")
+    def test_blah(tc):
+        tc.draw(gs.integers())
         raise AssertionError
 
     with pytest.raises(AssertionError):
@@ -346,8 +340,9 @@ def test_can_run_without_database():
 def test_can_run_with_database_in_thread():
     results = []
 
-    @given(integers())
-    def test_blah(x):
+    @hegel.test
+    def test_blah(tc):
+        tc.draw(gs.integers())
         raise ValueError
 
     def run_test():
@@ -366,57 +361,57 @@ def test_can_run_with_database_in_thread():
     assert results == ["success", "success"]
 
 
-@given(integers())
-def test_can_call_an_argument_f(f):
-    # See issue https://github.com/HypothesisWorks/hypothesis/issues/38
-    # for details
-    pass
-
-
 Litter = namedtuple("Litter", ("kitten1", "kitten2"))
 
 
-@given(builds(Litter, integers(), integers()))
-def test_named_tuples_are_of_right_type(litter):
+@hegel.test
+def test_named_tuples_are_of_right_type(tc):
+    litter = tc.draw(gs.builds(Litter, gs.integers(), gs.integers()))
     assert isinstance(litter, Litter)
 
 
 @fails_with(AttributeError)
-@given(integers().map(lambda x: x.nope))
-@settings(suppress_health_check=list(HealthCheck))
-def test_fails_in_reify(x):
-    pass
+@hegel.test(suppress_health_check=hegel.HealthCheck.all())
+def test_fails_in_reify(tc):
+    tc.draw(gs.integers().map(lambda x: x.nope))
 
 
-@given(text("a"))
-def test_a_text(x):
+@hegel.test
+def test_a_text(tc):
+    x = tc.draw(gs.text("a"))
     assert set(x).issubset(set("a"))
 
 
-@given(text(""))
-def test_empty_text(x):
+@pytest.mark.xfail(
+    strict=True,
+    reason="generator: text('') is rejected with InvalidArgument ('alphabet must not be "
+    "empty') where Hypothesis generates only the empty string",
+)
+@hegel.test
+def test_empty_text(tc):
+    x = tc.draw(gs.text(""))
     assert not x
 
 
-@given(text("abcdefg"))
-def test_mixed_text(x):
+@hegel.test
+def test_mixed_text(tc):
+    x = tc.draw(gs.text("abcdefg"))
     assert set(x).issubset(set("abcdefg"))
 
 
-@xfail_on_crosshair(Why.other, strict=False)  # runs ~five failing test cases
 def test_when_set_to_no_simplifies_runs_failing_example_twice():
     failing = []
 
-    @given(integers())
-    @settings(
+    @hegel.test(
         phases=no_shrink,
-        max_examples=100,
-        verbosity=Verbosity.normal,
-        report_multiple_bugs=False,
+        test_cases=100,
+        verbosity=hegel.Verbosity.normal,
+        report_multiple_failures=False,
     )
-    def foo(x):
+    def foo(tc):
+        x = tc.draw(gs.integers())
         if x > 11:
-            note("Lo")
+            tc.note("Lo")
             failing.append(x)
             raise AssertionError
 
@@ -426,12 +421,13 @@ def test_when_set_to_no_simplifies_runs_failing_example_twice():
     # the example runs more than Hypothesis's twice; it is still never shrunk.
     assert len(failing) >= 2
     assert len(set(failing)) == 1
-    assert "Falsifying example" in "\n".join(err.value.__notes__)
-    assert "Lo" in "\n".join(err.value.__notes__)
+    assert "Falsifying example" in "\n".join(notes(err.value))
+    assert "Lo" in "\n".join(notes(err.value))
 
 
-@given(integers().filter(lambda x: x % 4 == 0))
-def test_filtered_values_satisfy_condition(i):
+@hegel.test
+def test_filtered_values_satisfy_condition(tc):
+    i = tc.draw(gs.integers().filter(lambda x: x % 4 == 0))
     assert i % 4 == 0
 
 
@@ -442,86 +438,93 @@ def nameless_const(x):
     return functools.partial(f, x)
 
 
-@given(sets(booleans()).map(nameless_const(2)))
-def test_can_map_nameless(x):
+@hegel.test
+def test_can_map_nameless(tc):
+    x = tc.draw(gs.sets(gs.booleans()).map(nameless_const(2)))
     assert x == 2
 
 
-@given(integers(0, 10).flatmap(nameless_const(just(3))))
-def test_can_flatmap_nameless(x):
+@hegel.test
+def test_can_flatmap_nameless(tc):
+    x = tc.draw(gs.integers(0, 10).flat_map(nameless_const(gs.just(3))))
     assert x == 3
 
 
 def test_can_be_used_with_none_module():
-    def test_is_cool(i):
-        pass
+    def test_is_cool(tc):
+        tc.draw(gs.integers())
 
     test_is_cool.__module__ = None
-    test_is_cool = given(integers())(test_is_cool)
+    test_is_cool = hegel.test(test_is_cool)
     test_is_cool()
 
 
 def test_does_not_print_notes_if_all_succeed():
-    @given(integers())
-    @settings(verbosity=Verbosity.normal)
-    def test(i):
-        note("Hi there")
+    @hegel.test(verbosity=hegel.Verbosity.normal)
+    def test(tc):
+        tc.draw(gs.integers())
+        tc.note("Hi there")
 
-    with capture_out() as out, reporting.with_reporter(reporting.default):
+    with capture_out() as out:
         test()
     assert not out.getvalue()
 
 
 def test_prints_notes_once_on_failure():
-    @given(lists(integers()))
-    @settings(database=None, verbosity=Verbosity.normal)
-    def test(xs):
-        note("Hi there")
+    @hegel.test(database="", verbosity=hegel.Verbosity.normal)
+    def test(tc):
+        xs = tc.draw(gs.lists(gs.integers()))
+        tc.note("Hi there")
         if sum(xs) <= 100:
             raise ValueError
 
     with pytest.raises(ValueError) as err:
         test()
-    assert "\n".join(err.value.__notes__).count("Hi there") == 1
+    assert "\n".join(notes(err.value)).count("Hi there") == 1
 
 
-@given(lists(integers(), max_size=0))
-def test_empty_lists(xs):
+@hegel.test
+def test_empty_lists(tc):
+    xs = tc.draw(gs.lists(gs.integers(), max_size=0))
     assert xs == []
 
 
-@xfail_on_crosshair(Why.other, strict=False)
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel does not stop a run early when a finite search space is exhausted",
+    reason="engine: a run is not stopped early when a finite search space is exhausted",
 )
 def test_given_usable_inline_on_lambdas():
     xs = []
-    given(booleans())(lambda x: xs.append(x))()
+    hegel.test(lambda tc: xs.append(tc.draw(gs.booleans())))()
     assert len(xs) == 2
     assert set(xs) == {False, True}
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="engine: with the FilterTooMuch health check suppressed, a run whose every "
+    "case is rejected ends quietly as passed instead of raising Unsatisfiable",
+)
 def test_notes_high_filter_rates_in_unsatisfiable_error():
-    @given(st.integers())
-    @settings(suppress_health_check=[HealthCheck.filter_too_much])
-    def f(v):
-        assume(False)
+    @hegel.test(suppress_health_check=[hegel.HealthCheck.filter_too_much])
+    def f(tc):
+        tc.draw(gs.integers())
+        tc.assume(False)
 
-    with pytest.raises(Unsatisfiable, match=r"Unable to satisfy assumptions of f\."):
+    with pytest.raises(hegel.Unsatisfiable, match=r"Unable to satisfy assumptions"):
         f()
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="engine: rejecting every input of a finite space fails the FilterTooMuch "
+    "health check rather than raising Unsatisfiable",
+)
 def test_notes_exhausted_search_space_in_unsatisfiable_error():
-    @given(booleans())
-    def f(v):
-        assume(False)
+    @hegel.test
+    def f(tc):
+        tc.draw(gs.booleans())
+        tc.assume(False)
 
-    with pytest.raises(
-        Unsatisfiable,
-        match=(
-            r"Unable to satisfy assumptions of f\. Hypothesis tried every "
-            r"possible input"
-        ),
-    ):
+    with pytest.raises(hegel.Unsatisfiable, match=r"tried every possible input"):
         f()

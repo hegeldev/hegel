@@ -10,17 +10,11 @@
 
 import unicodedata
 
-import pytest
-
-from hegel.hypothesis import given, settings
-from hegel.hypothesis.strategies import text
+import hegel
+from hegel import generators as gs
 
 
-@pytest.mark.skipif(
-    settings.get_current_profile_name() == "crosshair",
-    reason="takes ~10 minutes; many-valued realization is slow",
-)
-@given(text(min_size=1, max_size=1))
-@settings(max_examples=2000)
-def test_does_not_generate_surrogates(t):
+@hegel.test(test_cases=2000)
+def test_does_not_generate_surrogates(tc):
+    t = tc.draw(gs.text(min_size=1, max_size=1))
     assert unicodedata.category(t) != "Cs"

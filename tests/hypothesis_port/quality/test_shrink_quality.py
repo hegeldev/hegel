@@ -8,20 +8,27 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-from collections import Counter, OrderedDict, namedtuple
-from fractions import Fraction
+# Dropped from the Hypothesis original: test_minimal_fractions_1,
+# test_minimal_fractions_2, test_minimal_fractions_3 (fractions());
+# test_dictionary's OrderedDict case (dict_class).
+#
+# minimal() is derandomized, so the seeds the original parametrized some
+# tests over are passed to the search as its seed, and the @given-drawn
+# parameters of others (which cannot start a nested run) are parametrized
+# over fixed values instead.
+
+from collections import Counter, namedtuple
 from functools import reduce
 
 import pytest
 
-from hegel.hypothesis import strategies as st
-from hegel.hypothesis import HealthCheck, assume, given, settings
-from hegel.hypothesis.strategies import (
+import hegel
+from hegel import generators as gs
+from hegel.generators import (
     booleans,
     builds,
-    dictionaries,
-    fixed_dictionaries,
-    fractions,
+    dicts,
+    fixed_dicts,
     frozensets,
     integers,
     just,
@@ -32,9 +39,7 @@ from hegel.hypothesis.strategies import (
     text,
     tuples,
 )
-
 from tests.hypothesis_port.common.debug import minimal
-from tests.hypothesis_port.common.utils import flaky
 
 
 def test_integers_from_minimizes_leftwards():
@@ -52,18 +57,6 @@ def test_minimize_bounded_integers_to_positive():
         return x != zero
 
     assert minimal(integers(-10, 10).filter(not_zero)) == 1
-
-
-def test_minimal_fractions_1():
-    assert minimal(fractions()) == Fraction(0)
-
-
-def test_minimal_fractions_2():
-    assert minimal(fractions(), lambda x: x >= 1) == Fraction(1)
-
-
-def test_minimal_fractions_3():
-    assert minimal(lists(fractions()), lambda s: len(s) >= 5) == [Fraction(0)] * 5
 
 
 def test_minimize_string_to_empty():
@@ -108,33 +101,35 @@ def test_minimize_sets_of_sets():
 
 
 def test_minimize_sets_sampled_from():
-    assert minimal(st.sets(st.sampled_from(range(10)), min_size=3)) == {0, 1, 2}
+    assert minimal(gs.sets(gs.sampled_from(range(10)), min_size=3)) == {0, 1, 2}
 
 
 def test_can_simplify_flatmap_with_bounded_left_hand_size():
     assert (
-        minimal(booleans().flatmap(lambda x: lists(just(x))), lambda x: len(x) >= 10)
+        minimal(booleans().flat_map(lambda x: lists(just(x))), lambda x: len(x) >= 10)
         == [False] * 10
     )
 
 
 def test_can_simplify_across_flatmap_of_just():
-    assert minimal(integers().flatmap(just)) == 0
+    assert minimal(integers().flat_map(just)) == 0
 
 
 def test_can_simplify_on_right_hand_strategy_of_flatmap():
-    assert minimal(integers().flatmap(lambda x: lists(just(x)))) == []
+    assert minimal(integers().flat_map(lambda x: lists(just(x)))) == []
 
 
-@flaky(min_passes=5, max_runs=5)
 def test_can_ignore_left_hand_side_of_flatmap():
     assert (
-        minimal(integers().flatmap(lambda x: lists(integers())), lambda x: len(x) >= 10) == [0] * 10
+        minimal(integers().flat_map(lambda x: lists(integers())), lambda x: len(x) >= 10)
+        == [0] * 10
     )
 
 
 def test_can_simplify_on_both_sides_of_flatmap():
-    assert minimal(integers().flatmap(lambda x: lists(just(x))), lambda x: len(x) >= 10) == [0] * 10
+    assert (
+        minimal(integers().flat_map(lambda x: lists(just(x))), lambda x: len(x) >= 10) == [0] * 10
+    )
 
 
 def test_flatmap_rectangles():
@@ -144,25 +139,18 @@ def test_flatmap_rectangles():
         return lists(sampled_from("ab"), min_size=n, max_size=n)
 
     xs = minimal(
-        lengths.flatmap(lambda w: lists(lists_of_length(w))),
+        lengths.flat_map(lambda w: lists(lists_of_length(w))),
         lambda x: ["a", "b"] in x,
-        settings=settings(database=None, max_examples=2000),
+        test_cases=2000,
     )
     assert xs == [["a", "b"]]
 
 
-@flaky(min_passes=5, max_runs=5)
-@pytest.mark.parametrize("dict_class", [dict, OrderedDict])
-def test_dictionary(dict_class):
-    assert (
-        minimal(dictionaries(keys=integers(), values=text(), dict_class=dict_class)) == dict_class()
-    )
+def test_dictionary():
+    assert minimal(dicts(keys=integers(), values=text())) == {}
 
-    x = minimal(
-        dictionaries(keys=integers(), values=text(), dict_class=dict_class),
-        lambda t: len(t) >= 3,
-    )
-    assert isinstance(x, dict_class)
+    x = minimal(dicts(keys=integers(), values=text()), lambda t: len(t) >= 3)
+    assert isinstance(x, dict)
     assert set(x.values()) == {""}
     for k in x:
         if k < 0:
@@ -179,7 +167,7 @@ def test_minimize_multiple_elements_in_silly_large_int_range():
     actual = minimal(
         lists(integers(-(2**256), 2**256)),
         lambda x: len(x) >= 20,
-        settings(max_examples=10_000),
+        test_cases=10_000,
     )
     assert actual == [0] * 20
 
@@ -189,7 +177,7 @@ def test_minimize_multiple_elements_in_silly_large_int_range_min_is_not_dupe():
 
     actual = minimal(
         lists(integers(0, 2**256)),
-        lambda x: assume(len(x) >= 20) and all(x[i] >= target[i] for i in target),
+        lambda x: len(x) >= 20 and all(x[i] >= target[i] for i in target),
     )
     assert actual == target
 
@@ -217,6 +205,7 @@ def test_containment(n, seed):
     iv = minimal(
         tuples(lists(integers()), integers()),
         lambda x: x[1] in x[0] and x[1] >= n,
+        seed=seed,
     )
     assert iv == ([n], n)
 
@@ -232,7 +221,7 @@ def test_duplicate_containment():
 
 @pytest.mark.parametrize("seed", [11, 28, 37])
 def test_reordering_bytes(seed):
-    ls = minimal(lists(integers()), lambda x: sum(x) >= 10 and len(x) >= 3)
+    ls = minimal(lists(integers()), lambda x: sum(x) >= 10 and len(x) >= 3, seed=seed)
     assert ls == sorted(ls)
 
 
@@ -279,7 +268,7 @@ def test_minimize_namedtuple():
 
 def test_minimize_dict():
     tab = minimal(
-        fixed_dictionaries({"a": booleans(), "b": booleans()}),
+        fixed_dicts({"a": booleans(), "b": booleans()}),
         lambda x: x["a"] or x["b"],
     )
     assert not (tab["a"] and tab["b"])
@@ -303,13 +292,9 @@ def test_minimize_list_of_tuples():
 
 
 def test_minimize_multi_key_dicts():
-    assert minimal(dictionaries(keys=booleans(), values=booleans()), bool) == {False: False}
+    assert minimal(dicts(keys=booleans(), values=booleans()), bool) == {False: False}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel returns the same list object for repeated draws of lists(none(), max_size=0)",
-)
 def test_multiple_empty_lists_are_independent():
     x = minimal(lists(lists(none(), max_size=0)), lambda t: len(t) >= 2)
     u, v = x
@@ -341,7 +326,7 @@ def test_sum_of_pair_int():
 
 
 def test_sum_of_pair_float():
-    assert minimal(tuples(st.floats(0, 1000), st.floats(0, 1000)), lambda x: sum(x) > 1000) == (
+    assert minimal(tuples(gs.floats(0, 1000), gs.floats(0, 1000)), lambda x: sum(x) > 1000) == (
         1.0,
         1000.0,
     )
@@ -349,37 +334,37 @@ def test_sum_of_pair_float():
 
 def test_sum_of_pair_mixed():
     # check both orderings
-    assert minimal(tuples(st.floats(0, 1000), st.integers(0, 1000)), lambda x: sum(x) > 1000) == (
+    assert minimal(tuples(gs.floats(0, 1000), gs.integers(0, 1000)), lambda x: sum(x) > 1000) == (
         1.0,
         1000,
     )
-    assert minimal(tuples(st.integers(0, 1000), st.floats(0, 1000)), lambda x: sum(x) > 1000) == (
+    assert minimal(tuples(gs.integers(0, 1000), gs.floats(0, 1000)), lambda x: sum(x) > 1000) == (
         1,
         1000.0,
     )
 
 
 def test_sum_of_pair_separated_int():
-    @st.composite
-    def separated_sum(draw):
-        n1 = draw(st.integers(0, 1000))
-        draw(st.text())
-        draw(st.booleans())
-        draw(st.integers())
-        n2 = draw(st.integers(0, 1000))
+    @hegel.composite
+    def separated_sum(tc):
+        n1 = tc.draw(gs.integers(0, 1000))
+        tc.draw(gs.text())
+        tc.draw(gs.booleans())
+        tc.draw(gs.integers())
+        n2 = tc.draw(gs.integers(0, 1000))
         return (n1, n2)
 
     assert minimal(separated_sum(), lambda x: sum(x) > 1000) == (1, 1000)
 
 
 def test_sum_of_pair_separated_float():
-    @st.composite
-    def separated_sum(draw):
-        f1 = draw(st.floats(0, 1000))
-        draw(st.text())
-        draw(st.booleans())
-        draw(st.integers())
-        f2 = draw(st.floats(0, 1000))
+    @hegel.composite
+    def separated_sum(tc):
+        f1 = tc.draw(gs.floats(0, 1000))
+        tc.draw(gs.text())
+        tc.draw(gs.booleans())
+        tc.draw(gs.integers())
+        f2 = tc.draw(gs.floats(0, 1000))
         return (f1, f2)
 
     assert minimal(separated_sum(), lambda x: sum(x) > 1000) == (1, 1000)
@@ -393,11 +378,11 @@ def test_calculator_benchmark():
     Proceedings of the 2014 ACM SIGPLAN symposium on Haskell. 2014.
     """
 
-    expression = st.deferred(
-        lambda: st.one_of(
-            st.integers(),
-            st.tuples(st.just("+"), expression, expression),
-            st.tuples(st.just("/"), expression, expression),
+    expression = gs.deferred(
+        lambda: gs.one_of(
+            gs.integers(),
+            gs.tuples(gs.just("+"), expression, expression),
+            gs.tuples(gs.just("/"), expression, expression),
         )
     )
 
@@ -418,7 +403,8 @@ def test_calculator_benchmark():
             return evaluate(e[1]) // evaluate(e[2])
 
     def is_failing(e):
-        assume(div_subterms(e))
+        if not div_subterms(e):
+            return False
         try:
             evaluate(e)
             return False
@@ -431,62 +417,39 @@ def test_calculator_benchmark():
 
 
 def test_one_of_slip():
-    assert minimal(st.integers(101, 200) | st.integers(0, 100)) == 101
+    assert minimal(gs.integers(101, 200) | gs.integers(0, 100)) == 101
 
 
-# this limit is only to avoid Unsatisfiable when searching for an initial
-# counterexample in minimal, as we may generate a very large magnitude n.
-@given(st.integers(-(2**32), 2**32))
-@settings(max_examples=3, suppress_health_check=[HealthCheck.nested_given])
+@pytest.mark.parametrize("n", [0, 1, -1, 2**31 + 12345, -(2**32)])
 def test_perfectly_shrinks_integers(n):
     if n >= 0:
-        assert minimal(st.integers(), lambda x: x >= n) == n
+        assert minimal(gs.integers(), lambda x: x >= n) == n
     else:
-        assert minimal(st.integers(), lambda x: x <= n) == n
+        assert minimal(gs.integers(), lambda x: x <= n) == n
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="hegel's bounded integers rarely generate a pair with a large gap within minimal()'s budget",
-)
-@given(st.integers(0, 20))
-@settings(suppress_health_check=[HealthCheck.nested_given])
+@pytest.mark.parametrize("gap", [0, 1, 7, 20])
 def test_lowering_together_positive(gap):
-    s = st.tuples(st.integers(0, 20), st.integers(0, 20))
-    assert minimal(s, lambda x: x[0] + gap == x[1]) == (0, gap)
+    s = gs.tuples(gs.integers(0, 20), gs.integers(0, 20))
+    assert minimal(s, lambda x: x[0] + gap == x[1], test_cases=2000) == (0, gap)
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="hegel's bounded integers rarely generate a pair with a large gap within minimal()'s budget",
-)
-@given(st.integers(-20, 0))
-@settings(suppress_health_check=[HealthCheck.nested_given])
+@pytest.mark.parametrize("gap", [0, -1, -7, -20])
 def test_lowering_together_negative(gap):
-    s = st.tuples(st.integers(-20, 0), st.integers(-20, 0))
-    assert minimal(s, lambda x: x[0] + gap == x[1]) == (0, gap)
+    s = gs.tuples(gs.integers(-20, 0), gs.integers(-20, 0))
+    assert minimal(s, lambda x: x[0] + gap == x[1], test_cases=2000) == (0, gap)
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="hegel's bounded integers rarely generate a pair with a large gap within minimal()'s budget",
-)
-@given(st.integers(-10, 10))
-@settings(suppress_health_check=[HealthCheck.nested_given])
+@pytest.mark.parametrize("gap", [0, 1, -1, 7, -10])
 def test_lowering_together_mixed(gap):
-    s = st.tuples(st.integers(-10, 10), st.integers(-10, 10))
-    assert minimal(s, lambda x: x[0] + gap == x[1]) == (0, gap)
+    s = gs.tuples(gs.integers(-10, 10), gs.integers(-10, 10))
+    assert minimal(s, lambda x: x[0] + gap == x[1], test_cases=2000) == (0, gap)
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="hegel's bounded integers rarely generate a pair with a large gap within minimal()'s budget",
-)
-@given(st.integers(-10, 10))
-@settings(suppress_health_check=[HealthCheck.nested_given])
+@pytest.mark.parametrize("gap", [0, 1, -1, 7, -10])
 def test_lowering_together_with_gap(gap):
-    s = st.tuples(st.integers(-10, 10), st.text(), st.floats(), st.integers(-10, 10))
-    assert minimal(s, lambda x: x[0] + gap == x[3]) == (0, "", 0.0, gap)
+    s = gs.tuples(gs.integers(-10, 10), gs.text(), gs.floats(), gs.integers(-10, 10))
+    assert minimal(s, lambda x: x[0] + gap == x[3], test_cases=2000) == (0, "", 0.0, gap)
 
 
 def test_run_length_encoding():
@@ -522,7 +485,7 @@ def test_run_length_encoding():
         out.append(entry)
         return out
 
-    assert minimal(st.text(), lambda s: decode(encode(s)) != s) == "001"
+    assert minimal(gs.text(), lambda s: decode(encode(s)) != s) == "001"
 
 
 def test_minimize_duplicated_characters_within_a_choice():
@@ -530,12 +493,12 @@ def test_minimize_duplicated_characters_within_a_choice():
     # least two different characters (to avoid the trivial shrink of replacing
     # everything with "0" from working).
 
-    # we should test this for st.binary too, but it's difficult to get it
+    # we should test this for binary too, but it's difficult to get it
     # to satisfy this precondition in the first place (probably worth improving
     # our generation here to duplicate binary elements in generate_mutations_from)
     assert (
         minimal(
-            st.text(min_size=1),
+            gs.text(min_size=1),
             lambda v: Counter(v).most_common()[0][1] > 2 and len(set(v)) > 1,
         )
         == "0001"
@@ -544,44 +507,44 @@ def test_minimize_duplicated_characters_within_a_choice():
 
 def test_nasty_string_shrinks():
     # failures found via NASTY_STRINGS should shrink like normal
-    assert minimal(st.text(), lambda s: "𝕿𝖍𝖊" in s, settings=settings(max_examples=10000)) == "𝕿𝖍𝖊"
+    assert minimal(gs.text(), lambda s: "𝕿𝖍𝖊" in s, test_cases=10_000) == "𝕿𝖍𝖊"
 
 
 def test_shrink_text_differs_from_lower_to_ascii():
     # Regression test for https://github.com/HypothesisWorks/hypothesis/issues/4725
     # Text shrinking would previously sometimes get stuck on a high-codepoint
     # accented letter such as 'À' instead of converging to 'A'.
-    assert minimal(st.text(min_size=1), lambda s: s != s.lower()) == "A"
+    assert minimal(gs.text(min_size=1), lambda s: s != s.lower()) == "A"
 
 
 def test_shrink_text_differs_from_upper_to_ascii():
-    assert minimal(st.text(min_size=1), lambda s: s != s.upper()) == "a"
+    assert minimal(gs.text(min_size=1), lambda s: s != s.upper()) == "a"
 
 
 def test_shrink_strips_accent_to_ascii_letter():
     # Removing the accent from any accented latin letter should shrink that
     # letter to its base ascii form.
-    assert minimal(st.text(min_size=1), lambda s: "e" in s.lower() or "E" in s) == "E"
+    assert minimal(gs.text(min_size=1), lambda s: "e" in s.lower() or "E" in s) == "E"
 
 
 def test_shrink_decomposes_compatibility_form_to_ascii():
     # A character that NFKD-decomposes to an ascii letter (eg a Mathematical
     # Bold Capital T, or a ligature) should reduce to that base letter when
     # the predicate also matches the base letter.
-    assert minimal(st.text(min_size=1), lambda s: any(c.lower() == "t" for c in s)) == "T"
+    assert minimal(gs.text(min_size=1), lambda s: any(c.lower() == "t" for c in s)) == "T"
 
 
 def test_shrink_ligature_to_base_character():
     # The ligature ﬁ NFKD-decomposes to "fi"; when the predicate accepts any
     # 'f' character, we should reduce to plain "F".
-    assert minimal(st.text(min_size=1), lambda s: any(c.lower() == "f" for c in s)) == "F"
+    assert minimal(gs.text(min_size=1), lambda s: any(c.lower() == "f" for c in s)) == "F"
 
 
 def test_bound5():
     # redistribute_numeric_pairs should work for negative integers too
-    bounded_ints = st.lists(st.integers(-100, 0), max_size=1)
+    bounded_ints = gs.lists(gs.integers(-100, 0), max_size=1)
 
-    s = st.tuples(
+    s = gs.tuples(
         bounded_ints,
         bounded_ints,
         bounded_ints,

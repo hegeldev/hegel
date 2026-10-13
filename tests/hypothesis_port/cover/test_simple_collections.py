@@ -8,15 +8,18 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+# Dropped from the Hypothesis original: test_fixed_dictionaries_vary_key_order
+# (fixed_dicts varying key order).
+
 from collections import OrderedDict
 
 import pytest
 
-from hegel.hypothesis import given, settings
-from hegel.hypothesis.strategies import (
+import hegel
+from hegel.generators import (
     booleans,
-    dictionaries,
-    fixed_dictionaries,
+    dicts,
+    fixed_dicts,
     frozensets,
     integers,
     lists,
@@ -26,7 +29,6 @@ from hegel.hypothesis.strategies import (
     text,
     tuples,
 )
-
 from tests.hypothesis_port.common.debug import find_any, minimal
 from tests.hypothesis_port.common.utils import flaky
 
@@ -38,12 +40,12 @@ from tests.hypothesis_port.common.utils import flaky
         ([], lists(none(), max_size=0)),
         (set(), sets(none(), max_size=0)),
         (frozenset(), frozensets(none(), max_size=0)),
-        ({}, fixed_dictionaries({})),
-        ({}, fixed_dictionaries({}, optional={})),
-        (OrderedDict(), fixed_dictionaries(OrderedDict(), optional=OrderedDict())),
-        ({}, fixed_dictionaries({}, optional={1: booleans()})),
-        ({0: False}, fixed_dictionaries({0: booleans()}, optional={1: booleans()})),
-        ({}, fixed_dictionaries({}, optional={(): booleans(), 0: booleans()})),
+        ({}, fixed_dicts({})),
+        ({}, fixed_dicts({}, optional={})),
+        (OrderedDict(), fixed_dicts(OrderedDict(), optional=OrderedDict())),
+        ({}, fixed_dicts({}, optional={1: booleans()})),
+        ({0: False}, fixed_dicts({0: booleans()}, optional={1: booleans()})),
+        ({}, fixed_dicts({}, optional={(): booleans(), 0: booleans()})),
         ([], lists(nothing())),
         ([], lists(nothing(), unique=True)),
     ],
@@ -72,23 +74,15 @@ def test_minimizes_list_of_lists():
     assert xs == [[], [False]]
 
 
-@given(sets(integers(0, 100), min_size=2, max_size=10))
-@settings(max_examples=100)
-def test_sets_are_size_bounded(xs):
+@hegel.test(test_cases=100)
+def test_sets_are_size_bounded(tc):
+    xs = tc.draw(sets(integers(0, 100), min_size=2, max_size=10))
     assert 2 <= len(xs) <= 10
 
 
-@pytest.mark.xfail(strict=True, reason="Hegel's fixed_dicts always draws keys in mapping order")
-def test_fixed_dictionaries_vary_key_order():
-    keys = list(range(10))
-    find_any(
-        fixed_dictionaries({k: booleans() for k in keys}),
-        lambda x: list(x.keys()) != keys,
-    )
-
-
-@given(fixed_dictionaries({}, optional={0: booleans(), 1: nothing(), 2: booleans()}))
-def test_fixed_dictionaries_with_optional_and_empty_keys(d):
+@hegel.test
+def test_fixed_dictionaries_with_optional_and_empty_keys(tc):
+    d = tc.draw(fixed_dicts({}, optional={0: booleans(), 1: nothing(), 2: booleans()}))
     assert 1 not in d
 
 
@@ -110,7 +104,7 @@ def test_sets_of_fixed_length(n):
 
 @pytest.mark.parametrize("n", range(10))
 def test_dictionaries_of_fixed_length(n):
-    x = set(minimal(dictionaries(integers(), booleans(), min_size=n, max_size=n)))
+    x = set(minimal(dicts(integers(), booleans(), min_size=n, max_size=n)))
 
     if not n:
         assert x == set()
@@ -153,24 +147,25 @@ def test_can_draw_empty_set_from_unsatisfiable_strategy():
     assert find_any(sets(integers().filter(lambda s: False))) == set()
 
 
-@given(lists(sets(none()), min_size=10))
-def test_small_sized_sets(x):
-    pass
+@hegel.test
+def test_small_sized_sets(tc):
+    tc.draw(lists(sets(none()), min_size=10))
 
 
 def test_minimize_dicts_with_incompatible_keys():
-    strat = fixed_dictionaries({1: booleans(), "hi": lists(booleans())})
+    strat = fixed_dicts({1: booleans(), "hi": lists(booleans())})
     assert minimal(strat) == {1: False, "hi": []}
 
 
-@given(
-    lists(
-        tuples(integers(), integers()),
-        min_size=2,
-        unique_by=(lambda x: x[0], lambda x: x[1]),
+@hegel.test
+def test_lists_unique_by_tuple_funcs(tc):
+    ls = tc.draw(
+        lists(
+            tuples(integers(), integers()),
+            min_size=2,
+            unique_by=(lambda x: x[0], lambda x: x[1]),
+        )
     )
-)
-def test_lists_unique_by_tuple_funcs(ls):
     firstitems, seconditems = zip(*ls, strict=True)
     assert len(set(firstitems)) == len(firstitems)
     assert len(set(seconditems)) == len(seconditems)

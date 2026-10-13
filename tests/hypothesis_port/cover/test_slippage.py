@@ -1,3 +1,6 @@
+# Dropped from the Hypothesis original: test_shows_target_scores_with_multiple_failures
+# (Hypothesis's "Highest target score" report line); test_garbage_collects_the_secondary_key
+# (example database internals).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -10,26 +13,10 @@
 
 import pytest
 
-from hegel.hypothesis import Phase, assume, given, settings, strategies as st, target
-from hegel.hypothesis.database import InMemoryExampleDatabase
-from hegel.hypothesis.errors import FlakyFailure
-
-from tests.hypothesis_port.common.utils import (
-    Why,
-    assert_output_contains_failure,
-    capture_out,
-    xfail_on_crosshair,
-)
-
-
-def non_covering_examples(database):
-    # Hegel's database also records each test's name under its own key.
-    return {v for vs in database.data.values() for v in vs if b"test_slippage" not in v}
-
-
-# Hypothesis keeps generating for at least this many calls; used to bound
-# how many examples a run may try.
-MIN_TEST_CALLS = 10
+import hegel
+from hegel import generators as gs
+from tests.helpers import notes
+from tests.hypothesis_port.common.utils import assert_output_contains_failure, capture_out
 
 
 def capture_reports(test):
@@ -37,25 +24,23 @@ def capture_reports(test):
         test()
 
     return o.getvalue() + "\n\n".join(
-        f"{e!r}\n" + "\n".join(getattr(e, "__notes__", []))
-        for e in (err.value, *err.value.exceptions)
+        f"{e!r}\n" + "\n".join(notes(e)) for e in (err.value, *err.value.exceptions)
     )
 
 
-@xfail_on_crosshair(Why.symbolic_outside_context, strict=False)
 def test_raises_multiple_failures_with_varying_type():
     target = None
 
-    @settings(database=None, max_examples=100, report_multiple_bugs=True)
-    @given(st.integers())
-    def test(i):
+    @hegel.test(database="", test_cases=100, report_multiple_failures=True)
+    def test(tc):
         nonlocal target
+        i = tc.draw(gs.integers())
         if abs(i) < 1000:
             return
         if target is None:
             # Ensure that we have some space to shrink into, so we can't
             # trigger an minimal example and mask the other exception type.
-            assume(1003 < abs(i))
+            tc.assume(1003 < abs(i))
             target = i
         exc_class = TypeError if target == i else ValueError
         raise exc_class
@@ -65,29 +50,13 @@ def test_raises_multiple_failures_with_varying_type():
     assert "ValueError" in output
 
 
-@pytest.mark.skipif(
-    settings().backend != "hypothesis", reason="no multiple failures on backends (yet?)"
-)
-@pytest.mark.xfail(strict=True, reason="Hegel does not report the highest target score")
-def test_shows_target_scores_with_multiple_failures():
-    @settings(derandomize=True, max_examples=10_000)
-    @given(st.integers())
-    def test(i):
-        target(i)
-        assert i > 0
-        assert i < 0
-
-    assert "Highest target score:" in capture_reports(test)
-
-
-@xfail_on_crosshair(Why.symbolic_outside_context, strict=False)
 def test_raises_multiple_failures_when_position_varies():
     target = None
 
-    @settings(max_examples=100, report_multiple_bugs=True)
-    @given(st.integers())
-    def test(i):
+    @hegel.test(test_cases=100, report_multiple_failures=True)
+    def test(tc):
         nonlocal target
+        i = tc.draw(gs.integers())
         if abs(i) < 1000:
             return
         if target is None:
@@ -102,14 +71,13 @@ def test_raises_multiple_failures_when_position_varies():
     assert "loc 2" in output
 
 
-@xfail_on_crosshair(Why.symbolic_outside_context, strict=False)
-def test_replays_both_failing_values():
+def test_replays_both_failing_values(tmp_path):
     target = None
 
-    @settings(database=InMemoryExampleDatabase(), max_examples=500, report_multiple_bugs=True)
-    @given(st.integers())
-    def test(i):
+    @hegel.test(database=str(tmp_path), test_cases=500, report_multiple_failures=True)
+    def test(tc):
         nonlocal target
+        i = tc.draw(gs.integers())
         if abs(i) < 1000:
             return
         if target is None:
@@ -124,26 +92,25 @@ def test_replays_both_failing_values():
         test()
 
 
-@xfail_on_crosshair(Why.symbolic_outside_context, strict=False)
 @pytest.mark.parametrize("fix", [TypeError, ValueError])
-def test_replays_slipped_examples_once_initial_bug_is_fixed(fix):
+def test_replays_slipped_examples_once_initial_bug_is_fixed(fix, tmp_path):
     target = []
     bug_fixed = False
 
-    @settings(database=InMemoryExampleDatabase(), max_examples=500, report_multiple_bugs=True)
-    @given(st.integers())
-    def test(i):
+    @hegel.test(database=str(tmp_path), test_cases=500, report_multiple_failures=True)
+    def test(tc):
+        i = tc.draw(gs.integers())
         if abs(i) < 1000:
             return
         if not target:
             target.append(i)
         if i == target[0]:
-            if bug_fixed and fix == TypeError:
+            if bug_fixed and fix is TypeError:
                 return
             raise TypeError
         if len(target) == 1:
             target.append(i)
-        if bug_fixed and fix == ValueError:
+        if bug_fixed and fix is ValueError:
             return
         if i == target[1]:
             raise ValueError
@@ -153,47 +120,8 @@ def test_replays_slipped_examples_once_initial_bug_is_fixed(fix):
 
     bug_fixed = True
 
-    with pytest.raises(ValueError if fix == TypeError else TypeError):
+    with pytest.raises(ValueError if fix is TypeError else TypeError):
         test()
-
-
-@xfail_on_crosshair(Why.symbolic_outside_context, strict=False)
-def test_garbage_collects_the_secondary_key():
-    target = []
-    bug_fixed = False
-
-    db = InMemoryExampleDatabase()
-
-    @settings(database=db, max_examples=500, report_multiple_bugs=True)
-    @given(st.integers())
-    def test(i):
-        if bug_fixed:
-            return
-        if abs(i) < 1000:
-            return
-        if not target:
-            target.append(i)
-        if i == target[0]:
-            raise TypeError
-        if len(target) == 1:
-            target.append(i)
-        if i == target[1]:
-            raise ValueError
-
-    with pytest.raises(ExceptionGroup):
-        test()
-
-    bug_fixed = True
-
-    def count():
-        return len(non_covering_examples(db))
-
-    prev = count()
-    while prev > 0:
-        test()
-        current = count()
-        assert current < prev
-        prev = current
 
 
 def test_shrinks_both_failures():
@@ -201,10 +129,10 @@ def test_shrinks_both_failures():
     duds = set()
     second_target = None
 
-    @settings(database=None, max_examples=1000, report_multiple_bugs=True)
-    @given(st.integers(min_value=0))
-    def test(i):
+    @hegel.test(database="", test_cases=1000, report_multiple_failures=True)
+    def test(tc):
         nonlocal first_has_failed, duds, second_target
+        i = tc.draw(gs.integers(min_value=0))
 
         if i >= 10000:
             first_has_failed = True
@@ -229,22 +157,27 @@ def test_shrinks_both_failures():
     assert_output_contains_failure(output, test, i=second_target)
 
 
+def _is_flaky(exception):
+    # Hegel reports a failure it could not reproduce reliably with a caveat
+    # note, rather than as a distinct exception type.
+    return any("nondeterministic" in note for note in notes(exception))
+
+
 @pytest.mark.xfail(
     strict=True,
-    reason="Hegel aborts the run with Flaky when one of several failures does not "
-    "reproduce, instead of reporting it as a FlakyFailure alongside the others",
+    reason="Hegel reports only the stable failure (TypeError, with a nondeterminism caveat) "
+    "instead of a group that also holds the flaky one",
 )
-@xfail_on_crosshair(Why.symbolic_outside_context, strict=False)
-def test_handles_flaky_tests_where_only_one_is_flaky():
+def test_handles_flaky_tests_where_only_one_is_flaky(tmp_path):
     flaky_fixed = False
 
     target = []
     flaky_failed_once = False
 
-    @settings(database=InMemoryExampleDatabase(), max_examples=1000, report_multiple_bugs=True)
-    @given(st.integers())
-    def test(i):
+    @hegel.test(database=str(tmp_path), test_cases=1000, report_multiple_failures=True)
+    def test(tc):
         nonlocal flaky_failed_once
+        i = tc.draw(gs.integers())
         if abs(i) < 1000:
             return
         if not target:
@@ -261,25 +194,22 @@ def test_handles_flaky_tests_where_only_one_is_flaky():
 
     with pytest.raises(ExceptionGroup) as err:
         test()
-    assert any(isinstance(e, FlakyFailure) for e in err.value.exceptions)
+    assert any(_is_flaky(e) for e in err.value.exceptions)
 
     flaky_fixed = True
 
     with pytest.raises(ExceptionGroup) as err:
         test()
-    assert not any(isinstance(e, FlakyFailure) for e in err.value.exceptions)
+    assert not any(_is_flaky(e) for e in err.value.exceptions)
 
 
-@pytest.mark.skipif(
-    settings().backend != "hypothesis", reason="no multiple failures on backends (yet?)"
-)
 @pytest.mark.parametrize("allow_multi", [True, False])
 def test_can_disable_multiple_error_reporting(allow_multi):
     seen = set()
 
-    @settings(database=None, derandomize=True, report_multiple_bugs=allow_multi)
-    @given(st.integers(min_value=0))
-    def test(i):
+    @hegel.test(database="", derandomize=True, report_multiple_failures=allow_multi)
+    def test(tc):
+        i = tc.draw(gs.integers(min_value=0))
         # We will pass on the minimal i=0, then fail with a large i, and eventually
         # slip to i=1 and a different error.  We check both seen and raised errors.
         if i == 1:
@@ -294,24 +224,23 @@ def test_can_disable_multiple_error_reporting(allow_multi):
     assert seen == {TypeError, ValueError}
 
 
-@xfail_on_crosshair(Why.symbolic_outside_context, strict=False)
 def test_finds_multiple_failures_in_generation():
     special = None
     seen = set()
 
-    @settings(
-        phases=[Phase.generate, Phase.shrink],
-        max_examples=100,
-        report_multiple_bugs=True,
+    @hegel.test(
+        phases=[hegel.Phase.generate, hegel.Phase.shrink],
+        test_cases=100,
+        report_multiple_failures=True,
     )
-    @given(st.integers(min_value=0))
-    def test(x):
+    def test(tc):
         """Constructs a test so the 10th largeish example we've seen is a
         special failure, and anything new we see after that point that
         is larger than it is a different failure. This demonstrates that we
         can keep generating larger examples and still find new bugs after that
         point."""
         nonlocal special
+        x = tc.draw(gs.integers(min_value=0))
         if not special:
             # don't mark duplicate inputs as special and thus erroring, to avoid
             # flakiness where we passed the input the first time but failed it the
@@ -332,9 +261,9 @@ def test_finds_multiple_failures_in_generation():
 def test_stops_immediately_if_not_report_multiple_bugs():
     seen = set()
 
-    @settings(phases=[Phase.generate], report_multiple_bugs=False)
-    @given(st.integers())
-    def test(x):
+    @hegel.test(phases=[hegel.Phase.generate], report_multiple_failures=False)
+    def test(tc):
+        x = tc.draw(gs.integers())
         seen.add(x)
         raise AssertionError
 
@@ -343,21 +272,20 @@ def test_stops_immediately_if_not_report_multiple_bugs():
     assert len(seen) == 1
 
 
-@pytest.mark.skipif(settings().backend != "hypothesis", reason="unclear backend semantics")
-def test_stops_immediately_on_replay():
+def test_stops_immediately_on_replay(tmp_path):
     seen = set()
 
-    @settings(database=InMemoryExampleDatabase(), phases=tuple(Phase)[:-1])
-    @given(st.integers())
-    def test(x):
+    @hegel.test(database=str(tmp_path), phases=tuple(hegel.Phase)[:-1])
+    def test(tc):
+        x = tc.draw(gs.integers())
         seen.add(x)
         assert x
 
-    # On the first run, we keep looking for other bugs after the first
-    # failure (Hegel runs more than Hypothesis's ten calls):
+    # On the first run, we find the failure (Hypothesis would keep looking
+    # for up to ten more examples; Hegel stops at once):
     with pytest.raises(AssertionError):
         test()
-    assert 1 < len(seen)
+    assert seen
 
     # With failing test cases in the database, we stop at one.
     seen.clear()

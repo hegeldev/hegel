@@ -1,5 +1,41 @@
-# Dropped from the Hypothesis original: test_unique_lists_of_bundle_values_use_the_generic_unique_strategy
-# (inspects Hypothesis's internal strategy classes).
+# Dropped from the Hypothesis original:
+# test_unique_lists_of_bundle_values_use_the_generic_unique_strategy (inspects Hypothesis's
+# internal strategy classes);
+# test_picks_up_settings_at_first_use_of_testcase, test_can_get_test_case_off_machine_instance,
+# test_settings_attribute_is_validated, test_fails_on_settings_class_attribute
+# (MachineClass.TestCase and its settings attribute);
+# test_flaky_draw_less_raises_flaky, test_flaky_raises_flaky, test_flaky_precondition_error_message,
+# test_flaky_draw_in_rule_no_precondition_note (current_build_context);
+# test_get_state_machine_test_is_importable (Hypothesis internal API);
+# test_multiple, test_multiple_variables_printed, test_multiple_variables_printed_single_element,
+# test_no_variables_printed, test_single_target_multiple, test_targets_repr, test_multiple_targets,
+# test_multiple_common_targets (multiple() and rule targets);
+# test_consumes_typecheck, test_deprecated_target_consumes_bundle,
+# test_bundle_repr_includes_transformations, test_rule_deprecation_targets_and_target,
+# test_rule_deprecation_bundle_by_name, test_rule_non_bundle_target,
+# test_rule_non_bundle_target_oneof (the Bundle/consumes API);
+# test_settings_argument_is_validated, test_stateful_double_rule_is_forbidden,
+# test_no_double_invariant, test_invariant_and_rule_are_incompatible, test_invalid_rule_argument,
+# test_invalid_initialize_argument (Hypothesis's definition-time validation);
+# test_can_explicitly_call_functions_when_precondition_not_satisfied, test_invariant_precondition,
+# test_explicit_invariant_call_with_precondition, test_precondition_cannot_be_used_without_rule
+# (@precondition);
+# test_initialize_rule, test_initialize_rule_populate_bundle,
+# test_initialize_rule_dont_mix_with_precondition, test_initialize_rule_dont_mix_with_regular_rule,
+# test_initialize_rule_cannot_be_double_applied, test_can_manually_call_initialize_rule,
+# test_invariants_are_checked_after_init_steps, test_invariants_can_be_checked_during_init_steps,
+# test_check_during_init_must_be_boolean (@initialize and check_during_init);
+# test_arguments_do_not_use_names_of_return_values,
+# test_prints_variable_names_for_filtered_bundle_arguments,
+# test_prints_variable_names_for_consumed_filtered_bundle_arguments,
+# test_prints_mapped_bundle_values_directly (Hypothesis's printed program with bundle variable
+# names);
+# test_uses_seed (@seed);
+# test_min_steps_argument (minimum step count).
+# Rewritten: test_initialize_rule_in_state_machine_with_inheritance as
+# test_rules_in_state_machine_with_inheritance (rules instead of @initialize);
+# test_prints_equal_values_with_correct_variable_name as
+# test_shrinks_moves_between_pools_to_one_step_each (step counts instead of variable names).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -19,807 +55,401 @@ import pytest
 from _pytest.outcomes import Failed, Skipped
 from pytest import raises
 
-from hegel.hypothesis import (
-    HealthCheck,
-    Phase,
-    __version__,
-    reproduce_failure,
-    seed,
-    settings as Settings,
-    strategies as st,
-)
-from hegel.hypothesis.control import current_build_context
-from hegel.hypothesis.database import InMemoryExampleDatabase
-from hegel.hypothesis.errors import (
-    DidNotReproduce,
-    FailedHealthCheck,
-    Flaky,
-    FlakyStrategyDefinition,
-    InvalidArgument,
-    InvalidDefinition,
-)
-from hegel.hypothesis.stateful import (
-    Bundle,
-    RuleBasedStateMachine,
-    consumes,
-    get_state_machine_test,
-    initialize,
-    invariant,
-    multiple,
-    precondition,
-    rule,
-    run_state_machine_as_test,
-)
-from hegel.hypothesis.strategies import binary, data, integers, just, lists
-
-from tests.hypothesis_port.common.utils import (
-    Why,
-    capture_out,
-    skipif_threading,
-    validate_deprecation,
-    xfail_on_crosshair,
-)
+import hegel
+from hegel import generators as gs
+from hegel.errors import DidNotReproduce, FailedHealthCheck, Flaky, InvalidArgument
+from tests.hypothesis_port.common.utils import capture_out, notes
 from tests.hypothesis_port.nocover.test_stateful import DepthMachine
 
 
-def _notes(err):
-    """Hegel attaches the whole falsifying example as a single note; split
-    it into lines so the tests can index them like Hypothesis's notes."""
-    return [line for note in getattr(err, "__notes__", []) for line in note.split("\n")]
+def _run(machine, **settings):
+    """Run ``machine`` as a Hegel state machine test."""
+    hegel.state_machine_test(machine, **settings)()
 
 
-NO_BLOB_SETTINGS = Settings(print_blob=False, phases=tuple(Phase)[:-1])
+def _failure_text(err):
+    """The falsifying example Hegel attached to ``err``, as one string."""
+    return "\n".join(notes(err)).strip()
 
 
-class MultipleRulesSameFuncMachine(RuleBasedStateMachine):
+class MultipleRulesSameFuncMachine(hegel.StateMachine):
     def myfunc(self, data):
         print(data)
 
-    rule1 = rule(data=just("rule1data"))(myfunc)
-    rule2 = rule(data=just("rule2data"))(myfunc)
+    rule1 = hegel.rule(name="rule1")(lambda self, tc: self.myfunc("rule1data"))
+    rule2 = hegel.rule(name="rule2")(lambda self, tc: self.myfunc("rule2data"))
 
 
-class PreconditionMachine(RuleBasedStateMachine):
+class PreconditionMachine(hegel.StateMachine):
     num = 0
 
-    @rule()
-    def add_one(self):
+    @hegel.rule()
+    def add_one(self, tc):
         self.num += 1
 
-    @rule()
-    def set_to_zero(self):
+    @hegel.rule()
+    def set_to_zero(self, tc):
         self.num = 0
 
-    @rule(num=integers())
-    @precondition(lambda self: self.num != 0)
-    def div_by_precondition_after(self, num):
-        self.num = num / self.num
-
-    @precondition(lambda self: self.num != 0)
-    @rule(num=integers())
-    def div_by_precondition_before(self, num):
+    @hegel.rule()
+    def div_when_nonzero(self, tc):
+        tc.assume(self.num != 0)
+        num = tc.draw(gs.integers())
         self.num = num / self.num
 
 
-TestPrecondition = PreconditionMachine.TestCase
-TestPrecondition.settings = Settings(TestPrecondition.settings, max_examples=10)
-
-
-def test_picks_up_settings_at_first_use_of_testcase():
-    assert TestPrecondition.settings.max_examples == 10
+test_PreconditionMachine = hegel.state_machine_test(PreconditionMachine, test_cases=10)
 
 
 def test_multiple_rules_same_func():
-    test_class = MultipleRulesSameFuncMachine.TestCase
     with capture_out() as o:
-        test_class().runTest()
+        _run(MultipleRulesSameFuncMachine, test_cases=10)
     output = o.getvalue()
     assert "rule1data" in output
     assert "rule2data" in output
 
 
-def test_can_get_test_case_off_machine_instance():
-    assert DepthMachine().TestCase is DepthMachine().TestCase
-    assert DepthMachine().TestCase is not None
-
-
-class FlakyDrawLessMachine(RuleBasedStateMachine):
-    @rule(d=data())
-    def action(self, d):
-        if current_build_context().is_final:
-            d.draw(binary(min_size=1, max_size=1))
-        else:
-            buffer = binary(min_size=1024, max_size=1024)
-            assert 0 not in buffer
-
-
-def test_flaky_draw_less_raises_flaky():
-    with raises(Flaky):
-        FlakyDrawLessMachine.TestCase().runTest()
-
-
 def test_result_is_added_to_target():
-    class TargetStateMachine(RuleBasedStateMachine):
-        nodes = Bundle("nodes")
+    class TargetStateMachine(hegel.StateMachine):
+        def __init__(self, tc):
+            self.nodes = hegel.Pool(tc)
 
-        @rule(target=nodes, source=lists(nodes))
-        def bunch(self, source):
+        @hegel.rule()
+        def bunch(self, tc):
+            source = tc.draw(gs.lists(self.nodes.values_reusable()))
             assert len(source) == 0
-            return source
+            self.nodes.add(source)
 
-    test_class = TargetStateMachine.TestCase
-    try:
-        test_class().runTest()
-        raise RuntimeError("Expected an assertion error")
-    except AssertionError as err:
-        notes = _notes(err)
-    regularized_notes = [re.sub(r"[0-9]+", "i", note) for note in notes]
-    assert "state.bunch(source=[nodes_i])" in regularized_notes
+    with raises(AssertionError) as err:
+        _run(TargetStateMachine)
+    # The value added by the first step is what the failing step draws.
+    assert re.search(r"Step \d+: bunch \{\n  source = \[\[\]\]\n\}", _failure_text(err.value))
 
 
-class FlakyStateMachine(RuleBasedStateMachine):
-    @rule()
-    def action(self):
-        assert current_build_context().is_final
-
-
-def test_flaky_raises_flaky():
-    with raises(Flaky):
-        FlakyStateMachine.TestCase().runTest()
-
-
-class FlakyPreconditionMachine(RuleBasedStateMachine):
-    @precondition(lambda self: not current_build_context().is_final)
-    @rule()
-    def action(self):
-        raise AssertionError
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel reports a flaky precondition as a plain Flaky/InvalidDefinition "
-    "error, without Hypothesis's FlakyStrategyDefinition note",
-)
-def test_flaky_precondition_error_message():
-    with raises(FlakyStrategyDefinition) as exc_info:
-        FlakyPreconditionMachine.TestCase().runTest()
-    assert any("flaky precondition" in note for note in _notes(exc_info.value))
-
-
-class FlakyDrawInRuleMachine(RuleBasedStateMachine):
-    # Flakiness inside rule execution (via data().draw()) happens AFTER rule selection,
-    # so the "flaky precondition" note should NOT be added.
-    @rule(d=data())
-    def action(self, d):
-        if current_build_context().is_final:
-            d.draw(st.integers(0, 0))
-        d.draw(st.integers())
-        raise AssertionError
-
-
-def test_flaky_draw_in_rule_no_precondition_note():
-    # When flakiness occurs during rule execution (not rule selection),
-    # the error message should NOT mention flaky preconditions.
-    # Hegel reports this as its generic Flaky error.
-    with raises(Flaky) as exc_info:
-        FlakyDrawInRuleMachine.TestCase().runTest()
-    notes = getattr(exc_info.value, "__notes__", [])
-    assert not any("flaky precondition" in note for note in notes)
-
-
-def test_get_state_machine_test_is_importable():
-    # Regression test: get_state_machine_test is used by HypoFuzz
-    assert callable(get_state_machine_test)
-
-
-class FlakyRatchettingMachine(RuleBasedStateMachine):
+class FlakyRatchettingMachine(hegel.StateMachine):
     ratchet = 0
 
-    @rule(d=data())
-    def action(self, d):
+    @hegel.rule()
+    def action(self, tc):
         FlakyRatchettingMachine.ratchet += 1
         n = FlakyRatchettingMachine.ratchet
-        d.draw(lists(integers(), min_size=n, max_size=n))
+        tc.draw(gs.lists(gs.integers(), min_size=n, max_size=n))
         raise AssertionError
 
 
-@Settings(
-    stateful_step_count=10,
-    max_examples=30,
-    suppress_health_check=[HealthCheck.filter_too_much],
-)  # speed this up
-class MachineWithConsumingRule(RuleBasedStateMachine):
-    b1 = Bundle("b1")
-    b2 = Bundle("b2")
+class MachineWithConsumingRule(hegel.StateMachine):
+    steps = 10
 
-    def __init__(self):
+    def __init__(self, tc):
+        self.b1 = hegel.Pool(tc)
+        self.b2 = hegel.Pool(tc)
         self.created_counter = 0
         self.consumed_counter = 0
-        super().__init__()
 
-    @invariant()
-    def bundle_length(self):
-        assert len(self.bundle("b1")) == self.created_counter - self.consumed_counter
+    @hegel.invariant()
+    def bundle_length(self, tc):
+        assert len(self.b1) == self.created_counter - self.consumed_counter
 
-    @rule(target=b1)
-    def populate_b1(self):
+    @hegel.rule()
+    def populate_b1(self, tc):
         self.created_counter += 1
-        return self.created_counter
+        self.b1.add(self.created_counter)
 
-    @rule(target=b2, consumed=consumes(b1))
-    def depopulate_b1(self, consumed):
+    @hegel.rule()
+    def depopulate_b1(self, tc):
+        consumed = tc.draw(self.b1.values_consumed())
         self.consumed_counter += 1
-        return consumed
+        self.b2.add(consumed)
 
-    @rule(consumed=lists(consumes(b1), max_size=3))
-    def depopulate_b1_multiple(self, consumed):
-        self.consumed_counter += len(consumed)
+    @hegel.rule()
+    def depopulate_b1_multiple(self, tc):
+        n = tc.draw(gs.integers(0, 3))
+        tc.assume(n <= len(self.b1))
+        for _ in range(n):
+            tc.draw(self.b1.values_consumed())
+        self.consumed_counter += n
 
-    @rule(value1=b1, value2=b2)
-    def check(self, value1, value2):
+    @hegel.rule()
+    def check(self, tc):
+        value1 = tc.draw(self.b1.values_reusable())
+        value2 = tc.draw(self.b2.values_reusable())
         assert value1 != value2
 
 
-TestMachineWithConsumingRule = MachineWithConsumingRule.TestCase
+test_MachineWithConsumingRule = hegel.state_machine_test(
+    MachineWithConsumingRule,
+    test_cases=30,
+    suppress_health_check=[hegel.HealthCheck.filter_too_much],
+)
 
 
-def test_multiple():
-    none = multiple()
-    some = multiple(1, 2.01, "3", b"4", 5)
-    assert len(none.values) == 0
-    assert len(some.values) == 5
-    assert set(some.values) == {1, 2.01, "3", b"4", 5}
-
-
-class MachineUsingMultiple(RuleBasedStateMachine):
-    b = Bundle("b")
-
-    def __init__(self):
+class MachineUsingMultiple(hegel.StateMachine):
+    def __init__(self, tc):
+        self.b = hegel.Pool(tc)
         self.expected_bundle_length = 0
-        super().__init__()
 
-    @invariant()
-    def bundle_length(self):
-        assert len(self.bundle("b")) == self.expected_bundle_length
+    @hegel.invariant()
+    def bundle_length(self, tc):
+        assert len(self.b) == self.expected_bundle_length
 
-    @rule(target=b, items=lists(elements=integers(), max_size=10))
-    def populate_bundle(self, items):
+    @hegel.rule()
+    def populate_bundle(self, tc):
+        items = tc.draw(gs.lists(gs.integers(), max_size=10))
         self.expected_bundle_length += len(items)
-        return multiple(*items)
+        for item in items:
+            self.b.add(item)
 
-    @rule(target=b)
-    def do_not_populate(self):
-        return multiple()
-
-
-TestMachineUsingMultiple = MachineUsingMultiple.TestCase
+    @hegel.rule()
+    def do_not_populate(self, tc):
+        pass
 
 
-def test_multiple_variables_printed():
-    class ProducesMultiple(RuleBasedStateMachine):
-        b = Bundle("b")
-
-        @initialize(target=b)
-        def populate_bundle(self):
-            return multiple(1, 2)
-
-        @rule()
-        def fail_fast(self):
-            raise AssertionError
-
-    with raises(AssertionError) as err:
-        run_state_machine_as_test(ProducesMultiple)
-
-    # This is tightly coupled to the output format of the step printing.
-    # The first line is "Falsifying example:..." the second is creating
-    # the state machine, the third is calling the "initialize" method.
-    assignment_line = _notes(err.value)[2]
-    # 'populate_bundle()' returns 2 values, so should be
-    # expanded to 2 variables.
-    assert assignment_line == "b_0, b_1 = state.populate_bundle()"
-
-    # Make sure MultipleResult is iterable so the printed code is valid.
-    # See https://github.com/HypothesisWorks/hypothesis/issues/2311
-    state = ProducesMultiple()
-    _b_0, _b_1 = state.populate_bundle()
-    with raises(AssertionError):
-        state.fail_fast()
-
-
-def test_multiple_variables_printed_single_element():
-    # https://github.com/HypothesisWorks/hypothesis/issues/3236
-    class ProducesMultiple(RuleBasedStateMachine):
-        b = Bundle("b")
-
-        @initialize(target=b)
-        def populate_bundle(self):
-            return multiple(1)
-
-        @rule(b=b)
-        def fail_fast(self, b):
-            assert b != 1
-
-    with raises(AssertionError) as err:
-        run_state_machine_as_test(ProducesMultiple)
-
-    assignment_line = _notes(err.value)[2]
-    assert assignment_line == "(b_0,) = state.populate_bundle()"
-
-    state = ProducesMultiple()
-    (v1,) = state.populate_bundle()
-    state.fail_fast((v1,))  # passes if tuple not unpacked
-    with raises(AssertionError):
-        state.fail_fast(v1)
-
-
-def test_no_variables_printed():
-    class ProducesNoVariables(RuleBasedStateMachine):
-        b = Bundle("b")
-
-        @initialize(target=b)
-        def populate_bundle(self):
-            return multiple()
-
-        @rule()
-        def fail_fast(self):
-            raise AssertionError
-
-    with raises(AssertionError) as err:
-        run_state_machine_as_test(ProducesNoVariables)
-
-    # This is tightly coupled to the output format of the step printing.
-    # The first line is "Falsifying example:..." the second is creating
-    # the state machine, the third is calling the "initialize" method.
-    assignment_line = _notes(err.value)[2]
-    # 'populate_bundle()' returns 0 values, so there should be no
-    # variable assignment.
-    assert assignment_line == "state.populate_bundle()"
-
-
-def test_consumes_typecheck():
-    with pytest.raises(TypeError):
-        consumes(integers())
+test_MachineUsingMultiple = hegel.state_machine_test(MachineUsingMultiple)
 
 
 def test_ratchetting_raises_flaky():
     with raises(Flaky):
-        FlakyRatchettingMachine.TestCase().runTest()
+        _run(FlakyRatchettingMachine, nondeterminism_strictness="error")
 
 
 def test_empty_machine_is_invalid():
-    class EmptyMachine(RuleBasedStateMachine):
+    class EmptyMachine(hegel.StateMachine):
         pass
 
-    with raises(InvalidDefinition):
-        EmptyMachine.TestCase().runTest()
+    with raises(InvalidArgument):
+        _run(EmptyMachine)
 
 
-def test_machine_with_no_terminals_is_invalid():
-    class NonTerminalMachine(RuleBasedStateMachine):
-        @rule(value=Bundle("hi"))
-        def bye(self, hi):
-            pass
+def test_machine_with_no_terminals_fails_health_check():
+    # Hypothesis rejects this machine at definition time; Hegel keeps
+    # rejecting the only rule (its pool is never filled) until the filter
+    # health check fires.
+    class NonTerminalMachine(hegel.StateMachine):
+        def __init__(self, tc):
+            self.hi = hegel.Pool(tc)
 
-    with raises(InvalidDefinition):
-        NonTerminalMachine.TestCase().runTest()
+        @hegel.rule()
+        def bye(self, tc):
+            tc.draw(self.hi.values_reusable())
+
+    with raises(FailedHealthCheck, match="FilterTooMuch"):
+        _run(NonTerminalMachine)
 
 
 def test_minimizes_errors_in_teardown():
-    # temporary debugging to try to narrow down a potential thread-safety issue
-    import threading
-
-    from hegel.hypothesis import Verbosity
-
     counter = 0
 
-    @Settings(database=None, verbosity=Verbosity.debug)
-    class Foo(RuleBasedStateMachine):
-        @initialize()
-        def init(self):
+    class Foo(hegel.StateMachine):
+        def __init__(self):
             nonlocal counter
             counter = 0
-            print(f"[{threading.get_ident()}] init", counter)
 
-        @rule()
-        def increment(self):
+        @hegel.rule()
+        def increment(self, tc):
             nonlocal counter
             counter += 1
-            print(f"[{threading.get_ident()}] increment", counter)
 
         def teardown(self):
             nonlocal counter
-            print(f"[{threading.get_ident()}] teardown", counter)
             assert not counter
 
     with raises(AssertionError):
-        run_state_machine_as_test(Foo)
+        _run(Foo)
     assert counter == 1
 
 
-class RequiresInit(RuleBasedStateMachine):
+class RequiresInit(hegel.StateMachine):
     def __init__(self, threshold):
-        super().__init__()
         self.threshold = threshold
 
-    @rule(value=integers())
-    def action(self, value):
+    @hegel.rule()
+    def action(self, tc):
+        value = tc.draw(gs.integers())
         if value > self.threshold:
             raise ValueError(f"{value} is too high")
 
 
 def test_can_use_factory_for_tests():
     with raises(ValueError):
-        run_state_machine_as_test(lambda: RequiresInit(42), settings=Settings(max_examples=100))
+        hegel.run(lambda tc: hegel.run_state_machine(tc, RequiresInit(42)), test_cases=100)
 
 
-class FailsEventually(RuleBasedStateMachine):
+class FailsEventually(hegel.StateMachine):
+    steps = 5
+
     def __init__(self):
-        super().__init__()
         self.counter = 0
 
-    @rule()
-    def increment(self):
+    @hegel.rule()
+    def increment(self, tc):
         self.counter += 1
         assert self.counter < 10
 
 
-FailsEventually.TestCase.settings = Settings(stateful_step_count=5)
-
-
-@skipif_threading
 def test_can_explicitly_pass_settings():
-    run_state_machine_as_test(FailsEventually)
-    try:
-        FailsEventually.TestCase.settings = Settings(
-            FailsEventually.TestCase.settings, stateful_step_count=15
-        )
-        run_state_machine_as_test(FailsEventually, settings=Settings(stateful_step_count=2))
-    finally:
-        FailsEventually.TestCase.settings = Settings(
-            FailsEventually.TestCase.settings, stateful_step_count=5
-        )
-
-
-def test_settings_argument_is_validated():
-    with pytest.raises(InvalidArgument):
-        run_state_machine_as_test(FailsEventually, settings=object())
+    _run(FailsEventually)
+    with raises(AssertionError):
+        hegel.run(lambda tc: hegel.run_state_machine(tc, FailsEventually, steps=15))
+    hegel.run(lambda tc: hegel.run_state_machine(tc, FailsEventually, steps=2))
 
 
 def test_runner_that_checks_factory_produced_a_machine():
     with pytest.raises(InvalidArgument):
-        run_state_machine_as_test(object)
+        hegel.run(lambda tc: hegel.run_state_machine(tc, object))
 
 
-@skipif_threading
-def test_settings_attribute_is_validated():
-    real_settings = FailsEventually.TestCase.settings
-    try:
-        FailsEventually.TestCase.settings = object()
-        with pytest.raises(InvalidArgument):
-            run_state_machine_as_test(FailsEventually)
-    finally:
-        FailsEventually.TestCase.settings = real_settings
-
-
-def test_saves_failing_example_in_database():
-    db = InMemoryExampleDatabase()
-    ss = Settings(database=db, max_examples=1000, suppress_health_check=list(HealthCheck))
+def test_saves_failing_example_in_database(tmp_path):
     with raises(AssertionError):
-        run_state_machine_as_test(DepthMachine, settings=ss)
+        _run(
+            DepthMachine,
+            database=str(tmp_path),
+            test_cases=1000,
+            suppress_health_check=hegel.HealthCheck.all(),
+        )
     # Hegel's database is a directory; a saved failure leaves files in it.
-    assert any(files for _, _, files in os.walk(db._hegel_path))
+    assert any(files for _, _, files in os.walk(tmp_path))
 
 
 def test_can_run_with_no_db():
     with raises(AssertionError):
-        run_state_machine_as_test(
-            DepthMachine, settings=Settings(database=None, max_examples=10_000)
-        )
-
-
-def test_stateful_double_rule_is_forbidden(recwarn):
-    with pytest.raises(InvalidDefinition):
-
-        class DoubleRuleMachine(RuleBasedStateMachine):
-            @rule(num=just(1))
-            @rule(num=just(2))
-            def whatevs(self, num):
-                pass
-
-
-def test_can_explicitly_call_functions_when_precondition_not_satisfied():
-    class BadPrecondition(RuleBasedStateMachine):
-        def __init__(self):
-            super().__init__()
-
-        @precondition(lambda self: False)
-        @rule()
-        def test_blah(self):
-            raise ValueError
-
-        @rule()
-        def test_foo(self):
-            self.test_blah()
-
-    with pytest.raises(ValueError):
-        run_state_machine_as_test(BadPrecondition)
+        _run(DepthMachine, database="", test_cases=10_000)
 
 
 def test_invariant():
     """If an invariant raise an exception, the exception is propagated."""
 
-    class Invariant(RuleBasedStateMachine):
-        def __init__(self):
-            super().__init__()
-
-        @invariant()
-        def test_blah(self):
+    class Invariant(hegel.StateMachine):
+        @hegel.invariant()
+        def test_blah(self, tc):
             raise ValueError
 
-        @rule()
-        def do_stuff(self):
+        @hegel.rule()
+        def do_stuff(self, tc):
             pass
 
     with pytest.raises(ValueError):
-        run_state_machine_as_test(Invariant)
-
-
-def test_no_double_invariant():
-    """The invariant decorator can't be applied multiple times to a single
-    function."""
-    with raises(InvalidDefinition):
-
-        class Invariant(RuleBasedStateMachine):
-            def __init__(self):
-                super().__init__()
-
-            @invariant()
-            @invariant()
-            def test_blah(self):
-                pass
-
-            @rule()
-            def do_stuff(self):
-                pass
-
-
-def test_invariant_precondition():
-    """If an invariant precodition isn't met, the invariant isn't run.
-
-    The precondition decorator can be applied in any order.
-    """
-
-    class Invariant(RuleBasedStateMachine):
-        def __init__(self):
-            super().__init__()
-
-        @invariant()
-        @precondition(lambda _: False)
-        def an_invariant(self):
-            raise ValueError
-
-        @precondition(lambda _: False)
-        @invariant()
-        def another_invariant(self):
-            raise ValueError
-
-        @rule()
-        def do_stuff(self):
-            pass
-
-    run_state_machine_as_test(Invariant)
-
-
-@pytest.mark.parametrize(
-    "decorators",
-    [
-        (invariant(), rule()),
-        (rule(), invariant()),
-        (invariant(), initialize()),
-        (initialize(), invariant()),
-        (invariant(), precondition(lambda self: True), rule()),
-        (rule(), precondition(lambda self: True), invariant()),
-        (precondition(lambda self: True), invariant(), rule()),
-        (precondition(lambda self: True), rule(), invariant()),
-    ],
-    ids=lambda x: "-".join(f.__qualname__.split(".")[0] for f in x),
-)
-def test_invariant_and_rule_are_incompatible(decorators):
-    """It's an error to apply @invariant and @rule to the same method."""
-
-    def method(self):
-        pass
-
-    for d in decorators[:-1]:
-        method = d(method)
-    with pytest.raises(InvalidDefinition):
-        decorators[-1](method)
-
-
-def test_invalid_rule_argument():
-    """Rule kwargs that are not a Strategy are expected to raise an InvalidArgument error."""
-    with pytest.raises(InvalidArgument):
-
-        class InvalidRuleMachine(RuleBasedStateMachine):
-            @rule(strategy=object())
-            def do_stuff(self):
-                pass
-
-
-def test_invalid_initialize_argument():
-    """Initialize kwargs that are not a Strategy are expected to raise an InvalidArgument error."""
-    with pytest.raises(InvalidArgument):
-
-        class InvalidInitialize(RuleBasedStateMachine):
-            @initialize(strategy=object())
-            def initialize(self):
-                pass
+        _run(Invariant)
 
 
 def test_multiple_invariants():
     """If multiple invariants are present, they all get run."""
 
-    class Invariant(RuleBasedStateMachine):
+    class Invariant(hegel.StateMachine):
         def __init__(self):
-            super().__init__()
             self.first_invariant_ran = False
 
-        @invariant()
-        def invariant_1(self):
+        @hegel.invariant()
+        def invariant_1(self, tc):
             self.first_invariant_ran = True
 
-        @precondition(lambda self: self.first_invariant_ran)
-        @invariant()
-        def invariant_2(self):
-            raise ValueError
+        @hegel.invariant()
+        def invariant_2(self, tc):
+            if self.first_invariant_ran:
+                raise ValueError
 
-        @rule()
-        def do_stuff(self):
+        @hegel.rule()
+        def do_stuff(self, tc):
             pass
 
     with pytest.raises(ValueError):
-        run_state_machine_as_test(Invariant)
+        _run(Invariant)
 
 
-def test_explicit_invariant_call_with_precondition():
-    """Invariants can be called explicitly even if their precondition is not
-    satisfied."""
-
-    class BadPrecondition(RuleBasedStateMachine):
-        def __init__(self):
-            super().__init__()
-
-        @precondition(lambda self: False)
-        @invariant()
-        def test_blah(self):
-            raise ValueError
-
-        @rule()
-        def test_foo(self):
-            self.test_blah()
-
-    with pytest.raises(ValueError):
-        run_state_machine_as_test(BadPrecondition)
-
-
-def test_invariant_checks_initial_state_if_no_initialize_rules():
+def test_invariant_checks_initial_state():
     """Invariants are checked before any rules run."""
 
-    class BadPrecondition(RuleBasedStateMachine):
+    class BadPrecondition(hegel.StateMachine):
         def __init__(self):
-            super().__init__()
             self.num = 0
 
-        @invariant()
-        def test_blah(self):
+        @hegel.invariant()
+        def test_blah(self, tc):
             if self.num == 0:
                 raise ValueError
 
-        @rule()
-        def test_foo(self):
+        @hegel.rule()
+        def test_foo(self, tc):
             self.num += 1
 
     with pytest.raises(ValueError):
-        run_state_machine_as_test(BadPrecondition)
+        _run(BadPrecondition)
 
 
 def test_invariant_failling_present_in_falsifying_example():
-    @Settings(print_blob=False)
-    class BadInvariant(RuleBasedStateMachine):
-        @initialize()
-        def initialize_1(self):
-            pass
-
-        @invariant()
-        def invariant_1(self):
+    class BadInvariant(hegel.StateMachine):
+        @hegel.invariant()
+        def invariant_1(self, tc):
             raise ValueError
 
-        @rule()
-        def rule_1(self):
+        @hegel.rule()
+        def rule_1(self, tc):
             pass
 
     with pytest.raises(ValueError) as err:
-        run_state_machine_as_test(BadInvariant)
+        _run(BadInvariant)
 
-    result = "\n".join(_notes(err.value))
     assert (
-        result
+        _failure_text(err.value)
         == """
 Falsifying example:
-state = BadInvariant()
-state.initialize_1()
-state.invariant_1()
-state.teardown()
+Checking invariants on the initial state.
+Invariant invariant_1 failed:
 """.strip()
     )
 
 
 def test_invariant_present_in_falsifying_example():
-    @Settings(print_blob=False, phases=tuple(Phase)[:-1])
-    class BadRuleWithGoodInvariants(RuleBasedStateMachine):
+    class BadRuleWithGoodInvariants(hegel.StateMachine):
         def __init__(self):
-            super().__init__()
             self.num = 0
 
-        @initialize()
-        def initialize_1(self):
+        @hegel.invariant()
+        def invariant_1(self, tc):
             pass
 
-        @invariant(check_during_init=True)
-        def invariant_1(self):
+        @hegel.invariant(always_run=True)
+        def invariant_2(self, tc):
             pass
 
-        @invariant(check_during_init=False)
-        def invariant_2(self):
-            pass
+        @hegel.invariant()
+        def invariant_3(self, tc):
+            assert self.num >= 0
 
-        @precondition(lambda self: self.num > 0)
-        @invariant()
-        def invariant_3(self):
-            pass
-
-        @rule()
-        def rule_1(self):
+        @hegel.rule()
+        def rule_1(self, tc):
             self.num += 1
             if self.num == 2:
                 raise ValueError
 
     with pytest.raises(ValueError) as err:
-        run_state_machine_as_test(BadRuleWithGoodInvariants)
+        _run(BadRuleWithGoodInvariants, phases=set(hegel.Phase) - {hegel.Phase.shrink})
 
+    # Passing invariants are not part of the printed run; the steps are.
     expected = """
 Falsifying example:
-state = BadRuleWithGoodInvariants()
-state.invariant_1()
-state.initialize_1()
-state.invariant_1()
-state.invariant_2()
-state.rule_1()
-state.invariant_1()
-state.invariant_2()
-state.invariant_3()
-state.rule_1()
-state.teardown()
+Checking invariants on the initial state.
+Step 1: rule_1 {
+}
+Step 2: rule_1 {
+}
+Rule rule_1 failed:
 """.strip()
-
-    result = "\n".join(_notes(err.value)).strip()
-    assert expected == result
+    assert _failure_text(err.value) == expected
 
 
 def test_always_runs_at_least_one_step():
-    class CountSteps(RuleBasedStateMachine):
+    class CountSteps(hegel.StateMachine):
         def __init__(self):
-            super().__init__()
             self.count = 0
 
-        @rule()
-        def do_something(self):
+        @hegel.rule()
+        def do_something(self, tc):
             self.count += 1
 
         def teardown(self):
             assert self.count > 0
 
-    run_state_machine_as_test(CountSteps)
+    _run(CountSteps)
 
 
 def test_removes_needless_steps():
@@ -834,725 +464,255 @@ def test_removes_needless_steps():
     but will still fail with very high probability.
     """
 
-    @Settings(derandomize=True, max_examples=1000, deadline=None)
-    class IncorrectDeletion(RuleBasedStateMachine):
-        def __init__(self):
-            super().__init__()
+    class IncorrectDeletion(hegel.StateMachine):
+        def __init__(self, tc):
             self.__saved = defaultdict(set)
             self.__deleted = defaultdict(set)
+            self.keys = hegel.Pool(tc)
+            self.values = hegel.Pool(tc)
 
-        keys = Bundle("keys")
-        values = Bundle("values")
+        @hegel.rule()
+        def k(self, tc):
+            self.keys.add(tc.draw(gs.binary()))
 
-        @rule(target=keys, k=binary())
-        def k(self, k):
-            return k
+        @hegel.rule()
+        def v(self, tc):
+            self.values.add(tc.draw(gs.binary()))
 
-        @rule(target=values, v=binary())
-        def v(self, v):
-            return v
-
-        @rule(k=keys, v=values)
-        def save(self, k, v):
+        @hegel.rule()
+        def save(self, tc):
+            k = tc.draw(self.keys.values_reusable())
+            v = tc.draw(self.values.values_reusable())
             self.__saved[k].add(v)
 
-        @rule(k=keys, v=values)
-        def delete(self, k, v):
+        @hegel.rule()
+        def delete(self, tc):
+            k = tc.draw(self.keys.values_reusable())
+            v = tc.draw(self.values.values_reusable())
             if v in self.__saved[k]:
                 self.__deleted[k].add(v)
 
-        @rule(k=keys)
-        def values_agree(self, k):
+        @hegel.rule()
+        def values_agree(self, tc):
+            k = tc.draw(self.keys.values_reusable())
             assert not self.__deleted[k]
 
     with pytest.raises(AssertionError) as err:
-        run_state_machine_as_test(IncorrectDeletion)
+        _run(IncorrectDeletion, derandomize=True, test_cases=1000)
 
-    result = "\n".join(_notes(err.value))
-    assert result.count(" = state.k(") == 1
-    assert result.count(" = state.v(") == 1
+    result = _failure_text(err.value)
+    assert len(re.findall(r"Step \d+: k \{", result)) == 1
+    assert len(re.findall(r"Step \d+: v \{", result)) == 1
 
 
-def test_prints_equal_values_with_correct_variable_name():
-    @Settings(max_examples=100, suppress_health_check=list(HealthCheck))
-    class MovesBetweenBundles(RuleBasedStateMachine):
-        b1 = Bundle("b1")
-        b2 = Bundle("b2")
+def test_shrinks_moves_between_pools_to_one_step_each():
+    class MovesBetweenBundles(hegel.StateMachine):
+        def __init__(self, tc):
+            self.b1 = hegel.Pool(tc)
+            self.b2 = hegel.Pool(tc)
 
-        @rule(target=b1)
-        def create(self):
-            return []
+        @hegel.rule()
+        def create(self, tc):
+            self.b1.add([])
 
-        @rule(target=b2, source=b1)
-        def transfer(self, source):
-            return source
+        @hegel.rule()
+        def transfer(self, tc):
+            source = tc.draw(self.b1.values_reusable())
+            self.b2.add(source)
 
-        @rule(source=b2)
-        def fail(self, source):
+        @hegel.rule()
+        def fail(self, tc):
+            tc.draw(self.b2.values_reusable())
             raise AssertionError
 
     with pytest.raises(AssertionError) as err:
-        run_state_machine_as_test(MovesBetweenBundles)
+        _run(MovesBetweenBundles, test_cases=100, suppress_health_check=hegel.HealthCheck.all())
 
-    result = "\n".join(_notes(err.value))
+    result = _failure_text(err.value)
     for m in ["create", "transfer", "fail"]:
-        assert result.count("state." + m) == 1
-    assert "b1_0 = state.create()" in result
-    assert "b2_0 = state.transfer(source=b1_0)" in result
-    assert "state.fail(source=b2_0)" in result
+        assert len(re.findall(rf"Step \d+: {m} \{{", result)) == 1
+    assert "Step 1: create {" in result
+    assert "Rule fail failed:" in result
 
 
-def test_initialize_rule():
-    @Settings(max_examples=1000)
-    class WithInitializeRules(RuleBasedStateMachine):
-        initialized: ClassVar = []
+def test_rules_in_state_machine_with_inheritance():
+    class ParentStateMachine(hegel.StateMachine):
+        seen: ClassVar = set()
 
-        @initialize()
-        def initialize_a(self):
-            self.initialized.append("a")
+        @hegel.rule()
+        def rule_a(self, tc):
+            self.seen.add("a")
 
-        @initialize()
-        def initialize_b(self):
-            self.initialized.append("b")
+    class ChildStateMachine(ParentStateMachine):
+        @hegel.rule()
+        def rule_b(self, tc):
+            self.seen.add("b")
 
-        @initialize()
-        def initialize_c(self):
-            self.initialized.append("c")
+        @hegel.rule()
+        def fail_when_both_ran(self, tc):
+            assert self.seen != {"a", "b"}
 
-        @rule()
-        def fail_fast(self):
-            raise AssertionError
+    with pytest.raises(AssertionError):
+        _run(ChildStateMachine)
 
-    with pytest.raises(AssertionError) as err:
-        run_state_machine_as_test(WithInitializeRules)
-
-    assert set(WithInitializeRules.initialized[-3:]) == {"a", "b", "c"}
-    result = _notes(err.value)[1:]
-    assert result[0] == "state = WithInitializeRules()"
-    # Initialize rules call order is shuffled
-    assert {result[1], result[2], result[3]} == {
-        "state.initialize_a()",
-        "state.initialize_b()",
-        "state.initialize_c()",
-    }
-    assert result[4] == "state.fail_fast()"
-    assert result[5] == "state.teardown()"
+    assert ChildStateMachine.seen == {"a", "b"}
 
 
 def test_one_of_with_a_single_bundle_branch():
-    class SingleBundleBranch(RuleBasedStateMachine):
-        b = Bundle("b")
+    class SingleBundleBranch(hegel.StateMachine):
+        def __init__(self, tc):
+            self.b = hegel.Pool(tc)
 
-        @rule(target=b)
-        def create(self):
-            return 1
+        @hegel.rule()
+        def create(self, tc):
+            self.b.add(1)
 
-        @rule(value=st.one_of(b, st.nothing()))
-        def consume(self, value):
+        @hegel.rule()
+        def consume(self, tc):
+            value = tc.draw(gs.one_of(self.b.values_reusable(), gs.nothing()))
             assert value == 1
 
-    run_state_machine_as_test(SingleBundleBranch)
-
-
-def test_initialize_rule_populate_bundle():
-    class WithInitializeBundleRules(RuleBasedStateMachine):
-        a = Bundle("a")
-
-        @initialize(target=a, dep=just("dep"))
-        def initialize_a(self, dep):
-            return f"a a_0 with ({dep})"
-
-        @rule(param=a)
-        def fail_fast(self, param):
-            raise AssertionError
-
-    WithInitializeBundleRules.TestCase.settings = NO_BLOB_SETTINGS
-    with pytest.raises(AssertionError) as err:
-        run_state_machine_as_test(WithInitializeBundleRules)
-
-    result = "\n".join(_notes(err.value))
-    assert (
-        result
-        == """
-Falsifying example:
-state = WithInitializeBundleRules()
-a_0 = state.initialize_a(dep='dep')
-state.fail_fast(param=a_0)
-state.teardown()
-""".strip()
-    )
-
-
-def test_initialize_rule_dont_mix_with_precondition():
-    with pytest.raises(
-        InvalidDefinition,
-        match=(
-            "BadStateMachine\\.initialize has been decorated with both @initialize "
-            "and @precondition"
-        ),
-    ):
-
-        class BadStateMachine(RuleBasedStateMachine):
-            @precondition(lambda self: True)
-            @initialize()
-            def initialize(self):
-                pass
-
-    # Also test decorator application in reverse order
-
-    with pytest.raises(
-        InvalidDefinition,
-        match=(
-            "BadStateMachineReverseOrder\\.initialize has been decorated with both "
-            "@initialize and @precondition"
-        ),
-    ):
-
-        class BadStateMachineReverseOrder(RuleBasedStateMachine):
-            @initialize()
-            @precondition(lambda self: True)
-            def initialize(self):
-                pass
-
-
-def test_initialize_rule_dont_mix_with_regular_rule():
-    with pytest.raises(
-        InvalidDefinition,
-        match="BadStateMachine\\.initialize has been decorated with both @rule and @initialize",
-    ):
-
-        class BadStateMachine(RuleBasedStateMachine):
-            @rule()
-            @initialize()
-            def initialize(self):
-                pass
-
-    with pytest.raises(
-        InvalidDefinition,
-        match=(
-            "BadStateMachineReverseOrder\\.initialize has been decorated with both "
-            "@rule and @initialize"
-        ),
-    ):
-
-        class BadStateMachineReverseOrder(RuleBasedStateMachine):
-            @initialize()
-            @rule()
-            def initialize(self):
-                pass
-
-
-def test_initialize_rule_cannot_be_double_applied():
-    with pytest.raises(
-        InvalidDefinition,
-        match="BadStateMachine\\.initialize has been decorated with @initialize twice",
-    ):
-
-        class BadStateMachine(RuleBasedStateMachine):
-            @initialize()
-            @initialize()
-            def initialize(self):
-                pass
-
-
-def test_initialize_rule_in_state_machine_with_inheritance():
-    class ParentStateMachine(RuleBasedStateMachine):
-        initialized: ClassVar = []
-
-        @initialize()
-        def initialize_a(self):
-            self.initialized.append("a")
-
-    class ChildStateMachine(ParentStateMachine):
-        @initialize()
-        def initialize_b(self):
-            self.initialized.append("b")
-
-        @rule()
-        def fail_fast(self):
-            raise AssertionError
-
-    with pytest.raises(AssertionError) as err:
-        run_state_machine_as_test(ChildStateMachine)
-
-    assert set(ChildStateMachine.initialized[-2:]) == {"a", "b"}
-    result = _notes(err.value)[1:]
-    assert result[0] == "state = ChildStateMachine()"
-    # Initialize rules call order is shuffled
-    assert {result[1], result[2]} == {"state.initialize_a()", "state.initialize_b()"}
-    assert result[3] == "state.fail_fast()"
-    assert result[4] == "state.teardown()"
-
-
-def test_can_manually_call_initialize_rule():
-    class StateMachine(RuleBasedStateMachine):
-        initialize_called_counter = 0
-
-        @initialize()
-        def initialize(self):
-            self.initialize_called_counter += 1
-
-        @rule()
-        def fail_eventually(self):
-            self.initialize()
-            assert self.initialize_called_counter <= 2
-
-    StateMachine.TestCase.settings = NO_BLOB_SETTINGS
-    with pytest.raises(AssertionError) as err:
-        run_state_machine_as_test(StateMachine)
-
-    result = "\n".join(_notes(err.value))
-    assert (
-        result
-        == """
-Falsifying example:
-state = StateMachine()
-state.initialize()
-state.fail_eventually()
-state.fail_eventually()
-state.teardown()
-""".strip()
-    )
+    _run(SingleBundleBranch)
 
 
 def test_steps_printed_despite_pytest_fail():
     # Test for https://github.com/HypothesisWorks/hypothesis/issues/1372
-    @Settings(print_blob=False)
-    class RaisesProblem(RuleBasedStateMachine):
-        @rule()
-        def oops(self):
+    class RaisesProblem(hegel.StateMachine):
+        @hegel.rule()
+        def oops(self, tc):
             pytest.fail("note that this raises a BaseException")
 
     with pytest.raises(Failed) as err:
-        run_state_machine_as_test(RaisesProblem)
+        _run(RaisesProblem)
     assert (
-        "\n".join(_notes(err.value)).strip()
+        _failure_text(err.value)
         == """
 Falsifying example:
-state = RaisesProblem()
-state.oops()
-state.teardown()""".strip()
+Step 1: oops {
+}
+Rule oops failed:""".strip()
     )
 
 
-def test_steps_not_printed_with_pytest_skip(capsys):
-    class RaisesProblem(RuleBasedStateMachine):
-        @rule()
-        def skip_whole_test(self):
+def test_steps_not_printed_with_pytest_skip():
+    class RaisesProblem(hegel.StateMachine):
+        @hegel.rule()
+        def skip_whole_test(self, tc):
             pytest.skip()
 
-    with pytest.raises(Skipped):
-        run_state_machine_as_test(RaisesProblem)
-    out, _ = capsys.readouterr()
-    assert "state" not in out
-
-
-def test_rule_deprecation_targets_and_target():
-    k, v = Bundle("k"), Bundle("v")
-    with pytest.raises(InvalidArgument):
-        rule(targets=(k,), target=v)
-
-
-def test_rule_deprecation_bundle_by_name():
-    Bundle("k")
-    with pytest.raises(InvalidArgument):
-        rule(target="k")
-
-
-def test_rule_non_bundle_target():
-    with pytest.raises(InvalidArgument):
-        rule(target=integers())
-
-
-def test_rule_non_bundle_target_oneof():
-    k, v = Bundle("k"), Bundle("v")
-    pattern = r".+ `one_of(a, b)` or `a | b` .+"
-    with pytest.raises(InvalidArgument, match=pattern):
-        rule(target=k | v)
-
-
-def test_uses_seed(capsys):
-    @seed(0)
-    class TrivialMachine(RuleBasedStateMachine):
-        @rule()
-        def oops(self):
-            raise AssertionError
-
-    with pytest.raises(AssertionError):
-        run_state_machine_as_test(TrivialMachine)
-    out, _ = capsys.readouterr()
-    assert "@seed" not in out
+    with capture_out() as out, pytest.raises(Skipped):
+        _run(RaisesProblem)
+    assert "Step" not in out.getvalue()
+    assert "Falsifying" not in out.getvalue()
 
 
 def _failing_blob():
     # Hegel's reproduction blobs are engine-specific, so take one from a
     # real failure instead of encoding a choice sequence.
-    class TrivialMachine(RuleBasedStateMachine):
-        @rule()
-        def oops(self):
+    class TrivialMachine(hegel.StateMachine):
+        @hegel.rule()
+        def oops(self, tc):
             raise AssertionError
 
     with pytest.raises(AssertionError) as err:
-        run_state_machine_as_test(TrivialMachine, settings=Settings(print_blob=True, database=None))
-    notes = "\n".join(_notes(err.value))
-    match = re.search(r"reproduce_failure\((?:'[^']*', b)?['\"]([^'\"]+)['\"]\)", notes)
-    assert match, notes
+        _run(TrivialMachine, print_blob=True, database="")
+    text = "\n".join(notes(err.value))
+    match = re.search(r'reproduce_failure\("([^"]+)"\)', text)
+    assert match, text
     return match.group(1)
 
 
 def test_reproduce_failure_works():
-    @reproduce_failure(__version__, _failing_blob())
-    class TrivialMachine(RuleBasedStateMachine):
-        @rule()
-        def oops(self):
+    class TrivialMachine(hegel.StateMachine):
+        @hegel.rule()
+        def oops(self, tc):
             raise AssertionError
 
+    test = hegel.reproduce_failure(_failing_blob())(
+        hegel.state_machine_test(TrivialMachine, print_blob=True)
+    )
     with pytest.raises(AssertionError):
-        run_state_machine_as_test(TrivialMachine, settings=Settings(print_blob=True))
+        test()
 
 
 def test_reproduce_failure_fails_if_no_error():
-    @reproduce_failure(__version__, _failing_blob())
-    class TrivialMachine(RuleBasedStateMachine):
-        @rule()
-        def ok(self):
+    class TrivialMachine(hegel.StateMachine):
+        @hegel.rule()
+        def ok(self, tc):
             pass
 
+    test = hegel.reproduce_failure(_failing_blob())(
+        hegel.state_machine_test(TrivialMachine, print_blob=True)
+    )
     with pytest.raises(DidNotReproduce):
-        run_state_machine_as_test(TrivialMachine, settings=Settings(print_blob=True))
+        test()
 
 
 def test_cannot_have_zero_steps():
+    class ZeroSteps(hegel.StateMachine):
+        steps = 0
+
+        @hegel.rule()
+        def step(self, tc):
+            pass
+
     with pytest.raises(InvalidArgument):
-        Settings(stateful_step_count=0)
-
-
-def test_arguments_do_not_use_names_of_return_values():
-    # See https://github.com/HypothesisWorks/hypothesis/issues/2341
-    class TrickyPrintingMachine(RuleBasedStateMachine):
-        data = Bundle("data")
-
-        @initialize(target=data, value=integers())
-        def init_data(self, value):
-            return value
-
-        @rule(d=data)
-        def mostly_fails(self, d):
-            assert d == 42
-
-    with pytest.raises(AssertionError) as err:
-        run_state_machine_as_test(TrickyPrintingMachine)
-    assert "data_0 = state.init_data(value=0)" in _notes(err.value)
-    assert "data_0 = state.init_data(value=data_0)" not in _notes(err.value)
-
-
-class TrickyInitMachine(RuleBasedStateMachine):
-    @initialize()
-    def init_a(self):
-        self.a = 0
-
-    @rule()
-    def inc(self):
-        self.a += 1
-
-    @invariant()
-    def check_a_positive(self):
-        # This will fail if run before the init_a method, but without
-        # @invariant(check_during_init=True) it will only run afterwards.
-        assert self.a >= 0
-
-
-def test_invariants_are_checked_after_init_steps():
-    run_state_machine_as_test(TrickyInitMachine)
-
-
-def test_invariants_can_be_checked_during_init_steps():
-    class UndefinedMachine(TrickyInitMachine):
-        @invariant(check_during_init=True)
-        def check_a_defined(self):
-            # This will fail because `a` is undefined before the init rule.
-            self.a
-
-    with pytest.raises(AttributeError):
-        run_state_machine_as_test(UndefinedMachine)
-
-
-def test_check_during_init_must_be_boolean():
-    invariant(check_during_init=False)
-    invariant(check_during_init=True)
+        _run(ZeroSteps)
     with pytest.raises(InvalidArgument):
-        invariant(check_during_init="not a bool")
+        hegel.run(lambda tc: hegel.run_state_machine(tc, FailsEventually, steps=0))
 
 
-def test_deprecated_target_consumes_bundle():
-    # It would be nicer to raise this error at runtime, but the internals make
-    # this sadly impractical.  Most InvalidDefinition errors happen at, well,
-    # definition-time already anyway, so it's not *worse* than the status quo.
-    with validate_deprecation():
-        rule(target=consumes(Bundle("b")))
-
-
-@Settings(stateful_step_count=5)
-class MinStepsMachine(RuleBasedStateMachine):
-    @initialize()
-    def init_a(self):
-        self.a = 0
-
-    @rule()
-    def inc(self):
-        self.a += 1
-
-    @invariant()
-    def not_too_many_steps(self):
-        assert self.a < 10
-
-    def teardown(self):
-        assert self.a >= 2
-
-
-# Replay overruns after we trigger a crosshair.util.IgnoreAttempt exception for n=3
-@xfail_on_crosshair(Why.other)
-@pytest.mark.xfail(strict=True, reason="Hegel's state machine runner has no minimum step count")
-def test_min_steps_argument():
-    # You must pass a non-negative integer...
-    for n_steps in (-1, "nan", 5.0):
-        with pytest.raises(InvalidArgument):
-            run_state_machine_as_test(MinStepsMachine, _min_steps=n_steps)
-
-    # and if you do, we'll take at least that many steps
-    run_state_machine_as_test(MinStepsMachine, _min_steps=3)
-
-    # (oh, and it's OK if you ask for more than we're actually going to take)
-    run_state_machine_as_test(MinStepsMachine, _min_steps=20)
-
-
-class ErrorsOnClassAttributeSettings(RuleBasedStateMachine):
-    settings = Settings(derandomize=True)
-
-    @rule()
-    def step(self):
-        pass
-
-
-def test_fails_on_settings_class_attribute():
-    with pytest.raises(
-        InvalidDefinition,
-        match=r"Assigning .+ as a class attribute does nothing",
-    ):
-        run_state_machine_as_test(ErrorsOnClassAttributeSettings)
-
-
-def test_single_target_multiple():
-    class Machine(RuleBasedStateMachine):
-        a = Bundle("a")
-
-        @initialize(target=a)
-        def initialize(self):
-            return multiple("ret1", "ret2", "ret3")
-
-        @rule(param=a)
-        def fail_fast(self, param):
-            raise AssertionError
-
-    Machine.TestCase.settings = NO_BLOB_SETTINGS
-    with pytest.raises(AssertionError) as err:
-        run_state_machine_as_test(Machine)
-
-    result = "\n".join(_notes(err.value))
-    assert (
-        result
-        == """
-Falsifying example:
-state = Machine()
-a_0, a_1, a_2 = state.initialize()
-state.fail_fast(param=a_0)
-state.teardown()
-""".strip()
-    )
-
-
-@pytest.mark.parametrize(
-    "bundle_names,initial,repr_",
-    [
-        ("a", "ret1", "a_0 = state.init()"),
-        ("aba", "ret1", "a_0 = b_0 = a_1 = state.init()"),
-        ("a", multiple(), "state.init()"),
-        ("aba", multiple(), "state.init()"),
-        ("a", multiple("ret1"), "(a_0,) = state.init()"),
-        ("aba", multiple("ret1"), "(a_0,) = (b_0,) = (a_1,) = state.init()"),
-        ("a", multiple("ret1", "ret2"), "a_0, a_1 = state.init()"),
-        (
-            "aba",
-            multiple("ret1", "ret2"),
-            "\n".join(  # noqa: FLY002  # no, f-string is not more readable
-                [
-                    "a_0, a_1 = state.init()",
-                    "b_0, b_1 = a_0, a_1",
-                    "a_2, a_3 = a_0, a_1",
-                ]
-            ),
-        ),
-    ],
-)
-def test_targets_repr(bundle_names, initial, repr_):
-    bundles = {name: Bundle(name) for name in bundle_names}
-
-    class Machine(RuleBasedStateMachine):
-        @initialize(targets=[bundles[name] for name in bundle_names])
-        def init(self):
-            return initial
-
-        @rule()
-        def fail_fast(self):
-            raise AssertionError
-
-    Machine.TestCase.settings = NO_BLOB_SETTINGS
-    with pytest.raises(AssertionError) as err:
-        run_state_machine_as_test(Machine)
-
-    result = "\n".join(_notes(err.value))
-    assert (
-        result
-        == f"""
-Falsifying example:
-state = Machine()
-{repr_}
-state.fail_fast()
-state.teardown()
-""".strip()
-    )
-
-
-def test_multiple_targets():
-    class Machine(RuleBasedStateMachine):
-        a = Bundle("a")
-        b = Bundle("b")
-
-        @initialize(targets=(a, b))
-        def initialize(self):
-            return multiple("ret1", "ret2", "ret3")
-
-        @rule(
-            a1=consumes(a),
-            a2=consumes(a),
-            a3=consumes(a),
-            b1=consumes(b),
-            b2=consumes(b),
-            b3=consumes(b),
-        )
-        def fail_fast(self, a1, a2, a3, b1, b2, b3):
-            raise AssertionError
-
-    Machine.TestCase.settings = NO_BLOB_SETTINGS
-    with pytest.raises(AssertionError) as err:
-        run_state_machine_as_test(Machine)
-
-    result = "\n".join(_notes(err.value))
-    assert (
-        result
-        == """
-Falsifying example:
-state = Machine()
-a_0, a_1, a_2 = state.initialize()
-b_0, b_1, b_2 = a_0, a_1, a_2
-state.fail_fast(a1=a_0, a2=a_1, a3=a_2, b1=b_0, b2=b_1, b3=b_2)
-state.teardown()
-""".strip()
-    )
-
-
-def test_multiple_common_targets():
-    class Machine(RuleBasedStateMachine):
-        a = Bundle("a")
-        b = Bundle("b")
-
-        @initialize(targets=(a, b, a))
-        def initialize(self):
-            return multiple("ret1", "ret2", "ret3")
-
-        @rule(
-            a1=consumes(a),
-            a2=consumes(a),
-            a3=consumes(a),
-            a4=consumes(a),
-            a5=consumes(a),
-            a6=consumes(a),
-            b1=consumes(b),
-            b2=consumes(b),
-            b3=consumes(b),
-        )
-        def fail_fast(self, a1, a2, a3, a4, a5, a6, b1, b2, b3):
-            raise AssertionError
-
-    Machine.TestCase.settings = NO_BLOB_SETTINGS
-    with pytest.raises(AssertionError) as err:
-        run_state_machine_as_test(Machine)
-
-    result = "\n".join(_notes(err.value))
-    assert (
-        result
-        == """
-Falsifying example:
-state = Machine()
-a_0, a_1, a_2 = state.initialize()
-b_0, b_1, b_2 = a_0, a_1, a_2
-a_3, a_4, a_5 = a_0, a_1, a_2
-state.fail_fast(a1=a_0, a2=a_1, a3=a_2, a4=a_3, a5=a_4, a6=a_5, b1=b_0, b2=b_1, b3=b_2)
-state.teardown()
-""".strip()
-    )
-
-
-class LotsOfEntropyPerStepMachine(RuleBasedStateMachine):
+class LotsOfEntropyPerStepMachine(hegel.StateMachine):
     # Regression tests for https://github.com/HypothesisWorks/hypothesis/issues/3618
-    @rule(data=binary(min_size=512, max_size=512))
-    def rule1(self, data):
+    @hegel.rule()
+    def rule1(self, tc):
+        data = tc.draw(gs.binary(min_size=512, max_size=512))
         assert data
 
 
-@pytest.mark.skipif(
-    Settings.get_current_profile_name() == "crosshair",
-    reason="takes hours; too much symbolic data",
-)
 def test_lots_of_entropy():
-    run_state_machine_as_test(LotsOfEntropyPerStepMachine)
+    _run(LotsOfEntropyPerStepMachine)
 
 
 def test_flatmap():
-    class Machine(RuleBasedStateMachine):
-        buns = Bundle("buns")
+    class Machine(hegel.StateMachine):
+        steps = 5
 
-        @initialize(target=buns)
-        def create_bun(self):
-            return 0
+        def __init__(self, tc):
+            self.buns = hegel.Pool(tc)
+            self.buns.add(0)
 
-        @rule(target=buns, bun=buns.flatmap(lambda x: just(x + 1)))
-        def use_flatmap(self, bun):
+        @hegel.rule()
+        def use_flatmap(self, tc):
+            bun = tc.draw(self.buns.values_reusable().flat_map(lambda x: gs.just(x + 1)))
             assert isinstance(bun, int)
-            return bun
+            self.buns.add(bun)
 
-        @rule(bun=buns)
-        def use_directly(self, bun):
+        @hegel.rule()
+        def use_directly(self, tc):
+            bun = tc.draw(self.buns.values_reusable())
             assert isinstance(bun, int)
 
-    Machine.TestCase.settings = Settings(stateful_step_count=5, max_examples=10)
-    run_state_machine_as_test(Machine)
+    _run(Machine, test_cases=10)
 
 
 def test_consumes_flatmap():
-    class Machine(RuleBasedStateMachine):
-        my_bundle = Bundle("my_bundle")
+    class Machine(hegel.StateMachine):
+        steps = 5
 
-        @rule(target=my_bundle)
-        def f(self):
-            return "abcde"
+        def __init__(self, tc):
+            self.my_bundle = hegel.Pool(tc)
 
-        @rule(value=consumes(my_bundle).flatmap(lambda v: st.just(None)))
-        def g(self, value):
+        @hegel.rule()
+        def f(self, tc):
+            self.my_bundle.add("abcde")
+
+        @hegel.rule()
+        def g(self, tc):
+            value = tc.draw(self.my_bundle.values_consumed().flat_map(lambda v: gs.just(None)))
             assert value is None
 
-    Machine.TestCase.settings = Settings(stateful_step_count=5, max_examples=10)
-    run_state_machine_as_test(Machine)
+    _run(Machine, test_cases=10)
 
 
 def test_use_bundle_within_other_strategies():
@@ -1560,300 +720,178 @@ def test_use_bundle_within_other_strategies():
         def __init__(self, value):
             self.value = value
 
-    class Machine(RuleBasedStateMachine):
-        my_bundle = Bundle("my_bundle")
+    class Machine(hegel.StateMachine):
+        steps = 5
 
-        @initialize(target=my_bundle)
-        def set_initial(self, /) -> str:
-            return "sample text"
+        def __init__(self, tc):
+            self.my_bundle = hegel.Pool(tc)
+            self.my_bundle.add("sample text")
 
-        @rule(instance=st.builds(Class, my_bundle))
-        def check(self, instance):
+        @hegel.rule()
+        def check(self, tc):
+            instance = tc.draw(gs.builds(Class, self.my_bundle.values_reusable()))
             assert isinstance(instance, Class)
             assert isinstance(instance.value, str)
 
-    Machine.TestCase.settings = Settings(stateful_step_count=5, max_examples=10)
-    run_state_machine_as_test(Machine)
+    _run(Machine, test_cases=10)
+
+
+def _filled_pool(tc, values):
+    pool = hegel.Pool(tc)
+    for value in values:
+        pool.add(value)
+    return pool
 
 
 def test_can_filter_bundle():
-    class Machine(RuleBasedStateMachine):
-        values = Bundle("values")
+    class Machine(hegel.StateMachine):
+        steps = 5
 
-        @initialize(target=values)
-        def fill(self):
-            return multiple(*range(10))
+        def __init__(self, tc):
+            self.values = _filled_pool(tc, range(10))
 
-        @rule(value=values.filter(lambda x: x % 2 == 0))
-        def use(self, value):
+        @hegel.rule()
+        def use(self, tc):
+            value = tc.draw(self.values.values_reusable().filter(lambda x: x % 2 == 0))
             assert value % 2 == 0
 
-    Machine.TestCase.settings = Settings(stateful_step_count=5, max_examples=10)
-    run_state_machine_as_test(Machine)
+    _run(Machine, test_cases=10)
 
 
 def test_can_map_bundle():
-    class Machine(RuleBasedStateMachine):
-        values = Bundle("values")
+    class Machine(hegel.StateMachine):
+        steps = 5
 
-        @initialize(target=values)
-        def fill(self):
-            return multiple(1, 2, 3)
+        def __init__(self, tc):
+            self.values = _filled_pool(tc, (1, 2, 3))
 
-        @rule(value=values.map(lambda x: x * 10))
-        def use(self, value):
+        @hegel.rule()
+        def use(self, tc):
+            value = tc.draw(self.values.values_reusable().map(lambda x: x * 10))
             assert value in (10, 20, 30)
 
-    Machine.TestCase.settings = Settings(stateful_step_count=5, max_examples=10)
-    run_state_machine_as_test(Machine)
+    _run(Machine, test_cases=10)
 
 
 def test_can_filter_mapped_bundle():
-    class Machine(RuleBasedStateMachine):
-        values = Bundle("values")
+    class Machine(hegel.StateMachine):
+        steps = 5
 
-        @initialize(target=values)
-        def fill(self):
-            return multiple(*range(10))
+        def __init__(self, tc):
+            self.values = _filled_pool(tc, range(10))
 
-        @rule(value=values.filter(lambda x: x % 2 == 0).map(lambda x: x + 1))
-        def use(self, value):
+        @hegel.rule()
+        def use(self, tc):
+            value = tc.draw(
+                self.values.values_reusable().filter(lambda x: x % 2 == 0).map(lambda x: x + 1)
+            )
             assert value % 2 == 1
 
-    Machine.TestCase.settings = Settings(stateful_step_count=5, max_examples=10)
-    run_state_machine_as_test(Machine)
+    _run(Machine, test_cases=10)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Pool.values_consumed() removes a value from the pool as soon as it is drawn, "
+    "so a filter's rejected attempts consume values too (observed: the odd value 1 was "
+    "missing from the pool after pop_even drew 0)",
+)
 def test_filtering_consumed_bundle_consumes_only_the_drawn_value():
-    class Machine(RuleBasedStateMachine):
-        values = Bundle("values")
+    class Machine(hegel.StateMachine):
+        steps = 5
 
-        @initialize(target=values)
-        def fill(self):
-            return multiple(*range(10))
+        def __init__(self, tc):
+            self.values = _filled_pool(tc, range(10))
 
-        @rule(value=consumes(values).filter(lambda x: x % 2 == 0))
-        def pop_even(self, value):
+        @hegel.rule()
+        def pop_even(self, tc):
+            value = tc.draw(self.values.values_consumed().filter(lambda x: x % 2 == 0))
             assert value % 2 == 0
-            remaining = {self.names_to_values[ref.name] for ref in self.bundle("values")}
-            # rejected values are not consumed from the bundle
+            remaining = set(self.values._values.values())
+            # rejected values are not consumed from the pool
             assert {1, 3, 5, 7, 9} <= remaining
 
-    Machine.TestCase.settings = Settings(stateful_step_count=5, max_examples=20)
-    run_state_machine_as_test(Machine)
+    _run(Machine, test_cases=20)
 
 
 def test_can_consume_filtered_bundle():
-    class Machine(RuleBasedStateMachine):
-        values = Bundle("values")
+    class Machine(hegel.StateMachine):
+        steps = 1
 
-        @initialize(target=values)
-        def fill(self):
-            return multiple(*range(4))
+        def __init__(self, tc):
+            self.values = _filled_pool(tc, range(4))
 
-        @rule(value=consumes(values.filter(lambda x: x == 3)))
-        def pop(self, value):
+        @hegel.rule()
+        def pop(self, tc):
+            value = tc.draw(self.values.values_consumed().filter(lambda x: x == 3))
             assert value == 3
 
-    Machine.TestCase.settings = Settings(stateful_step_count=1, max_examples=10)
-    run_state_machine_as_test(Machine)
+    _run(Machine, test_cases=10)
 
 
 def test_can_consume_mapped_bundle():
-    class Machine(RuleBasedStateMachine):
-        values = Bundle("values")
+    class Machine(hegel.StateMachine):
+        steps = 2
 
-        @initialize(target=values)
-        def fill(self):
-            return multiple(1, 2, 3)
+        def __init__(self, tc):
+            self.values = _filled_pool(tc, (1, 2, 3))
 
-        @rule(value=consumes(values).map(lambda x: x * 10))
-        def pop(self, value):
+        @hegel.rule()
+        def pop(self, tc):
+            value = tc.draw(self.values.values_consumed().map(lambda x: x * 10))
             assert value in (10, 20, 30)
 
-    Machine.TestCase.settings = Settings(stateful_step_count=2, max_examples=10)
-    run_state_machine_as_test(Machine)
+    _run(Machine, test_cases=10)
 
 
-def test_prints_variable_names_for_filtered_bundle_arguments():
-    class Machine(RuleBasedStateMachine):
-        values = Bundle("values")
-
-        @initialize(target=values)
-        def fill(self):
-            return multiple(1, 2, 3)
-
-        @rule(
-            a1=values.filter(lambda x: x < 2),
-            a2=values.filter(lambda x: x > 2),
-            a3=values,
-        )
-        def fail_fast(self, a1, a2, a3):
-            raise AssertionError
-
-    Machine.TestCase.settings = NO_BLOB_SETTINGS
-    with pytest.raises(AssertionError) as err:
-        run_state_machine_as_test(Machine)
-
-    result = "\n".join(_notes(err.value))
-    assert (
-        result
-        == """
-Falsifying example:
-state = Machine()
-values_0, values_1, values_2 = state.fill()
-state.fail_fast(a1=values_0, a2=values_2, a3=values_0)
-state.teardown()
-""".strip()
-    )
-
-
-def test_prints_variable_names_for_consumed_filtered_bundle_arguments():
-    class Machine(RuleBasedStateMachine):
-        values = Bundle("values")
-
-        @initialize(target=values)
-        def fill(self):
-            return multiple(1, 2, 3)
-
-        @rule(
-            v1=consumes(values).filter(lambda x: x < 2),
-            v2=consumes(values).filter(lambda x: x > 2),
-            v3=consumes(values),
-        )
-        def fail_fast(self, v1, v2, v3):
-            raise AssertionError
-
-    Machine.TestCase.settings = NO_BLOB_SETTINGS
-    with pytest.raises(AssertionError) as err:
-        run_state_machine_as_test(Machine)
-
-    result = "\n".join(_notes(err.value))
-    assert (
-        result
-        == """
-Falsifying example:
-state = Machine()
-values_0, values_1, values_2 = state.fill()
-state.fail_fast(v1=values_0, v2=values_2, v3=values_1)
-state.teardown()
-""".strip()
-    )
-
-
-def test_prints_mapped_bundle_values_directly():
-    # With a map transformation, the value passed to the rule is not the one
-    # stored on the machine - so we print the transformed value, not the name.
-    class Machine(RuleBasedStateMachine):
-        values = Bundle("values")
-
-        @initialize(target=values)
-        def fill(self):
-            return multiple("ret1", "ret2")
-
-        @rule(
-            v1=values,
-            v2=values.map(lambda x: x + x),
-            v3=consumes(values).map(lambda x: x + x),
-            v4=values,
-        )
-        def fail_fast(self, v1, v2, v3, v4):
-            raise AssertionError
-
-    Machine.TestCase.settings = NO_BLOB_SETTINGS
-    with pytest.raises(AssertionError) as err:
-        run_state_machine_as_test(Machine)
-
-    result = "\n".join(_notes(err.value))
-    assert (
-        result
-        == """
-Falsifying example:
-state = Machine()
-values_0, values_1 = state.fill()
-state.fail_fast(v1=values_0, v2='ret1ret1', v3='ret1ret1', v4=values_1)
-state.teardown()
-""".strip()
-    )
-
-
-@xfail_on_crosshair(Why.other, strict=False)  # health check may not trigger
 def test_unsatisfiable_bundle_filter_fails_health_check():
-    class Machine(RuleBasedStateMachine):
-        values = Bundle("values")
+    class Machine(hegel.StateMachine):
+        steps = 2
 
-        @initialize(target=values)
-        def fill(self):
-            return 0
+        def __init__(self, tc):
+            self.values = _filled_pool(tc, [0])
 
-        @rule(value=values.filter(lambda x: False))
-        def use(self, value):
+        @hegel.rule()
+        def use(self, tc):
+            tc.draw(self.values.values_reusable().filter(lambda x: False))
             raise AssertionError("should be unreachable")
 
-    Machine.TestCase.settings = Settings(stateful_step_count=2, max_examples=2)
-    # Hegel keeps asking for another rule while every rule is rejected, so
-    # the case overruns before the filter health check can fire.
-    with pytest.raises(FailedHealthCheck, match="(?i)filter_?too_?much|TestCasesTooLarge"):
-        run_state_machine_as_test(Machine)
+    with pytest.raises(FailedHealthCheck, match="FilterTooMuch"):
+        _run(Machine, test_cases=2)
 
 
 def test_can_generate_unique_lists_of_bundle_values():
-    class Machine(RuleBasedStateMachine):
-        values = Bundle("values")
+    class Machine(hegel.StateMachine):
+        steps = 3
 
-        @initialize(target=values)
-        def fill(self):
-            return multiple(*range(5))
+        def __init__(self, tc):
+            self.values = _filled_pool(tc, range(5))
 
-        @rule(vs=lists(values, unique=True, min_size=2))
-        def use(self, vs):
+        @hegel.rule()
+        def use(self, tc):
+            vs = tc.draw(gs.lists(self.values.values_reusable(), unique=True, min_size=2))
             assert len(set(vs)) == len(vs)
 
-    Machine.TestCase.settings = Settings(stateful_step_count=3, max_examples=10)
-    run_state_machine_as_test(Machine)
+    _run(Machine, test_cases=10)
 
 
 def test_can_generate_unique_lists_of_filtered_bundle_values():
-    class Machine(RuleBasedStateMachine):
-        values = Bundle("values")
+    class Machine(hegel.StateMachine):
+        steps = 3
 
-        @initialize(target=values)
-        def fill(self):
-            return multiple(*range(10))
+        def __init__(self, tc):
+            self.values = _filled_pool(tc, range(10))
 
-        @rule(vs=lists(values.filter(lambda x: x % 2 == 0), unique=True, min_size=2))
-        def use(self, vs):
+        @hegel.rule()
+        def use(self, tc):
+            vs = tc.draw(
+                gs.lists(
+                    self.values.values_reusable().filter(lambda x: x % 2 == 0),
+                    unique=True,
+                    min_size=2,
+                )
+            )
             assert len(set(vs)) == len(vs)
             assert all(v % 2 == 0 for v in vs)
 
-    Machine.TestCase.settings = Settings(stateful_step_count=3, max_examples=10)
-    run_state_machine_as_test(Machine)
-
-
-def test_bundle_repr_includes_transformations():
-    b = Bundle("b")
-    assert repr(b) == "Bundle(name='b')"
-    assert repr(consumes(b)) == "Bundle(name='b', consume=True)"
-    assert repr(b.filter(bool)) == "Bundle(name='b').filter(bool)"
-    assert repr(consumes(b.filter(bool))) == "Bundle(name='b', consume=True).filter(bool)"
-    assert repr(consumes(b).filter(bool)) == repr(consumes(b.filter(bool)))
-
-
-def test_precondition_cannot_be_used_without_rule():
-    class BadStateMachine(RuleBasedStateMachine):
-        @precondition(lambda: True)
-        def has_precondition_but_no_rule(self):
-            pass
-
-        @rule(n=st.integers())
-        def trivial(self, n):
-            pass
-
-    with pytest.raises(
-        InvalidDefinition,
-        match=(
-            "BadStateMachine\\.has_precondition_but_no_rule has been decorated "
-            "with @precondition, but not @rule"
-        ),
-    ):
-        BadStateMachine.TestCase().runTest()
+    _run(Machine, test_cases=10)

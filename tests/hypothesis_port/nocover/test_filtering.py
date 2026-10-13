@@ -10,8 +10,9 @@
 
 import pytest
 
-from hegel.hypothesis import given, strategies as st
-from hegel.hypothesis.strategies import integers, lists
+import hegel
+from hegel import generators as gs
+from hegel.generators import integers, lists
 
 
 @pytest.mark.parametrize(
@@ -19,29 +20,28 @@ from hegel.hypothesis.strategies import integers, lists
     [(integers(), lambda x: x > 1), (lists(integers()), bool)],
 )
 def test_filter_correctly(specifier, condition):
-    @given(specifier.filter(condition))
-    def test_is_filtered(x):
+    def test_is_filtered(tc):
+        x = tc.draw(specifier.filter(condition))
         assert condition(x)
 
-    test_is_filtered()
+    hegel.run(test_is_filtered)
 
 
 # A variety of strategies that generate the integers 1-20 inclusive, but might
 # differ in their support for special-case filtering.
 one_to_twenty_strategies = [
-    st.integers(1, 20),
-    st.integers(0, 19).map(lambda x: x + 1),
-    st.sampled_from(range(1, 21)),
-    st.sampled_from(range(20)).map(lambda x: x + 1),
+    gs.integers(1, 20),
+    gs.integers(0, 19).map(lambda x: x + 1),
+    gs.sampled_from(range(1, 21)),
+    gs.sampled_from(range(20)).map(lambda x: x + 1),
 ]
 
 
 @pytest.mark.parametrize("base", one_to_twenty_strategies)
-@given(
-    data=st.data(),
-    forbidden_values=st.lists(st.integers(1, 20), max_size=19, unique=True),
-)
-def test_chained_filters_agree(data, forbidden_values, base):
+@hegel.test
+def test_chained_filters_agree(tc, base):
+    forbidden_values = tc.draw(gs.lists(gs.integers(1, 20), max_size=19, unique=True))
+
     def forbid(s, forbidden):
         """Helper function to avoid Python variable scoping issues."""
         return s.filter(lambda x: x != forbidden)
@@ -50,7 +50,7 @@ def test_chained_filters_agree(data, forbidden_values, base):
     for forbidden in forbidden_values:
         s = forbid(s, forbidden)
 
-    x = data.draw(s)
+    x = tc.draw(s)
     assert 1 <= x <= 20
     assert x not in forbidden_values
 

@@ -1,6 +1,7 @@
 # Dropped from the Hypothesis original: test_threadlocal_setattr_and_getattr,
-# test_nonexistent_getattr_raises, test_nonexistent_setattr_raises and
-# test_raises_if_not_passed_callable (test the internal ThreadLocal helper).
+# test_nonexistent_getattr_raises, test_nonexistent_setattr_raises,
+# test_raises_if_not_passed_callable (the internal ThreadLocal helper);
+# TestNoDifferingExecutorsHealthCheck (HealthCheck.differing_executors).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -13,18 +14,12 @@
 
 from threading import Barrier, Thread
 
-import pytest
-
-from hegel.hypothesis import given, settings, strategies as st
-
+import hegel
+from hegel import generators as gs
 from tests.hypothesis_port.common.utils import skipif_emscripten
 
 
 @skipif_emscripten
-@pytest.mark.skipif(
-    settings.get_current_profile_name() == "crosshair",
-    reason="crosshair is not thread-safe",
-)
 def test_run_given_concurrently():
     # this is just a basic covering test. The more complicated and complete threading
     # tests are in nocover/test_threading.py.
@@ -32,8 +27,9 @@ def test_run_given_concurrently():
     n_threads = 2
     barrier = Barrier(n_threads)
 
-    @given(st.integers())
-    def test(n):
+    @hegel.test
+    def test(tc):
+        tc.draw(gs.integers())
         barrier.wait()
 
     threads = [Thread(target=test) for _ in range(n_threads)]
@@ -43,12 +39,3 @@ def test_run_given_concurrently():
 
     for thread in threads:
         thread.join(timeout=10)
-
-
-# rely on our pytest-run-parallel job to test this, since this only happens because
-# pytest instantiates a new class instance for each parametrization.
-class TestNoDifferingExecutorsHealthCheck:
-    @given(st.integers())
-    @pytest.mark.parametrize("x", range(2))
-    def test_a(self, x, i):
-        pass

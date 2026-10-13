@@ -8,73 +8,55 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-import re
+# Dropped from the Hypothesis original: test_slow_generation_inline_fails_a_health_check
+# (st.data() draws are no different from any other draw in Hegel; a duplicate of
+# test_slow_generation_fails_a_health_check); test_the_slow_test_health_check_can_be_disabled
+# (deadline); test_returning_non_none_is_forbidden, test_stateful_returnvalue_healthcheck
+# (HealthCheck.return_value); test_differing_executors_fails_health_check
+# (HealthCheck.differing_executors); test_can_suppress_nested_given,
+# test_cant_suppress_nested_given_on_inner, test_suppress_triply_nested_given
+# (HealthCheck.nested_given: a nested Hegel test is always an error).
+
 import time
 
 import pytest
 
-from hegel.hypothesis import HealthCheck, given, settings, strategies as st
-from hegel.hypothesis.errors import FailedHealthCheck, InvalidArgument
-from hegel.hypothesis.stateful import (
-    RuleBasedStateMachine,
-    initialize,
-    invariant,
-    rule,
-    run_state_machine_as_test,
-)
+import hegel
+from hegel import FailedHealthCheck, HealthCheck, InvalidArgument, Settings
+from hegel import generators as gs
+from tests.hypothesis_port.common.utils import no_shrink
 
-from tests.hypothesis_port.common.utils import Why, no_shrink, xfail_on_crosshair
+HEALTH_CHECK_SETTINGS = Settings(test_cases=11, database="", suppress_health_check=())
 
-# Hypothesis's suite patches time.sleep; this one does not, so a sleep of
-# 1000 seconds really takes that long.
-skipif_time_unpatched = pytest.mark.skip(reason="time.sleep is not patched in this suite")
-
-HEALTH_CHECK_SETTINGS = settings(max_examples=11, database=None, suppress_health_check=())
+# Hegel's too_slow health check fires when fewer than ten valid test cases
+# have taken thirty seconds of real time between them, so tripping it takes
+# a while (Hypothesis's suite patches time.sleep; this one cannot, since the
+# engine keeps its own clock).
+SLOW_SECONDS = 3.5
+SLOW_CASES = 9
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel's too_slow health check does not count time spent in Python "
-    "strategies while generating data",
-)
+@pytest.mark.slow
 def test_slow_generation_fails_a_health_check():
-    @settings(HEALTH_CHECK_SETTINGS, deadline=200)
-    @given(st.integers().map(lambda x: time.sleep(0.2)))
-    def test(x):
-        pass
+    @hegel.test(settings=HEALTH_CHECK_SETTINGS, test_cases=SLOW_CASES)
+    def test(tc):
+        tc.draw(gs.integers().map(lambda x: time.sleep(SLOW_SECONDS)))
 
-    with pytest.raises(FailedHealthCheck):
-        test()
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel's too_slow health check does not count time spent in Python "
-    "strategies while generating data; the deadline fires instead and the "
-    "replay (allowed 1.25x) then passes, which is reported as Flaky",
-)
-def test_slow_generation_inline_fails_a_health_check():
-    @settings(HEALTH_CHECK_SETTINGS, deadline=200)
-    @given(st.data())
-    def test(data):
-        data.draw(st.integers().map(lambda x: time.sleep(0.2)))
-
-    with pytest.raises(FailedHealthCheck):
+    with pytest.raises(FailedHealthCheck, match="TooSlow"):
         test()
 
 
 def test_default_health_check_can_weaken_specific():
     import random
 
-    @settings(HEALTH_CHECK_SETTINGS, suppress_health_check=list(HealthCheck))
-    @given(st.lists(st.integers(), min_size=1))
-    def test(x):
+    @hegel.test(settings=HEALTH_CHECK_SETTINGS, suppress_health_check=list(HealthCheck))
+    def test(tc):
+        x = tc.draw(gs.lists(gs.integers(), min_size=1))
         random.choice(x)
 
     test()
 
 
-@pytest.mark.skipif(settings.get_current_profile_name() == "crosshair", reason="nondeterministic")
 def test_suppressing_filtering_health_check():
     forbidden = set()
 
@@ -83,9 +65,9 @@ def test_suppressing_filtering_health_check():
             forbidden.add(x)
         return x not in forbidden
 
-    @HEALTH_CHECK_SETTINGS
-    @given(st.integers().filter(unhealthy_filter))
-    def test1(x):
+    @hegel.test(settings=HEALTH_CHECK_SETTINGS)
+    def test1(tc):
+        tc.draw(gs.integers().filter(unhealthy_filter))
         raise ValueError
 
     with pytest.raises(FailedHealthCheck):
@@ -93,9 +75,9 @@ def test_suppressing_filtering_health_check():
 
     forbidden = set()
 
-    @settings(suppress_health_check=[HealthCheck.filter_too_much, HealthCheck.too_slow])
-    @given(st.integers().filter(unhealthy_filter))
-    def test2(x):
+    @hegel.test(suppress_health_check=[HealthCheck.filter_too_much, HealthCheck.too_slow])
+    def test2(tc):
+        tc.draw(gs.integers().filter(unhealthy_filter))
         raise ValueError
 
     with pytest.raises(ValueError):
@@ -103,201 +85,80 @@ def test_suppressing_filtering_health_check():
 
 
 def test_filtering_everything_fails_a_health_check():
-    @given(st.integers().filter(lambda x: False))
-    @settings(database=None, suppress_health_check=())
-    def test(x):
-        pass
+    @hegel.test(database="", suppress_health_check=())
+    def test(tc):
+        tc.draw(gs.integers().filter(lambda x: False))
 
-    with pytest.raises(FailedHealthCheck, match="filter"):
+    with pytest.raises(FailedHealthCheck, match="(?i)filter"):
         test()
 
 
 def fails_regularly():
     # The original draws two bytes and assumes they equal 3; the same odds as
     # a filter over a 16-bit integer.
-    return st.integers(0, 2**16 - 1).filter(lambda b: b == 3)
+    return gs.integers(0, 2**16 - 1).filter(lambda b: b == 3)
 
 
 def test_filtering_most_things_fails_a_health_check():
-    @given(fails_regularly())
-    @settings(database=None, phases=no_shrink, suppress_health_check=())
-    def test(x):
-        pass
+    @hegel.test(database="", phases=no_shrink, suppress_health_check=())
+    def test(tc):
+        tc.draw(fails_regularly())
 
-    with pytest.raises(FailedHealthCheck, match="filter"):
+    with pytest.raises(FailedHealthCheck, match="(?i)filter"):
         test()
 
 
-def test_returning_non_none_is_forbidden():
-    @given(st.integers())
-    def a(x):
-        return 1
-
-    with pytest.raises(FailedHealthCheck):
-        a()
-
-
-@skipif_time_unpatched  # takes forever
-def test_the_slow_test_health_check_can_be_disabled():
-    @given(st.integers())
-    @settings(deadline=None)
-    def a(x):
-        time.sleep(1000)
-
-    a()
-
-
-@skipif_time_unpatched  # takes forever
+@pytest.mark.slow
 def test_the_slow_test_health_only_runs_if_health_checks_are_on():
-    @given(st.integers())
-    @settings(suppress_health_check=list(HealthCheck), deadline=None)
-    def a(x):
-        time.sleep(1000)
+    @hegel.test(suppress_health_check=list(HealthCheck), test_cases=SLOW_CASES)
+    def a(tc):
+        tc.draw(gs.integers())
+        time.sleep(SLOW_SECONDS)
 
     a()
-
-
-class sample_test_runner:
-    @given(st.none())
-    def test(self, _):
-        pass
-
-
-def test_differing_executors_fails_health_check():
-    sample_test_runner().test()
-    msg = re.escape(str(HealthCheck.differing_executors))
-    with pytest.raises(FailedHealthCheck, match=msg):
-        sample_test_runner().test()
 
 
 def test_it_is_an_error_to_suppress_non_iterables():
     with pytest.raises(InvalidArgument):
-        settings(suppress_health_check=1)
+        Settings(suppress_health_check=1)
 
 
 def test_it_is_an_error_to_suppress_non_healthchecks():
     with pytest.raises(InvalidArgument):
-        settings(suppress_health_check=["notahealthcheck"])
-
-
-class ReturningRuleMachine(RuleBasedStateMachine):
-    @rule()
-    def r(self):
-        return "any non-None value"
-
-
-class ReturningInitializeMachine(RuleBasedStateMachine):
-    _ = rule()(lambda self: None)
-
-    @initialize()
-    def r(self):
-        return "any non-None value"
-
-
-class ReturningInvariantMachine(RuleBasedStateMachine):
-    _ = rule()(lambda self: None)
-
-    @invariant(check_during_init=True)
-    def r(self):
-        return "any non-None value"
-
-
-@pytest.mark.parametrize(
-    "cls", [ReturningRuleMachine, ReturningInitializeMachine, ReturningInvariantMachine]
-)
-def test_stateful_returnvalue_healthcheck(cls):
-    with pytest.raises(FailedHealthCheck):
-        run_state_machine_as_test(cls, settings=settings())
+        Settings(suppress_health_check=["notahealthcheck"])
 
 
 def test_nested_given_raises_healthcheck():
-    @given(st.integers())
-    def f(n1):
-        @given(st.integers())
-        def g(n2):
-            pass
+    @hegel.test
+    def f(tc):
+        tc.draw(gs.integers())
+
+        @hegel.test
+        def g(tc):
+            tc.draw(gs.integers())
 
         g()
 
-    with pytest.raises(FailedHealthCheck):
+    with pytest.raises(InvalidArgument):
         f()
 
 
 def test_triply_nested_given_raises_healthcheck():
-    @given(st.integers())
-    @settings(max_examples=10)
-    def f(n1):
+    @hegel.test(test_cases=10)
+    def f(tc):
+        tc.draw(gs.integers())
 
-        @given(st.integers())
-        @settings(max_examples=10)
-        def g(n2):
+        @hegel.test(test_cases=10)
+        def g(tc):
+            tc.draw(gs.integers())
 
-            @given(st.integers())
-            @settings(max_examples=10)
-            def h(n3):
-                pass
-
-            h()
-
-        g()
-
-    with pytest.raises(FailedHealthCheck):
-        f()
-
-
-@xfail_on_crosshair(Why.nested_given)
-def test_can_suppress_nested_given():
-    @given(st.integers())
-    @settings(suppress_health_check=[HealthCheck.nested_given], max_examples=5)
-    def f(n1):
-
-        @given(st.integers())
-        @settings(max_examples=5)
-        def g(n2):
-            pass
-
-        g()
-
-    f()
-
-
-def test_cant_suppress_nested_given_on_inner():
-    # nested_given has to be suppressed at the function right above the nesting.
-    # this isn't a principled design choice, but a limitation of how we access
-    # the current settings.
-    @given(st.integers())
-    @settings(max_examples=5)
-    def f(n1):
-
-        @given(st.integers())
-        @settings(suppress_health_check=[HealthCheck.nested_given], max_examples=5)
-        def g(n2):
-            pass
-
-        g()
-
-    with pytest.raises(FailedHealthCheck):
-        f()
-
-
-@xfail_on_crosshair(Why.nested_given)
-def test_suppress_triply_nested_given():
-    # both suppressions are necessary here
-    @given(st.integers())
-    @settings(suppress_health_check=[HealthCheck.nested_given], max_examples=5)
-    def f(n1):
-
-        @given(st.integers())
-        @settings(suppress_health_check=[HealthCheck.nested_given], max_examples=5)
-        def g(n2):
-
-            @given(st.integers())
-            @settings(max_examples=5)
-            def h(n3):
-                pass
+            @hegel.test(test_cases=10)
+            def h(tc):
+                tc.draw(gs.integers())
 
             h()
 
         g()
 
-    f()
+    with pytest.raises(InvalidArgument):
+        f()

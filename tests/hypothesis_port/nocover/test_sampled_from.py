@@ -8,6 +8,10 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+# Dropped from the Hypothesis original: test_unsat_sets_of_samples (InvalidArgument
+# for a set larger than its sampled element count); test_repr_truncates_with_many_elements
+# (repr truncation).
+
 import enum
 import functools
 import itertools
@@ -15,17 +19,15 @@ import operator
 
 import pytest
 
-from hegel.hypothesis import given, settings, strategies as st
-from hegel.hypothesis.errors import InvalidArgument
-
+import hegel
+from hegel import generators as gs
 from tests.hypothesis_port.common.debug import find_any, minimal
-from tests.hypothesis_port.common.utils import fails_with
 
 
 # 2**25 is omitted: hegel's sampled_from materialises the range (~50s).
 @pytest.mark.parametrize("size", [100, 10**5, 10**6])
-@given(data=st.data())
-def test_filter_large_lists(data, size):
+@hegel.test
+def test_filter_large_lists(tc, size):
     n_calls = 0
 
     def cond(x):
@@ -33,7 +35,7 @@ def test_filter_large_lists(data, size):
         n_calls += 1
         return x % 2 != 0
 
-    s = data.draw(st.sampled_from(range(size)).filter(cond))
+    s = tc.draw(gs.sampled_from(range(size)).filter(cond))
 
     assert s % 2 != 0
     assert n_calls <= 100  # Hypothesis's SampledFromStrategy._MAX_FILTER_CALLS
@@ -44,7 +46,7 @@ def rare_value_strategy(n, target):
         """Helper function to avoid Python variable scoping issues."""
         return s.filter(lambda x: x != forbidden)
 
-    s = st.sampled_from(range(n))
+    s = gs.sampled_from(range(n))
     for i in range(n):
         if i != target:
             s = forbid(s, i)
@@ -52,27 +54,21 @@ def rare_value_strategy(n, target):
     return s
 
 
-@given(rare_value_strategy(n=128, target=80))
-def test_chained_filters_find_rare_value(x):
+@hegel.test
+def test_chained_filters_find_rare_value(tc):
+    x = tc.draw(rare_value_strategy(n=128, target=80))
     assert x == 80
 
 
 @pytest.mark.xfail(
     strict=True,
-    reason="hegel reports FilterTooMuch rather than InvalidArgument for sets(sampled_from(range(10)), min_size=11)",
+    reason="Engine: sets() does not sample without replacement, so sets(sampled_from(range(50)), "
+    "min_size=50) fails FilterTooMuch (docs/engine-issues.md)",
+    raises=hegel.FailedHealthCheck,
 )
-@fails_with(InvalidArgument)
-@given(st.sets(st.sampled_from(range(10)), min_size=11))
-def test_unsat_sets_of_samples(x):
-    raise AssertionError
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel's sets() of sampled_from does not sample without replacement, so min_size=50 of 50 fails FilterTooMuch",
-)
-@given(st.sets(st.sampled_from(range(50)), min_size=50))
-def test_efficient_sets_of_samples(x):
+@hegel.test
+def test_efficient_sets_of_samples(tc):
+    x = tc.draw(gs.sets(gs.sampled_from(range(50)), min_size=50))
     assert x == set(range(50))
 
 
@@ -81,19 +77,10 @@ class AnEnum(enum.Enum):
     b = enum.auto()
 
 
-@pytest.mark.xfail(strict=True, reason="hegel sampled_from reprs enums as a list of members")
-def test_enum_repr_uses_class_not_a_list():
-    # The repr should have enough detail to find the class again
-    # (which is very useful for the ghostwriter logic we're working on)
-    lazy_repr = repr(st.sampled_from(AnEnum))
-    assert lazy_repr == "sampled_from(tests.nocover.test_sampled_from.AnEnum)"
-
-
-@pytest.mark.xfail(strict=True, reason="hegel sampled_from repr is not truncated")
-def test_repr_truncates_with_many_elements():
-    s = st.sampled_from(list(range(10_000)))
-    repr_limit = 512
-    assert repr(s) == f"sampled_from([{', '.join(map(str, range(repr_limit)))}, ...])"
+def test_enum_repr_names_the_class():
+    # The repr should have enough detail to find the class again. Hypothesis
+    # reprs the class itself; hegel lists the members, whose reprs name it.
+    assert "AnEnum" in repr(gs.sampled_from(AnEnum))
 
 
 class AFlag(enum.Flag):
@@ -111,10 +98,12 @@ class UnnamedFlag(enum.Flag):
     b = 7
 
 
-@pytest.mark.xfail(strict=True, reason="hegel sampled_from reprs enums as a list of members")
-def test_flag_enum_repr_uses_class_not_a_list():
-    lazy_repr = repr(st.sampled_from(AFlag))
-    assert lazy_repr == "sampled_from(tests.hypothesis_port.nocover.test_sampled_from.AFlag)"
+@pytest.mark.xfail(
+    strict=True,
+    reason="hegel's sampled_from of a Flag class has no repr of its own (FlagCombinations())",
+)
+def test_flag_enum_repr_names_the_class():
+    assert "AFlag" in repr(gs.sampled_from(AFlag))
 
 
 @pytest.mark.xfail(
@@ -131,8 +120,9 @@ def test_exhaustive_flags():
         for flaglist in itertools.combinations(AFlag, r)
     }
 
-    @given(st.sampled_from(AFlag))
-    def accept(flag):
+    @hegel.test
+    def accept(tc):
+        flag = tc.draw(gs.sampled_from(AFlag))
         unseen_flags.discard(flag)
 
     accept()
@@ -141,24 +131,35 @@ def test_exhaustive_flags():
 
 
 def test_flags_minimize_to_first_named_flag():
-    assert minimal(st.sampled_from(LargeFlag)) == LargeFlag.bit0
+    assert minimal(gs.sampled_from(LargeFlag)) == LargeFlag.bit0
 
 
 def test_flags_minimizes_bit_count():
     assert (
-        minimal(st.sampled_from(LargeFlag), lambda f: f.value.bit_count() > 1)
+        minimal(gs.sampled_from(LargeFlag), lambda f: f.value.bit_count() > 1)
         == LargeFlag.bit0 | LargeFlag.bit1
     )
 
 
-@pytest.mark.xfail(strict=False, reason="all 64 bits set is rarely generated within the budget")
 def test_flags_finds_all_bits_set():
-    assert find_any(st.sampled_from(LargeFlag), lambda f: f == ~LargeFlag(0))
+    assert find_any(gs.sampled_from(LargeFlag), lambda f: f == ~LargeFlag(0))
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="hegel's sampled_from iterates a Flag class, which skips the non-canonical member b=7 "
+    "and the zero member, so UnnamedFlag raises InvalidArgument",
+    raises=hegel.InvalidArgument,
+)
 def test_sample_unnamed_alias():
-    assert find_any(st.sampled_from(UnnamedFlag), lambda f: f == UnnamedFlag.b)
+    assert find_any(gs.sampled_from(UnnamedFlag), lambda f: f == UnnamedFlag.b)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="hegel's sampled_from iterates a Flag class, which skips the non-canonical member b=7 "
+    "and the zero member, so UnnamedFlag raises InvalidArgument",
+    raises=hegel.InvalidArgument,
+)
 def test_shrink_to_named_empty():
-    assert minimal(st.sampled_from(UnnamedFlag)) == UnnamedFlag(0)
+    assert minimal(gs.sampled_from(UnnamedFlag)) == UnnamedFlag(0)

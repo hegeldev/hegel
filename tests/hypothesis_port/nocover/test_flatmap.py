@@ -12,9 +12,8 @@ from collections import Counter
 
 import pytest
 
-from hegel.hypothesis import HealthCheck, assume, given, settings
-from hegel.hypothesis.database import InMemoryExampleDatabase
-from hegel.hypothesis.strategies import (
+import hegel
+from hegel.generators import (
     booleans,
     builds,
     floats,
@@ -24,37 +23,34 @@ from hegel.hypothesis.strategies import (
     text,
     tuples,
 )
-
 from tests.hypothesis_port.common.debug import find_any, minimal
-from tests.hypothesis_port.common.utils import Why, xfail_on_crosshair
 
-ConstantLists = integers().flatmap(lambda i: lists(just(i)))
+ConstantLists = integers().flat_map(lambda i: lists(just(i)))
 
-OrderedPairs = integers(1, 200).flatmap(lambda e: tuples(integers(0, e - 1), just(e)))
+OrderedPairs = integers(1, 200).flat_map(lambda e: tuples(integers(0, e - 1), just(e)))
 
 
 # This health check fails very very occasionally - rarely enough to not be worth
 # investigation
-@settings(max_examples=100, suppress_health_check=[HealthCheck.filter_too_much])
-@given(ConstantLists)
-def test_constant_lists_are_constant(x):
-    assume(len(x) >= 3)
+@hegel.test(test_cases=100, suppress_health_check=[hegel.HealthCheck.filter_too_much])
+def test_constant_lists_are_constant(tc):
+    x = tc.draw(ConstantLists)
+    tc.assume(len(x) >= 3)
     assert len(set(x)) == 1
 
 
-@settings(max_examples=100)
-@given(OrderedPairs)
-def test_in_order(x):
+@hegel.test(test_cases=100)
+def test_in_order(tc):
+    x = tc.draw(OrderedPairs)
     assert x[0] < x[1]
 
 
-@xfail_on_crosshair(Why.undiscovered)  # (SampledFromStrategy.calc_label() hashes a symbolic float)
-def test_flatmap_retrieve_from_db():
+def test_flatmap_retrieve_from_db(tmp_path):
     track = []
 
-    @given(floats(0, 1).flatmap(lambda x: lists(just(x))))
-    @settings(database=InMemoryExampleDatabase())
-    def record_and_test_size(xs):
+    @hegel.test(database=str(tmp_path))
+    def record_and_test_size(tc):
+        xs = tc.draw(floats(0, 1).flat_map(lambda x: lists(just(x))))
         if sum(xs) >= 1:
             track.append(xs)
             raise AssertionError
@@ -73,22 +69,18 @@ def test_flatmap_retrieve_from_db():
 
 
 def test_flatmap_does_not_reuse_strategies():
-    s = builds(list).flatmap(just)
+    s = builds(list).flat_map(just)
     assert find_any(s) is not find_any(s)
 
 
 def test_flatmap_has_original_strategy_repr():
     ints = integers()
-    ints_up = ints.flatmap(lambda n: integers(min_value=n))
+    ints_up = ints.flat_map(lambda n: integers(min_value=n))
     assert repr(ints) in repr(ints_up)
 
 
-@pytest.mark.skipif(
-    settings.get_current_profile_name() == "crosshair",
-    reason="takes ~6 mins in CI, but ~7 sec in isolation. Unsure why",
-)
 def test_mixed_list_flatmap():
-    s = lists(booleans().flatmap(lambda b: booleans() if b else text()))
+    s = lists(booleans().flat_map(lambda b: booleans() if b else text()))
 
     def criterion(ls):
         c = Counter(type(l) for l in ls)
@@ -99,16 +91,14 @@ def test_mixed_list_flatmap():
     assert set(result) == {False, ""}
 
 
-@xfail_on_crosshair(Why.undiscovered)  # for n >= 8 at least
 @pytest.mark.parametrize("n", range(1, 10))
 def test_can_shrink_through_a_binding(n):
-    bool_lists = integers(0, 100).flatmap(lambda k: lists(booleans(), min_size=k, max_size=k))
+    bool_lists = integers(0, 100).flat_map(lambda k: lists(booleans(), min_size=k, max_size=k))
     assert minimal(bool_lists, lambda x: x.count(True) >= n) == [True] * n
 
 
-@xfail_on_crosshair(Why.undiscovered)  # for n >= 8 at least
 @pytest.mark.parametrize("n", range(1, 10))
 def test_can_delete_in_middle_of_a_binding(n):
-    bool_lists = integers(1, 100).flatmap(lambda k: lists(booleans(), min_size=k, max_size=k))
+    bool_lists = integers(1, 100).flat_map(lambda k: lists(booleans(), min_size=k, max_size=k))
     result = minimal(bool_lists, lambda x: x[0] and x[-1] and x.count(False) >= n)
     assert result == [True] + [False] * n + [True]

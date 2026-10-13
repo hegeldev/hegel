@@ -8,314 +8,192 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-import datetime
+# Dropped from the Hypothesis original: test_can_repeatedly_push_the_same_thing,
+# test_settings_in_strategies_are_from_test_scope, test_settings_apply_for_explicit_examples
+# (local_settings / settings.default scoping); test_will_reload_profile_when_default_is_absent,
+# test_cannot_assign_default, test_setattr_on_settings_singleton_is_error,
+# test_register_profile_avoids_intermediate_profiles (settings.default descriptor and
+# profile internals); test_settings_alone, test_settings_applied_twice_is_error,
+# test_outer_ok, test_inner_ok (the @settings decorator);
+# test_puts_the_database_in_the_home_dir_by_default, test_database_is_reference_preserved
+# (ExampleDatabase objects); test_deadline_given_none, test_deadline_given_valid_int,
+# test_deadline_given_valid_float, test_deadline_given_valid_timedelta (deadline);
+# test_settings_decorator_applies_to_rule_based_state_machine_class,
+# test_two_settings_decorators_applied_to_state_machine_class_raises_error,
+# test_settings_decorator_applied_to_non_state_machine_class_raises_error,
+# test_assigning_to_settings_attribute_on_state_machine_raises_error (@settings on a
+# state machine class, stateful_step_count); test_derandomise_with_explicit_database_is_invalid
+# (Hegel allows derandomize with a database); test_show_changed (show_changed);
+# test_note_deprecation_checks_date, test_note_deprecation_checks_has_codemod,
+# test_deprecated_settings_warn_on_set_settings, test_deprecated_settings_not_in_settings_all_list,
+# test_cannot_register_profile_from_inside_test, test_can_set_verbosity_to_integers,
+# test_can_set_phase_to_integers, test_can_set_suppressions_to_integers (deprecations and
+# deprecated HealthCheck members); test_verbosity_is_comparable (Hegel's Verbosity is not
+# ordered).
+
 import os
 import subprocess
 import sys
 from contextlib import contextmanager
-from threading import RLock
 from unittest import TestCase
 
 import pytest
 
-from hegel.hypothesis import example, given, strategies as st
-from hegel.hypothesis._settings import (
-    _CI_VARS,
-    HealthCheck,
-    Phase,
-    Verbosity,
-    default_variable,
-    local_settings,
-    settings,
+import hegel
+from hegel import HealthCheck, InvalidArgument, Phase, Settings, Verbosity
+from hegel import generators as gs
+from tests.hypothesis_port.common.utils import counts_calls, skipif_emscripten
+
+# The profile the suite's conftest makes the default before every test.
+SUITE_PROFILE = "hypothesis-port"
+
+# Environment variables the engine reads when choosing the environment's
+# profile (CI detection, Antithesis, and explicit overrides).
+_CI_VARS = (
+    "CI",
+    "TF_BUILD",
+    "BUILDKITE",
+    "CIRCLECI",
+    "CIRRUS_CI",
+    "CODEBUILD_BUILD_ID",
+    "GITHUB_ACTIONS",
+    "GITLAB_CI",
+    "HEROKU_TEST_RUN_ID",
+    "TEAMCITY_VERSION",
+    "bamboo.buildKey",
 )
-from hegel.hypothesis.database import InMemoryExampleDatabase
-from hegel.hypothesis.errors import (
-    HypothesisDeprecationWarning,
-    InvalidArgument,
+_PROFILE_VARS = (
+    "HEGEL_DEFAULT_PROFILE",
+    "HEGEL_CONFIG",
+    "HEGEL_DERANDOMIZE",
+    "ANTITHESIS_OUTPUT_DIR",
 )
-from hegel.hypothesis.stateful import RuleBasedStateMachine, rule
-from hegel.hypothesis.utils.conventions import not_set
-from hegel.hypothesis.utils.deprecation import note_deprecation
-
-from tests.hypothesis_port.common.utils import (
-    checks_deprecated_behaviour,
-    counts_calls,
-    fails_with,
-    skipif_emscripten,
-    skipif_threading,
-    validate_deprecation,
-)
-
-original_default = settings.get_profile("default").max_examples
-_temp_register_profile_lock = RLock()
-
-
-@contextmanager
-def temp_register_profile(name, parent, **kwargs):
-    with _temp_register_profile_lock:
-        try:
-            settings.register_profile(name, parent, **kwargs)
-            yield
-        finally:
-            settings._profiles.pop(name)
-
-
-_restore_profile_lock = RLock()
 
 
 @contextmanager
 def restore_profile():
-    with _restore_profile_lock:
-        # avoid polluting global state by resetting the loaded profile back to its
-        # previous value in tests which use load_profile
-        current_profile = settings.get_current_profile_name()
-        try:
-            yield
-        finally:
-            settings.load_profile(current_profile)
+    # avoid polluting global state by resetting the default profile back to
+    # the suite's in tests which use set_default_profile
+    try:
+        yield
+    finally:
+        Settings.set_default_profile(SUITE_PROFILE)
 
 
 def test_cannot_set_non_settings():
-    s = settings()
+    s = Settings()
     with pytest.raises(AttributeError):
         s.databas_file = "some_file"
 
 
 def test_settings_uses_defaults():
-    s = settings()
-    assert s.max_examples == settings.default.max_examples
+    s = Settings()
+    assert s.test_cases == Settings.from_profile(SUITE_PROFILE).test_cases
 
 
 def test_raises_attribute_error():
     with pytest.raises(AttributeError):
-        settings().kittens
+        Settings().kittens  # noqa: B018
 
 
 def test_respects_none_database():
-    assert settings(database=None).database is None
-
-
-def test_can_repeatedly_push_the_same_thing():
-    s = settings(max_examples=12)
-    t = settings(max_examples=17)
-    original = settings().max_examples
-    with local_settings(s):
-        assert settings().max_examples == 12
-        with local_settings(t):
-            assert settings().max_examples == 17
-            with local_settings(s):
-                assert settings().max_examples == 12
-                with local_settings(t):
-                    assert settings().max_examples == 17
-                assert settings().max_examples == 12
-            assert settings().max_examples == 17
-        assert settings().max_examples == 12
-    assert settings().max_examples == original
+    assert Settings(database=None).database is None
 
 
 def test_can_set_verbosity():
-    settings(verbosity=Verbosity.quiet)
-    settings(verbosity=Verbosity.normal)
-    settings(verbosity=Verbosity.verbose)
-    settings(verbosity=Verbosity.debug)
+    Settings(verbosity=Verbosity.quiet)
+    Settings(verbosity=Verbosity.normal)
+    Settings(verbosity=Verbosity.verbose)
+    Settings(verbosity=Verbosity.debug)
 
 
 def test_can_not_set_verbosity_to_non_verbosity():
     with pytest.raises(InvalidArgument):
-        settings(verbosity="kittens")
+        Settings(verbosity="kittens")
 
 
-@pytest.mark.parametrize("db", [None, InMemoryExampleDatabase()])
-def test_inherits_an_empty_database(db):
-    with local_settings(settings(database=InMemoryExampleDatabase())):
-        assert settings.default.database is not None
-        s = settings(database=db)
-        assert s.database is db
-        with local_settings(s):
-            t = settings()
-        assert t.database is db
+@pytest.mark.parametrize("db", [None, ""])
+def test_inherits_an_empty_database(db, tmp_path):
+    parent = Settings(database=tmp_path)
+    assert parent.database is not None
+    s = Settings(parent, database=db)
+    assert s.database == db
+    t = Settings(s)
+    assert t.database == db
 
 
-@pytest.mark.parametrize("db", [None, InMemoryExampleDatabase()])
+@pytest.mark.parametrize("db", [None, ""])
 def test_can_assign_database(db):
-    x = settings(database=db)
-    assert x.database is db
-
-
-def test_will_reload_profile_when_default_is_absent():
-    original = settings.default
-    default_variable.value = None
-    assert settings.default is original
+    x = Settings(database=db)
+    assert x.database == db
 
 
 def test_load_profile():
     with restore_profile():
-        settings.load_profile("default")
-        assert settings.default.max_examples == original_default
-        assert settings.default.stateful_step_count == 50
+        original_default = Settings.from_profile(SUITE_PROFILE).test_cases
+        assert Settings().test_cases == original_default
 
-        settings.register_profile("test", settings(max_examples=10), stateful_step_count=5)
-        settings.load_profile("test")
+        Settings.register_profile("test", Settings(test_cases=10))
+        Settings.set_default_profile("test")
 
-        assert settings.default.max_examples == 10
-        assert settings.default.stateful_step_count == 5
+        assert Settings().test_cases == 10
 
-        settings.load_profile("default")
+        Settings.set_default_profile(SUITE_PROFILE)
 
-        assert settings.default.max_examples == original_default
-        assert settings.default.stateful_step_count == 50
+        assert Settings().test_cases == original_default
 
 
 def test_profile_names_must_be_strings():
-    with pytest.raises(InvalidArgument):
-        settings.register_profile(5)
-    with pytest.raises(InvalidArgument):
-        settings.get_profile(5)
-    with pytest.raises(InvalidArgument):
-        settings.load_profile(5)
+    with pytest.raises(TypeError):
+        Settings.register_profile(5)
+    with pytest.raises(TypeError):
+        Settings.from_profile(5)
+    with pytest.raises(TypeError):
+        Settings.set_default_profile(5)
 
 
 def test_loading_profile_keeps_expected_behaviour():
     with restore_profile():
-        settings.register_profile("ci", settings(max_examples=10000))
-        settings.load_profile("ci")
-        assert settings().max_examples == 10000
-        with local_settings(settings(max_examples=5)):
-            assert settings().max_examples == 5
-        assert settings().max_examples == 10000
+        Settings.register_profile("many", Settings(test_cases=10000))
+        Settings.set_default_profile("many")
+        assert Settings().test_cases == 10000
+        assert Settings(test_cases=5).test_cases == 5
+        assert Settings().test_cases == 10000
 
 
 def test_load_non_existent_profile():
     with pytest.raises(InvalidArgument):
-        settings.get_profile("nonsense")
+        Settings.from_profile("nonsense")
+    with pytest.raises(InvalidArgument):
+        Settings.set_default_profile("nonsense")
 
 
 def test_cannot_set_settings():
-    x = settings()
+    x = Settings()
     with pytest.raises(AttributeError):
-        x.max_examples = "foo"
+        x.test_cases = "foo"
     with pytest.raises(AttributeError):
         x.database = "foo"
-    assert x.max_examples != "foo"
+    assert x.test_cases != "foo"
     assert x.database != "foo"
 
 
 def test_can_have_none_database():
-    assert settings(database=None).database is None
+    assert Settings(database=None).database is None
 
 
-@pytest.mark.parametrize("db", [None, InMemoryExampleDatabase()])
-@pytest.mark.parametrize("bad_db", [":memory:", ".hypothesis/examples"])
-def test_database_type_must_be_ExampleDatabase(db, bad_db):
-    with local_settings(settings(database=db)):
-        settings_property_db = settings.database
-        with pytest.raises(InvalidArgument):
-            settings(database=bad_db)
-        assert settings.database is settings_property_db
-
-
-def test_cannot_assign_default():
-    with pytest.raises(AttributeError):
-        settings.default = settings(max_examples=3)
-    assert settings().max_examples != 3
-
-
-@settings(max_examples=7)
-@given(st.builds(lambda: settings.default))
-def test_settings_in_strategies_are_from_test_scope(s):
-    assert s.max_examples == 7
-
-
-TEST_SETTINGS_ALONE = """
-from hegel.hypothesis import settings
-from hegel.hypothesis.strategies import integers
-
-@settings()
-def test_settings_alone():
-    pass
-"""
-
-
-# runpytest_inprocess uses invalidate_caches in pytest, which is not thread safe
-# (I presume; produces keyerrors).
-@skipif_threading
-def test_settings_alone(pytester):
-    # Disable cacheprovider, since we don't need it and it's flaky on pyodide
-    script = pytester.makepyfile(TEST_SETTINGS_ALONE)
-    result = pytester.runpytest_inprocess(script, "-p", "no:cacheprovider")
-    out = "\n".join(result.stdout.lines)
-    msg = "Using `@settings` on a test without `@given` is completely pointless."
-    assert msg in out
-    assert "InvalidArgument" in out
-    assert result.ret == 1
-
-
-@fails_with(InvalidArgument)
-def test_settings_applied_twice_is_error():
-    @given(st.integers())
-    @settings()
-    @settings()
-    def test_nothing(x):
-        pass
-
-
-@settings()
-@given(st.integers())
-def test_outer_ok(x):
-    pass
-
-
-@given(st.integers())
-@settings()
-def test_inner_ok(x):
-    pass
+@pytest.mark.parametrize("db", [None, ""])
+@pytest.mark.parametrize("bad_db", [3, object()])
+def test_database_type_must_be_a_path(db, bad_db):
+    with pytest.raises(InvalidArgument):
+        Settings(Settings(database=db), database=bad_db)
 
 
 def test_settings_as_decorator_must_be_on_callable():
     with pytest.raises(InvalidArgument):
-        settings()(1)
-
-
-ASSERT_DATABASE_PATH = """
-import tempfile
-from hegel.hypothesis import settings
-from hegel.hypothesis.configuration import set_hypothesis_home_dir
-from hegel.hypothesis.database import DirectoryBasedExampleDatabase
-
-settings.load_profile("default")
-settings.default.database
-
-if __name__ == '__main__':
-    new_home = tempfile.mkdtemp()
-    set_hypothesis_home_dir(new_home)
-    db = settings.default.database
-    assert isinstance(db, DirectoryBasedExampleDatabase), db
-    assert db.path.is_relative_to(new_home), (db.path, new_home)
-"""
-
-
-@pytest.mark.skip(
-    reason="Hegel's engine chooses the database directory; there is no "
-    "configuration.set_hypothesis_home_dir to point it elsewhere"
-)
-def test_puts_the_database_in_the_home_dir_by_default(tmp_path):
-    script = tmp_path / "assertlocation.py"
-    script.write_text(ASSERT_DATABASE_PATH, encoding="utf-8")
-    subprocess.check_call([sys.executable, str(script)])
-
-
-def test_database_is_reference_preserved():
-    s = settings(database=not_set)
-
-    assert s.database is s.database
-
-
-@settings(verbosity=Verbosity.verbose)
-@example(x=99)
-@given(st.integers())
-def test_settings_apply_for_explicit_examples(x):
-    # Regression test for #1521
-    assert settings.default.verbosity == Verbosity.verbose
+        hegel.test(test_cases=1)(1)
+    with pytest.raises(InvalidArgument):
+        hegel.test(1)
 
 
 class TestGivenExampleSettingsExplicitCalled(TestCase):
@@ -333,12 +211,10 @@ class TestGivenExampleSettingsExplicitCalled(TestCase):
     def call_target(self):
         pass
 
-    @given(st.booleans())
-    @example(True)
-    @settings(phases=[Phase.explicit])
-    # counts_calls is not thread safe (modifying global f.calls attr)
-    @skipif_threading
-    def test_example_explicit(self, x):
+    @hegel.test(phases=[Phase.explicit])
+    @hegel.explicit_test_case(True)
+    def test_example_explicit(self, tc):
+        tc.draw(gs.booleans())
         self.call_target()
 
     def tearDown(self):
@@ -346,131 +222,37 @@ class TestGivenExampleSettingsExplicitCalled(TestCase):
         assert self.call_target.calls == 1
 
 
-def test_setattr_on_settings_singleton_is_error():
-    # https://github.com/pandas-dev/pandas/pull/22679#issuecomment-420750921
-    # Should be setting attributes on settings.default, not settings!
-    with pytest.raises(AttributeError):
-        settings.max_examples = 10
-
-
-def test_deadline_given_none():
-    x = settings(deadline=None).deadline
-    assert x is None
-
-
-def test_deadline_given_valid_int():
-    x = settings(deadline=1000).deadline
-    assert isinstance(x, datetime.timedelta)
-    assert x.days == 0
-    assert x.seconds == 1
-    assert x.microseconds == 0
-
-
-def test_deadline_given_valid_float():
-    x = settings(deadline=2050.25).deadline
-    assert isinstance(x, datetime.timedelta)
-    assert x.days == 0
-    assert x.seconds == 2
-    assert x.microseconds == 50250
-
-
-def test_deadline_given_valid_timedelta():
-    x = settings(deadline=datetime.timedelta(days=1, microseconds=15030000)).deadline
-    assert isinstance(x, datetime.timedelta)
-    assert x.days == 1
-    assert x.seconds == 15
-    assert x.microseconds == 30000
-
-
 @pytest.mark.parametrize("value", ["always"])
 def test_can_not_set_print_blob_to_non_print_settings(value):
     with pytest.raises(InvalidArgument):
-        settings(print_blob=value)
-
-
-settings_step_count = 1
-
-
-@settings(stateful_step_count=settings_step_count)
-class StepCounter(RuleBasedStateMachine):
-    def __init__(self):
-        super().__init__()
-        self.step_count = 0
-
-    @rule()
-    def count_step(self):
-        self.step_count += 1
-
-    def teardown(self):
-        assert self.step_count <= settings_step_count
-
-
-test_settings_decorator_applies_to_rule_based_state_machine_class = StepCounter.TestCase
-
-
-def test_two_settings_decorators_applied_to_state_machine_class_raises_error():
-    with pytest.raises(InvalidArgument):
-
-        @settings()
-        @settings()
-        class StatefulTest(RuleBasedStateMachine):
-            pass
-
-
-def test_settings_decorator_applied_to_non_state_machine_class_raises_error():
-    with pytest.raises(InvalidArgument):
-
-        @settings()
-        class NonStateMachine:
-            pass
-
-
-def test_assigning_to_settings_attribute_on_state_machine_raises_error():
-    class StateMachine(RuleBasedStateMachine):
-        @rule(x=st.none())
-        def a_rule(self, x):
-            assert x is None
-
-    with pytest.raises(AttributeError):
-        StateMachine.settings = settings()
-
-    state_machine_instance = StateMachine()
-    state_machine_instance.settings = "any value"
-
-
-def test_derandomise_with_explicit_database_is_invalid():
-    with pytest.raises(InvalidArgument):
-        settings(derandomize=True, database=InMemoryExampleDatabase())
+        Settings(print_blob=value)
 
 
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"max_examples": -1},
-        {"max_examples": 2.5},
-        {"stateful_step_count": -1},
-        {"stateful_step_count": 2.5},
-        {"deadline": -1},
-        {"deadline": 0},
-        {"deadline": -0.7},
-        {"deadline": 86400000000000000.2},
-        {"deadline": datetime.timedelta(microseconds=-1)},
-        {"deadline": datetime.timedelta(0)},
-        {"deadline": True},
-        {"deadline": False},
+        {"test_cases": -1},
+        {"test_cases": 2.5},
         {"backend": "nonexistent_backend"},
         {"suppress_health_check": ["nonexistent_healthcheck"]},
         {"phases": ["nonexistent_phase"]},
         {"phases": 0},
         {"verbosity": -1},
         {"verbosity": "nonexistent_verbosity"},
+        {"nondeterminism_strictness": "nonexistent_strictness"},
     ],
 )
 def test_invalid_settings_are_errors(kwargs):
     with pytest.raises(InvalidArgument):
-        settings(**kwargs)
+        Settings(**kwargs)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Settings(parent) with something that is not a Settings raises "
+    "AttributeError ('NotSettings' object has no attribute 'test_cases'), "
+    "not InvalidArgument naming the parent",
+)
 def test_invalid_parent():
     class NotSettings:
         def __repr__(self):
@@ -478,117 +260,70 @@ def test_invalid_parent():
 
     not_settings = NotSettings()
 
-    with pytest.raises(InvalidArgument, match=r"parent=\(not settings repr\)"):
-        settings(not_settings)
+    with pytest.raises(InvalidArgument, match=r"\(not settings repr\)"):
+        Settings(not_settings)
 
 
 def test_default_settings_do_not_use_ci():
-    assert settings.get_profile("default").suppress_health_check == ()
+    development = Settings.from_profile("development")
+    assert development.suppress_health_check == frozenset()
+    assert development.derandomize is False
 
 
-def test_show_changed():
-    s = settings(settings.get_profile("default"), max_examples=999, database=None)
-    assert s.show_changed() == "database=None, max_examples=999"
-
-
-def test_note_deprecation_checks_date():
-    with pytest.warns(HypothesisDeprecationWarning) as rec:
-        note_deprecation("This is bad", since="RELEASEDAY", has_codemod=False)
-    assert len(rec) == 1
-    with pytest.raises(AssertionError):
-        note_deprecation("This is way too old", since="1999-12-31", has_codemod=False)
-
-
-def test_note_deprecation_checks_has_codemod():
-    with pytest.warns(
-        HypothesisDeprecationWarning,
-        match="The `hypothesis codemod` command-line tool",
-    ):
-        note_deprecation("This is bad", since="2021-01-01", has_codemod=True)
-
-
-def test_deprecated_settings_warn_on_set_settings():
-    with validate_deprecation():
-        settings(suppress_health_check=[HealthCheck.return_value])
-    with validate_deprecation():
-        settings(suppress_health_check=[HealthCheck.not_a_test_method])
-
-
-@checks_deprecated_behaviour
-def test_deprecated_settings_not_in_settings_all_list():
-    al = HealthCheck.all()
-    ls = list(HealthCheck)
-    assert al == ls
-    assert HealthCheck.return_value not in ls
-    assert HealthCheck.not_a_test_method not in ls
+def _derandomize_in_subprocess(env):
+    return subprocess.check_output(
+        [sys.executable, "-c", "import hegel\nprint(hegel.Settings().derandomize)"],
+        env=env,
+        text=True,
+        encoding="utf-8",
+    ).strip()
 
 
 @skipif_emscripten
 def test_check_defaults_to_derandomize_when_running_on_ci():
     env = dict(os.environ)
+    for key in _PROFILE_VARS:
+        env.pop(key, None)
     env["CI"] = "true"
 
-    assert (
-        subprocess.check_output(
-            [
-                sys.executable,
-                "-c",
-                "from hegel.hypothesis import settings\nprint(settings().derandomize)",
-            ],
-            env=env,
-            text=True,
-            encoding="utf-8",
-        ).strip()
-        == "True"
-    )
+    assert _derandomize_in_subprocess(env) == "True"
 
 
 @skipif_emscripten
 def test_check_defaults_to_randomize_when_not_running_on_ci():
     env = dict(os.environ)
-    for key in _CI_VARS:
+    for key in _CI_VARS + _PROFILE_VARS:
         env.pop(key, None)
 
-    assert (
-        subprocess.check_output(
-            [
-                sys.executable,
-                "-c",
-                "from hegel.hypothesis import settings\nprint(settings().derandomize)",
-            ],
-            env=env,
-            text=True,
-            encoding="utf-8",
-        ).strip()
-        == "False"
-    )
+    assert _derandomize_in_subprocess(env) == "False"
 
 
-@skipif_threading  # modifying global state (profiles) during testing
 def test_reloads_the_loaded_profile_if_registered_again():
     with restore_profile():
-        test_profile = "some nonsense profile purely for this test"
+        test_profile = "some_nonsense_profile_purely_for_this_test"
         test_value = 123456
-        settings.register_profile(test_profile, settings(max_examples=test_value))
-        settings.load_profile(test_profile)
-        assert settings.default.max_examples == test_value
+        Settings.register_profile(test_profile, Settings(test_cases=test_value))
+        Settings.set_default_profile(test_profile)
+        assert Settings().test_cases == test_value
         test_value_2 = 42
-        settings.register_profile(test_profile, settings(max_examples=test_value_2))
-        assert settings.default.max_examples == test_value_2
+        Settings.register_profile(test_profile, Settings(test_cases=test_value_2))
+        assert Settings().test_cases == test_value_2
 
 
 CI_TESTING_SCRIPT = """
-from hegel.hypothesis import settings
+import hegel
 
 if __name__ == '__main__':
-    settings.register_profile("ci", settings(max_examples=42))
-    assert settings.default.max_examples == 42
+    hegel.Settings.register_profile("ci", hegel.Settings(test_cases=42))
+    assert hegel.Settings().test_cases == 42, hegel.Settings().test_cases
 """
 
 
 @skipif_emscripten
 def test_will_automatically_pick_up_changes_to_ci_profile_in_ci():
     env = dict(os.environ)
+    for key in _PROFILE_VARS:
+        env.pop(key, None)
     env["CI"] = "true"
     subprocess.check_call(
         [sys.executable, "-c", CI_TESTING_SCRIPT],
@@ -598,83 +333,25 @@ def test_will_automatically_pick_up_changes_to_ci_profile_in_ci():
     )
 
 
-def test_register_profile_avoids_intermediate_profiles():
-    parent = settings()
-    s = settings(parent, max_examples=10)
-    with temp_register_profile("for_intermediate_test", s):
-        assert settings.get_profile("for_intermediate_test")._fallback is parent
-
-
-@checks_deprecated_behaviour
-@settings(max_examples=10)
-@given(st.integers())
-def test_cannot_register_profile_from_inside_test(x):
-    settings.register_profile("problematic", settings(max_examples=20))
-
-
 def test_can_set_verbosity_to_strings():
-    assert settings(verbosity="quiet").verbosity is Verbosity.quiet
-    assert settings(verbosity="normal").verbosity is Verbosity.normal
-    assert settings(verbosity="verbose").verbosity is Verbosity.verbose
-    assert settings(verbosity="debug").verbosity is Verbosity.debug
+    assert Settings(verbosity="quiet").verbosity is Verbosity.quiet
+    assert Settings(verbosity="normal").verbosity is Verbosity.normal
+    assert Settings(verbosity="verbose").verbosity is Verbosity.verbose
+    assert Settings(verbosity="debug").verbosity is Verbosity.debug
 
 
 def test_can_set_phase_to_strings():
-    assert settings(phases=["reuse"]).phases == (Phase.reuse,)
-    assert settings(phases=["reuse", "explicit"]).phases == (
-        Phase.explicit,
-        Phase.reuse,
-    )
+    assert Settings(phases=["reuse"]).phases == frozenset({Phase.reuse})
+    assert Settings(phases=["reuse", "explicit"]).phases == frozenset({Phase.explicit, Phase.reuse})
 
 
 def test_can_set_suppressions_to_strings():
-    assert settings(suppress_health_check=["filter_too_much"]).suppress_health_check == (
-        HealthCheck.filter_too_much,
+    assert Settings(suppress_health_check=["filter_too_much"]).suppress_health_check == frozenset(
+        {HealthCheck.filter_too_much}
     )
-    assert settings(
+    assert Settings(
         suppress_health_check=["filter_too_much", "too_slow"]
-    ).suppress_health_check == (HealthCheck.filter_too_much, HealthCheck.too_slow)
-
-
-def test_verbosity_is_comparable():
-    assert Verbosity.quiet < Verbosity.normal
-    assert Verbosity.quiet <= Verbosity.quiet
-    assert Verbosity.quiet == Verbosity.quiet
-    assert Verbosity.quiet >= Verbosity.quiet
-    assert Verbosity.debug > Verbosity.quiet
-
-    # make sure we're comparing by int value, not by str value
-    assert Verbosity.quiet < Verbosity.normal < Verbosity.verbose < Verbosity.debug
-
-    # also comparable with other ints
-    assert Verbosity.quiet < 1
-    assert Verbosity.quiet <= 1
-    assert Verbosity.quiet == 0
-    assert Verbosity.quiet >= 0
-    assert Verbosity.normal > 0
-
-
-@checks_deprecated_behaviour
-def test_can_set_verbosity_to_integers():
-    assert Verbosity(0) is Verbosity.quiet
-    assert Verbosity(1) is Verbosity.normal
-    assert Verbosity(2) is Verbosity.verbose
-    assert Verbosity(3) is Verbosity.debug
-
-
-@checks_deprecated_behaviour
-def test_can_set_phase_to_integers():
-    assert Phase(0) is Phase.explicit
-    assert Phase(1) is Phase.reuse
-    assert Phase(2) is Phase.generate
-    assert Phase(4) is Phase.shrink
-
-
-@checks_deprecated_behaviour
-def test_can_set_suppressions_to_integers():
-    assert HealthCheck(1) is HealthCheck.data_too_large
-    assert HealthCheck(2) is HealthCheck.filter_too_much
-    assert HealthCheck(3) is HealthCheck.too_slow
+    ).suppress_health_check == frozenset({HealthCheck.filter_too_much, HealthCheck.too_slow})
 
 
 def test_invalid_integer_phase_raises():

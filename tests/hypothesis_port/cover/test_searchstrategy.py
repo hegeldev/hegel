@@ -8,40 +8,30 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+# Dropped from the Hypothesis original: test_just_strategy_does_not_draw,
+# test_none_strategy_does_not_draw, test_deferred_strategy_draw (ConjectureData
+# internals); test_jsonable, test_jsonable_defaultdict, test_jsonable_namedtuple,
+# test_jsonable_small_ints_are_ints, test_jsonable_large_ints_are_floats,
+# test_jsonable_very_large_ints, test_jsonable_override,
+# test_jsonable_to_json_nested, test_to_jsonable_handles_reference_cycles
+# (to_jsonable, observability); test_use_of_global_random_is_deprecated_in_given,
+# test_use_of_global_random_is_deprecated_in_interactive_draws (deprecation
+# warnings).
+
 import functools
-import random
-import sys
-from collections import defaultdict, namedtuple
-from dataclasses import dataclass
-from typing import Any
-
-# Dropped (ConjectureData and to_jsonable are Hypothesis internals): test_just_strategy_does_not_draw, test_none_strategy_does_not_draw, test_deferred_strategy_draw, test_jsonable, test_jsonable_defaultdict, test_jsonable_namedtuple, test_jsonable_small_ints_are_ints, test_jsonable_large_ints_are_floats, test_jsonable_very_large_ints, test_jsonable_override, test_jsonable_to_json_nested, test_to_jsonable_handles_reference_cycles.
-
 
 import pytest
 
-from hegel.hypothesis import given, strategies as st
-from hegel.hypothesis.errors import InvalidArgument, Unsatisfiable
-from tests.hypothesis_port.common.compat import UniqueIdentifier, get_pretty_function_description
-
+import hegel
+from hegel import generators as gs
+from hegel.errors import InvalidArgument, Unsatisfiable
 from tests.hypothesis_port.common.debug import assert_simple_property, check_can_generate_examples
-from tests.hypothesis_port.common.utils import checks_deprecated_behaviour
 
 
-def test_or_errors_when_given_non_strategy():
-    bools = st.tuples(st.booleans())
-    with pytest.raises(ValueError):
+def test_or_errors_when_given_non_generator():
+    bools = gs.tuples(gs.booleans())
+    with pytest.raises(InvalidArgument):
         bools | "foo"
-
-
-SomeNamedTuple = namedtuple("SomeNamedTuple", ("a", "b"))
-
-
-def last(xs):
-    t = None
-    for x in xs:
-        t = x
-    return t
 
 
 def test_just_strategy_uses_repr():
@@ -49,17 +39,22 @@ def test_just_strategy_uses_repr():
         def __repr__(self):
             return "ABCDEFG"
 
-    assert repr(st.just(WeirdRepr())) == f"just({WeirdRepr()!r})"
+    assert repr(gs.just(WeirdRepr())) == f"just({WeirdRepr()!r})"
 
 
 def test_can_map():
-    s = st.integers().map(pack=lambda t: "foo")
+    s = gs.integers().map(lambda t: "foo")
     assert_simple_property(s, lambda v: v == "foo")
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="with health checks suppressed a generator that rejects every draw passes silently; "
+    "the engine only raises Unsatisfiable when no data is drawn (docs/engine-issues.md)",
+)
 def test_example_raises_unsatisfiable_when_too_filtered():
     with pytest.raises(Unsatisfiable):
-        check_can_generate_examples(st.integers().filter(lambda x: False))
+        check_can_generate_examples(gs.integers().filter(lambda x: False))
 
 
 def nameless_const(x):
@@ -71,76 +66,27 @@ def nameless_const(x):
 
 def test_can_map_nameless():
     f = nameless_const(2)
-    assert get_pretty_function_description(f) in repr(st.integers().map(f))
+    assert repr(f) in repr(gs.integers().map(f))
 
 
-def test_can_flatmap_nameless():
-    f = nameless_const(st.just(3))
-    assert get_pretty_function_description(f) in repr(st.integers().flatmap(f))
+def test_can_flat_map_nameless():
+    f = nameless_const(gs.just(3))
+    assert repr(f) in repr(gs.integers().flat_map(f))
 
 
-def test_flatmap_with_invalid_expand():
+def test_flat_map_with_invalid_expand():
     with pytest.raises(InvalidArgument):
-        check_can_generate_examples(st.just(100).flatmap(lambda n: "a"))
+        check_can_generate_examples(gs.just(100).flat_map(lambda n: "a"))
 
 
-_bad_random_strategy = st.lists(st.integers(), min_size=1).map(random.choice)
+def test_one_of_is_not_empty_when_an_operand_has_values():
+    assert not (gs.nothing() | gs.integers()).is_empty
+    assert (gs.nothing() | gs.nothing()).is_empty
+    assert gs.nothing().is_empty
+    assert not gs.integers().is_empty
 
 
-@checks_deprecated_behaviour
-def test_use_of_global_random_is_deprecated_in_given():
-    check_can_generate_examples(_bad_random_strategy)
-
-
-@checks_deprecated_behaviour
-def test_use_of_global_random_is_deprecated_in_interactive_draws():
-    @given(st.data())
-    def inner(d):
-        d.draw(_bad_random_strategy)
-
-    inner()
-
-
-@dataclass
-class HasDefaultDict:
-    x: defaultdict
-
-
-@dataclass
-class HasCustomJsonFormat:
-    x: str
-
-    def to_json(self):
-        return "surprise!"
-
-
-@dataclass
-class Inner:
-    value: int
-
-    def to_json(self):
-        return "custom"
-
-
-@dataclass
-class Outer:
-    inner: Inner
-
-
-recursive_list = []
-recursive_list.append(recursive_list)
-
-recursive_dict = {}
-recursive_dict["a"] = recursive_dict
-
-mutual1 = []
-mutual2 = [mutual1]
-mutual1.append(mutual2)
-
-shared = UniqueIdentifier("shared")
-
-
-@dataclass
-class A:
-    a: Any
-    b: Any
+@hegel.test
+def test_or_draws_from_either_operand(tc):
+    x = tc.draw(gs.just("a") | gs.just("b"))
+    assert x in ("a", "b")

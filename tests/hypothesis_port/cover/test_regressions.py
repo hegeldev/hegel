@@ -1,3 +1,5 @@
+# Dropped from the Hypothesis original: test_no_missed_custom_init_exceptions
+# (the exception list is Hegel's, checked by test_exceptions_are_picklable).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -10,41 +12,32 @@
 
 import pickle
 import random
-from datetime import timedelta
 from unittest.mock import Mock
 
 import pytest
 
-from hegel.hypothesis import (
-    Verbosity,
-    assume,
-    errors,
-    given,
-    seed,
-    settings,
-    strategies as st,
-)
-
-from tests.hypothesis_port.common.utils import skipif_threading
+import hegel
+from hegel import errors
+from hegel import generators as gs
 
 
 def strat():
-    return st.builds(dict, one=strat_one())
+    return gs.builds(dict, one=strat_one())
 
 
-@st.composite
-def strat_one(draw):
-    return draw(st.builds(dict, val=st.builds(dict, two=strat_two())))
+@hegel.composite
+def strat_one(tc):
+    return tc.draw(gs.builds(dict, val=gs.builds(dict, two=strat_two())))
 
 
-@st.composite
-def strat_two(draw):
-    return draw(st.builds(dict, some_text=st.text(min_size=1)))
+@hegel.composite
+def strat_two(tc):
+    return tc.draw(gs.builds(dict, some_text=gs.text(min_size=1)))
 
 
-@given(strat())
-def test_issue751(v):
-    pass
+@hegel.test
+def test_issue751(tc):
+    tc.draw(strat())
 
 
 def test_can_find_non_zero():
@@ -53,9 +46,9 @@ def test_can_find_non_zero():
     # handle that: We want to make sure that we're really not depth bounding
     # the text in the leaf nodes.
 
-    @settings(verbosity=Verbosity.quiet)
-    @given(strat())
-    def test(v):
+    @hegel.test(verbosity=hegel.Verbosity.quiet)
+    def test(tc):
+        v = tc.draw(strat())
         assert "0" in v["one"]["val"]["two"]["some_text"]
 
     with pytest.raises(AssertionError):
@@ -64,7 +57,7 @@ def test_can_find_non_zero():
 
 def test_mock_injection():
     """Ensure that it's possible for mechanisms like `pytest.fixture` and
-    `patch` to inject mocks into hypothesis test functions without side
+    `patch` to inject mocks into hegel test functions without side
     effects.
 
     (covers https://github.com/HypothesisWorks/hypothesis-
@@ -74,9 +67,9 @@ def test_mock_injection():
     class Bar:
         pass
 
-    @given(inp=st.integers())
-    def test_foo_spec(bar, inp):
-        pass
+    @hegel.test
+    def test_foo_spec(tc, bar):
+        tc.draw(gs.integers())
 
     test_foo_spec(Bar())
     test_foo_spec(Mock(Bar))
@@ -84,35 +77,34 @@ def test_mock_injection():
 
 
 def test_regression_issue_1230():
-    strategy = st.builds(
+    generator = gs.builds(
         lambda x, y: dict(list(x.items()) + list(y.items())),
-        st.fixed_dictionaries({"0": st.text()}),
-        st.builds(
+        gs.fixed_dicts({"0": gs.text()}),
+        gs.builds(
             lambda dictionary, keys: {key: dictionary[key] for key in keys},
-            st.fixed_dictionaries({"1": st.lists(elements=st.sampled_from(["a"]))}),
-            st.sets(elements=st.sampled_from(["1"])),
+            gs.fixed_dicts({"1": gs.lists(gs.sampled_from(["a"]))}),
+            gs.sets(gs.sampled_from(["1"])),
         ),
     )
 
-    @seed(81581571036124932593143257836081491416)
-    @settings(database=None)
-    @given(strategy)
-    def test_false_is_false(params):
-        assume(params.get("0") not in ("", "\x00"))
+    @hegel.test(database="", seed=81581571036124932593143257836081491416)
+    def test_false_is_false(tc):
+        params = tc.draw(generator)
+        tc.assume(params.get("0") not in ("", "\x00"))
         raise ValueError
 
     with pytest.raises(ValueError):
         test_false_is_false()
 
 
-@given(st.integers())
-def random_func(x):
+@hegel.test
+def random_func(tc):
+    tc.draw(gs.integers())
     random.random()
 
 
-@skipif_threading
 def test_prng_state_unpolluted_by_given_issue_1266():
-    # Checks that @given doesn't leave the global PRNG in a particular
+    # Checks that a hegel test doesn't leave the global PRNG in a particular
     # modified state; there may be no effect or random effect but not
     # a consistent end-state.
     first = random.getstate()
@@ -126,15 +118,21 @@ def test_prng_state_unpolluted_by_given_issue_1266():
         assert second != third
 
 
-# Hegel has no RewindRecursive, FlakyReplay carries no interesting origins,
-# and FlakyFailure (an ExceptionGroup) cannot hold a BaseException.
 exc_instances = [
-    errors.NoSuchExample("foobar", extra="baz"),
-    errors.DeadlineExceeded(runtime=timedelta(seconds=1.5), deadline=timedelta(seconds=1.0)),
-    errors.UnsatisfiedAssumption("reason for unsatisfied"),
-    errors.FlakyReplay("reason"),
-    errors.FlakyFailure("check with Exception", [Exception()]),
-    errors.BackendCannotProceed("verified"),
+    errors.AssumeFailed("reason for unsatisfied"),
+    errors.BackendError("backend"),
+    errors.DidNotReproduce("did not reproduce"),
+    errors.FailedHealthCheck("FailedHealthCheck: FilterTooMuch"),
+    errors.Flaky("flaky"),
+    errors.HegelError("hegel"),
+    errors.InternalError("internal"),
+    errors.InvalidArgument("invalid"),
+    errors.MultipleFailures("check with Exception", [Exception()]),
+    errors.MultipleFailures("check with BaseException", [KeyboardInterrupt()]),
+    errors.ResolutionFailed("resolution"),
+    errors.RunError("run"),
+    errors.StopTest("stop"),
+    errors.Unsatisfiable("unsatisfiable"),
 ]
 
 
@@ -144,14 +142,10 @@ def test_exceptions_are_picklable(exc):
     pickle.loads(pickle.dumps(exc))
 
 
-def test_no_missed_custom_init_exceptions():
-    untested_errors_with_custom_init = {
+def test_every_public_exception_is_tested_for_pickling():
+    untested = {
         et
         for et in vars(errors).values()
-        if isinstance(et, type)
-        and et.__module__ == errors.__name__  # skip types imported for compatibility
-        and issubclass(et, Exception)
-        and ("__init__" in vars(et) or "__new__" in vars(et))
+        if isinstance(et, type) and issubclass(et, BaseException) and et.__name__ in errors.__all__
     } - {type(exc) for exc in exc_instances}
-    print(untested_errors_with_custom_init)
-    assert not untested_errors_with_custom_init
+    assert not untested

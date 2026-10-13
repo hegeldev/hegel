@@ -8,18 +8,18 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-from hegel.hypothesis import given, strategies as st
+import hegel
+from hegel import generators as gs
 
-# Tests that convert_keyword_arguments in reflection.py can handle
-# composites that only have keyword-only arguments.
+# Tests that composites with only keyword-only arguments can be called.
 # See https://github.com/HypothesisWorks/hypothesis/issues/1999
 
 
-@st.composite
-def kwonlyargs_composites(draw, *, kwarg1=None):
-    return draw(st.fixed_dictionaries({"kwarg1": st.just(kwarg1), "i": st.integers()}))
+@hegel.composite
+def kwonlyargs_composites(tc, *, kwarg1=None):
+    return tc.draw(gs.fixed_dicts({"kwarg1": gs.just(kwarg1), "i": gs.integers()}))
 
 
-@given(st.lists(st.one_of(kwonlyargs_composites(kwarg1="test")), unique_by=lambda x: x["i"]))
-def test_composite_with_keyword_only_args(a):
-    pass
+@hegel.test
+def test_composite_with_keyword_only_args(tc):
+    tc.draw(gs.lists(gs.one_of(kwonlyargs_composites(kwarg1="test")), unique_by=lambda x: x["i"]))

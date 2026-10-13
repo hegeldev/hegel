@@ -16,6 +16,14 @@ than worked around in the bindings, so they can be fixed in the engine.
   Hypothesis raises an error naming the class and the alphabet; libhegel
   generates and filters
   (`test_regex.py::test_charsets_which_match_nothing_in_the_alphabet`).
+- `from_regex(".")` shrinks to `'ā'` (U+0101) rather than to `'0'`: the
+  shrinker's smallest match for `.` is not the smallest code point
+  (`test_regex.py::test_regex_output_should_print_as_string`).
+- Under `re.IGNORECASE`, a negated class whose excluded character has a
+  multi-character case fold (`[^İ]+`; `İ` folds to `i` followed by U+0307)
+  can generate the fold's components, so the result is not disjoint from the
+  fold (`tests/hypothesis_port/nocover/test_regex.py::test_case_insensitive_not_literal_never_constructs_multichar_match`,
+  pinned with a seed).
 
 ## Shrinking and generation
 
@@ -37,6 +45,17 @@ than worked around in the bindings, so they can be fixed in the engine.
   case 5,006. Hypothesis targets from much earlier, and also reports the
   highest score seen for each label when the run ends; libhegel reports no
   scores.
+
+- A float range consisting of a single infinity cannot be drawn from: with
+  64-bit floats, `floats(inf, inf)` aborts the run with an `InternalError`
+  (`FloatChoice::simplest: no valid float for this choice`), and with 32-bit
+  floats the infinite bound is clamped to the largest finite value and then
+  rejected as exceeding the other bound. Hypothesis returns the infinity
+  (`tests/hypothesis_port/cover/test_float_nastiness.py::test_interval_of_a_single_infinity`).
+- A reproduce blob replayed against a test whose draws have changed shape is
+  continued with fresh draws past the divergence, so a failure found that way
+  is reported as the failure rather than as `DidNotReproduce`
+  (`tests/hypothesis_port/cover/test_reproduce_failure.py::test_errors_with_did_not_reproduce_if_the_shape_changes`).
 
 ## Messages and reporting
 
@@ -72,7 +91,7 @@ than worked around in the bindings, so they can be fixed in the engine.
   `tests/test_generators_combinators.py::test_sampled_from`; pinned with a
   seed in `tests/test_engine_issues.py`.)
 - Identical inputs are generated repeatedly; there is no duplicate suppression
-  (`tests/hypothesis_port/nocover/test_duplication.py`).
+  (seen as repeated UUIDs in `tests/hypothesis_port/nocover/test_uuids.py`).
 - No widening of `one_of` branches. For `integers() | sampled_from([4991,
   4999])` and a predicate the sampled values satisfy, Hypothesis rewrites the
   choices from the sampled branch, `(1, 1)`, into the wide branch carrying the
@@ -82,5 +101,5 @@ than worked around in the bindings, so they can be fixed in the engine.
   reports `4991`. Whether widening would be an improvement in Hegel depends on
   how libhegel encodes a string or integer draw: if a draw is several choices,
   the wide form is longer and the engine's answer is the shortlex minimum.
-  (`tests/hypothesis_port/quality/test_widening_shrinks.py`; a `just()`
-  branch never widens in Hypothesis either, as its encoding is shorter.)
+  (A `just()` branch never widens in Hypothesis either, as its encoding is
+  shorter.)

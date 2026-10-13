@@ -8,7 +8,8 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-from hegel.hypothesis import given, strategies as st
+import hegel
+from hegel import generators as gs
 
 
 class BadRepr:
@@ -23,46 +24,43 @@ Frosty = BadRepr("☃")
 
 
 def test_just_frosty():
-    assert repr(st.just(Frosty)) == "just(☃)"
+    assert repr(gs.just(Frosty)) == "just(☃)"
 
 
 def test_sampling_snowmen():
     # Hegel's sampled_from stores its elements in a list.
-    assert repr(st.sampled_from((Frosty, "hi"))) in (
-        "sampled_from((☃, 'hi'))",
-        "sampled_from([☃, 'hi'])",
-    )
+    assert repr(gs.sampled_from((Frosty, "hi"))) == "sampled_from([☃, 'hi'])"
 
 
 def varargs(*args, **kwargs):
     pass
 
 
-@given(
-    st.sampled_from(
-        [
-            "✐",
-            "✑",
-            "✒",
-            "✓",
-            "✔",
-            "✕",
-            "✖",
-            "✗",
-            "✘",
-            "✙",
-            "✚",
-            "✛",
-            "✜",
-            "✝",
-            "✞",
-            "✟",
-            "✠",
-            "✡",
-            "✢",
-            "✣",
-        ]
+@hegel.test
+def test_sampled_from_bad_repr(tc):
+    tc.draw(
+        gs.sampled_from(
+            [
+                "✐",
+                "✑",
+                "✒",
+                "✓",
+                "✔",
+                "✕",
+                "✖",
+                "✗",
+                "✘",
+                "✙",
+                "✚",
+                "✛",
+                "✜",
+                "✝",
+                "✞",
+                "✟",
+                "✠",
+                "✡",
+                "✢",
+                "✣",
+            ]
+        )
     )
-)
-def test_sampled_from_bad_repr(c):
-    pass

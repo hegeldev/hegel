@@ -8,24 +8,23 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+# Dropped from the Hypothesis original: test_transformed_just_strategy
+# (JustStrategy internals); test_unsat_filtered_sampling_in_rejection_stage
+# (SampledFromStrategy internal early-exit branch);
+# TestErrorNoteBehavior3819 (the "sampled_from was given a collection of
+# strategies" error note, which Hegel does not add);
+# test_efficient_sets_of_samples_with_chained_transformations_slow_path
+# (carrying .map()/.filter() through a sampled_from's element narrowing).
+
 import collections
 import enum
 import operator
 
-# Dropped (exercises Hypothesis's JustStrategy internals): test_transformed_just_strategy.
-
-
 import pytest
 
-from hegel.hypothesis import given, settings, strategies as st
-from hegel.hypothesis.errors import (
-    FailedHealthCheck,
-    InvalidArgument,
-    StopTest,
-    Unsatisfiable,
-)
-from hegel.hypothesis.strategies import sampled_from
-
+import hegel
+from hegel import generators as gs
+from hegel.generators import sampled_from
 from tests.hypothesis_port.common.debug import (
     assert_all_examples,
     assert_simple_property,
@@ -41,7 +40,7 @@ an_empty_flag = enum.Flag("EmptyFlag", {"a": 0})
 an_ordereddict = collections.OrderedDict([("a", 1), ("b", 2), ("c", 3)])
 
 
-@fails_with(InvalidArgument)
+@fails_with(hegel.InvalidArgument)
 def test_cannot_sample_sets():
     check_can_generate_examples(sampled_from(set("abc")))
 
@@ -54,28 +53,30 @@ def test_can_sample_ordereddict_without_warning():
     check_can_generate_examples(sampled_from(an_ordereddict))
 
 
-@pytest.mark.parametrize("enum_class", [an_enum, a_flag, an_empty_flag])
+@pytest.mark.parametrize(
+    "enum_class",
+    [
+        an_enum,
+        a_flag,
+        pytest.param(
+            an_empty_flag,
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="hegel's sampled_from iterates a Flag class, which yields no members "
+                "for a flag with only a zero member, so it raises InvalidArgument",
+                raises=hegel.InvalidArgument,
+            ),
+        ),
+    ],
+)
 def test_can_sample_enums(enum_class):
     assert_all_examples(sampled_from(enum_class), lambda x: isinstance(x, enum_class))
 
 
-@fails_with(FailedHealthCheck)
-@settings(suppress_health_check=[])
-@given(sampled_from(range(10)).filter(lambda x: x < 0))
-def test_unsat_filtered_sampling(x):
-    raise AssertionError
-
-
-@fails_with(Unsatisfiable)
-@settings(suppress_health_check=[])
-@given(sampled_from(range(2)).filter(lambda x: x < 0))
-@pytest.mark.xfail(
-    strict=False,
-    reason="sampled_from(...).filter() searches untried elements only on main (FilteredSample)",
-)
-def test_unsat_filtered_sampling_in_rejection_stage(x):
-    # Rejecting all possible indices before we calculate the allowed indices
-    # takes an early exit path, so we need this test to cover that branch.
+@fails_with(hegel.FailedHealthCheck)
+@hegel.test(suppress_health_check=[])
+def test_unsat_filtered_sampling(tc):
+    tc.draw(sampled_from(range(10)).filter(lambda x: x < 0))
     raise AssertionError
 
 
@@ -83,251 +84,127 @@ def test_easy_filtered_sampling():
     assert_simple_property(sampled_from(range(100)).filter(lambda x: x == 0), lambda x: x == 0)
 
 
-@given(sampled_from(range(100)).filter(lambda x: x == 99))
-@pytest.mark.xfail(
-    strict=False,
-    reason="sampled_from(...).filter() searches untried elements only on main (FilteredSample)",
-)
-def test_filtered_sampling_finds_rare_value(x):
+@hegel.test
+def test_filtered_sampling_finds_rare_value(tc):
+    x = tc.draw(sampled_from(range(100)).filter(lambda x: x == 99))
     assert x == 99
 
 
-@given(st.sets(st.sampled_from(range(50)), min_size=50))
 @pytest.mark.xfail(
-    strict=False,
-    reason="sampled_from(...).filter() searches untried elements only on main (FilteredSample)",
+    strict=True,
+    reason="Engine: sets() does not sample without replacement, so sets(sampled_from(range(50)), "
+    "min_size=50) fails FilterTooMuch (docs/engine-issues.md)",
+    raises=hegel.FailedHealthCheck,
 )
-def test_efficient_sets_of_samples(x):
+@hegel.test
+def test_efficient_sets_of_samples(tc):
+    x = tc.draw(gs.sets(gs.sampled_from(range(50)), min_size=50))
     assert x == set(range(50))
 
 
-@given(st.dictionaries(keys=st.sampled_from(range(50)), values=st.none(), min_size=50))
 @pytest.mark.xfail(
-    strict=False,
-    reason="sampled_from(...).filter() searches untried elements only on main (FilteredSample)",
+    strict=True,
+    reason="Engine: dicts() does not sample keys without replacement, so "
+    "dicts(sampled_from(range(50)), none(), min_size=50) fails FilterTooMuch "
+    "(docs/engine-issues.md)",
+    raises=hegel.FailedHealthCheck,
 )
-def test_efficient_dicts_with_sampled_keys(x):
+@hegel.test
+def test_efficient_dicts_with_sampled_keys(tc):
+    x = tc.draw(gs.dicts(gs.sampled_from(range(50)), gs.none(), min_size=50))
     assert set(x) == set(range(50))
 
 
-@pytest.mark.skipif(
-    settings.get_current_profile_name() == "crosshair",
-    reason="takes 3-5 mins and raises Unsatisfiable",
-)
 @pytest.mark.parametrize("fn", [lambda asdf: asdf[0], (operator.itemgetter(0), lambda x: x[0])])
-@given(st.data())
-def test_efficient_lists_of_tuples_first_element_sampled_from(fn, data):
-    elems = st.tuples(st.sampled_from(range(20)), st.builds(list))
-    x = data.draw(st.lists(elems, min_size=20, unique_by=fn))
+@hegel.test
+def test_efficient_lists_of_tuples_first_element_sampled_from(tc, fn):
+    elems = gs.tuples(gs.sampled_from(range(20)), gs.builds(list))
+    x = tc.draw(gs.lists(elems, min_size=20, unique_by=fn))
     assert {first for first, *_ in x} == set(range(20))
 
 
-@given(st.lists(st.sampled_from([0] * 100), unique=True))
-def test_does_not_include_duplicates_even_when_duplicated_in_collection(ls):
+@hegel.test
+def test_does_not_include_duplicates_even_when_duplicated_in_collection(tc):
+    ls = tc.draw(gs.lists(gs.sampled_from([0] * 100), unique=True))
     assert len(ls) <= 1
 
 
-@given(
-    st.sets(
-        st.sampled_from(range(50))
-        .map(lambda x: x * 2)
-        .filter(lambda x: x % 3)
-        .map(lambda x: x // 2),
-        min_size=33,
-    )
-)
 @pytest.mark.xfail(
-    strict=False,
-    reason="sampled_from(...).filter() searches untried elements only on main (FilteredSample)",
+    strict=True,
+    reason="Engine: sets() does not sample without replacement, so a set of all 33 values of a "
+    "mapped and filtered sampled_from(range(50)) fails FilterTooMuch (docs/engine-issues.md)",
+    raises=hegel.FailedHealthCheck,
 )
-def test_efficient_sets_of_samples_with_chained_transformations(x):
+@hegel.test
+def test_efficient_sets_of_samples_with_chained_transformations(tc):
+    x = tc.draw(
+        gs.sets(
+            gs.sampled_from(range(50))
+            .map(lambda x: x * 2)
+            .filter(lambda x: x % 3)
+            .map(lambda x: x // 2),
+            min_size=33,
+        )
+    )
     assert x == {x for x in range(50) if (x * 2) % 3}
 
 
-@st.composite
-def stupid_sampled_sets(draw):
-    result = set()
-    s = st.sampled_from(range(20)).filter(lambda x: x % 3).map(lambda x: x * 2)
-    while len(result) < 13:
-        result.add(draw(s.filter(lambda x: x not in result)))
-    return result
-
-
-@given(stupid_sampled_sets())
 @pytest.mark.xfail(
-    strict=False,
-    reason="sampled_from(...).filter() searches untried elements only on main (FilteredSample)",
+    strict=True,
+    reason="Engine: a sampled_from whose every element is filtered out fails FilterTooMuch; "
+    "Unsatisfiable is only raised when the test draws no data",
+    raises=hegel.FailedHealthCheck,
 )
-def test_efficient_sets_of_samples_with_chained_transformations_slow_path(x):
-    # This deliberately exercises the standard filtering logic without going
-    # through the special-case handling of UniqueSampledListStrategy.
-    assert x == {x * 2 for x in range(20) if x % 3}
-
-
-@fails_with(Unsatisfiable)
-@given(st.sampled_from([None, False, ""]).filter(bool))
-@pytest.mark.xfail(
-    strict=False,
-    reason="sampled_from(...).filter() searches untried elements only on main (FilteredSample)",
-)
-def test_unsatisfiable_explicit_filteredstrategy_sampled(x):
+@fails_with(hegel.Unsatisfiable)
+@hegel.test
+def test_unsatisfiable_explicit_filteredstrategy_sampled(tc):
+    tc.draw(gs.sampled_from([None, False, ""]).filter(bool))
     raise AssertionError("Unreachable because there are no valid examples")
 
 
-@fails_with(Unsatisfiable)
-@given(st.none().filter(bool))
-def test_unsatisfiable_explicit_filteredstrategy_just(x):
+@fails_with(hegel.Unsatisfiable)
+@hegel.test
+def test_unsatisfiable_explicit_filteredstrategy_just(tc):
+    tc.draw(gs.none().filter(bool))
     raise AssertionError("Unreachable because there are no valid examples")
 
 
-@given(st.lists(st.sampled_from(range(100)), max_size=3, unique=True))
-def test_max_size_is_respected_with_unique_sampled_from(ls):
+@hegel.test
+def test_max_size_is_respected_with_unique_sampled_from(tc):
+    ls = tc.draw(gs.lists(gs.sampled_from(range(100)), max_size=3, unique=True))
     assert len(ls) <= 3
 
 
-@given(st.lists(st.sampled_from([0, 0.0]), unique=True, min_size=1))
-def test_issue_2247_regression(ls):
+@hegel.test
+def test_issue_2247_regression(tc):
+    ls = tc.draw(gs.lists(gs.sampled_from([0, 0.0]), unique=True, min_size=1))
     assert len(ls) == 1
 
 
-@given(st.data())
-def test_mutability_1(data):
+@hegel.test
+def test_mutability_1(tc):
     # See https://github.com/HypothesisWorks/hypothesis/issues/2507
     x = [1]
-    s = st.sampled_from(x)
+    s = gs.sampled_from(x)
     x.append(2)
-    assert data.draw(s) != 2
+    assert tc.draw(s) != 2
 
 
-@given(st.data())
-def test_mutability_2(data):
+@hegel.test
+def test_mutability_2(tc):
     x = [1]
-    s = st.sampled_from(x)
-    assert data.draw(s) != 2
+    s = gs.sampled_from(x)
+    assert tc.draw(s) != 2
     x.append(2)
-    assert data.draw(s) != 2
+    assert tc.draw(s) != 2
 
 
 class AnnotationsInsteadOfElements(enum.Enum):
     a: "int"
 
 
-@pytest.mark.xfail(
-    strict=True, reason="Hegel's sampled_from does not hint at annotations for a class argument"
-)
-def test_suggests_elements_instead_of_annotations():
-    with pytest.raises(InvalidArgument, match=r"Cannot sample.*annotations.*dataclass"):
-        check_can_generate_examples(st.sampled_from(AnnotationsInsteadOfElements))
-
-
-class TestErrorNoteBehavior3819:
-    elements = (st.booleans(), st.decimals(), st.integers(), st.text())
-
-    @staticmethod
-    @given(st.data())
-    def direct_without_error(data):
-        data.draw(st.sampled_from((st.floats(), st.binary())))
-
-    @staticmethod
-    @given(st.data())
-    def direct_with_non_type_error(data):
-        data.draw(st.sampled_from(st.characters(), st.floats()))
-        raise Exception("Contains SearchStrategy, but no note addition!")
-
-    @staticmethod
-    @given(st.data())
-    def direct_with_type_error_without_substring(data):
-        data.draw(st.sampled_from(st.booleans(), st.binary()))
-        raise TypeError("Substring not in message!")
-
-    @staticmethod
-    @given(st.data())
-    def direct_with_type_error_with_substring_but_not_all_strategies(data):
-        data.draw(st.sampled_from(st.booleans(), False, True))
-        raise TypeError("Contains SearchStrategy, but no note addition!")
-
-    @staticmethod
-    @given(st.data())
-    def direct_all_strategies_with_type_error_with_substring(data):
-        data.draw(st.sampled_from((st.dates(), st.datetimes())))
-        raise TypeError("This message contains SearchStrategy as substring!")
-
-    @staticmethod
-    @given(st.lists(st.sampled_from(elements)))
-    def indirect_without_error(_):
-        return
-
-    @staticmethod
-    @given(st.lists(st.sampled_from(elements)))
-    def indirect_with_non_type_error(_):
-        raise Exception("Contains SearchStrategy, but no note addition!")
-
-    @staticmethod
-    @given(st.lists(st.sampled_from(elements)))
-    def indirect_with_type_error_without_substring(_):
-        raise TypeError("Substring not in message!")
-
-    @staticmethod
-    @given(st.lists(st.sampled_from((*elements, False, True))))
-    def indirect_with_type_error_with_substring_but_not_all_strategies(_):
-        raise TypeError("Contains SearchStrategy, but no note addition!")
-
-    @staticmethod
-    @given(st.lists(st.sampled_from(elements), min_size=1))
-    def indirect_all_strategies_with_type_error_with_substring(objs):
-        raise TypeError("Contains SearchStrategy in message, trigger note!")
-
-    @pytest.mark.parametrize(
-        ["func_to_call", "exp_err_cls", "should_exp_msg"],
-        [
-            pytest.param(f.__func__, err, msg_exp, id=f.__func__.__name__)
-            for f, err, msg_exp in [
-                (f, TypeError, True)
-                for f in (
-                    direct_all_strategies_with_type_error_with_substring,
-                    indirect_all_strategies_with_type_error_with_substring,
-                )
-            ]
-            + [
-                (f, TypeError, False)
-                for f in (
-                    direct_with_type_error_without_substring,
-                    direct_with_type_error_with_substring_but_not_all_strategies,
-                    indirect_with_type_error_without_substring,
-                    indirect_with_type_error_with_substring_but_not_all_strategies,
-                )
-            ]
-            + [
-                (f, Exception, False)
-                for f in (
-                    direct_with_non_type_error,
-                    indirect_with_non_type_error,
-                )
-            ]
-            + [
-                (f, None, False)
-                for f in (
-                    direct_without_error,
-                    indirect_without_error,
-                )
-            ]
-        ],
-    )
-    @pytest.mark.xfail(
-        strict=False, reason="Hegel does not add the SearchStrategy-in-TypeError note"
-    )
-    def test_error_appropriate_error_note_3819(self, func_to_call, exp_err_cls, should_exp_msg):
-        if exp_err_cls is None:
-            # Here we only care that no exception was raised, so nothing to assert.
-            func_to_call()
-        else:
-            with pytest.raises(exp_err_cls) as err_ctx:
-                func_to_call()
-            notes = getattr(err_ctx.value, "__notes__", [])
-            matching_messages = [
-                n
-                for n in notes
-                if n.startswith("sampled_from was given a collection of strategies")
-                and n.endswith("Was one_of intended?")
-            ]
-            assert len(matching_messages) == (1 if should_exp_msg else 0)
+def test_rejects_enum_with_annotations_instead_of_elements():
+    # Hypothesis's message points at the annotations; hegel's says the
+    # sequence is empty.
+    with pytest.raises(hegel.InvalidArgument, match=r"Cannot sample"):
+        check_can_generate_examples(gs.sampled_from(AnnotationsInsteadOfElements))

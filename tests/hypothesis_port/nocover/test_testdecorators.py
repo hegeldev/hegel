@@ -1,3 +1,5 @@
+# Dropped from the Hypothesis original: test_signature_mismatch_error_message
+# (@given's argument binding).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -12,51 +14,43 @@ import re
 
 import pytest
 
-from hegel.hypothesis import HealthCheck, given, reject, settings, strategies as st
-from hegel.hypothesis.errors import InvalidArgument, Unsatisfiable
+import hegel
+from hegel import generators as gs
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="engine: with the health checks suppressed, a run whose every case is "
+    "rejected ends quietly as passed instead of raising Unsatisfiable",
+)
 def test_contains_the_test_function_name_in_the_exception_string():
-    look_for_one = settings(max_examples=1, suppress_health_check=list(HealthCheck))
+    look_for_one = hegel.Settings(test_cases=1, suppress_health_check=hegel.HealthCheck.all())
 
-    @given(st.integers())
-    @look_for_one
-    def this_has_a_totally_unique_name(x):
-        reject()
+    @hegel.test(settings=look_for_one)
+    def this_has_a_totally_unique_name(tc):
+        tc.draw(gs.integers())
+        tc.reject()
 
-    with pytest.raises(Unsatisfiable, match=re.escape(this_has_a_totally_unique_name.__name__)):
+    with pytest.raises(
+        hegel.Unsatisfiable, match=re.escape(this_has_a_totally_unique_name.__name__)
+    ):
         this_has_a_totally_unique_name()
 
     class Foo:
-        @given(st.integers())
-        @look_for_one
-        def this_has_a_unique_name_and_lives_on_a_class(self, x):
-            reject()
+        @hegel.test(settings=look_for_one)
+        def this_has_a_unique_name_and_lives_on_a_class(self, tc):
+            tc.draw(gs.integers())
+            tc.reject()
 
     with pytest.raises(
-        Unsatisfiable,
+        hegel.Unsatisfiable,
         match=re.escape(Foo.this_has_a_unique_name_and_lives_on_a_class.__name__),
     ):
         Foo().this_has_a_unique_name_and_lives_on_a_class()
 
 
-def test_signature_mismatch_error_message():
-    # Regression test for issue #1978
-
-    @settings(max_examples=2)
-    @given(x=st.integers())
-    def bad_test():
-        pass
-
-    with pytest.raises(
-        InvalidArgument,
-        match=r"bad_test\(\) got an unexpected keyword argument 'x', "
-        r"from `x=integers\(\)` in @given",
-    ):
-        bad_test()
-
-
-@given(data=st.data(), keys=st.lists(st.integers(), unique=True))
-def test_fixed_dict_preserves_keys(data, keys):
-    d = data.draw(st.fixed_dictionaries({k: st.none() for k in keys}))
+@hegel.test
+def test_fixed_dict_preserves_keys(tc):
+    keys = tc.draw(gs.lists(gs.integers(), unique=True))
+    d = tc.draw(gs.fixed_dicts({k: gs.none() for k in keys}))
     assert set(d) == set(keys)

@@ -8,12 +8,11 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-from hegel.hypothesis import strategies as st
-
+from hegel.generators import from_type
 from tests.hypothesis_port.common.debug import find_any
 
 
 def test_native_unions():
-    s = st.from_type(int | list[str])
+    s = from_type(int | list[str])
     find_any(s, lambda x: isinstance(x, int))
     find_any(s, lambda x: isinstance(x, list))

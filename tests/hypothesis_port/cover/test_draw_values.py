@@ -10,8 +10,7 @@
 
 import pytest
 
-from hegel.hypothesis.strategies import lists
-
+from hegel import generators as gs
 from tests.hypothesis_port.common import standard_types
 from tests.hypothesis_port.common.debug import check_can_generate_examples
 
@@ -23,4 +22,4 @@ def test_single_example(spec):
 
 @pytest.mark.parametrize("spec", standard_types, ids=repr)
 def test_list_example(spec):
-    check_can_generate_examples(lists(spec))
+    check_can_generate_examples(gs.lists(spec))

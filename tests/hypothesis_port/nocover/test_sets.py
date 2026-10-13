@@ -8,22 +8,23 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-from hegel.hypothesis import given, settings
-from hegel.hypothesis.strategies import floats, integers, sets
-
+import hegel
+from hegel.generators import floats, integers, sets
 from tests.hypothesis_port.common.debug import find_any
 
 
 def test_can_draw_sets_of_hard_to_find_elements():
     rarebool = floats(0, 1).map(lambda x: x <= 0.05)
-    find_any(sets(rarebool, min_size=2), settings=settings(deadline=None))
+    find_any(sets(rarebool, min_size=2))
 
 
-@given(sets(integers(), max_size=0))
-def test_empty_sets(x):
+@hegel.test
+def test_empty_sets(tc):
+    x = tc.draw(sets(integers(), max_size=0))
     assert x == set()
 
 
-@given(sets(integers(), max_size=2))
-def test_bounded_size_sets(x):
+@hegel.test
+def test_bounded_size_sets(tc):
+    x = tc.draw(sets(integers(), max_size=2))
     assert len(x) <= 2

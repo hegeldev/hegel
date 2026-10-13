@@ -10,40 +10,35 @@
 
 import pytest
 
-from hegel.hypothesis import strategies as st
-
+from hegel import generators as gs
 from tests.hypothesis_port.common.debug import minimal
 
 
 def test_large_branching_tree():
-    tree = st.deferred(lambda: st.integers() | st.tuples(tree, tree, tree, tree, tree))
+    tree = gs.deferred(lambda: gs.integers() | gs.tuples(tree, tree, tree, tree, tree))
     assert minimal(tree) == 0
     assert minimal(tree, lambda x: isinstance(x, tuple)) == (0,) * 5
 
 
 @pytest.mark.xfail(
     strict=True,
-    run=False,
-    reason="hegel recursive()/deferred() self-reference hits RecursionError (slow)",
+    reason="hegel rarely generates a dict with key '' holding a list from this definition "
+    "(about 9 in 2000 draws), so minimal()'s 500-case search is Unsatisfiable; "
+    "with 2000 cases it finds and shrinks to {'': []}",
 )
 def test_non_trivial_json():
-    json = st.deferred(lambda: st.none() | st.floats() | st.text() | lists | objects)
+    json = gs.deferred(lambda: gs.none() | gs.floats() | gs.text() | lists | objects)
 
-    lists = st.lists(json)
-    objects = st.dictionaries(st.text(), json)
+    lists = gs.lists(json)
+    objects = gs.dicts(gs.text(), json)
 
     assert minimal(json) is None
     assert minimal(json, lambda x: isinstance(x, list) and x) == [None]
     assert minimal(json, lambda x: isinstance(x, dict) and isinstance(x.get(""), list)) == {"": []}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    run=False,
-    reason="hegel recursive()/deferred() self-reference hits RecursionError (slow)",
-)
 def test_self_recursive_lists():
-    x = st.deferred(lambda: st.lists(x))
+    x = gs.deferred(lambda: gs.lists(x))
     assert minimal(x) == []
     assert minimal(x, bool) == [[]]
     assert minimal(x, lambda x: len(x) > 1) == [[], []]

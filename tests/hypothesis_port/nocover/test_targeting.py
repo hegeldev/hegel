@@ -1,3 +1,6 @@
+# Dropped from the Hypothesis original: test_target_returns_value (Hegel's
+# target() returns None); test_reports_target_results's 'Highest target score'
+# assertion (libhegel reports no target scores).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -10,79 +13,62 @@
 
 import pytest
 
-from hegel.hypothesis import Phase, given, seed, settings, strategies as st, target
-
-from tests.hypothesis_port.common.utils import Why, xfail_on_crosshair
+import hegel
+from hegel import generators as gs
 
 pytest_plugins = "pytester"
 
 TESTSUITE = """
-from hegel.hypothesis import given, strategies as st, target
+import hegel
+from hegel import generators as gs
 
-@given(st.integers(min_value=0))
-def test_threshold_problem(x):
-    target(float(x))
-    {0}target(float(x * 2), label="double")
+@hegel.test(database="")
+def test_threshold_problem(tc):
+    x = tc.draw(gs.integers(min_value=0))
+    tc.target(float(x))
+    {0}tc.target(float(x * 2), label="double")
     {0}assert x <= 100000
     assert x <= 100
 """
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel does not report 'Highest target score' and prints 'Falsifying example'",
-)
 @pytest.mark.parametrize("multiple", [False, True])
 def test_reports_target_results(testdir, multiple):
     script = testdir.makepyfile(TESTSUITE.format("" if multiple else "# "))
     result = testdir.runpytest(script, "--tb=native", "-rN")
     out = "\n".join(result.stdout.lines)
-    assert "Failing test case" in out
-    assert "x=101" in out, out
-    assert out.count("Highest target score") == 1
+    assert "Falsifying example" in out
+    assert "x = 101" in out, out
     assert result.ret != 0
 
 
 def test_targeting_increases_max_length():
-    strat = st.lists(st.booleans())
-
-    @settings(database=None, max_examples=200, phases=[Phase.generate, Phase.target])
-    @given(strat)
-    def test_with_targeting(ls):
-        target(float(len(ls)))
+    @hegel.test(database="", test_cases=200, phases=[hegel.Phase.generate, hegel.Phase.target])
+    def test_with_targeting(tc):
+        ls = tc.draw(gs.lists(gs.booleans()))
+        tc.target(float(len(ls)))
         assert len(ls) <= 80
 
     with pytest.raises(AssertionError):
         test_with_targeting()
 
 
-@given(st.integers(), st.integers())
-def test_target_returns_value(a, b):
-    difference = target(abs(a - b))
-    assert difference == abs(a - b)
-    assert isinstance(difference, int)
-
-
-@xfail_on_crosshair(Why.symbolic_outside_context)
 def test_targeting_can_be_disabled():
-    strat = st.lists(st.integers(0, 255))
-
     def score(enabled):
         result = 0
-        phases = [Phase.generate]
+        phases = [hegel.Phase.generate]
         if enabled:
-            phases.append(Phase.target)
+            phases.append(hegel.Phase.target)
 
-        @seed(0)
-        @settings(database=None, max_examples=100, phases=phases)
-        @given(strat)
-        def test(ls):
+        @hegel.test(database="", test_cases=100, phases=phases, seed=0)
+        def test(tc):
             nonlocal result
+            ls = tc.draw(gs.lists(gs.integers(0, 255)))
             # cap the score to avoid long test times by unbounded driving of list
             # length upwards
             score = min(sum(ls), 10_000)
             result = max(result, score)
-            target(score)
+            tc.target(score)
 
         test()
         return result
@@ -90,15 +76,10 @@ def test_targeting_can_be_disabled():
     assert score(enabled=True) > score(enabled=False)
 
 
-@pytest.mark.skipif(
-    settings.get_current_profile_name() == "crosshair",
-    reason="takes ~15 minutes, mostly just unrolling the rejection sampling loop",
-)
 def test_issue_2395_regression():
-    @given(d=st.floats().filter(lambda x: abs(x) < 1000))
-    @settings(max_examples=1000, database=None)
-    @seed(93962505385993024185959759429298090872)
-    def test_targeting_square_loss(d):
-        target(-((d - 42.5) ** 2.0))
+    @hegel.test(test_cases=1000, database="", seed=93962505385993024185959759429298090872)
+    def test_targeting_square_loss(tc):
+        d = tc.draw(gs.floats().filter(lambda x: abs(x) < 1000))
+        tc.target(-((d - 42.5) ** 2.0))
 
     test_targeting_square_loss()

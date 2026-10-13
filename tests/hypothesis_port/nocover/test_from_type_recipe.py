@@ -8,11 +8,9 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-import pytest
-
-from hegel.hypothesis import given, strategies as st
+import hegel
+from hegel import generators as gs
 from hegel.generators.from_type import _BUILTINS, _registry
-
 from tests.hypothesis_port.common.debug import find_any
 
 TYPES = sorted(
@@ -28,16 +26,18 @@ TYPES = sorted(
 def everything_except(excluded_types):
     """Recipe copied from the docstring of ``from_type``"""
     return (
-        st.from_type(type).flatmap(st.from_type).filter(lambda x: not isinstance(x, excluded_types))
+        gs.from_type(type)
+        .flat_map(gs.from_type)
+        .filter(lambda x: not isinstance(x, excluded_types))
     )
 
 
-@given(
-    excluded_types=st.lists(st.sampled_from(TYPES), min_size=1, max_size=3, unique=True).map(tuple),
-    data=st.data(),
-)
-def test_recipe_for_everything_except(excluded_types, data):
-    value = data.draw(everything_except(excluded_types))
+@hegel.test
+def test_recipe_for_everything_except(tc):
+    excluded_types = tc.draw(
+        gs.lists(gs.sampled_from(TYPES), min_size=1, max_size=3, unique=True).map(tuple)
+    )
+    value = tc.draw(everything_except(excluded_types))
     assert not isinstance(value, excluded_types)
 
 

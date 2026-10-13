@@ -8,20 +8,26 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+# Dropped from the Hypothesis original: test_url_fragments_contain_legal_chars
+# (Hypothesis's private _url_fragments_strategy); the max_element_length
+# cases of test_invalid_domain_arguments and test_valid_domains_arguments
+# (domains(max_element_length=) argument; hegel's domains() has only
+# max_length).
+
 import re
 import string
 
 import pytest
 
-from hegel.hypothesis import given, settings
-from hegel.hypothesis.errors import InvalidArgument
-from hegel.hypothesis.provisional import domains, urls
-
+import hegel
+from hegel import InvalidArgument
+from hegel import generators as gs
 from tests.hypothesis_port.common.debug import check_can_generate_examples, find_any
 
 
-@given(urls())
-def test_is_URL(url):
+@hegel.test
+def test_is_URL(tc):
+    url = tc.draw(gs.urls())
     allowed_chars = set(string.ascii_letters + string.digits + "$-_.+!*'(),~%/")
     url_schemeless = url.split("://", 1)[1]
     components = url_schemeless.split("#", 1)
@@ -38,29 +44,16 @@ def test_is_URL(url):
 
 
 @pytest.mark.parametrize("max_length", [-1, 0, 3, 4.0, 256])
-@pytest.mark.parametrize("max_element_length", [-1, 0, 4.0, 64, 128])
-def test_invalid_domain_arguments(max_length, max_element_length):
+def test_invalid_domain_arguments(max_length):
     with pytest.raises(InvalidArgument):
-        check_can_generate_examples(
-            domains(max_length=max_length, max_element_length=max_element_length)
-        )
+        check_can_generate_examples(gs.domains(max_length=max_length))
 
 
-@pytest.mark.skipif(
-    settings.get_current_profile_name() == "crosshair",
-    reason="takes ~300s each; the `sampled_from(get_top_level_domains())` decision is realized via iterative comparisons https://github.com/pschanely/CrossHair/issues/332",
-)
-@pytest.mark.parametrize("max_length", [None, 4, 8, 255])
-@pytest.mark.parametrize("max_element_length", [None, 1, 2, 4, 8, 63])
-def test_valid_domains_arguments(max_length, max_element_length):
-    check_can_generate_examples(
-        domains(max_length=max_length, max_element_length=max_element_length)
-    )
+@pytest.mark.parametrize("max_length", [4, 8, 255])
+def test_valid_domains_arguments(max_length):
+    check_can_generate_examples(gs.domains(max_length=max_length))
 
 
-@pytest.mark.parametrize("strategy", [domains(), urls()])
+@pytest.mark.parametrize("strategy", [gs.domains(), gs.urls()])
 def test_find_any_non_empty(strategy):
     find_any(strategy, lambda s: len(s) > 0)
-
-
-# Dropped: test_url_fragments_contain_legal_chars tests Hypothesis's private _url_fragments_strategy.

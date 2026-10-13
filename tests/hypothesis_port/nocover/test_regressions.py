@@ -1,3 +1,6 @@
+# Dropped from the Hypothesis original:
+# test_note_deprecation_blames_right_code_issue_652 (note_deprecation);
+# test_explain_phase_label_assertion_4339 (Phase.explain).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -8,52 +11,24 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-import pytest
-
-from hegel.hypothesis import given, settings, strategies as st
-
-
-# Dropped test_note_deprecation_blames_right_code_issue_652: note_deprecation is internal
+import hegel
+from hegel import generators as gs
 
 
-@given(
-    x=st.one_of(st.just(0) | st.just(1)),
-    y=st.one_of(st.just(0) | st.just(1) | st.just(2)),
-)
-def test_performance_issue_2027(x, y):
-    pass
+@hegel.test
+def test_performance_issue_2027(tc):
+    tc.draw(gs.one_of(gs.just(0) | gs.just(1)))
+    tc.draw(gs.one_of(gs.just(0) | gs.just(1) | gs.just(2)))
 
 
-@given(
-    st.lists(
-        st.floats(allow_infinity=False),
-        unique=True,
-    )
-)
-def test_unique_floats_with_nan_is_not_flaky_3926(ls):
-    pass
+@hegel.test
+def test_unique_floats_with_nan_is_not_flaky_3926(tc):
+    tc.draw(gs.lists(gs.floats(allow_infinity=False), unique=True))
 
 
 # this will take a while to find the regression, but will eventually trigger it.
 # min_value=0 is critical to trigger the probing behavior which exhausts our buffer.
 # https://github.com/pschanely/CrossHair/issues/285 for an upstream fix.
-@given(st.integers(min_value=0, max_value=1 << 25_000))
-def test_overrun_during_datatree_simulation_3874(n):
-    pass
-
-
-def test_explain_phase_label_assertion_4339():
-    # st.composite causes a re-creation of the SampledFromStrategy each time
-    # (one_of is implemented using sampled_from internally), which previously
-    # had different labels which triggered an assertion in the explain code.
-    @st.composite
-    def g(draw):
-        draw(st.none() | st.booleans())
-
-    @given(g(), st.none() | st.booleans())
-    @settings(database=None)
-    def f(a, b):
-        raise ValueError("marker")
-
-    with pytest.raises(ValueError, match="marker"):
-        f()
+@hegel.test
+def test_overrun_during_datatree_simulation_3874(tc):
+    tc.draw(gs.integers(min_value=0, max_value=1 << 25_000))

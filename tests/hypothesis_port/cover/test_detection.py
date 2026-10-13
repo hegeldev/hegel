@@ -8,16 +8,19 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-from hegel.hypothesis import given, is_hypothesis_test
-from hegel.hypothesis.stateful import RuleBasedStateMachine, rule
-from hegel.hypothesis.strategies import integers
+import hegel
+from hegel import generators as gs
+
+
+def is_hegel_test(f):
+    return getattr(f, "is_hegel_test", False)
 
 
 def test_functions_default_to_not_tests():
     def foo():
         pass
 
-    assert not is_hypothesis_test(foo)
+    assert not is_hegel_test(foo)
 
 
 def test_methods_default_to_not_tests():
@@ -25,30 +28,30 @@ def test_methods_default_to_not_tests():
         def foo(self):
             pass
 
-    assert not is_hypothesis_test(Foo().foo)
+    assert not is_hegel_test(Foo().foo)
 
 
 def test_detection_of_functions():
-    @given(integers())
-    def test(i):
-        pass
+    @hegel.test
+    def test(tc):
+        tc.draw(gs.integers())
 
-    assert is_hypothesis_test(test)
+    assert is_hegel_test(test)
 
 
 def test_detection_of_methods():
     class Foo:
-        @given(integers())
-        def test(self, i):
-            pass
+        @hegel.test
+        def test(self, tc):
+            tc.draw(gs.integers())
 
-    assert is_hypothesis_test(Foo().test)
+    assert is_hegel_test(Foo().test)
 
 
 def test_detection_of_stateful_tests():
-    class Stuff(RuleBasedStateMachine):
-        @rule(x=integers())
-        def a_rule(self, x):
-            pass
+    class Stuff(hegel.StateMachine):
+        @hegel.rule()
+        def a_rule(self, tc):
+            tc.draw(gs.integers())
 
-    assert is_hypothesis_test(Stuff.TestCase().runTest)
+    assert is_hegel_test(hegel.state_machine_test(Stuff))

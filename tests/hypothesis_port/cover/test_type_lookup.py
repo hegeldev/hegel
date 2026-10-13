@@ -8,66 +8,61 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+# Dropped from the Hypothesis original: test_given_can_infer_from_manual_annotations,
+# test_infer_all (@given argument binding and infer);
+# test_does_not_add_param_empty_to_type_hints (hypothesis.internal.compat.get_type_hints);
+# test_generic_sequence_of_integers_may_be_lists_or_bytes (from_type(Sequence[int]) never
+# yields bytes); test_can_generate_from_all_registered_types for the bare abstract origins
+# Collection, Iterable, Iterator, Mapping, MutableSet and Set (from_type never instantiates
+# them); test_generic_origin_empty (from_type builds an unregistered generic's origin rather
+# than failing); test_generic_origin_with_type_args (register_type_generator does not reject
+# parametrised generics as keys).
+
 import abc
 import enum
+import inspect
 import typing
 from collections.abc import Callable, Sequence
-from inspect import Parameter as P, Signature
-from typing import Generic, List as _List, TypeVar, Union
+from typing import Generic, TypeVar
+from typing import List as _List
 
 import pytest
 
-from hegel.hypothesis import given, infer, settings, strategies as st
-from hegel.hypothesis.errors import InvalidArgument, ResolutionFailed
+import hegel
+from hegel import generators as gs
+from hegel.errors import InvalidArgument, ResolutionFailed
+from hegel.generators.from_type import _registry
 from tests.hypothesis_port.common import types
-from tests.hypothesis_port.common.compat import get_pretty_function_description, get_type_hints
-from tests.hypothesis_port.common.types import _all_strategies, _global_type_lookup
-
 from tests.hypothesis_port.common.debug import (
     assert_all_examples,
     assert_simple_property,
     check_can_generate_examples,
     find_any,
 )
-from tests.hypothesis_port.common.utils import fails_with, skipif_threading, temp_registered
+from tests.hypothesis_port.common.types import _all_generators, _global_type_lookup
+from tests.hypothesis_port.common.utils import temp_registered
 
 # we'll continue testing the typing variants until their removal from the stdlib
 # ruff: noqa: UP006, UP035, UP007
 
-types_with_core_strat = types.core_types
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel's from_type resolver differs from Hypothesis's type lookup for this case",
-)
-def test_generic_sequence_of_integers_may_be_lists_or_bytes():
-    strat = st.from_type(Sequence[int])
-    find_any(strat, lambda x: isinstance(x, bytes))
-    find_any(strat, lambda x: isinstance(x, list))
+# typing.Any is a class on 3.11+, but nothing is an instance of it.
+types_with_core_strat = {typ for typ in types.core_types if typ is not typing.Any}
 
 
 @pytest.mark.parametrize("typ", sorted(types_with_core_strat, key=str))
-@pytest.mark.xfail(
-    strict=False,
-    reason="Hegel's from_type resolver differs from Hypothesis's type lookup for this case",
-)
 def test_resolve_core_strategies(typ):
-    @given(st.from_type(typ))
-    def inner(ex):
+    @hegel.test
+    def inner(tc):
+        ex = tc.draw(gs.from_type(typ))
         assert isinstance(ex, typ)
 
     inner()
 
 
-@pytest.mark.xfail(
-    strict=True, reason="from_type has no entry for FunctionType (the output of functions())"
-)
 def test_lookup_knows_about_all_core_strategies():
-    # Build a set of all types output by core strategies
+    # Build a set of all types output by core generators
     blocklist = {
         "builds",
-        "data",
         "deferred",
         "from_regex",
         "from_type",
@@ -77,25 +72,20 @@ def test_lookup_knows_about_all_core_strategies():
         "nothing",
         "one_of",
         "permutations",
-        "random_module",
-        "randoms",
         "recursive",
-        "runner",
         "sampled_from",
-        "shared",
-        "timezone_keys",
         "timezones",
     }
-    assert set(_all_strategies).issuperset(blocklist), blocklist.difference(_all_strategies)
+    assert set(_all_generators).issuperset(blocklist), blocklist.difference(_all_generators)
     found = set()
     for thing in (
-        getattr(st, name)
-        for name in sorted(_all_strategies)
-        if name in dir(st) and name not in blocklist
+        getattr(gs, name)
+        for name in sorted(_all_generators)
+        if name in dir(gs) and name not in blocklist
     ):
         for n in range(3):
             try:
-                ex = find_any(thing(*([st.nothing()] * n)))
+                ex = find_any(thing(*([gs.nothing()] * n)))
                 found.add(type(ex))
                 break
             except Exception:
@@ -105,33 +95,40 @@ def test_lookup_knows_about_all_core_strategies():
     assert not cannot_lookup
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="register_type_generator accepts a string key",
+)
 def test_lookup_keys_are_types():
-    with pytest.raises(InvalidArgument):
-        st.register_type_strategy("int", st.integers())
-    assert "int" not in types._global_type_lookup
+    try:
+        with pytest.raises(InvalidArgument):
+            gs.register_type_generator("int", gs.integers())
+        assert "int" not in types._global_type_lookup
+    finally:
+        _registry.pop("int", None)
 
 
 @pytest.mark.parametrize(
     "typ, not_a_strategy",
     [
-        (int, 42),  # Values must be strategies
-        # Can't register NotImplemented directly, even though strategy functions
+        (int, 42),  # Values must be generators
+        # Can't register NotImplemented directly, even though generator functions
         # can return it.
         (int, NotImplemented),
     ],
 )
 def test_lookup_values_are_strategies(typ, not_a_strategy):
     with pytest.raises(InvalidArgument):
-        st.register_type_strategy(typ, not_a_strategy)
+        gs.register_type_generator(typ, not_a_strategy)
     assert not_a_strategy not in types._global_type_lookup.values()
 
 
 @pytest.mark.parametrize("typ", sorted(types_with_core_strat, key=str))
 def test_lookup_overrides_defaults(typ):
     sentinel = object()
-    with temp_registered(typ, st.just(sentinel)):
-        assert_simple_property(st.from_type(typ), lambda v: v is sentinel)
-    assert_simple_property(st.from_type(typ), lambda v: v is not sentinel)
+    with temp_registered(typ, gs.just(sentinel)):
+        assert_simple_property(gs.from_type(typ), lambda v: v is sentinel)
+    assert_simple_property(gs.from_type(typ), lambda v: v is not sentinel)
 
 
 class ParentUnknownType:
@@ -144,32 +141,31 @@ class UnknownType(ParentUnknownType):
 
 
 def test_custom_type_resolution_fails_without_registering():
-    fails = st.from_type(UnknownType)
     with pytest.raises(ResolutionFailed):
-        check_can_generate_examples(fails)
+        check_can_generate_examples(gs.from_type(UnknownType))
 
 
 def test_custom_type_resolution():
     sentinel = object()
-    with temp_registered(UnknownType, st.just(sentinel)):
-        assert_simple_property(st.from_type(UnknownType), lambda v: v is sentinel)
+    with temp_registered(UnknownType, gs.just(sentinel)):
+        assert_simple_property(gs.from_type(UnknownType), lambda v: v is sentinel)
         # Also covered by registration of child class
-        assert_simple_property(st.from_type(ParentUnknownType), lambda v: v is sentinel)
+        assert_simple_property(gs.from_type(ParentUnknownType), lambda v: v is sentinel)
 
 
 def test_custom_type_resolution_with_function():
     sentinel = object()
-    with temp_registered(UnknownType, lambda _: st.just(sentinel)):
-        assert_simple_property(st.from_type(UnknownType), lambda v: v is sentinel)
-        assert_simple_property(st.from_type(ParentUnknownType), lambda v: v is sentinel)
+    with temp_registered(UnknownType, lambda _: gs.just(sentinel)):
+        assert_simple_property(gs.from_type(UnknownType), lambda v: v is sentinel)
+        assert_simple_property(gs.from_type(ParentUnknownType), lambda v: v is sentinel)
 
 
 def test_custom_type_resolution_with_function_non_strategy():
     with temp_registered(UnknownType, lambda _: None):
         with pytest.raises(ResolutionFailed):
-            check_can_generate_examples(st.from_type(UnknownType))
+            check_can_generate_examples(gs.from_type(UnknownType))
         with pytest.raises(ResolutionFailed):
-            check_can_generate_examples(st.from_type(ParentUnknownType))
+            check_can_generate_examples(gs.from_type(ParentUnknownType))
 
 
 @pytest.mark.parametrize("strategy_returned", [True, False])
@@ -179,63 +175,54 @@ def test_conditional_type_resolution_with_function(strategy_returned):
     def resolve_strategy(thing):
         assert thing == UnknownType
         if strategy_returned:
-            return st.just(sentinel)
+            return gs.just(sentinel)
         return NotImplemented
 
     with temp_registered(UnknownType, resolve_strategy):
         if strategy_returned:
-            assert_simple_property(st.from_type(UnknownType), lambda v: v is sentinel)
+            assert_simple_property(gs.from_type(UnknownType), lambda v: v is sentinel)
         else:
             with pytest.raises(ResolutionFailed):
-                check_can_generate_examples(st.from_type(UnknownType))
+                check_can_generate_examples(gs.from_type(UnknownType))
 
 
 def test_errors_if_generic_resolves_empty():
-    with temp_registered(UnknownType, lambda _: st.nothing()):
-        fails_1 = st.from_type(UnknownType)
+    with temp_registered(UnknownType, lambda _: gs.nothing()):
         with pytest.raises(ResolutionFailed):
-            check_can_generate_examples(fails_1)
-        fails_2 = st.from_type(ParentUnknownType)
+            check_can_generate_examples(gs.from_type(UnknownType))
         with pytest.raises(ResolutionFailed):
-            check_can_generate_examples(fails_2)
+            check_can_generate_examples(gs.from_type(ParentUnknownType))
 
 
-@skipif_threading
+@pytest.mark.xfail(
+    strict=True,
+    reason="register_type_generator accepts an empty generator (from_type then fails)",
+)
 def test_cannot_register_empty():
     # Cannot register and did not register
-    with pytest.raises(InvalidArgument):
-        st.register_type_strategy(UnknownType, st.nothing())
-    fails = st.from_type(UnknownType)
-    with pytest.raises(ResolutionFailed):
-        check_can_generate_examples(fails)
-    assert UnknownType not in types._global_type_lookup
+    try:
+        with pytest.raises(InvalidArgument):
+            gs.register_type_generator(UnknownType, gs.nothing())
+        with pytest.raises(ResolutionFailed):
+            check_can_generate_examples(gs.from_type(UnknownType))
+        assert UnknownType not in types._global_type_lookup
+    finally:
+        _registry.pop(UnknownType, None)
 
 
 def test_pulic_interface_works():
-    check_can_generate_examples(st.from_type(int))
-    fails = st.from_type("not a type or annotated function")
+    check_can_generate_examples(gs.from_type(int))
     with pytest.raises(InvalidArgument):
-        check_can_generate_examples(fails)
-
-
-@pytest.mark.parametrize("infer_token", [infer, ...])
-def test_given_can_infer_from_manual_annotations(infer_token):
-    # Editing annotations before decorating is hilariously awkward, but works!
-    def inner(a):
-        assert isinstance(a, int)
-
-    inner.__annotations__ = {"a": int}
-    given(a=infer_token)(inner)()
+        check_can_generate_examples(gs.from_type("not a type or annotated function"))
 
 
 class EmptyEnum(enum.Enum):
     pass
 
 
-@fails_with(InvalidArgument)
-@given(st.from_type(EmptyEnum))
-def test_error_if_enum_is_empty(x):
-    pass
+def test_error_if_enum_is_empty():
+    with pytest.raises(InvalidArgument):
+        gs.from_type(EmptyEnum)
 
 
 class BrokenClass:
@@ -244,16 +231,14 @@ class BrokenClass:
 
 def test_uninspectable_builds():
     with pytest.raises(TypeError, match="object is not callable"):
-        check_can_generate_examples(st.builds(BrokenClass))
+        check_can_generate_examples(gs.builds(BrokenClass))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel's from_type resolver differs from Hypothesis's type lookup for this case",
-)
 def test_uninspectable_from_type():
-    with pytest.raises(TypeError, match="object is not callable"):
-        check_can_generate_examples(st.from_type(BrokenClass))
+    # Hypothesis falls through to builds() and reports its TypeError; from_type
+    # reports the unusable signature itself.
+    with pytest.raises(ResolutionFailed, match="no usable signature"):
+        check_can_generate_examples(gs.from_type(BrokenClass))
 
 
 def _check_instances(t):
@@ -266,17 +251,40 @@ def _check_instances(t):
     )
 
 
+# Concrete generic origins from_type resolves only when parametrised
+# (dict[int, int]), not as bare classes.
+_UNRESOLVABLE_BARE = {"collections.OrderedDict", "collections.deque", "dict"}
+
+
+def _registered_type_param(typ):
+    name = f"{typ.__module__}.{typ.__qualname__}".removeprefix("builtins.")
+    if name in _UNRESOLVABLE_BARE:
+        return pytest.param(
+            typ,
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason=f"from_type({name}) resolves the parametrised form but not the bare "
+                "class (ResolutionFailed: no usable signature)",
+            ),
+        )
+    return typ
+
+
 @pytest.mark.parametrize(
     "typ",
-    sorted((x for x in _global_type_lookup if _check_instances(x)), key=str),
+    [
+        _registered_type_param(x)
+        for x in sorted((x for x in _global_type_lookup if _check_instances(x)), key=str)
+        if not inspect.isabstract(x)
+    ],
 )
-@given(data=st.data())
-@pytest.mark.xfail(
-    strict=False, reason="from_type cannot instantiate some registered abstract/typing types"
-)
-def test_can_generate_from_all_registered_types(data, typ):
-    value = data.draw(st.from_type(typ), label="value")
-    assert isinstance(value, typ)
+def test_can_generate_from_all_registered_types(typ):
+    @hegel.test
+    def inner(tc):
+        value = tc.draw(gs.from_type(typ), name="value")
+        assert isinstance(value, typ)
+
+    inner()
 
 
 T = TypeVar("T")
@@ -307,58 +315,22 @@ def using_concrete_generic(instance: MyGeneric[int]) -> int:
     return instance.arg
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel's from_type resolver differs from Hypothesis's type lookup for this case",
-)
-def test_generic_origin_empty():
-    with pytest.raises(ResolutionFailed):
-        check_can_generate_examples(st.builds(using_generic))
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel's from_type resolver differs from Hypothesis's type lookup for this case",
-)
 def test_issue_2951_regression():
-    lines_strat = st.builds(Lines, lines=st.lists(st.text()))
-    prev_seq_int_repr = repr(st.from_type(Sequence[int]))
+    lines_strat = gs.builds(Lines, lines=gs.lists(gs.text()))
+    prev_seq_int_repr = repr(gs.from_type(Sequence[int]))
     with temp_registered(Lines, lines_strat):
-        assert st.from_type(Lines) == lines_strat
-        # Now let's test that the strategy for ``Sequence[int]`` did not
-        # change just because we registered a strategy for ``Lines``:
-        assert repr(st.from_type(Sequence[int])) == prev_seq_int_repr
+        assert gs.from_type(Lines) == lines_strat
+        # Now let's test that the generator for ``Sequence[int]`` did not
+        # change just because we registered a generator for ``Lines``:
+        assert repr(gs.from_type(Sequence[int])) == prev_seq_int_repr
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel's from_type resolver differs from Hypothesis's type lookup for this case",
-)
 def test_issue_2951_regression_two_params():
-    map_strat = st.builds(SpecificDict, st.dictionaries(st.integers(), st.integers()))
-    expected = repr(st.from_type(dict[int, int]))
+    map_strat = gs.builds(SpecificDict, gs.dicts(gs.integers(), gs.integers()))
+    expected = repr(gs.from_type(dict[int, int]))
     with temp_registered(SpecificDict, map_strat):
-        assert st.from_type(SpecificDict) == map_strat
-        assert expected == repr(st.from_type(dict[int, int]))
-
-
-@pytest.mark.parametrize(
-    "generic",
-    (
-        Union[str, int],
-        str | int,
-        Sequence[Sequence[int]],
-        MyGeneric[str],
-        Callable[..., str],
-        Callable[[int], str],
-    ),
-    ids=repr,
-)
-@pytest.mark.parametrize("strategy", [st.none(), lambda _: st.none()])
-def test_generic_origin_with_type_args(generic, strategy):
-    with pytest.raises(InvalidArgument):
-        st.register_type_strategy(generic, strategy)
-    assert generic not in types._global_type_lookup
+        assert gs.from_type(SpecificDict) == map_strat
+        assert expected == repr(gs.from_type(dict[int, int]))
 
 
 @pytest.mark.parametrize(
@@ -377,34 +349,30 @@ def test_generic_origin_with_type_args(generic, strategy):
         MyGeneric[T],
     ),
 )
-@pytest.mark.xfail(
-    strict=False,
-    reason="Hegel's from_type resolver differs from Hypothesis's type lookup for this case",
-)
 def test_generic_origin_without_type_args(generic):
-    with temp_registered(generic, st.just("example")):
+    with temp_registered(generic, gs.just("example")):
         pass
 
 
 @pytest.mark.parametrize(
     "strat, type_",
     [
-        (st.from_type, MyGeneric[T]),
-        (st.from_type, MyGeneric[int]),
-        (st.from_type, MyGeneric),
-        (st.builds, using_generic),
-        (st.builds, using_concrete_generic),
+        (gs.from_type, MyGeneric[T]),
+        (gs.from_type, MyGeneric[int]),
+        (gs.from_type, MyGeneric),
+        (gs.builds, using_generic),
+        (gs.builds, using_concrete_generic),
     ],
-    ids=get_pretty_function_description,
+    ids=repr,
 )
 def test_generic_origin_from_type(strat, type_):
-    with temp_registered(MyGeneric, st.builds(MyGeneric)):
+    with temp_registered(MyGeneric, gs.builds(MyGeneric)):
         check_can_generate_examples(strat(type_))
 
 
 def test_generic_origin_concrete_builds():
-    with temp_registered(MyGeneric, st.builds(MyGeneric, st.integers())):
-        assert_all_examples(st.builds(using_generic), lambda example: isinstance(example, int))
+    with temp_registered(MyGeneric, gs.builds(MyGeneric, gs.integers())):
+        assert_all_examples(gs.builds(using_generic), lambda example: isinstance(example, int))
 
 
 class AbstractFoo(abc.ABC):
@@ -430,10 +398,11 @@ class ConcreteFoo2(AbstractFoo):
         pass
 
 
-@given(st.from_type(AbstractFoo))
-def test_gen_abstract(foo):
+@hegel.test
+def test_gen_abstract(tc):
     # This requires that we correctly checked which of the subclasses
     # could be resolved, rather than unconditionally using all of them.
+    foo = tc.draw(gs.from_type(AbstractFoo))
     assert isinstance(foo, ConcreteFoo2)
 
 
@@ -451,54 +420,13 @@ class ConcreteBar(AbstractBar):
         pass
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel's from_type resolver differs from Hypothesis's type lookup for this case",
-)
 def test_abstract_resolver_fallback():
-    # We create our distinct strategies for abstract and concrete types
-    gen_abstractbar = st.from_type(AbstractBar)
-    gen_concretebar = st.builds(ConcreteBar, x=st.none())
-    assert gen_abstractbar != gen_concretebar
-
-    # And trying to generate an instance of the abstract type fails,
+    # from_type resolves eagerly, so trying to resolve the abstract type fails,
     # UNLESS the concrete type is currently resolvable
     with pytest.raises(ResolutionFailed):
-        check_can_generate_examples(gen_abstractbar)
-    with temp_registered(ConcreteBar, gen_concretebar):
+        gs.from_type(AbstractBar)
+    with temp_registered(ConcreteBar, gs.builds(ConcreteBar, x=gs.none())):
         # which in turn means we resolve to the concrete subtype.
-        assert_simple_property(gen_abstractbar, lambda gen: isinstance(gen, ConcreteBar))
+        assert_simple_property(gs.from_type(AbstractBar), lambda gen: isinstance(gen, ConcreteBar))
     with pytest.raises(ResolutionFailed):
-        check_can_generate_examples(gen_abstractbar)
-
-
-def _one_arg(x: int):
-    assert isinstance(x, int)
-
-
-def _multi_arg(x: int, y: str):
-    assert isinstance(x, int)
-    assert isinstance(y, str)
-
-
-def _kwd_only(*, y: str):
-    assert isinstance(y, str)
-
-
-def _pos_and_kwd_only(x: int, *, y: str):
-    assert isinstance(x, int)
-    assert isinstance(y, str)
-
-
-@pytest.mark.parametrize("func", [_one_arg, _multi_arg, _kwd_only, _pos_and_kwd_only])
-def test_infer_all(func):
-    # tests @given(...) against various signatures
-    settings(max_examples=1)(given(...))(func)()
-
-
-def test_does_not_add_param_empty_to_type_hints():
-    def f(x):
-        pass
-
-    f.__signature__ = Signature([P("y", P.KEYWORD_ONLY)], return_annotation=None)
-    assert get_type_hints(f) == {}
+        gs.from_type(AbstractBar)

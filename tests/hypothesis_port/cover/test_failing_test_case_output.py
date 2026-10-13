@@ -1,3 +1,5 @@
+# Dropped from the Hypothesis original: test_vararg_output (@given's binding of positional
+# arguments).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -10,9 +12,11 @@
 
 import pytest
 
-from hegel.hypothesis import Phase, example, given, settings, strategies as st
+import hegel
+from hegel import generators as gs
+from tests.helpers import notes
 
-# Hegel reports a failing example as one "name = value" line per argument,
+# Hegel reports a failing example as one "name = value" line per draw,
 # whatever the length, rather than Hypothesis's call-style rendering.
 OUTPUT_WITH_BREAK = """
 Falsifying example:
@@ -23,41 +27,14 @@ y = {0!r}
 
 @pytest.mark.parametrize("n", [10, 100])
 def test_inserts_line_breaks_only_at_appropriate_lengths(n):
-    @example("0" * n, "0" * n)
-    @given(st.text(), st.text())
-    def test(x, y):
+    @hegel.test
+    @hegel.explicit_test_case("0" * n, "0" * n)
+    def test(tc):
+        x = tc.draw(gs.text())
+        y = tc.draw(gs.text())
         assert x < y
 
     with pytest.raises(AssertionError) as err:
         test()
 
-    assert OUTPUT_WITH_BREAK.format("0" * n).strip() == "\n".join(err.value.__notes__)
-
-
-@given(kw=st.none())
-def generate_phase(*args, kw):
-    assert args != (1, 2, 3)
-
-
-@given(kw=st.none())
-@example(kw=None)
-@settings(phases=[Phase.explicit])
-def explicit_phase(*args, kw):
-    assert args != (1, 2, 3)
-
-
-@pytest.mark.parametrize(
-    "fn",
-    [generate_phase, explicit_phase],
-    ids=lambda fn: fn.__name__,
-)
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel's falsifying example lists only the drawn arguments, not the "
-    "positional arguments the test was called with",
-)
-def test_vararg_output(fn):
-    with pytest.raises(AssertionError) as err:
-        fn(1, 2, 3)
-
-    assert "1,\n    2,\n    3,\n" in "\n".join(err.value.__notes__)
+    assert OUTPUT_WITH_BREAK.format("0" * n).strip() == "\n".join(notes(err.value))

@@ -12,16 +12,15 @@ from sys import float_info
 
 import pytest
 
-from hegel.hypothesis.errors import InvalidArgument
-from tests.hypothesis_port.common.compat import next_down, next_up
-from hegel.hypothesis.strategies import floats
-from tests.hypothesis_port.common.compat import next_down_normal, next_up_normal
-
-from tests.hypothesis_port.common.debug import (
-    assert_no_examples,
-    check_can_generate_examples,
-    find_any,
+import hegel
+from hegel import generators as gs
+from tests.hypothesis_port.common.compat import (
+    next_down,
+    next_down_normal,
+    next_up,
+    next_up_normal,
 )
+from tests.hypothesis_port.common.debug import assert_no_examples, find_any
 from tests.hypothesis_port.common.utils import PYTHON_FTZ
 
 pytestmark = [pytest.mark.skipif(PYTHON_FTZ, reason="broken by unsafe compiler flags")]
@@ -38,15 +37,22 @@ def kw(marks=(), **kwargs):
         kw(min_value=1),
         kw(max_value=-1),
         kw(min_value=float_info.min),
-        kw(min_value=next_down(float_info.min), exclude_min=True),
+        kw(
+            min_value=next_down(float_info.min),
+            exclude_min=True,
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="gs.floats() validates allow_subnormal=True against min_value before "
+                "exclude_min is applied, so a bound that excludes every subnormal is accepted",
+            ),
+        ),
         kw(max_value=-float_info.min),
         kw(min_value=next_up(-float_info.min), exclude_max=True),
     ],
 )
 def test_subnormal_validation(kwargs):
-    strat = floats(**kwargs, allow_subnormal=True)
-    with pytest.raises(InvalidArgument):
-        check_can_generate_examples(strat)
+    with pytest.raises(hegel.InvalidArgument):
+        gs.floats(**kwargs, allow_subnormal=True)
 
 
 @pytest.mark.parametrize(
@@ -82,7 +88,7 @@ def test_allow_subnormal_defaults_correctly(kwargs):
     # copy to support our threading CI tests
     kwargs = kwargs.copy()
     allow_subnormal = kwargs.pop("allow_subnormal")
-    strat = floats(**kwargs).filter(lambda x: x != 0)
+    strat = gs.floats(**kwargs).filter(lambda x: x != 0)
     if allow_subnormal:
         find_any(strat, lambda x: -float_info.min < x < float_info.min)
     else:

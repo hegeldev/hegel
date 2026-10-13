@@ -10,32 +10,33 @@
 
 import pytest
 
-from hegel.hypothesis import given, strategies as st
+import hegel
+from hegel import generators as gs
 
-given_booleans = given(st.booleans())
-
-
-@given_booleans
-def test_has_an_arg_named_x(x):
-    pass
+few_cases = hegel.test(test_cases=10)
 
 
-@given_booleans
-def test_has_an_arg_named_y(y):
-    pass
+@few_cases
+def test_has_an_arg_named_x(tc):
+    x = tc.draw(gs.booleans())
+    assert isinstance(x, bool)
 
 
-given_named_booleans = given(z=st.text())
+@few_cases
+def test_has_an_arg_named_y(tc):
+    y = tc.draw(gs.booleans())
+    assert isinstance(y, bool)
 
 
 def test_fail_independently():
-    @given_named_booleans
-    def test_z1(z):
+    @few_cases
+    def test_z1(tc):
+        tc.draw(gs.text())
         raise AssertionError
 
-    @given_named_booleans
-    def test_z2(z):
-        pass
+    @few_cases
+    def test_z2(tc):
+        tc.draw(gs.text())
 
     with pytest.raises(AssertionError):
         test_z1()

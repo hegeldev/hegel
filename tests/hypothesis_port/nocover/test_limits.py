@@ -8,16 +8,17 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-from hegel.hypothesis import given, settings, strategies as st
+import hegel
+from hegel import generators as gs
 
 
 def test_max_examples_are_respected():
     counter = 0
 
-    @given(st.random_module(), st.integers())
-    @settings(max_examples=100)
-    def test(rnd, i):
+    @hegel.test(test_cases=100)
+    def test(tc):
         nonlocal counter
+        tc.draw(gs.integers())
         counter += 1
 
     test()

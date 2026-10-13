@@ -3,8 +3,8 @@
 # test_nested_stoptest, test_frozen_and_stoptest, test_multiple_stoptest_1,
 # test_multiple_stoptest_2, test_stoptest_and_hypothesisexception and
 # test_multiple_hypothesisexception (raise the engine's internal Frozen/StopTest
-# control-flow exceptions from a test body). FlakyBackendFailure has no Hegel
-# equivalent (no alternative backends).
+# control-flow exceptions from a test body). FlakyFailure and FlakyBackendFailure have
+# no Hegel equivalent; Hegel's exception group is MultipleFailures.
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -19,10 +19,17 @@ from contextlib import suppress
 
 import pytest
 
-from hegel.hypothesis.errors import FlakyFailure
+import hegel
+
+_no_derive = pytest.mark.xfail(
+    strict=True,
+    reason="hegel.MultipleFailures does not implement .derive(), so .split() returns a "
+    "plain ExceptionGroup",
+)
 
 
-@pytest.mark.parametrize("ExceptionClass", [FlakyFailure])
+@_no_derive
+@pytest.mark.parametrize("ExceptionClass", [hegel.MultipleFailures])
 def test_exceptiongroups_reconstruct_original_type(ExceptionClass):
     # contextlib.suppress uses .split, and if ExceptionClass does not implement
     # .derive, .split will return a standard ExceptionGroup instead of
@@ -35,7 +42,8 @@ def test_exceptiongroups_reconstruct_original_type(ExceptionClass):
         raise ExceptionClass("exception message", [Exception()])
 
 
-@pytest.mark.parametrize("ExceptionClass", [FlakyFailure])
+@_no_derive
+@pytest.mark.parametrize("ExceptionClass", [hegel.MultipleFailures])
 def test_derived_exception_group(ExceptionClass):
     exception = ExceptionClass("exception message", [Exception()])
     # we don't expect a match, we just want to test .derive.

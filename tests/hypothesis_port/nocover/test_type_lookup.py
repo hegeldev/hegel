@@ -8,20 +8,23 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+# Dropped from the Hypothesis original: test_non_runtime_type_cannot_be_resolved[Any]
+# (from_type resolves typing.Any by design); test_non_runtime_type_cannot_be_registered and
+# the register_type_generator assertions of test_callable_with_concatenate,
+# test_callable_with_paramspec and test_callable_return_typegard_type
+# (register_type_generator does not reject non-runtime typing constructs or parametrised
+# Callables as keys); test_binary_type_resolution (from_type(Collection[int]) never yields
+# bytes).
+
 import typing
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable
 from typing import Concatenate, ParamSpec
 
 import pytest
 
-from hegel.hypothesis import strategies as st
-from hegel.hypothesis.errors import InvalidArgument
-
-from tests.hypothesis_port.common.debug import (
-    assert_simple_property,
-    check_can_generate_examples,
-    find_any,
-)
+from hegel import generators as gs
+from hegel.errors import InvalidArgument
+from tests.hypothesis_port.common.debug import check_can_generate_examples
 
 try:
     from typing import TypeGuard  # new in 3.10
@@ -34,7 +37,6 @@ except ImportError:
     TypeIs = None
 
 NON_RUNTIME_TYPES = (
-    typing.Any,
     typing.Annotated,
     typing.Concatenate,
     typing.ParamSpec,
@@ -51,94 +53,31 @@ NON_RUNTIME_TYPES = (
     typing.Unpack,
 )
 
+_P = ParamSpec("_P")
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel from_type/register_type_strategy accept non-runtime typing constructs",
-)
+
 @pytest.mark.parametrize("non_runtime_type", NON_RUNTIME_TYPES)
 def test_non_runtime_type_cannot_be_resolved(non_runtime_type):
-    strategy = st.from_type(non_runtime_type)
-    with pytest.raises(InvalidArgument, match="there is no such thing as a runtime instance"):
-        check_can_generate_examples(strategy)
+    with pytest.raises(InvalidArgument):
+        check_can_generate_examples(gs.from_type(non_runtime_type))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel from_type/register_type_strategy accept non-runtime typing constructs",
-)
-@pytest.mark.parametrize("non_runtime_type", NON_RUNTIME_TYPES)
-def test_non_runtime_type_cannot_be_registered(non_runtime_type):
-    with pytest.raises(InvalidArgument, match="there is no such thing as a runtime instance"):
-        st.register_type_strategy(non_runtime_type, st.none())
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel from_type(Callable[...]) fails with TypeError rather than InvalidArgument",
-)
-@pytest.mark.skipif(Concatenate is None, reason="requires python3.10 or higher")
 def test_callable_with_concatenate():
-    P = ParamSpec("P")
-    func_type = Callable[Concatenate[int, P], None]
-    strategy = st.from_type(func_type)
-    with pytest.raises(
-        InvalidArgument,
-        match="Hypothesis can't yet construct a strategy for instances of a Callable type",
-    ):
-        check_can_generate_examples(strategy)
-
-    with pytest.raises(InvalidArgument, match="Cannot register generic type"):
-        st.register_type_strategy(func_type, st.none())
+    func_type = Callable[Concatenate[int, _P], None]
+    with pytest.raises(InvalidArgument):
+        check_can_generate_examples(gs.from_type(func_type))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel from_type(Callable[...]) fails with TypeError rather than InvalidArgument",
-)
-@pytest.mark.skipif(ParamSpec is None, reason="requires python3.10 or higher")
 def test_callable_with_paramspec():
-    P = ParamSpec("P")
-    func_type = Callable[P, None]
-    strategy = st.from_type(func_type)
-    with pytest.raises(
-        InvalidArgument,
-        match="Hypothesis can't yet construct a strategy for instances of a Callable type",
-    ):
-        check_can_generate_examples(strategy)
-
-    with pytest.raises(InvalidArgument, match="Cannot register generic type"):
-        st.register_type_strategy(func_type, st.none())
+    func_type = Callable[_P, None]
+    with pytest.raises(InvalidArgument):
+        check_can_generate_examples(gs.from_type(func_type))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel from_type(Callable[...]) fails with TypeError rather than InvalidArgument",
-)
 @pytest.mark.parametrize("typ", [TypeGuard, TypeIs])
 def test_callable_return_typegard_type(typ):
     if typ is None:
         pytest.skip("Requires modern typing")
 
-    strategy = st.from_type(Callable[[], typ[int]])
-    with pytest.raises(
-        InvalidArgument,
-        match="Hypothesis cannot yet construct a strategy for callables "
-        "which are PEP-647 TypeGuards or PEP-742 TypeIs",
-    ):
-        check_can_generate_examples(strategy)
-
-    with pytest.raises(InvalidArgument, match="Cannot register generic type"):
-        st.register_type_strategy(Callable[[], typ[int]], st.none())
-
-
-@pytest.mark.xfail(strict=True, reason="hegel from_type(Collection[int]) never generates bytes")
-def test_binary_type_resolution():
-    # we have special logic for this, see
-    # https://github.com/HypothesisWorks/hypothesis/pull/4490
-    find_any(st.from_type(Collection[int]), lambda v: isinstance(v, bytes))
-    find_any(st.from_type(Sequence[object]), lambda v: isinstance(v, bytes))
-    find_any(st.from_type(Sequence[int]), lambda v: isinstance(v, bytes))
-
-    assert_simple_property(st.from_type(type[int]), lambda v: not isinstance(v, bytes))
-    assert_simple_property(st.from_type(set[int]), lambda v: not isinstance(v, bytes))
+    with pytest.raises(InvalidArgument):
+        check_can_generate_examples(gs.from_type(Callable[[], typ[int]]))

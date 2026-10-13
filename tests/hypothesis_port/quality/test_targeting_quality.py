@@ -10,26 +10,22 @@
 
 import pytest
 
-from hegel.hypothesis import (
-    HealthCheck,
-    Phase,
-    given,
-    seed,
-    settings,
-    strategies as st,
-    target,
-)
+import hegel
+from hegel import generators as gs
 
 common_settings = {
-    "database": None,
-    "suppress_health_check": list(HealthCheck),
-    "phases": [Phase.generate, Phase.target],
+    "database": "",
+    "suppress_health_check": hegel.HealthCheck.all(),
+    "phases": [hegel.Phase.generate, hegel.Phase.target],
 }
 
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Engine: targeting only starts halfway through the budget, so the threshold is found after about 5000 cases, more than the 4000 allowed (docs/engine-issues.md)",
+    reason=(
+        "Engine: targeting only starts halfway through the budget, so the threshold is "
+        "found after about 5000 cases, more than the 4000 allowed (docs/engine-issues.md)"
+    ),
 )
 @pytest.mark.parametrize("seed_val", [0, 1, 2])
 def test_finds_threshold_bug_quickly_with_large_budget(seed_val):
@@ -37,13 +33,12 @@ def test_finds_threshold_bug_quickly_with_large_budget(seed_val):
     calls = 0
     found_at = None
 
-    @seed(seed_val)
-    @settings(max_examples=10_000, **common_settings)
-    @given(st.lists(st.integers(0, 1000)))
-    def test(ls):
+    @hegel.test(test_cases=10_000, seed=seed_val, **common_settings)
+    def test(tc):
         nonlocal calls, found_at
+        ls = tc.draw(gs.lists(gs.integers(0, 1000)))
         calls += 1
-        target(min(sum(ls), 50_000))
+        tc.target(min(sum(ls), 50_000))
         if sum(ls) >= 30_000:
             if found_at is None:
                 found_at = calls
@@ -59,14 +54,13 @@ def test_finds_threshold_bug_quickly_with_large_budget(seed_val):
 def test_reaches_high_scores_with_moderate_budget(seed_val):
     best = 0.0
 
-    @seed(seed_val)
-    @settings(max_examples=2000, **common_settings)
-    @given(st.lists(st.integers(0, 1000)))
-    def test(ls):
+    @hegel.test(test_cases=2000, seed=seed_val, **common_settings)
+    def test(tc):
         nonlocal best
+        ls = tc.draw(gs.lists(gs.integers(0, 1000)))
         score = min(sum(ls), 100_000)
         best = max(best, score)
-        target(score)
+        tc.target(score)
 
     test()
     # generous margin to account for unrelated engine changes

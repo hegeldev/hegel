@@ -5,7 +5,6 @@ __pycache__/
 *.py[cod]
 *.so
 /.hegel
-/.hypothesis
 /.coverage
 /.coverage.*
 /htmlcov

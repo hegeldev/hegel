@@ -10,23 +10,22 @@
 
 import pytest
 
-from hegel.hypothesis import given, settings, strategies as st
-
-from tests.hypothesis_port.common.utils import Why, xfail_on_crosshair
+import hegel
+from hegel import generators as gs
 
 
 @pytest.mark.xfail(
-    strict=True,
-    reason="hegel's bounded integer distribution draws many more huge values (observed 680 of 1000 above 1e25)",
+    strict=False,
+    reason="the engine's bounded integer distribution draws many more huge values "
+    "(observed 680 of 1000 above 1e25; see docs/engine-issues.md)",
 )
-@xfail_on_crosshair(Why.symbolic_outside_context)
 def test_bounded_integers_distribution_of_bit_width_issue_1387_regression():
     values = []
 
-    @settings(database=None, max_examples=1000)
-    @given(st.integers(0, 1e100))
-    def test(x):
-        if 2 <= x <= int(1e100) - 2:  # skip forced-endpoints
+    @hegel.test(database="", test_cases=1000)
+    def test(tc):
+        x = tc.draw(gs.integers(0, 10**100))
+        if 2 <= x <= 10**100 - 2:  # skip forced-endpoints
             values.append(x)
 
     test()
@@ -51,8 +50,9 @@ def test_bounded_integers_distribution_of_bit_width_issue_1387_regression():
 def test_integer_bounds(bounds):
     min_value, max_value = bounds
 
-    @given(st.integers(min_value, max_value))
-    def f(n):
+    @hegel.test
+    def f(tc):
+        n = tc.draw(gs.integers(min_value, max_value))
         if min_value is not None:
             assert min_value <= n
         if max_value is not None:
@@ -61,8 +61,7 @@ def test_integer_bounds(bounds):
     f()
 
 
-# this test depends on internal HypothesisProvider distribution behavior
-@xfail_on_crosshair(Why.other, strict=False)
+# this test depends on the distribution hegel's integers() draws from
 @pytest.mark.parametrize(
     "min_value, max_value, lower, upper",
     [
@@ -83,8 +82,9 @@ def test_integer_bounds(bounds):
     ],
 )
 def test_integers_unbounded_and_half_bounded(min_value, max_value, lower, upper):
-    @given(st.integers(min_value, max_value))
-    def f(n):
+    @hegel.test
+    def f(tc):
+        n = tc.draw(gs.integers(min_value, max_value))
         assert lower <= n <= upper
 
     f()

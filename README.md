@@ -5,16 +5,11 @@ engine (`libhegel`). The engine generates inputs, shrinks failures, keeps an exa
 database and prints the failing test case; this package binds it to Python through
 a [pyo3](https://pyo3.rs) extension module and provides the test-writing API.
 
-Two APIs are provided:
-
-- `hegel`: the Hegel API, shared in shape with the Rust, Go and TypeScript
-  bindings. Tests take a `TestCase` and draw values from generators.
-- `hegel.hypothesis`: [Hypothesis](https://hypothesis.readthedocs.io)'s API
-  (`@given`, `strategies`, `settings`, `RuleBasedStateMachine`, ...) reimplemented
-  on top of Hegel, so existing Hypothesis tests can run on the Hegel engine with an
-  import change. The parts of Hypothesis it does not cover are listed in
-  `docs/comparison-with-hypothesis.md`; engine behaviour that differs from
-  Python's `re` or from Hypothesis is recorded in `docs/engine-issues.md`.
+The API is the Hegel API, shared in shape with the Rust, Go and TypeScript
+bindings: tests take a `TestCase` and draw values from generators. How it
+compares with [Hypothesis](https://hypothesis.readthedocs.io) is set out in
+`docs/comparison-with-hypothesis.md`; engine behaviour that differs from
+Python's `re` or from Hypothesis is recorded in `docs/engine-issues.md`.
 
 ## Installation
 
@@ -186,22 +181,20 @@ at once, in rounds grouped by the rules' `group`, with Hegel choosing the
 concurrency level and attributing the output to each worker; `hegel.ConcurrentPool`
 is the pool to share between them.
 
-## Hypothesis on Hegel
+## Coming from Hypothesis
+
+A Hypothesis test maps onto a Hegel one draw by draw:
 
 ```python
-from hegel.hypothesis import given, strategies as st
-
-
-@given(st.lists(st.integers()))
-def test_reversing_twice(xs):
-    assert list(reversed(list(reversed(xs)))) == xs
+# Hypothesis                                  # Hegel
+@given(st.lists(st.integers()))               @hegel.test
+def test_reversing_twice(xs):                 def test_reversing_twice(tc):
+    ...                                           xs = tc.draw(gs.lists(gs.integers()))
+                                                  ...
 ```
 
-`hegel.hypothesis` covers `given`, `example`, `settings` and profiles, `seed`,
-`reproduce_failure`, `find`, `assume`/`note`/`event`/`target`, the strategies
-module, the errors module, and `hegel.hypothesis.stateful` with
-`RuleBasedStateMachine`, `Bundle`, `rule`, `initialize`, `precondition`,
-`invariant`, `consumes` and `multiple`. Hypothesis's own test suite is ported under
+`docs/comparison-with-hypothesis.md` lists the correspondences and the
+differences. Hypothesis's own test suite, ported to the Hegel API, runs under
 `tests/hypothesis_port`.
 
 ## Development

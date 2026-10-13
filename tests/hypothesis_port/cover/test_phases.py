@@ -10,89 +10,106 @@
 
 import pytest
 
-from hegel.hypothesis import Phase, example, given, settings, strategies as st
-from hegel.hypothesis.database import ExampleDatabase, InMemoryExampleDatabase
-from hegel.hypothesis.errors import InvalidArgument
-
-from tests.hypothesis_port.common.utils import skipif_emscripten
+import hegel
+from hegel import InvalidArgument, Phase, Settings
+from hegel import generators as gs
 
 
-@example(11)
-@settings(phases=(Phase.explicit,))
-@given(st.integers())
-def test_only_runs_explicit_examples(i):
+@hegel.test(phases=(Phase.explicit,))
+@hegel.explicit_test_case(11)
+def test_only_runs_explicit_examples(tc):
+    i = tc.draw(gs.integers())
     assert i == 11
 
 
-@example("hello world")
-@settings(phases=(Phase.reuse, Phase.generate, Phase.shrink))
-@given(st.booleans())
-def test_does_not_use_explicit_examples(i):
+@hegel.test(phases=(Phase.reuse, Phase.generate, Phase.shrink))
+@hegel.explicit_test_case("hello world")
+def test_does_not_use_explicit_examples(tc):
+    i = tc.draw(gs.booleans())
     assert isinstance(i, bool)
 
 
-@skipif_emscripten  # TODO: actually Pytest 9.0, remove this workaround ASAP
-@settings(phases=(Phase.reuse, Phase.shrink), database=InMemoryExampleDatabase())
-@given(st.booleans())
-def test_this_would_fail_if_you_ran_it(b):
-    raise AssertionError
+def test_this_would_fail_if_you_ran_it(tmp_path):
+    @hegel.test(phases=(Phase.reuse, Phase.shrink), database=tmp_path)
+    def test(tc):
+        tc.draw(gs.booleans())
+        raise AssertionError
+
+    test()
 
 
 @pytest.mark.parametrize(
     "arg,expected",
     [
-        (tuple(Phase)[::-1], tuple(Phase)),
-        ([Phase.explicit, Phase.explicit], (Phase.explicit,)),
+        (tuple(Phase)[::-1], frozenset(Phase)),
+        ([Phase.explicit, Phase.explicit], frozenset({Phase.explicit})),
     ],
 )
 def test_sorts_and_dedupes_phases(arg, expected):
-    assert settings(phases=arg).phases == expected
+    assert Settings(phases=arg).phases == expected
 
 
 def test_phases_default_to_all():
-    assert settings().phases == tuple(Phase)
+    assert Settings().phases == frozenset(Phase)
 
 
-def test_does_not_reuse_saved_examples_if_reuse_not_in_phases():
-    class BadDatabase(ExampleDatabase):
-        def save(self, key, value):
-            pass
+# A failure on a value the generate phase has no realistic chance of
+# producing again, so that a later run can only see it by replaying the
+# database.
+def rarely_generated(tc):
+    x = tc.draw(gs.integers(0, 10**9))
+    assert x <= 10**8
+    return x
 
-        def delete(self, key, value):
-            pass
 
-        def fetch(self, key):
-            raise ValueError
+def test_does_not_reuse_saved_examples_if_reuse_not_in_phases(tmp_path):
+    seen = []
 
-        def close(self):
-            pass
+    @hegel.test(database=tmp_path)
+    def test_usage(tc):
+        seen.append(rarely_generated(tc))
 
-    @settings(database=BadDatabase(), phases=(Phase.generate,))
-    @given(st.integers())
-    def test_usage(i):
+    with pytest.raises(AssertionError):
+        test_usage()
+    saved = seen[-1]
+
+    seen.clear()
+
+    @hegel.test(database=tmp_path, phases=(Phase.generate,), test_cases=20)
+    def test_usage(tc):  # noqa: F811
+        seen.append(rarely_generated(tc))
+
+    try:
+        test_usage()
+    except AssertionError:
         pass
+    assert saved not in seen
 
-    test_usage()
 
+def test_will_save_when_reuse_not_in_phases(tmp_path):
+    seen = []
 
-def test_will_save_when_reuse_not_in_phases():
-    database = InMemoryExampleDatabase()
-
-    assert not database.data
-
-    @settings(database=database, phases=(Phase.generate,))
-    @given(st.integers())
-    def test_usage(i):
+    @hegel.test(database=tmp_path, phases=(Phase.generate,))
+    def test_usage(tc):
+        seen.append(tc.draw(gs.integers()))
         raise ValueError
 
     with pytest.raises(ValueError):
         test_usage()
+    saved = seen[-1]
 
-    # Hegel also records the test's name under a second key.
-    (saved,) = (v for v in database.data.values() if not any(b"test_usage" in x for x in v))
-    assert len(saved) == 1
+    seen.clear()
+
+    @hegel.test(database=tmp_path, phases=(Phase.reuse,))
+    def test_usage(tc):  # noqa: F811
+        seen.append(tc.draw(gs.integers()))
+        raise ValueError
+
+    with pytest.raises(ValueError):
+        test_usage()
+    assert seen[0] == saved
 
 
 def test_rejects_non_phases():
     with pytest.raises(InvalidArgument):
-        settings(phases=["cabbage"])
+        Settings(phases=["cabbage"])

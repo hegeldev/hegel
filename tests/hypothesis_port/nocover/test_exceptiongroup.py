@@ -9,32 +9,29 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import asyncio
-import sys
 from collections.abc import Callable
 
 import pytest
 
-from hegel.hypothesis import errors, given, reject, strategies as st
-from hegel.hypothesis.strategies import DataObject
+import hegel
+from hegel import generators as gs
 
-# this file is not typechecked by mypy, which only runs py310
-
-if sys.version_info < (3, 11):
-    pytest.skip("asyncio.TaskGroup not available on <py3.11", allow_module_level=True)
-
-
-@pytest.mark.xfail(
+_no_unwrap = pytest.mark.xfail(
     strict=True,
-    reason="hegel does not unwrap control exceptions from ExceptionGroups (and has no conjecture_data.mark_invalid)",
+    reason="Hegel does not unwrap its control-flow exceptions (AssumeFailed, "
+    "InvalidArgument) from an exception group: the group is reported as a failure",
 )
+
+
+@_no_unwrap
 def test_exceptiongroup_discard_frozen():
     """Basic test that raises Frozen+Unsatisfiable.
     Frozen is thrown out, and Unsatisfiable is raised"""
 
-    @given(st.data())
-    def test_function(data):
+    @hegel.test
+    def test_function(tc):
         async def task(pred):
-            return data.draw(st.booleans().filter(pred))
+            return tc.draw(gs.booleans().filter(pred))
 
         async def _main():
             async with asyncio.TaskGroup() as tg:
@@ -43,19 +40,16 @@ def test_exceptiongroup_discard_frozen():
 
         asyncio.run(_main())
 
-    with pytest.raises(errors.Unsatisfiable):
+    with pytest.raises(hegel.Unsatisfiable):
         test_function()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel does not unwrap control exceptions from ExceptionGroups (and has no conjecture_data.mark_invalid)",
-)
+@_no_unwrap
 def test_exceptiongroup_nested() -> None:
-    @given(st.data())
-    def test_function(data: DataObject) -> None:
+    @hegel.test
+    def test_function(tc: hegel.TestCase) -> None:
         async def task(pred: Callable[[bool], bool]) -> None:
-            data.draw(st.booleans().filter(pred))
+            tc.draw(gs.booleans().filter(pred))
 
         async def _main() -> None:
             async with asyncio.TaskGroup(), asyncio.TaskGroup() as tg2:
@@ -64,13 +58,13 @@ def test_exceptiongroup_nested() -> None:
 
         asyncio.run(_main())
 
-    with pytest.raises(errors.Unsatisfiable):
+    with pytest.raises(hegel.Unsatisfiable):
         test_function()
 
 
 def test_exceptiongroup_user_originated() -> None:
-    @given(st.data())
-    def test_function(data):
+    @hegel.test
+    def test_function(tc):
         raise ExceptionGroup("foo", [ValueError(), ValueError()])
 
     with pytest.raises(ExceptionGroup) as exc_info:
@@ -81,8 +75,8 @@ def test_exceptiongroup_user_originated() -> None:
     assert len(e.exceptions) == 2
     assert all(isinstance(child_e, ValueError) for child_e in e.exceptions)
 
-    @given(st.data())
-    def test_single_exc_group(data):
+    @hegel.test
+    def test_single_exc_group(tc):
         raise ExceptionGroup("important message for user", [ValueError()])
 
     with pytest.raises(ExceptionGroup) as exc_info:
@@ -94,67 +88,60 @@ def test_exceptiongroup_user_originated() -> None:
     assert isinstance(e.exceptions[0], ValueError)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel does not unwrap control exceptions from ExceptionGroups (and has no conjecture_data.mark_invalid)",
-)
+@_no_unwrap
 def test_exceptiongroup_multiple_stop() -> None:
-    @given(st.data())
-    def test_function(data):
-        async def task(d: DataObject) -> None:
-            d.conjecture_data.mark_invalid()
+    @hegel.test
+    def test_function(tc):
+        async def task(tc: hegel.TestCase) -> None:
+            tc.reject()
 
-        async def _main(d: DataObject) -> None:
+        async def _main(tc: hegel.TestCase) -> None:
             async with asyncio.TaskGroup() as tg:
-                tg.create_task(task(d))
-                tg.create_task(task(d))
+                tg.create_task(task(tc))
+                tg.create_task(task(tc))
 
-        asyncio.run(_main(data))
+        asyncio.run(_main(tc))
 
-    # multiple stoptests -> single stoptest -> unsatisfiable
-    with pytest.raises(errors.Unsatisfiable):
+    # multiple rejections -> single rejection -> unsatisfiable
+    with pytest.raises(hegel.Unsatisfiable):
         test_function()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel does not unwrap control exceptions from ExceptionGroups (and has no conjecture_data.mark_invalid)",
-)
+@_no_unwrap
 def test_exceptiongroup_stop_and_hypothesisexception() -> None:
-    # group with stoptest+invalidargument -> invalidargument
-    @given(st.data())
-    def test_function(data):
-        async def task_stoptest(d: DataObject) -> None:
-            # only mark some runs as invalid to not raise Unsatisfiable
-            if d.draw(st.integers(min_value=0, max_value=1)) == 1:
-                d.conjecture_data.mark_invalid()
+    # group with rejection+invalidargument -> invalidargument
+    @hegel.test
+    def test_function(tc):
+        async def task_reject(tc: hegel.TestCase) -> None:
+            # only reject some runs to not raise Unsatisfiable
+            if tc.draw(gs.integers(min_value=0, max_value=1)) == 1:
+                tc.reject()
 
-        async def task_invalid_argument(d: DataObject) -> None:
-            d.draw(st.integers(max_value=2, min_value=3))
+        async def task_invalid_argument(tc: hegel.TestCase) -> None:
+            tc.draw(gs.integers(max_value=2, min_value=3))
 
-        async def _main(d: DataObject) -> None:
+        async def _main(tc: hegel.TestCase) -> None:
             async with asyncio.TaskGroup() as tg:
-                tg.create_task(task_stoptest(d))
-                tg.create_task(task_invalid_argument(d))
+                tg.create_task(task_reject(tc))
+                tg.create_task(task_invalid_argument(tc))
 
-        asyncio.run(_main(data))
+        asyncio.run(_main(tc))
 
-    with pytest.raises(errors.InvalidArgument):
+    with pytest.raises(hegel.InvalidArgument):
         test_function()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel does not unwrap control exceptions from ExceptionGroups (and has no conjecture_data.mark_invalid)",
-)
+@_no_unwrap
 def test_exceptiongroup_multiple_hypothesisexception() -> None:
-    # multiple UnsatisfiedAssumption => first one is reraised => engine suppresses it
+    # multiple AssumeFailed => first one is reraised => engine suppresses it
 
-    @given(st.integers(min_value=0, max_value=3))
-    def test_function(val: int) -> None:
+    @hegel.test
+    def test_function(tc: hegel.TestCase) -> None:
+        val = tc.draw(gs.integers(min_value=0, max_value=3))
+
         async def task(value: int) -> None:
             if value == 0:
-                reject()
+                tc.reject()
 
         async def _main(value: int) -> None:
             async with asyncio.TaskGroup() as tg:
@@ -166,28 +153,25 @@ def test_exceptiongroup_multiple_hypothesisexception() -> None:
     test_function()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel does not unwrap control exceptions from ExceptionGroups (and has no conjecture_data.mark_invalid)",
-)
+@_no_unwrap
 def test_exceptiongroup_multiple_InvalidArgument() -> None:
     # multiple InvalidArgument => only first one is reraised... which seems bad.
     # But raising a group might break ghostwriter(?)
 
-    @given(st.data())
-    def test_function(data: DataObject) -> None:
-        async def task1(d: DataObject) -> None:
-            d.draw(st.integers(max_value=1, min_value=3))
+    @hegel.test
+    def test_function(tc: hegel.TestCase) -> None:
+        async def task1(tc: hegel.TestCase) -> None:
+            tc.draw(gs.integers(max_value=1, min_value=3))
 
-        async def task2(d: DataObject) -> None:
-            d.draw(st.integers(max_value=2, min_value=3))
+        async def task2(tc: hegel.TestCase) -> None:
+            tc.draw(gs.integers(max_value=2, min_value=3))
 
-        async def _main(d: DataObject) -> None:
+        async def _main(tc: hegel.TestCase) -> None:
             async with asyncio.TaskGroup() as tg:
-                tg.create_task(task1(d))
-                tg.create_task(task2(d))
+                tg.create_task(task1(tc))
+                tg.create_task(task2(tc))
 
-        asyncio.run(_main(data))
+        asyncio.run(_main(tc))
 
-    with pytest.raises(errors.InvalidArgument):
+    with pytest.raises(hegel.InvalidArgument):
         test_function()

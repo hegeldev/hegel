@@ -1,3 +1,11 @@
+# Dropped from the Hypothesis original:
+# test_run_stateful_test_with_transformed_bundles_concurrently (Bundle,
+# initialize, consumes, multiple; Hegel's pools are per-instance);
+# test_single_thread_can_raise_deadline_exceeded,
+# test_deadline_exceeded_not_raised_under_concurrent_threads,
+# test_deadline_exceeded_can_be_raised_after_threads (deadline);
+# test_recursive_property_concurrent, test_one_of_branches_lock
+# (SearchStrategy internals: validate(), branches).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -10,39 +18,23 @@
 
 import contextlib
 import sys
-import time
-from threading import Barrier, Thread
+from threading import Thread
 
 import pytest
 
-from hegel.hypothesis import given, settings, strategies as st
-from hegel.hypothesis.errors import DeadlineExceeded, InvalidArgument
-from hegel.hypothesis.stateful import (
-    Bundle,
-    RuleBasedStateMachine,
-    consumes,
-    initialize,
-    invariant,
-    multiple,
-    rule,
-)
-from hegel.hypothesis.strategies import SearchStrategy
-
+import hegel
+from hegel import generators as gs
 from tests.hypothesis_port.common.debug import check_can_generate_examples
 from tests.hypothesis_port.common.utils import run_concurrently
-
-pytestmark = pytest.mark.skipif(
-    settings.get_current_profile_name() == "crosshair",
-    reason="crosshair is not thread safe",
-)
 
 
 def test_can_run_given_in_thread():
     has_run_successfully = False
 
-    @given(st.integers())
-    def test(n):
+    @hegel.test
+    def test(tc):
         nonlocal has_run_successfully
+        tc.draw(gs.integers())
         has_run_successfully = True
 
     t = Thread(target=test)
@@ -52,47 +44,19 @@ def test_can_run_given_in_thread():
 
 
 def test_run_stateful_test_concurrently():
-    class MyStateMachine(RuleBasedStateMachine):
+    class MyStateMachine(hegel.StateMachine):
         def __init__(self):
             super().__init__()
 
-        @rule(n=st.integers())
-        def my_rule(self, n):
+        @hegel.rule()
+        def my_rule(self, tc):
+            tc.draw(gs.integers())
+
+        @hegel.invariant()
+        def my_invariant(self, tc):
             pass
 
-        @invariant()
-        def my_invariant(self):
-            pass
-
-    TestMyStateful = MyStateMachine.TestCase().runTest
-    run_concurrently(TestMyStateful, n=2)
-
-
-def test_run_stateful_test_with_transformed_bundles_concurrently():
-    # Bundles (and the reference-drawing copies Rule creates from them) are
-    # shared by every instance of the machine class, including across threads,
-    # so drawing from a bundle must not store per-draw state on the strategy.
-    class MyStateMachine(RuleBasedStateMachine):
-        values = Bundle("values")
-
-        @initialize(target=values)
-        def fill(self):
-            return multiple(*range(10))
-
-        @rule(target=values, n=values.filter(lambda x: x % 2 == 0))
-        def use_filtered(self, n):
-            assert n % 2 == 0
-            return n
-
-        @rule(n=values.map(lambda x: -x - 1))
-        def use_mapped(self, n):
-            assert n < 0
-
-        @rule(n=consumes(values).filter(lambda x: x % 2 == 0))
-        def pop_even(self, n):
-            assert n % 2 == 0
-
-    TestMyStateful = MyStateMachine.TestCase().runTest
+    TestMyStateful = hegel.state_machine_test(MyStateMachine)
     run_concurrently(TestMyStateful, n=2)
 
 
@@ -103,12 +67,14 @@ def do_work(*, multiplier=1):
 
 
 def test_run_different_tests_in_threads():
-    @given(st.integers())
-    def test1(n):
+    @hegel.test
+    def test1(tc):
+        tc.draw(gs.integers())
         do_work()
 
-    @given(st.integers())
-    def test2(n):
+    @hegel.test
+    def test2(tc):
+        tc.draw(gs.integers())
         do_work()
 
     thread1 = Thread(target=test1)
@@ -121,10 +87,11 @@ def test_run_different_tests_in_threads():
 
 
 def test_run_given_concurrently():
-    @given(st.data(), st.integers(-5, 5).map(lambda x: 10**x))
-    def test(data, magnitude):
+    @hegel.test
+    def test(tc):
+        magnitude = tc.draw(gs.integers(-5, 5).map(lambda x: 10**x))
         assert magnitude != 0
-        data.draw(st.complex_numbers(max_magnitude=magnitude))
+        tc.draw(gs.floats(min_value=-magnitude, max_value=magnitude))
 
     run_concurrently(test, n=2)
 
@@ -136,11 +103,10 @@ def test_stackframes_restores_original_recursion_limit():
         with contextlib.nullcontext():
             do_work()
 
-            # also mix in a hypothesis test; why not.
-            @given(st.integers())
-            @settings(max_examples=10)
-            def test(n):
-                pass
+            # also mix in a hegel test; why not.
+            @hegel.test(test_cases=10)
+            def test(tc):
+                tc.draw(gs.integers())
 
             test()
 
@@ -156,15 +122,15 @@ def test_stackframes_restores_original_recursion_limit():
 
 
 @pytest.mark.parametrize(
-    "make_strategy",
+    "make_generator",
     [
-        # Hegel validates eagerly, so the strategies are built inside the test.
-        lambda: st.recursive(st.none(), st.lists, max_leaves=-1),
-        lambda: st.recursive(st.none(), st.lists, max_leaves=0),
-        lambda: st.recursive(st.none(), st.lists, max_leaves=1.0),
+        # Hegel validates eagerly, so the generators are built inside the test.
+        lambda: gs.recursive(gs.none(), gs.lists, max_leaves=-1),
+        lambda: gs.recursive(gs.none(), gs.lists, max_leaves=0),
+        lambda: gs.recursive(gs.none(), gs.lists, max_leaves=1.0),
     ],
 )
-def test_handles_invalid_args_cleanly(make_strategy):
+def test_handles_invalid_args_cleanly(make_generator):
     # we previously had a race in SearchStrategy.validate, where one thread would
     # set `validate_called = True` (which it has to do first for recursive
     # strategies), then another thread would try to generate before the validation
@@ -174,90 +140,7 @@ def test_handles_invalid_args_cleanly(make_strategy):
     # 1 choice, for the same shared strategy.
 
     def check():
-        with pytest.raises(InvalidArgument):
-            check_can_generate_examples(make_strategy())
+        with pytest.raises(hegel.InvalidArgument):
+            check_can_generate_examples(make_generator())
 
     run_concurrently(check, n=4)
-
-
-def test_single_thread_can_raise_deadline_exceeded():
-    # a slow test running inside a thread, but not concurrently, should still
-    # be able to raise DeadlineExceeded.
-    # The shared test profile disables deadlines, so set one explicitly.
-    @given(st.integers())
-    @settings(max_examples=5, deadline=200)
-    def slow_test(n):
-        do_work()
-        time.sleep(0.4)
-
-    failures = []
-
-    def target():
-        try:
-            with pytest.raises(DeadlineExceeded):
-                slow_test()
-        except BaseException as e:  # propagate to the test thread
-            failures.append(e)
-
-    thread = Thread(target=target)
-    thread.start()
-    thread.join(timeout=10)
-    assert not failures, failures
-
-
-def test_deadline_exceeded_not_raised_under_concurrent_threads():
-    # it's still possible for multithreaded calls to a slow function to raise
-    # DeadlineExceeded, if the first thread completes its entire test before
-    # any other thread starts. For this test, prevent this scenario with a barrier,
-    # forcing the threads to run in parallel.
-    n_threads = 8
-    barrier = Barrier(n_threads)
-
-    @given(st.integers())
-    @settings(max_examples=5)
-    def slow_test(n):
-        do_work()
-        time.sleep(0.4)
-        barrier.wait()
-
-    run_concurrently(slow_test, n=n_threads)
-
-
-def test_deadline_exceeded_can_be_raised_after_threads():
-    # if we had concurrent threads before, but they've finished now, we should
-    # still be able to raise DeadlineExceeded normally. Importantly, we test this
-    # for the same test as was running before, since concurrent thread use is
-    # tracked per-@given.
-
-    @given(st.integers())
-    @settings(max_examples=5, deadline=200)
-    def slow_test(n):
-        do_work()
-        if should_sleep:
-            time.sleep(0.4)
-
-    should_sleep = False
-    run_concurrently(slow_test, n=8)
-
-    should_sleep = True
-    with pytest.raises(DeadlineExceeded):
-        slow_test()
-
-
-def test_recursive_property_concurrent():
-    # Regression test for https://github.com/HypothesisWorks/hypothesis/issues/4475.
-    # see comment in recursive_property.
-    counter = 0
-    for i in range(10):
-        leaf = st.integers(min_value=i)
-        targets = (leaf, st.lists(leaf))
-
-        def validate(targets=targets):
-            nonlocal counter
-            counter += 1
-            targets[counter % 2].validate()
-
-        run_concurrently(validate, n=8)
-
-
-# Dropped test_one_of_branches_lock: uses the internal SearchStrategy.branches property

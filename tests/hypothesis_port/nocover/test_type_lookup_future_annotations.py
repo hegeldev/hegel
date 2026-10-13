@@ -8,16 +8,15 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+# Dropped from the Hypothesis original: test_complex_forward_ref_in_typed_dict_local
+# (from_type does not handle function-local forward references in a TypedDict).
+
 from __future__ import annotations
 
 from typing import TypedDict
 
-import pytest
-
-from hegel.hypothesis import given, strategies as st
-from hegel.hypothesis.errors import InvalidArgument
-
-from tests.hypothesis_port.common.debug import check_can_generate_examples
+import hegel
+from hegel import generators as gs
 
 alias = int | str
 
@@ -31,24 +30,9 @@ class B(TypedDict):
     b: alias
 
 
-@given(st.from_type(B))
-def test_complex_forward_ref_in_typed_dict(d):
+@hegel.test
+def test_complex_forward_ref_in_typed_dict(tc):
+    d = tc.draw(gs.from_type(B))
     assert isinstance(d["a"], dict)
     assert isinstance(d["a"]["a"], int)
     assert isinstance(d["b"], (int, str))
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel from_type raises NameError rather than InvalidArgument for unresolvable local forward refs",
-)
-def test_complex_forward_ref_in_typed_dict_local():
-    local_alias = int | str
-
-    class C(TypedDict):
-        a: A
-        b: local_alias
-
-    c_strategy = st.from_type(C)
-    with pytest.raises(InvalidArgument):
-        check_can_generate_examples(c_strategy)

@@ -1,7 +1,7 @@
 import pytest
 
-from hegel.hypothesis import given, settings
-from hegel.hypothesis.errors import InvalidArgument
+import hegel
+from hegel.errors import InvalidArgument
 
 
 def e(a, *args, **kwargs):
@@ -20,12 +20,10 @@ def argument_validation_test(bad_args):
         ("function", "args", "kwargs"), bad_args, ids=list(map(e_to_str, bad_args))
     )
     def test_raise_invalid_argument(function, args, kwargs):
-        @given(function(*args, **kwargs))
-        @settings(report_multiple_bugs=False)
-        def test(x):
-            pass
-
+        # Hegel validates most arguments when the generator is built, and
+        # the rest on the first draw.
         with pytest.raises(InvalidArgument):
-            test()
+            generator = function(*args, **kwargs)
+            hegel.run(lambda tc: tc.draw(generator), report_multiple_failures=False)
 
     return test_raise_invalid_argument

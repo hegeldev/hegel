@@ -8,30 +8,37 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-import traceback
-
 import pytest
 
-from hegel.hypothesis import Verbosity, given, settings, strategies as st
+import hegel
+from hegel import generators as gs
 
 
-@pytest.mark.parametrize("verbosity", [Verbosity.normal, Verbosity.debug])
-@pytest.mark.parametrize("env_value", ["", "1"])
-def test_tracebacks_omit_hypothesis_internals(monkeypatch, env_value, verbosity):
-    monkeypatch.setenv("HYPOTHESIS_NO_TRACEBACK_TRIM", env_value)
+def _shown_frames(tb):
+    """The frames a test runner shows: those not marked ``__tracebackhide__``."""
+    frames = []
+    while tb is not None:
+        if not tb.tb_frame.f_locals.get("__tracebackhide__"):
+            frames.append(tb.tb_frame.f_code.co_name)
+        tb = tb.tb_next
+    return frames
 
-    @settings(verbosity=verbosity)
-    @given(st.just(False))
-    def simplest_failure(x):
+
+# Hegel trims its own frames from the failure's traceback whatever the
+# verbosity, and hides the frames it re-raises through (there is no
+# HYPOTHESIS_NO_TRACEBACK_TRIM equivalent).
+@pytest.mark.parametrize("verbosity", [hegel.Verbosity.normal, hegel.Verbosity.debug])
+def test_tracebacks_omit_hypothesis_internals(verbosity):
+    @hegel.test(verbosity=verbosity)
+    def simplest_failure(tc):
+        tc.draw(gs.just(False))
         raise ValueError
 
     try:
         simplest_failure()
     except ValueError as e:
-        tb = traceback.extract_tb(e.__traceback__)
-        # Unless in debug mode, Hypothesis adds 1 frame - the least possible!
-        # (4 frames: this one, simplest_failure, internal frame, assert False)
-        if verbosity < Verbosity.debug and not env_value:
-            assert len(tb) == 4
-        else:
-            assert len(tb) >= 5
+        # The least possible: this frame and the test body.
+        assert _shown_frames(e.__traceback__) == [
+            "test_tracebacks_omit_hypothesis_internals",
+            "simplest_failure",
+        ]

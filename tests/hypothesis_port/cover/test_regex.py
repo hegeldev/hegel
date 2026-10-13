@@ -8,6 +8,17 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+# Dropped from the Hypothesis original:
+# test_internals_can_disable_newline_from_dollar_for_jsonschema (the private
+# _temp_jsonschema_hack_no_end_newline flag); test_alphabet_codec_warning
+# (HypothesisWarning); test_fullmatch_must_be_bool (argument type validation;
+# hegel coerces fullmatch to bool); test_can_pass_union_for_alphabet (a
+# generator as the from_regex alphabet; hegel takes a string of characters or
+# characters()).
+#
+# Hegel's from_regex defaults to fullmatch=True where Hypothesis's defaults
+# to False, so tests that relied on Hypothesis's default pass fullmatch=False.
+
 import re
 import string
 import sys
@@ -15,12 +26,19 @@ import unicodedata
 
 import pytest
 
-from hegel.hypothesis import HealthCheck, Phase, assume, given, settings, strategies as st
-from hegel.hypothesis.errors import HypothesisWarning, InvalidArgument
+import hegel
+from hegel import InvalidArgument
+from hegel import generators as gs
 from tests.hypothesis_port.common.compat import PYPY
+from tests.hypothesis_port.common.debug import (
+    assert_all_examples,
+    assert_no_examples,
+    check_can_generate_examples,
+    find_any,
+)
 
 # Stand-ins for hypothesis.strategies._internal.regex: the character classes
-# the regex module recognises, and its two strategy constructors.
+# the regex module recognises.
 SPACE_CHARS = set(" \t\n\r\f\v")
 UNICODE_SPACE_CHARS = SPACE_CHARS | set("\x1c\x1d\x1e\x1f\x85")
 UNICODE_DIGIT_CATEGORIES = {"Nd"}
@@ -29,22 +47,7 @@ UNICODE_WORD_CATEGORIES = {"Lu", "Ll", "Lt", "Lm", "Lo", "Nd", "Nl", "No"}
 
 
 def base_regex_strategy(regex, *, alphabet=None):
-    return st.from_regex(regex, fullmatch=True, alphabet=alphabet)
-
-
-def regex_strategy(regex, fullmatch, *, alphabet=None, _temp_jsonschema_hack_no_end_newline=False):
-    strategy = st.from_regex(regex, fullmatch=fullmatch, alphabet=alphabet)
-    if _temp_jsonschema_hack_no_end_newline:
-        strategy = strategy.filter(lambda s: not s.endswith("\n"))
-    return strategy
-
-
-from tests.hypothesis_port.common.debug import (
-    assert_all_examples,
-    assert_no_examples,
-    check_can_generate_examples,
-    find_any,
-)
+    return gs.from_regex(regex, fullmatch=True, alphabet=alphabet)
 
 
 def is_ascii(s):
@@ -119,10 +122,6 @@ def test_matching(category, predicate, invert, is_unicode):
     _test_matching_pattern(category, isvalidchar=pred, is_unicode=is_unicode)
 
 
-@pytest.mark.skipif(
-    settings.get_current_profile_name() == "crosshair",
-    reason="takes ~30s each; CrossHair strings just aren't fast enough",
-)
 @pytest.mark.parametrize(
     "pattern",
     [
@@ -159,13 +158,12 @@ def test_matching(category, predicate, invert, is_unicode):
 )
 @pytest.mark.parametrize("encode", [None, False, True])
 def test_can_generate(pattern, encode):
-    alphabet = st.characters(max_codepoint=1000) if encode is None else None
+    alphabet = gs.characters(max_codepoint=1000) if encode is None else None
     if encode:
         pattern = pattern.encode("ascii")
     assert_all_examples(
-        st.from_regex(pattern, alphabet=alphabet),
+        gs.from_regex(pattern, fullmatch=False, alphabet=alphabet),
         re.compile(pattern).search,
-        settings=settings(suppress_health_check=[HealthCheck.data_too_large]),
     )
 
 
@@ -179,7 +177,7 @@ def test_can_generate(pattern, encode):
     ],
 )
 def test_literals_with_ignorecase(pattern):
-    strategy = st.from_regex(pattern)
+    strategy = gs.from_regex(pattern, fullmatch=False)
 
     find_any(strategy, lambda s: s == "a")
     find_any(strategy, lambda s: s == "A")
@@ -190,29 +188,25 @@ def test_literals_with_ignorecase(pattern):
 )
 def test_not_literal_with_ignorecase(pattern):
     assert_all_examples(
-        st.from_regex(pattern),
+        gs.from_regex(pattern, fullmatch=False),
         lambda s: s[0] not in ("a", "A") and s[1] not in ("b", "B"),
     )
 
 
 def test_any_doesnt_generate_newline():
-    assert_all_examples(st.from_regex("\\A.\\Z"), lambda s: s != "\n")
+    assert_all_examples(gs.from_regex("\\A.\\Z", fullmatch=False), lambda s: s != "\n")
 
 
 @pytest.mark.parametrize("pattern", [re.compile("\\A.\\Z", re.DOTALL), "(?s)\\A.\\Z"])
 def test_any_with_dotall_generate_newline(pattern):
-    find_any(st.from_regex(pattern), lambda s: s == "\n", settings(max_examples=10**6))
+    find_any(gs.from_regex(pattern, fullmatch=False), lambda s: s == "\n", test_cases=10**6)
 
 
 @pytest.mark.parametrize("pattern", [re.compile(b"\\A.\\Z", re.DOTALL), b"(?s)\\A.\\Z"])
 def test_any_with_dotall_generate_newline_binary(pattern):
-    find_any(st.from_regex(pattern), lambda s: s == b"\n", settings(max_examples=10**6))
+    find_any(gs.from_regex(pattern, fullmatch=False), lambda s: s == b"\n", test_cases=10**6)
 
 
-@pytest.mark.skipif(
-    settings.get_current_profile_name() == "crosshair",
-    reason="takes ~30s each; CrossHair strings just aren't fast enough",
-)
 @pytest.mark.parametrize(
     "pattern",
     ["\\d", "[\\d]", "[^\\D]", "\\w", "[\\w]", "[^\\W]", "\\s", "[\\s]", "[^\\S]"],
@@ -240,7 +234,7 @@ def test_groups(pattern, is_unicode, invert):
     pattern = f"^{pattern}\\Z"
 
     compiler = unicode_regex if is_unicode else ascii_regex
-    strategy = st.from_regex(compiler(pattern))
+    strategy = gs.from_regex(compiler(pattern), fullmatch=False)
 
     find_any(strategy.filter(group_pred), is_ascii)
     if is_unicode:
@@ -251,20 +245,21 @@ def test_groups(pattern, is_unicode, invert):
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Engine: libhegel generates for a pattern no string can match, rather than reporting it empty (docs/engine-issues.md)",
+    reason="Engine: libhegel generates for a pattern no string can match, rather than "
+    "reporting it empty (docs/engine-issues.md)",
 )
 def test_caret_in_the_middle_does_not_generate_anything():
     r = re.compile("a^b")
 
-    assert_no_examples(st.from_regex(r))
+    assert_no_examples(gs.from_regex(r, fullmatch=False))
 
 
 def test_end_with_terminator_does_not_pad():
-    assert_all_examples(st.from_regex("abc\\Z"), lambda x: x[-3:] == "abc")
+    assert_all_examples(gs.from_regex("abc\\Z", fullmatch=False), lambda x: x[-3:] == "abc")
 
 
 def test_end():
-    strategy = st.from_regex("\\Aabc$")
+    strategy = gs.from_regex("\\Aabc$", fullmatch=False)
 
     find_any(strategy, lambda s: s == "abc")
     find_any(strategy, lambda s: s == "abc\n")
@@ -272,63 +267,73 @@ def test_end():
 
 def test_groupref_exists():
     assert_all_examples(
-        st.from_regex("^(<)?a(?(1)>)$"), lambda s: s in ("a", "a\n", "<a>", "<a>\n")
+        gs.from_regex("^(<)?a(?(1)>)$", fullmatch=False),
+        lambda s: s in ("a", "a\n", "<a>", "<a>\n"),
     )
-    assert_all_examples(st.from_regex("^(a)?(?(1)b|c)$"), lambda s: s in ("ab", "ab\n", "c", "c\n"))
+    assert_all_examples(
+        gs.from_regex("^(a)?(?(1)b|c)$", fullmatch=False),
+        lambda s: s in ("ab", "ab\n", "c", "c\n"),
+    )
 
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Engine: libhegel generates for a pattern no string can match, rather than reporting it empty (docs/engine-issues.md)",
+    reason="Engine: libhegel generates for a pattern no string can match, rather than "
+    "reporting it empty (docs/engine-issues.md)",
 )
 def test_impossible_negative_lookahead():
-    assert_no_examples(st.from_regex("(?!foo)foo"))
+    assert_no_examples(gs.from_regex("(?!foo)foo", fullmatch=False))
 
 
-@given(st.from_regex("(\\Afoo\\Z)"))
-def test_can_handle_boundaries_nested(s):
+@hegel.test
+def test_can_handle_boundaries_nested(tc):
+    s = tc.draw(gs.from_regex("(\\Afoo\\Z)", fullmatch=False))
     assert s == "foo"
 
 
 def test_groupref_not_shared_between_regex():
     # If group references are (incorrectly!) shared between regex, this would
     # fail as the would only be one reference.
-    check_can_generate_examples(st.tuples(st.from_regex("(a)\\1"), st.from_regex("(b)\\1")))
+    check_can_generate_examples(
+        gs.tuples(
+            gs.from_regex("(a)\\1", fullmatch=False), gs.from_regex("(b)\\1", fullmatch=False)
+        )
+    )
 
 
 @pytest.mark.skipif(
     PYPY,  # Skip for now so we can test the rest
     reason=r"Triggers bugs in poor handling of unicode in re for these implementations",
 )
-@given(st.data())
-def test_group_ref_is_not_shared_between_identical_regex(data):
+@hegel.test
+def test_group_ref_is_not_shared_between_identical_regex(tc):
     pattern = re.compile("^(.+)\\1\\Z", re.UNICODE)
-    x = data.draw(base_regex_strategy(pattern, alphabet=st.characters()))
-    y = data.draw(base_regex_strategy(pattern, alphabet=st.characters()))
-    assume(x != y)
+    x = tc.draw(base_regex_strategy(pattern, alphabet=gs.characters()))
+    y = tc.draw(base_regex_strategy(pattern, alphabet=gs.characters()))
+    tc.assume(x != y)
     assert pattern.match(x).end() == len(x)
     assert pattern.match(y).end() == len(y)
 
 
-@given(st.data())
-def test_does_not_leak_groups(data):
-    a = data.draw(base_regex_strategy(re.compile("^(a)\\Z"), alphabet=st.characters()))
+@hegel.test
+def test_does_not_leak_groups(tc):
+    a = tc.draw(base_regex_strategy(re.compile("^(a)\\Z"), alphabet=gs.characters()))
     assert a == "a"
-    b = data.draw(base_regex_strategy(re.compile("^(?(1)a|b)(.)\\Z"), alphabet=st.characters()))
+    b = tc.draw(base_regex_strategy(re.compile("^(?(1)a|b)(.)\\Z"), alphabet=gs.characters()))
     assert b[0] == "b"
 
 
 def test_positive_lookbehind():
-    find_any(st.from_regex(".*(?<=ab)c"), lambda s: s.endswith("abc"))
+    find_any(gs.from_regex(".*(?<=ab)c", fullmatch=False), lambda s: s.endswith("abc"))
 
 
 def test_positive_lookahead():
-    find_any(st.from_regex("a(?=bc).*"), lambda s: s.startswith("abc"))
+    find_any(gs.from_regex("a(?=bc).*", fullmatch=False), lambda s: s.startswith("abc"))
 
 
 def test_negative_lookbehind():
     # no efficient support
-    strategy = st.from_regex("[abc]*(?<!abc)d")
+    strategy = gs.from_regex("[abc]*(?<!abc)d", fullmatch=False)
 
     assert_all_examples(strategy, lambda s: not s.endswith("abcd"))
     assert_no_examples(strategy, lambda s: s.endswith("abcd"))
@@ -336,25 +341,27 @@ def test_negative_lookbehind():
 
 def test_negative_lookahead():
     # no efficient support
-    strategy = st.from_regex("^ab(?!cd)[abcd]*")
+    strategy = gs.from_regex("^ab(?!cd)[abcd]*", fullmatch=False)
 
     assert_all_examples(strategy, lambda s: not s.startswith("abcd"))
     assert_no_examples(strategy, lambda s: s.startswith("abcd"))
 
 
-@given(st.from_regex("^a+\\Z"))
-def test_generates_only_the_provided_characters_given_boundaries(xs):
+@hegel.test
+def test_generates_only_the_provided_characters_given_boundaries(tc):
+    xs = tc.draw(gs.from_regex("^a+\\Z", fullmatch=False))
     assert set(xs) == {"a"}
 
 
-@given(st.from_regex("^(.)?\\1\\Z"))
-def test_group_backref_may_not_be_present(s):
+@hegel.test
+def test_group_backref_may_not_be_present(tc):
+    s = tc.draw(gs.from_regex("^(.)?\\1\\Z", fullmatch=False))
     assert len(s) == 2
     assert s[0] == s[1]
 
 
 def test_subpattern_flags():
-    strategy = st.from_regex("(?i)\\Aa(?-i:b)\\Z")
+    strategy = gs.from_regex("(?i)\\Aa(?-i:b)\\Z", fullmatch=False)
 
     # "a" is case insensitive
     find_any(strategy, lambda s: s[0] == "a")
@@ -367,77 +374,79 @@ def test_subpattern_flags():
 
 def test_can_handle_binary_regex_which_is_not_ascii():
     bad = b"\xad"
-    assert_all_examples(st.from_regex(bad), lambda x: bad in x)
+    assert_all_examples(gs.from_regex(bad, fullmatch=False), lambda x: bad in x)
 
 
 @pytest.mark.parametrize("pattern", [b".", "."])
 def test_regex_have_same_type_as_pattern(pattern):
-    @given(st.from_regex(pattern))
-    def test_result_type(s):
-        assert type(s) == type(pattern)
+    @hegel.test
+    def test_result_type(tc):
+        s = tc.draw(gs.from_regex(pattern, fullmatch=False))
+        assert type(s) is type(pattern)
 
     test_result_type()
 
 
 def test_can_pad_strings_arbitrarily():
-    find_any(st.from_regex("a"), lambda x: x[0] != "a")
-    find_any(st.from_regex("a"), lambda x: x[-1] != "a")
+    find_any(gs.from_regex("a", fullmatch=False), lambda x: x[0] != "a")
+    find_any(gs.from_regex("a", fullmatch=False), lambda x: x[-1] != "a")
 
 
 def test_can_pad_empty_strings():
-    find_any(st.from_regex(""), bool)
-    find_any(st.from_regex(b""), bool)
+    find_any(gs.from_regex("", fullmatch=False), bool)
+    find_any(gs.from_regex(b"", fullmatch=False), bool)
 
 
 def test_can_pad_strings_with_newlines():
-    find_any(st.from_regex("^$"), bool)
-    find_any(st.from_regex(b"^$"), bool)
+    find_any(gs.from_regex("^$", fullmatch=False), bool)
+    find_any(gs.from_regex(b"^$", fullmatch=False), bool)
 
 
 def test_given_multiline_regex_can_insert_after_dollar():
     find_any(
-        st.from_regex(re.compile("\\Ahi$", re.MULTILINE)),
+        gs.from_regex(re.compile("\\Ahi$", re.MULTILINE), fullmatch=False),
         lambda x: "\n" in x and x.split("\n")[1],
     )
 
 
 def test_given_multiline_regex_can_insert_before_caret():
     find_any(
-        st.from_regex(re.compile("^hi\\Z", re.MULTILINE)),
+        gs.from_regex(re.compile("^hi\\Z", re.MULTILINE), fullmatch=False),
         lambda x: "\n" in x and x.split("\n")[0],
     )
 
 
 def test_does_not_left_pad_beginning_of_string_marker():
-    assert_all_examples(st.from_regex("\\Afoo"), lambda x: x.startswith("foo"))
+    assert_all_examples(gs.from_regex("\\Afoo", fullmatch=False), lambda x: x.startswith("foo"))
 
 
 def test_bare_caret_can_produce():
-    find_any(st.from_regex("^"), bool)
+    find_any(gs.from_regex("^", fullmatch=False), bool)
 
 
 def test_bare_dollar_can_produce():
-    find_any(st.from_regex("$"), bool)
+    find_any(gs.from_regex("$", fullmatch=False), bool)
 
 
 def test_shared_union():
     # This gets parsed as [(ANY, None), (BRANCH, (None, [[], []]))], the
     # interesting feature of which is that it contains empty sub-expressions
     # in the branch.
-    find_any(st.from_regex(".|."))
+    find_any(gs.from_regex(".|.", fullmatch=False))
 
 
-@given(st.data())
-def test_issue_992_regression(data):
-    strat = st.from_regex(
+@hegel.test
+def test_issue_992_regression(tc):
+    strat = gs.from_regex(
         re.compile(
             r"""\d +  # the integral part
             \.    # the decimal point
             \d *  # some fractional digits""",
             re.VERBOSE,
-        )
+        ),
+        fullmatch=False,
     )
-    data.draw(strat)
+    tc.draw(strat)
 
 
 @pytest.mark.parametrize(
@@ -454,7 +463,7 @@ def test_issue_992_regression(data):
 )
 def test_fullmatch_generates_example(pattern, matching_str):
     find_any(
-        st.from_regex(pattern, fullmatch=True),
+        gs.from_regex(pattern, fullmatch=True),
         lambda s: s == matching_str,
     )
 
@@ -476,76 +485,57 @@ def test_fullmatch_generates_example(pattern, matching_str):
     ],
 )
 def test_fullmatch_matches(pattern, eqiv_pattern):
-    assert_all_examples(st.from_regex(pattern, fullmatch=True), lambda s: re.match(eqiv_pattern, s))
-
-
-def test_fullmatch_must_be_bool():
-    with pytest.raises(InvalidArgument):
-        st.from_regex("a", fullmatch=None).validate()
+    assert_all_examples(gs.from_regex(pattern, fullmatch=True), lambda s: re.match(eqiv_pattern, s))
 
 
 def test_issue_1786_regression():
-    st.from_regex(re.compile("\\\\", flags=re.IGNORECASE)).validate()
+    check_can_generate_examples(
+        gs.from_regex(re.compile("\\\\", flags=re.IGNORECASE), fullmatch=False)
+    )
 
 
 def test_sets_allow_multichar_output_in_ignorecase_mode():
     # CharacterBuilder.strategy includes logic to add multi-character strings
     # via sampled_from(), if any are whitelisted as matching.  See issue #2657.
     find_any(
-        st.from_regex(re.compile("[\u0130_]", re.IGNORECASE)),
+        gs.from_regex(re.compile("[\u0130_]", re.IGNORECASE), fullmatch=False),
         lambda s: len(s) > 1,
     )
 
 
-def test_internals_can_disable_newline_from_dollar_for_jsonschema():
-    pattern = "^abc$"
-    find_any(st.from_regex(pattern), lambda s: s == "abc\n")
-    assert_all_examples(
-        regex_strategy(
-            pattern,
-            False,
-            alphabet=st.characters(),
-            _temp_jsonschema_hack_no_end_newline=True,
-        ),
-        lambda s: s == "abc",
-    )
-
-
-@given(st.from_regex(r"[^.].*", alphabet=st.sampled_from("abc") | st.just(".")))
-def test_can_pass_union_for_alphabet(_):
-    pass
-
-
 @pytest.mark.parametrize("alphabet", ["ab", ("a", "b"), ["a", "b"], {"a", "b"}])
 def test_can_pass_collections_for_alphabet(alphabet):
-    assert_all_examples(st.from_regex(r".+", alphabet=alphabet), lambda s: set(s) <= {"a", "b"})
+    assert_all_examples(
+        gs.from_regex(r".+", fullmatch=False, alphabet=alphabet), lambda s: set(s) <= {"a", "b"}
+    )
 
 
 @pytest.mark.parametrize(
     "pattern, alphabet",
     [
-        (r"[^\d\D]", st.characters()),
-        ("[^abc]", st.sampled_from("abc")),
-        ("[\\d]", st.sampled_from("abc")),
-        ("\\d", st.sampled_from("abc")),
-        ("[^a]", st.just("a")),
-        (".", st.just("\n")),
-        ("[^a]+", st.just("a")),
-        ("[a-z]", st.just("0")),
+        (r"[^\d\D]", gs.characters()),
+        ("[^abc]", "abc"),
+        ("[\\d]", "abc"),
+        ("\\d", "abc"),
+        ("[^a]", "a"),
+        (".", "\n"),
+        ("[^a]+", "a"),
+        ("[a-z]", "0"),
     ],
 )
 @pytest.mark.xfail(
     strict=True,
-    reason="Engine: libhegel doesn't report a character class with no characters in the alphabet (docs/engine-issues.md)",
+    reason="Engine: libhegel doesn't report a character class with no characters in the "
+    "alphabet (docs/engine-issues.md)",
 )
 def test_charsets_which_match_nothing_in_the_alphabet(pattern, alphabet):
     with pytest.raises(InvalidArgument, match="specified alphabet"):
-        st.from_regex(pattern, alphabet=alphabet).validate()
+        check_can_generate_examples(gs.from_regex(pattern, fullmatch=False, alphabet=alphabet))
 
 
 def test_charset_matching_nothing_only_rules_out_its_own_branch():
     assert_all_examples(
-        st.from_regex("[^a]|a", alphabet=st.just("a"), fullmatch=True),
+        gs.from_regex("[^a]|a", alphabet="a", fullmatch=True),
         lambda s: s == "a",
     )
 
@@ -553,17 +543,17 @@ def test_charset_matching_nothing_only_rules_out_its_own_branch():
 def test_zero_minimum_repeats_incompatible_with_alphabet():
     # a subpattern which is incompatible with the alphabet can still be
     # repeated zero times - see issue #4857
-    strategy = st.from_regex("a*b*", alphabet="a", fullmatch=True)
+    strategy = gs.from_regex("a*b*", alphabet="a", fullmatch=True)
     find_any(strategy, lambda s: s == "")
     find_any(strategy, lambda s: s == "aa")
     assert_all_examples(strategy, lambda s: set(s) <= {"a"})
-    assert_all_examples(st.from_regex("ab?", alphabet="a", fullmatch=True), lambda s: s == "a")
+    assert_all_examples(gs.from_regex("ab?", alphabet="a", fullmatch=True), lambda s: s == "a")
 
 
 def test_inline_flags_do_not_leak_out_of_an_incompatible_subpattern():
     # `(?i:Ā)` is incompatible with the alphabet, but the group's flags must not leak
     # onto the following `k`.
-    alphabet = st.characters(max_codepoint=127)
+    alphabet = gs.characters(max_codepoint=127)
     regex = re.compile("(?i:\u0100)*k")
     assert_all_examples(base_regex_strategy(regex, alphabet=alphabet), regex.fullmatch)
     # and likewise for a group which turns a flag *off*
@@ -576,7 +566,7 @@ def test_ascii_inverted_categories_match_all_of_unicode():
     # restricted to ascii characters - see issue #4858
     regex = re.compile(r"\D", re.ASCII)
     assert regex.fullmatch("٣")
-    assert_all_examples(st.from_regex(regex, alphabet="٣", fullmatch=True), lambda s: s == "٣")
+    assert_all_examples(gs.from_regex(regex, alphabet="٣", fullmatch=True), lambda s: s == "٣")
 
 
 @pytest.mark.parametrize(
@@ -591,76 +581,59 @@ def test_ascii_flag_does_not_restrict_characters_or_ranges(pattern):
     # re.ASCII changes what \d \s \w match and restricts casefolding to ascii
     # characters, but explicit characters and ranges are unaffected - see
     # issue #4858
-    assert_all_examples(base_regex_strategy(pattern, alphabet=st.characters()), pattern.fullmatch)
+    assert_all_examples(base_regex_strategy(pattern, alphabet=gs.characters()), pattern.fullmatch)
 
 
 def test_ascii_characters_still_fold_under_ascii_flag():
-    strategy = st.from_regex(re.compile("i", re.IGNORECASE | re.ASCII), fullmatch=True)
+    strategy = gs.from_regex(re.compile("i", re.IGNORECASE | re.ASCII), fullmatch=True)
     find_any(strategy, lambda s: s == "I")
 
 
 def test_class_with_negative_category_and_positive_members():
     # [\W_] matches the union of \W and {"_"} - see issue #4859
     regex = re.compile(r"[\W_]")
-    assert_all_examples(st.from_regex(regex, alphabet="_", fullmatch=True), lambda s: s == "_")
-    find_any(st.from_regex(r"\A[\W_]\Z"), lambda s: s == "_")
+    assert_all_examples(gs.from_regex(regex, alphabet="_", fullmatch=True), lambda s: s == "_")
+    find_any(gs.from_regex(r"\A[\W_]\Z", fullmatch=False), lambda s: s == "_")
 
 
 def test_negated_class_excludes_all_members():
     # [^\W_] matches the complement of the union: word characters except "_"
     regex = re.compile(r"[^\W_]")
-    assert_all_examples(base_regex_strategy(regex, alphabet=st.characters()), regex.fullmatch)
+    assert_all_examples(base_regex_strategy(regex, alphabet=gs.characters()), regex.fullmatch)
 
 
 def test_negated_class_with_members_outside_alphabet():
-    assert_all_examples(st.from_regex("[^bc]", alphabet="a", fullmatch=True), lambda s: s == "a")
+    assert_all_examples(gs.from_regex("[^bc]", alphabet="a", fullmatch=True), lambda s: s == "a")
 
 
 @pytest.mark.parametrize(
-    "alphabet, error_part",
+    "alphabet",
     [
-        (("a", 1), "not unicode strings"),
-        (("ab",), "not of length one"),
-        (st.sampled_from(["a", 1]), "not unicode strings"),
-        (st.sampled_from(["ab"]), "not of length one"),
-        (st.sampled_from("ab").map(str.upper), "must be a collection of characters"),
-        (st.integers(), "must be a collection of characters"),
-        (st.just("a") | st.integers(), "must be a collection of characters"),
+        ("a", 1),
+        ("ab",),
+        gs.sampled_from(["a", 1]),
+        gs.sampled_from(["ab"]),
+        gs.sampled_from("ab").map(str.upper),
+        gs.integers(),
+        gs.just("a") | gs.integers(),
     ],
 )
-def test_invalid_alphabets(alphabet, error_part):
-    with pytest.raises(InvalidArgument, match=error_part):
-        st.from_regex(r".", alphabet=alphabet).validate()
+def test_invalid_alphabets(alphabet):
+    with pytest.raises(InvalidArgument):
+        check_can_generate_examples(gs.from_regex(r".", fullmatch=False, alphabet=alphabet))
 
 
-def test_alphabet_codec_warning():
-    with pytest.warns(HypothesisWarning, match="trying to use the codec"):
-        st.from_regex(r".", alphabet="ascii").validate()
-
-
-@pytest.mark.parametrize("explain", [False, True])
 @pytest.mark.xfail(
-    strict=True, reason="Hegel prints `name = value` lines rather than Hypothesis's call form"
+    strict=True,
+    reason="Engine: from_regex('..') shrinks to 'āā' (U+0101 twice) rather than '00'",
 )
-def test_regex_output_should_print_as_string(explain):
-    phases = [Phase.generate, Phase.shrink]
-    if explain:
-        phases.append(Phase.explain)
-
-    @settings(phases=phases)
-    @given(s=st.from_regex(r"..", fullmatch=True))
-    def test(s):
+def test_regex_output_should_print_as_string():
+    @hegel.test(phases=[hegel.Phase.generate, hegel.Phase.shrink])
+    def test(tc):
+        s = tc.draw(gs.from_regex(r"..", fullmatch=True))  # noqa: F841 (names the draw)
         raise AssertionError
 
     with pytest.raises(AssertionError) as err:
         test()
 
-    explain_line = "  # or any other generated value" if explain else ""
-
-    expected = f"""
-Failing test case: test(
-    s='00',{explain_line}
-)
-"""
-
-    assert "\n".join(err.value.__notes__).strip() == expected.strip()
+    assert "s = '00'" in "\n".join(err.value.__notes__)

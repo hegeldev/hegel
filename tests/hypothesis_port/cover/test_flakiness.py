@@ -1,5 +1,3 @@
-# Dropped from the Hypothesis original: test_flaky_with_context_when_fails_only_under_tracing
-# (patches the internal explain-phase Tracer and StateForActualGivenExecution).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -10,50 +8,25 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+# Dropped from the Hypothesis original: test_flaky_with_context_when_fails_only_under_tracing
+# (patches the internal explain-phase Tracer and StateForActualGivenExecution);
+# test_flaky_stateful_reports_steps (Hegel reports nondeterministic generation in a state
+# machine without the steps leading up to it).
+
+import random
 import sys
-import time
 
 import pytest
 
-from hegel.hypothesis import (
-    HealthCheck,
-    Verbosity,
-    assume,
-    core,
-    example,
-    given,
-    reject,
-    settings,
-)
-from hegel.hypothesis.errors import (
-    Flaky,
-    FlakyFailure,
-    FlakyStrategyDefinition,
-    Unsatisfiable,
-    UnsatisfiedAssumption,
-)
-from hegel.hypothesis.stateful import RuleBasedStateMachine, rule
-from hegel.hypothesis.strategies import (
-    booleans,
-    composite,
-    data,
-    integers,
-    lists,
-    random_module,
-)
+import hegel
+from hegel import Flaky, HealthCheck, Unsatisfiable, Verbosity
+from hegel import generators as gs
+from tests.hypothesis_port.common.utils import no_shrink, notes
 
-from tests.hypothesis_port.common.utils import (
-    Why,
-    capture_out,
-    no_shrink,
-    skipif_threading,
-    xfail_on_crosshair,
-)
-
-
-# Hypothesis keeps generating for at least this many calls before giving up
-# on a flaky failure; Hegel does the same after its replay fails to reproduce.
-MIN_TEST_CALLS = 10
+# Hegel confirms a failure by replaying it this many times; a failure that
+# never recurs is reported as unconfirmed, and under
+# nondeterminism_strictness="error" as Flaky.
+REPLAYS = 10
 
 
 class Nope(Exception):
@@ -63,18 +36,32 @@ class Nope(Exception):
 def test_fails_only_once_is_flaky():
     first_call = True
 
-    @given(integers())
-    def rude(x):
+    @hegel.test(nondeterminism_strictness="error")
+    def rude(tc):
         nonlocal first_call
+        tc.draw(gs.integers())
         if first_call:
             first_call = False
             raise Nope
 
-    with pytest.raises(FlakyFailure, match="Failed on the first call but") as e:
+    with pytest.raises(Flaky):
         rude()
-    exceptions = e.value.exceptions
-    assert len(exceptions) == 1
-    assert isinstance(exceptions[0], Nope)
+
+
+def test_fails_only_once_is_reported_as_unconfirmed_by_default():
+    first_call = True
+
+    @hegel.test
+    def rude(tc):
+        nonlocal first_call
+        tc.draw(gs.integers())
+        if first_call:
+            first_call = False
+            raise Nope
+
+    with pytest.raises(Nope) as e:
+        rude()
+    assert any(note.startswith("unconfirmed failure") for note in notes(e.value))
 
 
 def test_fails_differently_is_flaky():
@@ -83,10 +70,10 @@ def test_fails_differently_is_flaky():
     class DifferentNope(Exception):
         pass
 
-    @given(integers())
-    @settings(database=None)
-    def rude(x):
+    @hegel.test(database="", nondeterminism_strictness="error")
+    def rude(tc):
         nonlocal call_count
+        x = tc.draw(gs.integers())
         if x == 0:
             call_count += 1
             if call_count > 1:
@@ -94,22 +81,18 @@ def test_fails_differently_is_flaky():
             else:
                 raise DifferentNope
 
-    with pytest.raises(FlakyFailure, match="Inconsistent results from replaying") as e:
+    with pytest.raises(Flaky):
         rude()
-    exceptions = e.value.exceptions
-    assert len(exceptions) == 2
-    assert set(map(type, exceptions)) == {Nope, DifferentNope}
 
 
-@skipif_threading  # executing into global scope
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="except* syntax")
 def test_exceptiongroup_wrapped_naked_exception_is_flaky():
-
     # Defer parsing until runtime, as "except*" is syntax error pre 3.11
     rude_def = """
 first_call = True
-def rude_fn(x):
+def rude_fn(tc):
     global first_call
+    tc.draw(gs.integers())
     if first_call:
         first_call = False
         try:
@@ -118,95 +101,104 @@ def rude_fn(x):
             raise
     """
     exec(rude_def, globals())
-    rude = given(integers())(rude_fn)  # noqa: F821 # defined by exec()
+    rude = hegel.test(nondeterminism_strictness="error")(rude_fn)  # noqa: F821 # defined by exec()
 
-    with pytest.raises(FlakyFailure, match="Failed on the first call but") as e:
+    with pytest.raises(Flaky):
         rude()
-    exceptions = e.value.exceptions
-    assert list(map(type, exceptions)) == [ExceptionGroup]
-    assert list(map(type, exceptions[0].exceptions)) == [Nope]
 
 
 def test_gives_flaky_error_if_assumption_is_flaky():
     seen = set()
 
-    @given(integers())
-    @settings(verbosity=Verbosity.quiet, database=None)
-    def oops(s):
-        assume(s not in seen)
+    @hegel.test(verbosity=Verbosity.quiet, database="", nondeterminism_strictness="error")
+    def oops(tc):
+        s = tc.draw(gs.integers())
+        tc.assume(s not in seen)
         seen.add(s)
         raise AssertionError
 
-    with pytest.raises(FlakyFailure, match="Inconsistent results from replaying") as e:
+    with pytest.raises(Flaky):
         oops()
-    exceptions = e.value.exceptions
-    # Hegel's UnsatisfiedAssumption is a BaseException, which an exception
-    # group cannot hold, so it is described in a note instead.
-    assert len(exceptions) == 1
-    assert isinstance(exceptions[0], AssertionError)
-    assert UnsatisfiedAssumption.__name__ in "\n".join(e.value.__notes__)
 
 
-@xfail_on_crosshair(Why.symbolic_outside_context)
 def test_does_not_attempt_to_shrink_flaky_errors():
     values = []
 
-    @settings(database=None)
-    @given(integers())
-    def test(x):
+    @hegel.test(database="")
+    def test(tc):
+        x = tc.draw(gs.integers())
         values.append(x)
         assert len(values) != 1
 
-    with pytest.raises(FlakyFailure):
+    with pytest.raises(AssertionError) as e:
         test()
-    # We try a total of ten calls in the generation phase, each usually a
-    # unique value, looking briefly (and unsuccessfully) for another bug.
-    assert 1 < len(set(values)) <= MIN_TEST_CALLS
-    # We don't try any new values while shrinking: Hegel replays the flaky
-    # example once more at the end to raise it to the user.
-    assert values[-1] == values[0]
-    assert set(values) == set(values[:-1])
+    assert any(note.startswith("unconfirmed failure") for note in notes(e.value))
+    # The flaky example is replayed to confirm it, and nothing else is tried:
+    # no shrinking, and no further generation.
+    assert 1 < len(values) <= REPLAYS + 1
+    assert set(values) == {values[0]}
 
 
 class SatisfyMe(Exception):
     pass
 
 
-@composite
-def single_bool_lists(draw):
-    n = draw(integers(0, 20))
+@hegel.composite
+def single_bool_lists(tc):
+    n = tc.draw(gs.integers(0, 20))
     result = [False] * (n + 1)
     result[n] = True
     return result
 
 
-@xfail_on_crosshair(Why.nested_given)
-@example([True, False, False, False], [3], None)
-@example([False, True, False, False], [3], None)
-@example([False, False, True, False], [3], None)
-@example([False, False, False, True], [3], None)
-@settings(deadline=None, suppress_health_check=[HealthCheck.nested_given], max_examples=10)
-@given(lists(booleans()) | single_bool_lists(), lists(integers(1, 3)), random_module())
-def test_failure_sequence_inducing(building, testing, rnd):
+def _random_sequences(count, seed=0):
+    """Sequences of the shape Hypothesis drew from
+    ``lists(booleans()) | single_bool_lists()`` and ``lists(integers(1, 3))``:
+    the inner run below is a Hegel test, which cannot run inside another."""
+    rnd = random.Random(seed)
+    for _ in range(count):
+        if rnd.random() < 0.5:
+            building = [rnd.random() < 0.5 for _ in range(rnd.randint(0, 10))]
+        else:
+            n = rnd.randint(0, 20)
+            building = [False] * (n + 1)
+            building[n] = True
+        testing = [rnd.randint(1, 3) for _ in range(rnd.randint(0, 10))]
+        yield building, testing
+
+
+@pytest.mark.parametrize(
+    "building, testing",
+    [
+        ([True, False, False, False], [3]),
+        ([False, True, False, False], [3]),
+        ([False, False, True, False], [3]),
+        ([False, False, False, True], [3]),
+        *_random_sequences(10),
+    ],
+)
+def test_failure_sequence_inducing(building, testing):
     buildit = iter(building)
     testit = iter(testing)
 
-    def build(x):
+    @hegel.composite
+    def build(tc):
+        x = tc.draw(gs.integers())
         try:
-            assume(not next(buildit))
+            tc.assume(not next(buildit))
         except StopIteration:
             pass
         return x
 
-    @given(integers().map(build))
-    @settings(
+    @hegel.test(
         verbosity=Verbosity.quiet,
-        database=None,
+        database="",
         suppress_health_check=list(HealthCheck),
         phases=no_shrink,
-        max_examples=10,
+        test_cases=10,
     )
-    def test(x):
+    def test(tc):
+        tc.draw(build())
         try:
             i = next(testit)
         except StopIteration:
@@ -214,7 +206,7 @@ def test_failure_sequence_inducing(building, testing, rnd):
         if i == 1:
             return
         elif i == 2:
-            reject()
+            tc.reject()
         else:
             raise Nope
 
@@ -222,31 +214,5 @@ def test_failure_sequence_inducing(building, testing, rnd):
         test()
     except (Nope, Flaky, Unsatisfiable):
         pass
-    except UnsatisfiedAssumption:
+    except hegel.AssumeFailed:
         raise SatisfyMe from None
-
-
-class FlakyTimeStateMachine(RuleBasedStateMachine):
-    @rule(data=data())
-    def step(self, data):
-        # time advances between runs, so the integers() constraints differ when
-        # the same choice sequence is replayed - an inconsistent-generation flake.
-        data.draw(integers(time.time_ns(), time.time_ns() + 2))
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel reports nondeterministic data generation as a plain RunError, "
-    "not FlakyStrategyDefinition, and without the steps leading up to it",
-)
-def test_flaky_stateful_reports_steps(monkeypatch):
-    # Steps are recorded regardless of observability, so a flaky stateful test
-    # always reports the steps leading up to the error.
-    # ensure report() prints to stdout (rather than via the pytest plugin)
-    monkeypatch.setattr(core, "running_under_pytest", False)
-    FlakyTimeStateMachine.TestCase.settings = settings(
-        max_examples=200, database=None, stateful_step_count=5
-    )
-    with capture_out() as out, pytest.raises(FlakyStrategyDefinition):
-        FlakyTimeStateMachine.TestCase().runTest()
-    assert "Steps leading up to this error" in out.getvalue()

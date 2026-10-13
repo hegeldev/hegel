@@ -1,3 +1,4 @@
+# Dropped from the Hypothesis original: test_warns_on_bool_strategy (HypothesisWarning).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -12,36 +13,23 @@ import re
 
 import pytest
 
-from hegel.hypothesis import given, strategies as st
-from hegel.hypothesis.errors import HypothesisWarning
-from hegel.hypothesis.stateful import RuleBasedStateMachine, rule, run_state_machine_as_test
+import hegel
+from hegel import generators as gs
+from tests.helpers import notes
 
 
 def test_error_is_in_finally():
-    @given(st.data())
-    def test(d):
+    @hegel.test
+    def test(tc):
         try:
-            d.draw(st.lists(st.integers(), min_size=3, unique=True))
+            tc.draw(gs.lists(gs.integers(), min_size=3, unique=True))
         finally:
             raise ValueError
 
     with pytest.raises(ValueError) as err:
         test()
 
-    assert "[0, 1, -1]" in "\n".join(err.value.__notes__)
-
-
-@pytest.mark.xfail(
-    strict=True, reason="Hegel strategies do not warn when used in a boolean context"
-)
-@given(st.data())
-def test_warns_on_bool_strategy(data):
-    with pytest.warns(
-        HypothesisWarning,
-        match=r"bool\(.+\) is always True, did you mean to draw a value\?",
-    ):
-        if st.booleans():  # 'forgot' to draw from the strategy
-            pass
+    assert "[0, 1, -1]" in "\n".join(notes(err.value))
 
 
 def test_adds_note_showing_which_strategy():
@@ -49,28 +37,28 @@ def test_adds_note_showing_which_strategy():
         def __init__(self, y: int) -> None:
             assert y == 7
 
-    @given(...)
-    def inner(value: X):
+    @hegel.test
+    def inner(tc):
+        value = tc.draw(gs.from_type(X))
         assert isinstance(value, X)
 
-    rep = re.escape(repr(st.from_type(X)))
-    with pytest.raises(AssertionError, match=f".*while generating 'value' from {rep}"):
+    rep = re.escape(repr(gs.from_type(X)))
+    with pytest.raises(
+        AssertionError, match=f"value = <AssertionError raised while drawing from {rep}>"
+    ):
         inner()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel's state machines do not note which rule's strategy raised while drawing",
-)
 def test_adds_note_showing_which_strategy_stateful():
-    strategy = st.integers().map(lambda x: x / 0)
+    strategy = gs.integers().map(lambda x: x / 0)
 
-    class Machine(RuleBasedStateMachine):
-        @rule(value=strategy)
-        def take_a_step(self, value):
+    class Machine(hegel.StateMachine):
+        @hegel.rule()
+        def take_a_step(self, tc):
+            value = tc.draw(strategy)
             assert value
 
-    msg = f"while generating 'value' from {strategy!r} for rule take_a_step"
-    print(msg)
-    with pytest.raises(ZeroDivisionError, match=f".*{re.escape(msg)}"):
-        run_state_machine_as_test(Machine)
+    msg = f"value = <ZeroDivisionError raised while drawing from {strategy!r}>"
+    with pytest.raises(ZeroDivisionError, match=re.escape(msg)) as err:
+        hegel.state_machine_test(Machine)()
+    assert "take_a_step" in "\n".join(notes(err.value))

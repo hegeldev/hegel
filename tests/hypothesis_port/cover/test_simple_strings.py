@@ -8,103 +8,113 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-from hegel.hypothesis import given
-from hegel.hypothesis.strategies import binary, characters, just, sampled_from, text, tuples
-
+import hegel
+from hegel import generators as gs
 from tests.hypothesis_port.common.debug import minimal
 
 
 def test_can_minimize_up_to_zero():
-    s = minimal(text(), lambda x: any(t <= "0" for t in x))
+    s = minimal(gs.text(), lambda x: any(t <= "0" for t in x))
     assert s == "0"
 
 
 def test_minimizes_towards_ascii_zero():
-    s = minimal(text(), lambda x: any(t < "0" for t in x))
+    s = minimal(gs.text(), lambda x: any(t < "0" for t in x))
     assert s == chr(ord("0") - 1)
 
 
 def test_can_handle_large_codepoints():
-    s = minimal(text(), lambda x: x >= "☃")
+    s = minimal(gs.text(), lambda x: x >= "☃")
     assert s == "☃"
 
 
 def test_can_find_mixed_ascii_and_non_ascii_strings():
-    s = minimal(text(), lambda x: any(t >= "☃" for t in x) and any(ord(t) <= 127 for t in x))
+    s = minimal(gs.text(), lambda x: any(t >= "☃" for t in x) and any(ord(t) <= 127 for t in x))
     assert len(s) == 2
     assert sorted(s) == ["0", "☃"]
 
 
 def test_will_find_ascii_examples_given_the_chance():
-    s = minimal(tuples(text(max_size=1), text(max_size=1)), lambda x: x[0] and (x[0] < x[1]))
+    s = minimal(
+        gs.tuples(gs.text(max_size=1), gs.text(max_size=1)), lambda x: x[0] and (x[0] < x[1])
+    )
     assert ord(s[1]) == ord(s[0]) + 1
     assert "0" in s
 
 
 def test_minimisation_consistent_with_characters():
-    s = minimal(text("FEDCBA", min_size=3))
+    s = minimal(gs.text("FEDCBA", min_size=3))
     assert s == "AAA"
 
 
 def test_finds_single_element_strings():
-    assert minimal(text(), bool) == "0"
+    assert minimal(gs.text(), bool) == "0"
 
 
-@given(binary(max_size=5))
-def test_binary_respects_max_size(x):
+@hegel.test
+def test_binary_respects_max_size(tc):
+    x = tc.draw(gs.binary(max_size=5))
     assert len(x) <= 5
 
 
 def test_does_not_simplify_into_surrogates():
-    f = minimal(text(), lambda x: x >= "\udfff")
-    assert f == "\ue000"
+    f = minimal(gs.text(), lambda x: x >= "\udfff")
+    assert f == ""
 
     size = 5
 
-    f = minimal(text(min_size=size), lambda x: sum(t >= "\udfff" for t in x) >= size)
-    assert f == "\ue000" * size
+    f = minimal(gs.text(min_size=size), lambda x: sum(t >= "\udfff" for t in x) >= size)
+    assert f == "" * size
 
 
-@given(text(alphabet=["a", "b"]))
-def test_respects_alphabet_if_list(xs):
+@hegel.test
+def test_respects_alphabet_if_list(tc):
+    xs = tc.draw(gs.text(alphabet=["a", "b"]))
     assert set(xs).issubset(set("ab"))
 
 
-@given(text(alphabet="cdef"))
-def test_respects_alphabet_if_string(xs):
+@hegel.test
+def test_respects_alphabet_if_string(tc):
+    xs = tc.draw(gs.text(alphabet="cdef"))
     assert set(xs).issubset(set("cdef"))
 
 
-@given(text(alphabet=characters(max_codepoint=ord("b")) | just("d")))
-def test_respects_alphabet_if_union(xs):
+@hegel.test
+def test_respects_alphabet_if_union(tc):
+    xs = tc.draw(gs.text(alphabet=gs.characters(max_codepoint=ord("b")) | gs.just("d")))
     assert all(c <= "b" or c == "d" for c in xs)
 
 
-@given(text(alphabet=sampled_from("abc").filter(lambda c: c != "a") | just("d")))
-def test_respects_transformed_alphabet_in_union(xs):
+@hegel.test
+def test_respects_transformed_alphabet_in_union(tc):
+    xs = tc.draw(gs.text(alphabet=gs.sampled_from("abc").filter(lambda c: c != "a") | gs.just("d")))
     assert "a" not in xs
 
 
-@given(text())
-def test_can_encode_as_utf8(s):
+@hegel.test
+def test_can_encode_as_utf8(tc):
+    s = tc.draw(gs.text())
     s.encode()
 
 
-@given(text(characters(exclude_characters="\n")))
-def test_can_blacklist_newlines(s):
+@hegel.test
+def test_can_blacklist_newlines(tc):
+    s = tc.draw(gs.text(gs.characters(exclude_characters="\n")))
     assert "\n" not in s
 
 
-@given(text(characters(exclude_categories=("Cc", "Cs"))))
-def test_can_exclude_newlines_by_category(s):
+@hegel.test
+def test_can_exclude_newlines_by_category(tc):
+    s = tc.draw(gs.text(gs.characters(exclude_categories=("Cc", "Cs"))))
     assert "\n" not in s
 
 
-@given(text(characters(max_codepoint=127)))
-def test_can_restrict_to_ascii_only(s):
+@hegel.test
+def test_can_restrict_to_ascii_only(tc):
+    s = tc.draw(gs.text(gs.characters(max_codepoint=127)))
     s.encode("ascii")
 
 
-@given(text(max_size=10**6))
-def test_can_set_max_size_large(s):
-    pass
+@hegel.test
+def test_can_set_max_size_large(tc):
+    tc.draw(gs.text(max_size=10**6))

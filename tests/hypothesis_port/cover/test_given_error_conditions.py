@@ -1,3 +1,8 @@
+# Dropped from the Hypothesis original: test_error_if_has_no_hints,
+# test_error_if_infer_all_and_has_no_hints, test_error_if_infer_is_posarg,
+# test_error_if_infer_is_posarg_mixed_with_kwarg, test_given_is_not_a_class_decorator,
+# test_suggests_at_settings_if_extra_kwarg_matches_setting_name (@given's
+# argument binding).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -10,128 +15,68 @@
 
 import pytest
 
-from hegel.hypothesis import assume, given, reject, settings
-from hegel.hypothesis._settings import all_settings
-from hegel.hypothesis.errors import InvalidArgument, Unsatisfiable
-from hegel.hypothesis.strategies import booleans, integers, nothing
-
+import hegel
+from hegel import generators as gs
 from tests.hypothesis_port.common.utils import fails_with
 
 
-@fails_with(Unsatisfiable)
-@given(booleans())
-def test_raises_unsatisfiable_if_all_false_in_finite_set(x):
-    reject()
+@pytest.mark.xfail(
+    strict=True,
+    reason="engine: rejecting every input of a finite space fails the FilterTooMuch "
+    "health check rather than raising Unsatisfiable",
+)
+@fails_with(hegel.Unsatisfiable)
+@hegel.test
+def test_raises_unsatisfiable_if_all_false_in_finite_set(tc):
+    tc.draw(gs.booleans())
+    tc.reject()
 
 
 def test_does_not_raise_unsatisfiable_if_some_false_in_finite_set():
-    @given(booleans())
-    def test_assume_x(x):
-        assume(x)
+    @hegel.test
+    def test_assume_x(tc):
+        x = tc.draw(gs.booleans())
+        tc.assume(x)
 
     test_assume_x()
 
 
 def test_raises_unsatisfiable_if_passed_explicit_nothing():
-    @given(x=nothing())
-    def test_never_runs(x):
+    @hegel.test
+    def test_never_runs(tc):
+        tc.draw(gs.nothing())
         raise Exception("Can't ever execute this")
 
-    with pytest.raises(
-        Unsatisfiable,
-        match=r"Cannot generate test cases from empty strategy: x=nothing\(\)",
-    ):
+    with pytest.raises(hegel.Unsatisfiable):
         test_never_runs()
 
 
-def test_error_if_has_no_hints():
-    @given(a=...)
-    def inner(a):
-        pass
-
-    with pytest.raises(InvalidArgument):
-        inner()
-
-
-def test_error_if_infer_all_and_has_no_hints():
-    @given(...)
-    def inner(a):
-        pass
-
-    with pytest.raises(InvalidArgument):
-        inner()
-
-
-def test_error_if_infer_is_posarg():
-    @given(..., ...)
-    def inner(ex1: int, ex2: int):
-        pass
-
-    with pytest.raises(InvalidArgument):
-        inner()
-
-
-def test_error_if_infer_is_posarg_mixed_with_kwarg():
-    @given(..., ex2=...)
-    def inner(ex1: int, ex2: int):
-        pass
-
-    with pytest.raises(InvalidArgument):
-        inner()
-
-
 def test_given_twice_is_an_error():
-    @settings(deadline=None)
-    @given(booleans())
-    @given(integers())
-    def inner(a, b):
-        pass
+    with pytest.raises(hegel.InvalidArgument):
 
-    with pytest.raises(InvalidArgument):
-        inner()
-
-
-@fails_with(InvalidArgument)
-def test_given_is_not_a_class_decorator():
-    @given(integers())
-    class test_given_is_not_a_class_decorator:
-        def __init__(self, i):
+        @hegel.test
+        @hegel.test
+        def inner(tc):
             pass
 
 
+def test_nested_test_is_an_error():
+    @hegel.test
+    def inner(tc):
+        tc.draw(gs.integers())
+
+    @hegel.test
+    def outer(tc):
+        tc.draw(gs.booleans())
+        inner()
+
+    with pytest.raises(hegel.InvalidArgument, match="called from inside another"):
+        outer()
+
+
 def test_specific_error_for_coroutine_functions():
-    @settings(database=None)
-    @given(booleans())
-    async def foo(x):
-        pass
+    with pytest.raises(hegel.InvalidArgument, match="does not run async tests"):
 
-    with pytest.raises(
-        InvalidArgument,
-        match="Hypothesis doesn't know how to run async test functions",
-    ):
-        foo()
-
-
-@pytest.mark.parametrize("setting_name", all_settings)
-def test_suggests_at_settings_if_extra_kwarg_matches_setting_name(setting_name):
-    val = 1
-
-    # dynamically create functions with an extra kwarg argument which happens to
-    # match a settings variable. The user probably meant @settings.
-    # exec is pretty cursed here, but it does work.
-    namespace = {}
-    exec(
-        f"""
-@given(a=1, {setting_name}={val})
-def foo(a):
-    pass
-    """,
-        globals(),
-        namespace,
-    )
-
-    with pytest.raises(
-        InvalidArgument,
-        match=rf"Did you mean @settings\({setting_name}={val}\)\?",
-    ):
-        namespace["foo"]()
+        @hegel.test(database="")
+        async def foo(tc):
+            tc.draw(gs.booleans())

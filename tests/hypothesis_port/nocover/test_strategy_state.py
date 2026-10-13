@@ -1,3 +1,6 @@
+# Dropped from the Hypothesis original: the clear_database/set_database rules and teardown
+# (InMemoryExampleDatabase); complex_numbers(), decimals() and fractions() from the base
+# strategies (no hegel generator); the __main__ runner.
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -13,28 +16,8 @@ import math
 import struct
 from random import Random
 
-from hegel.hypothesis import Verbosity, assume, settings
-from hegel.hypothesis.database import InMemoryExampleDatabase
-from hegel.hypothesis.stateful import Bundle, RuleBasedStateMachine, rule
-from hegel.hypothesis.strategies import (
-    binary,
-    booleans,
-    complex_numbers,
-    data,
-    decimals,
-    floats,
-    fractions,
-    integers,
-    just,
-    lists,
-    none,
-    sampled_from,
-    text,
-    tuples,
-)
-
-
-PYPY = False
+import hegel
+from hegel import generators as gs
 
 
 def clamp(lower, value, upper):
@@ -53,101 +36,94 @@ def is_negative(value):
     return math.copysign(1.0, value) < 0
 
 
-class HypothesisSpec(RuleBasedStateMachine):
-    def __init__(self):
-        super().__init__()
-        self.database = None
+class HypothesisSpec(hegel.StateMachine):
+    steps = 50
 
-    strategies = Bundle("strategy")
-    strategy_tuples = Bundle("tuples")
-    objects = Bundle("objects")
-    basic_data = Bundle("basic")
-    varied_floats = Bundle("varied_floats")
+    def __init__(self, tc):
+        self.strategies = hegel.Pool(tc)
+        self.strategy_tuples = hegel.Pool(tc)
+        self.objects = hegel.Pool(tc)
+        self.varied_floats = hegel.Pool(tc)
 
-    def teardown(self):
-        self.clear_database()
-
-    @rule()
-    def clear_database(self):
-        if self.database is not None:
-            self.database = None
-
-    @rule()
-    def set_database(self):
-        self.teardown()
-        self.database = InMemoryExampleDatabase()
-
-    @rule(
-        target=strategies,
-        spec=sampled_from(
-            (
-                integers(),
-                booleans(),
-                floats(),
-                complex_numbers(),
-                fractions(),
-                decimals(),
-                text(),
-                binary(),
-                none(),
-                tuples(),
+    @hegel.rule()
+    def strategy(self, tc):
+        spec = tc.draw(
+            gs.sampled_from(
+                (
+                    gs.integers(),
+                    gs.booleans(),
+                    gs.floats(),
+                    gs.text(),
+                    gs.binary(),
+                    gs.none(),
+                    gs.tuples(),
+                )
             )
-        ),
-    )
-    def strategy(self, spec):
-        return spec
+        )
+        self.strategies.add(spec)
 
-    @rule(target=strategies, values=lists(integers() | text(), min_size=1))
-    def sampled_from_strategy(self, values):
-        return sampled_from(values)
+    @hegel.rule()
+    def sampled_from_strategy(self, tc):
+        values = tc.draw(gs.lists(gs.integers() | gs.text(), min_size=1))
+        self.strategies.add(gs.sampled_from(values))
 
-    @rule(target=strategies, spec=strategy_tuples)
-    def strategy_for_tupes(self, spec):
-        return tuples(*spec)
+    @hegel.rule()
+    def strategy_for_tupes(self, tc):
+        spec = tc.draw(self.strategy_tuples.values_reusable())
+        self.strategies.add(gs.tuples(*spec))
 
-    @rule(target=strategies, source=strategies, level=integers(1, 10), mixer=text())
-    def filtered_strategy(self, source, level, mixer):
+    @hegel.rule()
+    def filtered_strategy(self, tc):
+        source = tc.draw(self.strategies.values_reusable())
+        level = tc.draw(gs.integers(1, 10))
+        mixer = tc.draw(gs.text())
+
         def is_good(x):
             seed = hashlib.sha384((mixer + repr(x)).encode()).digest()
             return bool(Random(seed).randint(0, level))
 
-        return source.filter(is_good)
+        self.strategies.add(source.filter(is_good))
 
-    @rule(target=strategies, elements=strategies)
-    def list_strategy(self, elements):
-        return lists(elements)
+    @hegel.rule()
+    def list_strategy(self, tc):
+        elements = tc.draw(self.strategies.values_reusable())
+        self.strategies.add(gs.lists(elements))
 
-    @rule(target=strategies, left=strategies, right=strategies)
-    def or_strategy(self, left, right):
-        return left | right
+    @hegel.rule()
+    def or_strategy(self, tc):
+        left = tc.draw(self.strategies.values_reusable())
+        right = tc.draw(self.strategies.values_reusable())
+        self.strategies.add(left | right)
 
-    @rule(target=varied_floats, source=floats())
-    def float(self, source):
-        return source
+    @hegel.rule()
+    def float(self, tc):
+        self.varied_floats.add(tc.draw(gs.floats()))
 
-    @rule(target=varied_floats, source=varied_floats, offset=integers(-100, 100))
-    def adjust_float(self, source, offset):
-        return int_to_float(clamp(0, float_to_int(source) + offset, 2**64 - 1))
+    @hegel.rule()
+    def adjust_float(self, tc):
+        source = tc.draw(self.varied_floats.values_reusable())
+        offset = tc.draw(gs.integers(-100, 100))
+        self.varied_floats.add(int_to_float(clamp(0, float_to_int(source) + offset, 2**64 - 1)))
 
-    @rule(target=strategies, left=varied_floats, right=varied_floats)
-    def float_range(self, left, right):
-        assume(math.isfinite(left) and math.isfinite(right))
+    @hegel.rule()
+    def float_range(self, tc):
+        left = tc.draw(self.varied_floats.values_reusable())
+        right = tc.draw(self.varied_floats.values_reusable())
+        tc.assume(math.isfinite(left) and math.isfinite(right))
         left, right = sorted((left, right))
         assert left <= right
         # exclude deprecated case where left = 0.0 and right = -0.0
-        assume(left or right or not (is_negative(right) and not is_negative(left)))
-        return floats(left, right)
+        tc.assume(left or right or not (is_negative(right) and not is_negative(left)))
+        self.strategies.add(gs.floats(left, right))
 
-    @rule(
-        target=strategies,
-        source=strategies,
-        result1=strategies,
-        result2=strategies,
-        mixer=text(),
-        p=floats(0, 1),
-    )
-    def flatmapped_strategy(self, source, result1, result2, mixer, p):
-        assume(result1 is not result2)
+    @hegel.rule()
+    def flatmapped_strategy(self, tc):
+        source = tc.draw(self.strategies.values_reusable())
+        result1 = tc.draw(self.strategies.values_reusable())
+        result2 = tc.draw(self.strategies.values_reusable())
+        mixer = tc.draw(gs.text())
+        p = tc.draw(gs.floats(0, 1))
+        tc.assume(result1 is not result2)
 
         def do_map(value):
             rep = repr(value)
@@ -157,44 +133,40 @@ class HypothesisSpec(RuleBasedStateMachine):
             else:
                 return result2
 
-        return source.flatmap(do_map)
+        self.strategies.add(source.flat_map(do_map))
 
-    @rule(target=strategies, value=objects)
-    def just_strategy(self, value):
-        return just(value)
+    @hegel.rule()
+    def just_strategy(self, tc):
+        value = tc.draw(self.objects.values_reusable())
+        self.strategies.add(gs.just(value))
 
-    @rule(target=strategy_tuples, source=strategies)
-    def single_tuple(self, source):
-        return (source,)
+    @hegel.rule()
+    def single_tuple(self, tc):
+        source = tc.draw(self.strategies.values_reusable())
+        self.strategy_tuples.add((source,))
 
-    @rule(target=strategy_tuples, left=strategy_tuples, right=strategy_tuples)
-    def cat_tuples(self, left, right):
-        return left + right
+    @hegel.rule()
+    def cat_tuples(self, tc):
+        left = tc.draw(self.strategy_tuples.values_reusable())
+        right = tc.draw(self.strategy_tuples.values_reusable())
+        self.strategy_tuples.add(left + right)
 
-    @rule(target=objects, strat=strategies, data=data())
-    def get_example(self, strat, data):
-        data.draw(strat)
+    @hegel.rule()
+    def get_example(self, tc):
+        strat = tc.draw(self.strategies.values_reusable())
+        self.objects.add(tc.draw(strat))
 
-    @rule(target=strategies, left=integers(), right=integers())
-    def integer_range(self, left, right):
+    @hegel.rule()
+    def integer_range(self, tc):
+        left = tc.draw(gs.integers())
+        right = tc.draw(gs.integers())
         left, right = sorted((left, right))
-        return integers(left, right)
+        self.strategies.add(gs.integers(left, right))
 
-    @rule(strat=strategies)
-    def repr_is_good(self, strat):
+    @hegel.rule()
+    def repr_is_good(self, tc):
+        strat = tc.draw(self.strategies.values_reusable())
         assert " at 0x" not in repr(strat)
 
 
-MAIN = __name__ == "__main__"
-
-TestHypothesis = HypothesisSpec.TestCase
-
-TestHypothesis.settings = settings(
-    TestHypothesis.settings,
-    stateful_step_count=10 if PYPY else 50,
-    verbosity=max(TestHypothesis.settings.verbosity, Verbosity.verbose),
-    max_examples=10000 if MAIN else 200,
-)
-
-if MAIN:
-    TestHypothesis().runTest()
+test_Hypothesis = hegel.state_machine_test(HypothesisSpec, test_cases=200)

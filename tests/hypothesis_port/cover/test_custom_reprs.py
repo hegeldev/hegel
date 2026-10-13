@@ -1,3 +1,6 @@
+# Dropped from the Hypothesis original: test_sampled_repr_leaves_range_as_range
+# (sampled_from of a huge range); test_as_created_reprs_fallback_for_distinct_calls_same_obj
+# (Hypothesis's identity tracking of values returned by distinct calls).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -9,28 +12,23 @@
 # obtain one at https://mozilla.org/MPL/2.0/.
 
 import hashlib
-import re
 
 import pytest
 
-from hegel.hypothesis import Phase, given, settings, strategies as st
-from hegel.hypothesis.strategies._base import unwrap_strategies
+import hegel
+from hegel import generators as gs
+from tests.helpers import notes
 
 
 def _get_output(test_fn):
     with pytest.raises(AssertionError) as err:
         test_fn()
-    return "\n".join(err.value.__notes__).strip()
+    return "\n".join(notes(err.value)).strip()
 
 
 def test_includes_non_default_args_in_repr():
-    assert repr(st.integers()) == "integers()"
-    assert repr(st.integers(min_value=1)) == "integers(min_value=1)"
-
-
-def test_sampled_repr_leaves_range_as_range():
-    huge = 10**100
-    assert repr(st.sampled_from(range(huge))) == f"sampled_from(range(0, {huge}))"
+    assert repr(gs.integers()) == "integers()"
+    assert repr(gs.integers(min_value=1)) == "integers(min_value=1)"
 
 
 def hi(there, stuff):
@@ -38,18 +36,19 @@ def hi(there, stuff):
 
 
 def test_supports_positional_and_keyword_args_in_builds():
+    # Hegel quotes the target's name.
     assert (
-        repr(st.builds(hi, st.integers(), there=st.booleans()))
-        == "builds(hi, integers(), there=booleans())"
+        repr(gs.builds(hi, gs.integers(), there=gs.booleans()))
+        == "builds('hi', integers(), there=booleans())"
     )
 
 
 @pytest.mark.xfail(
-    strict=True, reason="sampled_from is built eagerly, so its repr shows the copied tuple"
+    strict=True, reason="sampled_from copies its elements into a list, so its repr shows a list"
 )
 def test_preserves_sequence_type_of_argument():
-    assert repr(st.sampled_from([0, 1])) == "sampled_from([0, 1])"
-    assert repr(st.sampled_from((0, 1))) == "sampled_from((0, 1))"
+    assert repr(gs.sampled_from([0, 1])) == "sampled_from([0, 1])"
+    assert repr(gs.sampled_from((0, 1))) == "sampled_from((0, 1))"
 
 
 class IHaveABadRepr:
@@ -59,24 +58,25 @@ class IHaveABadRepr:
 
 def test_errors_are_deferred_until_repr_is_calculated():
     s = (
-        st.builds(
+        gs.builds(
             lambda x, y: 1,
-            st.just(IHaveABadRepr()),
-            y=st.one_of(st.sampled_from((IHaveABadRepr(),)), st.just(IHaveABadRepr())),
+            gs.just(IHaveABadRepr()),
+            y=gs.one_of(gs.sampled_from((IHaveABadRepr(),)), gs.just(IHaveABadRepr())),
         )
         .map(lambda t: t)
         .filter(lambda t: True)
-        .flatmap(lambda t: st.just(IHaveABadRepr()))
+        .flat_map(lambda t: gs.just(IHaveABadRepr()))
     )
 
     with pytest.raises(ValueError):
         repr(s)
 
 
-@given(st.iterables(st.integers()))
-def test_iterables_repr_is_useful(it):
-    # fairly hard-coded but useful; also ensures _values are inexhaustible
-    assert repr(it) == f"iter({it._values!r})"
+@hegel.test
+def test_iterables_repr_is_useful(tc):
+    it = tc.draw(gs.iterables(gs.integers()))
+    # fairly hard-coded but useful; also ensures the values are inexhaustible
+    assert repr(it) == f"iter({list(it)!r})"
 
 
 class Foo:
@@ -88,26 +88,26 @@ class Bar(Foo):
     pass
 
 
-@pytest.mark.skip(reason="needs the syrupy snapshot fixture")
-def test_reprs_as_created(snapshot):
-    @given(foo=st.builds(Foo), bar=st.from_type(Bar), baz=st.none().map(Foo))
-    @settings(print_blob=False, max_examples=10_000, derandomize=True)
-    def inner(foo, bar, baz):
+def test_reprs_as_created():
+    @hegel.test(print_blob=False, test_cases=10_000, derandomize=True)
+    def inner(tc):
+        foo = tc.draw(gs.builds(Foo))
+        bar = tc.draw(gs.from_type(Bar))
+        baz = tc.draw(gs.none().map(Foo))
         assert baz.x is None
         assert foo.x <= 0 or bar.x >= 0
 
-    assert _get_output(inner) == snapshot
+    output = _get_output(inner)
+    assert output.startswith("Falsifying example:\nfoo = Foo(x=1)\nbar = Bar(x=-1)\nbaz = <")
 
 
-@pytest.mark.skip(reason="needs the syrupy snapshot fixture")
-def test_reprs_as_created_interactive(snapshot):
-    @given(st.data())
-    @settings(print_blob=False, max_examples=10_000)
-    def inner(data):
-        bar = data.draw(st.builds(Bar, st.just(10)))
+def test_reprs_as_created_interactive():
+    @hegel.test(print_blob=False, test_cases=10_000)
+    def inner(tc):
+        bar = tc.draw(gs.builds(Bar, gs.just(10)))
         assert not bar.x
 
-    assert _get_output(inner) == snapshot
+    assert _get_output(inner) == "Falsifying example:\nbar = Bar(10)"
 
 
 CONSTANT_FOO = Foo(None)
@@ -117,109 +117,102 @@ def some_foo(*_):
     return CONSTANT_FOO
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel prints the call that created a value even when distinct calls return the same object",
-)
-def test_as_created_reprs_fallback_for_distinct_calls_same_obj():
-    # If we have *different* calls which return the *same* object, we skip our
-    # nice repr because it's unclear which one we should use.
-    @given(st.builds(some_foo), st.builds(some_foo, st.none()))
-    @settings(print_blob=False, max_examples=10_000)
-    def inner(a, b):
-        assert a is not b
-
-    with pytest.raises(AssertionError) as err:
-        inner()
-    expected_re = r"""
-Failing test case: inner\(
-    a=<.*Foo object at 0x[0-9A-Fa-f]+>,
-    b=<.*Foo object at 0x[0-9A-Fa-f]+>,
-\)
-""".strip()
-    got = "\n".join(err.value.__notes__).strip()
-    assert re.fullmatch(expected_re, got), got
-
-
-@pytest.mark.skip(reason="needs the syrupy snapshot fixture")
-def test_reprs_as_created_consistent_calls_despite_indentation(snapshot):
+def test_reprs_as_created_consistent_calls_despite_indentation():
     aas = "a" * 60
-    strat = st.builds(some_foo, st.just(aas))
+    strat = gs.builds(some_foo, gs.just(aas))
 
     # If we have multiple calls which return the same object, we can print their
     # nice repr even if varying indentation means that they'll come out different!
-    @given(strat, st.builds(Bar, strat))
-    @settings(print_blob=False, max_examples=10_000)
-    def inner(a, b):
+    @hegel.test(print_blob=False, test_cases=10_000)
+    def inner(tc):
+        a = tc.draw(strat)
+        b = tc.draw(gs.builds(Bar, strat))
         assert a == b
 
-    assert _get_output(inner) == snapshot
+    assert _get_output(inner) == (
+        f"Falsifying example:\na = some_foo({aas!r})\nb = Bar(some_foo({aas!r}))"
+    )
+
+
+_no_arg_repr = pytest.mark.xfail(
+    strict=True, reason="Hegel's characters() generator does not repr its arguments"
+)
 
 
 @pytest.mark.parametrize(
     "strategy, expected_repr",
     [
-        (st.characters(), "characters()"),
-        (st.characters(codec="utf-8"), "characters(codec='utf-8')"),
-        (st.characters(min_codepoint=65), "characters(min_codepoint=65)"),
-        (st.characters(max_codepoint=127), "characters(max_codepoint=127)"),
-        (st.characters(categories=["Lu", "Ll"]), "characters(categories=('Lu', 'Ll'))"),
-        (
-            st.characters(exclude_characters="abc"),
+        (gs.characters(), "characters()"),
+        pytest.param(gs.characters(codec="utf-8"), "characters(codec='utf-8')", marks=_no_arg_repr),
+        pytest.param(
+            gs.characters(min_codepoint=65), "characters(min_codepoint=65)", marks=_no_arg_repr
+        ),
+        pytest.param(
+            gs.characters(max_codepoint=127), "characters(max_codepoint=127)", marks=_no_arg_repr
+        ),
+        pytest.param(
+            gs.characters(categories=["Lu", "Ll"]),
+            "characters(categories=('Lu', 'Ll'))",
+            marks=_no_arg_repr,
+        ),
+        pytest.param(
+            gs.characters(exclude_characters="abc"),
             "characters(exclude_characters='abc')",
+            marks=_no_arg_repr,
         ),
-        (
-            st.characters(min_codepoint=65, max_codepoint=90),
+        pytest.param(
+            gs.characters(min_codepoint=65, max_codepoint=90),
             "characters(min_codepoint=65, max_codepoint=90)",
+            marks=_no_arg_repr,
         ),
-        (
-            st.characters(codec="ascii", min_codepoint=32, max_codepoint=126),
+        pytest.param(
+            gs.characters(codec="ascii", min_codepoint=32, max_codepoint=126),
             "characters(min_codepoint=32, max_codepoint=126)",
+            marks=_no_arg_repr,
         ),
-        (
-            st.characters(categories=["Lu"], exclude_characters="AZ"),
+        pytest.param(
+            gs.characters(categories=["Lu"], exclude_characters="AZ"),
             "characters(categories=('Lu',), exclude_characters='AZ')",
+            marks=_no_arg_repr,
         ),
     ],
 )
-@pytest.mark.xfail(strict=False, reason="Hegel's Characters generator does not repr its arguments")
 def test_characters_repr(strategy, expected_repr):
-    assert repr(unwrap_strategies(strategy)) == expected_repr
+    assert repr(strategy) == expected_repr
 
 
-@pytest.mark.skip(reason="needs the syrupy snapshot fixture")
-def test_map_to_str_prints_as_repr(snapshot):
-    @given(s=st.integers().map(str))
-    @settings(phases=[Phase.generate, Phase.shrink], print_blob=False)
-    def inner(s):
+def test_map_to_str_prints_as_repr():
+    @hegel.test(phases=[hegel.Phase.generate, hegel.Phase.shrink], print_blob=False)
+    def inner(tc):
+        s = tc.draw(gs.integers().map(str))  # noqa: F841 (names the draw)
         raise AssertionError
 
-    assert _get_output(inner) == snapshot
+    assert _get_output(inner) == "Falsifying example:\ns = '0'"
 
 
-@pytest.mark.skip(reason="needs the syrupy snapshot fixture")
-def test_map_to_bytes_prints_as_repr(snapshot):
-    @given(b=st.binary().map(lambda b: hashlib.sha256(b).digest()))
-    @settings(phases=[Phase.generate, Phase.shrink], print_blob=False)
-    def inner(b):
+def test_map_to_bytes_prints_as_repr():
+    @hegel.test(phases=[hegel.Phase.generate, hegel.Phase.shrink], print_blob=False)
+    def inner(tc):
+        b = tc.draw(gs.binary().map(lambda b: hashlib.sha256(b).digest()))  # noqa: F841
         raise AssertionError
 
-    assert _get_output(inner) == snapshot
+    digest = hashlib.sha256(b"").digest()
+    assert _get_output(inner) == f"Falsifying example:\nb = {digest!r}"
 
 
-@pytest.mark.skip(reason="needs the syrupy snapshot fixture")
-def test_invalid_call_syntax_falls_back_to_repr(snapshot):
+def test_invalid_call_syntax_falls_back_to_repr():
     # When the call-style repr (e.g. "a b()") is invalid Python syntax but
-    # repr(obj) is valid, we should fall back to using repr(obj).
+    # repr(obj) is valid, Hypothesis falls back to using repr(obj); Hegel
+    # prints the call regardless.
     _BadName = type(
         "a b",
         (),
         {"__repr__": lambda self: "'hello world'"},
     )
 
-    @given(x=st.builds(_BadName))
-    @settings(phases=[Phase.generate, Phase.shrink], print_blob=False)
-    def inner(x):
+    @hegel.test(phases=[hegel.Phase.generate, hegel.Phase.shrink], print_blob=False)
+    def inner(tc):
+        x = tc.draw(gs.builds(_BadName))  # noqa: F841 (names the draw)
         raise AssertionError
 
-    assert _get_output(inner) == snapshot
+    assert _get_output(inner) == "Falsifying example:\nx = a b()"

@@ -8,18 +8,20 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+# Dropped from the Hypothesis original: the width=16 cases of
+# test_does_not_generate_subnormals_when_disallowed (floats(width=16)).
+
 import math
 from sys import float_info
 
 import pytest
 
-from hegel.hypothesis.strategies import floats
-
+from hegel import generators as gs
 from tests.hypothesis_port.common.debug import assert_all_examples, find_any
 
 PYTHON_FTZ = math.nextafter(float_info.min, 0.0) == 0.0
 
-width_smallest_normals = {16: 2**-14, 32: 2**-126, 64: 2**-1022}.__getitem__
+width_smallest_normals = {32: 2**-126, 64: 2**-1022}.__getitem__
 
 
 def test_python_compiled_with_sane_math_options():
@@ -37,15 +39,15 @@ skipif_ftz = pytest.mark.skipif(PYTHON_FTZ, reason="broken by unsafe compiler fl
 
 @skipif_ftz
 def test_can_generate_subnormals():
-    find_any(floats().filter(lambda x: x > 0), lambda x: x < float_info.min)
-    find_any(floats().filter(lambda x: x < 0), lambda x: x > -float_info.min)
+    find_any(gs.floats().filter(lambda x: x > 0), lambda x: x < float_info.min)
+    find_any(gs.floats().filter(lambda x: x < 0), lambda x: x > -float_info.min)
 
 
 @skipif_ftz
 @pytest.mark.parametrize("min_value, max_value", [(None, None), (-1, 0), (0, 1), (-1, 1)])
-@pytest.mark.parametrize("width", [16, 32, 64])
+@pytest.mark.parametrize("width", [32, 64])
 def test_does_not_generate_subnormals_when_disallowed(width, min_value, max_value):
-    strat = floats(
+    strat = gs.floats(
         min_value=min_value,
         max_value=max_value,
         allow_subnormal=False,

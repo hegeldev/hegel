@@ -8,16 +8,17 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-from hegel.hypothesis import given, settings, strategies as st
+import hegel
+from hegel import generators as gs
 
 
 def test_biases_towards_boundary_values():
     trillion = 10**12
     boundary_vals = {-trillion, -trillion + 1, trillion - 1, trillion}
 
-    @given(st.integers(-trillion, trillion))
-    @settings(max_examples=1000)
-    def f(n):
+    @hegel.test(test_cases=1000)
+    def f(tc):
+        n = tc.draw(gs.integers(-trillion, trillion))
         boundary_vals.discard(n)
 
     f()

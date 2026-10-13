@@ -8,14 +8,16 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+# Dropped from the Hypothesis original: test_float16_can_exclude_infinity, the
+# width=16 cases of test_out_of_range and test_fuzzing_floats_bounds (floats(width=16)).
+
 import math
 import sys
-import warnings
 
 import pytest
 
-from hegel.hypothesis import assume, given, strategies as st
-from hegel.hypothesis.errors import InvalidArgument
+import hegel
+from hegel import generators as gs
 from tests.hypothesis_port.common.compat import (
     float_of,
     float_to_int,
@@ -24,14 +26,7 @@ from tests.hypothesis_port.common.compat import (
     next_down,
     next_up,
 )
-
 from tests.hypothesis_port.common.debug import find_any, minimal
-from tests.hypothesis_port.common.utils import Why, xfail_on_crosshair
-
-try:
-    import numpy
-except ImportError:
-    numpy = None
 
 
 @pytest.mark.parametrize(
@@ -42,15 +37,15 @@ except ImportError:
         (-sys.float_info.max, sys.float_info.max),
     ],
 )
-@given(data=st.data())
-def test_floats_are_in_range(data, lower, upper):
-    t = data.draw(st.floats(lower, upper))
+@hegel.test
+def test_floats_are_in_range(tc, lower, upper):
+    t = tc.draw(gs.floats(lower, upper))
     assert lower <= t <= upper
 
 
 @pytest.mark.parametrize("sign", [-1, 1])
 def test_can_generate_both_zeros(sign):
-    assert minimal(st.floats(), lambda x: math.copysign(1, x) == sign) == sign * 0.0
+    assert minimal(gs.floats(), lambda x: math.copysign(1, x) == sign) == sign * 0.0
 
 
 @pytest.mark.parametrize(
@@ -59,59 +54,65 @@ def test_can_generate_both_zeros(sign):
 )
 @pytest.mark.parametrize("sign", [-1, 1])
 def test_can_generate_both_zeros_when_in_interval(l, r, sign):
-    assert minimal(st.floats(l, r), lambda x: math.copysign(1, x) == sign) == sign * 0.0
+    assert minimal(gs.floats(l, r), lambda x: math.copysign(1, x) == sign) == sign * 0.0
 
 
-@given(st.floats(0.0, 1.0))
-def test_does_not_generate_negative_if_right_boundary_is_positive(x):
+@hegel.test
+def test_does_not_generate_negative_if_right_boundary_is_positive(tc):
+    x = tc.draw(gs.floats(0.0, 1.0))
     assert math.copysign(1, x) == 1
 
 
-@given(st.floats(-1.0, -0.0))
-def test_does_not_generate_positive_if_right_boundary_is_negative(x):
+@hegel.test
+def test_does_not_generate_positive_if_right_boundary_is_negative(tc):
+    x = tc.draw(gs.floats(-1.0, -0.0))
     assert math.copysign(1, x) == -1
 
 
 def test_half_bounded_generates_zero():
-    find_any(st.floats(min_value=-1.0), lambda x: x == 0.0)
-    find_any(st.floats(max_value=1.0), lambda x: x == 0.0)
+    find_any(gs.floats(min_value=-1.0), lambda x: x == 0.0)
+    find_any(gs.floats(max_value=1.0), lambda x: x == 0.0)
 
 
-@given(st.floats(max_value=-0.0))
-def test_half_bounded_respects_sign_of_upper_bound(x):
+@hegel.test
+def test_half_bounded_respects_sign_of_upper_bound(tc):
+    x = tc.draw(gs.floats(max_value=-0.0))
     assert math.copysign(1, x) == -1
 
 
-@given(st.floats(min_value=0.0))
-def test_half_bounded_respects_sign_of_lower_bound(x):
+@hegel.test
+def test_half_bounded_respects_sign_of_lower_bound(tc):
+    x = tc.draw(gs.floats(min_value=0.0))
     assert math.copysign(1, x) == 1
 
 
-@given(st.floats(allow_nan=False))
-def test_filter_nan(x):
+@hegel.test
+def test_filter_nan(tc):
+    x = tc.draw(gs.floats(allow_nan=False))
     assert not math.isnan(x)
 
 
-@given(st.floats(allow_infinity=False))
-def test_filter_infinity(x):
+@hegel.test
+def test_filter_infinity(tc):
+    x = tc.draw(gs.floats(allow_infinity=False))
     assert not math.isinf(x)
 
 
 def test_can_guard_against_draws_of_nan():
     """In this test we create a NaN value that naturally "tries" to shrink into
-    the first strategy, where it is not permitted. This tests a case that is
+    the first generator, where it is not permitted. This tests a case that is
     very unlikely to happen in random generation: When the unconstrained first
     branch of generating a float just happens to produce a NaN value.
 
-    Here what happens is that we get a NaN from the *second* strategy,
+    Here what happens is that we get a NaN from the *second* generator,
     but this then shrinks into its unconstrained branch. The natural
     thing to happen is then to try to zero the branch parameter of the
     one_of, but that will put an illegal value there, so it's not
     allowed to happen.
     """
-    tagged_floats = st.one_of(
-        st.tuples(st.just(0), st.floats(allow_nan=False)),
-        st.tuples(st.just(1), st.floats(allow_nan=True)),
+    tagged_floats = gs.one_of(
+        gs.tuples(gs.just(0), gs.floats(allow_nan=False)),
+        gs.tuples(gs.just(1), gs.floats(allow_nan=True)),
     )
 
     tag, _f = minimal(tagged_floats, lambda x: math.isnan(x[1]))
@@ -123,15 +124,17 @@ def test_very_narrow_interval():
     lower_bound = int_to_float(float_to_int(upper_bound) + 10)
     assert lower_bound < upper_bound
 
-    @given(st.floats(lower_bound, upper_bound))
-    def test(f):
+    @hegel.test
+    def test(tc):
+        f = tc.draw(gs.floats(lower_bound, upper_bound))
         assert lower_bound <= f <= upper_bound
 
     test()
 
 
-@given(st.floats())
-def test_up_means_greater(x):
+@hegel.test
+def test_up_means_greater(tc):
+    x = tc.draw(gs.floats())
     hi = next_up(x)
     if not x < hi:
         assert (
@@ -141,8 +144,9 @@ def test_up_means_greater(x):
         )
 
 
-@given(st.floats())
-def test_down_means_lesser(x):
+@hegel.test
+def test_down_means_lesser(tc):
+    x = tc.draw(gs.floats())
     lo = next_down(x)
     if not x > lo:
         assert (
@@ -152,27 +156,22 @@ def test_down_means_lesser(x):
         )
 
 
-@given(st.floats(allow_nan=False, allow_infinity=False))
-def test_updown_roundtrip(val):
+@hegel.test
+def test_updown_roundtrip(tc):
+    val = tc.draw(gs.floats(allow_nan=False, allow_infinity=False))
     assert val == next_up(next_down(val))
     assert val == next_down(next_up(val))
 
 
-@given(st.floats(width=32, allow_infinity=False))
-def test_float32_can_exclude_infinity(x):
-    assert not math.isinf(x)
-
-
-@given(st.floats(width=16, allow_infinity=False))
-def test_float16_can_exclude_infinity(x):
+@hegel.test
+def test_float32_can_exclude_infinity(tc):
+    x = tc.draw(gs.floats(width=32, allow_infinity=False))
     assert not math.isinf(x)
 
 
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"min_value": 10**5, "width": 16},
-        {"max_value": 10**5, "width": 16},
         {"min_value": 10**40, "width": 32},
         {"max_value": 10**40, "width": 32},
         {"min_value": 10**400, "width": 64},
@@ -183,100 +182,115 @@ def test_float16_can_exclude_infinity(x):
 )
 def test_out_of_range(kwargs):
     with pytest.raises(OverflowError):
-        st.floats(**kwargs).validate()
+        gs.floats(**kwargs)
 
 
 def test_disallowed_width():
-    with pytest.raises(InvalidArgument):
-        st.floats(width=128).validate()
+    with pytest.raises(hegel.InvalidArgument):
+        gs.floats(width=128)
 
 
 def test_no_single_floats_in_range():
     low = 2.0**25 + 1
     high = low + 2
-    st.floats(low, high).validate()  # Note: OK for 64bit floats
-    with warnings.catch_warnings():
-        # Unrepresentable bounds are deprecated, but we're not testing that here
-        warnings.simplefilter("ignore")
-        with pytest.raises(InvalidArgument):
-            st.floats(low, high, width=32).validate()
+    gs.floats(low, high)  # Note: OK for 64bit floats
+    with pytest.raises(hegel.InvalidArgument):
+        gs.floats(low, high, width=32)
 
 
-# If the floats() strategy adds random floats to a value as large as 10^304
+# If the floats() generator adds random floats to a value as large as 10^304
 # without handling overflow, we are very likely to generate infinity.
-@given(st.floats(min_value=1e304, allow_infinity=False))
-def test_finite_min_bound_does_not_overflow(x):
+@hegel.test
+def test_finite_min_bound_does_not_overflow(tc):
+    x = tc.draw(gs.floats(min_value=1e304, allow_infinity=False))
     assert not math.isinf(x)
 
 
-@given(st.floats(max_value=-1e304, allow_infinity=False))
-def test_finite_max_bound_does_not_overflow(x):
+@hegel.test
+def test_finite_max_bound_does_not_overflow(tc):
+    x = tc.draw(gs.floats(max_value=-1e304, allow_infinity=False))
     assert not math.isinf(x)
 
 
-@given(st.floats(0, 1, exclude_min=True, exclude_max=True))
-def test_can_exclude_endpoints(x):
+@hegel.test
+def test_can_exclude_endpoints(tc):
+    x = tc.draw(gs.floats(0, 1, exclude_min=True, exclude_max=True))
     assert 0 < x < 1
 
 
-@given(st.floats(-math.inf, -1e307, exclude_min=True))
-def test_can_exclude_neg_infinite_endpoint(x):
+@hegel.test
+def test_can_exclude_neg_infinite_endpoint(tc):
+    x = tc.draw(gs.floats(-math.inf, -1e307, exclude_min=True))
     assert not math.isinf(x)
 
 
-@given(st.floats(1e307, math.inf, exclude_max=True))
-def test_can_exclude_pos_infinite_endpoint(x):
+@hegel.test
+def test_can_exclude_pos_infinite_endpoint(tc):
+    x = tc.draw(gs.floats(1e307, math.inf, exclude_max=True))
     assert not math.isinf(x)
 
 
 def test_exclude_infinite_endpoint_is_invalid():
-    with pytest.raises(InvalidArgument):
-        st.floats(min_value=math.inf, exclude_min=True).validate()
-    with pytest.raises(InvalidArgument):
-        st.floats(max_value=-math.inf, exclude_max=True).validate()
+    with pytest.raises(hegel.InvalidArgument):
+        gs.floats(min_value=math.inf, exclude_min=True)
+    with pytest.raises(hegel.InvalidArgument):
+        gs.floats(max_value=-math.inf, exclude_max=True)
 
 
 @pytest.mark.parametrize("lo,hi", [(True, False), (False, True), (True, True)])
-@given(bound=st.floats(allow_nan=False, allow_infinity=False).filter(bool))
-def test_exclude_entire_interval(lo, hi, bound):
-    with pytest.raises(InvalidArgument, match=r"exclude_min=.+ and exclude_max="):
-        st.floats(bound, bound, exclude_min=lo, exclude_max=hi).validate()
+@hegel.test
+def test_exclude_entire_interval(tc, lo, hi):
+    bound = tc.draw(gs.floats(allow_nan=False, allow_infinity=False).filter(bool))
+    with pytest.raises(hegel.InvalidArgument, match=r"exclude_min/exclude_max leave no"):
+        gs.floats(bound, bound, exclude_min=lo, exclude_max=hi)
 
 
 def test_zero_intervals_are_OK():
-    st.floats(0.0, 0.0).validate()
-    st.floats(-0.0, 0.0).validate()
-    st.floats(-0.0, -0.0).validate()
+    gs.floats(0.0, 0.0)
+    gs.floats(-0.0, 0.0)
+    gs.floats(-0.0, -0.0)
 
 
 @pytest.mark.parametrize("lo", [0.0, -0.0])
 @pytest.mark.parametrize("hi", [0.0, -0.0])
 @pytest.mark.parametrize("exmin,exmax", [(True, False), (False, True), (True, True)])
 def test_cannot_exclude_endpoint_with_zero_interval(lo, hi, exmin, exmax):
-    with pytest.raises(InvalidArgument):
-        st.floats(lo, hi, exclude_min=exmin, exclude_max=exmax).validate()
+    with pytest.raises(hegel.InvalidArgument):
+        gs.floats(lo, hi, exclude_min=exmin, exclude_max=exmax)
 
 
-WIDTHS = (64, 32, 16)
+WIDTHS = (64, 32)
 
 
-# crosshair-tool 0.0.109 can realize a symbolic float to a rational that is not
-# representable as an IEEE double (e.g. 1 + 2**-1064 when constrained to != 1);
-# converting it to a concrete float then rounds to the excluded value, so the
-# bounds-validation in st.floats() raises a spurious InvalidArgument.  Remove
-# once a fixed crosshair-tool is pinned.
-@xfail_on_crosshair(Why.other, strict=False)
-@pytest.mark.parametrize("nonfloat", [st.nothing(), st.none()])
-@given(data=st.data(), width=st.sampled_from(WIDTHS))
-def test_fuzzing_floats_bounds(data, width, nonfloat):
-    lo = data.draw(nonfloat | st.floats(allow_nan=False, width=width), label="lo")
-    hi = data.draw(nonfloat | st.floats(allow_nan=False, width=width), label="hi")
+@pytest.mark.xfail(
+    strict=True,
+    raises=(hegel.InternalError, hegel.InvalidArgument),
+    reason="the engine cannot draw from an interval whose only value is an infinity: "
+    "floats(inf, inf) is an InternalError (FloatChoice::simplest: no valid float for this "
+    "choice) at width 64, and at width 32 the bound is clamped to the largest finite float "
+    "and rejected as min_value (inf) > max_value",
+)
+@pytest.mark.parametrize("width", WIDTHS)
+@pytest.mark.parametrize("bound", [math.inf, -math.inf])
+def test_interval_of_a_single_infinity(bound, width):
+    assert find_any(gs.floats(bound, bound, width=width)) == bound
+
+
+@pytest.mark.parametrize("nonfloat", [gs.nothing(), gs.none()])
+@hegel.test
+def test_fuzzing_floats_bounds(tc, nonfloat):
+    width = tc.draw(gs.sampled_from(WIDTHS))
+    lo = tc.draw(nonfloat | gs.floats(allow_nan=False, width=width), name="lo")
+    hi = tc.draw(nonfloat | gs.floats(allow_nan=False, width=width), name="hi")
     if lo is not None and hi is not None and lo > hi:
         lo, hi = hi, lo
-    assume(lo != 0 or hi != 0)
-    value = data.draw(
-        st.floats(min_value=lo, max_value=hi, width=width, allow_nan=False),
-        label="value",
+    tc.assume(lo != 0 or hi != 0)
+    # An interval that is just one infinity breaks the engine; see
+    # test_interval_of_a_single_infinity.
+    tc.assume(lo is None or lo != hi or not math.isinf(lo))
+    value = tc.draw(
+        gs.floats(min_value=lo, max_value=hi, width=width, allow_nan=False),
+        name="value",
     )
     assert value == float_of(value, width=width)
     assert lo is None or lo <= value

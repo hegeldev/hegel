@@ -78,13 +78,10 @@ ignore = ["E741", "B008", "B023", "B904", "UP007", "UP045"]
 [tool.ruff.lint.isort]
 known-first-party = ["hegel", "tests"]
 
-[tool.ruff.lint.per-file-ignores]
-"tests/hypothesis_port/**" = ["E", "F", "I", "UP", "B", "W"]
-
 [tool.coverage.run]
 branch = true
 source = ["hegel"]
-omit = ["python/hegel/hypothesis/*", "python/hegel/_native.pyi"]
+omit = ["python/hegel/_native.pyi"]
 
 [tool.coverage.report]
 fail_under = 100

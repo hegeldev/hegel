@@ -1,3 +1,6 @@
+# Dropped from the Hypothesis original:
+# test_baseexception_in_strategy_no_rerun_no_flaky[SystemExit], test_explanations[SystemExit]
+# (Hegel lets SystemExit propagate rather than treating it as a failure).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -10,19 +13,17 @@
 
 import pytest
 
-from hegel.hypothesis import given
-from hegel.hypothesis.errors import Flaky
-from hegel.hypothesis.strategies import composite, integers, none
-
-from tests.hypothesis_port.common.utils import Why, skipif_threading, xfail_on_crosshair
+import hegel
+from hegel.generators import integers, none
 
 pytest_plugins = "pytester"
 
 
 @pytest.mark.parametrize("e", [KeyboardInterrupt, SystemExit, GeneratorExit, ValueError])
 def test_exception_propagates_fine(e):
-    @given(integers())
-    def test_raise(x):
+    @hegel.test
+    def test_raise(tc):
+        tc.draw(integers())
         raise e
 
     with pytest.raises(e):
@@ -31,16 +32,16 @@ def test_exception_propagates_fine(e):
 
 @pytest.mark.parametrize("e", [KeyboardInterrupt, SystemExit, GeneratorExit, ValueError])
 def test_exception_propagates_fine_from_strategy(e):
-    @composite
-    def interrupt_eventually(draw):
+    @hegel.composite
+    def interrupt_eventually(tc):
         raise e
         # this line will not be executed, but must be here
         # to pass draw function static reference check
-        return draw(none())
+        return tc.draw(none())
 
-    @given(interrupt_eventually())
-    def test_do_nothing(x):
-        pass
+    @hegel.test
+    def test_do_nothing(tc):
+        tc.draw(interrupt_eventually())
 
     with pytest.raises(e):
         test_do_nothing()
@@ -51,9 +52,12 @@ def test_baseexception_no_rerun_no_flaky(e):
     runs = 0
     interrupt = 3
 
-    @given(integers())
-    def test_raise_baseexception(x):
+    # A failure that does not replay is Flaky only under the strict
+    # nondeterminism setting; by default Hegel reports it with a caveat.
+    @hegel.test(nondeterminism_strictness="error")
+    def test_raise_baseexception(tc):
         nonlocal runs
+        tc.draw(integers())
         runs += 1
         if runs == interrupt:
             raise e
@@ -65,41 +69,26 @@ def test_baseexception_no_rerun_no_flaky(e):
 
         assert runs == interrupt
     else:
-        with pytest.raises(Flaky):
+        with pytest.raises(hegel.Flaky):
             test_raise_baseexception()
 
 
-@xfail_on_crosshair(Why.symbolic_outside_context, strict=False)  # KI and GE only
-@pytest.mark.parametrize(
-    "e",
-    [
-        KeyboardInterrupt,
-        pytest.param(
-            SystemExit,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="hegel lets SystemExit raised inside a strategy propagate",
-            ),
-        ),
-        GeneratorExit,
-        ValueError,
-    ],
-)
+@pytest.mark.parametrize("e", [KeyboardInterrupt, GeneratorExit, ValueError])
 def test_baseexception_in_strategy_no_rerun_no_flaky(e):
     runs = 0
     interrupt = 3
 
-    @composite
-    def interrupt_eventually(draw):
+    @hegel.composite
+    def interrupt_eventually(tc):
         nonlocal runs
         runs += 1
         if runs == interrupt:
             raise e
-        return draw(integers())
+        return tc.draw(integers())
 
-    @given(interrupt_eventually())
-    def test_do_nothing(x):
-        pass
+    @hegel.test(nondeterminism_strictness="error")
+    def test_do_nothing(tc):
+        tc.draw(interrupt_eventually())
 
     if issubclass(e, KeyboardInterrupt):
         with pytest.raises(e):
@@ -108,42 +97,39 @@ def test_baseexception_in_strategy_no_rerun_no_flaky(e):
         assert runs == interrupt
 
     else:
-        # Now SystemExit and GeneratorExit are caught like other exceptions
-        with pytest.raises(Flaky):
+        # Now GeneratorExit is caught like other exceptions
+        with pytest.raises(hegel.Flaky):
             test_do_nothing()
 
 
 TEMPLATE = """
-from hegel.hypothesis import given, note, strategies as st
+import hegel
+from hegel import generators as gs
 
-@st.composite
-def things(draw):
+@hegel.composite
+def things(tc):
     raise {exception}
     # this line will not be executed, but must be here
     # to pass draw function static reference check
-    return draw(st.none())
+    return tc.draw(gs.none())
 
 
-@given(st.data(), st.integers())
-def test(data, x):
+@hegel.test
+def test(tc):
+    x = tc.draw(gs.integers())
     if x > 100:
-        data.draw({strategy})
+        tc.draw({strategy})
         raise {exception}
 """
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="hegel does not print the falsifying example when SystemExit/GeneratorExit escapes the test",
-)
-@skipif_threading  # something in pytest here is not thread safe
-@pytest.mark.parametrize("exc_name", ["SystemExit", "GeneratorExit"])
+@pytest.mark.parametrize("exc_name", ["GeneratorExit"])
 @pytest.mark.parametrize("use_composite", [True, False])
 def test_explanations(testdir, exc_name, use_composite):
     code = TEMPLATE.format(
-        exception=exc_name, strategy="things()" if use_composite else "st.none()"
+        exception=exc_name, strategy="things()" if use_composite else "gs.none()"
     )
     test_file = str(testdir.makepyfile(code))
     pytest_stdout = str(testdir.runpytest_inprocess(test_file, "--tb=native").stdout)
-    assert "x=101" in pytest_stdout
+    assert "x = 101" in pytest_stdout
     assert exc_name in pytest_stdout

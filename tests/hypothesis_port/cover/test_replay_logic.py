@@ -10,27 +10,26 @@
 
 import pytest
 
-from hegel.hypothesis import given, settings, strategies as st
-from hegel.hypothesis.database import InMemoryExampleDatabase
+import hegel
+from hegel import MultipleFailures
+from hegel import generators as gs
 
 
-def test_does_not_shrink_on_replay():
-    database = InMemoryExampleDatabase()
-
+def test_does_not_shrink_on_replay(tmp_path):
     call_count = 0
 
     is_first = True
     last = None
 
-    @settings(
-        database=database,
-        report_multiple_bugs=False,
+    @hegel.test(
+        database=tmp_path,
+        report_multiple_failures=False,
         derandomize=False,
-        max_examples=1000,
+        test_cases=1000,
     )
-    @given(st.lists(st.integers(), unique=True, min_size=3))
-    def test(ls):
+    def test(tc):
         nonlocal call_count, is_first, last
+        ls = tc.draw(gs.lists(gs.integers(), unique=True, min_size=3))
         if is_first and last is not None:
             assert ls == last
         is_first = False
@@ -49,24 +48,24 @@ def test_does_not_shrink_on_replay():
     with pytest.raises(AssertionError):
         test()
 
+    # The replayed example fails, and is run once more to report it.
     assert call_count == 2
 
 
-def test_does_not_shrink_on_replay_with_multiple_bugs():
-    database = InMemoryExampleDatabase()
+def test_does_not_shrink_on_replay_with_multiple_bugs(tmp_path):
     call_count = 0
     raised = False
     marker = 1000093
 
-    @settings(
-        database=database,
-        report_multiple_bugs=True,
+    @hegel.test(
+        database=tmp_path,
+        report_multiple_failures=True,
         derandomize=False,
-        max_examples=1000,
+        test_cases=1000,
     )
-    @given(st.integers())
-    def test(n):
+    def test(tc):
         nonlocal call_count, raised
+        n = tc.draw(gs.integers())
         call_count += 1
         if n >= marker:
             raised = True
@@ -74,32 +73,30 @@ def test_does_not_shrink_on_replay_with_multiple_bugs():
         elif n < marker and raised:
             raise AssertionError
 
-    with pytest.raises(ExceptionGroup):
+    with pytest.raises(MultipleFailures):
         test()
 
     call_count = 0
 
-    with pytest.raises(ExceptionGroup):
+    with pytest.raises(MultipleFailures):
         test()
 
     assert call_count == 4
 
 
-def test_will_always_shrink_if_previous_example_does_not_replay():
-    database = InMemoryExampleDatabase()
-
+def test_will_always_shrink_if_previous_example_does_not_replay(tmp_path):
     good = set()
     last = None
 
-    @settings(
-        database=database,
-        report_multiple_bugs=True,
+    @hegel.test(
+        database=tmp_path,
+        report_multiple_failures=True,
         derandomize=False,
-        max_examples=1000,
+        test_cases=1000,
     )
-    @given(st.integers(min_value=0))
-    def test(n):
+    def test(tc):
         nonlocal last
+        n = tc.draw(gs.integers(min_value=0))
         if n not in good:
             last = n
             raise AssertionError
@@ -111,21 +108,18 @@ def test_will_always_shrink_if_previous_example_does_not_replay():
         good.add(last)
 
 
-def test_will_shrink_if_the_previous_example_does_not_look_right():
-    database = InMemoryExampleDatabase()
-
+def test_will_shrink_if_the_previous_example_does_not_look_right(tmp_path):
     last = None
 
     first_test = True
 
-    @settings(database=database, report_multiple_bugs=True, derandomize=False)
-    @given(st.data())
-    def test(data):
+    @hegel.test(database=tmp_path, report_multiple_failures=True, derandomize=False)
+    def test(tc):
         nonlocal last
-        m = data.draw(st.integers())
+        m = tc.draw(gs.integers())
         last = m
         if first_test:
-            data.draw(st.integers())
+            tc.draw(gs.integers())
             assert m < 10000
         else:
             raise AssertionError

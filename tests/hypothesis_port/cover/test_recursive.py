@@ -8,35 +8,39 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
+# Dropped from the Hypothesis original: test_respects_min_leaves,
+# test_can_set_exact_leaf_count and the min_leaves cases of test_invalid_args
+# (recursive(min_leaves=...)); test_identity_extend_warns (HypothesisWarning).
+
 import pytest
 
-from hegel.hypothesis import given, note, settings, strategies as st
-from hegel.hypothesis.errors import HypothesisWarning, InvalidArgument
-
+import hegel
+from hegel import generators as gs
+from hegel.errors import InvalidArgument
 from tests.hypothesis_port.common.debug import (
-    assert_all_examples,
     assert_no_examples,
     check_can_generate_examples,
     find_any,
     minimal,
 )
-from tests.hypothesis_port.common.utils import checks_deprecated_behaviour
 
 
-@given(st.recursive(st.booleans(), st.lists, max_leaves=10))
-def test_respects_leaf_limit(xs):
-    def flatten(x):
-        if isinstance(x, list):
-            return sum(map(flatten, x), [])
-        else:
-            return [x]
+def flatten(x):
+    if isinstance(x, list):
+        return sum(map(flatten, x), [])
+    else:
+        return [x]
 
+
+@hegel.test
+def test_respects_leaf_limit(tc):
+    xs = tc.draw(gs.recursive(gs.booleans(), gs.lists, max_leaves=10))
     assert len(flatten(xs)) <= 10
 
 
 def test_can_find_nested():
     x = minimal(
-        st.recursive(st.booleans(), lambda x: st.tuples(x, x)),
+        gs.recursive(gs.booleans(), lambda x: gs.tuples(x, x)),
         lambda x: isinstance(x, tuple) and isinstance(x[0], tuple),
     )
 
@@ -45,20 +49,18 @@ def test_can_find_nested():
 
 def test_recursive_call_validates_expand_returns_strategies():
     with pytest.raises(InvalidArgument):
-        check_can_generate_examples(st.recursive(st.booleans(), lambda x: 1))
+        check_can_generate_examples(gs.recursive(gs.booleans(), lambda x: 1))
 
 
 def test_recursive_call_validates_base_is_strategy():
-    x = st.recursive(1, lambda x: st.none())
     with pytest.raises(InvalidArgument):
-        check_can_generate_examples(x)
+        gs.recursive(1, lambda x: gs.none())
 
 
 def test_can_find_exactly_max_leaves():
-    strat = st.recursive(st.none(), lambda x: st.tuples(x, x), max_leaves=5)
+    strat = gs.recursive(gs.none(), lambda x: gs.tuples(x, x), max_leaves=5)
 
     def enough_leaves(t):
-        print(t)
         count = 0
         stack = [t]
         while stack:
@@ -72,27 +74,27 @@ def test_can_find_exactly_max_leaves():
     find_any(strat, enough_leaves)
 
 
-@given(st.recursive(st.none(), lambda x: st.tuples(x, x), max_leaves=1))
-def test_can_exclude_branching_with_max_leaves(t):
+@hegel.test
+def test_can_exclude_branching_with_max_leaves(tc):
+    t = tc.draw(gs.recursive(gs.none(), lambda x: gs.tuples(x, x), max_leaves=1))
     assert t is None
 
 
-@given(st.recursive(st.none(), lambda x: st.one_of(x, x)))
-def test_issue_1502_regression(s):
-    pass
+@hegel.test
+def test_issue_1502_regression(tc):
+    tc.draw(gs.recursive(gs.none(), lambda x: gs.one_of(x, x)))
 
 
 def test_recursive_can_generate_varied_structures():
-    values = st.recursive(st.none(), st.lists)
+    values = gs.recursive(gs.none(), gs.lists)
 
     find_any(values, lambda x: x is None)
     find_any(values, lambda x: isinstance(x, list))
     find_any(values, lambda x: isinstance(x, list) and any(isinstance(y, list) for y in x))
 
 
-@checks_deprecated_behaviour
 def test_recursive_can_generate_varied_structures_without_using_leaves():
-    values = st.recursive(st.none(), lambda _: st.lists(st.none()))
+    values = gs.recursive(gs.none(), lambda _: gs.lists(gs.none()))
 
     find_any(values, lambda x: x is None)
     find_any(values, lambda x: isinstance(x, list))
@@ -102,61 +104,17 @@ def test_recursive_can_generate_varied_structures_without_using_leaves():
     )
 
 
+# Validation is eager, so each invalid definition is built inside the test.
 @pytest.mark.parametrize(
-    "s",
+    "make",
     [
-        st.recursive(None, st.lists),
-        st.recursive(st.none(), lambda x: None),
-        st.recursive(st.none(), st.lists, max_leaves=-1),
-        st.recursive(st.none(), st.lists, max_leaves=0),
-        st.recursive(st.none(), st.lists, max_leaves=1.0),
-        st.recursive(st.none(), st.lists, min_leaves=-1),
-        st.recursive(st.none(), st.lists, min_leaves=0),
-        st.recursive(st.none(), st.lists, min_leaves=1.0),
-        st.recursive(st.none(), st.lists, min_leaves=10, max_leaves=5),
-        pytest.param(
-            st.recursive(st.none(), lambda _: st.lists(st.none()), min_leaves=1),
-            marks=pytest.mark.xfail(
-                strict=True, reason="Hegel does not detect extend functions ignoring their argument"
-            ),
-        ),
+        lambda: gs.recursive(None, gs.lists),
+        lambda: gs.recursive(gs.none(), lambda x: None),
+        lambda: gs.recursive(gs.none(), gs.lists, max_leaves=-1),
+        lambda: gs.recursive(gs.none(), gs.lists, max_leaves=0),
+        lambda: gs.recursive(gs.none(), gs.lists, max_leaves=1.0),
     ],
 )
-def test_invalid_args(s):
+def test_invalid_args(make):
     with pytest.raises(InvalidArgument):
-        check_can_generate_examples(s)
-
-
-def _count_leaves(tree):
-    if isinstance(tree, tuple):
-        return sum(_count_leaves(child) for child in tree)
-    return 1
-
-
-@pytest.mark.xfail(strict=True, reason="recursive(min_leaves=...) is not supported by Hegel")
-@given(st.data())
-@settings(max_examples=5, suppress_health_check=["filter_too_much"])
-def test_respects_min_leaves(data):
-    min_leaves = data.draw(st.integers(1, 20))
-    max_leaves = data.draw(st.integers(min_leaves, 40))
-    note(f"{min_leaves=}")
-    note(f"{max_leaves=}")
-    s = st.recursive(
-        st.none(),
-        lambda x: st.tuples(x, x),
-        min_leaves=min_leaves,
-        max_leaves=max_leaves,
-    )
-    assert_all_examples(s, lambda tree: min_leaves <= _count_leaves(tree) <= max_leaves)
-
-
-@pytest.mark.xfail(strict=True, reason="recursive(min_leaves=...) is not supported by Hegel")
-@given(st.recursive(st.none(), lambda x: st.tuples(x, x), min_leaves=5, max_leaves=5))
-@settings(suppress_health_check=["filter_too_much"])
-def test_can_set_exact_leaf_count(tree):
-    assert _count_leaves(tree) == 5
-
-
-def test_identity_extend_warns():
-    with pytest.warns(HypothesisWarning, match="extend=lambda x: x is a no-op"):
-        st.recursive(st.none(), lambda x: x).validate()
+        check_can_generate_examples(make())

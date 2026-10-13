@@ -1,5 +1,4 @@
 import contextlib
-import enum
 import math
 import os
 import sys
@@ -12,14 +11,34 @@ from threading import Barrier, Lock, RLock, Thread
 import pytest
 from pytest import mark
 
-from hegel.generators import from_type as _hegel_from_type
+import hegel
 from hegel.generators.from_type import _registry as _global_type_lookup
-from hegel.hypothesis import Phase, settings
-from hegel.hypothesis.errors import HypothesisDeprecationWarning
-from hegel.hypothesis.reporting import default, with_reporter
-from hegel.hypothesis.strategies import register_type_strategy
-
+from hegel.generators.from_type import register_type_generator
+from hegel.runner import with_output_override
+from tests.helpers import notes
 from tests.hypothesis_port.common.compat import next_down
+
+__all__ = [
+    "PYTHON_FTZ",
+    "assert_failing_output",
+    "assert_output_contains_failure",
+    "capture_out",
+    "counts_calls",
+    "fails",
+    "fails_with",
+    "flaky",
+    "no_shrink",
+    "notes",
+    "proxies",
+    "raises_warning",
+    "restore_recursion_limit",
+    "run_concurrently",
+    "run_test_for_failing_test_case",
+    "skipif_emscripten",
+    "skipif_root",
+    "temp_registered",
+    "wait_for",
+]
 
 time_sleep = time.sleep
 
@@ -33,12 +52,12 @@ skipif_root = mark.skipif(
     reason="root ignores file permissions, so inaccessible paths are readable",
 )
 
-no_shrink = tuple(set(settings.default.phases) - {Phase.shrink, Phase.explain})
+# Every phase but shrinking, for a run that only needs to find a failure.
+no_shrink = frozenset(hegel.Phase) - {hegel.Phase.shrink}
 
 
 def proxies(target):
-    """Keep the wrapped function's name, docstring and signature (so that
-    ``@given`` sees the original parameters)."""
+    """Keep the wrapped function's name, docstring and signature."""
 
     def accept(proxy):
         proxy = wraps(target)(proxy)
@@ -79,21 +98,25 @@ def flaky(max_runs, min_passes):
 capture_out_lock = Lock()
 
 
+class _Captured(StringIO):
+    """Everything Hegel prints during the block (its falsifying example,
+    verbose trace and so on), together with anything written to stdout."""
+
+    def __call__(self, line: str) -> None:
+        self.write(line + "\n")
+
+
 @contextlib.contextmanager
 def capture_out():
     with capture_out_lock:
         old_out = sys.stdout
         try:
-            new_out = StringIO()
+            new_out = _Captured()
             sys.stdout = new_out
-            with with_reporter(default):
+            with with_output_override(new_out):
                 yield new_out
         finally:
             sys.stdout = old_out
-
-
-class ExcInfo:
-    pass
 
 
 def fails_with(e, *, match=None):
@@ -111,30 +134,6 @@ def fails_with(e, *, match=None):
 fails = fails_with(AssertionError)
 
 
-class NotDeprecated(Exception):
-    pass
-
-
-@contextlib.contextmanager
-def validate_deprecation():
-    """Hegel emits no deprecation warnings for Hypothesis's deprecated
-    behaviours; the block runs with those warnings allowed."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", HypothesisDeprecationWarning)
-        yield
-
-
-def checks_deprecated_behaviour(func):
-    """A decorator for testing deprecated behaviour."""
-
-    @proxies(func)
-    def _inner(*args, **kwargs):
-        with validate_deprecation():
-            return func(*args, **kwargs)
-
-    return _inner
-
-
 def counts_calls(func):
     """Count how many times a function was called, in its ``.calls``."""
     assert not hasattr(func, "calls")
@@ -150,7 +149,7 @@ def counts_calls(func):
 
 def assert_output_contains_failure(output, test, **kwargs):
     for k, v in kwargs.items():
-        assert f"{k} = {v!r}" in output or f"{k}={v!r}" in output, (f"{k}={v!r}", output)
+        assert f"{k} = {v!r}" in output, (f"{k} = {v!r}", output)
 
 
 def assert_failing_output(
@@ -160,6 +159,8 @@ def assert_failing_output(
     expected_exception=AssertionError,
     **kwargs,
 ):
+    """Run ``test`` (a Hegel test) expecting it to fail, and check that the
+    failure output names each ``kwargs`` draw as ``name = value``."""
     with capture_out() as out:
         if expected_exception is None:
             test()
@@ -167,8 +168,7 @@ def assert_failing_output(
         else:
             with pytest.raises(expected_exception) as exc_info:
                 test()
-            notes = "\n".join(getattr(exc_info.value, "__notes__", []))
-            msg = str(exc_info.value) + "\n" + notes
+            msg = str(exc_info.value) + "\n" + "\n".join(notes(exc_info.value))
 
     output = out.getvalue() + msg
     assert f"{prefix}:" in output, (prefix, output)
@@ -179,17 +179,17 @@ temp_registered_lock = RLock()
 
 
 @contextlib.contextmanager
-def temp_registered(type_, strat_or_factory):
-    """Register and un-register a type for st.from_type()."""
+def temp_registered(type_, generator_or_factory):
+    """Register and un-register a type for gs.from_type()."""
     with temp_registered_lock:
         prev = _global_type_lookup.get(type_)
-        register_type_strategy(type_, strat_or_factory)
+        register_type_generator(type_, generator_or_factory)
         try:
             yield
         finally:
             _global_type_lookup.pop(type_, None)
             if prev is not None:
-                register_type_strategy(type_, prev)
+                register_type_generator(type_, prev)
 
 
 @contextlib.contextmanager
@@ -203,33 +203,6 @@ def raises_warning(expected_warning, match=None):
 
 # Some Python builds flush subnormal floats to zero.
 PYTHON_FTZ = next_down(sys.float_info.min) == 0.0
-
-
-class Why(enum.Enum):
-    # Categorizing known failures, to ease later follow-up investigation.
-    symbolic_outside_context = "CrosshairInternal error (using value outside context)"
-    nested_given = "nested @given decorators don't work with crosshair"
-    undiscovered = "crosshair may not find the failing input"
-    other = "reasons not elsewhere categorized"
-
-
-def xfail_on_crosshair(why: Why, /, *, strict=True, as_marks=False):
-    """No symbolic backend on Hegel: the decorator does nothing."""
-
-    def accept(f):
-        return f
-
-    if as_marks:
-        return ()
-    return accept
-
-
-def skipif_threading(f):
-    return f
-
-
-def xfail_if_gil_disabled(f):
-    return f
 
 
 _restore_recursion_limit_lock = RLock()
@@ -268,10 +241,9 @@ def wait_for(condition, *, timeout=1, interval=0.01):
     raise Exception(f"timing out after waiting {timeout}s for condition {condition!r}")
 
 
-def run_test_for_failing_test_case(test_fn):
-    with pytest.raises(AssertionError) as err:
+def run_test_for_failing_test_case(test_fn, exception=AssertionError):
+    """Run ``test_fn`` expecting it to fail; the text of its failure notes
+    (the falsifying example and any caveat)."""
+    with pytest.raises(exception) as err:
         test_fn()
-    return "\n".join(err.value.__notes__).strip()
-
-
-_ = _hegel_from_type
+    return "\n".join(notes(err.value)).strip()

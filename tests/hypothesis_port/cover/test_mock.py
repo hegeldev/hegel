@@ -1,3 +1,5 @@
+# Dropped from the Hypothesis original: test_can_mock_inside_given_without_fixture
+# (@given's argument binding of a mock.patch applied under the test decorator).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -8,42 +10,29 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-"""Checks that @given, @mock.patch, and pytest fixtures work as expected."""
+"""Checks that @hegel.test, @mock.patch, and pytest fixtures work as expected."""
 
 import math
 from unittest import mock
 
-try:
-    from pytest import Config
-except ImportError:  # pytest<7.0.0
-    from _pytest.config import Config
+from pytest import Config
 
-from hegel.hypothesis import given, strategies as st
-
-from tests.hypothesis_port.common.utils import skipif_threading
-
-
-@given(thing=st.text())
-@mock.patch("math.atan")
-# mock.patch is thread-unsafe. pytest-run-parallel normally detects this and skips
-# the test, but because we set it inside of @given it can't (or doesn't?) peek
-# inside the AST, resulting in a false negative.
-@skipif_threading
-def test_can_mock_inside_given_without_fixture(atan, thing):
-    assert isinstance(atan, mock.MagicMock)
-    assert isinstance(math.atan, mock.MagicMock)
+import hegel
+from hegel import generators as gs
 
 
 @mock.patch("math.atan")
-@given(thing=st.text())
-def test_can_mock_outside_given_with_fixture(atan, pytestconfig, thing):
+@hegel.test
+def test_can_mock_outside_given_with_fixture(tc, atan, pytestconfig):
+    tc.draw(gs.text())
     assert isinstance(atan, mock.MagicMock)
     assert isinstance(math.atan, mock.MagicMock)
     assert isinstance(pytestconfig, Config)
 
 
-@given(thing=st.text())
-def test_can_mock_within_test_with_fixture(pytestconfig, thing):
+@hegel.test
+def test_can_mock_within_test_with_fixture(tc, pytestconfig):
+    tc.draw(gs.text())
     assert isinstance(pytestconfig, Config)
     assert not isinstance(math.atan, mock.MagicMock)
     with mock.patch("math.atan") as atan:

@@ -11,8 +11,8 @@
 from inspect import signature
 from typing import get_type_hints
 
-from hegel.hypothesis import given, strategies as st
-
+import hegel
+from hegel import generators as gs
 from tests.hypothesis_port.common.debug import find_any
 
 
@@ -34,8 +34,9 @@ class Model:
         assert isinstance(kwargs["y"], str)
 
 
-@given(st.builds(Model))
-def test_builds_uses_signature_attribute(val):
+@hegel.test
+def test_builds_uses_signature_attribute(tc):
+    val = tc.draw(gs.builds(Model))
     assert isinstance(val, Model)
 
 
@@ -46,14 +47,15 @@ class ModelForFromType(Model):
         assert self.b is None or isinstance(self.b, list)
 
 
-@given(st.from_type(ModelForFromType))
-def test_from_type_uses_signature_attribute(val):
+@hegel.test
+def test_from_type_uses_signature_attribute(tc):
+    val = tc.draw(gs.from_type(ModelForFromType))
     assert isinstance(val, ModelForFromType)
 
 
 def test_from_type_can_be_default_or_annotation():
-    find_any(st.from_type(ModelForFromType), lambda m: m.b is None)
-    find_any(st.from_type(ModelForFromType), lambda m: isinstance(m.b, list))
+    find_any(gs.from_type(ModelForFromType), lambda m: m.b is None)
+    find_any(gs.from_type(ModelForFromType), lambda m: isinstance(m.b, list))
 
 
 def use_annotations(self, test_a: int, test_b: str | None = None, *, test_x: float, test_y: str):
@@ -77,8 +79,9 @@ class ModelWithAlias:
         assert all(isinstance(elem, str) for elem in kwargs["testY"])
 
 
-@given(st.builds(ModelWithAlias))
-def test_build_using_different_signature_and_annotations(val):
+@hegel.test
+def test_build_using_different_signature_and_annotations(tc):
+    val = tc.draw(gs.builds(ModelWithAlias))
     assert isinstance(val, ModelWithAlias)
 
 
@@ -95,8 +98,9 @@ class ModelWithBadAliasSignature:
         assert isinstance(kwargs["testX"], float)
 
 
-@given(st.builds(ModelWithBadAliasSignature))
-def test_build_with_non_types_in_signature(val):
+@hegel.test
+def test_build_with_non_types_in_signature(tc):
+    val = tc.draw(gs.builds(ModelWithBadAliasSignature))
     assert isinstance(val, ModelWithBadAliasSignature)
 
 
@@ -107,5 +111,5 @@ class UnconventionalSignature:
 
 
 def test_build_in_from_type_with_self_named_something_else():
-    find_any(st.from_type(UnconventionalSignature), lambda x: x.self is True)
-    find_any(st.from_type(UnconventionalSignature), lambda x: x.self is False)
+    find_any(gs.from_type(UnconventionalSignature), lambda x: x.self is True)
+    find_any(gs.from_type(UnconventionalSignature), lambda x: x.self is False)

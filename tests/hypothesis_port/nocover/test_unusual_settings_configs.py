@@ -8,22 +8,23 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-from hegel.hypothesis import HealthCheck, Verbosity, assume, given, settings, strategies as st
+import hegel
+from hegel import HealthCheck, Verbosity
+from hegel import generators as gs
 
 
-@settings(max_examples=1, database=None)
-@given(st.integers())
-def test_single_example(n):
-    pass
+@hegel.test(test_cases=1, database="")
+def test_single_example(tc):
+    tc.draw(gs.integers())
 
 
-@settings(
-    max_examples=1,
-    database=None,
+@hegel.test(
+    test_cases=1,
+    database="",
     suppress_health_check=[HealthCheck.filter_too_much, HealthCheck.too_slow],
     verbosity=Verbosity.debug,
 )
-@given(st.integers())
-def test_hard_to_find_single_example(n):
+def test_hard_to_find_single_example(tc):
+    n = tc.draw(gs.integers())
     # Numbers are arbitrary, just deliberately unlikely to hit this too soon.
-    assume(n % 50 == 11)
+    tc.assume(n % 50 == 11)

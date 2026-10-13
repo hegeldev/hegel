@@ -8,27 +8,19 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-import pytest
+# Dropped from the Hypothesis original: test_can_restrict_email_domains
+# (emails(domains=) argument; hegel's emails() takes none).
 
-from hegel.hypothesis import given, settings
-from hegel.hypothesis.strategies import emails, just
+import hegel
+from hegel import generators as gs
 
 
-@pytest.mark.skipif(
-    settings.get_current_profile_name() == "crosshair",
-    reason="takes ~7 mins; first barrier: the `sampled_from(get_top_level_domains())` decision is "
-    "realized via iterative comparisons; see https://github.com/pschanely/CrossHair/issues/332",
-)
-@given(emails())
-def test_is_valid_email(address: str):
+@hegel.test
+def test_is_valid_email(tc):
+    address = tc.draw(gs.emails())
     local, at_, domain = address.rpartition("@")
     assert len(address) <= 254
     assert at_ == "@"
     assert local
     assert domain
     assert not domain.lower().endswith(".arpa")
-
-
-@given(emails(domains=just("mydomain.com")))
-def test_can_restrict_email_domains(address: str):
-    assert address.endswith("@mydomain.com")

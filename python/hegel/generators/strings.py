@@ -312,8 +312,8 @@ def from_regex(regex: Any, *, fullmatch: bool = True, alphabet: Any = None) -> G
     """Generate strings matching ``regex`` (a pattern string or compiled
     pattern). By default the whole string matches, as ``re.fullmatch``
     checks; with ``fullmatch=False`` the string merely contains a match, as
-    ``re.search`` would find. (Hypothesis's ``from_regex``, and so
-    ``hegel.hypothesis``'s, defaults to ``fullmatch=False``.)"""
+    ``re.search`` would find. (Hypothesis's ``from_regex`` defaults to
+    ``fullmatch=False``.)"""
     pattern = getattr(regex, "pattern", regex)
     flags = getattr(regex, "flags", 0)
     if isinstance(pattern, bytes):

@@ -1,3 +1,4 @@
+# Dropped from the Hypothesis original: test_prints_initial_attempts_on_find (find()).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -8,37 +9,21 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-from contextlib import contextmanager, nullcontext
-
-from hegel.hypothesis import example, find, given, note
-from hegel.hypothesis._settings import Verbosity, settings
-from hegel.hypothesis.reporting import default as default_reporter, with_reporter
-from hegel.hypothesis.strategies import booleans, integers, lists
-
-from tests.hypothesis_port.common.debug import minimal
+import hegel
+from hegel import generators as gs
+from hegel.generators import booleans, integers, lists
 from tests.hypothesis_port.common.utils import capture_out, fails
-
-# Hegel has no observability hooks to record notes with; nothing to capture.
-capture_observations = nullcontext
-
 
 # Hegel's verbose output announces each example with "Running test case"
 # rather than Hypothesis's "Test case:" lines.
 
 
-@contextmanager
-def capture_verbosity():
-    with capture_out() as o, with_reporter(default_reporter):
-        yield o
-
-
 def test_prints_intermediate_in_success():
-    with capture_verbosity() as o:
+    with capture_out() as o:
 
-        @settings(verbosity=Verbosity.verbose)
-        @given(booleans())
-        def test_works(x):
-            pass
+        @hegel.test(verbosity=hegel.Verbosity.verbose)
+        def test_works(tc):
+            tc.draw(booleans())
 
         test_works()
     assert "Running test case" in o.getvalue()
@@ -46,24 +31,24 @@ def test_prints_intermediate_in_success():
 
 def test_notes_are_not_printed_twice_in_debug_mode():
     # the engine's debug output must not repeat notes which were already
-    # printed, even when observability has recorded them on the data
-    @settings(verbosity=Verbosity.debug, max_examples=1, database=None)
-    @given(booleans())
-    def test_works(x):
-        note("this is a note")
+    # printed
+    @hegel.test(verbosity=hegel.Verbosity.debug, test_cases=1, database="")
+    def test_works(tc):
+        tc.draw(booleans())
+        tc.note("this is a note")
 
-    with capture_verbosity() as o, capture_observations():
+    with capture_out() as o:
         test_works()
     assert o.getvalue().count("this is a note") == 1
 
 
 def test_does_not_log_in_quiet_mode():
-    with capture_verbosity() as o:
+    with capture_out() as o:
 
         @fails
-        @settings(verbosity=Verbosity.quiet, print_blob=False)
-        @given(integers())
-        def test_foo(x):
+        @hegel.test(verbosity=hegel.Verbosity.quiet, print_blob=False)
+        def test_foo(tc):
+            tc.draw(integers())
             raise AssertionError
 
         test_foo()
@@ -71,52 +56,36 @@ def test_does_not_log_in_quiet_mode():
 
 
 def test_includes_progress_in_verbose_mode():
-    with capture_verbosity() as o:
-        minimal(
-            lists(integers(), min_size=1),
-            lambda x: sum(x) >= 100,
-            settings(verbosity=Verbosity.verbose),
-        )
+    class Found(Exception):
+        pass
+
+    def search(tc):
+        x = tc.draw(lists(integers(), min_size=1))
+        if sum(x) >= 100:
+            raise Found
+
+    with capture_out() as o:
+        try:
+            hegel.run(search, verbosity=hegel.Verbosity.verbose)
+        except Found:
+            pass
     out = o.getvalue()
     assert out
     assert "Running test case" in out
 
 
-def test_prints_initial_attempts_on_find():
-    with capture_verbosity() as o:
-
-        def foo():
-            seen = []
-
-            def not_first(x):
-                if not seen:
-                    seen.append(x)
-                    return False
-                return x not in seen
-
-            find(
-                integers(),
-                not_first,
-                settings=settings(verbosity=Verbosity.verbose, max_examples=1000),
-            )
-
-        foo()
-
-    assert "Running test case" in o.getvalue()
-
-
 def test_includes_intermediate_results_in_verbose_mode():
-    with capture_verbosity() as o:
+    with capture_out() as o:
 
         @fails
-        @settings(
-            verbosity=Verbosity.verbose,
-            database=None,
+        @hegel.test(
+            verbosity=hegel.Verbosity.verbose,
+            database="",
             derandomize=True,
-            max_examples=100,
+            test_cases=100,
         )
-        @given(lists(integers(), min_size=1))
-        def test_foo(x):
+        def test_foo(tc):
+            x = tc.draw(lists(integers(), min_size=1))
             assert sum(x) < 10000
 
         test_foo()
@@ -125,26 +94,25 @@ def test_includes_intermediate_results_in_verbose_mode():
     assert [l for l in lines if "AssertionError" in l]
 
 
-@example(0)
-@settings(verbosity=Verbosity.quiet)
-@given(integers())
-def test_no_indexerror_in_quiet_mode(x):
+@hegel.test(verbosity=hegel.Verbosity.quiet)
+@hegel.explicit_test_case(0)
+def test_no_indexerror_in_quiet_mode(tc):
     # Regression tests for https://github.com/HypothesisWorks/hypothesis/issues/2696
     # where quiet mode -> no fragments to report -> IndexError accessing first report
-    pass
+    tc.draw(gs.integers())
 
 
 @fails
-@example(0)
-@settings(verbosity=Verbosity.quiet, report_multiple_bugs=True)
-@given(integers())
-def test_no_indexerror_in_quiet_mode_report_multiple(x):
+@hegel.test(verbosity=hegel.Verbosity.quiet, report_multiple_failures=True)
+@hegel.explicit_test_case(0)
+def test_no_indexerror_in_quiet_mode_report_multiple(tc):
+    x = tc.draw(gs.integers())
     assert x
 
 
 @fails
-@example(0)
-@settings(verbosity=Verbosity.quiet, report_multiple_bugs=False)
-@given(integers())
-def test_no_indexerror_in_quiet_mode_report_one(x):
+@hegel.test(verbosity=hegel.Verbosity.quiet, report_multiple_failures=False)
+@hegel.explicit_test_case(0)
+def test_no_indexerror_in_quiet_mode_report_one(tc):
+    x = tc.draw(gs.integers())
     assert x

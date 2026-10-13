@@ -1,3 +1,16 @@
+# Dropped from the Hypothesis original: TestInstanceMethods.test_hi_3,
+# test_no_args_and_kwargs, test_no_empty_examples (@given's argument binding; Hegel
+# accepts mixed and empty explicit cases);
+# test (deadline); test_simplifies_multiple_examples_with_same_error,
+# test_shows_all_examples_at_verbose, test_different_errors_not_simplified
+# (Hypothesis's grouping of failing explicit examples); test_example_decorator_accepts_strategies,
+# test_helpful_message_when_example_fails_because_it_was_passed_a_strategy
+# (Hypothesis's warning about a strategy passed to @example);
+# test_stop_silently_dropping_examples_when_decorator_is_applied_to_itself
+# (Hypothesis's guard against @example applied to @example);
+# test_prints_verbose_output_for_explicit_examples (a verbose trace of explicit cases);
+# the ExceptionGroup case of test_multiple_example_reporting (MultipleFailures for
+# explicit cases).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -8,86 +21,80 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-import time
 from unittest import TestCase
 
 import pytest
 
-from hegel.hypothesis import (
-    Phase,
-    Verbosity,
-    assume,
-    example,
-    given,
-    note,
-    reporting,
-    settings,
-)
-from hegel.hypothesis.errors import DeadlineExceeded, HypothesisWarning, InvalidArgument
-
-from hegel.hypothesis.strategies import floats, integers, text
-
-from tests.hypothesis_port.common.utils import (
-    assert_failing_output,
-    capture_out,
-    fails_with,
-    skipif_threading,
-)
+import hegel
+from hegel import generators as gs
+from tests.hypothesis_port.common.utils import assert_failing_output, capture_out, notes
 
 
 class TestInstanceMethods(TestCase):
-    @given(integers())
-    @example(1)
-    def test_hi_1(self, x):
+    @hegel.test
+    @hegel.explicit_test_case(1)
+    def test_hi_1(self, tc):
+        x = tc.draw(gs.integers())
         assert isinstance(x, int)
 
-    @given(integers())
-    @example(x=1)
-    def test_hi_2(self, x):
-        assert isinstance(x, int)
-
-    @given(x=integers())
-    @example(x=1)
-    def test_hi_3(self, x):
+    @hegel.test
+    @hegel.explicit_test_case(x=1)
+    def test_hi_2(self, tc):
+        x = tc.draw(gs.integers())
         assert isinstance(x, int)
 
 
 def test_kwarg_example_on_testcase():
     class Stuff(TestCase):
-        @given(integers())
-        @example(x=1)
-        def test_hi(self, x):
+        @hegel.test
+        @hegel.explicit_test_case(x=1)
+        def test_hi(self, tc):
+            x = tc.draw(gs.integers())
             assert isinstance(x, int)
 
     Stuff("test_hi").test_hi()
 
 
 def test_errors_when_run_with_not_enough_args():
-    @given(integers(), int)
-    @example(1)
-    def foo(x, y):
-        pass
+    @hegel.test
+    @hegel.explicit_test_case(1)
+    def foo(tc):
+        tc.draw(gs.integers())
+        tc.draw(gs.integers())
 
-    with pytest.raises((TypeError, InvalidArgument)):
+    with pytest.raises(hegel.InvalidArgument):
         foo()
 
 
 def test_errors_when_run_with_not_enough_kwargs():
-    @given(integers(), int)
-    @example(x=1)
-    def foo(x, y):
-        pass
+    @hegel.test
+    @hegel.explicit_test_case(x=1)
+    def foo(tc):
+        x = tc.draw(gs.integers())
+        y = tc.draw(gs.integers())
+        assert isinstance((x, y), tuple)
 
-    with pytest.raises((TypeError, InvalidArgument)):
+    with pytest.raises(hegel.InvalidArgument):
         foo()
+
+
+def test_must_agree_with_number_of_arguments():
+    @hegel.test
+    @hegel.explicit_test_case(1, 2)
+    def test(tc):
+        tc.draw(gs.integers())
+
+    with pytest.raises(hegel.InvalidArgument):
+        test()
 
 
 def test_can_use_examples_after_given():
     long_str = "This is a very long string that you've no chance of hitting"
 
-    @example(long_str)
-    @given(text())
-    def test_not_long_str(x):
+    @hegel.explicit_test_case(long_str)
+    @hegel.test
+    def test_not_long_str(tc):
+        x = tc.draw(gs.text())
         assert x != long_str
 
     with pytest.raises(AssertionError):
@@ -97,9 +104,10 @@ def test_can_use_examples_after_given():
 def test_can_use_examples_before_given():
     long_str = "This is a very long string that you've no chance of hitting"
 
-    @given(text())
-    @example(long_str)
-    def test_not_long_str(x):
+    @hegel.test
+    @hegel.explicit_test_case(long_str)
+    def test_not_long_str(tc):
+        x = tc.draw(gs.text())
         assert x != long_str
 
     with pytest.raises(AssertionError):
@@ -112,10 +120,11 @@ def test_can_use_examples_around_given():
 
     seen = []
 
-    @example(short_str)
-    @given(text())
-    @example(long_str)
-    def test_not_long_str(x):
+    @hegel.explicit_test_case(short_str)
+    @hegel.test
+    @hegel.explicit_test_case(long_str)
+    def test_not_long_str(tc):
+        x = tc.draw(gs.text())
         seen.append(x)
 
     test_not_long_str()
@@ -123,66 +132,41 @@ def test_can_use_examples_around_given():
 
 
 @pytest.mark.parametrize(("x", "y"), [(1, False), (2, True)])
-@example(z=10)
-@given(z=integers())
-def test_is_a_thing(x, y, z):
-    pass
-
-
-def test_no_args_and_kwargs():
-    with pytest.raises(InvalidArgument):
-        example(1, y=2)
-
-
-def test_no_empty_examples():
-    with pytest.raises(InvalidArgument):
-        example()
+@hegel.test
+@hegel.explicit_test_case(z=10)
+def test_is_a_thing(tc, x, y):
+    z = tc.draw(gs.integers())
+    assert isinstance(z, int)
 
 
 def test_does_not_print_on_explicit_examples_if_no_failure():
-    @example(1)
-    @given(integers())
-    def test_positive(x):
+    @hegel.test
+    @hegel.explicit_test_case(1)
+    def test_positive(tc):
+        x = tc.draw(gs.integers())
         assert x > 0
 
-    with (
-        reporting.with_reporter(reporting.default),
-        pytest.raises(AssertionError),
-        capture_out() as out,
-    ):
+    with pytest.raises(AssertionError), capture_out() as out:
         test_positive()
     out = out.getvalue()
-    assert "Failing test case: test_positive(1)" not in out
+    assert "x = 1" not in out
 
 
 def test_prints_output_for_explicit_examples():
-    @example(-1)
-    @given(integers())
-    def test_positive(x):
+    @hegel.test
+    @hegel.explicit_test_case(-1)
+    def test_positive(tc):
+        x = tc.draw(gs.integers())
         assert x > 0
 
     assert_failing_output(test_positive, "Falsifying example", x=-1)
 
 
-def test_prints_verbose_output_for_explicit_examples():
-    @settings(verbosity=Verbosity.verbose)
-    @example("NOT AN INTEGER")
-    @given(integers())
-    def test_always_passes(x):
-        pass
-
-    assert_failing_output(
-        test_always_passes,
-        expected_exception=None,
-        prefix="Trying explicit example",
-        x="NOT AN INTEGER",
-    )
-
-
 def test_captures_original_repr_of_example():
-    @example(x=[])
-    @given(integers())
-    def test_mutation(x):
+    @hegel.test
+    @hegel.explicit_test_case(x=[])
+    def test_mutation(tc):
+        x = tc.draw(gs.lists(gs.integers()))
         x.append(1)
         assert not x
 
@@ -190,156 +174,61 @@ def test_captures_original_repr_of_example():
 
 
 def test_examples_are_tried_in_order():
-    @example(x=1)
-    @example(x=2)
-    @given(integers())
-    @settings(phases=[Phase.explicit])
-    @example(x=3)
-    def test(x):
+    @hegel.explicit_test_case(x=1)
+    @hegel.explicit_test_case(x=2)
+    @hegel.test(phases=[hegel.Phase.explicit])
+    @hegel.explicit_test_case(x=3)
+    def test(tc):
+        x = tc.draw(gs.integers())
         print(f"x -> {x}")
 
-    with capture_out() as out, reporting.with_reporter(reporting.default):
+    with capture_out() as out:
         test()
     ls = out.getvalue().splitlines()
     assert ls == ["x -> 1", "x -> 2", "x -> 3"]
 
 
 def test_prints_note_in_failing_example():
-    @example(x=42)
-    @example(x=43)
-    @given(integers())
-    def test(x):
-        note(f"x -> {x}")
+    @hegel.test
+    @hegel.explicit_test_case(x=42)
+    @hegel.explicit_test_case(x=43)
+    def test(tc):
+        x = tc.draw(gs.integers())
+        tc.note(f"x -> {x}")
         assert x == 42
 
     with pytest.raises(AssertionError) as err:
         test()
-    assert "x -> 43" in "\n".join(err.value.__notes__)
-    assert "x -> 42" not in "\n".join(err.value.__notes__)
+    assert "x -> 43" in "\n".join(notes(err.value))
+    assert "x -> 42" not in "\n".join(notes(err.value))
 
 
-def test_must_agree_with_number_of_arguments():
-    @example(1, 2)
-    @given(integers())
-    def test(a):
-        pass
-
-    with pytest.raises(InvalidArgument):
-        test()
-
-
-@skipif_threading  # deadline disabled under threading
-@fails_with(DeadlineExceeded)
-@example(10)
-@settings(phases=[Phase.explicit], deadline=1)
-@given(integers())
-def test(x):
-    time.sleep(0.05)  # Hypothesis fakes elapsed time; a real short sleep still exceeds deadline=1ms
-
-
-@given(value=floats(0, 1))
-@example(value=0.56789)
 @pytest.mark.parametrize("threshold", [0.5, 1])
-def test_unsatisfied_assumption_during_explicit_example(threshold, value):
-    # Regression test, expected to pass / skip depending on parametrize.
-    # See https://github.com/HypothesisWorks/hypothesis/issues/2125
-    assume(value < threshold)
+def test_unsatisfied_assumption_during_explicit_example(threshold):
+    # Regression test for https://github.com/HypothesisWorks/hypothesis/issues/2125.
+    # Hegel treats an assumption that an explicit test case violates as a
+    # mistake in the explicit case, rather than skipping it.
+    @hegel.test
+    @hegel.explicit_test_case(value=0.56789)
+    def test(tc):
+        value = tc.draw(gs.floats(0, 1))
+        tc.assume(value < threshold)
+
+    if threshold > 0.56789:
+        test()
+    else:
+        with pytest.raises(hegel.InvalidArgument, match="assumption violated"):
+            test()
 
 
-@pytest.mark.parametrize("exc", [ExceptionGroup, AssertionError])
-def test_multiple_example_reporting(exc):
-    @example(1)
-    @example(2)
-    @settings(report_multiple_bugs=exc is ExceptionGroup, phases=[Phase.explicit])
-    @given(integers())
-    def inner_test_multiple_failing_examples(x):
+def test_multiple_example_reporting():
+    @hegel.test(phases=[hegel.Phase.explicit])
+    @hegel.explicit_test_case(1)
+    @hegel.explicit_test_case(2)
+    def inner_test_multiple_failing_examples(tc):
+        x = tc.draw(gs.integers())
         assert x < 2
         assert x < 1
 
-    with pytest.raises(exc):
+    with pytest.raises(AssertionError):
         inner_test_multiple_failing_examples()
-
-
-def test_simplifies_multiple_examples_with_same_error():
-    # When multiple examples fail with the same error, only the simplest is shown
-    @example(x=1000)
-    @example(x=1)
-    @example(x=100)
-    @settings(report_multiple_bugs=True, phases=[Phase.explicit])
-    @given(x=integers())
-    def test_fn(x):
-        assert x < 0
-
-    with pytest.raises(AssertionError) as exc_info:
-        test_fn()
-
-    err = exc_info.value
-    # Should show note about other examples
-    assert any("2 other explicit examples also failed" in note for note in err.__notes__)
-    # Should show the simplest example (x=1 is shorter than x=100 or x=1000)
-    assert any("x = 1\n" in note or note.endswith("x = 1") for note in err.__notes__)
-
-
-def test_shows_all_examples_at_verbose():
-    # At verbose, all examples with same error should be shown
-    @example(x=1000)
-    @example(x=1)
-    @settings(report_multiple_bugs=True, phases=[Phase.explicit], verbosity=Verbosity.verbose)
-    @given(x=integers())
-    def test_fn(x):
-        assert x < 0
-
-    with pytest.raises(ExceptionGroup) as exc_info:
-        test_fn()
-
-    group = exc_info.value
-    # Both examples should be shown
-    assert len(group.exceptions) == 2
-    # No simplification note should be present
-    for exc in group.exceptions:
-        assert not any("other explicit example" in note for note in getattr(exc, "__notes__", []))
-
-
-def test_different_errors_not_simplified():
-    # Examples with different errors should all be shown
-    @example(x=1)
-    @example(x=2)
-    @settings(report_multiple_bugs=True, phases=[Phase.explicit])
-    @given(x=integers())
-    def test_fn(x):
-        if x == 1:
-            raise ValueError("one")
-        raise TypeError("two")
-
-    with pytest.raises(ExceptionGroup) as exc_info:
-        test_fn()
-
-    assert {type(e) for e in exc_info.value.exceptions} == {ValueError, TypeError}
-
-
-@example(text())
-@given(text())
-def test_example_decorator_accepts_strategies(s):
-    """The custom error message only happens when the test has already failed."""
-
-
-def test_helpful_message_when_example_fails_because_it_was_passed_a_strategy():
-    @example(text())
-    @given(text())
-    def t(s):
-        assert isinstance(s, str)
-
-    try:
-        t()
-    except HypothesisWarning as err:
-        assert isinstance(err.__cause__, AssertionError)
-    else:
-        raise NotImplementedError("should be unreachable")
-
-
-def test_stop_silently_dropping_examples_when_decorator_is_applied_to_itself():
-    def f():
-        pass
-
-    test = example("outer")(example("inner"))(f)
-    assert len(test.hypothesis_explicit_examples) == 2

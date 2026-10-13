@@ -13,10 +13,10 @@ from inspect import Parameter
 
 import pytest
 
-from hegel.hypothesis import given, settings, strategies as st
-from hegel.hypothesis.errors import InvalidArgument
-
-from tests.hypothesis_port.common.arguments import e, e_to_str
+import hegel
+from hegel import generators as gs
+from hegel.errors import InvalidArgument
+from tests.hypothesis_port.common.arguments import argument_validation_test, e
 
 BAD_ARGS = []
 
@@ -29,12 +29,12 @@ def adjust(ex, **kwargs):
 
 
 for ex in [
-    e(st.lists, st.integers()),
-    e(st.sets, st.integers()),
-    e(st.frozensets, st.integers()),
-    e(st.dictionaries, st.integers(), st.integers()),
-    e(st.text),
-    e(st.binary),
+    e(gs.lists, gs.integers()),
+    e(gs.sets, gs.integers()),
+    e(gs.frozensets, gs.integers()),
+    e(gs.dicts, gs.integers(), gs.integers()),
+    e(gs.text),
+    e(gs.binary),
 ]:
     adjust(ex, min_size=-1)
     adjust(ex, max_size=-1)
@@ -42,49 +42,37 @@ for ex in [
     adjust(ex, max_size="no")
 
 
-@pytest.mark.parametrize(
-    ("function", "args", "kwargs"), BAD_ARGS, ids=list(map(e_to_str, BAD_ARGS))
+test_raise_invalid_argument = argument_validation_test(BAD_ARGS)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=hegel.FailedHealthCheck,
+    reason="Hegel's lists(nothing(), min_size=1) is not rejected: every draw is rejected "
+    "instead, failing the FilterTooMuch health check",
 )
-def test_raise_invalid_argument(function, args, kwargs):
-    # Hegel validates arguments eagerly, so the strategy is built inside the
-    # raises block (Hypothesis defers validation until the test runs).
-    with pytest.raises(InvalidArgument):
-
-        @given(function(*args, **kwargs))
-        @settings(report_multiple_bugs=False)
-        def test(x):
-            pass
-
-        test()
-
-
 def test_raise_invalid_argument_for_nonempty_list_of_nothing():
     with pytest.raises(InvalidArgument):
-
-        @given(st.lists(st.nothing(), unique=True, min_size=1))
-        @settings(report_multiple_bugs=False)
-        def test(x):
-            pass
-
-        test()
+        generator = gs.lists(gs.nothing(), unique=True, min_size=1)
+        hegel.run(lambda tc: tc.draw(generator), report_multiple_failures=False)
 
 
-ALL_STRATEGIES_COPY = {
-    name: getattr(st, name)
-    for name in st.__all__
-    if callable(getattr(st, name)) and not isinstance(getattr(st, name), type)
+ALL_GENERATORS_COPY = {
+    name: getattr(gs, name)
+    for name in gs.__all__
+    if callable(getattr(gs, name)) and not isinstance(getattr(gs, name), type)
 }
 
 
-@pytest.mark.parametrize("name", sorted(ALL_STRATEGIES_COPY))
+@pytest.mark.parametrize("name", sorted(ALL_GENERATORS_COPY))
 def test_consistent_with_api_guide_on_kwonly_args(name):
-    # Enforce our style-guide: if it has a default value, it should be
+    # Enforce the style-guide: if it has a default value, it should be
     # keyword-only, with a few exceptions.
-    strategy = ALL_STRATEGIES_COPY[name]
-    for arg in inspect.signature(strategy).parameters.values():
+    generator = ALL_GENERATORS_COPY[name]
+    for arg in inspect.signature(generator).parameters.values():
         assert (
             arg.default == Parameter.empty
             or arg.kind != Parameter.POSITIONAL_OR_KEYWORD
-            or arg.name in ("min_value", "max_value", "subtype_strategy", "columns")
-            or name in ("text", "range_indexes", "badly_draw_lists", "write_pattern")
+            or arg.name in ("min_value", "max_value")
+            or name == "text"
         ), f"need kwonly args in {name}"

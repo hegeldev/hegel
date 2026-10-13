@@ -10,30 +10,28 @@
 
 import pytest
 
-from hegel.hypothesis import HealthCheck, Verbosity, given, reject, settings, strategies as st
-from hegel.hypothesis.errors import Unsatisfiable
-
+import hegel
+from hegel import generators as gs
 from tests.hypothesis_port.common.debug import minimal
 from tests.hypothesis_port.common.utils import no_shrink
 
 
-@pytest.mark.parametrize("strat", [st.text(min_size=5)])
-@settings(phases=no_shrink, deadline=None, suppress_health_check=list(HealthCheck))
-@given(st.data())
-def test_explore_arbitrary_function(strat, data):
+@pytest.mark.parametrize("strat", [gs.text(min_size=5)])
+@hegel.test(phases=no_shrink, suppress_health_check=hegel.HealthCheck.all())
+def test_explore_arbitrary_function(tc, strat):
     cache = {}
 
     def predicate(x):
         try:
             return cache[x]
         except KeyError:
-            return cache.setdefault(x, data.draw(st.booleans(), label=repr(x)))
+            return cache.setdefault(x, tc.draw(gs.booleans(), name=repr(x)))
 
     try:
         minimal(
             strat,
             predicate,
-            settings=settings(max_examples=10, database=None, verbosity=Verbosity.quiet),
+            settings=hegel.Settings(test_cases=10, database="", verbosity=hegel.Verbosity.quiet),
         )
-    except Unsatisfiable:
-        reject()
+    except hegel.Unsatisfiable:
+        tc.reject()

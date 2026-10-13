@@ -24,7 +24,7 @@ check-coverage:
     uv run coverage run -m pytest -q tests --ignore=tests/hypothesis_port
     uv run coverage report
 
-# The Hypothesis test suite, ported to run on hegel.hypothesis.
+# The Hypothesis test suite, ported to the Hegel API.
 check-hypothesis-port:
     uv run pytest -q tests/hypothesis_port -p no:cacheprovider
 

@@ -8,10 +8,9 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-from hegel.hypothesis import strategies as st
-
+from hegel import generators as gs
 from tests.hypothesis_port.common.debug import find_any
 
 
 def test_can_generate_large_lists_with_min_size():
-    find_any(st.lists(st.integers(), min_size=400))
+    find_any(gs.lists(gs.integers(), min_size=400))

@@ -1,23 +1,19 @@
 import sys
 from collections import namedtuple
 
-from hegel.hypothesis.strategies import (
+from hegel.generators import (
     binary,
     booleans,
     builds,
-    complex_numbers,
-    decimals,
-    dictionaries,
-    fixed_dictionaries,
+    dicts,
+    fixed_dicts,
     floats,
-    fractions,
     frozensets,
     integers,
     just,
     lists,
     none,
     one_of,
-    randoms,
     recursive,
     sampled_from,
     sets,
@@ -25,9 +21,7 @@ from hegel.hypothesis.strategies import (
     tuples,
 )
 
-from tests.hypothesis_port.common.debug import TIME_INCREMENT
-
-__all__ = ["TIME_INCREMENT", "standard_types"]
+__all__ = ["standard_types"]
 
 OrderedPair = namedtuple("OrderedPair", ("left", "right"))
 ABC = namedtuple("ABC", ("a", "b", "c"))
@@ -42,12 +36,12 @@ standard_types = [
     tuples(),
     sets(none(), max_size=0),
     frozensets(none(), max_size=0),
-    fixed_dictionaries({}),
+    fixed_dicts({}),
     abc(booleans(), booleans(), booleans()),
     abc(booleans(), booleans(), integers()),
-    fixed_dictionaries({"a": integers(), "b": booleans()}),
-    dictionaries(booleans(), integers()),
-    dictionaries(text(), booleans()),
+    fixed_dicts({"a": integers(), "b": booleans()}),
+    dicts(booleans(), integers()),
+    dicts(text(), booleans()),
     one_of(integers(), tuples(booleans())),
     sampled_from(range(10)),
     one_of(just("a"), just("b"), just("c")),
@@ -70,19 +64,15 @@ standard_types = [
     tuples(booleans(), booleans()),
     frozensets(integers()),
     sets(frozensets(booleans())),
-    complex_numbers(),
-    fractions(),
-    decimals(),
     lists(lists(booleans())),
     lists(floats(0.0, 0.0)),
-    integers().flatmap(
+    integers().flat_map(
         lambda right: integers(min_value=0).map(lambda length: OrderedPair(right - length, right))
     ),
-    integers().flatmap(lambda v: lists(just(v))),
+    integers().flat_map(lambda v: lists(just(v))),
     integers().filter(lambda x: abs(x) > 100),
     floats(min_value=-sys.float_info.max, max_value=sys.float_info.max),
     none(),
-    randoms(use_true_random=True),
-    booleans().flatmap(lambda x: booleans() if x else complex_numbers()),
-    recursive(base=booleans(), extend=lambda x: lists(x, max_size=3), max_leaves=10),
+    booleans().flat_map(lambda x: booleans() if x else floats()),
+    recursive(booleans(), lambda x: lists(x, max_size=3), max_leaves=10),
 ]

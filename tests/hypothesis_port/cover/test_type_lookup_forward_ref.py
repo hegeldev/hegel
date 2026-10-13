@@ -11,29 +11,32 @@
 """
 We need these test to make sure ``TypeVar('X', bound='MyType')`` works correctly.
 
-There was a problem previously that ``bound='MyType'`` was resolved as ``ForwardRef('MyType')``
-which is not a real type. And ``hypothesis`` was not able to generate any meaningful values out of it.
+There was a problem previously that ``bound='MyType'`` was resolved as
+``ForwardRef('MyType')`` which is not a real type. And ``hypothesis`` was not able
+to generate any meaningful values out of it.
 
 Right here we test different possible outcomes for different Python versions:
 - Regular case, when ``'MyType'`` can be imported
 - Alias case, when we use type aliases for ``'MyType'``
-- ``if TYPE_CHECKING:`` case, when ``'MyType'`` only exists during type checking and is not importable at all
+- ``if TYPE_CHECKING:`` case, when ``'MyType'`` only exists during type checking
+  and is not importable at all
 - Dot access case, like ``'module.MyType'``
 - Missing case, when there's no ``'MyType'`` at all
 """
 
-from typing import TYPE_CHECKING, ForwardRef, TypeVar
+from typing import ForwardRef, TypeVar
 
 import pytest
 
-from hegel.hypothesis import given, strategies as st
-from hegel.hypothesis.errors import ResolutionFailed
-
+import hegel
+from hegel import generators as gs
+from hegel.errors import ResolutionFailed
 from tests.hypothesis_port.common import utils
 from tests.hypothesis_port.common.debug import check_can_generate_examples
 
-if TYPE_CHECKING:
-    from tests.hypothesis_port.common.utils import ExcInfo  # we just need any type
+# The dot-access case names ``utils.StringIO`` rather than Hypothesis's
+# ``utils.ExcInfo``: the ported helpers have no ``ExcInfo``, and any type
+# reachable through the module will do.
 
 # Correct:
 
@@ -49,9 +52,10 @@ class CustomType:
         self.arg = arg
 
 
-@given(st.builds(correct_fun))
-def test_bound_correct_forward_ref(built):
+@hegel.test
+def test_bound_correct_forward_ref(tc):
     """Correct resolution of existing type codebase."""
+    built = tc.draw(gs.builds(correct_fun))
     assert isinstance(built, int)
 
 
@@ -67,15 +71,16 @@ def alias_fun(thing: _Alias) -> int:
 OurAlias = CustomType
 
 
-@given(st.builds(alias_fun))
-def test_bound_alias_forward_ref(built):
+@hegel.test
+def test_bound_alias_forward_ref(tc):
     """Correct resolution of type aliases."""
+    built = tc.draw(gs.builds(alias_fun))
     assert isinstance(built, int)
 
 
 # Dot access:
 
-_CorrectDotAccess = TypeVar("_CorrectDotAccess", bound="utils.ExcInfo")
+_CorrectDotAccess = TypeVar("_CorrectDotAccess", bound="utils.StringIO")
 _WrongDotAccess = TypeVar("_WrongDotAccess", bound="wrong.ExcInfo")  # noqa
 _MissingDotAccess = TypeVar("_MissingDotAccess", bound="utils.MissingType")
 
@@ -92,9 +97,10 @@ def missing_dot_access_fun(thing: _MissingDotAccess) -> int:
     return 1
 
 
-@given(st.builds(correct_dot_access_fun))
-def test_bound_correct_dot_access_forward_ref(built):
+@hegel.test
+def test_bound_correct_dot_access_forward_ref(tc):
     """Correct resolution of dot access types."""
+    built = tc.draw(gs.builds(correct_dot_access_fun))
     assert isinstance(built, int)
 
 
@@ -102,7 +108,7 @@ def test_bound_correct_dot_access_forward_ref(built):
 def test_bound_missing_dot_access_forward_ref(function):
     """Resolution of missing type in dot access."""
     with pytest.raises(ResolutionFailed):
-        check_can_generate_examples(st.builds(function))
+        check_can_generate_examples(gs.builds(function))
 
 
 # Missing:
@@ -117,12 +123,12 @@ def missing_fun(thing: _Missing) -> int:
 def test_bound_missing_forward_ref():
     """We should raise proper errors on missing types."""
     with pytest.raises(ResolutionFailed):
-        check_can_generate_examples(st.builds(missing_fun))
+        check_can_generate_examples(gs.builds(missing_fun))
 
 
 # Type checking only:
 
-_TypeChecking = TypeVar("_TypeChecking", bound="ExcInfo")
+_TypeChecking = TypeVar("_TypeChecking", bound="ExcInfo")  # noqa: F821
 
 
 def typechecking_only_fun(thing: _TypeChecking) -> int:
@@ -131,14 +137,14 @@ def typechecking_only_fun(thing: _TypeChecking) -> int:
 
 def test_bound_type_cheking_only_forward_ref():
     """We should fallback to registering explicit ``ForwardRef`` when we have to."""
-    with utils.temp_registered(ForwardRef("ExcInfo"), st.just(1)):
-        check_can_generate_examples(st.builds(typechecking_only_fun))
+    with utils.temp_registered(ForwardRef("ExcInfo"), gs.just(1)):
+        check_can_generate_examples(gs.builds(typechecking_only_fun))
 
 
 def test_bound_type_checking_only_forward_ref_wrong_type():
     """We should check ``ForwardRef`` parameter name correctly."""
     with (
-        utils.temp_registered(ForwardRef("WrongType"), st.just(1)),
+        utils.temp_registered(ForwardRef("WrongType"), gs.just(1)),
         pytest.raises(ResolutionFailed),
     ):
-        check_can_generate_examples(st.builds(typechecking_only_fun))
+        check_can_generate_examples(gs.builds(typechecking_only_fun))

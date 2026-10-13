@@ -1,8 +1,7 @@
 """pytest integration, registered automatically when hegel is installed.
 
-Hegel tests are marked ``hegel`` (and hegel.hypothesis tests
-``hypothesis``), and these options adjust the default settings profile for
-the run:
+Hegel tests are marked ``hegel``, and these options adjust the default
+settings profile for the run:
 
 ``--hegel-profile NAME``
     Start from the named settings profile.
@@ -15,10 +14,6 @@ the run:
 ``--hegel-database PATH``
     Keep the example database in ``PATH``; ``--hegel-database=`` (empty)
     disables it.
-
-The ``--hypothesis-profile``, ``--hypothesis-seed`` and
-``--hypothesis-verbosity`` options do the same for hegel.hypothesis tests
-(see :mod:`hegel._pytest_hypothesis`).
 """
 
 from __future__ import annotations
@@ -27,12 +22,9 @@ from typing import Any
 
 import pytest
 
-from hegel import _pytest_hypothesis
-
 
 def pytest_addoption(parser: Any) -> None:
     group = parser.getgroup("hegel")
-    _pytest_hypothesis.addoption(group)
     group.addoption(
         "--hegel-profile", action="store", default=None, help="Hegel settings profile to use"
     )
@@ -70,8 +62,6 @@ _OPTIONS = {
 
 def pytest_configure(config: Any) -> None:
     config.addinivalue_line("markers", "hegel: a Hegel property-based test")
-    config.addinivalue_line("markers", "hypothesis: a hegel.hypothesis property-based test")
-    _pytest_hypothesis.configure(config)
     profile = config.getoption("--hegel-profile")
     overrides = {
         field: convert(value)
@@ -91,11 +81,3 @@ def pytest_itemcollected(item: Any) -> None:
     test = getattr(item, "obj", None)
     if getattr(test, "is_hegel_test", False):
         item.add_marker(pytest.mark.hegel)
-    if getattr(test, "is_hypothesis_test", False):
-        item.add_marker(pytest.mark.hypothesis)
-
-
-@pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_call(item: Any) -> Any:
-    _pytest_hypothesis.before_call(item)
-    yield
