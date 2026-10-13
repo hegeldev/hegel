@@ -591,6 +591,13 @@ fn filter_too_much_fires_on_an_exhausted_space() {
         Err(RunError::HealthCheck(check, msg)) => {
             assert_eq!(check, HealthCheck::FilterTooMuch);
             assert!(msg.contains("FilterTooMuch"), "{msg}");
+            assert!(
+                msg.contains(
+                    "suppress the FilterTooMuch health check with the suppress_health_check setting"
+                ),
+                "{msg}"
+            );
+            assert!(!msg.contains("HealthCheck::"), "{msg}");
         }
         other => panic!("expected FilterTooMuch, got {other:?}"),
     }
@@ -611,7 +618,10 @@ fn an_all_invalid_run_under_suppression_is_unsatisfiable() {
     );
     match result {
         Err(RunError::Unsatisfiable(msg)) => {
-            assert!(msg.contains("459 inputs were filtered out"), "{msg}");
+            assert!(
+                msg.contains("459 inputs were rejected by assume() or a filter"),
+                "{msg}"
+            );
         }
         other => panic!("expected Unsatisfiable, got {other:?}"),
     }
@@ -708,6 +718,76 @@ fn a_tiny_passing_space_generates_to_its_test_case_budget() {
     );
     assert!(result.unwrap().failures.is_empty());
     assert!(execs >= 50, "a valid space is budget-bounded: {execs}");
+}
+
+/// Verbose output announces every executed test case, the simplest input
+/// that opens generation included.
+#[test]
+fn verbose_output_announces_every_case() {
+    let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink = std::sync::Arc::clone(&lines);
+    let (result, execs) = tiny_invalid_run(
+        Settings::new()
+            .database(None)
+            .test_cases(50)
+            .verbosity(Verbosity::Verbose)
+            .output(Output::callback(move |line| {
+                sink.lock().unwrap().push(line.to_string());
+            })),
+        TestCaseResult::Valid,
+    );
+    assert!(result.unwrap().failures.is_empty());
+    let lines = lines.lock().unwrap();
+    let announced = lines.iter().filter(|l| *l == "Running test case").count() as u64;
+    assert_eq!(announced, execs, "{lines:?}");
+    let generate = lines
+        .iter()
+        .position(|l| l == "Starting phase: Generate")
+        .unwrap();
+    assert_eq!(lines[generate + 1], "Running test case", "{lines:?}");
+}
+
+/// Verbose output announces the reuse phase's database replays like any
+/// other executed test case.
+#[test]
+fn verbose_output_announces_reuse_replays() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().to_str().unwrap().to_string();
+    let db = DirectoryTestCaseDatabase::new(&path);
+    db.save(
+        b"k",
+        &serialize_choices(&[ChoiceValue::Boolean(true)]).unwrap(),
+    );
+    let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink = std::sync::Arc::clone(&lines);
+    let calls = AtomicU64::new(0);
+    let result = reuse_run(
+        Settings::new()
+            .database(Some(path.clone()))
+            .verbosity(Verbosity::Verbose)
+            .output(Output::callback(move |line| {
+                sink.lock().unwrap().push(line.to_string());
+            })),
+        "k",
+        |ds| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            match rbool(ds) {
+                Ok(true) => boom("stored bug"),
+                Ok(false) => TestCaseResult::Valid,
+                Err(()) => TestCaseResult::Overrun,
+            }
+        },
+    );
+    assert!(!result.unwrap().failures.is_empty());
+    let lines = lines.lock().unwrap();
+    let announced = lines.iter().filter(|l| *l == "Running test case").count() as u64;
+    assert_eq!(announced, calls.load(Ordering::SeqCst), "{lines:?}");
+    let reuse = lines
+        .iter()
+        .position(|l| l == "Starting phase: Reuse")
+        .unwrap();
+    assert_eq!(lines[reuse + 1], "Running test case", "{lines:?}");
 }
 
 #[test]
@@ -8139,7 +8219,10 @@ fn run_main_reports_unsatisfiable_for_trivial_always_invalid_test() {
     match exploration {
         Err(crate::backend::RunError::Unsatisfiable(msg)) => {
             assert!(msg.contains("Unsatisfiable"), "unexpected message: {msg}");
-            assert!(msg.contains("assume()"), "unexpected message: {msg}");
+            assert!(
+                msg.contains("draws no data, and its only possible input was rejected"),
+                "unexpected message: {msg}"
+            );
         }
         other => panic!("expected RunError::Unsatisfiable, got {other:?}"),
     }

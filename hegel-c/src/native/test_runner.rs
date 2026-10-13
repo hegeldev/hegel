@@ -560,9 +560,6 @@ impl<'a> Engine<'a> {
                 let params = crate::native::core::GenerationParameters::draw(&mut case_rng)?;
                 let ntc =
                     NativeTestCase::new_random_with_params(case_rng, params, self.choice_bound());
-                if verbosity == Verbosity::Verbose {
-                    output.line("Running test case");
-                }
 
                 let (run, mismatch) = self.test_function(ntc).await?;
                 if let Some(err) = mismatch {
@@ -589,10 +586,10 @@ impl<'a> Engine<'a> {
                             format!(
                                 "FailedHealthCheck: FilterTooMuch — it looks like this \
                          test is filtering out too many inputs. \
-                         {} inputs were filtered out by assume() \
+                         {} inputs were rejected by assume() or a filter \
                          while only {} valid inputs were \
-                         generated. If this is expected, suppress the check with \
-                         suppress_health_check = [HealthCheck::FilterTooMuch].",
+                         generated. If this is expected, suppress the FilterTooMuch \
+                         health check with the suppress_health_check setting.",
                                 self.invalid_test_cases, self.valid_test_cases
                             ),
                         ));
@@ -655,14 +652,14 @@ impl<'a> Engine<'a> {
             if self.test_is_trivial {
                 return Err(RunError::Unsatisfiable(
                     "Unsatisfiable: unable to satisfy the test's assumptions. The \
-                 test draws no data, and assume() rejected its only possible input."
+                 test draws no data, and its only possible input was rejected."
                         .to_string(),
                 ));
             }
             return Err(RunError::Unsatisfiable(format!(
                 "Unsatisfiable: unable to satisfy the test's assumptions. No valid \
-             input was generated: {} inputs were filtered out by assume() and {} \
-             overran the choice limit.",
+             input was generated: {} inputs were rejected by assume() or a filter \
+             and {} overran the choice limit.",
                 self.invalid_test_cases, self.overrun_test_cases
             )));
         }
@@ -981,8 +978,8 @@ pub(crate) fn too_slow_check(
             "FailedHealthCheck: TooSlow — input generation is slow: \
              only {valid_test_cases} valid inputs after {:?} (threshold \
              {:?}). Slow generation makes property testing much less \
-             effective. If this is expected, suppress the check with \
-             suppress_health_check = [HealthCheck::TooSlow].",
+             effective. If this is expected, suppress the TooSlow health check \
+             with the suppress_health_check setting.",
             total_test_time, threshold
         ))
     } else {
@@ -1010,10 +1007,9 @@ pub(crate) fn too_large_check(
              successfully, while {overrun_test_cases} inputs overran the choice limit \
              during generation. Testing with inputs this large is slow and shrinks \
              poorly. Try reducing the amount of data generated, e.g. a smaller \
-             min_size on collections like gs::vecs(). If this is expected, \
-             suppress the check with \
-             suppress_health_check = [HealthCheck::TestCasesTooLarge], which \
-             also removes the limit on the size of a test case."
+             minimum size on collections. If this is expected, suppress the \
+             TestCasesTooLarge health check with the suppress_health_check \
+             setting, which also removes the limit on the size of a test case."
         ))
     } else {
         None
@@ -1041,9 +1037,9 @@ pub(crate) fn large_initial_check(
             "FailedHealthCheck: LargeInitialTestCase — the smallest natural input \
              for this test is very large, which makes it hard to generate and \
              shrink good inputs. Consider reducing the amount of data generated, \
-             or introducing small alternatives (e.g. `gs::one_of` with an empty \
-             option). If this is expected, suppress the check with \
-             suppress_health_check = [HealthCheck::LargeInitialTestCase]."
+             or introducing small alternatives (e.g. a one_of with an empty \
+             option). If this is expected, suppress the LargeInitialTestCase \
+             health check with the suppress_health_check setting."
                 .to_string(),
         )
     } else {
@@ -1785,8 +1781,6 @@ impl<'a> Engine<'a> {
                 let probe = EngineShrinkProbe {
                     engine: &mut *self,
                     target_origin: origin.clone(),
-                    verbosity,
-                    output: output.clone(),
                 };
                 let mut shrinker =
                     Shrinker::with_probe(Box::new(probe), verify.nodes, Spans::from(verify.spans));
@@ -3032,6 +3026,9 @@ impl<'a> Engine<'a> {
     /// resuming the engine without concluding the offered case (see
     /// [`NativeDataSource::take_outcome`]).
     async fn execute(&mut self, ntc: NativeTestCase) -> Result<RunResult, RunError> {
+        if self.settings.verbosity == Verbosity::Verbose {
+            self.settings.output.line("Running test case");
+        }
         let (data_source, handle) = NativeDataSource::new(ntc);
         self.exchange.offer(Box::new(data_source)).await;
         let nodes = NativeDataSource::take_nodes(&handle);
@@ -3160,8 +3157,6 @@ fn graft_run(graph: &mut Graph, longest: &mut usize, nodes: &[ChoiceNode], spans
 struct EngineShrinkProbe<'e, 'a> {
     engine: &'e mut Engine<'a>,
     target_origin: String,
-    verbosity: Verbosity,
-    output: Output,
 }
 
 /// The deterministic shrinker's probe. Once a probe has flipped the run
@@ -3174,9 +3169,6 @@ impl ShrinkProbe for EngineShrinkProbe<'_, '_> {
         Box::pin(async move {
             if self.engine.nd_active {
                 return Err(ShrinkHalt::Stop);
-            }
-            if self.verbosity == Verbosity::Verbose {
-                self.output.line("Running test case");
             }
             let run = match req {
                 ShrinkRun::Full(nodes) => {
@@ -3212,9 +3204,6 @@ struct EngineGraphProbe<'e, 'a> {
 impl GraphProbe for EngineGraphProbe<'_, '_> {
     fn replay<'s>(&'s mut self, graph: Arc<Graph>, max_size: usize) -> GraphProbeFuture<'s> {
         Box::pin(async move {
-            if self.verbosity == Verbosity::Verbose {
-                self.output.line("Running test case");
-            }
             let replay = self
                 .engine
                 .nd_replay_graph(graph, max_size, Some(&self.origin))
