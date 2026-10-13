@@ -125,6 +125,8 @@ fn bad_repeat_ranges() {
     assert!(err("a: b~-1").contains("Bad Range for repetition (-1 isn't allowed)"));
     assert!(err("a: b~2000000").contains("Bad Range for repetition (2000000 isn't allowed)"));
     assert!(err("a: b~x").contains("Expecting a number after '~'"));
+    assert!(err("a: b~2..x").contains("Expecting a number after '..'"));
+    assert!(err("a: b~2..\n").contains("Expecting a number after '..'"));
 }
 
 #[test]

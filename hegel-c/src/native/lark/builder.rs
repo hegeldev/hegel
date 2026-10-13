@@ -49,9 +49,10 @@ pub fn bundled_grammar(grammar_path: &str) -> Option<&'static str> {
     }
 }
 
-/// Options recorded on a rule definition. Only `priority` and the
-/// template parameters affect anything here; the tree-shaping options are
-/// kept so the loader accepts every grammar Lark does.
+/// Options recorded on a rule definition. Nothing here reads them: a
+/// rule's priority and tree-shaping modifiers only matter to a parser
+/// building trees, and they are kept so that the loader accepts every
+/// grammar Lark does and reports what it parsed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleOptions {
     pub modifiers: RuleModifiers,

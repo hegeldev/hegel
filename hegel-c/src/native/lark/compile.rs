@@ -236,6 +236,7 @@ struct Compiler {
     term_by_pattern: HashMap<Pattern, TermId>,
     anon_counter: usize,
     rules: Vec<Option<Rule>>,
+    rule_names: Vec<String>,
     rule_ids: HashMap<String, RuleId>,
     templates: HashMap<String, (Vec<String>, Expr)>,
     pending: Vec<(String, Expr)>,
@@ -249,6 +250,7 @@ impl Compiler {
         }
         let id = self.rules.len();
         self.rules.push(None);
+        self.rule_names.push(name.to_string());
         self.rule_ids.insert(name.to_string(), id);
         id
     }
@@ -299,12 +301,7 @@ impl Compiler {
     fn symbol_name(&self, item: &Item) -> String {
         match item {
             Item::Terminal(id) => self.terminals[*id].0.clone(),
-            Item::Rule(id) => self
-                .rule_ids
-                .iter()
-                .find(|(_, v)| **v == *id)
-                .map(|(k, _)| k.clone())
-                .unwrap(),
+            Item::Rule(id) => self.rule_names[*id].clone(),
             Item::Group(_) | Item::Repeat { .. } => {
                 unreachable!("template arguments are always symbols")
             }
@@ -450,7 +447,7 @@ fn substitute(expr: &mut Expr, substitutions: &HashMap<&str, Symbol>) {
     }
 }
 
-fn collect_rule_refs(item: &Item, out: &mut Vec<RuleId>) {
+pub fn collect_rule_refs(item: &Item, out: &mut Vec<RuleId>) {
     match item {
         Item::Terminal(_) => {}
         Item::Rule(id) => out.push(*id),
@@ -507,6 +504,7 @@ pub fn compile(built: &BuiltGrammar, start: &[&str]) -> GrammarResult<Grammar> {
         term_by_pattern: HashMap::default(),
         anon_counter: 0,
         rules: Vec::new(),
+        rule_names: Vec::new(),
         rule_ids: HashMap::default(),
         templates: HashMap::default(),
         pending: Vec::new(),

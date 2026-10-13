@@ -314,9 +314,6 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(())
             }
-            Some(Tok::To) => {
-                Err(self.error("Expecting rule or terminal definition (missing colon)"))
-            }
             _ => Err(self.error("Expecting rule or terminal definition (missing colon)")),
         }
     }
@@ -374,7 +371,8 @@ impl<'a> Parser<'a> {
         Ok(Alternative { items, alias })
     }
 
-    fn repeat_count(&mut self) -> GrammarResult<u32> {
+    /// The count after `~` or `..` (`after`).
+    fn repeat_count(&mut self, after: &str) -> GrammarResult<u32> {
         let pos = self.pos();
         match self.advance() {
             Some(Tok::Number(n)) if (0..=REPEAT_LIMIT as i64).contains(&n) => Ok(n as u32),
@@ -382,7 +380,7 @@ impl<'a> Parser<'a> {
                 pos,
                 &format!("Bad Range for repetition ({n} isn't allowed)"),
             )),
-            _ => Err(self.error_at(pos, "Expecting a number after '~'")),
+            _ => Err(self.error_at(pos, &format!("Expecting a number after '{after}'"))),
         }
     }
 
@@ -406,9 +404,9 @@ impl<'a> Parser<'a> {
             Some(Tok::Tilde) => {
                 self.advance();
                 let pos = self.pos();
-                let min = self.repeat_count()?;
+                let min = self.repeat_count("~")?;
                 let max = if self.eat(&Tok::DotDot) {
-                    let max = self.repeat_count()?;
+                    let max = self.repeat_count("..")?;
                     if max < min {
                         return Err(self.error_at(
                             pos,
