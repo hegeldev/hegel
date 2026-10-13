@@ -1,0 +1,3 @@
+RELEASE_TYPE: patch
+
+This patch makes targeting start much earlier in large runs. Previously the first hill-climbing pass over `hegel_target` scores began only after half of the run's test cases, so a failure that targeting leads to with `test_cases = 10000` was found around case 5,000. Runs of 1,000 test cases or more now start optimising after a short random warm-up and interleave targeting passes with random generation on a fair-share schedule, with a pass firing early whenever random generation raises a best score, so such failures are found within a few hundred cases; smaller runs keep their single pass halfway through.
