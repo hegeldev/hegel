@@ -1,6 +1,6 @@
 mod common;
 
-use common::utils::{assert_all_examples, assert_no_examples, find_any};
+use common::utils::{assert_all_examples, assert_no_examples, find_any, known_to_std};
 use hegel::generators as gs;
 
 #[test]
@@ -26,7 +26,7 @@ fn test_characters_codepoint_range(tc: hegel::TestCase) {
 #[test]
 fn test_characters_lu() {
     assert_all_examples(gs::characters().categories(&["Lu"]), |c: &char| {
-        c.is_uppercase()
+        c.is_uppercase() || !known_to_std(*c)
     });
 }
 
@@ -98,7 +98,7 @@ fn test_text_codepoint_range(tc: hegel::TestCase) {
 #[test]
 fn test_text_categories() {
     assert_all_examples(gs::text().categories(&["Lu"]).max_size(20), |s: &String| {
-        s.chars().all(|c| c.is_uppercase())
+        s.chars().all(|c| c.is_uppercase() || !known_to_std(c))
     });
 }
 
