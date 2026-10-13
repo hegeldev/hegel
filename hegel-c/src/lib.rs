@@ -4969,7 +4969,7 @@ pub struct HegelGrammar {
 ///   with the `max_size` of `hegel_generate_grammar`.
 /// `max_depth`: How deeply rules may nest, or 0 for the default of 200.
 ///   Must not be below the shallowest nesting the start rule can produce,
-///   nor above 1000.
+///   nor above 500.
 /// `alphabet`: Optional (NULL for none). Must be a text generator; every
 ///   character a terminal's pattern draws is one of its characters, so a
 ///   character class, wildcard or literal outside it is never drawn.

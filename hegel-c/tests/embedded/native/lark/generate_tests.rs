@@ -388,7 +388,7 @@ fn caps_below_the_smallest_string_are_errors() {
     )
     .err()
     .unwrap();
-    assert_eq!(err.message, "max_depth is 1001 but may be at most 1000");
+    assert_eq!(err.message, "max_depth is 501 but may be at most 500");
     let err = spec_with(
         "start: a\na: b\nb: \"x\"\n",
         GrammarOptions {

@@ -116,8 +116,9 @@ pub const MAX_MAX_SIZE: u64 = 1 << 20;
 pub const DEFAULT_MAX_DEPTH: u32 = 200;
 
 /// The most deeply a grammar's rules may be allowed to nest: the walk
-/// that generates a string recurses a few frames per level.
-pub const MAX_MAX_DEPTH: u32 = 1000;
+/// that generates a string recurses a few frames per level, and this
+/// many fit in a 1 MiB stack unoptimised, half of a test thread's.
+pub const MAX_MAX_DEPTH: u32 = 500;
 
 /// How many distinct token texts a generation remembers the lexing of
 /// (see [`ReadingsCache::read_token`]) before the next draw forgets
