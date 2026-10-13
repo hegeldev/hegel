@@ -1488,9 +1488,8 @@ fn emit_from_set<D: Draws>(
 /// The least of `chars` (not empty) in the shrink order of `intervals`,
 /// the alphabet of the string choice (see
 /// [`IntervalSet::index_from_codepoint_in_shrink_order`]): the character
-/// the simplest walk emits for a class, so that the simplest string is
-/// the least string of the pattern, as it is for an alternation (see
-/// [`generate_least`]).
+/// the simplest walk emits for a class. Alternations likewise choose
+/// locally by shrink order (see [`generate_least`]).
 fn least_char(chars: &[char], intervals: &IntervalSet) -> Result<char, InternalError> {
     let least = chars
         .iter()
