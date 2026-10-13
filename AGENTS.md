@@ -16,6 +16,7 @@ just c-header             # regenerate hegel-c/include/hegel.h and src/ffi/sys/f
 just check-lark           # parse engine-generated strings from the Lark fixture grammars with Lark itself (needs uv)
 just check-parse          # compare the engine's grammar parser with Lark's on generated strings and their mutants (needs uv)
 just lark-fixtures        # regenerate the Lark fixtures' .expected files from Lark (needs uv)
+just unicodedata          # regenerate the Unicode tables and their Python reference from the vendored UCD files (needs uv)
 cargo test test_name      # one test
 ```
 

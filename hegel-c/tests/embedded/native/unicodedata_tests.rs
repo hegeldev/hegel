@@ -228,3 +228,30 @@ fn category_runs_in_clip_the_runs_to_the_range() {
     assert_eq!(category_runs_in(5, 3).count(), 0);
     assert_eq!(category_runs_in(0x110000, 0x110005).count(), 0);
 }
+
+/// Expected values from CPython 3.14's `_sre.unicode_tolower` and
+/// `_sre.unicode_iscased`, which the table derivation was checked against
+/// for every codepoint of Unicode 16.0.
+#[test]
+fn case_mappings_follow_cpython() {
+    assert_eq!(to_lower('A'), 'a');
+    assert_eq!(to_upper('a'), 'A');
+    assert_eq!(to_lower('\u{130}'), 'i');
+    assert_eq!(to_upper('\u{130}'), '\u{130}');
+    assert_eq!(to_lower('\u{DF}'), '\u{DF}');
+    assert_eq!(to_upper('\u{DF}'), 'S');
+    assert_eq!(to_upper('\u{149}'), '\u{2BC}');
+    assert_eq!(to_lower('\u{212A}'), 'k');
+    assert_eq!(to_upper('\u{1C8A}'), '\u{1C89}');
+    assert_eq!(to_lower('1'), '1');
+    assert_eq!(to_upper('1'), '1');
+    assert_eq!(to_lower('\u{4E00}'), '\u{4E00}');
+    assert_eq!(to_lower('\u{10FFFF}'), '\u{10FFFF}');
+}
+
+#[test]
+fn unicode_17_case_mappings_are_known() {
+    assert_eq!(to_upper('\u{A7CF}'), '\u{A7CE}');
+    assert_eq!(to_lower('\u{A7CE}'), '\u{A7CF}');
+    assert_eq!(general_category(0x105C0).unwrap(), Category::Lo);
+}

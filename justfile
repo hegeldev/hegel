@@ -214,6 +214,13 @@ check-parse:
 lark-fixtures:
     scripts/gen-lark-fixtures.py
 
+# Regenerate the engine's Unicode tables from the vendored UCD files in
+# hegel-c/src/unicodedata/, and the Python reference they are tested
+# against (needs uv, which fetches unicodedata2 for that Unicode version).
+unicodedata:
+    python3 scripts/generate_unicodedata_tables.py
+    scripts/generate_unicodedata_python_reference.py
+
 # Run cargo-insta, installing it first if it's missing. Pinned to the same
 # version as the `insta` dev-dependency so snapshot format stays consistent.
 INSTA_VERSION := "1.47.2"
