@@ -6,15 +6,22 @@
 //! Every [`Sequence`] of a rule becomes one production of that rule.
 //! A parenthesised [`Item::Group`] becomes a fresh nonterminal with one
 //! production per alternative, and an [`Item::Repeat`] a fresh
-//! nonterminal producing exactly the counts it allows: one production of
-//! each count up to a bound, or the minimum count plus a left-recursive
-//! production adding one more when there is none. Unrolling a bound
-//! takes a number of symbols quadratic in it, so a wide range becomes a
-//! chain instead: a nonterminal for the minimum count, then one for each
-//! further count allowed, producing the one before it with or without
-//! one more item; whichever of the two takes fewer symbols is used. The
-//! lowering makes no attempt to follow Lark's own EBNF expansion; it only
-//! needs to accept the same strings.
+//! nonterminal producing exactly the counts it allows. A narrow
+//! repetition is unrolled, one production per count; a wide one would
+//! take a number of symbols quadratic in its bound that way, so it is
+//! built from parts instead, as Lark's `_generate_repeats` factorises
+//! its large repeats: nonterminals for exactly a power of two items
+//! (each two of the one below), for zero or a power of two, and for
+//! up to one less than a power of two (an optional power of two for each
+//! bit), so that the minimum count is a sum of powers of two and the
+//! range above it splits at its highest power of two, all in a number
+//! of productions logarithmic in the bound. An unbounded repetition is
+//! the minimum count followed by a left-recursive part adding one item
+//! at a time. The parts carry [`Provenance::RepeatPart`], and a
+//! derivation's reader splices their items into the repetition's own.
+//! The lowering makes no attempt to follow Lark's own EBNF expansion; it
+//! only needs to accept the same strings, and derives each count in one
+//! way only.
 
 use super::compile::{Grammar, Item, RuleId, Sequence, TermId};
 use alloc::vec::Vec;
@@ -39,12 +46,12 @@ pub enum Provenance {
     Rule { id: RuleId, alt: usize },
     /// Alternative `alt` of a parenthesised group.
     Group { alt: usize },
-    /// Some number of repetitions of a repeated item, one per symbol of
-    /// the right-hand side.
+    /// Some number of repetitions of a repeated item: one per symbol of
+    /// the right-hand side, or as many as the parts there derive.
     Repeat,
-    /// The repetitions so far, as a nonterminal standing for fewer of
-    /// them, followed by one more item or by nothing.
-    RepeatMore,
+    /// Part of a repetition: some of its repetitions, to be read as
+    /// items of the whole.
+    RepeatPart,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,9 +69,25 @@ pub struct Lowered {
     pub by_lhs: Vec<Vec<ProdId>>,
 }
 
+/// The most right-hand-side symbols a bounded repetition is unrolled
+/// to, one production per count, before it is built from parts.
+const UNROLL_LIMIT: u64 = 64;
+
 struct Lowering {
     productions: Vec<Production>,
     nonterminals: usize,
+}
+
+/// The parts a wide repetition of one symbol is built from, each made
+/// once per repetition.
+struct Parts {
+    symbol: Symbol,
+    /// `powers[i]` derives exactly `2^i` items; `powers[0]` is the item.
+    powers: Vec<Symbol>,
+    /// `optional[i]` derives no items or `2^i` of them.
+    optional: Vec<Symbol>,
+    /// `below[k]` derives any count under `2^k`.
+    below: Vec<Symbol>,
 }
 
 impl Lowering {
@@ -95,30 +118,27 @@ impl Lowering {
             }
             Item::Repeat { inner, min, max } => {
                 let symbol = self.item(inner);
+                let lhs = self.fresh();
                 match *max {
-                    None => {
-                        let lhs = self.fresh();
-                        self.counts(lhs, symbol, *min, *min);
-                        self.more(lhs, lhs, Some(symbol));
-                        Symbol::Nonterminal(lhs)
-                    }
-                    Some(max) if unrolled_symbols(*min, max) <= chained_symbols(*min, max) => {
-                        let lhs = self.fresh();
+                    Some(max) if unrolled_symbols(*min, max) <= UNROLL_LIMIT => {
                         self.counts(lhs, symbol, *min, max);
-                        Symbol::Nonterminal(lhs)
                     }
-                    Some(max) => {
-                        let mut lhs = self.fresh();
-                        self.counts(lhs, symbol, *min, *min);
-                        for _ in *min..max {
-                            let next = self.fresh();
-                            self.more(next, lhs, None);
-                            self.more(next, lhs, Some(symbol));
-                            lhs = next;
+                    _ => {
+                        let mut parts = Parts::new(symbol);
+                        let mut rhs = parts.exact(self, *min);
+                        match *max {
+                            None => rhs.push(parts.any(self)),
+                            Some(max) if max > *min => rhs.push(parts.up_to(self, max - *min)),
+                            Some(_) => {}
                         }
-                        Symbol::Nonterminal(lhs)
+                        self.productions.push(Production {
+                            lhs,
+                            rhs,
+                            provenance: Provenance::Repeat,
+                        });
                     }
                 }
+                Symbol::Nonterminal(lhs)
             }
         }
     }
@@ -135,16 +155,100 @@ impl Lowering {
         }
     }
 
-    /// A production of `lhs` deriving `fewer` repetitions and then
-    /// `symbol`, when there is one.
-    fn more(&mut self, lhs: NtId, fewer: NtId, symbol: Option<Symbol>) {
-        let mut rhs = alloc::vec![Symbol::Nonterminal(fewer)];
-        rhs.extend(symbol);
+    /// A production of the part `lhs`.
+    fn part(&mut self, lhs: NtId, rhs: Vec<Symbol>) {
         self.productions.push(Production {
             lhs,
             rhs,
-            provenance: Provenance::RepeatMore,
+            provenance: Provenance::RepeatPart,
         });
+    }
+}
+
+impl Parts {
+    fn new(symbol: Symbol) -> Parts {
+        Parts {
+            symbol,
+            powers: alloc::vec![symbol],
+            optional: Vec::new(),
+            below: Vec::new(),
+        }
+    }
+
+    /// The part deriving exactly `2^i` items.
+    fn power(&mut self, lowering: &mut Lowering, i: usize) -> Symbol {
+        while self.powers.len() <= i {
+            let half = *self.powers.last().unwrap();
+            let lhs = lowering.fresh();
+            lowering.part(lhs, alloc::vec![half, half]);
+            self.powers.push(Symbol::Nonterminal(lhs));
+        }
+        self.powers[i]
+    }
+
+    /// The part deriving no items or `2^i` of them.
+    fn optional(&mut self, lowering: &mut Lowering, i: usize) -> Symbol {
+        while self.optional.len() <= i {
+            let power = self.power(lowering, self.optional.len());
+            let lhs = lowering.fresh();
+            lowering.part(lhs, Vec::new());
+            lowering.part(lhs, alloc::vec![power]);
+            self.optional.push(Symbol::Nonterminal(lhs));
+        }
+        self.optional[i]
+    }
+
+    /// The part deriving any count of items under `2^k`.
+    fn below(&mut self, lowering: &mut Lowering, k: usize) -> Symbol {
+        while self.below.len() <= k {
+            let k = self.below.len();
+            let lhs = lowering.fresh();
+            let rhs = match k.checked_sub(1) {
+                Some(bit) => alloc::vec![self.optional(lowering, bit), self.below[bit]],
+                None => Vec::new(),
+            };
+            lowering.part(lhs, rhs);
+            self.below.push(Symbol::Nonterminal(lhs));
+        }
+        self.below[k]
+    }
+
+    /// The parts deriving exactly `n` items between them: one for each
+    /// bit of `n`, highest first.
+    fn exact(&mut self, lowering: &mut Lowering, n: u32) -> Vec<Symbol> {
+        (0..u32::BITS as usize)
+            .rev()
+            .filter(|i| n & (1 << i) != 0)
+            .map(|i| self.power(lowering, i))
+            .collect()
+    }
+
+    /// The part deriving any count of items up to `d`, which is at
+    /// least one: every count under the highest power of two in `d`, or
+    /// that power of two and then any count up to the rest.
+    fn up_to(&mut self, lowering: &mut Lowering, d: u32) -> Symbol {
+        let k = d.ilog2() as usize;
+        let rest = d - (1 << k);
+        if rest == (1 << k) - 1 {
+            return self.below(lowering, k + 1);
+        }
+        let lhs = lowering.fresh();
+        let under = self.below(lowering, k);
+        lowering.part(lhs, alloc::vec![under]);
+        let mut rhs = alloc::vec![self.power(lowering, k)];
+        if rest > 0 {
+            rhs.push(self.up_to(lowering, rest));
+        }
+        lowering.part(lhs, rhs);
+        Symbol::Nonterminal(lhs)
+    }
+
+    /// The part deriving any number of items at all.
+    fn any(&mut self, lowering: &mut Lowering) -> Symbol {
+        let lhs = lowering.fresh();
+        lowering.part(lhs, Vec::new());
+        lowering.part(lhs, alloc::vec![Symbol::Nonterminal(lhs), self.symbol]);
+        Symbol::Nonterminal(lhs)
     }
 }
 
@@ -152,12 +256,6 @@ impl Lowering {
 /// unrolled to one production per count.
 fn unrolled_symbols(min: u32, max: u32) -> u64 {
     (u64::from(min) + u64::from(max)) * (u64::from(max - min) + 1) / 2
-}
-
-/// The right-hand-side symbols of a repetition of `min` to `max` items
-/// chained one count at a time.
-fn chained_symbols(min: u32, max: u32) -> u64 {
-    u64::from(min) + 3 * u64::from(max - min)
 }
 
 /// Lower `grammar` to BNF.

@@ -486,53 +486,50 @@ impl<T: Terminals> Parse<'_, T> {
 
     /// The steps of the derivation of a complete item, in order: a leaf
     /// for each terminal and ignored stretch, and the completed item for
-    /// each nonterminal. A repetition's chain of one-more productions is
-    /// flattened into the steps of the whole repetition.
+    /// each nonterminal, with the steps of each part of a repetition
+    /// spliced in place of the part.
     fn steps(&self, idx: u32) -> Vec<Step> {
-        let mut segments = Vec::new();
-        let mut cur = idx;
-        loop {
-            let mut steps = Vec::new();
-            let mut at = cur;
-            loop {
-                let item = &self.items[at as usize];
-                let end = item.col as usize;
-                match item.back {
-                    Back::Predicted => break,
-                    Back::Token { pred, term } => {
-                        let start = self.items[pred as usize].col as usize;
-                        let id = term as TermId;
-                        steps.push(Step::Leaf(Tree::Terminal { id, start, end }));
-                        at = pred;
-                    }
-                    Back::Ignored { pred, term } => {
-                        let start = self.items[pred as usize].col as usize;
-                        let id = term as TermId;
-                        steps.push(Step::Leaf(Tree::Ignored { id, start, end }));
-                        at = pred;
-                    }
-                    Back::Child { pred, child } => {
-                        steps.push(Step::Child(child));
-                        at = pred;
-                    }
-                }
-            }
-            steps.reverse();
-            let head = match (self.provenance(cur), steps.first()) {
-                (Provenance::RepeatMore, Some(Step::Child(child))) => Some(*child),
-                _ => None,
-            };
-            segments.push(steps);
-            match head {
-                Some(child) => cur = child,
-                None => break,
-            }
-        }
         let mut out = Vec::new();
-        for (k, segment) in segments.into_iter().rev().enumerate() {
-            out.extend(segment.into_iter().skip(usize::from(k > 0)));
+        let mut pending = Vec::new();
+        self.own_steps(idx, &mut pending);
+        while let Some(step) = pending.pop() {
+            match step {
+                Step::Child(child) if self.provenance(child) == Provenance::RepeatPart => {
+                    self.own_steps(child, &mut pending);
+                }
+                step => out.push(step),
+            }
         }
         out
+    }
+
+    /// The steps of a complete item's own production, pushed last first
+    /// so that the first is on top.
+    fn own_steps(&self, idx: u32, pending: &mut Vec<Step>) {
+        let mut at = idx;
+        loop {
+            let item = &self.items[at as usize];
+            let end = item.col as usize;
+            match item.back {
+                Back::Predicted => return,
+                Back::Token { pred, term } => {
+                    let start = self.items[pred as usize].col as usize;
+                    let id = term as TermId;
+                    pending.push(Step::Leaf(Tree::Terminal { id, start, end }));
+                    at = pred;
+                }
+                Back::Ignored { pred, term } => {
+                    let start = self.items[pred as usize].col as usize;
+                    let id = term as TermId;
+                    pending.push(Step::Leaf(Tree::Ignored { id, start, end }));
+                    at = pred;
+                }
+                Back::Child { pred, child } => {
+                    pending.push(Step::Child(child));
+                    at = pred;
+                }
+            }
+        }
     }
 
     fn frame(&self, item: u32) -> Frame {
@@ -548,7 +545,7 @@ impl<T: Terminals> Parse<'_, T> {
         match self.provenance(frame.item) {
             Provenance::Rule { id, alt } => Tree::Rule { id, alt, children },
             Provenance::Group { alt } => Tree::Group { alt, children },
-            Provenance::Repeat | Provenance::RepeatMore => Tree::Repeat { children },
+            Provenance::Repeat | Provenance::RepeatPart => Tree::Repeat { children },
         }
     }
 
