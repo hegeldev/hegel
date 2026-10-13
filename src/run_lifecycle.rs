@@ -671,9 +671,8 @@ fn drive_run<F: FnMut(TestCase)>(
 /// bypassing generation and shrinking.
 ///
 /// The engine owns the replay: a deterministic blob replays its choices up
-/// to four times — each attempt may draw fresh values past the recorded
-/// choices — stopping at the first failure; a nondeterministic blob replays
-/// its stored timelines until one fails, like database reuse. Decoding
+/// to four times, stopping at the first failure; a nondeterministic blob
+/// replays its stored timelines until one fails, like database reuse. Decoding
 /// failures (corrupt or incompatible blobs) panic with the engine's
 /// diagnostic. A blob that decodes but does not reproduce panics naming
 /// both hypotheses: the failure is fixed, or a nondeterministic one did not
