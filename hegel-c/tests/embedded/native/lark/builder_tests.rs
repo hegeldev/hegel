@@ -186,6 +186,14 @@ fn override_and_extend_errors() {
     assert!(
         err("%declare A\n%extend A: \"y\"").contains("Can't extend terminal A - it is abstract.")
     );
+    assert_eq!(
+        err("%import common.INT -> int\n%extend int: \"x\"\nstart: \"a\""),
+        "Cannot extend rule int - one is a terminal, while the other is not."
+    );
+    assert_eq!(
+        err("%import python.starguard -> STARGUARD\n%extend STARGUARD: \"x\"\nstart: \"a\""),
+        "Cannot extend terminal STARGUARD - one is a terminal, while the other is not."
+    );
 }
 
 #[test]
