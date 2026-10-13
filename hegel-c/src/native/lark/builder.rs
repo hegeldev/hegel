@@ -5,10 +5,14 @@
 //! terminals, and the validation Lark performs before compiling.
 
 use super::ast::{
-    Definition as DefStmt, Expr, ImportNames, ImportStmt, RuleModifiers, Statement, Symbol,
+    Alternative, Definition as DefStmt, Expr, ImportNames, ImportStmt, Pattern, RuleModifiers,
+    Statement, Symbol,
 };
+use super::compile::parse_terminal_pattern;
+use super::escape::pattern_to_regexp;
 use super::parser::parse_grammar;
 use super::{GrammarError, GrammarResult};
+use crate::native::re::width::get_width;
 use crate::native::{HashMap, HashSet};
 use alloc::boxed::Box;
 use alloc::format;
@@ -218,46 +222,128 @@ fn symbol_references<'e>(expr: &'e Expr, out: &mut Vec<&'e Symbol>) {
     }
 }
 
-/// The most elements a terminal's body may have once the terminals it
-/// references are inlined into it. A chain of terminals each using the
-/// one before it twice doubles in size at every link, and Lark builds
+/// The most characters a terminal's regex may have once the terminals
+/// it references are folded into it. A chain of terminals each using the
+/// one before it twice doubles in length at every link, and Lark builds
 /// the whole of it; here it is an error instead.
-const MAX_TERMINAL_SIZE: usize = 1 << 16;
+const MAX_TERMINAL_PATTERN_LEN: usize = 1 << 16;
 
-/// How many elements `expr` has: its literals and symbols, and the
-/// alternatives, sequences and repeats grouping them.
-fn expr_size(expr: &Expr) -> usize {
+fn contains_template(expr: &Expr) -> bool {
     match expr {
-        Expr::Alternatives(alts) => {
-            1 + alts
-                .iter()
-                .map(|alt| 1 + alt.items.iter().map(expr_size).sum::<usize>())
-                .sum::<usize>()
-        }
-        Expr::Symbol(_) | Expr::Literal(_) => 1,
-        Expr::Repeat { inner, .. } => 1 + expr_size(inner),
-        Expr::Template { args, .. } => 1 + args.iter().map(expr_size).sum::<usize>(),
+        Expr::Alternatives(alts) => alts.iter().any(|a| a.items.iter().any(contains_template)),
+        Expr::Symbol(_) | Expr::Literal(_) => false,
+        Expr::Repeat { inner, .. } => contains_template(inner),
+        Expr::Template { .. } => true,
     }
 }
 
-/// Replace every terminal reference in `expr` with the referenced
-/// terminal's body, as Lark's `resolve_term_references` does. Bodies are
-/// taken from `resolved`, which the caller fills in dependency order.
-fn inline_terminals(expr: &mut Expr, resolved: &HashMap<String, Expr>) {
+/// The widths of a pattern.
+fn pattern_widths(name: &str, pattern: &Pattern) -> GrammarResult<(u64, Option<u64>)> {
+    Ok(get_width(&parse_terminal_pattern(name, pattern)?.pattern))
+}
+
+/// The regex quantifier for a repetition. The parser builds an unbounded
+/// one only from `*` or `+`.
+fn repeat_suffix(min: u32, max: Option<u32>) -> String {
+    match (min, max) {
+        (0, Some(1)) => "?".to_string(),
+        (0, None) => "*".to_string(),
+        (_, None) => "+".to_string(),
+        (n, Some(m)) if n == m => format!("{{{n}}}"),
+        (n, Some(m)) => format!("{{{n},{m}}}"),
+    }
+}
+
+/// Lark's `TerminalTreeToPattern`: fold a terminal's body into one
+/// pattern, with each terminal it references standing for that
+/// terminal's own pattern from `resolved`. `name` is for diagnostics.
+fn terminal_tree_to_pattern(
+    name: &str,
+    expr: &Expr,
+    resolved: &HashMap<String, Pattern>,
+) -> GrammarResult<Pattern> {
     match expr {
         Expr::Alternatives(alts) => {
-            for alt in alts {
-                for item in &mut alt.items {
-                    inline_terminals(item, resolved);
-                }
-            }
+            join_alternatives(name, alternative_patterns(name, alts, resolved)?)
         }
-        Expr::Symbol(Symbol::Terminal(name)) => {
-            *expr = resolved[name.as_str()].clone();
+        Expr::Literal(pattern) => Ok(pattern.clone()),
+        Expr::Symbol(Symbol::Terminal(reference)) => Ok(resolved[reference.as_str()].clone()),
+        Expr::Repeat { inner, min, max } => {
+            let inner = terminal_tree_to_pattern(name, inner, resolved)?;
+            Ok(Pattern::re(format!(
+                "(?:{}){}",
+                pattern_to_regexp(&inner),
+                repeat_suffix(*min, *max)
+            ))
+            .with_flags(&inner.flags))
         }
-        Expr::Symbol(Symbol::Rule(_)) | Expr::Literal(_) | Expr::Template { .. } => {}
-        Expr::Repeat { inner, .. } => inline_terminals(inner, resolved),
+        Expr::Symbol(Symbol::Rule(_)) | Expr::Template { .. } => {
+            unreachable!("rules and templates inside terminals are rejected before folding")
+        }
     }
+}
+
+/// The pattern of each alternative of a terminal body.
+fn alternative_patterns(
+    name: &str,
+    alts: &[Alternative],
+    resolved: &HashMap<String, Pattern>,
+) -> GrammarResult<Vec<Pattern>> {
+    if alts.iter().any(|a| a.alias.is_some()) {
+        return Err(GrammarError::new(
+            "Aliasing not allowed in terminals (You used -> in the wrong place)",
+        ));
+    }
+    alts.iter()
+        .map(|alt| sequence_to_pattern(name, &alt.items, resolved))
+        .collect()
+}
+
+/// One pattern matching any of `patterns`, ordered as Lark orders them:
+/// the one matching the longest strings first.
+fn join_alternatives(name: &str, mut patterns: Vec<Pattern>) -> GrammarResult<Pattern> {
+    if patterns.len() == 1 {
+        return Ok(patterns.pop().unwrap());
+    }
+    let mut keyed = Vec::with_capacity(patterns.len());
+    for pattern in patterns {
+        let (min, max) = pattern_widths(name, &pattern)?;
+        keyed.push((
+            max.unwrap_or(u64::MAX),
+            min,
+            pattern.value.chars().count(),
+            pattern,
+        ));
+    }
+    keyed.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(b.2.cmp(&a.2)));
+    let joined: Vec<String> = keyed.iter().map(|k| pattern_to_regexp(&k.3)).collect();
+    Ok(Pattern::re(format!("(?:{})", joined.join("|"))))
+}
+
+fn sequence_to_pattern(
+    name: &str,
+    items: &[Expr],
+    resolved: &HashMap<String, Pattern>,
+) -> GrammarResult<Pattern> {
+    match items {
+        [] => Ok(Pattern::str("")),
+        [item] => terminal_tree_to_pattern(name, item, resolved),
+        _ => {
+            let mut joined = String::new();
+            for item in items {
+                joined.push_str(&pattern_to_regexp(&terminal_tree_to_pattern(
+                    name, item, resolved,
+                )?));
+            }
+            Ok(Pattern::re(joined))
+        }
+    }
+}
+
+/// The pattern of a terminal body as [`GrammarBuilder`] leaves it: with
+/// the terminals it referenced already folded in.
+pub fn terminal_pattern(name: &str, body: &Expr) -> GrammarResult<Pattern> {
+    terminal_tree_to_pattern(name, body, &HashMap::default())
 }
 
 impl<'s> GrammarBuilder<'s> {
@@ -495,9 +581,11 @@ impl<'s> GrammarBuilder<'s> {
         self.definitions.retain(|n, _| keep.contains(n));
     }
 
-    /// Lark's `resolve_term_references`: inline every terminal referenced
-    /// from another terminal's body, rejecting rules inside terminals,
-    /// undefined terminals and recursive terminals.
+    /// Lark's `resolve_term_references`, which inlines every terminal
+    /// referenced from another terminal's body: here each terminal's body
+    /// is folded to its patterns instead, which is what the inlined trees
+    /// come to and keeps a chain of references linear. Rejects rules
+    /// inside terminals, undefined terminals and recursive terminals.
     fn resolve_term_references(&mut self) -> GrammarResult<()> {
         let term_names: Vec<String> = self
             .names
@@ -533,56 +621,86 @@ impl<'s> GrammarBuilder<'s> {
                 }
             }
         }
-        let mut resolved: HashMap<String, Expr> = HashMap::default();
-        let mut visiting: Vec<String> = Vec::new();
+        let mut patterns: HashMap<String, Pattern> = HashMap::default();
         for name in &term_names {
-            self.resolve_terminal(name, &mut resolved, &mut visiting)?;
-        }
-        for name in &term_names {
-            if let Some(tree) = resolved.remove(name) {
-                self.definitions.get_mut(name).unwrap().tree = Some(tree);
-            }
+            self.resolve_terminal(name, &mut patterns)?;
         }
         Ok(())
     }
 
-    fn resolve_terminal(
-        &self,
-        name: &str,
-        resolved: &mut HashMap<String, Expr>,
-        visiting: &mut Vec<String>,
-    ) -> GrammarResult<()> {
-        if resolved.contains_key(name) {
-            return Ok(());
-        }
-        let Some(tree) = &self.definitions[name].tree else {
-            return Ok(());
-        };
-        if visiting.iter().any(|v| v == name) {
-            return Err(GrammarError::new(format!(
-                "Recursion in terminal '{name}' (recursion is only allowed in rules, not terminals)"
-            )));
-        }
-        visiting.push(name.to_string());
+    /// The terminals the body of the terminal `name` references.
+    fn terminal_references(&self, name: &str) -> Vec<String> {
         let mut references = Vec::new();
-        symbol_references(tree, &mut references);
-        for reference in &references {
-            self.resolve_terminal(reference.name(), resolved, visiting)?;
+        symbol_references(
+            self.definitions[name].tree.as_ref().unwrap(),
+            &mut references,
+        );
+        references
+            .into_iter()
+            .map(|symbol| symbol.name().to_string())
+            .collect()
+    }
+
+    /// Fold the terminal `name`, and first the terminals it references,
+    /// to their patterns: `patterns` collects the whole pattern of each,
+    /// and the definition's body becomes one literal per alternative,
+    /// so that a later `%extend` adds its alternatives alongside them.
+    fn resolve_terminal(
+        &mut self,
+        name: &str,
+        patterns: &mut HashMap<String, Pattern>,
+    ) -> GrammarResult<()> {
+        if patterns.contains_key(name) || self.definitions[name].tree.is_none() {
+            return Ok(());
         }
-        visiting.pop();
-        let size = expr_size(tree)
-            + references
-                .iter()
-                .map(|reference| expr_size(&resolved[reference.name()]))
-                .sum::<usize>();
-        if size > MAX_TERMINAL_SIZE {
-            return Err(GrammarError::new(format!(
-                "Terminal {name} has more than {MAX_TERMINAL_SIZE} elements once the terminals it uses are inlined"
-            )));
+        let mut stack = alloc::vec![(name.to_string(), self.terminal_references(name), 0)];
+        while let Some((_, references, next)) = stack.last_mut() {
+            if let Some(reference) = references.get(*next).cloned() {
+                *next += 1;
+                if patterns.contains_key(&reference) {
+                    continue;
+                }
+                if stack.iter().any(|(n, _, _)| *n == reference) {
+                    return Err(GrammarError::new(format!(
+                        "Recursion in terminal '{reference}' (recursion is only allowed in rules, not terminals)"
+                    )));
+                }
+                let references = self.terminal_references(&reference);
+                stack.push((reference, references, 0));
+                continue;
+            }
+            let (current, _, _) = stack.pop().unwrap();
+            let tree = self.definitions[&current].tree.as_ref().unwrap();
+            if contains_template(tree) {
+                return Err(GrammarError::new(format!(
+                    "Templates cannot be used inside terminals ({current})"
+                )));
+            }
+            if tree.is_single_empty() {
+                return Err(GrammarError::new(format!(
+                    "Terminals cannot be empty ({current})"
+                )));
+            }
+            let Expr::Alternatives(alts) = tree else {
+                unreachable!("definition bodies are always alternatives")
+            };
+            let alternatives = alternative_patterns(&current, alts, patterns)?;
+            let whole = join_alternatives(&current, alternatives.clone())?;
+            if whole.value.chars().count() > MAX_TERMINAL_PATTERN_LEN {
+                return Err(GrammarError::new(format!(
+                    "Terminal {current} has a pattern longer than {MAX_TERMINAL_PATTERN_LEN} characters once the terminals it uses are inlined"
+                )));
+            }
+            let folded = alternatives
+                .into_iter()
+                .map(|pattern| Alternative {
+                    items: alloc::vec![Expr::Literal(pattern)],
+                    alias: None,
+                })
+                .collect();
+            self.definitions.get_mut(&current).unwrap().tree = Some(Expr::Alternatives(folded));
+            patterns.insert(current, whole);
         }
-        let mut tree = tree.clone();
-        inline_terminals(&mut tree, resolved);
-        resolved.insert(name.to_string(), tree);
         Ok(())
     }
 

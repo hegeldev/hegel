@@ -1,12 +1,13 @@
 //! Compiling a built grammar into the form the generator walks: Lark's
 //! `Grammar.compile`, minus the EBNF-to-BNF desugaring. Terminals become a
-//! single regex each (`TerminalTreeToPattern`), literals inside rules
-//! become anonymous terminals (`PrepareAnonTerminals`), templates are
-//! instantiated (`ApplyTemplates`), and rules unreachable from the start
-//! symbols are dropped along with the terminals only they used.
+//! single regex each (`TerminalTreeToPattern`, folded by the builder),
+//! literals inside rules become anonymous terminals
+//! (`PrepareAnonTerminals`), templates are instantiated
+//! (`ApplyTemplates`), and rules unreachable from the start symbols are
+//! dropped along with the terminals only they used.
 
 use super::ast::{Expr, Pattern, PatternKind, Symbol};
-use super::builder::BuiltGrammar;
+use super::builder::{BuiltGrammar, terminal_pattern};
 use super::escape::pattern_to_regexp;
 use super::{GrammarError, GrammarResult};
 use crate::native::re::parser::{ParsedPattern, parse_pattern};
@@ -209,96 +210,9 @@ fn is_identifier(value: &str) -> bool {
 
 /// A pattern's regex form parsed with the engine's Python-syntax regex
 /// parser.
-fn parse_terminal_pattern(name: &str, pattern: &Pattern) -> GrammarResult<ParsedPattern> {
+pub fn parse_terminal_pattern(name: &str, pattern: &Pattern) -> GrammarResult<ParsedPattern> {
     parse_pattern(&pattern_to_regexp(pattern), 0)
         .map_err(|e| GrammarError::new(format!("Cannot compile token {name}: {e}")))
-}
-
-/// The widths of a pattern.
-fn pattern_widths(name: &str, pattern: &Pattern) -> GrammarResult<(u64, Option<u64>)> {
-    Ok(get_width(&parse_terminal_pattern(name, pattern)?.pattern))
-}
-
-/// The regex quantifier for a repetition. The parser builds an unbounded
-/// one only from `*` or `+`.
-fn repeat_suffix(min: u32, max: Option<u32>) -> String {
-    match (min, max) {
-        (0, Some(1)) => "?".to_string(),
-        (0, None) => "*".to_string(),
-        (_, None) => "+".to_string(),
-        (n, Some(m)) if n == m => format!("{{{n}}}"),
-        (n, Some(m)) => format!("{{{n},{m}}}"),
-    }
-}
-
-/// Lark's `TerminalTreeToPattern`: fold a terminal's body into one
-/// pattern. `name` is for diagnostics.
-fn terminal_tree_to_pattern(name: &str, expr: &Expr) -> GrammarResult<Pattern> {
-    match expr {
-        Expr::Alternatives(alts) => {
-            if alts.iter().any(|a| a.alias.is_some()) {
-                return Err(GrammarError::new(
-                    "Aliasing not allowed in terminals (You used -> in the wrong place)",
-                ));
-            }
-            let mut patterns = Vec::with_capacity(alts.len());
-            for alt in alts {
-                patterns.push(sequence_to_pattern(name, &alt.items)?);
-            }
-            if patterns.len() == 1 {
-                return Ok(patterns.pop().unwrap());
-            }
-            let mut keyed = Vec::with_capacity(patterns.len());
-            for pattern in patterns {
-                let (min, max) = pattern_widths(name, &pattern)?;
-                keyed.push((
-                    max.unwrap_or(u64::MAX),
-                    min,
-                    pattern.value.chars().count(),
-                    pattern,
-                ));
-            }
-            keyed.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(b.2.cmp(&a.2)));
-            let joined: Vec<String> = keyed.iter().map(|k| pattern_to_regexp(&k.3)).collect();
-            Ok(Pattern::re(format!("(?:{})", joined.join("|"))))
-        }
-        Expr::Literal(pattern) => Ok(pattern.clone()),
-        Expr::Repeat { inner, min, max } => {
-            let inner = terminal_tree_to_pattern(name, inner)?;
-            Ok(Pattern::re(format!(
-                "(?:{}){}",
-                pattern_to_regexp(&inner),
-                repeat_suffix(*min, *max)
-            ))
-            .with_flags(&inner.flags))
-        }
-        Expr::Symbol(_) | Expr::Template { .. } => {
-            unreachable!("terminal bodies have their symbols inlined and templates rejected")
-        }
-    }
-}
-
-fn sequence_to_pattern(name: &str, items: &[Expr]) -> GrammarResult<Pattern> {
-    match items {
-        [] => Ok(Pattern::str("")),
-        [item] => terminal_tree_to_pattern(name, item),
-        _ => {
-            let mut joined = String::new();
-            for item in items {
-                joined.push_str(&pattern_to_regexp(&terminal_tree_to_pattern(name, item)?));
-            }
-            Ok(Pattern::re(joined))
-        }
-    }
-}
-
-fn contains_template(expr: &Expr) -> bool {
-    match expr {
-        Expr::Alternatives(alts) => alts.iter().any(|a| a.items.iter().any(contains_template)),
-        Expr::Symbol(_) | Expr::Literal(_) => false,
-        Expr::Repeat { inner, .. } => contains_template(inner),
-        Expr::Template { .. } => true,
-    }
 }
 
 struct Compiler {
@@ -584,22 +498,10 @@ pub fn compile(built: &BuiltGrammar, start: &[&str]) -> GrammarResult<Grammar> {
         pending: Vec::new(),
     };
     for (name, body, priority) in &built.term_defs {
-        let pattern = match body {
-            Some(body) => {
-                if contains_template(body) {
-                    return Err(GrammarError::new(format!(
-                        "Templates cannot be used inside terminals ({name})"
-                    )));
-                }
-                if body.is_single_empty() {
-                    return Err(GrammarError::new(format!(
-                        "Terminals cannot be empty ({name})"
-                    )));
-                }
-                Some(terminal_tree_to_pattern(name, body)?)
-            }
-            None => None,
-        };
+        let pattern = body
+            .as_ref()
+            .map(|body| terminal_pattern(name, body))
+            .transpose()?;
         compiler.add_terminal(name.clone(), pattern, *priority)?;
     }
     for (name, params, body, _) in &built.rule_defs {

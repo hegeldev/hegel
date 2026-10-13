@@ -159,9 +159,10 @@ fn double_underscore_names_cannot_be_written() {
 #[test]
 fn ignore_by_name_and_by_expression() {
     let built =
-        build("start: \"a\"\nWS: \" \"\n%ignore WS\n%ignore \"\\t\" | /#.*/\n%ignore \"x\" -> y");
+        build("start: \"a\"\nWS: \" \"\n%ignore WS\n%ignore \"\\t\" | /#.*/\n%ignore \"x\"");
     assert_eq!(built.ignore, vec!["WS", "__IGNORE_1", "__IGNORE_2"]);
     assert_eq!(term_names(&built), vec!["WS", "__IGNORE_1", "__IGNORE_2"]);
+    assert!(err("start: \"a\"\n%ignore \"x\" -> y").contains("Aliasing not allowed in terminals"));
 }
 
 #[test]
@@ -198,20 +199,64 @@ fn template_parameters_are_not_undefined_symbols() {
 }
 
 #[test]
-fn terminals_inline_their_references() {
+fn terminals_fold_their_references_into_one_literal_per_alternative() {
     let built = build("start: C\nA: \"a\"\nB: A \"b\"\nC: B | A");
     assert_eq!(
         term_body(&built, "B"),
-        &Expr::Alternatives(vec![alt(vec![
-            Expr::Alternatives(vec![alt(vec![Expr::Literal(Pattern::str("a"))])]),
-            Expr::Literal(Pattern::str("b")),
-        ])])
+        &Expr::Alternatives(vec![alt(vec![Expr::Literal(Pattern::re("ab"))])])
     );
-    let c = term_body(&built, "C");
-    let Expr::Alternatives(alts) = c else {
-        unreachable!()
-    };
-    assert_eq!(alts.len(), 2);
+    assert_eq!(
+        term_body(&built, "C"),
+        &Expr::Alternatives(vec![
+            alt(vec![Expr::Literal(Pattern::re("ab"))]),
+            alt(vec![Expr::Literal(Pattern::str("a"))]),
+        ])
+    );
+    let grammar = compile(&built, &["start"]).unwrap();
+    let c = &grammar.terminals[grammar.terminal_id("C").unwrap()];
+    assert_eq!(c.regexp.as_deref(), Some("(?:ab|a)"));
+}
+
+#[test]
+fn an_extended_imported_terminal_sorts_its_new_alternatives_with_the_old() {
+    let sources = Sources(vec![("lib.lark", "A: B \"b\" | \"c\"\nB: \"a\"\n")]);
+    let built = build_with(
+        "%import lib.A\n%extend A: \"xyz\" | \"q\"\nstart: A",
+        &sources,
+    )
+    .unwrap();
+    assert_eq!(term_names(&built), vec!["A"]);
+    let grammar = compile(&built, &["start"]).unwrap();
+    let a = &grammar.terminals[grammar.terminal_id("A").unwrap()];
+    assert_eq!(a.regexp.as_deref(), Some("(?:xyz|ab|q|c)"));
+}
+
+#[test]
+fn a_long_chain_of_terminal_references_resolves_without_growing() {
+    let mut text = String::from("start: T3000\nT0: \"a\"\n");
+    for i in 1..=3000 {
+        text.push_str(&format!("T{i}: T{}\n", i - 1));
+    }
+    let built = build(&text);
+    assert_eq!(
+        term_body(&built, "T3000"),
+        &Expr::Alternatives(vec![alt(vec![Expr::Literal(Pattern::str("a"))])])
+    );
+    let mut text = String::from("start: T0\n");
+    for i in 0..3000 {
+        text.push_str(&format!("T{i}: T{}\n", i + 1));
+    }
+    text.push_str("T3000: \"a\"\n");
+    build(&text);
+}
+
+#[test]
+fn repeat_suffixes() {
+    assert_eq!(repeat_suffix(0, Some(1)), "?");
+    assert_eq!(repeat_suffix(0, None), "*");
+    assert_eq!(repeat_suffix(1, None), "+");
+    assert_eq!(repeat_suffix(3, Some(3)), "{3}");
+    assert_eq!(repeat_suffix(1, Some(3)), "{1,3}");
 }
 
 #[test]
@@ -236,10 +281,10 @@ fn a_terminal_doubling_at_every_link_of_a_chain_is_capped() {
         text.push_str(&format!("T{links}: \"a\"\n"));
         text
     };
-    build(&chain(12));
+    build(&chain(16));
     assert_eq!(
         err(&chain(17)),
-        "Terminal T3 has more than 65536 elements once the terminals it uses are inlined"
+        "Terminal T0 has a pattern longer than 65536 characters once the terminals it uses are inlined"
     );
 }
 

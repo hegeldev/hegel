@@ -390,15 +390,6 @@ fn anonymous_terminal_naming() {
 }
 
 #[test]
-fn repeat_suffixes() {
-    assert_eq!(repeat_suffix(0, Some(1)), "?");
-    assert_eq!(repeat_suffix(0, None), "*");
-    assert_eq!(repeat_suffix(1, None), "+");
-    assert_eq!(repeat_suffix(3, Some(3)), "{3}");
-    assert_eq!(repeat_suffix(1, Some(3)), "{1,3}");
-}
-
-#[test]
 fn grammar_lookups() {
     let grammar = compiled("start: A\nA: \"a\"");
     assert_eq!(grammar.rule_id("missing"), None);
