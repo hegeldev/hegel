@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.49.4 - 2026-10-13
+
+This patch makes `Backend::Urandom` draw its entropy from the Antithesis fuzzer directly when running inside Antithesis. Each draw now calls `fuzz_get_random` from Antithesis's instrumentation library, the function its own SDKs take their randomness from, so the fuzzer sees every draw as a request of its own rather than inferring them from reads of `/dev/urandom`. When the library cannot be loaded, and everywhere outside Antithesis, the backend reads `/dev/urandom` as before. Nothing changes in how the backend is selected: the `workload` profile still picks it inside Antithesis.
+
 ## 0.49.3 - 2026-10-13
 
 This patch fixes a test whose every input is rejected by `assume()` or `reject()` passing when `HealthCheck::FilterTooMuch` is suppressed. Such a run now fails with `Unsatisfiable`, as a test that rejects its input without drawing anything already did, since no valid input was ever generated; the same applies to a test whose every input overruns the choice limit with `HealthCheck::TestCasesTooLarge` suppressed.
