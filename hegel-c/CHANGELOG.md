@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.45.2 - 2026-10-13
+
+This patch fixes a run whose every test case is rejected ending as passed. A run that generates no valid test case now ends with `Unsatisfiable` (an error result over the C ABI, as for a test that draws no data and rejects its only input), however the health checks are configured: with `filter_too_much` suppressed, a test whose assumptions always fail used to spend its invalid budget and pass; with `test_cases_too_large` suppressed, a test whose every case overran the choice limit did the same.
+
+It also removes the early stop on ten consecutive already-seen rejections, which guessed that the search space was exhausted. The guess was wrong often enough to matter: a test that accepts one of seven equally likely values had its run cut short after about twenty rejections roughly one time in twenty, passing with no valid input when `filter_too_much` was suppressed and failing that health check with a message about the whole search space being filtered when it was not. Generation now runs until the test-case budget or the invalid budget is spent; a small fully-filtered space reports `filter_too_much` at the usual fifty-rejection threshold.
+
 ## 0.45.1 - 2026-10-07
 
 This patch lets C callers pass `NULL` with a zero byte length to `hegel_string_generator_regex` to match an empty pattern. A `NULL` string buffer with a nonzero length now returns an invalid argument error.
