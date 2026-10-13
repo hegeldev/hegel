@@ -2,8 +2,7 @@
 //!
 //! Flag bits and opcode / at / category enums used by the `_parser` port.
 //! Variant names mirror the Python constants verbatim so cross-referencing
-//! between `resources/cpython/Lib/re/_constants.py` and this file stays
-//! mechanical.
+//! between CPython's `_constants.py` and this file stays mechanical.
 
 pub const MAXREPEAT: u32 = u32::MAX;
 /// Deliberately far below CPython's `MAXGROUPS` (2^30 - 1): every capture

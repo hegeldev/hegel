@@ -5,11 +5,10 @@
 //! variant names track the Python OPCODES/ATCODES/CHCODES constants so
 //! cross-referencing stays trivial.
 //!
-//! Matching is NOT ported; the pattern crate handles execution at
-//! test-runtime. This module only produces the AST that
-//! Hypothesis's `strategies._internal.regex` walks to build a generator.
-//!
-//! Source: `resources/cpython/Lib/re/_parser.py`.
+//! This module only produces the AST: the regex generator
+//! (`draws/regex.rs`) walks it the way Hypothesis's
+//! `strategies._internal.regex` walks CPython's, and [`matcher`](super::matcher)
+//! and [`vm`](super::vm) match text against it.
 
 use crate::native::HashMap;
 use alloc::format;
