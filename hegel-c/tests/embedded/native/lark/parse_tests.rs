@@ -761,3 +761,18 @@ fn a_derivation_as_deep_as_its_text_is_long_needs_no_call_stack() {
         .join()
         .unwrap();
 }
+
+#[test]
+fn the_right_recursion_shortcut_keeps_a_completed_start_rule() {
+    let s = setup("start: t \"c\" | t \"d\" | x\nx: \"a\"\nt: start\n");
+    assert!(s.accepts("a"));
+    assert!(s.accepts("ac"));
+    assert!(s.accepts("acd"));
+    assert!(s.accepts("acc"));
+    assert!(!s.accepts("ca"));
+    assert_eq!(s.read_back("acd"), "acd");
+    let ignoring = setup("start: t \"c\" | t \"d\" | x\nx: \"a\"\nt: start\n%ignore \" \"\n");
+    assert!(ignoring.accepts("a "));
+    assert!(ignoring.accepts(" a c"));
+    assert_eq!(ignoring.read_back("a "), "a[ ]");
+}

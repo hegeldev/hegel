@@ -548,11 +548,17 @@ impl<T: Terminals> Parse<'_, T> {
     /// `nt` there ends with it, completing `nt` completes that item and
     /// nothing else, and if its own nonterminal is in the same position
     /// at its origin the chain goes on. `None` when there is no such
-    /// chain, or when it comes round to where it began.
+    /// chain, or when it comes round to where it began. The chain stops
+    /// short of completing the start rule from the first column, since
+    /// that item is the one a parse of the whole text is found by, and
+    /// the one carried past ignored text at its end.
     fn leo_top(&mut self, col: usize, nt: usize) -> Option<(u32, u32)> {
         let mut chain: Vec<((u32, u32), (u32, u32))> = Vec::new();
         let (mut col, mut nt) = (col, nt);
         let top = loop {
+            if col == 0 && nt == self.parser.start {
+                break None;
+            }
             let key = (col as u32, nt as u32);
             if let Some(&top) = self.leo.get(&key) {
                 break top;
