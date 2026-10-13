@@ -118,9 +118,14 @@ extern "C" fn sevens() -> u64 {
 }
 
 extern "C" fn counting() -> u64 {
-    use core::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(0x1000_0000_0000_0000);
-    NEXT.fetch_add(1, Ordering::Relaxed)
+    std::thread_local! {
+        static NEXT: core::cell::Cell<u64> = const { core::cell::Cell::new(0x1000_0000_0000_0000) };
+    }
+    NEXT.with(|next| {
+        let value = next.get();
+        next.set(value + 1);
+        value
+    })
 }
 
 #[test]

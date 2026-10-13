@@ -364,19 +364,16 @@ fn save_silently_returns_when_create_dir_all_fails() {
     assert!(db.fetch(b"key").is_empty());
 }
 
-#[cfg(unix)]
 #[test]
 fn move_value_falls_back_to_delete_save_when_dst_dir_create_fails() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = TempDir::new().unwrap();
-    let db = DirectoryTestCaseDatabase::new(dir.path().to_str().unwrap());
-    db.save(b"src", b"val");
-    let mut perms = std::fs::metadata(dir.path()).unwrap().permissions();
-    perms.set_mode(0o555);
-    std::fs::set_permissions(dir.path(), perms.clone()).unwrap();
+    let blocked = dir.path().join("not-a-directory");
+    std::fs::write(&blocked, b"not a directory").unwrap();
+    let db = DirectoryTestCaseDatabase::new(blocked.to_str().unwrap());
     db.move_value(b"src", b"dst", b"val");
-    perms.set_mode(0o755);
-    std::fs::set_permissions(dir.path(), perms).unwrap();
+    assert!(db.fetch(b"src").is_empty());
+    assert!(db.fetch(b"dst").is_empty());
+    assert_eq!(std::fs::read(&blocked).unwrap(), b"not a directory");
 }
 
 #[test]
