@@ -297,6 +297,21 @@ fn regex_node(pattern: &str, simplest: &str, value: &str) -> ChoiceNode {
     ChoiceNode::string((*kind).clone(), cps(value), false)
 }
 
+fn least_regex_node(pattern: &str, value: &str) -> ChoiceNode {
+    let spec = crate::native::draws::StringSpec::regex(pattern, true, None).unwrap();
+    let crate::native::draws::StringSpec::Regex { compiled, kind, .. } = &spec else {
+        unreachable!()
+    };
+    crate::native::draws::regex::ensure_simplest(
+        &mut crate::native::draws::source::SimplestDraws::default(),
+        compiled,
+        true,
+        kind,
+    )
+    .unwrap();
+    ChoiceNode::string((**kind).clone(), cps(value), false)
+}
+
 fn string_shrinker(
     nodes: Vec<ChoiceNode>,
     accept: impl Fn(&[u32]) -> bool + Send + Sync + 'static,
@@ -332,6 +347,16 @@ fn the_string_passes_shrink_a_string_under_a_regex_within_the_pattern() {
     assert_eq!(string_of(&shrinker), "\u{101}\u{101}");
     drive_no_yield(shrinker.shrink_strings()).unwrap();
     assert_eq!(string_of(&shrinker), "\u{101}");
+}
+
+/// The simplest string of a pattern is the least string of it, so the
+/// shrink reaches `a` from `bbbb`, which no edit of `bbbb` within the
+/// pattern could.
+#[test]
+fn a_string_under_a_regex_shrinks_to_the_least_alternative() {
+    let mut shrinker = accepting_shrinker(vec![least_regex_node("(?:bbbb|a)", "bbbb")]);
+    drive_no_yield(shrinker.shrink_strings()).unwrap();
+    assert_eq!(string_of(&shrinker), "a");
 }
 
 /// A run of characters the pattern only admits together is deleted at

@@ -267,12 +267,14 @@ fn compile_rejects_unparseable_patterns() {
 }
 
 fn ignorecase_state(caches: &Caches) -> GenState<'_> {
+    static SCALARS: Lazy<IntervalSet> = Lazy::new(|| IntervalSet::unicode_scalars().unwrap());
     GenState {
         groups: HashMap::default(),
         capture: false,
         flags: SRE_FLAG_IGNORECASE,
         fullmatch: false,
         base: 0,
+        intervals: &SCALARS,
         unproducible: false,
         caches,
     }
@@ -946,13 +948,17 @@ fn an_rng_source_records_the_invalid_conclusion_of_a_failing_pattern() {
     assert_eq!(draws.status(), Some(Status::Invalid));
 }
 
+/// The simplest source takes the fewest repetitions, the least
+/// character of a class or case-folded literal (`A` before `a`) and the
+/// alternative whose string is least: `bar` before `foo`, both three
+/// characters, as `b` is before `f` in the alphabet's shrink order.
 #[test]
 fn the_simplest_source_draws_the_simplest_match() {
     for (pattern, fullmatch, expected) in [
         ("[a-z]{2,5}x?", true, "aa"),
-        ("(foo|bar)+", true, "foo"),
+        ("(foo|bar)+", true, "bar"),
         ("abc", false, "abc"),
-        ("(?i)abc", true, "abc"),
+        ("(?i)abc", true, "ABC"),
         ("[1-9][0-9]*", true, "1"),
     ] {
         let re = CompiledRegex::compile(pattern, None).unwrap();
@@ -964,6 +970,156 @@ fn the_simplest_source_draws_the_simplest_match() {
         );
         assert_eq!(draws.status(), None);
     }
+}
+
+fn simplest(pattern: &str, alphabet: Option<IntervalSet>) -> String {
+    let re = CompiledRegex::compile(pattern, alphabet).unwrap();
+    let mut draws = SimplestDraws::default();
+    let simplest = generate_regex(&mut draws, &re, true).unwrap();
+    assert_eq!(draws.status(), None, "{pattern:?}");
+    simplest
+}
+
+/// The simplest string of an alternation is the least of its
+/// alternatives' simplest strings in the shrink order of the string
+/// choice: the shortest, then by each character's place in the
+/// alphabet's shrink order (`A` before `a`, `0` before `1`), the first
+/// alternative no longer preferred; a nested alternation is least the
+/// same way from either end.
+#[test]
+fn the_simplest_string_of_an_alternation_is_the_least_of_its_alternatives() {
+    for (pattern, expected) in [
+        ("(?:bbbb|a)", "a"),
+        ("(?:b|a)", "a"),
+        ("(?:a|b)", "a"),
+        ("(?:ab|c|d)", "c"),
+        ("(?:ab|d|c)", "c"),
+        ("(?:bb|a|cc)", "a"),
+        ("(?:ba|ab)", "ab"),
+        ("(?:a|A)", "A"),
+        ("(?:1|0)", "0"),
+        ("(?:(?:(?:a|bb)|cc)|dd)", "a"),
+        ("(?:dd|(?:cc|(?:bb|a)))", "a"),
+        ("(?:bbbb|a){2}", "aa"),
+        ("x(?:bbbb|a)?", "x"),
+    ] {
+        assert_eq!(simplest(pattern, None), expected, "{pattern:?}");
+    }
+}
+
+/// Among alternatives whose simplest strings are equal, the earliest is
+/// taken: the group it captures is the one a conditional later sees.
+/// The groups an alternative not taken captured are forgotten with it.
+#[test]
+fn equal_alternatives_tie_to_the_earliest_and_only_its_groups_are_kept() {
+    assert_eq!(simplest("(?:(a)|a)(?(1)y|x)", None), "ay");
+    assert_eq!(simplest("(?:a|(a))(?(1)x|y)", None), "ay");
+    assert_eq!(simplest("(?:(bb)|a)(?(1)x|y)", None), "ay");
+}
+
+/// The matcher's check at the end sees the string with the alternative
+/// taken: an assertion in the one taken must hold, and one in an
+/// alternative not taken (which would fail, at a position the string
+/// does not reach) does not matter.
+#[test]
+fn assertions_are_checked_on_the_alternative_taken() {
+    assert_eq!(simplest(r"(?:a\Z|bb)", None), "a");
+    assert_eq!(simplest(r"(?:bbbb\B|a)", None), "a");
+}
+
+/// Each alternative is drawn once per alternation it is in, so
+/// alternations nested many levels deep cost the walk their size, not
+/// its square or worse.
+#[test]
+fn the_least_of_nested_alternations_is_found_in_one_pass_over_each() {
+    let mut pattern = "a|bb".to_string();
+    for _ in 0..45 {
+        pattern = format!("(?:{pattern})|cc");
+    }
+    assert_eq!(simplest(&pattern, None), "a");
+    let mut pattern = "a|bb".to_string();
+    for _ in 0..45 {
+        pattern = format!("cc|(?:{pattern})");
+    }
+    assert_eq!(simplest(&pattern, None), "a");
+}
+
+/// An alternative the alphabet cannot supply is not a candidate, so the
+/// least of the rest is taken; an alternation with none has no string.
+#[test]
+fn the_least_alternative_is_chosen_among_those_the_alphabet_can_supply() {
+    let only_b = || Some(IntervalSet::new(vec![(u32::from('b'), u32::from('b'))]).unwrap());
+    assert_eq!(simplest("(?:a|bb)", only_b()), "bb");
+    let re = CompiledRegex::compile("(?:a|aa)", only_b()).unwrap();
+    let mut draws = SimplestDraws::default();
+    assert!(matches!(
+        generate_regex(&mut draws, &re, true),
+        Err(EngineError::InvalidTestCase)
+    ));
+    assert_eq!(draws.status(), Some(Status::Invalid));
+}
+
+/// An alternative that cannot be drawn where it stands fails the walk,
+/// as it would fail any draw, whichever alternative is least; the
+/// simplest string then comes from the seeded draws.
+#[test]
+fn an_alternative_that_cannot_be_drawn_fails_the_simplest_walk() {
+    let re = CompiledRegex::compile(r"b(?:\A|a)", None).unwrap();
+    let mut draws = SimplestDraws::default();
+    assert!(matches!(
+        generate_regex(&mut draws, &re, true),
+        Err(EngineError::InvalidTestCase)
+    ));
+    assert_eq!(draws.status(), Some(Status::Invalid));
+    let spec = spec(r"b(?:\A|a)", true);
+    let mut ntc = NativeTestCase::new_random(EngineRng::seeded(1)).unwrap();
+    crate::native::draws::generate_string(&mut ntc, &spec).unwrap();
+    assert_eq!(
+        regex_kind(&spec).constraint.as_ref().unwrap().simplest(),
+        Some(&[u32::from('b'), u32::from('a')][..])
+    );
+}
+
+/// When the string built from the least alternative fails the pattern's
+/// assertions, the simplest walk draws nothing, and the simplest string
+/// is the first valid string of the seeded draws: the only other
+/// alternative's, here.
+#[test]
+fn the_simplest_string_is_valid_when_the_least_alternative_fails_the_pattern() {
+    for pattern in ["(?!a)(?:a|bb)", r"(?:a\B|bb)", r"(?:-|bb)\b"] {
+        let re = CompiledRegex::compile(pattern, None).unwrap();
+        let mut draws = SimplestDraws::default();
+        assert!(
+            matches!(
+                generate_regex(&mut draws, &re, true),
+                Err(EngineError::InvalidTestCase)
+            ),
+            "{pattern:?}"
+        );
+        let spec = spec(pattern, true);
+        let mut ntc = NativeTestCase::new_random(EngineRng::seeded(1)).unwrap();
+        crate::native::draws::generate_string(&mut ntc, &spec).unwrap();
+        assert_eq!(
+            regex_kind(&spec).constraint.as_ref().unwrap().simplest(),
+            Some(&[u32::from('b'), u32::from('b')][..]),
+            "{pattern:?}"
+        );
+    }
+}
+
+/// The random source still draws an alternation by index, so the
+/// strings a seed draws are what they were.
+#[test]
+fn the_random_source_draws_alternatives_by_index() {
+    let re = CompiledRegex::compile("(?:bbbb|a)", None).unwrap();
+    let mut seen = HashSet::default();
+    for seed in 0..20 {
+        let mut rng = EngineRng::seeded(seed);
+        let mut draws = RngDraws::new(&mut rng, Default::default());
+        assert!(!draws.simplest());
+        seen.insert(generate_regex(&mut draws, &re, true).unwrap());
+    }
+    assert!(seen.contains("bbbb") && seen.contains("a"), "saw {seen:?}");
 }
 
 fn spec(pattern: &str, fullmatch: bool) -> StringSpec {
@@ -1272,6 +1428,44 @@ fn only_patterns_the_generator_approximates_are_verified_by_the_matcher() {
     }
 }
 
+/// The simplest character of a class, a case-folded literal or the
+/// wildcard is the least of its characters in the alphabet's shrink
+/// order (`0` first, then up through `Z` in codepoint order, then the
+/// characters below `0` from `/` down and the rest from `[` up),
+/// however the set is listed or stored, and a repeat of a class
+/// repeats it.
+#[test]
+fn the_simplest_character_of_a_class_is_its_least() {
+    for (pattern, expected) in [
+        (r"\w", "0"),
+        (r"\d", "0"),
+        (r"[^\n]", "0"),
+        (r"[^0]", "1"),
+        (r"[^0-Z]", "/"),
+        (r"[^0-9A-Z]", ":"),
+        (r"[\x00\x01]", "\x01"),
+        ("[ba]", "a"),
+        ("[b-z]", "b"),
+        ("[a-z0]", "0"),
+        ("[a-zA-Z]", "A"),
+        ("(?i)a", "A"),
+        ("(?i)k", "K"),
+        (".", "0"),
+        ("(?s).", "0"),
+        ("[ba]{3}", "aaa"),
+        ("[ba]+x", "ax"),
+    ] {
+        assert_eq!(simplest(pattern, None), expected, "{pattern:?}");
+    }
+    let letters = Some(IntervalSet::new(vec![(u32::from('a'), u32::from('z'))]).unwrap());
+    for (pattern, expected) in [("[^b]", "a"), (".", "a"), (r"\w", "a"), ("[cb]", "b")] {
+        assert_eq!(simplest(pattern, letters.clone()), expected, "{pattern:?}");
+    }
+}
+
+/// Every string drawn for a pattern with anchors or lookarounds, whose
+/// holding is the matcher's check at the end of the draw, is accepted
+/// by the constraint a replay checks it against.
 #[test]
 fn strings_drawn_for_anchors_and_lookarounds_are_accepted_by_the_constraint() {
     for pattern in [
@@ -1314,19 +1508,6 @@ fn strings_drawn_for_anchors_and_lookarounds_are_accepted_by_the_constraint() {
             }
         }
         assert!(produced > 0, "{pattern:?} drew nothing");
-    }
-}
-
-#[test]
-fn the_simplest_character_of_a_large_class_is_its_first() {
-    for (pattern, expected) in [(r"\w", "0"), (r"\d", "0"), (r"[^\n]", "\0")] {
-        let re = CompiledRegex::compile(pattern, None).unwrap();
-        let mut draws = SimplestDraws::default();
-        assert_eq!(
-            generate_regex(&mut draws, &re, true).unwrap(),
-            expected,
-            "{pattern:?}"
-        );
     }
 }
 

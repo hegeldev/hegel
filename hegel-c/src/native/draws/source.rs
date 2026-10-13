@@ -78,6 +78,14 @@ pub(crate) trait Draws {
     /// conclusion stands.
     fn conclude(&mut self, status: Status);
 
+    /// Whether every decision is answered with its simplest value, as
+    /// [`SimplestDraws`] answers, so that a walk choosing among
+    /// alternatives takes the one whose simplest string is least rather
+    /// than drawing an index.
+    fn simplest(&self) -> bool {
+        false
+    }
+
     /// Advance the many state by one element, answering whether another
     /// element should be drawn. Mirrors Hypothesis's `many.more()`.
     fn many_more(&mut self, state: &mut ManyState) -> Result<bool, EngineError> {
@@ -280,7 +288,10 @@ impl Draws for RngDraws<'_> {
 /// length over their smallest codepoint, so a collection stops at its
 /// minimum. Spans are no-ops and a conclusion is kept on the source (see
 /// [`SimplestDraws::status`]). What a generator draws from it is its
-/// simplest string.
+/// simplest string: a walk that chooses among alternatives, told by
+/// [`Draws::simplest`] that it is drawing from this source, takes the
+/// alternative whose own simplest string is least rather than the
+/// first.
 #[derive(Debug, Default)]
 pub(crate) struct SimplestDraws {
     status: Option<Status>,
@@ -357,6 +368,10 @@ impl Draws for SimplestDraws {
 
     fn conclude(&mut self, status: Status) {
         record_conclusion(&mut self.status, status);
+    }
+
+    fn simplest(&self) -> bool {
+        true
     }
 }
 
