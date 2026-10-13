@@ -48,6 +48,33 @@ fn a_regex_repeat_stops_at_an_empty_iteration_after_consuming_text() {
     assert!(!s.parser.accepts(&s.lexer, &chars("baba")));
 }
 
+#[test]
+fn item_limits_fail_cleanly_during_scanning_and_tree_reconstruction() {
+    for (grammar, text, expected) in [
+        (
+            "start: \"a\" start |\n",
+            "aaaaaaaaaaaaaaaa",
+            "aaaaaaaaaaaaaaaa",
+        ),
+        ("start: \"a\"+\n%ignore \" \"\n", " a a ", "[ ]a[ ]a[ ]"),
+    ] {
+        let s = setup(grammar);
+        let text = chars(text);
+        let mut accepted = false;
+        for budget in 0..200 {
+            let parser = Parser::new(&s.grammar, s.grammar.start[0]).with_item_budget(budget);
+            match parser.parse(&s.lexer, &text) {
+                Ok(tree) => {
+                    assert_eq!(read_back(&tree, &text), expected);
+                    accepted = true;
+                }
+                Err(_) => assert!(!accepted, "a larger budget must accept the same derivation"),
+            }
+        }
+        assert!(accepted);
+    }
+}
+
 /// The [`Tree::Terminal`] and [`Tree::Ignored`] leaves of `tree`, in text
 /// order.
 fn leaves(tree: &Tree) -> Vec<&Tree> {
@@ -137,6 +164,54 @@ fn accepts_and_rejects_simple_strings() {
     assert_eq!(s.parse("a"), Err(ParseError { position: 1 }));
     assert_eq!(s.parse("abc"), Err(ParseError { position: 2 }));
     assert_eq!(s.parse("x"), Err(ParseError { position: 0 }));
+}
+
+#[test]
+fn exhausted_budgets_stop_before_lexing_the_column() {
+    struct Counted<'a>(&'a Lexer, core::cell::Cell<usize>);
+
+    impl Terminals for Counted<'_> {
+        type Memo = ();
+
+        fn begin(&self, _: &[char]) {}
+
+        fn ends(&self, memo: &mut (), id: TermId, text: &[char], pos: usize, out: &mut Vec<usize>) {
+            self.1.set(self.1.get() + 1);
+            self.0.ends(memo, id, text, pos, out);
+        }
+    }
+
+    let s = setup("start: a\na: a a | \"a\" |\n");
+    let terminals = Counted(&s.lexer, core::cell::Cell::new(0));
+    assert!(s.parser.accepts(&terminals, &chars("a")));
+    assert!(terminals.1.get() > 0);
+    for parser in [
+        Parser::new(&s.grammar, s.grammar.start[0]).with_budget(5),
+        Parser::new(&s.grammar, s.grammar.start[0]).with_item_budget(5),
+    ] {
+        terminals.1.set(0);
+        assert!(parser.parse(&terminals, &chars("a")).is_err());
+        assert_eq!(terminals.1.get(), 0);
+    }
+}
+
+#[test]
+fn nullable_repeats_cannot_expand_an_unbounded_derivation() {
+    let s = setup("start: empty ~ 65536\nempty:\n");
+    let parser = Parser::new(&s.grammar, s.grammar.start[0]).with_item_budget(1000);
+    assert_eq!(parser.parse(&s.lexer, &[]), Err(ParseError { position: 0 }));
+}
+
+#[test]
+fn shared_nullable_rules_cannot_expand_an_unbounded_derivation() {
+    let mut grammar = String::from("start: r0\n");
+    for i in 0..12 {
+        grammar.push_str(&format!("r{i}: r{} r{}\n", i + 1, i + 1));
+    }
+    grammar.push_str("r12:\n");
+    let s = setup(&grammar);
+    let parser = Parser::new(&s.grammar, s.grammar.start[0]).with_item_budget(1000);
+    assert_eq!(parser.parse(&s.lexer, &[]), Err(ParseError { position: 0 }));
 }
 
 #[test]
