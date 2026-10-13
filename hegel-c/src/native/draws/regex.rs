@@ -1078,15 +1078,13 @@ fn in_set<'c>(
     }
 }
 
-/// Cached version of [`build_in_set`] for the default (no-alphabet) case.
-///
-/// Category-driven classes like `\w`, `\s`, `[^\d]` require a full
-/// 65 536-codepoint BMP scan to compute, and the parser yields distinct
-/// `SetItem` slices for distinct regex patterns — so the state-level
-/// pointer cache only helps within one draw. Patterns like `\w` alone
-/// cost ~35ms per draw in debug; 10 draws trips the 1s TooSlow health
-/// check on slower CI runners. Since the default alphabet is fixed, we
-/// can memoise across draws (and across patterns).
+/// [`build_in_set`] for the default (no-alphabet) case, memoised across
+/// draws and patterns by the class's items and the flags that affect
+/// them. Building a class with a category (`\w`, `\s`, `[^\d]`) scans
+/// the whole BMP, and the per-draw cache keyed by the items' address
+/// cannot share that work between patterns, which parse to distinct
+/// slices; with the default alphabet fixed, the result depends on
+/// nothing else, so one build serves every draw.
 fn cached_default_in_set(items: &[SetItem], flags: u32) -> Result<InSet, InternalError> {
     type Cache = Mutex<HashMap<(Vec<SetItem>, u32), InSet>>;
     static CACHE: Lazy<Cache> = Lazy::new(|| Mutex::new(HashMap::default()));
