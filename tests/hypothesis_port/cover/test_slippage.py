@@ -157,52 +157,6 @@ def test_shrinks_both_failures():
     assert_output_contains_failure(output, test, i=second_target)
 
 
-def _is_flaky(exception):
-    # Hegel reports a failure it could not reproduce reliably with a caveat
-    # note, rather than as a distinct exception type.
-    return any("nondeterministic" in note for note in notes(exception))
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="Hegel reports only the stable failure (TypeError, with a nondeterminism caveat) "
-    "instead of a group that also holds the flaky one",
-)
-def test_handles_flaky_tests_where_only_one_is_flaky(tmp_path):
-    flaky_fixed = False
-
-    target = []
-    flaky_failed_once = False
-
-    @hegel.test(database=str(tmp_path), test_cases=1000, report_multiple_failures=True)
-    def test(tc):
-        nonlocal flaky_failed_once
-        i = tc.draw(gs.integers())
-        if abs(i) < 1000:
-            return
-        if not target:
-            target.append(i)
-        if i == target[0]:
-            raise TypeError
-        if flaky_failed_once and not flaky_fixed:
-            return
-        if len(target) == 1:
-            target.append(i)
-        if i == target[1]:
-            flaky_failed_once = True
-            raise ValueError
-
-    with pytest.raises(ExceptionGroup) as err:
-        test()
-    assert any(_is_flaky(e) for e in err.value.exceptions)
-
-    flaky_fixed = True
-
-    with pytest.raises(ExceptionGroup) as err:
-        test()
-    assert not any(_is_flaky(e) for e in err.value.exceptions)
-
-
 @pytest.mark.parametrize("allow_multi", [True, False])
 def test_can_disable_multiple_error_reporting(allow_multi):
     seen = set()

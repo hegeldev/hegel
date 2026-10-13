@@ -82,25 +82,12 @@ def test_filtered_sampling_finds_rare_value(tc):
     assert x == 99
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Engine: sets() does not sample without replacement, so sets(sampled_from(range(50)), "
-    "min_size=50) fails FilterTooMuch (docs/engine-issues.md)",
-    raises=hegel.FailedHealthCheck,
-)
 @hegel.test
 def test_efficient_sets_of_samples(tc):
     x = tc.draw(gs.sets(gs.sampled_from(range(50)), min_size=50))
     assert x == set(range(50))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Engine: dicts() does not sample keys without replacement, so "
-    "dicts(sampled_from(range(50)), none(), min_size=50) fails FilterTooMuch "
-    "(docs/engine-issues.md)",
-    raises=hegel.FailedHealthCheck,
-)
 @hegel.test
 def test_efficient_dicts_with_sampled_keys(tc):
     x = tc.draw(gs.dicts(gs.sampled_from(range(50)), gs.none(), min_size=50))
@@ -121,12 +108,6 @@ def test_does_not_include_duplicates_even_when_duplicated_in_collection(tc):
     assert len(ls) <= 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Engine: sets() does not sample without replacement, so a set of all 33 values of a "
-    "mapped and filtered sampled_from(range(50)) fails FilterTooMuch (docs/engine-issues.md)",
-    raises=hegel.FailedHealthCheck,
-)
 @hegel.test
 def test_efficient_sets_of_samples_with_chained_transformations(tc):
     x = tc.draw(

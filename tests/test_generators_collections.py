@@ -138,6 +138,66 @@ def test_unique_collections_with_enough_distinct_values():
     check_all(gs.dicts(gs.booleans(), gs.none(), min_size=2), lambda d: len(d) == 2)
 
 
+def test_unique_collections_sample_without_replacement():
+    check_all(gs.sets(gs.sampled_from(range(50)), min_size=50), lambda s: s == set(range(50)))
+    check_all(gs.frozensets(gs.sampled_from("abc"), min_size=3), lambda s: s == frozenset("abc"))
+    check_all(
+        gs.dicts(gs.sampled_from(range(50)), gs.none(), min_size=50),
+        lambda d: set(d) == set(range(50)),
+    )
+    check_all(
+        gs.lists(gs.sampled_from(range(20)), min_size=20, unique=True),
+        lambda xs: sorted(xs) == list(range(20)),
+    )
+    check_all(
+        gs.lists(gs.sampled_from(range(20)), min_size=10, unique_by=lambda x: x % 10),
+        lambda xs: sorted(x % 10 for x in xs) == list(range(10)),
+    )
+    # Elements are used up through map and filter layers too, and a
+    # filtered-out element counts for nothing.
+    check_all(
+        gs.sets(
+            gs.sampled_from(range(50))
+            .map(lambda x: x * 2)
+            .filter(lambda x: x % 3)
+            .map(lambda x: x // 2),
+            min_size=33,
+        ),
+        lambda s: s == {x for x in range(50) if (x * 2) % 3},
+    )
+    check_all(
+        gs.sets(gs.sampled_from(range(10)).filter(lambda x: x % 2 == 0), min_size=5),
+        lambda s: s == {0, 2, 4, 6, 8},
+    )
+    check_all(
+        gs.lists(gs.sampled_from(range(10)).filter(lambda x: x % 2), min_size=5, unique=True),
+        lambda xs: sorted(xs) == [1, 3, 5, 7, 9],
+    )
+    check_all(
+        gs.dicts(gs.sampled_from(range(10)).filter(lambda x: x % 2), gs.none(), min_size=5),
+        lambda d: sorted(d) == [1, 3, 5, 7, 9],
+    )
+    # A map over something other than a sample draws with replacement.
+    check_all(gs.sets(gs.integers(0, 1).map(str), min_size=2), lambda s: s == {"0", "1"})
+    # Without enough elements left to reach min_size the case is rejected.
+    short = gs.sets(gs.sampled_from(range(10)).filter(lambda x: x < 3), min_size=5)
+    with pytest.raises(hegel.InvalidArgument, match="Could not find"):
+        find_example(short)
+    with pytest.raises(hegel.InvalidArgument, match="Could not find"):
+        find_example(gs.sets(gs.sampled_from([1, 2]).map(str), min_size=3))
+    assert find_example(gs.sets(gs.sampled_from([3, 2, 1]), min_size=1)) == {3}
+    assert find_example(gs.sets(gs.sampled_from([3, 2, 1]), min_size=2), lambda s: 1 in s) == {
+        3,
+        1,
+    }
+
+    def body(tc):
+        xs = tc.draw(gs.sets(gs.sampled_from([3, 2, 1]).map(str), min_size=2))
+        assert len(xs) < 2
+
+    assert notes(failing(body))[0] == "Falsifying example:\nxs = {'3', '2'}"
+
+
 def test_dicts():
     check_all(gs.dicts(gs.integers(0, 3), gs.text()), lambda d: isinstance(d, dict))
     check_all(

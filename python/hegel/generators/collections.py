@@ -6,10 +6,17 @@ from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from hegel.errors import InvalidArgument
-from hegel.generators.base import NOOP_PRINTER, Generator, combine_labels, label_from_name
-from hegel.generators.combinators import Just, SampledFrom, as_generator
+from hegel.generators.base import (
+    NOOP_PRINTER,
+    Filtered,
+    Generator,
+    Mapped,
+    combine_labels,
+    label_from_name,
+)
+from hegel.generators.combinators import FilteredSample, Just, SampledFrom, as_generator
 from hegel.generators.numeric import Booleans, Integers
-from hegel.pretty import PrettyPrinter
+from hegel.pretty import PrettyPrinter, pretty_print
 from hegel.test_case import Collection
 
 if TYPE_CHECKING:
@@ -93,6 +100,66 @@ def _check_distinct(what: str, elements: Generator[Any], min_size: int) -> None:
         )
 
 
+class _WithoutReplacement:
+    """Elements of a ``sampled_from``, under any ``map`` and ``filter``
+    layers, drawn without replacement: each draw uses up one of the
+    sampled elements, so a unique collection that needs most of them is
+    filled without rejecting duplicates, and the draws stop when the
+    elements run out."""
+
+    __slots__ = ("elements", "layers", "remaining")
+
+    def __init__(
+        self, elements: Sequence[Any], layers: list[tuple[bool, Callable[[Any], Any]]]
+    ) -> None:
+        self.elements = elements
+        self.layers = layers
+        self.remaining = list(range(len(elements)))
+
+    @classmethod
+    def of(cls, generator: Generator[Any]) -> _WithoutReplacement | None:
+        """A sampler for ``generator``, when it is a ``sampled_from`` under
+        ``map`` and ``filter`` layers, else None."""
+        layers: list[tuple[bool, Callable[[Any], Any]]] = []
+        while not isinstance(generator, SampledFrom):
+            if isinstance(generator, Mapped):
+                layers.append((False, generator.f))
+            elif isinstance(generator, Filtered):
+                layers.append((True, generator.predicate))
+            elif isinstance(generator, FilteredSample):
+                layers.append((True, generator._accepts))
+            else:
+                return None
+            generator = generator.source
+        layers.reverse()
+        return cls(generator.elements, layers)
+
+    def draw(self, tc: TestCase, printer: PrettyPrinter) -> tuple[bool, Any]:
+        """Use up one element: ``(True, value)`` when it passes the
+        filters, printed, else ``(False, None)``."""
+        index = self.remaining.pop(tc._generate_integer(0, len(self.remaining) - 1))
+        value: Any = self.elements[index]
+        for is_filter, function in self.layers:
+            if is_filter:
+                if not function(value):
+                    return False, None
+            else:
+                value = function(value)
+        pretty_print(value, printer)
+        return True, value
+
+
+def _more(collection: Collection, sampler: _WithoutReplacement | None) -> bool:
+    return (sampler is None or bool(sampler.remaining)) and collection.more()
+
+
+def _short(tc: TestCase, sampler: _WithoutReplacement | None, size: int, min_size: int) -> None:
+    """Reject the test case when sampling without replacement ran out
+    of elements before the collection reached its minimum size."""
+    if sampler is not None and size < min_size:
+        tc.reject()
+
+
 class Lists(Generator[list[T]]):
     def __init__(
         self,
@@ -120,12 +187,20 @@ class Lists(Generator[list[T]]):
         collection = Collection(tc, self.min_size, self.max_size)
         result: list[T] = []
         seen: list[set[Hashable]] = [set() for _ in (self.unique_by or ())]
-        while collection.more():
+        sampler = _WithoutReplacement.of(self.elements) if self.unique_by else None
+        while _more(collection, sampler):
             with printer.speculate() as speculation:
                 if result:
                     printer.text(",")
                     printer.breakable(" ")
-                element = tc.draw_and_print(self.elements, printer)
+                if sampler is None:
+                    element = tc.draw_and_print(self.elements, printer)
+                else:
+                    found, element = sampler.draw(tc, printer)
+                    if not found:
+                        speculation.abort()
+                        collection.reject("filtered element")
+                        continue
                 if self.unique_by is not None:
                     keys = [key(element) for key in self.unique_by]
                     if any(k in s for k, s in zip(keys, seen, strict=True)):
@@ -136,6 +211,7 @@ class Lists(Generator[list[T]]):
                         s.add(k)
                 speculation.commit()
                 result.append(element)
+        _short(tc, sampler, len(result), self.min_size)
         printer.end_group("]")
         return result
 
@@ -196,18 +272,27 @@ class Sets(Generator[Any]):
         printer.begin_group(len(open_), open_)
         result: set[Any] = set()
         collection = Collection(tc, self.min_size, self.max_size)
-        while collection.more():
+        sampler = _WithoutReplacement.of(self.elements)
+        while _more(collection, sampler):
             with printer.speculate() as speculation:
                 if result:
                     printer.text(",")
                     printer.breakable(" ")
-                element = tc.draw_and_print(self.elements, printer)
+                if sampler is None:
+                    element = tc.draw_and_print(self.elements, printer)
+                else:
+                    found, element = sampler.draw(tc, printer)
+                    if not found:
+                        speculation.abort()
+                        collection.reject("filtered element")
+                        continue
                 if element in result:
                     speculation.abort()
                     collection.reject("duplicate element")
                 else:
                     speculation.commit()
                     result.add(element)
+        _short(tc, sampler, len(result), self.min_size)
         if not result:
             printer.if_break("")
         printer.end_group(close)
@@ -301,12 +386,20 @@ class Dicts(Generator[dict[Any, Any]]):
         printer.begin_group(1, "{")
         result: dict[Any, Any] = {}
         collection = Collection(tc, self.min_size, self.max_size)
-        while collection.more():
+        sampler = _WithoutReplacement.of(self.keys)
+        while _more(collection, sampler):
             with printer.speculate() as speculation:
                 if result:
                     printer.text(",")
                     printer.breakable(" ")
-                key = tc.draw_and_print(self.keys, printer)
+                if sampler is None:
+                    key = tc.draw_and_print(self.keys, printer)
+                else:
+                    found, key = sampler.draw(tc, printer)
+                    if not found:
+                        speculation.abort()
+                        collection.reject("filtered key")
+                        continue
                 if key in result:
                     speculation.abort()
                     collection.reject("duplicate key")
@@ -315,6 +408,7 @@ class Dicts(Generator[dict[Any, Any]]):
                 value = tc.draw_and_print(self.values, printer)
                 speculation.commit()
                 result[key] = value
+        _short(tc, sampler, len(result), self.min_size)
         printer.end_group("}")
         return result
 

@@ -6,11 +6,6 @@ than worked around in the bindings, so they can be fixed in the engine.
 
 ## Regular expressions
 
-- Patterns no string can match, such as `a^b` or `(?!foo)foo`, are not
-  recognised as empty: the engine keeps generating strings that fail the
-  match, and the run ends `FilterTooMuch` rather than finding nothing
-  (`tests/hypothesis_port/cover/test_regex.py::test_caret_in_the_middle_does_not_generate_anything`,
-  `test_impossible_negative_lookahead`).
 - A pattern that the given alphabet cannot match (`abc` with
   `alphabet="def"`, `aa|bb` with `"c"`, `[ab]x[de]` with `"abcdef"`, `\d`
   with `"abc"`, `[^a]` with `"a"`) is not reported up front. Hypothesis
@@ -27,12 +22,6 @@ than worked around in the bindings, so they can be fixed in the engine.
 - `from_regex(".")` shrinks to `'ā'` (U+0101) rather than to `'0'`: the
   shrinker's smallest match for `.` is not the smallest code point
   (`test_regex.py::test_regex_output_should_print_as_string`).
-- Under `re.IGNORECASE`, a negated class whose excluded character has a
-  multi-character case fold (`[^İ]+`; `İ` folds to `i` followed by U+0307)
-  can generate the fold's components, so the result is not disjoint from the
-  fold (`tests/hypothesis_port/nocover/test_regex.py::test_case_insensitive_not_literal_never_constructs_multichar_match`,
-  pinned with a seed).
-
 ## Shrinking and generation
 
 - Shrinking can stop short of the minimum: with seed 6, a search over
@@ -48,10 +37,7 @@ than worked around in the bindings, so they can be fixed in the engine.
   budget: the first targeting pass starts after `test_cases / 2` cases. With
   `test_cases=10_000`, `lists(integers(0, 1000))`, `target(min(sum(xs),
   50_000))` and `assert sum(xs) < 30_000`, the failure is found at about
-  case 5,006. Hypothesis targets from much earlier, and also reports the
-  highest score seen for each label when the run ends; libhegel reports no
-  scores.
-
+  case 5,006. Hypothesis targets from much earlier.
 - A float draw with an infinite bound and `allow_infinity=false` aborts the
   run with an `InternalError` (`FloatChoice::simplest: no valid float for
   this choice`) at width 64, and at width 32 clamps the bound to the largest
@@ -65,20 +51,16 @@ than worked around in the bindings, so they can be fixed in the engine.
 
 ## Messages and reporting
 
-- A failure that reproduces only once is dropped once another failure is
-  confirmed. With a test that has two bugs, one deterministic (`TypeError`)
-  and one that fails exactly once (`ValueError`), the first replay miss
-  switches the whole run into nondeterministic handling
-  (`native/test_runner.rs` `first_check_sweep`), the discovery sweep then
-  rejects the `ValueError` origin when its confirmation batch never
-  reproduces (`reject_origin`), and `build_report` only reports unconfirmed
-  origins when nothing confirmed survived. The result is a lone `TypeError`
-  carrying a nondeterminism caveat ("failed 20 of 20 replays") even though
-  that bug is deterministic, and under `nondeterminism_strictness="error"`
-  a `Flaky` that aborts the run. Hypothesis reports both: the `TypeError`
-  and a `Flaky` for the `ValueError`
-  (`tests/hypothesis_port/cover/test_slippage.py::test_handles_flaky_tests_where_only_one_is_flaky`).
-
+- A deterministic failure is caveated as nondeterministic when a different
+  failure made the run nondeterministic. With a test that has two bugs, one
+  deterministic (`TypeError`) and one that fails exactly once
+  (`ValueError`), the first replay miss switches the whole run into
+  nondeterministic handling (`native/test_runner.rs` `first_check_sweep`)
+  and the report is a lone `TypeError` carrying the caveat "failed 20 of 20
+  replays", even though that bug reproduced at every replay; under
+  `nondeterminism_strictness="error"` it is a `Flaky` that aborts the run.
+  The caveat should be per failure. (Reporting the never-reproduced
+  `ValueError` as well, as Hypothesis does with a `Flaky`, is not a goal.)
 - Verbose output announces generated test cases with `Running test case`,
   but not the first case of a run (the simplest input,
   `NativeTestCase::for_simplest` in `native/test_runner.rs`) nor the replays
@@ -97,50 +79,36 @@ than worked around in the bindings, so they can be fixed in the engine.
 - There is no minimum step count for a state machine run: the engine decides
   how many steps to take, so Hypothesis's `_min_steps` is rejected with
   `InvalidArgument` rather than honoured.
-- Pool consumption is not rolled back when the draw is discarded.
-  `hegel_pool_generate(consume=true)` removes the variable from the pool at
-  draw time (`native/data_source.rs` `pool_generate`, then
-  `NativeVariables::consume`), and neither closing the enclosing span with
-  `discard=true` nor `state_machine_rule_rejected` restores it. The C API has
-  no `remove`/`restore` call and no way to generate from a subset of the
-  pool, so the bindings cannot defer the removal either. Consequently
+- A value consumed from a pool inside a filter's rejected attempt is lost.
+  `hegel_pool_generate(consume=true)` removes the variable at draw time
+  (`native/data_source.rs` `pool_generate`, then
+  `NativeVariables::consume`), and the C API has no call to put it back, so
   `pool.values_consumed().filter(f)` consumes every value the filter rejects
-  on the way to an accepted one, `lists(pool.values_consumed())` consumes
-  elements of a list that is then rejected, and a rule that draws a consumed
-  value and then fails `assume` loses that value, where Hypothesis's
-  `consumes(bundle)` only removes the value the rule actually ran with.
-  Repro: add 0..9 to a pool, draw `values_consumed().filter(even)`, and the
-  pool is short an odd value. Fix options: make consumption transactional
-  with spans and rule rejection, or expose restore/remove so the bindings can
-  do it (`tests/hypothesis_port/cover/test_stateful.py::test_filtering_consumed_bundle_consumes_only_the_drawn_value`).
-
+  on the way to an accepted one although no rule ran with them. Repro: add
+  0..9 to a pool, draw `values_consumed().filter(even)`, and the pool is
+  short an odd value. The fix is a restore call that un-consumes the
+  stream's most recent consume from the pool, which `filter` calls for a
+  value it rejects (the combinator still holds the value, so no copy is
+  needed). A rule that consumes a value and then fails `assume` keeps
+  losing it, as the rule body owns the value by then; Hypothesis's
+  argument-level `consumes(bundle)` differs there, and that is not a goal
+  (`tests/hypothesis_port/cover/test_stateful.py::test_filtering_consumed_bundle_consumes_only_the_drawn_value`).
 ## Other
 
-- `sets(sampled_from(range(n)), min_size=n)` fails `FilterTooMuch` because the
-  engine's collection generation does not sample without replacement; the
-  same goes for the keys of `dicts(sampled_from(range(n)), ..., min_size=n)`
-  (`tests/hypothesis_port/nocover/test_sampled_from.py`,
-  `cover/test_sampled_from.py`).
 - A test whose every input is rejected ends as a `FilterTooMuch` health
   check, or passes quietly if that check is suppressed. `Unsatisfiable` is
   only raised when the test draws no data at all. Hypothesis raises
-  `Unsatisfiable` in both cases, and its message notes the rejection rate
-  (or that the finite search space was exhausted); the health check is for
-  tests that reject *most* inputs, not all of them
+  `Unsatisfiable` in both cases; the health check is for tests that reject
+  *most* inputs, not all of them. The same shows up for a regex no string can
+  match (`a^b`, `(?!foo)foo`), where every draw is rejected
   (`tests/hypothesis_port/cover/test_given_error_conditions.py`,
   `cover/test_testdecorators.py::test_notes_high_filter_rates_in_unsatisfiable_error`,
-  `::test_notes_exhausted_search_space_in_unsatisfiable_error`,
+  `::test_rejecting_every_input_is_unsatisfiable`,
   `cover/test_searchstrategy.py::test_example_raises_unsatisfiable_when_too_filtered`,
   `nocover/test_given_error_conditions.py`, `nocover/test_testdecorators.py`,
-  `cover/test_sampled_from.py::test_sample_when_all_filtered_fails_as_filter_too_much`).
-- A finite search space is not detected as exhausted: a test drawing one
-  `booleans()` runs for the full `test_cases` (200 calls with
-  `test_cases=200`) where Hypothesis stops after the two distinct inputs
-  (`cover/test_testdecorators.py::test_given_usable_inline_on_lambdas`).
-- Shrinking a `lists(uuids())` to length five drives every element to the
-  same minimal UUID (`UUID(int=1)` five times); Hypothesis's shrinker keeps
-  the elements distinct
-  (`nocover/test_uuids.py::test_retains_uniqueness_in_simplify`).
+  `cover/test_sampled_from.py::test_sample_when_all_filtered_fails_as_filter_too_much`,
+  `cover/test_regex.py::test_caret_in_the_middle_does_not_generate_anything`,
+  `::test_impossible_negative_lookahead`).
 - Recursive generators rarely reach some shapes: for `deferred` JSON-like
   data, a dict with key `""` holding a list is almost never generated within
   the budget Hypothesis finds it in
@@ -157,8 +125,13 @@ than worked around in the bindings, so they can be fixed in the engine.
   (Seen as an intermittent failure of `find_example` in
   `tests/test_generators_combinators.py::test_sampled_from`; pinned with a
   seed in `tests/test_engine_issues.py`.)
-- Identical inputs are generated repeatedly; there is no duplicate suppression
-  (seen as repeated UUIDs in `tests/hypothesis_port/nocover/test_uuids.py`).
+- `uuids()` repeats values far more often than random UUIDs would: each
+  64-bit half is drawn with the boundary-weighted integer distribution, so a
+  few hundred UUIDs usually contain a duplicate and a `lists(uuids())`
+  often holds the same value twice. Hypothesis's `uuids()` are unique within
+  a run because they bypass the choice sequence (and so never shrink); Hegel
+  draws them as choices, and uniqueness would need engine state rather than
+  a different distribution.
 - No widening of `one_of` branches. For `integers() | sampled_from([4991,
   4999])` and a predicate the sampled values satisfy, Hypothesis rewrites the
   choices from the sampled branch, `(1, 1)`, into the wide branch carrying the

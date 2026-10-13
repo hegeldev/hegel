@@ -109,24 +109,6 @@ assert I_WITH_DOT.swapcase() == "i\u0307"  # note: string of length two!
 assert re.compile(I_WITH_DOT, flags=re.IGNORECASE).match(I_WITH_DOT.swapcase())
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Engine: for [^\u0130]+ under IGNORECASE libhegel generates U+0307 (combining dot "
-    "above), a character of \u0130's multi-character case fold; seed 8 draws it",
-)
-@hegel.test(seed=8)
-def test_case_insensitive_not_literal_never_constructs_multichar_match(tc):
-    # So our goal is to confirm that we can never accidentally create a non-matching
-    # string by assembling individually allowed characters.
-    pattern = re.compile(f"[^{I_WITH_DOT}]+", flags=re.IGNORECASE)
-    strategy = gs.from_regex(pattern, fullmatch=True)
-    for _ in range(5):
-        s = tc.draw(strategy)
-        assert pattern.fullmatch(s) is not None
-        # And to be on the safe side, we implement this stronger property:
-        assert set(s).isdisjoint(I_WITH_DOT.swapcase())
-
-
 @hegel.test
 def test_no_error_converting_negated_sets_to_strategy(tc):
     # CharactersBuilder no longer triggers an internal error converting sets

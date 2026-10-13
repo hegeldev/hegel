@@ -245,8 +245,9 @@ def test_groups(pattern, is_unicode, invert):
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Engine: libhegel generates for a pattern no string can match, rather than "
-    "reporting it empty (docs/engine-issues.md)",
+    reason="Engine: a run whose every case is rejected fails FilterTooMuch rather than "
+    "ending Unsatisfiable, which assert_no_examples treats as finding nothing "
+    "(docs/engine-issues.md)",
 )
 def test_caret_in_the_middle_does_not_generate_anything():
     r = re.compile("a^b")
@@ -278,8 +279,9 @@ def test_groupref_exists():
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Engine: libhegel generates for a pattern no string can match, rather than "
-    "reporting it empty (docs/engine-issues.md)",
+    reason="Engine: a run whose every case is rejected fails FilterTooMuch rather than "
+    "ending Unsatisfiable, which assert_no_examples treats as finding nothing "
+    "(docs/engine-issues.md)",
 )
 def test_impossible_negative_lookahead():
     assert_no_examples(gs.from_regex("(?!foo)foo", fullmatch=False))

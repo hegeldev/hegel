@@ -60,12 +60,6 @@ def test_chained_filters_find_rare_value(tc):
     assert x == 80
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Engine: sets() does not sample without replacement, so sets(sampled_from(range(50)), "
-    "min_size=50) fails FilterTooMuch (docs/engine-issues.md)",
-    raises=hegel.FailedHealthCheck,
-)
 @hegel.test
 def test_efficient_sets_of_samples(tc):
     x = tc.draw(gs.sets(gs.sampled_from(range(50)), min_size=50))
