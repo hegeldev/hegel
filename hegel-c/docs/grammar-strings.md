@@ -191,11 +191,11 @@ A string drawn from a regex is one string node whose kind has
 pattern as a program (`re/vm.rs`), or through the backtracking matcher
 (`re/matcher.rs`) where the program cannot express it — the whole string
 must match, or under `fullmatch(false)` some substring must — and whose
-identity is
-hashed from the pattern, its flags, the match mode and the alphabet. The
-alphabet is the one the generator was given, or every scalar value; the
-size cap is `REGEX_MAX_SIZE` (`draws/regex.rs`), and a draw over it
-concludes the test case invalid, so a recorded string always validates.
+identity is hashed from the pattern, its flags, the match mode and the
+alphabet. The alphabet is the one the generator was given, or every
+scalar value; the size cap is `REGEX_MAX_SIZE` (`draws/regex.rs`), and a
+draw over it concludes the test case invalid, so a recorded string
+always validates.
 `generate_string` draws it through `draw_string_from` like a grammar
 string, with the regex walk (`draws/regex.rs`) as the random source, and
 sets the simplest string at the first draw the same way: the walk with
