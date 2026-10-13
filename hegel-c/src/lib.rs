@@ -5160,13 +5160,15 @@ pub unsafe extern "C" fn hegel_grammar_placeholder(
 ///   NUL-terminated) with the string. Release with
 ///   `hegel_generate_string_result_free`.
 ///
-/// Returns `HEGEL_OK`, `HEGEL_E_STOP_TEST`, or `HEGEL_E_ASSUME` when the
-/// draw could not produce a string that lexes back as the grammar's
-/// tokens, which rejects the test case. Returns `HEGEL_E_INVALID_ARG`
-/// when no string of the grammar can be generated at all (none fits the
-/// size cap or lexes back as its tokens; the context's last error says
-/// which rule), and `HEGEL_E_INVALID_HANDLE` or `HEGEL_E_INVALID_ARG`
-/// for a null handle or out parameter.
+/// Returns `HEGEL_OK`, `HEGEL_E_STOP_TEST`, or `HEGEL_E_ASSUME`, which
+/// rejects the test case, when the draw could not produce a string that
+/// lexes back as the grammar's tokens within the work a draw is allowed,
+/// or when a replayed string is over this draw's `max_size`. Returns
+/// `HEGEL_E_INVALID_ARG` when no string of the grammar can be generated
+/// at all (none fits the size cap or the work limit, or lexes back as
+/// its tokens; the context's last error says which rule), and
+/// `HEGEL_E_INVALID_HANDLE` or `HEGEL_E_INVALID_ARG` for a null handle
+/// or out parameter.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_generate_grammar(
     ctx: *mut HegelContext,
