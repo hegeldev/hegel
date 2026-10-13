@@ -301,6 +301,8 @@ impl CompiledRegex {
 /// the choice recording it has a bound; a draw past it is invalid.
 pub(crate) const REGEX_MAX_SIZE: usize = 1 << 16;
 
+const GENERATION_BUDGET: usize = 1 << 22;
+
 /// Seeds tried for the simplest string when the matcher rejects the
 /// simplest walk, before giving the pattern up.
 const SIMPLEST_FALLBACK_SEEDS: u64 = 8;
@@ -323,14 +325,16 @@ pub(crate) fn ensure_simplest<D: Draws>(
         hegel_internal_error!("ensure_simplest: the kind is not under a regex");
     };
     let found = constraint.simplest_or_init(|| {
-        if let Ok(simplest) = generate_regex(&mut SimplestDraws::default(), re, fullmatch) {
-            return Ok(codepoints(&simplest));
+        if let Ok(simplest) =
+            draw_regex(&mut SimplestDraws::default(), re, fullmatch, kind.max_size)
+        {
+            return Ok(simplest);
         }
         for seed in 0..SIMPLEST_FALLBACK_SEEDS {
             let mut rng = EngineRng::seeded(seed);
             let mut draws = RngDraws::new(&mut rng, Default::default());
-            if let Ok(simplest) = generate_regex(&mut draws, re, fullmatch) {
-                return Ok(codepoints(&simplest));
+            if let Ok(simplest) = draw_regex(&mut draws, re, fullmatch, kind.max_size) {
+                return Ok(simplest);
             }
         }
         Err(())
@@ -339,10 +343,6 @@ pub(crate) fn ensure_simplest<D: Draws>(
         return Err(mark_invalid(d));
     }
     Ok(())
-}
-
-fn codepoints(s: &str) -> Vec<u32> {
-    s.chars().map(u32::from).collect()
 }
 
 /// Draw a string matching `re` from `d` as the codepoints a string choice
@@ -354,10 +354,7 @@ pub(crate) fn draw_regex<D: Draws>(
     max_size: usize,
 ) -> Result<Vec<u32>, EngineError> {
     let mut out = Vec::with_capacity(TYPICAL_CAPACITY);
-    generate_regex_into(d, re, fullmatch, &mut out)?;
-    if out.len() > max_size {
-        return Err(mark_invalid(d));
-    }
+    generate_regex_into(d, re, fullmatch, &mut out, max_size)?;
     Ok(out.into_iter().map(u32::from).collect())
 }
 
@@ -374,13 +371,14 @@ const TYPICAL_CAPACITY: usize = 64;
 /// match, ...) are retried a few times within the same test case — the
 /// analogue of Hypothesis's strategy-level `.filter(re.search)` retries —
 /// before the whole test case is marked invalid.
+#[cfg(test)]
 pub(crate) fn generate_regex<D: Draws>(
     d: &mut D,
     re: &CompiledRegex,
     fullmatch: bool,
 ) -> Result<String, EngineError> {
     let mut out = Vec::with_capacity(TYPICAL_CAPACITY);
-    generate_regex_into(d, re, fullmatch, &mut out)?;
+    generate_regex_into(d, re, fullmatch, &mut out, REGEX_MAX_SIZE)?;
     Ok(out.into_iter().collect())
 }
 
@@ -393,17 +391,21 @@ pub(crate) fn generate_regex_into<D: Draws>(
     re: &CompiledRegex,
     fullmatch: bool,
     out: &mut Vec<char>,
+    max_size: usize,
 ) -> Result<(), EngineError> {
     const MAX_ATTEMPTS: usize = 5;
     if fullmatch {
         if let Some(literal) = &re.literal {
+            if literal.len() > max_size {
+                return Err(mark_invalid(d));
+            }
             out.extend_from_slice(literal);
             return Ok(());
         }
     }
     let base = out.len();
     for _ in 0..MAX_ATTEMPTS {
-        match generate_regex_attempt(d, re, fullmatch, out, base) {
+        match generate_regex_attempt(d, re, fullmatch, out, base, max_size) {
             Ok(true) => return Ok(()),
             Ok(false) => out.truncate(base),
             Err(e) => {
@@ -443,6 +445,7 @@ fn generate_regex_attempt<D: Draws>(
     fullmatch: bool,
     out: &mut Vec<char>,
     base: usize,
+    max_size: usize,
 ) -> Result<bool, EngineError> {
     let parsed = &re.parsed;
     let alphabet = &re.alphabet;
@@ -453,6 +456,8 @@ fn generate_regex_attempt<D: Draws>(
         flags: parsed.flags,
         fullmatch,
         base,
+        max_size,
+        remaining: GENERATION_BUDGET,
         intervals: &re.intervals,
         unproducible: re.unproducible,
         caches: &re.caches,
@@ -461,6 +466,9 @@ fn generate_regex_attempt<D: Draws>(
     if parsed.pattern.is_empty() {
         if !fullmatch {
             draw_pad(d, alphabet, out)?;
+        }
+        if out.len() - base > max_size {
+            return Err(mark_invalid(d));
         }
         return Ok(true);
     }
@@ -471,6 +479,9 @@ fn generate_regex_attempt<D: Draws>(
     generate_subpattern(d, &parsed.pattern, &mut state, alphabet, out)?;
     if !fullmatch {
         draw_suffix(d, parsed, alphabet, out)?;
+    }
+    if out.len() - base > max_size {
+        return Err(mark_invalid(d));
     }
     Ok(!re.verified || pattern_matches(parsed, fullmatch, &out[base..]))
 }
@@ -520,6 +531,8 @@ fn approximated(ops: &SubPattern, tail: bool) -> bool {
 /// into `SUBPATTERN` nodes with inline flag modifiers).
 struct GenState<'a> {
     groups: HashMap<u32, Vec<char>>,
+    max_size: usize,
+    remaining: usize,
     /// Whether a back-reference or conditional group somewhere in the
     /// pattern reads `groups` back (see [`ParsedPattern::group_refs`]);
     /// when nothing does, a capturing group's text is not kept.
@@ -645,8 +658,15 @@ fn generate_subpattern<D: Draws>(
     alphabet: &Option<IntervalSet>,
     out: &mut Vec<char>,
 ) -> Result<(), EngineError> {
+    if state.remaining == 0 {
+        return Err(mark_invalid(d));
+    }
+    state.remaining -= 1;
     for op in &sp.data {
         generate_op(d, op, state, alphabet, out)?;
+        if out.len() - state.base > state.max_size {
+            return Err(mark_invalid(d));
+        }
     }
     Ok(())
 }
@@ -767,6 +787,9 @@ fn generate_op<D: Draws>(
             let Some(val) = state.groups.get(gid) else {
                 return Err(mark_invalid(d));
             };
+            if val.len() > state.max_size.saturating_sub(out.len() - state.base) {
+                return Err(mark_invalid(d));
+            }
             out.extend_from_slice(val);
         }
         OpCode::GroupRefExists {
@@ -854,6 +877,9 @@ fn repeat_in<D: Draws>(
             }
             let n = chars.len() as u64;
             loop {
+                if out.len() - state.base >= state.max_size {
+                    return Err(mark_invalid(d));
+                }
                 let idx = draw_char_index(d, n)?;
                 out.push(chars[idx as usize]);
                 if !many_more(d, ms)? {
@@ -866,6 +892,9 @@ fn repeat_in<D: Draws>(
                 return Err(mark_invalid(d));
             }
             loop {
+                if out.len() - state.base >= state.max_size {
+                    return Err(mark_invalid(d));
+                }
                 let idx = draw_char_index(d, complement.len)?;
                 out.push(complement.get(idx)?);
                 if !many_more(d, ms)? {

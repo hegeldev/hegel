@@ -23,6 +23,86 @@ fn chars(s: &str) -> Vec<char> {
     s.chars().collect()
 }
 
+fn codepoints(s: &str) -> Vec<u32> {
+    s.chars().map(u32::from).collect()
+}
+
+#[test]
+fn oversize_regex_draws_stop_and_restore_the_output_buffer() {
+    for pattern in [
+        "a{100000000}",
+        "[ab]{100000000}",
+        "[^ab]{100000000}",
+        "abcdefghij",
+        "(abc)\\1",
+    ] {
+        let re = CompiledRegex::compile(pattern, None).unwrap();
+        let mut rng = EngineRng::seeded(0);
+        let mut draws = RngDraws::new(&mut rng, Default::default());
+        let mut out = chars("prefix");
+        assert!(matches!(
+            generate_regex_into(&mut draws, &re, true, &mut out, 4),
+            Err(EngineError::InvalidTestCase)
+        ));
+        assert_eq!(out, chars("prefix"));
+        assert_eq!(draws.status(), Some(Status::Invalid));
+    }
+}
+
+#[test]
+fn padding_counts_toward_the_regex_size_limit() {
+    for pattern in ["", "a", "a$"] {
+        let re = CompiledRegex::compile(pattern, None).unwrap();
+        let mut rejected = 0;
+        for seed in 0..20 {
+            let mut rng = EngineRng::seeded(seed);
+            let mut draws = RngDraws::new(&mut rng, Default::default());
+            let mut out = Vec::new();
+            match generate_regex_into(&mut draws, &re, false, &mut out, 1) {
+                Ok(()) => assert!(out.len() <= 1),
+                Err(error) => {
+                    assert!(matches!(error, EngineError::InvalidTestCase));
+                    assert!(out.is_empty());
+                    rejected += 1;
+                }
+            }
+        }
+        assert!(rejected > 0);
+    }
+}
+
+#[test]
+fn nullable_regex_repeats_have_a_work_limit() {
+    let re = CompiledRegex::compile("(?:){65536}", None).unwrap();
+    let mut state = ignorecase_state(&re.caches);
+    state.remaining = 16;
+    let mut draws = SimplestDraws::default();
+    assert!(matches!(
+        generate_subpattern(
+            &mut draws,
+            &re.parsed.pattern,
+            &mut state,
+            &None,
+            &mut Vec::new()
+        ),
+        Err(EngineError::InvalidTestCase)
+    ));
+    assert_eq!(draws.status(), Some(Status::Invalid));
+}
+
+#[test]
+fn the_simplest_regex_string_must_fit_the_choice() {
+    let re = CompiledRegex::compile("a{10}", None).unwrap();
+    let mut kind = re.kind(true).unwrap();
+    kind.max_size = 4;
+    let mut draws = SimplestDraws::default();
+    assert!(matches!(
+        ensure_simplest(&mut draws, &re, true, &kind),
+        Err(EngineError::InvalidTestCase)
+    ));
+    assert!(kind.constraint.as_ref().unwrap().simplest().is_none());
+}
+
 fn lit(cp: char) -> OpCode {
     OpCode::Literal(cp as u32)
 }
@@ -270,6 +350,8 @@ fn ignorecase_state(caches: &Caches) -> GenState<'_> {
     static SCALARS: Lazy<IntervalSet> = Lazy::new(|| IntervalSet::unicode_scalars().unwrap());
     GenState {
         groups: HashMap::default(),
+        max_size: REGEX_MAX_SIZE,
+        remaining: GENERATION_BUDGET,
         capture: false,
         flags: SRE_FLAG_IGNORECASE,
         fullmatch: false,
