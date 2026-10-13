@@ -33,8 +33,9 @@
 //! alternative out: a rule none of whose alternatives fit theirs (the
 //! depth cap can leave only costlier ones) takes the cheapest the depth
 //! allows.
-//! A separate work limit bounds the walk even when repetitions and
-//! nested rules derive no text; exhausting it rejects the test case.
+//! A separate work limit ([`work_limit`]) bounds the nodes the walk
+//! visits even when repetitions and nested rules derive no text;
+//! exhausting it rejects the test case.
 //!
 //! Between adjacent tokens the generator inserts a `%ignore` terminal
 //! either when the simulated lexer says the two would otherwise lex
@@ -179,6 +180,8 @@ const COUNT_RESOLUTION: u64 = 1 << 20;
 /// draws no string (see [`GrammarSpec::ensure_simplest`]).
 const SIMPLEST_FALLBACK_SEEDS: u64 = 8;
 
+/// The fewest nodes a draw may visit before it is given up (see
+/// [`work_limit`]).
 const GENERATION_BUDGET: usize = 1 << 20;
 
 const LABEL_GRAMMAR: u64 = label_from_name("hegel.lark");
@@ -1325,7 +1328,7 @@ impl<'s> Generation<'s> {
         buffers.readings.forget_when_full();
         Generation {
             spec,
-            remaining: GENERATION_BUDGET,
+            remaining: work_limit(max_size, spec.max_depth),
             text: buffers.text,
             tokens: buffers.tokens,
             max_size,
@@ -1524,6 +1527,20 @@ fn ignore_cost(ignore: &[TermId], term_typical: &[u64]) -> f64 {
 /// insertions add about `rate * ignore_cost` characters per token one.
 fn token_budget(target: u64, min: u64, rate: f64, ignore_cost: f64) -> u64 {
     min.max((target as f64 / (1.0 + rate * ignore_cost)) as u64)
+}
+
+/// How many nodes a draw under `max_size` and `max_depth` may visit
+/// before it is given up as deriving nothing: enough for a string of
+/// the cap's size with a chain of rules as deep as the depth cap over
+/// every character, which is about what the most involved string within
+/// the caps costs, and never fewer than [`GENERATION_BUDGET`], so that
+/// a draw whose every node derives nothing (a repetition of an empty
+/// rule, a tree of nullable rules) ends soon enough whatever the caps.
+fn work_limit(max_size: u64, max_depth: u32) -> usize {
+    let per_size = max_size.saturating_mul(u64::from(max_depth));
+    usize::try_from(per_size)
+        .unwrap_or(usize::MAX)
+        .max(GENERATION_BUDGET)
 }
 
 /// How many alternatives of a rule [`Generation::choose_alt`] can hold in

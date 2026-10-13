@@ -57,6 +57,30 @@ fn nullable_derivations_have_a_work_limit() {
 }
 
 #[test]
+fn the_work_limit_grows_with_the_caps() {
+    assert_eq!(work_limit(0, MAX_MAX_DEPTH), GENERATION_BUDGET);
+    assert_eq!(
+        work_limit(DEFAULT_MAX_SIZE, DEFAULT_MAX_DEPTH),
+        (DEFAULT_MAX_SIZE * u64::from(DEFAULT_MAX_DEPTH)) as usize
+    );
+    assert_eq!(
+        work_limit(MAX_MAX_SIZE, MAX_MAX_DEPTH),
+        (MAX_MAX_SIZE * u64::from(MAX_MAX_DEPTH)) as usize
+    );
+    let spec = small("start: x ~ 400000\nx: y\ny: \"a\"\n", MAX_MAX_SIZE);
+    let generation = Generation::new(&spec, 0.0, spec.max_size);
+    assert_eq!(
+        generation.remaining,
+        work_limit(MAX_MAX_SIZE, DEFAULT_MAX_DEPTH)
+    );
+    assert!(generation.remaining > GENERATION_BUDGET);
+    generation.recycle();
+    let (drawn, status) = draw(&spec, 0);
+    assert_eq!(drawn.unwrap().len(), 400_000);
+    assert_eq!(status, None);
+}
+
+#[test]
 fn placeholder_text_counts_toward_the_generation_work_limit() {
     let spec = spec_with(
         "start: X ~ 3\n%declare X\n",
