@@ -4,7 +4,10 @@
 //! literals inside rules become anonymous terminals
 //! (`PrepareAnonTerminals`), templates are instantiated
 //! (`ApplyTemplates`), and rules unreachable from the start symbols are
-//! dropped along with the terminals only they used.
+//! dropped along with the terminals only they used. Only the terminals
+//! kept have their regex compiled and checked, as in Lark, so a helper
+//! terminal that is zero-width on its own, or one nothing uses, does not
+//! reject the grammar.
 
 use super::ast::{Expr, Pattern, PatternKind, Symbol};
 use super::builder::{BuiltGrammar, terminal_pattern};
@@ -216,7 +219,9 @@ pub fn parse_terminal_pattern(name: &str, pattern: &Pattern) -> GrammarResult<Pa
 }
 
 struct Compiler {
-    terminals: Vec<TerminalDef>,
+    /// The terminals as `(name, pattern, priority)`, compiled once the
+    /// unused ones are dropped.
+    terminals: Vec<(String, Option<Pattern>, i64)>,
     term_ids: HashMap<String, TermId>,
     /// The named terminal a literal in a rule stands for, by pattern: the
     /// last one defined with that pattern, as in Lark's `term_reverse`.
@@ -239,27 +244,21 @@ impl Compiler {
         id
     }
 
-    fn add_terminal(
-        &mut self,
-        name: String,
-        pattern: Option<Pattern>,
-        priority: i64,
-    ) -> GrammarResult<TermId> {
-        let term = TerminalDef::new(name, pattern, priority)?;
+    fn add_terminal(&mut self, name: String, pattern: Option<Pattern>, priority: i64) -> TermId {
         let id = self.terminals.len();
-        if let Some(p) = &term.pattern {
+        if let Some(p) = &pattern {
             self.term_by_pattern.insert(p.clone(), id);
         }
-        self.term_ids.insert(term.name.clone(), id);
-        self.terminals.push(term);
-        Ok(id)
+        self.term_ids.insert(name.clone(), id);
+        self.terminals.push((name, pattern, priority));
+        id
     }
 
     /// Lark's `PrepareAnonTerminals.pattern`: the terminal for a literal
     /// used inside a rule, created and named on first use.
-    fn anonymous_terminal(&mut self, pattern: &Pattern) -> GrammarResult<TermId> {
+    fn anonymous_terminal(&mut self, pattern: &Pattern) -> TermId {
         if let Some(&id) = self.term_by_pattern.get(pattern) {
-            return Ok(id);
+            return id;
         }
         let mut name = None;
         if pattern.kind == PatternKind::Str {
@@ -290,7 +289,7 @@ impl Compiler {
 
     fn symbol_name(&self, item: &Item) -> String {
         match item {
-            Item::Terminal(id) => self.terminals[*id].name.clone(),
+            Item::Terminal(id) => self.terminals[*id].0.clone(),
             Item::Rule(id) => self
                 .rule_ids
                 .iter()
@@ -334,7 +333,7 @@ impl Compiler {
             .iter()
             .map(|p| p.as_str())
             .zip(arg_items.iter().map(|a| match a {
-                Item::Terminal(id) => Symbol::Terminal(self.terminals[*id].name.clone()),
+                Item::Terminal(id) => Symbol::Terminal(self.terminals[*id].0.clone()),
                 Item::Rule(_) => Symbol::Rule(self.symbol_name(a)),
                 _ => unreachable!("template arguments are always symbols"),
             }))
@@ -365,7 +364,7 @@ impl Compiler {
                 None => unreachable!("undefined terminals are rejected before compiling"),
             },
             Expr::Symbol(Symbol::Rule(name)) => Item::Rule(self.rule_id(name)),
-            Expr::Literal(pattern) => Item::Terminal(self.anonymous_terminal(pattern)?),
+            Expr::Literal(pattern) => Item::Terminal(self.anonymous_terminal(pattern)),
             Expr::Repeat { inner, min, max } => Item::Repeat {
                 inner: Box::new(self.prepare(rule_name, inner)?),
                 min: *min,
@@ -502,7 +501,7 @@ pub fn compile(built: &BuiltGrammar, start: &[&str]) -> GrammarResult<Grammar> {
             .as_ref()
             .map(|body| terminal_pattern(name, body))
             .transpose()?;
-        compiler.add_terminal(name.clone(), pattern, *priority)?;
+        compiler.add_terminal(name.clone(), pattern, *priority);
     }
     for (name, params, body, _) in &built.rule_defs {
         if params.is_empty() {
@@ -581,10 +580,10 @@ pub fn compile(built: &BuiltGrammar, start: &[&str]) -> GrammarResult<Grammar> {
     }
     let mut term_map: HashMap<TermId, TermId> = HashMap::default();
     let mut kept_terms = Vec::new();
-    for (id, term) in compiler.terminals.into_iter().enumerate() {
+    for (id, (name, pattern, priority)) in compiler.terminals.into_iter().enumerate() {
         if used_terms.contains(&id) {
             term_map.insert(id, kept_terms.len());
-            kept_terms.push(term);
+            kept_terms.push(TerminalDef::new(name, pattern, priority)?);
         }
     }
     for rule in &mut kept_rules {

@@ -430,3 +430,20 @@ fn a_template_instantiating_itself_ever_deeper_is_rejected() {
     );
     compiled("start: t{t{t{\"a\"}}}\nt{x}: x | \"(\" x \")\"\n");
 }
+
+#[test]
+fn only_the_terminals_kept_are_compiled_and_checked_for_width() {
+    let grammar = compiled("start: A\n_INNER: /.*?/\nA: \"x\" _INNER \"y\"");
+    assert_eq!(grammar.terminals.len(), 1);
+    assert_eq!(grammar.terminals[0].regexp.as_deref(), Some("x.*?y"));
+    compiled("start: \"a\"\nUNUSED: /a*/");
+    compiled("start: \"a\"\nUNUSED: /(/");
+    compiled("start: \"a\"\nx: BAD\nBAD: /(/");
+    assert!(
+        compile_err("start: \"a\"\n%ignore BAD\nBAD: /(/").contains("Cannot compile token BAD")
+    );
+    assert!(
+        compile_err("start: \"a\"\n%ignore EMPTY\nEMPTY: /a*/")
+            .contains("Zero-width terminals are not allowed (EMPTY: a*)")
+    );
+}
