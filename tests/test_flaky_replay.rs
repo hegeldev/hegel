@@ -144,3 +144,64 @@ fn a_flaky_failure_over_a_collection_is_confirmed_and_shrunk() {
         "the collection must shrink to the two elements the failure needs:\n{text}"
     );
 }
+
+static FLAKY_FIRED: AtomicUsize = AtomicUsize::new(0);
+
+/// Every input fails: the first execution with one bug that never fires
+/// again, every execution after it with another. The first bug's replays
+/// flip the run nondeterministic; the second reproduces at every replay.
+fn one_flaky_then_one_deterministic_bug(tc: TestCase) {
+    let x: f64 = tc.draw(gs::floats::<f64>().min_value(10.0).max_value(10.0));
+    if FLAKY_FIRED.fetch_add(1, Ordering::SeqCst) == 0 {
+        panic!("flaky: x = {x}");
+    }
+    panic!("deterministic: x = {x}");
+}
+
+#[test]
+fn a_failure_that_reproduced_at_every_replay_has_no_caveat_in_a_flipped_run() {
+    let (lines, result) = capture_hegel_output(|| {
+        Hegel::new(one_flaky_then_one_deterministic_bug)
+            .settings(Settings::new().database(None))
+            .run();
+    });
+    let panic = result.expect_err("the deterministic failure is reported");
+    let msg = panic_message(&*panic);
+    assert!(msg.contains("deterministic: x = "), "got: {msg:?}");
+    let text = lines.join("\n");
+    assert!(!text.contains("flaky: x = "), "{text}");
+    assert!(
+        !text.contains("note: nondeterministic") && !text.contains("note: unconfirmed"),
+        "no caveat on a failure that reproduced at every replay:\n{text}"
+    );
+}
+
+static PASSED_ONCE: AtomicUsize = AtomicUsize::new(0);
+
+/// `true` passes the first time it is drawn and fails every time after:
+/// the failure then reproduces at every replay, but the engine saw the
+/// same input pass, so the report keeps its caveat.
+#[test]
+fn an_input_that_passed_before_it_failed_keeps_the_caveat() {
+    let body = |tc: TestCase| {
+        if tc.draw(gs::booleans()) && PASSED_ONCE.fetch_add(1, Ordering::SeqCst) > 0 {
+            panic!("fails from the second time on");
+        }
+    };
+    let (lines, result) = capture_hegel_output(|| {
+        Hegel::new(body)
+            .settings(Settings::new().database(None))
+            .run();
+    });
+    let panic = result.expect_err("the failure is reported");
+    let msg = panic_message(&*panic);
+    assert!(
+        msg.contains("fails from the second time on"),
+        "got: {msg:?}"
+    );
+    let text = lines.join("\n");
+    assert!(
+        text.contains("note: nondeterministic failure, confirmed: failed 20 of 20 replays"),
+        "{text}"
+    );
+}

@@ -2725,8 +2725,10 @@ fn a_flipped_reuse_run_persists_v2_entries() {
     .unwrap();
     assert_eq!(result.failures.len(), 1);
     assert!(result.failures[0].reproduce_blob.is_some());
-    let caveat = result.failures[0].caveat.as_deref().unwrap();
-    assert!(caveat.starts_with("nondeterministic failure"), "{caveat}");
+    assert_eq!(
+        result.failures[0].caveat, None,
+        "an entry that reproduced at every replay reports as a plain failure"
+    );
     let primary = db.fetch(b"k");
     assert!(!primary.is_empty());
     assert!(
@@ -3807,6 +3809,7 @@ fn the_final_replay_review_confirms_through_the_bar() {
             )
             .unwrap();
             assert!(ctx.origins.needs_confirmation(origin));
+            ctx.origins.entry(origin).record_miss();
             let output = ctx.settings.output.clone();
             ctx.final_replay(Verbosity::Quiet, &output, None, false)
                 .await
@@ -6472,6 +6475,61 @@ fn nd_trusted_zero_fail_shrink_batch_keeps_trusted_and_reports_honestly() {
         caveat.contains("reproduced from stored state earlier this run")
             && caveat.contains("not reproduced at report time"),
         "a zero-fail batch keeps the origin trusted and the caveat says so: {caveat:?}"
+    );
+}
+
+#[test]
+fn a_deterministic_entry_replayed_in_a_run_flipped_by_a_stored_nd_entry_has_no_caveat() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().to_str().unwrap().to_string();
+    let db = DirectoryTestCaseDatabase::new(&path);
+    let state = nd_state_of(&[vec![ChoiceValue::Boolean(true)]]);
+    db.save(b"k", &crate::native::blob::encode_nd_state(&state).unwrap());
+    db.save(
+        b"k",
+        &serialize_choices(&[ChoiceValue::Boolean(false)]).unwrap(),
+    );
+
+    let flaky_calls = AtomicUsize::new(0);
+    let result = reuse_run(
+        Settings::new()
+            .database(Some(path))
+            .phases([Phase::Reuse, Phase::Shrink])
+            .verbosity(Verbosity::Quiet)
+            .report_multiple_failures(true),
+        "k",
+        |ds| match rbool(ds) {
+            Ok(false) => boom("deterministic"),
+            Ok(true) if flaky_calls.fetch_add(1, Ordering::SeqCst) % 2 == 1 => boom("flaky"),
+            Ok(true) => TestCaseResult::Valid,
+            Err(()) => TestCaseResult::Overrun,
+        },
+    )
+    .unwrap();
+    assert_eq!(result.failures.len(), 2, "{:?}", result.failures);
+    let failure = |origin: &str| {
+        result
+            .failures
+            .iter()
+            .find(|f| f.origin == origin)
+            .unwrap_or_else(|| panic!("no failure at {origin:?}: {:?}", result.failures))
+    };
+    let flaky = failure("Panic: flaky");
+    assert!(flaky.reproduce_blob.is_some());
+    assert!(
+        flaky
+            .caveat
+            .as_deref()
+            .is_some_and(|c| c.starts_with("nondeterministic failure")),
+        "the origin that flipped the run keeps its caveat: {:?}",
+        flaky.caveat
+    );
+    let deterministic = failure("Panic: deterministic");
+    assert!(deterministic.reproduce_blob.is_some());
+    assert_eq!(
+        deterministic.caveat, None,
+        "a stored example that reproduced at every replay reports as a plain failure"
     );
 }
 

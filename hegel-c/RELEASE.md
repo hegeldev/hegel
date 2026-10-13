@@ -1,0 +1,3 @@
+RELEASE_TYPE: patch
+
+This patch makes the nondeterminism caveat per failure. A run that switched to nondeterministic handling used to attach a caveat to every failure it reported, so a failure that reproduced at every replay was described as "nondeterministic failure, confirmed: failed 20 of 20 replays" because a different failure had made the run nondeterministic. `hegel_failure_caveat` is now `NULL` for a confirmed failure, or one replayed from the database, that was never seen not to reproduce: no replay miss at confirmation, reuse or report time, no verdict change on its input, and no stored nondeterministic state behind it. A failure the run did see pass keeps its caveat quoting that evidence.
