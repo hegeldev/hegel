@@ -1,6 +1,6 @@
 /**
  * Thin, typed binding to the native `libhegel` C ABI (see
- * `hegel-rust/hegel-c/include/hegel.h`, version 0.45.3) via {@link koffi}.
+ * `hegel-rust/hegel-c/include/hegel.h`, version 0.45.4) via {@link koffi}.
  *
  * The {@link Libhegel} class owns the loaded library's function pointers and
  * exposes ergonomic wrappers. Every fallible call takes a `hegel_context_t*`
@@ -147,6 +147,10 @@ export interface Bindings {
   testCaseFromBlob: (ctx: Ptr, s: Ptr, blob: string | null, out: Ptr[]) => number;
   testCaseFree: (tc: Ptr) => void;
 
+  /**
+   * The `forced` / `has_forced` pair of `hegel_generate_boolean` is absorbed
+   * as `false, false` (no forced value: the draw is always made from `p`).
+   */
   generateBoolean: (ctx: Ptr, tc: Ptr, p: number, out: boolean[]) => number;
   generateInteger: (
     ctx: Ptr,
