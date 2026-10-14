@@ -8,6 +8,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SOURCE_DIRS = ["src/"]
+# how long to wait for a freshly published package to become visible on the
+# npm registry, and how often to check, in seconds
+REGISTRY_VISIBILITY_TIMEOUT = 15 * 60
+REGISTRY_POLL_INTERVAL = 5
 ROOT = Path(__file__).resolve().parent.parent.parent
 
 
@@ -85,18 +89,27 @@ def publish_platform_packages(version: str) -> None:
             continue
         subprocess.run(["npm", "publish"], check=True, cwd=pkg_dir)
 
-    # a fresh publish can lag on the registry read path for a few seconds.
-    # npm silently drops optional dependencies it cannot resolve, so
-    # regenerating the lockfile before every package is visible desyncs it
-    # from package.json.
+    # a fresh publish lags on the registry read path: npm now processes
+    # publishes asynchronously ("may take a few minutes to become
+    # available"), and the 0.4.8 release saw a package take over two minutes
+    # to appear. npm silently drops optional dependencies it cannot resolve,
+    # so regenerating the lockfile before every package is visible desyncs
+    # it from package.json. The deadline is shared across packages: they
+    # were all published above, so waiting on the first also covers the rest.
+    start = time.monotonic()
     for name in names:
-        for _ in range(30):
-            if is_published(name, version):
-                break
-            print(f"waiting for {name}@{version} to appear on the registry")
-            time.sleep(2)
-        else:
-            raise ValueError(f"{name}@{version} never appeared on the registry")
+        while not is_published(name, version):
+            elapsed = int(time.monotonic() - start)
+            if elapsed >= REGISTRY_VISIBILITY_TIMEOUT:
+                raise ValueError(
+                    f"{name}@{version} did not appear on the registry within "
+                    f"{REGISTRY_VISIBILITY_TIMEOUT} seconds"
+                )
+            print(
+                f"waiting for {name}@{version} to appear on the registry "
+                f"({elapsed}s elapsed)"
+            )
+            time.sleep(REGISTRY_POLL_INTERVAL)
 
 
 def add_changelog(path: Path, *, version: str, content: str) -> None:
