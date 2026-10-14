@@ -756,11 +756,25 @@ mod nocover_emails {
 
 mod regex_tests {
     use crate::common::utils::{
-        FindAny, assert_all_examples, assert_no_examples, check_can_generate_examples, find_any,
+        FindAny, assert_all_examples, assert_no_examples, check_can_generate_examples,
+        expect_panic, find_any,
     };
     use hegel::generators::{self as gs};
     use hegel::{HealthCheck, Hegel, Settings};
     use regex::Regex;
+
+    fn expect_invalid_argument<G: hegel::Generator<String> + 'static>(generator: G, pattern: &str) {
+        expect_panic(
+            std::panic::AssertUnwindSafe(|| {
+                Hegel::new(move |tc| {
+                    let _: String = tc.draw_silent(&generator);
+                })
+                .settings(Settings::new().test_cases(1).database(None))
+                .run();
+            }),
+            pattern,
+        );
+    }
 
     #[test]
     fn test_can_generate_patterns_no_alphabet() {
@@ -862,6 +876,59 @@ mod regex_tests {
     #[test]
     fn test_caret_in_the_middle_does_not_generate_anything() {
         assert_no_examples(gs::from_regex("a^b"), |_: &String| true);
+    }
+
+    #[test]
+    fn test_alphabet_that_cannot_match_the_pattern_is_rejected_at_construction() {
+        for (pattern, alphabet) in [
+            ("abc", gs::characters().min_codepoint(128)),
+            (
+                "abc",
+                gs::characters().include_characters("def").max_codepoint(0),
+            ),
+            (
+                "aa|bb",
+                gs::characters().include_characters("c").max_codepoint(0),
+            ),
+            (
+                "[abc]",
+                gs::characters().include_characters("def").max_codepoint(0),
+            ),
+            (
+                "[ab]x[de]",
+                gs::characters()
+                    .min_codepoint('a' as u32)
+                    .max_codepoint('f' as u32),
+            ),
+            ("[a-z]", gs::characters().codec("ascii").categories(&["Nd"])),
+            (
+                r"\d",
+                gs::characters().include_characters("abc").max_codepoint(0),
+            ),
+            (
+                "[^a]",
+                gs::characters()
+                    .min_codepoint('a' as u32)
+                    .max_codepoint('a' as u32),
+            ),
+        ] {
+            expect_invalid_argument(
+                gs::from_regex(pattern).alphabet(alphabet),
+                "matches no string over the alphabet",
+            );
+        }
+        expect_invalid_argument(
+            gs::from_regex("(?!)"),
+            "matches no string the generator can produce",
+        );
+        assert_all_examples(
+            gs::from_regex("[^a]|a").alphabet(
+                gs::characters()
+                    .min_codepoint('a' as u32)
+                    .max_codepoint('a' as u32),
+            ),
+            |s: &String| s == "a",
+        );
     }
 
     #[test]
