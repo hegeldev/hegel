@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.45.5 - 2026-10-14
+
+This patch adds `hegel_run_result_error_kind`, which reports why a run ended in `HEGEL_RUN_STATUS_ERROR` as a `hegel_run_error_kind_t` (a failed health check, a flaky or nondeterministic test under `error` strictness, an unsatisfiable test, a usage error, or an internal error) and, for a failed health check, which check as its `hegel_health_check_t` value. Bindings previously had to classify run errors by the wording of `hegel_run_result_error`, which a rewording could silently break; the message is unchanged and remains the diagnostic to attach. Either out parameter may be NULL when only the other is wanted.
+
+```c
+hegel_run_error_kind_t kind;
+uint32_t check;
+hegel_run_result_error_kind(ctx, result, &kind, &check);
+if (kind == HEGEL_RUN_ERROR_HEALTH_CHECK && check == HEGEL_HC_FILTER_TOO_MUCH) { ... }
+```
+
 ## 0.45.4 - 2026-10-13
 
 This patch adds grammar-based string generation. `hegel_grammar_new` compiles a grammar written in the syntax of the [Lark](https://lark-parser.readthedocs.io/en/stable/grammar.html) parsing library into a `hegel_grammar_t` handle (freed with `hegel_grammar_free`), taking the start rule, size and depth caps, an alphabet string generator for the regex terminals, the names of the terminals whose values the binding supplies (each occurrence in a drawn string is the placeholder marker `hegel_grammar_placeholder` reports, for the binding to replace with a value of its own), and an import callback through which the binding supplies `%import`ed grammar files (Lark's bundled `common`, `python`, `unicode` and `lark` grammars are built in). `hegel_generate_grammar` then draws a string of the grammar into a `hegel_generate_string_result_t`, as `hegel_generate_string` does, under a cap of the draw's own below the grammar's when the binding passes one (a placeholder marker counts as no characters toward either, so a binding keeps the string with its values spliced in under the user's cap by drawing again under a smaller one), and returns `HEGEL_E_ASSUME` when it gives up on a string that lexes back as its tokens, which rejects the test case.

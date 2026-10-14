@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.49.6 - 2026-10-14
+
+This release updates the `hegeltest-c` dependency to 0.45.5.
+
 ## 0.49.5 - 2026-10-13
 
 This patch adds `gs::from_lark`, which generates strings matching a grammar written in the syntax of the [Lark](https://lark-parser.readthedocs.io/en/stable/grammar.html) parsing library, the way `hypothesis.extra.lark.from_lark` does:
