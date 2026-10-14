@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.49.8 - 2026-10-14
+
+This patch makes `gs::from_regex` panic with an invalid-argument error, naming the pattern and the alphabet, when its `alphabet` can supply no string matching the pattern (`abc` over `def`, `[^a]` over `a`, `\d` over letters, ...), and likewise for a pattern no string matches at all, such as `(?!)`. Before, every draw was rejected and the run failed `HealthCheck::FilterTooMuch` or reported the test as unsatisfiable instead of pointing at the mistake.
+
 ## 0.49.7 - 2026-10-14
 
 This patch makes `Verbosity::Verbose` output announce every executed test case with `Running test case`, including the first, simplest input of a run and the replays of the reuse phase, which previously appeared under their phase heading with no announcement.
