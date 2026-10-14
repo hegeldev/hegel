@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.45.6 - 2026-10-14
+
+This patch makes verbose output announce every executed test case with `Running test case`, including the first, simplest input of a run and the replays of the reuse phase, which previously appeared under their phase heading with no announcement.
+
+It also removes the Rust syntax from the health check and `Unsatisfiable` messages. They now name the check plainly ("suppress the FilterTooMuch health check with the suppress_health_check setting") and describe rejections as "rejected by assume() or a filter", since the engine does not know which did the rejecting. The `FailedHealthCheck:` and `Unsatisfiable` prefixes are unchanged.
+
 ## 0.45.5 - 2026-10-14
 
 This patch adds `hegel_run_result_error_kind`, which reports why a run ended in `HEGEL_RUN_STATUS_ERROR` as a `hegel_run_error_kind_t` (a failed health check, a flaky or nondeterministic test under `error` strictness, an unsatisfiable test, a usage error, or an internal error) and, for a failed health check, which check as its `hegel_health_check_t` value. Bindings previously had to classify run errors by the wording of `hegel_run_result_error`, which a rewording could silently break; the message is unchanged and remains the diagnostic to attach. Either out parameter may be NULL when only the other is wanted.
