@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.9 - 2026-10-14
+
+This patch bumps our pinned libhegel ([hegel-rust](https://github.com/hegeldev/hegel-rust)) from [0.42.4](https://github.com/hegeldev/hegel-rust/releases/tag/libhegel-v0.42.4) to [0.45.4](https://github.com/hegeldev/hegel-rust/releases/tag/libhegel-v0.45.4).
+
 ## 0.4.8 - 2026-10-14
 
 Fix the getting-started examples, which passed the result of `hegel.test(...)` to `test` instead of a function. They now use `test("name", () => hegel.test(...))`.
