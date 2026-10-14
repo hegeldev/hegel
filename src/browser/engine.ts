@@ -570,6 +570,9 @@ export class WasmEngine implements Engine {
           this.ptr(tc),
           a.stringList(opts.ruleNames),
           groups,
+          // `rule_weights`: NULL for all-equal weights, which this client
+          // does not expose.
+          0,
           u32(opts.ruleNames.length),
           a.stringList(opts.invariantNames),
           a.input(Uint8Array.from(opts.invariantAlwaysCheck, Number)),

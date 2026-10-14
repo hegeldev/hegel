@@ -230,6 +230,10 @@ export interface Bindings {
   ) => number;
   poolFree: (pool: Ptr) => void;
 
+  /**
+   * The `rule_weights` array of `hegel_new_state_machine` is absorbed as NULL
+   * (all rules equally likely): this client does not expose rule weights.
+   */
   newStateMachine: (
     ctx: Ptr,
     tc: Ptr,
@@ -424,7 +428,7 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   const poolFree = f("int hegel_pool_free(void* ctx, void* pool)");
 
   const newStateMachine = f(
-    "int hegel_new_state_machine(void* ctx, void* tc, const char** rule_names, const int64_t* rule_groups, size_t num_rules, const char** invariant_names, const bool* invariant_always_check, size_t num_invariants, int64_t min_concurrency, int64_t max_concurrency, int64_t step_count, _Out_ void** out_state_machine, _Out_ int64_t* out_concurrency)",
+    "int hegel_new_state_machine(void* ctx, void* tc, const char** rule_names, const int64_t* rule_groups, const double* rule_weights, size_t num_rules, const char** invariant_names, const bool* invariant_always_check, size_t num_invariants, int64_t min_concurrency, int64_t max_concurrency, int64_t step_count, _Out_ void** out_state_machine, _Out_ int64_t* out_concurrency)",
   );
   const stateMachineNextGroup = f(
     "int hegel_state_machine_next_group(void* ctx, void* tc, void* state_machine, _Out_ int64_t* out_group_id)",
@@ -583,6 +587,7 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
         tc,
         opts.ruleNames.map((name) => cString(name)),
         opts.ruleGroups,
+        null,
         opts.ruleNames.length,
         opts.invariantNames.map((name) => cString(name)),
         opts.invariantAlwaysCheck,

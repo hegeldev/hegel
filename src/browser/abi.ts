@@ -55,7 +55,7 @@ export const signatures = {
   pool_add: "IIII",
   pool_generate: "IIIII",
   pool_free: "II",
-  new_state_machine: "IIIIIIIILLLII",
+  new_state_machine: "IIIIIIIIILLLII",
   state_machine_next_group: "IIII",
   state_machine_next_rule: "IIILI",
   state_machine_rule_rejected: "IIIL",
