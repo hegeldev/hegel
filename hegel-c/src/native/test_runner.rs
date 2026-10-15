@@ -1723,6 +1723,7 @@ impl<'a> Engine<'a> {
             } else if self.settings.nondeterminism_strictness == NondeterminismStrictness::Error {
                 return Err(RunError::Flaky(flaky_diagnostic_for(&origin)));
             } else {
+                self.origins.entry(&origin).record_miss();
                 self.nd_flip();
                 None
             }
@@ -1912,6 +1913,7 @@ impl<'a> Engine<'a> {
                     if self.settings.nondeterminism_strictness == NondeterminismStrictness::Error {
                         return Err(RunError::Flaky(flaky_diagnostic_for(&origin)));
                     }
+                    self.origins.entry(&origin).record_miss();
                     self.nd_flip();
                     if self.origins.needs_confirmation(&origin) && self.has_history(&origin) {
                         match self.backtrack(&origin).await? {
@@ -2740,7 +2742,9 @@ impl<'a> Engine<'a> {
                 if self.settings.nondeterminism_strictness == NondeterminismStrictness::Error {
                     return Err(err);
                 }
-                self.origins.entry(&origin).seed_evidence(evidence);
+                let checked = self.origins.entry(&origin);
+                checked.seed_evidence(evidence);
+                checked.record_miss();
                 self.nd_flip();
             }
         }
@@ -2973,8 +2977,8 @@ impl<'a> Engine<'a> {
         elapsed: core::time::Duration,
         measurement: bool,
     ) -> Result<Option<RunError>, InternalError> {
-        let mismatch = if self.nd_active {
-            None
+        let (mismatch, mismatched_origin) = if self.nd_active {
+            (None, None)
         } else {
             self.record_execution(run)?
         };
@@ -3025,6 +3029,12 @@ impl<'a> Engine<'a> {
                     .adopt(run.nodes.clone(), run.spans.clone());
             }
         }
+        if let Some(counterexample) = mismatched_origin
+            .as_deref()
+            .and_then(|origin| self.origins.get_mut(origin))
+        {
+            counterexample.record_miss();
+        }
         Ok(mismatch)
     }
 
@@ -3034,15 +3044,21 @@ impl<'a> Engine<'a> {
     /// a verdict change, the flake the tree could never see. The returned
     /// error is `NonDeterministic` for kind drift and `Flaky` for a verdict
     /// change; the caller keeps it under `error` strictness and flips
-    /// otherwise.
-    fn record_execution(&mut self, run: &RunResult) -> Result<Option<RunError>, InternalError> {
+    /// otherwise. A verdict change also names the origin whose example was
+    /// seen not to reproduce — the earlier conclusion's failure, or this
+    /// run's when the earlier conclusion passed — for the caller to mark
+    /// once the run's own origin has been admitted.
+    fn record_execution(
+        &mut self,
+        run: &RunResult,
+    ) -> Result<(Option<RunError>, Option<String>), InternalError> {
         if self.settings.nondeterminism_strictness == NondeterminismStrictness::Error {
             if let Some(msg) = self.kind_ledger.observe(&run.nodes)? {
-                return Ok(Some(RunError::NonDeterministic(msg)));
+                return Ok((Some(RunError::NonDeterministic(msg)), None));
             }
         }
         if run.status == Status::EarlyStop {
-            return Ok(None);
+            return Ok((None, None));
         }
         let recorded = self.exec_cache.record(
             serialize_executed_nodes(&run.nodes)?,
@@ -3052,12 +3068,14 @@ impl<'a> Engine<'a> {
             &run.spans,
             !self.collect_statistics,
         );
-        Ok(recorded.verdict_mismatch.then(|| {
-            RunError::Flaky(match &recorded.mismatched_origin {
-                Some(origin) => flaky_diagnostic_for(origin),
-                None => flaky_diagnostic(),
-            })
-        }))
+        if !recorded.verdict_mismatch {
+            return Ok((None, None));
+        }
+        let error = RunError::Flaky(match &recorded.mismatched_origin {
+            Some(origin) => flaky_diagnostic_for(origin),
+            None => flaky_diagnostic(),
+        });
+        Ok((Some(error), recorded.mismatched_origin))
     }
 
     /// Whether the generation-phase invalid/overrun budget still has room.
