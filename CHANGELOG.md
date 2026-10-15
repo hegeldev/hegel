@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.49.9 - 2026-10-15
+
+This patch improves the shrinking of bounded integers. A `gs::integers()` draw whose failing values are a sparse set of multiples, such as the multiples of six, could stop short of the minimum at a value none of the shrinker's moves could leave: a search over `0..=100` for a positive multiple of six reported 78 rather than 6 from about one seed in twenty-five. The shrinker now also tries dividing the distance from the shrink target by each of its prime factors, so such a search reports 6.
+
 ## 0.49.8 - 2026-10-14
 
 This patch makes `gs::from_regex` panic with an invalid-argument error, naming the pattern and the alphabet, when its `alphabet` can supply no string matching the pattern (`abc` over `def`, `[^a]` over `a`, `\d` over letters, ...), and likewise for a pattern no string matches at all, such as `(?!)`. Before, every draw was rejected and the run failed `HealthCheck::FilterTooMuch` or reported the test as unsatisfiable instead of pointing at the mistake.
