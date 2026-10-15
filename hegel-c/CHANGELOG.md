@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.45.9 - 2026-10-15
+
+This patch fixes `hegel_run_start_blob` replaying a reproduce blob against a test whose draws have changed. A replay that left the recorded choices (a draw whose kind or bounds no longer fit the recorded choice, or a draw past the end of the recording) used to be continued with fresh draws, so a failure the changed test happened to reach on that input was reported as the blob's failure. A replay now stops at such a divergence and counts as a miss, like a replay that passed, and the next attempt is still made, since a nondeterministic test may draw differently each time. A blob none of whose replays reproduced reports no failure, and one output line names the position, and stream, at which the test's draws left the recording. Database reuse, the report-time final replay, and `hegel_test_case_from_blob` are unchanged.
+
 ## 0.45.8 - 2026-10-15
 
 This patch fixes integer shrinking stopping short of the minimum on some values. A bounded integer whose failing values are a sparse set of multiples, such as the multiples of six, could stall at a value none of the shrinker's moves could leave: a search over `0..=100` for a positive multiple of six reported 78 rather than 6 from about one seed in twenty-five. The shrinker now also tries dividing the distance from `shrink_towards` by each of its prime factors, which steps straight from 78 to 6.

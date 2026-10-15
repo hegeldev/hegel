@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.49.10 - 2026-10-15
+
+This patch stops `#[hegel::reproduce_failure]` reporting a failure its blob did not record. A blob replayed against a test whose draws have changed since it was recorded is no longer continued past the change with fresh draws: such a replay does not reproduce, the attribute panics as for any blob that did not reproduce, and the engine's output names where the test's draws left the recording.
+
 ## 0.49.9 - 2026-10-15
 
 This patch improves the shrinking of bounded integers. A `gs::integers()` draw whose failing values are a sparse set of multiples, such as the multiples of six, could stop short of the minimum at a value none of the shrinker's moves could leave: a search over `0..=100` for a positive multiple of six reported 78 rather than 6 from about one seed in twenty-five. The shrinker now also tries dividing the distance from the shrink target by each of its prime factors, so such a search reports 6.
