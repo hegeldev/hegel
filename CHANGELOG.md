@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.49.14 - 2026-10-15
+
+`filter` on a pool's consuming generator (`Pool::values_consumed` and `ConcurrentPool::values_consumed`) now consumes only the value it yields. A rejected attempt used to consume its value for good, so `values_consumed().filter(even)` on a pool of `0..9` silently lost odd values no rule had seen. The attempts now keep each rejected value out of circulation until they are over, so no attempt draws the same value twice, and then put every rejected value back. Two trait methods with default implementations carry this: `Generator::do_draw_filtered` and `PrintableGenerator::do_draw_filtered_and_print` are the attempts a `filter` makes of its source generator, which a generator whose draws have side effects can run itself; existing implementations of either trait are unaffected. A filter of a filter now makes one round of attempts with both predicates rather than nesting one round inside another.
+
 ## 0.49.13 - 2026-10-15
 
 This patch makes the nondeterminism caveat per failure. A run that switched to nondeterministic handling used to attach a `note: nondeterministic failure, confirmed: failed 20 of 20 replays` caveat to every failure it reported, including one that reproduced at every replay and was only caught up in another failure's flakiness. Such a failure is now reported as a plain failure; a failure the run did see pass keeps its caveat quoting that evidence.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.45.13 - 2026-10-15
+
+`hegel_pool_restore(ctx, tc, pool, variable_id)` puts back a variable that a consuming `hegel_pool_generate` removed from the pool, so a frontend can leave the pool as it was when the value drawn with it is thrown away unused, as a filter does with a rejected attempt. A variable that is not a consumed member of the pool is an argument error, and libhegel never puts a variable back on its own.
+
 ## 0.45.12 - 2026-10-15
 
 This patch makes the nondeterminism caveat per failure. A run that switched to nondeterministic handling used to attach a caveat to every failure it reported, so a failure that reproduced at every replay was described as "nondeterministic failure, confirmed: failed 20 of 20 replays" because a different failure had made the run nondeterministic. `hegel_failure_caveat` is now `NULL` for a confirmed failure, or one replayed from the database, that was never seen not to reproduce: no replay miss at confirmation, reuse or report time, no verdict change on its input, and no stored nondeterministic state behind it. A failure the run did see pass keeps its caveat quoting that evidence.
