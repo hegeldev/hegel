@@ -86,12 +86,17 @@ than worked around in the bindings, so they can be fixed in the engine.
   `pool.values_consumed().filter(f)` consumes every value the filter rejects
   on the way to an accepted one although no rule ran with them. Repro: add
   0..9 to a pool, draw `values_consumed().filter(even)`, and the pool is
-  short an odd value. The fix is a restore call that un-consumes the
-  stream's most recent consume from the pool, which `filter` calls for a
-  value it rejects (the combinator still holds the value, so no copy is
-  needed). A rule that consumes a value and then fails `assume` keeps
-  losing it, as the rule body owns the value by then; Hypothesis's
-  argument-level `consumes(bundle)` differs there, and that is not a goal
+  short an odd value. The fix (hegeldev/hegel-rust#539) adds
+  `hegel_pool_restore(ctx, tc, pool, variable_id)`, and the pool's
+  consuming generator runs the filter's attempts itself: each attempt
+  consumes an engine-chosen id and tests the predicate on the value while
+  it is still in the binding's map, rejected ids stay consumed until the
+  attempts are over so none is drawn twice, and then every rejected id is
+  restored. Once the pin reaches that engine, `Pool.values_consumed()`
+  overrides `filter` the way `sampled_from` does. A rule that consumes a
+  value and then fails `assume` keeps losing it, as the rule body owns the
+  value by then; Hypothesis's argument-level `consumes(bundle)` differs
+  there, and that is not a goal
   (`tests/hypothesis_port/cover/test_stateful.py::test_filtering_consumed_bundle_consumes_only_the_drawn_value`).
 ## Other
 
