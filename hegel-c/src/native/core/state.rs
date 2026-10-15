@@ -1653,17 +1653,16 @@ impl NativeVariables {
             .collect()
     }
 
-    /// Mark a variable as consumed and trim trailing consumed variables.
+    /// Mark a variable as consumed.
     pub fn consume(&mut self, variable_id: i64) {
         self.removed.insert(variable_id);
-        while let Some(&last) = self.variables.last() {
-            if self.removed.contains(&last) {
-                self.variables.pop();
-                self.removed.remove(&last);
-            } else {
-                break;
-            }
-        }
+    }
+
+    /// Make the consumed variable `variable_id` drawable again: `true` when
+    /// it was consumed, `false` when it is not a consumed variable of this
+    /// pool, which is then left as it was.
+    pub fn restore(&mut self, variable_id: i64) -> bool {
+        self.removed.remove(&variable_id)
     }
 }
 

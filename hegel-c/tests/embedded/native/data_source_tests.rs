@@ -101,6 +101,61 @@ fn pool_add_ids_survive_deletion_before_a_consuming_draw() {
 }
 
 #[test]
+fn pool_restore_puts_back_the_named_consumed_variable() {
+    let (ds, _handle) = random_source();
+    let mut pool = ds.new_pool().unwrap();
+    for _ in 0..3 {
+        ds.pool_add(&mut pool).unwrap();
+    }
+    let first = ds.pool_generate(&mut pool, true).unwrap();
+    let second = ds.pool_generate(&mut pool, true).unwrap();
+    assert_eq!(pool.active().len(), 1);
+    ds.pool_restore(&mut pool, first).unwrap();
+    assert_eq!(pool.active().len(), 2);
+    assert!(pool.active().contains(&first));
+    assert!(!pool.active().contains(&second));
+    assert!(matches!(
+        ds.pool_restore(&mut pool, first),
+        Err(DataSourceError::InvalidArgument(msg)) if msg.contains("not a consumed variable")
+    ));
+    ds.pool_restore(&mut pool, second).unwrap();
+    assert_eq!(pool.active(), vec![0, 1, 2]);
+    assert!(matches!(
+        ds.pool_restore(&mut pool, 42),
+        Err(DataSourceError::InvalidArgument(msg)) if msg.contains("variable 42")
+    ));
+}
+
+#[test]
+fn pool_restore_only_puts_back_a_variable_of_the_given_pool() {
+    let (ds, _handle) = random_source();
+    let mut first = ds.new_pool().unwrap();
+    let mut second = ds.new_pool().unwrap();
+    let a = ds.pool_add(&mut first).unwrap();
+    let b = ds.pool_add(&mut second).unwrap();
+    assert_eq!(ds.pool_generate(&mut first, true).unwrap(), a);
+    assert_eq!(ds.pool_generate(&mut second, true).unwrap(), b);
+    assert!(ds.pool_restore(&mut second, a).is_err());
+    assert!(ds.pool_restore(&mut first, b).is_err());
+    ds.pool_restore(&mut first, a).unwrap();
+    ds.pool_restore(&mut second, b).unwrap();
+    assert_eq!(first.active(), vec![a]);
+    assert_eq!(second.active(), vec![b]);
+}
+
+#[test]
+fn pool_restore_does_not_put_back_a_non_consuming_draw() {
+    let (ds, _handle) = random_source();
+    let mut pool = ds.new_pool().unwrap();
+    let id = ds.pool_add(&mut pool).unwrap();
+    assert_eq!(ds.pool_generate(&mut pool, false).unwrap(), id);
+    assert!(matches!(
+        ds.pool_restore(&mut pool, id),
+        Err(DataSourceError::InvalidArgument(_))
+    ));
+}
+
+#[test]
 fn pool_generate_on_empty_pool_returns_assume() {
     let (ds, _handle) = random_source();
     let mut pool = ds.new_pool().unwrap();
@@ -442,6 +497,7 @@ fn generate_stoptest_sets_aborted_and_short_circuits() {
     let mut pool = NativeVariables::new();
     assert!(ds.pool_add(&mut pool).is_err());
     assert!(ds.pool_generate(&mut pool, false).is_err());
+    assert!(ds.pool_restore(&mut pool, 0).is_err());
 }
 
 #[test]
@@ -552,6 +608,8 @@ fn pools_are_shared_across_cloned_streams() {
         ds.pool_generate(&mut pool, false),
         Err(DataSourceError::Assume)
     ));
+    ds.pool_restore(&mut pool, v1).unwrap();
+    assert_eq!(ds.pool_generate(&mut pool, false).unwrap(), v1);
 }
 
 #[test]

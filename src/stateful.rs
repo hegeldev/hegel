@@ -148,7 +148,10 @@ use crate::control::{
     raise_control, with_test_context,
 };
 use crate::ffi::{PoolHandle, StateMachineHandle};
-use crate::generators::{Generator, label_from_name};
+use crate::generators::{
+    FILTER_ATTEMPT_LABEL, FILTER_ATTEMPTS, Generator, draw_filtered_and_print_value,
+    label_from_name,
+};
 use crate::run_lifecycle::{self, PanicInfo};
 use crate::test_case::raise_for_rc;
 use std::cell::RefCell;
@@ -235,7 +238,10 @@ impl<M> Invariant<M> {
 ///
 /// Both generators are used through [`tc.draw`](TestCase::draw), so the chosen
 /// value is recorded in the failing-test replay and the choice shrinks like any
-/// other draw.
+/// other draw. A [`filter`](Generator::filter) on either tries values the
+/// engine draws, one at a time, until the predicate accepts one; a consuming
+/// draw puts back every value it rejected, so filtering consumes only the
+/// value the test receives.
 pub struct Pool<T> {
     pool: crate::ffi::PoolHandle,
     tc: TestCase,
@@ -246,6 +252,66 @@ pub struct Pool<T> {
 fn pool_generate(tc: &TestCase, pool: &crate::ffi::PoolHandle, consume: bool) -> i64 {
     match tc.with_ctc(|ctc| ctc.pool_generate(pool, consume)) {
         Ok(id) => id,
+        Err(rc) => raise_for_rc(rc),
+    }
+}
+
+/// The outcome of one attempt of a filtered consuming draw.
+enum Attempt<T> {
+    Accepted(T),
+    Rejected(i64),
+}
+
+/// One attempt of a filtered consuming draw from `values`, the pool's map,
+/// which the caller has borrowed or locked: consume an engine-chosen id
+/// and remove its value if `predicate` accepts it. The attempt is a span
+/// of its own, closed as discarded on rejection so the shrinker can remove
+/// it. A rejected id stays consumed, and its value stays in the map, until
+/// the caller's attempts are over, so no attempt draws it again; see
+/// [`finish_filtered`].
+fn filtered_attempt<T>(
+    tc: &TestCase,
+    pool: &crate::ffi::PoolHandle,
+    label: u64,
+    predicate: &dyn Fn(&T) -> bool,
+    values: &mut HashMap<i64, T>,
+) -> Result<Attempt<T>, crate::ffi::sys::hegel_result_t> {
+    tc.start_span(FILTER_ATTEMPT_LABEL);
+    tc.start_span(label);
+    let variable_id = tc.with_ctc(|ctc| ctc.pool_generate(pool, true))?;
+    tc.stop_span(false);
+    let value = values.get(&variable_id);
+    hegel_internal_assert!(value.is_some(), "consumed variable id is not in map");
+    if predicate(value.unwrap()) {
+        tc.stop_span(false);
+        Ok(Attempt::Accepted(values.remove(&variable_id).unwrap()))
+    } else {
+        tc.stop_span(true);
+        Ok(Attempt::Rejected(variable_id))
+    }
+}
+
+/// End a filtered consuming draw: put back every id its attempts rejected,
+/// then yield the accepted value, reject the test case (as if by
+/// `assume(false)`, which is what a filter does when its attempts run out)
+/// when there is none, or raise the error that cut the attempts short.
+fn finish_filtered<T>(
+    tc: &TestCase,
+    pool: &crate::ffi::PoolHandle,
+    rejected: Vec<i64>,
+    outcome: Result<Option<T>, crate::ffi::sys::hegel_result_t>,
+) -> T {
+    for variable_id in rejected {
+        if let Err(rc) = tc.with_ctc(|ctc| ctc.pool_restore(pool, variable_id)) {
+            raise_for_rc(rc);
+        }
+    }
+    match outcome {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            tc.assume(false);
+            unreachable!()
+        }
         Err(rc) => raise_for_rc(rc),
     }
 }
@@ -290,6 +356,15 @@ impl<T> Pool<T> {
     /// Drawing from it removes a value from the pool and yields it by value.
     /// Once consumed, that value is never drawn again. Drawing rejects the
     /// current test case (as if by `assume(false)`) when the pool is empty.
+    ///
+    /// A [`filter`](Generator::filter) on this generator consumes only the
+    /// value it yields: each attempt consumes a value, so no attempt draws
+    /// the same value twice, and once the attempts are over every rejected
+    /// value is back in the pool. Nothing else puts a value back. One that
+    /// reaches a rule which then fails an [`assume`](TestCase::assume)
+    /// stays consumed, and so does one drawn through another combinator,
+    /// such as a [`map`](Generator::map) or a tuple, that a filter around
+    /// the combinator rejects.
     pub fn values_consumed(&mut self) -> ValuesConsumed<'_, T> {
         ValuesConsumed {
             pool: &self.pool,
@@ -351,11 +426,45 @@ impl<T> Generator<T> for ValuesConsumed<'_, T> {
         let variable_id = pool_generate(tc, self.pool, true);
         self.values.borrow_mut().remove(&variable_id).unwrap()
     }
+
+    /// The attempts stop early once every value left in the map has been
+    /// rejected, since the engine has nothing more to draw.
+    fn do_draw_filtered(&self, tc: &TestCase, predicate: &dyn Fn(&T) -> bool) -> T {
+        let mut rejected = Vec::new();
+        let mut outcome = Ok(None);
+        for _ in 0..FILTER_ATTEMPTS {
+            let mut values = self.values.borrow_mut();
+            if values.len() == rejected.len() {
+                break;
+            }
+            match filtered_attempt(tc, self.pool, self.label(), predicate, &mut values) {
+                Ok(Attempt::Accepted(value)) => {
+                    outcome = Ok(Some(value));
+                    break;
+                }
+                Ok(Attempt::Rejected(variable_id)) => rejected.push(variable_id),
+                Err(rc) => {
+                    outcome = Err(rc);
+                    break;
+                }
+            }
+        }
+        finish_filtered(tc, self.pool, rejected, outcome)
+    }
 }
 
 impl<T: std::fmt::Debug> crate::generators::PrintableGenerator<T> for ValuesConsumed<'_, T> {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut crate::PrettyPrinter) -> T {
         crate::generators::draw_and_print_value(self, tc, printer)
+    }
+
+    fn do_draw_filtered_and_print(
+        &self,
+        tc: &TestCase,
+        predicate: &dyn Fn(&T) -> bool,
+        printer: &mut crate::PrettyPrinter,
+    ) -> T {
+        draw_filtered_and_print_value(self, tc, predicate, printer)
     }
 }
 
@@ -457,6 +566,11 @@ impl<T> ConcurrentPool<T> {
     /// value; the engine consumes the id atomically, so exactly one worker
     /// receives each value. Drawing rejects the current test case (as if by
     /// `assume(false)`) when the pool is empty.
+    ///
+    /// A [`filter`](Generator::filter) on this generator consumes only the
+    /// value it yields, exactly as for [`Pool::values_consumed`]: the
+    /// values an attempt rejects are back in the pool once the attempts
+    /// are over, and until then no worker can draw them.
     pub fn values_consumed(&self) -> ConcurrentValuesConsumed<'_, T> {
         ConcurrentValuesConsumed { pool: self }
     }
@@ -506,6 +620,34 @@ impl<T> Generator<T> for ConcurrentValuesConsumed<'_, T> {
             }
         }
     }
+
+    /// Each attempt holds the pool's lock from the engine draw to the map
+    /// lookup, as `do_draw` does, and the predicate runs under it. The
+    /// early stop counts the map, which other workers' attempts may still
+    /// hold rejected values in, so an attempt can find the engine's pool
+    /// empty; that ends the draw the way an empty pool ends any other.
+    fn do_draw_filtered(&self, tc: &TestCase, predicate: &dyn Fn(&T) -> bool) -> T {
+        let mut rejected = Vec::new();
+        let mut outcome = Ok(None);
+        for _ in 0..FILTER_ATTEMPTS {
+            let mut values = self.pool.lock();
+            if values.len() == rejected.len() {
+                break;
+            }
+            match filtered_attempt(tc, &self.pool.handle, self.label(), predicate, &mut values) {
+                Ok(Attempt::Accepted(value)) => {
+                    outcome = Ok(Some(value));
+                    break;
+                }
+                Ok(Attempt::Rejected(variable_id)) => rejected.push(variable_id),
+                Err(rc) => {
+                    outcome = Err(rc);
+                    break;
+                }
+            }
+        }
+        finish_filtered(tc, &self.pool.handle, rejected, outcome)
+    }
 }
 
 impl<T: std::fmt::Debug> crate::generators::PrintableGenerator<T>
@@ -513,6 +655,15 @@ impl<T: std::fmt::Debug> crate::generators::PrintableGenerator<T>
 {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut crate::PrettyPrinter) -> T {
         crate::generators::draw_and_print_value(self, tc, printer)
+    }
+
+    fn do_draw_filtered_and_print(
+        &self,
+        tc: &TestCase,
+        predicate: &dyn Fn(&T) -> bool,
+        printer: &mut crate::PrettyPrinter,
+    ) -> T {
+        draw_filtered_and_print_value(self, tc, predicate, printer)
     }
 }
 

@@ -454,6 +454,23 @@ impl DataSource for NativeDataSource {
         })
     }
 
+    fn pool_restore(
+        &self,
+        pool: &mut NativeVariables,
+        variable_id: i64,
+    ) -> Result<(), DataSourceError> {
+        self.with_ntc(|_| {
+            if pool.restore(variable_id) {
+                Ok(())
+            } else {
+                Err(EngineError::InvalidArgument(format!(
+                    "pool_restore called with variable {variable_id}, which is not a \
+                     consumed variable of the pool"
+                )))
+            }
+        })
+    }
+
     fn target_observation(&self, score: f64, label: &str) -> Result<(), DataSourceError> {
         if !score.is_finite() {
             return Err(DataSourceError::InvalidArgument(format!(

@@ -1022,6 +1022,19 @@ impl CTestCase {
         rc_to_value(rc, id)
     }
 
+    /// Put back `variable_id`, which a consuming [`Self::pool_generate`]
+    /// removed from `pool`, so it can be drawn again.
+    pub(crate) fn pool_restore(
+        &self,
+        pool: &PoolHandle,
+        variable_id: i64,
+    ) -> Result<(), hegel_result_t> {
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_pool_restore(ctx, self.raw, pool.raw, variable_id)
+        });
+        rc_to_unit(rc)
+    }
+
     /// Register a state machine. Each rule is assigned to a concurrency
     /// group by `rule_groups` (parallel to `rule_names`); group ids are
     /// arbitrary and the machine has one group per distinct value. Each
@@ -1294,11 +1307,12 @@ impl Drop for RecursionHandle {
 /// An owned libhegel variable-pool handle (`hegel_pool_t`), freed on drop.
 ///
 /// Built by [`CTestCase::new_pool`] and driven through
-/// [`CTestCase::pool_add`] / [`CTestCase::pool_generate`] with any handle of
-/// the same test-case family. The pool serializes concurrent use internally,
-/// so it may be shared between clone handles on parallel threads; it is
-/// independent of the test case and run it was created under, so dropping it
-/// is safe in any order.
+/// [`CTestCase::pool_add`] / [`CTestCase::pool_generate`] /
+/// [`CTestCase::pool_restore`] with any handle of the same test-case
+/// family. The pool serializes concurrent use internally, so it may be
+/// shared between clone handles on parallel threads; it is independent of
+/// the test case and run it was created under, so dropping it is safe in
+/// any order.
 pub(crate) struct PoolHandle {
     raw: *mut hegel_c::HegelPool,
 }

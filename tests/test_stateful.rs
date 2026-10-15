@@ -1,8 +1,8 @@
 mod common;
 
-use hegel::TestCase;
 use hegel::generators as gs;
-use hegel::stateful::{Pool, pool};
+use hegel::stateful::{ConcurrentPool, Pool, concurrent_pool, pool};
+use hegel::{Generator, PrintableGenerator, TestCase};
 
 struct Linear {
     state: i32,
@@ -76,6 +76,144 @@ fn test_consume(tc: TestCase) {
         consumed,
     };
     hegel::stateful::machine(m).run(tc);
+}
+
+fn remaining(numbers: &mut Pool<i32>, tc: &TestCase) -> Vec<i32> {
+    let mut rest = Vec::new();
+    while !numbers.is_empty() {
+        rest.push(tc.draw(numbers.values_consumed()));
+    }
+    rest.sort_unstable();
+    rest
+}
+
+#[hegel::test]
+fn test_filter_consumes_only_the_value_it_accepts(tc: TestCase) {
+    let mut numbers: Pool<i32> = pool(&tc);
+    for i in 0..10 {
+        numbers.add(i);
+    }
+    let even = tc.draw(numbers.values_consumed().filter(|x| x % 2 == 0));
+    assert_eq!(even % 2, 0);
+    assert_eq!(numbers.len(), 9);
+    let expected: Vec<i32> = (0..10).filter(|x| *x != even).collect();
+    assert_eq!(remaining(&mut numbers, &tc), expected);
+}
+
+#[hegel::test]
+fn test_filter_through_wrappers_consumes_only_the_values_it_accepts(tc: TestCase) {
+    let mut numbers: Pool<i32> = pool(&tc);
+    for i in 0..10 {
+        numbers.add(i);
+    }
+    let mut accepted = [
+        tc.draw_silent((&numbers.values_consumed()).filter(|x| *x > 1)),
+        tc.draw(
+            numbers
+                .values_consumed()
+                .print_with(|value, printer| printer.text(&value.to_string()))
+                .filter(|x| *x > 1),
+        ),
+        tc.draw(
+            numbers
+                .values_consumed()
+                .print_as_debug()
+                .filter(|x| *x > 1),
+        ),
+    ];
+    assert!(accepted.iter().all(|x| *x > 1));
+    assert_eq!(numbers.len(), 7);
+    accepted.sort_unstable();
+    let expected: Vec<i32> = (0..10).filter(|x| !accepted.contains(x)).collect();
+    assert_eq!(remaining(&mut numbers, &tc), expected);
+
+    let shared: ConcurrentPool<i32> = concurrent_pool(&tc);
+    for i in 0..10 {
+        shared.add(&tc, i);
+    }
+    let accepted = [
+        tc.draw(shared.values_consumed().filter(|x| *x > 1)),
+        tc.draw(shared.values_consumed().boxed().filter(|x| *x > 1)),
+        tc.draw_silent(
+            shared
+                .values_consumed()
+                .boxed_printable()
+                .filter(|x| *x > 1),
+        ),
+    ];
+    assert!(accepted.iter().all(|x| *x > 1));
+    assert_eq!(shared.len(), 7);
+}
+
+#[hegel::test]
+fn test_nested_filters_consume_only_the_value_they_accept(tc: TestCase) {
+    let mut numbers: Pool<i32> = pool(&tc);
+    for i in 0..10 {
+        numbers.add(i);
+    }
+    let large_even = tc.draw(
+        numbers
+            .values_consumed()
+            .filter(|x| x % 2 == 0)
+            .filter(|x| *x >= 4),
+    );
+    assert!(large_even % 2 == 0 && large_even >= 4);
+    let expected: Vec<i32> = (0..10).filter(|x| *x != large_even).collect();
+    assert_eq!(remaining(&mut numbers, &tc), expected);
+}
+
+#[hegel::test]
+fn test_values_consumed_through_a_map_stay_consumed_when_filtered(tc: TestCase) {
+    let mut numbers: Pool<i32> = pool(&tc);
+    for i in 0..10 {
+        numbers.add(i);
+    }
+    let doubled = tc.draw(
+        numbers
+            .values_consumed()
+            .map(|x| x * 2)
+            .filter(|x| x % 4 == 0),
+    );
+    assert_eq!(doubled % 4, 0);
+    let rest = remaining(&mut numbers, &tc);
+    assert!(!rest.contains(&(doubled / 2)));
+    assert!(rest.len() <= 9);
+}
+
+struct FilteringConsumer {
+    numbers: Pool<i32>,
+    taken: usize,
+}
+
+#[hegel::state_machine]
+impl FilteringConsumer {
+    #[rule]
+    fn take_nothing(&mut self, tc: TestCase) {
+        tc.draw(self.numbers.values_consumed().filter(|_| false));
+        unreachable!("the filter accepts nothing");
+    }
+
+    #[rule]
+    fn take_zero(&mut self, tc: TestCase) {
+        let x = tc.draw(self.numbers.values_consumed());
+        self.taken += 1;
+        tc.assume(x == 0);
+    }
+
+    #[invariant]
+    fn rejected_rules_leave_the_pool_as_they_found_it(&mut self, _tc: TestCase) {
+        assert_eq!(self.numbers.len(), 2 - self.taken);
+    }
+}
+
+#[hegel::test]
+fn test_a_rejected_rule_keeps_what_it_consumed_and_puts_back_what_it_filtered(tc: TestCase) {
+    let mut numbers: Pool<i32> = pool(&tc);
+    for i in 0..2 {
+        numbers.add(i);
+    }
+    let m = FilteringConsumer { numbers, taken: 0 };
+    hegel::stateful::machine(m).steps(6).run(tc);
 }
 
 struct TestLifetimeMachine<'a> {
