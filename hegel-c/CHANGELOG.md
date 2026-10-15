@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.45.11 - 2026-10-15
+
+This patch fixes two skews in generation. Span mutation, which copies one span's values onto another span with the same label, no longer pairs spans whose first draws are of different kinds (such as a `one_of` index and the draw it selects, whose copied values could only collapse to the simplest value) and no longer re-runs a proposal that has already been executed, so a hundred cases over a small finite space now reach every value instead of drawing the all-zero sequence far more often than its share.
+
+Integer ranges too wide for `i128` now draw their ordinary values with the same bit-width shape as narrower ranges, an offset from the shrink target whose magnitude spreads over the range's orders, instead of uniformly over the span; `integers(0, 10**100)` previously produced values above `10**25` about two thirds of the time. Boundary values keep their weight. Seeded runs that draw such integers, or that spend cases on span mutation, generate different values from this version on.
+
 ## 0.45.10 - 2026-10-15
 
 This patch makes targeting start much earlier in large runs. Previously the first hill-climbing pass over `hegel_target` scores began only after half of the run's test cases, so a failure that targeting leads to with `test_cases = 10000` was found around case 5,000. Runs of 1,000 test cases or more now start optimising after a short random warm-up and interleave targeting passes with random generation on a fair-share schedule, with a pass firing early whenever random generation raises a best score, so such failures are found within a few hundred cases; smaller runs keep their single pass halfway through.

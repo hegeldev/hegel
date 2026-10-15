@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.49.12 - 2026-10-15
+
+This patch picks up two generation fixes from the engine: a hundred test cases over a small finite space (a `one_of` over a few `sampled_from` lists, say) now reach every value instead of repeating the simplest one, and `gs::integers::<u128>()` over a range too wide for `i128` spreads its values over the range's orders of magnitude as narrower ranges do rather than clustering near the top. Seeded runs that draw such integers, or that spend cases on span mutation, generate different values from this version on.
+
 ## 0.49.11 - 2026-10-15
 
 This patch makes `tc.target()` steer generation from early in a large run instead of only from halfway through its budget, so a test with `test_cases` of 1,000 or more whose failure targeting leads to is found within a few hundred cases rather than after thousands.
