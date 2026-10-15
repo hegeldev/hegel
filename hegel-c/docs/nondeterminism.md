@@ -281,13 +281,31 @@ strikes across two runs (primary miss demotes to the secondary corpus,
 secondary miss deletes), with the secondary corpus capped at 50 per key.
 
 Replaying stored state (`nd_reproduce`) is one primitive for database
-reuse, blob replay, and the final replay: the graph up to
-`reuse_replay_budget()` (29) times, stopping at the first failure, then
-where the caller allows it a few fresh generations. A version-1
-(deterministic) blob replays with the continuation budget and
-`V1_BLOB_REPLAYS` (4) attempts, so a blob recorded before a test went
-nondeterministic still reproduces. `hegel_run_start_blob` runs a blob as
-a run; `hegel_test_case_from_blob` remains a documented single attempt.
+reuse and the final replay: the graph up to `reuse_replay_budget()` (29)
+times, stopping at the first failure, then where the caller allows it a
+few fresh generations. A blob replay (`hegel_run_start_blob`,
+`reproduce_blob`) makes the same attempts — the reuse budget for a graph
+blob, `V1_BLOB_REPLAYS` (4) for a version-1 (deterministic) blob, so a
+blob recorded before a test went nondeterministic still gets several
+tries — but every attempt is exact, under `Rescue::Stop`
+(`core/replay.rs`): a divergence — a draw the stored counterexample does
+not serve, or one served after a divergence elsewhere in the family —
+concludes that attempt as `EarlyStop` instead of drawing on, because a
+failure reached by continuing past the recording would not be the
+blob's. A divergent attempt is a miss like a passing one and the loop
+runs on: a hidden coin that never flipped while the blob was recorded
+sends one attempt in ten off the recording at p = 0.9, and the next
+attempt may walk the recorded arm. A blob none of whose attempts
+reproduced reports no failure, with one output line naming the first
+divergence's stream and position. The continuation budget's measured
+justification (above) still holds where replays continue — database
+reuse, the final replay, the gauntlet — and no longer bears on blob
+replay, which has no continuation; the attempt counts were measured
+with continued attempts and now buy an unrecorded arm or a
+nondeterministic verdict, not a body with many hidden coins (see
+`V1_BLOB_REPLAYS`). `hegel_test_case_from_blob` is unchanged: a
+documented single attempt with the stored entropy seed and continuation
+budget, whose verdict the caller draws itself.
 
 ## Reporting
 

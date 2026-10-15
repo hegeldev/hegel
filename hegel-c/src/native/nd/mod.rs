@@ -418,11 +418,17 @@ pub(crate) fn reuse_replay_budget() -> u64 {
 /// Chosen, not derived: a small tail behind the budgeted replays.
 pub(crate) const FINAL_REPLAY_FRESH: u64 = 4;
 
-/// Replay attempts for a v1 exact-choice blob, each with the standard
-/// continuation budget (the reuse path's semantics). One exact
-/// no-continuation replay reproduced never-flipped runs' blobs at 13%
-/// against v2's 100% at p = 0.9; four continuation attempts bound
-/// the worst-case joint escape-then-miss at 1.2e-3.
+/// Replay attempts for a v1 exact-choice blob, each an exact replay
+/// (`Rescue::Stop`): a divergent attempt is a miss and the next attempt
+/// may replay the recording in full, so a blob recorded before a hidden
+/// coin flipped still reproduces when a later attempt lands on the
+/// recorded arm (one attempt in ten leaves it at p = 0.9). The count was
+/// measured with continued attempts — one exact replay reproduced
+/// never-flipped runs' blobs at 13% against 100% continued at p = 0.9,
+/// and four continued attempts bounded the joint escape-then-miss at
+/// 1.2e-3 — and that rescue is given up: a failure reached by continuing
+/// past the recording is not the blob's, so a body with many hidden coins
+/// reproduces only on an attempt that walks every recorded arm.
 pub(crate) const V1_BLOB_REPLAYS: u64 = 4;
 
 #[cfg(test)]

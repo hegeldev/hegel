@@ -76,7 +76,9 @@ pub(crate) async fn run_native_async(
 /// the draw that overruns; a nondeterministic blob replays its whole
 /// counterexample as one test case with the stored entropy
 /// seed and continuation budget, so a replay that leaves every stored
-/// timeline completes with fresh draws instead.
+/// timeline completes with fresh draws instead (the run-owned replay of
+/// `hegel_run_start_blob` is exact: see
+/// [`reproduce_blob`](crate::native::test_runner::reproduce_blob)).
 #[doc(hidden)]
 pub fn data_source_for_blob(
     settings: &Settings,
