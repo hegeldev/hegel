@@ -14,6 +14,7 @@ those places combine, and how the *profile* a run starts from is chosen.
 | `suppress_health_check` | list of `filter_too_much`, `too_slow`, `test_cases_too_large`, `large_initial_test_case`, or `all` | none | Health checks that should not fail the run ([`HealthCheck`](crate::HealthCheck)). Suppressing `test_cases_too_large` also removes the limit of 2^20 choices per test case. |
 | `phases` | list of `explicit`, `reuse`, `generate`, `target`, `shrink` | all five | Which parts of the run happen ([`Phase`](crate::Phase)); leaving out `shrink`, say, reports the first counterexample found. |
 | `report_multiple_failures` | boolean | `false` | Report every distinct failure a run finds rather than collapsing to one. |
+| `stop_on_first_failure` | boolean | `true` | Stop generating once a failure is found. When `false`, the run uses its whole `test_cases` budget before reporting; every failure found is persisted, and with `report_multiple_failures` off only the smallest is shrunk and reported. |
 | `show_statistics` | boolean | `false` | Print the end-of-run statistics report for events recorded with [`TestCase::event`](crate::TestCase::event) and [`TestCase::event_value`](crate::TestCase::event_value). |
 | `print_blob` | boolean | `true` | On failure, print a copy-pasteable `#[hegel::reproduce_failure("…")]` line. |
 | `backend` | `default`, `urandom` | `default` | The source of randomness ([`Backend`](crate::Backend)): a seeded PRNG, or fresh entropy on every draw for Antithesis's fuzzer to control — asked of the fuzzer directly inside Antithesis, read from `/dev/urandom` elsewhere. |
@@ -50,6 +51,7 @@ layers below it set and leaves the rest alone:
    | `HEGEL_SEED` | Sets `seed`: an integer is the seed, `none` clears one the profile set. |
    | `HEGEL_DERANDOMIZE` | Sets `derandomize`: `true`, `1` or `yes`, or `false`, `0` or `no`. |
    | `HEGEL_PRINT_BLOB` | Sets `print_blob`, with the same vocabulary. |
+   | `HEGEL_STOP_ON_FIRST_FAILURE` | Sets `stop_on_first_failure`, with the same vocabulary. |
    | `HEGEL_NONDETERMINISM_STRICTNESS` | Sets `nondeterminism_strictness`: `quiet`, `warn` or `error`. |
 
    An empty variable is ignored; any other malformed value is an error,
@@ -329,6 +331,7 @@ run first.
 | `HEGEL_SEED` | profile resolution | Sets `seed` over the resolved profile. |
 | `HEGEL_DERANDOMIZE` | profile resolution | Sets `derandomize` over the resolved profile. |
 | `HEGEL_PRINT_BLOB` | profile resolution | Sets `print_blob` over the resolved profile. |
+| `HEGEL_STOP_ON_FIRST_FAILURE` | profile resolution | Sets `stop_on_first_failure` over the resolved profile. |
 | `HEGEL_NONDETERMINISM_STRICTNESS` | profile resolution | Sets `nondeterminism_strictness` over the resolved profile. |
 | `ANTITHESIS_OUTPUT_DIR` | environment detection | Selects the `workload` profile, and each test's verdict is reported to the `sdk.jsonl` inside it. Must name an existing directory. |
 | `CI`, `GITHUB_ACTIONS`, … | environment detection | Selects the `ci` profile. |

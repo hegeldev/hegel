@@ -42,7 +42,7 @@
 //! Whatever profile is resolved, `base` included, the settings environment
 //! variables (`HEGEL_TEST_CASES`, `HEGEL_DATABASE`, `HEGEL_STATISTICS`,
 //! `HEGEL_SEED`, `HEGEL_DERANDOMIZE`, `HEGEL_PRINT_BLOB`,
-//! `HEGEL_NONDETERMINISM_STRICTNESS`; see
+//! `HEGEL_STOP_ON_FIRST_FAILURE`, `HEGEL_NONDETERMINISM_STRICTNESS`; see
 //! [`Settings::with_env_overrides_from`]) are applied over the result, so
 //! a settings handle starts from the profile as the environment adjusts
 //! it, and the setters called on it afterwards have the last word.
@@ -91,6 +91,7 @@ pub(crate) struct ProfileDelta {
     pub(crate) suppress_health_check: Option<Vec<HealthCheck>>,
     pub(crate) phases: Option<Vec<Phase>>,
     pub(crate) report_multiple_failures: Option<bool>,
+    pub(crate) stop_on_first_failure: Option<bool>,
     pub(crate) show_statistics: Option<bool>,
     pub(crate) print_blob: Option<bool>,
     pub(crate) backend: Option<Backend>,
@@ -128,6 +129,9 @@ impl ProfileDelta {
         if let Some(v) = self.report_multiple_failures {
             settings.report_multiple_failures = v;
         }
+        if let Some(v) = self.stop_on_first_failure {
+            settings.stop_on_first_failure = v;
+        }
         if let Some(v) = self.show_statistics {
             settings.show_statistics = v;
         }
@@ -158,6 +162,7 @@ impl ProfileDelta {
             suppress_health_check: Some(settings.suppress_health_check.clone()),
             phases: Some(settings.phases.clone()),
             report_multiple_failures: Some(settings.report_multiple_failures),
+            stop_on_first_failure: Some(settings.stop_on_first_failure),
             show_statistics: Some(settings.show_statistics),
             print_blob: Some(settings.print_blob),
             backend: Some(settings.backend),

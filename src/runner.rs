@@ -162,6 +162,7 @@ pub struct Settings {
     pub(crate) suppress_health_check: Vec<HealthCheck>,
     pub(crate) phases: Vec<Phase>,
     pub(crate) report_multiple_failures: bool,
+    pub(crate) stop_on_first_failure: bool,
     pub(crate) show_statistics: bool,
     pub(crate) print_blob: bool,
     pub(crate) backend: Backend,
@@ -463,6 +464,33 @@ impl Settings {
     /// Maps to Hypothesis's `report_multiple_bugs` setting.
     pub fn report_multiple_failures(mut self, report_multiple_failures: bool) -> Self {
         self.report_multiple_failures = report_multiple_failures;
+        self
+    }
+
+    /// Control whether finding a failure ends the generation phase.
+    ///
+    /// When `true` (the default), Hegel stops generating once it has found
+    /// a failure (after a short window to surface other distinct failures
+    /// when [`Settings::report_multiple_failures`] is on) and moves on to
+    /// shrinking and reporting it. When `false`, the run goes on to use its
+    /// whole `test_cases` budget before reporting, whatever it finds along
+    /// the way: a database replay that reproduces a failure no longer skips
+    /// generation, and every stored failure is replayed. Failing test cases
+    /// then count against the budget like valid ones, so a test that fails
+    /// on every input still ends.
+    ///
+    /// Every distinct failure found is persisted to the database either
+    /// way. What is shrunk and reported follows
+    /// [`Settings::report_multiple_failures`]: when that is `false` only
+    /// the smallest failure found is shrunk and reported, and the rest are
+    /// persisted as found.
+    ///
+    /// The `HEGEL_STOP_ON_FIRST_FAILURE` environment variable, when set and
+    /// non-empty, changes the value a `Settings` starts from, with the same
+    /// vocabulary as `HEGEL_DERANDOMIZE`. A value set here takes precedence
+    /// over it.
+    pub fn stop_on_first_failure(mut self, stop_on_first_failure: bool) -> Self {
+        self.stop_on_first_failure = stop_on_first_failure;
         self
     }
 }

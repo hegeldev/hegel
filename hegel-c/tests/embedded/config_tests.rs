@@ -29,6 +29,7 @@ fn parses_every_key() {
         seed = 42
         derandomize = true
         report_multiple_failures = true
+        stop_on_first_failure = false
         show_statistics = true
         print_blob = false
         verbosity = "verbose"
@@ -51,6 +52,7 @@ fn parses_every_key() {
             suppress_health_check: Some(vec![HealthCheck::TooSlow, HealthCheck::FilterTooMuch]),
             phases: Some(vec![Phase::Reuse, Phase::Generate, Phase::Shrink]),
             report_multiple_failures: Some(true),
+            stop_on_first_failure: Some(false),
             show_statistics: Some(true),
             print_blob: Some(false),
             backend: Some(Backend::Default),
@@ -364,6 +366,10 @@ fn rejects_wrong_value_types() {
     assert_eq!(
         parse_err("[profiles.x]\nderandomize = \"true\"\n").message,
         "`derandomize` expects a boolean, got a string"
+    );
+    assert_eq!(
+        parse_err("[profiles.x]\nstop_on_first_failure = 0\n").message,
+        "`stop_on_first_failure` expects a boolean, got an integer"
     );
     assert_eq!(
         parse_err("[profiles.x]\ntest_cases = true\n").message,

@@ -453,6 +453,7 @@ fn ffi_settings_round_trip_every_field_through_registration() {
         .suppress_health_check([HealthCheck::TooSlow, HealthCheck::FilterTooMuch])
         .phases([Phase::Reuse, Phase::Shrink])
         .report_multiple_failures(true)
+        .stop_on_first_failure(false)
         .show_statistics(true)
         .print_blob(true)
         .backend(Backend::Urandom)
@@ -471,6 +472,7 @@ fn ffi_settings_round_trip_every_field_through_registration() {
     );
     assert_eq!(restored.phases, vec![Phase::Reuse, Phase::Shrink]);
     assert!(restored.report_multiple_failures);
+    assert!(!restored.stop_on_first_failure);
     assert!(restored.show_statistics);
     assert!(restored.print_blob);
     assert_eq!(restored.backend, Backend::Urandom);

@@ -104,6 +104,7 @@ macro_rules! for_each_hegel_fn {
             fn hegel_settings_get_report_multiple_failures(ctx: *mut HegelContext, s: *const HegelSettings, out: *mut bool) -> hegel_result_t;
             fn hegel_settings_get_seed(ctx: *mut HegelContext, s: *const HegelSettings, out_seed: *mut u64, out_has_seed: *mut bool) -> hegel_result_t;
             fn hegel_settings_get_show_statistics(ctx: *mut HegelContext, s: *const HegelSettings, out: *mut bool) -> hegel_result_t;
+            fn hegel_settings_get_stop_on_first_failure(ctx: *mut HegelContext, s: *const HegelSettings, out: *mut bool) -> hegel_result_t;
             fn hegel_settings_get_suppress_health_check(ctx: *mut HegelContext, s: *const HegelSettings, out: *mut u32) -> hegel_result_t;
             fn hegel_settings_get_test_cases(ctx: *mut HegelContext, s: *const HegelSettings, out: *mut u64) -> hegel_result_t;
             fn hegel_settings_get_unbounded_choices(ctx: *mut HegelContext, s: *const HegelSettings, out: *mut bool) -> hegel_result_t;
@@ -121,6 +122,7 @@ macro_rules! for_each_hegel_fn {
             fn hegel_settings_set_report_multiple_failures(ctx: *mut HegelContext, s: *mut HegelSettings, yes: bool) -> hegel_result_t;
             fn hegel_settings_set_seed(ctx: *mut HegelContext, s: *mut HegelSettings, seed: u64, has_seed: bool) -> hegel_result_t;
             fn hegel_settings_set_show_statistics(ctx: *mut HegelContext, s: *mut HegelSettings, yes: bool) -> hegel_result_t;
+            fn hegel_settings_set_stop_on_first_failure(ctx: *mut HegelContext, s: *mut HegelSettings, yes: bool) -> hegel_result_t;
             fn hegel_settings_set_suppress_health_check(ctx: *mut HegelContext, s: *mut HegelSettings, checks: u32) -> hegel_result_t;
             fn hegel_settings_set_test_cases(ctx: *mut HegelContext, s: *mut HegelSettings, n: u64) -> hegel_result_t;
             fn hegel_settings_set_test_location(ctx: *mut HegelContext, s: *mut HegelSettings, file: hegel_string_t, begin_line: u32, class_name: hegel_string_t, function: hegel_string_t) -> hegel_result_t;

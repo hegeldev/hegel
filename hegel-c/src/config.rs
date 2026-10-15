@@ -325,6 +325,9 @@ fn assign(
         "report_multiple_failures" => {
             delta.report_multiple_failures = Some(expect_bool(src, value, key)?);
         }
+        "stop_on_first_failure" => {
+            delta.stop_on_first_failure = Some(expect_bool(src, value, key)?);
+        }
         "show_statistics" => delta.show_statistics = Some(expect_bool(src, value, key)?),
         "print_blob" => delta.print_blob = Some(expect_bool(src, value, key)?),
         "verbosity" => {

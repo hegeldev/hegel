@@ -190,6 +190,9 @@ pub struct Settings {
     pub(crate) in_antithesis: bool,
     pub(crate) phases: Vec<Phase>,
     pub(crate) report_multiple_failures: bool,
+    /// Whether the generation phase ends once a failure is found. See
+    /// [`Settings::stop_on_first_failure`].
+    pub(crate) stop_on_first_failure: bool,
     /// Print event statistics (`tc.event()` / `tc.event_value()`
     /// observations from the generation phase) at the end of the run.
     pub(crate) show_statistics: bool,
@@ -244,6 +247,7 @@ impl Settings {
                 Phase::Shrink,
             ],
             report_multiple_failures: false,
+            stop_on_first_failure: true,
             show_statistics: false,
             print_blob: true,
             backend: Backend::Default,
@@ -398,6 +402,26 @@ impl Settings {
         self
     }
 
+    /// Control whether finding a failure ends the generation phase.
+    ///
+    /// When `true` (the default), Hegel stops generating once it has found
+    /// a failure (after a short window to surface other distinct failures
+    /// when [`Settings::report_multiple_failures`] is on) and moves on to
+    /// shrinking and reporting it. When `false`, the run goes on to use its
+    /// whole `test_cases` budget before reporting, whatever it finds along
+    /// the way: a database replay that reproduces a failure no longer
+    /// skips generation, and every stored failure is replayed.
+    ///
+    /// Every distinct failure found is persisted to the database either
+    /// way. What is shrunk and reported follows
+    /// [`Settings::report_multiple_failures`]: when that is `false` only
+    /// the smallest failure found is shrunk and reported, and the rest are
+    /// persisted as found.
+    pub fn stop_on_first_failure(mut self, stop_on_first_failure: bool) -> Self {
+        self.stop_on_first_failure = stop_on_first_failure;
+        self
+    }
+
     /// Whether a failure should print a copy-pasteable reproduction line for
     /// its counterexample (default: `false`). The reproduce blob is always
     /// attached to the failure; the engine never reads this field — it
@@ -418,7 +442,8 @@ impl Settings {
     /// Apply the settings environment variables, read through `env`, over
     /// these settings: `HEGEL_TEST_CASES`, `HEGEL_DATABASE`,
     /// `HEGEL_STATISTICS`, `HEGEL_SEED`, `HEGEL_DERANDOMIZE`,
-    /// `HEGEL_PRINT_BLOB` and `HEGEL_NONDETERMINISM_STRICTNESS`. Profile
+    /// `HEGEL_PRINT_BLOB`, `HEGEL_STOP_ON_FIRST_FAILURE` and
+    /// `HEGEL_NONDETERMINISM_STRICTNESS`. Profile
     /// resolution calls this last, so the
     /// variables win over every profile and `hegel.toml`, while a setter
     /// called on the resulting handle still wins over them. An unset or
@@ -469,6 +494,9 @@ impl Settings {
         }
         if let Some(b) = env_bool(&env, "HEGEL_PRINT_BLOB")? {
             self.print_blob = b;
+        }
+        if let Some(b) = env_bool(&env, "HEGEL_STOP_ON_FIRST_FAILURE")? {
+            self.stop_on_first_failure = b;
         }
         if let Some(value) = env_value(&env, "HEGEL_NONDETERMINISM_STRICTNESS") {
             self.nondeterminism_strictness = match NondeterminismStrictness::parse(&value) {
