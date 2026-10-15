@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.45.12 - 2026-10-15
+
+This patch makes the nondeterminism caveat per failure. A run that switched to nondeterministic handling used to attach a caveat to every failure it reported, so a failure that reproduced at every replay was described as "nondeterministic failure, confirmed: failed 20 of 20 replays" because a different failure had made the run nondeterministic. `hegel_failure_caveat` is now `NULL` for a confirmed failure, or one replayed from the database, that was never seen not to reproduce: no replay miss at confirmation, reuse or report time, no verdict change on its input, and no stored nondeterministic state behind it. A failure the run did see pass keeps its caveat quoting that evidence.
+
 ## 0.45.11 - 2026-10-15
 
 This patch fixes two skews in generation. Span mutation, which copies one span's values onto another span with the same label, no longer pairs spans whose first draws are of different kinds (such as a `one_of` index and the draw it selects, whose copied values could only collapse to the simplest value) and no longer re-runs a proposal that has already been executed, so a hundred cases over a small finite space now reach every value instead of drawing the all-zero sequence far more often than its share.

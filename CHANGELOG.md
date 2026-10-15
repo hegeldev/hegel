@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.49.13 - 2026-10-15
+
+This patch makes the nondeterminism caveat per failure. A run that switched to nondeterministic handling used to attach a `note: nondeterministic failure, confirmed: failed 20 of 20 replays` caveat to every failure it reported, including one that reproduced at every replay and was only caught up in another failure's flakiness. Such a failure is now reported as a plain failure; a failure the run did see pass keeps its caveat quoting that evidence.
+
 ## 0.49.12 - 2026-10-15
 
 This patch picks up two generation fixes from the engine: a hundred test cases over a small finite space (a `one_of` over a few `sampled_from` lists, say) now reach every value instead of repeating the simplest one, and `gs::integers::<u128>()` over a range too wide for `i128` spreads its values over the range's orders of magnitude as narrower ranges do rather than clustering near the top. Seeded runs that draw such integers, or that spend cases on span mutation, generate different values from this version on.
