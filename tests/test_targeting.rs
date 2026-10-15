@@ -5,6 +5,7 @@ mod common;
 use common::utils::expect_panic;
 use hegel::generators as gs;
 use hegel::{Hegel, Settings};
+use std::panic::AssertUnwindSafe;
 
 /// `tc.target_labelled(observation, label)` compiles and runs without panicking.
 #[test]
@@ -77,7 +78,7 @@ fn test_respects_max_pool_size() {
 #[test]
 fn test_max_examples_is_not_exceeded() {
     let m: u64 = 10000;
-    for max_examples in [1usize, 5, 25, 99] {
+    for max_examples in [1usize, 5, 25, 99, 1000] {
         let mut calls: usize = 0;
         Hegel::new(|tc| {
             calls += 1;
@@ -293,4 +294,42 @@ fn test_targeting_rejects_growing_lateral_move() {
             .derandomize(true),
     )
     .run();
+}
+
+/// A threshold bug that only random generation would take the whole budget
+/// to hit: the sum of a list of integers up to 1000 reaching 30,000.
+/// Targeting the sum must interleave with generation from early in the run,
+/// so the failure is found well before halfway through the budget.
+#[test]
+fn test_finds_threshold_bug_quickly_with_large_budget() {
+    for seed in [0, 1, 2] {
+        let mut calls: u64 = 0;
+        let mut found_at: Option<u64> = None;
+        expect_panic(
+            AssertUnwindSafe(|| {
+                Hegel::new(|tc| {
+                    let xs: Vec<u64> = tc.draw(gs::vecs(gs::integers::<u64>().max_value(1000)));
+                    calls += 1;
+                    let total: u64 = xs.iter().sum();
+                    tc.target(total.min(50_000) as f64);
+                    if total >= 30_000 {
+                        if found_at.is_none() {
+                            found_at = Some(calls);
+                        }
+                        panic!("sum reached {total}");
+                    }
+                })
+                .settings(
+                    Settings::new()
+                        .test_cases(10_000)
+                        .seed(Some(seed))
+                        .database(None),
+                )
+                .run();
+            }),
+            "sum reached",
+        );
+        let found_at = found_at.unwrap();
+        assert!(found_at < 4_000, "seed {seed}: found at case {found_at}");
+    }
 }

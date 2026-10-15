@@ -164,25 +164,104 @@ fn adopt_nd_on_an_unknown_label_inserts_it() {
 }
 
 #[test]
-fn schedule_fires_at_first_threshold() {
-    let mut s = TargetingSchedule::new(100);
-    assert!(!s.should_fire(49));
-    assert!(s.should_fire(50));
-    assert!(!s.should_fire(50));
+fn targeting_state_version_counts_every_new_best() {
+    let mut state = TargetingState::new();
+    assert_eq!(state.version(), 0);
+    let choices = vec![ChoiceValue::Integer(BigInt::from(1))];
+    state.record(&choices, &HashMap::from_iter([("s".to_string(), 1.0)]));
+    assert_eq!(state.version(), 1);
+    state.record(&choices, &HashMap::from_iter([("s".to_string(), 1.0)]));
+    assert_eq!(state.version(), 1);
+    state.record(
+        &choices,
+        &HashMap::from_iter([("s".to_string(), 2.0), ("t".to_string(), 0.0)]),
+    );
+    assert_eq!(state.version(), 3);
 }
 
 #[test]
-fn schedule_re_fires_at_subsequent_thresholds() {
+fn schedule_for_a_small_budget_runs_a_single_pass_halfway() {
     let mut s = TargetingSchedule::new(100);
-    assert!(s.should_fire(50));
-    assert!(!s.should_fire(99));
-    assert!(s.should_fire(100));
+    assert!(!s.should_fire(49, 1));
+    assert!(s.should_fire(50, 1));
+    assert_eq!(s.pass_cap(50), 100);
+    s.pass_finished(60, 10, true, 2);
+    assert!(!s.should_fire(99, 2));
+    assert!(!s.should_fire(100, 3));
 }
 
 #[test]
-fn schedule_for_small_max_examples_never_fires_in_range() {
-    let mut s = TargetingSchedule::new(1);
-    assert!(!s.should_fire(1));
+fn schedule_for_a_tiny_budget_never_fires_in_range() {
+    let s = TargetingSchedule::new(1);
+    assert!(!s.should_fire(1, 1));
+}
+
+#[test]
+fn schedule_for_a_large_budget_fires_after_the_warm_up() {
+    let s = TargetingSchedule::new(10_000);
+    assert!(!s.should_fire(199, 5));
+    assert!(s.should_fire(200, 5));
+}
+
+#[test]
+fn schedule_caps_a_pass_at_a_slice_of_the_remaining_budget() {
+    let mut s = TargetingSchedule::new(10_000);
+    assert_eq!(s.pass_cap(200), 200 + 1250);
+    s.pass_finished(1450, 1250, true, 1);
+    assert_eq!(s.pass_cap(2700), 2700 + 937);
+    s.pass_finished(5700, 3000, true, 1);
+    assert_eq!(s.pass_cap(6000), 6000 + 200);
+    s.pass_finished(6600, 600, true, 1);
+    assert_eq!(s.pass_cap(7000), 7000 + 150);
+    s.pass_finished(7150, 150, true, 1);
+    assert_eq!(s.pass_cap(8000), 8000);
+    assert!(!s.should_fire(10_000, 2));
+}
+
+#[test]
+fn schedule_never_caps_a_pass_beyond_the_budget() {
+    let s = TargetingSchedule::new(10_000);
+    assert_eq!(s.pass_cap(9_900), 10_000);
+}
+
+#[test]
+fn schedule_alternates_improving_passes_with_generation_fairly() {
+    let mut s = TargetingSchedule::new(10_000);
+    s.pass_finished(500, 300, true, 1);
+    assert!(!s.should_fire(799, 1));
+    assert!(s.should_fire(800, 1));
+}
+
+#[test]
+fn schedule_stops_after_a_pass_that_found_no_improvement() {
+    let mut s = TargetingSchedule::new(10_000);
+    s.pass_finished(500, 300, false, 1);
+    assert!(!s.should_fire(10_000, 1));
+}
+
+#[test]
+fn schedule_re_fires_when_generation_raises_a_best_score() {
+    let mut s = TargetingSchedule::new(10_000);
+    assert!(!s.should_fire(100, 7));
+    s.pass_finished(500, 300, false, 7);
+    assert!(!s.should_fire(500, 7));
+    assert!(s.should_fire(501, 8));
+    s.pass_finished(4700, 4700, false, 9);
+    assert!(!s.should_fire(4701, 10));
+}
+
+#[test]
+fn schedule_keeps_the_halfway_cadence_for_a_pass_that_spent_nothing() {
+    let mut s = TargetingSchedule::new(10_000);
+    s.pass_finished(200, 0, true, 1);
+    assert!(!s.should_fire(300, 2));
+    assert!(!s.should_fire(5199, 2));
+    assert!(s.should_fire(5200, 2));
+
+    let mut s = TargetingSchedule::new(100);
+    s.pass_finished(50, 0, false, 1);
+    assert!(!s.should_fire(99, 2));
+    assert!(s.should_fire(100, 2));
 }
 
 #[test]
@@ -338,12 +417,15 @@ fn interesting() -> TestCaseResult {
     })
 }
 
-fn run_optimise<F>(start: Vec<ChoiceValue>, start_score: f64, mut body: F)
+/// Hill-climb from `start` (recorded at `start_score`) against `body` and
+/// return whether the optimiser reported an improvement.
+fn run_optimise<F>(start: Vec<ChoiceValue>, start_score: f64, mut body: F) -> bool
 where
     F: FnMut(&dyn DataSource) -> TestCaseResult,
 {
     let settings = crate::Settings::new().database(None).seed(Some(0xc0ffee));
     let exchange = crate::exchange::CaseExchange::new();
+    let improved = core::cell::Cell::new(false);
     let fut = async {
         let mut engine = Engine::new(&settings, None, &exchange).unwrap();
         engine
@@ -355,12 +437,13 @@ where
             max_valid: 10_000,
             max_calls: 100_000,
         };
-        optimiser.optimise_targets().await.unwrap();
+        improved.set(optimiser.optimise_targets().await.unwrap());
     };
     crate::exchange::drive(&exchange, fut, |ds| {
         let result = body(&*ds);
         ds.mark_complete(&result);
     });
+    improved.get()
 }
 
 /// Drives `hill_climb`'s resize-restart branch and the already-examined
@@ -378,7 +461,7 @@ fn hill_climb_resize_restart_and_already_examined_skip() {
         ChoiceValue::Boolean(false),
         ChoiceValue::Boolean(false),
     ];
-    run_optimise(start, 4.0, |ds| {
+    let improved = run_optimise(start, 4.0, |ds| {
         let body = || -> Result<TestCaseResult, ()> {
             draw_bool(ds)?;
             let m = draw_int(ds, 0, 20)?;
@@ -391,6 +474,7 @@ fn hill_climb_resize_restart_and_already_examined_skip() {
         };
         body().unwrap_or(TestCaseResult::Overrun)
     });
+    assert!(improved);
 }
 
 /// Drives `try_replace`'s `!strict && grew` rejection: a non-trailing
@@ -401,7 +485,7 @@ fn hill_climb_resize_restart_and_already_examined_skip() {
 #[test]
 fn hill_climb_rejects_lateral_grow() {
     let start = vec![ChoiceValue::Boolean(false), ChoiceValue::Boolean(false)];
-    run_optimise(start, 1.0, |ds| {
+    let improved = run_optimise(start, 1.0, |ds| {
         let body = || -> Result<TestCaseResult, ()> {
             draw_bool(ds)?;
             let big = draw_bool(ds)?;
@@ -415,6 +499,7 @@ fn hill_climb_rejects_lateral_grow() {
         };
         body().unwrap_or(TestCaseResult::Overrun)
     });
+    assert!(!improved);
 }
 
 /// Drives `try_replace`'s `trial.status < Status::Valid` rejection: an
@@ -444,7 +529,7 @@ fn hill_climb_rejects_invalid_trial_status() {
 #[test]
 fn hill_climb_returns_zero_when_initial_replay_invalid() {
     let start = vec![ChoiceValue::Integer(BigInt::from(7))];
-    run_optimise(start, 0.0, |ds| {
+    let improved = run_optimise(start, 0.0, |ds| {
         let n = match draw_int(ds, 0, 20) {
             Ok(n) => n,
             Err(()) => return TestCaseResult::Overrun,
@@ -455,6 +540,7 @@ fn hill_climb_returns_zero_when_initial_replay_invalid() {
         ds.target_observation(n as f64, "").unwrap();
         TestCaseResult::Valid
     });
+    assert!(!improved);
 }
 
 /// Drives `run_trial`'s `Status::Interesting` branch — the bug-found path
@@ -506,7 +592,7 @@ fn error_strictness_aborts_on_a_verdict_flip_during_hill_climbing() {
         };
         let err = match optimiser.optimise_targets().await {
             Err(err) => err,
-            Ok(()) => panic!("expected the verdict flip to abort the climb"),
+            Ok(_) => panic!("expected the verdict flip to abort the climb"),
         };
         assert!(matches!(err, RunError::Flaky(_)));
     };

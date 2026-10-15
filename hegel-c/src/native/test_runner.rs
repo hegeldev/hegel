@@ -657,18 +657,25 @@ impl<'a> Engine<'a> {
                 if target_phase
                     && !self.origins.any_live()
                     && !self.targeting.is_empty()
-                    && target_schedule.should_fire(self.valid_test_cases)
+                    && target_schedule.should_fire(self.valid_test_cases, self.targeting.version())
                 {
-                    if self.nd_active {
-                        self.optimise_targets_nd().await?;
+                    let start_valid = self.valid_test_cases;
+                    let improved = if self.nd_active {
+                        self.optimise_targets_nd().await?
                     } else {
                         let mut optimiser = crate::native::targeting::Optimiser {
                             engine: &mut *self,
-                            max_valid: max_test_cases,
+                            max_valid: target_schedule.pass_cap(start_valid),
                             max_calls: max_test_cases * 10,
                         };
-                        optimiser.optimise_targets().await?;
-                    }
+                        optimiser.optimise_targets().await?
+                    };
+                    target_schedule.pass_finished(
+                        self.valid_test_cases,
+                        self.valid_test_cases - start_valid,
+                        improved,
+                        self.targeting.version(),
+                    );
                 }
 
                 if run.status == Status::Valid
@@ -2427,15 +2434,17 @@ impl<'a> Engine<'a> {
     /// only ever raised. Races stop at [`nd::TARGET_ND_RACES`] per firing,
     /// after a full label pass with no adoption, or as soon as any
     /// interesting origin exists — at which point the run's replay budget
-    /// belongs to confirmation and shrinking.
-    async fn optimise_targets_nd(&mut self) -> Result<(), RunError> {
+    /// belongs to confirmation and shrinking. Returns whether any label
+    /// adopted a winner.
+    async fn optimise_targets_nd(&mut self) -> Result<bool, RunError> {
         let seeds = self.targeting.seeds();
         let mut races = 0u64;
+        let mut improved = false;
         loop {
             let mut adopted = false;
             for (label, best_score, best_choices) in &seeds {
                 if races >= nd::TARGET_ND_RACES || self.origins.any_live() {
-                    return Ok(());
+                    return Ok(improved);
                 }
                 if self.targeting.nd_target(label).is_none() {
                     self.nd_target_reference(label, best_choices).await?;
@@ -2457,10 +2466,11 @@ impl<'a> Engine<'a> {
                     .await?
                 {
                     adopted = true;
+                    improved = true;
                 }
             }
             if !adopted {
-                return Ok(());
+                return Ok(improved);
             }
         }
     }
