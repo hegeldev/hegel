@@ -3,7 +3,7 @@ mod common;
 use common::utils::{assert_matches_regex, capture_hegel_output};
 use hegel::generators as gs;
 use hegel::stateful::{ConcurrentPool, concurrent_pool, machine};
-use hegel::{HealthCheck, Hegel, Settings, TestCase, Verbosity};
+use hegel::{Generator, HealthCheck, Hegel, Settings, TestCase, Verbosity};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -557,6 +557,80 @@ fn test_concurrent_pool_across_workers(tc: TestCase) {
         next: AtomicI64::new(0),
     };
     machine(m).max_concurrency(3).run_concurrent(tc);
+}
+
+struct FilteringConsumer {
+    pool: ConcurrentPool<i64>,
+    taken: Mutex<Vec<i64>>,
+}
+
+#[hegel::concurrent_state_machine]
+impl FilteringConsumer {
+    #[rule]
+    fn take_even(&self, tc: TestCase) {
+        let value: i64 = tc.draw(self.pool.values_consumed().filter(|v| v % 2 == 0));
+        assert_eq!(value % 2, 0);
+        self.taken.lock().unwrap().push(value);
+    }
+
+    #[invariant]
+    fn only_accepted_values_leave_the_pool(&self, _: TestCase) {
+        assert_eq!(self.pool.len(), 6 - self.taken.lock().unwrap().len());
+    }
+}
+
+#[hegel::test]
+fn test_concurrent_filters_consume_only_the_values_they_accept(tc: TestCase) {
+    let pool = concurrent_pool(&tc);
+    for value in 0..6 {
+        pool.add(&tc, value);
+    }
+    let m = FilteringConsumer {
+        pool,
+        taken: Mutex::new(Vec::new()),
+    };
+    machine(m).max_concurrency(3).steps(5).run_concurrent(tc);
+}
+
+struct ExhaustingConsumer {
+    pool: ConcurrentPool<i64>,
+    taken: AtomicI64,
+}
+
+#[hegel::concurrent_state_machine]
+impl ExhaustingConsumer {
+    #[rule]
+    fn take_nothing(&self, tc: TestCase) {
+        tc.draw(self.pool.values_consumed().filter(|_| false));
+        unreachable!("the filter accepts nothing");
+    }
+
+    #[rule]
+    fn take_any(&self, tc: TestCase) {
+        tc.draw(self.pool.values_consumed());
+        self.taken.fetch_add(1, Ordering::SeqCst);
+    }
+
+    #[invariant]
+    fn rejected_rules_leave_the_pool_as_they_found_it(&self, _: TestCase) {
+        assert_eq!(
+            self.pool.len() as i64,
+            2 - self.taken.load(Ordering::SeqCst)
+        );
+    }
+}
+
+#[hegel::test]
+fn test_concurrent_filter_stops_once_every_remaining_value_is_rejected(tc: TestCase) {
+    let pool = concurrent_pool(&tc);
+    for value in 0..2 {
+        pool.add(&tc, value);
+    }
+    let m = ExhaustingConsumer {
+        pool,
+        taken: AtomicI64::new(0),
+    };
+    machine(m).max_concurrency(1).steps(6).run_concurrent(tc);
 }
 
 struct RacyCounter {

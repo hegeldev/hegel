@@ -1825,8 +1825,9 @@ hegel_result_t hegel_pool_add(hegel_context_t *ctx,
  additions never changes which variable a recorded choice refers to.
 
  Parameters:
- `consume`: When `true` the drawn variable is removed from the pool.
-   When `false` it is not removed.
+ `consume`: When `true` the drawn variable is removed from the pool, and
+   stays removed unless `hegel_pool_restore` puts it back. When `false`
+   it is not removed.
  `out_variable_id`: Receives the variable id libhegel chose.
 
  Returns `HEGEL_OK`, `HEGEL_E_STOP_TEST`, or `HEGEL_E_ASSUME` if the pool
@@ -1837,6 +1838,27 @@ hegel_result_t hegel_pool_generate(hegel_context_t *ctx,
                                    hegel_pool_t *pool,
                                    bool consume,
                                    int64_t *out_variable_id);
+
+/*
+ Puts back the variable `variable_id`, which a consuming
+ `hegel_pool_generate` removed from the pool, so it can be drawn again.
+ Call it when the value drawn with that consuming draw is being thrown
+ away unused, as a filter does with a rejected attempt, so the pool is
+ left as if the draw had never happened. Any handle of the test-case
+ family may put back a variable, whichever handle consumed it. libhegel
+ never puts a variable back of its own accord, so a consumed variable
+ stays consumed until this is called for it.
+
+ Parameters:
+ `variable_id`: The id a consuming `hegel_pool_generate` returned.
+
+ Returns `HEGEL_OK`, `HEGEL_E_STOP_TEST`, or `HEGEL_E_INVALID_ARG` when
+ `variable_id` is not a consumed variable of the pool.
+ */
+hegel_result_t hegel_pool_restore(hegel_context_t *ctx,
+                                  hegel_test_case_t *tc,
+                                  hegel_pool_t *pool,
+                                  int64_t variable_id);
 
 /*
  Release a pool handle from `hegel_new_pool`. Safe to call with NULL (a

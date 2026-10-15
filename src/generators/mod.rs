@@ -41,10 +41,12 @@ pub use combinators::{
 pub use compose::ComposedGenerator;
 pub use default::{DefaultGenerator, default};
 pub use deferred::{DeferredGeneratorDefinition, deferred, deferred_silent};
-pub(crate) use generators::draw_and_print_value;
 pub use generators::{
     BoxedGenerator, BoxedPrintableGenerator, Filtered, FlatMapped, Generator, Mapped,
     PrintableGenerator, PrintedAsCall, PrintedAsDebug, PrintedWith,
+};
+pub(crate) use generators::{
+    FILTER_ATTEMPT_LABEL, FILTER_ATTEMPTS, draw_and_print_value, draw_filtered_and_print_value,
 };
 pub use labels::{combine_labels, label_from_name};
 pub use lark::{LarkGenerator, from_lark};

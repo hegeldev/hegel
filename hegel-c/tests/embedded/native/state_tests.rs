@@ -1927,6 +1927,15 @@ fn native_variables_add_active_and_consume_round_trip() {
     assert_eq!(vars.active(), vec![0]);
     vars.consume(0);
     assert_eq!(vars.active(), Vec::<i64>::new());
+    assert!(vars.restore(1));
+    assert_eq!(vars.active(), vec![1]);
+    assert!(!vars.restore(1), "an active variable is not restored");
+    assert!(!vars.restore(7), "an unknown id is not restored");
+    assert_eq!(vars.active(), vec![1]);
+    assert!(vars.restore(2));
+    assert_eq!(vars.active(), vec![1, 2]);
+    vars.consume(2);
+    assert_eq!(vars.active(), vec![1]);
 }
 
 #[test]

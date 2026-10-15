@@ -8,7 +8,10 @@ use std::sync::Arc;
 const MAP_LABEL: u64 = label_from_name("hegel.map");
 const FLAT_MAP_LABEL: u64 = label_from_name("hegel.flat_map");
 const FILTER_LABEL: u64 = label_from_name("hegel.filter");
-const FILTER_ATTEMPT_LABEL: u64 = label_from_name("hegel.filter.attempt");
+pub(crate) const FILTER_ATTEMPT_LABEL: u64 = label_from_name("hegel.filter.attempt");
+
+/// How many values a filtered draw tries before rejecting the test case.
+pub(crate) const FILTER_ATTEMPTS: usize = 3;
 
 /// The core trait for all generators.
 ///
@@ -28,6 +31,36 @@ pub trait Generator<T> {
     /// as a second span.
     #[doc(hidden)]
     fn do_draw(&self, tc: &TestCase) -> T;
+
+    /// Produce a value that `predicate` accepts: the draw behind
+    /// [`filter`](Self::filter), which calls this on its source generator.
+    ///
+    /// The default makes up to three attempts, each a draw of
+    /// this generator inside a span of its own, closed as discarded when the
+    /// predicate rejects the value so the shrinker can remove it, and
+    /// rejects the test case (as if by `assume(false)`) when every attempt
+    /// is rejected. A generator whose draws have side effects runs the
+    /// attempts itself so that a rejected value leaves no trace: a
+    /// [`Pool::values_consumed`](crate::stateful::Pool::values_consumed)
+    /// draw puts back every value it rejected once its attempts are over,
+    /// since no rejected value reaches the test. A generator that merely
+    /// forwards `do_draw` to a wrapped generator forwards this too, so a
+    /// filter around the wrapper still reaches the wrapped generator's
+    /// attempts.
+    #[doc(hidden)]
+    fn do_draw_filtered(&self, tc: &TestCase, predicate: &dyn Fn(&T) -> bool) -> T {
+        for _ in 0..FILTER_ATTEMPTS {
+            tc.start_span(FILTER_ATTEMPT_LABEL);
+            let value = tc.draw_silent(self);
+            if predicate(&value) {
+                tc.stop_span(false);
+                return value;
+            }
+            tc.stop_span(true);
+        }
+        tc.assume(false);
+        unreachable!()
+    }
 
     /// The label identifying this generator to the engine.
     ///
@@ -111,7 +144,12 @@ pub trait Generator<T> {
 
     /// Only keep generated values that satisfy the predicate.
     ///
-    /// Retries up to 3 times, then calls `assume(false)` to reject the test case.
+    /// Draws up to three values, and calls `assume(false)` to reject the
+    /// test case if the predicate accepts none of them. The attempts are
+    /// the source generator's [`do_draw_filtered`](Self::do_draw_filtered),
+    /// so a generator whose draws have side effects, such as a pool's
+    /// consuming generator, can leave a rejected value as if it had never
+    /// been drawn.
     ///
     /// # Example
     ///
@@ -290,6 +328,41 @@ pub trait PrintableGenerator<T>: Generator<T> {
     /// forwarding layer doesn't register as a second region or span.
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> T;
 
+    /// Produce a value that `predicate` accepts, printing its representation
+    /// to `printer`: the printing counterpart of
+    /// [`do_draw_filtered`](Generator::do_draw_filtered), which
+    /// [`filter`](Generator::filter) calls on its source when the filtered
+    /// draw is printed.
+    ///
+    /// The default makes the same attempts as `do_draw_filtered`, each inside
+    /// a speculative print region that is discarded with the attempt, so
+    /// only the accepted value's representation survives. A generator that
+    /// overrides `do_draw_filtered` and prints by value prints the value
+    /// that returns; one that forwards `do_draw_and_print` to a wrapped
+    /// generator forwards this too.
+    #[doc(hidden)]
+    fn do_draw_filtered_and_print(
+        &self,
+        tc: &TestCase,
+        predicate: &dyn Fn(&T) -> bool,
+        printer: &mut PrettyPrinter,
+    ) -> T {
+        for _ in 0..FILTER_ATTEMPTS {
+            tc.start_span(FILTER_ATTEMPT_LABEL);
+            let mut speculation = printer.speculate();
+            let value = tc.draw_and_print(self, speculation.printer());
+            if predicate(&value) {
+                speculation.commit();
+                tc.stop_span(false);
+                return value;
+            }
+            speculation.abort();
+            tc.stop_span(true);
+        }
+        tc.assume(false);
+        unreachable!()
+    }
+
     /// Convert this generator into a type-erased boxed printable generator,
     /// as accepted by [`one_of!`](crate::one_of).
     fn boxed_printable<'a>(self) -> BoxedPrintableGenerator<'a, T>
@@ -315,6 +388,22 @@ pub(crate) fn draw_and_print_value<T: Debug>(
     value
 }
 
+/// Draw a value `predicate` accepts from `generator` silently, through its
+/// [`do_draw_filtered`](Generator::do_draw_filtered), then print the
+/// accepted value's `Debug` representation. The shared implementation of
+/// [`do_draw_filtered_and_print`](PrintableGenerator::do_draw_filtered_and_print)
+/// for every generator that prints by value.
+pub(crate) fn draw_filtered_and_print_value<T: Debug>(
+    generator: &(impl Generator<T> + ?Sized),
+    tc: &TestCase,
+    predicate: &dyn Fn(&T) -> bool,
+    printer: &mut PrettyPrinter,
+) -> T {
+    let value = generator.do_draw_filtered(tc, predicate);
+    printer.debug(&value);
+    value
+}
+
 /// Result of [`Generator::print_with`].
 pub struct PrintedWith<G, F> {
     source: G,
@@ -333,6 +422,10 @@ where
     fn do_draw(&self, tc: &TestCase) -> T {
         self.source.do_draw(tc)
     }
+
+    fn do_draw_filtered(&self, tc: &TestCase, predicate: &dyn Fn(&T) -> bool) -> T {
+        self.source.do_draw_filtered(tc, predicate)
+    }
 }
 
 impl<T, G, F> PrintableGenerator<T> for PrintedWith<G, F>
@@ -342,6 +435,17 @@ where
 {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> T {
         let value = self.source.do_draw(tc);
+        (self.print)(&value, printer);
+        value
+    }
+
+    fn do_draw_filtered_and_print(
+        &self,
+        tc: &TestCase,
+        predicate: &dyn Fn(&T) -> bool,
+        printer: &mut PrettyPrinter,
+    ) -> T {
+        let value = self.source.do_draw_filtered(tc, predicate);
         (self.print)(&value, printer);
         value
     }
@@ -364,6 +468,10 @@ where
     fn do_draw(&self, tc: &TestCase) -> T {
         self.source.do_draw(tc)
     }
+
+    fn do_draw_filtered(&self, tc: &TestCase, predicate: &dyn Fn(&T) -> bool) -> T {
+        self.source.do_draw_filtered(tc, predicate)
+    }
 }
 
 impl<T, G> PrintableGenerator<T> for PrintedAsDebug<G>
@@ -374,9 +482,18 @@ where
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> T {
         draw_and_print_value(&self.source, tc, printer)
     }
+
+    fn do_draw_filtered_and_print(
+        &self,
+        tc: &TestCase,
+        predicate: &dyn Fn(&T) -> bool,
+        printer: &mut PrettyPrinter,
+    ) -> T {
+        draw_filtered_and_print_value(&self.source, tc, predicate, printer)
+    }
 }
 
-impl<T, G: Generator<T>> Generator<T> for &G {
+impl<T, G: Generator<T> + ?Sized> Generator<T> for &G {
     fn label(&self) -> u64 {
         (*self).label()
     }
@@ -384,11 +501,24 @@ impl<T, G: Generator<T>> Generator<T> for &G {
     fn do_draw(&self, tc: &TestCase) -> T {
         (*self).do_draw(tc)
     }
+
+    fn do_draw_filtered(&self, tc: &TestCase, predicate: &dyn Fn(&T) -> bool) -> T {
+        (*self).do_draw_filtered(tc, predicate)
+    }
 }
 
-impl<T, G: PrintableGenerator<T>> PrintableGenerator<T> for &G {
+impl<T, G: PrintableGenerator<T> + ?Sized> PrintableGenerator<T> for &G {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> T {
         (*self).do_draw_and_print(tc, printer)
+    }
+
+    fn do_draw_filtered_and_print(
+        &self,
+        tc: &TestCase,
+        predicate: &dyn Fn(&T) -> bool,
+        printer: &mut PrettyPrinter,
+    ) -> T {
+        (*self).do_draw_filtered_and_print(tc, predicate, printer)
     }
 }
 
@@ -566,40 +696,6 @@ pub struct Filtered<T, F, G> {
     _phantom: PhantomData<fn() -> T>,
 }
 
-impl<T, F, G> Filtered<T, F, G>
-where
-    F: Fn(&T) -> bool + Send + Sync,
-{
-    /// The one filtering loop both draw paths run: each attempt draws
-    /// inside a speculative print region, so a rejected attempt discards
-    /// whatever the injected `draw` printed — only the accepted value's
-    /// representation survives — and inside a span of its own, closed as
-    /// discarded when the attempt is rejected so the shrinker can remove
-    /// it. The silent path passes the no-op printer and a print-free
-    /// `draw`.
-    fn draw_filtered(
-        &self,
-        tc: &TestCase,
-        printer: &mut PrettyPrinter,
-        draw: impl Fn(&G, &TestCase, &mut PrettyPrinter) -> T,
-    ) -> T {
-        for _ in 0..3 {
-            tc.start_span(FILTER_ATTEMPT_LABEL);
-            let mut speculation = printer.speculate();
-            let value = draw(&self.source, tc, speculation.printer());
-            if (self.predicate)(&value) {
-                speculation.commit();
-                tc.stop_span(false);
-                return value;
-            }
-            speculation.abort();
-            tc.stop_span(true);
-        }
-        tc.assume(false);
-        unreachable!()
-    }
-}
-
 impl<T, F, G> Generator<T> for Filtered<T, F, G>
 where
     G: Generator<T>,
@@ -610,9 +706,15 @@ where
     }
 
     fn do_draw(&self, tc: &TestCase) -> T {
-        self.draw_filtered(tc, &mut PrettyPrinter::noop(), |source, tc, _| {
-            tc.draw_silent(source)
-        })
+        self.source.do_draw_filtered(tc, &self.predicate)
+    }
+
+    /// A filter of a filter is one filtered draw of the source with both
+    /// predicates, so the chain costs one round of attempts and a source
+    /// that runs its own attempts sees every predicate at once.
+    fn do_draw_filtered(&self, tc: &TestCase, predicate: &dyn Fn(&T) -> bool) -> T {
+        self.source
+            .do_draw_filtered(tc, &|value| (self.predicate)(value) && predicate(value))
     }
 }
 
@@ -622,9 +724,21 @@ where
     F: Fn(&T) -> bool + Send + Sync,
 {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> T {
-        self.draw_filtered(tc, printer, |source, tc, printer| {
-            tc.draw_and_print(source, printer)
-        })
+        self.source
+            .do_draw_filtered_and_print(tc, &self.predicate, printer)
+    }
+
+    fn do_draw_filtered_and_print(
+        &self,
+        tc: &TestCase,
+        predicate: &dyn Fn(&T) -> bool,
+        printer: &mut PrettyPrinter,
+    ) -> T {
+        self.source.do_draw_filtered_and_print(
+            tc,
+            &|value| (self.predicate)(value) && predicate(value),
+            printer,
+        )
     }
 }
 
@@ -650,6 +764,10 @@ impl<T> Generator<T> for BoxedGenerator<'_, T> {
         self.inner.do_draw(tc)
     }
 
+    fn do_draw_filtered(&self, tc: &TestCase, predicate: &dyn Fn(&T) -> bool) -> T {
+        self.inner.do_draw_filtered(tc, predicate)
+    }
+
     fn boxed<'b>(self) -> BoxedGenerator<'b, T>
     where
         Self: Sized + Send + Sync + 'b,
@@ -665,6 +783,15 @@ impl<T> Generator<T> for BoxedGenerator<'_, T> {
 impl<T: Debug> PrintableGenerator<T> for BoxedGenerator<'_, T> {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> T {
         draw_and_print_value(self, tc, printer)
+    }
+
+    fn do_draw_filtered_and_print(
+        &self,
+        tc: &TestCase,
+        predicate: &dyn Fn(&T) -> bool,
+        printer: &mut PrettyPrinter,
+    ) -> T {
+        draw_filtered_and_print_value(self, tc, predicate, printer)
     }
 }
 
@@ -691,11 +818,25 @@ impl<T> Generator<T> for BoxedPrintableGenerator<'_, T> {
     fn do_draw(&self, tc: &TestCase) -> T {
         self.inner.do_draw(tc)
     }
+
+    fn do_draw_filtered(&self, tc: &TestCase, predicate: &dyn Fn(&T) -> bool) -> T {
+        self.inner.do_draw_filtered(tc, predicate)
+    }
 }
 
 impl<T> PrintableGenerator<T> for BoxedPrintableGenerator<'_, T> {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> T {
         self.inner.do_draw_and_print(tc, printer)
+    }
+
+    fn do_draw_filtered_and_print(
+        &self,
+        tc: &TestCase,
+        predicate: &dyn Fn(&T) -> bool,
+        printer: &mut PrettyPrinter,
+    ) -> T {
+        self.inner
+            .do_draw_filtered_and_print(tc, predicate, printer)
     }
 
     fn boxed_printable<'b>(self) -> BoxedPrintableGenerator<'b, T>

@@ -10,6 +10,7 @@ use common::utils::printed_draw_lines;
 use std::sync::{Arc, Mutex};
 
 use hegel::generators::{self as gs, Generator};
+use hegel::stateful::{ConcurrentPool, Pool, concurrent_pool, pool};
 use hegel::{Hegel, PrintableGenerator, Settings, Verbosity};
 
 /// Run a failing property and capture the final replay's draw/note lines.
@@ -203,6 +204,57 @@ fn filtered_draws_print_only_the_accepted_value() {
         panic!("boom");
     });
     assert_eq!(lines, vec!["let draw_1 = 1;"]);
+}
+
+#[test]
+fn filtered_pool_draws_print_only_the_accepted_value() {
+    let lines = failing_lines(|tc| {
+        let mut numbers: Pool<i32> = pool(&tc);
+        for i in 0..4 {
+            numbers.add(i);
+        }
+        let _ = tc.draw(numbers.values_consumed().filter(|x| *x >= 2));
+        let _ = tc.draw(
+            numbers
+                .values_consumed()
+                .print_with(|value, printer| printer.text(&format!("<{value}>")))
+                .filter(|x| *x >= 0),
+        );
+        {
+            let consumed = numbers.values_consumed();
+            let _ = tc.draw((&consumed).filter(|x| *x >= 0));
+        }
+        let shared: ConcurrentPool<i32> = concurrent_pool(&tc);
+        for i in 0..4 {
+            shared.add(&tc, i);
+        }
+        let _ = tc.draw(
+            shared
+                .values_consumed()
+                .filter(|x| *x >= 2)
+                .filter(|x| *x >= 0),
+        );
+        let _ = tc.draw(shared.values_consumed().boxed().filter(|x| *x >= 0));
+        let _ = tc.draw(
+            shared
+                .values_consumed()
+                .boxed_printable()
+                .boxed_printable()
+                .filter(|x| *x >= 0),
+        );
+        panic!("boom");
+    });
+    assert_eq!(
+        lines,
+        vec![
+            "let draw_1 = 2;",
+            "let draw_2 = <0>;",
+            "let draw_3 = 1;",
+            "let draw_4 = 2;",
+            "let draw_5 = 0;",
+            "let draw_6 = 1;",
+        ]
+    );
 }
 
 #[test]

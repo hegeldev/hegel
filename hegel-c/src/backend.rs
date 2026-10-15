@@ -303,12 +303,22 @@ pub trait DataSource: Send + Sync {
     /// Draw a variable id from the pool, with the choice drawn from this
     /// stream and recorded as the chosen id itself rather than as an index
     /// into the pool. If `consume` is true, the variable is removed from
-    /// the pool.
+    /// the pool until [`Self::pool_restore`] puts it back.
     fn pool_generate(
         &self,
         pool: &mut NativeVariables,
         consume: bool,
     ) -> Result<i64, DataSourceError>;
+
+    /// Put back `variable_id`, which a consuming [`Self::pool_generate`]
+    /// removed from the pool, making it drawable again. Fails with
+    /// [`DataSourceError::InvalidArgument`] when it is not a consumed
+    /// variable of the pool.
+    fn pool_restore(
+        &self,
+        pool: &mut NativeVariables,
+        variable_id: i64,
+    ) -> Result<(), DataSourceError>;
 
     /// Record a targeting observation for the current test case.
     ///
