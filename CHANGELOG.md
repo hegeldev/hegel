@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.49.11 - 2026-10-15
+
+This patch makes `tc.target()` steer generation from early in a large run instead of only from halfway through its budget, so a test with `test_cases` of 1,000 or more whose failure targeting leads to is found within a few hundred cases rather than after thousands.
+
 ## 0.49.10 - 2026-10-15
 
 This patch stops `#[hegel::reproduce_failure]` reporting a failure its blob did not record. A blob replayed against a test whose draws have changed since it was recorded is no longer continued past the change with fresh draws: such a replay does not reproduce, the attribute panics as for any blob that did not reproduce, and the engine's output names where the test's draws left the recording.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.45.10 - 2026-10-15
+
+This patch makes targeting start much earlier in large runs. Previously the first hill-climbing pass over `hegel_target` scores began only after half of the run's test cases, so a failure that targeting leads to with `test_cases = 10000` was found around case 5,000. Runs of 1,000 test cases or more now start optimising after a short random warm-up and interleave targeting passes with random generation on a fair-share schedule, with a pass firing early whenever random generation raises a best score, so such failures are found within a few hundred cases; smaller runs keep their single pass halfway through.
+
 ## 0.45.9 - 2026-10-15
 
 This patch fixes `hegel_run_start_blob` replaying a reproduce blob against a test whose draws have changed. A replay that left the recorded choices (a draw whose kind or bounds no longer fit the recorded choice, or a draw past the end of the recording) used to be continued with fresh draws, so a failure the changed test happened to reach on that input was reported as the blob's failure. A replay now stops at such a divergence and counts as a miss, like a replay that passed, and the next attempt is still made, since a nondeterministic test may draw differently each time. A blob none of whose replays reproduced reports no failure, and one output line names the position, and stream, at which the test's draws left the recording. Database reuse, the report-time final replay, and `hegel_test_case_from_blob` are unchanged.
