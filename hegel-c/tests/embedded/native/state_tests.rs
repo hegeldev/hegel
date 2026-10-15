@@ -1,6 +1,7 @@
 use super::float_sample::*;
 use super::*;
 use crate::native::HashSet;
+use crate::native::bignum::{BigUint, ToPrimitive};
 use crate::native::core::BUFFER_SIZE;
 use crate::native::core::GenerationParameters;
 use crate::native::core::choices::{BooleanChoice, ChoiceKind};
@@ -1317,6 +1318,101 @@ fn integer_sample_from_distribution_uniform_fallback_for_indistinguishable_bound
         !all_endpoints,
         "uniform fallback should produce values across the range"
     );
+}
+
+/// Beyond `i128` the middle spreads over the range's orders of magnitude
+/// like the narrow-range distribution does: over `[0, 10^100]` most values
+/// are small while every order stays reachable, so values above `10^25`
+/// are a minority rather than the two thirds a uniform draw gives. The
+/// windows sit far from the rates observed over many seeds (about 5% above
+/// `10^25`, over 90% within a `u64`) and from a uniform middle's, whose
+/// every ordinary value is above `10^25` and outside a `u64`.
+#[test]
+fn biased_integer_sample_beyond_i128_favours_small_magnitudes() {
+    let kind = IntegerChoice::new(
+        BigInt::from(0),
+        BigInt::from(BigUint::from(10u32).pow(100)),
+        BigInt::from(0),
+    );
+    let huge = BigInt::from(BigUint::from(10u32).pow(25));
+    let mut rng = EngineRng::seeded(24);
+    let mut above_huge = 0;
+    let mut below_u64 = 0;
+    let mut widths = alloc::collections::BTreeSet::new();
+    for _ in 0..1000 {
+        let params = GenerationParameters::draw(&mut rng).unwrap().integer;
+        let v = biased_integer_sample(&kind, &mut rng, params).unwrap();
+        assert!(kind.validate(&v), "out of range: {v:?}");
+        if v > huge {
+            above_huge += 1;
+        }
+        if v.to_u64().is_some() {
+            below_u64 += 1;
+        }
+        widths.insert(v.bits() / 32);
+    }
+    assert!(
+        (10..=200).contains(&above_huge),
+        "{above_huge} of 1000 above 10^25"
+    );
+    assert!(below_u64 > 700, "{below_u64} of 1000 fit a u64");
+    assert!(
+        widths.len() >= 4 && widths.iter().max() >= Some(&8),
+        "widths seen (in 32-bit steps): {widths:?}"
+    );
+}
+
+/// The shaped middle stays in range for a narrow span far beyond `i128`,
+/// where the distribution restricted to the span leaves only a few widths,
+/// reaching every value of the span; and for a span of thousands of bits,
+/// past what an `f64` magnitude can express.
+#[test]
+fn biased_integer_sample_beyond_i128_narrow_and_huge_spans_stay_in_range() {
+    let base = BigInt::from(BigUint::from(2u32).pow(200));
+    let narrow = IntegerChoice::new(base.clone(), &base + BigInt::from(10), BigInt::from(0));
+    let huge = IntegerChoice::new(
+        BigInt::from(0),
+        BigInt::from(BigUint::from(2u32).pow(2000)),
+        BigInt::from(0),
+    );
+    let mut rng = EngineRng::seeded(25);
+    let mut narrow_seen = HashSet::default();
+    for _ in 0..500 {
+        let params = GenerationParameters::draw(&mut rng).unwrap().integer;
+        let v = biased_integer_sample(&narrow, &mut rng, params).unwrap();
+        assert!(narrow.validate(&v), "out of range: {v:?}");
+        narrow_seen.insert(v - &base);
+        let v = biased_integer_sample(&huge, &mut rng, params).unwrap();
+        assert!(huge.validate(&v), "out of range: {v:?}");
+    }
+    assert_eq!(
+        narrow_seen.len(),
+        11,
+        "narrow span values seen: {narrow_seen:?}"
+    );
+}
+
+/// The bytes sampler's boundary draws cover each of its slots: the simplest
+/// value, the single zero byte a zero `min_size` adds, and the single `0xff`
+/// byte a `min_size` of at most one adds, each roughly one draw in a hundred.
+#[test]
+fn biased_bytes_sample_draws_each_boundary_value() {
+    let bc = crate::native::core::choices::BytesChoice {
+        min_size: 0,
+        max_size: 4,
+    };
+    let mut rng = EngineRng::seeded(27);
+    let mut seen = HashSet::default();
+    for _ in 0..2000 {
+        let v = biased_bytes_sample(&bc, &mut rng).unwrap();
+        assert!(v.len() <= 4, "{v:?} is longer than max_size");
+        if v.len() <= 1 {
+            seen.insert(v);
+        }
+    }
+    for boundary in [vec![], vec![0u8], vec![0xffu8]] {
+        assert!(seen.contains(&boundary), "{boundary:?} never drawn");
+    }
 }
 
 /// A `BigInt` choice with `min == max` beyond i128 collapses to that single
@@ -3764,4 +3860,34 @@ fn a_string_drawn_from_the_rng_replays_though_its_check_would_reject_it() {
         .unwrap();
     assert_eq!(drawn, "ab");
     assert!(kind.validate(&ab));
+}
+
+/// The shaped draw restricts the magnitude distribution to the span, so a
+/// span just past a power of two gives its full width (two values here, of
+/// the `2^k` below it) only the sliver of magnitudes that fit, with no pile
+/// at the top of the span and every narrower width still reached.
+#[test]
+fn shaped_sample_over_a_span_just_past_a_power_of_two_does_not_pile_up_there() {
+    let mut rng = EngineRng::seeded(26);
+    for k in [8u32, 16, 64, 200, 1100] {
+        let span = BigUint::from(2u32).pow(k) + BigUint::from(1u32);
+        let mut full_width = 0;
+        let mut widths = alloc::collections::BTreeSet::new();
+        for _ in 0..4000 {
+            let v = sample_biguint_shaped(&span, &mut rng).unwrap();
+            assert!(v <= span, "2^{k} + 1: {v:?} out of range");
+            if v.bits() > u64::from(k) {
+                full_width += 1;
+            }
+            widths.insert(v.bits());
+        }
+        assert!(
+            full_width < 100,
+            "2^{k} + 1: {full_width} of 4000 full width"
+        );
+        assert!(
+            widths.len() >= 9.min(k as usize),
+            "2^{k} + 1: widths seen: {widths:?}"
+        );
+    }
 }

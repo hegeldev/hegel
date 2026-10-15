@@ -5,11 +5,12 @@
 //! [`crate::native::database::serialize_choices`] gives the exact key
 //! semantics the tree's `ChoiceValueKey` had (floats by bit pattern, clones
 //! by child values). The verdict tier holds a 128-bit digest of that key for
-//! every conclusion and is what duplicate detection and verdict-flip
-//! detection read; the full tier holds complete serving entries (status,
-//! origin, nodes, spans) so shrink-phase repeats are served without
-//! re-running the body, byte-bounded with oldest-first eviction. Overruns
-//! enter neither tier: a proposal that ran out of data concluded nothing.
+//! every conclusion; verdict-flip detection reads it, and so does span
+//! mutation, to skip a proposal that has already been executed. The full
+//! tier holds complete serving entries (status, origin, nodes, spans) so
+//! shrink-phase repeats are served without re-running the body,
+//! byte-bounded with oldest-first eviction. Overruns enter neither tier: a
+//! proposal that ran out of data concluded nothing.
 //!
 //! The kind ledger is the tree's generation-nondeterminism detector: for
 //! each value prefix it remembers the choice kind (constraints included)
@@ -175,6 +176,12 @@ impl ExecCache {
             }
         }
         recorded
+    }
+
+    /// Whether the serialized values `key` have been executed to a
+    /// conclusion before, whatever that conclusion was.
+    pub(crate) fn seen(&self, key: &[u8]) -> bool {
+        self.verdicts.contains_key(&Digest::of(key))
     }
 
     /// The full entry for `key`, if one survives: an exact repeat of an

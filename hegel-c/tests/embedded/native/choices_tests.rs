@@ -566,6 +566,12 @@ fn string_choice_unit_single_codepoint_alphabet_at_max_size_falls_back_to_simple
 }
 
 #[test]
+fn string_choice_unit_single_codepoint_alphabet_below_max_size_adds_a_repeat() {
+    let sc = string_choice(vec![(0x41, 0x41)], 1, 3);
+    assert_eq!(sc.unit().unwrap(), vec![0x41, 0x41]);
+}
+
+#[test]
 fn string_choice_unit_empty_fixed_length_falls_back_to_simplest() {
     let sc = string_choice(vec![(0, 100)], 0, 0);
     assert_eq!(sc.unit().unwrap(), Vec::<u32>::new());
