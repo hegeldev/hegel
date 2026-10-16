@@ -1,4 +1,4 @@
-"""Smoke-test an installed hegel distribution (run from outside the checkout).
+"""Smoke-test an installed hegeltest distribution (run from outside the checkout).
 
 Checks that the package imports from site-packages rather than the source
 tree, that the native extension loads, that the version matches Cargo.toml,
@@ -19,7 +19,7 @@ expected = re.search(r'^version = "([^"]+)"', cargo_toml.read_text(), re.MULTILI
 assert expected is not None
 
 assert "site-packages" in hegel.__file__, hegel.__file__
-assert hegel.__version__ == importlib.metadata.version("hegel") == expected.group(1), (
+assert hegel.__version__ == importlib.metadata.version("hegeltest") == expected.group(1), (
     hegel.__version__
 )
 assert importlib.resources.files("hegel").joinpath("py.typed").is_file()

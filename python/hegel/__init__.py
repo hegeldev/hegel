@@ -61,7 +61,7 @@ from hegel.stateful import (
 from hegel.test_case import Collection, TestCase
 
 try:
-    __version__ = _metadata.version("hegel")
+    __version__ = _metadata.version("hegeltest")
 except _metadata.PackageNotFoundError:  # nocov
     __version__ = "0+unknown"
 __all__ = [

@@ -23,8 +23,8 @@ Python's `re` or from Hypothesis is recorded in `docs/engine-issues.md`.
 
 ## Installation
 
-Hegel for Python needs Python 3.11 or later and, until wheels are published, a Rust
-toolchain:
+Hegel for Python is the `hegeltest` package, imported as `hegel`. It needs
+Python 3.11 or later and, until wheels are published, a Rust toolchain:
 
 ```
 pip install git+https://github.com/hegeldev/hegel-python

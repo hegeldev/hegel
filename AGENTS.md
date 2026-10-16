@@ -2,7 +2,8 @@
 
 Guidance for coding agents (and people) working in this repository.
 
-hegel-python is the Python binding of the Hegel property-based testing engine.
+hegel-python is the Python binding of the Hegel property-based testing engine,
+distributed as the `hegeltest` package and imported as `hegel`.
 The engine is libhegel, built from source from the `hegeltest-c` crate (pinned
 exactly in `Cargo.toml`) into a pyo3 extension module, `hegel._native`
 (`src/*.rs`). The Python package lives in `python/hegel/`, and

@@ -203,7 +203,7 @@ wheels = [
 ]
 
 [[package]]
-name = "hegel"
+name = "hegeltest"
 source = { editable = "." }
 
 [package.dev-dependencies]

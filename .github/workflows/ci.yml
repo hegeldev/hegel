@@ -48,10 +48,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -65,7 +68,11 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install just
         run: |
-          if [ "$RUNNER_OS" = "macOS" ]; then brew install just; else sudo apt-get update && sudo apt-get install -y just; fi
+          case "$RUNNER_OS" in
+            macOS) brew install just ;;
+            Windows) choco install just -y ;;
+            *) sudo apt-get update && sudo apt-get install -y just ;;
+          esac
       - name: Set up the environment
         run: just setup
       - name: Run the test suite with coverage
@@ -78,10 +85,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -97,22 +107,31 @@ jobs:
           uvx --from 'maturin>=1.7,<2.0' maturin build --release --out dist
           uvx --from 'maturin>=1.7,<2.0' maturin sdist --out dist
           ls -l dist
+      # A virtualenv keeps its interpreter under bin/ on POSIX and Scripts/
+      # on Windows.
+      - name: Locate the virtualenv interpreter
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "VENV_PYTHON=Scripts/python.exe" >> "$GITHUB_ENV"
+          else
+            echo "VENV_PYTHON=bin/python" >> "$GITHUB_ENV"
+          fi
       - name: Install the wheel into a fresh virtualenv
         run: |
           uv venv "$RUNNER_TEMP/wheel-venv"
-          uv pip install --python "$RUNNER_TEMP/wheel-venv/bin/python" dist/*.whl
+          uv pip install --python "$RUNNER_TEMP/wheel-venv/$VENV_PYTHON" dist/*.whl
       - name: Import the installed wheel
         working-directory: ${{ runner.temp }}
         run: |
-          "$RUNNER_TEMP/wheel-venv/bin/python" "$GITHUB_WORKSPACE/.github/scripts/check_installed.py"
+          "$RUNNER_TEMP/wheel-venv/$VENV_PYTHON" "$GITHUB_WORKSPACE/.github/scripts/check_installed.py"
       - name: Build and install the sdist into a fresh virtualenv
         run: |
           uv venv "$RUNNER_TEMP/sdist-venv"
-          uv pip install --python "$RUNNER_TEMP/sdist-venv/bin/python" dist/*.tar.gz
+          uv pip install --python "$RUNNER_TEMP/sdist-venv/$VENV_PYTHON" dist/*.tar.gz
       - name: Import the package built from the sdist
         working-directory: ${{ runner.temp }}
         run: |
-          "$RUNNER_TEMP/sdist-venv/bin/python" "$GITHUB_WORKSPACE/.github/scripts/check_installed.py"
+          "$RUNNER_TEMP/sdist-venv/$VENV_PYTHON" "$GITHUB_WORKSPACE/.github/scripts/check_installed.py"
 
   release:
     name: release
