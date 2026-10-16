@@ -33,6 +33,12 @@ than worked around in the bindings, so they can be fixed in the engine.
   how many steps to take, so Hypothesis's `_min_steps` is rejected with
   `InvalidArgument` rather than honoured.
 
+## Messages and reporting
+
+- The `Unsatisfiable` message does not name the test it is about, though the
+  engine is given the test's location; Hypothesis's names the function
+  (`tests/hypothesis_port/nocover/test_testdecorators.py`).
+
 ## Other
 
 - Recursive generators rarely reach some shapes: for `deferred` JSON-like

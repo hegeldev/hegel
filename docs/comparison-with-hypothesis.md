@@ -17,7 +17,7 @@ differently marked `xfail` and a note per file of what was dropped.
 | `data()` | the test case itself | Interactive draws are the normal way to draw. |
 | `@example(...)` | `@hegel.explicit_test_case(...)` | Positional values feed draws in order; keywords match draw names. |
 | `@reproduce_failure(version, blob)` | `@hegel.reproduce_failure(blob)` | The blob is Hegel's, printed when `print_blob` is on. |
-| `@settings(...)`, profiles | `@hegel.test(...)` keywords, `hegel.Settings` profiles | `max_examples` is `test_cases`, `report_multiple_bugs` is `report_multiple_failures`, `database=None` is `database=""`. Engine profiles `default`, `ci` and `workload` exist. |
+| `@settings(...)`, profiles | `@hegel.test(...)` keywords, `hegel.Settings` profiles | `max_examples` is `test_cases`, `report_multiple_bugs` is `report_multiple_failures`, `database=None` is `database=""`. Engine profiles `development`, `ci` and `workload` exist. |
 | `RuleBasedStateMachine`, `Bundle` | `hegel.StateMachine`, `hegel.Machine`, `hegel.Pool` | Rules take the test case and draw their own arguments; a precondition is `tc.assume` at the top of a rule. |
 | `find(strategy, condition)` | none; write a test | A test whose failure is finding the value gets it shrunk. |
 | `dictionaries`, `fixed_dictionaries` | `dicts`, `fixed_dicts` | |
@@ -103,14 +103,14 @@ differently marked `xfail` and a note per file of what was dropped.
 - Reproduce blobs are opaque engine blobs, printed as
   `@hegel.reproduce_failure("...")`. No `@seed(...)` hint is printed, and no
   `Highest target score` line.
-- `target()` steers generation, but the engine only starts targeting halfway
-  through the run's budget, so a target-driven failure takes more test cases
-  to find than in Hypothesis (see `docs/engine-issues.md`).
+- `target()` steers generation, but the engine begins targeting only after a
+  warm-up (a short one in runs of a thousand cases or more), so a
+  target-driven failure can take more test cases to find than in Hypothesis.
 - By default a failure that does not reproduce on replay is confirmed by
   repeated replay and reported with a caveat, rather than aborting the run
   as `Flaky`; non-deterministic data generation is reported as a run error.
   A failure that reproduces only once is dropped once another failure is
-  confirmed (see `docs/engine-issues.md`).
+  confirmed.
 - A finite search space is not detected as exhausted early; the engine runs
   up to `test_cases` and does not suppress duplicate inputs. There is no
   shrinking time limit.
@@ -122,23 +122,23 @@ differently marked `xfail` and a note per file of what was dropped.
 - A skipped test ends the run before anything is saved to the database.
 - Generator arguments are validated when the generator is built, not when
   the test runs.
-- `sets(sampled_from(...), min_size=n)` and the keys of a `dicts` do not
-  sample without replacement.
 - `datetimes()` and `times()` never set `fold`, and there is no targeting of
   DST folds, gaps or leap seconds.
-- `from_regex` depends on the engine's regex generator; see
-  `docs/engine-issues.md` for where it departs from Python's `re`. Patterns
-  that can match nothing, and character classes with nothing in the
-  alphabet, are not reported up front.
-- Deeply self-referential `recursive(deferred(...))` generators hit Python's
-  recursion limit.
-- A test whose every input is rejected fails the `FilterTooMuch` health
-  check (or passes quietly when that check is suppressed) rather than
-  raising `Unsatisfiable`.
+- `from_regex` depends on the engine's regex generator rather than Python's
+  `re`; see `docs/engine-issues.md` for where it departs from it. A pattern
+  that can match nothing over its alphabet is rejected when the generator is
+  built, as in Hypothesis, but with Hegel's wording.
+- A `deferred` definition that only refers back to itself rejects the test
+  case once its draws nest 64 deep (so a test drawing nothing else is
+  `Unsatisfiable`), where Hypothesis detects the empty strategy up front.
+- A test whose every input is rejected fails the `filter_too_much` health
+  check, where Hypothesis raises `Unsatisfiable` once it detects that a
+  finite space is exhausted; with that check suppressed, Hegel raises
+  `Unsatisfiable` too.
 - `Pool.values_consumed()` removes a value from the pool as soon as it is
-  drawn, so a rule rejected by `tc.assume` afterwards, or a `.filter` on the
-  consumed values, loses values that a Hypothesis `consumes(bundle)` would
-  keep.
+  drawn, so a rule rejected by `tc.assume` after drawing one loses it, where
+  a Hypothesis `consumes(bundle)` would keep it. A `.filter` on the consumed
+  values consumes only the value it yields.
 
 ## Output format
 

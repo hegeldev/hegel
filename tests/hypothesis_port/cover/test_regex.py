@@ -324,10 +324,17 @@ def test_positive_lookahead():
 
 def test_negative_lookbehind():
     # no efficient support
-    strategy = gs.from_regex("[abc]*(?<!abc)d", fullmatch=False)
+    pattern = "[abc]*(?<!abc)d"
+    strategy = gs.from_regex(pattern, fullmatch=False)
 
-    assert_all_examples(strategy, lambda s: not s.endswith("abcd"))
-    assert_no_examples(strategy, lambda s: s.endswith("abcd"))
+    # Without fullmatch the string is padded around the match, and Hegel's
+    # padding can end in "abcd" ('dabcd' matches at its first character), so
+    # the lookbehind is checked on the match itself.
+    def match(s):
+        return re.search(pattern, s).group()
+
+    assert_all_examples(strategy, lambda s: not match(s).endswith("abcd"))
+    assert_no_examples(strategy, lambda s: match(s).endswith("abcd"))
 
 
 def test_negative_lookahead():
@@ -518,13 +525,9 @@ def test_can_pass_collections_for_alphabet(alphabet):
         ("[a-z]", "0"),
     ],
 )
-@pytest.mark.xfail(
-    strict=True,
-    reason="Engine: libhegel doesn't report a character class with no characters in the "
-    "alphabet (docs/engine-issues.md)",
-)
 def test_charsets_which_match_nothing_in_the_alphabet(pattern, alphabet):
-    with pytest.raises(InvalidArgument, match="specified alphabet"):
+    # Hypothesis's message says "specified alphabet"; Hegel's names the alphabet.
+    with pytest.raises(InvalidArgument, match="matches no string over the alphabet"):
         check_can_generate_examples(gs.from_regex(pattern, fullmatch=False, alphabet=alphabet))
 
 

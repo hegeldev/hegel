@@ -41,12 +41,16 @@ hegel = "hegel.pytest_plugin"
 python-source = "python"
 module-name = "hegel._native"
 features = ["pyo3/extension-module"]
-# Repository tooling that has no business in the source distribution. The
-# .cargo config only points cargo at the dev virtualenv; maturin sets
-# PYO3_PYTHON itself when building.
+# Repository tooling and bookkeeping that have no business in the source
+# distribution. The .cargo config only points cargo at the dev virtualenv;
+# maturin sets PYO3_PYTHON itself when building.
 exclude = [
   { path = ".github/**", format = "sdist" },
   { path = ".cargo/**", format = "sdist" },
+  { path = ".gitignore", format = "sdist" },
+  { path = ".python-version", format = "sdist" },
+  { path = "RELEASE.md", format = "sdist" },
+  { path = "RELEASE-sample.md", format = "sdist" },
 ]
 
 [dependency-groups]

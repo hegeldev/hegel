@@ -20,8 +20,7 @@ from hegel import generators as gs
 
 @pytest.mark.xfail(
     strict=True,
-    reason="engine: with the health checks suppressed, a run whose every case is "
-    "rejected ends quietly as passed instead of raising Unsatisfiable",
+    reason="engine: the Unsatisfiable message does not name the test function",
 )
 def test_contains_the_test_function_name_in_the_exception_string():
     look_for_one = hegel.Settings(test_cases=1, suppress_health_check=hegel.HealthCheck.all())

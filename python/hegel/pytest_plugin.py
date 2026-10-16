@@ -63,11 +63,15 @@ _OPTIONS = {
 def pytest_configure(config: Any) -> None:
     config.addinivalue_line("markers", "hegel: a Hegel property-based test")
     profile = config.getoption("--hegel-profile")
-    overrides = {
-        field: convert(value)
-        for field, (option, convert) in _OPTIONS.items()
-        if (value := config.getoption(option)) is not None
-    }
+    overrides = {}
+    for field, (option, convert) in _OPTIONS.items():
+        value = config.getoption(option)
+        if value is None:
+            continue
+        try:
+            overrides[field] = convert(value)
+        except ValueError:
+            raise pytest.UsageError(f"{option}={value!r} must be an integer") from None
     if profile is None and not overrides:
         return
     from hegel.settings import Settings

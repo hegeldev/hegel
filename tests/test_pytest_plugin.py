@@ -67,3 +67,10 @@ hegel.Settings.register_profile("mine", test_cases=7)
     result = pytester.runpytest("-s", "-k", "profile_seed", "--hegel-database=")
     result.assert_outcomes(passed=1)
     result.stdout.fnmatch_lines(["*DATABASE ''*"])
+
+
+def test_plugin_rejects_a_non_integer_seed(pytester: pytest.Pytester):
+    pytester.makepyfile(TEST_FILE)
+    result = pytester.runpytest("--hegel-seed=abc")
+    assert result.ret == pytest.ExitCode.USAGE_ERROR
+    result.stderr.fnmatch_lines(["*--hegel-seed='abc' must be an integer*"])

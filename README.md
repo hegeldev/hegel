@@ -1,9 +1,19 @@
+> [!IMPORTANT]
+> We're excited you're checking out Hegel! Hegel is in beta, and we'd love for you to try it and [report any feedback](https://github.com/hegeldev/hegel-python/issues/new).
+>
+> As part of our beta, we may make breaking changes if it makes Hegel a better property-based testing library. If that instability bothers you, please check back in a few months for a stable release!
+>
+> See https://hegel.dev/compatibility for more details.
+
 # Hegel for Python
 
-Property-based testing for Python, built on the [Hegel](https://github.com/hegeldev)
-engine (`libhegel`). The engine generates inputs, shrinks failures, keeps an example
-database and prints the failing test case; this package binds it to Python through
-a [pyo3](https://pyo3.rs) extension module and provides the test-writing API.
+* [Website](https://hegel.dev)
+
+Property-based testing for Python, built on the
+[Hegel](https://github.com/hegeldev/hegel-rust) engine (`libhegel`). The engine
+generates inputs, shrinks failures, keeps an example database and prints the
+failing test case; this package binds it to Python through a
+[pyo3](https://pyo3.rs) extension module and provides the test-writing API.
 
 The API is the Hegel API, shared in shape with the Rust, Go and TypeScript
 bindings: tests take a `TestCase` and draw values from generators. How it

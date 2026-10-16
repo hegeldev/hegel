@@ -70,6 +70,8 @@ It also fixes the bugs that porting that suite turned up:
   failure. Failures are distinguished by their cause chain and, for groups,
   their members, so the same `raise` reached through different underlying
   errors reports distinct bugs.
+- A non-integer `--hegel-seed` is reported by pytest as a usage error rather
+  than an internal error.
 - Explicit test cases are reported in verbose output like generated ones,
   and with `report_multiple_failures=True` every explicit case runs and all
   distinct failures are reported together; an engine error after an
