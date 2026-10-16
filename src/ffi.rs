@@ -25,9 +25,9 @@ use crate::runner::{
 };
 use crate::test_case::OutputSink;
 use hegel_c::hegel_result_t;
-use std::ffi::{CStr, CString, c_void};
+use std::ffi::c_void;
 use std::os::raw::c_char;
-use std::path::PathBuf;
+use std::path::Path;
 use std::ptr;
 
 /// Owns a `*mut HegelContext` — libhegel's explicit per-call error channel —
@@ -121,13 +121,6 @@ fn view(bytes: &[u8]) -> hegel_c::hegel_string_t {
         },
         len: bytes.len(),
     }
-}
-
-/// Build a NUL-terminated C string, replacing any interior NUL (which a
-/// `CString` cannot represent) with the Unicode replacement character so the
-/// value still round-trips to a diagnostic rather than being dropped.
-fn cstring_lossy(s: &str) -> CString {
-    CString::new(s).unwrap_or_else(|_| CString::new(s.replace('\0', "\u{FFFD}")).unwrap())
 }
 
 /// Convert an engine-produced string buffer into an owned `String`, raising
@@ -1509,52 +1502,84 @@ impl std::fmt::Debug for Grammar {
     }
 }
 
-/// The state behind the import callback handed to `hegel_grammar_new`: the
-/// directories to search, and every grammar file read so far, kept alive so
-/// the pointers handed to the engine stay valid until construction returns.
-struct GrammarImports<'a> {
-    dirs: &'a [PathBuf],
-    loaded: Vec<(CString, String)>,
+/// An owned grammar builder handle (`hegel_grammar_builder_t`), freed on
+/// drop.
+struct GrammarBuilder {
+    raw: *mut hegel_c::HegelGrammarBuilder,
 }
 
-/// Resolve an `%import` for the engine, as Lark does: the import
-/// directories in order, then the directory of the importing grammar for a
-/// relative import (`base_path`, `NULL` for the grammar text itself). The
-/// path reported back keeps the directory exactly as given, so the engine
-/// can recover it for the imported file's own relative imports.
-unsafe extern "C" fn load_grammar_import(
-    user_data: *mut c_void,
-    base_path: *const c_char,
-    grammar_path: *const c_char,
-    out_path: *mut *const c_char,
-    out_text: *mut *const c_char,
-    out_text_len: *mut usize,
-) -> bool {
-    // SAFETY: `hegel_grammar_new` calls this only while the `GrammarImports`
-    // that `Grammar::new` passed as `user_data` is alive, and the two C
-    // strings are valid for the duration of the call.
-    let imports = unsafe { &mut *user_data.cast::<GrammarImports<'_>>() };
-    let grammar_path = unsafe { CStr::from_ptr(grammar_path) }.to_string_lossy();
-    let base = unsafe { base_path.as_ref() }
-        .map(|p| unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned());
-    let dirs = imports.dirs.iter().cloned().chain(base.map(PathBuf::from));
-    for dir in dirs {
-        let joined = dir.join(&*grammar_path);
-        let Ok(text) = std::fs::read_to_string(&joined) else {
-            continue;
-        };
-        imports
-            .loaded
-            .push((cstring_lossy(&joined.to_string_lossy()), text));
-        let (path, text) = imports.loaded.last().unwrap();
-        unsafe {
-            *out_path = path.as_ptr();
-            *out_text = text.as_ptr().cast::<c_char>();
-            *out_text_len = text.len();
+impl GrammarBuilder {
+    /// A builder for `text` with every file it imports read from `dir`,
+    /// or reported missing when `dir` has no such file (or is `None`).
+    fn new(text: &str, dir: Option<&Path>) -> Result<Self, String> {
+        let mut raw: *mut hegel_c::HegelGrammarBuilder = ptr::null_mut();
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_grammar_builder_new(ctx, view(text.as_bytes()), &mut raw)
+        });
+        if rc != hegel_result_t::HEGEL_OK {
+            return Err(last_error_string());
         }
-        return true;
+        let builder = GrammarBuilder { raw };
+        let mut index = 0;
+        while let Some(path) = builder.file(index) {
+            let text = match dir {
+                Some(dir) => read_grammar_file(&dir.join(&path))?,
+                None => None,
+            };
+            let text = text.as_ref().map(|t| view(t.as_bytes()));
+            let rc = with_context(|ctx| unsafe {
+                hegel_c::hegel_grammar_builder_provide(
+                    ctx,
+                    builder.raw,
+                    index,
+                    text.as_ref().map_or(ptr::null(), std::ptr::from_ref),
+                )
+            });
+            if rc != hegel_result_t::HEGEL_OK {
+                return Err(last_error_string());
+            }
+            index += 1;
+        }
+        Ok(builder)
     }
-    false
+
+    /// The path of the `index`th file the grammar needs, or `None` past
+    /// the end of the list.
+    fn file(&self, index: usize) -> Option<String> {
+        let mut path = hegel_c::hegel_string_t::default();
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_grammar_builder_file(ctx, self.raw, index, &mut path)
+        });
+        if rc == hegel_result_t::HEGEL_E_NOT_FOUND {
+            return None;
+        }
+        require_ok(rc);
+        Some(string_opt(path).unwrap_or_default())
+    }
+}
+
+impl Drop for GrammarBuilder {
+    fn drop(&mut self) {
+        // SAFETY: `raw` came from `hegel_grammar_builder_new` and is freed
+        // exactly once.
+        free_on_drop(|ctx| unsafe { hegel_c::hegel_grammar_builder_free(ctx, self.raw) });
+    }
+}
+
+/// The text of the grammar file `file`, or `None` when there is none.
+fn read_grammar_file(file: &Path) -> Result<Option<String>, String> {
+    match std::fs::read_to_string(file) {
+        Ok(text) => Ok(Some(text)),
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(e) => Err(format!("Could not read grammar `{}`: {e}", file.display())),
+    }
 }
 
 impl Grammar {
@@ -1563,8 +1588,8 @@ impl Grammar {
     /// `max_depth` of `0` take the engine's defaults. `alphabet` constrains
     /// the characters of every terminal drawn from its pattern, `explicit`
     /// names the terminals whose values the caller splices in for their
-    /// [`placeholder`](Self::placeholder) markers, and `import_paths` are
-    /// the directories `%import`ed grammars are read from.
+    /// [`placeholder`](Self::placeholder) markers, and `import_dir` is the
+    /// directory `%import`ed grammars are read from.
     pub(crate) fn new(
         text: &str,
         start: Option<&str>,
@@ -1572,30 +1597,23 @@ impl Grammar {
         max_depth: u32,
         alphabet: Option<&StringGenerator>,
         explicit: &[String],
-        import_paths: &[PathBuf],
+        import_dir: Option<&Path>,
     ) -> Result<Self, String> {
+        let builder = GrammarBuilder::new(text, import_dir)?;
+        let c_start = start.map(|s| view(s.as_bytes()));
         let name_ptrs: Vec<hegel_c::hegel_string_t> =
             explicit.iter().map(|name| view(name.as_bytes())).collect();
-        let mut imports = GrammarImports {
-            dirs: import_paths,
-            loaded: Vec::new(),
-        };
         let mut raw: *mut hegel_c::HegelGrammar = ptr::null_mut();
         let rc = with_context(|ctx| unsafe {
             hegel_c::hegel_grammar_new(
                 ctx,
-                view(text.as_bytes()),
-                start
-                    .map(|s| view(s.as_bytes()))
-                    .as_ref()
-                    .map_or(ptr::null(), |s| s),
+                builder.raw,
+                c_start.as_ref().map_or(ptr::null(), std::ptr::from_ref),
                 max_size,
                 max_depth,
                 alphabet.map_or(ptr::null(), |a| a.raw.cast_const()),
                 name_ptrs.as_ptr(),
                 explicit.len(),
-                Some(load_grammar_import),
-                (&raw mut imports).cast::<c_void>(),
                 &mut raw,
             )
         });

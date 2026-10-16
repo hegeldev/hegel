@@ -16,7 +16,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 #[cfg(target_family = "wasm")]
 use core::alloc::Layout;
-use core::ffi::{CStr, c_char, c_void};
+use core::ffi::{c_char, c_void};
 use core::future::Future;
 use core::pin::Pin;
 use core::ptr;
@@ -312,6 +312,10 @@ pub enum hegel_result_t {
     /// was mispriced and the engine has already discarded it: drop it and
     /// start again from the root directly.
     HEGEL_E_RETRY = -10,
+
+    /// There is nothing at the index asked for:
+    /// `hegel_grammar_builder_file` past the end of the list of files.
+    HEGEL_E_NOT_FOUND = -11,
 }
 
 use hegel_result_t::*;
@@ -4991,88 +4995,204 @@ pub unsafe extern "C" fn hegel_owned_string_free(
     HEGEL_OK
 }
 
-/// Import callback for `hegel_grammar_new`, asked for every `%import` that
-/// the grammar, or a grammar it imports, makes. `user_data` is the pointer
-/// supplied alongside the callback. `base_path` is the directory of the
-/// importing grammar (the `out_path` this callback gave for it, cut at its
-/// last `/` or `\`, so empty for a path with neither) for a relative
-/// import (`%import .common.INT`) made by a grammar this callback
-/// supplied, and NULL otherwise: for every absolute import
-/// (`%import common.INT`), and for a relative import made by the text
-/// passed to `hegel_grammar_new`. `grammar_path` is the file the import
-/// names relative to it (`common.lark` for `%import common.INT`,
-/// `a/b.lark` for `%import a.b.rule`). Both are NUL-terminated UTF-8
-/// valid only for the duration of the call. To supply the grammar, set
-/// `out_path` to the NUL-terminated path it was found at, `out_text` and
-/// `out_text_len` to its UTF-8 text (bytes that are not UTF-8 are read
-/// with each invalid sequence replaced by U+FFFD), all kept alive until
-/// `hegel_grammar_new` returns, and return true; return false when there
-/// is no such grammar (a true return that leaves `out_path` or `out_text`
-/// NULL counts as false), in which case the import, absolute or relative,
-/// still resolves against the grammars bundled with libhegel, as Lark's
-/// does: `common`, `lark`, `python` and `unicode`.
-#[allow(non_camel_case_types)]
-pub type hegel_grammar_import_t = Option<
-    unsafe extern "C" fn(
-        user_data: *mut c_void,
-        base_path: *const c_char,
-        grammar_path: *const c_char,
-        out_path: *mut *const c_char,
-        out_text: *mut *const c_char,
-        out_text_len: *mut usize,
-    ) -> bool,
->;
-
-/// A caller-supplied import callback paired with its `user_data` pointer.
-struct CallbackImports {
-    callback: unsafe extern "C" fn(
-        *mut c_void,
-        *const c_char,
-        *const c_char,
-        *mut *const c_char,
-        *mut *const c_char,
-        *mut usize,
-    ) -> bool,
-    user_data: *mut c_void,
+/// A grammar and its imported files, gathered before compilation.
+///
+/// Create with `hegel_grammar_builder_new`, then supply each requested file:
+///
+/// ```c
+/// for (size_t i = 0;; i++) {
+///     hegel_string_t path;
+///     if (hegel_grammar_builder_file(ctx, b, i, &path) == HEGEL_E_NOT_FOUND)
+///         break;
+///     hegel_grammar_builder_provide(ctx, b, i, &text);  // or NULL
+/// }
+/// ```
+///
+/// The list grows as files are provided. Once all are supplied, compile
+/// with `hegel_grammar_new` and free with `hegel_grammar_builder_free`.
+///
+/// Paths: a path is slash-separated and relative, and ends in `.lark`.
+/// `%import a.b.X` needs `a/b.lark`. A relative `%import .c.X` in
+/// `x/y.lark` needs `x/c.lark`. The root grammar sits at the top level.
+/// Every component of a path is a Lark name (`[_a-zA-Z][_a-zA-Z0-9]*`),
+/// excluding empty components, `.`, `..`, backslashes and NULs.
+///
+/// Each path is requested once. Cycles are errors, identified by file path.
+///
+/// The frontend serves one tree of files, with no search path. A missing
+/// file falls back to the bundled grammar at that path (`common.lark`,
+/// `lark.lark`, `python.lark` or `unicode.lark`) only when all imports of
+/// it are absolute. Relative imports require a frontend file.
+pub struct HegelGrammarBuilder {
+    files: crate::native::lark::builder::GrammarFiles,
+    /// The path of each file, borrowed by
+    /// `hegel_grammar_builder_file`.
+    paths: Vec<StoredString>,
 }
 
-impl crate::native::lark::builder::ImportSource for CallbackImports {
-    fn load(&self, base_path: Option<&str>, grammar_path: &str) -> Option<(String, String)> {
-        let base = base_path.map(cstring_lossy);
-        let path = cstring_lossy(grammar_path);
-        let mut out_path: *const c_char = ptr::null();
-        let mut out_text: *const c_char = ptr::null();
-        let mut out_text_len = 0usize;
-        // SAFETY: the two paths are NUL-terminated `CString`s alive across
-        // the call, and the out-pointers are to locals the callback writes.
-        let found = unsafe {
-            (self.callback)(
-                self.user_data,
-                base.as_ref().map_or(ptr::null(), |b| b.as_ptr()),
-                path.as_ptr(),
-                &mut out_path,
-                &mut out_text,
-                &mut out_text_len,
-            )
-        };
-        if !found || out_path.is_null() || out_text.is_null() {
-            return None;
+impl HegelGrammarBuilder {
+    fn sync_paths(&mut self) {
+        while let Some(path) = self.files.path(self.paths.len()) {
+            self.paths.push(path.to_string().into());
         }
-        // SAFETY: per the `hegel_grammar_import_t` contract, a callback that
-        // returned true set `out_path` to a NUL-terminated string and
-        // `out_text` to `out_text_len` bytes, both alive until
-        // `hegel_grammar_new` returns; they are copied out here.
-        let path = unsafe { CStr::from_ptr(out_path) }
-            .to_string_lossy()
-            .into_owned();
-        let text = unsafe { core::slice::from_raw_parts(out_text.cast::<u8>(), out_text_len) };
-        Some((path, String::from_utf8_lossy(text).into_owned()))
     }
+}
+
+/// Start gathering a grammar written in Lark's syntax (see
+/// <https://lark-parser.readthedocs.io/en/stable/grammar.html>) and the
+/// files its `%import`s need. See `hegel_grammar_builder_t`.
+///
+/// Parameters:
+/// `text`: The grammar, as a UTF-8 string.
+/// `out_builder`: Receives the builder handle.
+///
+/// Returns `HEGEL_OK`; `HEGEL_E_INVALID_ARG` for text that is not UTF-8,
+/// that does not parse, or whose imports nest too deeply.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_grammar_builder_new(
+    ctx: *mut HegelContext,
+    text: hegel_string_t,
+    out_builder: *mut *mut HegelGrammarBuilder,
+) -> hegel_result_t {
+    const FN: &str = "hegel_grammar_builder_new";
+    clear_last_error(ctx);
+    if out_builder.is_null() {
+        set_last_error(ctx, "hegel_grammar_builder_new: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    unsafe { *out_builder = ptr::null_mut() };
+    let text = match unsafe { required_utf8_arg(ctx, FN, "text", text) } {
+        Ok(text) => text,
+        Err(rc) => return rc,
+    };
+    match crate::native::lark::builder::GrammarFiles::new(text) {
+        Ok(files) => {
+            let mut builder = HegelGrammarBuilder {
+                files,
+                paths: Vec::new(),
+            };
+            builder.sync_paths();
+            unsafe { *out_builder = into_raw_send_sync(builder) };
+            HEGEL_OK
+        }
+        Err(e) => {
+            set_last_error(ctx, &e.message);
+            HEGEL_E_INVALID_ARG
+        }
+    }
+}
+
+/// The `index`th file the grammar needs, counting from 0.
+///
+/// Parameters:
+/// `builder`: The builder.
+/// `index`: Which file.
+/// `out_path`: Receives the file's path (see `hegel_grammar_builder_t`)
+///   as a borrowed string. The builder owns it, and it stays valid until
+///   the builder is freed.
+///
+/// Returns `HEGEL_OK`; `HEGEL_E_NOT_FOUND` when `index` is past the end of
+/// the list, which grows as files are provided; `HEGEL_E_INVALID_HANDLE`
+/// for a NULL builder; `HEGEL_E_INVALID_ARG` for a NULL out parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_grammar_builder_file(
+    ctx: *mut HegelContext,
+    builder: *const HegelGrammarBuilder,
+    index: usize,
+    out_path: *mut hegel_string_t,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    let Some(builder) = (unsafe { builder.as_ref() }) else {
+        set_last_error(ctx, "hegel_grammar_builder_file: builder handle is null");
+        return HEGEL_E_INVALID_HANDLE;
+    };
+    if out_path.is_null() {
+        set_last_error(ctx, "hegel_grammar_builder_file: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    let Some(path) = builder.paths.get(index) else {
+        return HEGEL_E_NOT_FOUND;
+    };
+    unsafe {
+        *out_path = path.string;
+    }
+    HEGEL_OK
+}
+
+/// Supply the `index`th file the grammar needs. The text is copied and
+/// parsed, and the files it imports that are not on the list yet join the
+/// end of it.
+///
+/// Parameters:
+/// `builder`: The builder.
+/// `index`: Which file, as numbered by `hegel_grammar_builder_file`.
+/// `text`: UTF-8 file contents, or NULL for a missing file (see
+///   `hegel_grammar_builder_t` for fallback rules). A pointer to an empty
+///   `hegel_string_t` represents an existing empty file.
+///
+/// Returns `HEGEL_OK`; `HEGEL_E_INVALID_HANDLE` for a NULL builder;
+/// `HEGEL_E_INVALID_ARG` for an `index` past the end of the list or of a
+/// file already provided, text that is not UTF-8 or does not parse,
+/// imports that nest too deeply, a NULL `text` for a path with no bundled
+/// grammar or that a relative import names, or text that relatively
+/// imports a file the bundled grammar already stood in for. On error the
+/// file stays unprovided.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_grammar_builder_provide(
+    ctx: *mut HegelContext,
+    builder: *mut HegelGrammarBuilder,
+    index: usize,
+    text: *const hegel_string_t,
+) -> hegel_result_t {
+    const FN: &str = "hegel_grammar_builder_provide";
+    clear_last_error(ctx);
+    let Some(builder) = (unsafe { builder.as_mut() }) else {
+        set_last_error(ctx, "hegel_grammar_builder_provide: builder handle is null");
+        return HEGEL_E_INVALID_HANDLE;
+    };
+    let text = match unsafe { optional_utf8_arg(ctx, FN, "text", text) } {
+        Ok(text) => text,
+        Err(rc) => return rc,
+    };
+    match builder.files.provide(index, text) {
+        Ok(()) => {
+            builder.sync_paths();
+            HEGEL_OK
+        }
+        Err(e) => {
+            set_last_error(ctx, &e.message);
+            HEGEL_E_INVALID_ARG
+        }
+    }
+}
+
+/// Parameters:
+/// `builder`: The builder to release. Safe to call with NULL.
+///
+/// Returns `HEGEL_OK`.
+///
+/// Each builder must be freed exactly once. The paths
+/// `hegel_grammar_builder_file` gave are invalid afterwards; grammars
+/// built from it are not affected.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_grammar_builder_free(
+    ctx: *mut HegelContext,
+    builder: *mut HegelGrammarBuilder,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    if builder.is_null() {
+        return HEGEL_OK;
+    }
+    // SAFETY: `builder` came from `hegel_grammar_builder_new`'s
+    // `into_raw_send_sync` and, per the documented contract, is freed
+    // exactly once.
+    drop(unsafe { Box::from_raw(builder) });
+    HEGEL_OK
 }
 
 /// A grammar to draw strings of
 ///
-/// Build one with `hegel_grammar_new` from a grammar in Lark's syntax; the
+/// Build one with `hegel_grammar_new` from a `hegel_grammar_builder_t`; the
 /// grammar is checked and compiled at construction. A grammar is immutable
 /// after construction and may be shared freely across test cases and
 /// threads. Free it with `hegel_grammar_free` once no draws will use it
@@ -5084,12 +5204,13 @@ pub struct HegelGrammar {
     placeholders: Vec<(String, StoredString)>,
 }
 
-/// Compile a grammar written in Lark's syntax (see
-/// <https://lark-parser.readthedocs.io/en/stable/grammar.html>) into a
+/// Compile a grammar gathered by a `hegel_grammar_builder_t` into a
 /// generator of the strings it accepts, drawn with `hegel_generate_grammar`.
 ///
 /// Parameters:
-/// `text`: The grammar, as a UTF-8 string.
+/// `builder`: The grammar and its files, all provided. The builder is
+///   only read: the caller still frees it, and can build more grammars
+///   from it.
 /// `start`: The rule whose strings to generate, or NULL for `start`.
 /// `max_size`: The most characters a string may have, or 0 for the default
 ///   of 8192. Must not be below the shortest string the start rule can
@@ -5107,32 +5228,26 @@ pub struct HegelGrammar {
 ///   named; a terminal with a pattern may be named to override it. Each
 ///   occurrence of such a terminal in a drawn string is a placeholder
 ///   marker (see `hegel_grammar_placeholder`) for the caller to replace.
-/// `import_callback`, `import_data`: How `%import`s are resolved (see
-///   `hegel_grammar_import_t`); NULL to resolve only against the bundled
-///   grammars.
 /// `out_grammar`: Receives the grammar handle.
 ///
-/// Returns `HEGEL_OK`; `HEGEL_E_INVALID_ARG` with a message describing
-/// what is wrong with the grammar or the options: a syntax error, an
-/// undefined or unused symbol, a rule that can never produce a finite
-/// string, a `%declare`d terminal not named in `explicit_names`, or a
-/// cap below the smallest string.
+/// Returns `HEGEL_OK`; `HEGEL_E_INVALID_HANDLE` for a NULL builder;
+/// `HEGEL_E_INVALID_ARG` with a message describing what is wrong with the
+/// grammar or the options: a file not yet provided, an undefined symbol, a
+/// rule that can never produce a finite string, a `%declare`d terminal not
+/// named in `explicit_names`, or a cap below the smallest string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_grammar_new(
     ctx: *mut HegelContext,
-    text: hegel_string_t,
+    builder: *const HegelGrammarBuilder,
     start: *const hegel_string_t,
     max_size: u64,
     max_depth: u32,
     alphabet: *const HegelStringGenerator,
     explicit_names: *const hegel_string_t,
     explicit_len: usize,
-    import_callback: hegel_grammar_import_t,
-    import_data: *mut c_void,
     out_grammar: *mut *mut HegelGrammar,
 ) -> hegel_result_t {
-    use crate::native::lark::builder::{ImportSource, NoImports};
-    use crate::native::lark::generate::{GrammarOptions, from_lark};
+    use crate::native::lark::generate::{GrammarOptions, from_files};
     const FN: &str = "hegel_grammar_new";
     clear_last_error(ctx);
     if out_grammar.is_null() {
@@ -5140,9 +5255,9 @@ pub unsafe extern "C" fn hegel_grammar_new(
         return HEGEL_E_INVALID_ARG;
     }
     unsafe { *out_grammar = ptr::null_mut() };
-    let text = match unsafe { required_utf8_arg(ctx, FN, "text", text) } {
-        Ok(s) => s,
-        Err(rc) => return rc,
+    let Some(builder) = (unsafe { builder.as_ref() }) else {
+        set_last_error(ctx, "hegel_grammar_new: builder handle is null");
+        return HEGEL_E_INVALID_HANDLE;
     };
     let defaults = GrammarOptions::default();
     let start = match unsafe { optional_utf8_arg(ctx, FN, "start", start) } {
@@ -5170,15 +5285,7 @@ pub unsafe extern "C" fn hegel_grammar_new(
             max_depth
         },
     };
-    let callback = import_callback.map(|callback| CallbackImports {
-        callback,
-        user_data: import_data,
-    });
-    let source: &dyn ImportSource = match &callback {
-        Some(callback) => callback,
-        None => &NoImports,
-    };
-    match from_lark(&text, source, options) {
+    match from_files(&builder.files, options) {
         Ok(spec) => {
             let placeholders = spec
                 .placeholders()
