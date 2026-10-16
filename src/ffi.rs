@@ -211,6 +211,11 @@ impl SettingsHandle {
                     raw,
                     settings.report_multiple_failures,
                 ));
+                require_ok(hegel_c::hegel_settings_set_stop_on_first_failure(
+                    ctx,
+                    raw,
+                    settings.stop_on_first_failure,
+                ));
                 require_ok(hegel_c::hegel_settings_set_show_statistics(
                     ctx,
                     raw,
@@ -325,6 +330,7 @@ fn read_settings(ctx: *mut hegel_c::HegelContext, raw: *const hegel_c::HegelSett
     let mut phases = 0u32;
     let mut suppress_health_check = 0u32;
     let mut report_multiple_failures = false;
+    let mut stop_on_first_failure = false;
     let mut show_statistics = false;
     let mut print_blob = false;
     let mut backend = hegel_c::hegel_backend_t::HEGEL_BACKEND_DEFAULT;
@@ -369,6 +375,11 @@ fn read_settings(ctx: *mut hegel_c::HegelContext, raw: *const hegel_c::HegelSett
             raw,
             &mut report_multiple_failures,
         ));
+        require_ok(hegel_c::hegel_settings_get_stop_on_first_failure(
+            ctx,
+            raw,
+            &mut stop_on_first_failure,
+        ));
         require_ok(hegel_c::hegel_settings_get_show_statistics(
             ctx,
             raw,
@@ -400,6 +411,7 @@ fn read_settings(ctx: *mut hegel_c::HegelContext, raw: *const hegel_c::HegelSett
         suppress_health_check: health_checks_from_bitmask(suppress_health_check),
         phases: phases_from_bitmask(phases),
         report_multiple_failures,
+        stop_on_first_failure,
         show_statistics,
         print_blob,
         backend: backend_from_c(backend),

@@ -477,6 +477,10 @@ fn null_handles_are_rejected_without_crashing() {
             HEGEL_E_INVALID_HANDLE
         );
         assert_eq!(
+            hegel_c::hegel_settings_set_stop_on_first_failure(ctx, ptr::null_mut(), true),
+            HEGEL_E_INVALID_HANDLE
+        );
+        assert_eq!(
             hegel_c::hegel_settings_set_show_statistics(ctx, ptr::null_mut(), true),
             HEGEL_E_INVALID_HANDLE
         );
@@ -3649,6 +3653,7 @@ struct SettingsView {
     phases: u32,
     suppress_health_check: u32,
     report_multiple_failures: bool,
+    stop_on_first_failure: bool,
     show_statistics: bool,
     print_blob: bool,
     backend: u32,
@@ -3705,6 +3710,12 @@ unsafe fn read_settings(ctx: *mut HegelContext, s: *const hegel_c::HegelSettings
             s,
             &mut report_multiple_failures,
         ));
+        let mut stop_on_first_failure = false;
+        ok(hegel_c::hegel_settings_get_stop_on_first_failure(
+            ctx,
+            s,
+            &mut stop_on_first_failure,
+        ));
         let mut show_statistics = false;
         ok(hegel_c::hegel_settings_get_show_statistics(
             ctx,
@@ -3740,6 +3751,7 @@ unsafe fn read_settings(ctx: *mut HegelContext, s: *const hegel_c::HegelSettings
             phases,
             suppress_health_check: checks,
             report_multiple_failures,
+            stop_on_first_failure,
             show_statistics,
             print_blob,
             backend: backend as u32,
@@ -3784,6 +3796,9 @@ fn settings_getters_read_back_every_setter() {
             hegel_c::hegel_health_check_t::HEGEL_HC_TOO_SLOW as u32,
         ));
         ok(hegel_settings_set_report_multiple_failures(ctx, s, true));
+        ok(hegel_c::hegel_settings_set_stop_on_first_failure(
+            ctx, s, false,
+        ));
         ok(hegel_c::hegel_settings_set_show_statistics(ctx, s, true));
         ok(hegel_c::hegel_settings_set_print_blob(ctx, s, true));
         ok(hegel_settings_set_backend(
@@ -3818,6 +3833,7 @@ fn settings_getters_read_back_every_setter() {
             hegel_c::hegel_health_check_t::HEGEL_HC_TOO_SLOW as u32
         );
         assert!(view.report_multiple_failures);
+        assert!(!view.stop_on_first_failure);
         assert!(view.show_statistics);
         assert!(view.print_blob);
         assert_eq!(view.backend, hegel_backend_t::HEGEL_BACKEND_URANDOM as u32);
@@ -3909,6 +3925,7 @@ fn the_base_profile_reads_back_the_base_settings() {
         assert_eq!(view.phases, hegel_c::hegel_phase_t::HEGEL_PHASE_ALL as u32);
         assert_eq!(view.suppress_health_check, 0);
         assert!(!view.report_multiple_failures);
+        assert!(view.stop_on_first_failure);
         assert!(!view.show_statistics);
         assert!(view.print_blob);
         assert_eq!(view.backend, hegel_backend_t::HEGEL_BACKEND_DEFAULT as u32);
@@ -4196,6 +4213,14 @@ fn settings_getters_reject_null_handles_and_null_outs() {
         );
         assert_eq!(
             hegel_c::hegel_settings_get_report_multiple_failures(ctx, s, ptr::null_mut()),
+            HEGEL_E_INVALID_ARG
+        );
+        assert_eq!(
+            hegel_c::hegel_settings_get_stop_on_first_failure(ctx, null_s, &mut b),
+            HEGEL_E_INVALID_HANDLE
+        );
+        assert_eq!(
+            hegel_c::hegel_settings_get_stop_on_first_failure(ctx, s, ptr::null_mut()),
             HEGEL_E_INVALID_ARG
         );
         assert_eq!(

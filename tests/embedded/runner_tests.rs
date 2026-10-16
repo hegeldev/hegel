@@ -32,6 +32,19 @@ fn test_settings_report_multiple_failures_setter() {
 }
 
 #[test]
+fn test_settings_stop_on_first_failure_default_true() {
+    assert!(Settings::new().stop_on_first_failure);
+}
+
+#[test]
+fn test_settings_stop_on_first_failure_setter() {
+    let s = Settings::new().stop_on_first_failure(false);
+    assert!(!s.stop_on_first_failure);
+    let s = s.stop_on_first_failure(true);
+    assert!(s.stop_on_first_failure);
+}
+
+#[test]
 fn test_settings_backend_defaults_to_the_prng() {
     let s = Settings::new();
     assert_eq!(s.backend, Backend::Default);

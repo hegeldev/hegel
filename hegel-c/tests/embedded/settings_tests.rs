@@ -36,6 +36,15 @@ fn base_settings_are_environment_independent_except_for_antithesis() {
     assert!(!settings.derandomize);
     assert!(settings.print_blob);
     assert!(!settings.report_multiple_failures);
+    assert!(settings.stop_on_first_failure);
+}
+
+#[test]
+fn stop_on_first_failure_defaults_on_and_is_settable() {
+    assert!(Settings::base(true).stop_on_first_failure);
+    let s = Settings::base(false).stop_on_first_failure(false);
+    assert!(!s.stop_on_first_failure);
+    assert!(s.stop_on_first_failure(true).stop_on_first_failure);
 }
 
 const ALL_HEALTH_CHECKS: [HealthCheck; 4] = [
@@ -214,6 +223,37 @@ fn env_override_print_blob_replaces_the_setting() {
     assert_eq!(
         env_error("HEGEL_PRINT_BLOB", "on"),
         "HEGEL_PRINT_BLOB must be true or false, got \"on\""
+    );
+}
+
+#[test]
+fn env_override_stop_on_first_failure_replaces_the_setting() {
+    for value in ["false", "0", "no"] {
+        assert!(
+            !with_env(Settings::base(false), "HEGEL_STOP_ON_FIRST_FAILURE", value)
+                .stop_on_first_failure,
+            "{value:?}"
+        );
+    }
+    assert!(
+        with_env(
+            Settings::base(false).stop_on_first_failure(false),
+            "HEGEL_STOP_ON_FIRST_FAILURE",
+            "true"
+        )
+        .stop_on_first_failure
+    );
+    assert!(
+        !with_env(
+            Settings::base(false).stop_on_first_failure(false),
+            "HEGEL_STOP_ON_FIRST_FAILURE",
+            ""
+        )
+        .stop_on_first_failure
+    );
+    assert_eq!(
+        env_error("HEGEL_STOP_ON_FIRST_FAILURE", "never"),
+        "HEGEL_STOP_ON_FIRST_FAILURE must be true or false, got \"never\""
     );
 }
 

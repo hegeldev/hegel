@@ -392,6 +392,7 @@ impl<'a> Engine<'a> {
         let invalid_budget = invalid_thresholds(INVALID_TARGET_RATE, INVALID_TARGET_CONFIDENCE);
         let mut replay_aligned = false;
         let report_multiple = settings.report_multiple_failures;
+        let stop_on_first = settings.stop_on_first_failure;
 
         if settings.phases.contains(&Phase::Reuse) {
             if let (Some(_), Some(key)) = (self.db(), database_key) {
@@ -508,7 +509,7 @@ impl<'a> Engine<'a> {
                         } else {
                             replay_aligned = false;
                         }
-                        if !report_multiple {
+                        if !report_multiple && stop_on_first {
                             break;
                         }
                     } else if let Some(db) = self.db() {
@@ -530,7 +531,12 @@ impl<'a> Engine<'a> {
         }
 
         let shrink_phase = settings.phases.contains(&Phase::Shrink);
-        let found_in_reuse = self.origins.any_live();
+        let found_in_reuse = self.origins.any_live() && stop_on_first;
+        let reuse_incumbents = if replay_aligned {
+            Some(self.live_fingerprints()?)
+        } else {
+            None
+        };
 
         let actually_generate =
             settings.phases.contains(&Phase::Generate) && !found_in_reuse && !self.test_is_trivial;
@@ -569,7 +575,7 @@ impl<'a> Engine<'a> {
         while settings.phases.contains(&Phase::Generate)
             && !found_in_reuse
             && !self.test_is_trivial
-            && self.valid_test_cases < max_test_cases
+            && self.budget_used() < max_test_cases
             && self.within_invalid_budget(invalid_budget)
             && should_generate_more(
                 !self.origins.any_live(),
@@ -578,12 +584,13 @@ impl<'a> Engine<'a> {
                 self.last_bug_at,
                 shrink_phase,
                 report_multiple,
+                stop_on_first,
                 self.first_bug_time.map(|t| t.elapsed()),
             )
         {
             for _ in 0..RANDOM_GENERATION_BATCH {
                 if self.test_is_trivial
-                    || self.valid_test_cases >= max_test_cases
+                    || self.budget_used() >= max_test_cases
                     || !self.within_invalid_budget(invalid_budget)
                     || !should_generate_more(
                         !self.origins.any_live(),
@@ -592,6 +599,7 @@ impl<'a> Engine<'a> {
                         self.last_bug_at,
                         shrink_phase,
                         report_multiple,
+                        stop_on_first,
                         self.first_bug_time.map(|t| t.elapsed()),
                     )
                 {
@@ -655,7 +663,7 @@ impl<'a> Engine<'a> {
                 }
 
                 if target_phase
-                    && !self.origins.any_live()
+                    && (!self.origins.any_live() || !stop_on_first)
                     && !self.targeting.is_empty()
                     && target_schedule.should_fire(self.valid_test_cases, self.targeting.version())
                 {
@@ -717,6 +725,12 @@ impl<'a> Engine<'a> {
             log_phase("Generate", "End");
         }
         self.collect_statistics = false;
+
+        if let Some(before) = reuse_incumbents {
+            if self.live_fingerprints()? != before {
+                replay_aligned = false;
+            }
+        }
 
         let mut shrink_deadline: Option<crate::sys::Instant> = None;
         if self.origins.any_live() && !replay_aligned && shrink_phase {
@@ -795,7 +809,11 @@ impl<'a> Engine<'a> {
                     break;
                 }
                 pending.sort();
-                let origin = pending.remove(0);
+                let origin = if report_multiple {
+                    pending.remove(0)
+                } else {
+                    self.smallest_origin(pending)?
+                };
                 let initial = self
                     .origins
                     .get(&origin)
@@ -806,7 +824,7 @@ impl<'a> Engine<'a> {
                     .unwrap_or_default();
                 shrink_timed_out |= self
                     .shrink_origin(
-                        origin,
+                        origin.clone(),
                         initial,
                         verbosity,
                         &output,
@@ -814,6 +832,12 @@ impl<'a> Engine<'a> {
                         &mut shrunk_origins,
                     )
                     .await?;
+                if !report_multiple
+                    && shrunk_origins.contains(&origin)
+                    && self.origins.incumbent(&origin).is_some()
+                {
+                    break;
+                }
             }
 
             if shrink_timed_out && verbosity != Verbosity::Quiet {
@@ -854,6 +878,42 @@ impl<'a> Engine<'a> {
         }
 
         Ok(self.build_report()?)
+    }
+
+    /// The live origins with their incumbents' serialized choices: what a
+    /// comparison before and after generation tells apart, so an aligned
+    /// database replay skips shrinking only when generation left it the
+    /// run's whole result.
+    fn live_fingerprints(&self) -> Result<Vec<(String, Vec<u8>)>, InternalError> {
+        self.origins
+            .live()
+            .map(|(origin, nodes)| Ok((String::from(origin), serialize_executed_nodes(nodes)?)))
+            .collect()
+    }
+
+    /// Of `origins`, all live, the one whose incumbent is smallest by
+    /// [`sort_key`]: the single failure a run that reports one shrinks,
+    /// the rest being persisted as found. Ties keep `origins`'s order.
+    fn smallest_origin(&self, origins: Vec<String>) -> Result<String, InternalError> {
+        let smallest = origins.into_iter().min_by(|a, b| {
+            let key = |o: &String| self.origins.incumbent(o).map(sort_key);
+            key(a).cmp(&key(b))
+        });
+        Ok(crate::control::hegel_internal_unwrap!(
+            smallest,
+            "smallest_origin: no origins to choose from"
+        ))
+    }
+
+    /// The test cases counted against the `test_cases` budget: the valid
+    /// ones, plus — when a failure does not end generation — the failing
+    /// ones, so a test that fails on every input still runs to its budget.
+    fn budget_used(&self) -> u64 {
+        if self.settings.stop_on_first_failure {
+            self.valid_test_cases
+        } else {
+            self.valid_test_cases + self.interesting_test_cases
+        }
     }
 
     /// End-of-run database reconciliation: save every surviving failure's
@@ -997,8 +1057,11 @@ impl<'a> Engine<'a> {
 /// enough to surface other distinct origins. The window is
 /// `min(first_bug + 1000, last_bug * 2)`, with a minimum-call floor
 /// (`MIN_TEST_CALLS`) so very-cheap tests still produce a few extra probes.
+/// With `stop_on_first_failure` off a bug changes nothing: generation runs
+/// to its budget.
 ///
-/// A bug replayed from the **database** never reaches this heuristic: the
+/// Under `stop_on_first_failure`, a bug replayed from the **database**
+/// never reaches this heuristic: the
 /// generation loop is gated on `!found_in_reuse` at the call site, so the
 /// stored example is not followed by a fresh generation pass at all. The
 /// replay-logic test (`test_does_not_shrink_on_replay`) pins this behaviour
@@ -1241,9 +1304,10 @@ fn should_generate_more(
     last_bug_at: Option<u64>,
     shrink_enabled: bool,
     report_multiple: bool,
+    stop_on_first_failure: bool,
     first_bug_elapsed: Option<core::time::Duration>,
 ) -> bool {
-    if no_bug_yet {
+    if no_bug_yet || !stop_on_first_failure {
         return true;
     }
     if !shrink_enabled || !report_multiple {
@@ -1456,6 +1520,9 @@ pub(crate) struct Engine<'a> {
     pub(crate) valid_test_cases: u64,
     pub(crate) invalid_test_cases: u64,
     pub(crate) overrun_test_cases: u64,
+    /// Generation-phase executions that failed; counted against the
+    /// `test_cases` budget when a failure does not end generation.
+    pub(crate) interesting_test_cases: u64,
     pub(crate) total_test_time: core::time::Duration,
     pub(crate) test_is_trivial: bool,
     pub(crate) first_bug_at: Option<u64>,
@@ -1528,6 +1595,7 @@ impl<'a> Engine<'a> {
             valid_test_cases: 0,
             invalid_test_cases: 0,
             overrun_test_cases: 0,
+            interesting_test_cases: 0,
             total_test_time: core::time::Duration::ZERO,
             test_is_trivial: false,
             first_bug_at: None,
@@ -3006,6 +3074,7 @@ impl<'a> Engine<'a> {
                 Status::Invalid => self.invalid_test_cases += 1,
                 Status::EarlyStop => self.overrun_test_cases += 1,
                 Status::Interesting => {
+                    self.interesting_test_cases += 1;
                     if self.first_bug_at.is_none() {
                         self.first_bug_at = Some(self.calls);
                         self.first_bug_time = crate::sys::Instant::now();

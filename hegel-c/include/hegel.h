@@ -893,8 +893,9 @@ hegel_string_t hegel_context_last_error(const hegel_context_t *ctx);
    is its path.
  - `HEGEL_STATISTICS`: anything but `0` turns `show_statistics` on.
  - `HEGEL_SEED`: an integer fixes the seed; `none` clears one.
- - `HEGEL_DERANDOMIZE` and `HEGEL_PRINT_BLOB`: `true`, `1` or `yes`, or
-   `false`, `0` or `no`.
+ - `HEGEL_DERANDOMIZE`, `HEGEL_PRINT_BLOB` and
+   `HEGEL_STOP_ON_FIRST_FAILURE`: `true`, `1` or `yes`, or `false`, `0`
+   or `no`.
  - `HEGEL_NONDETERMINISM_STRICTNESS`: `quiet`, `warn` or `error`, the
    `nondeterminism_strictness` value.
 
@@ -1018,6 +1019,23 @@ hegel_result_t hegel_settings_set_derandomize(hegel_context_t *ctx,
 hegel_result_t hegel_settings_set_report_multiple_failures(hegel_context_t *ctx,
                                                            hegel_settings_t *s,
                                                            bool yes);
+
+/*
+ Parameters:
+ `yes`: When `true` (the default), libhegel stops generating once it has
+   found a failure and moves on to shrinking and reporting it. When
+   `false`, the run uses its whole `test_cases` budget before reporting,
+   whatever it finds along the way: a database replay that reproduces a
+   failure no longer skips generation, and every stored failure is
+   replayed. Every distinct failure found is persisted either way; with
+   `report_multiple_failures` off only the smallest is shrunk and
+   reported.
+
+ Returns `HEGEL_OK`.
+ */
+hegel_result_t hegel_settings_set_stop_on_first_failure(hegel_context_t *ctx,
+                                                        hegel_settings_t *s,
+                                                        bool yes);
 
 /*
  Parameters:
@@ -1274,6 +1292,16 @@ hegel_result_t hegel_settings_get_suppress_health_check(hegel_context_t *ctx,
 hegel_result_t hegel_settings_get_report_multiple_failures(hegel_context_t *ctx,
                                                            const hegel_settings_t *s,
                                                            bool *out);
+
+/*
+ Parameters:
+ `out`: Receives whether generation stops at the first failure found.
+
+ Returns `HEGEL_OK`.
+ */
+hegel_result_t hegel_settings_get_stop_on_first_failure(hegel_context_t *ctx,
+                                                        const hegel_settings_t *s,
+                                                        bool *out);
 
 /*
  Parameters:

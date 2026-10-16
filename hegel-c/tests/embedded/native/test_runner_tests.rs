@@ -2359,6 +2359,7 @@ fn should_generate_more_stops_ten_seconds_after_first_bug() {
         Some(15),
         true,
         true,
+        true,
         Some(std::time::Duration::from_secs(9)),
     ));
     assert!(!should_generate_more(
@@ -2368,7 +2369,25 @@ fn should_generate_more_stops_ten_seconds_after_first_bug() {
         Some(15),
         true,
         true,
+        true,
         Some(std::time::Duration::from_secs(11)),
+    ));
+}
+
+#[test]
+fn should_generate_more_ignores_bugs_without_stop_on_first_failure() {
+    assert!(should_generate_more(
+        false,
+        5000,
+        Some(15),
+        Some(15),
+        true,
+        true,
+        false,
+        Some(std::time::Duration::from_secs(11)),
+    ));
+    assert!(should_generate_more(
+        false, 5, None, None, false, false, false, None
     ));
 }
 
@@ -2456,9 +2475,275 @@ fn reuse_found_bug_skips_generation_entirely() {
 }
 
 #[test]
+fn stop_on_first_failure_off_runs_the_whole_budget() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let calls = AtomicU64::new(0);
+    let result = reuse_run(
+        Settings::new()
+            .database(None)
+            .phases([Phase::Generate])
+            .test_cases(40)
+            .stop_on_first_failure(false)
+            .verbosity(Verbosity::Quiet),
+        "k",
+        |ds| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            match rint(ds, 0, 1000) {
+                Ok(n) if n % 2 == 1 => boom("odd"),
+                Ok(_) => TestCaseResult::Valid,
+                Err(()) => TestCaseResult::Overrun,
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(result.failures.len(), 1);
+    assert!(
+        calls.load(Ordering::SeqCst) > 40,
+        "expected the whole budget to run after the first failure, ran {} cases",
+        calls.load(Ordering::SeqCst)
+    );
+}
+
+#[test]
+fn stop_on_first_failure_off_terminates_when_every_input_fails() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let calls = AtomicU64::new(0);
+    let result = reuse_run(
+        Settings::new()
+            .database(None)
+            .test_cases(10)
+            .stop_on_first_failure(false)
+            .verbosity(Verbosity::Quiet),
+        "k",
+        |ds| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            match rbool(ds) {
+                Ok(_) => boom("always"),
+                Err(()) => TestCaseResult::Overrun,
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(result.failures.len(), 1);
+    assert!(
+        calls.load(Ordering::SeqCst) < 100,
+        "expected failing cases to count against the budget, ran {} cases",
+        calls.load(Ordering::SeqCst)
+    );
+}
+
+/// With one failure reported and several found, only the smallest is
+/// shrunk; the rest are persisted exactly as found. The `large` origin
+/// needs a longer choice sequence than `small`, so shrinking `small` can
+/// never stumble into it and displace its incumbent.
+#[test]
+fn one_reported_failure_shrinks_only_the_smallest_and_persists_the_rest() {
+    use crate::native::bignum::BigInt;
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().to_str().unwrap().to_string();
+    let db = DirectoryTestCaseDatabase::new(&path);
+    let large_sightings = std::sync::Mutex::new(Vec::<(i64, i64)>::new());
+    let result = reuse_run(
+        Settings::new()
+            .database(Some(path.clone()))
+            .test_cases(100)
+            .derandomize(true)
+            .stop_on_first_failure(false)
+            .report_multiple_failures(false)
+            .verbosity(Verbosity::Quiet),
+        "k",
+        |ds| {
+            let Ok(k) = rint(ds, 0, 2) else {
+                return TestCaseResult::Overrun;
+            };
+            match k {
+                0 => TestCaseResult::Valid,
+                1 => match rbool(ds) {
+                    Ok(_) => boom("small"),
+                    Err(()) => TestCaseResult::Overrun,
+                },
+                _ => {
+                    let (Ok(x), Ok(y)) = (rint(ds, 0, 10_000), rint(ds, 0, 10_000)) else {
+                        return TestCaseResult::Overrun;
+                    };
+                    if x >= 1000 && y >= 1000 {
+                        large_sightings.lock().unwrap().push((x, y));
+                        boom("large")
+                    } else {
+                        TestCaseResult::Valid
+                    }
+                }
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(result.failures.len(), 1);
+    assert!(result.failures[0].origin.contains("small"));
+
+    let mut stored: Vec<Vec<ChoiceValue>> = db
+        .fetch(b"k")
+        .iter()
+        .map(|raw| deserialize_choices(raw).unwrap())
+        .collect();
+    stored.sort_by_key(|choices| choices.len());
+    assert_eq!(stored.len(), 2, "{stored:?}");
+    assert_eq!(
+        stored[0],
+        vec![
+            ChoiceValue::Integer(BigInt::from(1)),
+            ChoiceValue::Boolean(false)
+        ]
+    );
+    let smallest_sighting = *large_sightings.lock().unwrap().iter().min().unwrap();
+    assert_eq!(
+        stored[1],
+        vec![
+            ChoiceValue::Integer(BigInt::from(2)),
+            ChoiceValue::Integer(BigInt::from(smallest_sighting.0)),
+            ChoiceValue::Integer(BigInt::from(smallest_sighting.1)),
+        ]
+    );
+}
+
+#[test]
+fn stop_on_first_failure_off_generates_after_a_database_replay() {
+    use crate::native::bignum::BigInt;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().to_str().unwrap().to_string();
+    let db = DirectoryTestCaseDatabase::new(&path);
+    db.save(
+        b"k",
+        &serialize_choices(&[ChoiceValue::Integer(BigInt::from(4242))]).unwrap(),
+    );
+    let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink = std::sync::Arc::clone(&lines);
+    let calls = AtomicU64::new(0);
+    let result = reuse_run(
+        Settings::new()
+            .database(Some(path.clone()))
+            .test_cases(20)
+            .stop_on_first_failure(false)
+            .verbosity(Verbosity::Verbose)
+            .output(Output::callback(move |line| {
+                sink.lock().unwrap().push(line.to_string());
+            })),
+        "k",
+        |ds| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            match rint(ds, i64::MIN, i64::MAX) {
+                Ok(4242) => boom("stored bug"),
+                Ok(_) => TestCaseResult::Valid,
+                Err(()) => TestCaseResult::Overrun,
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(result.failures.len(), 1);
+    assert!(
+        calls.load(Ordering::SeqCst) > 20,
+        "expected generation to follow the replay, ran {} cases",
+        calls.load(Ordering::SeqCst)
+    );
+    let lines = lines.lock().unwrap();
+    assert!(
+        lines.iter().any(|l| l == "Starting phase: Generate"),
+        "{lines:?}"
+    );
+    assert!(
+        !lines.iter().any(|l| l == "Starting phase: Shrink"),
+        "an aligned replay that generation added nothing to still skips shrinking: {lines:?}"
+    );
+}
+
+#[test]
+fn a_failure_found_after_an_aligned_replay_restores_shrinking() {
+    use crate::native::bignum::BigInt;
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().to_str().unwrap().to_string();
+    let db = DirectoryTestCaseDatabase::new(&path);
+    db.save(
+        b"k",
+        &serialize_choices(&[ChoiceValue::Integer(BigInt::from(4242))]).unwrap(),
+    );
+    let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink = std::sync::Arc::clone(&lines);
+    let result = reuse_run(
+        Settings::new()
+            .database(Some(path.clone()))
+            .test_cases(30)
+            .derandomize(true)
+            .stop_on_first_failure(false)
+            .report_multiple_failures(false)
+            .verbosity(Verbosity::Verbose)
+            .output(Output::callback(move |line| {
+                sink.lock().unwrap().push(line.to_string());
+            })),
+        "k",
+        |ds| match rint(ds, i64::MIN, i64::MAX) {
+            Ok(4242) => boom("stored bug"),
+            Ok(n) if n < 0 => boom("negative bug"),
+            Ok(_) => TestCaseResult::Valid,
+            Err(()) => TestCaseResult::Overrun,
+        },
+    )
+    .unwrap();
+    assert_eq!(result.failures.len(), 1);
+    let lines = lines.lock().unwrap();
+    assert!(
+        lines.iter().any(|l| l == "Starting phase: Shrink"),
+        "{lines:?}"
+    );
+    assert_eq!(db.fetch(b"k").len(), 2, "both failures are persisted");
+}
+
+#[test]
+fn stop_on_first_failure_off_replays_every_stored_failure() {
+    use crate::native::bignum::BigInt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().to_str().unwrap().to_string();
+    let db = DirectoryTestCaseDatabase::new(&path);
+    db.save(
+        b"k",
+        &serialize_choices(&[ChoiceValue::Integer(BigInt::from(1111))]).unwrap(),
+    );
+    db.save(
+        b"k",
+        &serialize_choices(&[ChoiceValue::Integer(BigInt::from(2222))]).unwrap(),
+    );
+
+    let calls = AtomicUsize::new(0);
+    let result = reuse_run(
+        Settings::new()
+            .database(Some(path.clone()))
+            .phases([Phase::Reuse])
+            .report_multiple_failures(false)
+            .stop_on_first_failure(false)
+            .verbosity(Verbosity::Quiet),
+        "k",
+        |ds| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            match rint(ds, i64::MIN, i64::MAX) {
+                Ok(n) if n >= 1000 => boom("stored bug"),
+                Ok(_) => TestCaseResult::Valid,
+                Err(()) => TestCaseResult::Overrun,
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(result.failures.len(), 1);
+    assert!(
+        calls.load(Ordering::SeqCst) >= 3,
+        "expected both stored entries to be replayed, ran {} cases",
+        calls.load(Ordering::SeqCst)
+    );
+}
+
+#[test]
 fn should_generate_more_stops_without_bug_markers() {
     assert!(!should_generate_more(
-        false, 5, None, None, true, true, None
+        false, 5, None, None, true, true, true, None
     ));
 }
 
@@ -4483,6 +4768,48 @@ fn a_post_flip_origin_faces_the_bar_at_shrink_time() {
             assert!(!ctx.origins.needs_confirmation(&origin));
             assert!(shrunk.contains(&origin));
             assert_eq!(ctx.origins.incumbent(&origin).unwrap(), &[int_node(50)]);
+        },
+    );
+}
+
+/// A post-flip origin whose bar batch never reproduces is rejected at
+/// shrink admission: its pass ends with no incumbent and no confirmation.
+#[test]
+fn a_post_flip_fluke_is_rejected_at_the_bar_at_shrink_time() {
+    let bug = "bug";
+    with_engine(
+        quiet_settings(),
+        None,
+        |ds| match rint(ds, 0, 100) {
+            Ok(_) => TestCaseResult::Valid,
+            Err(()) => TestCaseResult::Overrun,
+        },
+        async |ctx| {
+            let origin = format!("Panic: {bug}");
+            ctx.nd_flip();
+            ctx.record_run(
+                &interesting_at(&origin, vec![int_node(90)]),
+                Duration::ZERO,
+                false,
+            )
+            .unwrap();
+            let output = ctx.settings.output.clone();
+            let mut shrunk = crate::native::HashSet::default();
+            let timed_out = ctx
+                .shrink_origin(
+                    origin.clone(),
+                    (vec![int_node(90)], Vec::new()),
+                    Verbosity::Quiet,
+                    &output,
+                    None,
+                    &mut shrunk,
+                )
+                .await
+                .unwrap();
+            assert!(!timed_out);
+            assert!(shrunk.contains(&origin));
+            assert!(ctx.origins.needs_confirmation(&origin));
+            assert!(ctx.origins.incumbent(&origin).is_none());
         },
     );
 }

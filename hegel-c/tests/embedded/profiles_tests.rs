@@ -485,6 +485,7 @@ fn snapshots_reproduce_their_settings_over_any_base() {
         .suppress_health_check([HealthCheck::TooSlow])
         .phases([Phase::Generate])
         .report_multiple_failures(true)
+        .stop_on_first_failure(false)
         .show_statistics(true)
         .print_blob(true)
         .backend(Backend::Urandom)
@@ -503,6 +504,7 @@ fn snapshots_reproduce_their_settings_over_any_base() {
     assert_eq!(restored.suppress_health_check, vec![HealthCheck::TooSlow]);
     assert_eq!(restored.phases, vec![Phase::Generate]);
     assert!(restored.report_multiple_failures);
+    assert!(!restored.stop_on_first_failure);
     assert!(restored.show_statistics);
     assert!(restored.print_blob);
     assert_eq!(restored.backend, Backend::Urandom);

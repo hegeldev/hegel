@@ -296,6 +296,54 @@ fn test_hegel_nondeterminism_strictness_env_makes_flakiness_an_error() {
         .run();
 }
 
+/// Fixture for `test_hegel_stop_on_first_failure_env_runs_the_whole_budget`,
+/// run via self-exec: a property failing on every odd input whose settings
+/// leave `stop_on_first_failure` to the profile, where it is on, so
+/// `HEGEL_STOP_ON_FIRST_FAILURE=false` is the only thing that can make the
+/// run use its whole budget. Every executed case prints a marker line.
+#[test]
+#[ignore = "fixture: run via exec::self_test"]
+fn env_stop_on_first_failure_fixture() {
+    hegel::Hegel::new(|tc: hegel::TestCase| {
+        let n = tc.draw(gs::integers::<u8>());
+        eprintln!("STOP_ON_FIRST_FAILURE_CASE");
+        assert!(n % 2 == 0, "odd input: {n}");
+    })
+    .settings(
+        hegel::Settings::new()
+            .test_cases(50)
+            .phases([hegel::Phase::Generate])
+            .derandomize(true)
+            .database(None),
+    )
+    .run();
+}
+
+#[test]
+fn test_hegel_stop_on_first_failure_env_runs_the_whole_budget() {
+    let cases = |output: &common::exec::RunOutput| {
+        output.stderr.matches("STOP_ON_FIRST_FAILURE_CASE").count()
+    };
+    let stopped = self_test("env_stop_on_first_failure_fixture")
+        .env_remove("HEGEL_STOP_ON_FIRST_FAILURE")
+        .expect_failure("odd input")
+        .run();
+    assert!(
+        cases(&stopped) < 50,
+        "expected the run to stop at the first failure, ran {} cases",
+        cases(&stopped)
+    );
+    let whole = self_test("env_stop_on_first_failure_fixture")
+        .env("HEGEL_STOP_ON_FIRST_FAILURE", "false")
+        .expect_failure("odd input")
+        .run();
+    assert!(
+        cases(&whole) > 50,
+        "expected the run to use its whole budget, ran {} cases",
+        cases(&whole)
+    );
+}
+
 #[test]
 fn test_hegel_print_blob_compiled_in_beats_the_env() {
     let with = self_test("env_print_blob_compiled_in_fixture")
