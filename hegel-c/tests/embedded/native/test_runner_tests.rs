@@ -4772,6 +4772,48 @@ fn a_post_flip_origin_faces_the_bar_at_shrink_time() {
     );
 }
 
+/// A post-flip origin whose bar batch never reproduces is rejected at
+/// shrink admission: its pass ends with no incumbent and no confirmation.
+#[test]
+fn a_post_flip_fluke_is_rejected_at_the_bar_at_shrink_time() {
+    let bug = "bug";
+    with_engine(
+        quiet_settings(),
+        None,
+        |ds| match rint(ds, 0, 100) {
+            Ok(_) => TestCaseResult::Valid,
+            Err(()) => TestCaseResult::Overrun,
+        },
+        async |ctx| {
+            let origin = format!("Panic: {bug}");
+            ctx.nd_flip();
+            ctx.record_run(
+                &interesting_at(&origin, vec![int_node(90)]),
+                Duration::ZERO,
+                false,
+            )
+            .unwrap();
+            let output = ctx.settings.output.clone();
+            let mut shrunk = crate::native::HashSet::default();
+            let timed_out = ctx
+                .shrink_origin(
+                    origin.clone(),
+                    (vec![int_node(90)], Vec::new()),
+                    Verbosity::Quiet,
+                    &output,
+                    None,
+                    &mut shrunk,
+                )
+                .await
+                .unwrap();
+            assert!(!timed_out);
+            assert!(shrunk.contains(&origin));
+            assert!(ctx.origins.needs_confirmation(&origin));
+            assert!(ctx.origins.incumbent(&origin).is_none());
+        },
+    );
+}
+
 #[test]
 fn a_mid_shrink_flip_requeues_from_the_pre_shrink_nodes() {
     with_engine(
