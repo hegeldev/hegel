@@ -10,7 +10,7 @@ import pytest
 import hegel
 from hegel import generators as gs
 from hegel.generators.strings import Characters, CharacterSpec, Text, TextFromAlphabet
-from tests.helpers import find_example, run_test
+from tests.helpers import UNICODE_NEWER_THAN_PYTHON, find_example, run_test
 
 
 def check_all(generator, predicate, *, test_cases=50):
@@ -31,11 +31,8 @@ def test_text_defaults():
     assert find_example(gs.text(min_size=1)) == "0"
 
 
-def test_text_filters():
-    check_all(gs.text(codec="ascii", min_size=1), lambda s: s.isascii())
-    check_all(
-        gs.text(min_codepoint=65, max_codepoint=70, min_size=1), lambda s: set(s) <= set("ABCDEF")
-    )
+@UNICODE_NEWER_THAN_PYTHON
+def test_text_category_filters():
     check_all(
         gs.text(categories=["Lu"], min_size=1),
         lambda s: all(unicodedata.category(c) == "Lu" for c in s),
@@ -43,6 +40,13 @@ def test_text_filters():
     check_all(
         gs.text(exclude_categories=["Lu", "Ll"], min_size=1),
         lambda s: all(unicodedata.category(c) not in ("Lu", "Ll", "Cs") for c in s),
+    )
+
+
+def test_text_filters():
+    check_all(gs.text(codec="ascii", min_size=1), lambda s: s.isascii())
+    check_all(
+        gs.text(min_codepoint=65, max_codepoint=70, min_size=1), lambda s: set(s) <= set("ABCDEF")
     )
     check_all(
         gs.text(categories=[], include_characters="ab", min_size=1), lambda s: set(s) <= set("ab")

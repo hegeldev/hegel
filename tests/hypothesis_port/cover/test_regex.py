@@ -29,6 +29,7 @@ import pytest
 import hegel
 from hegel import InvalidArgument
 from hegel import generators as gs
+from tests.helpers import UNICODE_NEWER_THAN_PYTHON
 from tests.hypothesis_port.common.compat import PYPY
 from tests.hypothesis_port.common.debug import (
     assert_all_examples,
@@ -243,12 +244,6 @@ def test_groups(pattern, is_unicode, invert):
     assert_all_examples(strategy, group_pred)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Engine: a run whose every case is rejected fails FilterTooMuch rather than "
-    "ending Unsatisfiable, which assert_no_examples treats as finding nothing "
-    "(docs/engine-issues.md)",
-)
 def test_caret_in_the_middle_does_not_generate_anything():
     r = re.compile("a^b")
 
@@ -277,12 +272,6 @@ def test_groupref_exists():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Engine: a run whose every case is rejected fails FilterTooMuch rather than "
-    "ending Unsatisfiable, which assert_no_examples treats as finding nothing "
-    "(docs/engine-issues.md)",
-)
 def test_impossible_negative_lookahead():
     assert_no_examples(gs.from_regex("(?!foo)foo", fullmatch=False))
 
@@ -464,9 +453,13 @@ def test_issue_992_regression(tc):
     ],
 )
 def test_fullmatch_generates_example(pattern, matching_str):
+    # A particular three-character string with a particular case pattern
+    # is about one draw in six hundred, so the seeded search needs a
+    # budget to match (Hypothesis's own minimal() allows fifty thousand).
     find_any(
         gs.from_regex(pattern, fullmatch=True),
         lambda s: s == matching_str,
+        test_cases=5000,
     )
 
 
@@ -598,6 +591,7 @@ def test_class_with_negative_category_and_positive_members():
     find_any(gs.from_regex(r"\A[\W_]\Z", fullmatch=False), lambda s: s == "_")
 
 
+@UNICODE_NEWER_THAN_PYTHON
 def test_negated_class_excludes_all_members():
     # [^\W_] matches the complement of the union: word characters except "_"
     regex = re.compile(r"[^\W_]")
@@ -625,10 +619,6 @@ def test_invalid_alphabets(alphabet):
         check_can_generate_examples(gs.from_regex(r".", fullmatch=False, alphabet=alphabet))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Engine: from_regex('..') shrinks to 'āā' (U+0101 twice) rather than '00'",
-)
 def test_regex_output_should_print_as_string():
     @hegel.test(phases=[hegel.Phase.generate, hegel.Phase.shrink])
     def test(tc):

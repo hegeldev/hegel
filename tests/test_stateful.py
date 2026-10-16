@@ -237,9 +237,20 @@ def test_rule_raising_control_signal_propagates():
     class Stop(hegel.StateMachine):
         @hegel.rule()
         def step(self, tc):
-            raise StopTest()
+            if tc.draw(gs.booleans()):
+                raise StopTest()
 
     hegel.state_machine_test(Stop, test_cases=2, suppress_health_check=hegel.HealthCheck.all())()
+
+    class AlwaysStop(hegel.StateMachine):
+        @hegel.rule()
+        def step(self, tc):
+            raise StopTest()
+
+    with pytest.raises(hegel.Unsatisfiable):
+        hegel.state_machine_test(
+            AlwaysStop, test_cases=2, suppress_health_check=hegel.HealthCheck.all()
+        )()
 
 
 def test_pools():
@@ -289,6 +300,112 @@ def test_pool_draw_from_empty_rejects():
             tc.draw(self.pool.values_reusable())
 
     hegel.state_machine_test(Empty, test_cases=3, suppress_health_check=hegel.HealthCheck.all())()
+
+
+def test_pool_filter_consumes_only_the_accepted_value():
+    """A filtered consuming draw takes exactly the value it yields; the
+    values its attempts rejected stay in the pool and can be drawn later."""
+
+    class Evens(hegel.StateMachine):
+        def __init__(self, tc):
+            self.pool = Pool(tc)
+            self.held = []
+
+        @hegel.rule()
+        def add(self, tc):
+            value = tc.draw(gs.integers(0, 20))
+            self.pool.add(value)
+            self.held.append(value)
+
+        @hegel.rule()
+        def take_even(self, tc):
+            value = tc.draw(self.pool.values_consumed().filter(lambda x: x % 2 == 0))
+            assert value % 2 == 0
+            self.held.remove(value)
+
+        @hegel.rule()
+        def take_big_even(self, tc):
+            even = self.pool.values_consumed().filter(lambda x: x % 2 == 0)
+            value = tc.draw(even.filter(lambda x: x > 4))
+            assert value % 2 == 0 and value > 4
+            self.held.remove(value)
+
+        @hegel.rule()
+        def take_any(self, tc):
+            self.held.remove(tc.draw(self.pool.values_consumed()))
+
+        @hegel.invariant()
+        def pool_holds_what_was_added_and_not_taken(self, tc):
+            assert sorted(self.pool._values.values()) == sorted(self.held)
+
+    hegel.state_machine_test(Evens, test_cases=50, suppress_health_check=hegel.HealthCheck.all())()
+
+
+def test_pool_filter_rejects_the_case_and_restores_when_no_value_is_accepted():
+    """With every value rejected (here fewer values than attempts), the
+    draw rejects the test case and every value is back in the pool, in the
+    engine as well as in the binding's map."""
+
+    class Odds(hegel.StateMachine):
+        def __init__(self, tc):
+            self.pool = Pool(tc)
+            self.pool.add(1)
+            self.pool.add(3)
+
+        @hegel.rule()
+        def take_even(self, tc):
+            tc.draw(self.pool.values_consumed().filter(lambda x: x % 2 == 0))
+            raise AssertionError("an odd value passed the filter")
+
+        @hegel.rule()
+        def predicate_rejects(self, tc):
+            calls = []
+
+            def first_false_then_reject(value):
+                calls.append(value)
+                if len(calls) == 1:
+                    return False
+                tc.reject()
+
+            tc.draw(self.pool.values_consumed().filter(first_false_then_reject))
+            raise AssertionError("unreachable")
+
+        @hegel.rule()
+        def take_both(self, tc):
+            both = {tc.draw(self.pool.values_consumed()) for _ in range(2)}
+            assert both == {1, 3}
+            self.pool.add(1)
+            self.pool.add(3)
+
+        @hegel.invariant()
+        def both_values_present(self, tc):
+            assert len(self.pool) == 2
+
+    hegel.state_machine_test(Odds, test_cases=20, suppress_health_check=hegel.HealthCheck.all())()
+
+
+def test_pool_filter_reprs():
+    def even(x):
+        return x % 2 == 0
+
+    def reprs(tc):
+        pool = Pool(tc)
+        consumed = pool.values_consumed().filter(even)
+        assert repr(consumed) == "Pool(0 values).values_consumed().filter(even)"
+        assert repr(consumed.filter(bool)) == (
+            "Pool(0 values).values_consumed().filter(even).filter(bool)"
+        )
+        assert repr(pool.values_reusable().filter(even)) == (
+            "Pool(0 values).values_reusable().filter(even)"
+        )
+        pool.add(1, tc)
+        pool.add(2, tc)
+        assert tc.draw(pool.values_reusable().filter(even)) == 2
+        assert len(pool) == 2
+        assert tc.draw(consumed) == 2
+        assert len(pool) == 1
+
+    run_test(reprs, test_cases=1)
 
 
 def test_pool_values_shrink_toward_earliest():
@@ -402,6 +519,37 @@ def test_concurrent_rules_may_reject_and_use_pools():
     run_test(needs_tc, test_cases=1)
 
 
+def test_concurrent_pool_filter_consumes_only_the_accepted_value():
+    class Evens(hegel.StateMachine):
+        max_concurrency = 3
+        steps = 15
+
+        def __init__(self, tc):
+            self.pool = ConcurrentPool(tc)
+            self.lock = threading.Lock()
+            self.balance = 0
+
+        @hegel.rule()
+        def add(self, tc):
+            value = tc.draw(gs.integers(0, 20))
+            with self.lock:
+                self.pool.add(value, tc)
+                self.balance += 1
+
+        @hegel.rule()
+        def take_even(self, tc):
+            value = tc.draw(self.pool.values_consumed().filter(lambda x: x % 2 == 0))
+            assert value % 2 == 0
+            with self.lock:
+                self.balance -= 1
+
+        @hegel.invariant()
+        def pool_holds_what_was_added_and_not_taken(self, tc):
+            assert len(self.pool) == self.balance
+
+    hegel.state_machine_test(Evens, test_cases=20, suppress_health_check=hegel.HealthCheck.all())()
+
+
 def test_concurrent_pool_empty_rejects():
     class Empty(hegel.StateMachine):
         max_concurrency = 2
@@ -482,7 +630,8 @@ def test_concurrent_rule_overrun_and_stop():
 
         @hegel.rule()
         def stop(self, tc):
-            raise StopTest()
+            if tc.draw(gs.booleans()):
+                raise StopTest()
 
     hegel.state_machine_test(Stops, test_cases=3, suppress_health_check=hegel.HealthCheck.all())()
 

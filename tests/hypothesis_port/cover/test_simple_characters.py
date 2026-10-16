@@ -20,6 +20,7 @@ import pytest
 
 from hegel import InvalidArgument
 from hegel import generators as gs
+from tests.helpers import UNICODE_NEWER_THAN_PYTHON
 from tests.hypothesis_port.common.debug import (
     assert_no_examples,
     check_can_generate_examples,
@@ -53,6 +54,7 @@ def test_when_nothing_could_be_produced():
         )
 
 
+@UNICODE_NEWER_THAN_PYTHON
 def test_characters_of_specific_groups():
     st = gs.characters(categories=("Lu", "Nd"))
 
@@ -62,6 +64,7 @@ def test_characters_of_specific_groups():
     assert_no_examples(st, lambda c: unicodedata.category(c) not in ("Lu", "Nd"))
 
 
+@UNICODE_NEWER_THAN_PYTHON
 def test_characters_of_major_categories():
     st = gs.characters(categories=("L", "N"))
     find_any(st, lambda c: unicodedata.category(c).startswith("L"))

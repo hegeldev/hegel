@@ -75,3 +75,46 @@ It also fixes the bugs that porting that suite turned up:
   distinct failures are reported together; an engine error after an
   explicit failure is chained onto it instead of hiding it. A test-runner
   skip raised inside an explicit case propagates unchanged.
+
+The engine moves from libhegel 0.45.0 to 0.45.13, which brings:
+
+- `Pool.values_consumed().filter(...)` consumes only the value it yields.
+  Each attempt consumes an engine-chosen value and tests it while it is
+  still in the pool, rejected values stay out of circulation until the
+  attempts are over so none is drawn twice, and then every rejected value
+  is put back; before, a filter's rejected attempts consumed their values
+  for good. This holds for `ConcurrentPool` too. A filter applied outside a
+  `map` or a tuple around the consuming generator still retries like any
+  other filter, and a value a rule has received stays consumed if the rule
+  then rejects the case.
+- A run whose every test case is rejected raises `Unsatisfiable` however the
+  health checks are configured; with `filter_too_much` suppressed it used to
+  pass quietly. The run also no longer stops early after a few repeated
+  rejections, so a test that accepts one input in seven is no longer cut
+  short.
+- `from_regex` with an alphabet that cannot match the pattern (`abc` over
+  `def`, `[^a]` over `a`, `\d` over letters) raises `InvalidArgument` when
+  the generator is built, as does a pattern no string matches such as
+  `(?!)`, instead of every draw being rejected. Strings drawn from a regex
+  shrink within the pattern, so `from_regex(".")` shrinks to `"0"` rather
+  than `"ā"`.
+- `hegel.reproduce_failure` with a blob whose test has changed shape stops
+  at the divergence and raises `DidNotReproduce` instead of continuing with
+  fresh draws and reporting whatever failure those happened to reach.
+- A deterministic failure reported alongside a nondeterministic one is no
+  longer caveated as nondeterministic itself.
+- Targeting with `tc.target` starts after a short warm-up in runs of a
+  thousand cases or more, instead of halfway through the budget. A bounded
+  integer whose failing values are sparse multiples shrinks to the smallest
+  of them. A hundred cases over a small finite space reach every value, and
+  `integers()` over a range wider than 128 bits spreads its values over the
+  range's orders of magnitude. Seeded runs generate different values from
+  this version on.
+- `FailedHealthCheck`, `Flaky` and `Unsatisfiable` are now chosen by the
+  kind the engine reports for a run error rather than by the wording of its
+  message. Verbose output announces every executed case, including the
+  first, and health check messages name the setting to suppress them
+  plainly.
+- The engine's Unicode tables are Unicode 17.0, so `characters()`,
+  `text()` and `from_regex` can draw characters that this Python's
+  `unicodedata` and `re` do not know yet (see `docs/engine-issues.md`).

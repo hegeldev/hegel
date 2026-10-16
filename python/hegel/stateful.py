@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from hegel._labels import label_from_name
+from hegel._labels import combine_labels, label_from_name
 from hegel.errors import (
     AssumeFailed,
     InternalError,
@@ -18,7 +18,7 @@ from hegel.errors import (
     LoopDone,
     StopTest,
 )
-from hegel.generators.base import Generator
+from hegel.generators.base import FILTER_ATTEMPT_LABEL, FILTER_LABEL, Generator, _name
 
 if TYPE_CHECKING:
     from hegel._native import StateMachine as NativeMachine
@@ -683,8 +683,53 @@ class _PoolValues(Generator[Any]):
     def do_draw(self, tc: TestCase) -> Any:
         return self.pool._draw(tc, self.consume)
 
+    def filter(self, predicate: Callable[[Any], bool]) -> Generator[Any]:
+        """A filtered consuming draw consumes only the value it yields;
+        see :class:`_FilteredPoolValues`. A reusable draw has nothing to
+        undo, so it filters like any other generator."""
+        if not self.consume:
+            return super().filter(predicate)
+        return _FilteredPoolValues(self.pool, [predicate])
+
     def __repr__(self) -> str:
         return f"{self.pool!r}.{'values_consumed' if self.consume else 'values_reusable'}()"
+
+
+FILTER_ATTEMPTS = 3
+
+
+class _FilteredPoolValues(Generator[Any]):
+    """``values_consumed().filter(...)``: each attempt consumes an
+    engine-chosen value and tests it while it is still in the pool, so a
+    rejected value never leaves the pool's map. Rejected values stay
+    consumed until the attempts are over, so no attempt draws the same
+    value twice, and are then all put back; only the accepted value is
+    consumed. The attempts stop early once every value left has been
+    rejected, and the draw then rejects the test case as a filter whose
+    attempts run out does."""
+
+    def __init__(self, pool: Pool, predicates: list[Callable[[Any], bool]]) -> None:
+        self.pool = pool
+        self.predicates = predicates
+        self.label = combine_labels([FILTER_LABEL, VALUES_CONSUMED_LABEL])
+
+    def filter(self, predicate: Callable[[Any], bool]) -> Generator[Any]:
+        return _FilteredPoolValues(self.pool, [*self.predicates, predicate])
+
+    def _accepts(self, value: Any) -> bool:
+        return all(p(value) for p in self.predicates)
+
+    def do_draw(self, tc: TestCase) -> Any:
+        return self.pool._draw_filtered(tc, self._accepts)
+
+    def __repr__(self) -> str:
+        return f"{self.pool!r}.values_consumed()" + "".join(
+            f".filter({_name(p)})" for p in self.predicates
+        )
+
+
+_REJECTED = object()
+_EXHAUSTED = object()
 
 
 class Pool:
@@ -726,6 +771,47 @@ class Pool:
             return self._values.pop(variable_id)
         return self._values[variable_id]
 
+    def _draw_filtered(self, tc: TestCase, accepts: Callable[[Any], bool]) -> Any:
+        """A consuming draw of a value ``accepts``; see :class:`_FilteredPoolValues`.
+        The ids the attempts rejected are put back however the attempts end,
+        including by an error from the engine or the predicate."""
+        rejected: list[int] = []
+        try:
+            for _ in range(FILTER_ATTEMPTS):
+                outcome = self._filtered_attempt(tc, accepts, rejected)
+                if outcome is _EXHAUSTED:
+                    break
+                if outcome is not _REJECTED:
+                    return outcome
+        finally:
+            for variable_id in rejected:
+                self._handle.restore(tc._handle, variable_id)
+        tc.reject()
+        raise AssertionError("unreachable")  # nocov
+
+    def _filtered_attempt(
+        self, tc: TestCase, accepts: Callable[[Any], bool], rejected: list[int]
+    ) -> Any:
+        """One attempt: the accepted value, removed from the pool, or
+        ``_REJECTED`` (its id left in ``rejected``), or ``_EXHAUSTED``
+        when every value left has already been rejected. The attempt is a
+        span of its own, closed as discarded on rejection."""
+        if len(self._values) == len(rejected):
+            return _EXHAUSTED
+        tc.start_span(FILTER_ATTEMPT_LABEL)
+        tc.start_span(VALUES_CONSUMED_LABEL)
+        variable_id = self._handle.generate(tc._handle, True)
+        tc.stop_span(False)
+        # Counted as rejected until the predicate accepts it, so a predicate
+        # that raises (``tc.reject()``, say) leaves the value to be restored.
+        rejected.append(variable_id)
+        if accepts(self._values[variable_id]):
+            rejected.pop()
+            tc.stop_span(False)
+            return self._values.pop(variable_id)
+        tc.stop_span(True)
+        return _REJECTED
+
     def __repr__(self) -> str:
         return f"Pool({len(self._values)} values)"
 
@@ -765,6 +851,17 @@ class ConcurrentPool(Pool):
             if consume:
                 return self._values.pop(variable_id)
             return self._values[variable_id]
+
+    def _filtered_attempt(
+        self, tc: TestCase, accepts: Callable[[Any], bool], rejected: list[int]
+    ) -> Any:
+        """Holds the lock from the engine draw to the map lookup, as
+        ``_draw`` does, so the predicate runs under it. Other workers'
+        attempts may hold rejected values in the map, so the engine's pool
+        can be empty when the map is not; that rejects the test case the
+        way an empty pool does."""
+        with self._lock:
+            return super()._filtered_attempt(tc, accepts, rejected)
 
     def __repr__(self) -> str:
         return f"ConcurrentPool({len(self)} values)"

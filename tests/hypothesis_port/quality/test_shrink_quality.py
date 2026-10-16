@@ -211,9 +211,13 @@ def test_containment(n, seed):
 
 
 def test_duplicate_containment():
+    # An integer appearing twice in an independently drawn list is about one
+    # case in two hundred, so the seeded search needs a budget to match
+    # (Hypothesis's own minimal() allows fifty thousand).
     ls, i = minimal(
         tuples(lists(integers()), integers()),
         lambda s: s[0].count(s[1]) > 1,
+        test_cases=5000,
     )
     assert ls == [0, 0]
     assert i == 0

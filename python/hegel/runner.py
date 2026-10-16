@@ -358,21 +358,21 @@ def _drive_blob_replay(
     )
 
 
-# The engine reports why a run failed only as a message (libhegel has no
-# error kinds: see docs/engine-issues.md), so the exception to raise is
-# chosen by how the message starts.
-_RUN_ERROR_PREFIXES: tuple[tuple[tuple[str, ...], type[RunError]], ...] = (
-    (("FailedHealthCheck:",), FailedHealthCheck),
-    (("Flaky test detected", "Your data generation is non-deterministic"), Flaky),
-    (("Unsatisfiable",), Unsatisfiable),
-)
+# The exception to raise for a run that ended in error, by the kind the
+# engine reports for it. Any other kind (a usage error, an internal engine
+# error) is a plain RunError carrying the engine's message.
+_RUN_ERROR_KINDS: dict[int, type[RunError]] = {
+    _native.RUN_ERROR_HEALTH_CHECK: FailedHealthCheck,
+    _native.RUN_ERROR_FLAKY: Flaky,
+    _native.RUN_ERROR_NONDETERMINISTIC: Flaky,
+    _native.RUN_ERROR_UNSATISFIABLE: Unsatisfiable,
+}
 
 
-def _run_error(message: str) -> RunError:
-    for prefixes, kind in _RUN_ERROR_PREFIXES:
-        if message.startswith(prefixes):
-            return kind(message)
-    return RunError(message)
+def _run_error(result: _native.RunResult) -> RunError:
+    kind, _health_check = result.error_kind()
+    message = result.error() or "the run failed with an unknown error"
+    return _RUN_ERROR_KINDS.get(kind, RunError)(message)
 
 
 def _drive_run(
@@ -430,7 +430,7 @@ def _drive_run(
             raise DidNotReproduce(stale_message)
         return
     if status == _native.RUN_STATUS_ERROR:
-        raise _run_error(result.error() or "the run failed with an unknown error")
+        raise _run_error(result)
     count = result.failure_count()
     exceptions: list[BaseException] = []
     for index in range(count):

@@ -75,12 +75,6 @@ def fn_ktest(*fnkwargs):
     )
 
 
-REGEX_ALPHABET_UNCHECKED = pytest.mark.xfail(
-    strict=True,
-    reason="Hegel's from_regex does not reject an alphabet that cannot match the pattern",
-)
-
-
 def accepted(reason):
     """Arguments Hypothesis rejects but Hegel accepts."""
     return pytest.mark.xfail(strict=True, reason=f"Hegel accepts this: {reason}")
@@ -147,25 +141,13 @@ def accepted(reason):
     (gs.from_regex, {"regex": 123}),
     (gs.from_regex, {"regex": b"abc", "alphabet": "abc"}),
     (gs.from_regex, {"regex": b"abc", "alphabet": b"def"}),
-    pytest.param(
-        gs.from_regex, {"regex": "abc", "alphabet": "def"}, marks=REGEX_ALPHABET_UNCHECKED
-    ),
-    pytest.param(
-        gs.from_regex, {"regex": "aa|bb", "alphabet": "c"}, marks=REGEX_ALPHABET_UNCHECKED
-    ),
-    pytest.param(
-        gs.from_regex, {"regex": "[abc]", "alphabet": "def"}, marks=REGEX_ALPHABET_UNCHECKED
-    ),
-    pytest.param(
-        gs.from_regex, {"regex": "[ab]x[de]", "alphabet": "abcdef"}, marks=REGEX_ALPHABET_UNCHECKED
-    ),
+    (gs.from_regex, {"regex": "abc", "alphabet": "def"}),
+    (gs.from_regex, {"regex": "aa|bb", "alphabet": "c"}),
+    (gs.from_regex, {"regex": "[abc]", "alphabet": "def"}),
+    (gs.from_regex, {"regex": "[ab]x[de]", "alphabet": "abcdef"}),
     (gs.from_regex, {"regex": "...", "alphabet": gs.builds(lambda: "a")}),
     (gs.from_regex, {"regex": "abc", "alphabet": gs.sampled_from("def")}),
-    pytest.param(
-        gs.from_regex,
-        {"regex": "abc", "alphabet": gs.characters(min_codepoint=128)},
-        marks=REGEX_ALPHABET_UNCHECKED,
-    ),
+    (gs.from_regex, {"regex": "abc", "alphabet": gs.characters(min_codepoint=128)}),
     (gs.from_regex, {"regex": "abc", "alphabet": 123}),
     (gs.from_regex, {"regex": "abc", "alphabet": [1]}),
     (gs.from_regex, {"regex": "abc", "alphabet": ["abc"]}),

@@ -790,12 +790,6 @@ def test_can_filter_mapped_bundle():
     _run(Machine, test_cases=10)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Pool.values_consumed() removes a value from the pool as soon as it is drawn, "
-    "so a filter's rejected attempts consume values too (observed: the odd value 1 was "
-    "missing from the pool after pop_even drew 0)",
-)
 def test_filtering_consumed_bundle_consumes_only_the_drawn_value():
     class Machine(hegel.StateMachine):
         steps = 5

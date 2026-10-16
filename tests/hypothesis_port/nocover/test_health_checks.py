@@ -33,8 +33,10 @@ too_large_strategy = gs.lists(gs.booleans(), min_size=TOO_LARGE, max_size=TOO_LA
 @pytest.mark.slow
 def test_large_data_will_fail_a_health_check():
     # Only one input in a hundred is small, so the run sees twenty oversized
-    # test cases before it sees ten valid ones.
-    @hegel.test(database="")
+    # test cases before it sees ten valid ones. Each of those is a million
+    # draws through the binding, a couple of seconds, so the slowness check
+    # (thirty seconds) is off to let the size check be the one that fires.
+    @hegel.test(database="", suppress_health_check=[hegel.HealthCheck.too_slow])
     def test(tc):
         n = tc.draw(gs.integers(0, 99))
         tc.draw(gs.none() if n == 0 else too_large_strategy)

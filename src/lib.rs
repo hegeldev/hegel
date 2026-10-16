@@ -355,5 +355,21 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         "HC_LARGE_INITIAL_TEST_CASE",
         c::hegel_health_check_t::HEGEL_HC_LARGE_INITIAL_TEST_CASE as u32,
     )?;
+    m.add(
+        "RUN_ERROR_HEALTH_CHECK",
+        c::hegel_run_error_kind_t::HEGEL_RUN_ERROR_HEALTH_CHECK as u32,
+    )?;
+    m.add(
+        "RUN_ERROR_FLAKY",
+        c::hegel_run_error_kind_t::HEGEL_RUN_ERROR_FLAKY as u32,
+    )?;
+    m.add(
+        "RUN_ERROR_NONDETERMINISTIC",
+        c::hegel_run_error_kind_t::HEGEL_RUN_ERROR_NONDETERMINISTIC as u32,
+    )?;
+    m.add(
+        "RUN_ERROR_UNSATISFIABLE",
+        c::hegel_run_error_kind_t::HEGEL_RUN_ERROR_UNSATISFIABLE as u32,
+    )?;
     Ok(())
 }

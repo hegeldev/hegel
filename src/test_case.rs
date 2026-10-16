@@ -148,6 +148,19 @@ impl RunResult {
         Ok(cstr_to_string(p))
     }
 
+    /// Why the run errored, as `(RUN_ERROR_* kind, HC_* check)`; the check
+    /// is meaningful only for a failed health check.
+    fn error_kind(&self) -> PyResult<(u32, u32)> {
+        let mut kind = c::hegel_run_error_kind_t::HEGEL_RUN_ERROR_NONE;
+        let mut check_ = 0u32;
+        with_ctx(|ctx| {
+            check(unsafe {
+                c::hegel_run_result_error_kind(ctx, self.raw.0, &mut kind, &mut check_)
+            })
+        })?;
+        Ok((kind as u32, check_))
+    }
+
     fn failure_count(&self) -> PyResult<usize> {
         let mut count = 0usize;
         with_ctx(|ctx| {
@@ -761,6 +774,14 @@ impl Pool {
             check(unsafe { c::hegel_pool_generate(ctx, tc.tc(), self.raw.0, consume, &mut out) })
         })?;
         Ok(out)
+    }
+
+    /// Put back `variable_id`, which a consuming `generate` removed, so it
+    /// can be drawn again.
+    fn restore(&self, tc: &TestCase, variable_id: i64) -> PyResult<()> {
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_pool_restore(ctx, tc.tc(), self.raw.0, variable_id) })
+        })
     }
 }
 

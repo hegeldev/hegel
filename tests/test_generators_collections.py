@@ -181,9 +181,9 @@ def test_unique_collections_sample_without_replacement():
     check_all(gs.sets(gs.integers(0, 1).map(str), min_size=2), lambda s: s == {"0", "1"})
     # Without enough elements left to reach min_size the case is rejected.
     short = gs.sets(gs.sampled_from(range(10)).filter(lambda x: x < 3), min_size=5)
-    with pytest.raises(hegel.InvalidArgument, match="Could not find"):
+    with pytest.raises(hegel.Unsatisfiable):
         find_example(short)
-    with pytest.raises(hegel.InvalidArgument, match="Could not find"):
+    with pytest.raises(hegel.Unsatisfiable):
         find_example(gs.sets(gs.sampled_from([1, 2]).map(str), min_size=3))
     assert find_example(gs.sets(gs.sampled_from([3, 2, 1]), min_size=1)) == {3}
     assert find_example(gs.sets(gs.sampled_from([3, 2, 1]), min_size=2), lambda s: 1 in s) == {

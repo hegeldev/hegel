@@ -257,7 +257,7 @@ def test_find_example_shrinks():
     assert find_example(gs.integers(), lambda x: x > 100) == 101
     assert find_example(gs.lists(gs.integers()), lambda xs: len(xs) >= 2) == [0, 0]
     assert find_example(gs.just(3)) == 3
-    with pytest.raises(hegel.InvalidArgument):
+    with pytest.raises(hegel.Unsatisfiable):
         find_example(gs.integers(), lambda x: False)
     with pytest.raises(hegel.InvalidArgument):
         find_example(5)
@@ -310,9 +310,19 @@ def test_health_check_failure():
 
 def test_health_check_can_be_suppressed():
     def body(tc):
-        tc.draw(gs.integers(0, 10**6).filter(lambda x: x == 12345))
+        tc.draw(gs.integers(0, 10**6).filter(lambda x: x % 20 == 0))
 
     run_test(body, test_cases=5, suppress_health_check=hegel.HealthCheck.all())
+
+
+def test_rejecting_every_case_is_unsatisfiable_even_with_health_checks_suppressed():
+    def body(tc):
+        tc.draw(gs.integers(0, 10**6).filter(lambda x: x == 12345))
+
+    error = failing(
+        body, hegel.Unsatisfiable, test_cases=5, suppress_health_check=hegel.HealthCheck.all()
+    )
+    assert "No valid input was generated" in str(error)
 
 
 def test_multiple_failures(output):
@@ -663,16 +673,20 @@ def test_sys_exit_propagates():
 
 
 class _FakeResult:
-    def __init__(self, status, error=None, failures=()):
+    def __init__(self, status, error=None, failures=(), kind=0):
         self._status = status
         self._error = error
         self._failures = list(failures)
+        self._kind = kind
 
     def status(self):
         return self._status
 
     def error(self):
         return self._error
+
+    def error_kind(self):
+        return self._kind, 0
 
     def failure_count(self):
         return len(self._failures)
@@ -700,6 +714,22 @@ class _FakeRun:
     [
         (_FakeResult(hegel._native.RUN_STATUS_ERROR, "Something odd"), hegel.RunError, "odd"),
         (_FakeResult(hegel._native.RUN_STATUS_ERROR), hegel.RunError, "unknown error"),
+        (
+            _FakeResult(
+                hegel._native.RUN_STATUS_ERROR, "flaky", kind=hegel._native.RUN_ERROR_FLAKY
+            ),
+            hegel.Flaky,
+            "flaky",
+        ),
+        (
+            _FakeResult(
+                hegel._native.RUN_STATUS_ERROR,
+                "nondeterministic",
+                kind=hegel._native.RUN_ERROR_NONDETERMINISTIC,
+            ),
+            hegel.Flaky,
+            "nondeterministic",
+        ),
         (
             _FakeResult(hegel._native.RUN_STATUS_FAILED, failures=[("origin", None, None)]),
             hegel.InternalError,

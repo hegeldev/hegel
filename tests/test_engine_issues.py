@@ -1,16 +1,12 @@
-"""Engine behaviour recorded in docs/engine-issues.md, pinned with a seed so
-each reproduces every run. Each test is a strict xfail: when the engine is
-fixed it passes, and the xfail (and the docs entry) should go."""
+"""Engine behaviour once recorded in docs/engine-issues.md and since fixed,
+pinned with the seed that reproduced it. A regression here is an engine
+regression: record it in the docs again and make the test a strict xfail."""
 
 from __future__ import annotations
-
-import pytest
 
 import hegel
 from hegel import generators as gs
 from tests.test_generators_from_type import Node
-
-ENGINE_ISSUE = "engine issue: see docs/engine-issues.md"
 
 
 class _Found(Exception):
@@ -44,19 +40,16 @@ def _first_found(generator, condition, seed):
     return None
 
 
-@pytest.mark.xfail(strict=True, reason=ENGINE_ISSUE)
 def test_an_integer_shrinks_to_the_smallest_positive_multiple_of_six():
     value = _first_found(gs.integers(0, 100), lambda x: x > 0 and x % 6 == 0, seed=6)
-    assert value == 6  # the engine stops at 78
+    assert value == 6
 
 
-@pytest.mark.xfail(strict=True, reason=ENGINE_ISSUE)
 def test_a_run_whose_first_cases_are_rejected_does_not_pass_quietly():
     value = _first_found(gs.from_type(Node), lambda n: n.child is not None, seed=3)
-    assert value is not None  # the run ends, passed, having found nothing
+    assert value is not None
 
 
-@pytest.mark.xfail(strict=True, reason=ENGINE_ISSUE)
 def test_a_small_finite_space_is_covered_by_a_hundred_cases():
     generator = gs.one_of(
         gs.sampled_from(["a", "b", "c", "empty"]),

@@ -203,7 +203,8 @@ def test_filter_rejects_after_three_attempts():
     def body(tc):
         tc.draw(gs.integers(0, 1).filter(lambda v: attempts.append(v) or False))
 
-    run_test(body, test_cases=2, suppress_health_check=hegel.HealthCheck.all())
+    with pytest.raises(hegel.Unsatisfiable):
+        run_test(body, test_cases=2, suppress_health_check=hegel.HealthCheck.all())
     assert len(attempts) >= 3
 
 
@@ -296,5 +297,5 @@ def test_filtered_samples_narrow_the_elements():
     assert find_example(g) == 41
     assert find_example(gs.sampled_from(range(60)).filter(lambda x: x > 50)) == 51
     empty = gs.sampled_from([1, 2]).filter(lambda x: x > 5)
-    with pytest.raises(hegel.InvalidArgument, match="Could not find"):
+    with pytest.raises(hegel.Unsatisfiable):
         find_example(empty)

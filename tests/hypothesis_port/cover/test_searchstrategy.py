@@ -48,11 +48,6 @@ def test_can_map():
     assert_simple_property(s, lambda v: v == "foo")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="with health checks suppressed a generator that rejects every draw passes silently; "
-    "the engine only raises Unsatisfiable when no data is drawn (docs/engine-issues.md)",
-)
 def test_example_raises_unsatisfiable_when_too_filtered():
     with pytest.raises(Unsatisfiable):
         check_can_generate_examples(gs.integers().filter(lambda x: False))

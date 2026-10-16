@@ -490,11 +490,6 @@ def test_given_usable_inline_on_lambdas():
     assert set(xs) == {False, True}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="engine: with the FilterTooMuch health check suppressed, a run whose every "
-    "case is rejected ends quietly as passed instead of raising Unsatisfiable",
-)
 def test_notes_high_filter_rates_in_unsatisfiable_error():
     @hegel.test(suppress_health_check=[hegel.HealthCheck.filter_too_much])
     def f(tc):
