@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.46.0 - 2026-10-16
+
+This release changes ordinary string arguments to borrowed `hegel_string_t` strings passed by value.
+
+Replace a string-pointer call such as `hegel_event(ctx, tc, label)` with:
+
+```c
+hegel_string_t label_string = {label, label_len};
+hegel_event(ctx, tc, label_string);
+```
+
+Release builds and Wasm CI use the current stable Rust compiler, with a required minimum of Rust 1.89. This is because 1.89 introduced an improved Wasm ABI.
+
 ## 0.45.13 - 2026-10-15
 
 `hegel_pool_restore(ctx, tc, pool, variable_id)` puts back a variable that a consuming `hegel_pool_generate` removed from the pool, so a frontend can leave the pool as it was when the value drawn with it is thrown away unused, as a filter does with a rejected attempt. A variable that is not a consumed member of the pool is an argument error, and libhegel never puts a variable back on its own.
