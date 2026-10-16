@@ -34,7 +34,7 @@
  * ------------------
  * Every function takes a hegel_context_t* as its first argument and returns
  * a hegel_result_t code, except for hegel_context_new, which returns a
- * context, and hegel_context_last_error, which returns the message pointer
+ * context, and hegel_context_last_error, which returns the message string
  * directly.
  *
  * HEGEL_OK is zero and every error code is negative. Anything else a call
@@ -46,8 +46,14 @@
  * out-parameter, inverted bounds, a non-UTF-8 string, and so on). The
  * functions below leave these implicit.
  *
- * For UTF-8 strings passed as a pointer and byte length, NULL with length
- * zero means the empty string. NULL with nonzero length is invalid.
+ * UTF-8 strings use hegel_string_t. Ordinary inputs pass it by value;
+ * optional inputs use const hegel_string_t* with NULL meaning absent.
+ * Borrowed outputs write a descriptor, or a descriptor pointer when
+ * optional. Inputs need no NUL terminator; zero length accepts NULL data.
+ * Output strings have non-NULL data and a trailing NUL, including empty
+ * strings. Lengths exclude the terminator and may include interior NULs.
+ * NULL data with nonzero length and lengths above PTRDIFF_MAX are invalid.
+ * String arrays contain hegel_string_t elements and take a separate count.
  *
  * A NULL context is always allowed and opts out of error messages. The call
  * still returns its usual error code. A context must not be used
@@ -78,8 +84,8 @@
  *     hegel_new_pool             ->  hegel_pool_free
  *     hegel_new_state_machine    ->  hegel_state_machine_free
  *     hegel_generate_bytes       ->  hegel_generate_bytes_result_free
- *     hegel_generate_string      ->  hegel_generate_string_result_free
- *     hegel_generate_grammar     ->  hegel_generate_string_result_free
+ *     hegel_generate_string      ->  hegel_owned_string_free
+ *     hegel_generate_grammar     ->  hegel_owned_string_free
  *     hegel_printer_options_new  ->  hegel_printer_options_free
  *     hegel_reflow_options_new   ->  hegel_reflow_options_free
  *     hegel_printer_new          ->  hegel_printer_free
@@ -87,7 +93,7 @@
  *     hegel_test_case_printer    ->  hegel_printer_free
  *     hegel_printer_value        ->  hegel_printer_value_result_free
  *
- * Every other pointer libhegel hands back is a borrowed string. The caller
+ * Every other string libhegel hands back is borrowed. The caller
  * must not free it, and it is valid only until a documented point.
  * hegel_context_last_error is invalidated by the next call on that context.
  *
@@ -450,7 +456,7 @@ typedef struct hegel_context_t hegel_context_t;
  One distinct interesting test case surfaced by the run.
  `hegel_run_result_failure` writes a caller-owned run result.
  Reading strings within the run result via `hegel_failure_origin` /
- `_reproduction_blob` returns `const char*` pointers that stay valid until
+ `_reproduction_blob` returns borrowed strings that stay valid until
  the memory is released with `hegel_failure_free`. The snapshot is
  independent of the result and run it came from.
 
@@ -675,6 +681,23 @@ typedef struct hegel_string_generator_t hegel_string_generator_t;
 typedef struct hegel_test_case_t hegel_test_case_t;
 
 /*
+ A UTF-8 string view. Ownership is documented by each function.
+ `len` counts bytes. Inputs need no NUL
+ terminator; zero length accepts any pointer, including NULL. Output
+ strings have non-NULL data and a trailing NUL, including empty strings.
+ `len` excludes the terminator. Interior NUL bytes are preserved; use
+ `len` to read the complete string.
+ Optional strings use a nullable pointer to this type: NULL means absent,
+ and a pointer to an empty string means present and empty. The caller
+ keeps input bytes alive for the call. Output bytes borrow their
+ documented owner, unless the function explicitly transfers ownership.
+ */
+typedef struct {
+    const char *data;
+    size_t len;
+} hegel_string_t;
+
+/*
  Per-line output callback, passed to `hegel_run_start` /
  `hegel_test_case_from_blob` (see there for the full contract). `user_data`
  is the pointer supplied alongside the callback; `line` is one line of
@@ -698,20 +721,18 @@ typedef struct {
 } hegel_generate_bytes_result_t;
 
 /*
- An engine-allocated string buffer returned by `hegel_generate_string`.
+ An owned UTF-8 string allocated by libhegel. Only strings explicitly
+ returned with ownership may be released with `hegel_owned_string_free`.
 
- `data` points to `len` bytes of UTF-8. The buffer is **not**
- NUL-terminated and may contain interior NUL bytes (the drawn alphabet
- can include U+0000), so it is not a C string — always use `len`. The
- caller owns the buffer and must release it with
- `hegel_generate_string_result_free` (freeing through any other allocator
+ `data` points to `len` bytes of UTF-8 followed by a NUL terminator.
+ Interior NUL bytes are preserved (the drawn alphabet can include
+ U+0000), so use `len` to read the complete string. The caller owns the
+ buffer and must release it with
+ `hegel_owned_string_free` (freeing through any other allocator
  is undefined behaviour). `data` is never NULL after a successful draw,
  even for `len == 0`.
  */
-typedef struct {
-    char *data;
-    size_t len;
-} hegel_generate_string_result_t;
+typedef hegel_string_t hegel_owned_string_t;
 
 /*
  Import callback for `hegel_grammar_new`, asked for every `%import` that
@@ -776,9 +797,9 @@ typedef struct {
 /*
  An engine-allocated string buffer returned by `hegel_printer_value`.
 
- `data` points to `len` bytes of UTF-8. The buffer is **not**
- NUL-terminated (printed values can contain any character), so always use
- `len`. The caller owns the buffer and must release it with
+ `data` points to `len` bytes of UTF-8 followed by a NUL terminator.
+ Interior NUL bytes are preserved, so use `len` to read the complete
+ string. The caller owns the buffer and must release it with
  `hegel_printer_value_result_free` (freeing through any other allocator is
  undefined behaviour). `data` is never NULL after a successful call, even
  for `len == 0`.
@@ -811,11 +832,11 @@ hegel_result_t hegel_context_free(hegel_context_t *ctx);
  `ctx`: The context to read.
 
  Returns the most recent error message recorded on `ctx`, or the empty
- string if the most recent call taking `ctx` succeeded. NULL only if `ctx`
- is NULL. The pointer borrows the context's internal buffer and is
- invalidated by the next call taking the same context.
+ string if the most recent call taking `ctx` succeeded or `ctx` is NULL.
+ The string borrows the context's internal buffer and is invalidated by
+ the next call taking the same context.
  */
-const char *hegel_context_last_error(const hegel_context_t *ctx);
+hegel_string_t hegel_context_last_error(const hegel_context_t *ctx);
 
 /*
  Parameters:
@@ -894,7 +915,7 @@ hegel_result_t hegel_settings_new(hegel_context_t *ctx,
  result either way.
  */
 hegel_result_t hegel_settings_new_for_profile(hegel_context_t *ctx,
-                                              const char *name,
+                                              hegel_string_t name,
                                               hegel_settings_t **out_settings);
 
 /*
@@ -1034,7 +1055,7 @@ hegel_result_t hegel_settings_set_unbounded_choices(hegel_context_t *ctx,
  */
 hegel_result_t hegel_settings_set_database(hegel_context_t *ctx,
                                            hegel_settings_t *s,
-                                           const char *database);
+                                           const hegel_string_t *database);
 
 /*
  Parameters:
@@ -1045,7 +1066,7 @@ hegel_result_t hegel_settings_set_database(hegel_context_t *ctx,
  */
 hegel_result_t hegel_settings_set_database_key(hegel_context_t *ctx,
                                                hegel_settings_t *s,
-                                               const char *key);
+                                               const hegel_string_t *key);
 
 /*
  Parameters:
@@ -1054,7 +1075,7 @@ hegel_result_t hegel_settings_set_database_key(hegel_context_t *ctx,
  `class_name`: The class, module or package enclosing the test function.
  `function`: The name of the test function.
 
- Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` if any string is NULL or
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` if any string is absent or
  not valid UTF-8.
 
  Records where the test under these settings lives. Inside
@@ -1072,10 +1093,10 @@ hegel_result_t hegel_settings_set_database_key(hegel_context_t *ctx,
  */
 hegel_result_t hegel_settings_set_test_location(hegel_context_t *ctx,
                                                 hegel_settings_t *s,
-                                                const char *file,
+                                                hegel_string_t file,
                                                 uint32_t begin_line,
-                                                const char *class_name,
-                                                const char *function);
+                                                hegel_string_t class_name,
+                                                hegel_string_t function);
 
 /*
  Parameters:
@@ -1130,12 +1151,12 @@ hegel_result_t hegel_settings_set_print_blob(hegel_context_t *ctx, hegel_setting
  handles already created keep their values.
  */
 hegel_result_t hegel_settings_register_profile(hegel_context_t *ctx,
-                                               const char *name,
+                                               hegel_string_t name,
                                                const hegel_settings_t *settings);
 
 /*
  Parameters:
- `name`: The profile the `default` alias should resolve to, or NULL to
+ `name`: The profile the `default` alias should resolve to, or an empty string to
    clear an earlier call. The name is not required to exist yet; naming
    the `default` alias itself is rejected.
 
@@ -1147,7 +1168,7 @@ hegel_result_t hegel_settings_register_profile(hegel_context_t *ctx,
  registration it is not retroactive: settings handles already created
  keep their values.
  */
-hegel_result_t hegel_set_default_profile(hegel_context_t *ctx, const char *name);
+hegel_result_t hegel_set_default_profile(hegel_context_t *ctx, hegel_string_t name);
 
 /*
  Parameters:
@@ -1200,9 +1221,9 @@ hegel_result_t hegel_settings_get_derandomize(hegel_context_t *ctx,
 
 /*
  Parameters:
- `out_database`: Receives the database value, mirroring the setter's
-   convention: NULL for the default, `""` for disabled, else the root
-   directory path. The pointer borrows the handle and stays valid until
+ `out_database`: Receives NULL for the default database, a pointer to an
+   empty string for disabled, or a pointer to the root directory string.
+   The string borrows the handle and stays valid until
    the next `hegel_settings_set_database` call on it or
    `hegel_settings_free`.
 
@@ -1210,7 +1231,7 @@ hegel_result_t hegel_settings_get_derandomize(hegel_context_t *ctx,
  */
 hegel_result_t hegel_settings_get_database(hegel_context_t *ctx,
                                            const hegel_settings_t *s,
-                                           const char **out_database);
+                                           const hegel_string_t **out_database);
 
 /*
  Parameters:
@@ -1348,7 +1369,7 @@ hegel_result_t hegel_run_start(hegel_context_t *ctx,
  */
 hegel_result_t hegel_run_start_blob(hegel_context_t *ctx,
                                     const hegel_settings_t *settings,
-                                    const char *blob,
+                                    hegel_string_t blob,
                                     hegel_output_callback_t callback,
                                     void *user_data,
                                     hegel_run_t **out_run);
@@ -1438,7 +1459,7 @@ hegel_result_t hegel_run_free(hegel_context_t *ctx, hegel_run_t *run);
  */
 hegel_result_t hegel_test_case_from_blob(hegel_context_t *ctx,
                                          const hegel_settings_t *s,
-                                         const char *blob,
+                                         hegel_string_t blob,
                                          hegel_output_callback_t callback,
                                          void *user_data,
                                          hegel_test_case_t **out_test_case);
@@ -1602,14 +1623,16 @@ hegel_result_t hegel_stop_span(hegel_context_t *ctx, hegel_test_case_t *tc, bool
  names and of other libraries'.
 
  Parameters:
- `name`: Non-NULL, NUL-terminated. Hashed as bytes, so any encoding
+ `name`: A string. Hashed as bytes, so any encoding
    works as long as the generator always uses the same one.
  `out_label`: Receives the label.
 
- Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` on a NULL `name` or
- `out_label`.
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` on a malformed `name` or
+ NULL `out_label`.
  */
-hegel_result_t hegel_label_from_name(hegel_context_t *ctx, const char *name, uint64_t *out_label);
+hegel_result_t hegel_label_from_name(hegel_context_t *ctx,
+                                     hegel_string_t name,
+                                     uint64_t *out_label);
 
 /*
  The span label for a generator built from other generators: a hash of
@@ -1668,7 +1691,7 @@ hegel_result_t hegel_collection_more(hegel_context_t *ctx,
 
 /*
  Parameters:
- `why`: Optional human-readable rejection reason (NULL is allowed).
+ `why`: Optional human-readable rejection reason (NULL means absent).
    Validated but currently unused, reserved for future rejection
    diagnostics.
 
@@ -1680,7 +1703,7 @@ hegel_result_t hegel_collection_more(hegel_context_t *ctx,
 hegel_result_t hegel_collection_reject(hegel_context_t *ctx,
                                        hegel_test_case_t *tc,
                                        hegel_collection_t *collection,
-                                       const char *why);
+                                       const hegel_string_t *why);
 
 /*
  Release a collection handle from `hegel_new_collection`. Safe to call
@@ -1876,8 +1899,7 @@ hegel_result_t hegel_pool_free(hegel_context_t *ctx, hegel_pool_t *pool);
  `rule_names`, and given a selection weight by `rule_weights`, an array
  of `num_rules` finite, strictly positive doubles parallel to
  `rule_names` (NULL for all-equal weights) — and `num_invariants`
- invariants, with names as
- NUL-terminated UTF-8, plus concurrency bounds. `invariant_always_check`
+ invariants, with names as UTF-8 strings, plus concurrency bounds. `invariant_always_check`
  is an array of `num_invariants` flags parallel to `invariant_names`
  (NULL for all-false): `hegel_state_machine_should_check_invariant`
  answers true unconditionally for a flagged invariant and samples the
@@ -1942,11 +1964,11 @@ hegel_result_t hegel_pool_free(hegel_context_t *ctx, hegel_pool_t *pool);
  */
 hegel_result_t hegel_new_state_machine(hegel_context_t *ctx,
                                        hegel_test_case_t *tc,
-                                       const char *const *rule_names,
+                                       const hegel_string_t *rule_names,
                                        const int64_t *rule_groups,
                                        const double *rule_weights,
                                        size_t num_rules,
-                                       const char *const *invariant_names,
+                                       const hegel_string_t *invariant_names,
                                        const bool *invariant_always_check,
                                        size_t num_invariants,
                                        int64_t min_concurrency,
@@ -2214,8 +2236,8 @@ hegel_result_t hegel_generate_bytes_result_free(hegel_context_t *ctx,
    categories. NULL means no restriction. A non-NULL empty list means an
    empty alphabet.
  `exclude_categories`: Removes the named categories.
- `include_characters` / `exclude_characters`: UTF-8 buffers (pointer
-   plus byte length) of individual characters. Characters in
+ `include_characters` / `exclude_characters`: UTF-8 strings
+   of individual characters. Characters in
    `include_characters` are included first, then characters in
    `exclude_characters` are removed.
 
@@ -2225,22 +2247,20 @@ hegel_result_t hegel_generate_bytes_result_free(hegel_context_t *ctx,
 hegel_result_t hegel_string_generator_text(hegel_context_t *ctx,
                                            uint64_t min_size,
                                            uint64_t max_size,
-                                           const char *codec,
+                                           const hegel_string_t *codec,
                                            uint32_t min_codepoint,
                                            uint32_t max_codepoint,
-                                           const char *const *categories,
+                                           const hegel_string_t *categories,
                                            size_t categories_len,
-                                           const char *const *exclude_categories,
+                                           const hegel_string_t *exclude_categories,
                                            size_t exclude_categories_len,
-                                           const uint8_t *include_characters,
-                                           size_t include_characters_len,
-                                           const uint8_t *exclude_characters,
-                                           size_t exclude_characters_len,
+                                           hegel_string_t include_characters,
+                                           hegel_string_t exclude_characters,
                                            hegel_string_generator_t **out_generator);
 
 /*
  Parameters:
- `pattern` / `pattern_len`: UTF-8 buffer (pointer plus byte length) of
+ `pattern`: Borrowed UTF-8 string of
    the pattern to match, in Python `re` syntax. Length-delimited so the
    pattern may contain the NUL character, which `re` accepts.
  `fullmatch`: When true, the whole string must match the pattern.
@@ -2257,8 +2277,7 @@ hegel_result_t hegel_string_generator_text(hegel_context_t *ctx,
  text generator.
  */
 hegel_result_t hegel_string_generator_regex(hegel_context_t *ctx,
-                                            const uint8_t *pattern,
-                                            size_t pattern_len,
+                                            hegel_string_t pattern,
                                             bool fullmatch,
                                             const hegel_string_generator_t *alphabet,
                                             hegel_string_generator_t **out_generator);
@@ -2304,10 +2323,10 @@ hegel_result_t hegel_string_generator_free(hegel_context_t *ctx,
  Parameters:
  `generator`: A generator built by one of the constructors above.
  `out_result`: Receives a libhegel-allocated
-   `{char *data; size_t len;}` the caller owns. Not NUL-terminated, and
-   it may contain interior NUL bytes since the drawn alphabet can include
-   U+0000, so always use `len`. Release with
-   `hegel_generate_string_result_free`.
+   `hegel_owned_string_t` the caller owns. A NUL terminator follows
+   the `len` bytes. The drawn alphabet can include U+0000, so use `len`
+   to read the complete string. Release with
+   `hegel_owned_string_free`.
 
  Returns `HEGEL_OK`, `HEGEL_E_STOP_TEST`, or `HEGEL_E_ASSUME` when the
  draw rejected itself (for example an email exceeding the RFC length
@@ -2316,17 +2335,17 @@ hegel_result_t hegel_string_generator_free(hegel_context_t *ctx,
 hegel_result_t hegel_generate_string(hegel_context_t *ctx,
                                      hegel_test_case_t *tc,
                                      const hegel_string_generator_t *generator,
-                                     hegel_generate_string_result_t *out_result);
+                                     hegel_owned_string_t *out_result);
 
 /*
  Parameters:
- `result`: Released and reset to `{NULL, 0}`. Safe to call with NULL or
-   an already-freed (zeroed) struct.
+ `result`: An owned string returned by libhegel, released and reset to
+   `{NULL, 0}`. Safe to call with NULL or an already-freed (zeroed) struct.
+   Borrowed strings must not be passed to this function.
 
  Returns `HEGEL_OK`.
  */
-hegel_result_t hegel_generate_string_result_free(hegel_context_t *ctx,
-                                                 hegel_generate_string_result_t *result);
+hegel_result_t hegel_owned_string_free(hegel_context_t *ctx, hegel_owned_string_t *result);
 
 /*
  Compile a grammar written in Lark's syntax (see
@@ -2334,7 +2353,7 @@ hegel_result_t hegel_generate_string_result_free(hegel_context_t *ctx,
  generator of the strings it accepts, drawn with `hegel_generate_grammar`.
 
  Parameters:
- `text`: The grammar, NUL-terminated UTF-8.
+ `text`: The grammar, as a UTF-8 string.
  `start`: The rule whose strings to generate, or NULL for `start`.
  `max_size`: The most characters a string may have, or 0 for the default
    of 8192. Must not be below the shortest string the start rule can
@@ -2364,12 +2383,12 @@ hegel_result_t hegel_generate_string_result_free(hegel_context_t *ctx,
  cap below the smallest string.
  */
 hegel_result_t hegel_grammar_new(hegel_context_t *ctx,
-                                 const char *text,
-                                 const char *start,
+                                 hegel_string_t text,
+                                 const hegel_string_t *start,
                                  uint64_t max_size,
                                  uint32_t max_depth,
                                  const hegel_string_generator_t *alphabet,
-                                 const char *const *explicit_names,
+                                 const hegel_string_t *explicit_names,
                                  size_t explicit_len,
                                  hegel_grammar_import_t import_callback,
                                  void *import_data,
@@ -2395,18 +2414,18 @@ hegel_result_t hegel_grammar_free(hegel_context_t *ctx, hegel_grammar_t *grammar
  Parameters:
  `grammar`: A grammar built by `hegel_grammar_new`.
  `name`: The terminal's name, as given in `explicit_names`.
- `out_marker`: Receives a NUL-terminated string the grammar owns, valid
+ `out_marker`: Receives a string the grammar owns, valid
    until the grammar is freed.
 
  Returns `HEGEL_OK`; `HEGEL_E_INVALID_HANDLE` for a NULL grammar;
- `HEGEL_E_INVALID_ARG` for a NULL `name` or `out_marker`, a `name` that
+ `HEGEL_E_INVALID_ARG` for a malformed `name` or NULL `out_marker`, a `name` that
  is not valid UTF-8, or one that is not an explicit terminal of the
  grammar.
  */
 hegel_result_t hegel_grammar_placeholder(hegel_context_t *ctx,
                                          const hegel_grammar_t *grammar,
-                                         const char *name,
-                                         const char **out_marker);
+                                         hegel_string_t name,
+                                         hegel_string_t *out_marker);
 
 /*
  Draw a string of a grammar: a string the grammar's start rule accepts,
@@ -2426,9 +2445,9 @@ hegel_result_t hegel_grammar_placeholder(hegel_context_t *ctx,
    caller replacing markers with values of its own uses it to draw
    again, under a smaller cap, when the values pushed the string past
    the cap it has in mind.
- `out_result`: Receives a libhegel-allocated UTF-8 buffer (not
-   NUL-terminated) with the string. Release with
-   `hegel_generate_string_result_free`.
+ `out_result`: Receives a libhegel-allocated UTF-8 buffer with a trailing
+   NUL outside its reported length. Release with
+   `hegel_owned_string_free`.
 
  Returns `HEGEL_OK`, `HEGEL_E_STOP_TEST`, or `HEGEL_E_ASSUME`, which
  rejects the test case, when the draw could not produce a string that
@@ -2444,7 +2463,7 @@ hegel_result_t hegel_generate_grammar(hegel_context_t *ctx,
                                       hegel_test_case_t *tc,
                                       const hegel_grammar_t *grammar,
                                       uint64_t max_size,
-                                      hegel_generate_string_result_t *out_result);
+                                      hegel_owned_string_t *out_result);
 
 /*
  Parameters:
@@ -2531,7 +2550,7 @@ hegel_result_t hegel_generate_ipv6(hegel_context_t *ctx, hegel_test_case_t *tc, 
  `value`: A numeric observation. Must be finite. Higher is "more
    interesting." libhegel biases later test cases toward inputs that
    produced higher observations under the same label.
- `label`: Non-NULL, valid UTF-8. Each label may be recorded at most
+ `label`: A present UTF-8 string. Each label may be recorded at most
    once per test case.
 
  Returns `HEGEL_OK`.
@@ -2541,7 +2560,7 @@ hegel_result_t hegel_generate_ipv6(hegel_context_t *ctx, hegel_test_case_t *tc, 
 hegel_result_t hegel_target(hegel_context_t *ctx,
                             hegel_test_case_t *tc,
                             double value,
-                            const char *label);
+                            hegel_string_t label);
 
 /*
  Record an event for the current test case, for the end-of-run
@@ -2552,12 +2571,12 @@ hegel_result_t hegel_target(hegel_context_t *ctx,
  nothing and report nothing.
 
  Parameters:
- `label`: Non-NULL, valid UTF-8.
+ `label`: A present UTF-8 string.
 
  Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` on a null / non-UTF-8
  label.
  */
-hegel_result_t hegel_event(hegel_context_t *ctx, hegel_test_case_t *tc, const char *label);
+hegel_result_t hegel_event(hegel_context_t *ctx, hegel_test_case_t *tc, hegel_string_t label);
 
 /*
  Record a numeric observation under `label` for the current test case,
@@ -2570,7 +2589,7 @@ hegel_result_t hegel_event(hegel_context_t *ctx, hegel_test_case_t *tc, const ch
 
  Parameters:
  `value`: The observation. Must be finite.
- `label`: Non-NULL, valid UTF-8. Unlike `hegel_target`, a label may be
+ `label`: A present UTF-8 string. Unlike `hegel_target`, a label may be
    observed any number of times per test case.
 
  Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` on a null / non-UTF-8
@@ -2579,7 +2598,7 @@ hegel_result_t hegel_event(hegel_context_t *ctx, hegel_test_case_t *tc, const ch
 hegel_result_t hegel_event_value(hegel_context_t *ctx,
                                  hegel_test_case_t *tc,
                                  double value,
-                                 const char *label);
+                                 hegel_string_t label);
 
 /*
  Create a printer-options handle with every option at its default
@@ -2633,7 +2652,7 @@ hegel_result_t hegel_printer_new(hegel_context_t *ctx,
 hegel_result_t hegel_printer_free(hegel_context_t *ctx, hegel_printer_t *printer);
 
 /*
- Emit `len` bytes of UTF-8 at `text` only if the innermost group open at
+ Emit the UTF-8 string `text` only if the innermost group open at
  this point renders broken; a group that fits on one line renders nothing
  here. The text never counts toward width (measurement uses the flat
  form, which is empty).
@@ -2648,11 +2667,10 @@ hegel_result_t hegel_printer_free(hegel_context_t *ctx, hegel_printer_t *printer
  */
 hegel_result_t hegel_printer_if_break(hegel_context_t *ctx,
                                       hegel_printer_t *printer,
-                                      const uint8_t *text,
-                                      size_t len);
+                                      hegel_string_t text);
 
 /*
- Emit `len` bytes of UTF-8 at `text` as literal, unbreakable text.
+ Emit the UTF-8 string `text` as literal, unbreakable text.
 
  The text must not contain newlines: express line structure with
  `hegel_printer_hard_break` (or breakable points) so column accounting
@@ -2663,8 +2681,7 @@ hegel_result_t hegel_printer_if_break(hegel_context_t *ctx,
  */
 hegel_result_t hegel_printer_text(hegel_context_t *ctx,
                                   hegel_printer_t *printer,
-                                  const uint8_t *text,
-                                  size_t len);
+                                  hegel_string_t text);
 
 /*
  Emit a potential break point: renders as the given separator if the
@@ -2676,8 +2693,7 @@ hegel_result_t hegel_printer_text(hegel_context_t *ctx,
  */
 hegel_result_t hegel_printer_breakable(hegel_context_t *ctx,
                                        hegel_printer_t *printer,
-                                       const uint8_t *sep,
-                                       size_t len);
+                                       hegel_string_t sep);
 
 /*
  Attach a comment to the line currently being written: the text is
@@ -2698,8 +2714,7 @@ hegel_result_t hegel_printer_breakable(hegel_context_t *ctx,
  */
 hegel_result_t hegel_printer_comment(hegel_context_t *ctx,
                                      hegel_printer_t *printer,
-                                     const uint8_t *text,
-                                     size_t len);
+                                     hegel_string_t text);
 
 /*
  Emit an unconditional newline followed by the current indentation.
@@ -2720,8 +2735,7 @@ hegel_result_t hegel_printer_hard_break(hegel_context_t *ctx, hegel_printer_t *p
 hegel_result_t hegel_printer_begin_group(hegel_context_t *ctx,
                                          hegel_printer_t *printer,
                                          uint64_t indent,
-                                         const uint8_t *open,
-                                         size_t open_len);
+                                         hegel_string_t open);
 
 /*
  Close the innermost group: undo the indentation its
@@ -2734,8 +2748,7 @@ hegel_result_t hegel_printer_begin_group(hegel_context_t *ctx,
  */
 hegel_result_t hegel_printer_end_group(hegel_context_t *ctx,
                                        hegel_printer_t *printer,
-                                       const uint8_t *close,
-                                       size_t close_len);
+                                       hegel_string_t close);
 
 /*
  Adjust the indentation applied by subsequent break points by `delta`
@@ -2764,7 +2777,7 @@ hegel_result_t hegel_reflow_options_new(hegel_context_t *ctx, hegel_reflow_optio
 hegel_result_t hegel_reflow_options_free(hegel_context_t *ctx, hegel_reflow_options_t *options);
 
 /*
- Re-emit a one-line debug representation — `len` bytes of UTF-8 at `text`
+ Re-emit a one-line debug representation — the UTF-8 string `text`
  — through the printer's groups and break points, so a value the client
  can only format flat (Rust's `{:?}`, Go's `%#v`, Python's `repr`,
  JavaScript's `util.inspect`, Java's `toString`, …) wraps like one printed
@@ -2792,8 +2805,7 @@ hegel_result_t hegel_reflow_options_free(hegel_context_t *ctx, hegel_reflow_opti
 hegel_result_t hegel_printer_reflow(hegel_context_t *ctx,
                                     hegel_printer_t *printer,
                                     const hegel_reflow_options_t *options,
-                                    const uint8_t *text,
-                                    size_t len);
+                                    hegel_string_t text);
 
 /*
  Open a deferred hole at the handle's current position and write a
@@ -2938,7 +2950,7 @@ hegel_result_t hegel_test_case_printer(hegel_context_t *ctx,
                                        hegel_printer_t **out_printer);
 
 /*
- Append a note — `len` bytes of UTF-8 at `text` — to this test-case
+ Append the UTF-8 string `text` to this test-case
  handle's print region (see `hegel_test_case_printer` for the region
  model). Each `\n`-separated line of the note becomes its own output
  line, so notes may contain newlines. Notes and drawn values from *one
@@ -2959,10 +2971,7 @@ hegel_result_t hegel_test_case_printer(hegel_context_t *ctx,
  region is dead (the document was already read), and
  `HEGEL_E_INVALID_ARG` — with a diagnostic — for invalid string buffers.
  */
-hegel_result_t hegel_note(hegel_context_t *ctx,
-                          hegel_test_case_t *tc,
-                          const uint8_t *text,
-                          size_t len);
+hegel_result_t hegel_note(hegel_context_t *ctx, hegel_test_case_t *tc, hegel_string_t text);
 
 /*
  Parameters:
@@ -2989,7 +2998,7 @@ hegel_result_t hegel_note(hegel_context_t *ctx,
 hegel_result_t hegel_mark_complete(hegel_context_t *ctx,
                                    hegel_test_case_t *tc,
                                    uint32_t status,
-                                   const char *origin);
+                                   const hegel_string_t *origin);
 
 /*
  Parameters:
@@ -3015,7 +3024,7 @@ hegel_result_t hegel_run_result_status(hegel_context_t *ctx,
  */
 hegel_result_t hegel_run_result_error(hegel_context_t *ctx,
                                       const hegel_run_result_t *r,
-                                      const char **out_error);
+                                      const hegel_string_t **out_error);
 
 /*
  Parameters:
@@ -3079,7 +3088,7 @@ hegel_result_t hegel_failure_free(hegel_context_t *ctx, hegel_failure_t *f);
  */
 hegel_result_t hegel_failure_origin(hegel_context_t *ctx,
                                     const hegel_failure_t *f,
-                                    const char **out_origin);
+                                    hegel_string_t *out_origin);
 
 /*
  Parameters:
@@ -3100,7 +3109,7 @@ hegel_result_t hegel_failure_origin(hegel_context_t *ctx,
  */
 hegel_result_t hegel_failure_reproduction_blob(hegel_context_t *ctx,
                                                const hegel_failure_t *f,
-                                               const char **out_blob);
+                                               const hegel_string_t **out_blob);
 
 /*
  Parameters:
@@ -3114,7 +3123,7 @@ hegel_result_t hegel_failure_reproduction_blob(hegel_context_t *ctx,
  */
 hegel_result_t hegel_failure_caveat(hegel_context_t *ctx,
                                     const hegel_failure_t *f,
-                                    const char **out_caveat);
+                                    const hegel_string_t **out_caveat);
 
 /*
  Parameters:
@@ -3123,7 +3132,7 @@ hegel_result_t hegel_failure_caveat(hegel_context_t *ctx,
 
  Returns `HEGEL_OK`.
  */
-hegel_result_t hegel_version(hegel_context_t *ctx, const char **out_version);
+hegel_result_t hegel_version(hegel_context_t *ctx, hegel_string_t *out_version);
 
 #ifdef __cplusplus
 }  // extern "C"

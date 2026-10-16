@@ -44,6 +44,22 @@ opaque_handles!(
 );
 
 #[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct hegel_string_t {
+    pub data: *const c_char,
+    pub len: usize,
+}
+
+impl Default for hegel_string_t {
+    fn default() -> Self {
+        Self {
+            data: std::ptr::null(),
+            len: 0,
+        }
+    }
+}
+
+#[repr(C)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[must_use]
 pub(crate) enum hegel_result_t {
@@ -179,11 +195,7 @@ pub(crate) struct hegel_generate_bytes_result_t {
     pub len: usize,
 }
 
-#[repr(C)]
-pub(crate) struct hegel_generate_string_result_t {
-    pub data: *mut c_char,
-    pub len: usize,
-}
+pub(crate) type hegel_owned_string_t = hegel_string_t;
 
 #[repr(C)]
 pub(crate) struct hegel_printer_value_result_t {

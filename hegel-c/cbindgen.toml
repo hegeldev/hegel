@@ -36,7 +36,7 @@ header = """
  * ------------------
  * Every function takes a hegel_context_t* as its first argument and returns
  * a hegel_result_t code, except for hegel_context_new, which returns a
- * context, and hegel_context_last_error, which returns the message pointer
+ * context, and hegel_context_last_error, which returns the message string
  * directly.
  *
  * HEGEL_OK is zero and every error code is negative. Anything else a call
@@ -48,8 +48,14 @@ header = """
  * out-parameter, inverted bounds, a non-UTF-8 string, and so on). The
  * functions below leave these implicit.
  *
- * For UTF-8 strings passed as a pointer and byte length, NULL with length
- * zero means the empty string. NULL with nonzero length is invalid.
+ * UTF-8 strings use hegel_string_t. Ordinary inputs pass it by value;
+ * optional inputs use const hegel_string_t* with NULL meaning absent.
+ * Borrowed outputs write a descriptor, or a descriptor pointer when
+ * optional. Inputs need no NUL terminator; zero length accepts NULL data.
+ * Output strings have non-NULL data and a trailing NUL, including empty
+ * strings. Lengths exclude the terminator and may include interior NULs.
+ * NULL data with nonzero length and lengths above PTRDIFF_MAX are invalid.
+ * String arrays contain hegel_string_t elements and take a separate count.
  *
  * A NULL context is always allowed and opts out of error messages. The call
  * still returns its usual error code. A context must not be used
@@ -80,8 +86,8 @@ header = """
  *     hegel_new_pool             ->  hegel_pool_free
  *     hegel_new_state_machine    ->  hegel_state_machine_free
  *     hegel_generate_bytes       ->  hegel_generate_bytes_result_free
- *     hegel_generate_string      ->  hegel_generate_string_result_free
- *     hegel_generate_grammar     ->  hegel_generate_string_result_free
+ *     hegel_generate_string      ->  hegel_owned_string_free
+ *     hegel_generate_grammar     ->  hegel_owned_string_free
  *     hegel_printer_options_new  ->  hegel_printer_options_free
  *     hegel_reflow_options_new   ->  hegel_reflow_options_free
  *     hegel_printer_new          ->  hegel_printer_free
@@ -89,7 +95,7 @@ header = """
  *     hegel_test_case_printer    ->  hegel_printer_free
  *     hegel_printer_value        ->  hegel_printer_value_result_free
  *
- * Every other pointer libhegel hands back is a borrowed string. The caller
+ * Every other string libhegel hands back is borrowed. The caller
  * must not free it, and it is valid only until a documented point.
  * hegel_context_last_error is invalidated by the next call on that context.
  *

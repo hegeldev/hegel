@@ -7,6 +7,10 @@
 
 #![cfg(not(windows))]
 
+mod string_helpers;
+
+use string_helpers::test_string;
+
 mod common;
 
 use common::{last_error, make_settings, next_case, ok, start};
@@ -54,10 +58,10 @@ unsafe fn set_location(ctx: *mut HegelContext, s: *mut HegelSettings) {
         hegel_settings_set_test_location(
             ctx,
             s,
-            FILE.as_ptr(),
+            test_string(&FILE),
             7,
-            CLASS.as_ptr(),
-            FUNCTION.as_ptr(),
+            test_string(&CLASS),
+            test_string(&FUNCTION),
         )
     });
 }
@@ -117,7 +121,7 @@ unsafe fn drive(
                 ctx,
                 tc,
                 status as u32,
-                c"the bug".as_ptr(),
+                &test_string(c"the bug"),
             ));
             ok(hegel_test_case_free(ctx, tc));
         }
@@ -171,9 +175,13 @@ fn a_failing_run_reports_a_false_condition_and_its_blob_replays_do_too() {
 
         let mut f: *mut HegelFailure = ptr::null_mut();
         ok(hegel_run_result_failure(ctx, r, 0, &mut f));
-        let mut blob_ptr: *const std::ffi::c_char = ptr::null();
+        let mut blob_ptr = ptr::null();
         ok(hegel_failure_reproduction_blob(ctx, f, &mut blob_ptr));
-        let blob: CString = CStr::from_ptr(blob_ptr).to_owned();
+        let blob: CString = CString::new(std::slice::from_raw_parts(
+            (*blob_ptr).data.cast::<u8>(),
+            (*blob_ptr).len,
+        ))
+        .unwrap();
         ok(hegel_failure_free(ctx, f));
         ok(hegel_c::hegel_run_result_free(ctx, r));
         ok(hegel_run_free(ctx, run));
@@ -187,7 +195,7 @@ fn a_failing_run_reports_a_false_condition_and_its_blob_replays_do_too() {
             ok(hegel_test_case_from_blob(
                 ctx,
                 s,
-                blob.as_ptr(),
+                test_string(&blob),
                 None,
                 ptr::null_mut(),
                 &mut tc,
@@ -199,7 +207,7 @@ fn a_failing_run_reports_a_false_condition_and_its_blob_replays_do_too() {
                 ctx,
                 tc,
                 status as u32,
-                c"the bug".as_ptr(),
+                &test_string(c"the bug"),
             ));
             assert_eq!(
                 read_events(&sdk),
@@ -242,10 +250,10 @@ fn a_run_that_errors_reports_a_false_condition() {
         let mut s: *mut HegelSettings = ptr::null_mut();
         ok(hegel_settings_new_for_profile(
             ctx,
-            c"base".as_ptr(),
+            test_string(c"base"),
             &mut s,
         ));
-        ok(hegel_settings_set_database(ctx, s, c"".as_ptr()));
+        ok(hegel_settings_set_database(ctx, s, &test_string(c"")));
         set_location(ctx, s);
         let run = start(ctx, s);
         let r = drive(ctx, run, hegel_status_t::HEGEL_STATUS_INVALID);
@@ -282,7 +290,7 @@ fn a_missing_output_dir_is_rejected_at_run_start() {
             hegel_run_start_blob(
                 ctx,
                 s,
-                c"not a blob".as_ptr(),
+                test_string(c"not a blob"),
                 None,
                 ptr::null_mut(),
                 &mut run

@@ -11,6 +11,10 @@
 //! result/failure/blob readers are all exercised through the raw C ABI under
 //! Miri, not just the handle pointers.
 
+mod string_helpers;
+
+use string_helpers::test_string;
+
 mod common;
 
 use common::ok;
@@ -51,7 +55,7 @@ unsafe fn one_case_run() -> (
         let mut s: *mut HegelSettings = ptr::null_mut();
         assert_eq!(hegel_settings_new(ctx, &mut s), HEGEL_OK);
         let empty = CString::new("").unwrap();
-        ok(hegel_settings_set_database(ctx, s, empty.as_ptr()));
+        ok(hegel_settings_set_database(ctx, s, &test_string(&empty)));
         ok(hegel_settings_set_test_cases(ctx, s, 1));
         ok(hegel_settings_set_seed(ctx, s, 1, true));
         let mut run: *mut HegelRun = ptr::null_mut();
@@ -241,7 +245,7 @@ fn object_handles_outlive_the_run_and_free_in_any_order() {
         let mut pool: *mut HegelPool = ptr::null_mut();
         ok(hegel_new_pool(ctx, tc, &mut pool));
         let rule = CString::new("only").unwrap();
-        let rules = [rule.as_ptr()];
+        let rules = [test_string(&rule)];
         let rule_groups: [i64; 1] = [0];
         let mut machine: *mut HegelStateMachine = ptr::null_mut();
         let mut out_concurrency = 0i64;
@@ -307,7 +311,7 @@ fn full_run_generates_fails_and_shrinks() {
         let mut s: *mut HegelSettings = ptr::null_mut();
         ok(hegel_settings_new(ctx, &mut s));
         let empty = CString::new("").unwrap();
-        ok(hegel_settings_set_database(ctx, s, empty.as_ptr()));
+        ok(hegel_settings_set_database(ctx, s, &test_string(&empty)));
         ok(hegel_settings_set_test_cases(ctx, s, 5));
         ok(hegel_settings_set_seed(ctx, s, 1, true));
         ok(hegel_settings_set_verbosity(
@@ -359,13 +363,13 @@ fn full_run_generates_fails_and_shrinks() {
             count >= 1,
             "an always-interesting property records a failure"
         );
-        let mut blob: *const std::os::raw::c_char = ptr::null();
+        let mut blob = ptr::null();
         ok(hegel_failure_reproduction_blob(ctx, f, &mut blob));
         assert!(
             !blob.is_null(),
             "a shrunk failure carries a reproduction blob"
         );
-        let mut caveat: *const std::os::raw::c_char = ptr::null();
+        let mut caveat = ptr::null();
         ok(hegel_failure_caveat(ctx, f, &mut caveat));
         assert!(caveat.is_null(), "a deterministic failure has no caveat");
         ok(hegel_failure_free(ctx, f));
