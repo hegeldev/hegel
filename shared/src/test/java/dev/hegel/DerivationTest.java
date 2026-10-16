@@ -13,6 +13,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalDouble;
+import java.util.OptionalInt;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -96,6 +99,13 @@ class DerivationTest {
         assertAllExamples(
                 forType(Wrappers.class),
                 w -> w.l() != null && w.b() != null && w.d() != null && w.data() != null && w.i() != null);
+    }
+
+    record Stats(long count, OptionalInt min, OptionalLong max, OptionalDouble mean) {}
+
+    @Test
+    void derivesPrimitiveOptionals() {
+        assertAllExamples(forType(Stats.class), s -> s.min() != null && s.max() != null && s.mean() != null);
     }
 
     @Test

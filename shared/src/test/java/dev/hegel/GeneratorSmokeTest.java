@@ -12,9 +12,13 @@ import static dev.hegel.Generators.floats;
 import static dev.hegel.Generators.fromRegex;
 import static dev.hegel.Generators.integers;
 import static dev.hegel.Generators.ipAddresses;
+import static dev.hegel.Generators.longs;
 import static dev.hegel.Generators.maps;
 import static dev.hegel.Generators.oneOf;
 import static dev.hegel.Generators.optional;
+import static dev.hegel.Generators.optionalDoubles;
+import static dev.hegel.Generators.optionalInts;
+import static dev.hegel.Generators.optionalLongs;
 import static dev.hegel.Generators.sampledFrom;
 import static dev.hegel.Generators.sets;
 import static dev.hegel.Generators.text;
@@ -26,6 +30,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalDouble;
+import java.util.OptionalInt;
+import java.util.OptionalLong;
 import java.util.Set;
 
 class GeneratorSmokeTest {
@@ -78,6 +85,12 @@ class GeneratorSmokeTest {
         assertTrue(iv <= 1 || iv >= 100);
         Optional<Integer> o = tc.draw(optional(integers().min(0).max(3)));
         o.ifPresent(x -> assertTrue(x >= 0 && x <= 3));
+        OptionalInt oi = tc.draw(optionalInts(integers().min(0).max(3)));
+        oi.ifPresent(x -> assertTrue(x >= 0 && x <= 3));
+        OptionalLong ol = tc.draw(optionalLongs(longs().min(0L).max(3L)));
+        ol.ifPresent(x -> assertTrue(x >= 0L && x <= 3L));
+        OptionalDouble od = tc.draw(optionalDoubles(doubles().min(0.0).max(1.0)));
+        od.ifPresent(x -> assertTrue(x >= 0.0 && x <= 1.0));
     }
 
     @HegelTest

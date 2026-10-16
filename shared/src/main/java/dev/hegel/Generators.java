@@ -38,6 +38,9 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalDouble;
+import java.util.OptionalInt;
+import java.util.OptionalLong;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -196,6 +199,36 @@ public final class Generators {
      */
     public static <T> Generator<Optional<T>> optional(Generator<T> generator) {
         return oneOf(just(Optional.<T>empty()), generator.map(Optional::of));
+    }
+
+    /**
+     * Generates an {@link OptionalInt} that is empty or wraps a value from {@code generator}.
+     *
+     * @param generator the value generator
+     * @return an optional-int generator
+     */
+    public static Generator<OptionalInt> optionalInts(Generator<Integer> generator) {
+        return oneOf(just(OptionalInt.empty()), generator.map(OptionalInt::of));
+    }
+
+    /**
+     * Generates an {@link OptionalLong} that is empty or wraps a value from {@code generator}.
+     *
+     * @param generator the value generator
+     * @return an optional-long generator
+     */
+    public static Generator<OptionalLong> optionalLongs(Generator<Long> generator) {
+        return oneOf(just(OptionalLong.empty()), generator.map(OptionalLong::of));
+    }
+
+    /**
+     * Generates an {@link OptionalDouble} that is empty or wraps a value from {@code generator}.
+     *
+     * @param generator the value generator
+     * @return an optional-double generator
+     */
+    public static Generator<OptionalDouble> optionalDoubles(Generator<Double> generator) {
+        return oneOf(just(OptionalDouble.empty()), generator.map(OptionalDouble::of));
     }
 
     // --- collections ---
@@ -465,9 +498,9 @@ public final class Generators {
      * Derive a generator for {@code type} by reflection.
      *
      * <p>Supports scalar types ({@code int}, {@code long}, {@code boolean}, {@code float}, {@code
-     * double}, {@code String}, {@code byte[]}, {@link UUID}, and their wrappers), enums, records
-     * (recursively), and {@code List}, {@code Set}, {@code Optional} and {@code Map} of supported
-     * element types.
+     * double}, {@code String}, {@code byte[]}, {@link UUID}, and their wrappers), {@link
+     * OptionalInt}, {@link OptionalLong}, {@link OptionalDouble}, enums, records (recursively), and
+     * {@code List}, {@code Set}, {@code Optional} and {@code Map} of supported element types.
      *
      * @param type the type to derive a generator for
      * @param <T> the type

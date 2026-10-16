@@ -9,9 +9,10 @@ import java.util.List;
 
 /**
  * Reflection-based generator derivation. Maps a Java type to a default generator: scalar wrappers
- * to their primitive generators, enums to a choice over their constants, records to a generator
- * over their components, and {@code List}/{@code Set}/{@code Optional}/{@code Map} to the matching
- * collection generators (using the declared element types).
+ * to their primitive generators, {@code OptionalInt}/{@code OptionalLong}/{@code OptionalDouble} to
+ * optionals over them, enums to a choice over their constants, records to a generator over their
+ * components, and {@code List}/{@code Set}/{@code Optional}/{@code Map} to the matching collection
+ * generators (using the declared element types).
  */
 public final class Derive {
     private Derive() {}
@@ -63,6 +64,15 @@ public final class Derive {
         }
         if (cls == double.class || cls == Double.class) {
             return Generators.doubles();
+        }
+        if (cls == java.util.OptionalInt.class) {
+            return Generators.optionalInts(Generators.integers());
+        }
+        if (cls == java.util.OptionalLong.class) {
+            return Generators.optionalLongs(Generators.longs());
+        }
+        if (cls == java.util.OptionalDouble.class) {
+            return Generators.optionalDoubles(Generators.doubles());
         }
         if (cls == String.class) {
             return Generators.text();
