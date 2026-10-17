@@ -226,6 +226,10 @@ unicodedata:
 tzdata:
     scripts/generate_tzdata.py
 
+# Check that hegel-c/src/tzdata/ is what `just tzdata` would write (needs uv).
+check-tzdata:
+    scripts/generate_tzdata.py --check
+
 # Run cargo-insta, installing it first if it's missing. Pinned to the same
 # version as the `insta` dev-dependency so snapshot format stays consistent.
 INSTA_VERSION := "1.47.2"

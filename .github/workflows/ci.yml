@@ -293,12 +293,15 @@ jobs:
 
       - uses: ./.github/actions/install-tools
         with:
-          # `uv` is needed for the `check-lark.py` script's
-          # `#!/usr/bin/env -S uv run --script` shebang.
+          # `uv` is needed for the `check-lark.py` and `generate_tzdata.py`
+          # scripts' `#!/usr/bin/env -S uv run --script` shebang.
           tools: just uv
 
       - name: Check generated strings parse with Lark
         run: just check-lark
+
+      - name: Check the bundled time zone table is reproducible
+        run: just check-tzdata
 
   docs:
     name: docs

@@ -17,6 +17,8 @@ just check-lark           # parse engine-generated strings from the Lark fixture
 just check-parse          # compare the engine's grammar parser with Lark's on generated strings and their mutants (needs uv)
 just lark-fixtures        # regenerate the Lark fixtures' .expected files from Lark (needs uv)
 just unicodedata          # regenerate the Unicode tables and their Python reference from the vendored UCD files (needs uv)
+just tzdata               # regenerate the bundled time zone table in hegel-c/src/tzdata/ from the pinned tzdata release (needs uv)
+just check-tzdata         # check that the bundled time zone table is what `just tzdata` would write (needs uv)
 cargo test test_name      # one test
 ```
 

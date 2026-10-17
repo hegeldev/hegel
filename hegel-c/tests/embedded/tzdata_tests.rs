@@ -12,6 +12,7 @@ use std::vec::Vec;
 
 const TABLE_TEXT: &str = include_str!("../../src/tzdata/tzdata.txt");
 const SCRIPT: &str = include_str!("../../../scripts/generate_tzdata.py");
+const CHECKSUM: &str = include_str!("../../src/tzdata/checksum.txt");
 
 fn all_names() -> &'static [Name] {
     names().unwrap()
@@ -291,11 +292,19 @@ fn appendix_c_zones_carry_their_tags() {
         ("GMT", &[Fixed, Link, Legacy], &[]),
         ("Zulu", &[Fixed, Link, Legacy], &[]),
         ("UCT", &[Fixed, Link, Legacy], &[]),
-        ("Etc/GMT+5", &[Fixed, InvertedSign], &[Link, Legacy]),
+        (
+            "Etc/GMT+5",
+            &[Fixed, InvertedSign],
+            &[Link, Legacy, Seconds],
+        ),
         ("Etc/GMT-14", &[Fixed, InvertedSign], &[Link]),
         ("Factory", &[Fixed, Undefined, Legacy], &[]),
         ("Asia/Calcutta", &[Fixed, Fractional, Link], &[Legacy]),
-        ("Asia/Kolkata", &[Fixed, Fractional], &[Link, WholeHour]),
+        (
+            "Asia/Kolkata",
+            &[Fixed, Fractional, Seconds],
+            &[Link, WholeHour],
+        ),
         ("Europe/Kiev", &[Link, Dst], &[Legacy]),
         ("Europe/Kyiv", &[Dst], &[Link]),
         ("US/Eastern", &[Link, Legacy, WholeHour, Dst], &[]),
@@ -353,8 +362,8 @@ fn appendix_c_zones_carry_their_tags() {
             &[WholeHour, Fractional],
         ),
         ("Africa/Juba", &[SpansMidnight, BaseChange], &[]),
-        ("Asia/Riyadh", &[Fixed], &[Seconds]),
-        ("Asia/Manila", &[WholeHour], &[Fixed]),
+        ("Asia/Riyadh", &[Fixed, WholeHour, Seconds], &[]),
+        ("Asia/Manila", &[WholeHour, Seconds], &[Fixed]),
         ("Europe/Istanbul", &[BaseChange], &[Dst]),
         ("Europe/Minsk", &[BaseChange], &[Dst]),
         ("Europe/Volgograd", &[BaseChange], &[Dst]),
@@ -390,7 +399,16 @@ fn footer_of(name: &str) -> Footer {
 fn appendix_c_footers_are_parsed_into_fields() {
     let dublin = footer_of("Europe/Dublin");
     assert_eq!(dublin.standard.utoff, 3600);
+    assert!(!dublin.standard.is_dst);
     assert_eq!(dublin.dst.unwrap().kind.utoff, 0);
+    assert!(dublin.dst.unwrap().kind.is_dst);
+    for entry in all_names() {
+        let footer = entry.zone.footer.unwrap();
+        assert!(!footer.standard.is_dst, "{}", entry.name);
+        if let Some(dst) = footer.dst {
+            assert!(dst.kind.is_dst, "{}", entry.name);
+        }
+    }
     let gaza = footer_of("Asia/Gaza").dst.unwrap();
     assert_eq!(gaza.start.time, 50 * 3600);
     assert_eq!(gaza.end.time, 50 * 3600);
@@ -452,6 +470,31 @@ fn appendix_c_footers_are_parsed_into_fields() {
             .iter()
             .any(|t| t.kind.utoff == -(44 * 60 + 30))
     );
+    assert_eq!(
+        lookup("Asia/Riyadh").unwrap().unwrap().zone.initial.utoff,
+        3 * 3600 + 6 * 60 + 52
+    );
+    assert_eq!(
+        lookup("Asia/Manila").unwrap().unwrap().zone.initial.utoff,
+        -(15 * 3600 + 56 * 60 + 8)
+    );
+}
+
+#[test]
+fn seconds_tag_covers_the_whole_history() {
+    for entry in all_names() {
+        let zone = entry.zone;
+        let footer = zone.footer.unwrap();
+        let mut offsets = vec![zone.initial.utoff, footer.standard.utoff];
+        offsets.extend(zone.transitions.iter().map(|t| t.kind.utoff));
+        offsets.extend(footer.dst.map(|dst| dst.kind.utoff));
+        assert_eq!(
+            entry.tags.contains(Tag::Seconds),
+            offsets.iter().any(|o| o % 60 != 0),
+            "{}",
+            entry.name
+        );
+    }
 }
 
 #[test]
@@ -478,8 +521,18 @@ fn compressed_table_inflates_to_the_text_table() {
     assert_eq!(String::from_utf8(inflated).unwrap(), TABLE_TEXT);
 }
 
+fn fnv1a64(data: &[u8]) -> String {
+    let hash = data.iter().fold(0xcbf29ce484222325u64, |h, &byte| {
+        (h ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+    });
+    format!("{hash:016x}")
+}
+
 #[test]
 fn table_is_reproducible() {
+    assert_eq!(fnv1a64(TABLE_TEXT.as_bytes()), CHECKSUM);
+    assert_eq!(fnv1a64(b""), "cbf29ce484222325");
+    assert_eq!(fnv1a64(b"a"), "af63dc4c8601ec8c");
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/generate_tzdata.py");
     let out = tempfile::tempdir().unwrap();
     let run = Command::new("uv")
@@ -489,10 +542,7 @@ fn table_is_reproducible() {
         .arg(out.path())
         .output();
     let output = match run {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            compressed_table_inflates_to_the_text_table();
-            return;
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
         other => other.unwrap(),
     };
     assert!(
@@ -500,13 +550,16 @@ fn table_is_reproducible() {
         "generate_tzdata.py failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let regenerated = std::fs::read_to_string(out.path().join("tzdata.txt")).unwrap();
-    assert_eq!(regenerated, TABLE_TEXT);
-    let version = std::fs::read_to_string(out.path().join("version.txt")).unwrap();
-    assert_eq!(version, VERSION);
+    for (name, expected) in [
+        ("tzdata.txt", TABLE_TEXT),
+        ("version.txt", VERSION),
+        ("checksum.txt", CHECKSUM),
+    ] {
+        let written = std::fs::read_to_string(out.path().join(name)).unwrap();
+        assert_eq!(written, expected, "{name}");
+    }
     let compressed = std::fs::read(out.path().join("tzdata.txt.z")).unwrap();
-    let inflated = miniz_oxide::inflate::decompress_to_vec_zlib(&compressed).unwrap();
-    assert_eq!(String::from_utf8(inflated).unwrap(), TABLE_TEXT);
+    assert_eq!(compressed, COMPRESSED_TABLE);
 }
 
 const MINIMAL: &str = "# comment\nV 2026e\nZ Etc/UTC 0 fixed\nA UTC\nI 0 0 0\nF 0 0\n";
@@ -562,7 +615,17 @@ fn parses_every_rule_day_form() {
             },
         ]
     );
-    let dst = zone.footer.unwrap().dst.unwrap();
+    let footer = zone.footer.unwrap();
+    assert!(!footer.standard.is_dst);
+    let dst = footer.dst.unwrap();
+    assert_eq!(
+        dst.kind,
+        LocalTimeType {
+            utoff: 3600,
+            is_dst: true,
+            abbreviation: 1
+        }
+    );
     assert_eq!(
         dst.start,
         RuleDate {
@@ -606,6 +669,19 @@ fn malformed_tables_are_internal_errors() {
             "unknown record \"Q\"",
         ),
         ("V x\nZ Etc/UTC 0 fixed\n", "has no abbreviations"),
+        ("V x\nZ Etc/UTC 0 fixed\nA UTC\n", "has no initial record"),
+        (
+            "V x\nZ Etc/UTC 0 fixed\nA UTC\nI 0 0 0\nI 0 0 0\n",
+            "initial record repeated or out of order",
+        ),
+        (
+            "V x\nZ Etc/UTC 0 fixed\nA UTC\nT 0 0 0 0\nI 0 0 0\n",
+            "initial record repeated or out of order",
+        ),
+        (
+            "V x\nZ Etc/UTC 0 fixed\nA UTC\nF 0 0\nI 0 0 0\n",
+            "initial record repeated or out of order",
+        ),
         (
             "V x\nZ Etc/UTC 0 fixed\nA UTC\nI 0 0 0\nL B Etc/GMT 1 link\n",
             "targets unknown zone Etc/GMT",

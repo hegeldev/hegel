@@ -193,6 +193,7 @@ pub struct RuleDate {
 /// The DST half of a footer rule.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct DstRule {
+    /// Always has `is_dst` set, as the standard half never does.
     pub kind: LocalTimeType,
     /// When DST starts each year.
     pub start: RuleDate,
@@ -250,6 +251,7 @@ struct ZoneRecord {
     zone: Zone,
     rank: u16,
     tags: Tags,
+    has_initial: bool,
 }
 
 struct LinkRecord {
@@ -331,6 +333,7 @@ fn parse_table(text: &str) -> Result<Table, InternalError> {
                     },
                     rank: parse_number(fields[1], lineno)?,
                     tags: parse_tags(fields[2], lineno)?,
+                    has_initial: false,
                 });
             }
             "L" => {
@@ -350,7 +353,7 @@ fn parse_table(text: &str) -> Result<Table, InternalError> {
                     zones.last_mut(),
                     "tzdata line {lineno}: {kind} record before any zone"
                 );
-                parse_zone_line(&mut record.zone, kind, &fields, lineno)?;
+                parse_zone_line(record, kind, &fields, lineno)?;
             }
         }
     }
@@ -359,6 +362,11 @@ fn parse_table(text: &str) -> Result<Table, InternalError> {
         hegel_internal_assert!(
             !record.zone.abbreviations.is_empty(),
             "tzdata zone {} has no abbreviations",
+            record.zone.name
+        );
+        hegel_internal_assert!(
+            record.has_initial,
+            "tzdata zone {} has no initial record",
             record.zone.name
         );
     }
@@ -419,11 +427,12 @@ fn parse_table(text: &str) -> Result<Table, InternalError> {
 }
 
 fn parse_zone_line(
-    zone: &mut Zone,
+    record: &mut ZoneRecord,
     kind: &str,
     fields: &[&str],
     lineno: usize,
 ) -> Result<(), InternalError> {
+    let zone = &mut record.zone;
     match kind {
         "A" => {
             hegel_internal_assert!(
@@ -433,7 +442,12 @@ fn parse_zone_line(
             zone.abbreviations = fields.iter().map(|s| s.to_string()).collect();
         }
         "I" => {
+            hegel_internal_assert!(
+                !record.has_initial && zone.transitions.is_empty() && zone.footer.is_none(),
+                "tzdata line {lineno}: initial record repeated or out of order"
+            );
             zone.initial = parse_type(zone, fields, lineno)?;
+            record.has_initial = true;
         }
         "T" => {
             hegel_internal_assert!(
@@ -453,10 +467,10 @@ fn parse_zone_line(
                 zone.footer.is_none() && (fields.len() == 2 || fields.len() == 6),
                 "tzdata line {lineno}: malformed footer record"
             );
-            let standard = parse_footer_type(zone, &fields[..2], lineno)?;
+            let standard = parse_footer_type(zone, &fields[..2], false, lineno)?;
             let dst = if fields.len() == 6 {
                 Some(DstRule {
-                    kind: parse_footer_type(zone, &fields[2..4], lineno)?,
+                    kind: parse_footer_type(zone, &fields[2..4], true, lineno)?,
                     start: parse_rule_date(fields[4], lineno)?,
                     end: parse_rule_date(fields[5], lineno)?,
                 })
@@ -516,11 +530,12 @@ fn parse_type(zone: &Zone, fields: &[&str], lineno: usize) -> Result<LocalTimeTy
 fn parse_footer_type(
     zone: &Zone,
     fields: &[&str],
+    is_dst: bool,
     lineno: usize,
 ) -> Result<LocalTimeType, InternalError> {
     Ok(LocalTimeType {
         utoff: parse_number(fields[1], lineno)?,
-        is_dst: false,
+        is_dst,
         abbreviation: parse_abbreviation(zone, fields[0], lineno)?,
     })
 }

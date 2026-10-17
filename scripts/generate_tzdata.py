@@ -8,7 +8,12 @@
 Run from the repo root (`just tzdata` does this), with uv, which fetches the
 pinned `tzdata` release from PyPI:
 
-    scripts/generate_tzdata.py [--out DIR]
+    scripts/generate_tzdata.py [--out DIR] [--check]
+
+`--check` writes nothing and instead fails when the files in the output
+directory differ from what the script would write (`just check-tzdata`).
+The engine's `table_is_reproducible` test does the same through `uv` when
+it is installed and otherwise falls back to `checksum.txt`.
 
 The `tzdata` package ships the compiled TZif files `zoneinfo` reads. This
 script parses the version 2+ 64-bit block and the footer of every file
@@ -22,6 +27,9 @@ files to `hegel-c/src/tzdata/` (or `--out DIR`):
     checks they agree, so only the text file needs reviewing.
   - `version.txt`: the IANA release alone, with no newline, so that
     `hegel_tzdb_version` can answer without inflating the table.
+  - `checksum.txt`: the 64-bit FNV-1a hash of `tzdata.txt`, as sixteen
+    hex digits with no newline, which the engine's tests compare against
+    the text table so a hand edit is caught even where `uv` is missing.
 
 Table format (fields are space-separated; `#` lines are comments):
 
@@ -58,8 +66,9 @@ footer's offsets.
   whole_hour      every offset after 1970 is a whole number of hours
   fractional      some offset after 1970 is a whole number of minutes but
                   not of hours (+05:30, +05:45, -03:30)
-  seconds         some offset in the zone's history is not a whole number
-                  of minutes (local mean time, Monrovia's -00:44:30)
+  seconds         some offset in the zone's history, including before
+                  1970, is not a whole number of minutes (local mean
+                  time, Monrovia's -00:44:30 until 1972)
   dst             the footer has a DST rule whose offset differs from the
                   standard one by exactly one hour
   dst_other       the footer has a DST rule with a different size (Lord
@@ -89,7 +98,7 @@ absolute offset, then zones tagged both `whole_hour` and `dst`, then the
 rest; within a tier zones with fewer tags come first and ties break by
 name. Ranks are unique, so they order every name.
 
-Size: for 2026e the text table is 443,796 bytes and deflates to 80,551.
+Size: for 2026e the text table is 447,828 bytes and deflates to 80,701.
 Measured on the release libhegel shared library (macOS arm64, 4,053,936
 bytes without any table), embedding the deflated table adds 121,056 bytes
 and embedding the text table adds 484,176, the inflater being linked
@@ -119,6 +128,7 @@ DEFAULT_OUT_DIR = REPO_ROOT / "hegel-c" / "src" / "tzdata"
 TABLE_NAME = "tzdata.txt"
 COMPRESSED_NAME = "tzdata.txt.z"
 VERSION_NAME = "version.txt"
+CHECKSUM_NAME = "checksum.txt"
 
 UNIX_1970 = 0
 SECONDS_PER_DAY = 86400
@@ -367,6 +377,13 @@ def footer_offsets(zone: Zone) -> set[int]:
     return offsets
 
 
+def all_offsets(zone: Zone) -> set[int]:
+    offsets = {zone.initial.utoff}
+    offsets.update(t.type.utoff for t in zone.transitions)
+    offsets.update(footer_offsets(zone))
+    return offsets
+
+
 def offsets_after(zone: Zone, instant: int) -> set[int]:
     offsets = {type_in_force(zone, instant).utoff}
     offsets.update(t.type.utoff for t in zone.transitions if t.instant >= instant)
@@ -433,7 +450,7 @@ def compute_zone_tags(zone: Zone) -> set[str]:
         tags.add("whole_hour")
     if any(o % SECONDS_PER_HOUR != 0 and o % 60 == 0 for o in recent):
         tags.add("fractional")
-    if any(o % 60 != 0 for o in recent):
+    if any(o % 60 != 0 for o in all_offsets(zone)):
         tags.add("seconds")
     if has_dst_rule:
         delta = abs(footer.dst.utoff - footer.std.utoff)
@@ -613,16 +630,40 @@ def build_table() -> str:
     return "\n".join(lines) + "\n"
 
 
+def fnv1a64(data: bytes) -> str:
+    h = 0xCBF29CE484222325
+    for byte in data:
+        h = ((h ^ byte) * 0x100000001B3) % (1 << 64)
+    return f"{h:016x}"
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
+    parser.add_argument("--check", action="store_true")
     args = parser.parse_args(argv)
     table = build_table()
-    args.out.mkdir(parents=True, exist_ok=True)
-    (args.out / TABLE_NAME).write_text(table)
     compressed = zlib.compress(table.encode("ascii"), 9)
-    (args.out / COMPRESSED_NAME).write_bytes(compressed)
-    (args.out / VERSION_NAME).write_text(IANA_VERSION)
+    files = {
+        TABLE_NAME: table.encode("ascii"),
+        COMPRESSED_NAME: compressed,
+        VERSION_NAME: IANA_VERSION.encode("ascii"),
+        CHECKSUM_NAME: fnv1a64(table.encode("ascii")).encode("ascii"),
+    }
+    if args.check:
+        stale = [
+            name
+            for name, content in files.items()
+            if not (args.out / name).is_file() or (args.out / name).read_bytes() != content
+        ]
+        if stale:
+            print(f"out of date in {args.out}: {', '.join(stale)}; run `just tzdata`")
+            return 1
+        print(f"{args.out / TABLE_NAME} is up to date")
+        return 0
+    args.out.mkdir(parents=True, exist_ok=True)
+    for name, content in files.items():
+        (args.out / name).write_bytes(content)
     print(f"wrote {args.out / TABLE_NAME} ({len(table)} bytes, {len(compressed)} deflated)")
     return 0
 
