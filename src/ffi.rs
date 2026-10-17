@@ -25,6 +25,9 @@ use crate::runner::{
 };
 use crate::test_case::OutputSink;
 use hegel_c::hegel_result_t;
+
+/// The precision every frontend draw passes, keeping times whole nanoseconds.
+const NANOSECONDS: u32 = hegel_c::hegel_precision_t::HEGEL_PRECISION_NANOSECONDS as u32;
 use std::ffi::{CStr, CString, c_void};
 use std::os::raw::c_char;
 use std::path::PathBuf;
@@ -813,7 +816,8 @@ impl CTestCase {
         take_string_result(rc, result)
     }
 
-    /// Draw a Gregorian calendar date in `[min, max]`.
+    /// Draw a Gregorian calendar date in `[min, max]` on any weekday and
+    /// in any month.
     pub(crate) fn generate_date(
         &self,
         min: hegel_c::hegel_date_t,
@@ -821,12 +825,12 @@ impl CTestCase {
     ) -> Result<hegel_c::hegel_date_t, hegel_result_t> {
         let mut out = min;
         let rc = with_context(|ctx| unsafe {
-            hegel_c::hegel_generate_date(ctx, self.raw, min, max, &mut out)
+            hegel_c::hegel_generate_date(ctx, self.raw, min, max, ptr::null(), &mut out)
         });
         rc_to_value(rc, out)
     }
 
-    /// Draw a time of day in `[min, max]`.
+    /// Draw a time of day in `[min, max]` at nanosecond precision.
     pub(crate) fn generate_time(
         &self,
         min: hegel_c::hegel_time_t,
@@ -834,12 +838,12 @@ impl CTestCase {
     ) -> Result<hegel_c::hegel_time_t, hegel_result_t> {
         let mut out = min;
         let rc = with_context(|ctx| unsafe {
-            hegel_c::hegel_generate_time(ctx, self.raw, min, max, &mut out)
+            hegel_c::hegel_generate_time(ctx, self.raw, min, max, NANOSECONDS, &mut out)
         });
         rc_to_value(rc, out)
     }
 
-    /// Draw a naive datetime in `[min, max]`.
+    /// Draw a naive datetime in `[min, max]` at nanosecond precision.
     pub(crate) fn generate_datetime(
         &self,
         min: hegel_c::hegel_datetime_t,
@@ -847,7 +851,7 @@ impl CTestCase {
     ) -> Result<hegel_c::hegel_datetime_t, hegel_result_t> {
         let mut out = min;
         let rc = with_context(|ctx| unsafe {
-            hegel_c::hegel_generate_datetime(ctx, self.raw, min, max, &mut out)
+            hegel_c::hegel_generate_datetime(ctx, self.raw, min, max, NANOSECONDS, &mut out)
         });
         rc_to_value(rc, out)
     }

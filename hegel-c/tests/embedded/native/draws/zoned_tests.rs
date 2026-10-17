@@ -9,6 +9,7 @@ use super::*;
 use crate::exchange::drive_no_yield;
 use crate::native::bignum::BigInt;
 use crate::native::core::{ChoiceNode, ChoiceValue, NativeTestCase};
+use crate::native::draws::special::time_to_ns;
 use crate::native::draws::timezone::TimeZoneSpec;
 use crate::native::rng::EngineRng;
 use crate::native::shrinker::{ShrinkRun, Shrinker};

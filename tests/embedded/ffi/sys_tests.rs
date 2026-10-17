@@ -216,6 +216,29 @@ mod drift {
             HEGEL_AMBIGUOUS_EARLIER,
             HEGEL_AMBIGUOUS_LATER,
         }
+        hegel_offset_granularity_t {
+            HEGEL_OFFSET_GRANULARITY_HOURS,
+            HEGEL_OFFSET_GRANULARITY_QUARTER_HOURS,
+            HEGEL_OFFSET_GRANULARITY_MINUTES,
+            HEGEL_OFFSET_GRANULARITY_SECONDS,
+        }
+        hegel_span_unit_t {
+            HEGEL_SPAN_UNIT_YEARS,
+            HEGEL_SPAN_UNIT_MONTHS,
+            HEGEL_SPAN_UNIT_WEEKS,
+            HEGEL_SPAN_UNIT_DAYS,
+            HEGEL_SPAN_UNIT_HOURS,
+            HEGEL_SPAN_UNIT_MINUTES,
+            HEGEL_SPAN_UNIT_SECONDS,
+            HEGEL_SPAN_UNIT_MILLISECONDS,
+            HEGEL_SPAN_UNIT_MICROSECONDS,
+            HEGEL_SPAN_UNIT_NANOSECONDS,
+        }
+        hegel_span_sign_t {
+            HEGEL_SPAN_SIGN_UNIFORM,
+            HEGEL_SPAN_SIGN_MIXED,
+            HEGEL_SPAN_SIGN_NONNEGATIVE,
+        }
     }
 
     macro_rules! assert_struct_mirrors {
@@ -242,6 +265,9 @@ mod drift {
         hegel_timezone_offset_t { offset_seconds, offset_known, is_dst, abbreviation }
         hegel_timezone_info_t { known, primary_name, is_link, rank, tags }
         hegel_zoned_datetime_t { civil, offset_seconds, offset_known, fold, kind, offset_before, offset_after, timestamp }
+        hegel_offset_t { seconds, known }
+        hegel_duration_t { seconds, nanoseconds }
+        hegel_span_t { years, months, weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds }
     }
 
     macro_rules! assert_const_mirrors {

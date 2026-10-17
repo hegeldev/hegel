@@ -82,6 +82,10 @@
  *     hegel_generate_grammar     ->  hegel_generate_string_result_free
  *     hegel_printer_options_new  ->  hegel_printer_options_free
  *     hegel_reflow_options_new   ->  hegel_reflow_options_free
+ *     hegel_timezone_spec_new    ->  hegel_timezone_spec_free
+ *     hegel_zoned_spec_new       ->  hegel_zoned_spec_free
+ *     hegel_date_options_new     ->  hegel_date_options_free
+ *     hegel_span_spec_new        ->  hegel_span_spec_free
  *     hegel_printer_new          ->  hegel_printer_free
  *     hegel_printer_deferred     ->  hegel_printer_free
  *     hegel_test_case_printer    ->  hegel_printer_free
@@ -525,8 +529,8 @@ typedef enum {
 } hegel_status_t;
 
 /*
- The unit the time part of a drawn zoned datetime is counted in; see
- `hegel_zoned_spec_set_precision`.
+ The unit the time part of a drawn time, datetime, zoned datetime,
+ timestamp or duration is counted in.
  */
 typedef enum {
     HEGEL_PRECISION_NANOSECONDS = 0,
@@ -572,6 +576,52 @@ typedef enum {
 } hegel_ambiguous_t;
 
 /*
+ The values a UTC offset draw restricts itself to; see
+ `hegel_generate_offset`.
+ */
+typedef enum {
+    HEGEL_OFFSET_GRANULARITY_HOURS = 0,
+    HEGEL_OFFSET_GRANULARITY_QUARTER_HOURS = 1,
+    HEGEL_OFFSET_GRANULARITY_MINUTES = 2,
+    HEGEL_OFFSET_GRANULARITY_SECONDS = 3,
+} hegel_offset_granularity_t;
+
+/*
+ A unit of a calendar span; see `hegel_span_spec_set_unit_bounds`.
+ */
+typedef enum {
+    HEGEL_SPAN_UNIT_YEARS = 0,
+    HEGEL_SPAN_UNIT_MONTHS = 1,
+    HEGEL_SPAN_UNIT_WEEKS = 2,
+    HEGEL_SPAN_UNIT_DAYS = 3,
+    HEGEL_SPAN_UNIT_HOURS = 4,
+    HEGEL_SPAN_UNIT_MINUTES = 5,
+    HEGEL_SPAN_UNIT_SECONDS = 6,
+    HEGEL_SPAN_UNIT_MILLISECONDS = 7,
+    HEGEL_SPAN_UNIT_MICROSECONDS = 8,
+    HEGEL_SPAN_UNIT_NANOSECONDS = 9,
+} hegel_span_unit_t;
+
+/*
+ How the signs of a span's units are drawn; see
+ `hegel_span_spec_set_sign`.
+ */
+typedef enum {
+    /*
+     One sign for every unit.
+     */
+    HEGEL_SPAN_SIGN_UNIFORM = 0,
+    /*
+     Each unit signed on its own.
+     */
+    HEGEL_SPAN_SIGN_MIXED = 1,
+    /*
+     Magnitudes only.
+     */
+    HEGEL_SPAN_SIGN_NONNEGATIVE = 2,
+} hegel_span_sign_t;
+
+/*
  Opaque handle to an engine-managed variable-length collection.
 
  Created by `hegel_new_collection` on a test case; driven by
@@ -594,6 +644,17 @@ typedef struct hegel_collection_t hegel_collection_t;
  call. Passed as the first argument to nearly every function.
  */
 typedef struct hegel_context_t hegel_context_t;
+
+/*
+ The weekday and month masks of a date draw
+
+ Build one with `hegel_date_options_new`, whose defaults allow every
+ weekday and every month, change it with the `hegel_date_options_set_*`
+ setters and free it with `hegel_date_options_free`. Options may be
+ drawn with by any number of test cases and threads once configured;
+ each setter call requires exclusive access.
+ */
+typedef struct hegel_date_options_t hegel_date_options_t;
 
 /*
  One distinct interesting test case surfaced by the run.
@@ -782,6 +843,18 @@ typedef struct hegel_run_result_t hegel_run_result_t;
  `hegel_settings_get_database` reads of it.
  */
 typedef struct hegel_settings_t hegel_settings_t;
+
+/*
+ The bounds and sign policy of a calendar span draw
+
+ Build one with `hegel_span_spec_new`, which enables no unit and draws
+ one sign for every unit; enable units with
+ `hegel_span_spec_set_unit_bounds`, set the policy with
+ `hegel_span_spec_set_sign` and free it with `hegel_span_spec_free`. A
+ spec may be drawn from by any number of test cases and threads once
+ configured; each setter call requires exclusive access.
+ */
+typedef struct hegel_span_spec_t hegel_span_spec_t;
 
 /*
  Opaque handle to an engine-owned *state machine* for stateful
@@ -1095,6 +1168,40 @@ typedef struct {
      */
     hegel_timestamp_t timestamp;
 } hegel_zoned_datetime_t;
+
+/*
+ A drawn UTC offset: `seconds` east of UT, 0 when not `known`.
+ */
+typedef struct {
+    int32_t seconds;
+    bool known;
+} hegel_offset_t;
+
+/*
+ A duration: `seconds` plus `nanoseconds` of the same sign, the latter
+ within ±999999999, so -1.5 s is `{-1, -500000000}`.
+ */
+typedef struct {
+    int64_t seconds;
+    int32_t nanoseconds;
+} hegel_duration_t;
+
+/*
+ A drawn calendar span: one value per unit, 0 for a unit the spec did
+ not enable.
+ */
+typedef struct {
+    int64_t years;
+    int64_t months;
+    int64_t weeks;
+    int64_t days;
+    int64_t hours;
+    int64_t minutes;
+    int64_t seconds;
+    int64_t milliseconds;
+    int64_t microseconds;
+    int64_t nanoseconds;
+} hegel_span_t;
 
 #ifdef __cplusplus
 extern "C" {
@@ -2755,51 +2862,117 @@ hegel_result_t hegel_generate_grammar(hegel_context_t *ctx,
                                       hegel_generate_string_result_t *out_result);
 
 /*
+ Create date options allowing every weekday and every month.
+
+ On success writes a caller-owned handle into `*out_options` (release
+ with `hegel_date_options_free`) and returns `HEGEL_OK`. Returns
+ `HEGEL_E_INVALID_ARG` for a NULL `out_options`.
+ */
+hegel_result_t hegel_date_options_new(hegel_context_t *ctx, hegel_date_options_t **out_options);
+
+/*
+ Free options previously returned by `hegel_date_options_new`. Safe to
+ call with NULL (a no-op that returns `HEGEL_OK`).
+ */
+hegel_result_t hegel_date_options_free(hegel_context_t *ctx, hegel_date_options_t *options);
+
+/*
+ Restrict the draw to the weekdays in `mask`.
+
+ Parameters:
+ `mask`: A bit set with bit 0 for Monday through bit 6 for Sunday, at
+   least one bit set and none above bit 6.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an empty or
+ out-of-range mask.
+ */
+hegel_result_t hegel_date_options_set_weekdays(hegel_context_t *ctx,
+                                               hegel_date_options_t *options,
+                                               uint32_t mask);
+
+/*
+ Restrict the draw to the months in `mask`.
+
+ Parameters:
+ `mask`: A bit set with bit 0 for January through bit 11 for December,
+   at least one bit set and none above bit 11.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an empty or
+ out-of-range mask.
+ */
+hegel_result_t hegel_date_options_set_months(hegel_context_t *ctx,
+                                             hegel_date_options_t *options,
+                                             uint32_t mask);
+
+/*
  Parameters:
  `min_value` / `max_value`: Inclusive bounds, as proleptic Gregorian
    dates with `year` in `[-999999, 999999]`. Pass `{1, 1, 1}` and
    `{9999, 12, 31}` for the full range.
+ `options`: Weekday and month masks built by `hegel_date_options_new`,
+   or NULL for every weekday and month. A drawn day outside the masks
+   is moved to the nearest allowed day inside the bounds (toward
+   2000-01-01 on a tie) rather than rejected.
 
- Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`.
+ Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`, or `HEGEL_E_INVALID_ARG`
+ when no date in the bounds falls on an allowed weekday and month.
 
  Shrinks toward 2000-01-01 or the nearest bound when that is out of
- range.
+ range, or the nearest allowed day to either. One draw in twenty on
+ average targets an interesting date in the bounds: a bound, the
+ nearest leap day or year boundary, the epoch, the 32-bit and 64-bit
+ boundaries, the Gregorian cutover, the century rules or a library's
+ edge.
  */
 hegel_result_t hegel_generate_date(hegel_context_t *ctx,
                                    hegel_test_case_t *tc,
                                    hegel_date_t min_value,
                                    hegel_date_t max_value,
+                                   const hegel_date_options_t *options,
                                    hegel_date_t *out_value);
 
 /*
  Parameters:
  `min_value` / `max_value`: Inclusive bounds. Pass all-zeros and
    `{23, 59, 59, 999999999}` for the full day.
+ `precision`: A `hegel_precision_t` value; the drawn time is a whole
+   number of these units.
 
- Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`.
+ Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`, or `HEGEL_E_INVALID_ARG`
+ for an unknown precision or bounds holding no value at it.
 
- Shrinks toward `min_value`, the representable time closest to midnight.
+ Shrinks toward `min_value`, the representable time closest to
+ midnight at the precision. One draw in twenty on average targets an
+ interesting time in the bounds: a bound, midnight, noon, the last
+ second, the hours and half-hours transitions use or a fractional
+ second of a common precision.
  */
 hegel_result_t hegel_generate_time(hegel_context_t *ctx,
                                    hegel_test_case_t *tc,
                                    hegel_time_t min_value,
                                    hegel_time_t max_value,
+                                   uint32_t precision,
                                    hegel_time_t *out_value);
 
 /*
  Parameters:
  `min_value` / `max_value`: Inclusive bounds on a naive datetime (no
    timezone).
+ `precision`: A `hegel_precision_t` value; the drawn time of day is a
+   whole number of these units.
 
- Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`.
+ Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`, or `HEGEL_E_INVALID_ARG`
+ for an unknown precision or bounds holding no value at it.
 
  Shrinks toward 2000-01-01T00:00:00 or the nearest bound when that is out
- of range.
+ of range, targeting the same dates and times as `hegel_generate_date`
+ and `hegel_generate_time`.
  */
 hegel_result_t hegel_generate_datetime(hegel_context_t *ctx,
                                        hegel_test_case_t *tc,
                                        hegel_datetime_t min_value,
                                        hegel_datetime_t max_value,
+                                       uint32_t precision,
                                        hegel_datetime_t *out_value);
 
 /*
@@ -3730,6 +3903,162 @@ hegel_result_t hegel_generate_zoned_datetime(hegel_context_t *ctx,
                                              const hegel_zoned_spec_t *zoned_spec,
                                              hegel_zoned_datetime_t *out_value,
                                              hegel_generate_string_result_t *out_zone);
+
+/*
+ Draw an instant in `[min_value, max_value]`.
+
+ Parameters:
+ `min_value` / `max_value`: Inclusive bounds, each with `second` in the
+   civil range of years `[-999999, 999999]` and `nanosecond` at most
+   999999999.
+ `precision`: A `hegel_precision_t` value; the drawn instant is a whole
+   number of these units since the epoch.
+
+ Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`, or `HEGEL_E_INVALID_ARG`
+ for invalid or inverted bounds, an unknown precision or bounds holding
+ no value at it.
+
+ Shrinks toward 2000-01-01T00:00:00Z, or the nearest bound when that is
+ out of range. One draw in twenty on average targets an interesting
+ instant in the bounds: a bound, the Unix epoch and its neighbours,
+ 2000-01-01, the 32-bit and 64-bit second and nanosecond boundaries,
+ the leap-second boundaries, the leap days of the century rules, jiff's
+ extremes or a transition of any bundled time zone.
+ */
+hegel_result_t hegel_generate_timestamp(hegel_context_t *ctx,
+                                        hegel_test_case_t *tc,
+                                        hegel_timestamp_t min_value,
+                                        hegel_timestamp_t max_value,
+                                        uint32_t precision,
+                                        hegel_timestamp_t *out_value);
+
+/*
+ Draw a UTC offset in `[min_seconds, max_seconds]`.
+
+ Parameters:
+ `min_seconds` / `max_seconds`: Inclusive bounds in seconds east of
+   UT, each within ±93599 (25:59:59).
+ `granularity`: A `hegel_offset_granularity_t` value; the drawn offset
+   is a whole number of hours, quarter-hours, minutes or seconds.
+ `allow_unknown`: Whether the draw may yield the unknown offset (RFC
+   3339's `-00:00`), reported with `known` false and `seconds` 0.
+
+ Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`, or `HEGEL_E_INVALID_ARG`
+ for out-of-range or inverted bounds, an unknown granularity or bounds
+ holding no offset at it.
+
+ Shrinks to a known offset, then toward 0 or the nearest bound. One
+ draw in twenty on average targets an offset any bundled time zone has
+ ever used, or one of the limits ±01:00, ±18:00, ±23:59:59, ±25:59:59
+ and ±00:00:01, when it lies in the bounds at the granularity.
+ */
+hegel_result_t hegel_generate_offset(hegel_context_t *ctx,
+                                     hegel_test_case_t *tc,
+                                     int32_t min_seconds,
+                                     int32_t max_seconds,
+                                     uint32_t granularity,
+                                     bool allow_unknown,
+                                     hegel_offset_t *out_value);
+
+/*
+ Draw a duration in `[min_value, max_value]`.
+
+ Parameters:
+ `min_value` / `max_value`: Inclusive bounds, each a valid
+   `hegel_duration_t`.
+ `precision`: A `hegel_precision_t` value; the drawn duration is a
+   whole number of these units.
+
+ Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`, or `HEGEL_E_INVALID_ARG`
+ for invalid or inverted bounds, an unknown precision or bounds holding
+ no value at it.
+
+ Shrinks toward zero, or the nearest bound when that is out of range.
+ One draw in twenty on average targets a bound or a duration of one
+ unit, second, minute, hour, 23, 24, 25 or 36 hours, week or year, or
+ the i32 seconds or i64 nanoseconds limit, of either sign, when it lies
+ in the bounds at the precision.
+ */
+hegel_result_t hegel_generate_duration(hegel_context_t *ctx,
+                                       hegel_test_case_t *tc,
+                                       hegel_duration_t min_value,
+                                       hegel_duration_t max_value,
+                                       uint32_t precision,
+                                       hegel_duration_t *out_value);
+
+/*
+ Create a span spec with no unit enabled and the uniform sign policy.
+
+ On success writes a caller-owned handle into `*out_spec` (release with
+ `hegel_span_spec_free`) and returns `HEGEL_OK`. Returns
+ `HEGEL_E_INVALID_ARG` for a NULL `out_spec`.
+ */
+hegel_result_t hegel_span_spec_new(hegel_context_t *ctx, hegel_span_spec_t **out_spec);
+
+/*
+ Free a spec previously returned by `hegel_span_spec_new`. Safe to call
+ with NULL (a no-op that returns `HEGEL_OK`).
+ */
+hegel_result_t hegel_span_spec_free(hegel_context_t *ctx, hegel_span_spec_t *spec);
+
+/*
+ Enable `unit` with the inclusive bounds `[min_value, max_value]` on
+ its signed value.
+
+ Parameters:
+ `unit`: A `hegel_span_unit_t` value.
+ `min_value` / `max_value`: Inclusive bounds on the unit's value. Under
+   the uniform sign policy a negative span draws each unit's magnitude
+   within `[max(-max_value, 0), -min_value]` and a non-negative one
+   within `[max(min_value, 0), max_value]`.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown unit,
+ inverted bounds, a negative `min_value` under the nonnegative policy
+ or bounds that leave the uniform policy no common sign.
+ */
+hegel_result_t hegel_span_spec_set_unit_bounds(hegel_context_t *ctx,
+                                               hegel_span_spec_t *spec,
+                                               uint32_t unit,
+                                               int64_t min_value,
+                                               int64_t max_value);
+
+/*
+ Set how the signs of the units are drawn.
+
+ Parameters:
+ `sign`: A `hegel_span_sign_t` value. Under `HEGEL_SPAN_SIGN_UNIFORM`
+   (the default) every unit has the one drawn sign, as a jiff `Span` or
+   Temporal `Duration` does; under `HEGEL_SPAN_SIGN_MIXED` each unit is
+   signed on its own, as a java `Period` is; under
+   `HEGEL_SPAN_SIGN_NONNEGATIVE` only magnitudes are drawn and every
+   enabled unit's `min_value` must be at least 0.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown policy or
+ one the enabled units' bounds do not admit.
+ */
+hegel_result_t hegel_span_spec_set_sign(hegel_context_t *ctx,
+                                        hegel_span_spec_t *spec,
+                                        uint32_t sign);
+
+/*
+ Draw a calendar span within `spec`'s bounds.
+
+ Parameters:
+ `spec`: A spec built by `hegel_span_spec_new` with at least one unit
+   enabled.
+
+ Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`, or `HEGEL_E_INVALID_ARG`
+ when no unit is enabled.
+
+ The draw is the sign, when the policy is uniform and the bounds admit
+ both signs, then one value per enabled unit, largest unit first.
+ Shrinks to the zero span, or the nearest value to it in each unit's
+ bounds.
+ */
+hegel_result_t hegel_generate_span(hegel_context_t *ctx,
+                                   hegel_test_case_t *tc,
+                                   const hegel_span_spec_t *spec,
+                                   hegel_span_t *out_value);
 
 #ifdef __cplusplus
 }  // extern "C"

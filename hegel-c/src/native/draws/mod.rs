@@ -2,6 +2,7 @@
 
 pub mod internet;
 pub mod regex;
+pub mod scalar;
 pub(crate) mod source;
 pub mod special;
 pub mod text;
@@ -39,6 +40,10 @@ pub(crate) const LABEL_TIME: u64 = label_from_name("hegel.time");
 pub(crate) const LABEL_DATETIME: u64 = label_from_name("hegel.datetime");
 pub(crate) const LABEL_TIMEZONE: u64 = label_from_name("hegel.timezone");
 pub(crate) const LABEL_ZONED_DATETIME: u64 = label_from_name("hegel.zoned_datetime");
+pub(crate) const LABEL_TIMESTAMP: u64 = label_from_name("hegel.timestamp");
+pub(crate) const LABEL_OFFSET: u64 = label_from_name("hegel.offset");
+pub(crate) const LABEL_DURATION: u64 = label_from_name("hegel.duration");
+pub(crate) const LABEL_SPAN: u64 = label_from_name("hegel.span");
 pub(crate) const LABEL_UUID: u64 = label_from_name("hegel.uuid");
 pub(crate) const LABEL_IP_ADDRESS: u64 = label_from_name("hegel.ip_address");
 pub(crate) const LABEL_INTEGER: u64 = label_from_name("hegel.integer");

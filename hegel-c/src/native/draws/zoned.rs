@@ -56,9 +56,11 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
+pub use super::special::Precision;
 use super::special::{
-    Date, DateTime, LAST_NS_OF_DAY, MAX_YEAR, MIN_YEAR, Time, civil_from_days, date_origin,
-    days_from_civil, time_from_ns, time_to_ns, validate_date, validate_time,
+    DAY_NS, Date, DateTime, LAST_NS_OF_DAY, MAX_YEAR, MIN_YEAR, NS, Time, align_down, align_up,
+    civil_from_days, date_origin, datetime_of_wall, days_from_civil, time_from_ns, validate_date,
+    validate_time, wall_ns,
 };
 use super::timezone::{Entry, TimeZoneSpec, draw_timezone};
 use super::{LABEL_TIMEZONE, LABEL_ZONED_DATETIME, spanned};
@@ -77,31 +79,6 @@ use crate::native::timezone::{
     transitions, type_at, validate_timestamp,
 };
 use crate::tzdata::Zone;
-
-/// The unit the time part of a drawn value is counted in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Precision {
-    Nanoseconds,
-    Microseconds,
-    Milliseconds,
-    Seconds,
-    Minutes,
-    Hours,
-}
-
-impl Precision {
-    /// The unit in nanoseconds.
-    pub const fn unit(self) -> i64 {
-        match self {
-            Precision::Nanoseconds => 1,
-            Precision::Microseconds => 1_000,
-            Precision::Milliseconds => 1_000_000,
-            Precision::Seconds => 1_000_000_000,
-            Precision::Minutes => 60_000_000_000,
-            Precision::Hours => 3_600_000_000_000,
-        }
-    }
-}
 
 /// What to do with a wall time the clocks skipped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -290,9 +267,7 @@ impl fmt::Display for ZonedDateTime {
     }
 }
 
-const NS: i128 = 1_000_000_000;
 const DAY: i64 = 86_400;
-const DAY_NS: i128 = 86_400 * NS;
 const HOUR_NS: i128 = 3_600 * NS;
 
 /// 2000-01-01T00:00:00Z, the shrink origin of instants (§10, Q3).
@@ -392,29 +367,8 @@ pub fn interesting_instants() -> impl Iterator<Item = i64> {
     }))
 }
 
-/// Wall-clock nanoseconds since 1970-01-01T00:00 read as UTC.
-fn wall_ns(civil: &DateTime) -> i128 {
-    i128::from(days_from_civil(&civil.date)) * DAY_NS + i128::from(time_to_ns(&civil.time))
-}
-
-fn datetime_of_wall(ns: i128) -> DateTime {
-    DateTime {
-        date: civil_from_days(ns.div_euclid(DAY_NS) as i64),
-        time: time_from_ns(ns.rem_euclid(DAY_NS) as i64),
-    }
-}
-
 fn instant_ns(timestamp: &Timestamp) -> i128 {
     i128::from(timestamp.second) * NS + i128::from(timestamp.nanosecond)
-}
-
-fn align_down(ns: i128, unit: i128) -> i128 {
-    ns - ns.rem_euclid(unit)
-}
-
-fn align_up(ns: i128, unit: i128) -> i128 {
-    let rem = ns.rem_euclid(unit);
-    if rem == 0 { ns } else { ns - rem + unit }
 }
 
 /// A wall-clock window aligned to the precision, in wall nanoseconds.

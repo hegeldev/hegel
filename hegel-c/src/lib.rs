@@ -5410,23 +5410,185 @@ fn c_time(t: crate::native::draws::special::Time) -> hegel_time_t {
     }
 }
 
+/// The unit the time part of a drawn time, datetime, zoned datetime,
+/// timestamp or duration is counted in.
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[allow(non_camel_case_types)]
+pub enum hegel_precision_t {
+    HEGEL_PRECISION_NANOSECONDS = 0,
+    HEGEL_PRECISION_MICROSECONDS = 1,
+    HEGEL_PRECISION_MILLISECONDS = 2,
+    HEGEL_PRECISION_SECONDS = 3,
+    HEGEL_PRECISION_MINUTES = 4,
+    HEGEL_PRECISION_HOURS = 5,
+}
+
+fn rust_precision(
+    fn_name: &str,
+    precision: u32,
+) -> Result<crate::native::draws::special::Precision, EngineError> {
+    use crate::native::draws::special::Precision;
+    use hegel_precision_t as c;
+    Ok(match precision {
+        x if x == c::HEGEL_PRECISION_NANOSECONDS as u32 => Precision::Nanoseconds,
+        x if x == c::HEGEL_PRECISION_MICROSECONDS as u32 => Precision::Microseconds,
+        x if x == c::HEGEL_PRECISION_MILLISECONDS as u32 => Precision::Milliseconds,
+        x if x == c::HEGEL_PRECISION_SECONDS as u32 => Precision::Seconds,
+        x if x == c::HEGEL_PRECISION_MINUTES as u32 => Precision::Minutes,
+        x if x == c::HEGEL_PRECISION_HOURS as u32 => Precision::Hours,
+        _ => {
+            return Err(EngineError::InvalidArgument(format!(
+                "{fn_name}: unknown precision {precision}"
+            )));
+        }
+    })
+}
+
+/// The weekday and month masks of a date draw
+///
+/// Build one with `hegel_date_options_new`, whose defaults allow every
+/// weekday and every month, change it with the `hegel_date_options_set_*`
+/// setters and free it with `hegel_date_options_free`. Options may be
+/// drawn with by any number of test cases and threads once configured;
+/// each setter call requires exclusive access.
+pub struct HegelDateOptions {
+    options: crate::native::draws::special::DateOptions,
+}
+
+/// Create date options allowing every weekday and every month.
+///
+/// On success writes a caller-owned handle into `*out_options` (release
+/// with `hegel_date_options_free`) and returns `HEGEL_OK`. Returns
+/// `HEGEL_E_INVALID_ARG` for a NULL `out_options`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_date_options_new(
+    ctx: *mut HegelContext,
+    out_options: *mut *mut HegelDateOptions,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    if out_options.is_null() {
+        set_last_error(ctx, "hegel_date_options_new: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    let options = Box::new(HegelDateOptions {
+        options: crate::native::draws::special::DateOptions::default(),
+    });
+    unsafe { *out_options = Box::into_raw(options) };
+    HEGEL_OK
+}
+
+/// Free options previously returned by `hegel_date_options_new`. Safe to
+/// call with NULL (a no-op that returns `HEGEL_OK`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_date_options_free(
+    ctx: *mut HegelContext,
+    options: *mut HegelDateOptions,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    if !options.is_null() {
+        drop(unsafe { Box::from_raw(options) });
+    }
+    HEGEL_OK
+}
+
+/// Shared prologue of the `hegel_date_options_set_*` setters: resolve the
+/// handle, apply `set` to a copy of the options and keep it when the
+/// result validates, reporting `HEGEL_E_INVALID_ARG` otherwise.
+unsafe fn date_options_set(
+    ctx: *mut HegelContext,
+    fn_name: &str,
+    options: *mut HegelDateOptions,
+    set: impl FnOnce(&mut crate::native::draws::special::DateOptions),
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    let Some(handle) = (unsafe { options.as_mut() }) else {
+        set_last_error(ctx, &format!("{fn_name}: options pointer is null"));
+        return HEGEL_E_INVALID_HANDLE;
+    };
+    let mut candidate = handle.options;
+    set(&mut candidate);
+    match candidate.validate() {
+        Ok(()) => {
+            handle.options = candidate;
+            HEGEL_OK
+        }
+        Err(e) => translate_construct_error(ctx, e),
+    }
+}
+
+/// Restrict the draw to the weekdays in `mask`.
+///
+/// Parameters:
+/// `mask`: A bit set with bit 0 for Monday through bit 6 for Sunday, at
+///   least one bit set and none above bit 6.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an empty or
+/// out-of-range mask.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_date_options_set_weekdays(
+    ctx: *mut HegelContext,
+    options: *mut HegelDateOptions,
+    mask: u32,
+) -> hegel_result_t {
+    unsafe {
+        date_options_set(ctx, "hegel_date_options_set_weekdays", options, |o| {
+            o.weekdays = u8::try_from(mask).unwrap_or(u8::MAX);
+        })
+    }
+}
+
+/// Restrict the draw to the months in `mask`.
+///
+/// Parameters:
+/// `mask`: A bit set with bit 0 for January through bit 11 for December,
+///   at least one bit set and none above bit 11.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an empty or
+/// out-of-range mask.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_date_options_set_months(
+    ctx: *mut HegelContext,
+    options: *mut HegelDateOptions,
+    mask: u32,
+) -> hegel_result_t {
+    unsafe {
+        date_options_set(ctx, "hegel_date_options_set_months", options, |o| {
+            o.months = u16::try_from(mask).unwrap_or(u16::MAX);
+        })
+    }
+}
+
 /// Parameters:
 /// `min_value` / `max_value`: Inclusive bounds, as proleptic Gregorian
 ///   dates with `year` in `[-999999, 999999]`. Pass `{1, 1, 1}` and
 ///   `{9999, 12, 31}` for the full range.
+/// `options`: Weekday and month masks built by `hegel_date_options_new`,
+///   or NULL for every weekday and month. A drawn day outside the masks
+///   is moved to the nearest allowed day inside the bounds (toward
+///   2000-01-01 on a tie) rather than rejected.
 ///
-/// Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`.
+/// Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`, or `HEGEL_E_INVALID_ARG`
+/// when no date in the bounds falls on an allowed weekday and month.
 ///
 /// Shrinks toward 2000-01-01 or the nearest bound when that is out of
-/// range.
+/// range, or the nearest allowed day to either. One draw in twenty on
+/// average targets an interesting date in the bounds: a bound, the
+/// nearest leap day or year boundary, the epoch, the 32-bit and 64-bit
+/// boundaries, the Gregorian cutover, the century rules or a library's
+/// edge.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_generate_date(
     ctx: *mut HegelContext,
     tc: *mut HegelTestCase,
     min_value: hegel_date_t,
     max_value: hegel_date_t,
+    options: *const HegelDateOptions,
     out_value: *mut hegel_date_t,
 ) -> hegel_result_t {
+    let options = unsafe { options.as_ref() }
+        .map(|o| o.options)
+        .unwrap_or_default();
     unsafe {
         typed_draw(
             ctx,
@@ -5435,7 +5597,7 @@ pub unsafe extern "C" fn hegel_generate_date(
             out_value.is_null(),
             |tc| {
                 tc.stream
-                    .generate_date(rust_date(&min_value), rust_date(&max_value))
+                    .generate_date(rust_date(&min_value), rust_date(&max_value), &options)
             },
             |d| *out_value = c_date(d),
         )
@@ -5445,16 +5607,24 @@ pub unsafe extern "C" fn hegel_generate_date(
 /// Parameters:
 /// `min_value` / `max_value`: Inclusive bounds. Pass all-zeros and
 ///   `{23, 59, 59, 999999999}` for the full day.
+/// `precision`: A `hegel_precision_t` value; the drawn time is a whole
+///   number of these units.
 ///
-/// Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`.
+/// Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`, or `HEGEL_E_INVALID_ARG`
+/// for an unknown precision or bounds holding no value at it.
 ///
-/// Shrinks toward `min_value`, the representable time closest to midnight.
+/// Shrinks toward `min_value`, the representable time closest to
+/// midnight at the precision. One draw in twenty on average targets an
+/// interesting time in the bounds: a bound, midnight, noon, the last
+/// second, the hours and half-hours transitions use or a fractional
+/// second of a common precision.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_generate_time(
     ctx: *mut HegelContext,
     tc: *mut HegelTestCase,
     min_value: hegel_time_t,
     max_value: hegel_time_t,
+    precision: u32,
     out_value: *mut hegel_time_t,
 ) -> hegel_result_t {
     unsafe {
@@ -5464,8 +5634,10 @@ pub unsafe extern "C" fn hegel_generate_time(
             "hegel_generate_time",
             out_value.is_null(),
             |tc| {
+                let precision = rust_precision("hegel_generate_time", precision)
+                    .map_err(|e| DataSourceError::InvalidArgument(e.to_string()))?;
                 tc.stream
-                    .generate_time(rust_time(&min_value), rust_time(&max_value))
+                    .generate_time(rust_time(&min_value), rust_time(&max_value), precision)
             },
             |t| *out_value = c_time(t),
         )
@@ -5475,17 +5647,22 @@ pub unsafe extern "C" fn hegel_generate_time(
 /// Parameters:
 /// `min_value` / `max_value`: Inclusive bounds on a naive datetime (no
 ///   timezone).
+/// `precision`: A `hegel_precision_t` value; the drawn time of day is a
+///   whole number of these units.
 ///
-/// Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`.
+/// Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`, or `HEGEL_E_INVALID_ARG`
+/// for an unknown precision or bounds holding no value at it.
 ///
 /// Shrinks toward 2000-01-01T00:00:00 or the nearest bound when that is out
-/// of range.
+/// of range, targeting the same dates and times as `hegel_generate_date`
+/// and `hegel_generate_time`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_generate_datetime(
     ctx: *mut HegelContext,
     tc: *mut HegelTestCase,
     min_value: hegel_datetime_t,
     max_value: hegel_datetime_t,
+    precision: u32,
     out_value: *mut hegel_datetime_t,
 ) -> hegel_result_t {
     unsafe {
@@ -5495,8 +5672,13 @@ pub unsafe extern "C" fn hegel_generate_datetime(
             "hegel_generate_datetime",
             out_value.is_null(),
             |tc| {
-                tc.stream
-                    .generate_datetime(rust_datetime(&min_value), rust_datetime(&max_value))
+                let precision = rust_precision("hegel_generate_datetime", precision)
+                    .map_err(|e| DataSourceError::InvalidArgument(e.to_string()))?;
+                tc.stream.generate_datetime(
+                    rust_datetime(&min_value),
+                    rust_datetime(&max_value),
+                    precision,
+                )
             },
             |dt| {
                 *out_value = hegel_datetime_t {
@@ -7715,20 +7897,6 @@ pub unsafe extern "C" fn hegel_generate_timezone(
     }
 }
 
-/// The unit the time part of a drawn zoned datetime is counted in; see
-/// `hegel_zoned_spec_set_precision`.
-#[repr(C)]
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-#[allow(non_camel_case_types)]
-pub enum hegel_precision_t {
-    HEGEL_PRECISION_NANOSECONDS = 0,
-    HEGEL_PRECISION_MICROSECONDS = 1,
-    HEGEL_PRECISION_MILLISECONDS = 2,
-    HEGEL_PRECISION_SECONDS = 3,
-    HEGEL_PRECISION_MINUTES = 4,
-    HEGEL_PRECISION_HOURS = 5,
-}
-
 /// What a zoned datetime draw does with a wall time the clocks skipped;
 /// see `hegel_zoned_spec_set_imaginary`.
 #[repr(C)]
@@ -7917,23 +8085,9 @@ pub unsafe extern "C" fn hegel_zoned_spec_set_precision(
     spec: *mut HegelZonedSpec,
     precision: u32,
 ) -> hegel_result_t {
-    use crate::native::draws::zoned::Precision;
-    use hegel_precision_t as c;
     unsafe {
         zoned_spec_set(ctx, "hegel_zoned_spec_set_precision", spec, |s| {
-            s.precision = match precision {
-                x if x == c::HEGEL_PRECISION_NANOSECONDS as u32 => Precision::Nanoseconds,
-                x if x == c::HEGEL_PRECISION_MICROSECONDS as u32 => Precision::Microseconds,
-                x if x == c::HEGEL_PRECISION_MILLISECONDS as u32 => Precision::Milliseconds,
-                x if x == c::HEGEL_PRECISION_SECONDS as u32 => Precision::Seconds,
-                x if x == c::HEGEL_PRECISION_MINUTES as u32 => Precision::Minutes,
-                x if x == c::HEGEL_PRECISION_HOURS as u32 => Precision::Hours,
-                _ => {
-                    return Err(EngineError::InvalidArgument(format!(
-                        "hegel_zoned_spec_set_precision: unknown precision {precision}"
-                    )));
-                }
-            };
+            s.precision = rust_precision("hegel_zoned_spec_set_precision", precision)?;
             Ok(())
         })
     }
@@ -8117,6 +8271,481 @@ pub unsafe extern "C" fn hegel_generate_zoned_datetime(
             };
             write_string_result(out_zone, z.zone)
         },
+        Err(e) => translate_ds_error(ctx, e),
+    }
+}
+
+/// Draw an instant in `[min_value, max_value]`.
+///
+/// Parameters:
+/// `min_value` / `max_value`: Inclusive bounds, each with `second` in the
+///   civil range of years `[-999999, 999999]` and `nanosecond` at most
+///   999999999.
+/// `precision`: A `hegel_precision_t` value; the drawn instant is a whole
+///   number of these units since the epoch.
+///
+/// Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`, or `HEGEL_E_INVALID_ARG`
+/// for invalid or inverted bounds, an unknown precision or bounds holding
+/// no value at it.
+///
+/// Shrinks toward 2000-01-01T00:00:00Z, or the nearest bound when that is
+/// out of range. One draw in twenty on average targets an interesting
+/// instant in the bounds: a bound, the Unix epoch and its neighbours,
+/// 2000-01-01, the 32-bit and 64-bit second and nanosecond boundaries,
+/// the leap-second boundaries, the leap days of the century rules, jiff's
+/// extremes or a transition of any bundled time zone.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_generate_timestamp(
+    ctx: *mut HegelContext,
+    tc: *mut HegelTestCase,
+    min_value: hegel_timestamp_t,
+    max_value: hegel_timestamp_t,
+    precision: u32,
+    out_value: *mut hegel_timestamp_t,
+) -> hegel_result_t {
+    use crate::native::timezone::Timestamp;
+    unsafe {
+        typed_draw(
+            ctx,
+            tc,
+            "hegel_generate_timestamp",
+            out_value.is_null(),
+            |tc| {
+                let precision = rust_precision("hegel_generate_timestamp", precision)
+                    .map_err(|e| DataSourceError::InvalidArgument(e.to_string()))?;
+                tc.stream.generate_timestamp(
+                    Timestamp {
+                        second: min_value.second,
+                        nanosecond: min_value.nanosecond,
+                    },
+                    Timestamp {
+                        second: max_value.second,
+                        nanosecond: max_value.nanosecond,
+                    },
+                    precision,
+                )
+            },
+            |t| {
+                *out_value = hegel_timestamp_t {
+                    second: t.second,
+                    nanosecond: t.nanosecond,
+                }
+            },
+        )
+    }
+}
+
+/// The values a UTC offset draw restricts itself to; see
+/// `hegel_generate_offset`.
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[allow(non_camel_case_types)]
+pub enum hegel_offset_granularity_t {
+    HEGEL_OFFSET_GRANULARITY_HOURS = 0,
+    HEGEL_OFFSET_GRANULARITY_QUARTER_HOURS = 1,
+    HEGEL_OFFSET_GRANULARITY_MINUTES = 2,
+    HEGEL_OFFSET_GRANULARITY_SECONDS = 3,
+}
+
+/// A drawn UTC offset: `seconds` east of UT, 0 when not `known`.
+#[repr(C)]
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
+pub struct hegel_offset_t {
+    pub seconds: i32,
+    pub known: bool,
+}
+
+/// Draw a UTC offset in `[min_seconds, max_seconds]`.
+///
+/// Parameters:
+/// `min_seconds` / `max_seconds`: Inclusive bounds in seconds east of
+///   UT, each within ±93599 (25:59:59).
+/// `granularity`: A `hegel_offset_granularity_t` value; the drawn offset
+///   is a whole number of hours, quarter-hours, minutes or seconds.
+/// `allow_unknown`: Whether the draw may yield the unknown offset (RFC
+///   3339's `-00:00`), reported with `known` false and `seconds` 0.
+///
+/// Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`, or `HEGEL_E_INVALID_ARG`
+/// for out-of-range or inverted bounds, an unknown granularity or bounds
+/// holding no offset at it.
+///
+/// Shrinks to a known offset, then toward 0 or the nearest bound. One
+/// draw in twenty on average targets an offset any bundled time zone has
+/// ever used, or one of the limits ±01:00, ±18:00, ±23:59:59, ±25:59:59
+/// and ±00:00:01, when it lies in the bounds at the granularity.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_generate_offset(
+    ctx: *mut HegelContext,
+    tc: *mut HegelTestCase,
+    min_seconds: i32,
+    max_seconds: i32,
+    granularity: u32,
+    allow_unknown: bool,
+    out_value: *mut hegel_offset_t,
+) -> hegel_result_t {
+    use crate::native::draws::scalar::Granularity;
+    use hegel_offset_granularity_t as c;
+    unsafe {
+        typed_draw(
+            ctx,
+            tc,
+            "hegel_generate_offset",
+            out_value.is_null(),
+            |tc| {
+                let granularity = match granularity {
+                    x if x == c::HEGEL_OFFSET_GRANULARITY_HOURS as u32 => Granularity::Hours,
+                    x if x == c::HEGEL_OFFSET_GRANULARITY_QUARTER_HOURS as u32 => {
+                        Granularity::QuarterHours
+                    }
+                    x if x == c::HEGEL_OFFSET_GRANULARITY_MINUTES as u32 => Granularity::Minutes,
+                    x if x == c::HEGEL_OFFSET_GRANULARITY_SECONDS as u32 => Granularity::Seconds,
+                    _ => {
+                        return Err(DataSourceError::InvalidArgument(format!(
+                            "hegel_generate_offset: unknown granularity {granularity}"
+                        )));
+                    }
+                };
+                tc.stream
+                    .generate_offset(min_seconds, max_seconds, granularity, allow_unknown)
+            },
+            |o| {
+                *out_value = hegel_offset_t {
+                    seconds: o.seconds,
+                    known: o.known,
+                }
+            },
+        )
+    }
+}
+
+/// A duration: `seconds` plus `nanoseconds` of the same sign, the latter
+/// within ±999999999, so -1.5 s is `{-1, -500000000}`.
+#[repr(C)]
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
+pub struct hegel_duration_t {
+    pub seconds: i64,
+    pub nanoseconds: i32,
+}
+
+/// Draw a duration in `[min_value, max_value]`.
+///
+/// Parameters:
+/// `min_value` / `max_value`: Inclusive bounds, each a valid
+///   `hegel_duration_t`.
+/// `precision`: A `hegel_precision_t` value; the drawn duration is a
+///   whole number of these units.
+///
+/// Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`, or `HEGEL_E_INVALID_ARG`
+/// for invalid or inverted bounds, an unknown precision or bounds holding
+/// no value at it.
+///
+/// Shrinks toward zero, or the nearest bound when that is out of range.
+/// One draw in twenty on average targets a bound or a duration of one
+/// unit, second, minute, hour, 23, 24, 25 or 36 hours, week or year, or
+/// the i32 seconds or i64 nanoseconds limit, of either sign, when it lies
+/// in the bounds at the precision.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_generate_duration(
+    ctx: *mut HegelContext,
+    tc: *mut HegelTestCase,
+    min_value: hegel_duration_t,
+    max_value: hegel_duration_t,
+    precision: u32,
+    out_value: *mut hegel_duration_t,
+) -> hegel_result_t {
+    use crate::native::draws::scalar::Duration;
+    unsafe {
+        typed_draw(
+            ctx,
+            tc,
+            "hegel_generate_duration",
+            out_value.is_null(),
+            |tc| {
+                let precision = rust_precision("hegel_generate_duration", precision)
+                    .map_err(|e| DataSourceError::InvalidArgument(e.to_string()))?;
+                tc.stream.generate_duration(
+                    Duration {
+                        seconds: min_value.seconds,
+                        nanoseconds: min_value.nanoseconds,
+                    },
+                    Duration {
+                        seconds: max_value.seconds,
+                        nanoseconds: max_value.nanoseconds,
+                    },
+                    precision,
+                )
+            },
+            |d| {
+                *out_value = hegel_duration_t {
+                    seconds: d.seconds,
+                    nanoseconds: d.nanoseconds,
+                }
+            },
+        )
+    }
+}
+
+/// A unit of a calendar span; see `hegel_span_spec_set_unit_bounds`.
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[allow(non_camel_case_types)]
+pub enum hegel_span_unit_t {
+    HEGEL_SPAN_UNIT_YEARS = 0,
+    HEGEL_SPAN_UNIT_MONTHS = 1,
+    HEGEL_SPAN_UNIT_WEEKS = 2,
+    HEGEL_SPAN_UNIT_DAYS = 3,
+    HEGEL_SPAN_UNIT_HOURS = 4,
+    HEGEL_SPAN_UNIT_MINUTES = 5,
+    HEGEL_SPAN_UNIT_SECONDS = 6,
+    HEGEL_SPAN_UNIT_MILLISECONDS = 7,
+    HEGEL_SPAN_UNIT_MICROSECONDS = 8,
+    HEGEL_SPAN_UNIT_NANOSECONDS = 9,
+}
+
+/// How the signs of a span's units are drawn; see
+/// `hegel_span_spec_set_sign`.
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[allow(non_camel_case_types)]
+pub enum hegel_span_sign_t {
+    /// One sign for every unit.
+    HEGEL_SPAN_SIGN_UNIFORM = 0,
+    /// Each unit signed on its own.
+    HEGEL_SPAN_SIGN_MIXED = 1,
+    /// Magnitudes only.
+    HEGEL_SPAN_SIGN_NONNEGATIVE = 2,
+}
+
+/// The bounds and sign policy of a calendar span draw
+///
+/// Build one with `hegel_span_spec_new`, which enables no unit and draws
+/// one sign for every unit; enable units with
+/// `hegel_span_spec_set_unit_bounds`, set the policy with
+/// `hegel_span_spec_set_sign` and free it with `hegel_span_spec_free`. A
+/// spec may be drawn from by any number of test cases and threads once
+/// configured; each setter call requires exclusive access.
+pub struct HegelSpanSpec {
+    spec: crate::native::draws::scalar::SpanSpec,
+}
+
+/// Create a span spec with no unit enabled and the uniform sign policy.
+///
+/// On success writes a caller-owned handle into `*out_spec` (release with
+/// `hegel_span_spec_free`) and returns `HEGEL_OK`. Returns
+/// `HEGEL_E_INVALID_ARG` for a NULL `out_spec`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_span_spec_new(
+    ctx: *mut HegelContext,
+    out_spec: *mut *mut HegelSpanSpec,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    if out_spec.is_null() {
+        set_last_error(ctx, "hegel_span_spec_new: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    let spec = Box::new(HegelSpanSpec {
+        spec: crate::native::draws::scalar::SpanSpec::default(),
+    });
+    unsafe { *out_spec = Box::into_raw(spec) };
+    HEGEL_OK
+}
+
+/// Free a spec previously returned by `hegel_span_spec_new`. Safe to call
+/// with NULL (a no-op that returns `HEGEL_OK`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_span_spec_free(
+    ctx: *mut HegelContext,
+    spec: *mut HegelSpanSpec,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    if !spec.is_null() {
+        drop(unsafe { Box::from_raw(spec) });
+    }
+    HEGEL_OK
+}
+
+/// Shared prologue of the `hegel_span_spec_set_*` setters: resolve the
+/// handle, apply `set` to a copy of the spec and keep it when the result
+/// validates, reporting `HEGEL_E_INVALID_ARG` otherwise.
+unsafe fn span_spec_set(
+    ctx: *mut HegelContext,
+    fn_name: &str,
+    spec: *mut HegelSpanSpec,
+    set: impl FnOnce(&mut crate::native::draws::scalar::SpanSpec) -> Result<(), EngineError>,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    let Some(handle) = (unsafe { spec.as_mut() }) else {
+        set_last_error(ctx, &format!("{fn_name}: spec pointer is null"));
+        return HEGEL_E_INVALID_HANDLE;
+    };
+    let mut candidate = handle.spec;
+    match set(&mut candidate).and_then(|()| candidate.validate()) {
+        Ok(()) => {
+            handle.spec = candidate;
+            HEGEL_OK
+        }
+        Err(e) => translate_construct_error(ctx, e),
+    }
+}
+
+/// Enable `unit` with the inclusive bounds `[min_value, max_value]` on
+/// its signed value.
+///
+/// Parameters:
+/// `unit`: A `hegel_span_unit_t` value.
+/// `min_value` / `max_value`: Inclusive bounds on the unit's value. Under
+///   the uniform sign policy a negative span draws each unit's magnitude
+///   within `[max(-max_value, 0), -min_value]` and a non-negative one
+///   within `[max(min_value, 0), max_value]`.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown unit,
+/// inverted bounds, a negative `min_value` under the nonnegative policy
+/// or bounds that leave the uniform policy no common sign.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_span_spec_set_unit_bounds(
+    ctx: *mut HegelContext,
+    spec: *mut HegelSpanSpec,
+    unit: u32,
+    min_value: i64,
+    max_value: i64,
+) -> hegel_result_t {
+    use crate::native::draws::scalar::SpanUnit;
+    unsafe {
+        span_spec_set(ctx, "hegel_span_spec_set_unit_bounds", spec, |s| {
+            let Some(unit) = usize::try_from(unit)
+                .ok()
+                .and_then(|i| SpanUnit::ALL.get(i))
+            else {
+                return Err(EngineError::InvalidArgument(format!(
+                    "hegel_span_spec_set_unit_bounds: unknown unit {unit}"
+                )));
+            };
+            s.set_unit_bounds(*unit, min_value, max_value);
+            Ok(())
+        })
+    }
+}
+
+/// Set how the signs of the units are drawn.
+///
+/// Parameters:
+/// `sign`: A `hegel_span_sign_t` value. Under `HEGEL_SPAN_SIGN_UNIFORM`
+///   (the default) every unit has the one drawn sign, as a jiff `Span` or
+///   Temporal `Duration` does; under `HEGEL_SPAN_SIGN_MIXED` each unit is
+///   signed on its own, as a java `Period` is; under
+///   `HEGEL_SPAN_SIGN_NONNEGATIVE` only magnitudes are drawn and every
+///   enabled unit's `min_value` must be at least 0.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown policy or
+/// one the enabled units' bounds do not admit.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_span_spec_set_sign(
+    ctx: *mut HegelContext,
+    spec: *mut HegelSpanSpec,
+    sign: u32,
+) -> hegel_result_t {
+    use crate::native::draws::scalar::SpanSign;
+    use hegel_span_sign_t as c;
+    unsafe {
+        span_spec_set(ctx, "hegel_span_spec_set_sign", spec, |s| {
+            s.sign = match sign {
+                x if x == c::HEGEL_SPAN_SIGN_UNIFORM as u32 => SpanSign::Uniform,
+                x if x == c::HEGEL_SPAN_SIGN_MIXED as u32 => SpanSign::Mixed,
+                x if x == c::HEGEL_SPAN_SIGN_NONNEGATIVE as u32 => SpanSign::NonNegative,
+                _ => {
+                    return Err(EngineError::InvalidArgument(format!(
+                        "hegel_span_spec_set_sign: unknown sign policy {sign}"
+                    )));
+                }
+            };
+            Ok(())
+        })
+    }
+}
+
+/// A drawn calendar span: one value per unit, 0 for a unit the spec did
+/// not enable.
+#[repr(C)]
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
+pub struct hegel_span_t {
+    pub years: i64,
+    pub months: i64,
+    pub weeks: i64,
+    pub days: i64,
+    pub hours: i64,
+    pub minutes: i64,
+    pub seconds: i64,
+    pub milliseconds: i64,
+    pub microseconds: i64,
+    pub nanoseconds: i64,
+}
+
+/// Draw a calendar span within `spec`'s bounds.
+///
+/// Parameters:
+/// `spec`: A spec built by `hegel_span_spec_new` with at least one unit
+///   enabled.
+///
+/// Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`, or `HEGEL_E_INVALID_ARG`
+/// when no unit is enabled.
+///
+/// The draw is the sign, when the policy is uniform and the bounds admit
+/// both signs, then one value per enabled unit, largest unit first.
+/// Shrinks to the zero span, or the nearest value to it in each unit's
+/// bounds.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_generate_span(
+    ctx: *mut HegelContext,
+    tc: *mut HegelTestCase,
+    spec: *const HegelSpanSpec,
+    out_value: *mut hegel_span_t,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    let (tc, _guard) = match unsafe { tc_guard(ctx, "hegel_generate_span", tc) } {
+        Ok(t) => t,
+        Err(rc) => return rc,
+    };
+    let Some(spec) = (unsafe { spec.as_ref() }) else {
+        set_last_error(ctx, "hegel_generate_span: spec handle is null");
+        return HEGEL_E_INVALID_HANDLE;
+    };
+    if out_value.is_null() {
+        set_last_error(ctx, "hegel_generate_span: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    match tc.stream.generate_span(&spec.spec) {
+        Ok(span) => {
+            let [
+                years,
+                months,
+                weeks,
+                days,
+                hours,
+                minutes,
+                seconds,
+                milliseconds,
+                microseconds,
+                nanoseconds,
+            ] = span.units;
+            unsafe {
+                *out_value = hegel_span_t {
+                    years,
+                    months,
+                    weeks,
+                    days,
+                    hours,
+                    minutes,
+                    seconds,
+                    milliseconds,
+                    microseconds,
+                    nanoseconds,
+                }
+            };
+            HEGEL_OK
+        }
         Err(e) => translate_ds_error(ctx, e),
     }
 }

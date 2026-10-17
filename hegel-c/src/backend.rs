@@ -5,11 +5,13 @@ use core::net::{Ipv4Addr, Ipv6Addr};
 
 use crate::native::bignum::BigInt;
 use crate::native::core::{ManyState, NativeStateMachine, NativeVariables, RecursionState};
-use crate::native::draws::special::{Date, DateTime, Time};
+use crate::native::draws::scalar::{Duration, Granularity, Span, SpanSpec, UtcOffset};
+use crate::native::draws::special::{Date, DateOptions, DateTime, Precision, Time};
 use crate::native::draws::timezone::TimeZoneSpec;
 use crate::native::draws::zoned::{ZonedDateTime, ZonedSpec};
 use crate::native::draws::{FloatSpec, StringSpec};
 use crate::native::lark::generate::GrammarSpec;
+use crate::native::timezone::Timestamp;
 use crate::settings::HealthCheck;
 
 /// Error returned by [`DataSource`] methods when an operation cannot complete.
@@ -102,15 +104,63 @@ pub trait DataSource: Send + Sync {
     /// Draw a Gregorian calendar [`Date`] in `[min, max]`, shrinking toward
     /// 2000-01-01 (clamped into range). Errors with `InvalidArgument` for
     /// invalid or inverted bounds.
-    fn generate_date(&self, min: Date, max: Date) -> Result<Date, DataSourceError>;
+    fn generate_date(
+        &self,
+        min: Date,
+        max: Date,
+        options: &DateOptions,
+    ) -> Result<Date, DataSourceError>;
 
-    /// Draw a [`Time`] of day in `[min, max]`, shrinking toward `min`.
-    /// Errors with `InvalidArgument` for invalid or inverted bounds.
-    fn generate_time(&self, min: Time, max: Time) -> Result<Time, DataSourceError>;
+    /// Draw a [`Time`] of day in `[min, max]` at `precision`, shrinking
+    /// toward `min`. Errors with `InvalidArgument` for invalid or inverted
+    /// bounds.
+    fn generate_time(
+        &self,
+        min: Time,
+        max: Time,
+        precision: Precision,
+    ) -> Result<Time, DataSourceError>;
 
-    /// Draw a naive [`DateTime`] in `[min, max]`. Errors with
-    /// `InvalidArgument` for invalid or inverted bounds.
-    fn generate_datetime(&self, min: DateTime, max: DateTime) -> Result<DateTime, DataSourceError>;
+    /// Draw a naive [`DateTime`] in `[min, max]` at `precision`. Errors
+    /// with `InvalidArgument` for invalid or inverted bounds.
+    fn generate_datetime(
+        &self,
+        min: DateTime,
+        max: DateTime,
+        precision: Precision,
+    ) -> Result<DateTime, DataSourceError>;
+
+    /// Draw a [`Timestamp`] in `[min, max]` at `precision`, shrinking
+    /// toward 2000-01-01T00:00:00Z. Errors with `InvalidArgument` for
+    /// invalid or inverted bounds.
+    fn generate_timestamp(
+        &self,
+        min: Timestamp,
+        max: Timestamp,
+        precision: Precision,
+    ) -> Result<Timestamp, DataSourceError>;
+
+    /// Draw a [`UtcOffset`] in `[min_seconds, max_seconds]` at
+    /// `granularity`, or the unknown offset when `allow_unknown`.
+    fn generate_offset(
+        &self,
+        min_seconds: i32,
+        max_seconds: i32,
+        granularity: Granularity,
+        allow_unknown: bool,
+    ) -> Result<UtcOffset, DataSourceError>;
+
+    /// Draw a [`Duration`] in `[min, max]` at `precision`, shrinking
+    /// toward zero.
+    fn generate_duration(
+        &self,
+        min: Duration,
+        max: Duration,
+        precision: Precision,
+    ) -> Result<Duration, DataSourceError>;
+
+    /// Draw a [`Span`] within `spec`'s bounds, shrinking to the zero span.
+    fn generate_span(&self, spec: &SpanSpec) -> Result<Span, DataSourceError>;
 
     /// Draw a time zone name allowed by `spec`.
     fn generate_timezone(&self, spec: &TimeZoneSpec) -> Result<String, DataSourceError>;

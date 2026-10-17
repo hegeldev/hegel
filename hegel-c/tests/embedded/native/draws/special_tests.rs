@@ -1,9 +1,17 @@
+use alloc::collections::BTreeSet;
 use alloc::string::ToString;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use super::*;
-use crate::native::core::NativeTestCase;
+use crate::native::core::{ChoiceKind, ChoiceNode, ChoiceValue, NativeTestCase};
 use crate::native::rng::EngineRng;
+
+fn integer_bounds(node: &ChoiceNode) -> (BigInt, BigInt) {
+    match node.kind() {
+        ChoiceKind::Integer(ic) => (ic.min_value(), ic.max_value()),
+        other => panic!("{other:?}"),
+    }
+}
 
 fn fresh_ntc(seed: u64) -> NativeTestCase {
     NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap()
@@ -49,7 +57,13 @@ const LAST_NANOSECOND: Time = Time {
 fn generate_date_produces_valid_dates() {
     for seed in 0..50 {
         let mut ntc = fresh_ntc(seed);
-        let d = generate_date(&mut ntc, FULL_MIN_DATE, FULL_MAX_DATE).unwrap();
+        let d = generate_date(
+            &mut ntc,
+            FULL_MIN_DATE,
+            FULL_MAX_DATE,
+            &DateOptions::default(),
+        )
+        .unwrap();
         assert!((1..=9999).contains(&d.year), "year out of range: {d:?}");
         assert!((1..=12).contains(&d.month), "month out of range: {d:?}");
         assert!((1..=31).contains(&d.day), "day out of range: {d:?}");
@@ -61,7 +75,13 @@ fn generate_date_day_respects_month_length() {
     let mut seen_feb = false;
     for seed in 0..1000 {
         let mut ntc = fresh_ntc(seed);
-        let d = generate_date(&mut ntc, FULL_MIN_DATE, FULL_MAX_DATE).unwrap();
+        let d = generate_date(
+            &mut ntc,
+            FULL_MIN_DATE,
+            FULL_MAX_DATE,
+            &DateOptions::default(),
+        )
+        .unwrap();
         if d.month == 2 {
             seen_feb = true;
             let is_leap = d.year % 4 == 0 && (d.year % 100 != 0 || d.year % 400 == 0);
@@ -81,7 +101,7 @@ fn generate_time_covers_zero_and_nonzero_nanoseconds() {
     let mut seen_nanosecond_nonzero = false;
     for seed in 0..1000 {
         let mut ntc = fresh_ntc(seed);
-        let t = generate_time(&mut ntc, MIDNIGHT, LAST_NANOSECOND).unwrap();
+        let t = generate_time(&mut ntc, MIDNIGHT, LAST_NANOSECOND, Precision::Nanoseconds).unwrap();
         assert!(t.hour <= 23 && t.minute <= 59 && t.second <= 59, "{t:?}");
         assert!(t.nanosecond <= 999_999_999, "{t:?}");
         if t.nanosecond == 0 {
@@ -114,6 +134,7 @@ fn generate_datetime_combines_valid_parts() {
                 date: FULL_MAX_DATE,
                 time: LAST_NANOSECOND,
             },
+            Precision::Nanoseconds,
         )
         .unwrap();
         assert!((1..=9999).contains(&dt.date.year));
@@ -239,7 +260,7 @@ fn generate_date_respects_bounds() {
     let max = date(2010, 2, 3);
     for seed in 0..300 {
         let mut ntc = fresh_ntc(seed);
-        let d = generate_date(&mut ntc, min, max).unwrap();
+        let d = generate_date(&mut ntc, min, max, &DateOptions::default()).unwrap();
         let days = days_from_civil(&d);
         assert!(
             (days_from_civil(&min)..=days_from_civil(&max)).contains(&days),
@@ -250,7 +271,6 @@ fn generate_date_respects_bounds() {
 
 #[test]
 fn generate_date_shrinks_toward_2000_01_01_clamped() {
-    use crate::native::core::ChoiceValue;
     for (min, max, expect) in [
         (date(1990, 1, 1), date(2010, 12, 31), date(2000, 1, 1)),
         (date(2005, 3, 2), date(2010, 12, 31), date(2005, 3, 2)),
@@ -258,7 +278,7 @@ fn generate_date_shrinks_toward_2000_01_01_clamped() {
     ] {
         let mut ntc =
             NativeTestCase::for_choices(&[ChoiceValue::Integer(BigInt::from(0))], None, None);
-        let d = generate_date(&mut ntc, min, max).unwrap();
+        let d = generate_date(&mut ntc, min, max, &DateOptions::default()).unwrap();
         assert_eq!(d, expect);
     }
 }
@@ -274,7 +294,7 @@ fn generate_date_rejects_invalid_arguments() {
         (date(1_000_000, 1, 1), date(1_000_000, 1, 2)),
         (date(2001, 1, 1), date(2000, 1, 1)),
     ] {
-        let err = generate_date(&mut ntc, min, max).unwrap_err();
+        let err = generate_date(&mut ntc, min, max, &DateOptions::default()).unwrap_err();
         assert!(
             matches!(err, EngineError::InvalidArgument(_)),
             "{min:?}..{max:?}"
@@ -289,7 +309,7 @@ fn generate_date_supports_negative_years() {
     let mut seen_negative = false;
     for seed in 0..200 {
         let mut ntc = fresh_ntc(seed);
-        let d = generate_date(&mut ntc, min, max).unwrap();
+        let d = generate_date(&mut ntc, min, max, &DateOptions::default()).unwrap();
         assert!((-262_143..=262_143).contains(&d.year));
         if d.year < 0 {
             seen_negative = true;
@@ -300,17 +320,19 @@ fn generate_date_supports_negative_years() {
 
 #[test]
 fn generate_time_respects_bounds_and_shrinks_to_min() {
-    use crate::native::core::ChoiceValue;
     let min = time(9, 30, 0, 0);
     let max = time(17, 0, 0, 0);
     for seed in 0..200 {
         let mut ntc = fresh_ntc(seed);
-        let t = generate_time(&mut ntc, min, max).unwrap();
+        let t = generate_time(&mut ntc, min, max, Precision::Nanoseconds).unwrap();
         let ns = time_to_ns(&t);
         assert!((time_to_ns(&min)..=time_to_ns(&max)).contains(&ns), "{t:?}");
     }
     let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::Integer(BigInt::from(0))], None, None);
-    assert_eq!(generate_time(&mut ntc, min, max).unwrap(), min);
+    assert_eq!(
+        generate_time(&mut ntc, min, max, Precision::Nanoseconds).unwrap(),
+        min
+    );
 }
 
 #[test]
@@ -323,7 +345,7 @@ fn generate_time_rejects_invalid_arguments() {
         (MIDNIGHT, time(0, 0, 0, 1_000_000_000)),
         (time(1, 0, 0, 0), time(0, 59, 0, 0)),
     ] {
-        let err = generate_time(&mut ntc, min, max).unwrap_err();
+        let err = generate_time(&mut ntc, min, max, Precision::Nanoseconds).unwrap_err();
         assert!(
             matches!(err, EngineError::InvalidArgument(_)),
             "{min:?}..{max:?}"
@@ -345,7 +367,7 @@ fn generate_datetime_respects_time_bounds_on_boundary_dates() {
     let mut seen_max_date = false;
     for seed in 0..500 {
         let mut ntc = fresh_ntc(seed);
-        let dt = generate_datetime(&mut ntc, min, max).unwrap();
+        let dt = generate_datetime(&mut ntc, min, max, Precision::Nanoseconds).unwrap();
         let day = days_from_civil(&dt.date);
         assert!((days_from_civil(&min.date)..=days_from_civil(&max.date)).contains(&day));
         if day == days_from_civil(&min.date) {
@@ -372,7 +394,7 @@ fn generate_datetime_single_day_constrains_both_ends() {
     };
     for seed in 0..100 {
         let mut ntc = fresh_ntc(seed);
-        let dt = generate_datetime(&mut ntc, min, max).unwrap();
+        let dt = generate_datetime(&mut ntc, min, max, Precision::Nanoseconds).unwrap();
         assert_eq!(dt.date, min.date);
         let ns = time_to_ns(&dt.time);
         assert!((time_to_ns(&min.time)..=time_to_ns(&max.time)).contains(&ns));
@@ -390,6 +412,311 @@ fn generate_datetime_rejects_inverted_bounds() {
         date: date(2020, 5, 5),
         time: time(10, 0, 0, 0),
     };
-    let err = generate_datetime(&mut ntc, lo, hi).unwrap_err();
+    let err = generate_datetime(&mut ntc, lo, hi, Precision::Nanoseconds).unwrap_err();
     assert!(matches!(err, EngineError::InvalidArgument(_)));
+}
+
+fn jiff_date(d: &Date) -> jiff::civil::Date {
+    jiff::civil::date(
+        i16::try_from(d.year).unwrap(),
+        i8::try_from(d.month).unwrap(),
+        i8::try_from(d.day).unwrap(),
+    )
+}
+
+fn weekdays(mask: u8) -> DateOptions {
+    DateOptions {
+        weekdays: mask,
+        months: ALL_MONTHS,
+    }
+}
+
+#[test]
+fn generate_time_counts_units_of_the_precision() {
+    for precision in [
+        Precision::Nanoseconds,
+        Precision::Microseconds,
+        Precision::Milliseconds,
+        Precision::Seconds,
+        Precision::Minutes,
+        Precision::Hours,
+    ] {
+        let unit = precision.unit();
+        for seed in 0..100 {
+            let mut ntc = fresh_ntc(seed);
+            let t = generate_time(&mut ntc, MIDNIGHT, LAST_NANOSECOND, precision).unwrap();
+            assert_eq!(time_to_ns(&t) % unit, 0, "{t:?} at {precision:?}");
+            assert_eq!(ntc.nodes.len(), 1);
+            let (lo, hi) = integer_bounds(&ntc.nodes[0]);
+            assert_eq!(lo, BigInt::from(0));
+            assert_eq!(hi, BigInt::from(LAST_NS_OF_DAY / unit));
+        }
+        let min = time(9, 30, 0, 1);
+        let max = time(17, 0, 0, 0);
+        let mut ntc =
+            NativeTestCase::for_choices(&[ChoiceValue::Integer(BigInt::from(0))], None, None);
+        let first = generate_time(&mut ntc, min, max, precision).unwrap();
+        assert_eq!(
+            time_to_ns(&first),
+            align_up(i128::from(time_to_ns(&min)), i128::from(unit)) as i64
+        );
+    }
+    let mut ntc = fresh_ntc(0);
+    let err = generate_time(
+        &mut ntc,
+        time(0, 0, 0, 500),
+        time(0, 0, 0, 900),
+        Precision::Seconds,
+    )
+    .unwrap_err();
+    assert!(matches!(err, EngineError::InvalidArgument(_)), "{err}");
+    assert!(err.to_string().contains("no value at precision"));
+    assert!(ntc.nodes.is_empty());
+}
+
+#[test]
+fn generate_datetime_at_a_precision_tightens_the_boundary_days() {
+    let min = DateTime {
+        date: date(2000, 1, 1),
+        time: time(23, 59, 59, 500_000_000),
+    };
+    let max = DateTime {
+        date: date(2000, 1, 3),
+        time: time(0, 0, 0, 400_000_000),
+    };
+    let mut seen = BTreeSet::new();
+    for seed in 0..500 {
+        let mut ntc = fresh_ntc(seed);
+        let dt = generate_datetime(&mut ntc, min, max, Precision::Seconds).unwrap();
+        assert_eq!(dt.time.nanosecond, 0, "{dt:?}");
+        assert!(
+            (wall_ns(&min)..=wall_ns(&max)).contains(&wall_ns(&dt)),
+            "{dt:?}"
+        );
+        assert_ne!(dt.date, min.date, "{dt:?}");
+        assert_eq!(ntc.nodes.len(), 2);
+        let (lo, hi) = integer_bounds(&ntc.nodes[0]);
+        assert_eq!((lo, hi), (BigInt::from(0), BigInt::from(1)));
+        seen.insert(dt);
+    }
+    assert!(seen.contains(&DateTime {
+        date: date(2000, 1, 3),
+        time: MIDNIGHT
+    }));
+    assert!(seen.len() > 100, "{}", seen.len());
+    let mut ntc = fresh_ntc(0);
+    let err = generate_datetime(
+        &mut ntc,
+        DateTime {
+            date: date(2000, 1, 1),
+            time: time(0, 0, 0, 500),
+        },
+        DateTime {
+            date: date(2000, 1, 1),
+            time: time(0, 0, 0, 900),
+        },
+        Precision::Seconds,
+    )
+    .unwrap_err();
+    assert!(matches!(err, EngineError::InvalidArgument(_)), "{err}");
+    assert!(ntc.nodes.is_empty());
+}
+
+#[test]
+fn date_draws_target_the_interesting_dates() {
+    let interesting: BTreeSet<Date> = INTERESTING_DATES
+        .iter()
+        .map(|&(year, month, day)| date(year, month, day))
+        .collect();
+    assert_eq!(interesting.len(), INTERESTING_DATES.len());
+    for d in &interesting {
+        validate_date("interesting", d).unwrap();
+    }
+    assert_eq!(jiff_date(&date(2024, 12, 30)).iso_week_date().week(), 1);
+    assert_eq!(jiff_date(&date(2021, 1, 3)).iso_week_date().week(), 53);
+    assert_eq!(
+        jiff_date(&date(2027, 1, 1)).weekday(),
+        jiff::civil::Weekday::Friday
+    );
+    let (min, max) = (date(1500, 1, 1), date(2300, 12, 31));
+    let mut hits = BTreeSet::new();
+    for seed in 0..4000 {
+        let mut ntc = fresh_ntc(seed);
+        let d = generate_date(&mut ntc, min, max, &DateOptions::default()).unwrap();
+        if interesting.contains(&d) && d != date(2000, 1, 1) {
+            hits.insert(d);
+        }
+    }
+    assert!(hits.len() >= 10, "{hits:?}");
+    let (min, max) = (date(2001, 3, 1), date(2007, 1, 1));
+    let mut hits = BTreeSet::new();
+    for seed in 0..2000 {
+        let mut ntc = fresh_ntc(seed);
+        hits.insert(generate_date(&mut ntc, min, max, &DateOptions::default()).unwrap());
+    }
+    for expected in [
+        date(2004, 2, 29),
+        date(2001, 12, 31),
+        date(2002, 1, 1),
+        date(2007, 1, 1),
+        date(2006, 12, 31),
+    ] {
+        assert!(hits.contains(&expected), "{expected:?} in {hits:?}");
+    }
+}
+
+#[test]
+fn time_draws_target_the_interesting_times() {
+    let interesting: BTreeSet<i64> = INTERESTING_TIMES.into_iter().collect();
+    assert_eq!(interesting.len(), INTERESTING_TIMES.len());
+    assert!(
+        interesting
+            .iter()
+            .all(|&t| (0..=LAST_NS_OF_DAY).contains(&t))
+    );
+    let mut hits = BTreeSet::new();
+    for seed in 0..4000 {
+        let mut ntc = fresh_ntc(seed);
+        let t = generate_time(&mut ntc, MIDNIGHT, LAST_NANOSECOND, Precision::Nanoseconds).unwrap();
+        let ns = time_to_ns(&t);
+        if interesting.contains(&ns) && ns != 0 {
+            hits.insert(ns);
+        }
+    }
+    assert!(hits.len() >= 8, "{hits:?}");
+    let mut hits = BTreeSet::new();
+    for seed in 0..2000 {
+        let mut ntc = fresh_ntc(seed);
+        let t = generate_time(
+            &mut ntc,
+            time(1, 0, 0, 0),
+            time(4, 0, 0, 0),
+            Precision::Minutes,
+        )
+        .unwrap();
+        hits.insert(t);
+    }
+    for expected in [
+        time(1, 30, 0, 0),
+        time(2, 30, 0, 0),
+        time(3, 30, 0, 0),
+        time(4, 0, 0, 0),
+    ] {
+        assert!(hits.contains(&expected), "{expected:?}");
+    }
+}
+
+#[test]
+fn date_masks_snap_to_an_allowed_weekday_and_month() {
+    let monday_in_february = DateOptions {
+        weekdays: 1,
+        months: 1 << 1,
+    };
+    let (min, max) = (date(1990, 1, 1), date(2010, 12, 31));
+    let mut seen = BTreeSet::new();
+    for seed in 0..500 {
+        let mut ntc = fresh_ntc(seed);
+        let d = generate_date(&mut ntc, min, max, &monday_in_february).unwrap();
+        assert!((days_from_civil(&min)..=days_from_civil(&max)).contains(&days_from_civil(&d)));
+        let theirs = jiff_date(&d);
+        assert_eq!(theirs.weekday(), jiff::civil::Weekday::Monday, "{d:?}");
+        assert_eq!(theirs.month(), 2, "{d:?}");
+        assert_eq!(ntc.nodes.len(), 1);
+        seen.insert(d);
+    }
+    assert!(seen.len() > 40, "{}", seen.len());
+    let nearest = simplest_date(min, max, &monday_in_february);
+    assert_eq!(nearest, date(2000, 2, 7));
+    assert_eq!(jiff_date(&nearest).weekday(), jiff::civil::Weekday::Monday);
+    for seed in 0..200 {
+        let mut ntc = fresh_ntc(seed);
+        let d = generate_date(
+            &mut ntc,
+            date(2000, 2, 1),
+            date(2000, 2, 29),
+            &weekdays(1 << 6),
+        )
+        .unwrap();
+        assert_eq!(
+            jiff_date(&d).weekday(),
+            jiff::civil::Weekday::Sunday,
+            "{d:?}"
+        );
+    }
+}
+
+fn simplest_date(min: Date, max: Date, options: &DateOptions) -> Date {
+    let mut ntc = NativeTestCase::for_simplest(1000).unwrap();
+    generate_date(&mut ntc, min, max, options).unwrap()
+}
+
+#[test]
+fn date_masks_snap_toward_the_origin_on_a_tie() {
+    assert_eq!(
+        jiff_date(&date(2000, 1, 1)).weekday(),
+        jiff::civil::Weekday::Saturday
+    );
+    let not_saturday = weekdays(ALL_WEEKDAYS & !(1 << 5));
+    let (min, max) = (date(1999, 1, 1), date(2001, 12, 31));
+    assert_eq!(simplest_date(min, max, &not_saturday), date(1999, 12, 31));
+    for (offset, expected) in [(7, date(2000, 1, 7)), (-7, date(1999, 12, 26))] {
+        let mut ntc =
+            NativeTestCase::for_choices(&[ChoiceValue::Integer(BigInt::from(offset))], None, None);
+        let d = generate_date(&mut ntc, min, max, &not_saturday).unwrap();
+        assert_eq!(d, expected);
+    }
+    let mut ntc = NativeTestCase::for_choices(&[ChoiceValue::Integer(BigInt::from(0))], None, None);
+    let d = generate_date(&mut ntc, date(2000, 1, 1), date(2000, 1, 31), &not_saturday).unwrap();
+    assert_eq!(d, date(2000, 1, 2));
+}
+
+#[test]
+fn date_masks_reject_bounds_without_an_allowed_day() {
+    let mut ntc = fresh_ntc(0);
+    for (min, max, options) in [
+        (
+            date(2000, 1, 3),
+            date(2000, 1, 7),
+            weekdays((1 << 5) | (1 << 6)),
+        ),
+        (
+            date(2000, 3, 1),
+            date(2001, 1, 31),
+            DateOptions {
+                weekdays: ALL_WEEKDAYS,
+                months: 1 << 1,
+            },
+        ),
+        (date(2000, 1, 1), date(2000, 1, 31), weekdays(0)),
+        (date(2000, 1, 1), date(2000, 1, 31), weekdays(0x80)),
+        (
+            date(2000, 1, 1),
+            date(2000, 1, 31),
+            DateOptions {
+                weekdays: ALL_WEEKDAYS,
+                months: 0,
+            },
+        ),
+        (
+            date(2000, 1, 1),
+            date(2000, 1, 31),
+            DateOptions {
+                weekdays: ALL_WEEKDAYS,
+                months: 0x1000,
+            },
+        ),
+    ] {
+        let err = generate_date(&mut ntc, min, max, &options).unwrap_err();
+        assert!(
+            matches!(err, EngineError::InvalidArgument(_)),
+            "{options:?}: {err}"
+        );
+    }
+    assert!(ntc.nodes.is_empty());
+    let february = DateOptions {
+        weekdays: 1,
+        months: 1 << 1,
+    };
+    let d = simplest_date(date(1000, 1, 1), date(3000, 1, 1), &february);
+    assert_eq!(d, date(2000, 2, 7));
 }
