@@ -485,6 +485,33 @@ fn generate_zoned_datetime_draws_consistent_values_and_validates_handles() {
         complete_valid(ctx, tc);
         drain(ctx, run);
         ok(hegel_c::hegel_run_free(ctx, run));
+
+        ok(set_names(ctx, tz, &["America/New_York"]));
+        for (min, max, kind) in [
+            (
+                civil(2024, 3, 10, 2, 0, 0),
+                civil(2024, 3, 10, 2, 59, 59),
+                HEGEL_TIMEZONE_KIND_GAP,
+            ),
+            (
+                civil(2024, 11, 3, 1, 0, 0),
+                civil(2024, 11, 3, 1, 59, 59),
+                HEGEL_TIMEZONE_KIND_FOLD,
+            ),
+        ] {
+            ok(hegel_zoned_spec_set_civil_bounds(ctx, spec, min, max));
+            let run = run_of(ctx, 5);
+            let tc = next_case(ctx, run);
+            ok(hegel_generate_zoned_datetime(
+                ctx, tc, tz, spec, &mut value, &mut zone,
+            ));
+            assert_eq!(take_string(ctx, &mut zone), "America/New_York");
+            assert_eq!(value.kind, kind);
+            assert_ne!(value.offset_before, value.offset_after);
+            complete_valid(ctx, tc);
+            drain(ctx, run);
+            ok(hegel_c::hegel_run_free(ctx, run));
+        }
         ok(hegel_zoned_spec_free(ctx, spec));
         ok(hegel_timezone_spec_free(ctx, tz));
     }

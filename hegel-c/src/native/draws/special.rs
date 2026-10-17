@@ -147,14 +147,20 @@ pub(crate) fn draw_date_in(
     min_days: i64,
     max_days: i64,
 ) -> Result<Date, EngineError> {
-    let center = days_from_civil(&Date {
+    let center = date_origin(min_days, max_days);
+    let offset = draw_i64(ntc, min_days - center, max_days - center)?;
+    Ok(civil_from_days(center + offset))
+}
+
+/// The day a bounded date draw shrinks toward: 2000-01-01, clamped into
+/// `[min_days, max_days]`.
+pub(crate) fn date_origin(min_days: i64, max_days: i64) -> i64 {
+    days_from_civil(&Date {
         year: 2000,
         month: 1,
         day: 1,
     })
-    .clamp(min_days, max_days);
-    let offset = draw_i64(ntc, min_days - center, max_days - center)?;
-    Ok(civil_from_days(center + offset))
+    .clamp(min_days, max_days)
 }
 
 /// The unspanned bounded time draw shared by [`generate_time`] and

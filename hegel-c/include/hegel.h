@@ -547,7 +547,7 @@ typedef enum {
      */
     HEGEL_IMAGINARY_ALLOW = 0,
     /*
-     Move it to the first wall time after the gap.
+     Draw another wall time, or move a replayed one past the gap.
      */
     HEGEL_IMAGINARY_AVOID = 1,
 } hegel_imaginary_t;
@@ -3628,12 +3628,16 @@ hegel_result_t hegel_zoned_spec_set_civil_bounds(hegel_context_t *ctx,
  Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for invalid or inverted
  bounds, or bounds holding no value at the spec's precision.
 
- The bounds become a wall-clock window in the drawn zone; when that
- window inverts, or spans at most a day and lies within two days of a
- transition, the draw picks the instant directly and converts it. A
- wall time whose instant falls outside the bounds (a fold on the wrong
- side of a bound) rejects the test case, which can only happen within
- one transition's width of a bound.
+ The bounds become a wall-clock window in the drawn zone, clamped to
+ the civil range; when that window inverts, or spans at most a day and
+ lies within two days of a transition, the draw picks the instant
+ directly and converts it, aligning the wall time to the precision and
+ reading it under the ambiguous policy. A wall time whose instant falls
+ outside the bounds (a fold on the wrong side of a bound, or a wall time
+ at the precision whose instant lies outside them) rejects the test
+ case, which can only happen within one transition's width or one
+ precision unit of a bound, or where the zone's wall clock leaves the
+ civil range.
  */
 hegel_result_t hegel_zoned_spec_set_instant_bounds(hegel_context_t *ctx,
                                                    hegel_zoned_spec_t *spec,
@@ -3662,9 +3666,13 @@ hegel_result_t hegel_zoned_spec_set_precision(hegel_context_t *ctx,
    `HEGEL_IMAGINARY_ALLOW` (the default) such a time is reported with
    kind `HEGEL_TIMEZONE_KIND_GAP`, both offsets and the instant it
    resolves to with the pre-transition offset; under
-   `HEGEL_IMAGINARY_AVOID` it is moved to the first wall time after the
-   gap, as a transform of the drawn value rather than a rejection, so a
-   replayed or shrunk value that lands in a gap moves the same way.
+   `HEGEL_IMAGINARY_AVOID` the draw redraws such a time while generating,
+   and a replayed or shrunk value that lands in a gap (or one on a day
+   the clocks skipped entirely) is moved to the first wall time after
+   the gap, or when that lies past the bounds to the last wall time
+   before it, as a transform of the drawn value; when neither lies
+   within the bounds, which then lie within the gap, the test case is
+   rejected.
 
  Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown policy.
  */
@@ -3702,14 +3710,16 @@ hegel_result_t hegel_zoned_spec_set_ambiguous(hegel_context_t *ctx,
 
  The draw is a zone, then a wall-clock time within the bounds in that
  zone, then the fold when the wall time is ambiguous. One draw in
- twenty on average targets a transition of the zone, drawing within a
- second, an hour or a day of it, which is how gap times, both folds and
- the exact boundary instants are reached. A frontend builds its native
- value from `civil`, the zone name and `fold`, or for a gap from
- `timestamp`, rather than from the offsets, so that a newer database on
- its side changes what a value means but never makes it invalid.
- Shrinks down the zone ladder, then toward 2000-01-01T00:00 within the
- bounds.
+ twenty on average targets a transition of the zone or one of the
+ instants every zone targets (the Unix epoch, 2000-01-01, the 32-bit
+ boundaries, the leap-second boundaries and jiff's extremes), drawing
+ within a second, an hour or a day of it, which is how gap times, both
+ folds and the exact boundary instants are reached. A frontend builds
+ its native value from `civil`, the zone name and `fold`, or for a gap
+ from `timestamp`, rather than from the offsets, so that a newer
+ database on its side changes what a value means but never makes it
+ invalid. Shrinks down the zone ladder, then toward 2000-01-01T00:00
+ within the bounds.
  */
 hegel_result_t hegel_generate_zoned_datetime(hegel_context_t *ctx,
                                              hegel_test_case_t *tc,
