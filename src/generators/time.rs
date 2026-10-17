@@ -172,26 +172,34 @@ fn system_time_of(t: Timestamp) -> SystemTime {
     }
 }
 
+impl SystemTimeGenerator {
+    fn draw_timestamp(&self, tc: &TestCase) -> Timestamp {
+        if self.min_value > self.max_value {
+            invalid_argument!("Cannot have max_value < min_value");
+        }
+        timestamp_from_c(tc.generate_timestamp(
+            timestamp_to_c(timestamp_of(self.min_value)),
+            timestamp_to_c(timestamp_of(self.max_value)),
+            precision_to_c(self.precision),
+        ))
+    }
+}
+
 impl Generator<SystemTime> for SystemTimeGenerator {
     fn label(&self) -> u64 {
         SYSTEM_TIME_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> SystemTime {
-        if self.min_value > self.max_value {
-            invalid_argument!("Cannot have max_value < min_value");
-        }
-        system_time_of(timestamp_from_c(tc.generate_timestamp(
-            timestamp_to_c(timestamp_of(self.min_value)),
-            timestamp_to_c(timestamp_of(self.max_value)),
-            precision_to_c(self.precision),
-        )))
+        system_time_of(self.draw_timestamp(tc))
     }
 }
 
 impl PrintableGenerator<SystemTime> for SystemTimeGenerator {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> SystemTime {
-        draw_and_print_value(self, tc, printer)
+        let t = self.draw_timestamp(tc);
+        printer.text(&t.to_string());
+        system_time_of(t)
     }
 }
 
@@ -202,7 +210,8 @@ impl PrintableGenerator<SystemTime> for SystemTimeGenerator {
 /// widen it with `min_value` and `max_value` where the platform allows,
 /// up to the engine's years ±999,999. Shrinks toward 2000-01-01T00:00:00Z.
 /// Built on [`timestamps()`](super::timestamps), whose targeting of interesting instants it
-/// shares. See [`SystemTimeGenerator`] for builder methods.
+/// shares and whose RFC 9557 form (`2000-01-01T00:00:00Z`) a drawn value
+/// prints in. See [`SystemTimeGenerator`] for builder methods.
 ///
 /// # Example
 ///

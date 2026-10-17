@@ -335,6 +335,12 @@ fn test_resolve_rejects_bad_input() {
         time: time(0, 0, 0, 0),
     };
     assert!(resolve("UTC", bad).is_err());
+    let last = datetime(MAX_YEAR, 12, 31, 23, 59, 59);
+    assert!(resolve("America/New_York", last).is_err());
+    assert_eq!(
+        resolve("UTC", last).unwrap().timestamp,
+        Timestamp::new(MAX_INSTANT, 0).unwrap()
+    );
 }
 
 #[test]
@@ -688,6 +694,25 @@ fn test_utc_offsets_unknown() {
 }
 
 #[test]
+fn test_utc_offsets_unknown_shrinks_to_a_known_offset() {
+    assert_eq!(
+        minimal(gs::utc_offsets().unknown(true), |_| true),
+        UtcOffset::Known(0)
+    );
+    assert_eq!(
+        minimal(gs::utc_offsets().unknown(true), |o| {
+            *o == UtcOffset::Unknown || matches!(o, UtcOffset::Known(s) if s.unsigned_abs() >= 3600)
+        }),
+        UtcOffset::Known(3600)
+    );
+    assert_eq!(
+        minimal(gs::utc_offsets().unknown(true), |o| *o
+            == UtcOffset::Unknown),
+        UtcOffset::Unknown
+    );
+}
+
+#[test]
 fn test_utc_offsets_in_vec() {
     assert_all_examples(
         gs::vecs(gs::utc_offsets().max_value(UtcOffset::Known(0))).max_size(5),
@@ -971,6 +996,43 @@ fn test_zoned_datetimes_in_vec() {
 fn test_zoned_datetimes_shrink_to_utc_at_the_millennium() {
     let z = minimal(gs::zoned_datetimes(), |_| true);
     assert_eq!(z.to_string(), "2000-01-01T00:00:00+00:00[UTC]");
+}
+
+#[test]
+fn test_zoned_datetimes_shrink_past_a_fold_at_the_lower_bound() {
+    let new_york = || gs::time_zones().names(["America/New_York"]);
+    let in_fold = datetime(2024, 11, 3, 1, 30, 0);
+    let both = minimal(
+        gs::zoned_datetimes()
+            .time_zones(new_york())
+            .min_value(in_fold),
+        |_| true,
+    );
+    assert_eq!(
+        both.to_string(),
+        "2024-11-03T02:00:00-05:00[America/New_York]"
+    );
+    let repeated = minimal(
+        gs::zoned_datetimes()
+            .time_zones(new_york())
+            .min_value(in_fold),
+        |z| z.kind == Kind::Fold,
+    );
+    assert_eq!(
+        repeated.to_string(),
+        "2024-11-03T01:30:00-04:00[America/New_York][fold=0]"
+    );
+    let earlier = minimal(
+        gs::zoned_datetimes()
+            .time_zones(new_york())
+            .min_value(in_fold)
+            .ambiguous(Ambiguous::Earlier),
+        |_| true,
+    );
+    assert_eq!(
+        earlier.to_string(),
+        "2024-11-03T01:30:00-04:00[America/New_York][fold=0]"
+    );
 }
 
 #[test]

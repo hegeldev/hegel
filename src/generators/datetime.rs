@@ -678,7 +678,8 @@ impl PrintableGenerator<TimeZone> for TimeZoneGenerator {
 /// Generate [`TimeZone`] values.
 ///
 /// By default any name of the engine's bundled IANA database, link names
-/// in and legacy names out; shrinks down a ladder of names to `UTC`. Half
+/// in and legacy names out; shrinks down a ladder of names to `UTC` when
+/// it is allowed, otherwise to the lowest-ranked allowed name. Half
 /// the draws are uniform over the allowed names and half weighted by the
 /// zones' features, so a zone with a rare feature (a fractional offset, a
 /// skipped day, negative DST) is drawn at a rate a short run reaches. See
@@ -857,7 +858,9 @@ impl PrintableGenerator<ZonedDateTime> for ZonedDateTimeGenerator {
 /// the engine's range at nanosecond precision, with skipped wall times
 /// reported as [`Kind::Gap`](crate::datetime::Kind::Gap) and both repeats
 /// of a fold drawn; shrinks down the zone ladder, then toward
-/// 2000-01-01T00:00:00. One draw in twenty on average targets a transition
+/// 2000-01-01T00:00:00, preferring a unique wall time to a repeated one
+/// (so a shrink whose lower bound lies in a fold ends just after the
+/// fold). One draw in twenty on average targets a transition
 /// of the zone, which is how gaps, folds and the exact boundary instants
 /// are reached. Build a native value from `civil`, the zone name and
 /// `fold` (or, for a gap, from `timestamp`), never from the offsets, so

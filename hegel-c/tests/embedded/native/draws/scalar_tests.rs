@@ -7,7 +7,7 @@
 use super::*;
 use crate::exchange::drive_no_yield;
 use crate::native::bignum::BigInt;
-use crate::native::core::choices::BooleanChoice;
+use crate::native::core::choices::{BooleanChoice, IntegerChoice};
 use crate::native::core::{ChoiceKind, ChoiceNode, ChoiceValue, NativeTestCase};
 use crate::native::rng::EngineRng;
 use crate::native::shrinker::{ShrinkRun, Shrinker};
@@ -396,13 +396,20 @@ fn offsets_shrink_to_known_zero_then_the_offset() {
         }
     );
     let unknown = replay(
-        &[ChoiceNode::boolean(
-            BooleanChoice {
-                p: UNKNOWN_PROBABILITY,
-            },
-            true,
-            false,
-        )],
+        &[
+            ChoiceNode::boolean(
+                BooleanChoice {
+                    p: UNKNOWN_PROBABILITY,
+                },
+                true,
+                false,
+            ),
+            ChoiceNode::integer(
+                IntegerChoice::small(-i64::from(MAX_OFFSET / 60), i64::from(MAX_OFFSET / 60), 0),
+                BigInt::from(60),
+                false,
+            ),
+        ],
         draw,
     );
     assert_eq!(
@@ -416,11 +423,18 @@ fn offsets_shrink_to_known_zero_then_the_offset() {
     for seed in 0..draws {
         let mut ntc = fresh_ntc(seed);
         let o = draw(&mut ntc).unwrap();
-        assert_eq!(ntc.nodes.len(), if o.known { 2 } else { 1 });
+        assert_eq!(ntc.nodes.len(), 2);
         unknowns += usize::from(!o.known);
     }
     let rate = unknowns as f64 / draws as f64;
     assert!((0.06..=0.14).contains(&rate), "{rate}");
+    assert_eq!(
+        shrunk(draw, |_| true),
+        UtcOffset {
+            seconds: 0,
+            known: true
+        }
+    );
     assert_eq!(
         shrunk(draw, |o| o.known && o.seconds.unsigned_abs() >= 3_600),
         UtcOffset {
@@ -430,6 +444,13 @@ fn offsets_shrink_to_known_zero_then_the_offset() {
     );
     assert_eq!(
         shrunk(draw, |o| !o.known || o.seconds.unsigned_abs() >= 3_600),
+        UtcOffset {
+            seconds: 3_600,
+            known: true
+        }
+    );
+    assert_eq!(
+        shrunk(draw, |o| !o.known),
         UtcOffset {
             seconds: 0,
             known: false

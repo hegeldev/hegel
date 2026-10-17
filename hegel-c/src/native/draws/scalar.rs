@@ -192,8 +192,10 @@ static OFFSET_CATALOGUE: Lazy<Result<Vec<i32>, InternalError>> = Lazy::new(|| {
 });
 
 /// Draw a [`UtcOffset`] in `[min_seconds, max_seconds]` at `granularity`,
-/// or the unknown offset when `allow_unknown`, wrapped in a span. Shrinks
-/// to known, then toward 0 or the nearest bound.
+/// or the unknown offset when `allow_unknown`, wrapped in a span: the
+/// weighted unknown node when allowed, then the count node in either
+/// case, so that the unknown's choice sequence is no shorter than a known
+/// offset's. Shrinks to known, then toward 0 or the nearest bound.
 pub fn generate_offset(
     ntc: &mut NativeTestCase,
     min_seconds: i32,
@@ -232,16 +234,11 @@ pub fn generate_offset(
         .map(|&s| i128::from(s / unit))
         .collect();
     spanned(ntc, LABEL_OFFSET, |ntc| {
-        if allow_unknown && ntc.weighted(UNKNOWN_PROBABILITY, None)? {
-            return Ok(UtcOffset {
-                seconds: 0,
-                known: false,
-            });
-        }
+        let unknown = allow_unknown && ntc.weighted(UNKNOWN_PROBABILITY, None)?;
         let count = draw_targeted(ntc, i128::from(lo), i128::from(hi), 0, vec![targets])?;
         Ok(UtcOffset {
-            seconds: count as i32 * unit,
-            known: true,
+            seconds: if unknown { 0 } else { count as i32 * unit },
+            known: !unknown,
         })
     })
 }

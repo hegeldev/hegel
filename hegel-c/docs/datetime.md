@@ -372,7 +372,12 @@ window] · date · time · [fold].
 
 The fold node exists only when the wall time is ambiguous, so a value
 never carries a meaningless fold and the choice sequence has no dead
-node, improving on Hypothesis's independently drawn fold.
+node, improving on Hypothesis's independently drawn fold. The cost is
+that a repeated wall time's sequence is one node longer than a unique
+one's, so it is the less simple of the two: under `both`, a shrink
+whose lower bound lies in a fold ends at the first unique wall time
+after the fold rather than at the bound, unless only repeated wall
+times keep the failure.
 
 ### 6.3 Timestamps, offsets, durations, spans
 
@@ -389,8 +394,10 @@ node, improving on Hypothesis's independently drawn fold.
   the set of offsets any bundled zone has ever used (a few hundred
   values, from the table), so `+05:45`, `+12:45`, `-00:44:30` and the
   like appear. When `unknown` is allowed a weighted boolean node comes
-  first; `true` yields the unknown offset and no count node, so the
-  draw shrinks to a known offset before the offset itself shrinks.
+  first and `true` yields the unknown offset; the count node is drawn
+  either way, so that the unknown's choice sequence is no shorter than
+  a known offset's and the draw shrinks to a known offset before the
+  offset itself shrinks (a shorter sequence would be the simpler one).
 - `generate_duration(min, max, precision)`: one integer node of units,
   shrinking toward 0.
 - `generate_span(spec)`: one integer node per enabled unit, drawn largest

@@ -157,8 +157,29 @@ impl TimeZone {
     }
 
     /// Classify the wall-clock time `civil` and resolve it to an instant;
-    /// `fold` picks the later instant of a fold.
+    /// `fold` picks the later instant of a fold. An argument error when
+    /// the instant lies outside `[MIN_INSTANT, MAX_INSTANT]`, which a
+    /// wall time within an offset's width of the civil envelope's ends
+    /// can do.
     pub fn resolve(&self, civil: &DateTime, fold: bool) -> Result<Resolution, EngineError> {
+        let r = self.resolve_any(civil, fold)?;
+        if !(MIN_INSTANT..=MAX_INSTANT).contains(&r.timestamp.second) {
+            return Err(EngineError::InvalidArgument(format!(
+                "civil resolves to the instant {} in this zone, outside \
+                 [{MIN_INSTANT}, {MAX_INSTANT}]",
+                r.timestamp.second
+            )));
+        }
+        Ok(r)
+    }
+
+    /// [`resolve`](Self::resolve) without the instant check, for the
+    /// zoned draw, which bounds the instant itself.
+    pub(crate) fn resolve_any(
+        &self,
+        civil: &DateTime,
+        fold: bool,
+    ) -> Result<Resolution, EngineError> {
         validate_date("civil.date", &civil.date)?;
         validate_time("civil.time", &civil.time)?;
         match self {

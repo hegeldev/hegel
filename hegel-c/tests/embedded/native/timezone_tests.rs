@@ -637,6 +637,35 @@ fn invalid_inputs_are_argument_errors() {
         TimeZone::Unknown.resolve(&civil(2024, 13, 1, 0, 0, 0), false),
         Err(EngineError::InvalidArgument(_))
     ));
+    let err = zone
+        .resolve(&civil(MAX_YEAR, 12, 31, 23, 0, 0), false)
+        .unwrap_err();
+    assert!(
+        matches!(err, EngineError::InvalidArgument(ref m) if m.contains("outside")),
+        "{err:?}"
+    );
+    assert_eq!(
+        zone.resolve(&civil(MAX_YEAR, 12, 31, 18, 59, 59), false)
+            .unwrap()
+            .timestamp
+            .second,
+        MAX_INSTANT
+    );
+    let err = named("Asia/Tokyo")
+        .resolve(&civil(MIN_YEAR, 1, 1, 8, 59, 59), false)
+        .unwrap_err();
+    assert!(
+        matches!(err, EngineError::InvalidArgument(ref m) if m.contains("outside")),
+        "{err:?}"
+    );
+    assert_eq!(
+        TimeZone::Unknown
+            .resolve(&civil(MAX_YEAR, 12, 31, 23, 59, 59), false)
+            .unwrap()
+            .timestamp
+            .second,
+        MAX_INSTANT
+    );
 }
 
 #[test]
@@ -704,12 +733,37 @@ fn extreme_instants_are_rejected_by_queries_and_clamped_by_type_at() {
         }
         let first = civil(MIN_YEAR, 1, 1, 0, 0, 0);
         let last = civil(MAX_YEAR, 12, 31, 23, 59, 59);
-        let r = zone.resolve(&first, false).unwrap();
+        let r = zone.resolve_any(&first, false).unwrap();
         assert_eq!(r.kind, Kind::Unique, "{}", entry.name);
         assert_eq!(r.offset, entry.zone.initial.utoff, "{}", entry.name);
         assert_eq!(r.timestamp.second, MIN_INSTANT - i64::from(r.offset));
-        let r = zone.resolve(&last, false).unwrap();
+        let r = zone.resolve_any(&last, false).unwrap();
         assert_eq!(r.timestamp.second, MAX_INSTANT - i64::from(r.offset));
+        for (end, bound) in [(&first, MIN_INSTANT), (&last, MAX_INSTANT)] {
+            let offset = i64::from(zone.resolve_any(end, false).unwrap().offset);
+            match zone.resolve(end, false) {
+                Ok(r) => {
+                    assert!(
+                        (MIN_INSTANT..=MAX_INSTANT).contains(&r.timestamp.second),
+                        "{} at {end:?}",
+                        entry.name
+                    );
+                    assert_eq!(r.timestamp.second, bound - offset);
+                }
+                Err(err) => {
+                    assert!(
+                        !(MIN_INSTANT..=MAX_INSTANT).contains(&(bound - offset)),
+                        "{} at {end:?}: {err:?}",
+                        entry.name
+                    );
+                    assert!(
+                        matches!(err, EngineError::InvalidArgument(ref m) if m.contains("outside")),
+                        "{} at {end:?}: {err:?}",
+                        entry.name
+                    );
+                }
+            }
+        }
         assert!(transitions(entry.zone, i64::MIN, i64::MAX).take(3).count() <= 3);
         assert_eq!(transitions(entry.zone, 0, 0).count(), 0);
         assert_eq!(transitions(entry.zone, 10, 0).count(), 0);

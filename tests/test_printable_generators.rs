@@ -571,7 +571,10 @@ fn every_leaf_generator_prints() {
     printed_draw_lines(gs::datetime_strings());
     printed_draw_lines(gs::uuids());
     printed_draw_lines(gs::durations());
-    printed_draw_lines(gs::system_times());
+    assert_eq!(
+        printed_draw_lines(gs::system_times()),
+        vec!["let draw_1 = 2000-01-01T00:00:00Z;"]
+    );
     printed_draw_lines(gs::floats::<f64>());
     printed_draw_lines(gs::characters().print_as_debug());
 }

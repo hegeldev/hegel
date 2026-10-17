@@ -3630,8 +3630,10 @@ hegel_result_t hegel_tzdb_version(hegel_context_t *ctx, const char **out_version
  `out`: Receives the classification, the offsets and the resolved
    instant; see `hegel_timezone_resolution_t`.
 
- Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown name or an
- invalid datetime.
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown name, an
+ invalid datetime, or a wall time whose instant in the zone lies
+ outside the timestamp range (within an offset's width of the civil
+ range's ends).
  */
 hegel_result_t hegel_timezone_resolve(hegel_context_t *ctx,
                                       const char *name,
@@ -3895,7 +3897,7 @@ hegel_result_t hegel_zoned_spec_set_ambiguous(hegel_context_t *ctx,
  from `timestamp`, rather than from the offsets, so that a newer
  database on its side changes what a value means but never makes it
  invalid. Shrinks down the zone ladder, then toward 2000-01-01T00:00
- within the bounds.
+ within the bounds, preferring a unique wall time to a repeated one.
  */
 hegel_result_t hegel_generate_zoned_datetime(hegel_context_t *ctx,
                                              hegel_test_case_t *tc,

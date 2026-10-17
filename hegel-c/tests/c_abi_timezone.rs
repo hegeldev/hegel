@@ -34,6 +34,7 @@ fn civil(year: i32, month: u8, day: u8, hour: u8, minute: u8, second: u8) -> heg
 
 const MIN_INSTANT: i64 = -31_619_087_596_800;
 const MAX_INSTANT: i64 = 31_494_784_780_799;
+const MAX_YEAR: i32 = 999_999;
 
 fn at(second: i64) -> hegel_timestamp_t {
     hegel_timestamp_t {
@@ -315,6 +316,18 @@ fn arguments_are_checked() {
         "{}",
         last_error(ctx)
     );
+    assert_eq!(
+        unsafe {
+            hegel_timezone_resolve(
+                ctx,
+                c"America/New_York".as_ptr(),
+                civil(MAX_YEAR, 12, 31, 23, 59, 59),
+                &mut r,
+            )
+        },
+        HEGEL_E_INVALID_ARG
+    );
+    assert!(last_error(ctx).contains("outside"), "{}", last_error(ctx));
     let bad_nanos = hegel_timestamp_t {
         second: 0,
         nanosecond: 1_000_000_000,

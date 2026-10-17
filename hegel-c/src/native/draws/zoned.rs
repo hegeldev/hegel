@@ -844,7 +844,7 @@ fn draw_from_instant(
         "draw_from_instant: validated index does not fit i64"
     );
     let (civil, fold) = values.at(i128::from(index))?;
-    let resolution = zone.resolve(&civil, fold)?;
+    let resolution = zone.resolve_any(&civil, fold)?;
     Ok(zoned(
         entry,
         civil,
@@ -927,13 +927,13 @@ fn draw_zoned(
         return Err(invalid(ntc));
     };
     let mut civil = draw_wall(ntc, zone, &window, unit, avoid)?;
-    let mut resolution = zone.resolve(&civil, false)?;
+    let mut resolution = zone.resolve_any(&civil, false)?;
     if resolution.kind == Kind::Gap && spec.imaginary == Imaginary::Avoid {
         civil = match past_gap(zone, &resolution, unit, &window)? {
             Some(moved) => moved,
             None => return Err(invalid(ntc)),
         };
-        resolution = zone.resolve(&civil, false)?;
+        resolution = zone.resolve_any(&civil, false)?;
         hegel_internal_assert!(
             resolution.kind != Kind::Gap,
             "the wall time next to a gap in {} is in a gap",
@@ -946,7 +946,7 @@ fn draw_zoned(
         _ => false,
     };
     if fold {
-        resolution = zone.resolve(&civil, true)?;
+        resolution = zone.resolve_any(&civil, true)?;
     }
     let instant = instant_ns(&resolution.timestamp);
     if instant < instants.0 || instant > instants.1 {
@@ -990,7 +990,8 @@ fn draw_wall(
 
 /// Draw a [`ZonedDateTime`] in a zone allowed by `tz` within `spec`'s
 /// bounds, wrapped in a span; see the module docs. Shrinks down the zone
-/// ladder, then toward 2000-01-01T00:00 within the bounds.
+/// ladder, then toward 2000-01-01T00:00 within the bounds, preferring a
+/// unique wall time to a repeated one, whose sequence is a node longer.
 pub fn generate_zoned_datetime(
     ntc: &mut NativeTestCase,
     tz: &TimeZoneSpec,

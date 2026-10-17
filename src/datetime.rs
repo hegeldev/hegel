@@ -805,8 +805,10 @@ pub(crate) fn timestamp_to_c(t: Timestamp) -> ffi::sys::hegel_timestamp_t {
 /// Classify the wall-clock time `civil` in the zone `name` and resolve it
 /// to an instant, meaning the earlier instant of a repeated wall time
 /// (`fold` false); the later is the wall time read with `offset_after`.
-/// An error names a zone the bundled database lacks or a `civil` out of
-/// range.
+/// An error names a zone the bundled database lacks, a `civil` out of
+/// range, or one whose instant in the zone lies outside the range of
+/// [`Timestamp`], which a wall time within an offset's width of the
+/// civil range's ends can do.
 pub fn resolve(name: &str, civil: DateTime) -> Result<ZonedDateTime, Error> {
     let r = ffi::timezone_resolve(name, datetime_to_c(civil)).map_err(error)?;
     let zone = TimeZone::new(name)?;
