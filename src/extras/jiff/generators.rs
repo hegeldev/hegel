@@ -1,13 +1,20 @@
-use jiff::civil::{Date, DateTime, Time};
+use std::fmt::Display;
+use std::sync::OnceLock;
+
+use jiff::civil::{Date, DateTime, Era, ISOWeekDate, Time, Weekday};
 use jiff::tz::{Offset, TimeZone};
 use jiff::{SignedDuration, Span, Timestamp, Zoned};
 
-use crate::ffi::sys as hegel_c;
+use crate::datetime::{
+    self as dt, Ambiguous, Granularity, Imaginary, Kind, Month, Precision, SpanSign, SpanUnit, Tag,
+    UtcOffset, info,
+};
 use crate::generators::{
-    BoxedGenerator, Generator, PrintableGenerator, TestCase, combine_labels, integers,
+    self as gs, BoolGenerator, Generator, IntegerGenerator, Mapped, PrintableGenerator, TestCase,
     label_from_name,
 };
 use crate::pretty::PrettyPrinter;
+use crate::test_case::invalid_argument;
 
 const DATE_LABEL: u64 = label_from_name("hegel.jiff.dates");
 const TIME_LABEL: u64 = label_from_name("hegel.jiff.times");
@@ -16,37 +23,138 @@ const TIMESTAMP_LABEL: u64 = label_from_name("hegel.jiff.timestamps");
 const SPAN_LABEL: u64 = label_from_name("hegel.jiff.spans");
 const SIGNED_DURATION_LABEL: u64 = label_from_name("hegel.jiff.signed_durations");
 const OFFSET_LABEL: u64 = label_from_name("hegel.jiff.offsets");
+const TIME_ZONE_LABEL: u64 = label_from_name("hegel.jiff.time_zones");
 const ZONED_LABEL: u64 = label_from_name("hegel.jiff.zoneds");
 
-use crate::test_case::invalid_argument;
+const NANOS_PER_SECOND: i128 = 1_000_000_000;
 
-/// Convert a [`Date`] to the engine's date struct. Every jiff `Date` fits:
-/// jiff spans years ±9999 and the engine accepts ±999999.
-fn hegel_date(d: Date) -> hegel_c::hegel_date_t {
-    hegel_c::hegel_date_t {
+/// Draw from `generator` and print the value's `Display` form, jiff's
+/// RFC 9557 spelling, which is also the engine's.
+fn draw_and_print_display<T: Display>(
+    generator: &impl Generator<T>,
+    tc: &TestCase,
+    printer: &mut PrettyPrinter,
+) -> T {
+    let value = generator.do_draw(tc);
+    printer.text(&value.to_string());
+    value
+}
+
+fn engine_date(d: Date) -> dt::Date {
+    dt::Date {
         year: i32::from(d.year()),
         month: d.month() as u8,
         day: d.day() as u8,
     }
 }
 
+fn jiff_date(d: dt::Date) -> Date {
+    Date::new(d.year as i16, d.month as i8, d.day as i8).unwrap()
+}
+
+fn engine_time(t: Time) -> dt::Time {
+    dt::Time {
+        hour: t.hour() as u8,
+        minute: t.minute() as u8,
+        second: t.second() as u8,
+        nanosecond: t.subsec_nanosecond() as u32,
+    }
+}
+
+fn jiff_time(t: dt::Time) -> Time {
+    Time::new(
+        t.hour as i8,
+        t.minute as i8,
+        t.second as i8,
+        t.nanosecond as i32,
+    )
+    .unwrap()
+}
+
+pub(super) fn engine_datetime(d: DateTime) -> dt::DateTime {
+    dt::DateTime {
+        date: engine_date(d.date()),
+        time: engine_time(d.time()),
+    }
+}
+
+pub(super) fn jiff_datetime(d: dt::DateTime) -> DateTime {
+    DateTime::from_parts(jiff_date(d.date), jiff_time(d.time))
+}
+
+fn engine_timestamp(t: Timestamp) -> dt::Timestamp {
+    let nanos = t.as_nanosecond();
+    dt::Timestamp {
+        second: nanos.div_euclid(NANOS_PER_SECOND) as i64,
+        nanosecond: nanos.rem_euclid(NANOS_PER_SECOND) as u32,
+    }
+}
+
+fn jiff_timestamp(t: dt::Timestamp) -> Timestamp {
+    Timestamp::new(t.second, t.nanosecond as i32).unwrap()
+}
+
+fn engine_duration(d: SignedDuration) -> dt::SignedDuration {
+    dt::SignedDuration {
+        seconds: d.as_secs(),
+        nanoseconds: d.subsec_nanos(),
+    }
+}
+
+fn jiff_duration(d: dt::SignedDuration) -> SignedDuration {
+    SignedDuration::new(d.seconds, d.nanoseconds)
+}
+
+fn engine_weekday(w: Weekday) -> dt::Weekday {
+    match w {
+        Weekday::Monday => dt::Weekday::Monday,
+        Weekday::Tuesday => dt::Weekday::Tuesday,
+        Weekday::Wednesday => dt::Weekday::Wednesday,
+        Weekday::Thursday => dt::Weekday::Thursday,
+        Weekday::Friday => dt::Weekday::Friday,
+        Weekday::Saturday => dt::Weekday::Saturday,
+        Weekday::Sunday => dt::Weekday::Sunday,
+    }
+}
+
 /// Generator for [`jiff::civil::Date`] values. Created by [`dates()`].
 pub struct DateGenerator {
-    min_value: Date,
-    max_value: Date,
+    inner: gs::DateGenerator,
 }
 
 impl DateGenerator {
     /// Set the minimum date (inclusive).
-    pub fn min_value(mut self, min: Date) -> Self {
-        self.min_value = min;
-        self
+    pub fn min_value(self, min: Date) -> Self {
+        DateGenerator {
+            inner: self.inner.min_value(engine_date(min)),
+        }
     }
 
     /// Set the maximum date (inclusive).
-    pub fn max_value(mut self, max: Date) -> Self {
-        self.max_value = max;
-        self
+    pub fn max_value(self, max: Date) -> Self {
+        DateGenerator {
+            inner: self.inner.max_value(engine_date(max)),
+        }
+    }
+
+    /// Draw only dates on these weekdays. A drawn day on another weekday
+    /// is moved to the nearest allowed day inside the bounds rather than
+    /// rejected, so the draw never filters.
+    pub fn weekdays(self, weekdays: impl IntoIterator<Item = Weekday>) -> Self {
+        DateGenerator {
+            inner: self
+                .inner
+                .weekdays(weekdays.into_iter().map(engine_weekday)),
+        }
+    }
+
+    /// Draw only dates in these months, moving a drawn day in another
+    /// month to the nearest allowed day inside the bounds as
+    /// [`weekdays`](Self::weekdays) does.
+    pub fn months(self, months: impl IntoIterator<Item = Month>) -> Self {
+        DateGenerator {
+            inner: self.inner.months(months),
+        }
     }
 }
 
@@ -56,74 +164,70 @@ impl Generator<Date> for DateGenerator {
     }
 
     fn do_draw(&self, tc: &TestCase) -> Date {
-        if self.min_value > self.max_value {
-            invalid_argument!("Cannot have max_value < min_value");
-        }
-        let d = tc.generate_date(hegel_date(self.min_value), hegel_date(self.max_value), None);
-        Date::new(d.year as i16, d.month as i8, d.day as i8).unwrap()
+        jiff_date(self.inner.do_draw(tc))
     }
 }
 
 impl PrintableGenerator<Date> for DateGenerator {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> Date {
-        crate::generators::draw_and_print_value(self, tc, printer)
+        draw_and_print_display(self, tc, printer)
     }
 }
 
 /// Generate [`jiff::civil::Date`] values.
 ///
-/// Defaults span years 1–9999 (`0001-01-01` through `9999-12-31`). Use the
-/// builder methods to constrain the range, or to widen it down to jiff's
-/// minimum of `-9999-01-01`.
-///
-/// See [`DateGenerator`] for builder methods.
+/// Defaults span years 1–9999 (`0001-01-01` through `9999-12-31`) on any
+/// weekday and in any month; shrinks toward 2000-01-01. Use the builder
+/// methods to constrain the range, or to widen it down to jiff's minimum
+/// of `-9999-01-01`. See [`DateGenerator`] for builder methods.
 ///
 /// # Example
 ///
 /// ```no_run
 /// use hegel::extras::jiff as jiff_gs;
-/// use jiff::civil::Date;
+/// use jiff::civil::{Date, Weekday};
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
 ///     let min = Date::constant(2024, 1, 1);
-///     let d = tc.draw(jiff_gs::dates().min_value(min));
-///     assert!(d >= min);
+///     let d = tc.draw(jiff_gs::dates().min_value(min).weekdays([Weekday::Saturday]));
+///     assert!(d >= min && d.weekday() == Weekday::Saturday);
 /// }
 /// ```
 pub fn dates() -> DateGenerator {
     DateGenerator {
-        min_value: Date::constant(1, 1, 1),
-        max_value: Date::constant(9999, 12, 31),
-    }
-}
-
-fn hegel_time(t: Time) -> hegel_c::hegel_time_t {
-    hegel_c::hegel_time_t {
-        hour: t.hour() as u8,
-        minute: t.minute() as u8,
-        second: t.second() as u8,
-        nanosecond: t.subsec_nanosecond() as u32,
+        inner: gs::dates()
+            .min_value(engine_date(Date::constant(1, 1, 1)))
+            .max_value(engine_date(Date::constant(9999, 12, 31))),
     }
 }
 
 /// Generator for [`jiff::civil::Time`] values. Created by [`times()`].
 pub struct TimeGenerator {
-    min_value: Time,
-    max_value: Time,
+    inner: gs::TimeGenerator,
 }
 
 impl TimeGenerator {
     /// Set the minimum time (inclusive).
-    pub fn min_value(mut self, min: Time) -> Self {
-        self.min_value = min;
-        self
+    pub fn min_value(self, min: Time) -> Self {
+        TimeGenerator {
+            inner: self.inner.min_value(engine_time(min)),
+        }
     }
 
     /// Set the maximum time (inclusive).
-    pub fn max_value(mut self, max: Time) -> Self {
-        self.max_value = max;
-        self
+    pub fn max_value(self, max: Time) -> Self {
+        TimeGenerator {
+            inner: self.inner.max_value(engine_time(max)),
+        }
+    }
+
+    /// Draw only times that are a whole number of `precision` units
+    /// since midnight.
+    pub fn precision(self, precision: Precision) -> Self {
+        TimeGenerator {
+            inner: self.inner.precision(precision),
+        }
     }
 }
 
@@ -133,93 +237,65 @@ impl Generator<Time> for TimeGenerator {
     }
 
     fn do_draw(&self, tc: &TestCase) -> Time {
-        if self.min_value > self.max_value {
-            invalid_argument!("Cannot have max_value < min_value");
-        }
-        let t = tc.generate_time(
-            hegel_time(self.min_value),
-            hegel_time(self.max_value),
-            crate::ffi::NANOSECONDS,
-        );
-        Time::new(
-            t.hour as i8,
-            t.minute as i8,
-            t.second as i8,
-            t.nanosecond as i32,
-        )
-        .unwrap()
+        jiff_time(self.inner.do_draw(tc))
     }
 }
 
 impl PrintableGenerator<Time> for TimeGenerator {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> Time {
-        crate::generators::draw_and_print_value(self, tc, printer)
+        draw_and_print_display(self, tc, printer)
     }
 }
 
 /// Generate [`jiff::civil::Time`] values.
 ///
-/// See [`TimeGenerator`] for builder methods.
+/// By default any time of day at nanosecond precision; shrinks toward
+/// midnight. See [`TimeGenerator`] for builder methods.
 ///
 /// # Example
 ///
 /// ```no_run
+/// use hegel::datetime::Precision;
 /// use hegel::extras::jiff as jiff_gs;
 /// use jiff::civil::Time;
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
 ///     let max = Time::constant(12, 0, 0, 0);
-///     let t = tc.draw(jiff_gs::times().max_value(max));
-///     assert!(t <= max);
+///     let t = tc.draw(jiff_gs::times().max_value(max).precision(Precision::Seconds));
+///     assert!(t <= max && t.subsec_nanosecond() == 0);
 /// }
 /// ```
 pub fn times() -> TimeGenerator {
-    TimeGenerator {
-        min_value: Time::MIN,
-        max_value: Time::MAX,
-    }
-}
-
-/// Convert a [`DateTime`] to nanoseconds since the Unix epoch, treating it
-/// as UTC. The wire format for [`DateTimeGenerator`] is a stable monotonic
-/// encoding of a civil datetime; UTC nanos give us that for free.
-///
-/// Bounds must fit within `Timestamp::MIN..=Timestamp::MAX`, which is slightly
-/// narrower than `DateTime::MIN..=DateTime::MAX` (jiff reserves a ~26-hour
-/// buffer at each end for offset conversions).
-fn datetime_to_nanos(dt: DateTime) -> i128 {
-    dt.to_zoned(TimeZone::UTC)
-        .expect("DateTime bound out of jiff::Timestamp range")
-        .timestamp()
-        .as_nanosecond()
-}
-
-/// Inverse of [`datetime_to_nanos`].
-fn nanos_to_datetime(n: i128) -> DateTime {
-    Timestamp::from_nanosecond(n)
-        .unwrap()
-        .to_zoned(TimeZone::UTC)
-        .datetime()
+    TimeGenerator { inner: gs::times() }
 }
 
 /// Generator for [`jiff::civil::DateTime`] values. Created by [`datetimes()`].
 pub struct DateTimeGenerator {
-    min_value: DateTime,
-    max_value: DateTime,
+    inner: gs::DateTimeGenerator,
 }
 
 impl DateTimeGenerator {
     /// Set the minimum datetime (inclusive).
-    pub fn min_value(mut self, min: DateTime) -> Self {
-        self.min_value = min;
-        self
+    pub fn min_value(self, min: DateTime) -> Self {
+        DateTimeGenerator {
+            inner: self.inner.min_value(engine_datetime(min)),
+        }
     }
 
     /// Set the maximum datetime (inclusive).
-    pub fn max_value(mut self, max: DateTime) -> Self {
-        self.max_value = max;
-        self
+    pub fn max_value(self, max: DateTime) -> Self {
+        DateTimeGenerator {
+            inner: self.inner.max_value(engine_datetime(max)),
+        }
+    }
+
+    /// Draw only datetimes whose time is a whole number of `precision`
+    /// units since midnight.
+    pub fn precision(self, precision: Precision) -> Self {
+        DateTimeGenerator {
+            inner: self.inner.precision(precision),
+        }
     }
 }
 
@@ -229,26 +305,22 @@ impl Generator<DateTime> for DateTimeGenerator {
     }
 
     fn do_draw(&self, tc: &TestCase) -> DateTime {
-        if self.min_value > self.max_value {
-            invalid_argument!("Cannot have max_value < min_value");
-        }
-        let n = integers::<i128>()
-            .min_value(datetime_to_nanos(self.min_value))
-            .max_value(datetime_to_nanos(self.max_value))
-            .do_draw(tc);
-        nanos_to_datetime(n)
+        jiff_datetime(self.inner.do_draw(tc))
     }
 }
 
 impl PrintableGenerator<DateTime> for DateTimeGenerator {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> DateTime {
-        crate::generators::draw_and_print_value(self, tc, printer)
+        draw_and_print_display(self, tc, printer)
     }
 }
 
 /// Generate [`jiff::civil::DateTime`] values.
 ///
-/// See [`DateTimeGenerator`] for builder methods.
+/// By default any datetime jiff holds, `-9999-01-01T00:00:00` through
+/// `9999-12-31T23:59:59.999999999`, at nanosecond precision; shrinks
+/// toward 2000-01-01T00:00:00. See [`DateTimeGenerator`] for builder
+/// methods.
 ///
 /// # Example
 ///
@@ -265,28 +337,38 @@ impl PrintableGenerator<DateTime> for DateTimeGenerator {
 /// ```
 pub fn datetimes() -> DateTimeGenerator {
     DateTimeGenerator {
-        min_value: Timestamp::MIN.to_zoned(TimeZone::UTC).datetime(),
-        max_value: Timestamp::MAX.to_zoned(TimeZone::UTC).datetime(),
+        inner: gs::datetimes()
+            .min_value(engine_datetime(DateTime::MIN))
+            .max_value(engine_datetime(DateTime::MAX)),
     }
 }
 
 /// Generator for [`jiff::Timestamp`] values. Created by [`timestamps()`].
 pub struct TimestampGenerator {
-    min_value: Timestamp,
-    max_value: Timestamp,
+    inner: gs::TimestampGenerator,
 }
 
 impl TimestampGenerator {
     /// Set the minimum timestamp (inclusive).
-    pub fn min_value(mut self, min: Timestamp) -> Self {
-        self.min_value = min;
-        self
+    pub fn min_value(self, min: Timestamp) -> Self {
+        TimestampGenerator {
+            inner: self.inner.min_value(engine_timestamp(min)),
+        }
     }
 
     /// Set the maximum timestamp (inclusive).
-    pub fn max_value(mut self, max: Timestamp) -> Self {
-        self.max_value = max;
-        self
+    pub fn max_value(self, max: Timestamp) -> Self {
+        TimestampGenerator {
+            inner: self.inner.max_value(engine_timestamp(max)),
+        }
+    }
+
+    /// Draw only timestamps that are a whole number of `precision` units
+    /// since the Unix epoch.
+    pub fn precision(self, precision: Precision) -> Self {
+        TimestampGenerator {
+            inner: self.inner.precision(precision),
+        }
     }
 }
 
@@ -296,26 +378,23 @@ impl Generator<Timestamp> for TimestampGenerator {
     }
 
     fn do_draw(&self, tc: &TestCase) -> Timestamp {
-        if self.min_value > self.max_value {
-            invalid_argument!("Cannot have max_value < min_value");
-        }
-        let nanos = integers::<i128>()
-            .min_value(self.min_value.as_nanosecond())
-            .max_value(self.max_value.as_nanosecond())
-            .do_draw(tc);
-        Timestamp::from_nanosecond(nanos).unwrap()
+        jiff_timestamp(self.inner.do_draw(tc))
     }
 }
 
 impl PrintableGenerator<Timestamp> for TimestampGenerator {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> Timestamp {
-        crate::generators::draw_and_print_value(self, tc, printer)
+        draw_and_print_display(self, tc, printer)
     }
 }
 
 /// Generate [`jiff::Timestamp`] values.
 ///
-/// See [`TimestampGenerator`] for builder methods.
+/// By default any instant jiff holds at nanosecond precision; shrinks
+/// toward 2000-01-01T00:00:00Z. One draw in twenty on average targets an
+/// interesting instant: the Unix epoch, the 32-bit and 64-bit boundaries,
+/// a leap second's or a time zone transition's. See
+/// [`TimestampGenerator`] for builder methods.
 ///
 /// # Example
 ///
@@ -332,32 +411,192 @@ impl PrintableGenerator<Timestamp> for TimestampGenerator {
 /// ```
 pub fn timestamps() -> TimestampGenerator {
     TimestampGenerator {
-        min_value: Timestamp::MIN,
-        max_value: Timestamp::MAX,
+        inner: gs::timestamps()
+            .min_value(engine_timestamp(Timestamp::MIN))
+            .max_value(engine_timestamp(Timestamp::MAX)),
     }
 }
 
-/// The largest absolute nanosecond magnitude jiff allows in a `Span`.
-const SPAN_NANOS_LIMIT: i64 = i64::MAX;
+/// The largest magnitude of each unit of a jiff [`Span`], in
+/// [`SpanUnit::ALL`] order.
+const UNIT_LIMITS: [i64; 10] = [
+    19_998,
+    239_976,
+    1_043_497,
+    7_304_484,
+    175_307_616,
+    10_518_456_960,
+    631_107_417_600,
+    631_107_417_600_000,
+    631_107_417_600_000_000,
+    i64::MAX,
+];
+
+const UNIT_NAMES: [&str; 10] = [
+    "years",
+    "months",
+    "weeks",
+    "days",
+    "hours",
+    "minutes",
+    "seconds",
+    "milliseconds",
+    "microseconds",
+    "nanoseconds",
+];
 
 /// Generator for [`jiff::Span`] values. Created by [`spans()`].
 pub struct SpanGenerator {
-    min_nanos: i64,
-    max_nanos: i64,
+    bounds: Option<[Option<(i64, i64)>; 10]>,
+    non_negative: bool,
+    inner: OnceLock<gs::SpanGenerator>,
 }
 
 impl SpanGenerator {
-    /// Set the minimum number of nanoseconds in the generated span.
-    pub fn min_nanoseconds(mut self, min: i64) -> Self {
-        self.min_nanos = min;
+    fn unit_bounds(mut self, unit: SpanUnit, min: i64, max: i64) -> Self {
+        self.bounds.get_or_insert([None; 10])[unit as usize] = Some((min, max));
+        self.inner = OnceLock::new();
         self
     }
 
-    /// Set the maximum number of nanoseconds in the generated span.
-    pub fn max_nanoseconds(mut self, max: i64) -> Self {
-        self.max_nanos = max;
+    /// Draw years within `[min, max]` (inclusive). The first per-unit
+    /// call replaces the default of every unit with just this one; later
+    /// calls add units, so a span of days and hours is
+    /// `spans().days(0, 30).hours(0, 23)`. A unit never enabled is
+    /// always 0.
+    pub fn years(self, min: i64, max: i64) -> Self {
+        self.unit_bounds(SpanUnit::Years, min, max)
+    }
+
+    /// Draw months within `[min, max]` (inclusive); see
+    /// [`years`](Self::years) for how units combine.
+    pub fn months(self, min: i64, max: i64) -> Self {
+        self.unit_bounds(SpanUnit::Months, min, max)
+    }
+
+    /// Draw weeks within `[min, max]` (inclusive); see
+    /// [`years`](Self::years) for how units combine.
+    pub fn weeks(self, min: i64, max: i64) -> Self {
+        self.unit_bounds(SpanUnit::Weeks, min, max)
+    }
+
+    /// Draw days within `[min, max]` (inclusive); see
+    /// [`years`](Self::years) for how units combine.
+    pub fn days(self, min: i64, max: i64) -> Self {
+        self.unit_bounds(SpanUnit::Days, min, max)
+    }
+
+    /// Draw hours within `[min, max]` (inclusive); see
+    /// [`years`](Self::years) for how units combine.
+    pub fn hours(self, min: i64, max: i64) -> Self {
+        self.unit_bounds(SpanUnit::Hours, min, max)
+    }
+
+    /// Draw minutes within `[min, max]` (inclusive); see
+    /// [`years`](Self::years) for how units combine.
+    pub fn minutes(self, min: i64, max: i64) -> Self {
+        self.unit_bounds(SpanUnit::Minutes, min, max)
+    }
+
+    /// Draw seconds within `[min, max]` (inclusive); see
+    /// [`years`](Self::years) for how units combine.
+    pub fn seconds(self, min: i64, max: i64) -> Self {
+        self.unit_bounds(SpanUnit::Seconds, min, max)
+    }
+
+    /// Draw milliseconds within `[min, max]` (inclusive); see
+    /// [`years`](Self::years) for how units combine.
+    pub fn milliseconds(self, min: i64, max: i64) -> Self {
+        self.unit_bounds(SpanUnit::Milliseconds, min, max)
+    }
+
+    /// Draw microseconds within `[min, max]` (inclusive); see
+    /// [`years`](Self::years) for how units combine.
+    pub fn microseconds(self, min: i64, max: i64) -> Self {
+        self.unit_bounds(SpanUnit::Microseconds, min, max)
+    }
+
+    /// Draw nanoseconds within `[min, max]` (inclusive); see
+    /// [`years`](Self::years) for how units combine.
+    pub fn nanoseconds(self, min: i64, max: i64) -> Self {
+        self.unit_bounds(SpanUnit::Nanoseconds, min, max)
+    }
+
+    /// Set the minimum number of nanoseconds, keeping the maximum:
+    /// `nanoseconds(min, max)` with the current maximum.
+    pub fn min_nanoseconds(self, min: i64) -> Self {
+        let (_, max) = self.nanosecond_bounds();
+        self.nanoseconds(min, max)
+    }
+
+    /// Set the maximum number of nanoseconds, keeping the minimum:
+    /// `nanoseconds(min, max)` with the current minimum.
+    pub fn max_nanoseconds(self, max: i64) -> Self {
+        let (min, _) = self.nanosecond_bounds();
+        self.nanoseconds(min, max)
+    }
+
+    /// Whether every unit is drawn as a magnitude, with no negative span
+    /// (off by default, when the whole span is of one drawn sign).
+    pub fn non_negative(mut self, non_negative: bool) -> Self {
+        self.non_negative = non_negative;
+        self.inner = OnceLock::new();
         self
     }
+
+    fn default_min(&self, limit: i64) -> i64 {
+        if self.non_negative { 0 } else { -limit }
+    }
+
+    fn nanosecond_bounds(&self) -> (i64, i64) {
+        let nanoseconds = SpanUnit::Nanoseconds as usize;
+        self.bounds
+            .and_then(|bounds| bounds[nanoseconds])
+            .unwrap_or((self.default_min(i64::MAX), i64::MAX))
+    }
+
+    fn inner(&self) -> &gs::SpanGenerator {
+        self.inner.get_or_init(|| {
+            let sign = if self.non_negative {
+                SpanSign::NonNegative
+            } else {
+                SpanSign::Uniform
+            };
+            let mut generator = gs::spans().sign(sign);
+            for (index, unit) in SpanUnit::ALL.into_iter().enumerate() {
+                let (name, limit) = (UNIT_NAMES[index], UNIT_LIMITS[index]);
+                let bound = match self.bounds {
+                    None => Some((self.default_min(limit), limit)),
+                    Some(bounds) => bounds[index],
+                };
+                let Some((min, max)) = bound else {
+                    continue;
+                };
+                if min > max {
+                    invalid_argument!("Cannot have max_{name} < min_{name}");
+                }
+                if min < -limit || max > limit {
+                    invalid_argument!("{name} must be within ±{limit}, the limit of a jiff Span");
+                }
+                generator = generator.unit_bounds(unit, min, max);
+            }
+            generator
+        })
+    }
+}
+
+fn jiff_span(s: dt::Span) -> Span {
+    Span::new()
+        .years(s.years)
+        .months(s.months)
+        .weeks(s.weeks)
+        .days(s.days)
+        .hours(s.hours)
+        .minutes(s.minutes)
+        .seconds(s.seconds)
+        .milliseconds(s.milliseconds)
+        .microseconds(s.microseconds)
+        .nanoseconds(s.nanoseconds)
 }
 
 impl Generator<Span> for SpanGenerator {
@@ -366,29 +605,21 @@ impl Generator<Span> for SpanGenerator {
     }
 
     fn do_draw(&self, tc: &TestCase) -> Span {
-        if self.min_nanos > self.max_nanos {
-            invalid_argument!("Cannot have max_nanoseconds < min_nanoseconds");
-        }
-        if self.min_nanos < -SPAN_NANOS_LIMIT {
-            invalid_argument!("min_nanoseconds must be >= -i64::MAX (the Span nanosecond limit)");
-        }
-        let nanos = integers::<i64>()
-            .min_value(self.min_nanos)
-            .max_value(self.max_nanos)
-            .do_draw(tc);
-        Span::new().try_nanoseconds(nanos).unwrap()
+        jiff_span(self.inner().do_draw(tc))
     }
 }
 
 impl PrintableGenerator<Span> for SpanGenerator {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> Span {
-        crate::generators::draw_and_print_value(self, tc, printer)
+        draw_and_print_display(self, tc, printer)
     }
 }
 
 /// Generate [`jiff::Span`] values.
 ///
-/// See [`SpanGenerator`] for builder methods.
+/// By default every unit from years to nanoseconds within jiff's limit
+/// for it, all of one drawn sign; shrinks toward the zero span. See
+/// [`SpanGenerator`] for the per-unit builder methods.
 ///
 /// # Example
 ///
@@ -397,41 +628,44 @@ impl PrintableGenerator<Span> for SpanGenerator {
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
-///     let s = tc.draw(jiff_gs::spans().min_nanoseconds(0));
-///     assert!(s.get_nanoseconds() >= 0);
+///     let s = tc.draw(jiff_gs::spans().days(0, 30).hours(0, 23));
+///     assert!((0..=30).contains(&s.get_days()) && s.get_years() == 0);
 /// }
 /// ```
 pub fn spans() -> SpanGenerator {
     SpanGenerator {
-        min_nanos: -SPAN_NANOS_LIMIT,
-        max_nanos: SPAN_NANOS_LIMIT,
+        bounds: None,
+        non_negative: false,
+        inner: OnceLock::new(),
     }
 }
 
-/// Inverse of [`SignedDuration::as_nanos`].
-fn nanos_to_signed_duration(n: i128) -> SignedDuration {
-    let secs = (n / 1_000_000_000) as i64;
-    let subnanos = (n % 1_000_000_000) as i32;
-    SignedDuration::new(secs, subnanos)
-}
-
-/// Generator for [`jiff::SignedDuration`] values. Created by [`signed_durations()`].
+/// Generator for [`jiff::SignedDuration`] values. Created by
+/// [`signed_durations()`].
 pub struct SignedDurationGenerator {
-    min_value: SignedDuration,
-    max_value: SignedDuration,
+    inner: gs::SignedDurationGenerator,
 }
 
 impl SignedDurationGenerator {
     /// Set the minimum duration (inclusive).
-    pub fn min_value(mut self, min: SignedDuration) -> Self {
-        self.min_value = min;
-        self
+    pub fn min_value(self, min: SignedDuration) -> Self {
+        SignedDurationGenerator {
+            inner: self.inner.min_value(engine_duration(min)),
+        }
     }
 
     /// Set the maximum duration (inclusive).
-    pub fn max_value(mut self, max: SignedDuration) -> Self {
-        self.max_value = max;
-        self
+    pub fn max_value(self, max: SignedDuration) -> Self {
+        SignedDurationGenerator {
+            inner: self.inner.max_value(engine_duration(max)),
+        }
+    }
+
+    /// Draw only durations that are a whole number of `precision` units.
+    pub fn precision(self, precision: Precision) -> Self {
+        SignedDurationGenerator {
+            inner: self.inner.precision(precision),
+        }
     }
 }
 
@@ -441,24 +675,22 @@ impl Generator<SignedDuration> for SignedDurationGenerator {
     }
 
     fn do_draw(&self, tc: &TestCase) -> SignedDuration {
-        if self.min_value > self.max_value {
-            invalid_argument!("Cannot have max_value < min_value");
-        }
-        let nanos = integers::<i128>()
-            .min_value(self.min_value.as_nanos())
-            .max_value(self.max_value.as_nanos())
-            .do_draw(tc);
-        nanos_to_signed_duration(nanos)
+        jiff_duration(self.inner.do_draw(tc))
     }
 }
 
 impl PrintableGenerator<SignedDuration> for SignedDurationGenerator {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> SignedDuration {
-        crate::generators::draw_and_print_value(self, tc, printer)
+        draw_and_print_display(self, tc, printer)
     }
 }
 
 /// Generate [`jiff::SignedDuration`] values.
+///
+/// By default any duration jiff holds, ±`i64` seconds, at nanosecond
+/// precision; shrinks toward zero. One draw in twenty on average targets
+/// a bound or a duration such as one unit, 24 hours or the `i32` seconds
+/// limit. See [`SignedDurationGenerator`] for builder methods.
 ///
 /// # Example
 ///
@@ -474,33 +706,37 @@ impl PrintableGenerator<SignedDuration> for SignedDurationGenerator {
 /// ```
 pub fn signed_durations() -> SignedDurationGenerator {
     SignedDurationGenerator {
-        min_value: SignedDuration::MIN,
-        max_value: SignedDuration::MAX,
+        inner: gs::signed_durations()
+            .min_value(engine_duration(SignedDuration::MIN))
+            .max_value(engine_duration(SignedDuration::MAX)),
     }
 }
 
-/// The minimum representable offset in seconds (-25:59:59).
-const OFFSET_MIN_SECS: i32 = -93_599;
-/// The maximum representable offset in seconds (+25:59:59).
-const OFFSET_MAX_SECS: i32 = 93_599;
-
 /// Generator for [`jiff::tz::Offset`] values. Created by [`offsets()`].
 pub struct OffsetGenerator {
-    min_value: Offset,
-    max_value: Offset,
+    inner: gs::UtcOffsetGenerator,
 }
 
 impl OffsetGenerator {
     /// Set the minimum offset (inclusive).
-    pub fn min_value(mut self, min: Offset) -> Self {
-        self.min_value = min;
-        self
+    pub fn min_value(self, min: Offset) -> Self {
+        OffsetGenerator {
+            inner: self.inner.min_value(UtcOffset::Known(min.seconds())),
+        }
     }
 
     /// Set the maximum offset (inclusive).
-    pub fn max_value(mut self, max: Offset) -> Self {
-        self.max_value = max;
-        self
+    pub fn max_value(self, max: Offset) -> Self {
+        OffsetGenerator {
+            inner: self.inner.max_value(UtcOffset::Known(max.seconds())),
+        }
+    }
+
+    /// Draw only offsets that are a whole number of `granularity` units.
+    pub fn granularity(self, granularity: Granularity) -> Self {
+        OffsetGenerator {
+            inner: self.inner.granularity(granularity),
+        }
     }
 }
 
@@ -510,133 +746,493 @@ impl Generator<Offset> for OffsetGenerator {
     }
 
     fn do_draw(&self, tc: &TestCase) -> Offset {
-        if self.min_value.seconds() > self.max_value.seconds() {
-            invalid_argument!("Cannot have max_value < min_value");
+        match self.inner.do_draw(tc) {
+            UtcOffset::Known(seconds) => Offset::from_seconds(seconds).unwrap(),
+            UtcOffset::Unknown => unreachable!(),
         }
-        let secs = integers::<i32>()
-            .min_value(self.min_value.seconds())
-            .max_value(self.max_value.seconds())
-            .do_draw(tc);
-        Offset::from_seconds(secs).unwrap()
     }
 }
 
 impl PrintableGenerator<Offset> for OffsetGenerator {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> Offset {
-        crate::generators::draw_and_print_value(self, tc, printer)
+        draw_and_print_display(self, tc, printer)
     }
 }
 
 /// Generate [`jiff::tz::Offset`] values.
 ///
-/// See [`OffsetGenerator`] for builder methods.
+/// By default any offset jiff holds, within ±25:59:59, at second
+/// granularity; shrinks toward `+00:00`. One draw in twenty on average
+/// targets an offset some time zone has used, so `+05:45` and `-00:44:30`
+/// appear. An [`Offset`] is always known, so the engine's unknown offset
+/// is never drawn; a zone with an unknown offset is
+/// [`TimeZone::unknown`], which [`time_zones()`] draws when asked to. See
+/// [`OffsetGenerator`] for builder methods.
 ///
 /// # Example
 ///
 /// ```no_run
+/// use hegel::datetime::Granularity;
 /// use hegel::extras::jiff as jiff_gs;
 /// use jiff::tz::Offset;
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
 ///     let o = tc.draw(jiff_gs::offsets()
-///         .min_value(Offset::ZERO));
-///     assert!(o.seconds() >= 0);
+///         .min_value(Offset::ZERO)
+///         .granularity(Granularity::Minutes));
+///     assert!(o.seconds() >= 0 && o.seconds() % 60 == 0);
 /// }
 /// ```
 pub fn offsets() -> OffsetGenerator {
     OffsetGenerator {
-        min_value: Offset::from_seconds(OFFSET_MIN_SECS).unwrap(),
-        max_value: Offset::from_seconds(OFFSET_MAX_SECS).unwrap(),
+        inner: gs::utc_offsets()
+            .min_value(UtcOffset::Known(Offset::MIN.seconds()))
+            .max_value(UtcOffset::Known(Offset::MAX.seconds())),
     }
 }
 
-/// Generator for [`jiff::Zoned`] values. Created by [`zoneds()`].
-pub struct ZonedGenerator<TS = TimestampGenerator, TZ = BoxedGenerator<'static, TimeZone>> {
-    timestamp_gen: TS,
-    timezone_gen: TZ,
-    label: u64,
+struct KnownName {
+    name: String,
+    link: bool,
+    legacy: bool,
 }
 
-impl<TS, TZ> ZonedGenerator<TS, TZ> {
-    fn new(timestamp_gen: TS, timezone_gen: TZ) -> Self
-    where
-        TS: Generator<Timestamp>,
-        TZ: Generator<TimeZone>,
-    {
-        ZonedGenerator {
-            label: combine_labels(&[ZONED_LABEL, timestamp_gen.label(), timezone_gen.label()]),
-            timestamp_gen,
-            timezone_gen,
-        }
+/// Every name jiff's database and the engine's both know, with the
+/// engine's link and legacy classification of it.
+fn known_names() -> &'static [KnownName] {
+    static NAMES: OnceLock<Vec<KnownName>> = OnceLock::new();
+    NAMES.get_or_init(|| {
+        jiff::tz::db()
+            .available()
+            .filter_map(|name| {
+                let name = name.to_string();
+                info(&name).map(|info| KnownName {
+                    link: info.is_link,
+                    legacy: info.tags.contains(&Tag::Legacy),
+                    name,
+                })
+            })
+            .collect()
+    })
+}
+
+/// Generator for [`jiff::tz::TimeZone`] values named in the IANA
+/// database. Created by [`time_zones()`].
+pub struct TimeZoneGenerator {
+    names: Option<Vec<String>>,
+    links: bool,
+    legacy: bool,
+    unknown: bool,
+    inner: OnceLock<gs::TimeZoneGenerator>,
+}
+
+impl TimeZoneGenerator {
+    /// Draw only these names, each one jiff's database resolves or
+    /// `Etc/Unknown`. The [`links`](Self::links) and
+    /// [`legacy`](Self::legacy) flags do not apply to an explicit list.
+    pub fn names(mut self, names: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.names = Some(names.into_iter().map(Into::into).collect());
+        self.inner = OnceLock::new();
+        self
     }
 
-    /// Replace the timestamp generator.
-    pub fn timestamps<TS2>(self, timestamp_gen: TS2) -> ZonedGenerator<TS2, TZ>
-    where
-        TS2: Generator<Timestamp>,
-        TZ: Generator<TimeZone>,
-    {
-        ZonedGenerator::new(timestamp_gen, self.timezone_gen)
+    /// Whether the default set includes link names such as
+    /// `Asia/Calcutta` (on by default).
+    pub fn links(mut self, links: bool) -> Self {
+        self.links = links;
+        self.inner = OnceLock::new();
+        self
     }
 
-    /// Replace the timezone generator.
-    pub fn timezones<TZ2>(self, timezone_gen: TZ2) -> ZonedGenerator<TS, TZ2>
-    where
-        TS: Generator<Timestamp>,
-        TZ2: Generator<TimeZone>,
-    {
-        ZonedGenerator::new(self.timestamp_gen, timezone_gen)
+    /// Whether the default set includes legacy names such as `EST5EDT`
+    /// and `US/Eastern` (off by default).
+    pub fn legacy(mut self, legacy: bool) -> Self {
+        self.legacy = legacy;
+        self.inner = OnceLock::new();
+        self
+    }
+
+    /// Whether [`TimeZone::unknown`], the zone `Etc/Unknown` with a known
+    /// instant and an unknown offset, is drawn (off by default).
+    pub fn unknown(mut self, unknown: bool) -> Self {
+        self.unknown = unknown;
+        self.inner = OnceLock::new();
+        self
+    }
+
+    /// The engine generator over the names this one draws: an explicit
+    /// list checked against jiff's database, or every name both
+    /// databases know, so the engine decides which zone to draw and jiff
+    /// decides what it means.
+    pub(super) fn engine_generator(&self) -> gs::TimeZoneGenerator {
+        let generator = match &self.names {
+            Some(names) => {
+                for name in names {
+                    if TimeZone::get(name).is_err() {
+                        invalid_argument!("jiff's time zone database does not know {name:?}");
+                    }
+                }
+                gs::time_zones().names(names.clone()).opaque(true)
+            }
+            None => gs::time_zones().names(
+                known_names()
+                    .iter()
+                    .filter(|known| (self.links || !known.link) && (self.legacy || !known.legacy))
+                    .map(|known| known.name.clone()),
+            ),
+        };
+        generator.unknown(self.unknown)
+    }
+
+    fn inner(&self) -> &gs::TimeZoneGenerator {
+        self.inner.get_or_init(|| self.engine_generator())
     }
 }
 
-impl<TS, TZ> Generator<Zoned> for ZonedGenerator<TS, TZ>
-where
-    TS: Generator<Timestamp>,
-    TZ: Generator<TimeZone>,
-{
+/// The jiff zone of a name the engine drew under a spec restricted to
+/// jiff's database.
+fn jiff_time_zone(zone: &dt::TimeZone) -> TimeZone {
+    TimeZone::get(&zone.name).unwrap()
+}
+
+impl Generator<TimeZone> for TimeZoneGenerator {
     fn label(&self) -> u64 {
-        self.label
+        TIME_ZONE_LABEL
     }
 
-    fn do_draw(&self, tc: &TestCase) -> Zoned {
-        let (ts, tz) = tc.draw_silent(crate::generators::tuples2(
-            &self.timestamp_gen,
-            &self.timezone_gen,
-        ));
-        Zoned::new(ts, tz)
+    fn do_draw(&self, tc: &TestCase) -> TimeZone {
+        jiff_time_zone(&self.inner().do_draw(tc))
     }
 }
 
-impl<TS, TZ> PrintableGenerator<Zoned> for ZonedGenerator<TS, TZ>
-where
-    TS: Generator<Timestamp>,
-    TZ: Generator<TimeZone>,
-{
-    fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> Zoned {
-        crate::generators::draw_and_print_value(self, tc, printer)
+impl PrintableGenerator<TimeZone> for TimeZoneGenerator {
+    fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> TimeZone {
+        let zone = self.inner().do_draw(tc);
+        printer.text(&zone.name);
+        jiff_time_zone(&zone)
     }
 }
 
-/// Generate [`jiff::Zoned`] values.
+/// Generate [`jiff::tz::TimeZone`] values named in the IANA database.
+///
+/// By default any name that both jiff's database and the engine's know,
+/// link names in and legacy names out, resolved with [`TimeZone::get`]
+/// so a link such as `Asia/Calcutta` keeps its name; shrinks down a
+/// ladder of names to `UTC` when it is allowed. Half the draws are
+/// uniform over the allowed names and half weighted by the zones'
+/// features, so a zone with a rare feature (a fractional offset, a
+/// skipped day, negative DST) is drawn at a rate a short run reaches.
+/// Fixed-offset zones are a different generator: compose
+/// `offsets().map(TimeZone::fixed)` with this one through
+/// [`one_of`](crate::generators::one_of) for a mix, as
+/// `gs::default::<TimeZone>()` does. See [`TimeZoneGenerator`] for
+/// builder methods.
 ///
 /// # Example
 ///
 /// ```no_run
 /// use hegel::extras::jiff as jiff_gs;
-/// use hegel::generators as gs;
-/// use jiff::tz::TimeZone;
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
-///     let _ = tc.draw(jiff_gs::zoneds());
-///     let _ = tc.draw(jiff_gs::zoneds().timezones(gs::just(TimeZone::UTC)));
+///     let zone = tc.draw(jiff_gs::time_zones().names(["Europe/London", "Asia/Calcutta"]));
+///     assert!(zone.iana_name() == Some("Europe/London") || zone.iana_name() == Some("Asia/Calcutta"));
+/// }
+/// ```
+pub fn time_zones() -> TimeZoneGenerator {
+    TimeZoneGenerator {
+        names: None,
+        links: true,
+        legacy: false,
+        unknown: false,
+        inner: OnceLock::new(),
+    }
+}
+
+/// The earliest wall-clock time jiff converts to an instant at every
+/// offset it allows: 26 hours after [`Timestamp::MIN`].
+pub const MIN_CIVIL: DateTime = DateTime::constant(-9999, 1, 3, 4, 0, 0, 0);
+
+/// The latest wall-clock time jiff converts to an instant at every
+/// offset it allows: 26 hours before [`Timestamp::MAX`].
+pub const MAX_CIVIL: DateTime = DateTime::constant(9999, 12, 29, 20, 0, 0, 0);
+
+enum ZonedBounds {
+    Civil(DateTime, DateTime),
+    Instant(Timestamp, Timestamp),
+}
+
+/// Generator for [`jiff::Zoned`] values. Created by [`zoneds()`].
+pub struct ZonedGenerator {
+    zones: TimeZoneGenerator,
+    bounds: ZonedBounds,
+    precision: Precision,
+    imaginary: Imaginary,
+    ambiguous: Ambiguous,
+    inner: OnceLock<gs::ZonedDateTimeGenerator>,
+}
+
+impl ZonedGenerator {
+    /// Draw the zone from `zones` rather than from every name both
+    /// databases know.
+    pub fn time_zones(mut self, zones: TimeZoneGenerator) -> Self {
+        self.zones = zones;
+        self.inner = OnceLock::new();
+        self
+    }
+
+    /// Set the minimum wall-clock time (inclusive), in whatever zone is
+    /// drawn, at or after [`MIN_CIVIL`]. Replaces instant bounds.
+    pub fn min_value(mut self, min: DateTime) -> Self {
+        let max = match self.bounds {
+            ZonedBounds::Civil(_, max) => max,
+            ZonedBounds::Instant(..) => MAX_CIVIL,
+        };
+        self.bounds = ZonedBounds::Civil(min, max);
+        self.inner = OnceLock::new();
+        self
+    }
+
+    /// Set the maximum wall-clock time (inclusive), in whatever zone is
+    /// drawn, at or before [`MAX_CIVIL`]. Replaces instant bounds.
+    pub fn max_value(mut self, max: DateTime) -> Self {
+        let min = match self.bounds {
+            ZonedBounds::Civil(min, _) => min,
+            ZonedBounds::Instant(..) => MIN_CIVIL,
+        };
+        self.bounds = ZonedBounds::Civil(min, max);
+        self.inner = OnceLock::new();
+        self
+    }
+
+    /// Set the minimum instant (inclusive). Replaces wall-clock bounds.
+    pub fn min_instant(mut self, min: Timestamp) -> Self {
+        let max = match self.bounds {
+            ZonedBounds::Instant(_, max) => max,
+            ZonedBounds::Civil(..) => Timestamp::MAX,
+        };
+        self.bounds = ZonedBounds::Instant(min, max);
+        self.inner = OnceLock::new();
+        self
+    }
+
+    /// Set the maximum instant (inclusive). Replaces wall-clock bounds.
+    pub fn max_instant(mut self, max: Timestamp) -> Self {
+        let min = match self.bounds {
+            ZonedBounds::Instant(min, _) => min,
+            ZonedBounds::Civil(..) => Timestamp::MIN,
+        };
+        self.bounds = ZonedBounds::Instant(min, max);
+        self.inner = OnceLock::new();
+        self
+    }
+
+    /// Draw only wall-clock times that are a whole number of `precision`
+    /// units since midnight.
+    pub fn precision(mut self, precision: Precision) -> Self {
+        self.precision = precision;
+        self.inner = OnceLock::new();
+        self
+    }
+
+    /// What to do with a wall time the clocks skipped
+    /// ([`Imaginary::Avoid`] by default, since a [`Zoned`] cannot hold
+    /// one). Under [`Imaginary::Allow`] the value is the instant the
+    /// skipped time resolves to with the offset in force before the
+    /// transition, as jiff's own `compatible` resolution would give.
+    pub fn imaginary(mut self, imaginary: Imaginary) -> Self {
+        self.imaginary = imaginary;
+        self.inner = OnceLock::new();
+        self
+    }
+
+    /// Which instant a wall time the clocks repeated means
+    /// ([`Ambiguous::Both`] by default).
+    pub fn ambiguous(mut self, ambiguous: Ambiguous) -> Self {
+        self.ambiguous = ambiguous;
+        self.inner = OnceLock::new();
+        self
+    }
+
+    fn inner(&self) -> &gs::ZonedDateTimeGenerator {
+        self.inner.get_or_init(|| {
+            let generator = gs::zoned_datetimes()
+                .time_zones(self.zones.engine_generator())
+                .precision(self.precision)
+                .imaginary(self.imaginary)
+                .ambiguous(self.ambiguous);
+            match self.bounds {
+                ZonedBounds::Civil(min, max) => {
+                    if min < MIN_CIVIL {
+                        invalid_argument!(
+                            "min_value must be at or after {MIN_CIVIL}, the earliest wall time \
+                             jiff converts to an instant at every offset"
+                        );
+                    }
+                    if max > MAX_CIVIL {
+                        invalid_argument!(
+                            "max_value must be at or before {MAX_CIVIL}, the latest wall time \
+                             jiff converts to an instant at every offset"
+                        );
+                    }
+                    generator
+                        .min_value(engine_datetime(min))
+                        .max_value(engine_datetime(max))
+                }
+                ZonedBounds::Instant(min, max) => generator
+                    .min_instant(engine_timestamp(min))
+                    .max_instant(engine_timestamp(max)),
+            }
+        })
+    }
+}
+
+/// Build the jiff value of an engine draw from its wall time, zone and
+/// fold, and from its instant for a skipped wall time or one jiff's
+/// database places outside its instant range.
+fn jiff_zoned(z: &dt::ZonedDateTime) -> Zoned {
+    let zone = jiff_time_zone(&z.zone);
+    let resolved = match z.kind {
+        Kind::Gap => None,
+        Kind::Unique | Kind::Fold => {
+            let ambiguous = zone.to_ambiguous_zoned(jiff_datetime(z.civil));
+            if z.fold {
+                ambiguous.later()
+            } else {
+                ambiguous.earlier()
+            }
+            .ok()
+        }
+    };
+    resolved.unwrap_or_else(|| jiff_timestamp(z.timestamp).to_zoned(zone))
+}
+
+impl Generator<Zoned> for ZonedGenerator {
+    fn label(&self) -> u64 {
+        ZONED_LABEL
+    }
+
+    fn do_draw(&self, tc: &TestCase) -> Zoned {
+        jiff_zoned(&self.inner().do_draw(tc))
+    }
+}
+
+impl PrintableGenerator<Zoned> for ZonedGenerator {
+    fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> Zoned {
+        draw_and_print_display(self, tc, printer)
+    }
+}
+
+/// Generate [`jiff::Zoned`] values: a zone, a wall-clock time in it and,
+/// when the clocks repeated that time, which repeat is meant.
+///
+/// By default any zone [`time_zones()`] draws and any wall-clock time
+/// from [`MIN_CIVIL`] to [`MAX_CIVIL`] at nanosecond precision, skipped
+/// wall times avoided and both repeats of a fold drawn; shrinks down the
+/// zone ladder, then toward 2000-01-01T00:00:00, preferring a unique wall
+/// time to a repeated one. One draw in twenty on average targets a
+/// transition of the zone, which is how folds and the exact boundary
+/// instants are reached. The value is built from the wall time, the zone
+/// name and the fold with jiff's own rules (`to_ambiguous_zoned` and
+/// `earlier` or `later`), so a newer database on jiff's side changes what
+/// a value means but never makes it invalid; the engine's database
+/// release is [`tzdb_version`](crate::datetime::tzdb_version). See
+/// [`ZonedGenerator`] for builder methods.
+///
+/// # Example
+///
+/// ```no_run
+/// use hegel::extras::jiff as jiff_gs;
+/// use jiff::civil::DateTime;
+///
+/// #[hegel::test]
+/// fn my_test(tc: hegel::TestCase) {
+///     let min = DateTime::constant(2024, 1, 1, 0, 0, 0, 0);
+///     let z = tc.draw(jiff_gs::zoneds()
+///         .time_zones(jiff_gs::time_zones().names(["Europe/London"]))
+///         .min_value(min));
+///     assert!(z.datetime() >= min && z.time_zone().iana_name() == Some("Europe/London"));
 /// }
 /// ```
 pub fn zoneds() -> ZonedGenerator {
-    use crate::generators::DefaultGenerator;
-    ZonedGenerator::new(
-        timestamps(),
-        <TimeZone as DefaultGenerator>::default_generator(),
-    )
+    ZonedGenerator {
+        zones: time_zones(),
+        bounds: ZonedBounds::Civil(MIN_CIVIL, MAX_CIVIL),
+        precision: Precision::Nanoseconds,
+        imaginary: Imaginary::Avoid,
+        ambiguous: Ambiguous::Both,
+        inner: OnceLock::new(),
+    }
+}
+
+/// Generator for [`jiff::civil::ISOWeekDate`] values. Created by
+/// [`iso_week_dates()`].
+pub type ISOWeekDateGenerator = Mapped<Date, ISOWeekDate, fn(Date) -> ISOWeekDate, DateGenerator>;
+
+/// Generate [`jiff::civil::ISOWeekDate`] values: the ISO week date of a
+/// date [`dates()`] draws, so years 1–9999 and shrinking toward
+/// 2000-01-01.
+///
+/// # Example
+///
+/// ```no_run
+/// use hegel::extras::jiff as jiff_gs;
+///
+/// #[hegel::test]
+/// fn my_test(tc: hegel::TestCase) {
+///     let w = tc.draw(jiff_gs::iso_week_dates());
+///     assert!((1..=53).contains(&w.week()));
+/// }
+/// ```
+pub fn iso_week_dates() -> ISOWeekDateGenerator {
+    dates().map(|d| d.iso_week_date())
+}
+
+/// Generator for [`jiff::civil::Weekday`] values. Created by
+/// [`weekdays()`].
+pub type WeekdayGenerator = Mapped<i8, Weekday, fn(i8) -> Weekday, IntegerGenerator<i8>>;
+
+/// Generate [`jiff::civil::Weekday`] values, uniformly; shrinks toward
+/// Monday.
+///
+/// # Example
+///
+/// ```no_run
+/// use hegel::extras::jiff as jiff_gs;
+/// use jiff::civil::Weekday;
+///
+/// #[hegel::test]
+/// fn my_test(tc: hegel::TestCase) {
+///     let w = tc.draw(jiff_gs::weekdays());
+///     assert!(w.since(Weekday::Monday) < 7);
+/// }
+/// ```
+pub fn weekdays() -> WeekdayGenerator {
+    gs::integers::<i8>()
+        .min_value(0)
+        .max_value(6)
+        .map(|n| Weekday::from_monday_zero_offset(n).unwrap())
+}
+
+/// Generator for [`jiff::civil::Era`] values. Created by [`eras()`].
+pub type EraGenerator = Mapped<bool, Era, fn(bool) -> Era, BoolGenerator>;
+
+/// Generate [`jiff::civil::Era`] values, either with equal probability;
+/// shrinks toward [`Era::CE`].
+///
+/// # Example
+///
+/// ```no_run
+/// use hegel::extras::jiff as jiff_gs;
+/// use jiff::civil::Era;
+///
+/// #[hegel::test]
+/// fn my_test(tc: hegel::TestCase) {
+///     let era = tc.draw(jiff_gs::eras());
+///     assert!(era == Era::CE || era == Era::BCE);
+/// }
+/// ```
+pub fn eras() -> EraGenerator {
+    gs::booleans().map(|bce| if bce { Era::BCE } else { Era::CE })
 }
