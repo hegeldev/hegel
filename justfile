@@ -221,6 +221,11 @@ unicodedata:
     python3 scripts/generate_unicodedata_tables.py
     scripts/generate_unicodedata_python_reference.py
 
+# Regenerate the engine's bundled time zone table in hegel-c/src/tzdata/
+# from the tzdata PyPI release the script pins (needs uv, which fetches it).
+tzdata:
+    scripts/generate_tzdata.py
+
 # Run cargo-insta, installing it first if it's missing. Pinned to the same
 # version as the `insta` dev-dependency so snapshot format stays consistent.
 INSTA_VERSION := "1.47.2"

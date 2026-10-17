@@ -3125,6 +3125,16 @@ hegel_result_t hegel_failure_caveat(hegel_context_t *ctx,
  */
 hegel_result_t hegel_version(hegel_context_t *ctx, const char **out_version);
 
+/*
+ Parameters:
+ `out_version`: Receives the IANA release of the time zone database
+   bundled in libhegel, e.g. `"2026e"`. The pointer is static and valid
+   for the program's lifetime.
+
+ Returns `HEGEL_OK`.
+ */
+hegel_result_t hegel_tzdb_version(hegel_context_t *ctx, const char **out_version);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus

@@ -49,6 +49,11 @@ mod sys;
 mod unicodedata;
 
 /// cbindgen:ignore
+// Only `hegel_tzdb_version` reaches it until the time zone draws land.
+#[allow(dead_code)]
+mod tzdata;
+
+/// cbindgen:ignore
 #[cfg(feature = "__bench")]
 #[doc(hidden)]
 pub mod __bench {
@@ -7132,6 +7137,26 @@ pub unsafe extern "C" fn hegel_version(
             Err(_) => unreachable!(),
         };
     unsafe { *out_version = VERSION.as_ptr() };
+    HEGEL_OK
+}
+
+/// Parameters:
+/// `out_version`: Receives the IANA release of the time zone database
+///   bundled in libhegel, e.g. `"2026e"`. The pointer is static and valid
+///   for the program's lifetime.
+///
+/// Returns `HEGEL_OK`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_tzdb_version(
+    ctx: *mut HegelContext,
+    out_version: *mut *const c_char,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    if out_version.is_null() {
+        set_last_error(ctx, "hegel_tzdb_version: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    unsafe { *out_version = crate::tzdata::VERSION_CSTR.as_ptr() };
     HEGEL_OK
 }
 

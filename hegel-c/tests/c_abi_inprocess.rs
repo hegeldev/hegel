@@ -36,7 +36,7 @@ use hegel_c::{
     hegel_state_machine_next_group, hegel_state_machine_next_rule,
     hegel_state_machine_rule_rejected, hegel_state_machine_should_check_invariant, hegel_status_t,
     hegel_stop_span, hegel_target, hegel_test_case_clone, hegel_test_case_free,
-    hegel_test_case_from_blob, hegel_test_case_should_capture, hegel_version,
+    hegel_test_case_from_blob, hegel_test_case_should_capture, hegel_tzdb_version, hegel_version,
 };
 use std::ffi::{CString, c_void};
 use std::os::raw::c_char;
@@ -1120,6 +1120,22 @@ fn version_is_reported() {
         .to_string();
     assert!(!v.is_empty(), "version string is non-empty");
     assert!(v.chars().next().unwrap().is_ascii_digit(), "got {v:?}");
+    ok(unsafe { hegel_context_free(ctx) });
+}
+
+#[test]
+fn tzdb_version_is_reported() {
+    let ctx = hegel_context_new();
+    assert_eq!(
+        unsafe { hegel_tzdb_version(ctx, ptr::null_mut()) },
+        HEGEL_E_INVALID_ARG
+    );
+    assert!(last_error(ctx).contains("out parameter is null"));
+    let mut p: *const c_char = ptr::null();
+    assert_eq!(unsafe { hegel_tzdb_version(ctx, &mut p) }, HEGEL_OK);
+    assert!(last_error(ctx).is_empty());
+    let v = unsafe { std::ffi::CStr::from_ptr(p) }.to_str().unwrap();
+    assert_eq!(v, jiff_tzdb::VERSION.unwrap());
     ok(unsafe { hegel_context_free(ctx) });
 }
 
