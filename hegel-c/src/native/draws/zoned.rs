@@ -289,7 +289,7 @@ const MAX_TIMESTAMP: Timestamp = Timestamp {
 /// draw looks for the zone's transitions: two centuries, so that a rule's
 /// transitions are listed over a bounded span of years however wide the
 /// window.
-const TARGET_RANGE: i64 = 200 * 365 * DAY;
+pub(crate) const TARGET_RANGE: i64 = 200 * 365 * DAY;
 
 /// How many times the time node's sampler redraws a wall time that lands
 /// in a gap under the `avoid` policy before the value is moved past the

@@ -5450,7 +5450,7 @@ fn rust_precision(
 /// Build one with `hegel_date_options_new`, whose defaults allow every
 /// weekday and every month, change it with the `hegel_date_options_set_*`
 /// setters and free it with `hegel_date_options_free`. Options may be
-/// drawn with by any number of test cases and threads once configured;
+/// drawn from by any number of test cases and threads once configured;
 /// each setter call requires exclusive access.
 pub struct HegelDateOptions {
     options: crate::native::draws::special::DateOptions,

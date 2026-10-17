@@ -651,7 +651,7 @@ typedef struct hegel_context_t hegel_context_t;
  Build one with `hegel_date_options_new`, whose defaults allow every
  weekday and every month, change it with the `hegel_date_options_set_*`
  setters and free it with `hegel_date_options_free`. Options may be
- drawn with by any number of test cases and threads once configured;
+ drawn from by any number of test cases and threads once configured;
  each setter call requires exclusive access.
  */
 typedef struct hegel_date_options_t hegel_date_options_t;

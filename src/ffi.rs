@@ -25,13 +25,13 @@ use crate::runner::{
 };
 use crate::test_case::OutputSink;
 use hegel_c::hegel_result_t;
-
-/// The precision every frontend draw passes, keeping times whole nanoseconds.
-const NANOSECONDS: u32 = hegel_c::hegel_precision_t::HEGEL_PRECISION_NANOSECONDS as u32;
 use std::ffi::{CStr, CString, c_void};
 use std::os::raw::c_char;
 use std::path::PathBuf;
 use std::ptr;
+
+/// The precision every frontend draw passes, keeping times whole nanoseconds.
+const NANOSECONDS: u32 = hegel_c::hegel_precision_t::HEGEL_PRECISION_NANOSECONDS as u32;
 
 /// Owns a `*mut HegelContext` — libhegel's explicit per-call error channel —
 /// and frees it on drop.

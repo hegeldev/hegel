@@ -375,18 +375,25 @@ const INTERESTING_DATES: [(i32, u8, u8); 36] = [
     (2024, 2, 29),
 ];
 
-/// The day of February 29 in the first leap year at or after `year`
-/// (`forward`), or at or before it.
-fn leap_day_near(year: i32, forward: bool) -> i64 {
-    let mut y = year;
-    while !is_leap_year(y) {
-        y += if forward { 1 } else { -1 };
+/// The first February 29 at or after the day `days` (`forward`), or the
+/// last one at or before it.
+fn leap_day_near(days: i64, forward: bool) -> i64 {
+    let step = if forward { 1 } else { -1 };
+    let mut year = civil_from_days(days).year;
+    loop {
+        if is_leap_year(year) {
+            let leap = days_from_civil(&Date {
+                year,
+                month: 2,
+                day: 29,
+            });
+            let near = if forward { leap >= days } else { leap <= days };
+            if near {
+                return leap;
+            }
+        }
+        year += step;
     }
-    days_from_civil(&Date {
-        year: y,
-        month: 2,
-        day: 29,
-    })
 }
 
 /// The target days of a date draw over `[min_days, max_days]`: the
@@ -400,8 +407,8 @@ fn date_targets(min_days: i64, max_days: i64, origin: i64) -> Vec<i128> {
     let mut list: Vec<i64> = [
         Some(min_days),
         Some(max_days),
-        Some(leap_day_near(min.year, true)),
-        Some(leap_day_near(max.year, false)),
+        Some(leap_day_near(min_days, true)),
+        Some(leap_day_near(max_days, false)),
         year_boundary(min.year, 12, 31),
         year_boundary(min.year + 1, 1, 1),
         year_boundary(max.year, 1, 1),

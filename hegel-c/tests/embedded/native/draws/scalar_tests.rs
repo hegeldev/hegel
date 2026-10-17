@@ -190,6 +190,45 @@ fn timestamps_target_the_interesting_instants_and_the_transitions() {
         "the 2024 spring transition of London is at {march_2024}"
     );
     assert!(catalogue.binary_search(&march_2024.as_second()).is_ok());
+    let new_york = jiff::tz::TimeZone::get("America/New_York").unwrap();
+    let explicit = tzdata::lookup("America/New_York")
+        .unwrap()
+        .unwrap()
+        .zone
+        .transitions
+        .last()
+        .unwrap();
+    assert_eq!(
+        jiff_timestamp(&at(explicit.instant)).to_string(),
+        "2007-03-11T07:00:00Z"
+    );
+    let march_2026 = jiff::civil::date(2026, 3, 8)
+        .at(7, 0, 0, 0)
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .unwrap()
+        .timestamp();
+    assert_eq!(new_york.to_offset(march_2026).seconds(), -4 * 3_600);
+    assert_eq!(
+        new_york
+            .to_offset(march_2026 - jiff::SignedDuration::from_secs(1))
+            .seconds(),
+        -5 * 3_600
+    );
+    assert!(catalogue.binary_search(&march_2026.as_second()).is_ok());
+    let last = *catalogue.last().unwrap();
+    assert!((EPOCH_2000 + TARGET_RANGE - 366 * 86_400..EPOCH_2000 + TARGET_RANGE).contains(&last));
+    let t = march_2026.as_second();
+    let mut on_the_transition = 0;
+    for seed in 0..2000 {
+        let mut ntc = fresh_ntc(seed);
+        let drawn =
+            generate_timestamp(&mut ntc, at(t - 3_600), at(t + 3_600), Precision::Seconds).unwrap();
+        on_the_transition += usize::from(drawn == at(t));
+    }
+    assert!(
+        (10..=200).contains(&on_the_transition),
+        "{on_the_transition}"
+    );
     let interesting: BTreeSet<i128> = interesting_instant_ns().collect();
     assert_eq!(interesting.len(), 44, "{interesting:?}");
     assert!(interesting.contains(&(i128::from(i32::MAX) * NS)));

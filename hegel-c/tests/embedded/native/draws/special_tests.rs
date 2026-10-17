@@ -548,21 +548,60 @@ fn date_draws_target_the_interesting_dates() {
         }
     }
     assert!(hits.len() >= 10, "{hits:?}");
-    let (min, max) = (date(2001, 3, 1), date(2007, 1, 1));
-    let mut hits = BTreeSet::new();
-    for seed in 0..2000 {
-        let mut ntc = fresh_ntc(seed);
-        hits.insert(generate_date(&mut ntc, min, max, &DateOptions::default()).unwrap());
+    let cases = [
+        (
+            date(2001, 3, 1),
+            date(2007, 1, 1),
+            vec![
+                date(2004, 2, 29),
+                date(2001, 12, 31),
+                date(2002, 1, 1),
+                date(2007, 1, 1),
+                date(2006, 12, 31),
+            ],
+        ),
+        (
+            date(2024, 3, 1),
+            date(2030, 12, 31),
+            vec![date(2028, 2, 29)],
+        ),
+        (date(2015, 1, 1), date(2024, 1, 15), vec![date(2020, 2, 29)]),
+    ];
+    for (min, max, expected) in cases {
+        let mut hits = BTreeSet::new();
+        for seed in 0..2000 {
+            let mut ntc = fresh_ntc(seed);
+            hits.insert(generate_date(&mut ntc, min, max, &DateOptions::default()).unwrap());
+        }
+        for expected in expected {
+            assert!(hits.contains(&expected), "{expected:?} in {hits:?}");
+        }
+        assert!(hits.iter().all(|d| (min..=max).contains(d)), "{hits:?}");
     }
-    for expected in [
-        date(2004, 2, 29),
-        date(2001, 12, 31),
-        date(2002, 1, 1),
-        date(2007, 1, 1),
-        date(2006, 12, 31),
-    ] {
-        assert!(hits.contains(&expected), "{expected:?} in {hits:?}");
-    }
+    assert_eq!(
+        leap_day_near(days_from_civil(&date(2024, 2, 29)), true),
+        days_from_civil(&date(2024, 2, 29))
+    );
+    assert_eq!(
+        leap_day_near(days_from_civil(&date(2024, 2, 29)), false),
+        days_from_civil(&date(2024, 2, 29))
+    );
+    assert_eq!(
+        leap_day_near(days_from_civil(&date(2024, 3, 1)), true),
+        days_from_civil(&date(2028, 2, 29))
+    );
+    assert_eq!(
+        leap_day_near(days_from_civil(&date(2024, 2, 28)), false),
+        days_from_civil(&date(2020, 2, 29))
+    );
+    assert_eq!(
+        leap_day_near(days_from_civil(&date(2100, 1, 1)), true),
+        days_from_civil(&date(2104, 2, 29))
+    );
+    assert_eq!(
+        leap_day_near(days_from_civil(&date(2100, 12, 31)), false),
+        days_from_civil(&date(2096, 2, 29))
+    );
 }
 
 #[test]

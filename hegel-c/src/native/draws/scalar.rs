@@ -7,7 +7,8 @@
 //! A timestamp is one integer node, the count of precision units from
 //! 2000-01-01T00:00:00Z clamped into the bounds, whose sampler mixes the
 //! engine's integer sampler with the interesting instants of Appendix C
-//! and the transitions of every bundled zone. An offset is one integer
+//! and the transitions of every bundled zone, a footer rule's listed up to
+//! two centuries after the origin. An offset is one integer
 //! node of granularity units shrinking toward 0, sampled with the offsets
 //! any bundled zone has ever used mixed in, preceded by a weighted boolean
 //! node when the unknown offset is allowed, whose `true` is the unknown
@@ -25,11 +26,11 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::special::{Date, Precision, align_down, align_up, days_from_civil, draw_targeted};
-use super::zoned::{EPOCH_2000, interesting_instants};
+use super::zoned::{EPOCH_2000, TARGET_RANGE, interesting_instants};
 use super::{LABEL_DURATION, LABEL_OFFSET, LABEL_SPAN, LABEL_TIMESTAMP, spanned};
 use crate::control::{InternalError, hegel_internal_unwrap};
 use crate::native::core::{EngineError, NativeTestCase};
-use crate::native::timezone::{Timestamp, validate_timestamp};
+use crate::native::timezone::{Timestamp, transitions, validate_timestamp};
 use crate::sys::sync::Lazy;
 use crate::tzdata;
 
@@ -55,12 +56,16 @@ fn interesting_instant_ns() -> impl Iterator<Item = i128> {
     ])
 }
 
-/// Every explicit transition instant of every bundled zone, ascending.
+/// Every transition instant of every bundled zone, ascending: the explicit
+/// ones, and the footer rule's up to [`TARGET_RANGE`] after the shrink
+/// origin, so that a rule's transitions are listed over a bounded span of
+/// years.
 static TRANSITION_CATALOGUE: Lazy<Result<Vec<i64>, InternalError>> = Lazy::new(|| {
     let mut set = BTreeSet::new();
+    let to = EPOCH_2000 + TARGET_RANGE;
     for name in tzdata::names()? {
         if !name.is_link() {
-            set.extend(name.zone.transitions.iter().map(|t| t.instant));
+            set.extend(transitions(name.zone, i64::MIN, to).map(|t| t.instant));
         }
     }
     Ok(set.into_iter().collect())

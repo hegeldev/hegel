@@ -378,22 +378,28 @@ node, improving on Hypothesis's independently drawn fold.
 
 - `generate_timestamp(min, max, precision)`: one integer node, count of
   precision units offset from 2000-01-01T00:00:00Z clamped into bounds;
-  the sampler mixes uniform with the interesting instants of Appendix C.
-- `generate_offset(min, max, granularity, unknown)`: one integer node in
-  seconds, shrinking toward 0; granularity ∈ {hours, quarter-hours,
-  minutes, seconds} restricts the values; the sampler mixes uniform with
+  the sampler mixes uniform with the interesting instants of Appendix C
+  and the transitions of every bundled zone (a footer rule's listed up to
+  two centuries after the origin).
+- `generate_offset(min, max, granularity, unknown)`: one integer node,
+  count of granularity units, shrinking toward 0; granularity ∈ {hours,
+  quarter-hours, minutes, seconds} is the unit, so the node's value is a
+  value of the draw at any granularity as a time's is at any precision
+  (§6.4); the sampler mixes uniform with
   the set of offsets any bundled zone has ever used (a few hundred
   values, from the table), so `+05:45`, `+12:45`, `-00:44:30` and the
   like appear. When `unknown` is allowed a weighted boolean node comes
-  first; `true` yields the unknown offset and no seconds node, so the
+  first; `true` yields the unknown offset and no count node, so the
   draw shrinks to a known offset before the offset itself shrinks.
 - `generate_duration(min, max, precision)`: one integer node of units,
   shrinking toward 0.
 - `generate_span(spec)`: one integer node per enabled unit, drawn largest
   unit first within its bounds, with a sign policy: `uniform` draws one
-  sign node then magnitudes (jiff `Span`, Temporal `Duration`), `mixed`
-  draws each component signed (java `Period`), `nonnegative` draws
-  magnitudes only. Shrinks to the zero span.
+  sign node, only when the bounds admit both signs, then magnitudes (jiff
+  `Span`, Temporal `Duration`), `mixed` draws each component signed (java
+  `Period`), `nonnegative` draws magnitudes only. As with the fold node of
+  §6.2, a sign the bounds fix is not drawn, so the sequence has no dead
+  node. Shrinks to the zero span.
 
 ### 6.4 Dates, times, datetimes
 
