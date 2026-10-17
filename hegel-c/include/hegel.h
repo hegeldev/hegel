@@ -4050,8 +4050,9 @@ hegel_result_t hegel_span_spec_set_sign(hegel_context_t *ctx,
  Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`, or `HEGEL_E_INVALID_ARG`
  when no unit is enabled.
 
- The draw is the sign, when the policy is uniform and the bounds admit
- both signs, then one value per enabled unit, largest unit first.
+ The draw is the sign, when the policy is uniform and a span of either
+ sign other than zero lies in the bounds, then one value per enabled
+ unit, largest unit first.
  Shrinks to the zero span, or the nearest value to it in each unit's
  bounds.
  */

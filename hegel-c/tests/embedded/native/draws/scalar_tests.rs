@@ -681,6 +681,45 @@ fn uniform_spans_share_one_sign_and_agree_with_jiff() {
             "{s:?}"
         );
     }
+    for (bounds, negative) in [
+        (vec![(SpanUnit::Nanoseconds, 0, 999_999_999)], false),
+        (
+            vec![(SpanUnit::Years, -3, 0), (SpanUnit::Months, 0, 0)],
+            true,
+        ),
+        (vec![(SpanUnit::Days, 0, 0)], false),
+    ] {
+        let spec = span_spec(SpanSign::Uniform, &bounds);
+        let mut nonzero = false;
+        for seed in 0..100 {
+            let mut ntc = fresh_ntc(seed);
+            let s = generate_span(&mut ntc, &spec).unwrap();
+            assert_eq!(ntc.nodes.len(), bounds.len(), "{s:?}");
+            for &(unit, min, max) in &bounds {
+                assert!((min..=max).contains(&s.units[unit as usize]), "{s:?}");
+            }
+            nonzero |= s
+                .units
+                .iter()
+                .any(|&v| if negative { v < 0 } else { v > 0 });
+        }
+        assert_eq!(nonzero, bounds.iter().any(|&(_, min, max)| min != max));
+    }
+    let either = span_spec(
+        SpanSign::Uniform,
+        &[(SpanUnit::Hours, -1, 0), (SpanUnit::Minutes, 0, 1)],
+    );
+    let mut seen = BTreeSet::new();
+    for seed in 0..100 {
+        let mut ntc = fresh_ntc(seed);
+        let s = generate_span(&mut ntc, &either).unwrap();
+        assert_eq!(ntc.nodes.len(), 3);
+        seen.insert((s.units[4], s.units[5]));
+    }
+    assert_eq!(
+        seen.into_iter().collect::<Vec<_>>(),
+        [(-1, 0), (0, 0), (0, 1)]
+    );
 }
 
 #[test]

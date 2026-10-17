@@ -16,9 +16,9 @@
 //! the offset itself shrinks. A duration is one integer node of precision
 //! units shrinking toward 0. A span is one integer node per enabled unit,
 //! largest first, under a sign policy: `uniform` draws one sign node when
-//! the bounds admit both signs and then magnitudes, `mixed` draws each
-//! unit signed and `nonnegative` draws magnitudes only; it shrinks to the
-//! zero span.
+//! a span of either sign other than zero lies in the bounds and then
+//! magnitudes, `mixed` draws each unit signed and `nonnegative` draws
+//! magnitudes only; it shrinks to the zero span.
 
 use alloc::collections::BTreeSet;
 use alloc::format;
@@ -425,6 +425,19 @@ impl SpanSpec {
             })
     }
 
+    /// Whether a positive span lies in the bounds (every enabled unit
+    /// admits a non-negative value and one admits a positive one), and
+    /// whether a negative one does.
+    fn admits_nonzero(&self) -> (bool, bool) {
+        let (pos, neg) = self.admits();
+        let (any_pos, any_neg) = self
+            .enabled()
+            .fold((false, false), |(p, n), (_, min, max)| {
+                (p || max > 0, n || min < 0)
+            });
+        (pos && any_pos, neg && any_neg)
+    }
+
     /// Check that each enabled unit's bounds are in order and that the
     /// sign policy admits a value: `nonnegative` needs every lower bound
     /// at or above 0, and `uniform` needs every unit to admit one common
@@ -467,9 +480,9 @@ pub fn generate_span(ntc: &mut NativeTestCase, spec: &SpanSpec) -> Result<Span, 
     }
     spanned(ntc, LABEL_SPAN, |ntc| {
         let mut span = Span::default();
-        let negative = match (spec.sign, spec.admits()) {
+        let negative = match (spec.sign, spec.admits_nonzero()) {
             (SpanSign::Uniform, (true, true)) => ntc.weighted(0.5, None)?,
-            (SpanSign::Uniform, (pos, _)) => !pos,
+            (SpanSign::Uniform, (false, neg)) => neg,
             _ => false,
         };
         for (unit, min, max) in spec.enabled() {

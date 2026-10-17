@@ -395,11 +395,11 @@ node, improving on Hypothesis's independently drawn fold.
   shrinking toward 0.
 - `generate_span(spec)`: one integer node per enabled unit, drawn largest
   unit first within its bounds, with a sign policy: `uniform` draws one
-  sign node, only when the bounds admit both signs, then magnitudes (jiff
-  `Span`, Temporal `Duration`), `mixed` draws each component signed (java
-  `Period`), `nonnegative` draws magnitudes only. As with the fold node of
-  §6.2, a sign the bounds fix is not drawn, so the sequence has no dead
-  node. Shrinks to the zero span.
+  sign node, only when the bounds admit a span of either sign other than
+  zero, then magnitudes (jiff `Span`, Temporal `Duration`), `mixed` draws
+  each component signed (java `Period`), `nonnegative` draws magnitudes
+  only. As with the fold node of §6.2, a sign the bounds fix is not
+  drawn, so the sequence has no dead node. Shrinks to the zero span.
 
 ### 6.4 Dates, times, datetimes
 
@@ -812,7 +812,7 @@ with 1, 3, 6, 7 and 9 digits (the precisions of milliseconds,
 microseconds, .NET ticks and nanoseconds).
 
 **Instants.** The Unix epoch ±1 ns; 2000-01-01T00:00:00Z; 2^31 − 1 and
-−2^31 seconds; 2^32 seconds; 10¹² ms (JavaScript); the 28 leap-second
+−2^31 seconds; 2^32 seconds; 10¹² ms (JavaScript); the 27 leap-second
 boundaries from 1972-07-01 to 2017-01-01 (Hypothesis's list; the last
 positive leap second was 2016-12-31T23:59:60Z); jiff's `Timestamp::MIN`
 and `MAX`.
