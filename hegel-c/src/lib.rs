@@ -7235,7 +7235,7 @@ pub struct hegel_timezone_offset_t {
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy)]
 pub struct hegel_timezone_info_t {
-    /// Whether the name is one the bundled database or `Etc/Unknown`; the
+    /// Whether the name is one in the bundled database or `Etc/Unknown`; the
     /// other fields are zero when it is not.
     pub known: bool,
     /// The name of the zone whose data applies: the link target for a link
