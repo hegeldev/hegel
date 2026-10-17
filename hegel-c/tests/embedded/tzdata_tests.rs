@@ -181,7 +181,13 @@ fn footers_agree_with_jiff() {
                 footer.standard.utoff,
                 "{name}"
             );
-            assert_eq!(tz.to_offset_info(from).abbreviation(), standard, "{name}");
+            let info = tz.to_offset_info(from);
+            let abbreviation = info.abbreviation();
+            if zone.name == "UTC" {
+                assert!(["UTC", "GMT"].contains(&abbreviation), "{name}");
+            } else {
+                assert_eq!(abbreviation, standard, "{name}");
+            }
             continue;
         };
         assert_eq!(transitions.len(), 6, "{name}");
@@ -227,7 +233,7 @@ fn every_link_resolves_to_a_primary_zone() {
             assert_eq!(entry.name, entry.zone.name);
         }
     }
-    assert_eq!(links, 253);
+    assert_eq!(links, 254);
 }
 
 #[test]
@@ -297,6 +303,16 @@ fn utc_is_the_primary_zone() {
         "UCT",
         "Universal",
         "Zulu",
+        "Etc/GMT",
+        "Etc/GMT+0",
+        "Etc/GMT-0",
+        "Etc/GMT0",
+        "Etc/Greenwich",
+        "GMT",
+        "GMT+0",
+        "GMT-0",
+        "GMT0",
+        "Greenwich",
     ] {
         let entry = lookup(name).unwrap().unwrap();
         assert!(entry.is_link(), "{name}");
@@ -310,6 +326,8 @@ fn utc_is_the_primary_zone() {
     assert_eq!(lowest_primary.name, "UTC");
     assert_eq!(TABLE_TEXT.matches("\nZ UTC ").count(), 1);
     assert!(!TABLE_TEXT.contains("\nL UTC "));
+    assert!(!TABLE_TEXT.contains("\nZ Etc/GMT "));
+    assert!(!TABLE_TEXT.contains("\nZ GMT "));
 }
 
 #[test]
@@ -408,7 +426,9 @@ fn jiff_tags(entry: &Name) -> Tags {
     }
     let mut per_year: std::collections::BTreeMap<i16, usize> = Default::default();
     for c in recent.iter().filter(|c| c.1.0 != c.2.0) {
-        *per_year.entry(utc_date(c.0).year()).or_default() += 1;
+        *per_year
+            .entry(utc_date(c.0 + i64::from(c.1.0)).year())
+            .or_default() += 1;
     }
     let wall = |c: &(i64, Kind, Kind)| (c.0 + i64::from(c.1.0), c.0 + i64::from(c.2.0));
     let conditions = [
@@ -486,8 +506,9 @@ fn appendix_c_zones_carry_their_tags() {
     let expectations: &[(&str, &[Tag], &[Tag])] = &[
         ("UTC", &[Fixed, WholeHour], &[Link, Legacy]),
         ("Etc/UTC", &[Fixed, WholeHour, Link], &[Legacy]),
-        ("Etc/GMT", &[Fixed], &[Link]),
+        ("Etc/GMT", &[Fixed, WholeHour, Link], &[Legacy]),
         ("GMT", &[Fixed, Link, Legacy], &[]),
+        ("Greenwich", &[Fixed, Link, Legacy], &[]),
         ("Zulu", &[Fixed, Link, Legacy], &[]),
         ("UCT", &[Fixed, Link, Legacy], &[]),
         (
@@ -531,6 +552,7 @@ fn appendix_c_zones_carry_their_tags() {
         ),
         ("Europe/Dublin", &[WholeHour, Dst], &[DstOther]),
         ("Africa/Casablanca", &[Multi, Midnight], &[Dst, SameOffset]),
+        ("Africa/Tripoli", &[Multi, BaseChange, Midnight], &[Dst]),
         ("Asia/Gaza", &[Dst, Multi, Midnight], &[]),
         ("Asia/Hebron", &[Dst, Multi, Midnight], &[]),
         ("America/Nuuk", &[Dst, SpansMidnight, Midnight], &[]),

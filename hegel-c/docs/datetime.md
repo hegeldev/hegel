@@ -248,7 +248,7 @@ changes only `isdst` flags and abbreviations, for Europe/Dublin and the
 like) does not affect the table's semantics; the feature tags below are
 derived from offset changes, never from `isdst`.
 
-`hegel_tzdb_version()` returns the bundled release ("2026b"). The
+`hegel_tzdb_version()` returns the bundled release ("2026e"). The
 checked-in table carries its version in its header, and a test fails if
 the script's pinned version and the table disagree. The update policy is
 the Unicode one: bump deliberately, in its own PR, with the changelog

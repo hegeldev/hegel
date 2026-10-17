@@ -57,11 +57,14 @@ Zone records (`Z` and the lines that follow) come first, sorted by name,
 then the `L` records, sorted by name. Every zone has an `F` line in the
 current data; the engine tolerates a missing one.
 
-The `tzdata.zi` source makes `UTC` a link to `Etc/UTC`; this script makes
-`UTC` the primary zone and `Etc/UTC` (with `Etc/UCT`, `Zulu` and the other
-names that resolved to it) a link to `UTC`, as ECMA-402 does and as the
-design's §4 and §B.2 assume, so that `UTC` is a primary name and the
-shrink target whether or not links are allowed.
+The `tzdata.zi` source makes `UTC` a link to `Etc/UTC` and keeps `Etc/GMT`
+a separate zone; this script makes `UTC` the primary zone and `Etc/UTC`,
+`Etc/GMT` and every name that resolved to either (`Etc/UCT`, `Zulu`,
+`GMT`, `Greenwich`, ...) a link to `UTC`, as ECMA-402 does and as the
+design's §4, §B.2 and Appendix C assume, so that `UTC` is a primary name
+and the shrink target whether or not links are allowed. A link's TZif
+must agree with its primary's in every offset and transition; only the
+`GMT` abbreviation of the `Etc/GMT` family is lost by the folding.
 
 Tags are derived from the offsets, never from the `isdst` flags, so the
 main and rearguard formats agree (the design's §5.3). A transition below
@@ -84,7 +87,10 @@ the footer's transitions and offsets.
                   standard one by exactly one hour
   dst_other       the footer has a DST rule with a different size (Lord
                   Howe's 30 minutes, Troll's two hours)
-  multi           some calendar year has more than two offset changes
+  multi           some calendar year has more than two offset changes,
+                  dating each change by the wall time it happens at (so
+                  Africa/Tripoli's change at 1982-01-01 00:00 local counts
+                  in 1982 although it is 1981-12-31T22:00Z)
   base_change     the lowest offset in force during some year after 1970
                   differs from the previous year's (Europe/Moscow 2011
                   and 2014, permanent changes generally)
@@ -110,7 +116,7 @@ rest; within a tier (and within an offset for `Etc/`) names with fewer
 tags come first, so a zone precedes its links, and ties break by name.
 Ranks are unique, so they order every name.
 
-Size: for 2026e the text table is 446,683 bytes and deflates to 80,733.
+Size: for 2026e the text table is 446,648 bytes and deflates to 80,718.
 Measured on the release libhegel shared library (macOS arm64, 4,053,936
 bytes without any table), embedding the deflated table adds 121,056 bytes
 and embedding the text table adds 484,176, the inflater being linked
@@ -259,10 +265,9 @@ def read_links() -> dict[str, str]:
         if line.startswith("L "):
             _, target, name = line.split()
             links[name] = target
-    utc_target = links.pop("UTC", None)
-    if utc_target is not None:
-        links = {name: "UTC" if target == utc_target else target for name, target in links.items()}
-        links[utc_target] = "UTC"
+    folded = {links.pop("UTC"), "Etc/GMT"}
+    links = {name: "UTC" if target in folded else target for name, target in links.items()}
+    links.update((name, "UTC") for name in folded)
     return links
 
 
@@ -388,6 +393,10 @@ def utc_year(instant: int) -> int:
     return datetime.fromtimestamp(instant, tz=timezone.utc).year
 
 
+def wall_year(change: Change) -> int:
+    return utc_year(change.instant + change.before.utoff)
+
+
 def year_start(year: int) -> int:
     return int(datetime(year, 1, 1, tzinfo=timezone.utc).timestamp())
 
@@ -511,7 +520,7 @@ def compute_zone_tags(zone: Zone) -> set[str]:
     changes_per_year: dict[int, int] = {}
     for change in recent:
         if change.changes_offset():
-            year = utc_year(change.instant)
+            year = wall_year(change)
             changes_per_year[year] = changes_per_year.get(year, 0) + 1
         else:
             tags.add("same_offset")
@@ -571,6 +580,22 @@ def assign_ranks(zones: dict[str, Zone], links: dict[str, Link]) -> None:
             zones[name].rank = rank
         else:
             links[name].rank = rank
+
+
+def offsets_only(zone: Zone) -> tuple:
+    """The zone's data without its abbreviations, for comparing a link's
+    TZif with its primary's."""
+    footer = zone.footer
+    return (
+        zone.initial.utoff,
+        [(t.instant, t.type.utoff) for t in zone.transitions],
+        None
+        if footer is None
+        else (
+            footer.std.utoff,
+            None if footer.dst is None else (footer.dst.utoff, footer.start, footer.end),
+        ),
+    )
 
 
 def abbreviation_list(zone: Zone) -> list[str]:
@@ -641,7 +666,10 @@ def build_table() -> str:
     for link in links.values():
         if link.primary not in zones:
             raise SystemExit(f"link {link.name} targets {link.primary}, which is not a zone")
-        if (zoneinfo / link.name).read_bytes() != (zoneinfo / link.primary).read_bytes():
+        initial, transitions, footer = parse_tzif((zoneinfo / link.name).read_bytes())
+        if offsets_only(Zone(link.name, initial, transitions, footer)) != offsets_only(
+            zones[link.primary]
+        ):
             raise SystemExit(f"link {link.name} differs from {link.primary}")
 
     for zone in zones.values():
