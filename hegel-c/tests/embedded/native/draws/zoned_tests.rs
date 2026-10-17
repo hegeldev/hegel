@@ -1600,3 +1600,143 @@ fn wall_arithmetic_round_trips() {
     assert_eq!(align_down(-7, 5), -10);
     assert_eq!(align_down(7, 5), 5);
 }
+
+#[test]
+fn a_bound_inside_a_gap_reaches_the_skipped_wall_times() {
+    let tz = zones(&["America/New_York"]);
+    let spring = 1_710_054_000;
+    let zone = TimeZone::lookup("America/New_York").unwrap().unwrap();
+    let instants = |min: i64, max: i64| ZonedSpec {
+        bounds: ZonedBounds::Instant {
+            min: at(min),
+            max: at(max),
+        },
+        precision: Precision::Seconds,
+        ..ZonedSpec::default()
+    };
+    let spec = instants(spring + 1800, spring + 7200);
+    let values = Values::of(zone, &at(spring + 1800), &at(spring + 7200), &spec).unwrap();
+    assert_eq!(values.total, 7201);
+    assert_eq!(values.at(0).unwrap(), (civil(2024, 3, 10, 2, 30, 0), false));
+    assert_eq!(
+        values.at(1800).unwrap(),
+        (civil(2024, 3, 10, 3, 30, 0), false)
+    );
+    let avoid = ZonedSpec {
+        imaginary: Imaginary::Avoid,
+        ..spec
+    };
+    let values = Values::of(zone, &at(spring + 1800), &at(spring + 7200), &avoid).unwrap();
+    assert_eq!(values.total, 5401);
+    let mut ntc = NativeTestCase::for_choices(
+        &[
+            ChoiceValue::String("America/New_York".chars().map(u32::from).collect()),
+            ChoiceValue::Integer(BigInt::from(0)),
+        ],
+        None,
+        None,
+    );
+    let z = generate_zoned_datetime(&mut ntc, &tz, &spec).unwrap();
+    assert_eq!(
+        z.to_string(),
+        "2024-03-10T02:30:00-04:00[America/New_York][gap]"
+    );
+    assert_eq!(z.timestamp, at(spring + 1800));
+    for (min, max, fallback) in [
+        (spring, spring + 7200, true),
+        (spring + 1800, spring + 7200, true),
+        (spring, spring + 3 * DAY, false),
+        (spring + 1800, spring + 3 * DAY, false),
+    ] {
+        let spec = instants(min, max);
+        let (mut gaps, mut rejected) = (0, 0);
+        for seed in 0..600 {
+            let mut ntc = fresh_ntc(seed);
+            match generate_zoned_datetime(&mut ntc, &tz, &spec) {
+                Ok(z) => {
+                    assert!((min..=max).contains(&z.timestamp.second), "{z}");
+                    check_with_jiff(&z);
+                    gaps += usize::from(z.kind == Kind::Gap);
+                }
+                Err(err) => {
+                    assert!(matches!(err, EngineError::InvalidTestCase), "{err:?}");
+                    assert!(!fallback, "{spec:?}");
+                    rejected += 1;
+                }
+            }
+        }
+        assert!(gaps > 0, "{spec:?}: {gaps} gap draws, {rejected} rejected");
+        let avoid = ZonedSpec {
+            imaginary: Imaginary::Avoid,
+            ..spec
+        };
+        for seed in 0..100 {
+            let mut ntc = fresh_ntc(seed);
+            if let Ok(z) = generate_zoned_datetime(&mut ntc, &tz, &avoid) {
+                assert_eq!(z.kind, Kind::Unique, "{z}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_run_between_two_folds_ends_in_the_earlier_repeat() {
+    let ltt = |utoff: i32| tzdata::LocalTimeType {
+        utoff,
+        is_dst: false,
+        abbreviation: 0,
+    };
+    let t1 = 959_817_600;
+    let t2 = t1 + 12 * 3600;
+    let zone: &'static tzdata::Zone = Box::leak(Box::new(tzdata::Zone {
+        name: "synthetic".to_string(),
+        abbreviations: vec!["S".to_string()],
+        initial: ltt(3600),
+        transitions: vec![
+            tzdata::Transition {
+                instant: t1,
+                kind: ltt(0),
+            },
+            tzdata::Transition {
+                instant: t2,
+                kind: ltt(-3600),
+            },
+        ],
+        footer: None,
+    }));
+    let name: &'static tzdata::Name = Box::leak(Box::new(tzdata::Name {
+        name: "synthetic".to_string(),
+        rank: u16::MAX,
+        tags: tzdata::Tags::EMPTY,
+        zone,
+    }));
+    let zone = TimeZone::Named(name);
+    let (min, max) = (at(t1 - 3600), at(t2 + 3600));
+    for (policy, excluded) in [
+        (Ambiguous::Both, vec![]),
+        (Ambiguous::Earlier, vec![t1..t1 + 3600, t2..t2 + 3600]),
+        (Ambiguous::Later, vec![t1 - 3600..t1, t2 - 3600..t2]),
+    ] {
+        let spec = ZonedSpec {
+            bounds: ZonedBounds::Instant { min, max },
+            precision: Precision::Minutes,
+            ambiguous: policy,
+            ..ZonedSpec::default()
+        };
+        let values = Values::of(zone, &min, &max, &spec).unwrap();
+        let instants: Vec<i64> = (0..values.total)
+            .map(|i| {
+                let (civil, fold) = values.at(i).unwrap();
+                let r = zone.resolve(&civil, fold).unwrap();
+                assert!(!fold || r.kind == Kind::Fold, "{civil:?} {fold}");
+                assert_eq!(r.timestamp.nanosecond, 0);
+                r.timestamp.second
+            })
+            .collect();
+        let expected: Vec<i64> = (t1 - 3600..=t2 + 3600)
+            .step_by(60)
+            .filter(|s| !excluded.iter().any(|r| r.contains(s)))
+            .collect();
+        assert_eq!(instants, expected, "{policy:?}");
+    }
+}
