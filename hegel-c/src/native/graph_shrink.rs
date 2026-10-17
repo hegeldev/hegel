@@ -52,7 +52,9 @@ use crate::native::HashMap;
 use crate::native::bignum::{BigInt, ToPrimitive};
 use crate::native::core::Constraint;
 use crate::native::core::{ChoiceData, ChoiceNode, ChoiceValue, Span, flattened_len, sort_key};
-use crate::native::graph::{Addr, Frame, Graph, Ident, Run, Step, Walked, shrink_rank};
+use crate::native::graph::{
+    Addr, Edge, Frame, Graph, GraphKey, Ident, Run, Step, ValueRank, Walked, shrink_rank,
+};
 use crate::native::nd::{self, Evidence, GauntletVerdict};
 use crate::native::shrinker::SweepMode;
 
@@ -655,9 +657,9 @@ impl GraphShrinker {
     /// The ladder for a time zone name, `text` now: the lowest-ranked
     /// allowed name, then each name below the current one on the rank
     /// ladder from the nearest down, starting over from the first
-    /// accepted. The graph orders its values by [`shrink_rank`], so a name
-    /// that ranks above the current one there is skipped rather than
-    /// proposed and refused.
+    /// accepted. The graph's key ranks such a name by its ladder position
+    /// ([`Self::rank`]), so every step down is an improvement whatever
+    /// the spelling.
     async fn shrink_timezone_string(
         &mut self,
         probe: &mut dyn GraphProbe,
@@ -667,17 +669,12 @@ impl GraphShrinker {
         text: &[u32],
     ) -> Result<bool, RunError> {
         let mut position = zones.position(text).unwrap_or(0);
-        let mut current = ChoiceValue::String(text.to_vec());
         let mut changed = false;
         'again: while position > 0 {
             for candidate in core::iter::once(0).chain((1..position).rev()) {
                 let value = ChoiceValue::String(zones.name_at(candidate).to_vec());
-                if shrink_rank(&value) >= shrink_rank(&current) {
-                    continue;
-                }
-                if self.try_value(probe, key, data, value.clone()).await? {
+                if self.try_value(probe, key, data, value).await? {
                     position = candidate;
-                    current = value;
                     changed = true;
                     continue 'again;
                 }
@@ -685,6 +682,31 @@ impl GraphShrinker {
             break;
         }
         Ok(changed)
+    }
+
+    /// The rank of the value of `edge`, which leaves the node of identity
+    /// `ident`, in a graph's key: a time zone name by its position on the
+    /// ladder of the constraint learned for that draw, as the main
+    /// shrinker's sort key ranks it, and every other value by
+    /// [`shrink_rank`].
+    fn rank(&self, ident: &Ident, edge: &Edge) -> ValueRank {
+        let zones = self
+            .constraints
+            .get(&(ident.clone(), edge.addr.clone()))
+            .and_then(ChoiceData::as_string)
+            .and_then(|(sc, _)| sc.constraint.as_ref()?.timezone());
+        match (zones, &edge.value) {
+            (Some(zones), ChoiceValue::String(name)) => {
+                let position = zones.position(name).unwrap_or(zones.ladder().len());
+                (3, position as u64, Vec::new())
+            }
+            _ => shrink_rank(&edge.value),
+        }
+    }
+
+    /// The shrink key of `graph` under [`Self::rank`].
+    fn key_of(&self, graph: &Graph) -> GraphKey {
+        graph.key(|ident, edge| self.rank(ident, edge))
     }
 
     /// The ladder for a sequence value: halve its length toward `min_len`,
@@ -817,7 +839,7 @@ impl GraphShrinker {
             candidate.retain_settled(&settled);
         }
         let graph = candidate.pruned();
-        if graph.key() >= self.graph.key() {
+        if self.key_of(&graph) >= self.key_of(&self.graph) {
             return Ok(Verdict::Rejected);
         }
         let witness = hegel_internal_unwrap!(

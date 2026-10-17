@@ -828,11 +828,15 @@ fn a_string_under_a_time_zone_set_moves_to_the_simplest_or_down_the_ladder() {
     assert_eq!(attempt(any_zone_body, "Europe/London"), (true, cb("UTC")));
     assert_eq!(
         attempt(zone_body, "America/Argentina/Buenos_Aires"),
-        (true, cb("Europe/London"))
+        (true, cb("America/Matamoros"))
     );
     assert_eq!(
         attempt(zone_body, "Europe/London"),
-        (false, cb("Europe/London"))
+        (true, cb("America/Matamoros"))
+    );
+    assert_eq!(
+        attempt(zone_body, "America/Matamoros"),
+        (false, cb("America/Matamoros"))
     );
     assert_eq!(
         attempt(zone_body, "Europe/Paris"),
