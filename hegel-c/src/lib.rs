@@ -7863,18 +7863,21 @@ pub unsafe extern "C" fn hegel_zoned_spec_set_civil_bounds(
 ///   `nanosecond` at most 999999999.
 ///
 /// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for invalid or inverted
-/// bounds, or bounds holding no value at the spec's precision.
+/// bounds. Whether the bounds hold a value at the spec's precision
+/// depends on the drawn zone's offset: a draw whose zone has none rejects
+/// the test case, and one for which no allowed zone has any fails with
+/// `HEGEL_E_INVALID_ARG`.
 ///
 /// The bounds become a wall-clock window in the drawn zone, clamped to
-/// the civil range; when that window inverts, or spans at most a day and
-/// lies within two days of a transition, the draw picks the instant
-/// directly and converts it, aligning the wall time to the precision and
-/// reading it under the ambiguous policy. A wall time whose instant falls
-/// outside the bounds (a fold on the wrong side of a bound, or a wall time
-/// at the precision whose instant lies outside them) rejects the test
-/// case, which can only happen within one transition's width or one
-/// precision unit of a bound, or where the zone's wall clock leaves the
-/// civil range.
+/// the civil range; when that window holds no value at the precision, or
+/// spans at most a day and lies within two days of a transition, the draw
+/// picks the instant directly from the values in the bounds (the wall
+/// times at the precision of each stretch of constant offset, the repeat
+/// the ambiguous policy excludes left out, and the skipped wall times of
+/// a gap included unless avoided) and reports it. Otherwise a wall time
+/// whose instant falls outside the bounds (a fold on the wrong side of a
+/// bound) rejects the test case, which can only happen within one
+/// transition's width of a bound.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_zoned_spec_set_instant_bounds(
     ctx: *mut HegelContext,

@@ -21,16 +21,23 @@
 //! The fold node exists only when the wall time is ambiguous and the
 //! `both` policy is in force.
 //!
-//! Instant bounds become a wall-clock window in the drawn zone, clamped to
-//! the civil envelope. When that window inverts, or spans at most a day
-//! and lies within two days of a transition, the draw falls back to one
-//! integer node: an instant, counted in nanoseconds from
-//! 2000-01-01T00:00:00Z clamped into the bounds, whose wall time is
-//! aligned down to the precision and read under the ambiguous policy,
-//! `both` meaning the repeat the instant lies in, so no fold node is
-//! drawn. Either way a wall time whose instant falls outside the bounds (a
-//! fold on the wrong side of a bound, or an alignment that crosses one)
-//! concludes the test case invalid.
+//! Instant bounds become a wall-clock window in the drawn zone: from the
+//! earliest wall time an instant in the bounds reads to the latest, which
+//! across a fold is the transition's wall time rather than a bound's own
+//! reading, clamped to the civil envelope. When that window holds no
+//! value at the precision, or spans at most a day and lies within two
+//! days of a transition, the draw falls back to drawing the instant as one
+//! integer node: an index into the values in the bounds in instant order
+//! ([`Values`]), shrinking toward the one nearest 2000-01-01T00:00:00Z and
+//! sampled at the targeting rate at either side of a transition or at an
+//! Appendix C instant in the bounds. The instant fixes which repeat of a
+//! fold the value means, so no fold node follows. A zone with no value in
+//! the bounds concludes the test case invalid, unless no allowed zone has
+//! one, which is an argument error. The wall-clock window of civil bounds
+//! is likewise narrowed to the wall times whose instants lie in the
+//! Timestamp range of §4, and a drawn wall time whose instant falls
+//! outside the bounds (a fold on the wrong side of a bound) concludes the
+//! test case invalid.
 //!
 //! Under the `avoid` policy the time node's sampler redraws a wall time
 //! that lands in a gap, uniformly and up to [`GAP_RESAMPLES`] times, so
@@ -58,13 +65,16 @@ use super::{LABEL_TIMEZONE, LABEL_ZONED_DATETIME, spanned};
 use crate::control::{hegel_internal_assert, hegel_internal_error, hegel_internal_unwrap};
 use crate::native::bignum::{BigInt, ToPrimitive};
 use crate::native::core::choices::IntegerChoice;
-use crate::native::core::state::{biased_integer_sample, uniform_u64_inclusive};
+use crate::native::core::state::{
+    biased_integer_sample, uniform_u64_inclusive, weighted_boolean_sample_precise,
+};
 use crate::native::core::{
     DatetimeGenerationParameters, EngineError, NativeTestCase, Status, TARGETED_PROBABILITY,
 };
 use crate::native::rng::EngineRng;
 use crate::native::timezone::{
-    Kind, Resolution, TimeZone, Timestamp, UNKNOWN_NAME, transitions, validate_timestamp,
+    Kind, MAX_INSTANT, MIN_INSTANT, Resolution, TimeZone, Timestamp, UNKNOWN_NAME, ZoneTransition,
+    transitions, type_at, validate_timestamp,
 };
 use crate::tzdata::Zone;
 
@@ -181,11 +191,11 @@ impl Default for ZonedSpec {
 }
 
 impl ZonedSpec {
-    /// Check the bounds: each valid, in order, and holding a value at the
-    /// precision.
+    /// Check the bounds: each valid and in order, and civil bounds holding
+    /// a value at the precision. Whether instant bounds hold one depends on
+    /// the zone's offset, so the draw settles that (see the module docs).
     pub fn validate(&self) -> Result<(), EngineError> {
-        let unit = i128::from(self.precision.unit());
-        let (lo, hi) = match &self.bounds {
+        match &self.bounds {
             ZonedBounds::Civil { min, max } => {
                 validate_date("min_value.date", &min.date)?;
                 validate_date("max_value.date", &max.date)?;
@@ -197,7 +207,13 @@ impl ZonedSpec {
                          [{min:?}, {max:?}]"
                     )));
                 }
-                (wall_ns(min), wall_ns(max))
+                let unit = i128::from(self.precision.unit());
+                if align_up(wall_ns(min), unit) > align_down(wall_ns(max), unit) {
+                    return Err(EngineError::InvalidArgument(format!(
+                        "generate_zoned_datetime: no value at precision {:?} lies in {:?}",
+                        self.precision, self.bounds
+                    )));
+                }
             }
             ZonedBounds::Instant { min, max } => {
                 validate_timestamp(min)?;
@@ -208,14 +224,7 @@ impl ZonedSpec {
                          [{min:?}, {max:?}]"
                     )));
                 }
-                (instant_ns(min), instant_ns(max))
             }
-        };
-        if align_up(lo, unit) > align_down(hi, unit) {
-            return Err(EngineError::InvalidArgument(format!(
-                "generate_zoned_datetime: no value at precision {:?} lies in {:?}",
-                self.precision, self.bounds
-            )));
         }
         Ok(())
     }
@@ -288,6 +297,18 @@ const HOUR_NS: i128 = 3_600 * NS;
 
 /// 2000-01-01T00:00:00Z, the shrink origin of instants (§10, Q3).
 pub const EPOCH_2000: i64 = 946_684_800;
+
+/// The first instant of the Timestamp range of §4.
+const MIN_TIMESTAMP: Timestamp = Timestamp {
+    second: MIN_INSTANT,
+    nanosecond: 0,
+};
+
+/// The last instant of the Timestamp range of §4.
+const MAX_TIMESTAMP: Timestamp = Timestamp {
+    second: MAX_INSTANT,
+    nanosecond: 999_999_999,
+};
 
 /// How far either side of the shrink origin, clamped into the window, the
 /// draw looks for the zone's transitions: two centuries, so that a rule's
@@ -385,13 +406,6 @@ fn datetime_of_wall(ns: i128) -> DateTime {
 
 fn instant_ns(timestamp: &Timestamp) -> i128 {
     i128::from(timestamp.second) * NS + i128::from(timestamp.nanosecond)
-}
-
-fn timestamp_of(ns: i128) -> Timestamp {
-    Timestamp {
-        second: ns.div_euclid(NS) as i64,
-        nanosecond: ns.rem_euclid(NS) as u32,
-    }
 }
 
 fn align_down(ns: i128, unit: i128) -> i128 {
@@ -589,19 +603,43 @@ fn draw_datetime_in(
     })
 }
 
-/// The wall-clock window of the instant bounds in `zone`, clamped to the
-/// civil envelope, or `None` when the draw should fall back to drawing
-/// the instant: the window inverts, or spans at most a day and lies
-/// within two days of a transition.
+/// The wall-clock range of the instants in `[min, max]` in `zone`, in
+/// wall nanoseconds: from the earliest reading to the latest, which at a
+/// bound inside a fold is not the bound's own reading but the
+/// transition's (the later repeat begins at the transition's wall time
+/// and the earlier one ends a nanosecond before it), for a transition
+/// within the bounds and within an offset's width of the bound.
+fn wall_range(
+    zone: TimeZone,
+    min: &Timestamp,
+    max: &Timestamp,
+) -> Result<(i128, i128), EngineError> {
+    let mut lo = instant_ns(min) + i128::from(zone.offset_at(*min)?.seconds) * NS;
+    let mut hi = instant_ns(max) + i128::from(zone.offset_at(*max)?.seconds) * NS;
+    if let TimeZone::Named(name) = zone {
+        let within = |from: i64, to: i64| {
+            transitions(name.zone, from.max(min.second + 1), to.min(max.second) + 1)
+        };
+        for t in within(min.second + 1, min.second + 2 * DAY) {
+            lo = lo.min(i128::from(t.instant + i64::from(t.after.utoff)) * NS);
+        }
+        for t in within(max.second - 2 * DAY, max.second) {
+            hi = hi.max(i128::from(t.instant + i64::from(t.before.utoff)) * NS - 1);
+        }
+    }
+    Ok((lo, hi))
+}
+
+/// The wall-clock window of the instant bounds in `zone`, aligned to the
+/// precision and clamped to the civil envelope, or `None` when the draw
+/// should fall back to drawing the instant: the window holds no value, or
+/// spans at most a day and lies within two days of a transition.
 fn wall_window(
     zone: TimeZone,
     min: &Timestamp,
     max: &Timestamp,
     unit: i128,
 ) -> Result<Option<Window>, EngineError> {
-    let envelope = Window::envelope();
-    let lo = instant_ns(min) + i128::from(zone.offset_at(*min)?.seconds) * NS;
-    let hi = instant_ns(max) + i128::from(zone.offset_at(*max)?.seconds) * NS;
     if let TimeZone::Named(name) = zone {
         let near = max.second - min.second <= DAY
             && transitions(name.zone, min.second - 2 * DAY, max.second + 2 * DAY + 1)
@@ -611,6 +649,8 @@ fn wall_window(
             return Ok(None);
         }
     }
+    let envelope = Window::envelope();
+    let (lo, hi) = wall_range(zone, min, max)?;
     Ok(Window::aligned(
         lo.max(envelope.lo),
         hi.min(envelope.hi),
@@ -618,24 +658,218 @@ fn wall_window(
     ))
 }
 
-/// The instant fallback: one integer node of nanoseconds from the shrink
-/// origin clamped into `[lo, hi]`, and the zone's wall time at that
-/// instant, clamped to the civil envelope and aligned down to the unit.
+/// `count` consecutive wall times at the precision from `first` (wall
+/// nanoseconds), each read with `offset`; an ambiguous one among them
+/// means the later repeat when `fold` is set.
+struct Run {
+    first: i128,
+    count: i128,
+    offset: i128,
+    fold: bool,
+}
+
+/// The values of a draw within instant bounds in one zone, in instant
+/// order: one run per stretch of constant offset within the bounds,
+/// trimmed of the repeat the ambiguous policy excludes, and under `allow`
+/// one more per gap for the skipped wall times, which read with the
+/// offset before the gap. Every run lies in the civil envelope.
+struct Values {
+    runs: Vec<Run>,
+    total: i128,
+    unit: i128,
+}
+
+impl Values {
+    fn of(
+        zone: TimeZone,
+        min: &Timestamp,
+        max: &Timestamp,
+        spec: &ZonedSpec,
+    ) -> Result<Values, EngineError> {
+        let mut values = Values {
+            runs: Vec::new(),
+            total: 0,
+            unit: i128::from(spec.precision.unit()),
+        };
+        let (lo, hi) = (instant_ns(min), instant_ns(max));
+        let TimeZone::Named(name) = zone else {
+            values.push(lo, hi, 0, false);
+            return Ok(values);
+        };
+        let zone = name.zone;
+        let fold_width = |t: &ZoneTransition| i128::from(t.before.utoff - t.after.utoff) * NS;
+        let (earlier, later) = (
+            spec.ambiguous == Ambiguous::Earlier,
+            spec.ambiguous == Ambiguous::Later,
+        );
+        let mut start = lo;
+        let mut offset = i128::from(type_at(zone, min.second)?.utoff) * NS;
+        let mut fold = false;
+        if let Some(t) = transitions(zone, min.second - 2 * DAY, min.second + 1).last() {
+            let width = fold_width(&t);
+            if width > 0 {
+                fold = true;
+                if earlier {
+                    start = start.max(i128::from(t.instant) * NS + width);
+                }
+            }
+        }
+        for t in transitions(zone, min.second + 1, max.second + 1) {
+            let at = i128::from(t.instant) * NS;
+            let width = fold_width(&t);
+            let end = if width > 0 && later { at - width } else { at } - 1;
+            values.push(start, end, offset, fold);
+            if width < 0 && spec.imaginary == Imaginary::Allow {
+                values.push(at, (at - width - 1).min(hi), offset, false);
+            }
+            start = if width > 0 && earlier { at + width } else { at };
+            offset = i128::from(t.after.utoff) * NS;
+            fold = width > 0;
+        }
+        let mut end = hi;
+        if later {
+            if let Some(t) = transitions(zone, max.second + 1, max.second + 2 * DAY + 1).next() {
+                let width = fold_width(&t);
+                if width > 0 {
+                    end = end.min(i128::from(t.instant) * NS - width - 1);
+                }
+            }
+        }
+        values.push(start, end, offset, fold);
+        Ok(values)
+    }
+
+    /// Add the wall times at the precision of the instants `start..=end`
+    /// read with `offset`, those within the civil envelope.
+    fn push(&mut self, start: i128, end: i128, offset: i128, fold: bool) {
+        let envelope = Window::envelope();
+        let first = align_up((start + offset).max(envelope.lo), self.unit);
+        let last = align_down((end + offset).min(envelope.hi), self.unit);
+        if first <= last {
+            let count = (last - first) / self.unit + 1;
+            self.runs.push(Run {
+                first,
+                count,
+                offset,
+                fold,
+            });
+            self.total += count;
+        }
+    }
+
+    /// The index of the first value whose instant is at or after
+    /// `instant`, or the last index when there is none.
+    fn index_at(&self, instant: i128) -> i128 {
+        let mut base = 0;
+        for run in &self.runs {
+            let last = run.first + (run.count - 1) * self.unit - run.offset;
+            if instant <= last {
+                let wall = (instant + run.offset).max(run.first);
+                return base + (align_up(wall, self.unit) - run.first) / self.unit;
+            }
+            base += run.count;
+        }
+        self.total - 1
+    }
+
+    /// The value at `index`: its wall time and whether, if ambiguous, it
+    /// means the later repeat.
+    fn at(&self, mut index: i128) -> Result<(DateTime, bool), EngineError> {
+        for run in &self.runs {
+            if index < run.count {
+                return Ok((datetime_of_wall(run.first + index * self.unit), run.fold));
+            }
+            index -= run.count;
+        }
+        hegel_internal_error!("draw_from_instant: no value {index} past the last run")
+    }
+
+    /// The indexes the sampler targets: the last value before and the
+    /// first after each change of reading, and the value at or after each
+    /// of the [`interesting_instants`] within `[lo, hi]`.
+    fn targets(&self, lo: i128, hi: i128) -> Vec<i128> {
+        let mut list = Vec::new();
+        let mut base = 0;
+        for run in &self.runs {
+            if base > 0 {
+                list.extend([base - 1, base]);
+            }
+            base += run.count;
+        }
+        for instant in interesting_instants() {
+            let ns = i128::from(instant) * NS;
+            if (lo..=hi).contains(&ns) {
+                list.push(self.index_at(ns));
+            }
+        }
+        list.sort_unstable();
+        list.dedup();
+        list
+    }
+}
+
+/// The instant fallback: one integer node indexing the [`Values`] in the
+/// bounds, shrinking toward the one nearest the origin and sampled by the
+/// engine's integer sampler or, at the targeting rate, at one of
+/// [`Values::targets`]. A zone with no value concludes the test case
+/// invalid, unless no allowed zone has one, which is an argument error.
 fn draw_from_instant(
     ntc: &mut NativeTestCase,
+    tz: &TimeZoneSpec,
+    entry: &Entry,
     zone: TimeZone,
-    lo: i128,
-    hi: i128,
-    unit: i128,
-) -> Result<(DateTime, Timestamp), EngineError> {
-    let center = (i128::from(EPOCH_2000) * NS).clamp(lo, hi);
-    let offset = ntc.draw_integer::<i128>(lo - center, hi - center)?;
-    let timestamp = timestamp_of(center + offset);
-    let offset = zone.offset_at(timestamp)?;
-    let envelope = Window::envelope();
-    let wall =
-        (instant_ns(&timestamp) + i128::from(offset.seconds) * NS).clamp(envelope.lo, envelope.hi);
-    Ok((datetime_of_wall(align_down(wall, unit)), timestamp))
+    spec: &ZonedSpec,
+    min: &Timestamp,
+    max: &Timestamp,
+) -> Result<ZonedDateTime, EngineError> {
+    let values = Values::of(zone, min, max, spec)?;
+    if values.total == 0 {
+        for other in tz.constraint()?.ladder() {
+            let zone = other.zone.unwrap_or(TimeZone::Unknown);
+            if Values::of(zone, min, max, spec)?.total > 0 {
+                return Err(invalid(ntc));
+            }
+        }
+        return Err(EngineError::InvalidArgument(format!(
+            "generate_zoned_datetime: no value at precision {:?} lies in {:?} in any allowed \
+             zone",
+            spec.precision, spec.bounds
+        )));
+    }
+    let last = hegel_internal_unwrap!(
+        i64::try_from(values.total - 1).ok(),
+        "draw_from_instant: {} values in {:?}",
+        values.total,
+        spec.bounds
+    );
+    let towards = values.index_at(i128::from(EPOCH_2000) * NS) as i64;
+    let targets = values.targets(instant_ns(min), instant_ns(max));
+    let targeted = if targets.is_empty() {
+        0.0
+    } else {
+        ntc.datetime_parameters()?.targeted_probability
+    };
+    let integer = ntc.family().generation_parameters().integer;
+    let index =
+        ntc.draw_integer_from(IntegerChoice::small(0, last, towards), move |kind, rng| {
+            if !targets.is_empty() && weighted_boolean_sample_precise(targeted, rng) {
+                let i = uniform_u64_inclusive(0, targets.len() as u64 - 1, rng) as usize;
+                return Ok(BigInt::from(targets[i]));
+            }
+            biased_integer_sample(kind, rng, integer)
+        })?;
+    let index = hegel_internal_unwrap!(
+        index.to_i64(),
+        "draw_from_instant: validated index does not fit i64"
+    );
+    let (civil, fold) = values.at(i128::from(index))?;
+    let resolution = zone.resolve(&civil, fold)?;
+    Ok(zoned(
+        entry,
+        civil,
+        fold && resolution.kind == Kind::Fold,
+        &resolution,
+    ))
 }
 
 /// The wall time the gap time `resolution` found moves to under `avoid`:
@@ -694,29 +928,22 @@ fn draw_zoned(
         (Imaginary::Avoid, TimeZone::Named(name)) => Some(name.zone),
         _ => None,
     };
-    let (window, instants, mut civil, drawn) = match &spec.bounds {
+    let (window, instants) = match &spec.bounds {
         ZonedBounds::Civil { min, max } => {
-            let window = hegel_internal_unwrap!(
-                Window::aligned(wall_ns(min), wall_ns(max), unit),
-                "generate_zoned_datetime: validated bounds hold no value"
-            );
-            let civil = draw_wall(ntc, zone, &window, unit, avoid)?;
-            (window, None, civil, None)
+            let (lo, hi) = wall_range(zone, &MIN_TIMESTAMP, &MAX_TIMESTAMP)?;
+            let window = Window::aligned(wall_ns(min).max(lo), wall_ns(max).min(hi), unit);
+            let instants = (instant_ns(&MIN_TIMESTAMP), instant_ns(&MAX_TIMESTAMP));
+            (window, instants)
         }
-        ZonedBounds::Instant { min, max } => {
-            let (lo, hi) = (instant_ns(min), instant_ns(max));
-            match wall_window(zone, min, max, unit)? {
-                Some(window) => {
-                    let civil = draw_wall(ntc, zone, &window, unit, avoid)?;
-                    (window, Some((lo, hi)), civil, None)
-                }
-                None => {
-                    let (civil, at) = draw_from_instant(ntc, zone, lo, hi, unit)?;
-                    (Window::envelope(), Some((lo, hi)), civil, Some(at))
-                }
-            }
-        }
+        ZonedBounds::Instant { min, max } => match wall_window(zone, min, max, unit)? {
+            Some(window) => (Some(window), (instant_ns(min), instant_ns(max))),
+            None => return draw_from_instant(ntc, tz, entry, zone, spec, min, max),
+        },
     };
+    let Some(window) = window else {
+        return Err(invalid(ntc));
+    };
+    let mut civil = draw_wall(ntc, zone, &window, unit, avoid)?;
     let mut resolution = zone.resolve(&civil, false)?;
     if resolution.kind == Kind::Gap && spec.imaginary == Imaginary::Avoid {
         civil = match past_gap(zone, &resolution, unit, &window)? {
@@ -731,21 +958,16 @@ fn draw_zoned(
         );
     }
     let fold = match (resolution.kind, spec.ambiguous) {
-        (Kind::Fold, Ambiguous::Both) => match drawn {
-            Some(at) => zone.resolve(&civil, true)?.timestamp <= at,
-            None => ntc.weighted(0.5, None)?,
-        },
+        (Kind::Fold, Ambiguous::Both) => ntc.weighted(0.5, None)?,
         (Kind::Fold, Ambiguous::Later) => true,
         _ => false,
     };
     if fold {
         resolution = zone.resolve(&civil, true)?;
     }
-    if let Some((lo, hi)) = instants {
-        let instant = instant_ns(&resolution.timestamp);
-        if instant < lo || instant > hi {
-            return Err(invalid(ntc));
-        }
+    let instant = instant_ns(&resolution.timestamp);
+    if instant < instants.0 || instant > instants.1 {
+        return Err(invalid(ntc));
     }
     Ok(zoned(entry, civil, fold, &resolution))
 }

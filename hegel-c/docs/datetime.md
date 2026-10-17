@@ -345,8 +345,10 @@ window] · date · time · [fold].
 1. Draw the zone.
 2. Convert instant bounds into a wall-clock window in that zone. When the
    window inverts, or is a day or shorter and touches a transition, draw
-   the instant directly (6.3) and convert; Hypothesis's aware mode found
-   this fallback necessary and the reasons apply here unchanged.
+   the instant directly (6.3) and convert (the instant fixes which repeat
+   of a fold the value means, so no fold node follows); Hypothesis's
+   aware mode found this fallback necessary and the reasons apply here
+   unchanged.
 3. Draw `targeted` with a fixed small probability (Hypothesis uses 5%;
    this proposal starts there and lets the generation parameters tune it
    per test case like the integer category weights). Skip the node when

@@ -347,15 +347,11 @@ fn zoned_spec_setters_validate_their_arguments() {
             at(1),
             at(59),
         ));
-        assert_eq!(
-            hegel_zoned_spec_set_precision(
-                ctx,
-                spec,
-                hegel_precision_t::HEGEL_PRECISION_MINUTES as u32
-            ),
-            HEGEL_E_INVALID_ARG
-        );
-        assert!(last_error(ctx).contains("no value at precision"));
+        ok(hegel_zoned_spec_set_precision(
+            ctx,
+            spec,
+            hegel_precision_t::HEGEL_PRECISION_MINUTES as u32,
+        ));
         ok(hegel_zoned_spec_set_civil_bounds(
             ctx, spec, whole.0, whole.1,
         ));
@@ -487,6 +483,33 @@ fn generate_zoned_datetime_draws_consistent_values_and_validates_handles() {
         complete_valid(ctx, tc);
         drain(ctx, run);
         ok(hegel_c::hegel_run_free(ctx, run));
+
+        ok(hegel_zoned_spec_set_instant_bounds(
+            ctx,
+            spec,
+            at(1),
+            at(59),
+        ));
+        ok(hegel_zoned_spec_set_precision(
+            ctx,
+            spec,
+            hegel_precision_t::HEGEL_PRECISION_MINUTES as u32,
+        ));
+        let run = run_of(ctx, 5);
+        let tc = next_case(ctx, run);
+        assert_eq!(
+            hegel_generate_zoned_datetime(ctx, tc, tz, spec, &mut value, &mut zone),
+            HEGEL_E_INVALID_ARG
+        );
+        assert!(last_error(ctx).contains("no value at precision"));
+        complete_valid(ctx, tc);
+        drain(ctx, run);
+        ok(hegel_c::hegel_run_free(ctx, run));
+        ok(hegel_zoned_spec_set_precision(
+            ctx,
+            spec,
+            hegel_precision_t::HEGEL_PRECISION_SECONDS as u32,
+        ));
 
         ok(set_names(ctx, tz, &["America/New_York"]));
         for (min, max, kind) in [
