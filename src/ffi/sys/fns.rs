@@ -143,6 +143,9 @@ macro_rules! for_each_hegel_fn {
             fn hegel_test_case_printer(ctx: *mut HegelContext, tc: *mut HegelTestCase, options: *const HegelPrinterOptions, out_printer: *mut *mut HegelPrinter) -> hegel_result_t;
             fn hegel_test_case_set_worker(ctx: *mut HegelContext, tc: *const HegelTestCase, worker_index: i64) -> hegel_result_t;
             fn hegel_test_case_should_capture(ctx: *mut HegelContext, tc: *const HegelTestCase, out_should_capture: *mut bool) -> hegel_result_t;
+            fn hegel_timezone_info(ctx: *mut HegelContext, name: *const c_char, out: *mut hegel_timezone_info_t) -> hegel_result_t;
+            fn hegel_timezone_offset_at(ctx: *mut HegelContext, name: *const c_char, timestamp: hegel_timestamp_t, out: *mut hegel_timezone_offset_t) -> hegel_result_t;
+            fn hegel_timezone_resolve(ctx: *mut HegelContext, name: *const c_char, civil: hegel_datetime_t, out: *mut hegel_timezone_resolution_t) -> hegel_result_t;
             fn hegel_tzdb_version(ctx: *mut HegelContext, out_version: *mut *const c_char) -> hegel_result_t;
             fn hegel_version(ctx: *mut HegelContext, out_version: *mut *const c_char) -> hegel_result_t;
         }

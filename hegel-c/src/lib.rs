@@ -257,6 +257,7 @@ use crate::control::hegel_internal_unwrap;
 use crate::embed::{data_source_for_blob, run_native_async};
 use crate::exchange::CaseExchange;
 use crate::native::bignum::BigInt;
+use crate::native::core::EngineError;
 use crate::native::printer::{Printer, PrinterError, Target as PrinterTarget};
 use crate::native::reflow::{ReflowOptions, reflow};
 use crate::settings::{
@@ -7158,6 +7159,342 @@ pub unsafe extern "C" fn hegel_tzdb_version(
     }
     unsafe { *out_version = crate::tzdata::VERSION_CSTR.as_ptr() };
     HEGEL_OK
+}
+
+/// An instant: `second`s since the Unix epoch and a `nanosecond` in
+/// `[0, 999999999]` counted forward from that second, so -1.5 s is
+/// `{-2, 500000000}`.
+#[repr(C)]
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
+pub struct hegel_timestamp_t {
+    pub second: i64,
+    pub nanosecond: u32,
+}
+
+/// How a wall-clock time maps to instants in a time zone; see
+/// `hegel_timezone_resolve`.
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[allow(non_camel_case_types)]
+pub enum hegel_timezone_kind_t {
+    /// Exactly one instant.
+    HEGEL_TIMEZONE_KIND_UNIQUE = 0,
+    /// None: the clocks skipped it.
+    HEGEL_TIMEZONE_KIND_GAP = 1,
+    /// Two: the clocks repeated it.
+    HEGEL_TIMEZONE_KIND_FOLD = 2,
+}
+
+/// A wall-clock time resolved against a time zone by
+/// `hegel_timezone_resolve`.
+#[repr(C)]
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
+pub struct hegel_timezone_resolution_t {
+    pub kind: hegel_timezone_kind_t,
+    /// For a gap or fold, the offsets (seconds east of UT) in force before
+    /// and after the transition; both equal to `offset_seconds` otherwise.
+    pub offset_before: i32,
+    pub offset_after: i32,
+    /// The offset in force at `timestamp`: for a gap `offset_after`, since
+    /// the resolved instant lies after the transition.
+    pub offset_seconds: i32,
+    /// False only for `Etc/Unknown`, whose offset is unknown and reported
+    /// as 0.
+    pub offset_known: bool,
+    /// The resolved instant under the rule every library's default agrees
+    /// on: the unique one; for a gap the wall time read with
+    /// `offset_before`, which shifts it forward by the gap's length; for a
+    /// fold the earlier instant (the later is `timestamp + offset_before -
+    /// offset_after`).
+    pub timestamp: hegel_timestamp_t,
+}
+
+/// The offset in force at an instant, from `hegel_timezone_offset_at`.
+#[repr(C)]
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
+pub struct hegel_timezone_offset_t {
+    /// Seconds east of UT; 0 when not `offset_known`.
+    pub offset_seconds: i32,
+    /// False only for `Etc/Unknown`.
+    pub offset_known: bool,
+    /// The tz database's DST flag for the local time type, informational
+    /// only: the main and rearguard data disagree on it for zones with
+    /// negative DST such as Europe/Dublin.
+    pub is_dst: bool,
+    /// The abbreviation in force, such as `"EST"` or `"+0530"`, as a
+    /// static string valid for the program's lifetime; `"-00"` for
+    /// `Etc/Unknown`.
+    pub abbreviation: *const c_char,
+}
+
+/// What libhegel knows about a time zone name, from `hegel_timezone_info`.
+#[repr(C)]
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
+pub struct hegel_timezone_info_t {
+    /// Whether the name is one the bundled database or `Etc/Unknown`; the
+    /// other fields are zero when it is not.
+    pub known: bool,
+    /// The name of the zone whose data applies: the link target for a link
+    /// name, the name itself otherwise. A static string valid for the
+    /// program's lifetime, or null when not `known`.
+    pub primary_name: *const c_char,
+    /// Whether the name is a link to `primary_name`.
+    pub is_link: bool,
+    /// The name's position on the shrink ladder: `UTC` is 0 and every
+    /// bundled name has its own rank; `Etc/Unknown` reports `UINT16_MAX`,
+    /// after all of them.
+    pub rank: u16,
+    /// The zone's feature tags, a bitwise OR of the `HEGEL_TIMEZONE_TAG_*`
+    /// constants.
+    pub tags: u32,
+}
+
+/// No offset change after 1970.
+pub const HEGEL_TIMEZONE_TAG_FIXED: u32 = 1 << 0;
+/// Some offset after 1970 is a whole number of hours.
+pub const HEGEL_TIMEZONE_TAG_WHOLE_HOUR: u32 = 1 << 1;
+/// Some offset after 1970 has minutes (`+05:30`, `+05:45`).
+pub const HEGEL_TIMEZONE_TAG_FRACTIONAL: u32 = 1 << 2;
+/// Some offset in the zone's history has seconds (local mean time,
+/// Africa/Monrovia's `-00:44:30` until 1972).
+pub const HEGEL_TIMEZONE_TAG_SECONDS: u32 = 1 << 3;
+/// One annual pair of one-hour transitions.
+pub const HEGEL_TIMEZONE_TAG_DST: u32 = 1 << 4;
+/// Daylight saving of a size other than one hour (Lord Howe's 30 minutes,
+/// Troll's two hours).
+pub const HEGEL_TIMEZONE_TAG_DST_OTHER: u32 = 1 << 5;
+/// More than two offset changes in some year (Morocco's Ramadan rule).
+pub const HEGEL_TIMEZONE_TAG_MULTI: u32 = 1 << 6;
+/// A change of standard offset (Europe/Moscow in 2011 and 2014).
+pub const HEGEL_TIMEZONE_TAG_BASE_CHANGE: u32 = 1 << 7;
+/// A transition at local midnight (America/Sao_Paulo, Africa/Cairo).
+pub const HEGEL_TIMEZONE_TAG_MIDNIGHT: u32 = 1 << 8;
+/// A gap or fold that spans local midnight (Asia/Pyongyang in 2015).
+pub const HEGEL_TIMEZONE_TAG_SPANS_MIDNIGHT: u32 = 1 << 9;
+/// A skipped or doubled whole day (Pacific/Apia in 2011).
+pub const HEGEL_TIMEZONE_TAG_WHOLE_DAY: u32 = 1 << 10;
+/// A transition that changes the abbreviation or DST flag but not the
+/// offset (Europe/Lisbon in 1992).
+pub const HEGEL_TIMEZONE_TAG_SAME_OFFSET: u32 = 1 << 11;
+/// The `-00` undefined offset (`Factory`, `Etc/Unknown`).
+pub const HEGEL_TIMEZONE_TAG_UNDEFINED: u32 = 1 << 12;
+/// A link to another zone's data (`Asia/Calcutta`).
+pub const HEGEL_TIMEZONE_TAG_LINK: u32 = 1 << 13;
+/// A legacy name (`EST`, `EST5EDT`), excluded from the default zone set.
+pub const HEGEL_TIMEZONE_TAG_LEGACY: u32 = 1 << 14;
+/// The POSIX-signed `Etc/GMT+5` family, where `+5` means UTC-5.
+pub const HEGEL_TIMEZONE_TAG_INVERTED_SIGN: u32 = 1 << 15;
+
+fn c_timezone_tags(tags: crate::tzdata::Tags) -> u32 {
+    use crate::tzdata::Tag;
+    tags.iter()
+        .map(|tag| match tag {
+            Tag::Fixed => HEGEL_TIMEZONE_TAG_FIXED,
+            Tag::WholeHour => HEGEL_TIMEZONE_TAG_WHOLE_HOUR,
+            Tag::Fractional => HEGEL_TIMEZONE_TAG_FRACTIONAL,
+            Tag::Seconds => HEGEL_TIMEZONE_TAG_SECONDS,
+            Tag::Dst => HEGEL_TIMEZONE_TAG_DST,
+            Tag::DstOther => HEGEL_TIMEZONE_TAG_DST_OTHER,
+            Tag::Multi => HEGEL_TIMEZONE_TAG_MULTI,
+            Tag::BaseChange => HEGEL_TIMEZONE_TAG_BASE_CHANGE,
+            Tag::Midnight => HEGEL_TIMEZONE_TAG_MIDNIGHT,
+            Tag::SpansMidnight => HEGEL_TIMEZONE_TAG_SPANS_MIDNIGHT,
+            Tag::WholeDay => HEGEL_TIMEZONE_TAG_WHOLE_DAY,
+            Tag::SameOffset => HEGEL_TIMEZONE_TAG_SAME_OFFSET,
+            Tag::Undefined => HEGEL_TIMEZONE_TAG_UNDEFINED,
+            Tag::Link => HEGEL_TIMEZONE_TAG_LINK,
+            Tag::Legacy => HEGEL_TIMEZONE_TAG_LEGACY,
+            Tag::InvertedSign => HEGEL_TIMEZONE_TAG_INVERTED_SIGN,
+        })
+        .fold(0, |mask, bit| mask | bit)
+}
+
+/// Shared prologue of the `hegel_timezone_*` queries: clear the error
+/// channel, require a non-null UTF-8 `name` and a non-null `out`, look the
+/// name up (`None` when the database lacks it), run `query` and write its
+/// value to `*out`; an argument error reports `HEGEL_E_INVALID_ARG` and a
+/// violated engine invariant `HEGEL_E_INTERNAL`.
+unsafe fn timezone_query<T>(
+    ctx: *mut HegelContext,
+    fn_name: &str,
+    name: *const c_char,
+    out: *mut T,
+    query: impl FnOnce(&str, Option<crate::native::timezone::TimeZone>) -> Result<T, EngineError>,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    if name.is_null() {
+        set_last_error(ctx, &format!("{fn_name}: name is null"));
+        return HEGEL_E_INVALID_ARG;
+    }
+    let Ok(name) = unsafe { CStr::from_ptr(name) }.to_str() else {
+        set_last_error(ctx, &format!("{fn_name}: name is not valid UTF-8"));
+        return HEGEL_E_INVALID_ARG;
+    };
+    if out.is_null() {
+        set_last_error(ctx, &format!("{fn_name}: out parameter is null"));
+        return HEGEL_E_INVALID_ARG;
+    }
+    let result = crate::native::timezone::TimeZone::lookup(name)
+        .map_err(EngineError::from)
+        .and_then(|zone| query(name, zone));
+    match result {
+        Ok(value) => {
+            unsafe { *out = value };
+            HEGEL_OK
+        }
+        Err(e) => translate_construct_error(ctx, e),
+    }
+}
+
+fn known_timezone(
+    fn_name: &str,
+    name: &str,
+    zone: Option<crate::native::timezone::TimeZone>,
+) -> Result<crate::native::timezone::TimeZone, EngineError> {
+    zone.ok_or_else(|| {
+        EngineError::InvalidArgument(format!(
+            "{fn_name}: unknown time zone {name:?}; names are matched exactly as the \
+             IANA database spells them, plus Etc/Unknown"
+        ))
+    })
+}
+
+/// Classify a wall-clock time against a time zone and resolve it to an
+/// instant. A query, not a draw: it lets a frontend without a capable
+/// native date library check a generated value, and makes libhegel's
+/// evaluator testable from every binding.
+///
+/// Parameters:
+/// `name`: A time zone name exactly as the IANA database spells it (link
+///   names included), or `Etc/Unknown`, the zone with a known instant and
+///   an unknown offset, in which the civil time is read as UTC.
+/// `civil`: A valid naive datetime (see `hegel_generate_datetime`).
+/// `out`: Receives the classification, the offsets and the resolved
+///   instant; see `hegel_timezone_resolution_t`.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown name or an
+/// invalid datetime.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_timezone_resolve(
+    ctx: *mut HegelContext,
+    name: *const c_char,
+    civil: hegel_datetime_t,
+    out: *mut hegel_timezone_resolution_t,
+) -> hegel_result_t {
+    use crate::native::timezone::Kind;
+    unsafe {
+        timezone_query(ctx, "hegel_timezone_resolve", name, out, |name, zone| {
+            let zone = known_timezone("hegel_timezone_resolve", name, zone)?;
+            let r = zone.resolve(&rust_datetime(&civil), false)?;
+            Ok(hegel_timezone_resolution_t {
+                kind: match r.kind {
+                    Kind::Unique => hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_UNIQUE,
+                    Kind::Gap => hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_GAP,
+                    Kind::Fold => hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_FOLD,
+                },
+                offset_before: r.offset_before,
+                offset_after: r.offset_after,
+                offset_seconds: r.offset,
+                offset_known: r.offset_known,
+                timestamp: hegel_timestamp_t {
+                    second: r.timestamp.second,
+                    nanosecond: r.timestamp.nanosecond,
+                },
+            })
+        })
+    }
+}
+
+/// The offset a time zone has in force at an instant.
+///
+/// Parameters:
+/// `name`: As for `hegel_timezone_resolve`.
+/// `timestamp`: The instant; `nanosecond` must be at most 999999999.
+/// `out`: Receives the offset, its DST flag and abbreviation; see
+///   `hegel_timezone_offset_t`.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown name or an
+/// out-of-range nanosecond.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_timezone_offset_at(
+    ctx: *mut HegelContext,
+    name: *const c_char,
+    timestamp: hegel_timestamp_t,
+    out: *mut hegel_timezone_offset_t,
+) -> hegel_result_t {
+    use crate::native::timezone::{
+        TimeZone, Timestamp, UNKNOWN_ABBREVIATION_CSTR, c_strings_of, type_at,
+    };
+    unsafe {
+        timezone_query(ctx, "hegel_timezone_offset_at", name, out, |name, zone| {
+            let zone = known_timezone("hegel_timezone_offset_at", name, zone)?;
+            let offset = zone.offset_at(Timestamp {
+                second: timestamp.second,
+                nanosecond: timestamp.nanosecond,
+            })?;
+            let abbreviation = match zone {
+                TimeZone::Unknown => UNKNOWN_ABBREVIATION_CSTR,
+                TimeZone::Named(name) => {
+                    let kind = type_at(name.zone, timestamp.second)?;
+                    c_strings_of(name)?.abbreviations[kind.abbreviation].as_c_str()
+                }
+            };
+            Ok(hegel_timezone_offset_t {
+                offset_seconds: offset.seconds,
+                offset_known: offset.known,
+                is_dst: offset.is_dst,
+                abbreviation: abbreviation.as_ptr(),
+            })
+        })
+    }
+}
+
+/// What libhegel knows about a time zone name.
+///
+/// Parameters:
+/// `name`: Any string; an unknown name is not an error but reports
+///   `known` false.
+/// `out`: Receives the description; see `hegel_timezone_info_t`.
+///
+/// Returns `HEGEL_OK`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_timezone_info(
+    ctx: *mut HegelContext,
+    name: *const c_char,
+    out: *mut hegel_timezone_info_t,
+) -> hegel_result_t {
+    use crate::native::timezone::{TimeZone, UNKNOWN_NAME_CSTR, c_strings_of};
+    unsafe {
+        timezone_query(ctx, "hegel_timezone_info", name, out, |_, zone| {
+            Ok(match zone {
+                None => hegel_timezone_info_t {
+                    known: false,
+                    primary_name: ptr::null(),
+                    is_link: false,
+                    rank: 0,
+                    tags: 0,
+                },
+                Some(TimeZone::Unknown) => hegel_timezone_info_t {
+                    known: true,
+                    primary_name: UNKNOWN_NAME_CSTR.as_ptr(),
+                    is_link: false,
+                    rank: u16::MAX,
+                    tags: HEGEL_TIMEZONE_TAG_UNDEFINED,
+                },
+                Some(TimeZone::Named(name)) => hegel_timezone_info_t {
+                    known: true,
+                    primary_name: c_strings_of(name)?.primary_name.as_ptr(),
+                    is_link: name.is_link(),
+                    rank: name.rank,
+                    tags: c_timezone_tags(name.tags),
+                },
+            })
+        })
+    }
 }
 
 #[cfg(test)]

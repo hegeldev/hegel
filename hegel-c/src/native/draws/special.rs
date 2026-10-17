@@ -38,7 +38,7 @@ pub struct DateTime {
 
 /// Days in the given month of the Gregorian `year`. Leap years follow the
 /// usual rule: divisible by 4 unless divisible by 100 but not 400.
-fn days_in_month(year: i32, month: u8) -> i64 {
+pub(crate) fn days_in_month(year: i32, month: u8) -> i64 {
     match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
@@ -93,7 +93,7 @@ pub(crate) fn civil_from_days(z: i64) -> Date {
     }
 }
 
-fn validate_date(what: &str, d: &Date) -> Result<(), EngineError> {
+pub(crate) fn validate_date(what: &str, d: &Date) -> Result<(), EngineError> {
     let valid = (MIN_YEAR..=MAX_YEAR).contains(&d.year)
         && (1..=12).contains(&d.month)
         && d.day >= 1
@@ -108,7 +108,7 @@ fn validate_date(what: &str, d: &Date) -> Result<(), EngineError> {
     Ok(())
 }
 
-fn validate_time(what: &str, t: &Time) -> Result<(), EngineError> {
+pub(crate) fn validate_time(what: &str, t: &Time) -> Result<(), EngineError> {
     let valid = t.hour <= 23 && t.minute <= 59 && t.second <= 59 && t.nanosecond <= 999_999_999;
     if !valid {
         return Err(EngineError::InvalidArgument(format!(

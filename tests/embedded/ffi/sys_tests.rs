@@ -194,6 +194,11 @@ mod drift {
             HEGEL_HC_TEST_CASES_TOO_LARGE,
             HEGEL_HC_LARGE_INITIAL_TEST_CASE,
         }
+        hegel_timezone_kind_t {
+            HEGEL_TIMEZONE_KIND_UNIQUE,
+            HEGEL_TIMEZONE_KIND_GAP,
+            HEGEL_TIMEZONE_KIND_FOLD,
+        }
     }
 
     macro_rules! assert_struct_mirrors {
@@ -215,7 +220,38 @@ mod drift {
         hegel_generate_bytes_result_t { data, len }
         hegel_generate_string_result_t { data, len }
         hegel_printer_value_result_t { data, len }
+        hegel_timestamp_t { second, nanosecond }
+        hegel_timezone_resolution_t { kind, offset_before, offset_after, offset_seconds, offset_known, timestamp }
+        hegel_timezone_offset_t { offset_seconds, offset_known, is_dst, abbreviation }
+        hegel_timezone_info_t { known, primary_name, is_link, rank, tags }
     }
+
+    macro_rules! assert_const_mirrors {
+        ($($name:ident),* $(,)?) => {
+            const _: () = {
+                $(assert!(mirror::$name == $name);)*
+            };
+        };
+    }
+
+    assert_const_mirrors!(
+        HEGEL_TIMEZONE_TAG_FIXED,
+        HEGEL_TIMEZONE_TAG_WHOLE_HOUR,
+        HEGEL_TIMEZONE_TAG_FRACTIONAL,
+        HEGEL_TIMEZONE_TAG_SECONDS,
+        HEGEL_TIMEZONE_TAG_DST,
+        HEGEL_TIMEZONE_TAG_DST_OTHER,
+        HEGEL_TIMEZONE_TAG_MULTI,
+        HEGEL_TIMEZONE_TAG_BASE_CHANGE,
+        HEGEL_TIMEZONE_TAG_MIDNIGHT,
+        HEGEL_TIMEZONE_TAG_SPANS_MIDNIGHT,
+        HEGEL_TIMEZONE_TAG_WHOLE_DAY,
+        HEGEL_TIMEZONE_TAG_SAME_OFFSET,
+        HEGEL_TIMEZONE_TAG_UNDEFINED,
+        HEGEL_TIMEZONE_TAG_LINK,
+        HEGEL_TIMEZONE_TAG_LEGACY,
+        HEGEL_TIMEZONE_TAG_INVERTED_SIGN,
+    );
 
     const _: () = {
         assert!(mirror::HEGEL_STATE_MACHINE_DONE == HEGEL_STATE_MACHINE_DONE);

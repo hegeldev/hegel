@@ -174,6 +174,68 @@ pub(crate) struct hegel_datetime_t {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct hegel_timestamp_t {
+    pub second: i64,
+    pub nanosecond: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum hegel_timezone_kind_t {
+    HEGEL_TIMEZONE_KIND_UNIQUE = 0,
+    HEGEL_TIMEZONE_KIND_GAP = 1,
+    HEGEL_TIMEZONE_KIND_FOLD = 2,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct hegel_timezone_resolution_t {
+    pub kind: hegel_timezone_kind_t,
+    pub offset_before: i32,
+    pub offset_after: i32,
+    pub offset_seconds: i32,
+    pub offset_known: bool,
+    pub timestamp: hegel_timestamp_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct hegel_timezone_offset_t {
+    pub offset_seconds: i32,
+    pub offset_known: bool,
+    pub is_dst: bool,
+    pub abbreviation: *const c_char,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct hegel_timezone_info_t {
+    pub known: bool,
+    pub primary_name: *const c_char,
+    pub is_link: bool,
+    pub rank: u16,
+    pub tags: u32,
+}
+
+pub(crate) const HEGEL_TIMEZONE_TAG_FIXED: u32 = 1 << 0;
+pub(crate) const HEGEL_TIMEZONE_TAG_WHOLE_HOUR: u32 = 1 << 1;
+pub(crate) const HEGEL_TIMEZONE_TAG_FRACTIONAL: u32 = 1 << 2;
+pub(crate) const HEGEL_TIMEZONE_TAG_SECONDS: u32 = 1 << 3;
+pub(crate) const HEGEL_TIMEZONE_TAG_DST: u32 = 1 << 4;
+pub(crate) const HEGEL_TIMEZONE_TAG_DST_OTHER: u32 = 1 << 5;
+pub(crate) const HEGEL_TIMEZONE_TAG_MULTI: u32 = 1 << 6;
+pub(crate) const HEGEL_TIMEZONE_TAG_BASE_CHANGE: u32 = 1 << 7;
+pub(crate) const HEGEL_TIMEZONE_TAG_MIDNIGHT: u32 = 1 << 8;
+pub(crate) const HEGEL_TIMEZONE_TAG_SPANS_MIDNIGHT: u32 = 1 << 9;
+pub(crate) const HEGEL_TIMEZONE_TAG_WHOLE_DAY: u32 = 1 << 10;
+pub(crate) const HEGEL_TIMEZONE_TAG_SAME_OFFSET: u32 = 1 << 11;
+pub(crate) const HEGEL_TIMEZONE_TAG_UNDEFINED: u32 = 1 << 12;
+pub(crate) const HEGEL_TIMEZONE_TAG_LINK: u32 = 1 << 13;
+pub(crate) const HEGEL_TIMEZONE_TAG_LEGACY: u32 = 1 << 14;
+pub(crate) const HEGEL_TIMEZONE_TAG_INVERTED_SIGN: u32 = 1 << 15;
+
+#[repr(C)]
 pub(crate) struct hegel_generate_bytes_result_t {
     pub data: *mut u8,
     pub len: usize,

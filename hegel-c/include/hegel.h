@@ -126,6 +126,89 @@
 #define HEGEL_STATE_MACHINE_DONE INT64_MIN
 
 /*
+ No offset change after 1970.
+ */
+#define HEGEL_TIMEZONE_TAG_FIXED (1 << 0)
+
+/*
+ Some offset after 1970 is a whole number of hours.
+ */
+#define HEGEL_TIMEZONE_TAG_WHOLE_HOUR (1 << 1)
+
+/*
+ Some offset after 1970 has minutes (`+05:30`, `+05:45`).
+ */
+#define HEGEL_TIMEZONE_TAG_FRACTIONAL (1 << 2)
+
+/*
+ Some offset in the zone's history has seconds (local mean time,
+ Africa/Monrovia's `-00:44:30` until 1972).
+ */
+#define HEGEL_TIMEZONE_TAG_SECONDS (1 << 3)
+
+/*
+ One annual pair of one-hour transitions.
+ */
+#define HEGEL_TIMEZONE_TAG_DST (1 << 4)
+
+/*
+ Daylight saving of a size other than one hour (Lord Howe's 30 minutes,
+ Troll's two hours).
+ */
+#define HEGEL_TIMEZONE_TAG_DST_OTHER (1 << 5)
+
+/*
+ More than two offset changes in some year (Morocco's Ramadan rule).
+ */
+#define HEGEL_TIMEZONE_TAG_MULTI (1 << 6)
+
+/*
+ A change of standard offset (Europe/Moscow in 2011 and 2014).
+ */
+#define HEGEL_TIMEZONE_TAG_BASE_CHANGE (1 << 7)
+
+/*
+ A transition at local midnight (America/Sao_Paulo, Africa/Cairo).
+ */
+#define HEGEL_TIMEZONE_TAG_MIDNIGHT (1 << 8)
+
+/*
+ A gap or fold that spans local midnight (Asia/Pyongyang in 2015).
+ */
+#define HEGEL_TIMEZONE_TAG_SPANS_MIDNIGHT (1 << 9)
+
+/*
+ A skipped or doubled whole day (Pacific/Apia in 2011).
+ */
+#define HEGEL_TIMEZONE_TAG_WHOLE_DAY (1 << 10)
+
+/*
+ A transition that changes the abbreviation or DST flag but not the
+ offset (Europe/Lisbon in 1992).
+ */
+#define HEGEL_TIMEZONE_TAG_SAME_OFFSET (1 << 11)
+
+/*
+ The `-00` undefined offset (`Factory`, `Etc/Unknown`).
+ */
+#define HEGEL_TIMEZONE_TAG_UNDEFINED (1 << 12)
+
+/*
+ A link to another zone's data (`Asia/Calcutta`).
+ */
+#define HEGEL_TIMEZONE_TAG_LINK (1 << 13)
+
+/*
+ A legacy name (`EST`, `EST5EDT`), excluded from the default zone set.
+ */
+#define HEGEL_TIMEZONE_TAG_LEGACY (1 << 14)
+
+/*
+ The POSIX-signed `Etc/GMT+5` family, where `+5` means UTC-5.
+ */
+#define HEGEL_TIMEZONE_TAG_INVERTED_SIGN (1 << 15)
+
+/*
  Result of a libhegel call. See "Calling convention" in the header
  preamble.
  */
@@ -335,6 +418,25 @@ typedef enum {
      */
     HEGEL_RUN_ERROR_INTERNAL = 6,
 } hegel_run_error_kind_t;
+
+/*
+ How a wall-clock time maps to instants in a time zone; see
+ `hegel_timezone_resolve`.
+ */
+typedef enum {
+    /*
+     Exactly one instant.
+     */
+    HEGEL_TIMEZONE_KIND_UNIQUE = 0,
+    /*
+     None: the clocks skipped it.
+     */
+    HEGEL_TIMEZONE_KIND_GAP = 1,
+    /*
+     Two: the clocks repeated it.
+     */
+    HEGEL_TIMEZONE_KIND_FOLD = 2,
+} hegel_timezone_kind_t;
 
 /*
  A phase of the property-test loop, used as a bit flag.
@@ -787,6 +889,106 @@ typedef struct {
     char *data;
     size_t len;
 } hegel_printer_value_result_t;
+
+/*
+ An instant: `second`s since the Unix epoch and a `nanosecond` in
+ `[0, 999999999]` counted forward from that second, so -1.5 s is
+ `{-2, 500000000}`.
+ */
+typedef struct {
+    int64_t second;
+    uint32_t nanosecond;
+} hegel_timestamp_t;
+
+/*
+ A wall-clock time resolved against a time zone by
+ `hegel_timezone_resolve`.
+ */
+typedef struct {
+    hegel_timezone_kind_t kind;
+    /*
+     For a gap or fold, the offsets (seconds east of UT) in force before
+     and after the transition; both equal to `offset_seconds` otherwise.
+     */
+    int32_t offset_before;
+    int32_t offset_after;
+    /*
+     The offset in force at `timestamp`: for a gap `offset_after`, since
+     the resolved instant lies after the transition.
+     */
+    int32_t offset_seconds;
+    /*
+     False only for `Etc/Unknown`, whose offset is unknown and reported
+     as 0.
+     */
+    bool offset_known;
+    /*
+     The resolved instant under the rule every library's default agrees
+     on: the unique one; for a gap the wall time read with
+     `offset_before`, which shifts it forward by the gap's length; for a
+     fold the earlier instant (the later is `timestamp + offset_before -
+     offset_after`).
+     */
+    hegel_timestamp_t timestamp;
+} hegel_timezone_resolution_t;
+
+/*
+ The offset in force at an instant, from `hegel_timezone_offset_at`.
+ */
+typedef struct {
+    /*
+     Seconds east of UT; 0 when not `offset_known`.
+     */
+    int32_t offset_seconds;
+    /*
+     False only for `Etc/Unknown`.
+     */
+    bool offset_known;
+    /*
+     The tz database's DST flag for the local time type, informational
+     only: the main and rearguard data disagree on it for zones with
+     negative DST such as Europe/Dublin.
+     */
+    bool is_dst;
+    /*
+     The abbreviation in force, such as `"EST"` or `"+0530"`, as a
+     static string valid for the program's lifetime; `"-00"` for
+     `Etc/Unknown`.
+     */
+    const char *abbreviation;
+} hegel_timezone_offset_t;
+
+/*
+ What libhegel knows about a time zone name, from `hegel_timezone_info`.
+ */
+typedef struct {
+    /*
+     Whether the name is one the bundled database or `Etc/Unknown`; the
+     other fields are zero when it is not.
+     */
+    bool known;
+    /*
+     The name of the zone whose data applies: the link target for a link
+     name, the name itself otherwise. A static string valid for the
+     program's lifetime, or null when not `known`.
+     */
+    const char *primary_name;
+    /*
+     Whether the name is a link to `primary_name`.
+     */
+    bool is_link;
+    /*
+     The name's position on the shrink ladder: `UTC` is 0 and every
+     bundled name has its own rank; `Etc/Unknown` reports `UINT16_MAX`,
+     after all of them.
+     */
+    uint16_t rank;
+    /*
+     The zone's feature tags, a bitwise OR of the `HEGEL_TIMEZONE_TAG_*`
+     constants.
+     */
+    uint32_t tags;
+} hegel_timezone_info_t;
 
 #ifdef __cplusplus
 extern "C" {
@@ -3134,6 +3336,59 @@ hegel_result_t hegel_version(hegel_context_t *ctx, const char **out_version);
  Returns `HEGEL_OK`.
  */
 hegel_result_t hegel_tzdb_version(hegel_context_t *ctx, const char **out_version);
+
+/*
+ Classify a wall-clock time against a time zone and resolve it to an
+ instant. A query, not a draw: it lets a frontend without a capable
+ native date library check a generated value, and makes libhegel's
+ evaluator testable from every binding.
+
+ Parameters:
+ `name`: A time zone name exactly as the IANA database spells it (link
+   names included), or `Etc/Unknown`, the zone with a known instant and
+   an unknown offset, in which the civil time is read as UTC.
+ `civil`: A valid naive datetime (see `hegel_generate_datetime`).
+ `out`: Receives the classification, the offsets and the resolved
+   instant; see `hegel_timezone_resolution_t`.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown name or an
+ invalid datetime.
+ */
+hegel_result_t hegel_timezone_resolve(hegel_context_t *ctx,
+                                      const char *name,
+                                      hegel_datetime_t civil,
+                                      hegel_timezone_resolution_t *out);
+
+/*
+ The offset a time zone has in force at an instant.
+
+ Parameters:
+ `name`: As for `hegel_timezone_resolve`.
+ `timestamp`: The instant; `nanosecond` must be at most 999999999.
+ `out`: Receives the offset, its DST flag and abbreviation; see
+   `hegel_timezone_offset_t`.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown name or an
+ out-of-range nanosecond.
+ */
+hegel_result_t hegel_timezone_offset_at(hegel_context_t *ctx,
+                                        const char *name,
+                                        hegel_timestamp_t timestamp,
+                                        hegel_timezone_offset_t *out);
+
+/*
+ What libhegel knows about a time zone name.
+
+ Parameters:
+ `name`: Any string; an unknown name is not an error but reports
+   `known` false.
+ `out`: Receives the description; see `hegel_timezone_info_t`.
+
+ Returns `HEGEL_OK`.
+ */
+hegel_result_t hegel_timezone_info(hegel_context_t *ctx,
+                                   const char *name,
+                                   hegel_timezone_info_t *out);
 
 #ifdef __cplusplus
 }  // extern "C"
