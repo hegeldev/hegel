@@ -7255,7 +7255,7 @@ pub struct hegel_timezone_info_t {
 
 /// No offset change after 1970.
 pub const HEGEL_TIMEZONE_TAG_FIXED: u32 = 1 << 0;
-/// Some offset after 1970 is a whole number of hours.
+/// Every offset after 1970 is a whole number of hours.
 pub const HEGEL_TIMEZONE_TAG_WHOLE_HOUR: u32 = 1 << 1;
 /// Some offset after 1970 has minutes (`+05:30`, `+05:45`).
 pub const HEGEL_TIMEZONE_TAG_FRACTIONAL: u32 = 1 << 2;
@@ -7413,12 +7413,14 @@ pub unsafe extern "C" fn hegel_timezone_resolve(
 ///
 /// Parameters:
 /// `name`: As for `hegel_timezone_resolve`.
-/// `timestamp`: The instant; `nanosecond` must be at most 999999999.
+/// `timestamp`: The instant; `second` must fall in the civil range of
+///   `hegel_generate_datetime`, years `[-999999, 999999]`, and `nanosecond`
+///   must be at most 999999999.
 /// `out`: Receives the offset, its DST flag and abbreviation; see
 ///   `hegel_timezone_offset_t`.
 ///
 /// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown name or an
-/// out-of-range nanosecond.
+/// out-of-range timestamp.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_timezone_offset_at(
     ctx: *mut HegelContext,

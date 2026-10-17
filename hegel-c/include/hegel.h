@@ -131,7 +131,7 @@
 #define HEGEL_TIMEZONE_TAG_FIXED (1 << 0)
 
 /*
- Some offset after 1970 is a whole number of hours.
+ Every offset after 1970 is a whole number of hours.
  */
 #define HEGEL_TIMEZONE_TAG_WHOLE_HOUR (1 << 1)
 
@@ -3364,12 +3364,14 @@ hegel_result_t hegel_timezone_resolve(hegel_context_t *ctx,
 
  Parameters:
  `name`: As for `hegel_timezone_resolve`.
- `timestamp`: The instant; `nanosecond` must be at most 999999999.
+ `timestamp`: The instant; `second` must fall in the civil range of
+   `hegel_generate_datetime`, years `[-999999, 999999]`, and `nanosecond`
+   must be at most 999999999.
  `out`: Receives the offset, its DST flag and abbreviation; see
    `hegel_timezone_offset_t`.
 
  Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown name or an
- out-of-range nanosecond.
+ out-of-range timestamp.
  */
 hegel_result_t hegel_timezone_offset_at(hegel_context_t *ctx,
                                         const char *name,

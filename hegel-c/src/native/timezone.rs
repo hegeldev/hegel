@@ -12,9 +12,12 @@
 //! a transition's pre- and post-transition clock readings, and a fold the
 //! same the other way round.
 //!
-//! Instants outside the civil envelope of [`MIN_YEAR`] to [`MAX_YEAR`] are
-//! clamped to it before the footer rule is evaluated, so no input can push
-//! the calendar arithmetic out of range; nothing here panics for any input.
+//! A [`Timestamp`] a query takes must lie in the civil envelope of
+//! [`MIN_YEAR`] to [`MAX_YEAR`] (§4), as a [`DateTime`] must, and one
+//! outside it is an argument error. The raw-second functions [`type_at`]
+//! and [`transitions`] clamp an instant to that envelope before the footer
+//! rule is evaluated, so no input can push the calendar arithmetic out of
+//! range; nothing here panics for any input.
 //!
 //! [`MIN_YEAR`]: crate::native::draws::special::MIN_YEAR
 //! [`MAX_YEAR`]: crate::native::draws::special::MAX_YEAR
@@ -176,6 +179,12 @@ impl TimeZone {
 }
 
 fn validate_timestamp(timestamp: &Timestamp) -> Result<(), EngineError> {
+    if !(MIN_INSTANT..=MAX_INSTANT).contains(&timestamp.second) {
+        return Err(EngineError::InvalidArgument(format!(
+            "timestamp.second must be in [{MIN_INSTANT}, {MAX_INSTANT}], got {}",
+            timestamp.second
+        )));
+    }
     if timestamp.nanosecond > 999_999_999 {
         return Err(EngineError::InvalidArgument(format!(
             "timestamp.nanosecond must be at most 999999999, got {}",

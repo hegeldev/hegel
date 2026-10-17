@@ -501,11 +501,11 @@ fn the_etc_gmt_family_inverts_the_sign() {
     ] {
         let zone = named(name);
         for second in [
-            i64::MIN,
+            MIN_INSTANT,
             instant_of(1800, 1, 1),
             0,
             instant_of(2400, 1, 1),
-            i64::MAX,
+            MAX_INSTANT,
         ] {
             let offset = zone.offset_at(whole(second)).unwrap();
             assert_eq!(
@@ -608,6 +608,17 @@ fn invalid_inputs_are_argument_errors() {
         TimeZone::Unknown.offset_at(bad_nanos),
         Err(EngineError::InvalidArgument(_))
     ));
+    for second in [MIN_INSTANT - 1, MAX_INSTANT + 1] {
+        let err = zone.offset_at(whole(second)).unwrap_err();
+        assert!(
+            matches!(err, EngineError::InvalidArgument(ref m) if m.contains("timestamp.second")),
+            "{err:?}"
+        );
+        assert!(matches!(
+            TimeZone::Unknown.offset_at(whole(second)),
+            Err(EngineError::InvalidArgument(_))
+        ));
+    }
     let err = zone
         .resolve(&civil(2024, 2, 30, 0, 0, 0), false)
         .unwrap_err();
@@ -650,7 +661,7 @@ fn nanoseconds_ride_along_and_never_change_the_offset() {
 }
 
 #[test]
-fn extreme_instants_are_clamped_rather_than_overflowing() {
+fn extreme_instants_are_rejected_by_queries_and_clamped_by_type_at() {
     assert_eq!(
         MIN_INSTANT,
         days_from_civil(&Date {
@@ -671,19 +682,25 @@ fn extreme_instants_are_clamped_rather_than_overflowing() {
     );
     for entry in all_names() {
         let zone = TimeZone::Named(entry);
-        for second in [
-            i64::MIN,
-            MIN_INSTANT - 1,
-            MIN_INSTANT,
-            MAX_INSTANT,
-            MAX_INSTANT + 1,
-            i64::MAX,
-        ] {
+        for second in [MIN_INSTANT, MAX_INSTANT] {
             let offset = zone.offset_at(whole(second)).unwrap();
-            let clamped = zone
-                .offset_at(whole(second.clamp(MIN_INSTANT, MAX_INSTANT)))
-                .unwrap();
-            assert_eq!(offset, clamped, "{} at {second}", entry.name);
+            let kind = type_at(entry.zone, second).unwrap();
+            assert_eq!(offset.seconds, kind.utoff, "{} at {second}", entry.name);
+        }
+        for second in [i64::MIN, MIN_INSTANT - 1, MAX_INSTANT + 1, i64::MAX] {
+            let err = zone.offset_at(whole(second)).unwrap_err();
+            assert!(
+                matches!(err, EngineError::InvalidArgument(ref m) if m.contains("timestamp.second")),
+                "{} at {second}: {err:?}",
+                entry.name
+            );
+            let clamped = second.clamp(MIN_INSTANT, MAX_INSTANT);
+            assert_eq!(
+                type_at(entry.zone, second).unwrap(),
+                type_at(entry.zone, clamped).unwrap(),
+                "{} at {second}",
+                entry.name
+            );
         }
         let first = civil(MIN_YEAR, 1, 1, 0, 0, 0);
         let last = civil(MAX_YEAR, 12, 31, 23, 59, 59);

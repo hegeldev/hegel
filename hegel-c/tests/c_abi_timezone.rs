@@ -32,6 +32,9 @@ fn civil(year: i32, month: u8, day: u8, hour: u8, minute: u8, second: u8) -> heg
     }
 }
 
+const MIN_INSTANT: i64 = -31_619_087_596_800;
+const MAX_INSTANT: i64 = 31_494_784_780_799;
+
 fn at(second: i64) -> hegel_timestamp_t {
     hegel_timestamp_t {
         second,
@@ -150,8 +153,11 @@ fn offset_at_reports_the_type_in_force() {
     assert_eq!(summer.offset_seconds, -14400);
     assert!(summer.is_dst);
     assert_eq!(string(summer.abbreviation), "EDT");
-    let far = unsafe { offset_at(ctx, &name, at(i64::MAX)) };
+    let far = unsafe { offset_at(ctx, &name, at(MAX_INSTANT)) };
     assert!([-18000, -14400].contains(&far.offset_seconds));
+    let early = unsafe { offset_at(ctx, &name, at(MIN_INSTANT)) };
+    assert_eq!(early.offset_seconds, -17762);
+    assert_eq!(string(early.abbreviation), "LMT");
     let kolkata = unsafe { offset_at(ctx, c"Asia/Calcutta", at(0)) };
     assert_eq!(kolkata.offset_seconds, 19800);
     assert_eq!(string(kolkata.abbreviation), "IST");
@@ -322,5 +328,20 @@ fn arguments_are_checked() {
         "{}",
         last_error(ctx)
     );
+    for second in [i64::MIN, MIN_INSTANT - 1, MAX_INSTANT + 1, i64::MAX] {
+        assert_eq!(
+            unsafe { hegel_timezone_offset_at(ctx, name.as_ptr(), at(second), &mut o) },
+            HEGEL_E_INVALID_ARG
+        );
+        assert!(
+            last_error(ctx).contains("timestamp.second must be in"),
+            "{}",
+            last_error(ctx)
+        );
+        assert_eq!(
+            unsafe { hegel_timezone_offset_at(ctx, c"Etc/Unknown".as_ptr(), at(second), &mut o) },
+            HEGEL_E_INVALID_ARG
+        );
+    }
     ok(unsafe { hegel_context_free(ctx) });
 }
