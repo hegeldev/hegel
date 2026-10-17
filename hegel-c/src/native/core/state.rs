@@ -34,6 +34,7 @@ use super::{
     DIRICHLET_ALPHA_FLOAT_NEAR_SQRT_MIN_POSITIVE, DIRICHLET_ALPHA_FLOAT_NEAR_ZERO,
     DIRICHLET_ALPHA_FLOAT_NON_DYADIC, DIRICHLET_ALPHA_FLOAT_SIGNED_ZERO,
     DIRICHLET_ALPHA_FLOAT_SUBNORMAL, DIRICHLET_ALPHA_INTERESTING, DIRICHLET_ALPHA_MIDDLE,
+    DIRICHLET_ALPHA_TARGETED, DIRICHLET_ALPHA_UNTARGETED,
 };
 use crate::control::{
     InternalError, hegel_internal_assert, hegel_internal_debug_assert, hegel_internal_unwrap,
@@ -768,8 +769,48 @@ impl Default for FloatGenerationParameters {
     }
 }
 
+/// The per-test-case probability that a zoned datetime draw targets a
+/// transition of its zone rather than drawing uniformly within its bounds
+/// (`hegel-c/docs/datetime.md` §6.2, Q4). Drawn from a Beta with mean
+/// [`TARGETED_PROBABILITY`], so most cases target at about that rate while
+/// a thin tail concentrates on transitions. Unlike the other swarm
+/// parameters it is drawn the first time a zoned datetime draw asks for it
+/// ([`NativeTestCase::datetime_parameters`]), so a test case that draws no
+/// zoned datetime keeps the random stream it had before the parameter
+/// existed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DatetimeGenerationParameters {
+    pub targeted_probability: f64,
+}
+
+/// The mean of [`DatetimeGenerationParameters::draw`], and the probability
+/// the targeted node's kind records, so that the kind is the same in every
+/// execution however the case's own parameters came out.
+pub const TARGETED_PROBABILITY: f64 = 0.05;
+
+impl DatetimeGenerationParameters {
+    const ALPHAS: [f64; 2] = [DIRICHLET_ALPHA_TARGETED, DIRICHLET_ALPHA_UNTARGETED];
+
+    pub fn draw(rng: &mut EngineRng) -> Result<Self, InternalError> {
+        let [targeted, _untargeted] = sample_dirichlet(Self::ALPHAS, rng)?;
+        Ok(DatetimeGenerationParameters {
+            targeted_probability: targeted,
+        })
+    }
+}
+
+impl Default for DatetimeGenerationParameters {
+    /// The mean of [`Self::draw`]; see [`GenerationParameters::default`].
+    fn default() -> Self {
+        DatetimeGenerationParameters {
+            targeted_probability: TARGETED_PROBABILITY,
+        }
+    }
+}
+
 /// Per-test-case *swarm* parameters: one set of category weights for integer
-/// draws and one for float draws. Drawn once at the start of each generated
+/// draws, one for float draws and the targeting rate of zoned datetime
+/// draws. Drawn once at the start of each generated
 /// test case (see [`Self::draw`]) and held constant across every draw and every
 /// clone-stream of that case.
 ///
@@ -1866,6 +1907,9 @@ pub struct FamilyCore {
     /// shared by every clone-stream so the whole case has one consistent
     /// distribution. Unset for replay-only families, which never sample.
     generation_parameters: OnceBox<GenerationParameters>,
+    /// The zoned datetime draws' targeting rate, drawn from the stream that
+    /// first asks for it; see [`NativeTestCase::datetime_parameters`].
+    datetime_parameters: OnceBox<DatetimeGenerationParameters>,
 }
 
 impl FamilyCore {
@@ -1879,6 +1923,7 @@ impl FamilyCore {
             events: Mutex::new(Vec::new()),
             fresh_ids: Mutex::new(FreshIds::default()),
             generation_parameters: OnceBox::new(),
+            datetime_parameters: OnceBox::new(),
         }
     }
 
@@ -2313,6 +2358,23 @@ impl NativeTestCase {
         self.rng = Some(rng);
         self.family.set_budget(self.max_size);
         self
+    }
+
+    /// This test case's [`DatetimeGenerationParameters`]: drawn from this
+    /// stream's RNG the first time any stream of the family asks, and the
+    /// default for a family that never samples (a replay).
+    pub(crate) fn datetime_parameters(
+        &mut self,
+    ) -> Result<DatetimeGenerationParameters, EngineError> {
+        if let Some(params) = self.family.datetime_parameters.get() {
+            return Ok(*params);
+        }
+        let Some(rng) = self.rng.as_mut() else {
+            return Ok(DatetimeGenerationParameters::default());
+        };
+        let params = DatetimeGenerationParameters::draw(rng)?;
+        let _ = self.family.datetime_parameters.set(Box::new(params));
+        Ok(params)
     }
 
     /// The family state shared by every stream of this test case.
@@ -2769,7 +2831,7 @@ impl NativeTestCase {
 
     /// [`draw_integer_as`](Self::draw_integer_as) for a draw that works in
     /// `BigInt` throughout.
-    fn draw_integer_from(
+    pub(crate) fn draw_integer_from(
         &mut self,
         kind: IntegerChoice,
         sample: impl Fn(&IntegerChoice, &mut EngineRng) -> Result<BigInt, InternalError>,
@@ -3190,6 +3252,17 @@ impl NativeTestCase {
     /// `p = 1 - 2^-32`) are honored. Routed here from `generate_boolean`.
     pub fn weighted_precise(&mut self, p: f64, forced: Option<bool>) -> Result<bool, EngineError> {
         self.weighted_with(p, forced, weighted_boolean_sample_precise)
+    }
+
+    /// A boolean node whose kind records the probability `p` but whose
+    /// fresh value is sampled with `sample_p`: for a decision whose rate
+    /// is a per-case generation parameter, so that the recorded kind is
+    /// the same in every execution (the kind ledger compares kinds across
+    /// executions, and a replay never draws parameters).
+    pub(crate) fn weighted_as(&mut self, p: f64, sample_p: f64) -> Result<bool, EngineError> {
+        self.weighted_with(p, None, move |_, rng| {
+            weighted_boolean_sample_precise(sample_p, rng)
+        })
     }
 
     fn weighted_with(

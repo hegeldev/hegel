@@ -178,7 +178,7 @@ impl TimeZone {
     }
 }
 
-fn validate_timestamp(timestamp: &Timestamp) -> Result<(), EngineError> {
+pub(crate) fn validate_timestamp(timestamp: &Timestamp) -> Result<(), EngineError> {
     if !(MIN_INSTANT..=MAX_INSTANT).contains(&timestamp.second) {
         return Err(EngineError::InvalidArgument(format!(
             "timestamp.second must be in [{MIN_INSTANT}, {MAX_INSTANT}], got {}",

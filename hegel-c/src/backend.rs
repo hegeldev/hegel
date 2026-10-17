@@ -6,6 +6,8 @@ use core::net::{Ipv4Addr, Ipv6Addr};
 use crate::native::bignum::BigInt;
 use crate::native::core::{ManyState, NativeStateMachine, NativeVariables, RecursionState};
 use crate::native::draws::special::{Date, DateTime, Time};
+use crate::native::draws::timezone::TimeZoneSpec;
+use crate::native::draws::zoned::{ZonedDateTime, ZonedSpec};
 use crate::native::draws::{FloatSpec, StringSpec};
 use crate::native::lark::generate::GrammarSpec;
 use crate::settings::HealthCheck;
@@ -109,6 +111,18 @@ pub trait DataSource: Send + Sync {
     /// Draw a naive [`DateTime`] in `[min, max]`. Errors with
     /// `InvalidArgument` for invalid or inverted bounds.
     fn generate_datetime(&self, min: DateTime, max: DateTime) -> Result<DateTime, DataSourceError>;
+
+    /// Draw a time zone name allowed by `spec`.
+    fn generate_timezone(&self, spec: &TimeZoneSpec) -> Result<String, DataSourceError>;
+
+    /// Draw a [`ZonedDateTime`] in a zone allowed by `tz` within `spec`'s
+    /// bounds. Errors with `InvalidArgument` for invalid or inverted
+    /// bounds.
+    fn generate_zoned_datetime(
+        &self,
+        tz: &TimeZoneSpec,
+        spec: &ZonedSpec,
+    ) -> Result<ZonedDateTime, DataSourceError>;
 
     /// Draw a UUID's 16 big-endian bytes. When `version` is set, the RFC
     /// 4122 version and variant nibbles are forced accordingly; errors with

@@ -778,3 +778,64 @@ fn a_string_under_a_grammar_moves_to_its_simplest_or_down_its_derivation() {
     assert!(moved);
     assert_eq!(shrinker.witness().0[0].value(), cb("cb"));
 }
+
+fn zone_body(tc: &mut NativeTestCase, _: &mut Lcg) -> Option<bool> {
+    let spec = crate::native::draws::timezone::TimeZoneSpec::new().unwrap();
+    let name = draw(tc, 1, |tc| {
+        crate::native::draws::timezone::draw_timezone(tc, &spec).map(|e| e.name.clone())
+    })?;
+    Some(name != "UTC" && name != "Etc/GMT+1")
+}
+
+fn any_zone_body(tc: &mut NativeTestCase, _: &mut Lcg) -> Option<bool> {
+    let spec = crate::native::draws::timezone::TimeZoneSpec::new().unwrap();
+    draw(tc, 1, |tc| {
+        crate::native::draws::timezone::draw_timezone(tc, &spec).map(|_| true)
+    })
+}
+
+#[test]
+fn a_string_under_a_time_zone_set_moves_to_the_simplest_or_down_the_ladder() {
+    let cb = |s: &str| ChoiceValue::String(s.chars().map(|c| c as u32).collect());
+    let mut spec = crate::native::draws::timezone::TimeZoneSpec::new().unwrap();
+    spec.set_names(
+        [
+            "UTC",
+            "Etc/GMT+1",
+            "America/Matamoros",
+            "Europe/London",
+            "America/Argentina/Buenos_Aires",
+        ]
+        .iter()
+        .map(|s| alloc::string::String::from(*s))
+        .collect(),
+    )
+    .unwrap();
+    let under_zones = |value: &str| {
+        ChoiceData::String(
+            Arc::clone(spec.kind()),
+            value.chars().map(u32::from).collect(),
+        )
+    };
+    let attempt = |body: Body, value: &str| {
+        let (mut shrinker, mut probe) = start(body, &[run(&[(A, cb(value))])], 0.5);
+        let key = edge_keys(shrinker.graph()).remove(0);
+        let moved =
+            drive_no_yield(shrinker.shrink_value(&mut probe, &key, &under_zones(value))).unwrap();
+        (moved, shrinker.witness().0[0].value())
+    };
+
+    assert_eq!(attempt(any_zone_body, "Europe/London"), (true, cb("UTC")));
+    assert_eq!(
+        attempt(zone_body, "America/Argentina/Buenos_Aires"),
+        (true, cb("Europe/London"))
+    );
+    assert_eq!(
+        attempt(zone_body, "Europe/London"),
+        (false, cb("Europe/London"))
+    );
+    assert_eq!(
+        attempt(zone_body, "Europe/Paris"),
+        (false, cb("Europe/Paris"))
+    );
+}

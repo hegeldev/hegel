@@ -199,6 +199,23 @@ mod drift {
             HEGEL_TIMEZONE_KIND_GAP,
             HEGEL_TIMEZONE_KIND_FOLD,
         }
+        hegel_precision_t {
+            HEGEL_PRECISION_NANOSECONDS,
+            HEGEL_PRECISION_MICROSECONDS,
+            HEGEL_PRECISION_MILLISECONDS,
+            HEGEL_PRECISION_SECONDS,
+            HEGEL_PRECISION_MINUTES,
+            HEGEL_PRECISION_HOURS,
+        }
+        hegel_imaginary_t {
+            HEGEL_IMAGINARY_ALLOW,
+            HEGEL_IMAGINARY_AVOID,
+        }
+        hegel_ambiguous_t {
+            HEGEL_AMBIGUOUS_BOTH,
+            HEGEL_AMBIGUOUS_EARLIER,
+            HEGEL_AMBIGUOUS_LATER,
+        }
     }
 
     macro_rules! assert_struct_mirrors {
@@ -224,6 +241,7 @@ mod drift {
         hegel_timezone_resolution_t { kind, offset_before, offset_after, offset_seconds, offset_known, timestamp }
         hegel_timezone_offset_t { offset_seconds, offset_known, is_dst, abbreviation }
         hegel_timezone_info_t { known, primary_name, is_link, rank, tags }
+        hegel_zoned_datetime_t { civil, offset_seconds, offset_known, fold, kind, offset_before, offset_after, timestamp }
     }
 
     macro_rules! assert_const_mirrors {

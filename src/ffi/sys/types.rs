@@ -41,6 +41,8 @@ opaque_handles!(
     HegelStateMachine,
     HegelStringGenerator,
     HegelTestCase,
+    HegelTimezoneSpec,
+    HegelZonedSpec,
 );
 
 #[repr(C)]
@@ -234,6 +236,45 @@ pub(crate) const HEGEL_TIMEZONE_TAG_UNDEFINED: u32 = 1 << 12;
 pub(crate) const HEGEL_TIMEZONE_TAG_LINK: u32 = 1 << 13;
 pub(crate) const HEGEL_TIMEZONE_TAG_LEGACY: u32 = 1 << 14;
 pub(crate) const HEGEL_TIMEZONE_TAG_INVERTED_SIGN: u32 = 1 << 15;
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub(crate) enum hegel_precision_t {
+    HEGEL_PRECISION_NANOSECONDS = 0,
+    HEGEL_PRECISION_MICROSECONDS = 1,
+    HEGEL_PRECISION_MILLISECONDS = 2,
+    HEGEL_PRECISION_SECONDS = 3,
+    HEGEL_PRECISION_MINUTES = 4,
+    HEGEL_PRECISION_HOURS = 5,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub(crate) enum hegel_imaginary_t {
+    HEGEL_IMAGINARY_ALLOW = 0,
+    HEGEL_IMAGINARY_AVOID = 1,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub(crate) enum hegel_ambiguous_t {
+    HEGEL_AMBIGUOUS_BOTH = 0,
+    HEGEL_AMBIGUOUS_EARLIER = 1,
+    HEGEL_AMBIGUOUS_LATER = 2,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct hegel_zoned_datetime_t {
+    pub civil: hegel_datetime_t,
+    pub offset_seconds: i32,
+    pub offset_known: bool,
+    pub fold: bool,
+    pub kind: hegel_timezone_kind_t,
+    pub offset_before: i32,
+    pub offset_after: i32,
+    pub timestamp: hegel_timestamp_t,
+}
 
 #[repr(C)]
 pub(crate) struct hegel_generate_bytes_result_t {

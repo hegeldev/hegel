@@ -221,6 +221,21 @@ impl DataSource for NativeDataSource {
         self.with_ntc(|ntc| crate::native::draws::special::generate_datetime(ntc, min, max))
     }
 
+    fn generate_timezone(
+        &self,
+        spec: &crate::native::draws::timezone::TimeZoneSpec,
+    ) -> Result<String, DataSourceError> {
+        self.with_ntc(|ntc| crate::native::draws::timezone::generate_timezone(ntc, spec))
+    }
+
+    fn generate_zoned_datetime(
+        &self,
+        tz: &crate::native::draws::timezone::TimeZoneSpec,
+        spec: &crate::native::draws::zoned::ZonedSpec,
+    ) -> Result<crate::native::draws::zoned::ZonedDateTime, DataSourceError> {
+        self.with_ntc(|ntc| crate::native::draws::zoned::generate_zoned_datetime(ntc, tz, spec))
+    }
+
     fn generate_uuid(&self, version: Option<u8>) -> Result<[u8; 16], DataSourceError> {
         self.with_ntc(|ntc| crate::native::draws::special::generate_uuid(ntc, version))
     }

@@ -138,6 +138,9 @@ include = [
     "hegel_verbosity_t",
     "hegel_nondeterminism_strictness_t",
     "hegel_status_t",
+    "hegel_precision_t",
+    "hegel_imaginary_t",
+    "hegel_ambiguous_t",
 ]
 
 [export.rename]
@@ -155,6 +158,8 @@ include = [
 "HegelPrinter" = "hegel_printer_t"
 "HegelPrinterOptions" = "hegel_printer_options_t"
 "HegelReflowOptions" = "hegel_reflow_options_t"
+"HegelTimezoneSpec" = "hegel_timezone_spec_t"
+"HegelZonedSpec" = "hegel_zoned_spec_t"
 
 # Enum types are named hegel_*_t directly in the Rust source, with each
 # variant pre-prefixed (HEGEL_STATUS_VALID etc.), so cbindgen's automatic

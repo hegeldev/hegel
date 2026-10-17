@@ -124,7 +124,7 @@ pub(crate) fn time_to_ns(t: &Time) -> i64 {
         + i64::from(t.nanosecond)
 }
 
-fn time_from_ns(ns: i64) -> Time {
+pub(crate) fn time_from_ns(ns: i64) -> Time {
     Time {
         hour: (ns / 3_600_000_000_000) as u8,
         minute: (ns / 60_000_000_000 % 60) as u8,
@@ -133,7 +133,7 @@ fn time_from_ns(ns: i64) -> Time {
     }
 }
 
-const LAST_NS_OF_DAY: i64 = 86_400_000_000_000 - 1;
+pub(crate) const LAST_NS_OF_DAY: i64 = 86_400_000_000_000 - 1;
 
 /// The unspanned bounded date draw shared by [`generate_date`] and
 /// [`generate_datetime`].
@@ -142,7 +142,7 @@ const LAST_NS_OF_DAY: i64 = 86_400_000_000_000 - 1;
 /// within the bounds, centred on 2000-01-01 (clamped into range) so that is
 /// the shrink target. Native lacks a parameterised `shrink_towards` on
 /// `draw_integer` (always 0), so the offset is drawn relative to the centre.
-fn draw_date_in(
+pub(crate) fn draw_date_in(
     ntc: &mut NativeTestCase,
     min_days: i64,
     max_days: i64,

@@ -37,6 +37,7 @@
 //! learned from every replay; a clone's record is not shrunk (only
 //! deleted) in this cut.
 
+use crate::native::draws::timezone::TimeZoneConstraint;
 use crate::native::lark::constraint::GrammarConstraint;
 use crate::native::lark::layout::Layout;
 use alloc::boxed::Box;
@@ -51,7 +52,7 @@ use crate::native::HashMap;
 use crate::native::bignum::{BigInt, ToPrimitive};
 use crate::native::core::Constraint;
 use crate::native::core::{ChoiceData, ChoiceNode, ChoiceValue, Span, flattened_len, sort_key};
-use crate::native::graph::{Addr, Frame, Graph, Ident, Run, Step, Walked};
+use crate::native::graph::{Addr, Frame, Graph, Ident, Run, Step, Walked, shrink_rank};
 use crate::native::nd::{self, Evidence, GauntletVerdict};
 use crate::native::shrinker::SweepMode;
 
@@ -575,31 +576,35 @@ impl GraphShrinker {
                     })
                     .await?;
             }
-            (ChoiceData::String(sc, _), ChoiceValue::String(v)) => {
-                match sc.constraint.as_ref().and_then(Constraint::grammar) {
-                    Some(constraint) => {
-                        let constraint = Arc::clone(constraint);
-                        changed |= self
-                            .shrink_grammar_string(probe, &mut key, data, &constraint, v)
-                            .await?;
-                    }
-                    None => {
-                        let mut v = v;
-                        let simplest = sc.simplest_codepoint()?;
-                        changed |= self
-                            .shrink_sequence(
-                                probe,
-                                &mut key,
-                                data,
-                                &mut v,
-                                sc.min_size,
-                                simplest,
-                                |s| ChoiceValue::String(s.to_vec()),
-                            )
-                            .await?;
-                    }
+            (ChoiceData::String(sc, _), ChoiceValue::String(v)) => match sc.constraint.as_ref() {
+                Some(Constraint::Grammar(constraint)) => {
+                    let constraint = Arc::clone(constraint);
+                    changed |= self
+                        .shrink_grammar_string(probe, &mut key, data, &constraint, v)
+                        .await?;
                 }
-            }
+                Some(Constraint::TimeZone(zones)) => {
+                    let zones = Arc::clone(zones);
+                    changed |= self
+                        .shrink_timezone_string(probe, &mut key, data, &zones, &v)
+                        .await?;
+                }
+                _ => {
+                    let mut v = v;
+                    let simplest = sc.simplest_codepoint()?;
+                    changed |= self
+                        .shrink_sequence(
+                            probe,
+                            &mut key,
+                            data,
+                            &mut v,
+                            sc.min_size,
+                            simplest,
+                            |s| ChoiceValue::String(s.to_vec()),
+                        )
+                        .await?;
+                }
+            },
             _ => {}
         }
         Ok(changed)
@@ -645,6 +650,41 @@ impl GraphShrinker {
                 None => return Ok(changed),
             }
         }
+    }
+
+    /// The ladder for a time zone name, `text` now: the lowest-ranked
+    /// allowed name, then each name below the current one on the rank
+    /// ladder from the nearest down, starting over from the first
+    /// accepted. The graph orders its values by [`shrink_rank`], so a name
+    /// that ranks above the current one there is skipped rather than
+    /// proposed and refused.
+    async fn shrink_timezone_string(
+        &mut self,
+        probe: &mut dyn GraphProbe,
+        key: &mut EdgeKey,
+        data: &ChoiceData,
+        zones: &TimeZoneConstraint,
+        text: &[u32],
+    ) -> Result<bool, RunError> {
+        let mut position = zones.position(text).unwrap_or(0);
+        let mut current = ChoiceValue::String(text.to_vec());
+        let mut changed = false;
+        'again: while position > 0 {
+            for candidate in core::iter::once(0).chain((1..position).rev()) {
+                let value = ChoiceValue::String(zones.name_at(candidate).to_vec());
+                if shrink_rank(&value) >= shrink_rank(&current) {
+                    continue;
+                }
+                if self.try_value(probe, key, data, value.clone()).await? {
+                    position = candidate;
+                    current = value;
+                    changed = true;
+                    continue 'again;
+                }
+            }
+            break;
+        }
+        Ok(changed)
     }
 
     /// The ladder for a sequence value: halve its length toward `min_len`,

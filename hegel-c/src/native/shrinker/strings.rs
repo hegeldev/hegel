@@ -470,15 +470,15 @@ impl<'a> Shrinker<'a> {
     }
 }
 
-/// The kind and value of a string node under no grammar (a string under a
-/// regex is one: its candidates are cheap to check against the pattern); see
-/// [`Shrinker::string_at`].
+/// The kind and value of a string node under no grammar and no time zone
+/// set (a string under a regex is one: its candidates are cheap to check
+/// against the pattern); see [`Shrinker::string_at`].
 fn plain_string(data: &ChoiceData) -> Option<(&StringChoice, &[u32])> {
     data.as_string().filter(|(sc, _)| {
-        sc.constraint
-            .as_ref()
-            .and_then(Constraint::grammar)
-            .is_none()
+        !matches!(
+            sc.constraint,
+            Some(Constraint::Grammar(_) | Constraint::TimeZone(_))
+        )
     })
 }
 

@@ -525,6 +525,53 @@ typedef enum {
 } hegel_status_t;
 
 /*
+ The unit the time part of a drawn zoned datetime is counted in; see
+ `hegel_zoned_spec_set_precision`.
+ */
+typedef enum {
+    HEGEL_PRECISION_NANOSECONDS = 0,
+    HEGEL_PRECISION_MICROSECONDS = 1,
+    HEGEL_PRECISION_MILLISECONDS = 2,
+    HEGEL_PRECISION_SECONDS = 3,
+    HEGEL_PRECISION_MINUTES = 4,
+    HEGEL_PRECISION_HOURS = 5,
+} hegel_precision_t;
+
+/*
+ What a zoned datetime draw does with a wall time the clocks skipped;
+ see `hegel_zoned_spec_set_imaginary`.
+ */
+typedef enum {
+    /*
+     Report it, with kind `HEGEL_TIMEZONE_KIND_GAP`.
+     */
+    HEGEL_IMAGINARY_ALLOW = 0,
+    /*
+     Move it to the first wall time after the gap.
+     */
+    HEGEL_IMAGINARY_AVOID = 1,
+} hegel_imaginary_t;
+
+/*
+ Which instant a zoned datetime draw means by a wall time the clocks
+ repeated; see `hegel_zoned_spec_set_ambiguous`.
+ */
+typedef enum {
+    /*
+     Either, decided by a drawn fold.
+     */
+    HEGEL_AMBIGUOUS_BOTH = 0,
+    /*
+     The earlier.
+     */
+    HEGEL_AMBIGUOUS_EARLIER = 1,
+    /*
+     The later.
+     */
+    HEGEL_AMBIGUOUS_LATER = 2,
+} hegel_ambiguous_t;
+
+/*
  Opaque handle to an engine-managed variable-length collection.
 
  Created by `hegel_new_collection` on a test case; driven by
@@ -777,6 +824,31 @@ typedef struct hegel_string_generator_t hegel_string_generator_t;
 typedef struct hegel_test_case_t hegel_test_case_t;
 
 /*
+ The allowed names of a time zone draw
+
+ Build one with `hegel_timezone_spec_new`, which allows every name in
+ the bundled database with link names in and legacy names out, change
+ it with the `hegel_timezone_spec_set_*` setters, and free it with
+ `hegel_timezone_spec_free` once no draws will use it again. A spec may
+ be drawn from by any number of test cases and threads once configured;
+ each setter call requires exclusive access.
+ */
+typedef struct hegel_timezone_spec_t hegel_timezone_spec_t;
+
+/*
+ The bounds and policies of a zoned datetime draw
+
+ Build one with `hegel_zoned_spec_new`, whose defaults are the whole
+ civil range of years `[-999999, 999999]` on the wall clock, nanosecond
+ precision, gap times allowed and both folds drawn; change it with the
+ `hegel_zoned_spec_set_*` setters and free it with
+ `hegel_zoned_spec_free`. A spec may be drawn from by any number of test
+ cases and threads once configured; each setter call requires exclusive
+ access.
+ */
+typedef struct hegel_zoned_spec_t hegel_zoned_spec_t;
+
+/*
  Per-line output callback, passed to `hegel_run_start` /
  `hegel_test_case_from_blob` (see there for the full contract). `user_data`
  is the pointer supplied alongside the callback; `line` is one line of
@@ -989,6 +1061,40 @@ typedef struct {
      */
     uint32_t tags;
 } hegel_timezone_info_t;
+
+/*
+ A drawn zoned datetime: the wall-clock time `civil` in the zone named
+ by the draw's string result, resolved as `hegel_timezone_resolve`
+ resolves it.
+ */
+typedef struct {
+    hegel_datetime_t civil;
+    /*
+     The offset in force at `timestamp`; 0 when not `offset_known`.
+     */
+    int32_t offset_seconds;
+    /*
+     False for `Etc/Unknown` and for an opaque zone.
+     */
+    bool offset_known;
+    /*
+     Which instant of a repeated wall time the value means (the later
+     when set); false for a unique or skipped wall time.
+     */
+    bool fold;
+    hegel_timezone_kind_t kind;
+    /*
+     For a gap or fold, the offsets before and after the transition;
+     both `offset_seconds` otherwise.
+     */
+    int32_t offset_before;
+    int32_t offset_after;
+    /*
+     The resolved instant: the unique one, the one `fold` picks, or for
+     a gap the wall time read with `offset_before`.
+     */
+    hegel_timestamp_t timestamp;
+} hegel_zoned_datetime_t;
 
 #ifdef __cplusplus
 extern "C" {
@@ -3391,6 +3497,226 @@ hegel_result_t hegel_timezone_offset_at(hegel_context_t *ctx,
 hegel_result_t hegel_timezone_info(hegel_context_t *ctx,
                                    const char *name,
                                    hegel_timezone_info_t *out);
+
+/*
+ Create a time zone spec allowing every bundled name, with link names
+ such as `Asia/Calcutta` included, legacy names such as `EST5EDT`
+ excluded and `Etc/Unknown` excluded.
+
+ On success writes a caller-owned handle into `*out_spec` (release with
+ `hegel_timezone_spec_free`) and returns `HEGEL_OK`. Returns
+ `HEGEL_E_INVALID_ARG` for a NULL `out_spec`.
+ */
+hegel_result_t hegel_timezone_spec_new(hegel_context_t *ctx, hegel_timezone_spec_t **out_spec);
+
+/*
+ Free a spec previously returned by `hegel_timezone_spec_new`. Safe to
+ call with NULL (a no-op that returns `HEGEL_OK`).
+ */
+hegel_result_t hegel_timezone_spec_free(hegel_context_t *ctx, hegel_timezone_spec_t *spec);
+
+/*
+ Restrict the draw to an explicit list of names.
+
+ Parameters:
+ `names`, `len`: `len` NUL-terminated names, each exactly as the IANA
+   database spells it or `Etc/Unknown`. The link and legacy flags do
+   not apply to an explicit list. A name the database lacks is an
+   argument error unless `hegel_timezone_spec_set_opaque` allowed it.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an empty list, a
+ NULL or non-UTF-8 name, or an unknown name not allowed as opaque.
+ */
+hegel_result_t hegel_timezone_spec_set_names(hegel_context_t *ctx,
+                                             hegel_timezone_spec_t *spec,
+                                             const char *const *names,
+                                             size_t len);
+
+/*
+ Whether the default set includes link names such as `Asia/Calcutta`
+ (on by default).
+ */
+hegel_result_t hegel_timezone_spec_set_links(hegel_context_t *ctx,
+                                             hegel_timezone_spec_t *spec,
+                                             bool links);
+
+/*
+ Whether the default set includes legacy names such as `EST5EDT` and
+ `US/Eastern` (off by default).
+ */
+hegel_result_t hegel_timezone_spec_set_legacy(hegel_context_t *ctx,
+                                              hegel_timezone_spec_t *spec,
+                                              bool legacy);
+
+/*
+ Whether `Etc/Unknown`, the zone with a known instant and an unknown
+ offset, is drawn (off by default).
+ */
+hegel_result_t hegel_timezone_spec_set_unknown(hegel_context_t *ctx,
+                                               hegel_timezone_spec_t *spec,
+                                               bool unknown);
+
+/*
+ Whether a name in an explicit list that the bundled database lacks is
+ accepted as an opaque zone (off by default): one the frontend's own
+ database knows, drawn like any other name but evaluated like
+ `Etc/Unknown`, with its civil time read as UTC and an unknown offset.
+ */
+hegel_result_t hegel_timezone_spec_set_opaque(hegel_context_t *ctx,
+                                              hegel_timezone_spec_t *spec,
+                                              bool opaque);
+
+/*
+ Draw a time zone name allowed by `spec`.
+
+ Parameters:
+ `spec`: A spec built by `hegel_timezone_spec_new`.
+ `out_result`: Receives the name as UTF-8; release with
+   `hegel_generate_string_result_free`.
+
+ Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`.
+
+ Half the draws are uniform over the allowed names and half weighted by
+ the zones' feature tags, so that zones with a rare feature are drawn
+ at a rate a short run reaches. Shrinks down the rank ladder
+ `hegel_timezone_info` reports, to `UTC` when it is allowed.
+ */
+hegel_result_t hegel_generate_timezone(hegel_context_t *ctx,
+                                       hegel_test_case_t *tc,
+                                       const hegel_timezone_spec_t *spec,
+                                       hegel_generate_string_result_t *out_result);
+
+/*
+ Create a zoned datetime spec with every option at its default (see
+ `hegel_zoned_spec_t`).
+
+ On success writes a caller-owned handle into `*out_spec` (release with
+ `hegel_zoned_spec_free`) and returns `HEGEL_OK`. Returns
+ `HEGEL_E_INVALID_ARG` for a NULL `out_spec`.
+ */
+hegel_result_t hegel_zoned_spec_new(hegel_context_t *ctx, hegel_zoned_spec_t **out_spec);
+
+/*
+ Free a spec previously returned by `hegel_zoned_spec_new`. Safe to
+ call with NULL (a no-op that returns `HEGEL_OK`).
+ */
+hegel_result_t hegel_zoned_spec_free(hegel_context_t *ctx, hegel_zoned_spec_t *spec);
+
+/*
+ Bound the draw on the wall clock of whatever zone is drawn.
+
+ Parameters:
+ `min_value` / `max_value`: Inclusive bounds on the civil datetime, as
+   for `hegel_generate_datetime`.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for invalid or inverted
+ bounds, or bounds holding no value at the spec's precision.
+ */
+hegel_result_t hegel_zoned_spec_set_civil_bounds(hegel_context_t *ctx,
+                                                 hegel_zoned_spec_t *spec,
+                                                 hegel_datetime_t min_value,
+                                                 hegel_datetime_t max_value);
+
+/*
+ Bound the draw on the instant.
+
+ Parameters:
+ `min_value` / `max_value`: Inclusive bounds on the instant, each with
+   `second` in the civil range of years `[-999999, 999999]` and
+   `nanosecond` at most 999999999.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for invalid or inverted
+ bounds, or bounds holding no value at the spec's precision.
+
+ The bounds become a wall-clock window in the drawn zone; when that
+ window inverts, or spans at most a day and lies within two days of a
+ transition, the draw picks the instant directly and converts it. A
+ wall time whose instant falls outside the bounds (a fold on the wrong
+ side of a bound) rejects the test case, which can only happen within
+ one transition's width of a bound.
+ */
+hegel_result_t hegel_zoned_spec_set_instant_bounds(hegel_context_t *ctx,
+                                                   hegel_zoned_spec_t *spec,
+                                                   hegel_timestamp_t min_value,
+                                                   hegel_timestamp_t max_value);
+
+/*
+ Set the unit the time part is counted in.
+
+ Parameters:
+ `precision`: A `hegel_precision_t` value; the drawn time of day is a
+   whole number of these units, and shrinks toward midnight in them.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown precision
+ or one at which the spec's bounds hold no value.
+ */
+hegel_result_t hegel_zoned_spec_set_precision(hegel_context_t *ctx,
+                                              hegel_zoned_spec_t *spec,
+                                              uint32_t precision);
+
+/*
+ Set what the draw does with a wall time the clocks skipped.
+
+ Parameters:
+ `imaginary`: A `hegel_imaginary_t` value. Under
+   `HEGEL_IMAGINARY_ALLOW` (the default) such a time is reported with
+   kind `HEGEL_TIMEZONE_KIND_GAP`, both offsets and the instant it
+   resolves to with the pre-transition offset; under
+   `HEGEL_IMAGINARY_AVOID` it is moved to the first wall time after the
+   gap, as a transform of the drawn value rather than a rejection, so a
+   replayed or shrunk value that lands in a gap moves the same way.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown policy.
+ */
+hegel_result_t hegel_zoned_spec_set_imaginary(hegel_context_t *ctx,
+                                              hegel_zoned_spec_t *spec,
+                                              uint32_t imaginary);
+
+/*
+ Set which instant the draw means by a wall time the clocks repeated.
+
+ Parameters:
+ `ambiguous`: A `hegel_ambiguous_t` value. Under `HEGEL_AMBIGUOUS_BOTH`
+   (the default) a fold is drawn, shrinking to the earlier instant;
+   under `HEGEL_AMBIGUOUS_EARLIER` or `HEGEL_AMBIGUOUS_LATER` that
+   instant is meant and no fold is drawn.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown policy.
+ */
+hegel_result_t hegel_zoned_spec_set_ambiguous(hegel_context_t *ctx,
+                                              hegel_zoned_spec_t *spec,
+                                              uint32_t ambiguous);
+
+/*
+ Draw a zoned datetime in a zone allowed by `tz_spec` within
+ `zoned_spec`'s bounds.
+
+ Parameters:
+ `tz_spec`: A spec built by `hegel_timezone_spec_new`.
+ `zoned_spec`: A spec built by `hegel_zoned_spec_new`.
+ `out_value`: Receives the value; see `hegel_zoned_datetime_t`.
+ `out_zone`: Receives the zone name as UTF-8; release with
+   `hegel_generate_string_result_free`.
+
+ Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`.
+
+ The draw is a zone, then a wall-clock time within the bounds in that
+ zone, then the fold when the wall time is ambiguous. One draw in
+ twenty on average targets a transition of the zone, drawing within a
+ second, an hour or a day of it, which is how gap times, both folds and
+ the exact boundary instants are reached. A frontend builds its native
+ value from `civil`, the zone name and `fold`, or for a gap from
+ `timestamp`, rather than from the offsets, so that a newer database on
+ its side changes what a value means but never makes it invalid.
+ Shrinks down the zone ladder, then toward 2000-01-01T00:00 within the
+ bounds.
+ */
+hegel_result_t hegel_generate_zoned_datetime(hegel_context_t *ctx,
+                                             hegel_test_case_t *tc,
+                                             const hegel_timezone_spec_t *tz_spec,
+                                             const hegel_zoned_spec_t *zoned_spec,
+                                             hegel_zoned_datetime_t *out_value,
+                                             hegel_generate_string_result_t *out_zone);
 
 #ifdef __cplusplus
 }  // extern "C"

@@ -49,7 +49,6 @@ mod sys;
 mod unicodedata;
 
 /// cbindgen:ignore
-// Only `hegel_tzdb_version` reaches it until the time zone draws land.
 #[allow(dead_code)]
 mod tzdata;
 
@@ -4648,17 +4647,33 @@ unsafe fn optional_utf8_array_arg(
     unsafe { names_from_c_array(ctx, fn_name, arg_name, p, len) }.map(Some)
 }
 
-/// Write a constructed string generator through `out_generator`, boxing it
-/// into a caller-owned handle.
-unsafe fn write_string_generator(
-    out_generator: *mut *mut HegelStringGenerator,
-    spec: crate::native::draws::StringSpec,
+/// Write a constructed handle through `out`, boxing it into a caller-owned
+/// one, or report why its construction failed.
+unsafe fn write_constructed<T: Send + Sync>(
+    ctx: *mut HegelContext,
+    out: *mut *mut T,
+    built: Result<T, EngineError>,
 ) -> hegel_result_t {
-    let handle = into_raw_send_sync(HegelStringGenerator {
+    match built {
+        Ok(value) => {
+            unsafe { *out = into_raw_send_sync(value) };
+            HEGEL_OK
+        }
+        Err(e) => translate_construct_error(ctx, e),
+    }
+}
+
+/// Write a constructed string generator through `out_generator`, boxing it
+/// into a caller-owned handle, or report why its construction failed.
+unsafe fn write_string_generator(
+    ctx: *mut HegelContext,
+    out_generator: *mut *mut HegelStringGenerator,
+    built: Result<crate::native::draws::StringSpec, EngineError>,
+) -> hegel_result_t {
+    let built = built.map(|spec| HegelStringGenerator {
         spec: Arc::new(spec),
     });
-    unsafe { *out_generator = handle };
-    HEGEL_OK
+    unsafe { write_constructed(ctx, out_generator, built) }
 }
 
 /// Parameters:
@@ -4759,11 +4774,9 @@ pub unsafe extern "C" fn hegel_string_generator_text(
         include_characters,
         exclude_characters,
     };
-    match crate::native::draws::StringSpec::text(&alphabet, size_arg(min_size), size_arg(max_size))
-    {
-        Ok(spec) => unsafe { write_string_generator(out_generator, spec) },
-        Err(e) => translate_construct_error(ctx, e),
-    }
+    let built =
+        crate::native::draws::StringSpec::text(&alphabet, size_arg(min_size), size_arg(max_size));
+    unsafe { write_string_generator(ctx, out_generator, built) }
 }
 
 /// Parameters:
@@ -4805,10 +4818,8 @@ pub unsafe extern "C" fn hegel_string_generator_regex(
             Err(rc) => return rc,
         };
     let alphabet_spec = unsafe { alphabet.as_ref() }.map(|g| &*g.spec);
-    match crate::native::draws::StringSpec::regex(&pattern, fullmatch, alphabet_spec) {
-        Ok(spec) => unsafe { write_string_generator(out_generator, spec) },
-        Err(e) => translate_construct_error(ctx, e),
-    }
+    let built = crate::native::draws::StringSpec::regex(&pattern, fullmatch, alphabet_spec);
+    unsafe { write_string_generator(ctx, out_generator, built) }
 }
 
 /// Returns `HEGEL_OK`. Produces RFC 5321/5322 addresses like
@@ -4824,7 +4835,13 @@ pub unsafe extern "C" fn hegel_string_generator_email(
         return HEGEL_E_INVALID_ARG;
     }
     unsafe { *out_generator = ptr::null_mut() };
-    unsafe { write_string_generator(out_generator, crate::native::draws::StringSpec::email()) }
+    unsafe {
+        write_string_generator(
+            ctx,
+            out_generator,
+            Ok(crate::native::draws::StringSpec::email()),
+        )
+    }
 }
 
 /// Returns `HEGEL_OK`. Produces RFC 3986 `http`/`https` URLs.
@@ -4839,7 +4856,13 @@ pub unsafe extern "C" fn hegel_string_generator_url(
         return HEGEL_E_INVALID_ARG;
     }
     unsafe { *out_generator = ptr::null_mut() };
-    unsafe { write_string_generator(out_generator, crate::native::draws::StringSpec::url()) }
+    unsafe {
+        write_string_generator(
+            ctx,
+            out_generator,
+            Ok(crate::native::draws::StringSpec::url()),
+        )
+    }
 }
 
 /// Parameters:
@@ -4860,10 +4883,8 @@ pub unsafe extern "C" fn hegel_string_generator_domain(
         return HEGEL_E_INVALID_ARG;
     }
     unsafe { *out_generator = ptr::null_mut() };
-    match crate::native::draws::StringSpec::domain(size_arg(max_length)) {
-        Ok(spec) => unsafe { write_string_generator(out_generator, spec) },
-        Err(e) => translate_construct_error(ctx, e),
-    }
+    let built = crate::native::draws::StringSpec::domain(size_arg(max_length));
+    unsafe { write_string_generator(ctx, out_generator, built) }
 }
 
 /// Parameters:
@@ -4882,7 +4903,7 @@ pub unsafe extern "C" fn hegel_string_generator_free(
     if generator.is_null() {
         return HEGEL_OK;
     }
-    // SAFETY: `generator` came from `write_string_generator`'s Box::into_raw
+    // SAFETY: `generator` came from `write_constructed`'s Box::into_raw
     // and is freed exactly once here.
     drop(unsafe { Box::from_raw(generator) });
     HEGEL_OK
@@ -7496,6 +7517,594 @@ pub unsafe extern "C" fn hegel_timezone_info(
                 },
             })
         })
+    }
+}
+
+/// The allowed names of a time zone draw
+///
+/// Build one with `hegel_timezone_spec_new`, which allows every name in
+/// the bundled database with link names in and legacy names out, change
+/// it with the `hegel_timezone_spec_set_*` setters, and free it with
+/// `hegel_timezone_spec_free` once no draws will use it again. A spec may
+/// be drawn from by any number of test cases and threads once configured;
+/// each setter call requires exclusive access.
+pub struct HegelTimezoneSpec {
+    spec: crate::native::draws::timezone::TimeZoneSpec,
+}
+
+/// Create a time zone spec allowing every bundled name, with link names
+/// such as `Asia/Calcutta` included, legacy names such as `EST5EDT`
+/// excluded and `Etc/Unknown` excluded.
+///
+/// On success writes a caller-owned handle into `*out_spec` (release with
+/// `hegel_timezone_spec_free`) and returns `HEGEL_OK`. Returns
+/// `HEGEL_E_INVALID_ARG` for a NULL `out_spec`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_timezone_spec_new(
+    ctx: *mut HegelContext,
+    out_spec: *mut *mut HegelTimezoneSpec,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    if out_spec.is_null() {
+        set_last_error(ctx, "hegel_timezone_spec_new: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    let built =
+        crate::native::draws::timezone::TimeZoneSpec::new().map(|spec| HegelTimezoneSpec { spec });
+    unsafe { write_constructed(ctx, out_spec, built) }
+}
+
+/// Free a spec previously returned by `hegel_timezone_spec_new`. Safe to
+/// call with NULL (a no-op that returns `HEGEL_OK`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_timezone_spec_free(
+    ctx: *mut HegelContext,
+    spec: *mut HegelTimezoneSpec,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    if !spec.is_null() {
+        drop(unsafe { Box::from_raw(spec) });
+    }
+    HEGEL_OK
+}
+
+/// Shared prologue of the `hegel_timezone_spec_set_*` setters: resolve
+/// the handle, apply `set` and report a configuration the spec rejects
+/// as `HEGEL_E_INVALID_ARG`.
+unsafe fn timezone_spec_set(
+    ctx: *mut HegelContext,
+    fn_name: &str,
+    spec: *mut HegelTimezoneSpec,
+    set: impl FnOnce(&mut crate::native::draws::timezone::TimeZoneSpec) -> Result<(), EngineError>,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    let Some(handle) = (unsafe { spec.as_mut() }) else {
+        set_last_error(ctx, &format!("{fn_name}: spec pointer is null"));
+        return HEGEL_E_INVALID_HANDLE;
+    };
+    match set(&mut handle.spec) {
+        Ok(()) => HEGEL_OK,
+        Err(e) => translate_construct_error(ctx, e),
+    }
+}
+
+/// Restrict the draw to an explicit list of names.
+///
+/// Parameters:
+/// `names`, `len`: `len` NUL-terminated names, each exactly as the IANA
+///   database spells it or `Etc/Unknown`. The link and legacy flags do
+///   not apply to an explicit list. A name the database lacks is an
+///   argument error unless `hegel_timezone_spec_set_opaque` allowed it.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an empty list, a
+/// NULL or non-UTF-8 name, or an unknown name not allowed as opaque.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_timezone_spec_set_names(
+    ctx: *mut HegelContext,
+    spec: *mut HegelTimezoneSpec,
+    names: *const *const c_char,
+    len: usize,
+) -> hegel_result_t {
+    const FN: &str = "hegel_timezone_spec_set_names";
+    clear_last_error(ctx);
+    let names = match unsafe { names_from_c_array(ctx, FN, "names", names, len) } {
+        Ok(names) => names,
+        Err(rc) => return rc,
+    };
+    unsafe { timezone_spec_set(ctx, FN, spec, |s| s.set_names(names)) }
+}
+
+/// Whether the default set includes link names such as `Asia/Calcutta`
+/// (on by default).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_timezone_spec_set_links(
+    ctx: *mut HegelContext,
+    spec: *mut HegelTimezoneSpec,
+    links: bool,
+) -> hegel_result_t {
+    unsafe {
+        timezone_spec_set(ctx, "hegel_timezone_spec_set_links", spec, |s| {
+            s.set_links(links)
+        })
+    }
+}
+
+/// Whether the default set includes legacy names such as `EST5EDT` and
+/// `US/Eastern` (off by default).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_timezone_spec_set_legacy(
+    ctx: *mut HegelContext,
+    spec: *mut HegelTimezoneSpec,
+    legacy: bool,
+) -> hegel_result_t {
+    unsafe {
+        timezone_spec_set(ctx, "hegel_timezone_spec_set_legacy", spec, |s| {
+            s.set_legacy(legacy)
+        })
+    }
+}
+
+/// Whether `Etc/Unknown`, the zone with a known instant and an unknown
+/// offset, is drawn (off by default).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_timezone_spec_set_unknown(
+    ctx: *mut HegelContext,
+    spec: *mut HegelTimezoneSpec,
+    unknown: bool,
+) -> hegel_result_t {
+    unsafe {
+        timezone_spec_set(ctx, "hegel_timezone_spec_set_unknown", spec, |s| {
+            s.set_unknown(unknown)
+        })
+    }
+}
+
+/// Whether a name in an explicit list that the bundled database lacks is
+/// accepted as an opaque zone (off by default): one the frontend's own
+/// database knows, drawn like any other name but evaluated like
+/// `Etc/Unknown`, with its civil time read as UTC and an unknown offset.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_timezone_spec_set_opaque(
+    ctx: *mut HegelContext,
+    spec: *mut HegelTimezoneSpec,
+    opaque: bool,
+) -> hegel_result_t {
+    unsafe {
+        timezone_spec_set(ctx, "hegel_timezone_spec_set_opaque", spec, |s| {
+            s.set_opaque(opaque)
+        })
+    }
+}
+
+/// Draw a time zone name allowed by `spec`.
+///
+/// Parameters:
+/// `spec`: A spec built by `hegel_timezone_spec_new`.
+/// `out_result`: Receives the name as UTF-8; release with
+///   `hegel_generate_string_result_free`.
+///
+/// Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`.
+///
+/// Half the draws are uniform over the allowed names and half weighted by
+/// the zones' feature tags, so that zones with a rare feature are drawn
+/// at a rate a short run reaches. Shrinks down the rank ladder
+/// `hegel_timezone_info` reports, to `UTC` when it is allowed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_generate_timezone(
+    ctx: *mut HegelContext,
+    tc: *mut HegelTestCase,
+    spec: *const HegelTimezoneSpec,
+    out_result: *mut hegel_generate_string_result_t,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    let (tc, _guard) = match unsafe { tc_guard(ctx, "hegel_generate_timezone", tc) } {
+        Ok(t) => t,
+        Err(rc) => return rc,
+    };
+    let Some(spec) = (unsafe { spec.as_ref() }) else {
+        set_last_error(ctx, "hegel_generate_timezone: spec handle is null");
+        return HEGEL_E_INVALID_HANDLE;
+    };
+    if out_result.is_null() {
+        set_last_error(ctx, "hegel_generate_timezone: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    match tc.stream.generate_timezone(&spec.spec) {
+        Ok(s) => unsafe { write_string_result(out_result, s) },
+        Err(e) => translate_ds_error(ctx, e),
+    }
+}
+
+/// The unit the time part of a drawn zoned datetime is counted in; see
+/// `hegel_zoned_spec_set_precision`.
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[allow(non_camel_case_types)]
+pub enum hegel_precision_t {
+    HEGEL_PRECISION_NANOSECONDS = 0,
+    HEGEL_PRECISION_MICROSECONDS = 1,
+    HEGEL_PRECISION_MILLISECONDS = 2,
+    HEGEL_PRECISION_SECONDS = 3,
+    HEGEL_PRECISION_MINUTES = 4,
+    HEGEL_PRECISION_HOURS = 5,
+}
+
+/// What a zoned datetime draw does with a wall time the clocks skipped;
+/// see `hegel_zoned_spec_set_imaginary`.
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[allow(non_camel_case_types)]
+pub enum hegel_imaginary_t {
+    /// Report it, with kind `HEGEL_TIMEZONE_KIND_GAP`.
+    HEGEL_IMAGINARY_ALLOW = 0,
+    /// Move it to the first wall time after the gap.
+    HEGEL_IMAGINARY_AVOID = 1,
+}
+
+/// Which instant a zoned datetime draw means by a wall time the clocks
+/// repeated; see `hegel_zoned_spec_set_ambiguous`.
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[allow(non_camel_case_types)]
+pub enum hegel_ambiguous_t {
+    /// Either, decided by a drawn fold.
+    HEGEL_AMBIGUOUS_BOTH = 0,
+    /// The earlier.
+    HEGEL_AMBIGUOUS_EARLIER = 1,
+    /// The later.
+    HEGEL_AMBIGUOUS_LATER = 2,
+}
+
+/// The bounds and policies of a zoned datetime draw
+///
+/// Build one with `hegel_zoned_spec_new`, whose defaults are the whole
+/// civil range of years `[-999999, 999999]` on the wall clock, nanosecond
+/// precision, gap times allowed and both folds drawn; change it with the
+/// `hegel_zoned_spec_set_*` setters and free it with
+/// `hegel_zoned_spec_free`. A spec may be drawn from by any number of test
+/// cases and threads once configured; each setter call requires exclusive
+/// access.
+pub struct HegelZonedSpec {
+    spec: crate::native::draws::zoned::ZonedSpec,
+}
+
+/// Create a zoned datetime spec with every option at its default (see
+/// `hegel_zoned_spec_t`).
+///
+/// On success writes a caller-owned handle into `*out_spec` (release with
+/// `hegel_zoned_spec_free`) and returns `HEGEL_OK`. Returns
+/// `HEGEL_E_INVALID_ARG` for a NULL `out_spec`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_zoned_spec_new(
+    ctx: *mut HegelContext,
+    out_spec: *mut *mut HegelZonedSpec,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    if out_spec.is_null() {
+        set_last_error(ctx, "hegel_zoned_spec_new: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    let spec = Box::new(HegelZonedSpec {
+        spec: crate::native::draws::zoned::ZonedSpec::default(),
+    });
+    unsafe { *out_spec = Box::into_raw(spec) };
+    HEGEL_OK
+}
+
+/// Free a spec previously returned by `hegel_zoned_spec_new`. Safe to
+/// call with NULL (a no-op that returns `HEGEL_OK`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_zoned_spec_free(
+    ctx: *mut HegelContext,
+    spec: *mut HegelZonedSpec,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    if !spec.is_null() {
+        drop(unsafe { Box::from_raw(spec) });
+    }
+    HEGEL_OK
+}
+
+/// Shared prologue of the `hegel_zoned_spec_set_*` setters: resolve the
+/// handle, apply `set` to a copy of the spec and keep it when the result
+/// validates, reporting `HEGEL_E_INVALID_ARG` otherwise.
+unsafe fn zoned_spec_set(
+    ctx: *mut HegelContext,
+    fn_name: &str,
+    spec: *mut HegelZonedSpec,
+    set: impl FnOnce(&mut crate::native::draws::zoned::ZonedSpec) -> Result<(), EngineError>,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    let Some(handle) = (unsafe { spec.as_mut() }) else {
+        set_last_error(ctx, &format!("{fn_name}: spec pointer is null"));
+        return HEGEL_E_INVALID_HANDLE;
+    };
+    let mut candidate = handle.spec;
+    match set(&mut candidate).and_then(|()| candidate.validate()) {
+        Ok(()) => {
+            handle.spec = candidate;
+            HEGEL_OK
+        }
+        Err(e) => translate_construct_error(ctx, e),
+    }
+}
+
+/// Bound the draw on the wall clock of whatever zone is drawn.
+///
+/// Parameters:
+/// `min_value` / `max_value`: Inclusive bounds on the civil datetime, as
+///   for `hegel_generate_datetime`.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for invalid or inverted
+/// bounds, or bounds holding no value at the spec's precision.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_zoned_spec_set_civil_bounds(
+    ctx: *mut HegelContext,
+    spec: *mut HegelZonedSpec,
+    min_value: hegel_datetime_t,
+    max_value: hegel_datetime_t,
+) -> hegel_result_t {
+    unsafe {
+        zoned_spec_set(ctx, "hegel_zoned_spec_set_civil_bounds", spec, |s| {
+            s.bounds = crate::native::draws::zoned::ZonedBounds::Civil {
+                min: rust_datetime(&min_value),
+                max: rust_datetime(&max_value),
+            };
+            Ok(())
+        })
+    }
+}
+
+/// Bound the draw on the instant.
+///
+/// Parameters:
+/// `min_value` / `max_value`: Inclusive bounds on the instant, each with
+///   `second` in the civil range of years `[-999999, 999999]` and
+///   `nanosecond` at most 999999999.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for invalid or inverted
+/// bounds, or bounds holding no value at the spec's precision.
+///
+/// The bounds become a wall-clock window in the drawn zone; when that
+/// window inverts, or spans at most a day and lies within two days of a
+/// transition, the draw picks the instant directly and converts it. A
+/// wall time whose instant falls outside the bounds (a fold on the wrong
+/// side of a bound) rejects the test case, which can only happen within
+/// one transition's width of a bound.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_zoned_spec_set_instant_bounds(
+    ctx: *mut HegelContext,
+    spec: *mut HegelZonedSpec,
+    min_value: hegel_timestamp_t,
+    max_value: hegel_timestamp_t,
+) -> hegel_result_t {
+    use crate::native::timezone::Timestamp;
+    unsafe {
+        zoned_spec_set(ctx, "hegel_zoned_spec_set_instant_bounds", spec, |s| {
+            s.bounds = crate::native::draws::zoned::ZonedBounds::Instant {
+                min: Timestamp {
+                    second: min_value.second,
+                    nanosecond: min_value.nanosecond,
+                },
+                max: Timestamp {
+                    second: max_value.second,
+                    nanosecond: max_value.nanosecond,
+                },
+            };
+            Ok(())
+        })
+    }
+}
+
+/// Set the unit the time part is counted in.
+///
+/// Parameters:
+/// `precision`: A `hegel_precision_t` value; the drawn time of day is a
+///   whole number of these units, and shrinks toward midnight in them.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown precision
+/// or one at which the spec's bounds hold no value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_zoned_spec_set_precision(
+    ctx: *mut HegelContext,
+    spec: *mut HegelZonedSpec,
+    precision: u32,
+) -> hegel_result_t {
+    use crate::native::draws::zoned::Precision;
+    use hegel_precision_t as c;
+    unsafe {
+        zoned_spec_set(ctx, "hegel_zoned_spec_set_precision", spec, |s| {
+            s.precision = match precision {
+                x if x == c::HEGEL_PRECISION_NANOSECONDS as u32 => Precision::Nanoseconds,
+                x if x == c::HEGEL_PRECISION_MICROSECONDS as u32 => Precision::Microseconds,
+                x if x == c::HEGEL_PRECISION_MILLISECONDS as u32 => Precision::Milliseconds,
+                x if x == c::HEGEL_PRECISION_SECONDS as u32 => Precision::Seconds,
+                x if x == c::HEGEL_PRECISION_MINUTES as u32 => Precision::Minutes,
+                x if x == c::HEGEL_PRECISION_HOURS as u32 => Precision::Hours,
+                _ => {
+                    return Err(EngineError::InvalidArgument(format!(
+                        "hegel_zoned_spec_set_precision: unknown precision {precision}"
+                    )));
+                }
+            };
+            Ok(())
+        })
+    }
+}
+
+/// Set what the draw does with a wall time the clocks skipped.
+///
+/// Parameters:
+/// `imaginary`: A `hegel_imaginary_t` value. Under
+///   `HEGEL_IMAGINARY_ALLOW` (the default) such a time is reported with
+///   kind `HEGEL_TIMEZONE_KIND_GAP`, both offsets and the instant it
+///   resolves to with the pre-transition offset; under
+///   `HEGEL_IMAGINARY_AVOID` it is moved to the first wall time after the
+///   gap, as a transform of the drawn value rather than a rejection, so a
+///   replayed or shrunk value that lands in a gap moves the same way.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown policy.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_zoned_spec_set_imaginary(
+    ctx: *mut HegelContext,
+    spec: *mut HegelZonedSpec,
+    imaginary: u32,
+) -> hegel_result_t {
+    use crate::native::draws::zoned::Imaginary;
+    use hegel_imaginary_t as c;
+    unsafe {
+        zoned_spec_set(ctx, "hegel_zoned_spec_set_imaginary", spec, |s| {
+            s.imaginary = match imaginary {
+                x if x == c::HEGEL_IMAGINARY_ALLOW as u32 => Imaginary::Allow,
+                x if x == c::HEGEL_IMAGINARY_AVOID as u32 => Imaginary::Avoid,
+                _ => {
+                    return Err(EngineError::InvalidArgument(format!(
+                        "hegel_zoned_spec_set_imaginary: unknown policy {imaginary}"
+                    )));
+                }
+            };
+            Ok(())
+        })
+    }
+}
+
+/// Set which instant the draw means by a wall time the clocks repeated.
+///
+/// Parameters:
+/// `ambiguous`: A `hegel_ambiguous_t` value. Under `HEGEL_AMBIGUOUS_BOTH`
+///   (the default) a fold is drawn, shrinking to the earlier instant;
+///   under `HEGEL_AMBIGUOUS_EARLIER` or `HEGEL_AMBIGUOUS_LATER` that
+///   instant is meant and no fold is drawn.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown policy.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_zoned_spec_set_ambiguous(
+    ctx: *mut HegelContext,
+    spec: *mut HegelZonedSpec,
+    ambiguous: u32,
+) -> hegel_result_t {
+    use crate::native::draws::zoned::Ambiguous;
+    use hegel_ambiguous_t as c;
+    unsafe {
+        zoned_spec_set(ctx, "hegel_zoned_spec_set_ambiguous", spec, |s| {
+            s.ambiguous = match ambiguous {
+                x if x == c::HEGEL_AMBIGUOUS_BOTH as u32 => Ambiguous::Both,
+                x if x == c::HEGEL_AMBIGUOUS_EARLIER as u32 => Ambiguous::Earlier,
+                x if x == c::HEGEL_AMBIGUOUS_LATER as u32 => Ambiguous::Later,
+                _ => {
+                    return Err(EngineError::InvalidArgument(format!(
+                        "hegel_zoned_spec_set_ambiguous: unknown policy {ambiguous}"
+                    )));
+                }
+            };
+            Ok(())
+        })
+    }
+}
+
+/// A drawn zoned datetime: the wall-clock time `civil` in the zone named
+/// by the draw's string result, resolved as `hegel_timezone_resolve`
+/// resolves it.
+#[repr(C)]
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
+pub struct hegel_zoned_datetime_t {
+    pub civil: hegel_datetime_t,
+    /// The offset in force at `timestamp`; 0 when not `offset_known`.
+    pub offset_seconds: i32,
+    /// False for `Etc/Unknown` and for an opaque zone.
+    pub offset_known: bool,
+    /// Which instant of a repeated wall time the value means (the later
+    /// when set); false for a unique or skipped wall time.
+    pub fold: bool,
+    pub kind: hegel_timezone_kind_t,
+    /// For a gap or fold, the offsets before and after the transition;
+    /// both `offset_seconds` otherwise.
+    pub offset_before: i32,
+    pub offset_after: i32,
+    /// The resolved instant: the unique one, the one `fold` picks, or for
+    /// a gap the wall time read with `offset_before`.
+    pub timestamp: hegel_timestamp_t,
+}
+
+/// Draw a zoned datetime in a zone allowed by `tz_spec` within
+/// `zoned_spec`'s bounds.
+///
+/// Parameters:
+/// `tz_spec`: A spec built by `hegel_timezone_spec_new`.
+/// `zoned_spec`: A spec built by `hegel_zoned_spec_new`.
+/// `out_value`: Receives the value; see `hegel_zoned_datetime_t`.
+/// `out_zone`: Receives the zone name as UTF-8; release with
+///   `hegel_generate_string_result_free`.
+///
+/// Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`.
+///
+/// The draw is a zone, then a wall-clock time within the bounds in that
+/// zone, then the fold when the wall time is ambiguous. One draw in
+/// twenty on average targets a transition of the zone, drawing within a
+/// second, an hour or a day of it, which is how gap times, both folds and
+/// the exact boundary instants are reached. A frontend builds its native
+/// value from `civil`, the zone name and `fold`, or for a gap from
+/// `timestamp`, rather than from the offsets, so that a newer database on
+/// its side changes what a value means but never makes it invalid.
+/// Shrinks down the zone ladder, then toward 2000-01-01T00:00 within the
+/// bounds.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_generate_zoned_datetime(
+    ctx: *mut HegelContext,
+    tc: *mut HegelTestCase,
+    tz_spec: *const HegelTimezoneSpec,
+    zoned_spec: *const HegelZonedSpec,
+    out_value: *mut hegel_zoned_datetime_t,
+    out_zone: *mut hegel_generate_string_result_t,
+) -> hegel_result_t {
+    use crate::native::timezone::Kind;
+    const FN: &str = "hegel_generate_zoned_datetime";
+    clear_last_error(ctx);
+    let (tc, _guard) = match unsafe { tc_guard(ctx, FN, tc) } {
+        Ok(t) => t,
+        Err(rc) => return rc,
+    };
+    let Some(tz_spec) = (unsafe { tz_spec.as_ref() }) else {
+        set_last_error(ctx, &format!("{FN}: time zone spec handle is null"));
+        return HEGEL_E_INVALID_HANDLE;
+    };
+    let Some(zoned_spec) = (unsafe { zoned_spec.as_ref() }) else {
+        set_last_error(ctx, &format!("{FN}: zoned spec handle is null"));
+        return HEGEL_E_INVALID_HANDLE;
+    };
+    if out_value.is_null() || out_zone.is_null() {
+        set_last_error(ctx, &format!("{FN}: out parameter is null"));
+        return HEGEL_E_INVALID_ARG;
+    }
+    match tc
+        .stream
+        .generate_zoned_datetime(&tz_spec.spec, &zoned_spec.spec)
+    {
+        Ok(z) => unsafe {
+            *out_value = hegel_zoned_datetime_t {
+                civil: hegel_datetime_t {
+                    date: c_date(z.civil.date),
+                    time: c_time(z.civil.time),
+                },
+                offset_seconds: z.offset_seconds,
+                offset_known: z.offset_known,
+                fold: z.fold,
+                kind: match z.kind {
+                    Kind::Unique => hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_UNIQUE,
+                    Kind::Gap => hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_GAP,
+                    Kind::Fold => hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_FOLD,
+                },
+                offset_before: z.offset_before,
+                offset_after: z.offset_after,
+                timestamp: hegel_timestamp_t {
+                    second: z.timestamp.second,
+                    nanosecond: z.timestamp.nanosecond,
+                },
+            };
+            write_string_result(out_zone, z.zone)
+        },
+        Err(e) => translate_ds_error(ctx, e),
     }
 }
 
