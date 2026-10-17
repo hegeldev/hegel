@@ -809,10 +809,11 @@ impl Default for DatetimeGenerationParameters {
 }
 
 /// Per-test-case *swarm* parameters: one set of category weights for integer
-/// draws, one for float draws and the targeting rate of zoned datetime
-/// draws. Drawn once at the start of each generated
+/// draws and one for float draws. Drawn once at the start of each generated
 /// test case (see [`Self::draw`]) and held constant across every draw and every
-/// clone-stream of that case.
+/// clone-stream of that case. The targeting rate of zoned datetime draws is
+/// the third such parameter, held apart in [`DatetimeGenerationParameters`]
+/// because it is drawn on first use rather than up front.
 ///
 /// They only ever change *how likely* each category is, never *which* values are
 /// reachable. Because hegel records typed choice *values* and the samplers are
@@ -2362,7 +2363,8 @@ impl NativeTestCase {
 
     /// This test case's [`DatetimeGenerationParameters`]: drawn from this
     /// stream's RNG the first time any stream of the family asks, and the
-    /// default for a family that never samples (a replay).
+    /// default for a family that never samples (a replay). Two streams
+    /// asking at once both draw, and both get the value the family kept.
     pub(crate) fn datetime_parameters(
         &mut self,
     ) -> Result<DatetimeGenerationParameters, EngineError> {
@@ -2373,8 +2375,10 @@ impl NativeTestCase {
             return Ok(DatetimeGenerationParameters::default());
         };
         let params = DatetimeGenerationParameters::draw(rng)?;
-        let _ = self.family.datetime_parameters.set(Box::new(params));
-        Ok(params)
+        Ok(*self
+            .family
+            .datetime_parameters
+            .get_or_init(|| Box::new(params)))
     }
 
     /// The family state shared by every stream of this test case.
