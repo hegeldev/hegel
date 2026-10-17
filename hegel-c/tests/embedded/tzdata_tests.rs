@@ -254,7 +254,7 @@ fn ladder_key(entry: &Name) -> (u8, u32, usize, &str) {
             .zone
             .footer
             .map_or(0, |f| f.standard.utoff.unsigned_abs());
-        (1, offset, 0, name)
+        (1, offset, entry.tags.len(), name)
     } else if entry.tags.contains(Tag::WholeHour) && entry.tags.contains(Tag::Dst) {
         (2, 0, entry.tags.len(), name)
     } else {
@@ -283,11 +283,209 @@ fn ranks_are_the_shrink_ladder() {
 }
 
 #[test]
+fn utc_is_the_primary_zone() {
+    let utc = lookup("UTC").unwrap().unwrap();
+    assert!(!utc.is_link());
+    assert_eq!(utc.zone.name, "UTC");
+    assert_eq!(utc.zone.transitions, Vec::new());
+    assert_eq!(utc.zone.initial.utoff, 0);
+    for name in [
+        "Etc/UTC",
+        "Etc/UCT",
+        "Etc/Universal",
+        "Etc/Zulu",
+        "UCT",
+        "Universal",
+        "Zulu",
+    ] {
+        let entry = lookup(name).unwrap().unwrap();
+        assert!(entry.is_link(), "{name}");
+        assert_eq!(entry.zone.name, "UTC", "{name}");
+    }
+    let lowest_primary = all_names()
+        .iter()
+        .filter(|n| !n.is_link())
+        .min_by_key(|n| n.rank)
+        .unwrap();
+    assert_eq!(lowest_primary.name, "UTC");
+    assert_eq!(TABLE_TEXT.matches("\nZ UTC ").count(), 1);
+    assert!(!TABLE_TEXT.contains("\nL UTC "));
+}
+
+#[test]
+fn name_tags_follow_the_name() {
+    const AREAS: [&str; 11] = [
+        "Africa",
+        "America",
+        "Antarctica",
+        "Arctic",
+        "Asia",
+        "Atlantic",
+        "Australia",
+        "Europe",
+        "Indian",
+        "Pacific",
+        "Etc",
+    ];
+    for entry in all_names() {
+        let name = entry.name.as_str();
+        let area = name.split_once('/').map(|(area, _)| area);
+        let legacy = name != "UTC" && !area.is_some_and(|area| AREAS.contains(&area));
+        assert_eq!(entry.tags.contains(Tag::Legacy), legacy, "{name}");
+        let inverted = name
+            .strip_prefix("Etc/GMT")
+            .and_then(|rest| rest.strip_prefix(['+', '-']))
+            .is_some_and(|digits| {
+                !digits.is_empty()
+                    && !digits.starts_with('0')
+                    && digits.bytes().all(|b| b.is_ascii_digit())
+            });
+        assert_eq!(entry.tags.contains(Tag::InvertedSign), inverted, "{name}");
+    }
+}
+
+fn year_start(year: i16) -> i64 {
+    date(year, 1, 1)
+        .to_zoned(TimeZone::UTC)
+        .unwrap()
+        .timestamp()
+        .as_second()
+}
+
+fn zone_tags(tags: Tags) -> Tags {
+    tags.iter()
+        .filter(|tag| ![Tag::Link, Tag::Legacy, Tag::InvertedSign].contains(tag))
+        .fold(Tags::EMPTY, Tags::with)
+}
+
+type Kind = (i32, String);
+
+fn jiff_tags(entry: &Name) -> Tags {
+    let tz = jiff_zone(&entry.name);
+    let last = entry.zone.transitions.last().map(|t| t.instant);
+    let last_year = last.map_or(1969, |last| utc_date(last).year());
+    let end = year_start(last_year.max(1970) + 3);
+    let mut changes: Vec<(i64, Kind, Kind)> = Vec::new();
+    for tr in tz
+        .following(Timestamp::MIN)
+        .take_while(|tr| tr.timestamp().as_second() < end)
+    {
+        let instant = tr.timestamp().as_second();
+        let before = tz.to_offset_info(at(instant - 1));
+        let before = (before.offset().seconds(), before.abbreviation().to_string());
+        let after = (tr.offset().seconds(), tr.abbreviation().to_string());
+        if before != after {
+            changes.push((instant, before, after));
+        }
+    }
+    let recent: Vec<&(i64, Kind, Kind)> = changes.iter().filter(|c| c.0 >= 0).collect();
+    let epoch = tz.to_offset_info(at(0));
+    let mut recent_types = vec![(epoch.offset().seconds(), epoch.abbreviation().to_string())];
+    recent_types.extend(recent.iter().map(|c| c.2.clone()));
+    let mut all_offsets = vec![tz.to_offset(Timestamp::MIN).seconds()];
+    all_offsets.extend(changes.iter().map(|c| c.2.0));
+    let rule = changes
+        .iter()
+        .find(|c| last.is_none_or(|last| c.0 > last))
+        .map(|c| (c.2.0 - c.1.0).unsigned_abs());
+    let offsets_in_year = |year: i16| -> Vec<i32> {
+        let (start, end) = (year_start(year), year_start(year + 1));
+        let mut offsets = vec![tz.to_offset(at(start)).seconds()];
+        offsets.extend(
+            changes
+                .iter()
+                .filter(|c| start < c.0 && c.0 < end)
+                .map(|c| c.2.0),
+        );
+        offsets
+    };
+    let mut base_change = false;
+    let mut previous_min = offsets_in_year(1969).into_iter().min().unwrap();
+    for year in 1970..=last_year + 1 {
+        let current_min = offsets_in_year(year).into_iter().min().unwrap();
+        base_change |= current_min != previous_min;
+        previous_min = current_min;
+    }
+    let mut per_year: std::collections::BTreeMap<i16, usize> = Default::default();
+    for c in recent.iter().filter(|c| c.1.0 != c.2.0) {
+        *per_year.entry(utc_date(c.0).year()).or_default() += 1;
+    }
+    let wall = |c: &(i64, Kind, Kind)| (c.0 + i64::from(c.1.0), c.0 + i64::from(c.2.0));
+    let conditions = [
+        (Tag::Fixed, recent.is_empty()),
+        (
+            Tag::WholeHour,
+            recent_types.iter().all(|(o, _)| o % 3600 == 0),
+        ),
+        (
+            Tag::Fractional,
+            recent_types
+                .iter()
+                .any(|(o, _)| o % 3600 != 0 && o % 60 == 0),
+        ),
+        (Tag::Seconds, all_offsets.iter().any(|o| o % 60 != 0)),
+        (Tag::Dst, rule == Some(3600)),
+        (Tag::DstOther, rule.is_some_and(|delta| delta != 3600)),
+        (Tag::Multi, per_year.values().any(|&n| n > 2)),
+        (Tag::BaseChange, base_change),
+        (
+            Tag::Midnight,
+            recent.iter().any(|c| {
+                let (before, after) = wall(c);
+                before.rem_euclid(86400) == 0 || after.rem_euclid(86400) == 0
+            }),
+        ),
+        (
+            Tag::SpansMidnight,
+            recent.iter().any(|c| {
+                let (before, after) = wall(c);
+                before.div_euclid(86400) != after.div_euclid(86400)
+            }),
+        ),
+        (
+            Tag::WholeDay,
+            changes
+                .iter()
+                .any(|c| (c.2.0 - c.1.0).unsigned_abs() >= 86400),
+        ),
+        (Tag::SameOffset, recent.iter().any(|c| c.1.0 == c.2.0)),
+        (
+            Tag::Undefined,
+            recent_types.iter().any(|(_, abbr)| abbr == "-00"),
+        ),
+    ];
+    conditions
+        .into_iter()
+        .filter(|&(_, on)| on)
+        .fold(Tags::EMPTY, |tags, (tag, _)| tags.with(tag))
+}
+
+#[test]
+fn zone_tags_agree_with_jiff() {
+    for entry in all_names() {
+        let primary = lookup(&entry.zone.name).unwrap().unwrap();
+        assert_eq!(
+            zone_tags(entry.tags),
+            zone_tags(primary.tags),
+            "{} and {}",
+            entry.name,
+            primary.name
+        );
+        if entry.is_link() {
+            continue;
+        }
+        let ours: Vec<Tag> = zone_tags(entry.tags).iter().collect();
+        let theirs: Vec<Tag> = jiff_tags(entry).iter().collect();
+        assert_eq!(ours, theirs, "{}", entry.name);
+    }
+}
+
+#[test]
 fn appendix_c_zones_carry_their_tags() {
     use Tag::*;
     let expectations: &[(&str, &[Tag], &[Tag])] = &[
-        ("UTC", &[Fixed, WholeHour, Link], &[Legacy]),
-        ("Etc/UTC", &[Fixed, WholeHour], &[Link, Legacy]),
+        ("UTC", &[Fixed, WholeHour], &[Link, Legacy]),
+        ("Etc/UTC", &[Fixed, WholeHour, Link], &[Legacy]),
         ("Etc/GMT", &[Fixed], &[Link]),
         ("GMT", &[Fixed, Link, Legacy], &[]),
         ("Zulu", &[Fixed, Link, Legacy], &[]),
@@ -326,9 +524,13 @@ fn appendix_c_zones_carry_their_tags() {
             &[WholeHour, Dst],
             &[Fractional, Fixed, Link, Legacy, Multi],
         ),
-        ("Europe/London", &[WholeHour, Dst, BaseChange], &[]),
+        (
+            "Europe/London",
+            &[WholeHour, Dst, BaseChange],
+            &[Midnight, SameOffset],
+        ),
         ("Europe/Dublin", &[WholeHour, Dst], &[DstOther]),
-        ("Africa/Casablanca", &[Multi, Midnight], &[Dst]),
+        ("Africa/Casablanca", &[Multi, Midnight], &[Dst, SameOffset]),
         ("Asia/Gaza", &[Dst, Multi, Midnight], &[]),
         ("Asia/Hebron", &[Dst, Multi, Midnight], &[]),
         ("America/Nuuk", &[Dst, SpansMidnight, Midnight], &[]),
@@ -341,7 +543,11 @@ fn appendix_c_zones_carry_their_tags() {
         ("Pacific/Chatham", &[Fractional, Dst], &[]),
         ("Asia/Kathmandu", &[Fractional, BaseChange], &[]),
         ("Australia/Eucla", &[Fractional], &[WholeHour]),
-        ("America/St_Johns", &[Fractional, Dst], &[]),
+        (
+            "America/St_Johns",
+            &[Fractional, Dst],
+            &[Midnight, SameOffset],
+        ),
         ("Asia/Tehran", &[Fractional], &[Dst]),
         ("America/Caracas", &[Fractional, BaseChange], &[]),
         ("Pacific/Norfolk", &[Fractional, Dst, BaseChange], &[]),
@@ -363,7 +569,18 @@ fn appendix_c_zones_carry_their_tags() {
         ),
         ("Africa/Juba", &[SpansMidnight, BaseChange], &[]),
         ("Asia/Riyadh", &[Fixed, WholeHour, Seconds], &[]),
-        ("Asia/Manila", &[WholeHour, Seconds], &[Fixed]),
+        ("Asia/Manila", &[WholeHour, Seconds, WholeDay], &[Fixed]),
+        ("Pacific/Guam", &[WholeHour, WholeDay], &[Fixed]),
+        (
+            "America/Metlakatla",
+            &[Dst, Multi, BaseChange, WholeDay],
+            &[],
+        ),
+        (
+            "Antarctica/Macquarie",
+            &[Dst, BaseChange],
+            &[Midnight, SameOffset],
+        ),
         ("Europe/Istanbul", &[BaseChange], &[Dst]),
         ("Europe/Minsk", &[BaseChange], &[Dst]),
         ("Europe/Volgograd", &[BaseChange], &[Dst]),

@@ -57,12 +57,23 @@ Zone records (`Z` and the lines that follow) come first, sorted by name,
 then the `L` records, sorted by name. Every zone has an `F` line in the
 current data; the engine tolerates a missing one.
 
-Tags are derived from the offsets, never from the `isdst` flags, so the
-main and rearguard formats agree (the design's §5.3). "After 1970" below
-means in force at any instant from 1970-01-01T00:00:00Z on, including the
-footer's offsets.
+The `tzdata.zi` source makes `UTC` a link to `Etc/UTC`; this script makes
+`UTC` the primary zone and `Etc/UTC` (with `Etc/UCT`, `Zulu` and the other
+names that resolved to it) a link to `UTC`, as ECMA-402 does and as the
+design's §4 and §B.2 assume, so that `UTC` is a primary name and the
+shrink target whether or not links are allowed.
 
-  fixed           no explicit transition after 1970 and no DST rule
+Tags are derived from the offsets, never from the `isdst` flags, so the
+main and rearguard formats agree (the design's §5.3). A transition below
+is an explicit one that changes the offset or the abbreviation, or one
+the footer rule makes after the last explicit one. A record that changes
+only the `isdst` flag is not a transition (Morocco's 2018 reclassification
+of +01 as standard time exists only in the main data), and neither is one
+of zic's no-op markers (Europe/London's GMT-to-GMT record at 1996-01-01).
+"After 1970" means at any instant from 1970-01-01T00:00:00Z on, including
+the footer's transitions and offsets.
+
+  fixed           no transition after 1970, which excludes a DST rule
   whole_hour      every offset after 1970 is a whole number of hours
   fractional      some offset after 1970 is a whole number of minutes but
                   not of hours (+05:30, +05:45, -03:30)
@@ -77,15 +88,15 @@ footer's offsets.
   base_change     the lowest offset in force during some year after 1970
                   differs from the previous year's (Europe/Moscow 2011
                   and 2014, permanent changes generally)
-  midnight        a transition whose wall time before or after it is 00:00
-  spans_midnight  a transition whose wall times before and after it fall
-                  on different dates
-                  (both also consider the footer rule's transitions in
-                  the year after the last explicit one: Nuuk's `M3.5.0/-1`)
-  whole_day       a transition that skips or repeats a whole day (an
-                  offset change of at least 24 hours)
-  same_offset     a transition that changes the abbreviation or DST flag
-                  but not the offset (Europe/Lisbon 1992)
+  midnight        a transition after 1970 whose wall time before or after
+                  it is 00:00 (Nuuk's footer `M3.5.0/-1` included)
+  spans_midnight  a transition after 1970 whose wall times before and
+                  after it fall on different dates
+  whole_day       a transition anywhere in the zone's history that skips
+                  or repeats a whole day (an offset change of at least 24
+                  hours: Pacific/Apia 2011, Asia/Manila 1844)
+  same_offset     a transition after 1970 that changes the abbreviation
+                  but not the offset (Europe/Lisbon 1992, WEST to CET)
   undefined       the zone uses the `-00` undefined-offset abbreviation
                   (Factory, Antarctic stations before they opened)
   link            the name is a link to another zone
@@ -93,12 +104,13 @@ footer's offsets.
                   (EST, EST5EDT, US/Eastern), excepting UTC
   inverted_sign   the `Etc/GMT+5` family, whose sign is POSIX's
 
-The rank is the shrink ladder: `UTC` first, then the `Etc/` zones by
-absolute offset, then zones tagged both `whole_hour` and `dst`, then the
-rest; within a tier zones with fewer tags come first and ties break by
-name. Ranks are unique, so they order every name.
+The rank is the shrink ladder: `UTC` first, then the `Etc/` names by
+absolute offset, then names tagged both `whole_hour` and `dst`, then the
+rest; within a tier (and within an offset for `Etc/`) names with fewer
+tags come first, so a zone precedes its links, and ties break by name.
+Ranks are unique, so they order every name.
 
-Size: for 2026e the text table is 447,828 bytes and deflates to 80,701.
+Size: for 2026e the text table is 446,683 bytes and deflates to 80,733.
 Measured on the release libhegel shared library (macOS arm64, 4,053,936
 bytes without any table), embedding the deflated table adds 121,056 bytes
 and embedding the text table adds 484,176, the inflater being linked
@@ -170,17 +182,33 @@ TAGS = [
 ]
 
 
-@dataclass
+@dataclass(frozen=True)
 class LocalType:
     utoff: int
     isdst: bool
     abbr: str
+
+    def is_transition_from(self, other: LocalType) -> bool:
+        return (self.utoff, self.abbr) != (other.utoff, other.abbr)
 
 
 @dataclass
 class Transition:
     instant: int
     type: LocalType
+
+
+@dataclass
+class Change:
+    """A transition in the sense of the module docstring: from `instant`
+    on, `after` applies in place of `before`."""
+
+    instant: int
+    before: LocalType
+    after: LocalType
+
+    def changes_offset(self) -> bool:
+        return self.before.utoff != self.after.utoff
 
 
 @dataclass
@@ -224,12 +252,17 @@ def read_zone_names() -> list[str]:
 
 
 def read_links() -> dict[str, str]:
-    """`{link name: target name}` from the compact source `tzdata.zi`."""
+    """`{link name: target name}` from the compact source `tzdata.zi`, with
+    `UTC` made primary (see the module docstring)."""
     links: dict[str, str] = {}
     for line in (tzdata_dir() / "zoneinfo" / "tzdata.zi").read_text().splitlines():
         if line.startswith("L "):
             _, target, name = line.split()
             links[name] = target
+    utc_target = links.pop("UTC", None)
+    if utc_target is not None:
+        links = {name: "UTC" if target == utc_target else target for name, target in links.items()}
+        links[utc_target] = "UTC"
     return links
 
 
@@ -359,44 +392,59 @@ def year_start(year: int) -> int:
     return int(datetime(year, 1, 1, tzinfo=timezone.utc).timestamp())
 
 
-def type_in_force(zone: Zone, instant: int) -> LocalType:
-    current = zone.initial
+def last_explicit_year(zone: Zone) -> int:
+    return utc_year(zone.transitions[-1].instant) if zone.transitions else 1969
+
+
+def zone_changes(zone: Zone) -> list[Change]:
+    """The zone's transitions in instant order: the explicit ones that
+    change the offset or abbreviation, then the footer rule's from the year of
+    the last explicit transition through the second year after it (or
+    through 1972 when the explicit ones end before 1970), so that every
+    year the tags look at is covered."""
+    changes: list[Change] = []
+    previous = zone.initial
     for t in zone.transitions:
-        if t.instant > instant:
+        if t.type.is_transition_from(previous):
+            changes.append(Change(t.instant, previous, t.type))
+        previous = t.type
+    if zone.footer is not None:
+        last = zone.transitions[-1].instant if zone.transitions else None
+        last_year = last_explicit_year(zone)
+        for year in range(last_year, max(last_year, 1970) + 3):
+            for change in footer_transitions(zone.footer, year):
+                if last is None or change.instant > last:
+                    changes.append(change)
+    changes.sort(key=lambda c: c.instant)
+    return changes
+
+
+def types_between(zone: Zone, changes: list[Change], start: int, end: int) -> set[LocalType]:
+    """The local time types in force at some instant in `start <= t < end`."""
+    current = zone.initial
+    types: set[LocalType] = set()
+    for change in changes:
+        if change.instant >= end:
             break
-        current = t.type
-    return current
+        if change.instant <= start:
+            current = change.after
+        else:
+            types.add(change.after)
+    types.add(current)
+    return types
 
 
-def footer_offsets(zone: Zone) -> set[int]:
-    if zone.footer is None:
-        return set()
-    offsets = {zone.footer.std.utoff}
-    if zone.footer.dst is not None:
-        offsets.add(zone.footer.dst.utoff)
-    return offsets
+def offsets_in_year(zone: Zone, changes: list[Change], year: int) -> set[int]:
+    return {t.utoff for t in types_between(zone, changes, year_start(year), year_start(year + 1))}
 
 
 def all_offsets(zone: Zone) -> set[int]:
     offsets = {zone.initial.utoff}
     offsets.update(t.type.utoff for t in zone.transitions)
-    offsets.update(footer_offsets(zone))
-    return offsets
-
-
-def offsets_after(zone: Zone, instant: int) -> set[int]:
-    offsets = {type_in_force(zone, instant).utoff}
-    offsets.update(t.type.utoff for t in zone.transitions if t.instant >= instant)
-    offsets.update(footer_offsets(zone))
-    return offsets
-
-
-def offsets_in_year(zone: Zone, year: int) -> set[int]:
-    start, end = year_start(year), year_start(year + 1)
-    offsets = {type_in_force(zone, start).utoff}
-    offsets.update(t.type.utoff for t in zone.transitions if start <= t.instant < end)
-    if zone.transitions and zone.transitions[-1].instant < end:
-        offsets.update(footer_offsets(zone))
+    if zone.footer is not None:
+        offsets.add(zone.footer.std.utoff)
+        if zone.footer.dst is not None:
+            offsets.add(zone.footer.dst.utoff)
     return offsets
 
 
@@ -424,80 +472,66 @@ def rule_date(rule: RuleDate, year: int) -> date:
     return date(year, 1, 1) + timedelta(days=int(text))
 
 
-def footer_transitions(footer: Footer, year: int) -> list[tuple[int, int, int]]:
-    """The footer's `(instant, utoff before, utoff after)` pairs in `year`."""
+def footer_transitions(footer: Footer, year: int) -> list[Change]:
+    """The footer rule's transitions in `year`."""
     if footer.dst is None:
         return []
     result = []
     for rule, before, after in (
-        (footer.start, footer.std.utoff, footer.dst.utoff),
-        (footer.end, footer.dst.utoff, footer.std.utoff),
+        (footer.start, footer.std, footer.dst),
+        (footer.end, footer.dst, footer.std),
     ):
         midnight = int(datetime.combine(rule_date(rule, year), time(), timezone.utc).timestamp())
-        result.append((midnight + rule.time - before, before, after))
+        result.append(Change(midnight + rule.time - before.utoff, before, after))
     return result
 
 
 def compute_zone_tags(zone: Zone) -> set[str]:
     tags: set[str] = set()
     footer = zone.footer
-    has_dst_rule = footer is not None and footer.dst is not None
+    changes = zone_changes(zone)
+    recent = [c for c in changes if c.instant >= UNIX_1970]
+    recent_types = types_between(zone, changes, UNIX_1970, sys.maxsize)
+    recent_offsets = {t.utoff for t in recent_types}
 
-    if not any(t.instant >= UNIX_1970 for t in zone.transitions) and not has_dst_rule:
+    if not recent:
         tags.add("fixed")
-    recent = offsets_after(zone, UNIX_1970)
-    if all(o % SECONDS_PER_HOUR == 0 for o in recent):
+    if all(o % SECONDS_PER_HOUR == 0 for o in recent_offsets):
         tags.add("whole_hour")
-    if any(o % SECONDS_PER_HOUR != 0 and o % 60 == 0 for o in recent):
+    if any(o % SECONDS_PER_HOUR != 0 and o % 60 == 0 for o in recent_offsets):
         tags.add("fractional")
     if any(o % 60 != 0 for o in all_offsets(zone)):
         tags.add("seconds")
-    if has_dst_rule:
+    if footer is not None and footer.dst is not None:
         delta = abs(footer.dst.utoff - footer.std.utoff)
         tags.add("dst" if delta == SECONDS_PER_HOUR else "dst_other")
 
+    if any(abs(c.after.utoff - c.before.utoff) >= SECONDS_PER_DAY for c in changes):
+        tags.add("whole_day")
     changes_per_year: dict[int, int] = {}
-    previous = type_in_force(zone, UNIX_1970).utoff
-    changes: list[tuple[int, int, int]] = []
-    for t in zone.transitions:
-        if t.instant >= UNIX_1970:
-            changes.append((t.instant, previous, t.type.utoff))
-        previous = t.type.utoff
-    if footer is not None:
-        last_year = utc_year(zone.transitions[-1].instant) if zone.transitions else 1969
-        changes.extend(footer_transitions(footer, max(1970, last_year + 1)))
-    for instant, before, after in changes:
-        if before == after:
-            tags.add("same_offset")
-        else:
-            year = utc_year(instant)
+    for change in recent:
+        if change.changes_offset():
+            year = utc_year(change.instant)
             changes_per_year[year] = changes_per_year.get(year, 0) + 1
-        wall_before, wall_after = instant + before, instant + after
+        else:
+            tags.add("same_offset")
+        wall_before = change.instant + change.before.utoff
+        wall_after = change.instant + change.after.utoff
         if wall_before % SECONDS_PER_DAY == 0 or wall_after % SECONDS_PER_DAY == 0:
             tags.add("midnight")
         if wall_before // SECONDS_PER_DAY != wall_after // SECONDS_PER_DAY:
             tags.add("spans_midnight")
-        if abs(after - before) >= SECONDS_PER_DAY:
-            tags.add("whole_day")
     if any(n > 2 for n in changes_per_year.values()):
         tags.add("multi")
 
-    if zone.transitions:
-        last_year = utc_year(zone.transitions[-1].instant)
-        previous_min = min(offsets_in_year(zone, 1969))
-        for year in range(1970, last_year + 2):
-            current_min = min(offsets_in_year(zone, year))
-            if current_min != previous_min:
-                tags.add("base_change")
-            previous_min = current_min
+    previous_min = min(offsets_in_year(zone, changes, 1969))
+    for year in range(1970, last_explicit_year(zone) + 2):
+        current_min = min(offsets_in_year(zone, changes, year))
+        if current_min != previous_min:
+            tags.add("base_change")
+        previous_min = current_min
 
-    abbreviations = {type_in_force(zone, UNIX_1970).abbr}
-    abbreviations.update(t.type.abbr for t in zone.transitions if t.instant >= UNIX_1970)
-    if footer is not None:
-        abbreviations.add(footer.std.abbr)
-        if footer.dst is not None:
-            abbreviations.add(footer.dst.abbr)
-    if "-00" in abbreviations:
+    if any(t.abbr == "-00" for t in recent_types):
         tags.add("undefined")
 
     tags |= name_tags(zone.name)
@@ -527,7 +561,7 @@ def assign_ranks(zones: dict[str, Zone], links: dict[str, Link]) -> None:
         if name == "UTC":
             return (0, 0, 0, name)
         if name.startswith("Etc/"):
-            return (1, abs_offset, 0, name)
+            return (1, abs_offset, len(tags), name)
         if "whole_hour" in tags and "dst" in tags:
             return (2, 0, len(tags), name)
         return (3, 0, len(tags), name)
