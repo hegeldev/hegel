@@ -571,8 +571,46 @@ fn every_leaf_generator_prints() {
     printed_draw_lines(gs::datetime_strings());
     printed_draw_lines(gs::uuids());
     printed_draw_lines(gs::durations());
+    printed_draw_lines(gs::system_times());
     printed_draw_lines(gs::floats::<f64>());
     printed_draw_lines(gs::characters().print_as_debug());
+}
+
+#[test]
+fn datetime_generators_print_the_rfc_9557_form() {
+    assert_eq!(
+        printed_draw_lines(gs::dates()),
+        vec!["let draw_1 = 2000-01-01;"]
+    );
+    assert_eq!(
+        printed_draw_lines(gs::times()),
+        vec!["let draw_1 = 00:00:00;"]
+    );
+    assert_eq!(
+        printed_draw_lines(gs::datetimes()),
+        vec!["let draw_1 = 2000-01-01T00:00:00;"]
+    );
+    assert_eq!(
+        printed_draw_lines(gs::timestamps()),
+        vec!["let draw_1 = 2000-01-01T00:00:00Z;"]
+    );
+    assert_eq!(
+        printed_draw_lines(gs::utc_offsets()),
+        vec!["let draw_1 = +00:00;"]
+    );
+    assert_eq!(
+        printed_draw_lines(gs::time_zones()),
+        vec!["let draw_1 = UTC;"]
+    );
+    assert_eq!(
+        printed_draw_lines(gs::zoned_datetimes()),
+        vec!["let draw_1 = 2000-01-01T00:00:00+00:00[UTC];"]
+    );
+    assert_eq!(
+        printed_draw_lines(gs::signed_durations()),
+        vec!["let draw_1 = PT0S;"]
+    );
+    assert_eq!(printed_draw_lines(gs::spans()), vec!["let draw_1 = 0s;"]);
 }
 
 #[test]

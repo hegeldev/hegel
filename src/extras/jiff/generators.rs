@@ -59,7 +59,7 @@ impl Generator<Date> for DateGenerator {
         if self.min_value > self.max_value {
             invalid_argument!("Cannot have max_value < min_value");
         }
-        let d = tc.generate_date(hegel_date(self.min_value), hegel_date(self.max_value));
+        let d = tc.generate_date(hegel_date(self.min_value), hegel_date(self.max_value), None);
         Date::new(d.year as i16, d.month as i8, d.day as i8).unwrap()
     }
 }
@@ -136,7 +136,11 @@ impl Generator<Time> for TimeGenerator {
         if self.min_value > self.max_value {
             invalid_argument!("Cannot have max_value < min_value");
         }
-        let t = tc.generate_time(hegel_time(self.min_value), hegel_time(self.max_value));
+        let t = tc.generate_time(
+            hegel_time(self.min_value),
+            hegel_time(self.max_value),
+            crate::ffi::NANOSECONDS,
+        );
         Time::new(
             t.hour as i8,
             t.minute as i8,

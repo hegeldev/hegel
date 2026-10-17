@@ -288,7 +288,7 @@ impl Generator<NaiveDate> for NaiveDateGenerator {
         if self.min_value > self.max_value {
             invalid_argument!("Cannot have max_value < min_value");
         }
-        let d = tc.generate_date(hegel_date(self.min_value), hegel_date(self.max_value));
+        let d = tc.generate_date(hegel_date(self.min_value), hegel_date(self.max_value), None);
         NaiveDate::from_ymd_opt(d.year, u32::from(d.month), u32::from(d.day)).unwrap()
     }
 }

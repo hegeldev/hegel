@@ -321,6 +321,7 @@
 pub mod backend;
 pub(crate) mod cli;
 pub(crate) mod control;
+pub mod datetime;
 pub mod docs;
 #[doc(hidden)]
 pub mod explicit_test_case;
