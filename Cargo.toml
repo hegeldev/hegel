@@ -119,6 +119,7 @@ rand = { version = "0.10", optional = true }
 chrono = { version = "0.4.41", default-features = false, features = ["std"], optional = true }
 # opting out of bundled tz features
 jiff = { version = "0.2", default-features = false, features = ["std"], optional = true }
+time = { version = "0.3.45", default-features = false, optional = true }
 
 [dev-dependencies]
 regex = "1.0"
@@ -147,6 +148,7 @@ default = []
 rand = ["dep:rand"]
 chrono = ["dep:chrono"]
 jiff = ["dep:jiff"]
+time = ["dep:time"]
 serde_json = ["dep:serde_json"]
 # Enables the serde_json/raw_value feature. Enables generators for serde_json::value::RawValue.
 serde_json_raw_value = ["serde_json", "serde_json/raw_value"]
