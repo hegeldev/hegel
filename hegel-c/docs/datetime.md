@@ -1,8 +1,9 @@
 # Dates, times and time zones
 
-**Status:** Proposal (not yet implemented). Written 2026-10-16 from a survey
-of the engine, the seven frontends, the property-based testing libraries
-in Appendix A and the date/time libraries in Appendix B.
+**Status:** Accepted design, not yet implemented. Written 2026-10-16 from
+a survey of the engine, the seven frontends, the property-based testing
+libraries in Appendix A and the date/time libraries in Appendix B. The
+open questions were decided on 2026-10-17; §10 records the outcome.
 
 ## Summary
 
@@ -40,11 +41,12 @@ C ABI, so that each frontend is a thin mapping onto its native types:
    draws, plus a `precision` parameter on every time-bearing draw so a
    frontend with microsecond or millisecond types never truncates after
    the fact.
-5. **Rust frontend:** the `jiff` and `chrono` extras become complete
-   (IANA zones, zoned datetimes, calendar spans), a `time`-crate extra is
-   added, and a handful of first-party generators cover `std::time` and
-   zone names. Other frontends get the same engine draws; their mapping
-   is sketched in §8.
+5. **Rust frontend:** a minimal first-party API exposes every engine
+   value as a plain struct with no date arithmetic, parsing or
+   conversions, so a user of any date library can wrap it; the `jiff` and
+   `chrono` extras become complete (IANA zones, zoned datetimes, calendar
+   spans) on top of it, and a `time`-crate extra is added. Other
+   frontends get the same engine draws; their mapping is sketched in §8.
 
 The engine takes no new dependency. `jiff` stays a dev-dependency and
 becomes the oracle the engine's time zone code is tested against.
@@ -57,8 +59,10 @@ shrinks and what the database stores), the time zone data source and its
 update policy, the C ABI surface, and the Rust frontend API.
 
 Does not settle: the exact API in the non-Rust frontends beyond the
-mapping each needs (§8), non-Gregorian calendars (out of scope, §10),
-and leap seconds beyond a generation knob (§10).
+mapping each needs (§8). Non-Gregorian calendars are out of scope: the
+model is the proleptic Gregorian (ISO 8601) calendar only (§10, Q7), and
+leap seconds appear only as a deferred generation knob for strings (§10,
+Q6).
 
 ## 2. Where we are
 
@@ -164,9 +168,9 @@ clamped. Appendix B tabulates the libraries these were taken from.
 | `Time` | hour, minute, second, nanosecond | 00:00:00 to 23:59:59.999999999 | lower bound (midnight) |
 | `DateTime` | `Date` + `Time` | as above | 2000-01-01T00:00 |
 | `Timestamp` | seconds `i64` since the Unix epoch, nanosecond `u32` | the civil range above, about ±3.2 × 10¹⁶ s; covers Temporal's ±10⁸ days, jiff, Noda Time, Python and chrono, not java.time's ±10⁹ years | 2000-01-01T00:00:00Z, clamped |
-| `UtcOffset` | seconds `i32` | ±25:59:59, which is RFC 9636's recommended `utoff` range for TZif and jiff's and the `time` crate's envelope; Python's is ±24h exclusive, java.time's and Noda Time's ±18h | 0 |
-| `TimeZone` | IANA name as written (ASCII), plus the primary name it resolves to | the bundled database, or the caller's subset | `UTC` |
-| `ZonedDateTime` | zone, `DateTime`, kind (unique / gap / fold), offset before and after the transition, fold (0/1), the resolved offset and `Timestamp` | as `DateTime` | zone ladder, then `DateTime` |
+| `UtcOffset` | seconds `i32`, or *unknown* when the draw allows it | ±25:59:59, which is RFC 9636's recommended `utoff` range for TZif and jiff's and the `time` crate's envelope; Python's is ±24h exclusive, java.time's and Noda Time's ±18h | 0, known |
+| `TimeZone` | IANA name as written (ASCII), plus the primary name it resolves to | the bundled database, or the caller's subset, plus `Etc/Unknown` when the spec allows it | `UTC` |
+| `ZonedDateTime` | zone, `DateTime`, kind (unique / gap / fold), offset before and after the transition, fold (0/1), the resolved offset and whether it is known, and the `Timestamp` | as `DateTime` | zone ladder, then `DateTime` |
 | `Duration` | seconds `i64`, nanoseconds `i32` with the same sign | ±i64 seconds (jiff `SignedDuration`, `time::Duration`, chrono `TimeDelta` fit; `std::time::Duration` is the non-negative half) | 0 |
 | `Span` (calendar) | years, months, weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds, each `i64` | per-unit bounds set by the caller; sign uniform or mixed | all zero |
 
@@ -191,17 +195,26 @@ Decisions worth calling out:
   zone name, and a frontend that wants "UTC, a fixed offset or a region"
   composes the two with `one_of`, which keeps the branch index as the
   shrink dimension.
+- **Unknown offset is a value.** RFC 3339's `-00:00` and RFC 9557's `Z`
+  before a bracketed zone mean "instant known, local offset unknown"; the
+  tz database has the `Factory` zone for it, CLDR names the zone
+  `Etc/Unknown`, and jiff has `TimeZone::unknown()`. The offset draw can
+  yield an unknown offset and the zone draw can yield `Etc/Unknown`, each
+  behind an option that is off by default because most frontends' offset
+  types cannot hold it. A `ZonedDateTime` in `Etc/Unknown` has a known
+  instant, civil fields equal to UTC and an unknown offset, as CLDR and
+  jiff specify. Both shrink to the known value: 0 and `UTC`. (§10, Q8.)
 - **Instants shrink toward 2000-01-01T00:00:00Z, not the epoch**, so that
   a zoned datetime drawn through instant bounds and one drawn through
   wall-clock bounds agree, and so that a minimal instant prints as a date
-  the reader recognises. (Open question Q3.)
+  the reader recognises. (§10, Q3.)
 - **Names are preserved, not canonicalised.** Temporal, `whenever` and
   jiff keep `Asia/Calcutta` as written and compare by primary identifier;
   the engine does the same and reports both names, so parsing code sees
   link names, and the primary name is there for frontends that need it.
 - **No leap seconds in the model.** Second is 0..59, as in jiff, Temporal,
-  java.time, Noda Time and Python. §10 proposes a knob for `23:59:60` in
-  generated strings only.
+  java.time, Noda Time and Python. A knob for `23:59:60` in generated
+  strings only is deferred to Phase 3 (§10, Q6).
 
 ## 5. Time zone data
 
@@ -302,9 +315,9 @@ new is added to the node kinds except one string constraint.
 `generate_timezone(spec)` draws one string node whose constraint is
 `Constraint::TimeZone(spec)`. The spec is the allowed set of names (all
 bundled names by default, with legacy names excluded and link names
-included; or an explicit list from the caller) and whether an unknown
-name supplied by the caller is accepted as an opaque zone (§8, version
-skew). `validate` is set membership; `simplest` is the lowest-ranked
+included; or an explicit list from the caller), whether `Etc/Unknown` is
+included (off by default), and whether an unknown name supplied by the
+caller is accepted as an opaque zone (§8, version skew). `validate` is set membership; `simplest` is the lowest-ranked
 allowed name.
 
 Fresh generation mixes two samplers: with probability ½ uniform over the
@@ -364,11 +377,14 @@ node, improving on Hypothesis's independently drawn fold.
 - `generate_timestamp(min, max, precision)`: one integer node, count of
   precision units offset from 2000-01-01T00:00:00Z clamped into bounds;
   the sampler mixes uniform with the interesting instants of Appendix C.
-- `generate_offset(min, max, granularity)`: one integer node in seconds,
-  shrinking toward 0; granularity ∈ {hours, quarter-hours, minutes,
-  seconds} restricts the values; the sampler mixes uniform with the set
-  of offsets any bundled zone has ever used (a few hundred values, from
-  the table), so `+05:45`, `+12:45`, `-00:44:30` and the like appear.
+- `generate_offset(min, max, granularity, unknown)`: one integer node in
+  seconds, shrinking toward 0; granularity ∈ {hours, quarter-hours,
+  minutes, seconds} restricts the values; the sampler mixes uniform with
+  the set of offsets any bundled zone has ever used (a few hundred
+  values, from the table), so `+05:45`, `+12:45`, `-00:44:30` and the
+  like appear. When `unknown` is allowed a weighted boolean node comes
+  first; `true` yields the unknown offset and no seconds node, so the
+  draw shrinks to a known offset before the offset itself shrinks.
 - `generate_duration(min, max, precision)`: one integer node of units,
   shrinking toward 0.
 - `generate_span(spec)`: one integer node per enabled unit, drawn largest
@@ -395,7 +411,8 @@ node shape.
 The engine already prints choice nodes for its own diagnostics; the new
 draws print as RFC 9557 strings
 (`2024-03-10T02:30:00-05:00[America/New_York]`) with `[gap]` or
-`[fold=1]` appended when relevant, so a counterexample in any frontend's
+`[fold=1]` appended when relevant, an unknown offset as `-00:00` and
+the unknown zone as `Z[Etc/Unknown]` (jiff's spelling), so a counterexample in any frontend's
 output can be read without knowing that frontend's type.
 
 ## 7. C ABI
@@ -410,6 +427,7 @@ hegel_timezone_spec_new(ctx, out)                     // default set
 hegel_timezone_spec_set_names(ctx, spec, names, n)    // explicit subset
 hegel_timezone_spec_set_links(ctx, spec, bool)
 hegel_timezone_spec_set_legacy(ctx, spec, bool)
+hegel_timezone_spec_set_unknown(ctx, spec, bool)      // Etc/Unknown
 hegel_timezone_spec_free(spec)
 hegel_generate_timezone(ctx, tc, spec, out_string_result)
 
@@ -420,12 +438,13 @@ hegel_zoned_spec_set_precision(ctx, spec, hegel_precision_t)
 hegel_zoned_spec_set_imaginary(ctx, spec, HEGEL_IMAGINARY_ALLOW|AVOID)
 hegel_zoned_spec_set_ambiguous(ctx, spec, HEGEL_AMBIGUOUS_BOTH|EARLIER|LATER)
 hegel_generate_zoned_datetime(ctx, tc, tz_spec, zoned_spec, out)
-  // out: hegel_zoned_datetime_t { civil, offset_seconds, fold, kind,
-  //       offset_before, offset_after, timestamp } plus the zone name
+  // out: hegel_zoned_datetime_t { civil, offset_seconds, offset_known,
+  //       fold, kind, offset_before, offset_after, timestamp } plus the zone name
   //       as a string result the caller frees
 
 hegel_generate_timestamp(ctx, tc, min, max, precision, out)
-hegel_generate_offset(ctx, tc, min_seconds, max_seconds, granularity, out)
+hegel_generate_offset(ctx, tc, min_seconds, max_seconds, granularity,
+                      allow_unknown, out)             // hegel_offset_t { seconds, known }
 hegel_generate_duration(ctx, tc, min, max, precision, out)
 hegel_span_spec_new / _set_unit_bounds / _set_sign / _free
 hegel_generate_span(ctx, tc, spec, out)
@@ -462,12 +481,30 @@ per run when the two releases differ.
 
 ### 8.2 Rust
 
-First-party (`hegel::generators`): `durations()` (unchanged API, now the
-engine draw), `system_times()`, `timezone_ids()` returning `String`.
+First-party, the minimum that exposes the engine's data (§10, Q2): a
+`hegel::datetime` module of plain value types mirroring §4 one to one
+(`Date`, `Time`, `DateTime`, `Timestamp`, `UtcOffset`, `TimeZone`,
+`ZonedDateTime`, `SignedDuration`, `Span`), each a public struct of
+public fields deriving `Debug`, `Clone`, `Copy` where the type has no
+string, `PartialEq`, `Eq`, `Hash`, and `Ord` where the order is total,
+with `Display` printing the engine's RFC 9557 form of §6.5 so a
+counterexample reads the same from every frontend. Nothing else: no
+arithmetic, no parsing, no conversions and no constructors beyond `new`
+functions that check the §4 ranges, so a user of any date library wraps
+the struct with `map` and nothing here competes with their library.
+Generators over these types live in `hegel::generators` under the names
+the extras also use (`dates`, `times`, `datetimes`, `timestamps`,
+`utc_offsets`, `time_zones`, `zoned_datetimes`, `signed_durations`,
+`spans`), each with the builder options of §6 (`min_value`/`max_value`,
+`precision`, `weekdays`/`months`, `imaginary`, `ambiguous`, `unknown`).
+`durations()` over `std::time::Duration` keeps its API on the engine
+draw and `system_times()` is added. The extras are thin maps over these.
 
 `extras::jiff` becomes complete: `dates`, `times`, `datetimes`,
 `timestamps`, `offsets`, `time_zones()` (IANA, from the engine, resolved
-with `TimeZone::get`; the spec is restricted to `tz::db().available()`),
+with `TimeZone::get`; the spec is restricted to `tz::db().available()`,
+and `Etc/Unknown` maps to `TimeZone::unknown()`, so today's default zone
+generator of UTC, unknown or a fixed offset is reproduced by composition),
 `zoneds()` built on `generate_zoned_datetime` with wall-clock or instant
 bounds and `.imaginary(Avoid)` by default since `Zoned` cannot hold a gap
 time; both folds via `to_ambiguous_zoned` + `earlier()`/`later()`;
@@ -511,8 +548,9 @@ Phase 1 (engine + Rust + Python): tz table and script, tz evaluator with
 the jiff oracle tests, `generate_timezone`, `generate_zoned_datetime` with
 civil bounds, `generate_timestamp`, `generate_offset`,
 `generate_duration`, precision on time and datetime, targeted values in
-date/time/timestamp samplers, C ABI and header, jiff and chrono extras,
-Python `timezones`/`datetimes`. This is the point at which R1–R9 hold.
+date/time/timestamp samplers, C ABI and header, the first-party
+`hegel::datetime` types and generators, jiff and chrono extras, Python
+`timezones`/`datetimes`. This is the point at which R1–R9 hold.
 
 Phase 2: instant bounds and the wall-clock-window fallback, `generate_span`,
 weekday and month masks, the `time` extra, Java/Go/TypeScript mappings.
@@ -534,31 +572,41 @@ datetime round-trips through jiff with the reported kind; the existing
 generator test set from the `new-generator` skill per generator; a
 size-budget test on the wasm build.
 
-## 10. Open questions
+## 10. Decisions
+
+The questions the proposal left open, as put on 2026-10-16, and the
+decisions taken on 2026-10-17. This file is the record; no RFC is filed
+in `internal-rfcs`.
 
 Q1. Default zone set: every name including links (Hypothesis) or
-    canonical zones only, with links behind an option? Proposed: links
-    on, legacy names off.
-Q2. Should the Rust first-party API expose plain engine value types
-    (`hegel::time::Date` and friends) so users without jiff or chrono
-    get dates, or stay with extras only? Proposed: extras only, plus
-    `timezone_ids()` and `system_times()`.
-Q3. Shrink target for instants: 2000-01-01Z (proposed) or the Unix epoch.
+    canonical zones only, with links behind an option? **Decided:** links
+    on, legacy names off, both switchable in the spec.
+Q2. Should the Rust first-party API expose plain engine value types so
+    users without jiff or chrono get dates, or stay with extras only?
+    **Decided:** a minimal first-party API that exposes the data and
+    nothing more: plain structs for every §4 value, with no convenience
+    date-time API, for users with another date library to wrap (§8.2).
+Q3. Shrink target for instants: 2000-01-01Z or the Unix epoch.
+    **Decided:** 2000-01-01Z.
 Q4. The targeted-draw probability: fixed 5%, or a generation parameter
-    drawn per test case like the integer category weights. Proposed:
-    parameter, mean 5%.
+    drawn per test case like the integer category weights. **Decided:**
+    a generation parameter with mean 5%.
 Q5. Breaking `hegel_generate_time`/`hegel_generate_datetime` for
-    precision versus new names. Proposed: break, with the changelog note.
+    precision versus new names. **Decided:** break, with the changelog
+    note.
 Q6. Leap seconds: a `leap_seconds` knob on times that yields second 60
     (chrono's `NaiveTime` and the Haskell `time` tests can hold it; no
-    other target can), off by default. Phase 3 at the earliest.
+    other target can), off by default. **Decided:** as proposed, Phase 3
+    at the earliest, and only in generated strings.
 Q7. Non-Gregorian calendars (Temporal's `u-ca`, Noda Time's calendar
-    systems, java.time's `chrono`) are out of scope; is an ISO-only model
-    acceptable for the frontends that have them?
-Q8. Should the engine offer an "unknown offset" value (RFC 3339's
-    `-00:00`, jiff's `Etc/Unknown`, the tz database's `Factory` zone) as a
-    first-class output of the offset and zone draws, or leave it to
-    frontend composition as the jiff extra does today?
+    systems, java.time's `chrono`). **Decided:** out of scope. The model
+    is ISO 8601 (proleptic Gregorian) only; frontends with calendar
+    systems convert from it.
+Q8. An "unknown offset" value (RFC 3339's `-00:00`, jiff's `Etc/Unknown`,
+    the tz database's `Factory` zone) as a first-class output of the
+    offset and zone draws, or frontend composition as the jiff extra does
+    today? **Decided:** first class, behind an option that is off by
+    default (§4, §6.1, §6.3, §7, §8.2).
 
 ## Appendix A. Date and time generation in other property-based testing libraries
 
