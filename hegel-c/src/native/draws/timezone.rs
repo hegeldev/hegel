@@ -211,8 +211,14 @@ impl TimeZoneSpec {
 
     /// Restrict the draw to `names`, which the database must know unless
     /// opaque names are accepted; the link and legacy flags do not apply
-    /// to an explicit list.
+    /// to an explicit list, and an empty list is an error whether or not
+    /// `Etc/Unknown` is drawn.
     pub fn set_names(&mut self, names: Vec<String>) -> Result<(), EngineError> {
+        if names.is_empty() {
+            return Err(EngineError::InvalidArgument(
+                "a time zone draw needs at least one allowed name".to_string(),
+            ));
+        }
         self.names = Some(names);
         self.rebuild()
     }
@@ -304,12 +310,10 @@ impl TimeZoneSpec {
                 tags: Tags::EMPTY.with(Tag::Undefined),
             });
         }
-        if ladder.is_empty() {
-            return Err(EngineError::InvalidArgument(
-                "a time zone draw needs at least one allowed name".to_string(),
-            ));
-        }
-        let max_size = ladder.iter().map(|e| e.codepoints.len()).max().unwrap();
+        let max_size = hegel_internal_unwrap!(
+            ladder.iter().map(|e| e.codepoints.len()).max(),
+            "a time zone spec built an empty ladder"
+        );
         self.kind = Arc::new(StringChoice {
             intervals: Arc::clone(&self.kind.intervals),
             min_size: 0,

@@ -162,6 +162,14 @@ fn an_unknown_name_is_an_error_unless_opaque_names_are_accepted() {
         matches!(&err, EngineError::InvalidArgument(msg) if msg.contains("at least one")),
         "{err:?}"
     );
+    let mut spec = TimeZoneSpec::new().unwrap();
+    spec.set_unknown(true).unwrap();
+    let err = spec.set_names(Vec::new()).unwrap_err();
+    assert!(
+        matches!(&err, EngineError::InvalidArgument(msg) if msg.contains("at least one")),
+        "{err:?}"
+    );
+    assert_ne!(names_of(&spec), vec![UNKNOWN_NAME]);
 }
 
 #[test]

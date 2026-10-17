@@ -209,6 +209,8 @@ fn timezone_spec_setters_validate_their_arguments() {
         ok(hegel_timezone_spec_set_links(ctx, spec, false));
         ok(hegel_timezone_spec_set_legacy(ctx, spec, true));
         ok(hegel_timezone_spec_set_unknown(ctx, spec, true));
+        assert_eq!(set_names(ctx, spec, &[]), HEGEL_E_INVALID_ARG);
+        assert!(last_error(ctx).contains("at least one allowed name"));
         ok(hegel_timezone_spec_free(ctx, spec));
     }
     unsafe { ok(hegel_context_free(ctx)) };
