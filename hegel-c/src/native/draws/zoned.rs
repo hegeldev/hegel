@@ -230,7 +230,7 @@ pub struct ZonedDateTime {
 }
 
 impl fmt::Display for ZonedDateTime {
-    /// RFC 9557 (§6.5): `2024-03-10T02:30:00-05:00[America/New_York]`,
+    /// RFC 9557 (§6.5): `2024-03-10T01:30:00-05:00[America/New_York]`,
     /// with `[gap]` or `[fold=N]` appended to a skipped or repeated wall
     /// time, `-00:00` for an unknown offset and `Z[Etc/Unknown]` for the
     /// unknown zone.

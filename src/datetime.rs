@@ -17,8 +17,9 @@
 //!
 //! Each `Display` implementation prints the RFC 9557 form the engine
 //! prints a counterexample in, so a failing value reads the same from
-//! every language binding: `2024-03-10T02:30:00-05:00[America/New_York]`,
-//! with `[gap]` or `[fold=1]` appended to a skipped or repeated wall time,
+//! every language binding: `2024-03-10T01:30:00-05:00[America/New_York]`,
+//! with `[gap]` or `[fold=0]`/`[fold=1]` appended to a skipped or repeated
+//! wall time (`2024-03-10T02:30:00-04:00[America/New_York][gap]`),
 //! `-00:00` for an unknown offset and `Z[Etc/Unknown]` for the unknown
 //! zone.
 //!
@@ -330,8 +331,9 @@ pub enum Kind {
 /// resolved `offset` (unknown in [`UNKNOWN_ZONE`] and in a zone only the
 /// caller's database knows) and the `timestamp`: the unique instant, the
 /// one `fold` picks, or for a gap the wall time read with `offset_before`.
-/// Prints as `2024-03-10T02:30:00-05:00[America/New_York]`, with `[gap]`
-/// or `[fold=1]` appended when relevant.
+/// Prints as `2024-03-10T01:30:00-05:00[America/New_York]`, with `[gap]`
+/// (`2024-03-10T02:30:00-04:00[America/New_York][gap]`) or `[fold=0]` /
+/// `[fold=1]` appended when relevant.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ZonedDateTime {
     pub zone: TimeZone,

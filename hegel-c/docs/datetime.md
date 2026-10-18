@@ -1,9 +1,13 @@
 # Dates, times and time zones
 
-**Status:** Accepted design, not yet implemented. Written 2026-10-16 from
-a survey of the engine, the seven frontends, the property-based testing
-libraries in Appendix A and the date/time libraries in Appendix B. The
-open questions were decided on 2026-10-17; §10 records the outcome.
+**Status:** Implemented (engine, C ABI and the Rust frontend with its
+`jiff`, `chrono` and `time` extras; the other frontends' mappings in §8.3
+remain to do). Written 2026-10-16 from a survey of the engine, the seven
+frontends, the property-based testing libraries in Appendix A and the
+date/time libraries in Appendix B. The open questions were decided on
+2026-10-17; §10 records the outcome. §4–§8 describe what was built, with
+the places the implementation departed from the original text corrected
+in place; the appendices are the original survey.
 
 ## Summary
 
@@ -187,10 +191,13 @@ Decisions worth calling out:
   the transition, which shifts a gap time forward by the gap's length and
   picks the earlier instant in a fold (jiff and Temporal `compatible`,
   java.time `ZonedDateTime.of`, Noda Time's lenient resolver, PEP 495
-  `fold=0`, `whenever`, RFC 5545; Appendix B). A frontend whose type can
-  hold the imaginary wall time (Python) uses the civil fields; one that
-  cannot uses the instant, or derives the "shift backward" instant from
-  the offsets if its library prefers that.
+  `fold=0`, `whenever`, RFC 5545; Appendix B). The resolved offset a gap
+  value reports is the one in force at that shifted instant, the offset
+  *after* the transition, so the value prints as an instant that exists
+  (`2024-03-10T02:30:00-04:00[America/New_York][gap]`). A frontend whose
+  type can hold the imaginary wall time (Python) uses the civil fields;
+  one that cannot uses the instant, or derives the "shift backward"
+  instant from the offsets if its library prefers that.
 - **Offsets and zones are different generators.** A fixed offset is not a
   zone name, and a frontend that wants "UTC, a fixed offset or a region"
   composes the two with `one_of`, which keeps the branch index as the
@@ -248,11 +255,17 @@ changes only `isdst` flags and abbreviations, for Europe/Dublin and the
 like) does not affect the table's semantics; the feature tags below are
 derived from offset changes, never from `isdst`.
 
-`hegel_tzdb_version()` returns the bundled release ("2026e"). The
-checked-in table carries its version in its header, and a test fails if
-the script's pinned version and the table disagree. The update policy is
-the Unicode one: bump deliberately, in its own PR, with the changelog
-naming the release.
+`hegel_tzdb_version()` returns the bundled release ("2026e"). Both the
+text table and its deflated copy are checked in, so the table is
+reviewable in the PR that regenerates it; the table carries its version
+in its header and in `version.txt` beside it, and `checksum.txt` holds an
+FNV-1a checksum of the text that the script writes with it. A test fails
+if the script's pinned version and the table disagree, or the table is
+not what the script would write (compared against the checksum, and
+against a fresh run of the script when `uv` is installed; the `just
+check-tzdata` CI step runs the script's `--check` mode). The engine
+reads only the deflated copy. The update policy is the Unicode one: bump
+deliberately, in its own PR, with the changelog naming the release.
 
 ### 5.2 Why bundle, and why not `jiff`
 
@@ -300,8 +313,11 @@ tag was verified against.
 
 From the tags the script also assigns each zone a **rank**, the shrink
 ladder of R6: `UTC`, then the fixed `Etc/` zones by absolute offset, then
-whole-hour zones with simple DST, then everything else by number of
-distinct features and then by name. The rank and the tags are data in the
+whole-hour zones with simple DST, then everything else; within a tier
+names with fewer tags come first, so a zone precedes its links, and ties
+break by name. `UTC` is the primary zone and `Etc/UTC`, `Etc/GMT`, `GMT`,
+`Zulu` and the rest of that family are links to it, as ECMA-402 has it.
+The rank and the tags are data in the
 table, reviewable in the PR that regenerates it, and the engine never
 infers them at run time.
 
@@ -317,8 +333,10 @@ new is added to the node kinds except one string constraint.
 bundled names by default, with legacy names excluded and link names
 included; or an explicit list from the caller), whether `Etc/Unknown` is
 included (off by default), and whether an unknown name supplied by the
-caller is accepted as an opaque zone (§8, version skew). `validate` is set membership; `simplest` is the lowest-ranked
-allowed name.
+caller is accepted as an opaque zone (§8, version skew). `validate` is set
+membership, and a stored name the spec no longer allows replays as the
+lowest-ranked allowed name; `simplest` is that name too. An empty explicit
+list is an argument error.
 
 Fresh generation mixes two samplers: with probability ½ uniform over the
 allowed set, so every zone is reachable and a name-parsing bug in a rare
@@ -340,32 +358,55 @@ instants (`Timestamp` pair), a precision, an **imaginary** policy (`allow`
 or `avoid`) and an **ambiguous** policy (`both`, `earlier`, `later`).
 
 The node sequence is: zone (6.1) · targeted? (boolean) · [target index ·
-window] · date · time · [fold].
+half-width] · date · time · [fold].
 
-1. Draw the zone.
-2. Convert instant bounds into a wall-clock window in that zone. When the
-   window inverts, or is a day or shorter and touches a transition, draw
-   the instant directly (6.3) and convert (the instant fixes which repeat
-   of a fold the value means, so no fold node follows); Hypothesis's
-   aware mode found this fallback necessary and the reasons apply here
-   unchanged.
-3. Draw `targeted` with a fixed small probability (Hypothesis uses 5%;
-   this proposal starts there and lets the generation parameters tune it
-   per test case like the integer category weights). Skip the node when
-   no target lies in the window.
+1. Draw the zone. A zone the engine cannot evaluate (an opaque name the
+   spec accepted) reads its civil time as UTC with an unknown offset, as
+   `Etc/Unknown` does.
+2. Convert instant bounds into a wall-clock window in that zone: from the
+   earliest wall time an instant in the bounds reads to the latest, which
+   across a fold is the transition's wall time rather than a bound's own
+   reading, and under `allow` includes the skipped wall times that shift
+   to an instant in the bounds. The window of civil bounds is likewise
+   narrowed to the wall times whose instants lie in the `Timestamp` range
+   of §4. When the instant window holds no value at the precision, or
+   spans at most a day and lies within two days of a transition, draw the
+   instant instead as one integer node: an index into the values in the
+   bounds in instant order (the wall times at the precision of each
+   stretch of constant offset, trimmed of the repeat the ambiguous policy
+   excludes, with a gap's skipped wall times under `allow`), shrinking
+   toward the value nearest 2000-01-01T00:00:00Z and sampled at the
+   targeting rate at either side of a transition or at an Appendix C
+   instant. The instant fixes which repeat of a fold the value means, so
+   no fold node follows. Hypothesis's aware mode found this fallback
+   necessary and the reasons apply here unchanged. A drawn zone with no
+   value in the bounds rejects the test case; bounds no allowed zone has
+   a value in are an argument error.
+3. Draw `targeted`, a boolean whose rate is a generation parameter drawn
+   per test case with mean 5% (§10, Q4) the first time a zoned draw needs
+   it, and recorded under a fixed weight so the node's kind is the same
+   in every execution. Skip the node when no target lies in the window.
 4. Targeted: pick a target from the zone's transitions in the window
    together with the global interesting instants (Appendix C), as an
    integer index shrinking toward the one nearest 2000-01-01; pick a
    half-width from {1 s + 1 unit, 1 h + 1 unit, 1 day}; the date and
-   time bounds become that window, clamped.
+   time bounds become that window around the target's wall time (for a
+   transition, the wall time just after it), clamped, and the date and
+   time are drawn uniformly within it, since the integer sampler's
+   preference for the low end would otherwise reach one side of the
+   transition only.
 5. Draw the date and time nodes exactly as `generate_datetime` does, at
    the requested precision.
 6. Classify the wall time against the zone. Unique: done. Fold with
    policy `both`: draw one boolean node, the fold. Gap with policy
    `allow`: report kind `gap`, both offsets and the forward-shifted
-   instant. Gap with policy `avoid`: resample within the sampler until the
-   wall time is not in a gap (a replayed or shrunk value that lands in a
-   gap is shifted past it; the draw never returns a gap under `avoid`).
+   instant. Gap with policy `avoid`: the time node's sampler redraws a
+   wall time that lands in a gap, so fresh generation draws from the
+   non-gap times of the day; a value that still lands in one (a replayed
+   or shrunk value, or one on a day the clocks skipped entirely) is moved
+   to the first wall time after the gap, or to the last wall time before
+   it when that lies past the window, and a window lying within a gap
+   rejects the test case. The draw never returns a gap under `avoid`.
 7. Instant bounds: if the resolved instant is outside them (a fold on the
    wrong side of a bound), reject the test case as Hypothesis does; this
    can only happen within one transition's width of a bound.
@@ -406,7 +447,19 @@ times keep the failure.
   zero, then magnitudes (jiff `Span`, Temporal `Duration`), `mixed` draws
   each component signed (java `Period`), `nonnegative` draws magnitudes
   only. As with the fold node of §6.2, a sign the bounds fix is not
-  drawn, so the sequence has no dead node. Shrinks to the zero span.
+  drawn, so the sequence has no dead node. The per-unit bounds are on
+  the unit's signed value: under `uniform` a negative span draws each
+  magnitude within `[max(-max, 0), -min]` and a non-negative one within
+  `[max(min, 0), max]`, `nonnegative` requires every `min` to be at least
+  0, and a spec with no enabled unit is an argument error. Shrinks to the
+  zero span.
+
+The timestamp and offset samplers draw their targets at the same per-case
+rate as §6.2's `targeted` node. The timestamp catalogue lists the
+transitions of the primary zones (a link shares its zone's), and the
+duration sampler targets the bounds and a few round durations (one unit,
+a second, a minute, an hour, 23, 24, 25 and 36 hours, a week, a year, the
+`i32` seconds and `i64` nanoseconds limits) of either sign.
 
 ### 6.4 Dates, times, datetimes
 
@@ -415,8 +468,9 @@ in the interesting dates of Appendix C (Feb 29 nearest the bounds, the
 year boundaries, the 2038 and 2106 overflow days, the ISO-week-53 days,
 the Julian-to-Gregorian cutover), and the bounds may be narrowed by a
 weekday mask and a month mask, applied by snapping the drawn day to the
-nearest allowed day inside the bounds rather than by rejection (jqwik's
-post-filter is the thing to avoid). `generate_time` and
+nearest allowed day inside the bounds, toward 2000-01-01 on a tie, rather
+than by rejection (jqwik's post-filter is the thing to avoid); bounds
+holding no allowed day are an argument error. `generate_time` and
 `generate_datetime` gain `precision`; a time's node becomes a count of
 units, so a microsecond frontend and a nanosecond frontend draw the same
 node shape.
@@ -425,10 +479,14 @@ node shape.
 
 The engine already prints choice nodes for its own diagnostics; the new
 draws print as RFC 9557 strings
-(`2024-03-10T02:30:00-05:00[America/New_York]`) with `[gap]` or
-`[fold=1]` appended when relevant, an unknown offset as `-00:00` and
+(`2024-03-10T01:30:00-05:00[America/New_York]`) with the resolved offset,
+`[gap]` appended to a skipped wall time
+(`2024-03-10T02:30:00-04:00[America/New_York][gap]`) and `[fold=0]` or
+`[fold=1]` to a repeated one, an unknown offset as `-00:00` and
 the unknown zone as `Z[Etc/Unknown]` (jiff's spelling), so a counterexample in any frontend's
-output can be read without knowing that frontend's type.
+output can be read without knowing that frontend's type. The Rust
+frontend prints a duration in the ISO 8601 form (`PT1H30M5.5S`) and a
+span in jiff's friendly form (`1y 2mo 3d`).
 
 ## 7. C ABI
 
@@ -443,6 +501,7 @@ hegel_timezone_spec_set_names(ctx, spec, names, n)    // explicit subset
 hegel_timezone_spec_set_links(ctx, spec, bool)
 hegel_timezone_spec_set_legacy(ctx, spec, bool)
 hegel_timezone_spec_set_unknown(ctx, spec, bool)      // Etc/Unknown
+hegel_timezone_spec_set_opaque(ctx, spec, bool)       // names the database lacks
 hegel_timezone_spec_free(spec)
 hegel_generate_timezone(ctx, tc, spec, out_string_result)
 
@@ -452,10 +511,10 @@ hegel_zoned_spec_set_instant_bounds(ctx, spec, min, max)
 hegel_zoned_spec_set_precision(ctx, spec, hegel_precision_t)
 hegel_zoned_spec_set_imaginary(ctx, spec, HEGEL_IMAGINARY_ALLOW|AVOID)
 hegel_zoned_spec_set_ambiguous(ctx, spec, HEGEL_AMBIGUOUS_BOTH|EARLIER|LATER)
-hegel_generate_zoned_datetime(ctx, tc, tz_spec, zoned_spec, out)
+hegel_generate_zoned_datetime(ctx, tc, tz_spec, zoned_spec, out, out_zone)
   // out: hegel_zoned_datetime_t { civil, offset_seconds, offset_known,
-  //       fold, kind, offset_before, offset_after, timestamp } plus the zone name
-  //       as a string result the caller frees
+  //       fold, kind, offset_before, offset_after, timestamp }; out_zone:
+  //       the zone name as a string result the caller frees
 
 hegel_generate_timestamp(ctx, tc, min, max, precision, out)
 hegel_generate_offset(ctx, tc, min_seconds, max_seconds, granularity,
@@ -466,17 +525,29 @@ hegel_generate_span(ctx, tc, spec, out)
 
 hegel_timezone_resolve(ctx, name, civil, out)   // classify a wall time
 hegel_timezone_offset_at(ctx, name, timestamp, out)
-hegel_timezone_info(ctx, name, out)              // known? primary name, tags
+hegel_timezone_info(ctx, name, out)              // known? primary name, rank, tags
 ```
 
 `hegel_generate_time` and `hegel_generate_datetime` gain a `precision`
 argument (a breaking signature change, as `hegel_generate_datetime` had
 once before; every frontend passes `NANOSECONDS` to keep its behaviour).
 `hegel_generate_date` gains an options handle for the weekday and month
-masks. `hegel_timezone_resolve` and `hegel_timezone_offset_at` are query
+masks, which may be NULL for no mask. `hegel_precision_t` is one enum
+shared by times, datetimes, zoned datetimes, timestamps and durations.
+`hegel_timezone_resolve` and `hegel_timezone_offset_at` are query
 functions, not draws: they let a frontend without a capable native
 library (Go for gap detection, OCaml) check a value, and they make the
 engine's tz evaluator testable from every binding's conformance suite.
+`hegel_timezone_resolve` takes no fold argument: it resolves under the
+compatible rule of §4 (the earlier instant of a fold, a gap shifted
+forward, with `offset_seconds` the offset in force at the resolved
+instant), and the later instant of a fold is
+`timestamp + offset_before - offset_after`. It and
+`hegel_timezone_offset_at` reject an unknown name with an argument
+error, whereas `hegel_timezone_info` reports `known = false` for one
+(and the undefined tag with the highest rank for `Etc/Unknown`); the
+feature tags cross the ABI as `uint32_t` bits named
+`HEGEL_TIMEZONE_TAG_*`.
 
 ## 8. Frontends
 
@@ -500,20 +571,28 @@ First-party, the minimum that exposes the engine's data (§10, Q2): a
 `hegel::datetime` module of plain value types mirroring §4 one to one
 (`Date`, `Time`, `DateTime`, `Timestamp`, `UtcOffset`, `TimeZone`,
 `ZonedDateTime`, `SignedDuration`, `Span`), each a public struct of
-public fields deriving `Debug`, `Clone`, `Copy` where the type has no
+public fields (`UtcOffset` is the enum `Known(i32) | Unknown`) deriving
+`Debug`, `Clone`, `Copy` where the type has no
 string, `PartialEq`, `Eq`, `Hash`, and `Ord` where the order is total,
 with `Display` printing the engine's RFC 9557 form of §6.5 so a
 counterexample reads the same from every frontend. Nothing else: no
 arithmetic, no parsing, no conversions and no constructors beyond `new`
 functions that check the §4 ranges, so a user of any date library wraps
-the struct with `map` and nothing here competes with their library.
+the struct with `map` and nothing here competes with their library. The
+option enums of §6 (`Precision`, `Granularity`, `Weekday`, `Month`,
+`Imaginary`, `Ambiguous`, `SpanSign`, `SpanUnit`, `Tag`) and the query
+functions `tzdb_version`, `resolve`, `offset_at` and `info` live in the
+same module.
 Generators over these types live in `hegel::generators` under the names
 the extras also use (`dates`, `times`, `datetimes`, `timestamps`,
 `utc_offsets`, `time_zones`, `zoned_datetimes`, `signed_durations`,
 `spans`), each with the builder options of §6 (`min_value`/`max_value`,
-`precision`, `weekdays`/`months`, `imaginary`, `ambiguous`, `unknown`).
+`precision`, `weekdays`/`months`, `imaginary`, `ambiguous`, `unknown`,
+and `opaque` on `time_zones`); `spans()` enables every unit by default,
+and the first `unit_bounds` call replaces that default.
 `durations()` over `std::time::Duration` keeps its API on the engine
-draw and `system_times()` is added. The extras are thin maps over these.
+draw, gaining `precision`, and `system_times()` is added. The extras are
+thin maps over these.
 
 `extras::jiff` becomes complete: `dates`, `times`, `datetimes`,
 `timestamps`, `offsets`, `time_zones()` (IANA, from the engine, resolved
@@ -523,18 +602,30 @@ generator of UTC, unknown or a fixed offset is reproduced by composition),
 `zoneds()` built on `generate_zoned_datetime` with wall-clock or instant
 bounds and `.imaginary(Avoid)` by default since `Zoned` cannot hold a gap
 time; both folds via `to_ambiguous_zoned` + `earlier()`/`later()`;
-`spans()` over the span draw with per-unit builders; `signed_durations`;
-`iso_week_dates`, `weekdays`, `eras` as mappings. `DefaultGenerator` for
-every public jiff type.
+`spans()` over the span draw with per-unit builders and a `non_negative`
+switch (a jiff `Span` is single-signed, so there is no `mixed` policy);
+`signed_durations`; `iso_week_dates`, `weekdays`, `eras` as mappings.
+`zoneds()` takes civil bounds a day inside jiff's `Timestamp` range, so
+that the conversion cannot fail by construction, and rejects a draw
+jiff's database reads back at another wall time. `DefaultGenerator` for
+every public jiff value type; enum-only types whose generator would be
+`sampled_from` of all variants, the builder and configuration structs
+and the borrowed types get none.
 
-`extras::chrono`: `datetimes::<Tz>()` reworked on the engine draw;
+`extras::chrono`: `datetimes::<Tz>()` reworked on the engine draw, with
+`timezones()` taking a sealed `TimeZones` trait implemented for every
+generator of `Utc` or `FixedOffset` and for the IANA generator, since
+the engine must be able to classify wall times in the zone;
 `chrono-tz` behind a feature, so `DateTime<Tz>` for IANA `Tz` uses
 `LocalResult` with the engine's fold; naive generators gain precision and
-masks.
+masks, and a bound in chrono's leap-second representation is a usage
+error, since the engine's time draw cannot hold a 60th second (Q6).
 
 `extras::time` (new, behind a `time` feature): `dates`, `times`,
-`primitive_datetimes`, `utc_offsets`, `offset_datetimes`, `durations`,
-`weekdays`, `months`; `large-dates` honoured.
+`primitive_datetimes`, `utc_offsets`, `offset_datetimes` (a wall-clock
+time in a drawn IANA zone with the offset in force, gaps always avoided
+since an `OffsetDateTime` holds a civil time and one offset),
+`durations`, `weekdays`, `months`; `large-dates` honoured.
 
 ### 8.3 Other frontends (mapping only)
 

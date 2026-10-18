@@ -1,4 +1,11 @@
-//! Integrations with third-party libraries.
+//! Integrations with third-party libraries, each behind a cargo feature of
+//! the same name: `chrono` (with `chrono-tz` adding IANA time zones),
+//! `jiff`, `rand`, `serde_json` and `time`. The date and time
+//! integrations are thin maps over the first-party generators of
+//! [`hegel::generators`](crate::generators) and the values of
+//! [`hegel::datetime`](crate::datetime), so every library draws from the
+//! engine's bundled time zone database with the same targeting and
+//! shrinking.
 
 #[cfg(feature = "chrono")]
 pub mod chrono;
