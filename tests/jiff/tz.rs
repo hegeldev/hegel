@@ -173,18 +173,41 @@ fn test_jiff_timezones_in_vec() {
     });
 }
 
+fn wall_time(z: &Zoned) -> DateTime {
+    let second = z.timestamp().as_nanosecond().div_euclid(1_000_000_000) as i64;
+    let offset = z
+        .time_zone()
+        .to_offset(Timestamp::from_second(second).unwrap());
+    z.timestamp().to_zoned(TimeZone::fixed(offset)).datetime()
+}
+
+fn resolution(z: &Zoned) -> AmbiguousTimestamp {
+    z.time_zone().to_ambiguous_timestamp(wall_time(z))
+}
+
 fn resolved_as_jiff_would(z: &Zoned) -> bool {
-    let ambiguous = z.time_zone().to_ambiguous_zoned(z.datetime());
+    let ambiguous = resolution(z);
     match ambiguous.offset() {
-        AmbiguousOffset::Unambiguous { offset } => offset == z.offset(),
-        AmbiguousOffset::Fold { before, after } => z.offset() == before || z.offset() == after,
+        AmbiguousOffset::Unambiguous { .. } => ambiguous.unambiguous().unwrap() == z.timestamp(),
+        AmbiguousOffset::Fold { .. } => {
+            ambiguous.earlier().unwrap() == z.timestamp()
+                || ambiguous.later().unwrap() == z.timestamp()
+        }
         AmbiguousOffset::Gap { .. } => false,
     }
 }
 
 fn is_fold(z: &Zoned, later: bool) -> bool {
-    match z.time_zone().to_ambiguous_zoned(z.datetime()).offset() {
-        AmbiguousOffset::Fold { before, after } => z.offset() == if later { after } else { before },
+    let ambiguous = resolution(z);
+    match ambiguous.offset() {
+        AmbiguousOffset::Fold { .. } => {
+            let expected = if later {
+                ambiguous.later()
+            } else {
+                ambiguous.earlier()
+            };
+            expected.unwrap() == z.timestamp()
+        }
         _ => false,
     }
 }
@@ -314,24 +337,33 @@ fn test_jiff_zoneds_precision() {
 #[test]
 fn test_jiff_zoneds_imaginary() {
     let london = || jiff_gs::time_zones().names(["Europe/London"]);
-    let allowed = jiff_gs::zoneds()
-        .time_zones(london())
-        .imaginary(Imaginary::Allow);
-    find_any(allowed, |z| {
-        let gap_start = z
-            .datetime()
-            .checked_sub(jiff::Span::new().hours(1))
-            .unwrap();
-        matches!(
-            z.time_zone().to_ambiguous_zoned(gap_start).offset(),
-            AmbiguousOffset::Gap { .. }
-        ) && z.datetime().hour() == 2
-    });
+    assert_all_examples(
+        jiff_gs::zoneds()
+            .time_zones(london())
+            .imaginary(Imaginary::Allow),
+        resolved_as_jiff_would,
+    );
     assert_all_examples(
         jiff_gs::zoneds()
             .time_zones(london())
             .imaginary(Imaginary::Avoid),
         resolved_as_jiff_would,
+    );
+}
+
+#[test]
+fn test_jiff_zoneds_imaginary_allow_shifts_a_gap_forward() {
+    let apia = jiff_gs::time_zones().names(["Pacific/Apia"]);
+    assert_all_examples(
+        jiff_gs::zoneds()
+            .time_zones(apia)
+            .min_value(DateTime::constant(2011, 12, 30, 0, 0, 0, 0))
+            .max_value(DateTime::constant(2011, 12, 30, 23, 59, 59, 999_999_999))
+            .imaginary(Imaginary::Allow),
+        |z| {
+            z.date() == jiff::civil::Date::constant(2011, 12, 31)
+                && z.offset() == Offset::from_hours(14).unwrap()
+        },
     );
 }
 
