@@ -99,14 +99,15 @@ impl DefaultGenerator for Zoned {
 }
 
 /// The engine's zoned draw over jiff's zones, with skipped wall times
-/// kept, for the ambiguous types that hold a wall time jiff has not yet
-/// resolved.
+/// kept and no fold drawn, for the ambiguous types that hold a wall time
+/// jiff has not yet resolved.
 fn ambiguous_draws() -> ZonedDateTimeGenerator {
     gs::zoned_datetimes()
         .time_zones(time_zones().engine_generator())
         .min_value(super::engine_datetime(MIN_CIVIL))
         .max_value(super::engine_datetime(MAX_CIVIL))
         .imaginary(crate::datetime::Imaginary::Allow)
+        .ambiguous(crate::datetime::Ambiguous::Earlier)
 }
 
 fn ambiguous_zoned(z: ZonedDateTime) -> AmbiguousZoned {

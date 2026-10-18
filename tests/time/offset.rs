@@ -1,4 +1,7 @@
-use crate::common::utils::{assert_all_examples, check_can_generate_examples, find_any, minimal};
+use crate::common::utils::{
+    AssertAllExamples, assert_all_examples, check_can_generate_examples, find_any, minimal,
+};
+use hegel::HealthCheck;
 use hegel::datetime::{Ambiguous, Granularity, Precision, UNKNOWN_ZONE};
 use hegel::extras::time as time_gs;
 use hegel::generators as gs;
@@ -264,6 +267,30 @@ fn test_offset_datetimes_reject_a_wall_time_past_the_time_range(tc: hegel::TestC
             .min_instant(last)
             .max_instant(last),
     );
+}
+
+fn instant_in_the_time_range(dt: &OffsetDateTime) -> bool {
+    dt.checked_to_offset(UtcOffset::UTC).is_some()
+}
+
+#[test]
+fn test_offset_datetimes_instants_stay_within_the_time_range() {
+    assert_all_examples(time_gs::offset_datetimes(), instant_in_the_time_range);
+    let day = time::Duration::days(1);
+    AssertAllExamples::new(
+        time_gs::offset_datetimes()
+            .time_zones(gs::time_zones().names(["Etc/GMT+12"]))
+            .min_value(PrimitiveDateTime::MAX - day),
+        instant_in_the_time_range,
+    )
+    .run_with_health_checks_suppressed(&[HealthCheck::FilterTooMuch]);
+    AssertAllExamples::new(
+        time_gs::offset_datetimes()
+            .time_zones(gs::time_zones().names(["Etc/GMT-14"]))
+            .max_value(PrimitiveDateTime::MIN + day),
+        instant_in_the_time_range,
+    )
+    .run_with_health_checks_suppressed(&[HealthCheck::FilterTooMuch]);
 }
 
 #[test]

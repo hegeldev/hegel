@@ -299,3 +299,22 @@ fn test_datetimes_tz_stay_in_bounds_where_chrono_tz_and_the_engine_disagree_on_a
     )
     .run_with_health_checks_suppressed(&[HealthCheck::FilterTooMuch]);
 }
+
+#[test]
+fn test_datetimes_tz_stay_in_instant_bounds_where_chrono_tz_applies_no_daylight_saving() {
+    let min = Utc.with_ymd_and_hms(2100, 3, 15, 0, 0, 0).unwrap();
+    let max = min + chrono::TimeDelta::hours(2);
+    let new_york_2100 = || {
+        chrono_gs::datetimes()
+            .timezones(chrono_gs::time_zones().names([Tz::America__New_York]))
+            .min_instant(min)
+            .max_instant(max)
+    };
+    find_any(new_york_2100(), |dt| {
+        dt.offset().fix().local_minus_utc() == -5 * 3600
+    });
+    AssertAllExamples::new(new_york_2100(), move |dt| {
+        dt.to_utc() >= min && dt.to_utc() <= max && resolves_to_itself(dt)
+    })
+    .run_with_health_checks_suppressed(&[HealthCheck::FilterTooMuch]);
+}

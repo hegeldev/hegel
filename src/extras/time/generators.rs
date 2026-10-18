@@ -502,13 +502,12 @@ impl Generator<OffsetDateTime> for OffsetDateTimeGenerator {
             datetime::UtcOffset::Known(seconds) => UtcOffset::from_whole_seconds(seconds).unwrap(),
             datetime::UtcOffset::Unknown => UtcOffset::UTC,
         };
-        match time_datetime(z.civil) {
-            Some(civil) => OffsetDateTime::new_in_offset(civil.date(), civil.time(), offset),
-            None => {
-                tc.assume(false);
-                unreachable!()
-            }
+        let civil = time_datetime(z.civil).unwrap_or_else(|| tc.reject());
+        let dt = OffsetDateTime::new_in_offset(civil.date(), civil.time(), offset);
+        if dt.checked_to_offset(UtcOffset::UTC).is_none() {
+            tc.reject();
         }
+        dt
     }
 }
 
@@ -528,8 +527,12 @@ impl PrintableGenerator<OffsetDateTime> for OffsetDateTimeGenerator {
 /// to `UTC`, then toward 2000-01-01T00:00:00. One draw in twenty on
 /// average targets a transition of the zone, so instants on either side
 /// of a daylight-saving change are reached. The zone with an unknown
-/// offset, `Etc/Unknown`, is read as UTC. See [`OffsetDateTimeGenerator`]
-/// for builder methods.
+/// offset, `Etc/Unknown`, is read as UTC. The value's instant lies within
+/// the range too, so `to_utc` never panics on it: a wall time within a
+/// day of the range's ends whose instant at the drawn offset falls outside
+/// it is rejected as if by `assume(false)`, as is a wall time an instant
+/// bound puts past the range. See [`OffsetDateTimeGenerator`] for builder
+/// methods.
 ///
 /// # Example
 ///

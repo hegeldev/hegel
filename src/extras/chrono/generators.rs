@@ -1004,8 +1004,11 @@ where
 /// chrono's range whose instant in the drawn zone or offset falls outside
 /// it is rejected as if by `assume(false)`; bounds that leave the range's
 /// last day alone never meet this. So is a wall time chrono-tz's database
-/// skips where the engine's does not, since the two can differ by a
-/// release; the engine's is [`tzdb_version`](crate::datetime::tzdb_version).
+/// skips where the engine's does not, and a wall time whose instant under
+/// chrono-tz's rules falls outside instant bounds the engine kept it
+/// within: the two databases can differ by a release, the engine's being
+/// [`tzdb_version`](crate::datetime::tzdb_version), and chrono-tz applies
+/// no daylight-saving rule from 2100 on.
 ///
 /// ```no_run
 /// use chrono::{FixedOffset, Utc};
@@ -1149,7 +1152,13 @@ impl zoned::Zones<chrono_tz::Tz> for TimeZoneGenerator {
         let tz: chrono_tz::Tz = z.zone.name.parse().unwrap();
         let instant = DateTime::<Utc>::from_timestamp(z.timestamp.second, z.timestamp.nanosecond)
             .unwrap_or_else(|| tc.reject());
-        chrono_tz_datetime(&z, tz, instant).unwrap_or_else(|| tc.reject())
+        let dt = chrono_tz_datetime(&z, tz, instant).unwrap_or_else(|| tc.reject());
+        if let zoned::Bounds::Instant(min, max) = config.bounds {
+            if dt < min || dt > max {
+                tc.reject();
+            }
+        }
+        dt
     }
 }
 
