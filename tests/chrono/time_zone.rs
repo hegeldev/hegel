@@ -1,8 +1,10 @@
 use crate::common::utils::{
-    assert_all_examples, check_can_generate_examples, expect_panic, find_any, minimal,
+    AssertAllExamples, assert_all_examples, check_can_generate_examples, expect_panic, find_any,
+    minimal,
 };
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
+use hegel::HealthCheck;
 use hegel::datetime::{Ambiguous, Imaginary, Precision, Tag, info};
 use hegel::extras::chrono as chrono_gs;
 use hegel::generators as gs;
@@ -273,4 +275,27 @@ fn test_datetimes_tz_property(tc: hegel::TestCase) {
     );
     assert!(dt >= min && dt <= max);
     assert!(resolves_to_itself(&dt));
+}
+
+#[hegel::test]
+fn test_datetimes_tz_rebuilt_after_a_draw_uses_the_new_bounds(tc: hegel::TestCase) {
+    let max = new_york((2000, 1, 1), (0, 0, 0));
+    let g = chrono_gs::datetimes().timezones(chrono_gs::time_zones().names([Tz::UTC]));
+    let _ = tc.draw(&g);
+    let dt = tc.draw(g.max_value(max));
+    assert!(dt.naive_local() <= max);
+}
+
+#[test]
+fn test_datetimes_tz_stay_in_bounds_where_chrono_tz_and_the_engine_disagree_on_a_gap() {
+    let min = new_york((2027, 3, 14), (2, 0, 0));
+    let max = new_york((2027, 3, 14), (3, 59, 59));
+    AssertAllExamples::new(
+        chrono_gs::datetimes()
+            .timezones(chrono_gs::time_zones().names([Tz::America__Edmonton]))
+            .min_value(min)
+            .max_value(max),
+        move |dt| dt.naive_local() >= min && dt.naive_local() <= max && resolves_to_itself(dt),
+    )
+    .run_with_health_checks_suppressed(&[HealthCheck::FilterTooMuch]);
 }

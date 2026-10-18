@@ -1089,23 +1089,25 @@ impl ZonedGenerator {
 }
 
 /// Build the jiff value of an engine draw from its wall time, zone and
-/// fold, and from its instant for a skipped wall time or one jiff's
-/// database places outside its instant range.
-fn jiff_zoned(z: &dt::ZonedDateTime) -> Zoned {
+/// fold, and from its instant for a skipped wall time. `None` when jiff
+/// has no value at that wall time: its database skips it, or it reads
+/// the instant it resolves to back as a different wall time, as it does
+/// in the last second before a pre-1970 gap.
+fn jiff_zoned(z: &dt::ZonedDateTime) -> Option<Zoned> {
     let zone = jiff_time_zone(&z.zone);
-    let resolved = match z.kind {
-        Kind::Gap => None,
+    match z.kind {
+        Kind::Gap => Some(jiff_timestamp(z.timestamp).to_zoned(zone)),
         Kind::Unique | Kind::Fold => {
-            let ambiguous = zone.to_ambiguous_zoned(jiff_datetime(z.civil));
-            if z.fold {
+            let civil = jiff_datetime(z.civil);
+            let ambiguous = zone.to_ambiguous_zoned(civil);
+            let resolved = if z.fold {
                 ambiguous.later()
             } else {
                 ambiguous.earlier()
-            }
-            .ok()
+            };
+            resolved.ok().filter(|zoned| zoned.datetime() == civil)
         }
-    };
-    resolved.unwrap_or_else(|| jiff_timestamp(z.timestamp).to_zoned(zone))
+    }
 }
 
 impl Generator<Zoned> for ZonedGenerator {
@@ -1114,7 +1116,7 @@ impl Generator<Zoned> for ZonedGenerator {
     }
 
     fn do_draw(&self, tc: &TestCase) -> Zoned {
-        jiff_zoned(&self.inner().do_draw(tc))
+        jiff_zoned(&self.inner().do_draw(tc)).unwrap_or_else(|| tc.reject())
     }
 }
 
@@ -1136,9 +1138,11 @@ impl PrintableGenerator<Zoned> for ZonedGenerator {
 /// instants are reached. The value is built from the wall time, the zone
 /// name and the fold with jiff's own rules (`to_ambiguous_zoned` and
 /// `earlier` or `later`), so a newer database on jiff's side changes what
-/// a value means but never makes it invalid; the engine's database
-/// release is [`tzdb_version`](crate::datetime::tzdb_version). See
-/// [`ZonedGenerator`] for builder methods.
+/// a value means; a wall time jiff has no value at, because its database
+/// skips it or it reads the instant back as another wall time, is
+/// rejected as if by `assume(false)`. The engine's database release is
+/// [`tzdb_version`](crate::datetime::tzdb_version). See [`ZonedGenerator`]
+/// for builder methods.
 ///
 /// # Example
 ///

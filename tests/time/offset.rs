@@ -3,6 +3,8 @@ use hegel::datetime::{Ambiguous, Granularity, Precision, UNKNOWN_ZONE};
 use hegel::extras::time as time_gs;
 use hegel::generators as gs;
 use jiff::tz::AmbiguousOffset;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
 
 fn datetime(year: i32, month: u8, day: u8, hour: u8, minute: u8, second: u8) -> PrimitiveDateTime {
@@ -261,5 +263,81 @@ fn test_offset_datetimes_reject_a_wall_time_past_the_time_range(tc: hegel::TestC
             .time_zones(gs::time_zones().names(["Etc/GMT-14"]))
             .min_instant(last)
             .max_instant(last),
+    );
+}
+
+#[test]
+fn test_offset_datetimes_instant_bounds_reach_the_ends_of_the_time_range() {
+    find_any(
+        time_gs::offset_datetimes().min_instant(OffsetDateTime::UNIX_EPOCH),
+        |dt| dt.year() == PrimitiveDateTime::MAX.year(),
+    );
+    find_any(
+        time_gs::offset_datetimes().max_instant(OffsetDateTime::UNIX_EPOCH),
+        |dt| dt.year() == PrimitiveDateTime::MIN.year(),
+    );
+}
+
+#[test]
+fn test_offset_datetimes_instant_bounds_replace_wall_clock_bounds() {
+    let millennium = datetime(2000, 1, 1, 0, 0, 0);
+    find_any(
+        time_gs::offset_datetimes()
+            .min_value(millennium)
+            .max_instant(OffsetDateTime::UNIX_EPOCH),
+        |dt| dt.year() == PrimitiveDateTime::MIN.year(),
+    );
+    find_any(
+        time_gs::offset_datetimes()
+            .max_value(millennium)
+            .min_instant(OffsetDateTime::UNIX_EPOCH),
+        |dt| dt.year() == PrimitiveDateTime::MAX.year(),
+    );
+}
+
+#[test]
+fn test_offset_datetimes_wall_clock_bounds_replace_instant_bounds() {
+    let epoch = datetime(1970, 1, 1, 0, 0, 0);
+    find_any(
+        time_gs::offset_datetimes()
+            .min_instant(OffsetDateTime::UNIX_EPOCH)
+            .min_value(epoch),
+        |dt| dt.year() == PrimitiveDateTime::MAX.year(),
+    );
+    find_any(
+        time_gs::offset_datetimes()
+            .max_instant(OffsetDateTime::UNIX_EPOCH)
+            .max_value(epoch),
+        |dt| dt.year() == PrimitiveDateTime::MIN.year(),
+    );
+}
+
+#[test]
+fn test_offset_datetimes_instant_bounds_never_reject_a_draw() {
+    let draws = Arc::new(AtomicU64::new(0));
+    let values = Arc::new(AtomicU64::new(0));
+    let (d, v) = (Arc::clone(&draws), Arc::clone(&values));
+    hegel::Hegel::new(move |tc| {
+        d.fetch_add(1, Ordering::SeqCst);
+        let _ = tc.draw(time_gs::offset_datetimes().min_instant(OffsetDateTime::UNIX_EPOCH));
+        v.fetch_add(1, Ordering::SeqCst);
+    })
+    .settings(
+        hegel::Settings::new()
+            .test_cases(300)
+            .database(None)
+            .phases([hegel::Phase::Generate]),
+    )
+    .run();
+    assert_eq!(draws.load(Ordering::SeqCst), values.load(Ordering::SeqCst));
+}
+
+#[test]
+fn test_offset_datetimes_instant_bounds_keep_each_other() {
+    let lo = OffsetDateTime::UNIX_EPOCH;
+    let hi = datetime(2000, 1, 1, 0, 0, 0).assume_utc();
+    assert_all_examples(
+        time_gs::offset_datetimes().max_instant(hi).min_instant(lo),
+        move |dt| *dt >= lo && *dt <= hi,
     );
 }

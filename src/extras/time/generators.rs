@@ -388,10 +388,26 @@ pub fn utc_offsets() -> UtcOffsetGenerator {
     }
 }
 
+enum OffsetDateTimeBounds {
+    Civil(PrimitiveDateTime, PrimitiveDateTime),
+    Instant(OffsetDateTime, OffsetDateTime),
+}
+
+/// The earliest instant whose wall time is in range at every offset.
+fn earliest_instant() -> OffsetDateTime {
+    PrimitiveDateTime::MIN.assume_offset(UtcOffset::from_hms(-25, -59, -59).unwrap())
+}
+
+/// The latest instant whose wall time is in range at every offset.
+fn latest_instant() -> OffsetDateTime {
+    PrimitiveDateTime::MAX.assume_offset(UtcOffset::from_hms(25, 59, 59).unwrap())
+}
+
 /// Generator for [`time::OffsetDateTime`] values. Created by
 /// [`offset_datetimes()`].
 pub struct OffsetDateTimeGenerator {
     inner: gs::ZonedDateTimeGenerator,
+    bounds: OffsetDateTimeBounds,
 }
 
 impl OffsetDateTimeGenerator {
@@ -402,32 +418,62 @@ impl OffsetDateTimeGenerator {
         self
     }
 
+    fn civil_bounds(mut self, min: PrimitiveDateTime, max: PrimitiveDateTime) -> Self {
+        self.bounds = OffsetDateTimeBounds::Civil(min, max);
+        self.inner = self
+            .inner
+            .min_value(hegel_datetime(min))
+            .max_value(hegel_datetime(max));
+        self
+    }
+
+    fn instant_bounds(mut self, min: OffsetDateTime, max: OffsetDateTime) -> Self {
+        self.bounds = OffsetDateTimeBounds::Instant(min, max);
+        self.inner = self
+            .inner
+            .min_instant(hegel_timestamp(min))
+            .max_instant(hegel_timestamp(max));
+        self
+    }
+
     /// Set the minimum wall-clock time (inclusive), in whatever zone is
     /// drawn. Replaces instant bounds.
-    pub fn min_value(mut self, min: PrimitiveDateTime) -> Self {
-        self.inner = self.inner.min_value(hegel_datetime(min));
-        self
+    pub fn min_value(self, min: PrimitiveDateTime) -> Self {
+        let max = match self.bounds {
+            OffsetDateTimeBounds::Civil(_, max) => max,
+            OffsetDateTimeBounds::Instant(..) => PrimitiveDateTime::MAX,
+        };
+        self.civil_bounds(min, max)
     }
 
     /// Set the maximum wall-clock time (inclusive), in whatever zone is
     /// drawn. Replaces instant bounds.
-    pub fn max_value(mut self, max: PrimitiveDateTime) -> Self {
-        self.inner = self.inner.max_value(hegel_datetime(max));
-        self
+    pub fn max_value(self, max: PrimitiveDateTime) -> Self {
+        let min = match self.bounds {
+            OffsetDateTimeBounds::Civil(min, _) => min,
+            OffsetDateTimeBounds::Instant(..) => PrimitiveDateTime::MIN,
+        };
+        self.civil_bounds(min, max)
     }
 
     /// Set the minimum instant (inclusive); only `min`'s instant matters,
     /// not its offset. Replaces wall-clock bounds.
-    pub fn min_instant(mut self, min: OffsetDateTime) -> Self {
-        self.inner = self.inner.min_instant(hegel_timestamp(min));
-        self
+    pub fn min_instant(self, min: OffsetDateTime) -> Self {
+        let max = match self.bounds {
+            OffsetDateTimeBounds::Instant(_, max) => max,
+            OffsetDateTimeBounds::Civil(..) => latest_instant(),
+        };
+        self.instant_bounds(min, max)
     }
 
     /// Set the maximum instant (inclusive); only `max`'s instant matters,
     /// not its offset. Replaces wall-clock bounds.
-    pub fn max_instant(mut self, max: OffsetDateTime) -> Self {
-        self.inner = self.inner.max_instant(hegel_timestamp(max));
-        self
+    pub fn max_instant(self, max: OffsetDateTime) -> Self {
+        let min = match self.bounds {
+            OffsetDateTimeBounds::Instant(min, _) => min,
+            OffsetDateTimeBounds::Civil(..) => earliest_instant(),
+        };
+        self.instant_bounds(min, max)
     }
 
     /// Draw only wall-clock times that are a whole number of `precision`
@@ -504,6 +550,7 @@ pub fn offset_datetimes() -> OffsetDateTimeGenerator {
             .min_value(hegel_datetime(PrimitiveDateTime::MIN))
             .max_value(hegel_datetime(PrimitiveDateTime::MAX))
             .imaginary(datetime::Imaginary::Avoid),
+        bounds: OffsetDateTimeBounds::Civil(PrimitiveDateTime::MIN, PrimitiveDateTime::MAX),
     }
 }
 

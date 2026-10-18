@@ -472,3 +472,29 @@ fn test_jiff_ambiguous_timestamp_default_generator() {
         t.compatible().is_ok()
     });
 }
+
+#[test]
+fn test_jiff_zoneds_stay_in_bounds_where_jiff_misreads_the_last_second_before_a_gap() {
+    let min = DateTime::constant(1946, 5, 31, 0, 0, 0, 0);
+    let max = DateTime::constant(1946, 5, 31, 23, 59, 59, 999_999_999);
+    assert_all_examples(
+        jiff_gs::zoneds()
+            .time_zones(jiff_gs::time_zones().names(["Europe/Istanbul"]))
+            .min_value(min)
+            .max_value(max),
+        move |z| z.datetime() >= min && z.datetime() <= max && resolved_as_jiff_would(z),
+    );
+}
+
+#[test]
+fn test_jiff_zoneds_stay_in_bounds_where_jiff_reports_a_fold_the_engine_does_not() {
+    let min = DateTime::constant(2023, 10, 28, 23, 0, 0, 0);
+    let max = DateTime::constant(2023, 10, 29, 23, 59, 59, 0);
+    assert_all_examples(
+        jiff_gs::zoneds()
+            .time_zones(jiff_gs::time_zones().names(["America/Nuuk"]))
+            .min_value(min)
+            .max_value(max),
+        move |z| z.datetime() >= min && z.datetime() <= max,
+    );
+}
