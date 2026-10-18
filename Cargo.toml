@@ -122,6 +122,7 @@ jiff = { version = "0.2", default-features = false, features = ["std"], optional
 # IANA time zones for the chrono generators, resolved by chrono-tz's own
 # copy of the database.
 chrono-tz = { version = "0.10.4", default-features = false, optional = true }
+time = { version = "0.3.45", default-features = false, optional = true }
 
 [dev-dependencies]
 regex = "1.0"
@@ -152,6 +153,7 @@ chrono = ["dep:chrono"]
 # Adds `DateTime<chrono_tz::Tz>` and IANA time zone generators to the chrono integration.
 chrono-tz = ["chrono", "dep:chrono-tz"]
 jiff = ["dep:jiff"]
+time = ["dep:time"]
 serde_json = ["dep:serde_json"]
 # Enables the serde_json/raw_value feature. Enables generators for serde_json::value::RawValue.
 serde_json_raw_value = ["serde_json", "serde_json/raw_value"]

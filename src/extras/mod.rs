@@ -11,3 +11,6 @@ pub mod rand;
 
 #[cfg(feature = "serde_json")]
 pub mod serde_json;
+
+#[cfg(feature = "time")]
+pub mod time;
