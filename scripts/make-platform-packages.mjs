@@ -3,7 +3,7 @@
 // plus a manifest whose `os`/`cpu` fields let package managers install only the
 // host's package (they are `optionalDependencies` of the main package).
 //
-// Artifacts are fetched from the pinned hegel-rust release (see
+// Artifacts are fetched from the pinned libhegel release (see
 // scripts/fetch-libhegel.mjs). Package versions are read from the root
 // package.json — the release pipeline bumps that first, then runs this script
 // and publishes each generated directory (see .github/scripts/release.py).

@@ -5,7 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What This Is
 
 `@hegeldev/hegel` — property-based testing for TypeScript. The client drives
-**libhegel**, the Rust engine (`hegel-rust/hegel-c`, version pinned in
+**libhegel**, the Rust engine (the `libhegel/` component of the
+[hegeldev/hegel](https://github.com/hegeldev/hegel) monorepo, version pinned in
 `src/libhegel-version.ts`), directly through its C ABI. On Node, Bun and Deno
 that is the native shared library via the `koffi` FFI library; in browsers it
 is the same engine compiled to `wasm32-unknown-unknown`, driven through the raw
@@ -34,7 +35,7 @@ npm run test:browser    # pack the package, bundle it four ways, run in Chromium
   to download both into `native/<version>/`, or set `HEGEL_LIBHEGEL_PATH`
   (resolved by `tests/libPath.ts`) and `HEGEL_WASM_PATH` (resolved by
   `tests/wasmFixture.ts`).
-- `just build-libhegel` builds libhegel from a sibling `../hegel-rust` checkout
+- `just build-libhegel` builds libhegel from a sibling `../hegel` checkout
   for work against an unreleased engine; export the printed path as
   `HEGEL_LIBHEGEL_PATH`. For the Wasm side, build there with
   `cargo build -p hegeltest-c --release --target wasm32-unknown-unknown` and
@@ -72,9 +73,11 @@ the koffi entry; `scripts/packaging.test.mjs` pins that ordering.
 
 `src/libhegel-version.ts` is the single pin for both artifacts.
 `scripts/fetch-libhegel.mjs` downloads the pinned release's host library and
-Wasm module into `native/<version>/`, verifying each against the release's
-`.sha256` sidecar (the versioned path is the cache invalidation — a pin bump
-misses and re-downloads). Regenerate the pin with `just update-libhegel`; it
+Wasm module into `native/<version>/` from the hegeldev/hegel GitHub release
+tagged `libhegel/<version>` (releases before 0.47.2 are on hegeldev/hegel-rust
+as `libhegel-v<version>`), verifying each against the release's `.sha256`
+sidecar (the versioned path is the cache invalidation — a pin bump misses and
+re-downloads). Regenerate the pin with `just update-libhegel`; it
 refuses a release that does not publish every platform asset, the Wasm module
 and their sidecars. The pin file is generated code — never edit by hand. After
 a bump, follow the `align-libhegel` skill: the koffi bindings _and_ the raw
@@ -144,7 +147,8 @@ so a Node import creeping into a shared module fails `just lint`.
    (imperative) and `record` (declarative) in `compose.ts` are the composition
    entry points.
 
-The C ABI is declared in `hegel-rust/hegel-c/include/hegel.h`. Neither adapter
+The C ABI is declared in `libhegel/include/hegel.h` in hegeldev/hegel (also
+published as the `hegel.h` asset of each libhegel release). Neither adapter
 frees anything implicitly — every handle the ABI writes back is caller-owned:
 the runner frees `Context`/`Settings`/`Run` handles, each test case from
 `next_test_case`, the run result, each failure, and each collection explicitly

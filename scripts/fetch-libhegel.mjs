@@ -7,8 +7,9 @@
 //
 // The release to download is pinned by LIBHEGEL_VERSION in
 // src/libhegel-version.ts (run `just update-libhegel` to bump it); its assets
-// hang off hegel-rust's `libhegel-v<version>` tag (the plain `v<version>` tags
-// mark hegeltest releases and carry no binaries). Every asset is verified
+// hang off the `libhegel/<version>` tag of the hegeldev/hegel monorepo
+// (releases before 0.47.2 live on hegeldev/hegel-rust under
+// `libhegel-v<version>` tags, from before libhegel moved). Every asset is verified
 // against the `<asset>.sha256` sidecar the release publishes next to it.
 // Artifacts land in a per-version directory (native/<version>/), so a pin bump
 // simply misses the cache and downloads fresh — no invalidation logic needed.
@@ -31,11 +32,39 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const VERSION_TS = path.join(ROOT, "src", "libhegel-version.ts");
 const NATIVE_DIR = path.join(ROOT, "native");
-const BASE_URL = "https://github.com/hegeldev/hegel-rust/releases/download";
 
-/** The hegel-rust tag that carries the libhegel release of a version. */
+/**
+ * libhegel moved from hegeldev/hegel-rust (tags `libhegel-v<version>`) into
+ * the hegeldev/hegel monorepo (tags `libhegel/<version>`) with 0.47.2; older
+ * releases stay where they were published.
+ */
+export const RELEASE_REPO = "hegeldev/hegel";
+const LEGACY_RELEASE_REPO = "hegeldev/hegel-rust";
+const FIRST_MONOREPO_VERSION = "0.47.2";
+
+function isLegacyRelease(version) {
+  const parse = (v) => v.split(".").map((part) => Number.parseInt(part, 10));
+  const [a, b] = [parse(version), parse(FIRST_MONOREPO_VERSION)];
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const diff = (a[i] ?? 0) - (b[i] ?? 0);
+    if (diff !== 0) return diff < 0;
+  }
+  return false;
+}
+
+/** The GitHub repository that carries the libhegel release of a version. */
+export function releaseRepo(version) {
+  return isLegacyRelease(version) ? LEGACY_RELEASE_REPO : RELEASE_REPO;
+}
+
+/** The tag that carries the libhegel release of a version. */
 export function releaseTag(version) {
-  return `libhegel-v${version}`;
+  return isLegacyRelease(version) ? `libhegel-v${version}` : `libhegel/${version}`;
+}
+
+/** The download URL of an asset of the libhegel release of a version. */
+export function assetUrl(asset, version) {
+  return `https://github.com/${releaseRepo(version)}/releases/download/${releaseTag(version)}/${asset}`;
 }
 
 export const PLATFORMS = [
@@ -128,7 +157,7 @@ export async function fetchAsset(asset, version, { offline = false } = {}) {
   if (offline) {
     throw new Error(`libhegel: ${asset} is not fetched; run \`just fetch-libhegel\` first`);
   }
-  const url = `${BASE_URL}/${releaseTag(version)}/${asset}`;
+  const url = assetUrl(asset, version);
   const tmp = `${dest}.${process.pid}.partial`;
   const sidecar = `${tmp}.sha256`;
   process.stderr.write(`libhegel: downloading ${asset}\n`);

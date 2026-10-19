@@ -5,7 +5,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-RUST_REPO = "hegeldev/hegel-rust"
+# libhegel lives in the hegeldev/hegel monorepo since 0.47.2; earlier releases
+# stay on hegeldev/hegel-rust (see scripts/fetch-libhegel.mjs).
+RELEASE_REPO = "hegeldev/hegel"
+LEGACY_RELEASE_REPO = "hegeldev/hegel-rust"
+FIRST_MONOREPO_VERSION = (0, 47, 2)
 # One branch per pinned version. A fixed, reused branch meant every release
 # force-recreated it from main, clobbering any manual or agent work pushed to
 # the open PR; a per-version branch keeps re-runs of the *same* version
@@ -32,12 +36,13 @@ def set_output(name: str, value: str) -> None:
 def release_url(version: str) -> str:
     """The GitHub release of a libhegel version.
 
-    hegel-rust tags every release `v<hegeltest version>` with no GitHub
-    release; a release that includes hegel-c additionally tags
-    `libhegel-v<hegel-c version>`, and the GitHub release (with the libhegel
-    binaries) hangs off that tag.
+    The monorepo tags each component's releases `<path>/<version>`, so the
+    GitHub release (with the libhegel binaries) hangs off `libhegel/<version>`.
+    Releases from before the move hang off hegel-rust's `libhegel-v<version>`.
     """
-    return f"https://github.com/{RUST_REPO}/releases/tag/libhegel-v{version}"
+    if tuple(int(part) for part in version.split(".")) < FIRST_MONOREPO_VERSION:
+        return f"https://github.com/{LEGACY_RELEASE_REPO}/releases/tag/libhegel-v{version}"
+    return f"https://github.com/{RELEASE_REPO}/releases/tag/libhegel/{version}"
 
 
 def get_pinned_version() -> str:
@@ -73,7 +78,7 @@ def bump(requested: str) -> None:
 
     RELEASE_MD.write_text(
         "RELEASE_TYPE: patch\n\n"
-        f"This patch bumps our pinned libhegel ([hegel-rust](https://github.com/{RUST_REPO})) from "
+        f"This patch bumps our pinned [libhegel](https://github.com/{RELEASE_REPO}) from "
         f"[{current}]({current_url}) to [{new}]({new_url}).\n"
     )
 
@@ -101,6 +106,6 @@ def bump(requested: str) -> None:
 
 if __name__ == "__main__":
     # An optional argument pins that exact release, given as either the
-    # `libhegel-v<version>` tag or the bare version; with none we take the
+    # `libhegel/<version>` tag or the bare version; with none we take the
     # latest. The repository_dispatch trigger passes client_payload.tag.
     bump(sys.argv[1] if len(sys.argv) > 1 else "")

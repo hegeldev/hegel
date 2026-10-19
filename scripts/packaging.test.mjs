@@ -49,7 +49,7 @@ test("conditional exports keep node ahead of browser and default to browser", ()
 });
 
 test("update-libhegel only pins releases that publish every asset with its sidecar", () => {
-  // A fake gh stands in for hegel-rust; this is the path
+  // A fake gh stands in for GitHub; this is the path
   // .github/scripts/bump_hegel_rust.py takes for every engine bump.
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "hegel-update-libhegel-test-"));
   try {
@@ -72,7 +72,9 @@ test("update-libhegel only pins releases that publish every asset with its sidec
 const assets = ${JSON.stringify(assets)};
 const drop = process.env.DROP ?? "";
 if (process.argv[2] !== 'release') throw new Error('unexpected gh invocation: ' + process.argv.slice(2).join(' '));
-console.log(JSON.stringify({tagName: process.env.TAG ?? 'libhegel-v9.9.9', assets: assets.filter(name => name !== drop).map(name => ({name}))}));
+const repo = process.argv[process.argv.indexOf('--repo') + 1];
+if (repo !== (process.env.REPO ?? 'hegeldev/hegel')) throw new Error('unexpected repo: ' + repo);
+console.log(JSON.stringify({tagName: process.env.TAG ?? 'libhegel/9.9.9', assets: assets.filter(name => name !== drop).map(name => ({name}))}));
 `,
     );
     fs.chmodSync(path.join(temp, "gh"), 0o755);
@@ -87,13 +89,18 @@ console.log(JSON.stringify({tagName: process.env.TAG ?? 'libhegel-v9.9.9', asset
     assert.match(run("9.9.9", { DROP: WASM_ASSET }).stderr, /missing assets: .*wasm/);
     assert.match(run("9.9.9", { DROP: `${WASM_ASSET}.sha256` }).stderr, /wasm\.sha256/);
     assert.match(run("9.9.9", { DROP: PLATFORMS[0].asset }).stderr, /missing assets/);
-    assert.match(run("9.9.9", { TAG: "v9.9.9" }).stderr, /not a libhegel release/);
-    assert.match(run("9.9.8").stderr, /requested release libhegel-v9.9.8 but got tag/);
+    assert.match(run("9.9.9", { TAG: "frontends/rust/9.9.9" }).stderr, /not a libhegel release/);
+    assert.match(run("9.9.8").stderr, /requested release libhegel\/9.9.8 but got tag/);
+    assert.match(run("0.45.4").stderr, /unexpected repo: hegeldev\/hegel-rust/);
     assert.equal(pin(), before, "a rejected release must leave the pin alone");
 
-    const result = run("libhegel-v9.9.9");
+    const result = run("libhegel/9.9.9");
     assert.equal(result.status, 0, result.stderr);
     assert.match(pin(), /LIBHEGEL_VERSION = "9\.9\.9";/);
+
+    const legacy = run("0.45.4", { TAG: "libhegel-v0.45.4", REPO: "hegeldev/hegel-rust" });
+    assert.equal(legacy.status, 0, legacy.stderr);
+    assert.match(pin(), /LIBHEGEL_VERSION = "0\.45\.4";/);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }

@@ -1,61 +1,67 @@
 // Bumps the pinned libhegel release (src/libhegel-version.ts).
 //
-// Queries a libhegel GitHub release in hegel-rust (the latest by default, or
-// the one named by the argument), checks that it publishes an artifact for
-// every supported platform plus the Wasm module (each with its checksum
-// sidecar), and writes a fresh, generated source file pinning its version.
-// Run it to bump the pinned release, then commit the result.
+// Queries a libhegel GitHub release in the hegeldev/hegel monorepo (the latest
+// by default, or the one named by the argument), checks that it publishes an
+// artifact for every supported platform plus the Wasm module (each with its
+// checksum sidecar), and writes a fresh, generated source file pinning its
+// version. Run it to bump the pinned release, then commit the result.
 //
-// hegel-rust tags every release `v<hegeltest version>` with no GitHub release
-// attached; a release that includes hegel-c additionally tags
-// `libhegel-v<hegel-c version>`, and that tag carries the GitHub release and
-// the libhegel binaries. Only the `libhegel-v` releases exist to be pinned.
+// The monorepo tags each component's releases `<path>/<version>`; libhegel's
+// are the `libhegel/<version>` tags (titled `libhegel v<version>`), and only
+// those carry the libhegel binaries. Releases before 0.47.2 predate the
+// monorepo and live on hegeldev/hegel-rust as `libhegel-v<version>`
+// (see scripts/fetch-libhegel.mjs).
 //
 // Usage:
-//   node scripts/update-libhegel.mjs [<version> | libhegel-v<version>]
+//   node scripts/update-libhegel.mjs [<version> | libhegel/<version>]
 
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { PLATFORMS, WASM_ASSET, releaseTag } from "./fetch-libhegel.mjs";
+import { PLATFORMS, RELEASE_REPO, WASM_ASSET, releaseRepo, releaseTag } from "./fetch-libhegel.mjs";
 
-const REPO = "hegeldev/hegel-rust";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUTPUT = path.join(ROOT, "src", "libhegel-version.ts");
 
 /**
- * The libhegel version named by a `libhegel-v<version>` tag, or null for any
- * other tag (a hegeltest-only `v<version>` release, say).
+ * The libhegel version named by a `libhegel/<version>` tag (or a legacy
+ * `libhegel-v<version>` one), or null for any other tag (another component's
+ * release, say).
  */
 function versionOfTag(tag) {
-  const match = /^libhegel-v(.+)$/.exec(tag);
+  const match = /^libhegel(?:\/|-v)(.+)$/.exec(tag);
   return match ? match[1] : null;
 }
 
-/** Normalize a requested `<version>` / `v<version>` / `libhegel-v<version>`. */
+/**
+ * Normalize a requested `<version>` / `v<version>` / `libhegel/<version>` /
+ * `libhegel-v<version>`.
+ */
 function requestedVersion(want) {
-  return want.replace(/^(libhegel-)?v/, "");
+  return want.replace(/^(libhegel\/|libhegel-v|v)/, "");
 }
 
 /**
  * Query a libhegel release and return its version (tag without the leading
- * "libhegel-v"), verifying that every supported platform's artifact and the
- * Wasm module are published, each with its checksum sidecar.
+ * "libhegel/"), verifying that every supported platform's artifact and the
+ * Wasm module are published, each with its checksum sidecar. An explicit
+ * version is looked up wherever that version was published; "latest" is the
+ * monorepo's latest release, which must be a libhegel one.
  */
 function releaseVersion(want) {
   const args = ["release", "view"];
+  let repo = RELEASE_REPO;
   if (want) {
     args.push(releaseTag(requestedVersion(want)));
+    repo = releaseRepo(requestedVersion(want));
   }
-  args.push("--repo", REPO, "--json", "tagName,assets");
+  args.push("--repo", repo, "--json", "tagName,assets");
 
   const rel = JSON.parse(execFileSync("gh", args, { encoding: "utf8" }));
   const version = versionOfTag(rel.tagName);
   if (version === null) {
-    throw new Error(
-      `release ${rel.tagName} is not a libhegel release (expected a libhegel-v* tag)`,
-    );
+    throw new Error(`release ${rel.tagName} is not a libhegel release (expected a libhegel/* tag)`);
   }
 
   const published = new Set(rel.assets.map((asset) => asset.name));
