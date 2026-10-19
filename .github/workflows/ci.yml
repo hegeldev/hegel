@@ -23,8 +23,9 @@ concurrency:
 jobs:
   # Which parts of the repo changed. On a push to main everything is treated
   # as changed, so the release job always has a complete run behind it; on a
-  # pull request only the affected components' workflows run. Skipped
-  # required checks count as passing for branch protection.
+  # pull request only the affected components' workflows run. Branch
+  # protection requires `ci-ok` below rather than the component jobs, since a
+  # skipped reusable workflow reports no check runs at all.
   changes:
     name: changes
     runs-on: ubuntu-latest
@@ -221,6 +222,26 @@ jobs:
           tools: just
       - name: lint
         run: just check-format-nix
+
+  # The one check branch protection requires. Jobs inside a skipped reusable
+  # workflow never report a check run, so requiring `libhegel / test` directly
+  # would block every frontend-only PR; this job always runs and fails only
+  # when something it depends on failed or was cancelled.
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [lint, libhegel, rust, test-minimal-versions, coverage, nix]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Check dependency results
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "$RESULTS"
+          if echo "$RESULTS" | grep -Eq '"(failure|cancelled)"'; then
+            exit 1
+          fi
 
   release:
     name: release
