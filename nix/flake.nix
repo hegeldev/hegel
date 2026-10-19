@@ -1,5 +1,5 @@
 {
-  description = "Hegel for Rust";
+  description = "Hegel: the libhegel engine and its language frontends";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
@@ -27,7 +27,7 @@
         }:
         let
           cargoTomlLines = builtins.filter builtins.isString (
-            builtins.split "\n" (builtins.readFile ../hegel-c/Cargo.toml)
+            builtins.split "\n" (builtins.readFile ../libhegel/Cargo.toml)
           );
           versionLine = builtins.head (
             builtins.filter (l: builtins.match ''version = "[^"]+"'' l != null) cargoTomlLines

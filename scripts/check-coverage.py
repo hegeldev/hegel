@@ -69,7 +69,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 RATCHET_FILE = Path(".github/coverage-ratchet.json")
-SOURCE_DIRS = [Path("src"), Path("hegel-macros/src"), Path("hegel-c/src")]
+SOURCE_DIRS = [
+    Path("frontends/rust/src"),
+    Path("frontends/rust/macros/src"),
+    Path("libhegel/src"),
+]
 
 # ──────────────────────────────────────────────────────────────────────
 # nocov block cache
@@ -428,8 +432,8 @@ def _ensure_smoke_cdylib(target_dir: Path) -> None:
     """Build the libhegel cdylib and point the dlopen smoke test at it.
 
     `cargo llvm-cov` runs `cargo test`, which builds rlibs and test binaries
-    but *not* the standalone `cdylib` artifact. The hegel-c smoke test
-    (`hegel-c/tests/smoke.rs`) dlopens that cdylib, so without it every smoke
+    but *not* the standalone `cdylib` artifact. The libhegel smoke test
+    (`libhegel/tests/smoke.rs`) dlopens that cdylib, so without it every smoke
     test fails to find `libhegel_c.so` and the whole coverage run errors out.
 
     Build it into cargo's target dir (separate from its `llvm-cov-target`
@@ -439,7 +443,7 @@ def _ensure_smoke_cdylib(target_dir: Path) -> None:
     `HEGEL_C_LIB_DIR` instead of nested-building the engine, and its loader
     dlopens this cdylib. A non-instrumented cdylib is fine in both cases: the
     engine's line coverage comes from the in-process tests (hegeltest driving
-    the C ABI under `static-engine` plus hegel-c's embedded/`c_abi_inprocess`
+    the C ABI under `static-engine` plus libhegel's embedded/`c_abi_inprocess`
     tests), not from dlopening the library — the dlopen-based tests only
     exercise the FFI boundary behaviourally.
     """
@@ -477,16 +481,13 @@ def cargo_target_dir() -> Path:
 
 
 def public_features() -> str:
-    """Every root-crate feature except `default` and internal `__*` ones.
+    """Every hegeltest feature except `default` and internal `__*` ones.
 
     The `__` prefix marks internal features, which gate code that would
     report as permanently uncovered.
     """
     metadata = cargo_metadata()
-    root_manifest = Path(metadata["workspace_root"]) / "Cargo.toml"
-    package = next(
-        p for p in metadata["packages"] if Path(p["manifest_path"]) == root_manifest
-    )
+    package = next(p for p in metadata["packages"] if p["name"] == "hegeltest")
     features = sorted(
         f for f in package["features"] if f != "default" and not f.startswith("__")
     )
@@ -498,20 +499,20 @@ def run_coverage() -> Path:
 
     A `--workspace` pass with every additive feature enabled. Running the
     whole workspace (rather than hegeltest alone) covers the engine in
-    hegel-c/src — both through hegeltest driving it over the C ABI and through
-    hegel-c's own embedded tests — instead of excluding hegel-c as a mere
+    libhegel/src — both through hegeltest driving it over the C ABI and through
+    libhegel's own embedded tests — instead of excluding libhegel as a mere
     dependency, while still covering the hegeltest frontend.
 
-    A second pass then re-exports hegel-c's lib tests on their own, after
+    A second pass then re-exports libhegel's lib tests on their own, after
     cleaning the workspace artifacts, and the two LCOV files are union-merged
     per line. This is a correctness requirement, not belt-and-braces: the
-    workspace pass links two distinct compilations of hegel-c (the shared
+    workspace pass links two distinct compilations of libhegel (the shared
     rlib every other binary uses, and the crate's own `--test` build for its
     embedded tests), and every `#[no_mangle] hegel_*` function has the *same*
     coverage-record name but a *different* record hash in each. `llvm-cov`
     resolves that collision by whichever object it reads the function's
     mapping from and silently drops the other compilation's counts — so a
-    line inside a `no_mangle` function covered only by hegel-c's embedded
+    line inside a `no_mangle` function covered only by libhegel's embedded
     tests deterministically shows as uncovered in the workspace export. The
     isolated pass sees only the lib test's own object after workspace
     artifacts are cleaned, where those counts resolve correctly; merging at
@@ -522,7 +523,7 @@ def run_coverage() -> Path:
     A third pass runs hegeltest with default features, where the engine is
     the dlopened shared library rather than a linked rlib. The workspace pass
     enables `static-engine` (a public feature, so `public_features()` picks
-    it up), which compiles out the runtime loader in `src/ffi/sys/`; this
+    it up), which compiles out the runtime loader in `frontends/rust/src/ffi/sys/`; this
     pass is what covers it. The dlopened cdylib is the non-instrumented one
     `_ensure_smoke_cdylib` built, so this pass adds only frontend lines to
     the union merge; the engine's lines come from the other two passes.
@@ -538,7 +539,7 @@ def run_coverage() -> Path:
     print("Running coverage analysis...")
     lcov_path = Path("lcov.info")
     raw_lcov = Path("lcov-all.info")
-    hegel_c_lib_lcov = Path("lcov-hegel-c-lib.info")
+    hegel_c_lib_lcov = Path("lcov-libhegel-lib.info")
     ffi_lcov = Path("lcov-hegeltest-ffi.info")
     target_dir = cargo_target_dir()
 
@@ -553,7 +554,7 @@ def run_coverage() -> Path:
             # proc-macro compile-time execution isn't runtime coverage; keep
             # hegel-macros out of the report rather than count it as uncovered.
             "--ignore-filename-regex",
-            "hegel-macros/",
+            "frontends/rust/macros/",
         ],
         output=raw_lcov,
         label="workspace, all features",
@@ -563,7 +564,7 @@ def run_coverage() -> Path:
     _run_lcov_phase(
         cargo_args=["-p", "hegeltest-c", "--lib"],
         output=hegel_c_lib_lcov,
-        label="hegel-c lib tests, isolated no_mangle records",
+        label="libhegel lib tests, isolated no_mangle records",
         target_dir=target_dir,
     )
 

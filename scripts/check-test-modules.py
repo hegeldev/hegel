@@ -27,9 +27,9 @@ from pathlib import Path
 # Each test root, paired with the src trees whose `#[path]` attributes wire
 # up its `embedded/` directory.
 ROOTS: list[tuple[Path, list[Path]]] = [
-    (Path("tests"), [Path("src")]),
-    (Path("hegel-c/tests"), [Path("hegel-c/src")]),
-    (Path("hegel-macros/tests"), [Path("hegel-macros/src")]),
+    (Path("frontends/rust/tests"), [Path("frontends/rust/src")]),
+    (Path("frontends/rust/macros/tests"), [Path("frontends/rust/macros/src")]),
+    (Path("libhegel/tests"), [Path("libhegel/src")]),
 ]
 
 MOD_RE = re.compile(r"^\s*(?:pub\s+)?mod\s+(\w+)\s*;", re.MULTILINE)

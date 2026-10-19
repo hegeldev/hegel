@@ -1,0 +1,149 @@
+# Recipes for libhegel, the native engine behind every Hegel frontend, built
+# as the `hegeltest-c` crate. Run as `just libhegel::<recipe>` from anywhere in
+# the repo; recipes execute from this directory.
+set ignore-comments := true
+
+check: check-lint test
+
+# libhegel-specific lints; workspace-wide ones live in the root justfile.
+check-lint:
+    # nothing yet beyond the workspace-wide lints
+
+test: check-tests
+
+check-tests:
+    RUST_BACKTRACE=1 cargo test -p hegeltest-c
+
+# Build the libhegel C shared library + checked-in C header.
+build:
+    python scripts/check-release-rust.py
+    cargo build -p hegeltest-c --release
+
+# Type-check and build the browser-oriented raw WebAssembly artifact.
+build-wasm:
+    rustup run stable python scripts/check-release-rust.py
+    cargo +stable check -p hegeltest-c --target wasm32-unknown-unknown
+    cargo +stable build -p hegeltest-c --release --target wasm32-unknown-unknown
+    cargo +stable rustc -p hegeltest-c --release --target wasm32-unknown-unknown --features wasm-static --crate-type staticlib
+
+# Smoke-test the WebAssembly host and string ABI against the release build.
+test-wasm-abi:
+    node scripts/test-wasm-abi.mjs "$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')/wasm32-unknown-unknown/release/hegel_c.wasm"
+
+# Run the smoke tests (Rust integration test that dlopens libhegel) and
+# build + run every example C program against both the shared (libhegel.so)
+# and static (libhegel.a) builds. The static link pulls in the same system
+# libraries Rust's std needs (libdl/pthread/m on Linux); --print-link-args
+# from rustc would enumerate them, but the set is stable enough to hard-code
+# in the driver script.
+c-test: c-test-smoke c-test-examples
+
+# Cross-platform half of `c-test`: build the cdylib + run the
+# libloading-based smoke tests. Works on Linux, macOS, and Windows.
+c-test-smoke:
+    # Build the cdylib first so the smoke tests can dlopen it. `cargo test`
+    # alone doesn't produce the cdylib artifact (libloading-based tests
+    # don't declare a build-link dependency on it).
+    cargo build -p hegeltest-c
+    cargo test -p hegeltest-c
+
+# Unix-only half of `c-test`: compile + run the example C programs in
+# examples/ against both libhegel.so and libhegel.a (and the darwin
+# equivalents). The driver is a bash script that assumes a Unix-style
+# toolchain (cc + ld); a Windows port is a separate follow-up.
+[unix]
+c-test-examples:
+    scripts/c-examples-run.sh
+
+[windows]
+c-test-examples:
+    @echo "Skipping c-test-examples on Windows (bash-based driver, follow-up)"
+
+# Build libhegel with `panic = "abort"` and run the smoke tests + C examples
+# against it. This proves no panic is reachable across the FFI boundary on
+# the tested paths: under abort, any panic aborts the process, so an
+# invalid-schema test that crashed instead of returning HEGEL_E_INVALID_ARG
+# would fail the run (the original hegel-java SIGABRT). The cdylib/staticlib
+# are built into a separate target dir so they don't clobber the unwind
+# artifacts; the smoke-test harness itself stays unwind (so its own
+# assertions report normally) and is pointed at the abort artifacts via
+# HEGEL_C_LIB_DIR.
+[unix]
+c-test-abort:
+    RUSTFLAGS="-C panic=abort" CARGO_TARGET_DIR={{justfile_directory()}}/../target/abort cargo build -p hegeltest-c
+    HEGEL_C_LIB_DIR={{justfile_directory()}}/../target/abort/debug cargo test -p hegeltest-c
+    HEGEL_C_LIB_DIR={{justfile_directory()}}/../target/abort/debug scripts/c-examples-run.sh
+
+[windows]
+c-test-abort:
+    @echo "Skipping c-test-abort on Windows (bash-based driver, follow-up)"
+
+# Build libhegel as a self-contained no-std cdylib (`--no-default-features
+# --features runtime`, `panic = "abort"` because there is no unwinder
+# without std), check with `nm -D`/`readelf` that it registers no
+# thread-local state and exports only hegel_* (the dlclose-safety
+# contract), and run the smoke tests — including the dlopen/dlclose replay
+# test — against it. Built `--release` so the gate certifies the profile a
+# shipped artifact would use, and into a separate target dir so it doesn't
+# clobber the default std-backed artifacts.
+[linux]
+c-test-runtime:
+    RUSTFLAGS="-C panic=abort" CARGO_TARGET_DIR={{justfile_directory()}}/../target/runtime cargo build --release -p hegeltest-c --no-default-features --features runtime
+    RUSTFLAGS="-C panic=abort" CARGO_TARGET_DIR={{justfile_directory()}}/../target/runtime cargo clippy --release -p hegeltest-c --no-default-features --features runtime -- -D warnings
+    scripts/check-no-tls.sh {{justfile_directory()}}/../target/runtime/release/libhegel_c.so
+    HEGEL_C_LIB_DIR={{justfile_directory()}}/../target/runtime/release cargo test -p hegeltest-c
+
+[macos]
+c-test-runtime:
+    @echo "Skipping c-test-runtime on macOS (GNU nm -D based check, Linux-only for now)"
+
+[windows]
+c-test-runtime:
+    @echo "Skipping c-test-runtime on Windows (GNU nm -D based check, Linux-only for now)"
+
+# Regenerate include/hegel.h and the Rust frontend's src/ffi/sys/fns.rs from
+# the Rust source (no diff check).
+header:
+    HEGEL_C_HEADER_WRITE=1 cargo test -p hegeltest-c --test header_drift
+    ../frontends/rust/scripts/gen-ffi-list.py
+
+# The hegeltest-c `c_abi_miri` test target drives the C ABI directly — the
+# reference-counted clone/free handle lifecycle (clone, free-in-any-order,
+# two clones used concurrently from two threads) plus one complete run that
+# generates, fails, and shrinks — which is the pointer/aliasing and run-loop
+# logic Miri checks for use-after-free, double-free, leaks, and races. It is
+# a dedicated tractable subset; the exhaustive `c_abi_inprocess` suite is too
+# slow to interpret in full and runs only under normal `cargo test`, and the
+# dlopen `smoke` test cannot run under Miri at all.
+#
+# Requires the nightly toolchain with the miri component:
+# `rustup +nightly component add miri`.
+#
+# CI=1 disables the on-disk failure database (we don't want Miri writing
+# files); isolation is disabled because the engine seeds its PRNG from OS
+# entropy.
+check-miri:
+    CI=1 MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test -p hegeltest-c --test c_abi_miri
+
+# Parse strings generated from the fixture grammars with Lark itself
+# (needs uv, which fetches the pinned lark).
+check-lark:
+    scripts/check-lark.py
+
+# Compare the engine's grammar parser with Lark's Earley parser on strings
+# generated from the fixture grammars and mutations of them (needs uv).
+check-parse:
+    scripts/check-parse.py
+
+# Regenerate the `.expected` files for the Lark fixture grammars from Lark.
+lark-fixtures:
+    scripts/gen-lark-fixtures.py
+
+# Regenerate the engine's Unicode tables from the vendored UCD files in
+# src/unicodedata/, and the Python reference they are tested against (needs
+# uv, which fetches unicodedata2 for that Unicode version).
+unicodedata:
+    python3 scripts/generate_unicodedata_tables.py
+    scripts/generate_unicodedata_python_reference.py
+
+miri: check-miri
