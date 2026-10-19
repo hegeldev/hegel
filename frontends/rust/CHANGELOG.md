@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.50.2 - 2026-10-19
+
+This patch updates the bug-report link in internal error messages to point at `https://github.com/hegeldev/hegel/issues`, where Hegel development now lives.
+
 ## 0.50.1 - 2026-10-16
 
 This patch adds the `stop_on_first_failure` setting. By default (`true`) a run stops generating once it has found a failure and moves on to shrinking and reporting it. Set it to `false` and the run uses its whole `test_cases` budget before reporting, whatever it finds along the way: a failure replayed from the database no longer skips generation, every stored failure is replayed, and failing test cases count against the budget like valid ones, so a test that fails on every input still ends.

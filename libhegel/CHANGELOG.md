@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.47.2 - 2026-10-19
+
+This patch updates the bug-report link in internal error messages and in the `HEGEL_E_INTERNAL` documentation to point at `https://github.com/hegeldev/hegel/issues`, where Hegel development now lives.
+
 ## 0.47.1 - 2026-10-16
 
 This patch adds the `stop_on_first_failure` setting (`hegel_settings_set_stop_on_first_failure` / `hegel_settings_get_stop_on_first_failure`, the `stop_on_first_failure` profile key, the `HEGEL_STOP_ON_FIRST_FAILURE` environment variable; on by default). Turned off, a run uses its whole `test_cases` budget before reporting instead of stopping at the first failure: a failure replayed from the database no longer skips generation, every stored failure is replayed, and failing test cases count against the budget like valid ones, so a test that fails on every input still ends.
