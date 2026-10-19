@@ -5,3 +5,5 @@ This release makes the string generators follow the host's Unicode version. `heg
 The older versions are kept as their differences from the next newer version, a few hundred lines in all, so adding one costs little.
 
 This release also accepts `\z` in regex patterns, the end-of-string anchor Python 3.14 added to `re` as a spelling of `\Z`, and rejects as an invalid argument a float draw whose bounds leave only an infinity while infinities are disallowed (a `min_value` of `inf` or a `max_value` of `-inf`, possibly after stepping an exclusive bound), which used to fail as an internal error at width 64.
+
+It also fixes a shrinking regression introduced in 0.46.0. A run that reports a single failure shrinks only the smallest failure it found, but shrinking that failure can run into a different failure with a smaller example than any seen before, and the run then reported that example without shrinking it. Such a failure is now shrunk before it is reported, so the reported failure is minimal again.
