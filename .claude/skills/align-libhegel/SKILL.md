@@ -5,7 +5,8 @@ description: "How to align the C++ wrapper layer to a new libhegel (hegel-c) rel
 
 # Aligning the C++ wrapper to a new libhegel release
 
-`libhegel` is a Rust cdylib built from hegel-rust's `hegel-c` crate. hegel-cpp
+`libhegel` is a Rust cdylib built from the `libhegel/` crate (`hegeltest-c`)
+of the hegeldev/hegel monorepo. hegel-cpp
 compiles **directly against the vendored C header** (`libhegel/hegel.h`,
 included as `<hegel.h>`) and links the prebuilt shared library that
 `cmake/libhegel.cmake` downloads and SHA-256-verifies at configure time. There
@@ -125,16 +126,18 @@ The pin lives in **three files that must move together**, rewritten by
 `.github/workflows/bump-hegel-rust.yml`) — do not hand-bump:
 
 - `cmake/libhegel.cmake` — `HEGEL_LIBHEGEL_VERSION`
-- `libhegel/hegel.h` — the vendored C ABI header, fetched from hegel-rust at
-  the release tag and reformatted with `uvx clang-format` to repo style
+- `libhegel/hegel.h` — the vendored C ABI header, fetched from hegeldev/hegel
+  at the release tag and reformatted with `uvx clang-format` to repo style
 - `nix/flake.nix` — `libhegelVersion` plus each platform asset's SHA-256
 
-The release **tag is `libhegel-v<VERSION>`** (hegel-rust's plain
-`v<VERSION>` tags belong to the `hegeltest` crate, whose version differs;
-the raw path with the wrong tag 404s or serves another release's header):
+The release **tag is `libhegel/<VERSION>`** (the monorepo's other components
+tag their releases `<path>/<version>` too, e.g. `frontends/rust/<VERSION>`,
+and their versions differ; the raw path with the wrong tag 404s or serves
+another release's header). Releases before 0.47.2 are on hegeldev/hegel-rust
+under `libhegel-v<VERSION>` tags, at `hegel-c/include/hegel.h`:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/hegeldev/hegel-rust/libhegel-v<VERSION>/hegel-c/include/hegel.h
+curl -sSL https://raw.githubusercontent.com/hegeldev/hegel/libhegel/<VERSION>/libhegel/include/hegel.h
 ```
 
 **Diff the header before touching any code.** The bump commit already
@@ -170,7 +173,7 @@ rm -rf build
   and the module rewrites the dylib's install name itself.
 - To test against a locally built engine instead, pass
   `-DHEGEL_LIBHEGEL_LIBRARY=/path/to/libhegel_c.<ext>` (e.g. built from a
-  `../hegel-rust` checkout **at the release tag** — a checkout on another
+  `../hegel` checkout **at the release tag** — a checkout on another
   ref is a different ABI).
 
 **When you need the symbol table**, run `nm` against the downloaded library —
@@ -256,7 +259,7 @@ Categorize each change in the `libhegel/hegel.h` diff:
   noise; loosen an expectation only with a comment saying which release
   moved it.
 - **References for unclear semantics**: the implementation is
-  `hegel-c/src/` in hegel-rust **at the release tag** (ownership, error
+  `libhegel/src/` in hegeldev/hegel **at the release tag** (ownership, error
   codes, sentinel values), and hegel-go's `internal/libhegel/` is a second,
   complete binding of the same ABI to sanity-check your reading against.
 
@@ -293,8 +296,8 @@ edit anything — this is a read-only verification.
 
 1. Read the pinned version from cmake/libhegel.cmake (HEGEL_LIBHEGEL_VERSION).
 2. Fetch the matching upstream header:
-   curl -sSL https://raw.githubusercontent.com/hegeldev/hegel-rust/libhegel-v<VERSION>/hegel-c/include/hegel.h
-   (the tag is `libhegel-v<VERSION>`) and confirm the vendored libhegel/hegel.h
+   curl -sSL https://raw.githubusercontent.com/hegeldev/hegel/libhegel/<VERSION>/libhegel/include/hegel.h
+   (the tag is `libhegel/<VERSION>`) and confirm the vendored libhegel/hegel.h
    declares the same functions with the same signatures (the vendored copy is
    clang-formatted, so compare declarations, not bytes).
 3. Extract every `hegel_*` function declared in the header.

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is the C++ library for Hegel, a universal property-based testing protocol. The library drives Hegel's native engine (libhegel, the Hypothesis-derived engine from hegel-rust) **in-process** through its C ABI to generate random test data and perform shrinking. There is no server process: libhegel is a small prebuilt shared library that the build downloads for the host platform.
+This is the C++ library for Hegel, a universal property-based testing protocol. The library drives Hegel's native engine (libhegel, the Hypothesis-derived engine from the hegeldev/hegel monorepo) **in-process** through its C ABI to generate random test data and perform shrinking. There is no server process: libhegel is a small prebuilt shared library that the build downloads for the host platform.
 
 ## Build & Test Commands
 
@@ -42,7 +42,7 @@ you to port a feature from there.
 
 - C++20 compiler by default. The only hard C++20 dependency is reflect-cpp (used by `default_generator`). Configure with `-DHEGEL_REFLECTION=OFF` to drop reflect-cpp and build/consume at C++17 — `default_generator` and automatic struct parsing become unavailable, but everything else works. The feature is gated by the `HEGEL_HAS_REFLECTION` macro (set from the CMake option; see `include/hegel/config.h`). Designated-initializer params (`integers<int>({.min_value = 0})`) then rely on a GCC/Clang C++17 extension.
 - CMake 3.14+
-- libhegel (Hegel's native engine) — a prebuilt shared library downloaded at configure time by `cmake/libhegel.cmake` from the hegel-rust GitHub release, verified against its published SHA-256, and linked. Override with `-DHEGEL_LIBHEGEL_LIBRARY=/path/to/libhegel_c.<ext>`. The vendored C ABI header lives at `libhegel/hegel.h`. Its version is bumped by a bot (`.github/workflows/bump-hegel-rust.yml` running `.github/scripts/bump_hegel_rust.py`) that rewrites `cmake/libhegel.cmake`, `libhegel/hegel.h`, and `nix/flake.nix` together in one PR — do not hand-bump it.
+- libhegel (Hegel's native engine) — a prebuilt shared library downloaded at configure time by `cmake/libhegel.cmake` from the `libhegel/<version>` GitHub release on hegeldev/hegel, verified against its published SHA-256, and linked. Override with `-DHEGEL_LIBHEGEL_LIBRARY=/path/to/libhegel_c.<ext>`. The vendored C ABI header lives at `libhegel/hegel.h`. Its version is bumped by a bot (`.github/workflows/bump-hegel-rust.yml` running `.github/scripts/bump_hegel_rust.py`) that rewrites `cmake/libhegel.cmake`, `libhegel/hegel.h`, and `nix/flake.nix` together in one PR — do not hand-bump it.
 - reflect-cpp v0.22.0 (type-directed generator derivation via reflection). Version pinned in `CMakeLists.txt`; keep it in sync with `nix/flake.nix`'s `fetchDeps.reflectcpp`.
 - Google Test v1.14.0 (for unit tests)
 - ApprovalTests.cpp v.10.13.0 (test-only; snapshot tests in `tests/approvals/`). Fetched at configure time — keep the version in `tests/CMakeLists.txt` and `nix/flake.nix`'s `fetchDeps.approvaltests` in sync. `-DHEGEL_APPROVAL_TESTS=OFF` skips the fetch and the snapshot suites for offline builds. A mismatch writes a sibling `*.received.txt`; accept it by rerunning the test binary with `APPROVAL_TESTS_USE_REPORTER=AutoApproveReporter`.
