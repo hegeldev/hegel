@@ -150,7 +150,9 @@ R5. A frontend whose native type cannot represent a gap time (jiff,
     Temporal, Go, `std::chrono`) can ask the engine never to produce one.
 R6. Shrinking has legible targets: 2000-01-01, midnight, UTC, zero
     duration, zero offset; a zoned datetime shrinks through the ladder
-    "exotic zone → simple zone → UTC".
+    "exotic zone → simple real zone → UTC", with the synthetic `Etc/`
+    family and the legacy names ranked below every real zone so a
+    minimal failure names a zone a reader recognises.
 R7. Every time-bearing draw takes a precision, drawn in units of that
     precision, so no frontend truncates.
 R8. Bounds are inclusive, and a draw with `min == max` is a constant, as
@@ -272,7 +274,8 @@ depend on the zlib build and are not compared. The engine reads only
 the deflated copy. A TZif record that repeats the type before it (same
 offset, flag and abbreviation) is left out of the table, except for a
 zone's last record, which zic writes to pin where the footer rule takes
-over and which the engine applies the footer from. The update policy is
+over and which the engine applies the footer from without reporting it
+as a transition. The update policy is
 the Unicode one: bump deliberately, in its own PR, with the changelog
 naming the release.
 
@@ -394,11 +397,10 @@ half-width] · date · time · [fold].
    instant instead as one integer node: an index into the values in the
    bounds in instant order (the wall times at the precision of each
    stretch of constant offset, trimmed of the repeat the ambiguous policy
-   excludes, with a gap's skipped wall times under `allow` listed after
-   the real wall times of the same instants, so that an index never
-   shrinks to a skipped wall time when a real one denotes the same
-   instant), shrinking
-   toward the value nearest 2000-01-01T00:00:00Z and sampled at the
+   excludes, with a gap's skipped wall times under `allow`), shrinking
+   toward the real wall time nearest 2000-01-01T00:00:00Z, never a
+   skipped one, which denotes the same instant as a real one, and
+   sampled at the
    targeting rate at either side of a transition or at an Appendix C
    instant. The instant fixes which repeat of a fold the value means, so
    no fold node follows. Hypothesis's aware mode found this fallback

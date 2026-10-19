@@ -384,7 +384,10 @@ impl Iterator for RuleTransitions {
 
 /// Every transition of `zone` with `from <= instant < to`, in order: the
 /// explicit ones, then the footer rule's after the last explicit one. The
-/// rule's transitions are confined to the civil envelope.
+/// rule's transitions are confined to the civil envelope. A record that
+/// repeats the type before it, which is how zic marks where the footer
+/// rule takes over, changes nothing and is not a transition, so it is
+/// not yielded, although it still fixes where the rule starts.
 pub struct Transitions<'a> {
     zone: &'a Zone,
     to: i64,
@@ -425,7 +428,7 @@ impl Iterator for Transitions<'_> {
     type Item = ZoneTransition;
 
     fn next(&mut self) -> Option<ZoneTransition> {
-        if let Some(t) = self.zone.transitions.get(self.explicit) {
+        while let Some(t) = self.zone.transitions.get(self.explicit) {
             if t.instant >= self.to {
                 return None;
             }
@@ -434,11 +437,13 @@ impl Iterator for Transitions<'_> {
                 i => self.zone.transitions[i - 1].kind,
             };
             self.explicit += 1;
-            return Some(ZoneTransition {
-                instant: t.instant,
-                before,
-                after: t.kind,
-            });
+            if before != t.kind {
+                return Some(ZoneTransition {
+                    instant: t.instant,
+                    before,
+                    after: t.kind,
+                });
+            }
         }
         let rule = self.rule.as_mut()?;
         loop {

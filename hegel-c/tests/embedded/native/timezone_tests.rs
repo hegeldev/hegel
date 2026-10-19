@@ -190,7 +190,16 @@ fn transitions_agree_with_jiff() {
                 )
             })
             .collect();
-        let explicit: Vec<i64> = zone.transitions.iter().map(|t| t.instant).collect();
+        let mut previous = zone.initial;
+        let explicit: Vec<i64> = zone
+            .transitions
+            .iter()
+            .filter_map(|t| {
+                let changed = t.kind != previous;
+                previous = t.kind;
+                changed.then_some(t.instant)
+            })
+            .collect();
         let ours = ours
             .into_iter()
             .map(|(instant, utoff, abbreviation)| {
@@ -216,6 +225,40 @@ fn transitions_agree_with_jiff() {
             "{name}"
         );
     }
+}
+
+#[test]
+fn transitions_skip_the_records_that_change_nothing() {
+    let mut skipped = 0;
+    for entry in all_names().iter().filter(|n| !n.is_link()) {
+        let zone = entry.zone;
+        let listed: Vec<i64> = transitions(zone, i64::MIN, instant_of(2201, 1, 1))
+            .inspect(|t| assert_ne!(t.before, t.after, "{}", entry.name))
+            .map(|t| t.instant)
+            .collect();
+        let mut previous = zone.initial;
+        for t in &zone.transitions {
+            if t.kind == previous {
+                assert!(!listed.contains(&t.instant), "{}", entry.name);
+                skipped += 1;
+            } else {
+                assert!(listed.contains(&t.instant), "{}", entry.name);
+            }
+            previous = t.kind;
+        }
+    }
+    assert_eq!(skipped, 18);
+    let london = zone_of("Europe/London");
+    let marker = london.transitions.last().unwrap().instant;
+    assert_eq!(marker, 820_454_400);
+    assert!(transitions(london, marker - 1, marker + 1).next().is_none());
+    assert_eq!(
+        transitions(london, marker - 1, instant_of(1997, 1, 1))
+            .next()
+            .unwrap()
+            .instant,
+        instant_of(1996, 3, 31) + 3600
+    );
 }
 
 /// Whether `wall` lies within two days of a last explicit transition that
