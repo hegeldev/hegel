@@ -1,0 +1,109 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "hegeltest"
+dynamic = ["version"]
+description = "Property-based testing for Python, built on the Hegel engine."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "Hegel developers" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: Pytest",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Rust",
+  "Topic :: Software Development :: Testing",
+  "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://hegel.dev"
+Repository = "https://github.com/hegeldev/hegel-python"
+
+[project.entry-points.pytest11]
+hegel = "hegel.pytest_plugin"
+
+[tool.maturin]
+python-source = "python"
+module-name = "hegel._native"
+features = ["pyo3/extension-module"]
+# Repository tooling and bookkeeping that have no business in the source
+# distribution. The .cargo config only points cargo at the dev virtualenv;
+# maturin sets PYO3_PYTHON itself when building.
+exclude = [
+  { path = ".github/**", format = "sdist" },
+  { path = ".cargo/**", format = "sdist" },
+  { path = ".gitignore", format = "sdist" },
+  { path = ".python-version", format = "sdist" },
+  { path = "RELEASE.md", format = "sdist" },
+  { path = "RELEASE-sample.md", format = "sdist" },
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "pytest-xdist>=3",
+  "coverage>=7",
+  "ruff>=0.6",
+  "mypy>=1.11",
+  "maturin>=1.7,<2.0",
+  "tzdata>=2024.1",  # the timezone database that Windows lacks
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider -p pytester"
+xfail_strict = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.per-file-target-version]
+"tests/hypothesis_port/cover/test_typealias_py312.py" = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W"]
+ignore = ["E741", "B008", "B023", "B904", "UP007", "UP045"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["hegel", "tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["hegel"]
+omit = ["python/hegel/_native.pyi"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = true
+exclude_also = [
+  "nocov",
+  "if TYPE_CHECKING:",
+  "\\.\\.\\.$",
+  "raise NotImplementedError",
+  # Code only an older or newer Python reaches, marked "unreachable on
+  # py3.X" and excluded only when `just check-coverage` measures on 3.X.
+  "unreachable on .*\\bpy${HEGEL_COVERAGE_PYTHON-none}\\b",
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true
