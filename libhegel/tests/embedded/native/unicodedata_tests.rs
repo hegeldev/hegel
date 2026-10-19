@@ -88,6 +88,28 @@ fn versions_parse_by_number() {
 }
 
 #[test]
+fn per_version_cells_compute_once_and_independently() {
+    let cells: PerVersion<u32> = PerVersion::new();
+    let v16 = version("16.0.0");
+    assert_eq!(*cells.get(LATEST, || 17), 17);
+    assert_eq!(*cells.get(LATEST, || 99), 17);
+    assert_eq!(*cells.get(v16, || 16), 16);
+    assert_eq!(*cells.get(LATEST, || 99), 17);
+    for v in UnicodeVersion::all() {
+        assert_eq!(
+            *cells.get(v, || v.index() + 100),
+            if v == LATEST {
+                17
+            } else if v == v16 {
+                16
+            } else {
+                v.index() + 100
+            }
+        );
+    }
+}
+
+#[test]
 fn version_indices_round_trip() {
     let all: Vec<UnicodeVersion> = UnicodeVersion::all().collect();
     assert_eq!(all.len(), 5);
