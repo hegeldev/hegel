@@ -160,6 +160,9 @@ def test_matching(category, predicate, invert, is_unicode):
 @pytest.mark.parametrize("encode", [None, False, True])
 def test_can_generate(pattern, encode):
     alphabet = gs.characters(max_codepoint=1000) if encode is None else None
+    if encode is False and any(c in pattern for c in ("\\d", "\\D", "\\w", "\\W")):
+        # Unicode \w and \d draw letters and digits this Python may not know.
+        skip_if_unicode_newer_than_python()
     if encode:
         pattern = pattern.encode("ascii")
     assert_all_examples(

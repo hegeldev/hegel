@@ -11,7 +11,7 @@ than worked around in the bindings, so they can be fixed in the engine.
   categories a `characters()` or `text()` draw admits, and case folding
   follow assignments and reclassifications Python does not know yet. Seen
   in practice: `[^\W_]` drew U+323B0 (CJK Extension J), `^\w\Z` drew
-  U+A7CE, `characters(categories=("Lu", "Nd"))` drew U+10D40 (Garay), and
+  U+A7CE and `\w` drew U+A7CB (Unicode 16, unknown to Python 3.13), `characters(categories=("Lu", "Nd"))` drew U+10D40 (Garay), and
   `text(exclude_categories=["Lu", "Ll"])` drew U+0295 `ʕ`, which Unicode 17
   reclassified from `Ll` to `Lo`.
 
