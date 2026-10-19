@@ -16,7 +16,9 @@ def test_biases_towards_boundary_values():
     trillion = 10**12
     boundary_vals = {-trillion, -trillion + 1, trillion - 1, trillion}
 
-    @hegel.test(test_cases=1000)
+    # Hegel draws each boundary value about 0.65% of the time, so Hypothesis's
+    # 1000 test cases would miss one of the four in about 0.6% of runs.
+    @hegel.test(test_cases=3000)
     def f(tc):
         n = tc.draw(gs.integers(-trillion, trillion))
         boundary_vals.discard(n)

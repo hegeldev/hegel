@@ -97,6 +97,15 @@ def _interfaces(version: int) -> Generator[Any]:
     return tuples(ip_addresses(v=version), integers(0, bits)).map(lambda p: interface(p))
 
 
+def _zip() -> Generator[Any]:
+    # Before Python 3.13 ``zip`` has no signature, so unlike the other
+    # builtins whose constructor takes no required argument it cannot be
+    # inferred from one.
+    from hegel.generators.composite import builds
+
+    return builds(zip)
+
+
 _BUILTINS: dict[Any, Callable[[], Generator[Any]]] = {
     type(None): none,
     bool: booleans,
@@ -121,6 +130,7 @@ _BUILTINS: dict[Any, Callable[[], Generator[Any]]] = {
     ipaddress.IPv6Interface: lambda: _interfaces(6),
     object: lambda: one_of(none(), booleans(), integers(), floats(), text(), binary()),
     typing.Any: lambda: one_of(none(), booleans(), integers(), floats(), text(), binary()),
+    zip: _zip,
 }
 
 
@@ -199,16 +209,20 @@ def from_type(type_: Any) -> Generator[Any]:
         return from_type(_resolve_forward_ref(type_, None))
     if type_ is None:
         return none()
-    if _TypeAliasType is not None and isinstance(type_, _TypeAliasType):
+    if _TypeAliasType is not None and isinstance(type_, _TypeAliasType):  # unreachable on py3.11
         return from_type(type_.__value__)
     if _known(_BUILTINS, type_):
         return _BUILTINS[type_]()
     if type_ is type:
         return just(object)
+    if type_ is typing.Annotated:
+        # A class before Python 3.13 (a special form after), so not rejected
+        # as a non-type below.
+        raise ResolutionFailed("from_type(typing.Annotated): Annotated needs a type argument")
     origin = typing.get_origin(type_)
     if origin is tuple and hasattr(type_, "__args__") and not type_.__args__:
         return tuples()  # ``tuple[()]``, unlike a bare ``typing.Tuple``, is the empty tuple
-    if _TypeAliasType is not None and isinstance(origin, _TypeAliasType):
+    if _TypeAliasType is not None and isinstance(origin, _TypeAliasType):  # unreachable on py3.11
         if origin in _registry:
             return _registered(origin, type_)
         try:
@@ -248,7 +262,7 @@ def from_type(type_: Any) -> Generator[Any]:
     if inspect.isabstract(type_) or getattr(type_, "_is_protocol", False):
         # Neither an abstract class nor a Protocol can be instantiated.
         return _abstract(type_)
-    if hasattr(type_, "__annotations__") and typing.is_typeddict(type_):
+    if typing.is_typeddict(type_):
         try:
             hints = typing.get_type_hints(type_)
         except Exception as error:

@@ -30,7 +30,9 @@ so run `just setup` first.
 - **Coverage is 100%.** `just check-coverage` requires full line and branch
   coverage of `python/hegel` from the package's own tests (`tests/`, without
   the ported suite). Cover new code with tests; mark genuinely unreachable
-  lines `# nocov` rather than lowering the bar.
+  lines `# nocov` rather than lowering the bar. Code that only some Python
+  versions reach is marked `# unreachable on py3.X` instead, which excludes
+  it only when `just check-coverage` runs on 3.X.
 - **Engine divergences are not worked around.** When libhegel behaves
   differently from what Python's `re` or Hypothesis would do, record it in
   `docs/engine-issues.md` and mark the affected test `xfail` (strict, so it

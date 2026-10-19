@@ -512,7 +512,7 @@ def test_origin_includes_the_chain_and_group_members():
             return error
         raise AssertionError("did not raise")  # nocov
 
-    here = __file__
+    here = re.escape(__file__)
     origin = _origin(caught(wrapped, KeyError()))
     assert re.fullmatch(rf"ValueError at {here}:\d+ \(from KeyError at {here}:\d+\)", origin)
     assert origin != _origin(caught(wrapped, IndexError()))

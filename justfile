@@ -19,10 +19,11 @@ test *ARGS:
 check-tests:
     uv run pytest -q tests --ignore=tests/hypothesis_port
 
-# The package's own test suite, requiring complete line coverage.
+# The package's own test suite, requiring complete line coverage. Lines marked
+# "unreachable on py3.X" are excluded only when measuring on Python 3.X.
 check-coverage:
     uv run coverage run -m pytest -q tests --ignore=tests/hypothesis_port
-    uv run coverage report
+    HEGEL_COVERAGE_PYTHON=$(uv run python -c 'import sys; print("%d.%d" % sys.version_info[:2])') uv run coverage report
 
 # The Hypothesis test suite, ported to the Hegel API.
 check-hypothesis-port:

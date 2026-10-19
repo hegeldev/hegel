@@ -132,6 +132,7 @@ CASES = [
     (typing.Optional[str], lambda v: v is None or isinstance(v, str)),
     (typing.Literal["a", 2], lambda v: v in ("a", 2)),
     (type, lambda v: v is object),
+    (zip, lambda v: isinstance(v, zip)),
     (type[int], lambda v: v is int),
     (typing.Annotated[int, "meta"], lambda v: isinstance(v, int)),
     (Colour, lambda v: v is Colour.red),
@@ -165,6 +166,26 @@ def test_from_type_errors():
 
     with pytest.raises(hegel.InvalidArgument, match="no usable signature"):
         gs.from_type(NoSignature)
+    # A class before Python 3.13, so not rejected along with the other special forms.
+    with pytest.raises(hegel.InvalidArgument, match="Annotated needs a type argument"):
+        gs.from_type(typing.Annotated)
+
+
+def test_from_type_tolerates_annotations_that_do_not_evaluate():
+    # Python 3.14 evaluates annotations lazily, so merely reading a class's
+    # ``__annotations__`` can raise: the standard library's ``_colorize.ThemeSection``
+    # annotates a field with a ``ClassVar`` it imports only for type checking,
+    # and resolving ``Container`` or ``Sized`` through their subclasses meets it.
+    class Lazy(abc.ABCMeta):
+        @property
+        def __annotations__(cls):
+            raise NameError("name 'ClassVar' is not defined")
+
+    class Empty(collections.abc.Sized, metaclass=Lazy):
+        def __len__(self):
+            return 0
+
+    check_all(gs.from_type(Empty), lambda v: isinstance(v, Empty))
 
 
 def test_register_type_generator():
