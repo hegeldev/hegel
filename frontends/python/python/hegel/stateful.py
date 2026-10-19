@@ -81,18 +81,42 @@ def _check_weight(name: str, weight: Any) -> float:
 
 
 class Machine:
-    """A state machine assembled from rule and invariant callables.
+    """A state machine assembled from rule and invariant callables, inside
+    a test: the function-based counterpart of :class:`StateMachine`.
 
     ::
 
-        machine = hegel.Machine(tc)
-        machine.rule("push", lambda tc: stack.append(tc.draw(gs.integers())))
-        machine.invariant("sorted", lambda tc: check(stack))
-        machine.run()
+        @hegel.test
+        def test_stack(tc):
+            stack = []
+            machine = hegel.Machine(tc)
+            machine.rule("push", lambda tc: stack.append(tc.draw(gs.integers())))
 
-    With ``max_concurrency`` above 1 the machine runs concurrently: the
-    engine picks a concurrency level, and in each round every worker
-    thread applies rules from the round's group to the shared model.
+            @machine.rule("pop")
+            def pop(tc):
+                tc.assume(stack)
+                stack.pop()
+
+            @machine.invariant("bounded")
+            def bounded(tc):
+                assert len(stack) <= 50
+
+            machine.run()
+
+    Each rule and invariant takes the test case for its step, and draws
+    from it. :meth:`steps`, :meth:`min_concurrency` and
+    :meth:`max_concurrency` return the machine, so calls chain.
+
+    With ``max_concurrency`` above 1 the machine runs concurrently, in
+    rounds. The engine draws a number of worker threads for the test case
+    in ``[min_concurrency, max_concurrency]``, weighted toward the maximum.
+    Each round, it picks one group of rules, every worker runs a short
+    sequence of that group's rules against the shared model, and the
+    invariants then run on the main thread. Rules in the same group may
+    overlap; rules in different groups never do. A concurrent run's
+    failures may not reproduce exactly, so they are confirmed by replay
+    and reported with a caveat; see
+    :class:`~hegel.NondeterminismStrictness`.
     """
 
     def __init__(self, tc: TestCase) -> None:
@@ -112,7 +136,17 @@ class Machine:
         group: str | None = None,
         weight: float = 1.0,
     ) -> Any:
-        """Add a rule; usable as a decorator when ``apply`` is omitted."""
+        """Add a rule called ``name`` that runs ``apply(tc)`` as one step;
+        usable as a decorator when ``apply`` is omitted.
+
+        A rule that rejects (with :meth:`TestCase.assume
+        <hegel.TestCase.assume>`) stops early without failing; rules
+        should reject before they change the model. ``group`` is the
+        concurrency group (rules without one share a group) and
+        ``weight`` a positive hint of how often to choose the rule
+        relative to the others. A duplicate name or a weight that is not
+        finite and positive is an :class:`~hegel.InvalidArgument`.
+        """
 
         def add(fn: Callable[[TestCase], Any]) -> Callable[[TestCase], Any]:
             if any(r.name == name for r in self._rules):
@@ -139,7 +173,15 @@ class Machine:
         *,
         always_run: bool = False,
     ) -> Any:
-        """Add an invariant; usable as a decorator when ``apply`` is omitted."""
+        """Add an invariant called ``name``, checked by ``apply(tc)``;
+        usable as a decorator when ``apply`` is omitted.
+
+        Every invariant runs on the initial and final state. Between steps
+        each one runs with probability ``1 / steps``, keeping its expected
+        cost constant as the step count grows, unless ``always_run`` is
+        set, in which case it runs after every step. A duplicate name is an
+        :class:`~hegel.InvalidArgument`.
+        """
 
         def add(fn: Callable[[TestCase], Any]) -> Callable[[TestCase], Any]:
             if any(i.name == name for i in self._invariants):
@@ -153,26 +195,38 @@ class Machine:
         return self
 
     def steps(self, step_count: int) -> Machine:
-        """The target number of steps per test case (default 50)."""
+        """Set the number of steps per test case (default 50): every test
+        case runs at least one and at most ``step_count``, most run them
+        all, and shrinking shortens a failing one. A step is one completed
+        rule (one that rejects does not count) or, for a concurrent
+        machine, one round. Returns the machine."""
         if not isinstance(step_count, int) or step_count < 1:
             raise InvalidArgument(f"steps={step_count!r} must be a positive integer")
         self._steps = step_count
         return self
 
     def min_concurrency(self, n: int) -> Machine:
+        """Set the fewest worker threads a concurrent run uses (default 1).
+        Returns the machine."""
         if not isinstance(n, int) or n < 1:
             raise InvalidArgument(f"min_concurrency={n!r} must be a positive integer")
         self._min_concurrency = n
         return self
 
     def max_concurrency(self, n: int) -> Machine:
+        """Set the most worker threads a run uses (default 1, sequential).
+        Above 1 the machine runs concurrently. Returns the machine."""
         if not isinstance(n, int) or n < 1:
             raise InvalidArgument(f"max_concurrency={n!r} must be a positive integer")
         self._max_concurrency = n
         return self
 
     def run(self) -> None:
-        """Run the machine on this test case."""
+        """Run the machine on this test case: invariants on the initial
+        state, then steps chosen by the engine, then invariants on the
+        final state. The failure report lists each step's rule and draws.
+        A machine with no rules, or with ``min_concurrency`` above
+        ``max_concurrency``, is an :class:`~hegel.InvalidArgument`."""
         if not self._rules:
             raise InvalidArgument("a state machine needs at least one rule")
         if self._min_concurrency > self._max_concurrency:
@@ -498,8 +552,19 @@ def rule(
     weight: float = 1.0,
     name: str | None = None,
 ) -> Any:
-    """Mark a :class:`StateMachine` method as a rule. The method takes the
-    test case: ``def push(self, tc)``."""
+    """Mark a :class:`StateMachine` method as a rule: one step the engine
+    may choose to run. The method takes the test case and draws whatever
+    the step needs::
+
+        @hegel.rule()
+        def push(self, tc):
+            self.stack.append(tc.draw(gs.integers()))
+
+    Usable as ``@hegel.rule`` or ``@hegel.rule(...)``. ``name`` replaces
+    the method name in the failure report; ``group`` and ``weight`` are as
+    for :meth:`Machine.rule`. A rule's precondition is a
+    :meth:`TestCase.assume <hegel.TestCase.assume>` at its top.
+    """
 
     def decorate(method: Callable[..., Any]) -> Callable[..., Any]:
         _check_step_method("rule", method)
@@ -516,10 +581,16 @@ def rule(
 def invariant(
     fn: Callable[..., Any] | None = None, *, always_run: bool = False, name: str | None = None
 ) -> Any:
-    """Mark a :class:`StateMachine` method as an invariant, checked after
-    every step. The method takes the test case: ``def valid(self, tc)``.
-    With ``always_run`` it is checked even after a step the engine
-    discards."""
+    """Mark a :class:`StateMachine` method as an invariant: a check of the
+    machine's state that fails by raising. The method takes the test case:
+    ``def valid(self, tc)``.
+
+    Every invariant runs on the initial and final state. Between steps
+    each one runs with probability ``1 / steps``, unless
+    ``always_run=True``, in which case it runs after every step. Usable as
+    ``@hegel.invariant`` or ``@hegel.invariant(...)``; ``name`` replaces
+    the method name in the failure report.
+    """
 
     def decorate(method: Callable[..., Any]) -> Callable[..., Any]:
         _check_step_method("invariant", method)
@@ -535,13 +606,18 @@ def invariant(
 class StateMachine:
     """Base class for class-based state machines.
 
-    Rules and invariants are methods decorated with :func:`rule` and
-    :func:`invariant`; each takes the test case for its step. The class
-    attributes ``steps``, ``min_concurrency`` and ``max_concurrency``
-    configure the run; with ``max_concurrency > 1`` the rules run on
-    worker threads against the shared instance. A fresh instance is made
-    for every test case: ``__init__`` takes either no arguments or just the
-    test case, to draw the initial state from.
+    A state machine test checks a system through sequences of operations:
+    each test case runs a sequence of rules chosen by the engine, checking
+    the invariants along the way, and a failure is shrunk to a short
+    sequence of steps. Rules and invariants are methods decorated with
+    :func:`rule` and :func:`invariant`; each takes the test case for its
+    step. The class attributes ``steps``, ``min_concurrency`` and
+    ``max_concurrency`` configure the run, as the :class:`Machine`
+    methods of the same names do; with ``max_concurrency > 1`` the rules
+    run on worker threads against the shared instance. A fresh instance is
+    made for every test case: ``__init__`` takes either no arguments or
+    just the test case, to draw the initial state from, and
+    :meth:`teardown` runs at the end of each.
 
     ::
 
@@ -586,6 +662,8 @@ class StateMachine:
         return list(found.items())
 
     def build_machine(self, tc: TestCase) -> Machine:
+        """The :class:`Machine` this instance runs as, with its rules,
+        invariants and class settings."""
         machine = Machine(tc)
         for attr, spec in self._rules():
             machine.rule(
@@ -608,7 +686,14 @@ def run_state_machine(
     """Run a state machine on ``tc``: a :class:`Machine`, a
     :class:`StateMachine` instance, or a class to instantiate (with ``tc``
     if its constructor accepts one). ``steps``, ``min_concurrency`` and
-    ``max_concurrency`` may be overridden."""
+    ``max_concurrency`` may be overridden; any other keyword is an
+    :class:`~hegel.InvalidArgument`. Use it to run a machine from inside a
+    :func:`~hegel.test`, after other setup::
+
+        @hegel.test
+        def test_counter(tc):
+            hegel.run_state_machine(tc, Counter, steps=100)
+    """
     if isinstance(machine, Machine):
         built = machine
     else:
@@ -655,7 +740,15 @@ def _instantiate(cls: type[StateMachine], tc: TestCase) -> StateMachine:
 
 
 def state_machine_test(machine: type[StateMachine], **settings: Any) -> Callable[..., None]:
-    """A test function (for pytest to collect) that runs ``machine``."""
+    """A test function that runs ``machine``, a :class:`StateMachine`
+    subclass, for pytest to collect when assigned to a ``test_`` name::
+
+        test_counter = hegel.state_machine_test(Counter, test_cases=200)
+
+    Keyword arguments are settings, as for :func:`~hegel.test`. A failure
+    report says how to replay the failure by wrapping this call in
+    :func:`~hegel.reproduce_failure`.
+    """
     from hegel.runner import test
 
     def run_machine(tc: TestCase) -> None:
@@ -736,7 +829,27 @@ class Pool:
     """A pool of values a stateful test accumulates, with generators that
     draw from it: :meth:`values_reusable` leaves the value in the pool,
     :meth:`values_consumed` removes it. Drawing from an empty pool rejects
-    the test case."""
+    the test case (so the rule stops early).
+
+    The engine tracks which value is drawn, so shrinking keeps the values
+    a failure depends on and drops the rest; it shrinks toward values
+    added earlier. Create the pool from the test case, typically in the
+    machine's ``__init__``::
+
+        class Files(hegel.StateMachine):
+            def __init__(self, tc):
+                self.handles = hegel.Pool(tc)
+
+            @hegel.rule()
+            def open(self, tc):
+                self.handles.add(open_file(tc.draw(gs.text(min_size=1))))
+
+            @hegel.rule()
+            def close(self, tc):
+                tc.draw(self.handles.values_consumed()).close()
+
+    ``len(pool)`` is the number of values in it.
+    """
 
     def __init__(self, tc: TestCase) -> None:
         self._tc = tc
@@ -748,10 +861,12 @@ class Pool:
 
     @property
     def is_empty(self) -> bool:
+        """Whether the pool has no values."""
         return not self._values
 
     def add(self, value: Any, tc: TestCase | None = None) -> None:
-        """Add ``value`` to the pool."""
+        """Add ``value`` to the pool. ``tc`` is the test case of the step
+        adding it, by default the one the pool was created with."""
         handle = (tc or self._tc)._handle
         variable_id = self._handle.add(handle)
         if variable_id in self._values:  # nocov
@@ -759,9 +874,15 @@ class Pool:
         self._values[variable_id] = value
 
     def values_reusable(self) -> Generator[Any]:
+        """A generator of the pool's values that leaves the drawn value in
+        the pool."""
         return _PoolValues(self, False)
 
     def values_consumed(self) -> Generator[Any]:
+        """A generator of the pool's values that removes the drawn value
+        from the pool, for values a step uses up (a handle it closes, say).
+        The value is removed as soon as it is drawn, even if the step then
+        rejects. Filtering it removes only the value that passes."""
         return _PoolValues(self, True)
 
     def _draw(self, tc: TestCase, consume: bool) -> Any:
@@ -818,8 +939,9 @@ class Pool:
 
 class ConcurrentPool(Pool):
     """A :class:`Pool` safe to share between the worker threads of a
-    concurrent state machine. ``add`` must be given the worker's test
-    case."""
+    concurrent state machine. :meth:`add` must be given the worker's test
+    case (the one the rule received), or it is an
+    :class:`~hegel.InvalidArgument`."""
 
     def __init__(self, tc: TestCase) -> None:
         super().__init__(tc)

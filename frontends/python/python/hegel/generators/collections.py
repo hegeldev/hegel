@@ -233,11 +233,31 @@ def lists(
     unique: bool = False,
     unique_by: Any = None,
 ) -> Generator[list[T]]:
-    """Generate lists of values from ``elements``.
+    """Generate lists of values from ``elements``, with between
+    ``min_size`` and ``max_size`` elements.
 
-    ``unique`` requires distinct (hashable) elements; ``unique_by`` is a
-    key function, or a tuple of them, each of whose results must be
-    distinct across the list.
+    ``max_size`` defaults to no fixed limit: the engine decides when to
+    stop, and keeps lists reasonably short. Lists shrink toward fewer
+    elements, and each element shrinks as ``elements`` does.
+
+    ``unique=True`` requires the elements to be distinct (and hashable).
+    ``unique_by`` is a key function, or a tuple of them, each of whose
+    results must be distinct across the list; it cannot be combined with
+    ``unique``. A duplicate element is discarded and another drawn in its
+    place. When the elements are a :func:`sampled_from` (under any
+    :meth:`~Generator.map` and :meth:`~Generator.filter`), unique lists
+    draw its elements without replacement, so a unique list needing most
+    of them is still found quickly.
+
+    A negative size, ``max_size < min_size``, or a ``min_size`` larger than
+    the number of distinct values ``elements`` is known to have, is an
+    :class:`~hegel.InvalidArgument`.
+
+    ::
+
+        xs = tc.draw(gs.lists(gs.integers(), min_size=1, max_size=10))
+        ids = tc.draw(gs.lists(gs.integers(), unique=True))
+        pairs = tc.draw(gs.lists(gs.tuples(gs.text(), gs.integers()), unique_by=lambda p: p[0]))
     """
     elements = as_generator(elements)
     min_size, max_size = _check_sizes(min_size, max_size)
@@ -324,14 +344,18 @@ def _sets(elements: Any, min_size: int, max_size: int | None, frozen: bool) -> S
 def sets(
     elements: Generator[T], *, min_size: int = 0, max_size: int | None = None
 ) -> Generator[set[T]]:
-    """Generate sets of distinct values from ``elements``."""
+    """Generate sets of values from ``elements``, with between
+    ``min_size`` and ``max_size`` members; the elements must be hashable.
+    Sizes are as for :func:`lists`, and a drawn duplicate is discarded and
+    another element drawn in its place."""
     return _sets(elements, min_size, max_size, False)
 
 
 def frozensets(
     elements: Generator[T], *, min_size: int = 0, max_size: int | None = None
 ) -> Generator[frozenset[T]]:
-    """Generate frozensets of distinct values from ``elements``."""
+    """Generate frozensets of values from ``elements``, as :func:`sets`
+    does."""
     return _sets(elements, min_size, max_size, True)
 
 
@@ -343,8 +367,11 @@ def iterables(
     unique: bool = False,
     unique_by: Any = None,
 ) -> Generator[Iterable[T]]:
-    """Generate lists, as ``lists`` does, but reported and handed to the
-    test as a one-shot iterable."""
+    """Generate one-shot iterables of values from ``elements``: an
+    iterator over a list that :func:`lists` would generate, with the same
+    arguments. Iterating once exhausts it, which tests code that must not
+    iterate its input twice. The failure report prints the values it
+    started with."""
     return lists(
         elements, min_size=min_size, max_size=max_size, unique=unique, unique_by=unique_by
     ).map(_OneShot)
@@ -432,7 +459,17 @@ def dicts(
     min_size: int = 0,
     max_size: int | None = None,
 ) -> Generator[dict[Any, Any]]:
-    """Generate dicts with keys and values from the given generators."""
+    """Generate dicts with keys drawn from ``keys`` and values from
+    ``values``, with between ``min_size`` and ``max_size`` entries.
+
+    Sizes are as for :func:`lists`. A drawn duplicate key is discarded and
+    another drawn in its place. For dicts with a fixed set of keys, use
+    :func:`fixed_dicts`.
+
+    ::
+
+        scores = tc.draw(gs.dicts(gs.text(), gs.integers(0, 100)))
+    """
     keys, values = as_generator(keys), as_generator(values)
     min_size, max_size = _check_sizes(min_size, max_size)
     _check_distinct("keys", keys, min_size)
@@ -489,8 +526,21 @@ class FixedDicts(Generator[dict[Any, Any]]):
 def fixed_dicts(
     mapping: dict[Any, Generator[Any]], *, optional: dict[Any, Generator[Any]] | None = None
 ) -> Generator[dict[Any, Any]]:
-    """Generate dicts with the fixed keys of ``mapping``, each value drawn
-    from its generator; keys in ``optional`` are present or absent."""
+    """Generate dicts with the keys of ``mapping``, each value drawn from
+    the generator that ``mapping`` gives for its key.
+
+    Each key of ``optional`` (a dict of the same shape) is present or
+    absent independently, shrinking toward absent. A key in both, or a
+    value that is not a generator, is an :class:`~hegel.InvalidArgument`.
+    The keys appear in the order given, required keys first.
+
+    ::
+
+        user = tc.draw(gs.fixed_dicts(
+            {"name": gs.text(), "age": gs.integers(0, 120)},
+            optional={"email": gs.emails()},
+        ))
+    """
     if not isinstance(mapping, Mapping):
         raise InvalidArgument(f"mapping={mapping!r} must be a dict of generators")
     if optional is not None and not isinstance(optional, Mapping):
@@ -532,7 +582,9 @@ class Tuples(Generator[tuple[Any, ...]]):
 
 
 def tuples(*generators: Generator[Any]) -> Generator[tuple[Any, ...]]:
-    """Generate tuples with one element from each generator."""
+    """Generate tuples with one element from each generator, in order:
+    ``tuples(gs.integers(), gs.text())`` generates pairs like
+    ``(0, "")``. With no generators it generates only ``()``."""
     return Tuples(tuple(as_generator(g) for g in generators))
 
 
@@ -574,8 +626,10 @@ class Subsequences(Generator[list[T]]):
 def subsequences(
     elements: Iterable[T], *, min_size: int = 0, max_size: int | None = None
 ) -> Generator[list[T]]:
-    """Generate subsequences of ``elements``: a subset in the original
-    order."""
+    """Generate subsequences of ``elements``: lists of some of its
+    elements, each used at most once, in their original order. Sizes are
+    as for :func:`lists`, capped at ``len(elements)``; a ``min_size``
+    larger than that is an :class:`~hegel.InvalidArgument` when drawn."""
     min_size, max_size = _check_sizes(min_size, max_size)
     return Subsequences(list(elements), min_size, max_size)
 
@@ -594,8 +648,8 @@ class Permutations(Generator[list[T]]):
 
 
 def permutations(elements: Iterable[T]) -> Generator[list[T]]:
-    """Generate reorderings of ``elements``, shrinking toward the original
-    order."""
+    """Generate reorderings of ``elements`` (any iterable, read once), as
+    lists, shrinking toward the original order."""
     return Permutations(list(elements))
 
 
@@ -642,7 +696,14 @@ def samples(
     max_size: int | None = None,
     replacement: bool = True,
 ) -> Generator[list[T]]:
-    """Generate samples of ``elements``: with replacement (the default) each
-    element is chosen independently; without, each is used at most once."""
+    """Generate lists sampled from ``elements``, with between ``min_size``
+    and ``max_size`` items.
+
+    With ``replacement=True`` (the default) each item is chosen
+    independently, so an element may appear more than once. With
+    ``replacement=False`` each element is used at most once, in the order
+    drawn, so the size is capped at ``len(elements)``. A ``min_size`` that
+    cannot be met is an :class:`~hegel.InvalidArgument` when drawn.
+    """
     min_size, max_size = _check_sizes(min_size, max_size)
     return Samples(list(elements), min_size, max_size, bool(replacement))

@@ -71,8 +71,22 @@ class Integers(Generator[int]):
 
 
 def integers(min_value: int | None = None, max_value: int | None = None) -> Generator[int]:
-    """Generate integers in ``[min_value, max_value]``; either bound may be
-    omitted."""
+    """Generate integers in ``[min_value, max_value]``, inclusive.
+
+    Either bound may be omitted. Python integers are unbounded, but the
+    values drawn are not: a missing bound is taken to be ``2**127`` values
+    beyond the other bound, or beyond zero when that is further. Values
+    shrink toward zero, or toward the bound nearest zero when zero is out
+    of range.
+
+    A bound that is not an integer (a ``float`` with an integral value is
+    accepted) or ``min_value > max_value`` is an
+    :class:`~hegel.InvalidArgument`.
+
+    ::
+
+        n = tc.draw(gs.integers(min_value=0, max_value=100))
+    """
     if min_value is not None:
         min_value = _check_int("min_value", min_value)
     if max_value is not None:
@@ -95,12 +109,14 @@ class Booleans(Generator[bool]):
 
 
 def booleans() -> Generator[bool]:
-    """Generate ``True`` or ``False``."""
+    """Generate ``True`` or ``False``, shrinking toward ``False``."""
     return Booleans()
 
 
 def weighted_booleans(p: float) -> Generator[bool]:
-    """Generate ``True`` with probability ``p``."""
+    """Generate ``True`` with probability ``p``, and ``False`` otherwise,
+    shrinking toward ``False``. ``p`` outside ``[0, 1]`` is an
+    :class:`~hegel.InvalidArgument`."""
     return Booleans(float(p))
 
 
@@ -318,12 +334,33 @@ def floats(
     exclude_min: bool = False,
     exclude_max: bool = False,
 ) -> Generator[float]:
-    """Generate floating-point numbers.
+    """Generate floating-point numbers in ``[min_value, max_value]``.
 
-    Without bounds, NaN and the infinities are allowed. Setting a bound
-    disables NaN; setting both disables infinity. ``width`` is 64 (the
-    default) or 32, in which case every value is exactly representable as a
-    32-bit float.
+    Either bound may be omitted. ``exclude_min`` and ``exclude_max`` make
+    the corresponding bound exclusive. Values shrink toward ``0.0``, and
+    toward simple values with few significant digits: integers before
+    fractions.
+
+    ``allow_nan``, ``allow_infinity`` and ``allow_subnormal`` default to
+    whatever the bounds permit. Without bounds, NaN and the infinities are
+    allowed. Setting a bound disables NaN, and asking for it with a bound
+    is an :class:`~hegel.InvalidArgument`. Setting both bounds disables
+    infinity; with one bound, the infinity on the unbounded side is
+    allowed unless ``allow_infinity=False``. Subnormals are allowed when
+    the range contains any.
+
+    ``width`` is 64 (the default) or 32, in which case every value is
+    exactly representable as a 32-bit float and the bounds must be too.
+
+    Bounds that are NaN or not real numbers, ``min_value > max_value``,
+    an exclusive bound that is missing, and any combination that leaves no
+    values (``allow_infinity=False`` with ``min_value=math.inf``, say) are
+    each an :class:`~hegel.InvalidArgument`.
+
+    ::
+
+        probability = tc.draw(gs.floats(min_value=0.0, max_value=1.0))
+        finite = tc.draw(gs.floats(allow_nan=False, allow_infinity=False))
     """
     if min_value is not None:
         min_value = _check_float("min_value", min_value, width)

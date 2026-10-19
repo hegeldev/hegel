@@ -26,7 +26,18 @@ __all__ = [
 
 
 class Verbosity(enum.Enum):
-    """How much output Hegel produces during a run."""
+    """How much output Hegel produces during a run.
+
+    - ``quiet``: nothing; a failing test still raises, without the drawn
+      values attached.
+    - ``normal``: the default. A failing test's drawn values and notes,
+      attached to the exception, and any warnings.
+    - ``verbose``: also every test case's drawn values and notes as it
+      runs, and the start and end of each phase.
+    - ``debug``: also the engine's own diagnostics.
+
+    Settings accept a member or its name: ``verbosity="verbose"``.
+    """
 
     quiet = _native.VERBOSITY_QUIET
     normal = _native.VERBOSITY_NORMAL
@@ -35,7 +46,20 @@ class Verbosity(enum.Enum):
 
 
 class Phase(enum.Enum):
-    """The phases of a run. By default all of them run."""
+    """The phases of a run, in the order they run. By default all of them
+    do; ``phases`` selects a subset.
+
+    - ``explicit``: run the explicit test cases added with
+      :func:`~hegel.explicit_test_case`.
+    - ``reuse``: replay failures saved in the example database.
+    - ``generate``: generate new test cases.
+    - ``target``: steer generation toward high :meth:`~hegel.TestCase.target`
+      scores.
+    - ``shrink``: shrink a failing test case to a minimal one. Without it,
+      the first failure found is reported as it is.
+
+    ``Phase.all()`` is the set of every phase.
+    """
 
     explicit = _native.PHASE_EXPLICIT
     reuse = _native.PHASE_REUSE
@@ -49,7 +73,25 @@ class Phase(enum.Enum):
 
 
 class HealthCheck(enum.Enum):
-    """Health checks that can be suppressed."""
+    """Health checks: proactive errors raised when a test is likely to test
+    poorly or too slowly. A failing check raises
+    :class:`~hegel.FailedHealthCheck`; ``suppress_health_check`` turns
+    checks off for a test whose behaviour is intentional.
+
+    - ``filter_too_much``: too many test cases are rejected, by
+      :meth:`~hegel.TestCase.assume` or
+      :meth:`~hegel.generators.Generator.filter`.
+    - ``too_slow``: generating test cases takes too long. Only the engine's
+      own time counts, not the time the test and its Python-side
+      generators take.
+    - ``test_cases_too_large``: test cases routinely reach the limit on the
+      number of choices one may make. Suppressing it also removes that
+      limit.
+    - ``large_initial_test_case``: the smallest possible test case is
+      already very large.
+
+    ``HealthCheck.all()`` is the set of every check.
+    """
 
     filter_too_much = _native.HC_FILTER_TOO_MUCH
     too_slow = _native.HC_TOO_SLOW
@@ -62,7 +104,15 @@ class HealthCheck(enum.Enum):
 
 
 class Backend(enum.Enum):
-    """Where the engine's randomness comes from."""
+    """Where the engine's randomness comes from.
+
+    - ``default``: a seeded pseudo-random generator, so runs are
+      reproducible from ``seed`` and shrinking and replay work as usual.
+    - ``urandom``: fresh entropy from outside the process on every draw,
+      for running under `Antithesis <https://antithesis.com/>`_, whose
+      fuzzer then controls every choice. The ``workload`` profile selects
+      it.
+    """
 
     default = _native.BACKEND_DEFAULT
     urandom = _native.BACKEND_URANDOM
@@ -70,10 +120,16 @@ class Backend(enum.Enum):
 
 class NondeterminismStrictness(enum.Enum):
     """How a run reacts to a test whose behaviour changes when the same
-    choices are replayed: silently switch to confirming failures by
-    repeated replay (``quiet``, the default), do so with a one-line
-    notice (``warn``), or abort the run with :class:`hegel.Flaky`
-    (``error``)."""
+    choices are replayed (a test depending on timing, threads, or state
+    left over from an earlier test case).
+
+    - ``quiet``: the default. Switch silently to confirming each failure
+      by repeated replay; the report carries a caveat describing how
+      reliably it reproduced.
+    - ``warn``: the same, with a one-line notice when the switch happens.
+    - ``error``: abort the run with :class:`~hegel.Flaky`, as Hypothesis
+      does.
+    """
 
     quiet = _native.NONDETERMINISM_QUIET
     warn = _native.NONDETERMINISM_WARN
@@ -82,7 +138,9 @@ class NondeterminismStrictness(enum.Enum):
 
 @dataclass(frozen=True)
 class TestLocation:
-    """Where a test is defined, recorded in the database and statistics."""
+    """Where a test is defined: the file, first line, class and function
+    name. :func:`hegel.test` records it automatically; :func:`hegel.run`
+    takes one to identify the test in the engine's reports."""
 
     __test__ = False  # not a pytest test class
 
@@ -144,21 +202,75 @@ def _check_profile_name(name: Any) -> None:
 
 @dataclass(frozen=True)
 class Settings:
-    """Configuration for a run.
+    """Configuration for a run. Immutable.
 
     ``Settings()`` starts from the default profile (resolved by the engine:
-    ``hegel.toml``, ``HEGEL_DEFAULT_PROFILE``, the ``default`` set with
-    :meth:`set_default_profile`, or the environment: ``workload`` under
-    Antithesis, ``ci`` on a CI server, ``development`` otherwise), with any
-    keyword arguments overriding individual fields.
+    the ``default`` set with :meth:`set_default_profile`,
+    ``HEGEL_DEFAULT_PROFILE``, the ``default`` entry in ``hegel.toml``, or
+    the environment: ``workload`` under Antithesis, ``ci`` on a CI server,
+    ``development`` otherwise), with any keyword arguments overriding
+    individual fields. ``Settings(parent, **overrides)`` starts from
+    ``parent`` instead. The ``HEGEL_*`` environment variables
+    (``HEGEL_TEST_CASES``, ``HEGEL_SEED``, ...) apply over the profile.
 
-    ``database`` is ``None`` for the engine's default directory
-    (``.hegel/examples``), a directory path, or ``""`` (or ``False``) to
-    disable the database. Note that ``None`` does not disable it, unlike in
-    the Rust library and Hypothesis.
+    Usually settings are given to :func:`hegel.test` as keywords
+    (``@hegel.test(test_cases=500)``), which override the same fields.
+
+    The fields:
+
+    ``test_cases``
+        How many test cases to run (default 100). Rejected test cases do
+        not count.
+    ``verbosity``
+        How much Hegel prints: a :class:`Verbosity` (default ``normal``).
+    ``seed``
+        An integer seed for a reproducible run, or ``None`` (the default)
+        for a fresh random seed each run.
+    ``derandomize``
+        Derive a fixed seed from the test, so every run of it is the same
+        (default ``False``; the ``ci`` profile sets it). A ``seed`` takes
+        precedence.
+    ``database``
+        Where failing examples are saved and replayed from: ``None`` for
+        the engine's default directory (``.hegel/examples``), a directory
+        path, or ``""`` (or ``False``) to disable the database. Note that
+        ``None`` does not disable it, unlike in the Rust library and
+        Hypothesis.
+    ``suppress_health_check``
+        The :class:`HealthCheck` members not to fail the run on (default
+        none).
+    ``phases``
+        The :class:`Phase` members to run (default all).
+    ``report_multiple_failures``
+        Report every distinct failure found, as a
+        :class:`~hegel.MultipleFailures`, rather than only the smallest
+        (default ``False``).
+    ``show_statistics``
+        Print the end-of-run statistics of the events recorded with
+        :meth:`~hegel.TestCase.event` and
+        :meth:`~hegel.TestCase.event_value` (default ``False``).
+    ``print_blob``
+        On failure, say how to replay it with
+        :func:`~hegel.reproduce_failure` (default ``True``).
+    ``backend``
+        The source of randomness: a :class:`Backend` (default
+        ``default``).
+    ``nondeterminism_strictness``
+        How to react to a test that behaves differently on replay: a
+        :class:`NondeterminismStrictness` (default ``quiet``).
 
     Enum-valued fields take members (``HealthCheck.filter_too_much``) or
-    their names (``"filter_too_much"``).
+    their names (``"filter_too_much"``); the set-valued fields take one
+    or a collection of them. A value of the wrong type is an
+    :class:`~hegel.InvalidArgument`, and an unknown field a
+    :class:`TypeError`.
+
+    ::
+
+        thorough = hegel.Settings(test_cases=10_000, suppress_health_check=["too_slow"])
+
+        @hegel.test(settings=thorough)
+        def test_something(tc): ...
     """
 
     # Every field is filled in by __init__, from the default profile or the
@@ -189,14 +301,34 @@ class Settings:
 
     @classmethod
     def from_profile(cls, name: str, **overrides: Any) -> Settings:
-        """Settings initialised from the named profile."""
+        """Settings initialised from the named profile, with
+        ``overrides`` applied. The profile is one of the engine's
+        (``development``, ``ci``, ``workload``, or ``base`` for the plain
+        defaults), one defined in ``hegel.toml``, or one registered with
+        :meth:`register_profile`. Unlike ``Settings()``, this ignores
+        which profile is the default."""
         _check_profile_name(name)
         return cls(_from_native(_native.Settings.for_profile(name)), **overrides)
 
     @staticmethod
     def register_profile(name: str, settings: Settings | None = None, **overrides: Any) -> None:
-        """Register (or replace) a named profile, from ``settings`` (the
-        default profile when omitted) with ``overrides`` applied."""
+        """Register (or replace) a named profile, for the whole process:
+        ``settings`` (the default profile when omitted) with ``overrides``
+        applied. The profile can then be selected with
+        :meth:`from_profile`, :meth:`set_default_profile`,
+        ``HEGEL_DEFAULT_PROFILE`` or pytest's ``--hegel-profile``.
+
+        ::
+
+            hegel.Settings.register_profile("nightly", test_cases=10_000)
+            hegel.Settings.set_default_profile("nightly")
+
+        Registering does not change :class:`Settings` objects that already
+        exist. A :func:`hegel.test` without ``settings=`` resolves its
+        settings each time it runs, so registering in a ``conftest.py``
+        reaches every test. The reserved names ``base`` and ``default``
+        cannot be registered.
+        """
         _check_profile_name(name)
         if settings is not None and not isinstance(settings, Settings):
             raise InvalidArgument(f"settings={settings!r} must be a Settings object or None")
@@ -207,7 +339,8 @@ class Settings:
     def set_default_profile(name: str | None) -> None:
         """Make the named (already registered) profile the one
         ``Settings()`` resolves, for the whole process. ``None`` restores
-        the engine's own choice (see :class:`Settings`)."""
+        the engine's own choice (see :class:`Settings`). An unknown
+        profile name is an error."""
         if name is not None:
             _check_profile_name(name)
             _native.Settings.for_profile(name)  # raises for an unknown profile

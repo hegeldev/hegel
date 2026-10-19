@@ -30,7 +30,15 @@ DEFAULT_MAX_WIDTH = 79
 
 
 class PrettyPrinter:
-    """A handle onto a region of an engine-side document.
+    """A handle onto a region of an engine-side document: what a custom
+    generator's ``do_draw_and_print``, or a
+    :meth:`~hegel.generators.Generator.print_with` function, writes a
+    value's representation to.
+
+    The engine lays the document out with an Oppen-style pretty-printer:
+    a group (:meth:`begin_group` to :meth:`end_group`) stays on one line
+    if it fits, and otherwise its :meth:`breakable` points become newlines.
+    Most code needs only :func:`pretty_print` or :meth:`text`.
 
     A no-op printer (``PrettyPrinter.noop()``) accepts every call and prints
     nothing, so a generator can run one code path for silent and printing
@@ -44,6 +52,7 @@ class PrettyPrinter:
 
     @classmethod
     def noop(cls) -> PrettyPrinter:
+        """A printer that discards everything written to it."""
         return cls(None)
 
     @property
@@ -84,6 +93,7 @@ class PrettyPrinter:
             self._handle.if_break(text)
 
     def hard_break(self) -> None:
+        """A newline, whether or not the enclosing group fits."""
         if self._handle is not None:
             self._handle.hard_break()
 
@@ -98,10 +108,13 @@ class PrettyPrinter:
             self._handle.begin_group(indent, open)
 
     def end_group(self, close: str) -> None:
+        """Close the group :meth:`begin_group` opened, emitting ``close``."""
         if self._handle is not None:
             self._handle.end_group(close)
 
     def shift_indent(self, delta: int) -> None:
+        """Adjust the indentation that later break points apply by
+        ``delta`` columns."""
         if self._handle is not None:
             self._handle.shift_indent(delta)
 
@@ -168,13 +181,18 @@ class Document:
 
 
 def pretty_repr(value: Any, max_width: int = DEFAULT_MAX_WIDTH) -> str:
-    """``repr(value)`` as the engine lays it out, within ``max_width``."""
+    """``repr(value)`` as the engine lays it out, wrapped to fit within
+    ``max_width`` columns (default 79): how a drawn value appears in a
+    failure report."""
     document = Document(max_width)
     pretty_print(value, document.printer)
     return document.finish()
 
 
 def pretty_print(value: Any, printer: PrettyPrinter) -> None:
-    """Print ``repr(value)`` through ``printer``, reflowed to fit."""
+    """Print ``repr(value)`` through ``printer``, reflowed to fit: the
+    default way a drawn value is printed, and the usual way to print a
+    component value from a :meth:`~hegel.generators.Generator.print_with`
+    function."""
     if printer.should_print:
         printer.reflow(repr(value))

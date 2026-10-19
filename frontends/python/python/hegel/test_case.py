@@ -90,13 +90,24 @@ class _DrawState:
 
 
 class TestCase:
-    """One execution of a property test: draws values from the engine,
-    records notes, assumptions, and targets.
+    """One execution of a property test: the object a test draws its
+    inputs from, and through which it rejects inputs, adds notes to the
+    failure report, steers generation and records statistics.
 
-    Test bodies receive an instance; they never construct one. Each
-    instance owns a libhegel handle and may be driven by one thread at a
-    time. For another thread, :meth:`_clone` a handle with an independent
-    choice stream.
+    A test decorated with :func:`hegel.test` receives a ``TestCase`` as
+    its first argument, once per test case; tests never construct one.
+    An instance belongs to the test case it was passed for and must not be
+    kept and used after the test returns. It may be driven by one thread
+    at a time.
+
+    ::
+
+        @hegel.test
+        def test_addition_commutes(tc):
+            x = tc.draw(gs.integers())
+            y = tc.draw(gs.integers())
+            tc.note(f"x + y = {x + y}")
+            assert x + y == y + x
     """
 
     __test__ = False  # not a pytest test class
@@ -144,6 +155,10 @@ class TestCase:
     def draw(self, generator: Generator[T], name: str | None = None) -> T:
         """Draw a value from ``generator`` and report it.
 
+        Passing something other than a :class:`~hegel.generators.Generator`
+        (a generator function that was not called, say) is an
+        :class:`~hegel.InvalidArgument`.
+
         The value is printed, as ``name = value``, into the output shown
         for a failing test case. When ``name`` is omitted it is inferred
         from the assignment the call appears in (``x = tc.draw(...)``); a
@@ -151,6 +166,12 @@ class TestCase:
         numbered, as ``x_1``, ``x_2``, ... An explicit ``name`` is always
         numbered, since it typically names a draw in a helper function,
         and an unassigned draw reports as ``draw_1``, ``draw_2``, ...
+        Names are inferred from the test's source, so draws in code whose
+        source is unavailable report as ``draw_N``.
+
+        Draws made inside a :func:`~hegel.composite` generator, or while
+        another draw is in progress, are not printed separately: they are
+        part of the outer value.
         """
         if not isinstance(generator, _generator_class()):
             raise InvalidArgument(
@@ -219,8 +240,10 @@ class TestCase:
             printer.hard_break()
 
     def draw_silent(self, generator: Generator[T]) -> T:
-        """Draw a value without reporting it. The draw still runs inside a
-        span labelled with the generator's label."""
+        """Draw a value from ``generator`` without printing it in the
+        failure report. Use it for values that would only clutter the
+        report, or in a custom :class:`~hegel.generators.Generator`'s
+        ``do_draw``."""
         explicit = self._global.explicit
         if explicit is not None:
             return explicit.draw_silent(self, generator)
@@ -231,7 +254,8 @@ class TestCase:
 
     def draw_and_print(self, generator: Generator[T], printer: PrettyPrinter) -> T:
         """Draw a value, printing its representation through ``printer``.
-        This is how compositional generators draw their components."""
+        This is how a custom generator's ``do_draw_and_print`` draws its
+        components, so they print as part of its own value."""
         self.start_span(generator.label)
         value = generator.do_draw_and_print(self, printer)
         self.stop_span(False)
@@ -263,20 +287,45 @@ class TestCase:
     # -- control flow ----------------------------------------------------
 
     def assume(self, condition: object) -> None:
-        """Reject the current test case unless ``condition`` holds."""
+        """Reject the current test case unless ``condition`` is true.
+
+        A rejected test case is neither a pass nor a failure: it is
+        abandoned and does not count toward ``test_cases``. Use it for
+        inputs the property does not apply to::
+
+            x = tc.draw(gs.integers())
+            y = tc.draw(gs.integers())
+            tc.assume(y != 0)
+            assert (x // y) * y + x % y == x
+
+        Rejecting most test cases makes a run slow and fails the
+        ``filter_too_much`` health check; a generator that only produces
+        valid inputs is better where one is easy to write.
+        """
         if not condition:
             self.reject()
 
     def reject(self) -> None:
-        """Reject the current test case."""
+        """Reject the current test case unconditionally, as
+        ``tc.assume(False)`` does. It never returns: it raises
+        :class:`~hegel.AssumeFailed`, which Hegel catches."""
         explicit = self._global.explicit
         if explicit is not None:
             explicit.reject()
         raise AssumeFailed()
 
     def note(self, message: str) -> None:
-        """Record a message shown with the drawn values of a failing test
-        case (or in verbose mode)."""
+        """Add ``message`` to the output of this test case, between the
+        drawn values in the order it was recorded.
+
+        The output is shown for the failing test case Hegel reports, and
+        for every test case at ``verbosity="verbose"`` and above; otherwise
+        notes cost nothing. Use it for intermediate values that help explain
+        a failure::
+
+            result = compute(x)
+            tc.note(f"intermediate result: {result!r}")
+        """
         explicit = self._global.explicit
         if explicit is not None:
             explicit.note(str(message))
@@ -286,8 +335,22 @@ class TestCase:
         self._handle.note(str(message))
 
     def target(self, score: float, label: str = "") -> None:
-        """Guide generation toward maximising ``score`` (once per label per
-        test case)."""
+        """Guide generation toward test cases that maximise ``score``.
+
+        ``score`` is an ``int`` or ``float`` and ``label`` names the
+        quantity being maximised, so one test can target several. After a
+        warm-up, the engine's targeting phase searches around the
+        highest-scoring test cases for higher scores. This helps find
+        failures that need an extreme value of some measure (a
+        long queue, a deep tree). Each label can be targeted at most once
+        per test case; a second call with the same label, or a score or
+        label of the wrong type, is an :class:`~hegel.InvalidArgument`.
+
+        ::
+
+            queue_length = simulate(tc)
+            tc.target(queue_length, label="queue length")
+        """
         if not isinstance(label, str):
             raise InvalidArgument(f"label={label!r} must be a string")
         if isinstance(score, bool) or not isinstance(score, (int, float)):
@@ -297,13 +360,30 @@ class TestCase:
         self._handle.target(float(score), label)
 
     def event(self, label: str) -> None:
-        """Record an event for the run's statistics."""
+        """Record that ``label`` happened in this test case.
+
+        With ``show_statistics=True`` (or ``HEGEL_STATISTICS=1``), the end
+        of the run reports the percentage of test cases recording each
+        event, which shows whether the inputs exercise what they should::
+
+            tc.event("empty" if not xs else "non-empty")
+        """
         if self._global.explicit is not None:
             return
         self._handle.event(str(label))
 
     def event_value(self, label: str, value: float) -> None:
-        """Record a numeric observation for the run's statistics."""
+        """Record a numeric observation ``value`` under ``label``.
+
+        With ``show_statistics=True`` the end of the run reports the count,
+        minimum, median, mean, 90th percentile and maximum of the values
+        recorded under each label. ``value`` must be an ``int`` or
+        ``float``, or it is an :class:`~hegel.InvalidArgument`.
+
+        ::
+
+            tc.event_value("list length", len(xs))
+        """
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise InvalidArgument(f"value={value!r} must be an int or float")
         if self._global.explicit is not None:
@@ -312,9 +392,31 @@ class TestCase:
 
     def repeat(self, body: Callable[[], Any]) -> NoReturn:
         """Run ``body`` an engine-chosen number of times, then end the test
-        case. Each repetition is reported under a ``// Repetition #N``
-        heading. This never returns normally: it raises an internal
-        control-flow signal that ends the test body successfully."""
+        case successfully.
+
+        ``body`` takes no arguments and draws from this test case (a
+        closure over ``tc``). A repetition that rejects (with
+        :meth:`assume`) is skipped and the next one runs. A failure in any
+        repetition fails the test case, and shrinking reduces the number of
+        repetitions along with the values each drew. Each repetition is
+        reported under a ``// Repetition #N`` heading.
+
+        ``repeat`` never returns normally: it raises an internal
+        control-flow signal that ends the test body, so code after it does
+        not run. It suits workload-style tests that perform a sequence of
+        operations until the engine decides to stop::
+
+            @hegel.test
+            def test_store(tc):
+                store = Store()
+
+                def step():
+                    key = tc.draw(gs.text())
+                    store.put(key, tc.draw(gs.integers()))
+                    assert store.get(key) is not None
+
+                tc.repeat(step)
+        """
         from hegel.generators import booleans, integers
 
         min_size = self.draw_silent(integers(min_value=0, max_value=1 << 40))
@@ -409,8 +511,11 @@ class TestCase:
 
     def start_span(self, label: int) -> None:
         """Open a span labelled ``label`` grouping the draws until the
-        matching :meth:`stop_span`. Nesting deeper than ``MAX_DRAW_DEPTH``
-        abandons the test case as too large."""
+        matching :meth:`stop_span`. Spans tell the shrinker which choices
+        belong together; :meth:`draw` and :meth:`draw_silent` open one per
+        draw, so only a low-level custom generator needs this. Nesting
+        deeper than ``MAX_DRAW_DEPTH`` abandons the test case as too
+        large."""
         if self._span_depth >= MAX_DRAW_DEPTH:
             raise StopTest(f"draws nested more than {MAX_DRAW_DEPTH} deep")
         self._span_depth += 1
@@ -421,6 +526,9 @@ class TestCase:
             raise
 
     def stop_span(self, discard: bool = False) -> None:
+        """Close the span opened by the matching :meth:`start_span`. With
+        ``discard=True`` the shrinker treats the span's draws as thrown
+        away (a filtered-out attempt, say)."""
         if self._span_depth <= 0:
             raise InternalError("stop_span called with no open span")
         self._span_depth -= 1
@@ -526,8 +634,16 @@ class TestCase:
 
 
 class Collection:
-    """A backend-managed collection: asks the engine whether to draw
-    another element, within ``[min_size, max_size]``."""
+    """A low-level helper for custom collection generators: the engine
+    decides how many elements to draw, within ``[min_size, max_size]``
+    (``max_size=None`` for no fixed limit), so the shrinker can remove
+    elements cleanly. Call :meth:`more` before drawing each element::
+
+        collection = hegel.Collection(tc, min_size, max_size)
+        result = []
+        while collection.more():
+            result.append(tc.draw_silent(elements))
+    """
 
     __slots__ = ("_finished", "_handle", "_max_size", "_min_size", "_tc")
 

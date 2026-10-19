@@ -17,7 +17,7 @@ from hegel import generators as gs
 @pytest.mark.xfail(
     strict=False,
     reason="the engine's bounded integer distribution draws many more huge values "
-    "(observed 680 of 1000 above 1e25; see docs/comparison-with-hypothesis.md)",
+    "(observed 680 of 1000 above 1e25; see docs/explanation/comparison-with-hypothesis.md)",
 )
 def test_bounded_integers_distribution_of_bit_width_issue_1387_regression():
     values = []

@@ -120,12 +120,25 @@ def recursive(
     max_depth: int = DEFAULT_MAX_DEPTH,
     max_leaves: int = DEFAULT_MAX_LEAVES,
 ) -> Generator[T]:
-    """Generate recursively structured data.
+    """Generate recursively structured data: trees whose leaves come from
+    ``leaf``.
 
-    ``leaf`` generates the base cases; ``branch`` receives a generator of
-    sub-values and returns a generator combining some of them into a
-    compound value. Values are bounded by ``max_depth`` (nesting) and
-    ``max_leaves`` (an attempt drawing more leaves is retried).
+    ``branch`` receives a generator of sub-values (each a leaf or a further
+    branch) and returns a generator combining some of them into a compound
+    value. Values are bounded by ``max_depth`` (nesting, default 32) and
+    ``max_leaves`` (default 100; an attempt drawing more leaves is
+    discarded and retried). Values shrink toward a single leaf.
+
+    ::
+
+        json = gs.recursive(
+            gs.none() | gs.booleans() | gs.floats() | gs.text(),
+            lambda children: gs.lists(children) | gs.dicts(gs.text(), children),
+        )
+
+    A negative ``max_depth``, or ``max_leaves`` below 1, is an
+    :class:`~hegel.InvalidArgument`. For mutually recursive definitions,
+    use :func:`deferred`.
     """
     if not isinstance(max_depth, int) or max_depth < 0:
         raise InvalidArgument(f"max_depth={max_depth!r} must be a non-negative integer")
@@ -213,7 +226,20 @@ class Deferred(Generator[T]):
 
 def deferred(definition: Callable[[], Generator[T]]) -> Generator[T]:
     """A generator whose definition is evaluated on first use, enabling
-    recursive and mutually recursive definitions."""
+    recursive and mutually recursive definitions.
+
+    ``definition`` is a function of no arguments returning a generator. It
+    is called once, the first time the generator is drawn from (or its
+    label is needed), so it can refer to generators defined after it,
+    including the deferred generator itself::
+
+        tree = gs.deferred(lambda: gs.none() | gs.tuples(tree, tree))
+
+    A draw from a deferred generator nested more than 64 levels deep
+    rejects the test case, so a definition that always refers back to
+    itself cannot recurse forever. A definition that resolves only to
+    itself is an :class:`~hegel.InvalidArgument`.
+    """
     if not callable(definition):
         raise InvalidArgument("deferred() takes a zero-argument function returning a generator")
     return Deferred(definition)

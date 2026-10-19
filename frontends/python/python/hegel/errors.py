@@ -32,7 +32,9 @@ __all__ = [
 
 
 class ResolutionFailed(InvalidArgument):
-    """``from_type`` could not find a generator for a type."""
+    """:func:`~hegel.generators.from_type` could not find a generator for a
+    type. Raised when the generator is built; a subclass of
+    :class:`InvalidArgument`."""
 
 
 class LoopDone(BaseException):
@@ -40,13 +42,18 @@ class LoopDone(BaseException):
 
 
 class RunError(HegelError):
-    """The engine aborted the run: a failed health check, nondeterminism, or
-    an internal engine error."""
+    """The engine aborted the run rather than reporting a pass or a test
+    failure: a failed health check (:class:`FailedHealthCheck`),
+    nondeterminism under the ``error`` strictness (:class:`Flaky`), too few
+    valid test cases (:class:`Unsatisfiable`), or another engine error.
+    The message explains which."""
 
 
 class FailedHealthCheck(RunError):
-    """A health check failed. The message explains which one, and how to
-    suppress it if the behaviour is intentional."""
+    """A health check failed: the run was likely to test poorly or slowly
+    (too many rejected test cases, say). The message explains which check
+    failed, and how to suppress it with ``suppress_health_check`` if the
+    behaviour is intentional. See :class:`~hegel.HealthCheck`."""
 
 
 class Flaky(RunError):
@@ -58,15 +65,21 @@ class Flaky(RunError):
 
 class Unsatisfiable(RunError):
     """The engine could not find enough inputs satisfying the test's
-    assumptions."""
+    assumptions and filters. With the ``filter_too_much`` health check
+    enabled, a run that rejects nearly everything fails that check
+    (:class:`FailedHealthCheck`) first."""
 
 
 class DidNotReproduce(HegelError):
-    """A ``reproduce_failure`` blob no longer reproduces a failure."""
+    """The blob given to :func:`~hegel.reproduce_failure` no longer makes
+    the test fail: the bug is fixed (remove the decorator) or the test has
+    changed so the blob means something else."""
 
 
 class MultipleFailures(BaseExceptionGroup):  # type: ignore[type-arg]
-    """A run found several distinct failures (``report_multiple_failures``).
+    """A run found several distinct failures, with
+    ``report_multiple_failures=True``. Each failure is in ``exceptions``,
+    with its own falsifying example attached as notes.
 
     Like the built-in exception groups, an instance whose failures are all
     :class:`Exception` s is itself an :class:`ExceptionGroup`, so

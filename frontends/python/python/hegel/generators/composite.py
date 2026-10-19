@@ -44,11 +44,33 @@ class Composite(Generator[T]):
 
 
 def composite(function: Callable[..., T]) -> Callable[..., Generator[T]]:
-    """Define a generator as a function taking a :class:`TestCase` first.
+    """Define a generator as a function taking a :class:`~hegel.TestCase`
+    first.
 
     Calling the decorated function with the remaining arguments returns a
-    generator; each draw runs the function body, whose own draws are
-    silent (they are reported as part of the composite's value).
+    generator; each draw runs the function body with the test case and
+    those arguments, and the generated value is what the body returns.
+    The body draws with ``tc.draw`` like a test does, so later draws can
+    depend on earlier ones. Its own draws are not printed separately: the
+    failure report prints the composite's value.
+
+    ::
+
+        @hegel.composite
+        def sorted_pairs(tc, limit):
+            a = tc.draw(gs.integers(0, limit))
+            b = tc.draw(gs.integers(a, limit))
+            return (a, b)
+
+        @hegel.test
+        def test_pairs(tc):
+            a, b = tc.draw(sorted_pairs(100))
+            assert a <= b
+
+    Decorating a class, or a function without a positional first
+    parameter for the test case, is an :class:`~hegel.InvalidArgument`.
+    ``hegel.composite`` and ``hegel.generators.composite`` are the same
+    function.
     """
     if not callable(function):
         raise InvalidArgument("composite() takes a function")
@@ -128,8 +150,26 @@ class Builds(Generator[T]):
 
 def builds(target: Callable[..., T], /, *args: Any, **kwargs: Any) -> Generator[T]:
     """Generate values by calling ``target`` with arguments drawn from the
-    given generators. Missing required arguments with type annotations are
-    inferred with ``from_type``."""
+    given generators: ``builds(f, gs.integers(), name=gs.text())`` draws
+    ``f(n, name=s)``.
+
+    Required parameters of ``target`` that are not given, and that have a
+    type annotation, are filled in from :func:`from_type` of the
+    annotation; parameters with defaults are left to their defaults. The
+    value is printed as the call, ``f(0, name='')``. A ``target`` that is
+    not callable, or an argument that is not a generator, is an
+    :class:`~hegel.InvalidArgument`.
+
+    ::
+
+        @dataclass
+        class Point:
+            x: int
+            y: int
+
+        point = tc.draw(gs.builds(Point))
+        origin_row = tc.draw(gs.builds(Point, y=gs.just(0)))
+    """
     if not callable(target):
         raise InvalidArgument(f"builds() target {target!r} must be callable")
     arg_gens = tuple(as_generator(a) for a in args)

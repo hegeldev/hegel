@@ -37,12 +37,27 @@ FILTER_ATTEMPT_LABEL = label_from_name("hegel.filter.attempt")
 
 
 class Generator(Generic[T]):
-    """A recipe for drawing values of some type from a :class:`TestCase`.
+    """A recipe for drawing values of some type from a :class:`~hegel.TestCase`.
 
+    Generators are built by the functions in :mod:`hegel.generators` and
+    drawn from with :meth:`TestCase.draw <hegel.TestCase.draw>`. They are
+    immutable descriptions of how to make a value: the same generator can
+    be drawn from any number of times, in any number of tests. Every
+    generator has the combinators :meth:`map`, :meth:`filter` and
+    :meth:`flat_map`, and ``a | b`` is :func:`~hegel.generators.one_of`
+    of the two::
+
+        evens = gs.integers().map(lambda n: n * 2)
+        small = gs.integers().filter(lambda n: abs(n) < 100)
+        numbers = gs.integers() | gs.floats()
+
+    Most custom generators are best written with
+    :func:`~hegel.generators.composite`. Subclassing is for generators that
+    need to control how their values are printed or how they are labelled.
     Subclasses implement :meth:`do_draw` (and, when they draw component
     generators whose output should be printed structurally,
     :meth:`do_draw_and_print`; the default prints the drawn value with
-    :func:`hegel.pretty.pretty_print`). ``label`` identifies the generator
+    :func:`hegel.pretty_print`). ``label`` identifies the generator
     to the engine's shrinker: generators drawing the same shape of value
     share one, built from :func:`label_from_name` and
     :func:`combine_labels`.
@@ -64,29 +79,82 @@ class Generator(Generic[T]):
         return value
 
     def map(self, f: Callable[[T], U]) -> Generator[U]:
-        """Transform generated values with ``f``."""
+        """A generator of ``f(value)`` for each ``value`` this one generates.
+
+        The mapped value is what the failure report prints. ``f`` runs every
+        time a value is drawn, and shrinking happens on the underlying value,
+        so a mapped generator shrinks toward ``f`` of the source's simplest
+        value::
+
+            evens = gs.integers().map(lambda n: n * 2)
+        """
         return Mapped(self, f)
 
     def flat_map(self, f: Callable[[T], Generator[U]]) -> Generator[U]:
         """Generate a value, then draw from the generator ``f`` builds
-        from it."""
+        from it.
+
+        ``f`` must return a :class:`Generator`; anything else is an
+        :class:`~hegel.InvalidArgument`. Only the final value is printed.
+        Use this when the shape of one value depends on another::
+
+            lists_and_index = gs.integers(1, 10).flat_map(
+                lambda n: gs.tuples(
+                    gs.lists(gs.integers(), min_size=n, max_size=n),
+                    gs.integers(0, n - 1),
+                )
+            )
+
+        A :func:`~hegel.generators.composite` generator expresses the same
+        dependency more readably, and is usually the better choice.
+        """
         return FlatMapped(self, f)
 
     def filter(self, predicate: Callable[[T], bool]) -> Generator[T]:
-        """Keep only values satisfying ``predicate``. After three rejected
-        attempts the test case is rejected as if by ``assume``."""
+        """Keep only values satisfying ``predicate``.
+
+        Each draw tries the source up to three times; if no attempt
+        satisfies ``predicate``, the test case is rejected as if by
+        :meth:`TestCase.assume <hegel.TestCase.assume>`. A filter that
+        rejects most values therefore rejects many test cases, and may fail
+        the ``filter_too_much`` health check: prefer generating the values
+        you want directly (``gs.integers(min_value=0)`` rather than
+        ``gs.integers().filter(lambda n: n >= 0)``). Chained filters
+        combine into one, and filtering
+        :func:`~hegel.generators.sampled_from` narrows its elements instead
+        of retrying, so even a rare element is found.
+        """
         return Filtered(self, predicate)
 
     def print_with(self, print: Callable[[T, PrettyPrinter], None]) -> Generator[T]:
-        """Print each drawn value with ``print`` instead of its ``repr``."""
+        """Print each drawn value with ``print`` instead of its ``repr``.
+
+        ``print`` is called as ``print(value, printer)`` with a
+        :class:`~hegel.PrettyPrinter` to write the value's representation
+        into the failure report; it is only called when the output will be
+        shown. The values drawn are unchanged.
+        """
         return PrintedWith(self, print)
 
     def print_as_call(self, function: str) -> Generator[T]:
         """For a mapped generator: print ``function(input)`` around the
-        source generator's own output instead of the mapped value."""
+        source generator's own output instead of the mapped value.
+
+        This makes a value whose ``repr`` is unhelpful print as the call
+        that built it::
+
+            points = gs.tuples(gs.integers(), gs.integers()).map(
+                lambda t: Point(*t)
+            ).print_as_call("Point")
+
+        prints a drawn point as ``Point((0, 0))``. Calling it on a
+        generator that is not the result of :meth:`map`, or with an empty
+        name, is an :class:`~hegel.InvalidArgument`.
+        """
         raise InvalidArgument("print_as_call is only available on a mapped generator")
 
     def __or__(self, other: Generator[Any]) -> Generator[Any]:
+        """``a | b`` is ``one_of(a, b)``."""
         from hegel.generators.combinators import one_of
 
         return one_of(self, other)

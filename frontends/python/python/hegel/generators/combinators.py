@@ -52,7 +52,13 @@ class Just(Generator[T]):
 
 
 def just(value: T) -> Generator[T]:
-    """Always generate ``value``."""
+    """Always generate ``value``.
+
+    The same object is returned by every draw, so mutating it in one test
+    case is visible in the next. It is useful as an argument to
+    :func:`one_of` or :func:`~hegel.generators.builds`, or as the result
+    of a :meth:`~hegel.generators.Generator.flat_map`.
+    """
     return Just(value)
 
 
@@ -65,7 +71,7 @@ class NoneGenerator(Just[None]):
 
 
 def none() -> Generator[None]:
-    """Always generate ``None``."""
+    """Always generate ``None``. The same as ``just(None)``."""
     return NoneGenerator()
 
 
@@ -81,7 +87,11 @@ class Nothing(Generator[Any]):
 
 
 def nothing() -> Generator[Any]:
-    """A generator with no values: every draw rejects the test case."""
+    """A generator with no values: every draw rejects the test case, as
+    :meth:`TestCase.reject <hegel.TestCase.reject>` does.
+
+    :func:`one_of` drops it, so ``one_of(gs.nothing(), g)`` is ``g``.
+    """
     return Nothing()
 
 
@@ -147,9 +157,24 @@ class FilteredSample(Generator[T]):
 
 
 def sampled_from(elements: Any) -> Generator[Any]:
-    """Pick one of ``elements`` (a sequence, or an ``Enum`` class). A
-    ``Flag`` class also yields the empty flag and combinations of its
-    members."""
+    """Pick one of ``elements``, shrinking toward the first.
+
+    ``elements`` is a sequence (copied if mutable, so later changes to it
+    do not affect the generator), any other iterable (read once), or an
+    :class:`~enum.Enum` class, whose members are sampled in definition
+    order. A :class:`~enum.Flag` class also yields the empty flag and
+    combinations of its members. An empty collection, an enum with no
+    members, or a ``set`` (which has no stable order to shrink in) is an
+    :class:`~hegel.InvalidArgument`.
+
+    ::
+
+        colour = tc.draw(gs.sampled_from(["red", "green", "blue"]))
+
+    ``.filter`` on the result narrows the elements rather than retrying
+    draws, so even a predicate that accepts one element in thousands finds
+    it.
+    """
     if isinstance(elements, type) and issubclass(elements, enum.Enum):
         if not elements.__members__:
             raise InvalidArgument(f"Cannot sample from {_name(elements)}: it has no members")
@@ -231,8 +256,19 @@ class OneOf(Generator[Any]):
 
 
 def one_of(*generators: Any) -> Generator[Any]:
-    """Draw from one of ``generators``, chosen uniformly. Accepts the
-    generators as separate arguments or as one iterable."""
+    """Draw from one of ``generators``, shrinking toward the earlier ones.
+
+    The generators are passed as separate arguments or as one iterable;
+    ``a | b`` is ``one_of(a, b)``. Nested ``one_of`` calls are flattened,
+    :func:`nothing` arguments are dropped, and a single generator is
+    returned as it is. ``one_of()`` with no arguments, or an argument that
+    is not a generator, is an :class:`~hegel.InvalidArgument`.
+
+    ::
+
+        key = tc.draw(gs.one_of(gs.integers(), gs.text()))
+        key = tc.draw(gs.integers() | gs.text())
+    """
     if (
         len(generators) == 1
         and not isinstance(generators[0], Generator)
@@ -278,5 +314,7 @@ class Optional(Generator[Any]):
 
 
 def optional(inner: Generator[T]) -> Generator[T | None]:
-    """Generate either ``None`` or a value from ``inner``."""
+    """Generate either ``None`` or a value from ``inner``, shrinking toward
+    ``None``. Passing something other than a generator is an
+    :class:`~hegel.InvalidArgument`."""
     return Optional(as_generator(inner))

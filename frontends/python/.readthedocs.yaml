@@ -1,0 +1,24 @@
+# Read the Docs configuration for the Python frontend's documentation. The
+# project's settings point "Path for .readthedocs.yaml" here. The build
+# compiles the extension (Rust toolchain plus maturin, through uv) so that
+# autodoc imports the real package.
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    python: "3.13"
+    rust: "latest"
+  jobs:
+    pre_create_environment:
+      - asdf plugin add uv
+      - asdf install uv latest
+      - asdf global uv latest
+    create_environment:
+      - uv venv "${READTHEDOCS_VIRTUALENV_PATH}"
+    install:
+      - cd frontends/python && UV_PROJECT_ENVIRONMENT="${READTHEDOCS_VIRTUALENV_PATH}" uv sync --frozen --no-dev --group docs
+
+sphinx:
+  configuration: frontends/python/docs/conf.py
+  fail_on_warning: true

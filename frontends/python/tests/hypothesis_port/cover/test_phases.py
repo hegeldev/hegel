@@ -65,7 +65,7 @@ def rarely_generated(tc):
 def test_does_not_reuse_saved_examples_if_reuse_not_in_phases(tmp_path):
     seen = []
 
-    @hegel.test(database=tmp_path)
+    @hegel.test(database=tmp_path, test_cases=1000)
     def test_usage(tc):
         seen.append(rarely_generated(tc))
 

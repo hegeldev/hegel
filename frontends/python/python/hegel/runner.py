@@ -548,17 +548,31 @@ def run(
     reproducer: Reproducer = default_reproducer,
     **overrides: Any,
 ) -> None:
-    """Run ``test_fn`` as a property test: it is called once per test
-    case with a :class:`TestCase`, and the first exception it raises (other
-    than a rejected assumption) is a failure, reported after shrinking:
-    the drawn values, any caveat, and how to reproduce it are added to the
-    exception as notes.
+    """Run ``test_fn`` as a property test, without a decorator: it is
+    called once per test case with a :class:`TestCase`, and the first
+    exception it raises (other than a rejected assumption) is a failure,
+    reported after shrinking: the drawn values, any caveat, and how to
+    reproduce it are added to the exception as notes, and the exception is
+    re-raised. A passing run returns ``None``.
 
-    ``settings`` (with ``overrides`` applied) configures the run.
-    ``explicit_cases`` run first, with their given values; ``reproduce_blob``
-    replays one previously reported failure instead of generating.
-    ``reproducer`` words the note saying how to replay a failure, given
-    its blob.
+    ``settings`` (with ``overrides`` applied, as for :class:`Settings`)
+    configures the run; by default it is ``Settings()``.
+    ``database_key`` identifies the test in the example database (without
+    one, failures are not saved or replayed) and ``test_location`` in the
+    engine's reports. ``explicit_cases`` run first, with their given
+    values; ``reproduce_blob`` replays one previously reported failure
+    first. ``reproducer`` words the note saying how to replay a failure,
+    given its blob.
+
+    ::
+
+        def check(tc):
+            xs = tc.draw(gs.lists(gs.integers()))
+            assert sorted(sorted(xs)) == sorted(xs)
+
+        hegel.run(check, test_cases=1000)
+
+    :func:`test` is this, run when the decorated function is called.
     """
     __tracebackhide__ = True
     if not callable(test_fn):
@@ -628,11 +642,32 @@ def test(
     **overrides: Any,
 ) -> Any:
     """Decorate a test function taking a :class:`TestCase` as its first
-    argument so that calling it (as pytest does) runs the property test.
+    argument (after ``self``, for a method) so that calling it, as pytest
+    does, runs the property test.
 
-    Any further parameters are passed through, so pytest fixtures work.
-    Settings may be given as ``settings=`` or as individual fields, e.g.
-    ``@hegel.test(test_cases=500)``.
+    ::
+
+        @hegel.test
+        def test_reversing_twice(tc):
+            xs = tc.draw(gs.lists(gs.integers()))
+            assert list(reversed(list(reversed(xs)))) == xs
+
+        @hegel.test(test_cases=500, derandomize=True)
+        def test_with_settings(tc): ...
+
+    The decorated function takes the remaining parameters, which are
+    passed through, so pytest fixtures and ``parametrize`` work. Settings
+    may be given as ``settings=`` (a :class:`Settings`), as individual
+    fields, or both, the fields overriding; without ``settings=`` they
+    start from the default profile, resolved each time the test runs.
+    Failing examples are saved in the example database under the test's
+    module and qualified name, and replayed first on the next run.
+
+    The test runs synchronously: an ``async def`` test, a class, or a
+    function with no positional parameter for the test case is an
+    :class:`~hegel.InvalidArgument`, as is calling a Hegel test from inside
+    another. The wrapper has ``is_hegel_test = True`` and the original
+    function as ``hegel_inner_test``.
     """
     _check_settings(settings)
 
@@ -711,8 +746,27 @@ def test(
 
 def explicit_test_case(*args: Any, **kwargs: Any) -> Callable[[T], T]:
     """Add an explicit test case: the test runs with these values before
-    any are generated. Positional values are consumed by draws in order;
-    keyword values by draw name (``x=1`` for ``x = tc.draw(...)``)."""
+    any are generated, in the ``explicit`` phase. Positional values are
+    consumed by draws in order; keyword values by draw name (``x=1`` for
+    ``x = tc.draw(...)``).
+
+    ::
+
+        @hegel.explicit_test_case(xs=[])
+        @hegel.explicit_test_case(xs=[1, 1])
+        @hegel.test
+        def test_sort_keeps_length(tc):
+            xs = tc.draw(gs.lists(gs.integers()))
+            assert len(sorted(xs)) == len(xs)
+
+    Stacked decorators run their cases top to bottom. Explicit cases are
+    not shrunk, and their values are not checked against the generators:
+    each draw simply returns the given value. Every value must be drawn,
+    and every draw needs a value; a mismatch, a rejected assumption, or
+    :meth:`~TestCase.draw_silent` in an explicit case is an
+    :class:`~hegel.InvalidArgument`. The decorator may go above or below
+    :func:`test`.
+    """
     case = ExplicitCase(args, kwargs)
 
     def decorate(fn: T) -> T:
@@ -727,8 +781,17 @@ def explicit_test_case(*args: Any, **kwargs: Any) -> Callable[[T], T]:
 
 
 def reproduce_failure(blob: str) -> Callable[[T], T]:
-    """Replay the reproduction blob printed for a failure instead of
-    generating test cases. Remove the decorator once the bug is fixed."""
+    """Replay the failure that ``blob`` encodes before anything else.
+
+    A failure report ends with a line such as
+    ``@hegel.reproduce_failure("AXicY2Vg...")`` when ``print_blob`` is on;
+    adding that decorator below :func:`test` makes the next run start by
+    replaying exactly that failing test case, which is useful when the
+    failure is hard to find again. If the blob no longer fails, the run
+    raises :class:`~hegel.DidNotReproduce`. Remove the decorator once the
+    bug is fixed. An empty or non-string blob is an
+    :class:`~hegel.InvalidArgument`.
+    """
     if not isinstance(blob, str) or not blob:
         raise InvalidArgument("reproduce_failure takes the blob string printed with a failure")
 

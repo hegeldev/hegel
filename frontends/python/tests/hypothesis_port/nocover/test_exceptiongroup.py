@@ -20,7 +20,7 @@ _filter_too_much = pytest.mark.xfail(
     strict=True,
     reason="engine: rejecting every input after a draw fails the filter_too_much health "
     "check rather than raising Unsatisfiable, as Hegel does not detect an exhausted "
-    "finite space (docs/comparison-with-hypothesis.md)",
+    "finite space (docs/explanation/comparison-with-hypothesis.md)",
 )
 
 

@@ -40,7 +40,13 @@ class Dates(Generator[dt.date]):
 
 
 def dates(min_value: dt.date = dt.date.min, max_value: dt.date = dt.date.max) -> Generator[dt.date]:
-    """Generate dates in ``[min_value, max_value]``."""
+    """Generate :class:`datetime.date` objects in ``[min_value, max_value]``,
+    inclusive, shrinking toward 2000-01-01 (or the bound nearest it).
+
+    The bounds default to the whole range :mod:`datetime` supports. Bounds
+    that are not dates (a ``datetime`` is not accepted), or
+    ``min_value > max_value``, are an :class:`~hegel.InvalidArgument`.
+    """
     _check_type("min_value", min_value, dt.date)
     _check_type("max_value", max_value, dt.date)
     if isinstance(min_value, dt.datetime) or isinstance(max_value, dt.datetime):
@@ -77,8 +83,13 @@ def times(
     *,
     timezones: Generator[Any] | None = None,
 ) -> Generator[dt.time]:
-    """Generate times of day in ``[min_value, max_value]``, naive unless
-    ``timezones`` generates tzinfo objects to attach."""
+    """Generate :class:`datetime.time` objects in ``[min_value, max_value]``,
+    inclusive, shrinking toward midnight.
+
+    The bounds must be naive. The times are naive too, unless
+    ``timezones`` is given: a generator of :class:`datetime.tzinfo` objects
+    (such as :func:`timezones`), one of which is attached to each time.
+    """
     _check_type("min_value", min_value, dt.time)
     _check_type("max_value", max_value, dt.time)
     if min_value.tzinfo is not None or max_value.tzinfo is not None:
@@ -138,8 +149,26 @@ def datetimes(
     timezones: Generator[Any] | None = None,
     allow_imaginary: bool = True,
 ) -> Generator[dt.datetime]:
-    """Generate datetimes in ``[min_value, max_value]`` (naive bounds), with
-    tzinfo drawn from ``timezones`` when given."""
+    """Generate :class:`datetime.datetime` objects in
+    ``[min_value, max_value]``, inclusive, shrinking toward 2000-01-01
+    00:00 (or the bound nearest it).
+
+    The bounds must be naive, and the datetimes are naive unless
+    ``timezones`` is given: a generator of :class:`datetime.tzinfo` objects
+    (or ``None``), such as :func:`timezones`. The drawn timezone is
+    attached to the drawn wall-clock time, so the bounds limit the local
+    time, not the instant. With ``allow_imaginary=False``, a local time
+    that does not exist in its timezone (one skipped by a daylight-saving
+    transition) rejects the test case. ``fold`` is never set.
+
+    ::
+
+        aware = tc.draw(gs.datetimes(timezones=gs.timezones()))
+
+    Bounds that are not naive datetimes, ``min_value > max_value``, or a
+    timezone generator producing something other than ``tzinfo`` objects
+    are an :class:`~hegel.InvalidArgument`.
+    """
     _check_type("min_value", min_value, dt.datetime)
     _check_type("max_value", max_value, dt.datetime)
     if min_value.tzinfo is not None or max_value.tzinfo is not None:
@@ -184,7 +213,10 @@ class Timedeltas(Generator[dt.timedelta]):
 def timedeltas(
     min_value: dt.timedelta = dt.timedelta.min, max_value: dt.timedelta = dt.timedelta.max
 ) -> Generator[dt.timedelta]:
-    """Generate timedeltas in ``[min_value, max_value]``."""
+    """Generate :class:`datetime.timedelta` objects in
+    ``[min_value, max_value]``, inclusive, shrinking toward zero: whole
+    days first, then seconds, then microseconds. The bounds default to the
+    whole range :mod:`datetime` supports."""
     _check_type("min_value", min_value, dt.timedelta)
     _check_type("max_value", max_value, dt.timedelta)
     if min_value > max_value:
@@ -193,8 +225,15 @@ def timedeltas(
 
 
 def timezones(*, no_cache: bool = False) -> Generator[dt.tzinfo]:
-    """Generate IANA timezones (``zoneinfo.ZoneInfo`` objects), shrinking
-    toward UTC."""
+    """Generate IANA timezones, as :class:`zoneinfo.ZoneInfo` objects,
+    shrinking toward UTC.
+
+    The timezones are those :func:`zoneinfo.available_timezones` lists;
+    on a system without a timezone database (Windows, say) install the
+    ``tzdata`` package. With ``no_cache=True`` each is built with
+    :meth:`zoneinfo.ZoneInfo.no_cache`, so it is not the same object as
+    ``ZoneInfo(key)``.
+    """
     import zoneinfo
 
     from hegel.generators.combinators import sampled_from

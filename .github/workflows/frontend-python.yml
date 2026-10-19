@@ -38,6 +38,24 @@ jobs:
       - name: Run the ported Hypothesis test suite
         run: just python::check-hypothesis-port
 
+  # Build the documentation as Read the Docs does, with warnings as errors.
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          tools: just uv
+      - name: Set up the environment
+        run: just python::setup
+      - name: Build the documentation
+        run: just python::docs
+
   # Build the wheels exactly as a release would (same composite action), then
   # install one into a fresh virtualenv and import it from outside the
   # checkout; on linux-amd64 also build the sdist and install from that, which

@@ -45,8 +45,20 @@ _TypeAliasType: Any = getattr(typing, "TypeAliasType", None)  # Python 3.12+
 def register_type_generator(
     type_: Any, generator: Generator[Any] | Callable[[Any], Generator[Any]]
 ) -> None:
-    """Make ``from_type(type_)`` (and ``builds`` inference) use
-    ``generator``, or the generator the callable returns for the type."""
+    """Make :func:`from_type` of ``type_`` (and so :func:`builds` inference
+    of a parameter annotated with it) use ``generator``.
+
+    ``generator`` is a generator, or a callable that takes the type asked
+    for (a parameterisation such as ``MyBox[int]``, for a generic) and
+    returns one. ``from_type`` of a class with no registration of its own
+    but with registered subclasses draws from those subclasses' generators.
+    Registering again replaces the earlier registration. A string in
+    place of a type is an :class:`~hegel.InvalidArgument`.
+
+    ::
+
+        gs.register_type_generator(Money, gs.integers(0, 10**6).map(Money))
+    """
     if isinstance(type_, str):
         raise InvalidArgument(
             f"register_type_generator takes a type, not the string {type_!r}: "
@@ -197,10 +209,36 @@ def _bytes_satisfies(element: Any) -> bool:
 
 
 def from_type(type_: Any) -> Generator[Any]:
-    """A generator of instances of ``type_``: builtins, standard-library
-    value types, ``typing`` constructs, enums, dataclasses and classes with
-    annotated constructors, or anything registered with
-    :func:`register_type_generator`."""
+    """A generator of instances of ``type_``, inferred from the type.
+
+    ``type_`` may be:
+
+    - a type registered with :func:`register_type_generator`;
+    - a builtin or standard-library value type (``int``, ``str``,
+      ``bytes``, ``float``, ``datetime.date``, ``uuid.UUID``,
+      ``decimal.Decimal``, ``ipaddress`` types, ...);
+    - a parameterised collection or ``typing`` construct
+      (``list[int]``, ``dict[str, float]``, ``tuple[int, ...]``,
+      ``int | None``, ``Literal[...]``, ``Optional``, ``Annotated``,
+      ``NewType``, a ``TypeVar`` by its bound or constraints, and type
+      aliases);
+    - an :class:`~enum.Enum`, sampled with :func:`sampled_from`;
+    - a dataclass or ``TypedDict``, built from its field annotations;
+    - an abstract class or protocol, by its resolvable subclasses;
+    - any other class whose constructor's required parameters are all
+      annotated, built with :func:`builds` (annotated optional parameters
+      are either left to their defaults or generated).
+
+    A type that cannot be resolved (a required constructor parameter
+    without an annotation, an abstract class or protocol with no
+    resolvable subclass, an unresolved string annotation) is a
+    :class:`~hegel.ResolutionFailed`, raised when the generator is
+    built.
+
+    ::
+
+        pairs = tc.draw(gs.from_type(list[tuple[int, str]]))
+    """
     if _known(_registry, type_):
         return _registered(type_, type_)
     if isinstance(type_, str):

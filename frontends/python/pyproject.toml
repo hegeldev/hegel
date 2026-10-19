@@ -34,6 +34,7 @@ dependencies = []
 [project.urls]
 Homepage = "https://hegel.dev"
 Repository = "https://github.com/hegeldev/hegel"
+Documentation = "https://hegel-python.readthedocs.io"
 Changelog = "https://github.com/hegeldev/hegel/blob/main/frontends/python/CHANGELOG.md"
 
 [project.entry-points.pytest11]
@@ -49,9 +50,11 @@ features = ["pyo3/extension-module"]
 # workspace manifest and the in-tree libhegel the crate depends on.
 exclude = [
   { path = ".cargo/**", format = "sdist" },
+  { path = ".readthedocs.yaml", format = "sdist" },
   { path = ".gitignore", format = "sdist" },
   { path = ".python-version", format = "sdist" },
   { path = "AGENTS.md", format = "sdist" },
+  { path = "docs/**", format = "sdist" },
   { path = "justfile", format = "sdist" },
   { path = "RELEASE.md", format = "sdist" },
   { path = "RELEASE-sample.md", format = "sdist" },
@@ -67,6 +70,11 @@ dev = [
   "mypy>=1.11",
   "maturin>=1.7,<2.0",
   "tzdata>=2024.1",  # the timezone database that Windows lacks
+]
+docs = [
+  "sphinx>=8",
+  "furo>=2024.8",
+  "myst-parser>=4",
 ]
 
 [tool.pytest.ini_options]
