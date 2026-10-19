@@ -1,0 +1,3 @@
+start: A
+A: t{"a"}
+t{x}: x

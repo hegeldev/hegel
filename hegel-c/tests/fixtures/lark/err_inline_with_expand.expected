@@ -1,0 +1,2 @@
+error
+Inlined rules (_rule) cannot use the ?rule modifier.

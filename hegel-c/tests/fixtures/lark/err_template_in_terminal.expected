@@ -1,0 +1,2 @@
+error
+Tree('template_usage', [NonTerminal('t'), 'a'])
