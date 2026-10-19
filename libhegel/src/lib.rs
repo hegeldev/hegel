@@ -297,7 +297,7 @@ pub enum hegel_result_t {
 
     /// An internal invariant failed inside libhegel. Should not happen in
     /// practice. Please file a bug at
-    /// <https://github.com/hegeldev/hegel-rust/issues>.
+    /// <https://github.com/hegeldev/hegel/issues>.
     HEGEL_E_INTERNAL = -8,
 
     /// A single test-case handle was used from two threads at once. Clone

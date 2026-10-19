@@ -32,7 +32,7 @@ impl core::fmt::Display for InternalError {
             f,
             "Internal error in hegel at {}: {}. This is a bug in hegel \
              itself; please report it at \
-             https://github.com/hegeldev/hegel-rust/issues",
+             https://github.com/hegeldev/hegel/issues",
             self.location, self.message
         )
     }
