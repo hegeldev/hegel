@@ -1511,7 +1511,7 @@ fn resolve_round(events: Vec<WorkerEvent>, tc: &TestCase) {
                     control = Some(Box::new(InternalError(format!(
                         "Internal error in hegel: concurrent stateful worker {worker} exited \
                          without reporting an outcome. This is a bug in hegel itself; please \
-                         report it at https://github.com/hegeldev/hegel-rust/issues"
+                         report it at https://github.com/hegeldev/hegel/issues"
                     ))));
                 }
             }

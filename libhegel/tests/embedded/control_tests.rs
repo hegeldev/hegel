@@ -14,7 +14,7 @@ fn internal_error_carries_location_and_bug_report_framing() {
     assert!(msg.contains("boom: 7"), "{msg}");
     assert!(msg.contains("bug in hegel"), "{msg}");
     assert!(
-        msg.contains("https://github.com/hegeldev/hegel-rust/issues"),
+        msg.contains("https://github.com/hegeldev/hegel/issues"),
         "{msg}"
     );
 }

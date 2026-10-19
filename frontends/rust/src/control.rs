@@ -55,7 +55,7 @@ pub(crate) fn raise_internal_error(message: std::fmt::Arguments<'_>) -> ! {
     let location = std::panic::Location::caller();
     let full = format!(
         "Internal error in hegel at {location}: {message}. This is a bug in hegel \
-         itself; please report it at https://github.com/hegeldev/hegel-rust/issues"
+         itself; please report it at https://github.com/hegeldev/hegel/issues"
     );
     if currently_in_test_context() {
         raise_control(InternalError(full));

@@ -178,7 +178,7 @@ typedef enum {
     /*
      An internal invariant failed inside libhegel. Should not happen in
      practice. Please file a bug at
-     <https://github.com/hegeldev/hegel-rust/issues>.
+     <https://github.com/hegeldev/hegel/issues>.
      */
     HEGEL_E_INTERNAL = -8,
     /*
