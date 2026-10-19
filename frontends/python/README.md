@@ -19,7 +19,7 @@ The API is the Hegel API, shared in shape with the Rust, Go and TypeScript
 bindings: tests take a `TestCase` and draw values from generators. How it
 compares with [Hypothesis](https://hypothesis.readthedocs.io) is set out in
 `docs/comparison-with-hypothesis.md`; engine behaviour that differs from
-Python's `re` or from Hypothesis is recorded in `docs/engine-issues.md`.
+Python's `re` or from Hypothesis is tracked in this repository's issues.
 
 ## Installation
 

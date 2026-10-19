@@ -1,8 +1,8 @@
 # Hegel for Python compared with Hypothesis
 
 This page records what Hegel for Python has, what it does differently, and
-what it lacks, relative to Hypothesis 6.168. `docs/engine-issues.md` lists the
-engine bugs found along the way, and `tests/hypothesis_port` is Hypothesis's
+what it lacks, relative to Hypothesis 6.168. The engine bugs found along the
+way are issues on the repository, and `tests/hypothesis_port` is Hypothesis's
 own test suite ported to the Hegel API, with the tests of behaviour Hegel does
 differently marked `xfail` and a note per file of what was dropped.
 
@@ -115,8 +115,8 @@ differently marked `xfail` and a note per file of what was dropped.
   up to `test_cases` and does not suppress duplicate inputs. There is no
   shrinking time limit.
 - Shrinking differs in places: Hegel does not rewrite a `sampled_from` branch
-  of a `one_of` into the wide branch (Hypothesis's widening pass; see
-  `docs/engine-issues.md`), and the bounded integer distribution is weighted
+  of a `one_of` into the wide branch (Hypothesis's widening pass, which Hegel
+  will not adopt), and the bounded integer distribution is weighted
   toward boundaries. `integers(0, 1e100)` draws many more huge values than
   Hypothesis does.
 - A skipped test ends the run before anything is saved to the database.
@@ -125,7 +125,7 @@ differently marked `xfail` and a note per file of what was dropped.
 - `datetimes()` and `times()` never set `fold`, and there is no targeting of
   DST folds, gaps or leap seconds.
 - `from_regex` depends on the engine's regex generator rather than Python's
-  `re`; see `docs/engine-issues.md` for where it departs from it. A pattern
+  `re`. A pattern
   that can match nothing over its alphabet is rejected when the generator is
   built, as in Hypothesis, but with Hegel's wording.
 - A `deferred` definition that only refers back to itself rejects the test

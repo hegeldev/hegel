@@ -1,6 +1,6 @@
-"""Engine behaviour once recorded in docs/engine-issues.md and since fixed,
-pinned with the seed that reproduced it. A regression here is an engine
-regression: record it in the docs again and make the test a strict xfail."""
+"""Engine behaviour once reported as an issue and since fixed, pinned with
+the seed that reproduced it. A regression here is an engine regression:
+reopen the issue and make the test a strict xfail."""
 
 from __future__ import annotations
 
