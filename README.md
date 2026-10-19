@@ -1,54 +1,13 @@
+# Hegel
+
 > [!IMPORTANT]
-> We're excited you're checking out Hegel! Hegel is in beta, and we'd love for you to try it and [report any feedback](https://github.com/hegeldev/hegel-rust/issues/new).
->
-> As part of our beta, we may make breaking changes if it makes Hegel a better property-based testing library. If that instability bothers you, please check back in a few months for a stable release!
->
-> See https://hegel.dev/compatibility for more details.
+> Hegel is in beta, and we'd love for you to try it and [report any feedback](https://github.com/hegeldev/hegel/issues/new). See https://hegel.dev/compatibility for details on what may still change.
 
-# Hegel for Rust
+[Hegel](https://hegel.dev) is property-based testing, based on [Hypothesis](https://github.com/hypothesisworks/hypothesis): a native engine that does the generating, shrinking and bookkeeping, and thin frontends that give it an idiomatic surface in each language.
 
-* [Documentation](https://docs.rs/hegeltest)
-* [Website](https://hegel.dev)
+| Component | Path | What it is |
+| --- | --- | --- |
+| libhegel | [`libhegel/`](libhegel/) | The engine, with a C ABI. Published as prebuilt libraries on [GitHub releases](https://github.com/hegeldev/hegel/releases) and as the `hegeltest-c` crate. |
+| Hegel for Rust | [`frontends/rust/`](frontends/rust/) | The [`hegeltest`](https://docs.rs/hegeltest) crate. |
 
-`hegel-rust` is a property-based testing library for Rust. `hegel-rust` is based on [Hypothesis](https://github.com/hypothesisworks/hypothesis), using the [Hegel](https://hegel.dev/) protocol.
-
-## Installation
-
-To install: `cargo add --dev hegeltest`.
-
-## Quickstart
-
-Here's a quick example of how to write a Hegel test:
-
-```rust
-use hegel::generators as gs;
-use hegel::TestCase;
-
-fn my_sort(ls: &[i32]) -> Vec<i32> {
-    let mut result: Vec<i32> = ls.to_vec();
-    result.sort();
-    result.dedup();
-    result
-}
-
-#[hegel::test]
-fn test_matches_builtin(tc: TestCase) {
-    let mut vec1 = tc.draw(gs::vecs(gs::integers::<i32>()));
-    let vec2 = my_sort(&vec1);
-    vec1.sort();
-    assert_eq!(vec1, vec2);
-}
-```
-
-This test will fail when run with `cargo test`! Hegel will produce a minimal failing test case for us:
-
-```
----- test_matches_builtin stdout ----
-let vec1 = [0, 0];
-thread 'test_matches_builtin' (2) panicked at tests/readme.rs:16:5:
-assertion `left == right` failed
-  left: [0, 0]
- right: [0]
-```
-
-Hegel reports the minimal example showing that our sort is incorrectly dropping duplicates. If we remove `result.dedup()` from `my_sort()`, this test will then pass (because it's just comparing the standard sort against itself).
+Each component is versioned and released independently; releases are tagged `<path>/<version>`, for example `libhegel/0.47.1` or `frontends/rust/0.50.1`. See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.

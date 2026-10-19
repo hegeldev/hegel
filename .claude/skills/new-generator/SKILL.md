@@ -5,28 +5,28 @@ description: "How to add a new generator to hegel-rust. Use when the user asks t
 
 # Adding a New Generator
 
-A reference + checklist for implementing a single new generator. The pattern is very consistent across the crate — `src/generators/time.rs` (`DurationGenerator`) is the cleanest single-builder example, and `src/generators/numeric.rs` (`FloatGenerator`) is the cleanest multi-builder example. Read whichever is closer to your case before starting.
+A reference + checklist for implementing a single new generator. The pattern is very consistent across the crate — `frontends/rust/src/generators/time.rs` (`DurationGenerator`) is the cleanest single-builder example, and `frontends/rust/src/generators/numeric.rs` (`FloatGenerator`) is the cleanest multi-builder example. Read whichever is closer to your case before starting.
 
 This skill covers writing the generator itself. To make `gs::default::<T>()` work for the new type, also run the **new-default-generator** skill after this one.
 
 ## When engine-side draw work would be required
 
-Engine-side draw mods (the typed draws in `hegel-c/src/native/draws/` and their `hegel_generate_*` C ABI) are **out of scope** for this skill.
+Engine-side draw mods (the typed draws in `libhegel/src/native/draws/` and their `hegel_generate_*` C ABI) are **out of scope** for this skill.
 
 If you find that the generator would *dramatically and fundamentally* benefit from a new engine-side draw (e.g. it needs bundled data like the Unicode tables or the TLD list, or every interesting builder method would need a new ABI parameter), stop and surface that to the user. Do not start the engine-side work yourself. Otherwise, compose the existing generators and `TestCase` draw methods — `gs::integers()`, `gs::text()`, `tc.generate_date()`, etc. — even if the result is slightly less direct.
 
 ## File placement
 
-**First-party generators** (always-on, not tied to a third-party crate) live under `src/generators/`:
+**First-party generators** (always-on, not tied to a third-party crate) live under `frontends/rust/src/generators/`:
 
 - If a topical module already exists for this kind of generator, add it there.
-  - Time-shaped → `src/generators/time.rs`
-  - Numeric → `src/generators/numeric.rs`
-  - String-shaped → `src/generators/strings.rs`
-  - Tiny / one-off (no obvious topic) → `src/generators/misc.rs`
-- Otherwise create a new module file `src/generators/<name>.rs`.
+  - Time-shaped → `frontends/rust/src/generators/time.rs`
+  - Numeric → `frontends/rust/src/generators/numeric.rs`
+  - String-shaped → `frontends/rust/src/generators/strings.rs`
+  - Tiny / one-off (no obvious topic) → `frontends/rust/src/generators/misc.rs`
+- Otherwise create a new module file `frontends/rust/src/generators/<name>.rs`.
 
-**Feature-gated third-party integrations** (jiff, chrono, uuid, url, rand, etc.) live under `src/extras/<lib>/generators.rs`, exposed publicly as `hegel::extras::<lib>::<gen>` (via `pub use generators::*;` in the lib's `mod.rs`). See the **add-library-support** skill for the full layout. Inside an `extras::<lib>` module, function names drop the lib prefix — use `dates()`, not `<lib>_dates()` — because the lib name is already in the path.
+**Feature-gated third-party integrations** (jiff, chrono, uuid, url, rand, etc.) live under `frontends/rust/src/extras/<lib>/generators.rs`, exposed publicly as `hegel::extras::<lib>::<gen>` (via `pub use generators::*;` in the lib's `mod.rs`). See the **add-library-support** skill for the full layout. Inside an `extras::<lib>` module, function names drop the lib prefix — use `dates()`, not `<lib>_dates()` — because the lib name is already in the path.
 
 ## Implementation pattern
 
@@ -47,9 +47,9 @@ If two builder methods are mutually exclusive, document the exclusion on both me
 ### 3. Validation `invalid_argument!`s
 
 **Every invalid combination of builder values must be caught at draw time with `invalid_argument!`, with a clear message.** Validation runs at the start of `do_draw` (or, for string-shaped generators, inside the cached-handle builder). Examples to model:
-- `IntegerGenerator` and `FloatGenerator` in `src/generators/numeric.rs` — bound ordering (`min <= max`), and a descriptive message for the sign-aware-empty float range
-- `DurationGenerator` in `src/generators/time.rs` — bound ordering for nanoseconds
-- `TextGenerator` in `src/generators/strings.rs` — combination check for `alphabet` vs character methods
+- `IntegerGenerator` and `FloatGenerator` in `frontends/rust/src/generators/numeric.rs` — bound ordering (`min <= max`), and a descriptive message for the sign-aware-empty float range
+- `DurationGenerator` in `frontends/rust/src/generators/time.rs` — bound ordering for nanoseconds
+- `TextGenerator` in `frontends/rust/src/generators/strings.rs` — combination check for `alphabet` vs character methods
 
 These messages are part of the public API: tests assert against them. Pick a stable, descriptive substring.
 
@@ -72,19 +72,19 @@ impl Generator<T> for FooGenerator {
 
 Compose existing generators (`integers()`, `text()`, …) or, for a leaf that maps directly onto an engine draw, the `pub(crate)` typed draw methods on `TestCase` (`generate_integer_i64`, `generate_date`, `generate_string`, …). Do not open a span around the body: `TestCase` already runs every `do_draw` inside a span labelled with the generator's `label()`, so the shrinker treats the value as a unit. A generator holding *component* generators (a user-supplied element or field generator) draws them with `tc.draw_silent(&self.component)` (or `tc.draw_and_print` on the printing path) rather than `self.component.do_draw(tc)`, so each component's choices get a span of their own. String-shaped generators that need a `ffi::StringGenerator` handle cache it in a `OnceLock` (see `TextGenerator`) so the alphabet/pattern construction happens once.
 
-A span's label is an opaque `u64` identifying the generator that opened it: the engine treats same-label spans as coming from the same generator (candidates for swapping, duplicating and reordering) and never interprets a label. `Generator::label` defaults to a hash of the type name; labels are hashed from names with `generators::label_from_name` (FNV-1a 64, `const fn`) and folded together with `generators::combine_labels`, and combinators override `label` to combine a label of their own kind (`hegel.vec`, `hegel.one_of`, …) with their components' labels, so `vecs(integers())` and `vecs(text())` differ. `label` is called on every draw, so never compute it there: a leaf returns a module `const` from `label_from_name`, and a generator with components (including the derive-macro output) combines its label once when it is built, stores it in a field, and recomputes it in any builder that swaps a component. A deferred handle asked before its definition is set answers with the fixed `hegel.deferred` label. The engine exposes the same two functions as `hegel_label_from_name` / `hegel_label_combine` (`hegel-c/src/native/labels.rs`) and labels its own spans around every draw with names like `hegel.integer` (`hegel-c/src/native/draws/mod.rs`). There is no enumeration of labels anywhere; do not add one.
+A span's label is an opaque `u64` identifying the generator that opened it: the engine treats same-label spans as coming from the same generator (candidates for swapping, duplicating and reordering) and never interprets a label. `Generator::label` defaults to a hash of the type name; labels are hashed from names with `generators::label_from_name` (FNV-1a 64, `const fn`) and folded together with `generators::combine_labels`, and combinators override `label` to combine a label of their own kind (`hegel.vec`, `hegel.one_of`, …) with their components' labels, so `vecs(integers())` and `vecs(text())` differ. `label` is called on every draw, so never compute it there: a leaf returns a module `const` from `label_from_name`, and a generator with components (including the derive-macro output) combines its label once when it is built, stores it in a field, and recomputes it in any builder that swaps a component. A deferred handle asked before its definition is set answers with the fixed `hegel.deferred` label. The engine exposes the same two functions as `hegel_label_from_name` / `hegel_label_combine` (`libhegel/src/native/labels.rs`) and labels its own spans around every draw with names like `hegel.integer` (`libhegel/src/native/draws/mod.rs`). There is no enumeration of labels anywhere; do not add one.
 
 ### 5. Factory function + module export
 
 Public factory function `pub fn foos() -> FooGenerator` that returns the generator with default-everything. Plural (`durations`, `floats`, `integers`). Inside an `extras::<lib>` module, drop the lib prefix — `dates()` not `<lib>_dates()`.
 
-The factory function gets a `///` doc comment with a short prose description and a runnable example using `#[hegel::test]` in a `no_run` block. Model on the `durations()` factory in `src/generators/time.rs`.
+The factory function gets a `///` doc comment with a short prose description and a runnable example using `#[hegel::test]` in a `no_run` block. Model on the `durations()` factory in `frontends/rust/src/generators/time.rs`.
 
 Module wiring depends on placement:
 
-- **First-party generator in a new module file:** add `pub use foo::{FooGenerator, foos};` to `src/generators/mod.rs`.
+- **First-party generator in a new module file:** add `pub use foo::{FooGenerator, foos};` to `frontends/rust/src/generators/mod.rs`.
 - **First-party generator added to an existing module:** the existing `pub use` block in `mod.rs` may need a new entry — extend the list rather than adding a new line.
-- **Feature-gated generator under `src/extras/<lib>/`:** add the generator type and factory function as `pub` items in `src/extras/<lib>/generators.rs`. They surface as `hegel::extras::<lib>::FooGenerator` and `hegel::extras::<lib>::foos()` through the `pub use generators::*;` already in the lib's `mod.rs`. No `pub use` re-exports in `src/generators/mod.rs`.
+- **Feature-gated generator under `frontends/rust/src/extras/<lib>/`:** add the generator type and factory function as `pub` items in `frontends/rust/src/extras/<lib>/generators.rs`. They surface as `hegel::extras::<lib>::FooGenerator` and `hegel::extras::<lib>::foos()` through the `pub use generators::*;` already in the lib's `mod.rs`. No `pub use` re-exports in `frontends/rust/src/generators/mod.rs`.
 
 ## rustdoc requirements
 
@@ -94,7 +94,7 @@ Required on every new generator:
 - `///` on every builder method describing what it constrains.
 - `///` on the factory function with a runnable `#[hegel::test]` example wrapped in ` ```no_run ` (use `no_run` so the example compiles but doctests don't execute a full property run).
 
-The example block in the factory function is a *requirement*, not aspirational — see the `durations()` factory in `src/generators/time.rs` for the canonical shape.
+The example block in the factory function is a *requirement*, not aspirational — see the `durations()` factory in `frontends/rust/src/generators/time.rs` for the canonical shape.
 
 ## Tests
 
@@ -102,8 +102,8 @@ All five test categories below are required for every new generator (except #4 w
 
 Test file location:
 
-- **First-party generator** (under `src/generators/`) → `tests/test_<name>.rs`, modeled on `tests/test_time.rs`.
-- **Feature-gated generator** (under `src/extras/<lib>/`) → tests live in a topic-grouped sibling file under `tests/<lib>/` (e.g. `tests/jiff/civil.rs`), declared as `mod <name>;` in `tests/<lib>/main.rs`. Cargo silently skips files not declared in `main.rs`; `just lint` runs `scripts/check-test-modules.py` to catch orphans. See the **add-library-support** skill.
+- **First-party generator** (under `frontends/rust/src/generators/`) → `frontends/rust/tests/test_<name>.rs`, modeled on `frontends/rust/tests/test_time.rs`.
+- **Feature-gated generator** (under `frontends/rust/src/extras/<lib>/`) → tests live in a topic-grouped sibling file under `frontends/rust/tests/<lib>/` (e.g. `frontends/rust/tests/jiff/civil.rs`), declared as `mod <name>;` in `frontends/rust/tests/<lib>/main.rs`. Cargo silently skips files not declared in `main.rs`; `just lint` runs `scripts/check-test-modules.py` to catch orphans. See the **add-library-support** skill.
 
 ### Test 1 — Sanity (required)
 
@@ -130,7 +130,7 @@ fn test_foos_max_value() {
 }
 ```
 
-Model on `tests/test_strings.rs` — most builder methods on `text()` and `characters()` get their own dedicated test.
+Model on `frontends/rust/tests/test_strings.rs` — most builder methods on `text()` and `characters()` get their own dedicated test.
 
 ### Test 3 — Composition in `vecs` (required)
 
@@ -153,7 +153,7 @@ Lives in the **new-default-generator** skill, not here. Skip if you're not also 
 
 ### Test 5 — Panic on invalid config (required, one per validation)
 
-For every `invalid_argument!` in the generator, a test that triggers it by drawing. Validation happens at draw time, so the test draws inside a run (either the `expect_draw_panic` helper in `tests/test_validation.rs`, or a `#[hegel::test]` with `#[should_panic]`):
+For every `invalid_argument!` in the generator, a test that triggers it by drawing. Validation happens at draw time, so the test draws inside a run (either the `expect_draw_panic` helper in `frontends/rust/tests/test_validation.rs`, or a `#[hegel::test]` with `#[should_panic]`):
 
 ```rust
 #[hegel::test]
@@ -163,9 +163,9 @@ fn test_foos_min_greater_than_max(tc: hegel::TestCase) {
 }
 ```
 
-For **first-party generators**, panic tests live in `tests/test_validation.rs` (not in `tests/test_<name>.rs`), grouped with the other validation tests. Model on the existing `test_integers_*` and `test_floats_*` panic tests there.
+For **first-party generators**, panic tests live in `frontends/rust/tests/test_validation.rs` (not in `frontends/rust/tests/test_<name>.rs`), grouped with the other validation tests. Model on the existing `test_integers_*` and `test_floats_*` panic tests there.
 
-For **feature-gated generators**, panic tests live alongside the rest of the lib's tests under `tests/<lib>/`. They can't go in `test_validation.rs` because they need the feature flag to compile.
+For **feature-gated generators**, panic tests live alongside the rest of the lib's tests under `frontends/rust/tests/<lib>/`. They can't go in `test_validation.rs` because they need the feature flag to compile.
 
 The `expected` substring must match a stable part of the panic message — keep it short and free of formatting.
 
@@ -183,7 +183,7 @@ fn test_foos_property(tc: hegel::TestCase) {
 }
 ```
 
-Model on `tests/test_strings.rs:test_text_codepoint_range` and `test_characters_codepoint_range`.
+Model on `frontends/rust/tests/test_strings.rs:test_text_codepoint_range` and `test_characters_codepoint_range`.
 
 When the generator's options interact in nontrivial ways (e.g. `floats()` with `allow_nan` × `min_value`), use `tc.assume(...)` to filter out combinations the generator rejects rather than picking them apart by hand.
 
@@ -200,11 +200,11 @@ Before declaring the generator done:
 - [ ] Every invalid configuration is caught with `invalid_argument!` at draw time
 - [ ] `Generator<T>` impl composing existing generators / `TestCase` draw methods, with spans around multi-draw structures
 - [ ] Factory function with `///` doc and runnable `#[hegel::test]` example in `no_run`
-- [ ] Module wiring done: re-exported from `src/generators/mod.rs` (first-party) or `pub` in `src/extras/<lib>/generators.rs` (feature-gated; surfaced via the existing `pub use generators::*;` in `mod.rs`)
+- [ ] Module wiring done: re-exported from `frontends/rust/src/generators/mod.rs` (first-party) or `pub` in `frontends/rust/src/extras/<lib>/generators.rs` (feature-gated; surfaced via the existing `pub use generators::*;` in `mod.rs`)
 - [ ] Test 1 (sanity, `check_can_generate_examples`)
 - [ ] Test 2 (one test per builder method)
 - [ ] Test 3 (composition in `vecs`)
-- [ ] Test 5 (one panic test per assert; first-party → `tests/test_validation.rs`, feature-gated → `tests/<lib>/`)
+- [ ] Test 5 (one panic test per assert; first-party → `frontends/rust/tests/test_validation.rs`, feature-gated → `frontends/rust/tests/<lib>/`)
 - [ ] Test 6 (randomized-bound property test, recommended)
 - [ ] `just check` passes (formatting, lint, tests, docs)
 - [ ] Coverage is 100% on the new code (see the `coverage` skill if anything is uncovered)

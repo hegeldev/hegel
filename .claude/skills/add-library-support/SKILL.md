@@ -61,12 +61,12 @@ Version: pin to the latest published `major.minor` (Cargo treats `"X.Y"` as `^X.
 
 ## Step 3 — Module layout and public API
 
-Feature-gated third-party integrations live under `src/extras/<lib>/`, exposed publicly as `hegel::extras::<lib>::<gen>`.
+Feature-gated third-party integrations live under `frontends/rust/src/extras/<lib>/`, exposed publicly as `hegel::extras::<lib>::<gen>`.
 
 Create the source dir:
 
 ```
-src/extras/
+frontends/rust/src/extras/
   mod.rs              # contains `#[cfg(feature = "<lib>")] pub mod <lib>;` for each supported lib
   <lib>/
     mod.rs            # module wiring: `mod generators;`, `mod default;`, `pub use generators::*;`
@@ -74,13 +74,13 @@ src/extras/
     default.rs        # `DefaultGenerator` impls (omit the file if there are none)
 ```
 
-Wire up the top-level `extras` module in `src/lib.rs` (only needed once, when adding the very first lib):
+Wire up the top-level `extras` module in `frontends/rust/src/lib.rs` (only needed once, when adding the very first lib):
 
 ```rust
 pub mod extras;
 ```
 
-In `src/extras/mod.rs`, add the new lib:
+In `frontends/rust/src/extras/mod.rs`, add the new lib:
 
 ```rust
 #[cfg(feature = "<lib>")]
@@ -89,21 +89,21 @@ pub mod <lib>;
 
 **Naming inside the lib module: drop the lib prefix from function names.** The lib name is in the path. Use `extras::jiff::dates()`, not `extras::jiff::jiff_dates()`.
 
-The lib's generator types and factory functions are `pub` in `src/extras/<lib>/generators.rs` and surfaced through the `pub use generators::*;` in `mod.rs`; no further re-export juggling needed.
+The lib's generator types and factory functions are `pub` in `frontends/rust/src/extras/<lib>/generators.rs` and surfaced through the `pub use generators::*;` in `mod.rs`; no further re-export juggling needed.
 
-`src/generators/mod.rs` does **not** re-export anything from `extras/`. Keep that boundary clean.
+`frontends/rust/src/generators/mod.rs` does **not** re-export anything from `extras/`. Keep that boundary clean.
 
 ## Step 4 — Implement every generator + every DefaultGenerator impl
 
 For each type from Step 1, in dependency order (leaf types first, composite types later so they can reuse the leaves' generators):
 
-1. Apply the **new-generator** skill to add the generator to `src/extras/<lib>/generators.rs`.
-2. Apply the **new-default-generator** skill to add the `DefaultGenerator` impl. For feature-gated types the impl goes in `src/extras/<lib>/default.rs` — `src/generators/default.rs` stays first-party only. See the new-default-generator skill for the rationale.
+1. Apply the **new-generator** skill to add the generator to `frontends/rust/src/extras/<lib>/generators.rs`.
+2. Apply the **new-default-generator** skill to add the `DefaultGenerator` impl. For feature-gated types the impl goes in `frontends/rust/src/extras/<lib>/default.rs` — `frontends/rust/src/generators/default.rs` stays first-party only. See the new-default-generator skill for the rationale.
 
 Composite types should typically delegate to the leaf generators rather than drawing raw values themselves. Example sketch:
 
 ```rust
-// in src/extras/<lib>/generators.rs
+// in frontends/rust/src/extras/<lib>/generators.rs
 pub fn datetimes() -> impl Generator<lib::DateTime> {
     gs::tuples((dates(), times()))
         .map(|(d, t)| lib::DateTime::from_parts(d, t))
@@ -114,14 +114,14 @@ Prefer composition — do not re-derive a draw sequence a leaf generator already
 
 ### Engine-side draws are out of scope
 
-If you find a type that would *dramatically and fundamentally* benefit from a new engine-side draw (e.g. would otherwise need a wildly contorted `flat_map` or post-hoc filter), stop and surface it to the user. Do not modify the engine's typed draws (`hegel-c/src/native/draws/`) or the C ABI yourself. See the new-generator skill for more on this gate.
+If you find a type that would *dramatically and fundamentally* benefit from a new engine-side draw (e.g. would otherwise need a wildly contorted `flat_map` or post-hoc filter), stop and surface it to the user. Do not modify the engine's typed draws (`libhegel/src/native/draws/`) or the C ABI yourself. See the new-generator skill for more on this gate.
 
 ## Step 5 — Tests
 
-All tests for the lib live under `tests/<lib>/`, organized as several sibling files grouped by topic (e.g. `tests/jiff/civil.rs`, `tests/jiff/duration.rs`, `tests/jiff/tz.rs`). A single `tests/<lib>/main.rs` is the entry point — it declares the shared `common` module and lists each sibling as `mod <name>;`. Cargo auto-discovers `tests/<lib>/main.rs` as one test binary; the sibling files compile as submodules of it.
+All tests for the lib live under `frontends/rust/tests/<lib>/`, organized as several sibling files grouped by topic (e.g. `frontends/rust/tests/jiff/civil.rs`, `frontends/rust/tests/jiff/duration.rs`, `frontends/rust/tests/jiff/tz.rs`). A single `frontends/rust/tests/<lib>/main.rs` is the entry point — it declares the shared `common` module and lists each sibling as `mod <name>;`. Cargo auto-discovers `frontends/rust/tests/<lib>/main.rs` as one test binary; the sibling files compile as submodules of it.
 
 ```rust
-// tests/<lib>/main.rs
+// frontends/rust/tests/<lib>/main.rs
 #![cfg(feature = "<lib>")]
 
 #[path = "../common/mod.rs"]
@@ -135,20 +135,20 @@ mod tz;
 Each sibling file imports what it needs directly — no `use super::*;` — and references the shared module as `crate::common::...`:
 
 ```rust
-// tests/<lib>/civil.rs
+// frontends/rust/tests/<lib>/civil.rs
 use crate::common::utils::{assert_all_examples, check_can_generate_examples};
 use hegel::extras::<lib> as <lib>_gs;
 use hegel::generators as gs;
 // ...
 ```
 
-**Cargo silently ignores files in `tests/<lib>/` that aren't referenced from `main.rs`.** A new sibling file isn't compiled until you add `mod <name>;` to `main.rs`. The `just lint` recipe runs `scripts/check-test-modules.py`, which catches orphan files; rely on it rather than memory.
+**Cargo silently ignores files in `frontends/rust/tests/<lib>/` that aren't referenced from `main.rs`.** A new sibling file isn't compiled until you add `mod <name>;` to `main.rs`. The `just lint` recipe runs `scripts/check-test-modules.py`, which catches orphan files; rely on it rather than memory.
 
-Tests for *every* generator in the lib (per new-generator skill: sanity, per-builder, composition, panic, randomized-bound) and every `default()` impl (per new-default-generator skill) all go under this directory. Panic tests do **not** go into the global `tests/test_validation.rs` for feature-gated libs — they need the feature flag and live with the rest of the lib's tests.
+Tests for *every* generator in the lib (per new-generator skill: sanity, per-builder, composition, panic, randomized-bound) and every `default()` impl (per new-default-generator skill) all go under this directory. Panic tests do **not** go into the global `frontends/rust/tests/test_validation.rs` for feature-gated libs — they need the feature flag and live with the rest of the lib's tests.
 
 Group sibling files by topic, not by exact type — e.g. all duration-shaped types in `duration.rs`, all timezone types in `tz.rs`. Start with one or two files and split further as the lib grows.
 
-Update `justfile` if the test command needs to learn the new feature flag — check whether `just test` already runs with `--all-features` or similar before adding anything.
+Update `frontends/rust/justfile` if the test command needs to learn the new feature flag — check whether `just test` already runs with `--all-features` or similar before adding anything.
 
 ## Step 6 — Verify
 
@@ -176,7 +176,7 @@ Coverage must stay at 100% on the new code (see the `coverage` skill if anything
 
 - [ ] Step 1: sub-agent enumerated the full public API; you have the type list
 - [ ] Step 2: `Cargo.toml` has the optional dep and the feature
-- [ ] Step 3: `src/extras/<lib>/{mod.rs,generators.rs,default.rs}` exist (default.rs only if you have any DefaultGenerator impls); `src/extras/mod.rs` declares it behind `#[cfg(feature = "<lib>")]`; (first-time only) `src/lib.rs` has `pub mod extras;`
+- [ ] Step 3: `frontends/rust/src/extras/<lib>/{mod.rs,generators.rs,default.rs}` exist (default.rs only if you have any DefaultGenerator impls); `frontends/rust/src/extras/mod.rs` declares it behind `#[cfg(feature = "<lib>")]`; (first-time only) `frontends/rust/src/lib.rs` has `pub mod extras;`
 - [ ] Step 4: every type from Step 1 has a generator (new-generator skill applied) and a `DefaultGenerator` impl (new-default-generator skill applied) — none skipped; function names inside `extras::<lib>` do not carry a lib prefix
-- [ ] Step 5: `tests/<lib>/main.rs` exists with `#![cfg(feature = "<lib>")]`, pulls in `common` via `#[path = "../common/mod.rs"]`, and declares each sibling file with `mod <name>;`. Sibling files (grouped by topic) collectively contain every generator's test set + every `default()` test. `just check-test-modules` passes (no orphans).
+- [ ] Step 5: `frontends/rust/tests/<lib>/main.rs` exists with `#![cfg(feature = "<lib>")]`, pulls in `common` via `#[path = "../common/mod.rs"]`, and declares each sibling file with `mod <name>;`. Sibling files (grouped by topic) collectively contain every generator's test set + every `default()` test. `just check-test-modules` passes (no orphans).
 - [ ] Step 6: `just check`, `cargo {build,test,doc} --features <lib>`, and the bare `cargo {build,test}` all pass; coverage is 100%

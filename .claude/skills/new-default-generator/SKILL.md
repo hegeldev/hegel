@@ -14,8 +14,8 @@ If neither generator exists nor can be composed from existing ones, inform the u
 
 ## File placement
 
-- For primitive / `std` types: `src/generators/default.rs`. Group with similar impls (numeric near numeric, etc.).
-- For types from a feature-gated third-party crate (e.g. `jiff`, `chrono`): `src/extras/<lib>/default.rs`. Create the file if it doesn't exist yet and wire it up in the lib's `mod.rs` with `mod default;`.
+- For primitive / `std` types: `frontends/rust/src/generators/default.rs`. Group with similar impls (numeric near numeric, etc.).
+- For types from a feature-gated third-party crate (e.g. `jiff`, `chrono`): `frontends/rust/src/extras/<lib>/default.rs`. Create the file if it doesn't exist yet and wire it up in the lib's `mod.rs` with `mod default;`.
 
 ## The trait impl
 
@@ -39,10 +39,10 @@ impl DefaultGenerator for std::path::PathBuf {
 }
 ```
 
-For feature-gated impls, the impl lives in `src/extras/<lib>/default.rs`. The lib's `mod.rs` re-exports the generator type and factory via `pub use generators::*;`, so `default.rs` can import them through `super::`:
+For feature-gated impls, the impl lives in `frontends/rust/src/extras/<lib>/default.rs`. The lib's `mod.rs` re-exports the generator type and factory via `pub use generators::*;`, so `default.rs` can import them through `super::`:
 
 ```rust
-// in src/extras/jiff/default.rs
+// in frontends/rust/src/extras/jiff/default.rs
 use jiff::civil::Date;
 
 use crate::generators::DefaultGenerator;
@@ -57,20 +57,20 @@ impl DefaultGenerator for Date {
 }
 ```
 
-No `#[cfg(feature = "<lib>")]` attribute is needed on the impl itself — the entire module is already gated by the feature in `src/extras/mod.rs`.
+No `#[cfg(feature = "<lib>")]` attribute is needed on the impl itself — the entire module is already gated by the feature in `frontends/rust/src/extras/mod.rs`.
 
 ## Imports
 
 For first-party types, add the new generator type and factory function to the existing `use super::{...}` block at the top of `default.rs`.
 
-For feature-gated types, extend the existing `use super::{...};` block at the top of `src/extras/<lib>/default.rs` with the new generator type and factory function. `DefaultGenerator` comes from `use crate::generators::DefaultGenerator;` in the same file.
+For feature-gated types, extend the existing `use super::{...};` block at the top of `frontends/rust/src/extras/<lib>/default.rs` with the new generator type and factory function. `DefaultGenerator` comes from `use crate::generators::DefaultGenerator;` in the same file.
 
 ## The required test
 
 A single test in the same test file as the generator's own tests:
 
-- **First-party type** → `tests/test_<name>.rs`
-- **Feature-gated type** → `tests/<lib>.rs` (with `#![cfg(feature = "<lib>")]` at the top, per the add-library-support skill)
+- **First-party type** → `frontends/rust/tests/test_<name>.rs`
+- **Feature-gated type** → `frontends/rust/tests/<lib>.rs` (with `#![cfg(feature = "<lib>")]` at the top, per the add-library-support skill)
 
 ```rust
 #[test]
@@ -85,8 +85,8 @@ If the standalone-case generator has a meaningful invariant on its default outpu
 
 ## Final checklist
 
-- [ ] `DefaultGenerator` impl in the right place: `src/generators/default.rs` for first-party types, `src/extras/<lib>/default.rs` for feature-gated types
+- [ ] `DefaultGenerator` impl in the right place: `frontends/rust/src/generators/default.rs` for first-party types, `frontends/rust/src/extras/<lib>/default.rs` for feature-gated types
 - [ ] For first-party: factory + generator type imported at the top of `default.rs`
-- [ ] For feature-gated: factory + generator type imported via `use super::{...};` in `src/extras/<lib>/default.rs`, plus `use crate::generators::DefaultGenerator;`
+- [ ] For feature-gated: factory + generator type imported via `use super::{...};` in `frontends/rust/src/extras/<lib>/default.rs`, plus `use crate::generators::DefaultGenerator;`
 - [ ] One test calling `check_can_generate_examples(gs::default::<T>())`
 - [ ] `just check` passes
