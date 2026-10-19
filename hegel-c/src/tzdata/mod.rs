@@ -37,6 +37,13 @@ pub static VERSION_CSTR: &CStr =
 /// Upper bound on the inflated table, a few times its real size.
 const MAX_TABLE_LEN: usize = 16 << 20;
 
+/// Exclusive bound on the magnitude of every offset in the table, in
+/// seconds: two days. The evaluator searches for a wall time's instants
+/// within this distance of it (`native::timezone`'s `WINDOW`), so an
+/// offset at or beyond it would be missed; RFC 9636 recommends that
+/// offsets stay within a day.
+pub const UTOFF_BOUND: i32 = 2 * 86_400;
+
 /// A feature of a zone, computed by the generator script from the zone's
 /// offsets (never from its DST flags) and its name. The script's docstring
 /// defines each one.
@@ -454,6 +461,10 @@ fn parse_zone_line(
                 fields.len() == 4,
                 "tzdata line {lineno}: malformed transition record"
             );
+            hegel_internal_assert!(
+                zone.footer.is_none(),
+                "tzdata line {lineno}: transition record after the footer"
+            );
             let instant: i64 = parse_number(fields[0], lineno)?;
             hegel_internal_assert!(
                 zone.transitions.last().is_none_or(|t| t.instant < instant),
@@ -515,13 +526,22 @@ fn parse_abbreviation(zone: &Zone, text: &str, lineno: usize) -> Result<usize, I
     Ok(index)
 }
 
+fn parse_utoff(text: &str, lineno: usize) -> Result<i32, InternalError> {
+    let utoff: i32 = parse_number(text, lineno)?;
+    hegel_internal_assert!(
+        utoff.unsigned_abs() < UTOFF_BOUND.unsigned_abs(),
+        "tzdata line {lineno}: offset {utoff} is not within {UTOFF_BOUND} seconds of UT"
+    );
+    Ok(utoff)
+}
+
 fn parse_type(zone: &Zone, fields: &[&str], lineno: usize) -> Result<LocalTimeType, InternalError> {
     hegel_internal_assert!(
         fields.len() == 3 && (fields[1] == "0" || fields[1] == "1"),
         "tzdata line {lineno}: malformed local time type"
     );
     Ok(LocalTimeType {
-        utoff: parse_number(fields[0], lineno)?,
+        utoff: parse_utoff(fields[0], lineno)?,
         is_dst: fields[1] == "1",
         abbreviation: parse_abbreviation(zone, fields[2], lineno)?,
     })
@@ -534,7 +554,7 @@ fn parse_footer_type(
     lineno: usize,
 ) -> Result<LocalTimeType, InternalError> {
     Ok(LocalTimeType {
-        utoff: parse_number(fields[1], lineno)?,
+        utoff: parse_utoff(fields[1], lineno)?,
         is_dst,
         abbreviation: parse_abbreviation(zone, fields[0], lineno)?,
     })

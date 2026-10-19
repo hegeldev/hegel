@@ -57,7 +57,7 @@ fn shrinker(
     )
 }
 
-const LADDER: [&str; 4] = ["UTC", "Etc/GMT+1", "America/Matamoros", "Europe/London"];
+const LADDER: [&str; 4] = ["UTC", "America/Matamoros", "Europe/London", "Etc/GMT+1"];
 
 #[test]
 fn the_simplest_name_is_tried_first() {
@@ -71,8 +71,8 @@ fn the_simplest_name_is_tried_first() {
 #[test]
 fn the_ladder_is_walked_down_to_the_lowest_name_that_still_fails() {
     let spec = spec(&LADDER);
-    let mut s = shrinker(vec![zone_node(&spec, "Europe/London")], |names| {
-        names[0] != "UTC" && names[0] != "Etc/GMT+1"
+    let mut s = shrinker(vec![zone_node(&spec, "Etc/GMT+1")], |names| {
+        names[0] != "UTC"
     });
     drive_no_yield(s.shrink_timezones()).unwrap();
     assert_eq!(text_of(&s.current_nodes[0]), "America/Matamoros");
@@ -90,11 +90,11 @@ fn a_name_at_the_bottom_of_the_ladder_is_left_alone() {
 #[test]
 fn a_name_nothing_below_accepts_stays() {
     let spec = spec(&LADDER);
-    let mut s = shrinker(vec![zone_node(&spec, "Europe/London")], |names| {
-        names[0] == "Europe/London"
+    let mut s = shrinker(vec![zone_node(&spec, "Etc/GMT+1")], |names| {
+        names[0] == "Etc/GMT+1"
     });
     drive_no_yield(s.shrink_timezones()).unwrap();
-    assert_eq!(text_of(&s.current_nodes[0]), "Europe/London");
+    assert_eq!(text_of(&s.current_nodes[0]), "Etc/GMT+1");
     assert_eq!(s.calls, 3);
 }
 

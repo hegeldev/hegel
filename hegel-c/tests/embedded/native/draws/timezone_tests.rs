@@ -114,7 +114,7 @@ fn an_explicit_list_is_ranked_deduplicated_and_may_name_the_unknown_zone() {
         .map(|n| tzdata::lookup(n).unwrap().unwrap().rank)
         .collect();
     assert!(ranks.windows(2).all(|w| w[0] < w[1]));
-    let mut without_utc = spec_of(&["Europe/London", "Asia/Kolkata"]);
+    let mut without_utc = spec_of(&["Europe/London", "America/Santiago"]);
     assert_eq!(names_of(&without_utc)[0], "Europe/London");
     assert_eq!(
         without_utc.constraint().unwrap().simplest(),
@@ -308,7 +308,7 @@ fn a_stored_name_the_spec_no_longer_allows_is_punned_to_the_simplest() {
     let stored = ChoiceValue::String(cps("Pacific/Apia"));
     let mut ntc = NativeTestCase::for_choices(core::slice::from_ref(&stored), None, None);
     assert_eq!(generate_timezone(&mut ntc, &wide).unwrap(), "Pacific/Apia");
-    let narrow = spec_of(&["Europe/London", "Asia/Kolkata"]);
+    let narrow = spec_of(&["Europe/London", "America/Santiago"]);
     assert!(!narrow.kind().validate(&cps("Pacific/Apia")));
     let mut ntc = NativeTestCase::for_choices(&[stored], None, None);
     assert_eq!(

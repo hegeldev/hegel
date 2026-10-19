@@ -10,10 +10,13 @@ pinned `tzdata` release from PyPI:
 
     scripts/generate_tzdata.py [--out DIR] [--check]
 
-`--check` writes nothing and instead fails when the files in the output
-directory differ from what the script would write (`just check-tzdata`).
-The engine's `table_is_reproducible` test does the same through `uv` when
-it is installed and otherwise falls back to `checksum.txt`.
+`--check` writes nothing and instead fails when the text table, version
+or checksum in the output directory differ from what the script would
+write, or the deflated table there does not inflate to the text table
+(`just check-tzdata`); the deflated bytes themselves are not compared,
+as they depend on the zlib build. The engine's `table_is_reproducible`
+test does the same through `uv` when it is installed and otherwise falls
+back to `checksum.txt`.
 
 The `tzdata` package ships the compiled TZif files `zoneinfo` reads. This
 script parses the version 2+ 64-bit block and the footer of every file
@@ -66,15 +69,24 @@ and the shrink target whether or not links are allowed. A link's TZif
 must agree with its primary's in every offset and transition; only the
 `GMT` abbreviation of the `Etc/GMT` family is lost by the folding.
 
+A TZif record that repeats the type in force before it (the same offset,
+`isdst` flag and abbreviation) changes nothing, and the table omits it:
+zic writes such records as the point where the footer rule takes over
+(Europe/London's GMT-to-GMT record at 1996-01-01), and the engine applies
+the footer from the last record it is given, so a zone's last record is
+kept when the footer rule, applied from the record before it, would not
+reproduce it (America/Nuuk's 2023-10-28 record, which postpones the
+footer's DST to 2024). A record that changes only the `isdst` flag or
+only the abbreviation stays, since the engine reports both.
+
 Tags are derived from the offsets, never from the `isdst` flags, so the
 main and rearguard formats agree (the design's §5.3). A transition below
 is an explicit one that changes the offset or the abbreviation, or one
 the footer rule makes after the last explicit one. A record that changes
 only the `isdst` flag is not a transition (Morocco's 2018 reclassification
-of +01 as standard time exists only in the main data), and neither is one
-of zic's no-op markers (Europe/London's GMT-to-GMT record at 1996-01-01).
-"After 1970" means at any instant from 1970-01-01T00:00:00Z on, including
-the footer's transitions and offsets.
+of +01 as standard time exists only in the main data). "After 1970" means
+at any instant from 1970-01-01T00:00:00Z on, including the footer's
+transitions and offsets.
 
   fixed           no transition after 1970, which excludes a DST rule
   whole_hour      every offset after 1970 is a whole number of hours
@@ -110,13 +122,17 @@ the footer's transitions and offsets.
                   (EST, EST5EDT, US/Eastern), excepting UTC
   inverted_sign   the `Etc/GMT+5` family, whose sign is POSIX's
 
-The rank is the shrink ladder: `UTC` first, then the `Etc/` names by
-absolute offset, then names tagged both `whole_hour` and `dst`, then the
-rest; within a tier (and within an offset for `Etc/`) names with fewer
-tags come first, so a zone precedes its links, and ties break by name.
-Ranks are unique, so they order every name.
+The rank is the shrink ladder, in tiers: `UTC` first; then the simple
+`Area/Location` names, those whose tags other than `seconds` and `link`
+are exactly `whole_hour` with `fixed` or with `dst` (a whole-hour offset
+that is fixed or has textbook one-hour DST, with no other irregularity
+after 1970); then every other `Area/Location` name; then the `Etc/`
+names by absolute offset; then the `legacy` names. Within a tier (and
+within an offset for `Etc/`) names with fewer tags come first, so a zone
+precedes its links, and ties break by name. Ranks are unique, so they
+order every name.
 
-Size: for 2026e the text table is 446,648 bytes and deflates to 80,718.
+Size: for 2026e the text table is 446,624 bytes and deflates to 80,710.
 Measured on the release libhegel shared library (macOS arm64, 4,053,936
 bytes without any table), embedding the deflated table adds 121,056 bytes
 and embedding the text table adds 484,176, the inflater being linked
@@ -495,6 +511,68 @@ def footer_transitions(footer: Footer, year: int) -> list[Change]:
     return result
 
 
+def rule_type_at(footer: Footer, instant: int) -> LocalType | None:
+    """The type the footer rule has in force at `instant`, or `None` when
+    no rule transition precedes it within the years looked at."""
+    year = utc_year(instant)
+    changes = sorted(
+        (c for y in range(year - 2, year + 1) for c in footer_transitions(footer, y)),
+        key=lambda c: c.instant,
+    )
+    preceding = [c for c in changes if c.instant <= instant]
+    return preceding[-1].after if preceding else None
+
+
+def is_redundant(
+    zone: Zone, record: Transition, preceding: Transition | None, last: bool
+) -> bool:
+    """Whether `record` repeats the type in force before it and the engine
+    would answer every query the same without it (the module docstring).
+    `preceding` is the kept record before it, if any, and `last` whether
+    it is the zone's last record, where the footer rule takes over."""
+    previous = zone.initial if preceding is None else preceding.type
+    if record.type != previous:
+        return False
+    if not last:
+        return True
+    footer = zone.footer
+    if footer is None:
+        return True
+    if footer.dst is None:
+        return footer.std == record.type
+    if preceding is None:
+        return False
+    start = preceding.instant
+    years = range(utc_year(start), utc_year(record.instant) + 1)
+    rule = [c for y in years for c in footer_transitions(footer, y)]
+    if any(start < c.instant <= record.instant for c in rule):
+        return False
+    return rule_type_at(footer, start) == record.type
+
+
+def prune_transitions(zone: Zone) -> None:
+    """Drop the records that change nothing (the module docstring)."""
+    kept: list[Transition] = []
+    count = len(zone.transitions)
+    for index, record in enumerate(zone.transitions):
+        preceding = kept[-1] if kept else None
+        if not is_redundant(zone, record, preceding, index + 1 == count):
+            kept.append(record)
+    zone.transitions = kept
+
+
+def check_transitions(zone: Zone) -> None:
+    """Fail unless every record changes the type in force, except for a
+    last record that pins where the footer rule starts."""
+    count = len(zone.transitions)
+    for index, record in enumerate(zone.transitions):
+        preceding = zone.transitions[index - 1] if index else None
+        previous = zone.initial if preceding is None else preceding.type
+        last = index + 1 == count
+        if record.type == previous and (not last or is_redundant(zone, record, preceding, last)):
+            raise SystemExit(f"{zone.name}: the record at {record.instant} changes nothing")
+
+
 def compute_zone_tags(zone: Zone) -> set[str]:
     tags: set[str] = set()
     footer = zone.footer
@@ -557,6 +635,16 @@ def name_tags(name: str) -> set[str]:
     return tags
 
 
+SIMPLE_TAGS = {"whole_hour", "fixed", "dst", "seconds", "link"}
+
+
+def is_simple(tags: set[str]) -> bool:
+    """Whether a name belongs to the ladder's tier after `UTC`: a whole-hour
+    offset that is fixed or has one-hour DST, and nothing else after 1970
+    (the module docstring)."""
+    return "whole_hour" in tags and ("fixed" in tags or "dst" in tags) and tags <= SIMPLE_TAGS
+
+
 def assign_ranks(zones: dict[str, Zone], links: dict[str, Link]) -> None:
     entries: list[tuple[str, set[str], int]] = []
     for z in zones.values():
@@ -569,11 +657,13 @@ def assign_ranks(zones: dict[str, Zone], links: dict[str, Link]) -> None:
         name, tags, abs_offset = entry
         if name == "UTC":
             return (0, 0, 0, name)
+        if "legacy" in tags:
+            return (4, 0, len(tags), name)
         if name.startswith("Etc/"):
-            return (1, abs_offset, len(tags), name)
-        if "whole_hour" in tags and "dst" in tags:
-            return (2, 0, len(tags), name)
-        return (3, 0, len(tags), name)
+            return (3, abs_offset, len(tags), name)
+        if is_simple(tags):
+            return (1, 0, len(tags), name)
+        return (2, 0, len(tags), name)
 
     for rank, (name, _, _) in enumerate(sorted(entries, key=key)):
         if name in zones:
@@ -644,6 +734,14 @@ def format_zone(zone: Zone) -> list[str]:
     return lines
 
 
+def load_zone(zoneinfo: Path, name: str) -> Zone:
+    initial, transitions, footer = parse_tzif((zoneinfo / name).read_bytes())
+    zone = Zone(name, initial, transitions, footer)
+    prune_transitions(zone)
+    check_transitions(zone)
+    return zone
+
+
 def build_table() -> str:
     if tzdata.__version__ != TZDATA_PYPI_VERSION or tzdata.IANA_VERSION != IANA_VERSION:
         raise SystemExit(
@@ -660,16 +758,12 @@ def build_table() -> str:
         if name in link_targets:
             links[name] = Link(name, link_targets[name])
             continue
-        initial, transitions, footer = parse_tzif((zoneinfo / name).read_bytes())
-        zones[name] = Zone(name, initial, transitions, footer)
+        zones[name] = load_zone(zoneinfo, name)
 
     for link in links.values():
         if link.primary not in zones:
             raise SystemExit(f"link {link.name} targets {link.primary}, which is not a zone")
-        initial, transitions, footer = parse_tzif((zoneinfo / link.name).read_bytes())
-        if offsets_only(Zone(link.name, initial, transitions, footer)) != offsets_only(
-            zones[link.primary]
-        ):
+        if offsets_only(load_zone(zoneinfo, link.name)) != offsets_only(zones[link.primary]):
             raise SystemExit(f"link {link.name} differs from {link.primary}")
 
     for zone in zones.values():
@@ -699,18 +793,25 @@ def fnv1a64(data: bytes) -> str:
     return f"{h:016x}"
 
 
+def inflate(path: Path) -> bytes | None:
+    """The deflated table at `path`, or `None` when it is missing or does
+    not inflate."""
+    try:
+        return zlib.decompress(path.read_bytes())
+    except (OSError, zlib.error):
+        return None
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args(argv)
-    table = build_table()
-    compressed = zlib.compress(table.encode("ascii"), 9)
+    table = build_table().encode("ascii")
     files = {
-        TABLE_NAME: table.encode("ascii"),
-        COMPRESSED_NAME: compressed,
+        TABLE_NAME: table,
         VERSION_NAME: IANA_VERSION.encode("ascii"),
-        CHECKSUM_NAME: fnv1a64(table.encode("ascii")).encode("ascii"),
+        CHECKSUM_NAME: fnv1a64(table).encode("ascii"),
     }
     if args.check:
         stale = [
@@ -718,14 +819,18 @@ def main(argv: list[str]) -> int:
             for name, content in files.items()
             if not (args.out / name).is_file() or (args.out / name).read_bytes() != content
         ]
+        if inflate(args.out / COMPRESSED_NAME) != table:
+            stale.append(COMPRESSED_NAME)
         if stale:
             print(f"out of date in {args.out}: {', '.join(stale)}; run `just tzdata`")
             return 1
         print(f"{args.out / TABLE_NAME} is up to date")
         return 0
+    compressed = zlib.compress(table, 9)
     args.out.mkdir(parents=True, exist_ok=True)
     for name, content in files.items():
         (args.out / name).write_bytes(content)
+    (args.out / COMPRESSED_NAME).write_bytes(compressed)
     print(f"wrote {args.out / TABLE_NAME} ({len(table)} bytes, {len(compressed)} deflated)")
     return 0
 

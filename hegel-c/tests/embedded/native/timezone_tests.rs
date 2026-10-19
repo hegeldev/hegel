@@ -773,6 +773,223 @@ fn extreme_instants_are_rejected_by_queries_and_clamped_by_type_at() {
 }
 
 #[test]
+fn the_search_window_covers_every_offset_the_table_admits() {
+    assert!(i64::from(tzdata::UTOFF_BOUND) <= WINDOW);
+    for entry in all_names() {
+        let zone = entry.zone;
+        let footer = zone.footer.unwrap();
+        let mut offsets = vec![zone.initial.utoff, footer.standard.utoff];
+        offsets.extend(zone.transitions.iter().map(|t| t.kind.utoff));
+        offsets.extend(footer.dst.map(|dst| dst.kind.utoff));
+        assert!(
+            offsets.iter().all(|o| o.unsigned_abs() < 86_400),
+            "{}",
+            entry.name
+        );
+    }
+}
+
+fn weekday_of_day(days: i64) -> u8 {
+    (days + 4).rem_euclid(7) as u8
+}
+
+fn check_rule_day(rule: RuleDate, wall: i64, context: &str) {
+    let midnight = wall - i64::from(rule.time);
+    assert_eq!(midnight.rem_euclid(DAY), 0, "{context}");
+    let days = midnight.div_euclid(DAY);
+    let date = civil_from_days(days);
+    let january_first = days_from_civil(&Date {
+        year: date.year,
+        month: 1,
+        day: 1,
+    });
+    match rule.day {
+        RuleDay::MonthWeekDay {
+            month,
+            week,
+            weekday,
+        } => {
+            assert_eq!(date.month, month, "{context}");
+            assert_eq!(weekday_of_day(days), weekday, "{context}");
+            if week == 5 {
+                assert!(
+                    i64::from(date.day) + 7 > days_in_month(date.year, month),
+                    "{context}"
+                );
+            } else {
+                assert_eq!((date.day - 1) / 7 + 1, week, "{context}");
+            }
+        }
+        RuleDay::Julian(n) => {
+            let leap_day = i64::from(days_in_month(date.year, 2) == 29 && n >= 60);
+            assert_eq!(
+                days - january_first,
+                i64::from(n) - 1 + leap_day,
+                "{context}"
+            );
+        }
+        RuleDay::ZeroBased(n) => {
+            assert_eq!(days - january_first, i64::from(n), "{context}");
+        }
+    }
+}
+
+fn day_one(year: i32) -> i64 {
+    days_from_civil(&Date {
+        year,
+        month: 1,
+        day: 1,
+    }) * DAY
+}
+
+/// `zone` with its explicit records dropped, so that its footer rule
+/// applies to every year.
+fn footer_only(zone: &Zone) -> TimeZone {
+    let footer = zone.footer.unwrap();
+    let derived = Zone {
+        name: format!("{} (footer only)", zone.name),
+        abbreviations: zone.abbreviations.clone(),
+        initial: footer.standard,
+        transitions: Vec::new(),
+        footer: Some(footer),
+    };
+    TimeZone::Named(Box::leak(Box::new(Name {
+        name: derived.name.clone(),
+        rank: 0,
+        tags: Tags::EMPTY,
+        zone: Box::leak(Box::new(derived)),
+    })))
+}
+
+#[test]
+fn footer_rules_are_self_consistent_at_far_years() {
+    for name in [
+        "America/New_York",
+        "Australia/Sydney",
+        "America/Santiago",
+        "Europe/Dublin",
+        "America/Nuuk",
+    ] {
+        let real = zone_of(name);
+        for year in [-500_000, -1, 0] {
+            assert_eq!(
+                transitions(real, day_one(year), day_one(year + 1)).count(),
+                0,
+                "{name} in {year}"
+            );
+            assert_eq!(
+                type_at(real, day_one(year)).unwrap(),
+                real.initial,
+                "{name} in {year}"
+            );
+        }
+        let cases = [
+            (named(name), vec![400_000, 999_990]),
+            (footer_only(real), vec![-500_000, -1, 0, 400_000, 999_990]),
+        ];
+        for (tz, years) in cases {
+            let TimeZone::Named(entry) = tz else {
+                unreachable!()
+            };
+            let zone = entry.zone;
+            for year in years {
+                check_rule_year(&entry.name, tz, zone, year);
+            }
+        }
+    }
+}
+
+fn check_rule_year(name: &str, tz: TimeZone, zone: &Zone, year: i32) {
+    let footer = zone.footer.unwrap();
+    let dst = footer.dst.unwrap();
+    let in_year: Vec<ZoneTransition> =
+        transitions(zone, day_one(year), day_one(year + 1)).collect();
+    let context = format!("{name} in {year}");
+    assert_eq!(in_year.len(), 2, "{context}");
+    for t in in_year {
+        let context = format!("{context} at {}", t.instant);
+        let (before, after) = (t.before.utoff, t.after.utoff);
+        assert_ne!(before, after, "{context}");
+        let rule = if t.after == dst.kind {
+            assert_eq!(t.before, footer.standard, "{context}");
+            dst.start
+        } else {
+            assert_eq!(
+                (t.before, t.after),
+                (dst.kind, footer.standard),
+                "{context}"
+            );
+            dst.end
+        };
+        check_rule_day(rule, t.instant + i64::from(before), &context);
+        let offset_at = |second: i64| tz.offset_at(whole(second)).unwrap();
+        assert_eq!(offset_at(t.instant - 1).seconds, before, "{context}");
+        assert_eq!(offset_at(t.instant).seconds, after, "{context}");
+        assert_eq!(offset_at(t.instant + 1).seconds, after, "{context}");
+        assert_eq!(
+            offset_at(t.instant).abbreviation,
+            abbreviation(zone, t.after).unwrap(),
+            "{context}"
+        );
+        assert_eq!(offset_at(t.instant).is_dst, t.after.is_dst, "{context}");
+        let (low, high) = (before.min(after), before.max(after));
+        let inside = t.instant + i64::from(low) + i64::from(high - low) / 2;
+        let earlier = tz.resolve(&civil_of(inside), false).unwrap();
+        let later = tz.resolve(&civil_of(inside), true).unwrap();
+        assert_eq!(
+            (earlier.offset_before, earlier.offset_after),
+            (before, after),
+            "{context}"
+        );
+        assert_eq!(
+            earlier.timestamp.second,
+            inside - i64::from(before),
+            "{context}"
+        );
+        if after > before {
+            assert_eq!(earlier.kind, Kind::Gap, "{context}");
+            assert_eq!(earlier.offset, after, "{context}");
+            assert!(earlier.timestamp.second >= t.instant, "{context}");
+            assert_eq!(later, earlier, "{context}");
+        } else {
+            assert_eq!(earlier.kind, Kind::Fold, "{context}");
+            assert_eq!(earlier.offset, before, "{context}");
+            assert_eq!(later.kind, Kind::Fold, "{context}");
+            assert_eq!(later.offset, after, "{context}");
+            assert_eq!(
+                later.timestamp.second,
+                earlier.timestamp.second + i64::from(before) - i64::from(after),
+                "{context}"
+            );
+            assert!(
+                earlier.timestamp.second < t.instant && t.instant <= later.timestamp.second,
+                "{context}"
+            );
+        }
+        let last_before = tz
+            .resolve(&civil_of(t.instant + i64::from(low) - 1), false)
+            .unwrap();
+        assert_eq!(last_before.kind, Kind::Unique, "{context}");
+        assert_eq!(last_before.offset, before, "{context}");
+        assert_eq!(
+            last_before.timestamp.second,
+            t.instant + i64::from(low - before) - 1,
+            "{context}"
+        );
+        let first_after = tz
+            .resolve(&civil_of(t.instant + i64::from(high)), false)
+            .unwrap();
+        assert_eq!(first_after.kind, Kind::Unique, "{context}");
+        assert_eq!(first_after.offset, after, "{context}");
+        assert_eq!(
+            first_after.timestamp.second,
+            t.instant + i64::from(high - after),
+            "{context}"
+        );
+    }
+}
+
+#[test]
 fn far_future_transitions_follow_the_footer_rule() {
     let zone = zone_of("America/New_York");
     let from = instant_of(9000, 1, 1);
@@ -988,6 +1205,10 @@ fn rule_times_beyond_a_day_land_on_the_following_days() {
             .map(|t| t + i64::from(hours - 2) * 3600)
             .collect();
         assert_eq!(shifted, expected, "{hours} hours");
+        check_against_posix(
+            &est_edt(rule(week_2_sunday, hours * 3600), november),
+            &format!("EST5EDT,M3.2.0/{hours},M11.1.0/2"),
+        );
     }
     let tz = JiffZone::posix("EST5EDT,M3.2.1/2,M11.1.0/2").unwrap();
     let monday: Vec<i64> = tz

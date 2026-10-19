@@ -251,41 +251,156 @@ fn lookup_is_an_exact_match() {
     );
 }
 
-fn ladder_key(entry: &Name) -> (u8, u32, usize, &str) {
+fn is_simple(tags: Tags) -> bool {
+    let allowed = Tags::EMPTY
+        .with(Tag::WholeHour)
+        .with(Tag::Fixed)
+        .with(Tag::Dst)
+        .with(Tag::Seconds)
+        .with(Tag::Link);
+    tags.contains(Tag::WholeHour)
+        && (tags.contains(Tag::Fixed) || tags.contains(Tag::Dst))
+        && tags.iter().all(|tag| allowed.contains(tag))
+}
+
+fn ladder_tier(entry: &Name) -> u8 {
     let name = entry.name.as_str();
     if name == "UTC" {
-        (0, 0, 0, name)
+        0
+    } else if entry.tags.contains(Tag::Legacy) {
+        4
     } else if name.starts_with("Etc/") {
-        let offset = entry
+        3
+    } else if is_simple(entry.tags) {
+        1
+    } else {
+        2
+    }
+}
+
+fn ladder_key(entry: &Name) -> (u8, u32, usize, &str) {
+    let tier = ladder_tier(entry);
+    let offset = if tier == 3 {
+        entry
             .zone
             .footer
-            .map_or(0, |f| f.standard.utoff.unsigned_abs());
-        (1, offset, entry.tags.len(), name)
-    } else if entry.tags.contains(Tag::WholeHour) && entry.tags.contains(Tag::Dst) {
-        (2, 0, entry.tags.len(), name)
+            .map_or(0, |f| f.standard.utoff.unsigned_abs())
     } else {
-        (3, 0, entry.tags.len(), name)
-    }
+        0
+    };
+    (tier, offset, entry.tags.len(), entry.name.as_str())
+}
+
+fn by_rank() -> Vec<&'static Name> {
+    let mut by_rank: Vec<&Name> = all_names().iter().collect();
+    by_rank.sort_by_key(|n| n.rank);
+    by_rank
+}
+
+fn rank_of(name: &str) -> u16 {
+    lookup(name).unwrap().unwrap().rank
 }
 
 #[test]
 fn ranks_are_the_shrink_ladder() {
-    let mut by_rank: Vec<&Name> = all_names().iter().collect();
-    by_rank.sort_by_key(|n| n.rank);
+    let by_rank = by_rank();
     for (i, entry) in by_rank.iter().enumerate() {
         assert_eq!(usize::from(entry.rank), i);
     }
-    assert_eq!(by_rank[0].name, "UTC");
-    assert!(by_rank[1..36].iter().all(|n| n.name.starts_with("Etc/")));
-    assert_eq!(
-        by_rank[36].tags,
-        Tags::EMPTY.with(Tag::WholeHour).with(Tag::Dst)
-    );
     let mut by_key: Vec<&Name> = all_names().iter().collect();
     by_key.sort_by_key(|n| ladder_key(n));
     let ranked: Vec<&str> = by_rank.iter().map(|n| n.name.as_str()).collect();
     let keyed: Vec<&str> = by_key.iter().map(|n| n.name.as_str()).collect();
     assert_eq!(ranked, keyed);
+    let tiers: Vec<u8> = by_rank.iter().map(|n| ladder_tier(n)).collect();
+    assert!(tiers.windows(2).all(|w| w[0] <= w[1]));
+    assert_eq!(tiers.iter().filter(|&&t| t == 0).count(), 1);
+    for tier in 1..=4 {
+        assert!(tiers.contains(&tier), "tier {tier} is empty");
+    }
+}
+
+#[test]
+fn the_ladder_prefers_simple_real_zones_then_etc_then_legacy_names() {
+    let first: Vec<&str> = by_rank()[..7].iter().map(|n| n.name.as_str()).collect();
+    assert_eq!(
+        first,
+        [
+            "UTC",
+            "Africa/Johannesburg",
+            "America/Matamoros",
+            "Europe/Belgrade",
+            "Europe/Warsaw",
+            "Indian/Maldives",
+            "Africa/Abidjan",
+        ]
+    );
+    assert!(rank_of("America/New_York") < rank_of("Etc/GMT+5"));
+    assert!(rank_of("Europe/London") < rank_of("Etc/GMT+5"));
+    assert!(rank_of("Etc/GMT+5") < rank_of("EST5EDT"));
+    assert!(rank_of("America/New_York") < rank_of("Asia/Kolkata"));
+    assert!(rank_of("America/New_York") < rank_of("Europe/London"));
+    assert!(rank_of("Asia/Kolkata") < rank_of("Europe/London"));
+    assert!(rank_of("America/Nuuk") < rank_of("Etc/GMT"));
+    assert!(rank_of("Etc/GMT") < rank_of("Etc/GMT+1"));
+    assert!(rank_of("Etc/GMT+1") < rank_of("Etc/GMT-1"));
+    assert!(rank_of("Etc/GMT-1") < rank_of("Etc/GMT+2"));
+    assert!(rank_of("Etc/GMT-14") < rank_of("EST"));
+    assert!(rank_of("America/New_York") < rank_of("US/Eastern"));
+    for entry in all_names() {
+        if entry.is_link() {
+            let primary = lookup(&entry.zone.name).unwrap().unwrap();
+            assert!(
+                entry.rank > primary.rank,
+                "{} before {}",
+                entry.name,
+                primary.name
+            );
+        }
+        let real = entry.name.contains('/')
+            && !entry.name.starts_with("Etc/")
+            && !entry.tags.contains(Tag::Legacy);
+        assert_eq!(
+            real,
+            (1..=2).contains(&ladder_tier(entry)),
+            "{}",
+            entry.name
+        );
+    }
+}
+
+#[test]
+fn only_a_footer_starting_record_repeats_the_type_before_it() {
+    use crate::native::timezone::{transitions, type_at};
+    let mut markers = Vec::new();
+    for entry in all_names().iter().filter(|n| !n.is_link()) {
+        let zone = entry.zone;
+        let mut previous = zone.initial;
+        for (i, t) in zone.transitions.iter().enumerate() {
+            if t.kind == previous {
+                let context = format!("{} at {}", entry.name, t.instant);
+                assert_eq!(i + 1, zone.transitions.len(), "{context}");
+                let mut without = zone.clone();
+                without.transitions.pop();
+                let start = i
+                    .checked_sub(1)
+                    .map_or(i64::MIN, |j| zone.transitions[j].instant);
+                let reproduced = type_at(&without, start).unwrap() == t.kind
+                    && transitions(&without, start.saturating_add(1), t.instant + 1)
+                        .next()
+                        .is_none();
+                assert!(!reproduced, "{context}");
+                markers.push(entry.name.as_str());
+            }
+            previous = t.kind;
+        }
+    }
+    assert_eq!(markers.len(), 18);
+    assert!(markers.contains(&"Europe/London"));
+    assert!(markers.contains(&"America/Nuuk"));
+    let lisbon = lookup("Europe/Lisbon").unwrap().unwrap().zone;
+    assert_eq!(lisbon.initial.utoff, -2205);
+    assert_ne!(lisbon.transitions[0].kind, lisbon.initial);
 }
 
 #[test]
@@ -798,7 +913,10 @@ fn table_is_reproducible() {
         assert_eq!(written, expected, "{name}");
     }
     let compressed = std::fs::read(out.path().join("tzdata.txt.z")).unwrap();
-    assert_eq!(compressed, COMPRESSED_TABLE);
+    let inflated =
+        miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&compressed, MAX_TABLE_LEN)
+            .unwrap();
+    assert_eq!(String::from_utf8(inflated).unwrap(), TABLE_TEXT);
 }
 
 const MINIMAL: &str = "# comment\nV 2026e\nZ Etc/UTC 0 fixed\nA UTC\nI 0 0 0\nF 0 0\n";
@@ -889,6 +1007,21 @@ fn a_zone_without_a_footer_parses() {
 }
 
 #[test]
+fn offsets_up_to_the_bound_parse() {
+    let table = parse_table(
+        "V x\nZ A/B 0 -\nA S D\nI 172799 0 0\nT 5 -172799 0 1\nF 0 172799 1 -172799 J1/0 J2/0\n",
+    )
+    .unwrap();
+    let zone = table.names[0].zone;
+    assert_eq!(zone.initial.utoff, UTOFF_BOUND - 1);
+    assert_eq!(zone.transitions[0].kind.utoff, 1 - UTOFF_BOUND);
+    assert_eq!(
+        zone.footer.unwrap().dst.unwrap().kind.utoff,
+        1 - UTOFF_BOUND
+    );
+}
+
+#[test]
 fn malformed_tables_are_internal_errors() {
     let cases: &[(&str, &str)] = &[
         ("Z Etc/UTC 0 fixed\nA UTC\nI 0 0 0\n", "no version record"),
@@ -966,6 +1099,26 @@ fn malformed_tables_are_internal_errors() {
         (
             "V x\nZ Etc/UTC 0 fixed\nA UTC\nI 0 0 0\nT 5 0 0 0\nT 5 0 0 0\n",
             "not ascending",
+        ),
+        (
+            "V x\nZ Etc/UTC 0 fixed\nA UTC\nI 0 0 0\nF 0 0\nT 5 0 0 0\n",
+            "transition record after the footer",
+        ),
+        (
+            "V x\nZ Etc/UTC 0 fixed\nA UTC\nI 172800 0 0\n",
+            "offset 172800 is not within 172800 seconds of UT",
+        ),
+        (
+            "V x\nZ Etc/UTC 0 fixed\nA UTC\nI 0 0 0\nT 5 -172800 0 0\n",
+            "offset -172800 is not within",
+        ),
+        (
+            "V x\nZ Etc/UTC 0 fixed\nA UTC\nI 0 0 0\nF 0 200000\n",
+            "offset 200000 is not within",
+        ),
+        (
+            "V x\nZ Etc/UTC 0 fixed\nA UTC\nI 0 0 0\nF 0 0 0 -200000 M3.2.0/0 M11.1.0/0\n",
+            "offset -200000 is not within",
         ),
         (
             "V x\nZ Etc/UTC 0 fixed\nA UTC\nI 0 0 0\nF 0\n",

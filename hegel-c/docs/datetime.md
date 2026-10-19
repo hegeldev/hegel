@@ -265,9 +265,16 @@ FNV-1a checksum of the text that the script writes with it. A test fails
 if the script's pinned version and the table disagree, or the table is
 not what the script would write (compared against the checksum, and
 against a fresh run of the script when `uv` is installed; the `just
-check-tzdata` CI step runs the script's `--check` mode). The engine
-reads only the deflated copy. The update policy is the Unicode one: bump
-deliberately, in its own PR, with the changelog naming the release.
+check-tzdata` CI step runs the script's `--check` mode). Both compare
+the text table, the version and the checksum, and check that the
+deflated copy inflates to the text table; the deflated bytes themselves
+depend on the zlib build and are not compared. The engine reads only
+the deflated copy. A TZif record that repeats the type before it (same
+offset, flag and abbreviation) is left out of the table, except for a
+zone's last record, which zic writes to pin where the footer rule takes
+over and which the engine applies the footer from. The update policy is
+the Unicode one: bump deliberately, in its own PR, with the changelog
+naming the release.
 
 ### 5.2 Why bundle, and why not `jiff`
 
@@ -314,10 +321,21 @@ the `Etc/GMT+5` inverted-sign family. Appendix C lists the zones each
 tag was verified against.
 
 From the tags the script also assigns each zone a **rank**, the shrink
-ladder of R6: `UTC`, then the fixed `Etc/` zones by absolute offset, then
-whole-hour zones with simple DST, then everything else; within a tier
+ladder of R6, in tiers: `UTC`; then the simple real zones, the
+`Area/Location` names whose tags other than `seconds` (pre-1970 local
+mean time) and `link` are exactly `whole_hour` with `fixed` or with
+`dst`, so a whole-hour offset that is fixed or has textbook one-hour DST
+and no other irregularity after 1970 (`America/New_York` and
+`Asia/Tokyo` qualify; `Europe/London` does not, for its `base_change`,
+nor `Asia/Kolkata`, for its fractional offset); then every other
+`Area/Location` name; then the fixed `Etc/` family by absolute offset;
+then the legacy names (`EST`, `EST5EDT`, `US/Eastern`). Within a tier
 names with fewer tags come first, so a zone precedes its links, and ties
-break by name. `UTC` is the primary zone and `Etc/UTC`, `Etc/GMT`, `GMT`,
+break by name, so the ladder starts `UTC`, `Africa/Johannesburg`,
+`America/Matamoros`, `Europe/Belgrade`, `Europe/Warsaw`,
+`Indian/Maldives`, `Africa/Abidjan`, and a failure in a real zone
+shrinks to a real zone rather than to `Etc/GMT+1`, whose sign reads
+backwards. `UTC` is the primary zone and `Etc/UTC`, `Etc/GMT`, `GMT`,
 `Zulu` and the rest of that family are links to it, as ECMA-402 has it.
 The rank and the tags are data in the
 table, reviewable in the PR that regenerates it, and the engine never
