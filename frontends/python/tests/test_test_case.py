@@ -154,7 +154,7 @@ def test_repeat_with_assumption_and_control_signals():
 
         tc.repeat(step)
 
-    failing(invalid, hegel.InvalidArgument, test_cases=2)
+    failing(invalid, hegel.InvalidArgument, test_cases=20)
 
 
 def test_repeat_can_run_zero_times(monkeypatch):

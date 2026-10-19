@@ -1,5 +1,6 @@
 /.venv
 /dist
+/sdist
 __pycache__/
 *.py[cod]
 *.so
