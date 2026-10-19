@@ -49,3 +49,11 @@ E       @hegel.reproduce_failure("AXicY2VgYGBkZOBiZEBhMAAAAd8AIQ==")
 ```
 
 Hegel reports the minimal example showing that our sort is incorrectly dropping duplicates. If we change `my_sort()` to `sorted(ls)`, this test will then pass (because it's just comparing the standard sort against itself).
+
+## Relationship to Hypothesis
+
+The short version is "We're still figuring that out". Hegel and Hypothesis are both very similar libraries, built on very similar ideas. Hegel is more optimised for the sorts of workloads that you are likely to want to run on [Antithesis](https://antithesis.com/) and we are providing it partly because many people want to write their workloads in Python, and avoiding writing a Hegel for Python just because Hypothesis already existed seemed silly. 
+
+As a rule of thumb: If you just want to have tests that run as part of your CI and already have Hypothesis tests, you probably want to keep using Hypothesis. If you want to write a workload for Antithesis, you definitely want to use Hegel. Otherwise... probably stick to Hypothesis for now, but there's not a huge amount in it and in some cases Hegel will be better and you should feel free toe xperiment.
+
+The answer may change in future, but if and when it does it will be very easy to get an LLM to port your tests from Hypothesis to Hegel.
