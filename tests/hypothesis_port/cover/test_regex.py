@@ -29,7 +29,7 @@ import pytest
 import hegel
 from hegel import InvalidArgument
 from hegel import generators as gs
-from tests.helpers import UNICODE_NEWER_THAN_PYTHON
+from tests.helpers import UNICODE_NEWER_THAN_PYTHON, skip_if_unicode_newer_than_python
 from tests.hypothesis_port.common.compat import PYPY
 from tests.hypothesis_port.common.debug import (
     assert_all_examples,
@@ -215,6 +215,9 @@ def test_any_with_dotall_generate_newline_binary(pattern):
 @pytest.mark.parametrize("is_unicode", [False, True])
 @pytest.mark.parametrize("invert", [False, True])
 def test_groups(pattern, is_unicode, invert):
+    if is_unicode and "s" not in pattern.lower():
+        # Unicode \w and \d draw letters and digits this Python may not know.
+        skip_if_unicode_newer_than_python()
     # Under re.ASCII, the positive categories \d \s \w match only ascii
     # characters, and the negative categories \D \S \W match everything else.
     if "d" in pattern.lower():

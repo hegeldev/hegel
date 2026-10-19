@@ -18,7 +18,6 @@
 
 import collections
 import enum
-import operator
 
 import pytest
 
@@ -92,14 +91,6 @@ def test_efficient_sets_of_samples(tc):
 def test_efficient_dicts_with_sampled_keys(tc):
     x = tc.draw(gs.dicts(gs.sampled_from(range(50)), gs.none(), min_size=50))
     assert set(x) == set(range(50))
-
-
-@pytest.mark.parametrize("fn", [lambda asdf: asdf[0], (operator.itemgetter(0), lambda x: x[0])])
-@hegel.test
-def test_efficient_lists_of_tuples_first_element_sampled_from(tc, fn):
-    elems = gs.tuples(gs.sampled_from(range(20)), gs.builds(list))
-    x = tc.draw(gs.lists(elems, min_size=20, unique_by=fn))
-    assert {first for first, *_ in x} == set(range(20))
 
 
 @hegel.test

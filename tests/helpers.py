@@ -21,12 +21,22 @@ def run_test(fn: Callable[..., Any], **settings: Any) -> None:
 # know yet (see docs/engine-issues.md). Whether a run meets one of those
 # characters is down to chance, so the tests are skipped rather than xfailed
 # until this Python catches up.
-UNICODE_NEWER_THAN_PYTHON = pytest.mark.skipif(
-    unicodedata.unidata_version < "17.0.0",
-    reason="Engine: libhegel's Unicode 17.0 tables are newer than this Python's "
+_UNICODE_NEWER_THAN_PYTHON = unicodedata.unidata_version < "17.0.0"
+_UNICODE_NEWER_THAN_PYTHON_REASON = (
+    "Engine: libhegel's Unicode 17.0 tables are newer than this Python's "
     f"({unicodedata.unidata_version}), so it draws characters Python's re and "
-    "unicodedata classify differently",
+    "unicodedata classify differently"
 )
+UNICODE_NEWER_THAN_PYTHON = pytest.mark.skipif(
+    _UNICODE_NEWER_THAN_PYTHON, reason=_UNICODE_NEWER_THAN_PYTHON_REASON
+)
+
+
+def skip_if_unicode_newer_than_python() -> None:
+    """``UNICODE_NEWER_THAN_PYTHON`` as a call, for a test only some of
+    whose parameters draw from the engine's Unicode tables."""
+    if _UNICODE_NEWER_THAN_PYTHON:
+        pytest.skip(_UNICODE_NEWER_THAN_PYTHON_REASON)
 
 
 def failing(
