@@ -1,15 +1,18 @@
 """Pin a new libhegel release and leave a fully-formed commit on a local branch.
 
 Resolves the target libhegel version (an explicit argument, else the latest
-`libhegel-v*` release of hegel-rust), writes it into `cmake/libhegel.cmake`,
-refreshes the vendored C ABI header (`libhegel/hegel.h`) from hegel-rust at the
-matching `libhegel-v<version>` tag, repins the Nix flake (`nix/flake.nix`)
-version and per-platform SHA-256 hashes from the release sidecars, and drops a
-`RELEASE.md` so merging the PR cuts a hegel-cpp release.
+`libhegel/*` release of the hegeldev/hegel monorepo), writes it into
+`cmake/libhegel.cmake`, refreshes the vendored C ABI header (`libhegel/hegel.h`)
+from the monorepo at the matching `libhegel/<version>` tag, repins the Nix
+flake (`nix/flake.nix`) version and per-platform SHA-256 hashes from the
+release sidecars, and drops a `RELEASE.md` so merging the PR cuts a hegel-cpp
+release.
 
-hegel-rust tags a libhegel release `libhegel-v<version>`; its plain
-`v<version>` tags belong to the `hegeltest` crate, whose version differs from
-libhegel's, so they are never what we pin.
+The monorepo tags a libhegel release `libhegel/<version>` and titles it
+`libhegel v<version>`; the other components in that repo tag their releases
+`<path>/<version>` too, so only `libhegel/*` tags are ever what we pin.
+Releases before 0.47.2 remain on hegeldev/hegel-rust under `libhegel-v<version>`
+tags, so URLs for an already-pinned older version still point there.
 
 The commit is intentionally *not* pushed: the workflow then realigns the C++
 wrapper layer to the new release, amends the result into this commit, and
@@ -27,7 +30,15 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-RUST_REPO = "hegeldev/hegel-rust"
+REPO = "hegeldev/hegel"
+TAG_PREFIX = "libhegel/"
+HEADER_PATH = "libhegel/include/hegel.h"
+# Releases before this version were published by hegel-rust, with a different
+# tag shape and header location.
+FIRST_MONOREPO_VERSION = (0, 47, 2)
+LEGACY_REPO = "hegeldev/hegel-rust"
+LEGACY_TAG_PREFIX = "libhegel-v"
+LEGACY_HEADER_PATH = "hegel-c/include/hegel.h"
 # One branch per pinned version. A fixed, reused branch meant every release
 # force-recreated it from main, clobbering any manual or agent work pushed to
 # the open PR; a per-version branch keeps re-runs of the *same* version
@@ -40,10 +51,6 @@ HEADER = ROOT / "libhegel" / "hegel.h"
 FLAKE = ROOT / "nix" / "flake.nix"
 RELEASE_MD = ROOT / "RELEASE.md"
 
-# The generated C ABI header committed in hegel-rust, tagged with each release.
-RUST_HEADER_PATH = "hegel-c/include/hegel.h"
-# A libhegel release is tagged `libhegel-v<version>` in hegel-rust.
-TAG_PREFIX = "libhegel-v"
 SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
 VERSION_RE = re.compile(r'(HEGEL_LIBHEGEL_VERSION\s+")([^"]+)(")')
@@ -74,15 +81,35 @@ def get_pinned_version() -> str:
     return m.group(2)
 
 
-def release_tag(version: str) -> str:
-    return f"{TAG_PREFIX}{version}"
+def semver(version: str) -> tuple[int, int, int]:
+    m = SEMVER_RE.match(version)
+    assert m is not None, f"not a semver version: {version!r}"
+    major, minor, patch = (int(part) for part in m.groups())
+    return (major, minor, patch)
+
+
+def release_source(version: str) -> tuple[str, str, str]:
+    """Return the (repo, tag, header path) that publish libhegel `version`."""
+    if semver(version) < FIRST_MONOREPO_VERSION:
+        return LEGACY_REPO, f"{LEGACY_TAG_PREFIX}{version}", LEGACY_HEADER_PATH
+    return REPO, f"{TAG_PREFIX}{version}", HEADER_PATH
+
+
+def release_page_url(version: str) -> str:
+    repo, tag, _ = release_source(version)
+    return f"https://github.com/{repo}/releases/tag/{tag}"
+
+
+def release_download_url(version: str, asset: str) -> str:
+    repo, tag, _ = release_source(version)
+    return f"https://github.com/{repo}/releases/download/{tag}/{asset}"
 
 
 def resolve_latest() -> str:
-    # hegel-rust's "latest" release may belong to another crate, so list the
-    # releases and take the highest `libhegel-v<version>` tag by semver.
+    # The monorepo's "latest" release may belong to another component, so list
+    # the releases and take the highest `libhegel/<version>` tag by semver.
     tags = subprocess.run(
-        ["gh", "release", "list", "--repo", RUST_REPO, "--limit", "200",
+        ["gh", "release", "list", "--repo", REPO, "--limit", "200",
          "--exclude-drafts", "--exclude-pre-releases",
          "--json", "tagName", "--jq", ".[].tagName"],
         check=True, capture_output=True, text=True,
@@ -94,7 +121,7 @@ def resolve_latest() -> str:
         m = SEMVER_RE.match(tag[len(TAG_PREFIX):])
         if m is not None:
             versions.append(tuple(int(part) for part in m.groups()))
-    assert versions, f"no {TAG_PREFIX}* release found in {RUST_REPO}"
+    assert versions, f"no {TAG_PREFIX}* release found in {REPO}"
     return ".".join(str(part) for part in max(versions))
 
 
@@ -106,17 +133,18 @@ def set_pinned_version(version: str) -> None:
 
 
 def refresh_header(version: str) -> None:
-    # Fetch the C ABI header from hegel-rust at the released tag and overwrite the
-    # vendored copy so it matches exactly what libhegel {version} exposes.
-    tag = release_tag(version)
+    # Fetch the C ABI header from the release's repo at the released tag and
+    # overwrite the vendored copy so it matches exactly what libhegel {version}
+    # exposes.
+    repo, tag, header_path = release_source(version)
     content_b64 = subprocess.run(
         ["gh", "api",
-         f"repos/{RUST_REPO}/contents/{RUST_HEADER_PATH}?ref={tag}",
+         f"repos/{repo}/contents/{header_path}?ref={tag}",
          "--jq", ".content"],
         check=True, capture_output=True, text=True,
     ).stdout.strip()
     header = base64.b64decode(content_b64)
-    assert header, f"fetched empty {RUST_HEADER_PATH} for {tag}"
+    assert header, f"fetched empty {header_path} for {tag}"
     HEADER.write_bytes(header)
     # Reformat to the repo style (left pointers, etc.) so check-format passes;
     # same invocation as `just format`.
@@ -125,8 +153,7 @@ def refresh_header(version: str) -> None:
 
 def fetch_asset_sha256(version: str, asset: str) -> str:
     # Each release asset ships a `<asset>.sha256` sidecar ("<hex>  <asset>").
-    url = (f"https://github.com/{RUST_REPO}/releases/download/"
-           f"{release_tag(version)}/{asset}.sha256")
+    url = release_download_url(version, f"{asset}.sha256")
     with urllib.request.urlopen(url) as resp:
         sidecar = resp.read().decode("utf-8")
     m = re.search(r"[0-9a-fA-F]{64}", sidecar)
@@ -163,12 +190,12 @@ def bump(requested: str) -> None:
     refresh_header(target)
     refresh_flake(target)
 
-    current_url = f"https://github.com/{RUST_REPO}/releases/tag/{release_tag(current)}"
-    new_url = f"https://github.com/{RUST_REPO}/releases/tag/{release_tag(target)}"
+    current_url = release_page_url(current)
+    new_url = release_page_url(target)
 
     RELEASE_MD.write_text(
         "RELEASE_TYPE: patch\n\n"
-        f"This patch bumps our pinned `libhegel` ([hegel-rust]({RUST_REPO})) from "
+        f"This patch bumps our pinned `libhegel` ([hegeldev/hegel](https://github.com/{REPO})) from "
         f"[{current}]({current_url}) to [{target}]({new_url}).\n",
         encoding="utf-8",
     )

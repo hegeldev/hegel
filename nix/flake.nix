@@ -25,7 +25,15 @@
       # Prebuilt libhegel (Hegel's native engine) release. Keep the version and
       # hashes in sync with cmake/libhegel.cmake and libhegel/hegel.h. Hashes
       # are the SHA-256 sidecars published next to each release asset.
+      # Releases from 0.47.2 on are GitHub releases of the hegeldev/hegel
+      # monorepo tagged `libhegel/<version>`; older ones live on
+      # hegeldev/hegel-rust under `libhegel-v<version>` tags.
       libhegelVersion = "0.42.4";
+      libhegelBaseUrl =
+        if nixpkgs.lib.versionOlder libhegelVersion "0.47.2" then
+          "https://github.com/hegeldev/hegel-rust/releases/download/libhegel-v${libhegelVersion}"
+        else
+          "https://github.com/hegeldev/hegel/releases/download/libhegel/${libhegelVersion}";
       libhegelAssets = {
         "x86_64-linux" = {
           asset = "libhegel-linux-amd64.so";
@@ -57,7 +65,7 @@
           version = libhegelVersion;
 
           src = pkgs.fetchurl {
-            url = "https://github.com/hegeldev/hegel-rust/releases/download/libhegel-v${libhegelVersion}/${info.asset}";
+            url = "${libhegelBaseUrl}/${info.asset}";
             inherit (info) sha256;
           };
           dontUnpack = true;

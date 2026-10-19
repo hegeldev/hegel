@@ -31,7 +31,7 @@ target_link_libraries(your_target PRIVATE hegel)
 ```
 
 At configure time the build downloads a small prebuilt shared library
-([libhegel](https://github.com/hegeldev/hegel-rust/tree/main/hegel-c),
+([libhegel](https://github.com/hegeldev/hegel/tree/main/libhegel),
 Hegel's native engine) for your platform and verifies it against its published
 SHA-256, then links it. To link a locally built engine instead, pass 
 `-DHEGEL_LIBHEGEL_LIBRARY=/path/to/libhegel_c.<ext>`. 
