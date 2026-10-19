@@ -177,7 +177,8 @@ impl fmt::Debug for TimeZoneConstraint {
 /// The configuration of a time zone draw; see the module docs. Built with
 /// [`TimeZoneSpec::new`] and changed with the setters, each of which
 /// rebuilds the constraint and reports a configuration with no name in it
-/// or, without `opaque`, a name the database lacks.
+/// or, without `opaque`, a name the database lacks, leaving the spec as it
+/// was.
 #[derive(Clone, Debug)]
 pub struct TimeZoneSpec {
     names: Option<Vec<String>>,
@@ -219,33 +220,38 @@ impl TimeZoneSpec {
                 "a time zone draw needs at least one allowed name".to_string(),
             ));
         }
-        self.names = Some(names);
-        self.rebuild()
+        self.apply(|spec| spec.names = Some(names))
     }
 
     /// Whether the default set includes link names such as `Asia/Calcutta`.
     pub fn set_links(&mut self, links: bool) -> Result<(), EngineError> {
-        self.links = links;
-        self.rebuild()
+        self.apply(|spec| spec.links = links)
     }
 
     /// Whether the default set includes legacy names such as `EST5EDT`.
     pub fn set_legacy(&mut self, legacy: bool) -> Result<(), EngineError> {
-        self.legacy = legacy;
-        self.rebuild()
+        self.apply(|spec| spec.legacy = legacy)
     }
 
     /// Whether `Etc/Unknown` is drawn.
     pub fn set_unknown(&mut self, unknown: bool) -> Result<(), EngineError> {
-        self.unknown = unknown;
-        self.rebuild()
+        self.apply(|spec| spec.unknown = unknown)
     }
 
     /// Whether an explicit name the database lacks is accepted as an
     /// opaque zone, which evaluates like `Etc/Unknown`.
     pub fn set_opaque(&mut self, opaque: bool) -> Result<(), EngineError> {
-        self.opaque = opaque;
-        self.rebuild()
+        self.apply(|spec| spec.opaque = opaque)
+    }
+
+    /// Make `change` to a copy of the spec and keep the copy once it
+    /// rebuilds, so that a rejected change leaves the spec as it was.
+    fn apply(&mut self, change: impl FnOnce(&mut TimeZoneSpec)) -> Result<(), EngineError> {
+        let mut candidate = self.clone();
+        change(&mut candidate);
+        candidate.rebuild()?;
+        *self = candidate;
+        Ok(())
     }
 
     /// The string choice every name drawn under this spec is recorded as.

@@ -173,6 +173,37 @@ fn an_unknown_name_is_an_error_unless_opaque_names_are_accepted() {
 }
 
 #[test]
+fn a_rejected_change_leaves_the_spec_as_it_was() {
+    let mut spec = spec_of(&["UTC", "Europe/London"]);
+    let before = names_of(&spec);
+    let kind = Arc::clone(spec.kind());
+    let err = spec
+        .set_names(vec!["Mars/Olympus_Mons".to_string()])
+        .unwrap_err();
+    assert!(matches!(err, EngineError::InvalidArgument(_)));
+    assert_eq!(names_of(&spec), before);
+    assert_eq!(spec.kind(), &kind);
+    spec.set_links(false).unwrap();
+    assert_eq!(names_of(&spec), before);
+    let mut ntc = fresh_ntc(0);
+    let name = generate_timezone(&mut ntc, &spec).unwrap();
+    assert!(before.contains(&name), "{name}");
+    spec.set_opaque(true).unwrap();
+    spec.set_names(vec!["Mars/Olympus_Mons".to_string()])
+        .unwrap();
+    spec.set_opaque(false).unwrap_err();
+    assert_eq!(names_of(&spec), vec!["Mars/Olympus_Mons"]);
+    spec.set_names(vec!["UTC".to_string(), "Mars/Olympus_Mons".to_string()])
+        .unwrap();
+    assert_eq!(names_of(&spec), vec!["UTC", "Mars/Olympus_Mons"]);
+    spec.set_unknown(true).unwrap();
+    assert_eq!(
+        names_of(&spec),
+        vec!["UTC", "Mars/Olympus_Mons", UNKNOWN_NAME]
+    );
+}
+
+#[test]
 fn constraints_compare_by_their_ladder() {
     let a = TimeZoneSpec::new().unwrap();
     let b = TimeZoneSpec::new().unwrap();

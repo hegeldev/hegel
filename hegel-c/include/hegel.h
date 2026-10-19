@@ -1050,6 +1050,9 @@ typedef struct {
  `hegel_timezone_resolve`.
  */
 typedef struct {
+    /*
+     A `hegel_timezone_kind_t`, 32 bits wide.
+     */
     hegel_timezone_kind_t kind;
     /*
      For a gap or fold, the offsets (seconds east of UT) in force before
@@ -1155,6 +1158,9 @@ typedef struct {
      when set); false for a unique or skipped wall time.
      */
     bool fold;
+    /*
+     A `hegel_timezone_kind_t`, 32 bits wide.
+     */
     hegel_timezone_kind_t kind;
     /*
      For a gap or fold, the offsets before and after the transition;
@@ -2883,8 +2889,8 @@ hegel_result_t hegel_date_options_free(hegel_context_t *ctx, hegel_date_options_
  `mask`: A bit set with bit 0 for Monday through bit 6 for Sunday, at
    least one bit set and none above bit 6.
 
- Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an empty or
- out-of-range mask.
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `options`, or
+ `HEGEL_E_INVALID_ARG` for an empty or out-of-range mask.
  */
 hegel_result_t hegel_date_options_set_weekdays(hegel_context_t *ctx,
                                                hegel_date_options_t *options,
@@ -2897,8 +2903,8 @@ hegel_result_t hegel_date_options_set_weekdays(hegel_context_t *ctx,
  `mask`: A bit set with bit 0 for January through bit 11 for December,
    at least one bit set and none above bit 11.
 
- Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an empty or
- out-of-range mask.
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `options`, or
+ `HEGEL_E_INVALID_ARG` for an empty or out-of-range mask.
  */
 hegel_result_t hegel_date_options_set_months(hegel_context_t *ctx,
                                              hegel_date_options_t *options,
@@ -3612,7 +3618,7 @@ hegel_result_t hegel_version(hegel_context_t *ctx, const char **out_version);
    bundled in libhegel, e.g. `"2026e"`. The pointer is static and valid
    for the program's lifetime.
 
- Returns `HEGEL_OK`.
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for a NULL `out_version`.
  */
 hegel_result_t hegel_tzdb_version(hegel_context_t *ctx, const char **out_version);
 
@@ -3699,8 +3705,9 @@ hegel_result_t hegel_timezone_spec_free(hegel_context_t *ctx, hegel_timezone_spe
    not apply to an explicit list. A name the database lacks is an
    argument error unless `hegel_timezone_spec_set_opaque` allowed it.
 
- Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an empty list, a
- NULL or non-UTF-8 name, or an unknown name not allowed as opaque.
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+ `HEGEL_E_INVALID_ARG` for an empty list, a NULL or non-UTF-8 name, or
+ an unknown name not allowed as opaque, which leaves the spec as it was.
  */
 hegel_result_t hegel_timezone_spec_set_names(hegel_context_t *ctx,
                                              hegel_timezone_spec_t *spec,
@@ -3710,6 +3717,8 @@ hegel_result_t hegel_timezone_spec_set_names(hegel_context_t *ctx,
 /*
  Whether the default set includes link names such as `Asia/Calcutta`
  (on by default).
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_HANDLE` for a NULL `spec`.
  */
 hegel_result_t hegel_timezone_spec_set_links(hegel_context_t *ctx,
                                              hegel_timezone_spec_t *spec,
@@ -3718,6 +3727,8 @@ hegel_result_t hegel_timezone_spec_set_links(hegel_context_t *ctx,
 /*
  Whether the default set includes legacy names such as `EST5EDT` and
  `US/Eastern` (off by default).
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_HANDLE` for a NULL `spec`.
  */
 hegel_result_t hegel_timezone_spec_set_legacy(hegel_context_t *ctx,
                                               hegel_timezone_spec_t *spec,
@@ -3726,6 +3737,8 @@ hegel_result_t hegel_timezone_spec_set_legacy(hegel_context_t *ctx,
 /*
  Whether `Etc/Unknown`, the zone with a known instant and an unknown
  offset, is drawn (off by default).
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_HANDLE` for a NULL `spec`.
  */
 hegel_result_t hegel_timezone_spec_set_unknown(hegel_context_t *ctx,
                                                hegel_timezone_spec_t *spec,
@@ -3736,6 +3749,10 @@ hegel_result_t hegel_timezone_spec_set_unknown(hegel_context_t *ctx,
  accepted as an opaque zone (off by default): one the frontend's own
  database knows, drawn like any other name but evaluated like
  `Etc/Unknown`, with its civil time read as UTC and an unknown offset.
+
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+ `HEGEL_E_INVALID_ARG` for turning it off while an opaque name is
+ allowed, which leaves the spec as it was.
  */
 hegel_result_t hegel_timezone_spec_set_opaque(hegel_context_t *ctx,
                                               hegel_timezone_spec_t *spec,
@@ -3784,8 +3801,9 @@ hegel_result_t hegel_zoned_spec_free(hegel_context_t *ctx, hegel_zoned_spec_t *s
  `min_value` / `max_value`: Inclusive bounds on the civil datetime, as
    for `hegel_generate_datetime`.
 
- Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for invalid or inverted
- bounds, or bounds holding no value at the spec's precision.
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+ `HEGEL_E_INVALID_ARG` for invalid or inverted bounds, or bounds holding
+ no value at the spec's precision.
  */
 hegel_result_t hegel_zoned_spec_set_civil_bounds(hegel_context_t *ctx,
                                                  hegel_zoned_spec_t *spec,
@@ -3800,10 +3818,11 @@ hegel_result_t hegel_zoned_spec_set_civil_bounds(hegel_context_t *ctx,
    `second` in the civil range of years `[-999999, 999999]` and
    `nanosecond` at most 999999999.
 
- Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for invalid or inverted
- bounds. Whether the bounds hold a value at the spec's precision
- depends on the drawn zone's offset: a draw whose zone has none rejects
- the test case, and one for which no allowed zone has any fails with
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+ `HEGEL_E_INVALID_ARG` for invalid or inverted bounds. Whether the
+ bounds hold a value at the spec's precision depends on the drawn
+ zone's offset: a draw whose zone has none rejects the test case, and
+ one for which no allowed zone has any fails with
  `HEGEL_E_INVALID_ARG`.
 
  The bounds become a wall-clock window in the drawn zone, clamped to
@@ -3829,8 +3848,9 @@ hegel_result_t hegel_zoned_spec_set_instant_bounds(hegel_context_t *ctx,
  `precision`: A `hegel_precision_t` value; the drawn time of day is a
    whole number of these units, and shrinks toward midnight in them.
 
- Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown precision
- or one at which the spec's bounds hold no value.
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+ `HEGEL_E_INVALID_ARG` for an unknown precision or one at which the
+ spec's bounds hold no value.
  */
 hegel_result_t hegel_zoned_spec_set_precision(hegel_context_t *ctx,
                                               hegel_zoned_spec_t *spec,
@@ -3852,7 +3872,8 @@ hegel_result_t hegel_zoned_spec_set_precision(hegel_context_t *ctx,
    within the bounds, which then lie within the gap, the test case is
    rejected.
 
- Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown policy.
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+ `HEGEL_E_INVALID_ARG` for an unknown policy.
  */
 hegel_result_t hegel_zoned_spec_set_imaginary(hegel_context_t *ctx,
                                               hegel_zoned_spec_t *spec,
@@ -3867,7 +3888,8 @@ hegel_result_t hegel_zoned_spec_set_imaginary(hegel_context_t *ctx,
    under `HEGEL_AMBIGUOUS_EARLIER` or `HEGEL_AMBIGUOUS_LATER` that
    instant is meant and no fold is drawn.
 
- Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown policy.
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+ `HEGEL_E_INVALID_ARG` for an unknown policy.
  */
 hegel_result_t hegel_zoned_spec_set_ambiguous(hegel_context_t *ctx,
                                               hegel_zoned_spec_t *spec,
@@ -4014,9 +4036,10 @@ hegel_result_t hegel_span_spec_free(hegel_context_t *ctx, hegel_span_spec_t *spe
    within `[max(-max_value, 0), -min_value]` and a non-negative one
    within `[max(min_value, 0), max_value]`.
 
- Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown unit,
- inverted bounds, a negative `min_value` under the nonnegative policy
- or bounds that leave the uniform policy no common sign.
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+ `HEGEL_E_INVALID_ARG` for an unknown unit, inverted bounds, a negative
+ `min_value` under the nonnegative policy or bounds that leave the
+ uniform policy no common sign.
  */
 hegel_result_t hegel_span_spec_set_unit_bounds(hegel_context_t *ctx,
                                                hegel_span_spec_t *spec,
@@ -4035,8 +4058,9 @@ hegel_result_t hegel_span_spec_set_unit_bounds(hegel_context_t *ctx,
    `HEGEL_SPAN_SIGN_NONNEGATIVE` only magnitudes are drawn and every
    enabled unit's `min_value` must be at least 0.
 
- Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown policy or
- one the enabled units' bounds do not admit.
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+ `HEGEL_E_INVALID_ARG` for an unknown policy or one the enabled units'
+ bounds do not admit.
  */
 hegel_result_t hegel_span_spec_set_sign(hegel_context_t *ctx,
                                         hegel_span_spec_t *spec,

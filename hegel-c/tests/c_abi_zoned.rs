@@ -217,6 +217,51 @@ fn timezone_spec_setters_validate_their_arguments() {
 }
 
 #[test]
+fn a_rejected_timezone_spec_change_leaves_the_spec_usable() {
+    let ctx = hegel_context_new();
+    unsafe {
+        let spec = tz_spec(ctx);
+        ok(set_names(ctx, spec, &["UTC", "Europe/London"]));
+        assert_eq!(
+            set_names(ctx, spec, &["Mars/Olympus_Mons"]),
+            HEGEL_E_INVALID_ARG
+        );
+        assert!(last_error(ctx).contains("unknown time zone \"Mars/Olympus_Mons\""));
+        ok(hegel_timezone_spec_set_links(ctx, spec, false));
+        assert_eq!(last_error(ctx), "");
+        let run = run_of(ctx, 30);
+        let mut seen = BTreeSet::new();
+        let mut result = empty_result();
+        let mut tc = next_case(ctx, run);
+        while !tc.is_null() {
+            for _ in 0..10 {
+                ok(hegel_generate_timezone(ctx, tc, spec, &mut result));
+                seen.insert(take_string(ctx, &mut result));
+            }
+            complete_valid(ctx, tc);
+            tc = next_case(ctx, run);
+        }
+        assert_eq!(
+            seen,
+            ["UTC", "Europe/London"]
+                .into_iter()
+                .map(String::from)
+                .collect()
+        );
+        ok(hegel_c::hegel_run_free(ctx, run));
+        ok(hegel_timezone_spec_set_opaque(ctx, spec, true));
+        ok(set_names(ctx, spec, &["Mars/Olympus_Mons", "UTC"]));
+        assert_eq!(
+            hegel_timezone_spec_set_opaque(ctx, spec, false),
+            HEGEL_E_INVALID_ARG
+        );
+        ok(hegel_timezone_spec_set_unknown(ctx, spec, true));
+        ok(hegel_timezone_spec_free(ctx, spec));
+    }
+    unsafe { ok(hegel_context_free(ctx)) };
+}
+
+#[test]
 fn generate_timezone_draws_allowed_names_and_validates_handles() {
     let ctx = hegel_context_new();
     unsafe {

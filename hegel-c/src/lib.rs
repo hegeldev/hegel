@@ -5523,8 +5523,8 @@ unsafe fn date_options_set(
 /// `mask`: A bit set with bit 0 for Monday through bit 6 for Sunday, at
 ///   least one bit set and none above bit 6.
 ///
-/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an empty or
-/// out-of-range mask.
+/// Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `options`, or
+/// `HEGEL_E_INVALID_ARG` for an empty or out-of-range mask.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_date_options_set_weekdays(
     ctx: *mut HegelContext,
@@ -5544,8 +5544,8 @@ pub unsafe extern "C" fn hegel_date_options_set_weekdays(
 /// `mask`: A bit set with bit 0 for January through bit 11 for December,
 ///   at least one bit set and none above bit 11.
 ///
-/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an empty or
-/// out-of-range mask.
+/// Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `options`, or
+/// `HEGEL_E_INVALID_ARG` for an empty or out-of-range mask.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_date_options_set_months(
     ctx: *mut HegelContext,
@@ -7349,7 +7349,7 @@ pub unsafe extern "C" fn hegel_version(
 ///   bundled in libhegel, e.g. `"2026e"`. The pointer is static and valid
 ///   for the program's lifetime.
 ///
-/// Returns `HEGEL_OK`.
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for a NULL `out_version`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_tzdb_version(
     ctx: *mut HegelContext,
@@ -7395,6 +7395,7 @@ pub enum hegel_timezone_kind_t {
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy)]
 pub struct hegel_timezone_resolution_t {
+    /// A `hegel_timezone_kind_t`, 32 bits wide.
     pub kind: hegel_timezone_kind_t,
     /// For a gap or fold, the offsets (seconds east of UT) in force before
     /// and after the transition; both equal to `offset_seconds` otherwise.
@@ -7633,9 +7634,7 @@ pub unsafe extern "C" fn hegel_timezone_offset_at(
     timestamp: hegel_timestamp_t,
     out: *mut hegel_timezone_offset_t,
 ) -> hegel_result_t {
-    use crate::native::timezone::{
-        TimeZone, Timestamp, UNKNOWN_ABBREVIATION_CSTR, c_strings_of, type_at,
-    };
+    use crate::native::timezone::{TimeZone, Timestamp, UNKNOWN_ABBREVIATION_CSTR, c_strings_of};
     unsafe {
         timezone_query(ctx, "hegel_timezone_offset_at", name, out, |name, zone| {
             let zone = known_timezone("hegel_timezone_offset_at", name, zone)?;
@@ -7646,8 +7645,18 @@ pub unsafe extern "C" fn hegel_timezone_offset_at(
             let abbreviation = match zone {
                 TimeZone::Unknown => UNKNOWN_ABBREVIATION_CSTR,
                 TimeZone::Named(name) => {
-                    let kind = type_at(name.zone, timestamp.second)?;
-                    c_strings_of(name)?.abbreviations[kind.abbreviation].as_c_str()
+                    let strings = c_strings_of(name)?;
+                    hegel_internal_unwrap!(
+                        name.zone
+                            .abbreviations
+                            .iter()
+                            .position(|a| a == offset.abbreviation)
+                            .and_then(|i| strings.abbreviations.get(i)),
+                        "zone {} has no abbreviation {:?}",
+                        name.zone.name,
+                        offset.abbreviation
+                    )
+                    .as_c_str()
                 }
             };
             Ok(hegel_timezone_offset_t {
@@ -7780,8 +7789,9 @@ unsafe fn timezone_spec_set(
 ///   not apply to an explicit list. A name the database lacks is an
 ///   argument error unless `hegel_timezone_spec_set_opaque` allowed it.
 ///
-/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an empty list, a
-/// NULL or non-UTF-8 name, or an unknown name not allowed as opaque.
+/// Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+/// `HEGEL_E_INVALID_ARG` for an empty list, a NULL or non-UTF-8 name, or
+/// an unknown name not allowed as opaque, which leaves the spec as it was.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_timezone_spec_set_names(
     ctx: *mut HegelContext,
@@ -7800,6 +7810,8 @@ pub unsafe extern "C" fn hegel_timezone_spec_set_names(
 
 /// Whether the default set includes link names such as `Asia/Calcutta`
 /// (on by default).
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_HANDLE` for a NULL `spec`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_timezone_spec_set_links(
     ctx: *mut HegelContext,
@@ -7815,6 +7827,8 @@ pub unsafe extern "C" fn hegel_timezone_spec_set_links(
 
 /// Whether the default set includes legacy names such as `EST5EDT` and
 /// `US/Eastern` (off by default).
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_HANDLE` for a NULL `spec`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_timezone_spec_set_legacy(
     ctx: *mut HegelContext,
@@ -7830,6 +7844,8 @@ pub unsafe extern "C" fn hegel_timezone_spec_set_legacy(
 
 /// Whether `Etc/Unknown`, the zone with a known instant and an unknown
 /// offset, is drawn (off by default).
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_HANDLE` for a NULL `spec`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_timezone_spec_set_unknown(
     ctx: *mut HegelContext,
@@ -7847,6 +7863,10 @@ pub unsafe extern "C" fn hegel_timezone_spec_set_unknown(
 /// accepted as an opaque zone (off by default): one the frontend's own
 /// database knows, drawn like any other name but evaluated like
 /// `Etc/Unknown`, with its civil time read as UTC and an unknown offset.
+///
+/// Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+/// `HEGEL_E_INVALID_ARG` for turning it off while an opaque name is
+/// allowed, which leaves the spec as it was.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_timezone_spec_set_opaque(
     ctx: *mut HegelContext,
@@ -8005,8 +8025,9 @@ unsafe fn zoned_spec_set(
 /// `min_value` / `max_value`: Inclusive bounds on the civil datetime, as
 ///   for `hegel_generate_datetime`.
 ///
-/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for invalid or inverted
-/// bounds, or bounds holding no value at the spec's precision.
+/// Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+/// `HEGEL_E_INVALID_ARG` for invalid or inverted bounds, or bounds holding
+/// no value at the spec's precision.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_zoned_spec_set_civil_bounds(
     ctx: *mut HegelContext,
@@ -8032,10 +8053,11 @@ pub unsafe extern "C" fn hegel_zoned_spec_set_civil_bounds(
 ///   `second` in the civil range of years `[-999999, 999999]` and
 ///   `nanosecond` at most 999999999.
 ///
-/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for invalid or inverted
-/// bounds. Whether the bounds hold a value at the spec's precision
-/// depends on the drawn zone's offset: a draw whose zone has none rejects
-/// the test case, and one for which no allowed zone has any fails with
+/// Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+/// `HEGEL_E_INVALID_ARG` for invalid or inverted bounds. Whether the
+/// bounds hold a value at the spec's precision depends on the drawn
+/// zone's offset: a draw whose zone has none rejects the test case, and
+/// one for which no allowed zone has any fails with
 /// `HEGEL_E_INVALID_ARG`.
 ///
 /// The bounds become a wall-clock window in the drawn zone, clamped to
@@ -8079,8 +8101,9 @@ pub unsafe extern "C" fn hegel_zoned_spec_set_instant_bounds(
 /// `precision`: A `hegel_precision_t` value; the drawn time of day is a
 ///   whole number of these units, and shrinks toward midnight in them.
 ///
-/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown precision
-/// or one at which the spec's bounds hold no value.
+/// Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+/// `HEGEL_E_INVALID_ARG` for an unknown precision or one at which the
+/// spec's bounds hold no value.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_zoned_spec_set_precision(
     ctx: *mut HegelContext,
@@ -8110,7 +8133,8 @@ pub unsafe extern "C" fn hegel_zoned_spec_set_precision(
 ///   within the bounds, which then lie within the gap, the test case is
 ///   rejected.
 ///
-/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown policy.
+/// Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+/// `HEGEL_E_INVALID_ARG` for an unknown policy.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_zoned_spec_set_imaginary(
     ctx: *mut HegelContext,
@@ -8143,7 +8167,8 @@ pub unsafe extern "C" fn hegel_zoned_spec_set_imaginary(
 ///   under `HEGEL_AMBIGUOUS_EARLIER` or `HEGEL_AMBIGUOUS_LATER` that
 ///   instant is meant and no fold is drawn.
 ///
-/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown policy.
+/// Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+/// `HEGEL_E_INVALID_ARG` for an unknown policy.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_zoned_spec_set_ambiguous(
     ctx: *mut HegelContext,
@@ -8184,6 +8209,7 @@ pub struct hegel_zoned_datetime_t {
     /// Which instant of a repeated wall time the value means (the later
     /// when set); false for a unique or skipped wall time.
     pub fold: bool,
+    /// A `hegel_timezone_kind_t`, 32 bits wide.
     pub kind: hegel_timezone_kind_t,
     /// For a gap or fold, the offsets before and after the transition;
     /// both `offset_seconds` otherwise.
@@ -8602,9 +8628,10 @@ unsafe fn span_spec_set(
 ///   within `[max(-max_value, 0), -min_value]` and a non-negative one
 ///   within `[max(min_value, 0), max_value]`.
 ///
-/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown unit,
-/// inverted bounds, a negative `min_value` under the nonnegative policy
-/// or bounds that leave the uniform policy no common sign.
+/// Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+/// `HEGEL_E_INVALID_ARG` for an unknown unit, inverted bounds, a negative
+/// `min_value` under the nonnegative policy or bounds that leave the
+/// uniform policy no common sign.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_span_spec_set_unit_bounds(
     ctx: *mut HegelContext,
@@ -8640,8 +8667,9 @@ pub unsafe extern "C" fn hegel_span_spec_set_unit_bounds(
 ///   `HEGEL_SPAN_SIGN_NONNEGATIVE` only magnitudes are drawn and every
 ///   enabled unit's `min_value` must be at least 0.
 ///
-/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown policy or
-/// one the enabled units' bounds do not admit.
+/// Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+/// `HEGEL_E_INVALID_ARG` for an unknown policy or one the enabled units'
+/// bounds do not admit.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_span_spec_set_sign(
     ctx: *mut HegelContext,
