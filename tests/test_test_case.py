@@ -157,7 +157,12 @@ def test_repeat_with_assumption_and_control_signals():
     failing(invalid, hegel.InvalidArgument, test_cases=2)
 
 
-def test_repeat_can_run_zero_times():
+def test_repeat_can_run_zero_times(monkeypatch):
+    # A body that draws nothing is stopped only by the test case's choice
+    # limit, about a million forced repetitions, which is far too slow under
+    # coverage on CI; have the collection stop at once instead.
+    monkeypatch.setattr(Collection, "more", lambda self: False)
+
     def body(tc):
         tc.repeat(lambda: None)
 
