@@ -1,6 +1,6 @@
 # Browser support
 
-`@hegeldev/hegel` supports browsers through the WebAssembly build of libhegel that hegel-rust publishes with every release (since [PR #478](https://github.com/hegeldev/hegel-rust/pull/478)); the package ships the module of its pinned engine version.
+`@hegeldev/hegel` supports browsers through the WebAssembly build of libhegel that [hegeldev/hegel](https://github.com/hegeldev/hegel) publishes with every libhegel release (since hegel-rust [PR #478](https://github.com/hegeldev/hegel-rust/pull/478)); the package ships the module of its pinned engine version.
 
 ## Use the same imports
 
@@ -86,7 +86,7 @@ Use Rollup with `@rollup/plugin-node-resolve` and `output: { format: "es", file:
 
 ## Maintainers: the Wasm module is one more asset of the pinned release
 
-The browser entry runs the same libhegel release as the native library. `src/libhegel-version.ts` is the only pin; hegel-rust publishes `libhegel-wasm32-unknown-unknown.wasm` (with a `.sha256` sidecar) next to the native libraries on the `libhegel-v<version>` release. `just fetch-libhegel` downloads the host library and the Wasm module into `native/<version>/`, verifying each against its sidecar; the tests load the module from there (or from `HEGEL_WASM_PATH`, the counterpart of `HEGEL_LIBHEGEL_PATH`), and `npm run build` fetches it if needed and copies it into `dist/browser/`, where the browser entry's `new URL(...)` expression finds it. The library never downloads anything at runtime; it fetches only the asset the application serves.
+The browser entry runs the same libhegel release as the native library. `src/libhegel-version.ts` is the only pin; hegeldev/hegel publishes `libhegel-wasm32-unknown-unknown.wasm` (with a `.sha256` sidecar) next to the native libraries on the `libhegel/<version>` release. `just fetch-libhegel` downloads the host library and the Wasm module into `native/<version>/`, verifying each against its sidecar; the tests load the module from there (or from `HEGEL_WASM_PATH`, the counterpart of `HEGEL_LIBHEGEL_PATH`), and `npm run build` fetches it if needed and copies it into `dist/browser/`, where the browser entry's `new URL(...)` expression finds it. The library never downloads anything at runtime; it fetches only the asset the application serves.
 
 To run everything locally:
 

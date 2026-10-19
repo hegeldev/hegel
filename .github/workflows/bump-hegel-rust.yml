@@ -1,10 +1,11 @@
 name: Bump hegel-rust
 
 on:
-  # Fired by hegel-rust's release workflow for releases that include hegel-c.
-  # client_payload.tag carries the `libhegel-v<version>` tag the release and
-  # its binaries hang off (client_payload.version is the bare version), so we
-  # pin that exact release rather than racing on latest.
+  # Fired by the hegeldev/hegel monorepo's release workflow for each libhegel
+  # release. client_payload.tag carries the `libhegel/<version>` tag the
+  # release and its binaries hang off (client_payload.version is the bare
+  # version), so we pin that exact release rather than racing on latest. The
+  # event type predates the monorepo and is kept for compatibility.
   repository_dispatch:
     types: [hegel-rust-release]
   # Manual escape hatch: run with an empty version to pin the latest release,
@@ -12,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "libhegel release to pin, as libhegel-v<version> or <version> (empty = latest release)"
+        description: "libhegel release to pin, as libhegel/<version> or <version> (empty = latest release)"
         required: false
         default: ""
 
@@ -66,13 +67,13 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ steps.app-token.outputs.token }}
-          # hegel-rust fires this workflow via repository_dispatch using the
+          # hegeldev/hegel fires this workflow via repository_dispatch using the
           # hegel-release[bot] app token, so the actor is a bot. The action
           # blocks bot-initiated runs by default; allow this specific bot.
           allowed_bots: hegel-release
           prompt: |
             The pinned libhegel version was just bumped to ${{ steps.bump.outputs.version }}
-            (hegel-rust tag libhegel-v${{ steps.bump.outputs.version }}; src/libhegel-version.ts)
+            (hegeldev/hegel tag libhegel/${{ steps.bump.outputs.version }}; src/libhegel-version.ts)
             on this checkout. Use the align-libhegel skill to align
             the TypeScript koffi FFI binding layer (src/libhegel.ts and, only if the ABI
             demands it, src/generate.ts / src/runner.ts / src/session.ts) to the new
@@ -104,7 +105,7 @@ jobs:
       - name: Push and open/update the PR
         if: steps.bump.outputs.bumped == 'true'
         env:
-          # hegel-rust releases are public, so the app token (scoped to
+          # libhegel releases are public, so the app token (scoped to
           # hegel-typescript) reads them fine; gh uses GH_TOKEN for the PR commands.
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           VERSION: ${{ steps.bump.outputs.version }}
@@ -116,7 +117,7 @@ jobs:
           workflow_url="https://github.com/hegeldev/hegel-typescript/blob/main/.github/workflows/bump-hegel-rust.yml"
           title="Bump pinned \`libhegel\` to \`${VERSION}\`"
           body=$(printf '%s\n' \
-            "This PR bumps our pinned \`libhegel\` version to \`${VERSION}\` ([libhegel-v${VERSION}](https://github.com/hegeldev/hegel-rust/releases/tag/libhegel-v${VERSION}))." \
+            "This PR bumps our pinned \`libhegel\` version to \`${VERSION}\` ([libhegel v${VERSION}](https://github.com/hegeldev/hegel/releases/tag/libhegel/${VERSION}))." \
             "" \
             "---" \
             "" \

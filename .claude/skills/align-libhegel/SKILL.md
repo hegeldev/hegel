@@ -5,10 +5,11 @@ description: "How to align the TypeScript koffi FFI binding to a new libhegel (h
 
 # Aligning the TypeScript client to a new libhegel release
 
-`libhegel` is a Rust cdylib built from hegel-rust's `hegel-c` crate. This
+`libhegel` is a Rust cdylib built from the `hegeltest-c` crate in the
+`libhegel/` component of the hegeldev/hegel monorepo. This
 client calls it synchronously via the `koffi` FFI library — no subprocess, no
 wire protocol. When the pinned version changes, the C API in
-`hegel-c/include/hegel.h` may have added, removed, renamed, or re-typed
+`libhegel/include/hegel.h` may have added, removed, renamed, or re-typed
 symbols, and the binding layer must be re-aligned. The public
 `@hegeldev/hegel` API (`test`, `testAsync`, `Settings`, the generators) must
 **not** change as a result — only the internal layers.
@@ -110,13 +111,18 @@ The pin lives in `src/libhegel-version.ts` as `LIBHEGEL_VERSION`. It is
 generated code — regenerate with `just update-libhegel [version]`, never edit
 by hand.
 
-The release **tag is `libhegel-v<VERSION>`** (hegel-rust's plain `v<VERSION>`
-tags are hegeltest releases and carry no libhegel binaries; the raw path
-without the `libhegel-v` prefix fetches the wrong header or 404s):
+The release **tag is `libhegel/<VERSION>`** (the monorepo tags each component
+`<path>/<version>`; `frontends/rust/<VERSION>` tags are the Rust frontend's
+releases and carry no libhegel binaries). The header is published as the
+`hegel.h` asset of the release:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/hegeldev/hegel-rust/libhegel-v<VERSION>/hegel-c/include/hegel.h
+curl -sSL https://github.com/hegeldev/hegel/releases/download/libhegel/<VERSION>/hegel.h
 ```
+
+Releases before 0.47.2 predate the monorepo: their tag is `libhegel-v<VERSION>`
+on hegeldev/hegel-rust and the header is at
+`https://raw.githubusercontent.com/hegeldev/hegel-rust/libhegel-v<VERSION>/hegel-c/include/hegel.h`.
 
 Diff it against the previous pin's header first — if the two are identical,
 the alignment is a no-op and you only need `just check` to confirm.
@@ -218,7 +224,7 @@ this client uses, three places move together: the **prototype string** (or
   script beats an afternoon of debugging a garbage struct field. Delete the
   script afterwards.
 - **References for unclear semantics**: the implementation is
-  `hegel-c/src/` in hegel-rust _at the release tag_ (ownership, error codes,
+  `libhegel/src/` in hegeldev/hegel _at the release tag_ (ownership, error codes,
   sentinel values), and hegel-go's `internal/libhegel/` is a second, complete
   binding of the same ABI to sanity-check your reading against.
 
@@ -278,8 +284,9 @@ NOT edit anything — this is a read-only verification.
 
 1. Read the pinned version from src/libhegel-version.ts (LIBHEGEL_VERSION).
 2. Fetch the matching header:
-   curl -sSL https://raw.githubusercontent.com/hegeldev/hegel-rust/libhegel-v<VERSION>/hegel-c/include/hegel.h
-   (note the `libhegel-v` prefix on the tag).
+   curl -sSL https://github.com/hegeldev/hegel/releases/download/libhegel/<VERSION>/hegel.h
+   (the tag is `libhegel/<VERSION>`; before 0.47.2 it is
+   https://raw.githubusercontent.com/hegeldev/hegel-rust/libhegel-v<VERSION>/hegel-c/include/hegel.h).
 3. Extract every `hegel_*` function declared in the header.
 4. Cross-check each against src/libhegel.ts. A function the client uses must
    have (a) a koffi prototype in bindLibrary whose parameter types match the C

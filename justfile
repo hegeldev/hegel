@@ -10,7 +10,7 @@ set ignore-comments := true
 @fetch-libhegel:
     node scripts/fetch-libhegel.mjs
 
-# Build libhegel from a sibling ../hegel-rust checkout (for local development
+# Build libhegel from a sibling ../hegel monorepo checkout (for local development
 # against an unreleased engine). Prints the path to export as
 # HEGEL_LIBHEGEL_PATH. (For the Wasm side, `cargo build -p hegeltest-c
 # --release --target wasm32-unknown-unknown` there and export the module's
@@ -18,12 +18,12 @@ set ignore-comments := true
 build-libhegel:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release -p hegeltest-c --manifest-path ../hegel-rust/Cargo.toml
-    echo "../hegel-rust/target/release/libhegel_c.so"
+    cargo build --release -p hegeltest-c --manifest-path ../hegel/Cargo.toml
+    echo "../hegel/target/release/libhegel_c.so"
 
-# Regenerate src/libhegel-version.ts from a libhegel release (hegel-rust's
-# `libhegel-v<version>` tags). Targets the latest release; pass a version
-# (e.g. `just update-libhegel 0.42.1`, or the tag `libhegel-v0.42.1`) to pin
+# Regenerate src/libhegel-version.ts from a libhegel release (hegeldev/hegel's
+# `libhegel/<version>` tags). Targets the latest release; pass a version
+# (e.g. `just update-libhegel 0.47.2`, or the tag `libhegel/0.47.2`) to pin
 # an exact one.
 update-libhegel version="":
     node scripts/update-libhegel.mjs {{version}}
