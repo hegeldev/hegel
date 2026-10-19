@@ -77,7 +77,9 @@ strategy_globals["bar"] = bar
 strategy_globals["baz"] = baz
 
 
-@hegel.test
+# builds_ignoring_invalid rejects often enough that, about one run in a
+# hundred, 50 inputs are rejected before 10 are accepted.
+@hegel.test(suppress_health_check=[hegel.HealthCheck.filter_too_much])
 def test_repr_evals_to_thing_with_same_repr(tc):
     strategy = tc.draw(Strategies)
     r = repr(strategy)
