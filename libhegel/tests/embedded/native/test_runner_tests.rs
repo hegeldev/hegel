@@ -2605,6 +2605,53 @@ fn one_reported_failure_shrinks_only_the_smallest_and_persists_the_rest() {
     );
 }
 
+/// Shrinking the smallest failure found can run into another failure
+/// with a smaller example than any seen so far. That failure is then the
+/// one the run reports, so it is shrunk too rather than reported as it
+/// was stumbled upon. The first failure generated here is `large`, and
+/// `small` is only ever reached by shrinking it.
+#[test]
+fn one_reported_failure_shrinks_a_smaller_failure_found_while_shrinking() {
+    use crate::native::bignum::BigInt;
+    let first_failure = std::sync::Mutex::new(None::<&str>);
+    let result = reuse_run(
+        Settings::new()
+            .database(None)
+            .test_cases(100)
+            .derandomize(true)
+            .report_multiple_failures(false)
+            .verbosity(Verbosity::Quiet),
+        "k",
+        |ds| {
+            let Ok(x) = rint(ds, 0, 10_000) else {
+                return TestCaseResult::Overrun;
+            };
+            let failure = if x >= 1000 {
+                "large"
+            } else if x > 100 {
+                "small"
+            } else {
+                return TestCaseResult::Valid;
+            };
+            first_failure.lock().unwrap().get_or_insert(failure);
+            boom(failure)
+        },
+    )
+    .unwrap();
+    assert_eq!(*first_failure.lock().unwrap(), Some("large"));
+    assert_eq!(result.failures.len(), 1);
+    assert!(
+        result.failures[0].origin.contains("small"),
+        "{}",
+        result.failures[0].origin
+    );
+    let blob = result.failures[0].reproduce_blob.as_deref().unwrap();
+    assert_eq!(
+        crate::native::blob::decode_failure(blob).unwrap(),
+        vec![ChoiceValue::Integer(BigInt::from(101))]
+    );
+}
+
 #[test]
 fn stop_on_first_failure_off_generates_after_a_database_replay() {
     use crate::native::bignum::BigInt;
