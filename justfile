@@ -67,6 +67,10 @@ check-tests-minimal-versions:
     # versions). Note this rewrites the checked-in Cargo.lock; restore it with
     # `git checkout Cargo.lock` afterwards.
     cargo generate-lockfile -Z minimal-versions
+    # The workspace run includes libhegel's dlopen smoke tests, which need
+    # the cdylib `cargo test` alone does not produce (see `c-test-smoke` in
+    # libhegel/justfile).
+    cargo build --locked -p hegeltest-c
     HEGEL_RUNNING_TESTS_WITH_RUST_NIGHTLY=1 RUST_BACKTRACE=1 cargo test --workspace --locked --all-features
 
 # Run cargo-insta, installing it first if it's missing. Pinned to the same
