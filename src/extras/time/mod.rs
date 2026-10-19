@@ -8,7 +8,8 @@
 //! [`durations`] with a [`Precision`](crate::datetime::Precision),
 //! [`utc_offsets`] with a [`Granularity`](crate::datetime::Granularity),
 //! [`offset_datetimes`] from a wall-clock time in a drawn IANA time zone
-//! read with the offset that zone had in force, and [`weekdays`] and
+//! read with the offset the engine's bundled database says that zone had
+//! in force, and [`weekdays`] and
 //! [`months`]. The date range follows `time::Date::MIN..=MAX`, so
 //! enabling the `time/large-dates` feature widens it to years ±999,999.
 

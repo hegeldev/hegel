@@ -389,6 +389,20 @@ fn test_jiff_zoneds_property(tc: hegel::TestCase) {
 }
 
 #[test]
+fn test_jiff_zoneds_stay_in_instant_bounds_where_jiff_reports_a_fold_the_engine_does_not() {
+    let dummy = Timestamp::from_second(1_698_541_200).unwrap();
+    let min = dummy - jiff::SignedDuration::from_hours(1);
+    let max = dummy + jiff::SignedDuration::from_hours(1);
+    assert_all_examples(
+        jiff_gs::zoneds()
+            .time_zones(jiff_gs::time_zones().names(["America/Nuuk"]))
+            .min_instant(min)
+            .max_instant(max),
+        move |z| z.timestamp() >= min && z.timestamp() <= max,
+    );
+}
+
+#[test]
 fn test_jiff_zoneds_shrink_to_utc_at_the_millennium() {
     let z = minimal(jiff_gs::zoneds(), |_| true);
     assert_eq!(z.to_string(), "2000-01-01T00:00:00+00:00[UTC]");

@@ -245,38 +245,47 @@ pub fn fixed_offsets() -> FixedOffsetGenerator {
     }
 }
 
-/// Convert a [`TimeDelta`] to a total nanosecond count.
-///
-/// `TimeDelta` is internally `(secs: i64, nanos: u32 in [0, 1e9))`. The total
-/// nanosecond magnitude exceeds `i64`'s range by a factor of ~10^9, so we
-/// widen to `i128` (which has ~10^10 of headroom past `TimeDelta::MAX`).
-fn timedelta_to_nanos(d: TimeDelta) -> i128 {
-    i128::from(d.num_seconds()) * NANOS_PER_SECOND + i128::from(d.subsec_nanos())
+/// The engine's reading of a [`TimeDelta`]: whole seconds and the
+/// nanoseconds past them, both of the delta's sign.
+fn hegel_time_delta(d: TimeDelta) -> hd::SignedDuration {
+    hd::SignedDuration {
+        seconds: d.num_seconds(),
+        nanoseconds: d.subsec_nanos(),
+    }
 }
 
-/// Inverse of [`timedelta_to_nanos`].
-fn nanos_to_timedelta(n: i128) -> TimeDelta {
-    let secs = n.div_euclid(NANOS_PER_SECOND) as i64;
-    let nanos = n.rem_euclid(NANOS_PER_SECOND) as u32;
-    TimeDelta::new(secs, nanos).unwrap()
+/// The [`TimeDelta`] of an engine duration, which lies within
+/// `TimeDelta::MIN..=TimeDelta::MAX` because the draw's bounds do.
+fn chrono_time_delta(d: hd::SignedDuration) -> TimeDelta {
+    let (seconds, nanoseconds) = if d.nanoseconds < 0 {
+        (d.seconds - 1, d.nanoseconds + 1_000_000_000)
+    } else {
+        (d.seconds, d.nanoseconds)
+    };
+    TimeDelta::new(seconds, nanoseconds as u32).unwrap()
 }
 
 /// Generator for [`chrono::TimeDelta`] values. Created by [`time_deltas()`].
 pub struct TimeDeltaGenerator {
-    min_value: TimeDelta,
-    max_value: TimeDelta,
+    inner: gs::SignedDurationGenerator,
 }
 
 impl TimeDeltaGenerator {
     /// Set the minimum delta (inclusive).
     pub fn min_value(mut self, min: TimeDelta) -> Self {
-        self.min_value = min;
+        self.inner = self.inner.min_value(hegel_time_delta(min));
         self
     }
 
     /// Set the maximum delta (inclusive).
     pub fn max_value(mut self, max: TimeDelta) -> Self {
-        self.max_value = max;
+        self.inner = self.inner.max_value(hegel_time_delta(max));
+        self
+    }
+
+    /// Draw only deltas that are a whole number of `precision` units.
+    pub fn precision(mut self, precision: Precision) -> Self {
+        self.inner = self.inner.precision(precision);
         self
     }
 }
@@ -287,14 +296,7 @@ impl Generator<TimeDelta> for TimeDeltaGenerator {
     }
 
     fn do_draw(&self, tc: &TestCase) -> TimeDelta {
-        if self.min_value > self.max_value {
-            invalid_argument!("Cannot have max_value < min_value");
-        }
-        let nanos = integers::<i128>()
-            .min_value(timedelta_to_nanos(self.min_value))
-            .max_value(timedelta_to_nanos(self.max_value))
-            .do_draw(tc);
-        nanos_to_timedelta(nanos)
+        chrono_time_delta(self.inner.do_draw(tc))
     }
 }
 
@@ -306,8 +308,11 @@ impl PrintableGenerator<TimeDelta> for TimeDeltaGenerator {
 
 /// Generate [`chrono::TimeDelta`] values.
 ///
-/// Defaults span the full `TimeDelta::MIN..=TimeDelta::MAX` range. Use the
-/// builder methods to constrain.
+/// By default any delta chrono holds, `TimeDelta::MIN..=TimeDelta::MAX`,
+/// at nanosecond precision; shrinks toward zero, and targets the bounds
+/// and a few round durations (a unit, a second, a minute, a day, a week,
+/// the `i32`-seconds and `i64`-nanoseconds limits) of either sign. See
+/// [`TimeDeltaGenerator`] for builder methods.
 ///
 /// # Example
 ///
@@ -324,8 +329,9 @@ impl PrintableGenerator<TimeDelta> for TimeDeltaGenerator {
 /// ```
 pub fn time_deltas() -> TimeDeltaGenerator {
     TimeDeltaGenerator {
-        min_value: TimeDelta::MIN,
-        max_value: TimeDelta::MAX,
+        inner: gs::signed_durations()
+            .min_value(hegel_time_delta(TimeDelta::MIN))
+            .max_value(hegel_time_delta(TimeDelta::MAX)),
     }
 }
 
@@ -1007,8 +1013,9 @@ where
 /// skips where the engine's does not, and a wall time whose instant under
 /// chrono-tz's rules falls outside instant bounds the engine kept it
 /// within: the two databases can differ by a release, the engine's being
-/// [`tzdb_version`](crate::datetime::tzdb_version), and chrono-tz applies
-/// no daylight-saving rule from 2100 on.
+/// [`tzdb_version`](crate::datetime::tzdb_version) and chrono-tz's
+/// `chrono_tz::IANA_TZDB_VERSION`, and chrono-tz applies no
+/// daylight-saving rule from 2100 on.
 ///
 /// ```no_run
 /// use chrono::{FixedOffset, Utc};

@@ -506,6 +506,15 @@ fn test_times_in_vec() {
 }
 
 #[test]
+fn test_times_shrink_toward_midnight() {
+    assert_eq!(minimal(gs::times(), |_| true), time(0, 0, 0, 0));
+    assert_eq!(
+        minimal(gs::times().min_value(time(6, 30, 0, 0)), |_| true),
+        time(6, 30, 0, 0)
+    );
+}
+
+#[test]
 fn test_times_default_generator() {
     check_can_generate_examples(gs::default::<Time>());
 }

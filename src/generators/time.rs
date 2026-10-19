@@ -211,7 +211,11 @@ impl PrintableGenerator<SystemTime> for SystemTimeGenerator {
 /// up to the engine's years ±999,999. Shrinks toward 2000-01-01T00:00:00Z.
 /// Built on [`timestamps()`](super::timestamps), whose targeting of interesting instants it
 /// shares and whose RFC 9557 form (`2000-01-01T00:00:00Z`) a drawn value
-/// prints in. See [`SystemTimeGenerator`] for builder methods.
+/// prints in. On Windows a `SystemTime` counts 100-nanosecond ticks, so
+/// there the value is the drawn instant truncated to that unit while the
+/// printed form keeps the nanoseconds; draw at
+/// [`Precision::Microseconds`] or coarser for the two to agree. See
+/// [`SystemTimeGenerator`] for builder methods.
 ///
 /// # Example
 ///

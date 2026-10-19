@@ -817,6 +817,23 @@ fn known_names() -> &'static [KnownName] {
     })
 }
 
+/// The engine generator over the names of `known` the link and legacy
+/// flags admit, which is every name both databases know by default.
+fn default_names(known: &[KnownName], links: bool, legacy: bool) -> gs::TimeZoneGenerator {
+    if known.is_empty() {
+        invalid_argument!(
+            "jiff's time zone database is empty, so no IANA zone can be drawn: enable one of \
+             jiff's tzdb features, such as tzdb-bundle-platform or tzdb-bundle-always"
+        );
+    }
+    gs::time_zones().names(
+        known
+            .iter()
+            .filter(|known| (links || !known.link) && (legacy || !known.legacy))
+            .map(|known| known.name.clone()),
+    )
+}
+
 /// Generator for [`jiff::tz::TimeZone`] values named in the IANA
 /// database. Created by [`time_zones()`].
 pub struct TimeZoneGenerator {
@@ -875,12 +892,7 @@ impl TimeZoneGenerator {
                 }
                 gs::time_zones().names(names.clone()).opaque(true)
             }
-            None => gs::time_zones().names(
-                known_names()
-                    .iter()
-                    .filter(|known| (self.links || !known.link) && (self.legacy || !known.legacy))
-                    .map(|known| known.name.clone()),
-            ),
+            None => default_names(known_names(), self.links, self.legacy),
         };
         generator.unknown(self.unknown)
     }
@@ -926,8 +938,10 @@ impl PrintableGenerator<TimeZone> for TimeZoneGenerator {
 /// Fixed-offset zones are a different generator: compose
 /// `offsets().map(TimeZone::fixed)` with this one through
 /// [`one_of`](crate::generators::one_of) for a mix, as
-/// `gs::default::<TimeZone>()` does. See [`TimeZoneGenerator`] for
-/// builder methods.
+/// `gs::default::<TimeZone>()` does. jiff must have a time zone database
+/// for any name to be known, one of its `tzdb-*` features or the
+/// system's; without one the draw is a usage error. See
+/// [`TimeZoneGenerator`] for builder methods.
 ///
 /// # Example
 ///
@@ -1040,7 +1054,9 @@ impl ZonedGenerator {
     /// ([`Imaginary::Avoid`] by default, since a [`Zoned`] cannot hold
     /// one). Under [`Imaginary::Allow`] the value is the instant the
     /// skipped time resolves to with the offset in force before the
-    /// transition, as jiff's own `compatible` resolution would give.
+    /// transition, as jiff's own `compatible` resolution would give; its
+    /// own wall time lies past the gap, so it can exceed
+    /// [`max_value`](Self::max_value) by the gap's width.
     pub fn imaginary(mut self, imaginary: Imaginary) -> Self {
         self.imaginary = imaginary;
         self.inner = OnceLock::new();
@@ -1110,13 +1126,26 @@ fn jiff_zoned(z: &dt::ZonedDateTime) -> Option<Zoned> {
     }
 }
 
+/// Whether jiff's reading of a draw lies within the instant bounds the
+/// engine kept the draw within under its own rules, which jiff's
+/// database can read with another offset near a transition the two
+/// disagree on.
+fn within_instant_bounds(zoned: &Zoned, bounds: &ZonedBounds) -> bool {
+    match bounds {
+        ZonedBounds::Civil(..) => true,
+        ZonedBounds::Instant(min, max) => (min..=max).contains(&&zoned.timestamp()),
+    }
+}
+
 impl Generator<Zoned> for ZonedGenerator {
     fn label(&self) -> u64 {
         ZONED_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> Zoned {
-        jiff_zoned(&self.inner().do_draw(tc)).unwrap_or_else(|| tc.reject())
+        jiff_zoned(&self.inner().do_draw(tc))
+            .filter(|zoned| within_instant_bounds(zoned, &self.bounds))
+            .unwrap_or_else(|| tc.reject())
     }
 }
 
@@ -1140,7 +1169,9 @@ impl PrintableGenerator<Zoned> for ZonedGenerator {
 /// `earlier` or `later`), so a newer database on jiff's side changes what
 /// a value means; a wall time jiff has no value at, because its database
 /// skips it or it reads the instant back as another wall time, is
-/// rejected as if by `assume(false)`. The engine's database release is
+/// rejected as if by `assume(false)`, as is a wall time whose instant
+/// under jiff's rules falls outside instant bounds the engine kept it
+/// within. The engine's database release is
 /// [`tzdb_version`](crate::datetime::tzdb_version). See [`ZonedGenerator`]
 /// for builder methods.
 ///
@@ -1240,3 +1271,7 @@ pub type EraGenerator = Mapped<bool, Era, fn(bool) -> Era, BoolGenerator>;
 pub fn eras() -> EraGenerator {
     gs::booleans().map(|bce| if bce { Era::BCE } else { Era::CE })
 }
+
+#[cfg(test)]
+#[path = "../../../tests/embedded/extras/jiff_generators_tests.rs"]
+mod tests;

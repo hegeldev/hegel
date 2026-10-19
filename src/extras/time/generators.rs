@@ -526,7 +526,11 @@ impl PrintableGenerator<OffsetDateTime> for OffsetDateTimeGenerator {
 /// repeated drawn and a wall time the clocks skipped never drawn; shrinks
 /// to `UTC`, then toward 2000-01-01T00:00:00. One draw in twenty on
 /// average targets a transition of the zone, so instants on either side
-/// of a daylight-saving change are reached. The zone with an unknown
+/// of a daylight-saving change are reached. The offset is the engine's
+/// own reading of the zone, from the IANA release
+/// [`tzdb_version`](crate::datetime::tzdb_version) reports, since the
+/// `time` crate has no database of its own to resolve the wall time
+/// with. The zone with an unknown
 /// offset, `Etc/Unknown`, is read as UTC. The value's instant lies within
 /// the range too, so `to_utc` never panics on it: a wall time within a
 /// day of the range's ends whose instant at the drawn offset falls outside

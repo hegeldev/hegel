@@ -201,7 +201,7 @@ impl Timestamp {
     pub fn new(second: i64, nanosecond: u32) -> Result<Timestamp, Error> {
         if !(MIN_INSTANT..=MAX_INSTANT).contains(&second) || nanosecond >= NANOS_PER_SECOND {
             return Err(error(format!(
-                "{second}.{nanosecond:09} is not a valid timestamp (seconds in \
+                "second {second}, nanosecond {nanosecond} is not a valid timestamp (seconds in \
                  [{MIN_INSTANT}, {MAX_INSTANT}], nanoseconds in [0, 999999999])"
             )));
         }

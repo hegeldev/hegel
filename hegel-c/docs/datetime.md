@@ -155,8 +155,10 @@ R7. Every time-bearing draw takes a precision, drawn in units of that
     precision, so no frontend truncates.
 R8. Bounds are inclusive, and a draw with `min == max` is a constant, as
     Hypothesis and the existing engine draws behave.
-R9. The engine gains no required runtime dependency; the wasm build stays
-    small enough for the browser frontend (target: under 300 KB added).
+R9. The engine gains no required runtime dependency, and the wasm build
+    grows by the deflated table and the evaluator only (about 330 KB in
+    the first release; there is no hard budget, since libhegel is
+    expected to grow with its features until a concrete limit appears).
 R10. Every surface a setting or a generator has today (builder, ABI,
     docs, `DefaultGenerator`) is reached before a generator counts as done.
 
@@ -374,7 +376,10 @@ half-width] · date · time · [fold].
    instant instead as one integer node: an index into the values in the
    bounds in instant order (the wall times at the precision of each
    stretch of constant offset, trimmed of the repeat the ambiguous policy
-   excludes, with a gap's skipped wall times under `allow`), shrinking
+   excludes, with a gap's skipped wall times under `allow` listed after
+   the real wall times of the same instants, so that an index never
+   shrinks to a skipped wall time when a real one denotes the same
+   instant), shrinking
    toward the value nearest 2000-01-01T00:00:00Z and sampled at the
    targeting rate at either side of a transition or at an Appendix C
    instant. The instant fixes which repeat of a fold the value means, so
@@ -562,8 +567,13 @@ offset. If the host's rules disagree the value is still valid, merely not
 the targeted edge. Frontends that can enumerate the host's zone names
 pass them as the spec's explicit subset, so a name the host cannot
 resolve is never drawn; where they cannot, an unresolvable name is
-rejected with `assume`. `hegel_tzdb_version` lets a frontend warn once
-per run when the two releases differ.
+rejected with `assume`. `hegel_tzdb_version` lets a frontend compare the
+two releases. The Rust extras document the skew rather than warn about
+it: chrono-tz compiles in its own release (`chrono_tz::IANA_TZDB_VERSION`),
+so the two differ on every run between its releases and a warning would
+be noise, and jiff and `time` cannot report a release at all. A frontend
+whose host database is updated independently (Python's `tzdata`, the JVM)
+can warn once per run when the two differ.
 
 ### 8.2 Rust
 
@@ -675,8 +685,9 @@ Testing: oracle tests comparing `offset_at`, `resolve` and the transition
 iterator against jiff over every bundled zone and every transition plus
 rule-generated years to 2200; property tests that every generated zoned
 datetime round-trips through jiff with the reported kind; the existing
-generator test set from the `new-generator` skill per generator; a
-size-budget test on the wasm build.
+generator test set from the `new-generator` skill per generator. The
+wasm build's size is measured when the table is bumped, not budgeted
+(R9).
 
 ## 10. Decisions
 
