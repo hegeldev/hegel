@@ -1,0 +1,50 @@
+name: Set up Rust
+description: >-
+  Install a Rust toolchain (with optional components and targets), make it the
+  default, restore the cargo cache, install `just` and any other tools, and
+  on Windows exclude the workspace from Defender. Every Rust job in this repo
+  starts with this so the setup logic lives in one place.
+inputs:
+  toolchain:
+    description: rustup toolchain name, e.g. stable, nightly, "1.86"
+    default: stable
+  components:
+    description: space-separated rustup components, e.g. "rustfmt clippy"
+    default: ""
+  targets:
+    description: space-separated extra targets, e.g. wasm32-unknown-unknown
+    default: ""
+  tools:
+    description: space-separated tools for ./.github/actions/install-tools
+    default: just
+runs:
+  using: composite
+  steps:
+    - name: Install Rust
+      shell: bash
+      env:
+        TOOLCHAIN: ${{ inputs.toolchain }}
+        COMPONENTS: ${{ inputs.components }}
+        TARGETS: ${{ inputs.targets }}
+      run: |
+        set -euo pipefail
+        args=(rustup toolchain install "$TOOLCHAIN" --profile minimal)
+        for c in $COMPONENTS; do args+=(-c "$c"); done
+        for t in $TARGETS; do args+=(-t "$t"); done
+        "${args[@]}"
+        rustup default "$TOOLCHAIN"
+    - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+    - uses: ./.github/actions/install-tools
+      with:
+        tools: ${{ inputs.tools }}
+    # Windows Defender real-time scanning of every .obj/.exe/.pdb cargo
+    # writes (and of each test binary on execution) is a large tax on the
+    # subprocess-heavy integration tests. Excluding the workspace from
+    # real-time scanning removes it. Purely a speed optimization, and the
+    # Defender provider is occasionally unavailable on runners — never fail
+    # the job over it.
+    - name: Exclude workspace from Windows Defender
+      if: runner.os == 'Windows'
+      shell: pwsh
+      continue-on-error: true
+      run: Add-MpPreference -ExclusionPath "${{ github.workspace }}"

@@ -1,53 +1,76 @@
+from __future__ import annotations
+
 import argparse
 import os
 import re
 import subprocess
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Changes under these dirs require a hegel-rust RELEASE.md (the root one,
-# feeding CHANGELOG.md). Changes under C_SOURCE_DIRS require hegel-c/RELEASE.md
-# (feeding hegel-c/CHANGELOG.md) instead.
-RUST_SOURCE_DIRS = ["src/", "hegel-macros/"]
-C_SOURCE_DIRS = ["hegel-c/src/"]
 ROOT = Path(__file__).resolve().parent.parent.parent
 
-ROOT_RELEASE = "RELEASE.md"
-C_RELEASE = "hegel-c/RELEASE.md"
-ROOT_CHANGELOG = "CHANGELOG.md"
-C_CHANGELOG = "hegel-c/CHANGELOG.md"
 
-# hegel-rust (the `hegeltest` crate) and hegel-c (`hegeltest-c`) carry
-# independent version numbers, because a change can be breaking for one without
-# being breaking for the other (a breaking C ABI change is a minor bump for
-# hegel-c but only a patch for hegel-rust). The root and hegel-macros manifests
-# share the hegel-rust version; hegel-c has its own. Each is tagged separately:
-# `v<version>` for hegel-rust and `libhegel-v<version>` for hegel-c, whose tag
-# also carries the GitHub release the libhegel binaries are uploaded to.
+@dataclass(frozen=True)
+class Component:
+    """A separately versioned part of the monorepo.
+
+    `path` is the component's directory relative to the repo root. It doubles
+    as the tag prefix: a release of version X.Y.Z is tagged `<path>/X.Y.Z`.
+    `manifests` are the Cargo manifests that carry the component's version
+    (the first is the one its version is read from); `source_dirs` are the
+    directories whose changes require a `<path>/RELEASE.md` on a PR.
+    """
+
+    path: str
+    manifests: tuple[str, ...]
+    source_dirs: tuple[str, ...]
+
+    @property
+    def release_file(self) -> str:
+        return f"{self.path}/RELEASE.md"
+
+    @property
+    def changelog(self) -> str:
+        return f"{self.path}/CHANGELOG.md"
+
+    def tag(self, version: str) -> str:
+        return f"{self.path}/{version}"
+
+    def manifest(self) -> Path:
+        return ROOT / self.manifests[0]
 
 
-def rust_tag(version: str) -> str:
-    return f"v{version}"
-
-
-def libhegel_tag(version: str) -> str:
-    return f"libhegel-v{version}"
+# libhegel (the `hegeltest-c` crate) and the Rust frontend (`hegeltest` and
+# `hegeltest-macros`) carry independent version numbers, because a change can
+# be breaking for one without being breaking for the other (a breaking C ABI
+# change is a minor bump for libhegel but only a patch for the Rust frontend).
+# Each is tagged separately as `<path>/<version>`; the libhegel tag also
+# carries the GitHub release the libhegel binaries are uploaded to.
+LIBHEGEL = Component(
+    path="libhegel",
+    manifests=("libhegel/Cargo.toml",),
+    source_dirs=("libhegel/src/",),
+)
+RUST = Component(
+    path="frontends/rust",
+    manifests=("frontends/rust/Cargo.toml", "frontends/rust/macros/Cargo.toml"),
+    source_dirs=("frontends/rust/src/", "frontends/rust/macros/"),
+)
+COMPONENTS = [LIBHEGEL, RUST]
 
 
 def libhegel_release_title(version: str) -> str:
     return f"libhegel v{version}"
 
+
 # Files the release commit reads, rewrites, and stages. These are validated by
-# `check` on every PR so removing one (as the conformance-test removal did with
-# tests/conformance/rust) fails fast instead of breaking the actual release —
-# which only ever runs the `release` subcommand on a push to main.
+# `check` on every PR so removing one fails fast instead of breaking the actual
+# release — which only ever runs the `release` subcommand on a push to main.
 RELEASE_PATHS = [
-    "Cargo.toml",
     "Cargo.lock",
-    "hegel-macros/Cargo.toml",
-    "hegel-c/Cargo.toml",
-    "CHANGELOG.md",
-    "hegel-c/CHANGELOG.md",
+    *(m for c in COMPONENTS for m in c.manifests),
+    *(c.changelog for c in COMPONENTS),
 ]
 
 
@@ -116,9 +139,9 @@ def bump_internal_path_deps(cargo_toml: Path, versions: dict[str, str]) -> None:
     move to. Requiring both an exact pin and a `path =` (rather than trusting a
     hardcoded crate list) means a change in dependency direction can't silently
     leave a stale pin behind — which is exactly how the inversion refactor broke
-    the release: the root crate gained a `hegeltest-c` path dependency that the
-    old hardcoded list never touched. Now that hegel-rust and hegel-c version
-    independently, the pin is keyed by crate name so each follows its own crate.
+    the release: the frontend crate gained a `hegeltest-c` path dependency that
+    the old hardcoded list never touched. The pin is keyed by crate name so each
+    follows its own crate's version.
     """
     lines = cargo_toml.read_text().splitlines(keepends=True)
     out = []
@@ -142,23 +165,21 @@ def bump_internal_path_deps(cargo_toml: Path, versions: dict[str, str]) -> None:
 def apply_version_bump(root: Path, rust_version: str, c_version: str) -> None:
     """Rewrite the workspace manifests to their new versions.
 
-    The root and hegel-macros manifests move to `rust_version`; hegel-c moves to
-    `c_version`. Internal path-dependency pins follow the crate they point at.
-    Pure file rewriting, factored out of `release()` so it can be tested without
-    the publish/git/gh machinery around it.
+    The Rust frontend's manifests (`hegeltest` and `hegeltest-macros`) move to
+    `rust_version`; libhegel's moves to `c_version`. Internal path-dependency
+    pins follow the crate they point at. Pure file rewriting, factored out of
+    `release()` so it can be tested without the publish/git/gh machinery.
     """
     versions = {"hegeltest-macros": rust_version, "hegeltest-c": c_version}
 
-    set_version(root / "Cargo.toml", rust_version)
-    set_version(root / "hegel-macros" / "Cargo.toml", rust_version)
-    set_version(root / "hegel-c" / "Cargo.toml", c_version)
+    for rel in RUST.manifests:
+        set_version(root / rel, rust_version)
+    for rel in LIBHEGEL.manifests:
+        set_version(root / rel, c_version)
 
-    for manifest in [
-        root / "Cargo.toml",
-        root / "hegel-macros" / "Cargo.toml",
-        root / "hegel-c" / "Cargo.toml",
-    ]:
-        bump_internal_path_deps(manifest, versions)
+    for component in COMPONENTS:
+        for rel in component.manifests:
+            bump_internal_path_deps(root / rel, versions)
 
 
 def add_changelog(path: Path, *, version: str, content: str) -> None:
@@ -174,27 +195,28 @@ def add_changelog(path: Path, *, version: str, content: str) -> None:
 def plan_release(
     rust_current: str,
     c_current: str,
-    root_release: tuple[str, str] | None,
+    rust_release: tuple[str, str] | None,
     c_release: tuple[str, str] | None,
 ) -> tuple[str, str, str, str | None]:
     """Decide the new versions and changelog bodies for a release.
 
-    `root_release`/`c_release` are `(release_type, content)` pairs parsed from
-    RELEASE.md / hegel-c/RELEASE.md, or None when that file is absent. At least
-    one must be present (the release only runs when one exists).
+    `rust_release`/`c_release` are `(release_type, content)` pairs parsed from
+    `frontends/rust/RELEASE.md` / `libhegel/RELEASE.md`, or None when that file
+    is absent. At least one must be present (the release only runs when one
+    exists).
 
-    The two crates version independently. hegel-c bumps by its own release file.
-    hegel-rust bumps by its release file when present; otherwise — when only
-    hegel-c changed — it takes a patch bump because the root crate pins
-    `hegeltest-c` exactly and must be republished against the new engine, and
-    its changelog gets an auto-generated dependency-bump entry. That entry is
-    only correct when there are no functional hegel-rust changes (see the
-    changelog skill).
+    The two components version independently. libhegel bumps by its own
+    release file. The Rust frontend bumps by its release file when present;
+    otherwise — when only libhegel changed — it takes a patch bump because
+    `hegeltest` pins `hegeltest-c` exactly and must be republished against the
+    new engine, and its changelog gets an auto-generated dependency-bump entry.
+    That entry is only correct when there are no functional frontend changes
+    (see the changelog skill).
 
-    Returns `(rust_version, c_version, root_content, c_content)`; `c_content`
-    is None (and `c_version` unchanged) when there is no hegel-c/RELEASE.md.
+    Returns `(rust_version, c_version, rust_content, c_content)`; `c_content`
+    is None (and `c_version` unchanged) when there is no libhegel/RELEASE.md.
     """
-    assert root_release is not None or c_release is not None
+    assert rust_release is not None or c_release is not None
 
     if c_release is not None:
         c_version = bump_version(c_current, c_release[0])
@@ -203,16 +225,16 @@ def plan_release(
         c_version = c_current
         c_content = None
 
-    if root_release is not None:
-        rust_version = bump_version(rust_current, root_release[0])
-        root_content = root_release[1]
+    if rust_release is not None:
+        rust_version = bump_version(rust_current, rust_release[0])
+        rust_content = rust_release[1]
     else:
         rust_version = bump_version(rust_current, "patch")
-        root_content = (
+        rust_content = (
             f"This release updates the `hegeltest-c` dependency to {c_version}."
         )
 
-    return rust_version, c_version, root_content, c_content
+    return rust_version, c_version, rust_content, c_content
 
 
 def check(base_ref: str) -> None:
@@ -230,39 +252,42 @@ def check(base_ref: str) -> None:
     )
     changed_files = [line for line in output.splitlines() if line.strip()]
 
-    rust_changed = any(
-        f.startswith(d) for f in changed_files for d in RUST_SOURCE_DIRS
-    )
-    c_changed = any(f.startswith(d) for f in changed_files for d in C_SOURCE_DIRS)
+    def changed(component: Component) -> bool:
+        return any(
+            f.startswith(d) for f in changed_files for d in component.source_dirs
+        )
 
-    # A hegel-c release auto-generates the root dependency-bump entry, so when
-    # hegel-c is releasing (its RELEASE.md is present) a root RELEASE.md is
-    # optional — the author writes one only when there are functional hegel-rust
-    # changes to document. A hegel-rust change with no hegel-c release has no
-    # such fallback, so the root RELEASE.md is required.
-    c_release_present = (ROOT / C_RELEASE).exists()
-
-    require_release_file(
-        base_ref,
-        ROOT_RELEASE,
-        changed_files,
-        [
-            "Every pull request to hegel-rust requires a RELEASE.md file.",
-            "You can find an example and instructions in RELEASE-sample.md.",
-        ],
-        required=rust_changed and not c_release_present,
-    )
+    # A libhegel release auto-generates the Rust frontend's dependency-bump
+    # entry, so when libhegel is releasing (its RELEASE.md is present) the
+    # frontend's RELEASE.md is optional — the author writes one only when there
+    # are functional frontend changes to document. A frontend change with no
+    # libhegel release has no such fallback, so its RELEASE.md is required.
+    c_release_present = (ROOT / LIBHEGEL.release_file).exists()
 
     require_release_file(
         base_ref,
-        C_RELEASE,
+        RUST.release_file,
         changed_files,
         [
-            "Every pull request changing the libhegel C ABI requires a "
-            "hegel-c/RELEASE.md file.",
-            "You can find an example and instructions in RELEASE-sample.md.",
+            f"Every pull request changing the Rust frontend requires a "
+            f"{RUST.release_file} file.",
+            "You can find an example and instructions in "
+            "frontends/rust/RELEASE-sample.md.",
         ],
-        required=c_changed,
+        required=changed(RUST) and not c_release_present,
+    )
+
+    require_release_file(
+        base_ref,
+        LIBHEGEL.release_file,
+        changed_files,
+        [
+            f"Every pull request changing libhegel requires a "
+            f"{LIBHEGEL.release_file} file.",
+            "You can find an example and instructions in "
+            "frontends/rust/RELEASE-sample.md.",
+        ],
+        required=changed(LIBHEGEL),
     )
 
 
@@ -308,16 +333,16 @@ def require_release_file(
 
 
 def release() -> None:
-    root_path = ROOT / ROOT_RELEASE
-    c_path = ROOT / C_RELEASE
-    root_release = parse_release_file(root_path) if root_path.exists() else None
+    rust_path = ROOT / RUST.release_file
+    c_path = ROOT / LIBHEGEL.release_file
+    rust_release = parse_release_file(rust_path) if rust_path.exists() else None
     c_release = parse_release_file(c_path) if c_path.exists() else None
-    assert root_release is not None or c_release is not None
+    assert rust_release is not None or c_release is not None
 
-    rust_current = current_version(ROOT / "Cargo.toml")
-    c_current = current_version(ROOT / "hegel-c" / "Cargo.toml")
-    rust_version, c_version, root_content, c_content = plan_release(
-        rust_current, c_current, root_release, c_release
+    rust_current = current_version(RUST.manifest())
+    c_current = current_version(LIBHEGEL.manifest())
+    rust_version, c_version, rust_content, c_content = plan_release(
+        rust_current, c_current, rust_release, c_release
     )
 
     apply_version_bump(ROOT, rust_version, c_version)
@@ -325,9 +350,9 @@ def release() -> None:
     # regenerate the lockfile after version bump
     subprocess.run(["cargo", "update", "--workspace"], check=True, cwd=ROOT)
 
-    add_changelog(ROOT / ROOT_CHANGELOG, version=rust_version, content=root_content)
+    add_changelog(ROOT / RUST.changelog, version=rust_version, content=rust_content)
     if c_content is not None:
-        add_changelog(ROOT / C_CHANGELOG, version=c_version, content=c_content)
+        add_changelog(ROOT / LIBHEGEL.changelog, version=c_version, content=c_content)
 
     app_slug = os.environ["HEGEL_RELEASE_APP_SLUG"]
     bot_user_id = subprocess.check_output(
@@ -341,10 +366,10 @@ def release() -> None:
         cwd=ROOT,
     )
     git("add", *RELEASE_PATHS, cwd=ROOT)
-    if root_release is not None:
-        git("rm", ROOT_RELEASE, cwd=ROOT)
+    if rust_release is not None:
+        git("rm", RUST.release_file, cwd=ROOT)
     if c_release is not None:
-        git("rm", C_RELEASE, cwd=ROOT)
+        git("rm", LIBHEGEL.release_file, cwd=ROOT)
 
     bumped = [f"hegeltest to {rust_version}"]
     if c_release is not None:
@@ -356,11 +381,11 @@ def release() -> None:
         cwd=ROOT,
     )
 
-    # hegel-rust bumps on every release, so its tag is always pushed. The
-    # GitHub release carries the libhegel binaries, so it is the hegel-c
-    # release: it is tagged with the hegel-c version and only cut when hegel-c
-    # changed. A hegel-rust-only release publishes to crates.io, updates the
-    # changelog and pushes its tag — no GitHub release.
+    # The Rust frontend bumps on every release, so its tag is always pushed.
+    # The GitHub release carries the libhegel binaries, so it is the libhegel
+    # release: it is tagged with the libhegel version and only cut when
+    # libhegel changed. A frontend-only release publishes to crates.io,
+    # updates the changelog and pushes its tag — no GitHub release.
     tags = release_tags(rust_version, c_version if c_release is not None else None)
     for tag in tags:
         git("tag", tag, cwd=ROOT)
@@ -371,7 +396,7 @@ def release() -> None:
                 "gh",
                 "release",
                 "create",
-                libhegel_tag(c_version),
+                LIBHEGEL.tag(c_version),
                 "--draft",
                 "--title",
                 libhegel_release_title(c_version),
@@ -384,26 +409,27 @@ def release() -> None:
 
 
 def release_tags(rust_version: str, c_version: str | None) -> list[str]:
-    """The tags a release commit gets: hegel-rust's always, hegel-c's when it
-    released (`c_version` is None otherwise)."""
-    tags = [rust_tag(rust_version)]
+    """The tags a release commit gets: the Rust frontend's always, libhegel's
+    when it released (`c_version` is None otherwise)."""
+    tags = [RUST.tag(rust_version)]
     if c_version is not None:
-        tags.append(libhegel_tag(c_version))
+        tags.append(LIBHEGEL.tag(c_version))
     return tags
 
 
-def release_pr_details(version: str, tags: list[str]) -> tuple[str, str]:
+def release_pr_details(tags: list[str]) -> tuple[str, str]:
     """Title and body for the fallback PR opened when the release push races a
     concurrent merge to main.
 
-    `version` is the hegeltest version of the release commit, which names the
-    PR. `tags` is whatever release tags point at that commit — hegel-rust's
-    `v<version>`, plus libhegel's `libhegel-v<version>` when hegel-c released —
-    all of which were pushed before the failed push to main.
+    `tags` is whatever release tags point at the release commit — the Rust
+    frontend's `frontends/rust/<version>`, plus `libhegel/<version>` when
+    libhegel released — all of which were pushed before the failed push to
+    main.
     """
-    title = f"Release v{version}"
+    joined = " and ".join(tags)
+    title = f"Release {joined}"
     body = (
-        f"The push to main after tagging {' and '.join(tags)} failed because "
+        f"The push to main after tagging {joined} failed because "
         f"main had diverged. The tags and crates.io publish succeeded.\n\n"
         f"This PR merges the release commit (version bump, changelog, "
         f"RELEASE.md removal) into main."
@@ -412,7 +438,7 @@ def release_pr_details(version: str, tags: list[str]) -> tuple[str, str]:
 
 
 def push_or_pr() -> None:
-    version = current_version(ROOT / "Cargo.toml")
+    version = current_version(RUST.manifest())
 
     result = subprocess.run(
         ["git", "push", "origin", "main"], cwd=ROOT
@@ -420,9 +446,9 @@ def push_or_pr() -> None:
     if result.returncode == 0:
         return
 
-    print(f"Push to main failed, creating PR for release v{version}")
+    print(f"Push to main failed, creating PR for release {RUST.tag(version)}")
 
-    branch = f"release/v{version}"
+    branch = f"release/rust-{version}"
     git("checkout", "-b", branch, cwd=ROOT)
     git("push", "origin", branch, cwd=ROOT)
 
@@ -439,7 +465,7 @@ def push_or_pr() -> None:
     tags = subprocess.check_output(
         ["git", "tag", "--points-at", "HEAD"], cwd=ROOT, text=True
     ).split()
-    title, body = release_pr_details(version, tags)
+    title, body = release_pr_details(tags)
     subprocess.run(
         [
             "gh", "pr", "create",
@@ -455,7 +481,7 @@ def push_or_pr() -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Release automation for hegel-rust.")
+    parser = argparse.ArgumentParser(description="Release automation for the hegel monorepo.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     check_parser = subparsers.add_parser("check")

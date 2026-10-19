@@ -1,3 +1,11 @@
+# The CI entry point. Works out which components a change touches, runs the
+# workspace-wide checks, calls each component's reusable workflow
+# (libhegel.yml, frontend-rust.yml) only when that component is affected,
+# and — on a push to main — releases whatever has a RELEASE.md.
+#
+# Adding a frontend: add a `frontends/<lang>/**` filter below, a
+# `.github/workflows/frontend-<lang>.yml` reusable workflow, a job here that
+# calls it, and list that job in the release job's `needs`.
 name: CI
 
 on:
@@ -13,6 +21,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Which parts of the repo changed. On a push to main everything is treated
+  # as changed, so the release job always has a complete run behind it; on a
+  # pull request only the affected components' workflows run. Skipped
+  # required checks count as passing for branch protection.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      libhegel: ${{ github.event_name != 'pull_request' || steps.filter.outputs.libhegel == 'true' }}
+      rust: ${{ github.event_name != 'pull_request' || steps.filter.outputs.rust == 'true' }}
+    steps:
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        if: github.event_name == 'pull_request'
+        id: filter
+        with:
+          # `shared` is everything the Cargo workspace members have in common:
+          # a change there re-runs every component. libhegel is a dependency
+          # of every frontend, so a libhegel change re-runs the frontends too.
+          filters: |
+            shared: &shared
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'clippy.toml'
+              - 'justfile'
+              - 'scripts/**'
+              - 'nix/**'
+              - '.github/**'
+            libhegel:
+              - *shared
+              - 'libhegel/**'
+            rust:
+              - *shared
+              - 'libhegel/**'
+              - 'frontends/rust/**'
+
+  # Workspace-wide lints: formatting, clippy, the scripts/check-*.py lints,
+  # each component's own lints (via `just check-lint`), the workflow lint and
+  # a packaging dry run. Cheap enough to run on every change.
   lint:
     name: lint
     runs-on: ubuntu-latest
@@ -22,15 +70,9 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-
-      - name: Install Rust
-        run: rustup toolchain install stable --profile minimal -c rustfmt -c clippy
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-
-      - uses: ./.github/actions/install-tools
+      - uses: ./.github/actions/setup-rust
         with:
-          tools: just
-
+          components: rustfmt clippy
       - name: Check lint
         run: just check-lint
       - name: Check zizmor
@@ -41,7 +83,7 @@ jobs:
         # creates a .crate for distribution and verifies it can build in isolation
         # see https://doc.rust-lang.org/cargo/commands/cargo-package.html
         #
-        # The packaged hegeltest has no hegel-c/ sibling, so its build.rs
+        # The packaged hegeltest has no libhegel/ sibling, so its build.rs
         # would fetch the pinned hegeltest-c from crates.io — which does not
         # exist yet on a release PR. HEGEL_C_LIB_DIR short-circuits that with
         # the cdylib built from this checkout.
@@ -49,260 +91,27 @@ jobs:
           cargo build -p hegeltest-c
           HEGEL_C_LIB_DIR="$PWD/target/debug" cargo package --workspace
 
-  test:
-    # Keep the name matching the branch-protection required checks on Linux
-    # (`test (1.86)` / `test (stable)`); Windows variants get a suffix.
-    # macOS is intentionally absent for now and will land in a follow-up.
-    name: test (${{ matrix.rust }}${{ matrix.os == 'windows-latest' && ', windows' || '' }})
-    runs-on: ${{ matrix.os }}
+  libhegel:
+    name: libhegel
+    needs: changes
+    if: needs.changes.outputs.libhegel == 'true'
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        rust: ["1.86", stable]
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
+    uses: ./.github/workflows/libhegel.yml
 
-      - name: Install Rust
-        run: rustup toolchain install ${{ matrix.rust }} --profile minimal && rustup default ${{ matrix.rust }}
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-
-      - uses: ./.github/actions/install-tools
-        with:
-          tools: just
-
-      # Windows Defender real-time scanning of every .obj/.exe/.pdb cargo
-      # writes (and of each test binary on execution) is a large tax on the
-      # subprocess-heavy integration tests. Excluding the workspace from
-      # real-time scanning removes it. No-op on non-Windows runners.
-      - name: Exclude workspace from Windows Defender
-        if: runner.os == 'Windows'
-        shell: pwsh
-        # Purely a speed optimization, and the Defender provider is
-        # occasionally unavailable on runners — never fail the job over it.
-        continue-on-error: true
-        run: Add-MpPreference -ExclusionPath "${{ github.workspace }}"
-
-      - name: Run tests
-        run: just check-tests
-
-  test-wasm:
-    name: test-wasm
-    runs-on: ubuntu-latest
+  rust:
+    name: rust
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     permissions:
       contents: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
+    uses: ./.github/workflows/frontend-rust.yml
 
-      - name: Install Rust and WebAssembly target
-        run: |
-          rustup toolchain install stable --profile minimal -c llvm-tools-preview
-          rustup default stable
-          python scripts/check-release-rust.py
-          rustup target add wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-
-      - name: Compile the test suite for WebAssembly
-        run: cargo test -p hegeltest-c --target wasm32-unknown-unknown --lib --no-run
-      - name: Build the WebAssembly artifact
-        run: cargo build -p hegeltest-c --release --target wasm32-unknown-unknown
-      - name: Build the WebAssembly static archive
-        run: cargo rustc -p hegeltest-c --release --target wasm32-unknown-unknown --features wasm-static --crate-type staticlib
-      - name: Check static archive hook names
-        shell: bash
-        run: |
-          set -euo pipefail
-          nm="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-nm"
-          symbols=$("$nm" -u target/wasm32-unknown-unknown/release/libhegel_c.a)
-          grep -q 'hegel_host_entropy_fill' <<<"$symbols"
-          grep -q 'hegel_host_monotonic_nanos' <<<"$symbols"
-          if grep -Eq '_RN.*host_entropy_fill' <<<"$symbols"; then exit 1; fi
-          if grep -Eq '_RN.*host_monotonic_nanos' <<<"$symbols"; then exit 1; fi
-      - name: Smoke-test the WebAssembly host and string ABI
-        run: node scripts/test-wasm-abi.mjs
-
-  test-all-features:
-    name: test-all-features (${{ matrix.rust }}${{ matrix.os == 'windows-latest' && ', windows' || '' }})
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            rust: "1.86"
-            recipe: check-tests-all-features
-          - os: windows-latest
-            rust: stable
-            recipe: check-tests-all-features
-          - os: ubuntu-latest
-            rust: "1.86"
-            recipe: check-tests-all-features
-          - os: ubuntu-latest
-            rust: stable
-            recipe: check-tests-all-features
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Install Rust
-        run: rustup toolchain install ${{ matrix.rust }} --profile minimal && rustup default ${{ matrix.rust }}
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-
-      - uses: ./.github/actions/install-tools
-        with:
-          tools: just
-
-      # See the note in the `test` job: exclude the workspace from Windows
-      # Defender real-time scanning to drop the AV tax on subprocess builds.
-      - name: Exclude workspace from Windows Defender
-        if: runner.os == 'Windows'
-        shell: pwsh
-        # Purely a speed optimization, and the Defender provider is
-        # occasionally unavailable on runners — never fail the job over it.
-        continue-on-error: true
-        run: Add-MpPreference -ExclusionPath "${{ github.workspace }}"
-
-      - name: Run tests
-        run: just ${{ matrix.recipe }}
-
-  test-c-bindings:
-    # Builds libhegel (the C shared/static library in hegel-c/), runs
-    # the libloading-based Rust smoke tests, and then compiles every
-    # example C program in hegel-c/examples/ against both libhegel.so
-    # and libhegel.a, running each binary to check the linking modes
-    # actually work end-to-end. Runs on every native runner where we
-    # publish a release binary; symbol-visibility, libloading behavior,
-    # and Windows-specific calling conventions only get exercised by
-    # actually running the smoke tests on each OS. The example C
-    # programs are bash-driven and only run on Unix runners.
-    name: test-c-bindings (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-14, windows-latest]
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Install Rust
-        run: rustup toolchain install stable --profile minimal && rustup default stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-
-      - uses: ./.github/actions/install-tools
-        with:
-          tools: just
-
-      # See the note in the `test` job: exclude the workspace from Windows
-      # Defender real-time scanning to drop the AV tax on subprocess builds.
-      - name: Exclude workspace from Windows Defender
-        if: runner.os == 'Windows'
-        shell: pwsh
-        # Purely a speed optimization, and the Defender provider is
-        # occasionally unavailable on runners — never fail the job over it.
-        continue-on-error: true
-        run: Add-MpPreference -ExclusionPath "${{ github.workspace }}"
-
-      - name: Run C bindings test recipe
-        run: just c-test
-
-      # Build libhegel with `panic = "abort"` and re-run the smoke tests + C
-      # examples against it. Proves no panic crosses the FFI boundary on the
-      # tested paths (an invalid schema that aborted instead of returning
-      # HEGEL_E_INVALID_ARG would crash the process and fail this step). The
-      # recipe is a no-op on Windows (bash-driven examples).
-      - name: Run C bindings under panic=abort
-        run: just c-test-abort
-
-  test-c-runtime:
-    # Builds libhegel as a self-contained no-std release cdylib
-    # (--features runtime), verifies via `nm -D`/`readelf` that it
-    # references no thread-local-storage machinery
-    # (__cxa_thread_atexit_impl / __tls_get_addr / pthread_key_create — the
-    # registrations that make dlclose unsafe), carries no PT_TLS segment,
-    # and exports only hegel_* symbols, and runs the smoke tests, including
-    # the dlopen/dlclose replay test, against that build.
-    name: test-c-runtime
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Install Rust
-        run: rustup toolchain install stable --profile minimal -c clippy && rustup default stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-
-      - uses: ./.github/actions/install-tools
-        with:
-          tools: just
-
-      - name: Run no-std runtime C bindings recipe
-        run: just c-test-runtime
-
-  lark:
-    name: lark
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Install Rust
-        run: rustup toolchain install stable --profile minimal
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-
-      - uses: ./.github/actions/install-tools
-        with:
-          # `uv` is needed for the `check-lark.py` script's
-          # `#!/usr/bin/env -S uv run --script` shebang.
-          tools: just uv
-
-      - name: Check generated strings parse with Lark
-        run: just check-lark
-
-  docs:
-    name: docs
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-      - name: Install Rust
-        run: rustup toolchain install nightly --profile minimal && rustup default nightly
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-
-      - uses: ./.github/actions/install-tools
-        with:
-          tools: just
-
-      - name: Install cargo-docs-rs
-        run: cargo install --locked cargo-docs-rs
-
-      - name: Check docs
-        run: just check-docs
-
-  # test with the minimal versions of all our dependencies
+  # Test with the minimal versions of every dependency in the workspace.
   test-minimal-versions:
     name: test-minimal-versions
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -310,36 +119,19 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - name: Install Rust
-        run: rustup toolchain install nightly --profile minimal && rustup default nightly
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - uses: ./.github/actions/install-tools
+      - uses: ./.github/actions/setup-rust
         with:
-          tools: just
-
+          toolchain: nightly
       - name: Run tests
         run: just check-tests-minimal-versions
 
-  compile-examples:
-    name: compile-examples (${{ matrix.rust }})
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    strategy:
-      matrix:
-        rust: ["1.86", stable]
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-      - name: Install Rust
-        run: rustup toolchain install ${{ matrix.rust }} --profile minimal && rustup default ${{ matrix.rust }}
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - name: Compile examples
-        run: cargo build --examples --all-features
-
+  # Coverage is measured over the whole Cargo workspace (the engine is
+  # covered by its own tests and by the Rust frontend driving it), so it
+  # runs whenever either changed.
   coverage:
     name: coverage
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write  # needed for ratchet auto-update
@@ -360,25 +152,21 @@ jobs:
         with:
           app-id: ${{ vars.HEGEL_RELEASE_APP_ID }}
           private-key: ${{ secrets.HEGEL_RELEASE_APP_PRIVATE_KEY }}
-          repositories: hegel-rust
+          repositories: hegel
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2 # zizmor: ignore[artipacked]
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         with:
           ref: ${{ github.head_ref || github.ref }}
           token: ${{ steps.app-token.outputs.token }}
 
-      - name: Install Rust
-        run: rustup toolchain install stable --profile minimal -c llvm-tools-preview
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-
-      - name: Install cargo-llvm-cov
-        run: cargo install --locked cargo-llvm-cov
-
-      - uses: ./.github/actions/install-tools
+      - uses: ./.github/actions/setup-rust
         with:
+          components: llvm-tools-preview
           # `uv` is needed for the `check-coverage.py` script's
           # `#!/usr/bin/env -S uv run --script` shebang.
           tools: just uv
+      - name: Install cargo-llvm-cov
+        run: cargo install --locked cargo-llvm-cov
 
       - name: Run coverage
         run: just check-coverage
@@ -418,6 +206,8 @@ jobs:
 
   nix:
     name: nix
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -425,7 +215,6 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-
       - uses: cachix/install-nix-action@1ca7d21a94afc7c957383a2d217460d980de4934 # v31.10.1
       - uses: ./.github/actions/install-tools
         with:
@@ -433,51 +222,24 @@ jobs:
       - name: lint
         run: just check-format-nix
 
-  # Run a fast core of the suite under Miri to catch undefined behaviour in the
-  # native engine and the in-process C-ABI boundary hegeltest drives it through.
-  # The expensive quality/compile suites and subprocess-driven tests are
-  # excluded (see `just check-miri`); the `test_miri` target drives every main
-  # feature through the FFI primitives at small example counts, and the
-  # `c_abi_miri` test target drives the C-ABI directly (clone / free /
-  # reference-counted release / concurrent use, plus one complete generate-fail-
-  # shrink run) in a dedicated tractable subset, which is what keeps the run
-  # manageable under Miri's interpreter while covering the unsafe boundary.
-  miri:
-    name: miri
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Install Rust nightly + miri
-        run: rustup toolchain install nightly --profile minimal -c miri
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-
-      - uses: ./.github/actions/install-tools
-        with:
-          tools: just
-
-      - name: Run miri
-        run: just check-miri
-
   release:
     name: release
-    if: github.event_name == 'push' && github.repository == 'hegeldev/hegel-rust'
-    needs: [lint, test, test-wasm, test-all-features, test-minimal-versions, test-c-bindings, test-c-runtime, compile-examples, docs, coverage, nix, miri, lark]
+    # On a push every component ran (see `changes`), so a plain success of
+    # every dependency is required; the `!cancelled()` form is what lets this
+    # job evaluate its condition at all when a dependency was skipped.
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && github.event_name == 'push' && github.repository == 'hegeldev/hegel' }}
+    needs: [lint, libhegel, rust, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       # id-token: "enables the workflow to request and use an OIDC token from GitHub's OIDC provider".
       # Used by our trusted publishing flow
       id-token: write
-    # Expose the hegel-c release to `release-binaries` (cross-platform library
-    # builds). `c_released` lets those jobs run only when hegel-c changed — a
-    # hegel-rust-only release ships no new binaries. `version` is the
-    # post-bump hegel-c version and `libhegel_tag` the `libhegel-v<version>`
-    # tag release.py cut for it, which they check out and upload against.
+    # Expose the libhegel release to `release-binaries` (cross-platform library
+    # builds). `c_released` lets those jobs run only when libhegel changed — a
+    # frontend-only release ships no new binaries. `version` is the post-bump
+    # libhegel version and `libhegel_tag` the `libhegel/<version>` tag
+    # release.py cut for it, which they check out and upload against.
     outputs:
       c_released: ${{ steps.check.outputs.c_release == 'true' }}
       version: ${{ steps.released-version.outputs.version }}
@@ -490,14 +252,14 @@ jobs:
       - name: Check for release files
         id: check
         run: |
-          if [ ! -f RELEASE.md ] && [ ! -f hegel-c/RELEASE.md ]; then
+          if [ ! -f frontends/rust/RELEASE.md ] && [ ! -f libhegel/RELEASE.md ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
-          # A hegel-c/RELEASE.md means the libhegel binaries are
-          # released: hegeltest-c is republished and a tagged GitHub release
-          # with cross-platform binaries is cut. Captured here, before the
-          # release commit consumes the file.
-          if [ -f hegel-c/RELEASE.md ]; then
+          # A libhegel/RELEASE.md means the libhegel binaries are released:
+          # hegeltest-c is republished and a tagged GitHub release with
+          # cross-platform binaries is cut. Captured here, before the release
+          # commit consumes the file.
+          if [ -f libhegel/RELEASE.md ]; then
             echo "c_release=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -508,7 +270,7 @@ jobs:
         with:
           app-id: ${{ vars.HEGEL_RELEASE_APP_ID }}
           private-key: ${{ secrets.HEGEL_RELEASE_APP_PRIVATE_KEY }}
-          repositories: hegel-rust
+          repositories: hegel
 
       - name: Re-checkout with app token # zizmor: ignore[artipacked]
         if: steps.check.outputs.skip != 'true'
@@ -521,7 +283,7 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-          python scripts/check-release-rust.py
+          python libhegel/scripts/check-release-rust.py
 
       - name: Release
         if: steps.check.outputs.skip != 'true'
@@ -530,15 +292,15 @@ jobs:
           HEGEL_RELEASE_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
         run: python .github/scripts/release.py release
 
-      - name: Capture released hegel-c version
+      - name: Capture released libhegel version
         id: released-version
         if: steps.check.outputs.skip != 'true' && steps.check.outputs.c_release == 'true'
         run: |
           set -euo pipefail
-          VERSION=$(grep '^version' hegel-c/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
-          TAG=$(git tag --points-at HEAD --list 'libhegel-v*')
+          VERSION=$(grep '^version' libhegel/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          TAG=$(git tag --points-at HEAD --list 'libhegel/*')
           if [ -z "$TAG" ]; then
-            echo "release.py left no libhegel-v* tag on the release commit" >&2
+            echo "release.py left no libhegel/* tag on the release commit" >&2
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -558,7 +320,7 @@ jobs:
       - name: Wait for crates.io index
         if: steps.check.outputs.skip != 'true'
         run: |
-          VERSION=$(grep '^version' hegel-macros/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          VERSION=$(grep '^version' frontends/rust/macros/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
           echo "waiting for hegeltest-macros $VERSION to appear on crates.io..."
           for i in $(seq 1 60); do
             if cargo search hegeltest-macros | grep -q "\"$VERSION\""; then
@@ -571,13 +333,14 @@ jobs:
 
       - name: Publish hegeltest-c
         if: steps.check.outputs.skip != 'true' && steps.check.outputs.c_release == 'true'
-        # The engine crate. hegeltest now depends on it, so it must be
-        # published (and indexed) before hegeltest. Its other role is to
-        # reserve the name; the useful artefact for non-Rust consumers is the
+        # The engine crate. hegeltest depends on it, so it must be published
+        # (and indexed) before hegeltest. Its other role is to reserve the
+        # name; the useful artefact for non-Rust consumers is the
         # `libhegel-<goos>-<goarch>.<ext>` binaries uploaded by the
         # `release-binaries` job, not this source crate. Only published when
-        # hegel-c actually changed — its version is independent of hegeltest's,
-        # so a hegel-rust-only release leaves it at its already-published version.
+        # libhegel actually changed — its version is independent of the Rust
+        # frontend's, so a frontend-only release leaves it at its
+        # already-published version.
         run: cargo publish -p hegeltest-c
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
@@ -585,7 +348,7 @@ jobs:
       - name: Wait for hegeltest-c on crates.io index
         if: steps.check.outputs.skip != 'true' && steps.check.outputs.c_release == 'true'
         run: |
-          VERSION=$(grep '^version' hegel-c/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          VERSION=$(grep '^version' libhegel/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
           echo "waiting for hegeltest-c $VERSION to appear on crates.io..."
           for i in $(seq 1 60); do
             if cargo search hegeltest-c | grep -q "\"$VERSION\""; then
@@ -626,7 +389,7 @@ jobs:
     # showing the literal `${{ matrix.X }}` template, which GitHub does
     # not interpolate when a job-level `if:` evaluates to false before
     # matrix expansion.
-    if: github.event_name == 'push' && github.repository == 'hegeldev/hegel-rust' && needs.release.outputs.c_released == 'true'
+    if: github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.outputs.c_released == 'true'
     needs: release
     permissions:
       contents: write
@@ -672,7 +435,7 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-          python scripts/check-release-rust.py
+          python libhegel/scripts/check-release-rust.py
           rustup target add ${{ matrix.target }}
 
       - name: Build libraries
@@ -735,7 +498,7 @@ jobs:
             "$STATIC_ASSET.sha256"
           )
           if [ "${{ matrix.platform }}" = linux-amd64 ]; then
-            cp hegel-c/include/hegel.h hegel.h
+            cp libhegel/include/hegel.h hegel.h
             sha256sum hegel.h > hegel.h.sha256
             assets+=(hegel.h hegel.h.sha256)
           fi
@@ -750,14 +513,14 @@ jobs:
             gh release create "$tag" \
               --draft \
               --title "libhegel v${VERSION}" \
-              --notes "libhegel ${VERSION} binaries. See hegel-c/CHANGELOG.md for the full changelog." \
+              --notes "libhegel ${VERSION} binaries. See libhegel/CHANGELOG.md for the full changelog." \
               || true
           fi
           gh release upload "$tag" "${assets[@]}" --clobber
 
   release-wasm:
     name: release-wasm
-    if: github.event_name == 'push' && github.repository == 'hegeldev/hegel-rust' && needs.release.outputs.c_released == 'true'
+    if: github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.outputs.c_released == 'true'
     needs: release
     runs-on: ubuntu-latest
     permissions:
@@ -777,7 +540,7 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-          python scripts/check-release-rust.py
+          python libhegel/scripts/check-release-rust.py
           rustup target add wasm32-unknown-unknown
       - name: Build WebAssembly artifact
         run: cargo build -p hegeltest-c --release --target wasm32-unknown-unknown
@@ -801,12 +564,10 @@ jobs:
   # Independent post-condition check that every expected libhegel asset is
   # present on the Release. `release-binaries` uses `fail-fast: false` so
   # failed-platform diagnostics aren't lost; this aggregator job fails
-  # loudly when any expected asset (or its sidecar) is missing, satisfying
-  # go-reports.md item 6: "Update the release workflow to fail if any
-  # expected asset is missing."
+  # loudly when any expected asset (or its sidecar) is missing.
   release-binaries-verify:
     name: release-binaries-verify
-    if: github.event_name == 'push' && github.repository == 'hegeldev/hegel-rust' && needs.release.outputs.c_released == 'true'
+    if: github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.outputs.c_released == 'true'
     needs: [release, release-binaries, release-wasm]
     runs-on: ubuntu-latest
     # `contents: write` (not just read) so this job can both view the draft
@@ -862,19 +623,22 @@ jobs:
           tag="$TAG"
           # Un-draft the release now that every asset is verified present.
           # Publishing is what makes the release (and its assets) immutable,
-          # so it must happen last. 
+          # so it must happen last.
           gh release edit "$tag" --repo "$REPO" --draft=false
           echo "Published release $tag."
 
-  # Notify each downstream language binding that a new libhegel release is live
-  # so it can bump its pinned version. One matrix entry per consumer repo.
-  # Gated on `release-binaries-verify`, not just `release`: the downstream bumps
-  # read the per-asset SHA-256 digests off this release, so we only dispatch
-  # once every libhegel binary is confirmed uploaded. `fail-fast: false` keeps a
-  # dispatch failure for one repo from cancelling the others.
+  # Notify each downstream language binding that still lives in its own repo
+  # that a new libhegel release is live so it can bump its pinned version.
+  # One matrix entry per consumer repo; remove an entry when that frontend
+  # moves into this monorepo. Gated on `release-binaries-verify`, not just
+  # `release`: the downstream bumps read the per-asset SHA-256 digests off
+  # this release, so we only dispatch once every libhegel binary is confirmed
+  # uploaded. `fail-fast: false` keeps a dispatch failure for one repo from
+  # cancelling the others. The event type keeps its historical name so the
+  # consumers' existing workflows keep matching.
   bump-libhegel:
     name: bump-libhegel
-    if: github.event_name == 'push' && github.repository == 'hegeldev/hegel-rust' && needs.release.outputs.c_released == 'true'
+    if: github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.outputs.c_released == 'true'
     needs: [release, release-binaries-verify]
     runs-on: ubuntu-latest
     # The cross-repo dispatch uses the app token below, not GITHUB_TOKEN.

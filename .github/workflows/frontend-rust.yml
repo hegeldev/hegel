@@ -1,0 +1,107 @@
+# CI for the Rust frontend (the `hegeltest` and `hegeltest-macros` crates in
+# frontends/rust/). Called from ci.yml when the frontend, libhegel (which it
+# drives in-process) or the shared workspace changed.
+name: rust
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  test:
+    name: test (${{ matrix.rust }}${{ matrix.os == 'windows-latest' && ', windows' || '' }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        # The first entry is the MSRV; bumping it means bumping
+        # frontends/rust/Cargo.toml, frontends/rust/macros/Cargo.toml and
+        # libhegel/Cargo.toml together.
+        rust: ["1.86", stable]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: ${{ matrix.rust }}
+      - name: Run tests
+        run: just rust::check-tests
+
+  test-all-features:
+    name: test-all-features (${{ matrix.rust }}${{ matrix.os == 'windows-latest' && ', windows' || '' }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        rust: ["1.86", stable]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: ${{ matrix.rust }}
+      - name: Run tests
+        run: just rust::check-tests-all-features
+
+  compile-examples:
+    name: compile-examples (${{ matrix.rust }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        rust: ["1.86", stable]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: ${{ matrix.rust }}
+      - name: Compile examples
+        run: just rust::compile-examples
+
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: nightly
+      - name: Install cargo-docs-rs
+        run: cargo install --locked cargo-docs-rs
+      - name: Check docs
+        run: just rust::check-docs
+
+  # Run a fast core of the suite under Miri to catch undefined behaviour at
+  # the in-process C-ABI boundary hegeltest drives the engine through. See
+  # the `check-miri` recipe in frontends/rust/justfile.
+  miri:
+    name: miri
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: nightly
+          components: miri
+      - name: Run miri
+        run: just rust::check-miri

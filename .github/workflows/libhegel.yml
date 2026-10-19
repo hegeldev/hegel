@@ -1,0 +1,134 @@
+# libhegel's own CI: the native engine built as the `hegeltest-c` crate and
+# shipped as the libhegel C library. Called from ci.yml when libhegel (or the
+# shared workspace) changed; it does not run for frontend-only changes.
+name: libhegel
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  test-wasm:
+    name: test-wasm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          components: llvm-tools-preview
+          targets: wasm32-unknown-unknown
+      - name: Check the release toolchain
+        run: python libhegel/scripts/check-release-rust.py
+      - name: Compile the test suite for WebAssembly
+        run: cargo test -p hegeltest-c --target wasm32-unknown-unknown --lib --no-run
+      - name: Build the WebAssembly artifact
+        run: cargo build -p hegeltest-c --release --target wasm32-unknown-unknown
+      - name: Build the WebAssembly static archive
+        run: cargo rustc -p hegeltest-c --release --target wasm32-unknown-unknown --features wasm-static --crate-type staticlib
+      - name: Check static archive hook names
+        shell: bash
+        run: |
+          set -euo pipefail
+          nm="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-nm"
+          symbols=$("$nm" -u target/wasm32-unknown-unknown/release/libhegel_c.a)
+          grep -q 'hegel_host_entropy_fill' <<<"$symbols"
+          grep -q 'hegel_host_monotonic_nanos' <<<"$symbols"
+          if grep -Eq '_RN.*host_entropy_fill' <<<"$symbols"; then exit 1; fi
+          if grep -Eq '_RN.*host_monotonic_nanos' <<<"$symbols"; then exit 1; fi
+      - name: Smoke-test the WebAssembly host and string ABI
+        run: node libhegel/scripts/test-wasm-abi.mjs target/wasm32-unknown-unknown/release/hegel_c.wasm
+
+  test-c-bindings:
+    # Builds libhegel (the C shared/static library), runs the
+    # libloading-based Rust smoke tests, and then compiles every example C
+    # program in libhegel/examples/ against both libhegel.so and libhegel.a,
+    # running each binary to check the linking modes actually work
+    # end-to-end. Runs on every native runner where we publish a release
+    # binary; symbol-visibility, libloading behavior, and Windows-specific
+    # calling conventions only get exercised by actually running the smoke
+    # tests on each OS. The example C programs are bash-driven and only run
+    # on Unix runners.
+    name: test-c-bindings (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - name: Run C bindings test recipe
+        run: just libhegel::c-test
+      # Build libhegel with `panic = "abort"` and re-run the smoke tests + C
+      # examples against it. Proves no panic crosses the FFI boundary on the
+      # tested paths (an invalid schema that aborted instead of returning
+      # HEGEL_E_INVALID_ARG would crash the process and fail this step). The
+      # recipe is a no-op on Windows (bash-driven examples).
+      - name: Run C bindings under panic=abort
+        run: just libhegel::c-test-abort
+
+  test-c-runtime:
+    # Builds libhegel as a self-contained no-std release cdylib
+    # (--features runtime), verifies via `nm -D`/`readelf` that it
+    # references no thread-local-storage machinery
+    # (__cxa_thread_atexit_impl / __tls_get_addr / pthread_key_create — the
+    # registrations that make dlclose unsafe), carries no PT_TLS segment,
+    # and exports only hegel_* symbols, and runs the smoke tests, including
+    # the dlopen/dlclose replay test, against that build.
+    name: test-c-runtime
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          components: clippy
+      - name: Run no-std runtime C bindings recipe
+        run: just libhegel::c-test-runtime
+
+  lark:
+    name: lark
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          # `uv` is needed for the `check-lark.py` script's
+          # `#!/usr/bin/env -S uv run --script` shebang.
+          tools: just uv
+      - name: Check generated strings parse with Lark
+        run: just libhegel::check-lark
+
+  # Run the C-ABI lifecycle tests under Miri to catch undefined behaviour in
+  # the native engine. See the `check-miri` recipe in libhegel/justfile.
+  miri:
+    name: miri
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: nightly
+          components: miri
+      - name: Run miri
+        run: just libhegel::check-miri
