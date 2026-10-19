@@ -35,7 +35,7 @@ def inject_base_href(root: Path) -> None:
 
 
 def push_with_retry() -> None:
-    # Concurrent hegel releases (a hegel-rust release cascades into several
+    # Concurrent hegel releases (a libhegel release cascades into several
     # library releases) can push to website main at the same time. Each flow
     # touches a distinct path, so a rebase onto the winner is always clean:
     # on rejection, fetch + rebase + retry.

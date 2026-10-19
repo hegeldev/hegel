@@ -7,7 +7,7 @@
    [../hegel-rust/target/release/] (then [.../debug/]) checkout relative to the
    current working directory, under the name cargo gives the cdylib
    ([libhegel_c.<ext>]). 4. A SHA-256-verified copy downloaded from the
-   hegel-rust GitHub release tagged [libhegel-v<version>], cached under
+   libhegel GitHub release (see [release_base]), cached under
    [$XDG_CACHE_HOME|~/.cache]/hegel-ocaml/libhegel/<version>/. Set
    [HEGEL_LIBHEGEL_NO_DOWNLOAD=1] to opt out of the download fallback.
 
@@ -31,14 +31,20 @@ let checksums =
   ]
 ;;
 
-(* hegel-rust tags a libhegel release [libhegel-v<hegel-c version>] and hangs
-   the GitHub release (and its binaries) off that tag; the repository's plain
-   [v<version>] tags belong to the [hegeltest] crate, whose version differs.
-   Every libhegel release back to 0.24.0 carries a [libhegel-v] tag. *)
-let release_tag = "libhegel-v" ^ version
+(* libhegel releases live in the hegeldev/hegel monorepo since 0.47.2, as
+   GitHub releases tagged [libhegel/<version>] with the binaries attached.
+   Earlier releases stay on hegeldev/hegel-rust under [libhegel-v<version>]
+   tags (every libhegel release back to 0.24.0 carries one). Keep in sync with
+   .github/scripts/libhegel-release-url.sh and scripts/update-checksums.py. *)
+let release_repo, release_tag =
+  let parse v = List.map int_of_string (String.split_on_char '.' v) in
+  if compare (parse version) (parse "0.47.2") < 0
+  then "hegeldev/hegel-rust", "libhegel-v" ^ version
+  else "hegeldev/hegel", "libhegel/" ^ version
+;;
 
 let release_base =
-  "https://github.com/hegeldev/hegel-rust/releases/download/" ^ release_tag
+  "https://github.com/" ^ release_repo ^ "/releases/download/" ^ release_tag
 ;;
 
 let getenv_nonempty name =

@@ -97,9 +97,8 @@ jobs:
       - name: Stage libhegel from the matching GitHub release
         id: libhegel
         run: |
-          VERSION=$(awk -F'"' '/let version =/{print $2}' lib/ffi/loader.ml)
           ASSET="libhegel-linux-amd64.so"
-          URL_BASE="https://github.com/hegeldev/hegel-rust/releases/download/libhegel-v${VERSION}"
+          URL_BASE=$(.github/scripts/libhegel-release-url.sh)
           DEST="${RUNNER_TEMP}/libhegel.so"
           curl -fsSL -o "${DEST}" "${URL_BASE}/${ASSET}"
           curl -fsSL -o "${DEST}.sha256" "${URL_BASE}/${ASSET}.sha256"

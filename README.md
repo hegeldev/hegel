@@ -22,8 +22,9 @@ at runtime. It looks for the following in order:
    containing it)
 2. a sibling [hegel-rust](https://github.com/hegeldev/hegel-rust) checkout at
    `../hegel-rust/target/release/` (then `.../debug/`) relative to your project
-3. a checksum-verified download of the matching version from hegel-rust's GitHub
-   releases (the `libhegel-v<version>` tag), cached under
+3. a checksum-verified download of the matching version from libhegel's GitHub
+   releases on [hegeldev/hegel](https://github.com/hegeldev/hegel) (the
+   `libhegel/<version>` tag), cached under
    `~/.cache/hegel-ocaml/libhegel/<version>/`.
 
 Set `HEGEL_LIBHEGEL_NO_DOWNLOAD=1` to opt out of the download fallback.

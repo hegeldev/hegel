@@ -195,7 +195,8 @@ in-process via ctypes. `Hegel_ffi.Loader` resolves the shared library at runtime
 `cargo build -p hegeltest-c` gives the cdylib; dune sandboxes run tests from
 `_build/.sandbox/...`, so that relative path does not resolve under
 `dune runtest` — set `HEGEL_LIBHEGEL_PATH` there), then a SHA-256-verified
-download from the hegel-rust GitHub release cached under
+download from the libhegel GitHub release (hegeldev/hegel, tag
+`libhegel/<version>`; releases before 0.47.2 are on hegel-rust) cached under
 `~/.cache/hegel-ocaml/libhegel/<version>/` (opt out with
 `HEGEL_LIBHEGEL_NO_DOWNLOAD=1`). `Hegel_ffi.Ffi` `dlopen`s that path and exposes
 thin 1:1 wrappers: settings handles, the run lifecycle (`run_start`,
