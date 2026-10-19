@@ -1,7 +1,6 @@
-use crate::{SendPtr, check, cstr_to_string, cstring, with_ctx};
+use crate::{SendPtr, check, hstr, opt_string_from, with_ctx};
 use hegel_c as c;
 use pyo3::prelude::*;
-use std::ffi::c_char;
 use std::ptr;
 
 /// An owned libhegel settings handle.
@@ -42,10 +41,9 @@ impl Settings {
     /// Settings initialised from the named profile.
     #[staticmethod]
     fn for_profile(name: &str) -> PyResult<Self> {
-        let c_name = cstring(name);
         let mut raw: *mut c::HegelSettings = ptr::null_mut();
         with_ctx(|ctx| {
-            check(unsafe { c::hegel_settings_new_for_profile(ctx, c_name.as_ptr(), &mut raw) })
+            check(unsafe { c::hegel_settings_new_for_profile(ctx, hstr(name), &mut raw) })
         })?;
         Ok(Settings::from_raw(raw))
     }
@@ -113,15 +111,15 @@ impl Settings {
     /// any other string is used as the database directory.
     #[pyo3(signature = (database))]
     fn set_database(&self, database: Option<&str>) -> PyResult<()> {
-        let c_db = database.map(cstring);
-        let p = c_db.as_ref().map_or(ptr::null(), |s| s.as_ptr());
+        let s = database.map(hstr);
+        let p = s.as_ref().map_or(ptr::null(), |s| s as *const _);
         with_ctx(|ctx| check(unsafe { c::hegel_settings_set_database(ctx, self.raw.0, p) }))
     }
 
     #[pyo3(signature = (key))]
     fn set_database_key(&self, key: Option<&str>) -> PyResult<()> {
-        let c_key = key.map(cstring);
-        let p = c_key.as_ref().map_or(ptr::null(), |s| s.as_ptr());
+        let s = key.map(hstr);
+        let p = s.as_ref().map_or(ptr::null(), |s| s as *const _);
         with_ctx(|ctx| check(unsafe { c::hegel_settings_set_database_key(ctx, self.raw.0, p) }))
     }
 
@@ -132,18 +130,15 @@ impl Settings {
         class_name: &str,
         function: &str,
     ) -> PyResult<()> {
-        let c_file = cstring(file);
-        let c_class = cstring(class_name);
-        let c_function = cstring(function);
         with_ctx(|ctx| {
             check(unsafe {
                 c::hegel_settings_set_test_location(
                     ctx,
                     self.raw.0,
-                    c_file.as_ptr(),
+                    hstr(file),
                     begin_line,
-                    c_class.as_ptr(),
-                    c_function.as_ptr(),
+                    hstr(class_name),
+                    hstr(function),
                 )
             })
         })
@@ -239,8 +234,8 @@ impl Settings {
     }
 
     fn get_database(&self) -> PyResult<Option<String>> {
-        let mut p: *const c_char = ptr::null();
+        let mut p: *const c::hegel_string_t = ptr::null();
         with_ctx(|ctx| check(unsafe { c::hegel_settings_get_database(ctx, self.raw.0, &mut p) }))?;
-        Ok(cstr_to_string(p))
+        Ok(opt_string_from(p))
     }
 }

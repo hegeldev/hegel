@@ -14,7 +14,7 @@ from pathlib import Path
 import hegel
 from hegel import generators as gs
 
-cargo_toml = Path(__file__).resolve().parents[2] / "Cargo.toml"
+cargo_toml = Path(__file__).resolve().parents[1] / "Cargo.toml"
 expected = re.search(r'^version = "([^"]+)"', cargo_toml.read_text(), re.MULTILINE)
 assert expected is not None
 

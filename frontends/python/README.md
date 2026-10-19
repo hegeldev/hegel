@@ -1,5 +1,5 @@
 > [!IMPORTANT]
-> We're excited you're checking out Hegel! Hegel is in beta, and we'd love for you to try it and [report any feedback](https://github.com/hegeldev/hegel-python/issues/new).
+> We're excited you're checking out Hegel! Hegel is in beta, and we'd love for you to try it and [report any feedback](https://github.com/hegeldev/hegel/issues/new).
 >
 > As part of our beta, we may make breaking changes if it makes Hegel a better property-based testing library. If that instability bothers you, please check back in a few months for a stable release!
 >
@@ -10,7 +10,7 @@
 * [Website](https://hegel.dev)
 
 Property-based testing for Python, built on the
-[Hegel](https://github.com/hegeldev/hegel-rust) engine (`libhegel`). The engine
+[Hegel](https://github.com/hegeldev/hegel) engine (`libhegel`). The engine
 generates inputs, shrinks failures, keeps an example database and prints the
 failing test case; this package binds it to Python through a
 [pyo3](https://pyo3.rs) extension module and provides the test-writing API.
@@ -24,10 +24,12 @@ Python's `re` or from Hypothesis is recorded in `docs/engine-issues.md`.
 ## Installation
 
 Hegel for Python is the `hegeltest` package, imported as `hegel`. It needs
-Python 3.11 or later and, until wheels are published, a Rust toolchain:
+Python 3.11 or later; wheels are published for Linux (x86-64 and ARM64),
+Apple-silicon macOS and Windows, and the source distribution builds anywhere
+with a Rust toolchain:
 
 ```
-pip install git+https://github.com/hegeldev/hegel-python
+pip install hegeltest
 ```
 
 ## Quickstart
@@ -209,7 +211,10 @@ differences. Hypothesis's own test suite, ported to the Hegel API, runs under
 
 ## Development
 
+This package lives in `frontends/python/` of the
+[Hegel monorepo](https://github.com/hegeldev/hegel), alongside the engine.
+
 ```
-just setup        # create the virtualenv and build the extension
-just check        # formatting, lint, types, tests with coverage, the ported suite
+just python::setup        # create the virtualenv and build the extension
+just python::check        # lint, types, tests with coverage, the ported suite
 ```

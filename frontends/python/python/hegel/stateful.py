@@ -373,7 +373,7 @@ def _resolve_round(events: list[_Event], tc: TestCase) -> None:
                 control = InternalError(
                     f"Internal error in hegel: concurrent stateful worker {worker} exited "
                     "without reporting an outcome. This is a bug in hegel itself; please "
-                    "report it at https://github.com/hegeldev/hegel-python/issues"
+                    "report it at https://github.com/hegeldev/hegel/issues"
                 )
 
     def note_dropped(dropped: list[tuple[int, BaseException]]) -> None:

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["libhegel", "frontends/rust", "frontends/rust/macros"]
+members = ["libhegel", "frontends/rust", "frontends/rust/macros", "frontends/python"]
 
 [workspace.lints.clippy]
 too_many_arguments = "allow"

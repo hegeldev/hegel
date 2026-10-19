@@ -33,7 +33,8 @@ dependencies = []
 
 [project.urls]
 Homepage = "https://hegel.dev"
-Repository = "https://github.com/hegeldev/hegel-python"
+Repository = "https://github.com/hegeldev/hegel"
+Changelog = "https://github.com/hegeldev/hegel/blob/main/frontends/python/CHANGELOG.md"
 
 [project.entry-points.pytest11]
 hegel = "hegel.pytest_plugin"
@@ -44,14 +45,17 @@ module-name = "hegel._native"
 features = ["pyo3/extension-module"]
 # Repository tooling and bookkeeping that have no business in the source
 # distribution. The .cargo config only points cargo at the dev virtualenv;
-# maturin sets PYO3_PYTHON itself when building.
+# maturin sets PYO3_PYTHON itself when building. maturin also bundles the
+# workspace manifest and the in-tree libhegel the crate depends on.
 exclude = [
-  { path = ".github/**", format = "sdist" },
   { path = ".cargo/**", format = "sdist" },
   { path = ".gitignore", format = "sdist" },
   { path = ".python-version", format = "sdist" },
+  { path = "AGENTS.md", format = "sdist" },
+  { path = "justfile", format = "sdist" },
   { path = "RELEASE.md", format = "sdist" },
   { path = "RELEASE-sample.md", format = "sdist" },
+  { path = "scripts/**", format = "sdist" },
 ]
 
 [dependency-groups]

@@ -12,8 +12,7 @@ use pyo3::create_exception;
 use pyo3::exceptions::{PyBaseException, PyException};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
-use std::ffi::{CStr, CString, c_char, c_void};
-use std::ptr;
+use std::ffi::{c_char, c_void};
 use std::sync::{Arc, Mutex};
 
 mod printer;
@@ -90,24 +89,47 @@ pub(crate) fn with_ctx<R>(f: impl FnOnce(*mut c::HegelContext) -> R) -> R {
 
 pub(crate) fn last_error() -> String {
     with_ctx(|ctx| {
-        // SAFETY: ctx is a live context; the returned pointer is valid until
+        // SAFETY: ctx is a live context; the returned string is valid until
         // the next call on this context, and we copy it out immediately.
-        let p = unsafe { c::hegel_context_last_error(ctx) };
-        cstr_to_string(p).unwrap_or_default()
+        let s = unsafe { c::hegel_context_last_error(ctx) };
+        string_from(s)
     })
 }
 
-pub(crate) fn cstr_to_string(p: *const c_char) -> Option<String> {
-    if p.is_null() {
-        None
-    } else {
-        // SAFETY: the engine guarantees a NUL-terminated string.
-        Some(unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned())
+/// A borrowed engine string viewing `s`, valid while `s` is.
+pub(crate) fn hstr(s: &str) -> c::hegel_string_t {
+    hstr_bytes(s.as_bytes())
+}
+
+pub(crate) fn hstr_bytes(bytes: &[u8]) -> c::hegel_string_t {
+    c::hegel_string_t {
+        data: bytes.as_ptr() as *const c_char,
+        len: bytes.len(),
     }
 }
 
-pub(crate) fn cstring(s: &str) -> CString {
-    CString::new(s.replace('\0', "\u{fffd}")).expect("NUL bytes were replaced")
+pub(crate) fn hstrs(items: &[String]) -> Vec<c::hegel_string_t> {
+    items.iter().map(|s| hstr(s)).collect()
+}
+
+/// Copy a borrowed engine string out. A NULL `data` is the empty string.
+pub(crate) fn string_from(s: c::hegel_string_t) -> String {
+    if s.data.is_null() {
+        return String::new();
+    }
+    // SAFETY: the engine guarantees `len` readable bytes at `data`.
+    let bytes = unsafe { std::slice::from_raw_parts(s.data as *const u8, s.len) };
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+/// Copy an optional borrowed engine string out: NULL means absent.
+pub(crate) fn opt_string_from(p: *const c::hegel_string_t) -> Option<String> {
+    if p.is_null() {
+        None
+    } else {
+        // SAFETY: a non-NULL pointer refers to a live engine string.
+        Some(string_from(unsafe { *p }))
+    }
 }
 
 /// Map a libhegel result code to `Ok(())` or the matching Python exception.
@@ -205,16 +227,15 @@ pub(crate) fn big_from_le(bytes: &[u8]) -> BigInt {
 
 #[pyfunction]
 fn version() -> PyResult<String> {
-    let mut p: *const c_char = ptr::null();
-    with_ctx(|ctx| check(unsafe { c::hegel_version(ctx, &mut p) }))?;
-    Ok(cstr_to_string(p).unwrap_or_default())
+    let mut out = c::hegel_string_t::default();
+    with_ctx(|ctx| check(unsafe { c::hegel_version(ctx, &mut out) }))?;
+    Ok(string_from(out))
 }
 
 #[pyfunction]
 fn label_from_name(name: &str) -> PyResult<u64> {
-    let c_name = cstring(name);
     let mut out = 0u64;
-    with_ctx(|ctx| check(unsafe { c::hegel_label_from_name(ctx, c_name.as_ptr(), &mut out) }))?;
+    with_ctx(|ctx| check(unsafe { c::hegel_label_from_name(ctx, hstr(name), &mut out) }))?;
     Ok(out)
 }
 
@@ -230,16 +251,14 @@ fn label_combine(labels: Vec<u64>) -> PyResult<u64> {
 #[pyfunction]
 #[pyo3(signature = (name))]
 fn set_default_profile(name: Option<&str>) -> PyResult<()> {
-    let c_name = name.map(cstring);
-    let ptr = c_name.as_ref().map_or(std::ptr::null(), |n| n.as_ptr());
-    with_ctx(|ctx| check(unsafe { c::hegel_set_default_profile(ctx, ptr) }))
+    let name = name.unwrap_or("");
+    with_ctx(|ctx| check(unsafe { c::hegel_set_default_profile(ctx, hstr(name)) }))
 }
 
 #[pyfunction]
 fn register_profile(name: &str, settings: &Settings) -> PyResult<()> {
-    let c_name = cstring(name);
     with_ctx(|ctx| {
-        check(unsafe { c::hegel_settings_register_profile(ctx, c_name.as_ptr(), settings.raw()) })
+        check(unsafe { c::hegel_settings_register_profile(ctx, hstr(name), settings.raw()) })
     })
 }
 

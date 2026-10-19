@@ -1,4 +1,3 @@
-/target
 /.venv
 /dist
 __pycache__/
@@ -14,6 +13,5 @@ __pycache__/
 *.egg-info
 /python/hegel/_native.*.so
 /python/hegel/_native.pyd
-.claude/
 *.swp
 *~

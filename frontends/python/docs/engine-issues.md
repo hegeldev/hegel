@@ -1,8 +1,9 @@
 # Engine issues found while building Hegel for Python
 
-Places where libhegel (`hegeltest-c` 0.45.13) behaves differently from what
-Python's `re` module or Hypothesis would do. These are recorded here rather
-than worked around in the bindings, so they can be fixed in the engine.
+Places where libhegel (the engine in `../../libhegel`, observed at 0.47.2)
+behaves differently from what Python's `re` module or Hypothesis would do.
+These are recorded here rather than worked around in the bindings, so they
+can be fixed in the engine.
 
 ## Unicode tables
 

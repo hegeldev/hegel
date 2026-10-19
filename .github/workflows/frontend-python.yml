@@ -1,0 +1,100 @@
+# CI for the Python frontend (the `hegeltest` package in frontends/python/,
+# a pyo3 extension over libhegel). Called from ci.yml when the frontend,
+# libhegel (which it compiles in) or the shared workspace changed.
+name: python
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.11", "3.12", "3.13", "3.14"]
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          tools: just uv
+      - name: Set up the environment
+        run: just python::setup
+      - name: Run the test suite with coverage
+        run: just python::check-coverage
+      - name: Run the ported Hypothesis test suite
+        run: just python::check-hypothesis-port
+
+  # Build the wheels exactly as a release would (same composite action), then
+  # install one into a fresh virtualenv and import it from outside the
+  # checkout; on linux-amd64 also build the sdist and install from that, which
+  # proves the bundled libhegel sources compile standalone.
+  package:
+    name: package (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-amd64,   runner: ubuntu-latest }
+          - { platform: linux-arm64,   runner: ubuntu-24.04-arm }
+          - { platform: darwin-arm64,  runner: macos-14 }
+          - { platform: windows-amd64, runner: windows-latest }
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          tools: just uv
+      - uses: ./.github/actions/build-python-wheels
+      - name: Build the sdist
+        if: matrix.platform == 'linux-amd64'
+        working-directory: frontends/python
+        run: uvx --from 'maturin>=1.7,<2.0' maturin sdist --out dist
+      # A virtualenv keeps its interpreter under bin/ on POSIX and Scripts/
+      # on Windows.
+      - name: Locate the virtualenv interpreter
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "VENV_PYTHON=Scripts/python.exe" >> "$GITHUB_ENV"
+          else
+            echo "VENV_PYTHON=bin/python" >> "$GITHUB_ENV"
+          fi
+      - name: Install a wheel into a fresh virtualenv
+        run: |
+          uv venv --python 3.13 "$RUNNER_TEMP/wheel-venv"
+          uv pip install --python "$RUNNER_TEMP/wheel-venv/$VENV_PYTHON" \
+            --no-index --find-links frontends/python/dist hegeltest
+      - name: Import the installed wheel
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$RUNNER_TEMP/wheel-venv/$VENV_PYTHON" "$GITHUB_WORKSPACE/frontends/python/scripts/check_installed.py"
+      - name: Build and install the sdist into a fresh virtualenv
+        if: matrix.platform == 'linux-amd64'
+        run: |
+          uv venv --python 3.13 "$RUNNER_TEMP/sdist-venv"
+          uv pip install --python "$RUNNER_TEMP/sdist-venv/$VENV_PYTHON" frontends/python/dist/*.tar.gz
+      - name: Import the package built from the sdist
+        if: matrix.platform == 'linux-amd64'
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$RUNNER_TEMP/sdist-venv/$VENV_PYTHON" "$GITHUB_WORKSPACE/frontends/python/scripts/check_installed.py"

@@ -1,4 +1,4 @@
-use crate::{InternalError, InvalidArgument, SendPtr, check, last_error, with_ctx};
+use crate::{InternalError, InvalidArgument, SendPtr, check, hstr, last_error, with_ctx};
 use hegel_c as c;
 use hegel_c::hegel_result_t as Rc;
 use pyo3::prelude::*;
@@ -66,39 +66,27 @@ impl Printer {
     }
 
     fn text(&self, s: &str) -> PyResult<()> {
-        with_ctx(|ctx| {
-            tolerate(unsafe { c::hegel_printer_text(ctx, self.raw.0, s.as_ptr(), s.len()) })
-        })
+        with_ctx(|ctx| tolerate(unsafe { c::hegel_printer_text(ctx, self.raw.0, hstr(s)) }))
     }
 
     /// Re-emit a flat representation (a `repr`) through the printer's
     /// groups and break points so it wraps as if printed structurally.
     fn reflow(&self, s: &str) -> PyResult<()> {
         with_ctx(|ctx| {
-            tolerate(unsafe {
-                c::hegel_printer_reflow(ctx, self.raw.0, ptr::null(), s.as_ptr(), s.len())
-            })
+            tolerate(unsafe { c::hegel_printer_reflow(ctx, self.raw.0, ptr::null(), hstr(s)) })
         })
     }
 
     fn if_break(&self, s: &str) -> PyResult<()> {
-        with_ctx(|ctx| {
-            tolerate(unsafe { c::hegel_printer_if_break(ctx, self.raw.0, s.as_ptr(), s.len()) })
-        })
+        with_ctx(|ctx| tolerate(unsafe { c::hegel_printer_if_break(ctx, self.raw.0, hstr(s)) }))
     }
 
     fn breakable(&self, sep: &str) -> PyResult<()> {
-        with_ctx(|ctx| {
-            tolerate(unsafe {
-                c::hegel_printer_breakable(ctx, self.raw.0, sep.as_ptr(), sep.len())
-            })
-        })
+        with_ctx(|ctx| tolerate(unsafe { c::hegel_printer_breakable(ctx, self.raw.0, hstr(sep)) }))
     }
 
     fn comment(&self, s: &str) -> PyResult<()> {
-        with_ctx(|ctx| {
-            tolerate(unsafe { c::hegel_printer_comment(ctx, self.raw.0, s.as_ptr(), s.len()) })
-        })
+        with_ctx(|ctx| tolerate(unsafe { c::hegel_printer_comment(ctx, self.raw.0, hstr(s)) }))
     }
 
     fn hard_break(&self) -> PyResult<()> {
@@ -107,17 +95,13 @@ impl Printer {
 
     fn begin_group(&self, indent: u64, open: &str) -> PyResult<()> {
         with_ctx(|ctx| {
-            tolerate(unsafe {
-                c::hegel_printer_begin_group(ctx, self.raw.0, indent, open.as_ptr(), open.len())
-            })
+            tolerate(unsafe { c::hegel_printer_begin_group(ctx, self.raw.0, indent, hstr(open)) })
         })
     }
 
     fn end_group(&self, close: &str) -> PyResult<()> {
         with_ctx(|ctx| {
-            tolerate(unsafe {
-                c::hegel_printer_end_group(ctx, self.raw.0, close.as_ptr(), close.len())
-            })
+            tolerate(unsafe { c::hegel_printer_end_group(ctx, self.raw.0, hstr(close)) })
         })
     }
 

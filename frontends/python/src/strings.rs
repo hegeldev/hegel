@@ -1,7 +1,6 @@
-use crate::{SendPtr, check, cstring, with_ctx};
+use crate::{SendPtr, check, hstr, hstrs, with_ctx};
 use hegel_c as c;
 use pyo3::prelude::*;
-use std::ffi::{CString, c_char};
 use std::ptr;
 
 /// An owned libhegel string-generator handle. Immutable after construction,
@@ -25,13 +24,6 @@ impl Drop for StringGenerator {
     }
 }
 
-fn c_strings(items: &Option<Vec<String>>) -> Vec<CString> {
-    items
-        .as_ref()
-        .map(|v| v.iter().map(|s| cstring(s)).collect())
-        .unwrap_or_default()
-}
-
 #[pymethods]
 impl StringGenerator {
     #[staticmethod]
@@ -47,11 +39,9 @@ impl StringGenerator {
         include_characters: Option<&str>,
         exclude_characters: Option<&str>,
     ) -> PyResult<Self> {
-        let c_codec = codec.map(cstring);
-        let cats = c_strings(&categories);
-        let excl = c_strings(&exclude_categories);
-        let cat_ptrs: Vec<*const c_char> = cats.iter().map(|s| s.as_ptr()).collect();
-        let excl_ptrs: Vec<*const c_char> = excl.iter().map(|s| s.as_ptr()).collect();
+        let codec = codec.map(hstr);
+        let cats = categories.as_deref().map(hstrs);
+        let excl = exclude_categories.as_deref().map(hstrs);
         let mut raw: *mut c::HegelStringGenerator = ptr::null_mut();
         with_ctx(|ctx| {
             check(unsafe {
@@ -59,25 +49,15 @@ impl StringGenerator {
                     ctx,
                     min_size,
                     max_size,
-                    c_codec.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
+                    codec.as_ref().map_or(ptr::null(), |s| s as *const _),
                     min_codepoint,
                     max_codepoint.unwrap_or(u32::MAX),
-                    if categories.is_some() {
-                        cat_ptrs.as_ptr()
-                    } else {
-                        ptr::null()
-                    },
-                    cat_ptrs.len(),
-                    if exclude_categories.is_some() {
-                        excl_ptrs.as_ptr()
-                    } else {
-                        ptr::null()
-                    },
-                    excl_ptrs.len(),
-                    include_characters.map_or(ptr::null(), |s| s.as_ptr()),
-                    include_characters.map_or(0, |s| s.len()),
-                    exclude_characters.map_or(ptr::null(), |s| s.as_ptr()),
-                    exclude_characters.map_or(0, |s| s.len()),
+                    cats.as_ref().map_or(ptr::null(), |v| v.as_ptr()),
+                    cats.as_ref().map_or(0, |v| v.len()),
+                    excl.as_ref().map_or(ptr::null(), |v| v.as_ptr()),
+                    excl.as_ref().map_or(0, |v| v.len()),
+                    hstr(include_characters.unwrap_or("")),
+                    hstr(exclude_characters.unwrap_or("")),
                     &mut raw,
                 )
             })
@@ -93,8 +73,7 @@ impl StringGenerator {
             check(unsafe {
                 c::hegel_string_generator_regex(
                     ctx,
-                    pattern.as_ptr(),
-                    pattern.len(),
+                    hstr(pattern),
                     fullmatch,
                     alphabet.map_or(ptr::null(), |a| a.raw()),
                     &mut raw,

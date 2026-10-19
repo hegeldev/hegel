@@ -1,5 +1,0 @@
-rules:
-  # The release app's key and the Anthropic key are repository secrets, as in
-  # the sibling hegel-* repositories; there is no deployment environment.
-  secrets-outside-env:
-    disable: true

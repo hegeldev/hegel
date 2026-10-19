@@ -15,8 +15,9 @@ just check
 # one component
 just libhegel::check
 just rust::check
+just python::check   # needs uv, and `just python::setup` once
 ```
 
-Of course, you can also run the underlying `cargo` commands if you prefer not to install `just`.
+Of course, you can also run the underlying `cargo` commands if you prefer not to install `just`. The Python frontend needs [`uv`](https://docs.astral.sh/uv/) as well.
 
-Every pull request that changes a component's source needs a `RELEASE.md` in that component's directory; see `frontends/rust/RELEASE-sample.md`.
+Every pull request that changes a component's source needs a `RELEASE.md` in that component's directory; see `frontends/rust/RELEASE-sample.md` or `frontends/python/RELEASE-sample.md`.

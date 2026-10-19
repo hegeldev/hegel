@@ -549,6 +549,10 @@ def run_coverage() -> Path:
     _run_lcov_phase(
         cargo_args=[
             "--workspace",
+            # The Python extension is covered by its own pytest suite
+            # (frontends/python/justfile `check-coverage`), not by Rust tests.
+            "--exclude",
+            "hegel-python",
             "--features",
             public_features(),
             # proc-macro compile-time execution isn't runtime coverage; keep

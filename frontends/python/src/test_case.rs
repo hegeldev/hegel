@@ -1,14 +1,14 @@
 use crate::printer::{Printer, with_options};
 use crate::{
     InternalError, OutputBuffer, SendPtr, Settings, StringGenerator, big_from_le, big_to_le, check,
-    cstr_to_string, cstring, output_trampoline, output_user_data, with_ctx,
+    hstr, hstr_bytes, hstrs, opt_string_from, output_trampoline, output_user_data, string_from,
+    with_ctx,
 };
 use hegel_c as c;
 use hegel_c::hegel_result_t as Rc;
 use num_bigint::BigInt;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
-use std::ffi::c_char;
 use std::ptr;
 use std::sync::Arc;
 
@@ -64,16 +64,19 @@ impl Run {
         let output = Arc::new(OutputBuffer::default());
         let user_data = SendPtr(output_user_data(&output));
         let settings_ptr = SendPtr(settings.raw() as *mut c::HegelSettings);
-        let c_blob = cstring(blob);
-        let blob_ptr = SendPtr(c_blob.as_ptr() as *mut c_char);
+        let blob_ptr = SendPtr(blob.as_ptr() as *mut u8);
+        let blob_len = blob.len();
         let mut raw: *mut c::HegelRun = ptr::null_mut();
         let raw_out = SendPtr(&mut raw as *mut *mut c::HegelRun);
         let rc = py.detach(move || {
+            // SAFETY: `blob` outlives this call; the view is rebuilt here so
+            // the closure captures only Send wrappers.
+            let blob = hstr_bytes(unsafe { std::slice::from_raw_parts(blob_ptr.get(), blob_len) });
             with_ctx(|ctx| unsafe {
                 c::hegel_run_start_blob(
                     ctx,
                     settings_ptr.get(),
-                    blob_ptr.get(),
+                    blob,
                     Some(output_trampoline),
                     user_data.get(),
                     raw_out.get(),
@@ -143,9 +146,9 @@ impl RunResult {
     }
 
     fn error(&self) -> PyResult<Option<String>> {
-        let mut p: *const c_char = ptr::null();
+        let mut p: *const c::hegel_string_t = ptr::null();
         with_ctx(|ctx| check(unsafe { c::hegel_run_result_error(ctx, self.raw.0, &mut p) }))?;
-        Ok(cstr_to_string(p))
+        Ok(opt_string_from(p))
     }
 
     /// Why the run errored, as `(RUN_ERROR_* kind, HC_* check)`; the check
@@ -177,9 +180,9 @@ impl RunResult {
         let mut f: *mut c::HegelFailure = ptr::null_mut();
         with_ctx(|ctx| {
             check(unsafe { c::hegel_run_result_failure(ctx, self.raw.0, index, &mut f) })?;
-            let mut origin: *const c_char = ptr::null();
-            let mut blob: *const c_char = ptr::null();
-            let mut caveat: *const c_char = ptr::null();
+            let mut origin = c::hegel_string_t::default();
+            let mut blob: *const c::hegel_string_t = ptr::null();
+            let mut caveat: *const c::hegel_string_t = ptr::null();
             let result = check(unsafe { c::hegel_failure_origin(ctx, f, &mut origin) })
                 .and_then(|()| {
                     check(unsafe { c::hegel_failure_reproduction_blob(ctx, f, &mut blob) })
@@ -187,9 +190,9 @@ impl RunResult {
                 .and_then(|()| check(unsafe { c::hegel_failure_caveat(ctx, f, &mut caveat) }))
                 .map(|()| {
                     (
-                        cstr_to_string(origin).unwrap_or_default(),
-                        cstr_to_string(blob),
-                        cstr_to_string(caveat),
+                        string_from(origin),
+                        opt_string_from(blob),
+                        opt_string_from(caveat),
                     )
                 });
             let _ = unsafe { c::hegel_failure_free(ctx, f) };
@@ -315,13 +318,22 @@ impl TestCase {
 
     #[pyo3(signature = (status, origin))]
     fn mark_complete(&self, py: Python<'_>, status: u32, origin: Option<&str>) -> PyResult<()> {
-        let c_origin = origin.map(cstring);
-        let origin_ptr =
-            SendPtr(c_origin.as_ref().map_or(ptr::null(), |s| s.as_ptr()) as *mut c_char);
+        let origin_ptr = SendPtr(origin.map_or(ptr::null(), |s| s.as_ptr()) as *mut u8);
+        let origin_len = origin.map_or(0, |s| s.len());
         let tc = self.raw;
         let rc = py.detach(move || {
+            // SAFETY: `origin` outlives this call; the view is rebuilt here so
+            // the closure captures only Send wrappers.
+            let origin = (!origin_ptr.get().is_null()).then(|| {
+                hstr_bytes(unsafe { std::slice::from_raw_parts(origin_ptr.get(), origin_len) })
+            });
             with_ctx(|ctx| unsafe {
-                c::hegel_mark_complete(ctx, tc.get(), status, origin_ptr.get())
+                c::hegel_mark_complete(
+                    ctx,
+                    tc.get(),
+                    status,
+                    origin.as_ref().map_or(ptr::null(), |s| s as *const _),
+                )
             })
         });
         check(rc)
@@ -443,10 +455,7 @@ impl TestCase {
         py: Python<'py>,
         generator: &StringGenerator,
     ) -> PyResult<Bound<'py, PyBytes>> {
-        let mut result = c::hegel_generate_string_result_t {
-            data: ptr::null_mut(),
-            len: 0,
-        };
+        let mut result = c::hegel_owned_string_t::default();
         let bytes = with_ctx(|ctx| {
             check(unsafe {
                 c::hegel_generate_string(ctx, self.tc(), generator.raw(), &mut result)
@@ -454,7 +463,7 @@ impl TestCase {
             // SAFETY: as for generate_bytes.
             let bytes = unsafe { std::slice::from_raw_parts(result.data as *const u8, result.len) }
                 .to_vec();
-            let _ = unsafe { c::hegel_generate_string_result_free(ctx, &mut result) };
+            let _ = unsafe { c::hegel_owned_string_free(ctx, &mut result) };
             Ok::<_, PyErr>(bytes)
         })?;
         Ok(PyBytes::new(py, &bytes))
@@ -554,20 +563,15 @@ impl TestCase {
     }
 
     fn target(&self, value: f64, label: &str) -> PyResult<()> {
-        let c_label = cstring(label);
-        with_ctx(|ctx| check(unsafe { c::hegel_target(ctx, self.tc(), value, c_label.as_ptr()) }))
+        with_ctx(|ctx| check(unsafe { c::hegel_target(ctx, self.tc(), value, hstr(label)) }))
     }
 
     fn event(&self, label: &str) -> PyResult<()> {
-        let c_label = cstring(label);
-        with_ctx(|ctx| check(unsafe { c::hegel_event(ctx, self.tc(), c_label.as_ptr()) }))
+        with_ctx(|ctx| check(unsafe { c::hegel_event(ctx, self.tc(), hstr(label)) }))
     }
 
     fn event_value(&self, value: f64, label: &str) -> PyResult<()> {
-        let c_label = cstring(label);
-        with_ctx(|ctx| {
-            check(unsafe { c::hegel_event_value(ctx, self.tc(), value, c_label.as_ptr()) })
-        })
+        with_ctx(|ctx| check(unsafe { c::hegel_event_value(ctx, self.tc(), value, hstr(label)) }))
     }
 
     fn start_span(&self, label: u64) -> PyResult<()> {
@@ -582,7 +586,7 @@ impl TestCase {
     /// region (the document was already read) is a silent no-op.
     fn note(&self, text: &str) -> PyResult<()> {
         with_ctx(
-            |ctx| match unsafe { c::hegel_note(ctx, self.tc(), text.as_ptr(), text.len()) } {
+            |ctx| match unsafe { c::hegel_note(ctx, self.tc(), hstr(text)) } {
                 Rc::HEGEL_E_INVALID_HANDLE => Ok(()),
                 rc => check(rc),
             },
@@ -644,10 +648,8 @@ impl TestCase {
         max_concurrency: i64,
         step_count: i64,
     ) -> PyResult<(StateMachine, i64)> {
-        let rule_cs: Vec<_> = rule_names.iter().map(|s| cstring(s)).collect();
-        let inv_cs: Vec<_> = invariant_names.iter().map(|s| cstring(s)).collect();
-        let rule_ptrs: Vec<*const c_char> = rule_cs.iter().map(|s| s.as_ptr()).collect();
-        let inv_ptrs: Vec<*const c_char> = inv_cs.iter().map(|s| s.as_ptr()).collect();
+        let rules = hstrs(&rule_names);
+        let invariants = hstrs(&invariant_names);
         let mut raw: *mut c::HegelStateMachine = ptr::null_mut();
         let mut concurrency = 0i64;
         with_ctx(|ctx| {
@@ -655,15 +657,15 @@ impl TestCase {
                 c::hegel_new_state_machine(
                     ctx,
                     self.tc(),
-                    rule_ptrs.as_ptr(),
+                    rules.as_ptr(),
                     rule_groups.as_ptr(),
                     rule_weights.as_ref().map_or(ptr::null(), |w| w.as_ptr()),
-                    rule_ptrs.len(),
-                    inv_ptrs.as_ptr(),
+                    rules.len(),
+                    invariants.as_ptr(),
                     invariant_always_check
                         .as_ref()
                         .map_or(ptr::null(), |a| a.as_ptr()),
-                    inv_ptrs.len(),
+                    invariants.len(),
                     min_concurrency,
                     max_concurrency,
                     step_count,
@@ -701,8 +703,8 @@ impl Collection {
 
     #[pyo3(signature = (tc, why))]
     fn reject(&self, tc: &TestCase, why: Option<&str>) -> PyResult<()> {
-        let c_why = why.map(cstring);
-        let p = c_why.as_ref().map_or(ptr::null(), |s| s.as_ptr());
+        let s = why.map(hstr);
+        let p = s.as_ref().map_or(ptr::null(), |s| s as *const _);
         with_ctx(|ctx| check(unsafe { c::hegel_collection_reject(ctx, tc.tc(), self.raw.0, p) }))
     }
 }
