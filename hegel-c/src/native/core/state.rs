@@ -769,15 +769,18 @@ impl Default for FloatGenerationParameters {
     }
 }
 
-/// The per-test-case probability that a zoned datetime draw targets a
-/// transition of its zone rather than drawing uniformly within its bounds
+/// The per-test-case probability that a date or time draw targets one of
+/// its interesting values (a transition of the zone, an instant, offset
+/// or duration of Appendix C) rather than drawing from its sampler
 /// (`hegel-c/docs/datetime.md` §6.2, Q4). Drawn from a Beta with mean
 /// [`TARGETED_PROBABILITY`], so most cases target at about that rate while
-/// a thin tail concentrates on transitions. Unlike the other swarm
-/// parameters it is drawn the first time a zoned datetime draw asks for it
-/// ([`NativeTestCase::datetime_parameters`]), so a test case that draws no
-/// zoned datetime keeps the random stream it had before the parameter
-/// existed.
+/// a thin tail concentrates on the targets. Unlike the other swarm
+/// parameters it is drawn lazily, by the first draw that targets anything
+/// (a date, time, timestamp, offset, duration or zoned datetime draw with
+/// a target in its bounds; [`NativeTestCase::datetime_parameters`]), and
+/// a node drawn at its rate is recorded under the fixed
+/// [`TARGETED_PROBABILITY`], so the node's kind is the same in every
+/// execution however the case's parameter came out.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DatetimeGenerationParameters {
     pub targeted_probability: f64,
@@ -2362,9 +2365,11 @@ impl NativeTestCase {
     }
 
     /// This test case's [`DatetimeGenerationParameters`]: drawn from this
-    /// stream's RNG the first time any stream of the family asks, and the
-    /// default for a family that never samples (a replay). Two streams
-    /// asking at once both draw, and both get the value the family kept.
+    /// stream's RNG the first time any stream of the family asks, which
+    /// the first date, time, timestamp, offset, duration or zoned datetime
+    /// draw with a target in its bounds does, and the default for a family
+    /// that never samples (a replay). Two streams asking at once both
+    /// draw, and both get the value the family kept.
     pub(crate) fn datetime_parameters(
         &mut self,
     ) -> Result<DatetimeGenerationParameters, EngineError> {

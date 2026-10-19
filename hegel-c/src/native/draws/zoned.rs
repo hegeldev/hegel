@@ -11,15 +11,15 @@
 //! second, an hour or a day of the target's wall time (for a transition,
 //! the wall time just after it), which is how gap times, both folds and
 //! the exact boundary instants are reached; its rate is a per-case
-//! generation parameter ([`DatetimeGenerationParameters`], drawn when the
-//! first such node is), recorded under the fixed [`TARGETED_PROBABILITY`]
-//! so the node's kind is the same in every execution. The date and time
-//! nodes are the ones `generate_datetime` draws over the window, the time
-//! counted in units of the precision; a targeted draw samples them
-//! uniformly within its window, since the integer sampler's preference
-//! for the low end would otherwise reach one side of the transition only.
-//! The fold node exists only when the wall time is ambiguous and the
-//! `both` policy is in force.
+//! generation parameter ([`DatetimeGenerationParameters`], drawn by the
+//! first draw of the case that targets anything), recorded under the
+//! fixed [`TARGETED_PROBABILITY`] so the node's kind is the same in every
+//! execution. The date and time nodes are the ones `generate_datetime`
+//! draws over the window, the time counted in units of the precision; a
+//! targeted draw samples them uniformly within its window, since the
+//! integer sampler's preference for the low end would otherwise reach one
+//! side of the transition only. The fold node exists only when the wall
+//! time is ambiguous and the `both` policy is in force.
 //!
 //! Instant bounds become a wall-clock window in the drawn zone: from the
 //! earliest wall time an instant in the bounds reads to the latest, which
@@ -29,17 +29,18 @@
 //! the bound, clamped to the civil envelope. When that window holds no
 //! value at the precision, or spans at most a day and lies within two
 //! days of a transition, the draw falls back to drawing the instant as one
-//! integer node: an index into the values in the bounds in instant order
-//! ([`Values`]), shrinking toward the one nearest 2000-01-01T00:00:00Z and
-//! sampled at the targeting rate at either side of a transition or at an
-//! Appendix C instant in the bounds. The instant fixes which repeat of a
-//! fold the value means, so no fold node follows. A zone with no value in
-//! the bounds concludes the test case invalid, unless no allowed zone has
-//! one, which is an argument error. The wall-clock window of civil bounds
-//! is likewise narrowed to the wall times whose instants lie in the
-//! Timestamp range of §4, and a drawn wall time whose instant falls
-//! outside the bounds (a fold on the wrong side of a bound) concludes the
-//! test case invalid.
+//! integer node: an index into the values in the bounds in instant order,
+//! a gap's skipped wall times listed before the unique reading of the
+//! same instants ([`Values`]), shrinking toward the unique value nearest
+//! 2000-01-01T00:00:00Z and sampled at the targeting rate at either side
+//! of a transition or at an Appendix C instant in the bounds. The instant
+//! fixes which repeat of a fold the value means, so no fold node follows.
+//! The wall-clock window of civil bounds is likewise narrowed to the wall
+//! times whose instants lie in the Timestamp range of §4. Either way, a
+//! zone with no value in the bounds concludes the test case invalid,
+//! unless no allowed zone has one, which is an argument error; and a
+//! drawn wall time whose instant falls outside the bounds (a fold on the
+//! wrong side of a bound) concludes the test case invalid.
 //!
 //! Under the `avoid` policy the time node's sampler redraws a wall time
 //! that lands in a gap, uniformly and up to [`GAP_RESAMPLES`] times, so
@@ -447,6 +448,26 @@ fn invalid(ntc: &mut NativeTestCase) -> EngineError {
     EngineError::InvalidTestCase
 }
 
+/// The outcome of a drawn zone with no value in `spec`'s bounds: the test
+/// case concluded invalid when another zone `tz` allows has one, which
+/// `has_value` decides, and an argument error when none does.
+fn no_value<T>(
+    ntc: &mut NativeTestCase,
+    tz: &TimeZoneSpec,
+    spec: &ZonedSpec,
+    has_value: impl Fn(TimeZone) -> Result<bool, EngineError>,
+) -> Result<T, EngineError> {
+    for other in tz.constraint()?.ladder() {
+        if has_value(other.zone.unwrap_or(TimeZone::Unknown))? {
+            return Err(invalid(ntc));
+        }
+    }
+    Err(EngineError::InvalidArgument(format!(
+        "generate_zoned_datetime: no value at precision {:?} lies in {:?} in any allowed zone",
+        spec.precision, spec.bounds
+    )))
+}
+
 /// One integer node drawn uniformly from `0..count`.
 fn draw_uniform_index(ntc: &mut NativeTestCase, count: usize) -> Result<usize, EngineError> {
     let last = count as u64 - 1;
@@ -630,20 +651,22 @@ fn wall_window(
 /// `count` consecutive wall times at the precision from `first` (wall
 /// nanoseconds), each read with `offset`; an ambiguous one among them
 /// before `fold_end` means the later repeat, and one at or after it the
-/// earlier.
+/// earlier. A `gap` run holds the wall times a gap skipped.
 struct Run {
     first: i128,
     count: i128,
     offset: i128,
     fold_end: i128,
+    gap: bool,
 }
 
 /// The values of a draw within instant bounds in one zone, in instant
 /// order: one run per stretch of constant offset within the bounds,
 /// trimmed of the repeat the ambiguous policy excludes, and under `allow`
 /// one more per gap for the skipped wall times that shift to instants in
-/// the bounds, which read with the offset before the gap. Every run lies
-/// in the civil envelope.
+/// the bounds, which read with the offset before the gap and are listed
+/// before the unique reading of the same instants. Every run lies in the
+/// civil envelope.
 struct Values {
     runs: Vec<Run>,
     total: i128,
@@ -664,7 +687,7 @@ impl Values {
         };
         let (lo, hi) = (instant_ns(min), instant_ns(max));
         let TimeZone::Named(name) = zone else {
-            values.push(lo, hi, 0, i128::MIN);
+            values.push(lo, hi, 0, i128::MIN, false);
             return Ok(values);
         };
         let zone = name.zone;
@@ -687,16 +710,16 @@ impl Values {
             }
             if width < 0 && spec.imaginary == Imaginary::Allow {
                 let before = i128::from(t.before.utoff) * NS;
-                values.push(lo, (at - width - 1).min(hi), before, i128::MIN);
+                values.push(lo, (at - width - 1).min(hi), before, i128::MIN, true);
             }
         }
         for t in transitions(zone, min.second + 1, max.second + 1) {
             let at = i128::from(t.instant) * NS;
             let width = fold_width(&t);
             let end = if width > 0 && later { at - width } else { at } - 1;
-            values.push(start, end, offset, fold_end);
+            values.push(start, end, offset, fold_end, false);
             if width < 0 && spec.imaginary == Imaginary::Allow {
-                values.push(at, (at - width - 1).min(hi), offset, i128::MIN);
+                values.push(at, (at - width - 1).min(hi), offset, i128::MIN, true);
             }
             start = if width > 0 && earlier { at + width } else { at };
             offset = i128::from(t.after.utoff) * NS;
@@ -715,13 +738,13 @@ impl Values {
                 }
             }
         }
-        values.push(start, end, offset, fold_end);
+        values.push(start, end, offset, fold_end, false);
         Ok(values)
     }
 
     /// Add the wall times at the precision of the instants `start..=end`
     /// read with `offset`, those within the civil envelope.
-    fn push(&mut self, start: i128, end: i128, offset: i128, fold_end: i128) {
+    fn push(&mut self, start: i128, end: i128, offset: i128, fold_end: i128, gap: bool) {
         let envelope = Window::envelope();
         let first = align_up((start + offset).max(envelope.lo), self.unit);
         let last = align_down((end + offset).min(envelope.hi), self.unit);
@@ -732,24 +755,31 @@ impl Values {
                 count,
                 offset,
                 fold_end,
+                gap,
             });
             self.total += count;
         }
     }
 
     /// The index of the first value whose instant is at or after
-    /// `instant`, or the last index when there is none.
+    /// `instant`, or the last index when there is none, among the unique
+    /// readings: a skipped wall time denotes the same instant as a real
+    /// one, which is the value to shrink toward.
     fn index_at(&self, instant: i128) -> i128 {
         let mut base = 0;
+        let mut last_unique = self.total - 1;
         for run in &self.runs {
-            let last = run.first + (run.count - 1) * self.unit - run.offset;
-            if instant <= last {
-                let wall = (instant + run.offset).max(run.first);
-                return base + (align_up(wall, self.unit) - run.first) / self.unit;
+            if !run.gap {
+                let last = run.first + (run.count - 1) * self.unit - run.offset;
+                if instant <= last {
+                    let wall = (instant + run.offset).max(run.first);
+                    return base + (align_up(wall, self.unit) - run.first) / self.unit;
+                }
+                last_unique = base + run.count - 1;
             }
             base += run.count;
         }
-        self.total - 1
+        last_unique
     }
 
     /// The value at `index`: its wall time and whether, if ambiguous, it
@@ -805,17 +835,9 @@ fn draw_from_instant(
 ) -> Result<ZonedDateTime, EngineError> {
     let values = Values::of(zone, min, max, spec)?;
     if values.total == 0 {
-        for other in tz.constraint()?.ladder() {
-            let zone = other.zone.unwrap_or(TimeZone::Unknown);
-            if Values::of(zone, min, max, spec)?.total > 0 {
-                return Err(invalid(ntc));
-            }
-        }
-        return Err(EngineError::InvalidArgument(format!(
-            "generate_zoned_datetime: no value at precision {:?} lies in {:?} in any allowed \
-             zone",
-            spec.precision, spec.bounds
-        )));
+        return no_value(ntc, tz, spec, |zone| {
+            Ok(Values::of(zone, min, max, spec)?.total > 0)
+        });
     }
     let last = hegel_internal_unwrap!(
         i64::try_from(values.total - 1).ok(),
@@ -883,6 +905,23 @@ fn past_gap(
     Ok((before >= window.lo).then(|| datetime_of_wall(before)))
 }
 
+/// The wall-clock window of the civil bounds `[min, max]` in `zone`:
+/// narrowed to the wall times whose instants lie in the Timestamp range
+/// of §4 and aligned to the precision, or `None` when no value lies in it.
+fn civil_window(
+    zone: TimeZone,
+    min: &DateTime,
+    max: &DateTime,
+    unit: i128,
+) -> Result<Option<Window>, EngineError> {
+    let (lo, hi) = wall_range(zone, &MIN_TIMESTAMP, &MAX_TIMESTAMP, false)?;
+    Ok(Window::aligned(
+        wall_ns(min).max(lo),
+        wall_ns(max).min(hi),
+        unit,
+    ))
+}
+
 fn zoned(entry: &Entry, civil: DateTime, fold: bool, r: &Resolution) -> ZonedDateTime {
     ZonedDateTime {
         zone: entry.name.clone(),
@@ -910,21 +949,23 @@ fn draw_zoned(
         _ => None,
     };
     let (window, instants) = match &spec.bounds {
-        ZonedBounds::Civil { min, max } => {
-            let (lo, hi) = wall_range(zone, &MIN_TIMESTAMP, &MAX_TIMESTAMP, false)?;
-            let window = Window::aligned(wall_ns(min).max(lo), wall_ns(max).min(hi), unit);
-            let instants = (instant_ns(&MIN_TIMESTAMP), instant_ns(&MAX_TIMESTAMP));
-            (window, instants)
-        }
+        ZonedBounds::Civil { min, max } => match civil_window(zone, min, max, unit)? {
+            Some(window) => (
+                window,
+                (instant_ns(&MIN_TIMESTAMP), instant_ns(&MAX_TIMESTAMP)),
+            ),
+            None => {
+                return no_value(ntc, tz, spec, |zone| {
+                    Ok(civil_window(zone, min, max, unit)?.is_some())
+                });
+            }
+        },
         ZonedBounds::Instant { min, max } => {
             match wall_window(zone, min, max, unit, spec.imaginary == Imaginary::Allow)? {
-                Some(window) => (Some(window), (instant_ns(min), instant_ns(max))),
+                Some(window) => (window, (instant_ns(min), instant_ns(max))),
                 None => return draw_from_instant(ntc, tz, entry, zone, spec, min, max),
             }
         }
-    };
-    let Some(window) = window else {
-        return Err(invalid(ntc));
     };
     let mut civil = draw_wall(ntc, zone, &window, unit, avoid)?;
     let mut resolution = zone.resolve_any(&civil, false)?;
@@ -958,8 +999,9 @@ fn draw_zoned(
 /// The wall time: the targeted node when a target lies in `window`, then
 /// when targeted the target index and half-width nodes, then the date and
 /// time nodes over the window, or when targeted uniformly over the part
-/// of it within the half-width of the target's wall time, or the whole
-/// window when no value at the precision lies within the half-width.
+/// of it within the half-width of the target's wall time clamped into the
+/// window, so that a transition whose later reading lies outside the
+/// window is targeted at the window's edge.
 fn draw_wall(
     ntc: &mut NativeTestCase,
     zone: TimeZone,
@@ -977,14 +1019,18 @@ fn draw_wall(
     if !ntc.weighted_as(TARGETED_PROBABILITY, targeted_probability)? {
         return draw_datetime_in(ntc, window, unit, Sampling::Biased, avoid);
     }
-    let center = list[draw_uniform_index(ntc, list.len())?].center;
+    let center = list[draw_uniform_index(ntc, list.len())?]
+        .center
+        .clamp(window.lo, window.hi);
     let half_width = [NS + unit, HOUR_NS + unit, DAY_NS][draw_uniform_index(ntc, 3)?];
-    let narrowed = Window::aligned(
-        window.lo.max(center - half_width),
-        window.hi.min(center + half_width),
-        unit,
-    )
-    .unwrap_or(*window);
+    let narrowed = hegel_internal_unwrap!(
+        Window::aligned(
+            window.lo.max(center - half_width),
+            window.hi.min(center + half_width),
+            unit,
+        ),
+        "draw_wall: no value within {half_width} of {center} in {window:?}"
+    );
     draw_datetime_in(ntc, &narrowed, unit, Sampling::Uniform, avoid)
 }
 

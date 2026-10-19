@@ -626,35 +626,48 @@ fn a_fold_on_the_wrong_side_of_an_instant_bound_is_rejected() {
 }
 
 #[test]
-fn a_target_window_past_the_bounds_widens_to_the_bounds() {
+fn a_target_past_the_bounds_is_clamped_to_their_edge() {
     let tz = zones(&["America/New_York"]);
-    let spec = ZonedSpec {
-        bounds: ZonedBounds::Civil {
-            min: civil(2024, 3, 10, 2, 0, 0),
-            max: civil(2024, 3, 10, 2, 30, 0),
-        },
+    let bounded = |min: DateTime, max: DateTime| ZonedSpec {
+        bounds: ZonedBounds::Civil { min, max },
         precision: Precision::Seconds,
         ..ZonedSpec::default()
     };
-    let values = |seconds: i64| {
-        vec![
+    let values = |seconds: i64, fold: bool| {
+        let mut values = vec![
             ChoiceValue::String("America/New_York".chars().map(u32::from).collect()),
             ChoiceValue::Boolean(true),
             ChoiceValue::Integer(BigInt::from(0)),
             ChoiceValue::Integer(BigInt::from(0)),
             ChoiceValue::Integer(BigInt::from(0)),
             ChoiceValue::Integer(BigInt::from(seconds)),
-        ]
+        ];
+        values.extend(fold.then_some(ChoiceValue::Boolean(false)));
+        values
     };
-    let mut ntc = NativeTestCase::for_choices(&values(0), None, None);
-    let z = generate_zoned_datetime(&mut ntc, &tz, &spec).unwrap();
+    let before_a_gap = bounded(civil(2024, 3, 10, 2, 0, 0), civil(2024, 3, 10, 2, 30, 0));
+    let mut ntc = NativeTestCase::for_choices(&values(0, false), None, None);
+    let z = generate_zoned_datetime(&mut ntc, &tz, &before_a_gap).unwrap();
     assert_eq!(ntc.nodes.len(), 6);
-    assert_eq!(z.civil, civil(2024, 3, 10, 2, 0, 0));
+    assert_eq!(z.civil, civil(2024, 3, 10, 2, 29, 58));
     assert_eq!(z.kind, Kind::Gap);
     check_with_jiff(&z);
-    let mut ntc = NativeTestCase::for_choices(&values(1800), None, None);
-    let z = generate_zoned_datetime(&mut ntc, &tz, &spec).unwrap();
+    let mut ntc = NativeTestCase::for_choices(&values(2, false), None, None);
+    let z = generate_zoned_datetime(&mut ntc, &tz, &before_a_gap).unwrap();
     assert_eq!(z.civil, civil(2024, 3, 10, 2, 30, 0), "{:?}", ntc.nodes);
+    assert_eq!(z.kind, Kind::Gap);
+    check_with_jiff(&z);
+    let inside_a_fold = bounded(civil(2024, 11, 3, 1, 30, 0), civil(2024, 11, 3, 2, 30, 0));
+    let mut ntc = NativeTestCase::for_choices(&values(0, true), None, None);
+    let z = generate_zoned_datetime(&mut ntc, &tz, &inside_a_fold).unwrap();
+    assert_eq!(ntc.nodes.len(), 7);
+    assert_eq!(z.civil, civil(2024, 11, 3, 1, 30, 0));
+    assert_eq!(z.kind, Kind::Fold);
+    check_with_jiff(&z);
+    let mut ntc = NativeTestCase::for_choices(&values(2, true), None, None);
+    let z = generate_zoned_datetime(&mut ntc, &tz, &inside_a_fold).unwrap();
+    assert_eq!(z.civil, civil(2024, 11, 3, 1, 30, 2), "{:?}", ntc.nodes);
+    assert_eq!(z.kind, Kind::Fold);
     check_with_jiff(&z);
 }
 
@@ -1344,9 +1357,29 @@ fn civil_bounds_narrow_to_the_timestamp_range() {
     for seed in 0..20 {
         let mut ntc = fresh_ntc(seed);
         let err = generate_zoned_datetime(&mut ntc, &kolkata, &before_the_range).unwrap_err();
-        assert!(matches!(err, EngineError::InvalidTestCase), "{err:?}");
-        assert_eq!(ntc.status(), Some(Status::Invalid));
+        assert!(
+            matches!(&err, EngineError::InvalidArgument(m) if m.contains("in any allowed zone")),
+            "{err:?}"
+        );
+        assert_eq!(ntc.status(), None);
     }
+    let kolkata_or_utc = zones(&["Asia/Kolkata", "UTC"]);
+    let mut ntc = NativeTestCase::for_choices(&[name("Asia/Kolkata")], None, None);
+    let err = generate_zoned_datetime(&mut ntc, &kolkata_or_utc, &before_the_range).unwrap_err();
+    assert!(matches!(err, EngineError::InvalidTestCase), "{err:?}");
+    assert_eq!(ntc.status(), Some(Status::Invalid));
+    let mut ntc = NativeTestCase::for_choices(
+        &[
+            name("UTC"),
+            ChoiceValue::Integer(BigInt::from(0)),
+            ChoiceValue::Integer(BigInt::from(0)),
+        ],
+        None,
+        None,
+    );
+    let z = generate_zoned_datetime(&mut ntc, &kolkata_or_utc, &before_the_range).unwrap();
+    assert_eq!(z.timestamp, MIN_TIMESTAMP);
+    assert_eq!(z.to_string(), "-999999-01-01T00:00:00+00:00[UTC]");
 }
 
 #[test]
@@ -1622,26 +1655,45 @@ fn a_bound_inside_a_gap_reaches_the_skipped_wall_times() {
         values.at(1800).unwrap(),
         (civil(2024, 3, 10, 3, 30, 0), false)
     );
+    assert_eq!(
+        values.runs.iter().map(|r| r.gap).collect::<Vec<_>>(),
+        [true, false]
+    );
+    assert_eq!(values.index_at(i128::from(EPOCH_2000) * NS), 1800);
+    assert_eq!(values.index_at(i128::from(spring + 1800) * NS), 1800);
+    assert_eq!(values.index_at(i128::from(spring + 3599) * NS), 3599);
+    assert_eq!(values.index_at(i128::from(spring + 7201) * NS), 7200);
     let avoid = ZonedSpec {
         imaginary: Imaginary::Avoid,
         ..spec
     };
     let values = Values::of(zone, &at(spring + 1800), &at(spring + 7200), &avoid).unwrap();
     assert_eq!(values.total, 5401);
-    let mut ntc = NativeTestCase::for_choices(
-        &[
-            ChoiceValue::String("America/New_York".chars().map(u32::from).collect()),
-            ChoiceValue::Integer(BigInt::from(0)),
-        ],
-        None,
-        None,
-    );
-    let z = generate_zoned_datetime(&mut ntc, &tz, &spec).unwrap();
+    let replayed = |index: i64| {
+        let mut ntc = NativeTestCase::for_choices(
+            &[
+                ChoiceValue::String("America/New_York".chars().map(u32::from).collect()),
+                ChoiceValue::Integer(BigInt::from(index)),
+            ],
+            None,
+            None,
+        );
+        let z = generate_zoned_datetime(&mut ntc, &tz, &spec).unwrap();
+        assert_eq!(z.timestamp, at(spring + 1800));
+        z.to_string()
+    };
     assert_eq!(
-        z.to_string(),
+        replayed(0),
         "2024-03-10T02:30:00-04:00[America/New_York][gap]"
     );
-    assert_eq!(z.timestamp, at(spring + 1800));
+    assert_eq!(
+        replayed(1800),
+        "2024-03-10T03:30:00-04:00[America/New_York]"
+    );
+    let (mut shrinker, _) = shrinker_for(Arc::new(zones(&["America/New_York"])), spec, |_| true);
+    drive_no_yield(shrinker.shrink()).unwrap();
+    let z = replay(&tz, &spec, &shrinker.current_nodes);
+    assert_eq!(z.to_string(), "2024-03-10T03:30:00-04:00[America/New_York]");
     for (min, max, fallback) in [
         (spring, spring + 7200, true),
         (spring + 1800, spring + 7200, true),

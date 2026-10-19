@@ -569,6 +569,29 @@ fn durations_shrink_to_zero_clamped_and_target_the_catalogue() {
 }
 
 #[test]
+fn durations_target_one_unit_of_the_precision() {
+    let (min, max) = (duration(-1_000_000_000, 0), duration(1_000_000_000, 0));
+    let mut ntc = (0..10_000)
+        .find_map(|seed| {
+            let mut ntc = fresh_ntc(seed);
+            (ntc.datetime_parameters().unwrap().targeted_probability > 0.3).then_some(ntc)
+        })
+        .unwrap();
+    for (precision, unit) in [
+        (Precision::Milliseconds, duration(0, 1_000_000)),
+        (Precision::Microseconds, duration(0, 1_000)),
+    ] {
+        let mut hits = [0usize; 2];
+        for _ in 0..2000 {
+            let d = generate_duration(&mut ntc, min, max, precision).unwrap();
+            hits[0] += usize::from(d == unit);
+            hits[1] += usize::from(d == duration(-unit.seconds, -unit.nanoseconds));
+        }
+        assert!(hits.iter().all(|&n| n >= 20), "{precision:?}: {hits:?}");
+    }
+}
+
+#[test]
 fn durations_reject_invalid_arguments() {
     let mut ntc = fresh_ntc(0);
     for (min, max, precision) in [

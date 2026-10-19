@@ -297,7 +297,9 @@ fn duration_of(ns: i128) -> Duration {
 
 /// Draw a [`Duration`] in `[min, max]` as a whole number of `precision`
 /// units, wrapped in a span. Shrinks toward zero, or the nearest bound
-/// when that is out of range.
+/// when that is out of range. Targets the bounds, one unit of the
+/// precision of either sign and the [`interesting_duration_ns`] in the
+/// bounds at the precision.
 pub fn generate_duration(
     ntc: &mut NativeTestCase,
     min: Duration,
@@ -319,7 +321,7 @@ pub fn generate_duration(
             "generate_duration: no value at precision {precision:?} lies in [{min:?}, {max:?}]"
         )));
     }
-    let mut targets: Vec<i128> = [lo, hi]
+    let mut targets: Vec<i128> = [lo, hi, unit, -unit]
         .into_iter()
         .chain(interesting_duration_ns())
         .filter(|t| (lo..=hi).contains(t) && t % unit == 0)
