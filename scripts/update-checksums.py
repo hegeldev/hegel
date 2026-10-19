@@ -2,10 +2,10 @@
 """Regenerate the baked-in libhegel SHA-256 checksums in lib/ffi/loader.ml.
 
 Reads the targeted libhegel version from lib/ffi/loader.ml, lists the
-``libhegel-<os>-<arch>.{so,dylib,dll}`` assets of the matching hegel-rust
-GitHub release (tagged ``libhegel-v<version>``; via the ``gh`` CLI), downloads
-each one, computes its SHA-256 locally (we don't trust the published .sha256
-sidecars — we recompute), and rewrites the ``let checksums = [ ... ]`` table.
+``libhegel-<os>-<arch>.{so,dylib,dll}`` assets of the matching libhegel
+GitHub release (via the ``gh`` CLI), downloads each one, computes its SHA-256
+locally (we don't trust the published .sha256 sidecars — we recompute), and
+rewrites the ``let checksums = [ ... ]`` table.
 
 Usage: bump ``let version`` in lib/ffi/loader.ml, then run this script and
 commit the diff. Requires the GitHub CLI (`gh`) on PATH.
@@ -18,13 +18,26 @@ import sys
 import urllib.request
 from pathlib import Path
 
-REPO = "hegeldev/hegel-rust"
 LOADER = Path(__file__).resolve().parent.parent / "lib" / "ffi" / "loader.ml"
+MONOREPO_SINCE = (0, 47, 2)
 
 VERSION_RE = re.compile(r'let version = "([^"]+)"')
 # Client-loadable artifacts only; the ".sha256" sidecars are excluded.
 ASSET_RE = re.compile(r"^libhegel-([a-z0-9]+-[a-z0-9]+)\.(?:so|dylib|dll)$")
 CHECKSUMS_RE = re.compile(r"let checksums =\n  \[.*?\n  \]\n;;", re.DOTALL)
+
+
+def release_source(version: str) -> tuple[str, str]:
+    """The (repo, tag) of the GitHub release libhegel ``version`` hangs off.
+
+    libhegel releases live in the hegeldev/hegel monorepo since 0.47.2, tagged
+    ``libhegel/<version>``; earlier releases stay on hegeldev/hegel-rust under
+    ``libhegel-v<version>`` tags. Keep in sync with ``release_base`` in
+    lib/ffi/loader.ml and .github/scripts/libhegel-release-url.sh.
+    """
+    if tuple(int(p) for p in version.split(".")) < MONOREPO_SINCE:
+        return "hegeldev/hegel-rust", f"libhegel-v{version}"
+    return "hegeldev/hegel", f"libhegel/{version}"
 
 
 def main() -> int:
@@ -33,11 +46,11 @@ def main() -> int:
     if not version_match:
         sys.exit(f'could not find `let version = "..."` in {LOADER}')
     version = version_match.group(1)
-    tag = f"libhegel-v{version}"
-    print(f"libhegel version: {version}")
+    repo, tag = release_source(version)
+    print(f"libhegel version: {version} ({repo} {tag})")
 
     names = subprocess.run(
-        ["gh", "release", "view", tag, "--repo", REPO,
+        ["gh", "release", "view", tag, "--repo", repo,
          "--json", "assets", "--jq", ".assets[].name"],
         check=True, capture_output=True, text=True,
     ).stdout.split()
@@ -48,9 +61,9 @@ def main() -> int:
         if m:
             keyed[m.group(1)] = name
     if not keyed:
-        sys.exit(f"no libhegel-<os>-<arch> assets found in {REPO} {tag}")
+        sys.exit(f"no libhegel-<os>-<arch> assets found in {repo} {tag}")
 
-    base = f"https://github.com/{REPO}/releases/download/{tag}"
+    base = f"https://github.com/{repo}/releases/download/{tag}"
     rows = []
     for key in sorted(keyed):
         print(f"  hashing {keyed[key]} ...")

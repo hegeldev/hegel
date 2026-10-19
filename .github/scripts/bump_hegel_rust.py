@@ -1,16 +1,18 @@
 """Pin a new libhegel release and open/update the bump PR.
 
-Resolves the target libhegel release tag (an explicit `libhegel-v<version>`
+Resolves the target libhegel release tag (an explicit `libhegel/<version>`
 argument, else the latest libhegel release), writes its version into
 `lib/ffi/loader.ml`, regenerates the baked-in checksums via the existing
 `scripts/update-checksums.py`, drops a `RELEASE.md` so merging the PR cuts a
 hegel-ocaml release, and force-pushes a fixed branch (updating an already-open
 PR in place rather than stacking one PR per release).
 
-hegel-rust tags every release `v<hegeltest version>` (no GitHub release) and a
-release that includes hegel-c additionally `libhegel-v<hegel-c version>`, with
-the GitHub release and binaries on that tag. Only the latter is a libhegel
-release, so this script works in terms of `libhegel-v` tags throughout.
+libhegel is released from the hegeldev/hegel monorepo, where every component
+is tagged `<path>/<version>`: a libhegel release is the GitHub release (with
+the binaries attached) on a `libhegel/<version>` tag, so this script works in
+terms of `libhegel/` tags throughout. Releases before 0.47.2 live on
+hegeldev/hegel-rust under `libhegel-v<version>` tags; the currently pinned
+version may still be one of those.
 
 Requires the GitHub CLI (`gh`) on PATH with `GH_TOKEN` set.
 """
@@ -22,7 +24,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-RUST_REPO = "hegeldev/hegel-rust"
+LIBHEGEL_REPO = "hegeldev/hegel"
 BRANCH = "ci/bump-hegel-rust"
 LOADER = ROOT / "lib" / "ffi" / "loader.ml"
 UPDATE_CHECKSUMS = ROOT / "scripts" / "update-checksums.py"
@@ -33,7 +35,8 @@ WORKFLOW_URL = (
 )
 
 VERSION_RE = re.compile(r'^let version = "([^"]+)"', re.MULTILINE)
-TAG_PREFIX = "libhegel-v"
+TAG_PREFIX = "libhegel/"
+MONOREPO_SINCE = (0, 47, 2)
 
 
 def git(*args: str) -> None:
@@ -47,18 +50,29 @@ def get_pinned_version() -> str:
 
 
 def version_of_tag(tag: str) -> str:
-    """The `let version` form ("0.42.4") of a `libhegel-v0.42.4` tag."""
+    """The `let version` form ("0.47.2") of a `libhegel/0.47.2` tag."""
     if not tag.startswith(TAG_PREFIX):
         sys.exit(f"expected a {TAG_PREFIX}<version> tag, got {tag!r}")
     return tag[len(TAG_PREFIX):]
 
 
+def release_url(version: str) -> str:
+    """The GitHub release page for libhegel `version`.
+
+    Mirrors `release_source` in scripts/update-checksums.py: releases before
+    0.47.2 are on hegeldev/hegel-rust under `libhegel-v<version>` tags.
+    """
+    if tuple(int(p) for p in version.split(".")) < MONOREPO_SINCE:
+        return f"https://github.com/hegeldev/hegel-rust/releases/tag/libhegel-v{version}"
+    return f"https://github.com/{LIBHEGEL_REPO}/releases/tag/{TAG_PREFIX}{version}"
+
+
 def resolve_latest() -> str:
-    # The newest `libhegel-v` tag with a GitHub release. hegel-rust's plain
-    # `v<version>` tags are hegeltest releases without one, but filter on the
-    # prefix rather than trusting "latest" to be a libhegel release.
+    # The newest `libhegel/` tag with a GitHub release. Only libhegel tags in
+    # the monorepo carry one, but filter on the prefix rather than trusting
+    # "latest" to be a libhegel release.
     tags = subprocess.run(
-        ["gh", "release", "list", "--repo", RUST_REPO,
+        ["gh", "release", "list", "--repo", LIBHEGEL_REPO,
          "--exclude-drafts", "--exclude-pre-releases",
          "--json", "tagName", "--jq", ".[].tagName"],
         check=True, capture_output=True, text=True,
@@ -66,7 +80,7 @@ def resolve_latest() -> str:
     for tag in tags:
         if tag.startswith(TAG_PREFIX):
             return tag
-    sys.exit(f"no {TAG_PREFIX}<version> release found in {RUST_REPO}")
+    sys.exit(f"no {TAG_PREFIX}<version> release found in {LIBHEGEL_REPO}")
 
 
 def set_pinned_version(version: str) -> None:
@@ -87,16 +101,17 @@ def bump(requested_tag: str) -> None:
 
     # Pin the new version, then regenerate the checksum table.
     # update-checksums.py reads the version back out of loader.ml (and derives
-    # the libhegel-v tag from it), so it must be written first.
+    # the release tag from it), so it must be written first.
     set_pinned_version(target)
     subprocess.run([sys.executable, str(UPDATE_CHECKSUMS)], check=True, cwd=ROOT)
 
-    current_url = f"https://github.com/{RUST_REPO}/releases/tag/{TAG_PREFIX}{current}"
-    new_url = f"https://github.com/{RUST_REPO}/releases/tag/{target_tag}"
+    current_url = release_url(current)
+    new_url = release_url(target)
 
     RELEASE_MD.write_text(
         "RELEASE_TYPE: patch\n\n"
-        f"This patch bumps our pinned libhegel ([hegel-rust]({RUST_REPO})) from "
+        "This patch bumps our pinned libhegel "
+        f"([hegeldev/hegel](https://github.com/{LIBHEGEL_REPO})) from "
         f"[{current}]({current_url}) to [{target}]({new_url}).\n",
         encoding="utf-8",
     )
@@ -147,7 +162,7 @@ def bump(requested_tag: str) -> None:
 
 
 if __name__ == "__main__":
-    # An optional argument pins that exact `libhegel-v<version>` tag; with none
+    # An optional argument pins that exact `libhegel/<version>` tag; with none
     # we take the latest libhegel release. The repository_dispatch trigger
     # passes client_payload.tag.
     bump(sys.argv[1] if len(sys.argv) > 1 else "")
