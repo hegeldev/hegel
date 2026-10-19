@@ -16,14 +16,36 @@ runs:
           esac
         done
       shell: bash
-    - if: steps.parse.outputs.just == 'true' && runner.os == 'Linux'
-      run: sudo apt-get update && sudo apt-get install -y just
-      shell: bash
-    # The chocolatey community feed regularly times out, and `choco install`
-    # exits 0 even when it installed nothing, so fetch the pinned release
-    # straight from GitHub and verify its checksum instead. To bump: take the
-    # new version and its x86_64-pc-windows-msvc line from
+    # The justfiles use modules (`mod`), which need a newer `just` than the
+    # distro packages ship, and the chocolatey community feed regularly
+    # times out while `choco install` exits 0 even when it installed
+    # nothing. So on Linux and Windows fetch the pinned release straight
+    # from GitHub and verify its checksum. To bump: take the new version
+    # and the matching lines from
     # https://github.com/casey/just/releases/download/<version>/SHA256SUMS.
+    - if: steps.parse.outputs.just == 'true' && runner.os == 'Linux'
+      env:
+        JUST_VERSION: 1.59.0
+        JUST_SHA256_X86_64: 409044617b6f06517c1035e55ca38c8c856ff8b650e41bc2aa1ef82d5903a23e
+        JUST_SHA256_AARCH64: 23871b1702bfd550fb5f901778fd4290ecf2ee034a45a889fbe96d89b188086d
+      # The GITHUB_PATH write only matters under pull_request_target, which
+      # no workflow here uses.
+      run: | # zizmor: ignore[github-env]
+        set -euo pipefail
+        case "$(uname -m)" in
+          x86_64) arch=x86_64; sha="$JUST_SHA256_X86_64" ;;
+          aarch64) arch=aarch64; sha="$JUST_SHA256_AARCH64" ;;
+          *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+        esac
+        archive="just-${JUST_VERSION}-${arch}-unknown-linux-musl.tar.gz"
+        dir="$RUNNER_TEMP/just-${JUST_VERSION}"
+        mkdir -p "$dir"
+        curl -sSfL --retry 5 --retry-delay 10 -o "$dir/$archive" \
+          "https://github.com/casey/just/releases/download/${JUST_VERSION}/$archive"
+        echo "$sha  $dir/$archive" | sha256sum -c -
+        tar -xzf "$dir/$archive" -C "$dir" just
+        echo "$dir" >> "$GITHUB_PATH"
+      shell: bash
     - if: steps.parse.outputs.just == 'true' && runner.os == 'Windows'
       env:
         JUST_VERSION: 1.59.0
