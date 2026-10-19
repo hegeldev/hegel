@@ -82,6 +82,11 @@ def test_fuzz_stuff(tc):
         # Possible nested sets, e.g. "[[", trigger a FutureWarning
         tc.reject()
 
+    if sys.version_info >= (3, 14):
+        # Engine: \z, the end-of-string anchor re accepts from Python 3.14,
+        # is rejected as a bad escape (see docs/engine-issues.md).
+        tc.assume((b"\\z" if isinstance(pattern, bytes) else "\\z") not in pattern)
+
     ex = tc.draw(gs.from_regex(regex, fullmatch=False))
 
     assert regex.search(ex)

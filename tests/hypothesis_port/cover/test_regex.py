@@ -635,3 +635,16 @@ def test_regex_output_should_print_as_string():
         test()
 
     assert "s = '00'" in "\n".join(err.value.__notes__)
+
+
+@pytest.mark.skipif(sys.version_info < (3, 14), reason="re gained the \\z anchor in Python 3.14")
+@pytest.mark.xfail(
+    strict=True,
+    raises=InvalidArgument,
+    reason="Engine: \\z, the end-of-string anchor re accepts from Python 3.14, is rejected "
+    "as a bad escape (see docs/engine-issues.md)",
+)
+@hegel.test
+def test_end_of_string_anchor_z(tc):
+    s = tc.draw(gs.from_regex(r"a\z", fullmatch=False))
+    assert re.search(r"a\z", s)

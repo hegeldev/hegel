@@ -50,6 +50,16 @@ than worked around in the bindings, so they can be fixed in the engine.
   by `tests/test_generators_strings.py` and, in the port,
   `cover/test_regex.py` and `cover/test_simple_characters.py`).
 
+## Regular expressions
+
+- Python 3.14 added `\z` to `re`, an end-of-string anchor equivalent to
+  `\Z` and the spelling most other engines use. libhegel rejects it as a bad
+  escape (`invalid regex pattern "a\z": bad escape \z at position 1`), so
+  `from_regex` fails for a pattern `re` compiles
+  (`tests/hypothesis_port/cover/test_regex.py::test_end_of_string_anchor_z`,
+  xfail on 3.14 and later; the fuzz test in `nocover/test_regex.py` assumes
+  such patterns away).
+
 ## Shrinking and generation
 
 - A float draw with an infinite bound and `allow_infinity=false` aborts the
