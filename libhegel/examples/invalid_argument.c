@@ -69,7 +69,7 @@ int main(void) {
     }
 
     hegel_string_generator_t *gen;
-    rc = hegel_string_generator_text(ctx, 0, 10, &STRING("ebcdic"), 0, UINT32_MAX, NULL, 0, NULL, 0, STRING(""), STRING(""), &gen);
+    rc = hegel_string_generator_text(ctx, 0, 10, &STRING("ebcdic"), 0, UINT32_MAX, NULL, 0, NULL, 0, STRING(""), STRING(""), STRING(""), &gen);
     if (rc != HEGEL_E_INVALID_ARG) {
         fprintf(stderr, "expected HEGEL_E_INVALID_ARG (%d) for unknown codec, got rc=%d\n",
                 HEGEL_E_INVALID_ARG, rc);

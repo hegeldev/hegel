@@ -12,10 +12,11 @@ use crate::native::bignum::BigInt;
 use crate::native::core::{ChoiceValue, Constraint, GenerationParameters, NativeTestCase};
 use crate::native::draws::source::{RngDraws, SimplestDraws};
 use crate::native::draws::{StringSpec, TextAlphabet};
-use crate::native::re::constants::{ChCode, SRE_FLAG_IGNORECASE};
+use crate::native::re::constants::{ChCode, SRE_FLAG_ASCII, SRE_FLAG_IGNORECASE};
 use crate::native::re::matcher::set_matches;
 use crate::native::re::parser::{OpCode, SetItem, SubPattern};
 use crate::native::rng::EngineRng;
+use crate::unicodedata::UnicodeVersion;
 use alloc::string::ToString;
 use alloc::vec;
 
@@ -36,7 +37,7 @@ fn oversize_regex_draws_stop_and_restore_the_output_buffer() {
         "abcdefghij",
         "(abc)\\1",
     ] {
-        let re = CompiledRegex::compile(pattern, None).unwrap();
+        let re = CompiledRegex::compile(pattern, None, UnicodeVersion::LATEST).unwrap();
         let mut rng = EngineRng::seeded(0);
         let mut draws = RngDraws::new(&mut rng, Default::default());
         let mut out = chars("prefix");
@@ -52,7 +53,7 @@ fn oversize_regex_draws_stop_and_restore_the_output_buffer() {
 #[test]
 fn padding_counts_toward_the_regex_size_limit() {
     for pattern in ["", "a", "a$"] {
-        let re = CompiledRegex::compile(pattern, None).unwrap();
+        let re = CompiledRegex::compile(pattern, None, UnicodeVersion::LATEST).unwrap();
         let mut rejected = 0;
         for seed in 0..20 {
             let mut rng = EngineRng::seeded(seed);
@@ -73,7 +74,7 @@ fn padding_counts_toward_the_regex_size_limit() {
 
 #[test]
 fn nullable_regex_repeats_have_a_work_limit() {
-    let re = CompiledRegex::compile("(?:){65536}", None).unwrap();
+    let re = CompiledRegex::compile("(?:){65536}", None, UnicodeVersion::LATEST).unwrap();
     let mut state = ignorecase_state(&re.caches);
     state.remaining = 16;
     let mut draws = SimplestDraws::default();
@@ -92,7 +93,7 @@ fn nullable_regex_repeats_have_a_work_limit() {
 
 #[test]
 fn the_simplest_regex_string_must_fit_the_choice() {
-    let re = CompiledRegex::compile("a{10}", None).unwrap();
+    let re = CompiledRegex::compile("a{10}", None, UnicodeVersion::LATEST).unwrap();
     let mut kind = re.kind(true).unwrap();
     kind.max_size = 4;
     let mut draws = SimplestDraws::default();
@@ -351,10 +352,10 @@ fn generate_op_negated_class_covering_the_bmp_marks_invalid() {
 
 #[test]
 fn compile_rejects_unparseable_patterns() {
-    let err = CompiledRegex::compile("(unclosed", None).unwrap_err();
+    let err = CompiledRegex::compile("(unclosed", None, UnicodeVersion::LATEST).unwrap_err();
     assert!(matches!(err, EngineError::InvalidArgument(_)));
     assert!(err.to_string().contains("invalid regex pattern"));
-    assert!(CompiledRegex::compile("a+b?", None).is_ok());
+    assert!(CompiledRegex::compile("a+b?", None, UnicodeVersion::LATEST).is_ok());
 }
 
 fn ignorecase_state(caches: &Caches) -> GenState<'_> {
@@ -388,7 +389,7 @@ fn typical_width_predicts_the_mean_length_of_generated_strings() {
         "(?!z)[^a].",
         "a*+b",
     ] {
-        let re = CompiledRegex::compile(pattern, None).unwrap();
+        let re = CompiledRegex::compile(pattern, None, UnicodeVersion::LATEST).unwrap();
         let predicted = re.typical_width();
         let mut total = 0;
         for seed in 0..draws {
@@ -486,7 +487,7 @@ fn generate_op_ignorecase_not_literal_excludes_every_case_equal_char() {
 fn generate_regex_handles_huge_character_class_ranges() {
     use crate::native::rng::EngineRng;
     let mut ntc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
-    let re = CompiledRegex::compile("[\\x20-\\U0010FFFF]", None).unwrap();
+    let re = CompiledRegex::compile("[\\x20-\\U0010FFFF]", None, UnicodeVersion::LATEST).unwrap();
     let s = generate_regex(&mut ntc, &re, false).unwrap();
     assert!(!s.is_empty());
 }
@@ -494,7 +495,7 @@ fn generate_regex_handles_huge_character_class_ranges() {
 #[test]
 fn generate_regex_word_boundaries_hold_in_the_final_string() {
     use crate::native::rng::EngineRng;
-    let re = CompiledRegex::compile(r"\bfoo\b", None).unwrap();
+    let re = CompiledRegex::compile(r"\bfoo\b", None, UnicodeVersion::LATEST).unwrap();
     let mut produced = 0;
     for seed in 0..300 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
@@ -513,7 +514,7 @@ fn generate_regex_word_boundaries_hold_in_the_final_string() {
 #[test]
 fn generate_regex_end_anchor_inside_branch_holds_in_the_final_string() {
     use crate::native::rng::EngineRng;
-    let re = CompiledRegex::compile("foo$|bar", None).unwrap();
+    let re = CompiledRegex::compile("foo$|bar", None, UnicodeVersion::LATEST).unwrap();
     let mut produced = 0;
     for seed in 0..300 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
@@ -532,7 +533,7 @@ fn generate_regex_end_anchor_inside_branch_holds_in_the_final_string() {
 #[test]
 fn generate_regex_fullmatch_lookahead_does_not_emit_the_assertion_body() {
     use crate::native::rng::EngineRng;
-    let re = CompiledRegex::compile("(?=a)ab", None).unwrap();
+    let re = CompiledRegex::compile("(?=a)ab", None, UnicodeVersion::LATEST).unwrap();
     let mut produced = 0;
     for seed in 0..100 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
@@ -548,7 +549,7 @@ fn generate_regex_fullmatch_lookahead_does_not_emit_the_assertion_body() {
 #[test]
 fn generate_regex_unsatisfiable_possessive_pattern_never_yields_a_wrong_string() {
     use crate::native::rng::EngineRng;
-    let re = CompiledRegex::compile("a*+a", None).unwrap();
+    let re = CompiledRegex::compile("a*+a", None, UnicodeVersion::LATEST).unwrap();
     for seed in 0..100 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
         for fullmatch in [false, true] {
@@ -577,7 +578,7 @@ fn generate_regex_ignorecase_negated_class_excludes_every_case_equal_char() {
         ])
         .unwrap(),
     );
-    let re = CompiledRegex::compile("(?i)[^\u{130}a]", alphabet).unwrap();
+    let re = CompiledRegex::compile("(?i)[^\u{130}a]", alphabet, UnicodeVersion::LATEST).unwrap();
     let mut seen = HashSet::default();
     for seed in 0..100 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
@@ -594,7 +595,7 @@ fn generate_regex_ignorecase_negated_class_excludes_every_case_equal_char() {
 #[test]
 fn generate_regex_fullmatch_lookbehind_is_validated_against_the_final_string() {
     use crate::native::rng::EngineRng;
-    let re = CompiledRegex::compile("(?<=a)b", None).unwrap();
+    let re = CompiledRegex::compile("(?<=a)b", None, UnicodeVersion::LATEST).unwrap();
     for seed in 0..20 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
         assert!(
@@ -603,7 +604,7 @@ fn generate_regex_fullmatch_lookbehind_is_validated_against_the_final_string() {
         );
     }
 
-    let re = CompiledRegex::compile("(?<=^)b", None).unwrap();
+    let re = CompiledRegex::compile("(?<=^)b", None, UnicodeVersion::LATEST).unwrap();
     let mut produced = 0;
     for seed in 0..20 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
@@ -621,7 +622,7 @@ fn generate_regex_fullmatch_lookbehind_is_validated_against_the_final_string() {
 #[test]
 fn generate_regex_retries_a_failed_negative_lookbehind_within_the_test_case() {
     use crate::native::rng::EngineRng;
-    let re = CompiledRegex::compile(r"[ab]*(?<!a)c", None).unwrap();
+    let re = CompiledRegex::compile(r"[ab]*(?<!a)c", None, UnicodeVersion::LATEST).unwrap();
     let mut produced = 0;
     for seed in 0..200 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
@@ -635,7 +636,7 @@ fn generate_regex_retries_a_failed_negative_lookbehind_within_the_test_case() {
         "a candidate ending in `a` must be redrawn, not fail the test case: {produced}/200"
     );
 
-    let re = CompiledRegex::compile(r"a(?<!a)c", None).unwrap();
+    let re = CompiledRegex::compile(r"a(?<!a)c", None, UnicodeVersion::LATEST).unwrap();
     for seed in 0..10 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
         assert!(
@@ -650,7 +651,7 @@ fn generate_regex_retries_a_failed_negative_lookbehind_within_the_test_case() {
 fn generate_regex_end_anchor_with_no_newline_in_alphabet_does_not_pad() {
     use crate::native::rng::EngineRng;
     let alphabet = Some(IntervalSet::new(vec![('a' as u32, 'b' as u32)]).unwrap());
-    let re = CompiledRegex::compile("a$", alphabet).unwrap();
+    let re = CompiledRegex::compile("a$", alphabet, UnicodeVersion::LATEST).unwrap();
     let mut produced = 0;
     for seed in 0..20 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
@@ -666,7 +667,7 @@ fn generate_regex_end_anchor_with_no_newline_in_alphabet_does_not_pad() {
 #[test]
 fn generate_regex_multiline_caret_in_the_middle_generates_nothing() {
     use crate::native::rng::EngineRng;
-    let re = CompiledRegex::compile("(?m)a^b", None).unwrap();
+    let re = CompiledRegex::compile("(?m)a^b", None, UnicodeVersion::LATEST).unwrap();
     for seed in 0..20 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
         assert!(
@@ -683,7 +684,7 @@ fn codepoint_to_char_reports_surrogates_as_internal_errors() {
 }
 
 fn reference_in_category(c: char, cat: ChCode, ascii: bool) -> bool {
-    let group = |g: &str| unicodedata::is_in_group(c as u32, g).unwrap();
+    let group = |g: &str| UnicodeVersion::LATEST.is_in_group(c as u32, g).unwrap();
     let (digit, space, word) = if ascii {
         (
             c.is_ascii_digit(),
@@ -768,20 +769,22 @@ fn category_in_agrees_with_in_category_from_the_category_alone_codepoint_up() {
     use ChCode::*;
     let cats = [Digit, NotDigit, Space, NotSpace, Word, NotWord];
     for ascii in [false, true] {
+        let flags = if ascii { SRE_FLAG_ASCII } else { 0 };
         for c in (CATEGORY_ALONE_FROM..=0x10FFFF).filter_map(char::from_u32) {
-            let category = unicodedata::general_category_char(c);
+            let category = UnicodeVersion::LATEST.general_category_char(c);
             for cat in cats {
                 assert_eq!(
                     category_in(category, cat, ascii),
-                    in_category(c, cat, !ascii),
+                    in_category(c, cat, flags),
                     "{c:?} {cat:?} ascii {ascii}"
                 );
             }
         }
     }
     let differs = |c: char, cat: ChCode, ascii: bool| {
-        let category = unicodedata::general_category_char(c);
-        category_in(category, cat, ascii) != in_category(c, cat, !ascii)
+        let category = UnicodeVersion::LATEST.general_category_char(c);
+        let flags = if ascii { SRE_FLAG_ASCII } else { 0 };
+        category_in(category, cat, ascii) != in_category(c, cat, flags)
     };
     assert!(differs('\t', Space, false));
     assert!(differs('_', Word, false));
@@ -899,8 +902,8 @@ fn a_repeated_class_draws_what_repeating_it_in_a_group_would() {
         ("[^ab]*", "([^ab])*", &complemented),
         ("[^ab]{2,4}", "([^ab]){2,4}", &complemented),
     ] {
-        let direct = CompiledRegex::compile(direct, None).unwrap();
-        let grouped = CompiledRegex::compile(grouped, None).unwrap();
+        let direct = CompiledRegex::compile(direct, None, UnicodeVersion::LATEST).unwrap();
+        let grouped = CompiledRegex::compile(grouped, None, UnicodeVersion::LATEST).unwrap();
         assert!(matches!(repeated(&direct).data[..], [OpCode::In(_)]));
         assert!(matches!(
             repeated(&grouped).data[..],
@@ -981,8 +984,8 @@ fn a_captured_group_is_kept_only_when_the_pattern_reads_it_back() {
         assert_eq!(out, chars("a"));
         assert_eq!(state.groups.get(&1), capture.then(|| chars("a")).as_ref());
     }
-    let reading = CompiledRegex::compile("(a|b)\\1", None).unwrap();
-    let plain = CompiledRegex::compile("(a|b)(?!c)", None).unwrap();
+    let reading = CompiledRegex::compile("(a|b)\\1", None, UnicodeVersion::LATEST).unwrap();
+    let plain = CompiledRegex::compile("(a|b)(?!c)", None, UnicodeVersion::LATEST).unwrap();
     assert!(reading.parsed.group_refs);
     assert!(!plain.parsed.group_refs);
     for seed in 0..50 {
@@ -1008,7 +1011,7 @@ fn drawing_from_an_rng_gives_the_strings_a_fresh_test_case_draws() {
         "(?P<q>['\"])[^'\"]*(?P=q)",
     ];
     for pattern in patterns {
-        let re = CompiledRegex::compile(pattern, None).unwrap();
+        let re = CompiledRegex::compile(pattern, None, UnicodeVersion::LATEST).unwrap();
         for fullmatch in [true, false] {
             for seed in 0..10 {
                 let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
@@ -1031,7 +1034,7 @@ fn drawing_from_an_rng_gives_the_strings_a_fresh_test_case_draws() {
 
 #[test]
 fn an_rng_source_records_the_invalid_conclusion_of_a_failing_pattern() {
-    let re = CompiledRegex::compile("(?!)", None).unwrap();
+    let re = CompiledRegex::compile("(?!)", None, UnicodeVersion::LATEST).unwrap();
     let mut rng = EngineRng::seeded(0);
     let mut draws = RngDraws::new(&mut rng, GenerationParameters::default().integer);
     assert!(matches!(
@@ -1054,7 +1057,7 @@ fn the_simplest_source_draws_the_simplest_match() {
         ("(?i)abc", true, "ABC"),
         ("[1-9][0-9]*", true, "1"),
     ] {
-        let re = CompiledRegex::compile(pattern, None).unwrap();
+        let re = CompiledRegex::compile(pattern, None, UnicodeVersion::LATEST).unwrap();
         let mut draws = SimplestDraws::default();
         assert_eq!(
             generate_regex(&mut draws, &re, fullmatch).unwrap(),
@@ -1066,7 +1069,7 @@ fn the_simplest_source_draws_the_simplest_match() {
 }
 
 fn simplest(pattern: &str, alphabet: Option<IntervalSet>) -> String {
-    let re = CompiledRegex::compile(pattern, alphabet).unwrap();
+    let re = CompiledRegex::compile(pattern, alphabet, UnicodeVersion::LATEST).unwrap();
     let mut draws = SimplestDraws::default();
     let simplest = generate_regex(&mut draws, &re, true).unwrap();
     assert_eq!(draws.status(), None, "{pattern:?}");
@@ -1143,7 +1146,7 @@ fn the_least_of_nested_alternations_is_found_in_one_pass_over_each() {
 fn the_least_alternative_is_chosen_among_those_the_alphabet_can_supply() {
     let only_b = || Some(IntervalSet::new(vec![(u32::from('b'), u32::from('b'))]).unwrap());
     assert_eq!(simplest("(?:a|bb)", only_b()), "bb");
-    let re = CompiledRegex::compile("(?:a|aa)", only_b()).unwrap();
+    let re = CompiledRegex::compile("(?:a|aa)", only_b(), UnicodeVersion::LATEST).unwrap();
     let mut draws = SimplestDraws::default();
     assert!(matches!(
         generate_regex(&mut draws, &re, true),
@@ -1157,7 +1160,7 @@ fn the_least_alternative_is_chosen_among_those_the_alphabet_can_supply() {
 /// simplest string then comes from the seeded draws.
 #[test]
 fn an_alternative_that_cannot_be_drawn_fails_the_simplest_walk() {
-    let re = CompiledRegex::compile(r"b(?:\A|a)", None).unwrap();
+    let re = CompiledRegex::compile(r"b(?:\A|a)", None, UnicodeVersion::LATEST).unwrap();
     let mut draws = SimplestDraws::default();
     assert!(matches!(
         generate_regex(&mut draws, &re, true),
@@ -1180,7 +1183,7 @@ fn an_alternative_that_cannot_be_drawn_fails_the_simplest_walk() {
 #[test]
 fn the_simplest_string_is_valid_when_the_least_alternative_fails_the_pattern() {
     for pattern in ["(?!a)(?:a|bb)", r"(?:a\B|bb)", r"(?:-|bb)\b"] {
-        let re = CompiledRegex::compile(pattern, None).unwrap();
+        let re = CompiledRegex::compile(pattern, None, UnicodeVersion::LATEST).unwrap();
         let mut draws = SimplestDraws::default();
         assert!(
             matches!(
@@ -1204,7 +1207,7 @@ fn the_simplest_string_is_valid_when_the_least_alternative_fails_the_pattern() {
 /// strings a seed draws are what they were.
 #[test]
 fn the_random_source_draws_alternatives_by_index() {
-    let re = CompiledRegex::compile("(?:bbbb|a)", None).unwrap();
+    let re = CompiledRegex::compile("(?:bbbb|a)", None, UnicodeVersion::LATEST).unwrap();
     let mut seen = HashSet::default();
     for seed in 0..20 {
         let mut rng = EngineRng::seeded(seed);
@@ -1215,8 +1218,45 @@ fn the_random_source_draws_alternatives_by_index() {
     assert!(seen.contains("bbbb") && seen.contains("a"), "saw {seen:?}");
 }
 
+#[test]
+fn classes_and_case_folding_follow_the_unicode_version() {
+    let v15_1 = UnicodeVersion::parse("15.1.0").unwrap();
+    let v16 = UnicodeVersion::parse("16.0.0").unwrap();
+    let rams_horn = Some(IntervalSet::new(vec![(0xA7CB, 0xA7CB)]).unwrap());
+    assert!(
+        CompiledRegex::compile(r"\w", rams_horn.clone(), v16)
+            .unwrap()
+            .producible()
+    );
+    assert!(
+        !CompiledRegex::compile(r"\w", rams_horn.clone(), v15_1)
+            .unwrap()
+            .producible()
+    );
+    assert!(
+        CompiledRegex::compile(r"\W", rams_horn, v15_1)
+            .unwrap()
+            .producible()
+    );
+    let drawn = |version: UnicodeVersion| {
+        let re = CompiledRegex::compile(r"(?i)\uA7CE", None, version).unwrap();
+        let mut seen = HashSet::default();
+        for seed in 0..50 {
+            let mut rng = EngineRng::seeded(seed);
+            let mut draws = RngDraws::new(&mut rng, Default::default());
+            seen.insert(generate_regex(&mut draws, &re, true).unwrap());
+        }
+        seen
+    };
+    assert_eq!(
+        drawn(UnicodeVersion::LATEST),
+        HashSet::from_iter(["\u{A7CE}".to_string(), "\u{A7CF}".to_string()])
+    );
+    assert_eq!(drawn(v16), HashSet::from_iter(["\u{A7CE}".to_string()]));
+}
+
 fn spec(pattern: &str, fullmatch: bool) -> StringSpec {
-    StringSpec::regex(pattern, fullmatch, None).unwrap()
+    StringSpec::regex(pattern, fullmatch, None, UnicodeVersion::LATEST).unwrap()
 }
 
 fn regex_kind(spec: &StringSpec) -> &Arc<StringChoice> {
@@ -1266,7 +1306,7 @@ fn a_regex_string_drawn_over_an_alphabet_is_recorded_over_it() {
         1,
     )
     .unwrap();
-    let spec = StringSpec::regex("[a-z]+", true, Some(&letters)).unwrap();
+    let spec = StringSpec::regex("[a-z]+", true, Some(&letters), UnicodeVersion::LATEST).unwrap();
     let kind = regex_kind(&spec);
     assert_eq!(kind.intervals.len(), 3);
     assert!(kind.validate(&[u32::from('b')]));
@@ -1368,7 +1408,7 @@ fn ensuring_the_simplest_string_of_a_kind_under_no_regex_is_an_internal_error() 
 #[test]
 fn a_literal_pattern_is_emitted_without_a_walk() {
     let compiled = |pattern: &str, alphabet: Option<IntervalSet>| {
-        CompiledRegex::compile(pattern, alphabet).unwrap()
+        CompiledRegex::compile(pattern, alphabet, UnicodeVersion::LATEST).unwrap()
     };
     assert_eq!(
         compiled("abc", None).literal.as_deref(),
@@ -1429,7 +1469,7 @@ fn every_string_drawn_is_one_the_pattern_matches() {
         r"(?i)(?-i:k)(?a:k)",
         "a\0b",
     ] {
-        let re = CompiledRegex::compile(pattern, None).unwrap();
+        let re = CompiledRegex::compile(pattern, None, UnicodeVersion::LATEST).unwrap();
         for fullmatch in [true, false] {
             for seed in 0..100 {
                 let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
@@ -1453,7 +1493,7 @@ fn a_negated_class_under_ignorecase_never_draws_a_character_folding_into_it() {
             (u32::from(lookalike), u32::from(lookalike)),
         ])
         .unwrap();
-        let re = CompiledRegex::compile(pattern, Some(alphabet)).unwrap();
+        let re = CompiledRegex::compile(pattern, Some(alphabet), UnicodeVersion::LATEST).unwrap();
         for seed in 0..40 {
             let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
             assert_eq!(
@@ -1468,7 +1508,7 @@ fn a_negated_class_under_ignorecase_never_draws_a_character_folding_into_it() {
 #[test]
 fn a_pattern_no_string_matches_rejects_the_test_case_instead_of_drawing_one() {
     for (pattern, fullmatch) in [(r"(?=a)b", false), (r"(?a)\bé", true)] {
-        let re = CompiledRegex::compile(pattern, None).unwrap();
+        let re = CompiledRegex::compile(pattern, None, UnicodeVersion::LATEST).unwrap();
         for seed in 0..10 {
             let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
             assert!(
@@ -1516,7 +1556,7 @@ fn only_patterns_the_generator_approximates_are_verified_by_the_matcher() {
         (r"(?:$)", false),
         (r"(?m)^a$", false),
     ] {
-        let re = CompiledRegex::compile(pattern, None).unwrap();
+        let re = CompiledRegex::compile(pattern, None, UnicodeVersion::LATEST).unwrap();
         assert_eq!(re.verified, verified, "{pattern:?}");
     }
 }
@@ -1581,7 +1621,7 @@ fn strings_drawn_for_anchors_and_lookarounds_are_accepted_by_the_constraint() {
         r"(a)(?<=\1)b",
         r"(?=a$)a",
     ] {
-        let re = CompiledRegex::compile(pattern, None).unwrap();
+        let re = CompiledRegex::compile(pattern, None, UnicodeVersion::LATEST).unwrap();
         let mut produced = 0;
         for fullmatch in [true, false] {
             let kind = re.kind(fullmatch).unwrap();
@@ -1606,14 +1646,14 @@ fn strings_drawn_for_anchors_and_lookarounds_are_accepted_by_the_constraint() {
 
 #[test]
 fn generate_regex_ascii_flag_generates_explicit_nonascii_chars() {
-    let re = CompiledRegex::compile("(?a)[Ï-İ]", None).unwrap();
+    let re = CompiledRegex::compile("(?a)[Ï-İ]", None, UnicodeVersion::LATEST).unwrap();
     for seed in 0..20 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
         let s = generate_regex(&mut ntc, &re, true).unwrap();
         let c = s.chars().next().unwrap();
         assert!(s.chars().count() == 1 && ('Ï'..='İ').contains(&c), "{s:?}");
     }
-    let re = CompiledRegex::compile("(?a)[^\\x00-\\xff]", None).unwrap();
+    let re = CompiledRegex::compile("(?a)[^\\x00-\\xff]", None, UnicodeVersion::LATEST).unwrap();
     for seed in 0..20 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
         let s = generate_regex(&mut ntc, &re, true).unwrap();
@@ -1623,12 +1663,12 @@ fn generate_regex_ascii_flag_generates_explicit_nonascii_chars() {
 
 #[test]
 fn generate_regex_ascii_ignorecase_folds_only_ascii_letters() {
-    let re = CompiledRegex::compile("(?ai)À", None).unwrap();
+    let re = CompiledRegex::compile("(?ai)À", None, UnicodeVersion::LATEST).unwrap();
     for seed in 0..20 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
         assert_eq!(generate_regex(&mut ntc, &re, true).unwrap(), "À");
     }
-    let re = CompiledRegex::compile("(?ai)a", None).unwrap();
+    let re = CompiledRegex::compile("(?ai)a", None, UnicodeVersion::LATEST).unwrap();
     let mut seen = HashSet::default();
     for seed in 0..50 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
@@ -1640,7 +1680,7 @@ fn generate_regex_ascii_ignorecase_folds_only_ascii_letters() {
 #[test]
 fn generate_regex_skips_a_repeat_whose_body_the_alphabet_cannot_supply() {
     let alphabet = Some(IntervalSet::new(vec![(0, 127)]).unwrap());
-    let re = CompiledRegex::compile("(?-i:Ā)*k", alphabet).unwrap();
+    let re = CompiledRegex::compile("(?-i:Ā)*k", alphabet, UnicodeVersion::LATEST).unwrap();
     assert!(re.unproducible);
     for seed in 0..50 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
@@ -1657,7 +1697,7 @@ fn generate_regex_skips_a_repeat_whose_body_the_alphabet_cannot_supply() {
 #[test]
 fn generate_regex_required_repeat_of_an_unproducible_body_is_rejected() {
     let alphabet = Some(IntervalSet::new(vec![(0, 127)]).unwrap());
-    let re = CompiledRegex::compile("Ā+k", alphabet).unwrap();
+    let re = CompiledRegex::compile("Ā+k", alphabet, UnicodeVersion::LATEST).unwrap();
     for seed in 0..20 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
         assert!(generate_regex(&mut ntc, &re, true).is_err(), "seed {seed}");
@@ -1667,7 +1707,7 @@ fn generate_regex_required_repeat_of_an_unproducible_body_is_rejected() {
 #[test]
 fn generate_regex_branch_picks_only_producible_alternatives() {
     let alphabet = Some(IntervalSet::new(vec![(0, 127)]).unwrap());
-    let re = CompiledRegex::compile("Ā|b|Ē", alphabet.clone()).unwrap();
+    let re = CompiledRegex::compile("Ā|b|Ē", alphabet.clone(), UnicodeVersion::LATEST).unwrap();
     for seed in 0..50 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
         assert_eq!(
@@ -1676,10 +1716,10 @@ fn generate_regex_branch_picks_only_producible_alternatives() {
             "seed {seed}"
         );
     }
-    let re = CompiledRegex::compile("Āx|b|Ēy", alphabet.clone()).unwrap();
+    let re = CompiledRegex::compile("Āx|b|Ēy", alphabet.clone(), UnicodeVersion::LATEST).unwrap();
     let mut ntc = NativeTestCase::for_choices(&[], None, None);
     assert_eq!(generate_regex(&mut ntc, &re, true).unwrap(), "b");
-    let re = CompiledRegex::compile("Āx|Ēy", alphabet).unwrap();
+    let re = CompiledRegex::compile("Āx|Ēy", alphabet, UnicodeVersion::LATEST).unwrap();
     for seed in 0..20 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
         assert!(generate_regex(&mut ntc, &re, true).is_err(), "seed {seed}");
@@ -1696,7 +1736,7 @@ fn a_pattern_the_alphabet_supplies_in_full_skips_the_producibility_lookups() {
         ("(?:ab)*c", None),
         ("a|b|c", Some(IntervalSet::new(vec![(0, 127)]).unwrap())),
     ] {
-        let re = CompiledRegex::compile(pattern, alphabet).unwrap();
+        let re = CompiledRegex::compile(pattern, alphabet, UnicodeVersion::LATEST).unwrap();
         assert!(!re.unproducible, "{pattern:?}");
         assert!(re.caches.producible.lock().values().all(|&p| p));
     }
@@ -1705,7 +1745,7 @@ fn a_pattern_the_alphabet_supplies_in_full_skips_the_producibility_lookups() {
 #[test]
 fn generate_regex_class_the_alphabet_cannot_supply_is_rejected() {
     let alphabet = Some(IntervalSet::new(vec![(0, 127)]).unwrap());
-    let re = CompiledRegex::compile("[ĀĒ]", alphabet).unwrap();
+    let re = CompiledRegex::compile("[ĀĒ]", alphabet, UnicodeVersion::LATEST).unwrap();
     for seed in 0..5 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
         assert!(generate_regex(&mut ntc, &re, true).is_err(), "seed {seed}");
@@ -1715,7 +1755,7 @@ fn generate_regex_class_the_alphabet_cannot_supply_is_rejected() {
 
 #[test]
 fn generate_regex_empty_negative_lookahead_is_rejected() {
-    let re = CompiledRegex::compile("(?!)", None).unwrap();
+    let re = CompiledRegex::compile("(?!)", None, UnicodeVersion::LATEST).unwrap();
     for seed in 0..5 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
         assert!(generate_regex(&mut ntc, &re, true).is_err(), "seed {seed}");
@@ -1725,7 +1765,7 @@ fn generate_regex_empty_negative_lookahead_is_rejected() {
 
 #[test]
 fn generate_regex_pattern_with_a_nul_character_matches_itself() {
-    let re = CompiledRegex::compile("a\0b", None).unwrap();
+    let re = CompiledRegex::compile("a\0b", None, UnicodeVersion::LATEST).unwrap();
     let mut ntc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
     assert_eq!(generate_regex(&mut ntc, &re, true).unwrap(), "a\0b");
 }
@@ -1830,7 +1870,7 @@ fn producible_sub_answers_for_every_subpattern_of_an_alternation() {
 fn a_wildcard_over_an_alphabet_draws_from_it_and_leaves_the_newline_to_dotall() {
     let alphabet =
         IntervalSet::new(vec![('\n' as u32, '\n' as u32), ('a' as u32, 'b' as u32)]).unwrap();
-    let re = CompiledRegex::compile("(?s:.).", Some(alphabet)).unwrap();
+    let re = CompiledRegex::compile("(?s:.).", Some(alphabet), UnicodeVersion::LATEST).unwrap();
     let mut seen = HashSet::default();
     for seed in 0..100 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
@@ -1955,7 +1995,9 @@ fn a_regex_generator_over_an_alphabet_that_cannot_match_its_pattern_is_rejected(
         ),
     ] {
         for fullmatch in [true, false] {
-            let Err(err) = StringSpec::regex(pattern, fullmatch, Some(&alphabet)) else {
+            let Err(err) =
+                StringSpec::regex(pattern, fullmatch, Some(&alphabet), UnicodeVersion::LATEST)
+            else {
                 panic!("{pattern:?} was built");
             };
             assert!(
@@ -1983,7 +2025,8 @@ fn a_regex_generator_over_an_alphabet_that_can_match_its_pattern_is_built() {
     ] {
         for fullmatch in [true, false] {
             assert!(
-                StringSpec::regex(pattern, fullmatch, Some(&alphabet)).is_ok(),
+                StringSpec::regex(pattern, fullmatch, Some(&alphabet), UnicodeVersion::LATEST)
+                    .is_ok(),
                 "{pattern:?}"
             );
         }
@@ -1995,7 +2038,7 @@ fn a_regex_generator_over_an_alphabet_that_can_match_its_pattern_is_built() {
 #[test]
 fn a_regex_generator_whose_pattern_matches_nothing_is_rejected() {
     for pattern in ["(?!)", "a(?!)b", "(?:(?!)|(?!))x", "(?!)+"] {
-        let Err(err) = StringSpec::regex(pattern, true, None) else {
+        let Err(err) = StringSpec::regex(pattern, true, None, UnicodeVersion::LATEST) else {
             panic!("{pattern:?} was built");
         };
         assert!(
@@ -2009,7 +2052,7 @@ fn a_regex_generator_whose_pattern_matches_nothing_is_rejected() {
     }
     for pattern in ["(?!)?", "x(?!(?!))y", "(?!)|a", "(a)?(?(1)(?!)|k)", "(?!)*"] {
         assert!(
-            StringSpec::regex(pattern, true, None).is_ok(),
+            StringSpec::regex(pattern, true, None, UnicodeVersion::LATEST).is_ok(),
             "{pattern:?}"
         );
     }

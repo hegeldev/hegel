@@ -29,7 +29,6 @@ import pytest
 import hegel
 from hegel import InvalidArgument
 from hegel import generators as gs
-from tests.helpers import UNICODE_NEWER_THAN_PYTHON, skip_if_unicode_newer_than_python
 from tests.hypothesis_port.common.compat import PYPY
 from tests.hypothesis_port.common.debug import (
     assert_all_examples,
@@ -160,9 +159,6 @@ def test_matching(category, predicate, invert, is_unicode):
 @pytest.mark.parametrize("encode", [None, False, True])
 def test_can_generate(pattern, encode):
     alphabet = gs.characters(max_codepoint=1000) if encode is None else None
-    if encode is False and any(c in pattern for c in ("\\d", "\\D", "\\w", "\\W")):
-        # Unicode \w and \d draw letters and digits this Python may not know.
-        skip_if_unicode_newer_than_python()
     if encode:
         pattern = pattern.encode("ascii")
     assert_all_examples(
@@ -218,9 +214,6 @@ def test_any_with_dotall_generate_newline_binary(pattern):
 @pytest.mark.parametrize("is_unicode", [False, True])
 @pytest.mark.parametrize("invert", [False, True])
 def test_groups(pattern, is_unicode, invert):
-    if is_unicode and "s" not in pattern.lower():
-        # Unicode \w and \d draw letters and digits this Python may not know.
-        skip_if_unicode_newer_than_python()
     # Under re.ASCII, the positive categories \d \s \w match only ascii
     # characters, and the negative categories \D \S \W match everything else.
     if "d" in pattern.lower():
@@ -600,7 +593,6 @@ def test_class_with_negative_category_and_positive_members():
     find_any(gs.from_regex(r"\A[\W_]\Z", fullmatch=False), lambda s: s == "_")
 
 
-@UNICODE_NEWER_THAN_PYTHON
 def test_negated_class_excludes_all_members():
     # [^\W_] matches the complement of the union: word characters except "_"
     regex = re.compile(r"[^\W_]")
@@ -641,12 +633,6 @@ def test_regex_output_should_print_as_string():
 
 
 @pytest.mark.skipif(sys.version_info < (3, 14), reason="re gained the \\z anchor in Python 3.14")
-@pytest.mark.xfail(
-    strict=True,
-    raises=InvalidArgument,
-    reason="Engine: \\z, the end-of-string anchor re accepts from Python 3.14, is rejected "
-    "as a bad escape (see docs/engine-issues.md)",
-)
 @hegel.test
 def test_end_of_string_anchor_z(tc):
     s = tc.draw(gs.from_regex(r"a\z", fullmatch=False))

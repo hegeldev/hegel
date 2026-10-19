@@ -101,10 +101,11 @@ class StringGenerator:
         exclude_categories: Sequence[str] | None,
         include_characters: str | None,
         exclude_characters: str | None,
+        unicode_version: str,
     ) -> StringGenerator: ...
     @staticmethod
     def regex(
-        pattern: str, fullmatch: bool, alphabet: StringGenerator | None
+        pattern: str, fullmatch: bool, alphabet: StringGenerator | None, unicode_version: str
     ) -> StringGenerator: ...
     @staticmethod
     def email() -> StringGenerator: ...

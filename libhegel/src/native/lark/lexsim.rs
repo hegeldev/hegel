@@ -29,13 +29,14 @@
 use super::ast::{Pattern, PatternKind};
 use super::compile::{TermId, TerminalDef};
 use crate::native::re::categories::class_ranges;
-use crate::native::re::constants::{AtCode, MAXREPEAT, SRE_FLAG_IGNORECASE};
+use crate::native::re::constants::{AtCode, MAXREPEAT, SRE_FLAG_IGNORECASE, unicode_version};
 use crate::native::re::matcher::{
     MatchError, Matcher, Probe, Touch, literal_eq, literal_sequence, probe_matches, run_len,
 };
 use crate::native::re::parser::{OpCode, ParsedPattern, SetItem, SubPattern};
 use crate::native::re::vm::{Program, Resume, has_nested_repeats};
 use crate::native::re::width::get_width;
+use crate::unicodedata::UnicodeVersion;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec;
@@ -84,6 +85,7 @@ impl FirstChars {
 struct FirstWalk {
     ranges: Vec<(u32, u32)>,
     any: bool,
+    version: UnicodeVersion,
 }
 
 impl FirstWalk {
@@ -113,10 +115,12 @@ impl FirstWalk {
                     match item {
                         SetItem::Literal(c) => self.ranges.push((*c, *c)),
                         SetItem::Range(lo, hi) => self.ranges.push((*lo, *hi)),
-                        SetItem::Category(category) => match class_ranges(*category) {
-                            Some(ranges) => self.ranges.extend_from_slice(ranges),
-                            None => self.any = true,
-                        },
+                        SetItem::Category(category) => {
+                            match class_ranges(*category, self.version) {
+                                Some(ranges) => self.ranges.extend_from_slice(ranges),
+                                None => self.any = true,
+                            }
+                        }
                         SetItem::Negate => self.any = true,
                     }
                 }
@@ -165,6 +169,7 @@ pub fn first_chars(parsed: &ParsedPattern) -> Option<FirstChars> {
     let mut walk = FirstWalk {
         ranges: Vec::new(),
         any: false,
+        version: unicode_version(parsed.flags),
     };
     let nullable = walk.seq(&parsed.pattern);
     if walk.any || nullable {

@@ -456,6 +456,7 @@ fn lookup_category(escape: &str) -> Option<CategoryCode> {
         "\\w" => Some(CategoryCode::In(ChCode::Word)),
         "\\W" => Some(CategoryCode::In(ChCode::NotWord)),
         "\\Z" => Some(CategoryCode::At(AtCode::EndString)),
+        "\\z" => Some(CategoryCode::At(AtCode::EndString)),
         _ => None,
     }
 }

@@ -3,6 +3,7 @@ use crate::native::core::Constraint;
 use crate::native::core::{ChoiceNode, ChoiceValue, Spans, StringChoice};
 use crate::native::intervalsets::IntervalSet;
 use crate::native::shrinker::{ShrinkRun, Shrinker};
+use crate::unicodedata::UnicodeVersion;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec;
@@ -281,10 +282,13 @@ fn the_string_passes_leave_a_string_under_a_grammar_alone() {
 }
 
 fn regex_node(pattern: &str, simplest: &str, value: &str) -> ChoiceNode {
-    let kind = match crate::native::draws::StringSpec::regex(pattern, true, None).unwrap() {
-        crate::native::draws::StringSpec::Regex { kind, .. } => kind,
-        _ => unreachable!(),
-    };
+    let kind =
+        match crate::native::draws::StringSpec::regex(pattern, true, None, UnicodeVersion::LATEST)
+            .unwrap()
+        {
+            crate::native::draws::StringSpec::Regex { kind, .. } => kind,
+            _ => unreachable!(),
+        };
     let Some(Constraint::Regex(constraint)) = &kind.constraint else {
         unreachable!()
     };
@@ -295,7 +299,8 @@ fn regex_node(pattern: &str, simplest: &str, value: &str) -> ChoiceNode {
 }
 
 fn least_regex_node(pattern: &str, value: &str) -> ChoiceNode {
-    let spec = crate::native::draws::StringSpec::regex(pattern, true, None).unwrap();
+    let spec = crate::native::draws::StringSpec::regex(pattern, true, None, UnicodeVersion::LATEST)
+        .unwrap();
     let crate::native::draws::StringSpec::Regex { compiled, kind, .. } = &spec else {
         unreachable!()
     };

@@ -2277,9 +2277,19 @@ hegel_result_t hegel_generate_bytes_result_free(hegel_context_t *ctx,
    of individual characters. Characters in
    `include_characters` are included first, then characters in
    `exclude_characters` are removed.
+ `unicode_version`: The Unicode version whose General Categories the
+   category constraints follow, as a version number like `"15.1.0"`:
+   pass the host language's (Python's `unicodedata.unidata_version`,
+   Go's `unicode.Version`), so that a character the host does not know
+   yet is in no category and a character it classifies differently is
+   in the category it says. Empty for the engine's own tables, the
+   newest it has (Unicode 17.0.0; versions back to 14.0.0 are
+   supported); a newer version uses those too, as the nearest the
+   engine has.
 
  Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for constraints that leave
- no characters while `max_size > 0`.
+ no characters while `max_size > 0`, or a Unicode version the engine has
+ no tables for.
  */
 hegel_result_t hegel_string_generator_text(hegel_context_t *ctx,
                                            uint64_t min_size,
@@ -2293,6 +2303,7 @@ hegel_result_t hegel_string_generator_text(hegel_context_t *ctx,
                                            size_t exclude_categories_len,
                                            hegel_string_t include_characters,
                                            hegel_string_t exclude_characters,
+                                           hegel_string_t unicode_version,
                                            hegel_string_generator_t **out_generator);
 
 /*
@@ -2304,19 +2315,27 @@ hegel_result_t hegel_string_generator_text(hegel_context_t *ctx,
    Otherwise, the match may be padded on either side.
  `alphabet`: Optional (NULL for none). Must be a text generator. Every
    character of the string, padding included, is one of its characters.
+ `unicode_version`: The Unicode version whose tables the pattern's
+   character classes (`\w`, `\d`, `\s`), word boundaries and
+   case-insensitive matching follow, as a version number like
+   `"15.1.0"`: pass the host language's, so that the strings drawn match
+   the pattern as the host's regex engine reads it. Empty for the
+   engine's own tables, the newest it has (Unicode 17.0.0; versions
+   back to 14.0.0 are supported); a newer version uses those too.
 
  A string drawn from the generator is recorded as one string choice the
  pattern constrains, replayed as long as it still matches and shrunk
  within the pattern.
 
  Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an invalid string
- buffer, a pattern that does not parse, or an alphabet that is not a
- text generator.
+ buffer, a pattern that does not parse, an alphabet that is not a text
+ generator, or a Unicode version the engine has no tables for.
  */
 hegel_result_t hegel_string_generator_regex(hegel_context_t *ctx,
                                             hegel_string_t pattern,
                                             bool fullmatch,
                                             const hegel_string_generator_t *alphabet,
+                                            hegel_string_t unicode_version,
                                             hegel_string_generator_t **out_generator);
 
 /*

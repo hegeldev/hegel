@@ -24,6 +24,7 @@ use core::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use core::task::{Context, Poll, Waker};
 
 use crate::sys::sync::{Mutex, MutexGuard};
+use crate::unicodedata::UnicodeVersion;
 
 /// cbindgen:ignore
 mod antithesis;
@@ -4737,6 +4738,20 @@ unsafe fn optional_utf8_array_arg(
     unsafe { names_from_c_array(ctx, fn_name, arg_name, p, len) }.map(Some)
 }
 
+/// The `unicode_version` argument of a string generator constructor: the
+/// engine's latest tables for the empty string, else the version named.
+unsafe fn unicode_version_arg(
+    ctx: *mut HegelContext,
+    fn_name: &str,
+    value: hegel_string_t,
+) -> Result<UnicodeVersion, hegel_result_t> {
+    let name = unsafe { required_utf8_arg(ctx, fn_name, "unicode_version", value) }?;
+    if name.is_empty() {
+        return Ok(UnicodeVersion::LATEST);
+    }
+    UnicodeVersion::parse(&name).map_err(|e| translate_construct_error(ctx, e))
+}
+
 /// Write a constructed string generator through `out_generator`, boxing it
 /// into a caller-owned handle.
 unsafe fn write_string_generator(
@@ -4765,9 +4780,19 @@ unsafe fn write_string_generator(
 ///   of individual characters. Characters in
 ///   `include_characters` are included first, then characters in
 ///   `exclude_characters` are removed.
+/// `unicode_version`: The Unicode version whose General Categories the
+///   category constraints follow, as a version number like `"15.1.0"`:
+///   pass the host language's (Python's `unicodedata.unidata_version`,
+///   Go's `unicode.Version`), so that a character the host does not know
+///   yet is in no category and a character it classifies differently is
+///   in the category it says. Empty for the engine's own tables, the
+///   newest it has (Unicode 17.0.0; versions back to 14.0.0 are
+///   supported); a newer version uses those too, as the nearest the
+///   engine has.
 ///
 /// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for constraints that leave
-/// no characters while `max_size > 0`.
+/// no characters while `max_size > 0`, or a Unicode version the engine has
+/// no tables for.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_string_generator_text(
     ctx: *mut HegelContext,
@@ -4782,6 +4807,7 @@ pub unsafe extern "C" fn hegel_string_generator_text(
     exclude_categories_len: usize,
     include_characters: hegel_string_t,
     exclude_characters: hegel_string_t,
+    unicode_version: hegel_string_t,
     out_generator: *mut *mut HegelStringGenerator,
 ) -> hegel_result_t {
     clear_last_error(ctx);
@@ -4823,6 +4849,10 @@ pub unsafe extern "C" fn hegel_string_generator_text(
             Ok(v) => v,
             Err(rc) => return rc,
         };
+    let unicode_version = match unsafe { unicode_version_arg(ctx, FN, unicode_version) } {
+        Ok(v) => v,
+        Err(rc) => return rc,
+    };
     let alphabet = crate::native::draws::TextAlphabet {
         codec,
         min_codepoint,
@@ -4831,6 +4861,7 @@ pub unsafe extern "C" fn hegel_string_generator_text(
         exclude_categories,
         include_characters: Some(include_characters),
         exclude_characters: Some(exclude_characters),
+        unicode_version,
     };
     match crate::native::draws::StringSpec::text(&alphabet, size_arg(min_size), size_arg(max_size))
     {
@@ -4847,20 +4878,28 @@ pub unsafe extern "C" fn hegel_string_generator_text(
 ///   Otherwise, the match may be padded on either side.
 /// `alphabet`: Optional (NULL for none). Must be a text generator. Every
 ///   character of the string, padding included, is one of its characters.
+/// `unicode_version`: The Unicode version whose tables the pattern's
+///   character classes (`\w`, `\d`, `\s`), word boundaries and
+///   case-insensitive matching follow, as a version number like
+///   `"15.1.0"`: pass the host language's, so that the strings drawn match
+///   the pattern as the host's regex engine reads it. Empty for the
+///   engine's own tables, the newest it has (Unicode 17.0.0; versions
+///   back to 14.0.0 are supported); a newer version uses those too.
 ///
 /// A string drawn from the generator is recorded as one string choice the
 /// pattern constrains, replayed as long as it still matches and shrunk
 /// within the pattern.
 ///
 /// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an invalid string
-/// buffer, a pattern that does not parse, or an alphabet that is not a
-/// text generator.
+/// buffer, a pattern that does not parse, an alphabet that is not a text
+/// generator, or a Unicode version the engine has no tables for.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_string_generator_regex(
     ctx: *mut HegelContext,
     pattern: hegel_string_t,
     fullmatch: bool,
     alphabet: *const HegelStringGenerator,
+    unicode_version: hegel_string_t,
     out_generator: *mut *mut HegelStringGenerator,
 ) -> hegel_result_t {
     clear_last_error(ctx);
@@ -4874,8 +4913,17 @@ pub unsafe extern "C" fn hegel_string_generator_regex(
         Ok(s) => s,
         Err(rc) => return rc,
     };
+    let unicode_version = match unsafe { unicode_version_arg(ctx, FN, unicode_version) } {
+        Ok(v) => v,
+        Err(rc) => return rc,
+    };
     let alphabet_spec = unsafe { alphabet.as_ref() }.map(|g| &*g.spec);
-    match crate::native::draws::StringSpec::regex(&pattern, fullmatch, alphabet_spec) {
+    match crate::native::draws::StringSpec::regex(
+        &pattern,
+        fullmatch,
+        alphabet_spec,
+        unicode_version,
+    ) {
         Ok(spec) => unsafe { write_string_generator(out_generator, spec) },
         Err(e) => translate_construct_error(ctx, e),
     }

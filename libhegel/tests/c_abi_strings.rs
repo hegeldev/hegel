@@ -102,7 +102,14 @@ fn strings_reject_invalid_layouts_and_utf8_before_reading() {
             assert!(!last_error(ctx).is_empty());
             let mut generator = ptr::null_mut();
             assert_eq!(
-                hegel_string_generator_regex(ctx, value, true, ptr::null(), &mut generator),
+                hegel_string_generator_regex(
+                    ctx,
+                    value,
+                    true,
+                    ptr::null(),
+                    hegel_string_t::default(),
+                    &mut generator
+                ),
                 HEGEL_E_INVALID_ARG
             );
             assert!(generator.is_null());
@@ -164,6 +171,7 @@ fn string_arrays_use_each_elements_length() {
             0,
             hegel_string_t::default(),
             hegel_string_t::default(),
+            hegel_string_t::default(),
             &mut generator,
         ));
         ok(hegel_string_generator_free(ctx, generator));
@@ -188,6 +196,7 @@ fn string_arrays_use_each_elements_length() {
                     count,
                     ptr::null(),
                     0,
+                    hegel_string_t::default(),
                     hegel_string_t::default(),
                     hegel_string_t::default(),
                     &mut generator

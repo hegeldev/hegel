@@ -1,4 +1,5 @@
 use super::*;
+use crate::unicodedata::UnicodeVersion;
 use alloc::string::ToString;
 use alloc::vec;
 
@@ -108,6 +109,38 @@ fn build_intervals_categories_subset_intersects_base() {
     assert!(iv.contains(b'0' as u32));
     assert!(iv.contains(b'9' as u32));
     assert!(!iv.contains(b'a' as u32));
+}
+
+#[test]
+fn build_intervals_categories_follow_the_unicode_version() {
+    let rams_horn = |version: &str| TextAlphabet {
+        categories: Some(vec!["Lu".to_string()]),
+        min_codepoint: 0xA7CB,
+        max_codepoint: 0xA7CB,
+        unicode_version: UnicodeVersion::parse(version).unwrap(),
+        ..Default::default()
+    };
+    assert_eq!(build_intervals(&rams_horn("16.0.0")).unwrap().len(), 1);
+    assert!(build_intervals(&rams_horn("15.1.0")).unwrap().is_empty());
+    let other_letters = |version: &str| {
+        build_intervals(&TextAlphabet {
+            categories: Some(vec!["Lo".to_string()]),
+            unicode_version: UnicodeVersion::parse(version).unwrap(),
+            ..Default::default()
+        })
+        .unwrap()
+    };
+    assert!(other_letters("17.0.0").contains(0x295));
+    assert!(!other_letters("16.0.0").contains(0x295));
+    assert!(other_letters("16.0.0").contains(0x4E00));
+    let others = build_intervals(&TextAlphabet {
+        categories: Some(vec!["C".to_string()]),
+        ..Default::default()
+    })
+    .unwrap();
+    assert!(others.contains(0xD7FF) && others.contains(0xE000));
+    assert!(!others.contains(0xD800) && !others.contains(0xDFFF));
+    assert!(others.contains(0x10FFFF) && others.contains(0));
 }
 
 #[test]
@@ -305,7 +338,7 @@ fn build_intervals_rejects_include_characters_outside_codec() {
 
 #[test]
 fn categories_union_of_no_categories_is_empty() {
-    let iv = categories_union(&[]).unwrap();
+    let iv = categories_union(&[], UnicodeVersion::LATEST).unwrap();
     assert!(iv.is_empty());
 }
 

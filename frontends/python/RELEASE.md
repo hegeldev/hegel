@@ -1,3 +1,5 @@
 RELEASE_TYPE: patch
 
-This patch moves Hegel for Python into the Hegel monorepo, where it is built against the in-tree libhegel engine (0.47.2, up from 0.45.13) and released with wheels for Linux (x86-64 and ARM64), Apple-silicon macOS and Windows, plus a source distribution. The repository, changelog and bug-report links now point at https://github.com/hegeldev/hegel.
+This patch makes `text()`, `characters()` and `from_regex()` follow this Python's Unicode version (`unicodedata.unidata_version`) rather than the engine's newer tables. A `characters()` or `text()` generator with category constraints no longer draws a character this Python does not know yet or puts in another category, and a `from_regex()` draw always matches the pattern as this Python's `re` reads it: `\w`, `\d` and `\s`, word boundaries and `re.IGNORECASE` all follow the host's tables.
+
+`from_regex()` also accepts the `\z` end-of-string anchor that `re` gained in Python 3.14.

@@ -6,16 +6,18 @@
 //! (`_sre.unicode_iscased`), and additionally treats the lowercase pairs in
 //! `Lib/re/_casefix.py` as equal. This module ports those three pieces and
 //! the queries the generator and matcher need on top of them, with the
-//! case mappings taken from the engine's own Unicode tables
-//! ([`unicodedata::to_lower`]) so that they are the same whatever the
-//! Rust toolchain's Unicode version.
+//! case mappings taken from the engine's own Unicode tables for the
+//! Unicode version the flags carry ([`UnicodeVersion::to_lower`], see
+//! [`unicode_version`]) so that they are the host's rather than the Rust
+//! toolchain's.
+//!
+//! [`UnicodeVersion::to_lower`]: crate::unicodedata::UnicodeVersion::to_lower
 
 use alloc::vec::Vec;
 
-use super::constants::{SRE_FLAG_ASCII, SRE_FLAG_IGNORECASE};
+use super::constants::{SRE_FLAG_ASCII, SRE_FLAG_IGNORECASE, unicode_version};
 use crate::native::HashMap;
-use crate::sys::sync::Lazy;
-use crate::unicodedata;
+use crate::unicodedata::PerVersion;
 
 fn ignorecase(flags: u32) -> bool {
     flags & SRE_FLAG_IGNORECASE != 0
@@ -27,12 +29,12 @@ fn ascii(flags: u32) -> bool {
 
 /// `_sre.unicode_tolower` (or `_sre.ascii_tolower` under the ASCII flag):
 /// the simple lowercase mapping, or the first character of a special-cased
-/// full mapping (see [`unicodedata::to_lower`]).
+/// full mapping (see `UnicodeVersion::to_lower`).
 pub fn lower(c: char, flags: u32) -> char {
     if ascii(flags) {
         c.to_ascii_lowercase()
     } else {
-        unicodedata::to_lower(c)
+        unicode_version(flags).to_lower(c)
     }
 }
 
@@ -43,7 +45,7 @@ pub fn is_cased(c: char, flags: u32) -> bool {
     if ascii(flags) {
         c.is_ascii_alphabetic()
     } else {
-        lower(c, flags) != c || unicodedata::to_upper(c) != c
+        lower(c, flags) != c || unicode_version(flags).to_upper(c) != c
     }
 }
 
@@ -128,11 +130,12 @@ pub fn uppers_of(c: char, flags: u32) -> &'static [char] {
             &[]
         };
     }
-    static UPPERS: Lazy<HashMap<char, Vec<char>>> = Lazy::new(|| {
+    static UPPERS: PerVersion<HashMap<char, Vec<char>>> = PerVersion::new();
+    let version = unicode_version(flags);
+    let uppers = UPPERS.get(version, || {
         let mut table: HashMap<char, Vec<char>> = HashMap::default();
-        for cp in 0..=0x10FFFF {
-            if let Some(c) = char::from_u32(cp) {
-                let l = lower(c, 0);
+        for &(cp, lower, _) in version.case_mappings() {
+            if let (Some(c), Some(l)) = (char::from_u32(cp), char::from_u32(lower)) {
                 if l != c {
                     table.entry(l).or_default().push(c);
                 }
@@ -140,7 +143,7 @@ pub fn uppers_of(c: char, flags: u32) -> &'static [char] {
         }
         table
     });
-    Lazy::force(&UPPERS).get(&c).map_or(&[], Vec::as_slice)
+    uppers.get(&c).map_or(&[], Vec::as_slice)
 }
 
 /// The lowercase forms a character must fold to in order to match the

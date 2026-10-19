@@ -27,7 +27,7 @@ impl Drop for StringGenerator {
 #[pymethods]
 impl StringGenerator {
     #[staticmethod]
-    #[pyo3(signature = (min_size, max_size, codec, min_codepoint, max_codepoint, categories, exclude_categories, include_characters, exclude_characters))]
+    #[pyo3(signature = (min_size, max_size, codec, min_codepoint, max_codepoint, categories, exclude_categories, include_characters, exclude_characters, unicode_version))]
     fn text(
         min_size: u64,
         max_size: u64,
@@ -38,6 +38,7 @@ impl StringGenerator {
         exclude_categories: Option<Vec<String>>,
         include_characters: Option<&str>,
         exclude_characters: Option<&str>,
+        unicode_version: &str,
     ) -> PyResult<Self> {
         let codec = codec.map(hstr);
         let cats = categories.as_deref().map(hstrs);
@@ -58,6 +59,7 @@ impl StringGenerator {
                     excl.as_ref().map_or(0, |v| v.len()),
                     hstr(include_characters.unwrap_or("")),
                     hstr(exclude_characters.unwrap_or("")),
+                    hstr(unicode_version),
                     &mut raw,
                 )
             })
@@ -66,8 +68,13 @@ impl StringGenerator {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (pattern, fullmatch, alphabet))]
-    fn regex(pattern: &str, fullmatch: bool, alphabet: Option<&StringGenerator>) -> PyResult<Self> {
+    #[pyo3(signature = (pattern, fullmatch, alphabet, unicode_version))]
+    fn regex(
+        pattern: &str,
+        fullmatch: bool,
+        alphabet: Option<&StringGenerator>,
+        unicode_version: &str,
+    ) -> PyResult<Self> {
         let mut raw: *mut c::HegelStringGenerator = ptr::null_mut();
         with_ctx(|ctx| {
             check(unsafe {
@@ -76,6 +83,7 @@ impl StringGenerator {
                     hstr(pattern),
                     fullmatch,
                     alphabet.map_or(ptr::null(), |a| a.raw()),
+                    hstr(unicode_version),
                     &mut raw,
                 )
             })

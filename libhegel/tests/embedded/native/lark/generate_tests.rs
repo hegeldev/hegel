@@ -12,6 +12,7 @@ use crate::native::lark::analysis::Bound;
 use crate::native::lark::builder::{ImportSource, NoImports, load_grammar};
 use crate::native::lark::parse::Parser;
 use crate::native::rng::EngineRng;
+use crate::unicodedata::UnicodeVersion;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
@@ -510,7 +511,9 @@ fn alphabet_must_be_a_text_generator() {
         let err = spec_with(
             text,
             GrammarOptions {
-                alphabet: Some(Arc::new(StringSpec::regex("a", true, None).unwrap())),
+                alphabet: Some(Arc::new(
+                    StringSpec::regex("a", true, None, UnicodeVersion::LATEST).unwrap(),
+                )),
                 ..GrammarOptions::default()
             },
         )

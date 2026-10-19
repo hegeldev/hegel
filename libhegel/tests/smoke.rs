@@ -184,6 +184,7 @@ type FnStringGeneratorText = unsafe extern "C" fn(
     usize,
     hegel_string_t,
     hegel_string_t,
+    hegel_string_t,
     *mut *mut u8,
 ) -> c_int;
 type FnTarget = unsafe extern "C" fn(*mut u8, *mut u8, f64, hegel_string_t) -> c_int;
@@ -633,6 +634,7 @@ fn invalid_arguments_return_error_not_abort() {
             0,
             ptr::null(),
             0,
+            "".into(),
             "".into(),
             "".into(),
             &mut g,

@@ -220,7 +220,7 @@ def test_primitive_draws():
         assert 0.0 <= f <= 1.0
         assert len(tc._generate_bytes(2, 2)) == 2
         s = tc._generate_string(
-            _native.StringGenerator.text(1, 1, "ascii", 0, None, None, None, None, None)
+            _native.StringGenerator.text(1, 1, "ascii", 0, None, None, None, None, None, "")
         )
         assert len(s) == 1
         d = tc._generate_date(dt.date(2000, 1, 1), dt.date(2000, 1, 2))

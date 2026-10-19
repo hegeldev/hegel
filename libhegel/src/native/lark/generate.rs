@@ -103,6 +103,7 @@ use crate::native::draws::{Draws, LABEL_REGEX, StringSpec, spanned};
 use crate::native::labels::label_from_name;
 use crate::native::rng::EngineRng;
 use crate::sys::sync::Mutex;
+use crate::unicodedata::UnicodeVersion;
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
@@ -515,8 +516,9 @@ impl GrammarSpec {
                     terminals.push(TerminalGen::Placeholder(marker.clone()));
                 }
                 (None, Some(regexp)) => {
-                    let compiled = CompiledRegex::compile(regexp, alphabet.clone())
-                        .map_err(|e| GrammarError::new(format!("{e}")))?;
+                    let compiled =
+                        CompiledRegex::compile(regexp, alphabet.clone(), UnicodeVersion::LATEST)
+                            .map_err(|e| GrammarError::new(format!("{e}")))?;
                     term_min.push(term.min_width);
                     term_typical.push(typical_size(&compiled, term.min_width));
                     terminals.push(TerminalGen::Pattern(Box::new(compiled)));

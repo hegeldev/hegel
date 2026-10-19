@@ -1426,6 +1426,7 @@ impl StringGenerator {
                     .map_or(hegel_c::hegel_string_t::default(), |s| view(s.as_bytes())),
                 exclude_characters
                     .map_or(hegel_c::hegel_string_t::default(), |s| view(s.as_bytes())),
+                hegel_c::hegel_string_t::default(),
                 &mut raw,
             )
         });
@@ -1445,6 +1446,7 @@ impl StringGenerator {
                 view(pattern.as_bytes()),
                 fullmatch,
                 alphabet.map_or(ptr::null(), |a| a.raw),
+                hegel_c::hegel_string_t::default(),
                 &mut raw,
             )
         });

@@ -8,7 +8,7 @@ use crate::control::InternalError;
 use crate::native::core::EngineError;
 use crate::native::intervalsets::IntervalSet;
 use crate::sys::sync::{Lazy, Mutex};
-use crate::unicodedata;
+use crate::unicodedata::UnicodeVersion;
 
 /// Character-alphabet constraints for a text draw, as accepted at the
 /// `hegel_string_generator_text` API surface.
@@ -29,6 +29,10 @@ pub struct TextAlphabet {
     pub include_characters: Option<String>,
     /// Always exclude these characters.
     pub exclude_characters: Option<String>,
+    /// The Unicode version whose General Categories the category
+    /// constraints follow: the host's, so that a character the host does
+    /// not know yet is in no category.
+    pub unicode_version: UnicodeVersion,
 }
 
 impl Default for TextAlphabet {
@@ -41,6 +45,7 @@ impl Default for TextAlphabet {
             exclude_categories: None,
             include_characters: None,
             exclude_characters: None,
+            unicode_version: UnicodeVersion::LATEST,
         }
     }
 }
@@ -152,7 +157,7 @@ fn compute_intervals(alphabet: &TextAlphabet) -> Result<IntervalSet, EngineError
         if cats.is_empty() {
             IntervalSet::new(Vec::new())?
         } else {
-            let cat_union = categories_union(cats)?;
+            let cat_union = categories_union(cats, alphabet.unicode_version)?;
             base.intersection(&cat_union)?
         }
     } else if let Some(excl_cats) = exclude_categories {
@@ -164,7 +169,7 @@ fn compute_intervals(alphabet: &TextAlphabet) -> Result<IntervalSet, EngineError
                 .filter(|c| c.as_str() != "Cs")
                 .cloned()
                 .collect();
-            let cat_union = categories_union(&non_cs)?;
+            let cat_union = categories_union(&non_cs, alphabet.unicode_version)?;
             base.difference(&cat_union)?
         }
     } else {
@@ -225,24 +230,28 @@ fn chars_to_intervals(chars: &[char]) -> Result<IntervalSet, InternalError> {
 }
 
 /// Union of the given category abbreviations as an [`IntervalSet`] over the
-/// whole codespace `0..=0x10FFFF`, matching Hypothesis's charmap (which is
-/// built over `range(sys.maxunicode + 1)`). Cached per category: the scan
-/// runs once per process per category name.
-fn categories_union(cats: &[String]) -> Result<IntervalSet, InternalError> {
-    static CACHE: Lazy<Mutex<HashMap<String, Arc<IntervalSet>>>> =
-        Lazy::new(|| Mutex::new(HashMap::default()));
+/// whole codespace `0..=0x10FFFF` under `version`, matching Hypothesis's
+/// charmap (which is built over `range(sys.maxunicode + 1)`). Cached per
+/// category and version: the scan runs once per process for each.
+fn categories_union(
+    cats: &[String],
+    version: UnicodeVersion,
+) -> Result<IntervalSet, InternalError> {
+    type Cache = Mutex<HashMap<(UnicodeVersion, String), Arc<IntervalSet>>>;
+    static CACHE: Lazy<Cache> = Lazy::new(|| Mutex::new(HashMap::default()));
 
     let mut union: Option<IntervalSet> = None;
     for cat in cats {
+        let key = (version, cat.clone());
         let cached = {
             let map = CACHE.lock();
-            map.get(cat).map(Arc::clone)
+            map.get(&key).map(Arc::clone)
         };
         let single = match cached {
             Some(s) => s,
             None => {
-                let s = Arc::new(category_intervalset(cat)?);
-                CACHE.lock().insert(cat.clone(), Arc::clone(&s));
+                let s = Arc::new(category_intervalset(cat, version)?);
+                CACHE.lock().insert(key, Arc::clone(&s));
                 s
             }
         };
@@ -258,29 +267,25 @@ fn categories_union(cats: &[String]) -> Result<IntervalSet, InternalError> {
 }
 
 /// Build the `IntervalSet` of codepoints (over the full codespace,
-/// surrogates excepted) whose `unicodedata.category` matches `cat` (or
-/// whose category starts with `cat` when `cat` is a single-letter major
-/// class).
-fn category_intervalset(cat: &str) -> Result<IntervalSet, InternalError> {
+/// surrogates excepted) whose `unicodedata.category` under `version`
+/// matches `cat` (or whose category starts with `cat` when `cat` is a
+/// single-letter major class).
+fn category_intervalset(cat: &str, version: UnicodeVersion) -> Result<IntervalSet, InternalError> {
     let mut ranges: Vec<(u32, u32)> = Vec::new();
-    let mut run_start: Option<u32> = None;
-    for cp in 0u32..=0x10FFFF {
-        if (0xD800..=0xDFFF).contains(&cp) {
-            if let Some(start) = run_start.take() {
-                ranges.push((start, cp - 1));
-            }
+    let mut push = |start: u32, end: u32| match ranges.last_mut() {
+        Some(last) if last.1 + 1 == start => last.1 = end,
+        _ => ranges.push((start, end)),
+    };
+    for (start, end, category) in version.category_runs() {
+        if !category.in_group(cat) {
             continue;
         }
-        if unicodedata::is_in_group(cp, cat)? {
-            if run_start.is_none() {
-                run_start = Some(cp);
-            }
-        } else if let Some(start) = run_start.take() {
-            ranges.push((start, cp - 1));
+        if start < 0xD800 {
+            push(start, end.min(0xD7FF));
         }
-    }
-    if let Some(start) = run_start {
-        ranges.push((start, 0x10FFFF));
+        if end > 0xDFFF {
+            push(start.max(0xE000), end);
+        }
     }
     IntervalSet::new(ranges)
 }

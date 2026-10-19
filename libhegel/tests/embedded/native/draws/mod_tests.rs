@@ -47,6 +47,33 @@ fn width_32_float_bounds_must_be_f32_representable() {
 }
 
 #[test]
+fn bounds_leaving_only_an_infinity_without_infinity_are_an_invalid_argument() {
+    let mut ntc = NativeTestCase::new_random(EngineRng::seeded(3)).unwrap();
+    for (width, min_value, max_value, exclude_min) in [
+        (64, f64::INFINITY, f64::INFINITY, false),
+        (32, f64::INFINITY, f64::INFINITY, false),
+        (64, f64::NEG_INFINITY, f64::NEG_INFINITY, false),
+        (64, f64::MAX, f64::INFINITY, true),
+    ] {
+        let mut spec = float_spec(width, min_value, max_value);
+        spec.exclude_min = exclude_min;
+        let err = generate_float(&mut ntc, &spec).unwrap_err();
+        let EngineError::InvalidArgument(msg) = err else {
+            panic!("expected InvalidArgument, got {err:?}");
+        };
+        assert!(
+            msg.contains("allow_infinity=false leaves no value"),
+            "unexpected message: {msg}"
+        );
+    }
+    let v = generate_float(&mut ntc, &float_spec(64, 0.0, f64::INFINITY)).unwrap();
+    assert!(v.is_finite() && v >= 0.0);
+    let mut spec = float_spec(64, f64::INFINITY, f64::INFINITY);
+    spec.allow_infinity = true;
+    assert_eq!(generate_float(&mut ntc, &spec).unwrap(), f64::INFINITY);
+}
+
+#[test]
 fn narrow_to_f32_keeps_overflowing_finite_draws_finite() {
     let snm = f64::from(f32::from_bits(1));
     assert_eq!(
