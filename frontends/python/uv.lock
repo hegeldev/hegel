@@ -456,7 +456,7 @@ docs = [
 [package.metadata.requires-dev]
 dev = [
     { name = "coverage", specifier = ">=7" },
-    { name = "maturin", specifier = ">=1.7,<2.0" },
+    { name = "maturin", specifier = ">=1.9.3,<2.0" },
     { name = "mypy", specifier = ">=1.11" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-xdist", specifier = ">=3" },

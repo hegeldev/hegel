@@ -740,7 +740,9 @@ jobs:
           tools: uv
       - name: Build the sdist
         working-directory: frontends/python
-        run: uvx --from 'maturin>=1.7,<2.0' maturin sdist --out dist
+        run: uvx --from 'maturin>=1.9.3,<2.0' maturin sdist --out dist
+      - name: Check the sdist's metadata against its contents
+        run: python3 frontends/python/scripts/check_sdist.py frontends/python/dist/*.tar.gz
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: python-sdist
