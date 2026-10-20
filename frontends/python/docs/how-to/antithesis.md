@@ -27,5 +27,6 @@ outside Antithesis, select the profile yourself:
 pytest --hegel-profile=workload
 ```
 
-Outside Antithesis the `urandom` backend reads `/dev/urandom` for every
-choice, so runs cannot be reproduced from a seed.
+Outside Antithesis the `urandom` backend takes fresh entropy from the
+operating system (`/dev/urandom` on Unix) for every choice, so runs cannot be
+reproduced from a seed.

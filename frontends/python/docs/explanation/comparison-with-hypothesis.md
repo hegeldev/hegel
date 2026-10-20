@@ -2,9 +2,11 @@
 
 This page records what Hegel for Python has, what it does differently, and
 what it lacks, relative to Hypothesis 6.168. The engine bugs found along the
-way are issues on the repository, and `tests/hypothesis_port` is Hypothesis's
-own test suite ported to the Hegel API, with the tests of behaviour Hegel does
-differently marked `xfail` and a note per file of what was dropped.
+way are [issues on the repository](https://github.com/hegeldev/hegel/issues),
+and [`tests/hypothesis_port`](https://github.com/hegeldev/hegel/tree/main/frontends/python/tests/hypothesis_port)
+is Hypothesis's own test suite ported to the Hegel API, with the tests of
+behaviour Hegel does differently marked `xfail` and a note per file of what
+was dropped.
 
 ## Same job, different shape
 
@@ -25,8 +27,9 @@ differently marked `xfail` and a note per file of what was dropped.
 | `is_hypothesis_test(f)`, `f.hypothesis.inner_test` | `f.is_hegel_test`, `f.hegel_inner_test` | |
 | `InvalidArgument`, `Unsatisfiable`, `FailedHealthCheck`, `DidNotReproduce`, `StopTest` | the same names in `hegel` | `InvalidArgument` is not a `TypeError` subclass. |
 | `Flaky` and its subclasses | `hegel.Flaky` | Only under `nondeterminism_strictness="error"`; see below. |
-| `MultipleFailures` | `hegel.MultipleFailures` | An `ExceptionGroup`. |
+| `MultipleFailures` (deprecated for a plain `BaseExceptionGroup`) | `hegel.MultipleFailures` | An `ExceptionGroup`. |
 | `UnsatisfiedAssumption` | `hegel.AssumeFailed` | A `BaseException`. |
+| `HealthCheck.data_too_large`, `HealthCheck.large_base_example` | `HealthCheck.test_cases_too_large`, `HealthCheck.large_initial_test_case` | |
 
 ## Hegel has, Hypothesis lacks
 
@@ -43,13 +46,12 @@ differently marked `xfail` and a note per file of what was dropped.
 
 ## Hypothesis has, Hegel for Python lacks
 
-- `deadline`: Hegel's engine has no deadline concept, and `HealthCheck.too_slow`
-  counts engine time only, so slow Python-side generator work does not
-  trigger it.
-- The health checks `return_value`, `function_scoped_fixture`, `nested_given`
-  (a Hegel test called from inside another is an `InvalidArgument` instead),
-  `differing_executors`, `not_a_test_method`, `data_too_large` and
-  `large_base_example`.
+- `deadline`: Hegel has no per-test-case time limit. `HealthCheck.too_slow`
+  only fails a run whose first ten valid test cases take more than 30
+  seconds in all.
+- The health checks `function_scoped_fixture`, `nested_given` (a Hegel test
+  called from inside another is an `InvalidArgument` instead) and
+  `differing_executors`.
 - `find()`, `.example()`, `@seed` (set `seed` in the settings instead),
   `register_random` and the per-test-case seeding of the global `random`.
 - The strategies `shared`, `runner`, `slices`, `functions`, `randoms`,
@@ -113,9 +115,7 @@ differently marked `xfail` and a note per file of what was dropped.
   shrinking time limit.
 - Shrinking differs in places: Hegel does not rewrite a `sampled_from` branch
   of a `one_of` into the wide branch (Hypothesis's widening pass, which Hegel
-  will not adopt), and the bounded integer distribution is weighted
-  toward boundaries. `integers(0, 1e100)` draws many more huge values than
-  Hypothesis does.
+  will not adopt).
 - A skipped test ends the run before anything is saved to the database.
 - Generator arguments are validated when the generator is built, not when
   the test runs.

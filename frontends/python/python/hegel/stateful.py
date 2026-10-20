@@ -4,6 +4,7 @@ concurrently, and pools of values shared between their rules."""
 from __future__ import annotations
 
 import inspect
+import math
 import queue
 import threading
 from collections.abc import Callable
@@ -75,7 +76,7 @@ def _check_weight(name: str, weight: Any) -> float:
         raise InvalidArgument(
             f"rule {name!r}: weight={weight!r} must be a positive number"
         ) from None
-    if not (value > 0) or value != value or value in (float("inf"),):
+    if not (math.isfinite(value) and value > 0):
         raise InvalidArgument(f"rule {name!r}: weight={weight!r} must be finite and positive")
     return value
 

@@ -6,9 +6,9 @@
 #
 # Adding a frontend: add a `frontends/<lang>/**` filter below, a
 # `.github/workflows/frontend-<lang>.yml` reusable workflow, a job here that
-# calls it, list that job in the `ci-ok` and `release` jobs' `needs`, and
-# give the release job (plus any follow-on publish jobs) its publishing
-# steps.
+# calls it, list that job in the `ci-ok` and `release` jobs' `needs`, add
+# the component to `COMPONENTS` in `.github/scripts/release.py`, and give
+# the release job (plus any follow-on publish jobs) its publishing steps.
 name: CI
 
 on:
@@ -299,9 +299,11 @@ jobs:
       - name: Check for release files
         id: check
         run: |
+          # Every component release.py knows keeps its RELEASE.md at one
+          # of these paths.
           skip=true
-          for component in libhegel frontends/rust frontends/python; do
-            if [ -f "$component/RELEASE.md" ]; then
+          for f in libhegel/RELEASE.md frontends/*/RELEASE.md; do
+            if [ -f "$f" ]; then
               skip=false
             fi
           done
@@ -682,8 +684,8 @@ jobs:
           gh release edit "$tag" --repo "$REPO" --draft=false
           echo "Published release $tag."
 
-  # The Python frontend's wheels, one job per platform (the same platforms
-  # as the libhegel binaries), each building for every supported CPython via
+  # The Python frontend's wheels, one job per platform (the libhegel binary
+  # platforms less windows-arm64), each building for every supported CPython via
   # the composite action the PR `package` job also uses. They check out the
   # `frontends/python/<version>` tag the `release` job pushed; the sdist and
   # the PyPI upload follow in the next two jobs.

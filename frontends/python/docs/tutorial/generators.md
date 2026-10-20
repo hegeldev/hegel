@@ -126,8 +126,8 @@ same thing and is easier to read.
 ## Generating your own types
 
 {func}`~hegel.generators.builds` calls a class or function with arguments
-drawn from generators. Arguments you don't give a generator for are inferred
-from their type annotations:
+drawn from generators. Required arguments you don't give a generator for are
+inferred from their type annotations; arguments with defaults keep them:
 
 ```python
 from dataclasses import dataclass
@@ -140,7 +140,7 @@ class Point:
     label: str = ""
 
 
-points = gs.builds(Point, x=gs.floats(-1, 1), y=gs.floats(-1, 1))
+points = gs.builds(Point, x=gs.floats(-1, 1))
 ```
 
 {func}`~hegel.generators.from_type` goes further and builds a generator from a

@@ -136,9 +136,11 @@ test_machine = hegel.state_machine_test(Machine)
 
 ## Exceptions
 
-`InvalidArgument`, `Unsatisfiable`, `FailedHealthCheck`, `DidNotReproduce`,
-`Flaky` and `MultipleFailures` have the same names in `hegel`.
-`UnsatisfiedAssumption` is {class}`hegel.AssumeFailed`.
+`InvalidArgument`, `Unsatisfiable`, `FailedHealthCheck`, `DidNotReproduce`
+and `Flaky` have the same names in `hegel`. `UnsatisfiedAssumption` is
+{class}`hegel.AssumeFailed`. Where Hypothesis now raises a plain
+`BaseExceptionGroup` (its `MultipleFailures` is deprecated), Hegel raises
+{class}`hegel.MultipleFailures`, an `ExceptionGroup` subclass.
 
 ## Letting a model do it
 

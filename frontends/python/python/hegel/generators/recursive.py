@@ -26,9 +26,6 @@ DEFAULT_MAX_DEPTH = 32
 DEFAULT_MAX_LEAVES = 100
 RECURSIVE_LABEL = label_from_name("hegel.recursive")
 DEFERRED_LABEL = label_from_name("hegel.deferred")
-# A deferred definition drawn more deeply nested than this (a definition
-# that always refers back to itself) rejects the test case instead of
-# recursing until Python gives up.
 # Below the test case's own span-depth limit, so a definition that only
 # refers back to itself is rejected as an assumption rather than overrunning.
 MAX_DEFERRED_DEPTH = 64

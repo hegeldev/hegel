@@ -28,7 +28,9 @@
 //! versions in `scripts/generate_unicodedata_tables.py` and run it (it
 //! downloads the older versions' UCD files), then regenerate the test
 //! reference with `scripts/generate_unicodedata_python_reference.py`
-//! (`just unicodedata` does both).
+//! (`just unicodedata` does both). The version range named in the
+//! `hegel_string_generator_text` and `hegel_string_generator_regex` docs
+//! in `lib.rs` is written by hand; update it too.
 
 #[cfg(test)]
 use crate::control::{InternalError, hegel_internal_assert};
@@ -468,9 +470,11 @@ fn fields<'a, const N: usize>(line: &'a str, file: &str) -> [&'a str; N] {
 /// Whether a delta line is a category run (`C`) rather than a case
 /// mapping (`M`).
 fn is_category_line(kind: &str, line: &str) -> bool {
-    let kinds = ["M", "C"];
-    let index = kinds.iter().position(|k| *k == kind);
-    index.unwrap_or_else(|| panic!("malformed delta line: {line:?}")) == 1
+    match kind {
+        "C" => true,
+        "M" => false,
+        _ => panic!("malformed delta line: {line:?}"),
+    }
 }
 
 impl Tables {

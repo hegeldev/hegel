@@ -799,21 +799,17 @@ impl<'a> Engine<'a> {
             let mut shrunk_origins: crate::native::HashSet<String> =
                 crate::native::HashSet::default();
             loop {
-                let mut pending: Vec<String> = self
-                    .origins
-                    .live_origins()
-                    .into_iter()
-                    .filter(|o| !shrunk_origins.contains(o.as_str()))
-                    .collect();
-                if pending.is_empty() {
-                    break;
-                }
-                pending.sort();
+                let mut live = self.origins.live_origins();
+                live.sort();
                 let origin = if report_multiple {
-                    pending.remove(0)
+                    match live.into_iter().find(|o| !shrunk_origins.contains(o)) {
+                        Some(origin) => origin,
+                        None => break,
+                    }
                 } else {
-                    let mut live = self.origins.live_origins();
-                    live.sort();
+                    if live.is_empty() {
+                        break;
+                    }
                     let smallest = self.smallest_origin(live)?;
                     if shrunk_origins.contains(&smallest) {
                         break;

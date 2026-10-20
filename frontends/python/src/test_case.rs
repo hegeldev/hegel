@@ -100,10 +100,7 @@ impl Run {
             with_ctx(|ctx| unsafe { c::hegel_next_test_case(ctx, run.get(), raw_out.get()) })
         });
         check(rc)?;
-        Ok((!raw.is_null()).then(|| TestCase {
-            raw: SendPtr(raw),
-            output: None,
-        }))
+        Ok((!raw.is_null()).then(|| TestCase { raw: SendPtr(raw) }))
     }
 
     /// Engine output lines emitted since the last drain.
@@ -207,8 +204,6 @@ impl RunResult {
 #[pyclass(frozen, name = "TestCase", module = "hegel._native")]
 pub(crate) struct TestCase {
     raw: SendPtr<c::HegelTestCase>,
-    /// Present only for a blob replay, which has no run to drain from.
-    output: Option<Arc<OutputBuffer>>,
 }
 
 impl Drop for TestCase {
@@ -273,18 +268,11 @@ fn datetime_from_c(d: c::hegel_datetime_t) -> PyDateTime {
 
 #[pymethods]
 impl TestCase {
-    fn drain_output(&self) -> Vec<String> {
-        self.output.as_ref().map(|o| o.drain()).unwrap_or_default()
-    }
-
     /// A handle with an independent choice stream, for another thread.
     fn clone(&self) -> PyResult<TestCase> {
         let mut raw: *mut c::HegelTestCase = ptr::null_mut();
         with_ctx(|ctx| check(unsafe { c::hegel_test_case_clone(ctx, self.tc(), &mut raw) }))?;
-        Ok(TestCase {
-            raw: SendPtr(raw),
-            output: self.output.clone(),
-        })
+        Ok(TestCase { raw: SendPtr(raw) })
     }
 
     /// A handle sharing this one's choice stream whose printed output is a
@@ -294,10 +282,7 @@ impl TestCase {
         with_ctx(|ctx| {
             check(unsafe { c::hegel_test_case_block(ctx, self.tc(), indent, &mut raw) })
         })?;
-        Ok(TestCase {
-            raw: SendPtr(raw),
-            output: self.output.clone(),
-        })
+        Ok(TestCase { raw: SendPtr(raw) })
     }
 
     fn set_worker(&self, worker_index: i64) -> PyResult<()> {

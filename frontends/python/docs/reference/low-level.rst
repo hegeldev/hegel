@@ -9,3 +9,9 @@ and the standard generators give. Most tests never need them.
    :members:
 
 .. autofunction:: hegel.generators.weighted_booleans
+
+.. automethod:: hegel.TestCase.draw_and_print
+
+.. automethod:: hegel.TestCase.start_span
+
+.. automethod:: hegel.TestCase.stop_span

@@ -81,9 +81,9 @@ class HealthCheck(enum.Enum):
     - ``filter_too_much``: too many test cases are rejected, by
       :meth:`~hegel.TestCase.assume` or
       :meth:`~hegel.generators.Generator.filter`.
-    - ``too_slow``: generating test cases takes too long. Only the engine's
-      own time counts, not the time the test and its Python-side
-      generators take.
+    - ``too_slow``: the first test cases take too long to run: more than
+      30 seconds in all before ten valid ones, counting the test body and
+      its generators.
     - ``test_cases_too_large``: test cases routinely reach the limit on the
       number of choices one may make. Suppressing it also removes that
       limit.
@@ -245,6 +245,12 @@ class Settings:
         Report every distinct failure found, as a
         :class:`~hegel.MultipleFailures`, rather than only the smallest
         (default ``False``).
+    ``stop_on_first_failure``
+        Stop generating once a failure is found (default ``True``). When
+        ``False``, the run uses its whole ``test_cases`` budget before
+        reporting; every failure found is saved to the database, and with
+        ``report_multiple_failures`` off only the smallest is shrunk and
+        reported.
     ``show_statistics``
         Print the end-of-run statistics of the events recorded with
         :meth:`~hegel.TestCase.event` and
@@ -283,6 +289,7 @@ class Settings:
     suppress_health_check: frozenset[HealthCheck]
     phases: frozenset[Phase]
     report_multiple_failures: bool
+    stop_on_first_failure: bool
     show_statistics: bool
     print_blob: bool
     backend: Backend
@@ -363,6 +370,7 @@ class Settings:
         native.set_seed(self.seed)
         native.set_derandomize(self.derandomize)
         native.set_report_multiple_failures(self.report_multiple_failures)
+        native.set_stop_on_first_failure(self.stop_on_first_failure)
         native.set_show_statistics(self.show_statistics)
         native.set_database(self.database)
         native.set_print_blob(self.print_blob)
@@ -414,6 +422,9 @@ def _assign(settings: Settings, values: dict[str, Any]) -> None:
         "report_multiple_failures": _check_bool(
             "report_multiple_failures", values["report_multiple_failures"]
         ),
+        "stop_on_first_failure": _check_bool(
+            "stop_on_first_failure", values["stop_on_first_failure"]
+        ),
         "show_statistics": _check_bool("show_statistics", values["show_statistics"]),
         "print_blob": _check_bool("print_blob", values["print_blob"]),
         "backend": _coerce_member(Backend, "backend", values["backend"]),
@@ -440,6 +451,7 @@ def _from_native(native: _native.Settings) -> Settings:
             "suppress_health_check": _unflags(HealthCheck, native.get_suppress_health_check()),
             "phases": _unflags(Phase, native.get_phases()),
             "report_multiple_failures": native.get_report_multiple_failures(),
+            "stop_on_first_failure": native.get_stop_on_first_failure(),
             "show_statistics": native.get_show_statistics(),
             "print_blob": native.get_print_blob(),
             "backend": Backend(native.get_backend()),

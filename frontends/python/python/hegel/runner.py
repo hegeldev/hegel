@@ -370,7 +370,7 @@ _RUN_ERROR_KINDS: dict[int, type[RunError]] = {
 
 
 def _run_error(result: _native.RunResult) -> RunError:
-    kind, _health_check = result.error_kind()
+    kind = result.error_kind()[0]
     message = result.error() or "the run failed with an unknown error"
     return _RUN_ERROR_KINDS.get(kind, RunError)(message)
 
@@ -560,9 +560,10 @@ def run(
     ``database_key`` identifies the test in the example database (without
     one, failures are not saved or replayed) and ``test_location`` in the
     engine's reports. ``explicit_cases`` run first, with their given
-    values; ``reproduce_blob`` replays one previously reported failure
-    first. ``reproducer`` words the note saying how to replay a failure,
-    given its blob.
+    values. ``reproduce_blob`` makes the run consist only of replaying one
+    previously reported failure: a replay that passes is a
+    :class:`~hegel.DidNotReproduce`. ``reproducer`` words the note saying
+    how to replay a failure, given its blob.
 
     ::
 
@@ -785,11 +786,11 @@ def reproduce_failure(blob: str) -> Callable[[T], T]:
 
     A failure report ends with a line such as
     ``@hegel.reproduce_failure("AXicY2Vg...")`` when ``print_blob`` is on;
-    adding that decorator below :func:`test` makes the next run start by
-    replaying exactly that failing test case, which is useful when the
-    failure is hard to find again. If the blob no longer fails, the run
-    raises :class:`~hegel.DidNotReproduce`. Remove the decorator once the
-    bug is fixed. An empty or non-string blob is an
+    adding that decorator below :func:`test` makes the next run consist
+    only of replaying exactly that failing test case, which is useful when
+    the failure is hard to find again. If the blob no longer fails, the
+    run raises :class:`~hegel.DidNotReproduce`. Remove the decorator once
+    the bug is fixed. An empty or non-string blob is an
     :class:`~hegel.InvalidArgument`.
     """
     if not isinstance(blob, str) or not blob:

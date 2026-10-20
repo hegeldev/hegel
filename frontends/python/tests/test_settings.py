@@ -139,6 +139,7 @@ def test_build_round_trips_every_field():
         suppress_health_check=HealthCheck.all(),
         phases=[Phase.generate],
         report_multiple_failures=True,
+        stop_on_first_failure=False,
         show_statistics=True,
         print_blob=True,
         backend=Backend.urandom,
@@ -152,6 +153,7 @@ def test_build_round_trips_every_field():
     assert native.get_suppress_health_check() == sum(h.value for h in HealthCheck)
     assert native.get_phases() == Phase.generate.value
     assert native.get_report_multiple_failures()
+    assert not native.get_stop_on_first_failure()
     assert native.get_show_statistics()
     assert native.get_print_blob()
     assert native.get_backend() == _native.BACKEND_URANDOM
@@ -169,6 +171,7 @@ def test_enum_helpers_and_fields():
         "suppress_health_check",
         "phases",
         "report_multiple_failures",
+        "stop_on_first_failure",
         "show_statistics",
         "print_blob",
         "backend",

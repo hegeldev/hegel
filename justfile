@@ -2,9 +2,10 @@
 set ignore-comments := true
 
 # Per-component recipes live next to the code they drive and run from that
-# directory: `just libhegel::test`, `just rust::test`. Recipes here are the
-# ones that span the whole Cargo workspace (libhegel + the Rust frontend
-# share one workspace, lockfile and coverage report).
+# directory: `just libhegel::test`, `just rust::test`, `just python::test`.
+# Recipes here are the ones that span the whole Cargo workspace (libhegel,
+# the Rust frontend and the Python extension share one workspace and
+# lockfile; the coverage report covers the first two).
 
 # The libhegel engine
 mod libhegel

@@ -20,4 +20,4 @@ Conventions:
   search a generator by running a Hegel test, and `utils.capture_out` collects
   Hegel's output.
 
-Run them with `just check-hypothesis-port`.
+Run them with `just python::check-hypothesis-port`.

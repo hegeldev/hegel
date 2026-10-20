@@ -119,7 +119,7 @@ class Accounts(hegel.StateMachine):
     @hegel.rule()
     def close_account(self, tc):
         name = tc.draw(self.accounts.values_consumed())
-        assert self.balances.pop(name) < 100
+        assert self.balances.pop(name) >= 0
 
 
 test_accounts = hegel.state_machine_test(Accounts)
@@ -142,7 +142,8 @@ def test_stack(tc):
 
     @machine.rule("push")
     def push(tc):
-        stack.append(tc.draw(gs.integers()))
+        x = tc.draw(gs.integers())
+        stack.append(x)
 
     @machine.rule("pop")
     def pop(tc):
@@ -151,7 +152,7 @@ def test_stack(tc):
 
     @machine.invariant("bounded")
     def bounded(tc):
-        assert len(stack) < 3
+        assert len(stack) <= 50
 
     machine.run()
 ```

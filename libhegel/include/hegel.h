@@ -2494,7 +2494,9 @@ hegel_result_t hegel_grammar_builder_free(hegel_context_t *ctx, hegel_grammar_bu
    nor above 500.
  `alphabet`: Optional (NULL for none). Must be a text generator; every
    character a terminal's pattern draws is one of its characters, so a
-   character class, wildcard or literal outside it is never drawn.
+   character class, wildcard or literal outside it is never drawn. The
+   patterns themselves are read with the engine's newest Unicode tables,
+   whatever `unicode_version` the alphabet was given.
  `explicit_names`, `explicit_len`: `explicit_len` terminals whose values
    the caller supplies. Every terminal the grammar `%declare`s must be
    named; a terminal with a pattern may be named to override it. Each

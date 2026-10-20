@@ -202,8 +202,8 @@ pub(crate) unsafe extern "C" fn output_trampoline(
         return;
     }
     // SAFETY: user_data is the Arc<OutputBuffer> pointer registered with the
-    // run (kept alive until the run or replayed test case is freed); line is
-    // valid for len bytes for the duration of the call.
+    // run (kept alive until the run is freed); line is valid for len bytes
+    // for the duration of the call.
     let buffer = unsafe { &*(user_data as *const OutputBuffer) };
     let bytes = if line.is_null() {
         &[][..]

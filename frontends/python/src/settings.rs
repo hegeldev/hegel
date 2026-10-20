@@ -78,6 +78,12 @@ impl Settings {
         })
     }
 
+    fn set_stop_on_first_failure(&self, value: bool) -> PyResult<()> {
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_settings_set_stop_on_first_failure(ctx, self.raw.0, value) })
+        })
+    }
+
     fn set_show_statistics(&self, value: bool) -> PyResult<()> {
         with_ctx(|ctx| {
             check(unsafe { c::hegel_settings_set_show_statistics(ctx, self.raw.0, value) })
@@ -180,6 +186,14 @@ impl Settings {
             check(unsafe {
                 c::hegel_settings_get_report_multiple_failures(ctx, self.raw.0, &mut out)
             })
+        })?;
+        Ok(out)
+    }
+
+    fn get_stop_on_first_failure(&self) -> PyResult<bool> {
+        let mut out: bool = false;
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_settings_get_stop_on_first_failure(ctx, self.raw.0, &mut out) })
         })?;
         Ok(out)
     }

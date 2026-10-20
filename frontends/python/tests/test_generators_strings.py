@@ -56,6 +56,24 @@ def test_text_filters():
         gs.text(categories=["Cs"])
 
 
+def test_characters_follow_this_pythons_unicode_version():
+    ol_onal = dict(min_codepoint=0x1E5D0, max_codepoint=0x1E5FA)
+    if unicodedata.category("\U0001e5d0") == "Cn":
+        with pytest.raises(hegel.InvalidArgument, match="No valid characters"):
+            gs.characters(categories=["L"], **ol_onal)
+        with pytest.raises(hegel.InvalidArgument):
+            gs.from_regex(r"\w", alphabet=gs.characters(**ol_onal))
+    else:
+        check_all(
+            gs.characters(categories=["L"], **ol_onal),
+            lambda c: unicodedata.category(c) == "Lo",
+        )
+        check_all(
+            gs.from_regex(r"\w", alphabet=gs.characters(**ol_onal)),
+            lambda s: re.fullmatch(r"\w", s) is not None,
+        )
+
+
 def test_text_alphabets():
     check_all(gs.text("xyz", min_size=1), lambda s: set(s) <= set("xyz"))
     check_all(gs.text(["x", "y"], min_size=1), lambda s: set(s) <= set("xy"))

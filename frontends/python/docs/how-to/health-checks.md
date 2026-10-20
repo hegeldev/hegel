@@ -55,7 +55,8 @@ suppress_health_check = ["too_slow"]
   {meth}`~hegel.TestCase.assume` or {meth}`~hegel.generators.Generator.filter`.
 
 `too_slow`
-: Generating test cases is taking too long.
+: The first test cases are taking too long: more than 30 seconds in all
+  before ten valid ones, counting the test body and its generators.
 
 `test_cases_too_large`
 : The test cases being generated are too large: they make too many choices.

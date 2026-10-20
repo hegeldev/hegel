@@ -71,7 +71,8 @@ in a run. Hegel ships with three, and picks one for you:
 
 `ci`
 : Used automatically on a CI server. It derandomizes every test, so CI runs
-  are repeatable, and turns off the example database.
+  are repeatable, turns off the example database, and suppresses the
+  `too_slow` health check.
 
 `workload`
 : Used automatically inside [Antithesis](https://antithesis.com).

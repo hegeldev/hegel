@@ -523,3 +523,9 @@ fn unicode_17_case_mappings_are_known() {
     assert_eq!(LATEST.to_lower('\u{A7CE}'), '\u{A7CF}');
     assert_eq!(LATEST.general_category(0x105C0).unwrap(), Category::Lo);
 }
+
+#[test]
+#[should_panic(expected = "malformed delta line")]
+fn a_delta_line_of_unknown_kind_is_malformed() {
+    Tables::latest().with_delta("X 1 2 3");
+}

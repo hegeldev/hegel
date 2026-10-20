@@ -12,8 +12,7 @@ __pycache__/
 /.ruff_cache
 /.pytest_cache
 *.egg-info
-/python/hegel/_native.*.so
-/python/hegel/_native.pyd
+/python/hegel/_native*.pyd
 *.swp
 *~
 

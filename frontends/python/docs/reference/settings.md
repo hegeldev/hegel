@@ -16,6 +16,7 @@ combine, and how the *profile* a run starts from is chosen.
 | `suppress_health_check` | collection of {class}`~hegel.HealthCheck` | none | Health checks that should not fail the run. See {doc}`../how-to/health-checks`. |
 | `phases` | collection of {class}`~hegel.Phase` | all five | Which parts of the run happen; leaving out `shrink`, say, reports the first failure found as it is. See {doc}`../explanation/how-hegel-works`. |
 | `report_multiple_failures` | boolean | `False` | Report every distinct failure a run finds, as a {class}`~hegel.MultipleFailures`, rather than only the smallest. |
+| `stop_on_first_failure` | boolean | `True` | Stop generating once a failure is found. When `False`, the run uses its whole `test_cases` budget before reporting; every failure found is saved to the database, and with `report_multiple_failures` off only the smallest is shrunk and reported. |
 | `show_statistics` | boolean | `False` | Print the end-of-run statistics report for events recorded with {meth}`~hegel.TestCase.event` and {meth}`~hegel.TestCase.event_value`. |
 | `print_blob` | boolean | `True` | On failure, print a `@hegel.reproduce_failure("...")` line to replay it. |
 | `backend` | `default`, `urandom` | `default` | The source of randomness ({class}`~hegel.Backend`): a seeded random number generator, or fresh entropy for every choice, for running under Antithesis. |
@@ -50,6 +51,7 @@ below it set and leaves the rest alone:
    | `HEGEL_SEED` | Sets `seed`: an integer is the seed, `none` clears one the profile set. |
    | `HEGEL_DERANDOMIZE` | Sets `derandomize`: `true`, `1` or `yes`, or `false`, `0` or `no`. |
    | `HEGEL_PRINT_BLOB` | Sets `print_blob`, with the same vocabulary. |
+   | `HEGEL_STOP_ON_FIRST_FAILURE` | Sets `stop_on_first_failure`, with the same vocabulary. |
    | `HEGEL_NONDETERMINISM_STRICTNESS` | Sets `nondeterminism_strictness`: `quiet`, `warn` or `error`. |
 
    An empty variable is ignored; any other malformed value is an error,
@@ -104,7 +106,9 @@ chain down to the base settings and applies the changes from the bottom up.
 
 - **`base`** is the base settings from the table above. It ends every chain,
   so a profile that extends `base`, or a test that selects it, gets exactly the
-  base settings plus its own overrides, whatever the environment.
+  base settings plus its own overrides, whichever profile the environment
+  would otherwise have chosen. (The `HEGEL_*` settings variables still apply
+  over it, as over every profile.)
 - **`default`** is the default profile: the one a run gets when nothing names
   a profile, and the one custom profiles extend when they don't say otherwise.
   It is an alias, resolved as described under
@@ -145,7 +149,8 @@ test_cases = 100000
   `nightly` → `development` → `base` locally: it gets the environment's
   behaviour plus more test cases, wherever it is selected.
 - `pinned` resolves as `pinned` → `base` everywhere: 10000 test cases, a fresh
-  seed and the database on, even on CI.
+  seed and the database on, even on CI (unless a `HEGEL_*` variable says
+  otherwise).
 - `deep-ci` resolves as `deep-ci` → `ci` → `base` everywhere.
 
 Because the shipped profiles are siblings, a change meant for every
@@ -170,9 +175,9 @@ the disabled database), and may set `extends` to change its parent, as above.
 
 `common` has to extend `base` explicitly. Without that it would extend
 `default`, which is `development` locally, and `development` extends `common`:
-a cycle. An `extends` naming an unknown profile, or a cycle, is an error. Every profile in a `hegel.toml` is checked whenever any
-profile is resolved, so a broken profile fails loudly even before something
-selects it.
+a cycle. An `extends` naming an unknown profile, or a cycle, is an error.
+Every profile in a `hegel.toml` is checked whenever any profile is resolved,
+so a broken profile fails loudly even before something selects it.
 
 ### Choosing the default profile
 
@@ -288,6 +293,7 @@ them before the tests they should affect run: in a `conftest.py`, for example.
 | `HEGEL_SEED` | Sets `seed` over the resolved profile. |
 | `HEGEL_DERANDOMIZE` | Sets `derandomize` over the resolved profile. |
 | `HEGEL_PRINT_BLOB` | Sets `print_blob` over the resolved profile. |
+| `HEGEL_STOP_ON_FIRST_FAILURE` | Sets `stop_on_first_failure` over the resolved profile. |
 | `HEGEL_NONDETERMINISM_STRICTNESS` | Sets `nondeterminism_strictness` over the resolved profile. |
 | `ANTITHESIS_OUTPUT_DIR` | Selects the `workload` profile, and each test's verdict is reported to Antithesis. Must name an existing directory. |
 | `CI`, `GITHUB_ACTIONS`, ... | Selects the `ci` profile. |
