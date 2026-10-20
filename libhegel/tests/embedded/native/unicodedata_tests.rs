@@ -529,3 +529,12 @@ fn unicode_17_case_mappings_are_known() {
 fn a_delta_line_of_unknown_kind_is_malformed() {
     Tables::latest().with_delta("X 1 2 3");
 }
+
+#[test]
+fn the_host_version_is_the_latest_until_set() {
+    assert_eq!(UnicodeVersion::host(), LATEST);
+    UnicodeVersion::set_host(version("15.1.0"));
+    assert_eq!(UnicodeVersion::host(), version("15.1.0"));
+    UnicodeVersion::set_host(LATEST);
+    assert_eq!(UnicodeVersion::host(), LATEST);
+}

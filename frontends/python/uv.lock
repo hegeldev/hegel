@@ -432,7 +432,7 @@ wheels = [
 
 [[package]]
 name = "hegeltest"
-source = { editable = "." }
+source = { virtual = "." }
 
 [package.dev-dependencies]
 dev = [

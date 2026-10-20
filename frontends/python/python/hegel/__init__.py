@@ -11,9 +11,10 @@ A test takes a :class:`TestCase` and draws values from generators::
         assert sorted(xs) == sorted(sorted(xs))
 """
 
+import unicodedata as _unicodedata
 from importlib import metadata as _metadata
 
-from hegel import generators
+from hegel import _native, generators
 from hegel._native import version as _version
 from hegel.errors import (
     AssumeFailed,
@@ -59,6 +60,8 @@ from hegel.stateful import (
     state_machine_test,
 )
 from hegel.test_case import Collection, TestCase
+
+_native.set_unicode_version(_unicodedata.unidata_version)
 
 try:
     __version__ = _metadata.version("hegeltest")

@@ -156,7 +156,7 @@ def _run_test_case(
     quiet = verbosity is Verbosity.quiet
     stamped = handle.should_capture()
     should_emit = (stamped and not quiet) or verbose
-    tc = TestCase(handle, should_emit, case_sink or output.resolved_sink(), is_final=stamped)
+    tc = TestCase(handle, should_emit, case_sink or output.resolved_sink())
     outcome = _CaseOutcome(_native.STATUS_VALID, None, None, stamped)
     try:
         _call_test(test_fn, tc)
@@ -458,7 +458,7 @@ def _run_explicit(
     the drawn values, and how it ended."""
     verbose = verbosity in (Verbosity.verbose, Verbosity.debug)
     explicit = ExplicitTestCase(case)
-    tc = TestCase(NO_HANDLE, True, output.resolved_sink(), explicit, is_final=True)
+    tc = TestCase(NO_HANDLE, True, output.resolved_sink(), explicit)
     if verbose:
         output.line(f"Running explicit test case: {case!r}")
     outcome = _CaseOutcome(_native.STATUS_VALID, None, None, True)

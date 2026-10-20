@@ -234,11 +234,9 @@ class ComponentTest(unittest.TestCase):
             self.assertIn(component.changelog, release.RELEASE_PATHS)
         self.assertIn("Cargo.lock", release.RELEASE_PATHS)
 
-    def test_release_paths_and_samples_exist_in_the_checkout(self) -> None:
+    def test_release_paths_exist_in_the_checkout(self) -> None:
         for rel in release.RELEASE_PATHS:
             self.assertTrue((release.ROOT / rel).exists(), rel)
-        for component in release.COMPONENTS:
-            self.assertTrue((release.ROOT / component.release_sample).exists(), component.path)
 
     def test_crates_match_the_manifests(self) -> None:
         for component in release.COMPONENTS:

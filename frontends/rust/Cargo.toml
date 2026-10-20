@@ -6,7 +6,6 @@ edition = "2024"
 rust-version = "1.86"
 exclude = [
   "/AGENTS.md",
-  "/RELEASE-sample.md",
   "/scripts",
   # Test-only fixture binaries (see the [[bin]] targets below). Excluding the
   # sources makes `cargo package` strip the [[bin]] targets from the published

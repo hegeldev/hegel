@@ -39,6 +39,7 @@ use crate::sys::sync::Lazy;
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU32, Ordering};
 use once_cell::race::OnceBox;
 
 /// Unicode General Category.
@@ -224,9 +225,25 @@ fn version_number(s: &str) -> Option<(u32, u32, u32)> {
     parts.next().is_none().then_some((major, minor, update))
 }
 
+static HOST: AtomicU32 = AtomicU32::new(0);
+
 impl UnicodeVersion {
     /// The newest version the engine has tables for.
     pub const LATEST: UnicodeVersion = UnicodeVersion(0);
+
+    /// The version the string generators follow: the host's, set with
+    /// [`set_host`](Self::set_host) (`hegel_set_unicode_version`), or
+    /// [`LATEST`](Self::LATEST) until then. Read when a generator is
+    /// built, so a change does not reach generators that already exist.
+    pub fn host() -> UnicodeVersion {
+        UnicodeVersion::from_index(HOST.load(Ordering::Relaxed))
+    }
+
+    /// Make `version` the one [`host`](Self::host) returns, for the
+    /// whole process.
+    pub fn set_host(version: UnicodeVersion) {
+        HOST.store(version.index(), Ordering::Relaxed);
+    }
 
     /// Every version, newest first.
     #[cfg(test)]

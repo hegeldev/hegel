@@ -220,7 +220,7 @@ def test_primitive_draws():
         assert 0.0 <= f <= 1.0
         assert len(tc._generate_bytes(2, 2)) == 2
         s = tc._generate_string(
-            _native.StringGenerator.text(1, 1, "ascii", 0, None, None, None, None, None, "")
+            _native.StringGenerator.text(1, 1, "ascii", 0, None, None, None, None, None)
         )
         assert len(s) == 1
         d = tc._generate_date(dt.date(2000, 1, 1), dt.date(2000, 1, 2))
@@ -328,19 +328,6 @@ def test_numbered_names_skip_names_already_taken():
 
     lines = notes(failing(body))[0].splitlines()
     assert lines[1:] == ["x_1 = 0", "x_2 = 1", "x_3 = 1"]
-
-
-def test_per_case_state_is_shared_by_every_handle_onto_a_test_case():
-    seen = []
-
-    def body(tc):
-        store = tc._per_case("key", list)
-        assert tc._clone()._per_case("key", list) is store
-        assert tc._child()._per_case("key", dict) is store
-        seen.append(store)
-
-    run_test(body, test_cases=2, database="")
-    assert len(seen) == 2 and seen[0] is not seen[1]
 
 
 def test_a_draw_that_raises_reports_what_was_drawn_inside_it():

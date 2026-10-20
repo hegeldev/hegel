@@ -57,9 +57,15 @@ exclude = [
   { path = "docs/**", format = "sdist" },
   { path = "justfile", format = "sdist" },
   { path = "RELEASE.md", format = "sdist" },
-  { path = "RELEASE-sample.md", format = "sdist" },
   { path = "scripts/**", format = "sdist" },
+  { path = "tests/**", format = "sdist" },
 ]
+
+# uv manages the dependencies only; the extension is built and installed
+# by `maturin develop` (`just python::setup`), not by uv's own editable
+# build of the project, which would compile it a second time.
+[tool.uv]
+package = false
 
 [dependency-groups]
 dev = [

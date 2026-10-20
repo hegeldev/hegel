@@ -256,6 +256,11 @@ fn set_default_profile(name: Option<&str>) -> PyResult<()> {
 }
 
 #[pyfunction]
+fn set_unicode_version(version: &str) -> PyResult<()> {
+    with_ctx(|ctx| check(unsafe { c::hegel_set_unicode_version(ctx, hstr(version)) }))
+}
+
+#[pyfunction]
 fn register_profile(name: &str, settings: &Settings) -> PyResult<()> {
     with_ctx(|ctx| {
         check(unsafe { c::hegel_settings_register_profile(ctx, hstr(name), settings.raw()) })
@@ -285,6 +290,7 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(label_from_name, m)?)?;
     m.add_function(wrap_pyfunction!(label_combine, m)?)?;
     m.add_function(wrap_pyfunction!(set_default_profile, m)?)?;
+    m.add_function(wrap_pyfunction!(set_unicode_version, m)?)?;
     m.add_function(wrap_pyfunction!(register_profile, m)?)?;
     m.add("STATUS_VALID", c::hegel_status_t::HEGEL_STATUS_VALID as u32)?;
     m.add(

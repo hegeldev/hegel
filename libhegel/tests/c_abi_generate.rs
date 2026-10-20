@@ -23,10 +23,10 @@ use hegel_c::{
     hegel_generate_time, hegel_generate_uuid, hegel_grammar_builder_file,
     hegel_grammar_builder_free, hegel_grammar_builder_new, hegel_grammar_builder_provide,
     hegel_grammar_free, hegel_grammar_new, hegel_grammar_placeholder, hegel_mark_complete,
-    hegel_owned_string_free, hegel_owned_string_t, hegel_run_free, hegel_settings_free,
-    hegel_settings_set_test_cases, hegel_status_t, hegel_string_generator_domain,
-    hegel_string_generator_email, hegel_string_generator_free, hegel_string_generator_regex,
-    hegel_string_generator_text, hegel_string_generator_url,
+    hegel_owned_string_free, hegel_owned_string_t, hegel_run_free, hegel_set_unicode_version,
+    hegel_settings_free, hegel_settings_set_test_cases, hegel_status_t,
+    hegel_string_generator_domain, hegel_string_generator_email, hegel_string_generator_free,
+    hegel_string_generator_regex, hegel_string_generator_text, hegel_string_generator_url,
 };
 use std::ptr;
 
@@ -772,7 +772,6 @@ unsafe fn text_generator(
                 0,
                 "".into(),
                 "".into(),
-                hegel_string_t::default(),
                 &mut g,
             )
         },
@@ -810,43 +809,16 @@ unsafe fn draw_string(
 fn string_generators_follow_the_unicode_version() {
     let ctx = hegel_context_new();
     unsafe {
-        let mut g: *mut HegelStringGenerator = ptr::null_mut();
-        let uppercase = ["Lu".into()];
-        let rams_horn = |version: hegel_string_t, g: &mut *mut HegelStringGenerator| {
-            hegel_string_generator_text(
-                ctx,
-                1,
-                1,
-                ptr::null(),
-                0xA7CB,
-                0xA7CB,
-                uppercase.as_ptr(),
-                1,
-                ptr::null(),
-                0,
-                "".into(),
-                "".into(),
-                version,
-                g,
-            )
-        };
-        assert_eq!(rams_horn("16.0.0".into(), &mut g), HEGEL_OK);
-        ok(hegel_string_generator_free(ctx, g));
-        assert_eq!(rams_horn("".into(), &mut g), HEGEL_OK);
-        ok(hegel_string_generator_free(ctx, g));
-        assert_eq!(rams_horn("15.1.0".into(), &mut g), HEGEL_E_INVALID_ARG);
-        assert!(last_error(ctx).contains("No valid characters"));
-        assert_eq!(rams_horn("13.0.0".into(), &mut g), HEGEL_E_INVALID_ARG);
+        let set = |version: hegel_string_t| hegel_set_unicode_version(ctx, version);
+        assert_eq!(set("13.0.0".into()), HEGEL_E_INVALID_ARG);
         assert!(last_error(ctx).contains("no tables for Unicode 13.0.0"));
-        assert_eq!(rams_horn("fifteen".into(), &mut g), HEGEL_E_INVALID_ARG);
+        assert_eq!(set("15.0.1".into()), HEGEL_E_INVALID_ARG);
+        assert!(last_error(ctx).contains("no tables for Unicode 15.0.1"));
+        assert_eq!(set("fifteen".into()), HEGEL_E_INVALID_ARG);
         assert!(last_error(ctx).contains("not a Unicode version number"));
         let bad_utf8 = [0xffu8];
-        assert_eq!(
-            rams_horn(test_string(&bad_utf8), &mut g),
-            HEGEL_E_INVALID_ARG
-        );
-        assert!(last_error(ctx).contains("unicode_version is not valid UTF-8"));
-        assert!(g.is_null());
+        assert_eq!(set(test_string(&bad_utf8)), HEGEL_E_INVALID_ARG);
+        assert!(last_error(ctx).contains("version is not valid UTF-8"));
 
         let mut alphabet: *mut HegelStringGenerator = ptr::null_mut();
         let none: [hegel_string_t; 0] = [];
@@ -863,23 +835,62 @@ fn string_generators_follow_the_unicode_version() {
             0,
             "\u{A7CB}".into(),
             "".into(),
-            "16.0.0".into(),
             &mut alphabet,
         ));
-        let word = |version: hegel_string_t, g: &mut *mut HegelStringGenerator| {
-            hegel_string_generator_regex(ctx, "\\w".into(), true, alphabet, version, g)
+        let mut g: *mut HegelStringGenerator = ptr::null_mut();
+        let uppercase = ["Lu".into()];
+        let rams_horn = |g: &mut *mut HegelStringGenerator| {
+            hegel_string_generator_text(
+                ctx,
+                1,
+                1,
+                ptr::null(),
+                0xA7CB,
+                0xA7CB,
+                uppercase.as_ptr(),
+                1,
+                ptr::null(),
+                0,
+                "".into(),
+                "".into(),
+                g,
+            )
         };
-        assert_eq!(word("16.0.0".into(), &mut g), HEGEL_OK);
-        ok(hegel_string_generator_free(ctx, g));
-        assert_eq!(word("18.0.0".into(), &mut g), HEGEL_OK);
-        ok(hegel_string_generator_free(ctx, g));
-        assert_eq!(word("15.1.0".into(), &mut g), HEGEL_E_INVALID_ARG);
+        let word = |g: &mut *mut HegelStringGenerator| {
+            hegel_string_generator_regex(ctx, "\\w".into(), true, alphabet, g)
+        };
+        let word_grammar = || {
+            let b = grammar_builder(ctx, "start: WORD\nWORD: /\\w/\n", &[]).unwrap();
+            let mut g: *mut HegelGrammar = ptr::null_mut();
+            let rc = hegel_grammar_new(ctx, b, ptr::null(), 0, 0, alphabet, ptr::null(), 0, &mut g);
+            ok(hegel_grammar_builder_free(ctx, b));
+            if rc == HEGEL_OK {
+                ok(hegel_grammar_free(ctx, g));
+                Ok(())
+            } else {
+                assert_eq!(rc, HEGEL_E_INVALID_ARG);
+                Err(last_error(ctx))
+            }
+        };
+
+        for version in ["16.0.0", "18.0.0", ""] {
+            ok(set(version.into()));
+            assert_eq!(rams_horn(&mut g), HEGEL_OK, "{version}");
+            ok(hegel_string_generator_free(ctx, g));
+            assert_eq!(word(&mut g), HEGEL_OK, "{version}");
+            ok(hegel_string_generator_free(ctx, g));
+            word_grammar().unwrap();
+        }
+
+        ok(set("15.1.0".into()));
+        assert_eq!(rams_horn(&mut g), HEGEL_E_INVALID_ARG);
+        assert!(last_error(ctx).contains("No valid characters"));
+        assert_eq!(word(&mut g), HEGEL_E_INVALID_ARG);
         assert!(last_error(ctx).contains("matches no string over the alphabet"));
-        assert_eq!(word("15.0.1".into(), &mut g), HEGEL_E_INVALID_ARG);
-        assert!(last_error(ctx).contains("no tables for Unicode 15.0.1"));
-        assert_eq!(word(test_string(&bad_utf8), &mut g), HEGEL_E_INVALID_ARG);
-        assert!(last_error(ctx).contains("unicode_version is not valid UTF-8"));
         assert!(g.is_null());
+        let err = word_grammar().unwrap_err();
+        assert!(err.contains("matches no string over the alphabet"), "{err}");
+        ok(set("".into()));
         ok(hegel_string_generator_free(ctx, alphabet));
     }
     unsafe { ok(hegel_context_free(ctx)) };
@@ -904,7 +915,6 @@ fn text_generator_constructor_validates_and_draws() {
                 0,
                 "".into(),
                 "".into(),
-                hegel_string_t::default(),
                 ptr::null_mut()
             ),
             HEGEL_E_INVALID_ARG
@@ -925,7 +935,6 @@ fn text_generator_constructor_validates_and_draws() {
                 0,
                 "".into(),
                 "".into(),
-                hegel_string_t::default(),
                 &mut g
             ),
             HEGEL_E_INVALID_ARG
@@ -946,7 +955,6 @@ fn text_generator_constructor_validates_and_draws() {
                 0,
                 "".into(),
                 "".into(),
-                hegel_string_t::default(),
                 &mut g
             ),
             HEGEL_E_INVALID_ARG
@@ -968,7 +976,6 @@ fn text_generator_constructor_validates_and_draws() {
                 0,
                 "".into(),
                 "".into(),
-                hegel_string_t::default(),
                 &mut g
             ),
             HEGEL_E_INVALID_ARG
@@ -990,7 +997,6 @@ fn text_generator_constructor_validates_and_draws() {
                 0,
                 test_string(&bad_include),
                 "".into(),
-                hegel_string_t::default(),
                 &mut g
             ),
             HEGEL_E_INVALID_ARG
@@ -1014,7 +1020,6 @@ fn text_generator_constructor_validates_and_draws() {
                     len: 1
                 },
                 "".into(),
-                hegel_string_t::default(),
                 &mut g
             ),
             HEGEL_E_INVALID_ARG
@@ -1036,7 +1041,6 @@ fn text_generator_constructor_validates_and_draws() {
                 0,
                 "".into(),
                 "".into(),
-                hegel_string_t::default(),
                 &mut g
             ),
             HEGEL_E_INVALID_ARG
@@ -1061,7 +1065,6 @@ fn text_generator_constructor_validates_and_draws() {
                 0,
                 "".into(),
                 "".into(),
-                hegel_string_t::default(),
                 &mut g
             ),
             HEGEL_E_INVALID_ARG
@@ -1083,7 +1086,6 @@ fn text_generator_constructor_validates_and_draws() {
                 0,
                 "".into(),
                 "".into(),
-                hegel_string_t::default(),
                 &mut g
             ),
             HEGEL_E_INVALID_ARG
@@ -1108,7 +1110,6 @@ fn text_generator_constructor_validates_and_draws() {
                 1,
                 "".into(),
                 "".into(),
-                hegel_string_t::default(),
                 &mut g
             ),
             HEGEL_E_INVALID_ARG
@@ -1130,7 +1131,6 @@ fn text_generator_constructor_validates_and_draws() {
                 0,
                 "".into(),
                 test_string(&bad_exclude),
-                hegel_string_t::default(),
                 &mut g
             ),
             HEGEL_E_INVALID_ARG
@@ -1152,7 +1152,6 @@ fn text_generator_constructor_validates_and_draws() {
                 0,
                 test_string(b"a"),
                 test_string(b"0"),
-                hegel_string_t::default(),
                 &mut g
             ),
             HEGEL_OK
@@ -1191,14 +1190,7 @@ fn regex_email_url_domain_generators_draw_valid_values() {
     unsafe {
         let mut regex_g: *mut HegelStringGenerator = ptr::null_mut();
         assert_eq!(
-            hegel_string_generator_regex(
-                ctx,
-                "".into(),
-                true,
-                ptr::null(),
-                hegel_string_t::default(),
-                &mut regex_g
-            ),
+            hegel_string_generator_regex(ctx, "".into(), true, ptr::null(), &mut regex_g),
             HEGEL_OK
         );
         let empty_settings = make_settings_no_db(ctx);
@@ -1219,7 +1211,6 @@ fn regex_email_url_domain_generators_draw_valid_values() {
                 },
                 true,
                 ptr::null(),
-                hegel_string_t::default(),
                 &mut regex_g
             ),
             HEGEL_E_INVALID_ARG
@@ -1232,7 +1223,6 @@ fn regex_email_url_domain_generators_draw_valid_values() {
                 test_string(&bad_utf8),
                 false,
                 ptr::null(),
-                hegel_string_t::default(),
                 &mut regex_g
             ),
             HEGEL_E_INVALID_ARG
@@ -1245,7 +1235,6 @@ fn regex_email_url_domain_generators_draw_valid_values() {
                 test_string(&unclosed),
                 false,
                 ptr::null(),
-                hegel_string_t::default(),
                 &mut regex_g
             ),
             HEGEL_E_INVALID_ARG
@@ -1258,7 +1247,6 @@ fn regex_email_url_domain_generators_draw_valid_values() {
                 test_string(&pattern),
                 false,
                 ptr::null(),
-                hegel_string_t::default(),
                 ptr::null_mut()
             ),
             HEGEL_E_INVALID_ARG
@@ -1299,27 +1287,13 @@ fn regex_email_url_domain_generators_draw_valid_values() {
         );
 
         assert_eq!(
-            hegel_string_generator_regex(
-                ctx,
-                test_string(&pattern),
-                true,
-                email_g,
-                hegel_string_t::default(),
-                &mut regex_g
-            ),
+            hegel_string_generator_regex(ctx, test_string(&pattern), true, email_g, &mut regex_g),
             HEGEL_E_INVALID_ARG
         );
         assert!(last_error(ctx).contains("must be a text string generator"));
         let alphabet = text_generator(ctx, 0, 10);
         assert_eq!(
-            hegel_string_generator_regex(
-                ctx,
-                test_string(&pattern),
-                true,
-                alphabet,
-                hegel_string_t::default(),
-                &mut regex_g
-            ),
+            hegel_string_generator_regex(ctx, test_string(&pattern), true, alphabet, &mut regex_g),
             HEGEL_OK
         );
 
@@ -1398,7 +1372,6 @@ fn regex_pattern_may_contain_nul() {
                 test_string(&pattern),
                 true,
                 ptr::null(),
-                hegel_string_t::default(),
                 &mut regex_g
             ),
             HEGEL_OK

@@ -125,3 +125,19 @@ def test_composite_validates_its_function():
         return args[0].draw(gs.just(args[1]))
 
     assert find_example(variadic(3)) == 3
+
+
+def test_builds_skips_non_type_annotations_on_required_arguments():
+    def target(x: 1):  # type: ignore[valid-type]
+        return x
+
+    assert find_example(gs.builds(target, x=gs.just(2))) == 2
+    with pytest.raises(TypeError):
+        find_example(gs.builds(target))
+
+
+def test_builds_skips_non_type_annotations():
+    def target(x: 1 = 0):  # type: ignore[valid-type]
+        return x
+
+    assert find_example(gs.builds(target)) == 0

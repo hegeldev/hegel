@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ipaddress
 import re
-import unicodedata
 import uuid as _uuid
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
@@ -163,7 +162,6 @@ class CharacterSpec:
             self.exclude_categories,
             self.include_characters,
             self.exclude_characters,
-            unicodedata.unidata_version,
         )
 
 
@@ -425,9 +423,7 @@ class Regex(Generator[str]):
             if not isinstance(alphabet, Characters) and not spec.include_characters:
                 raise InvalidArgument("from_regex alphabet must not be empty")
             alphabet_handle = spec.build(0, 0)
-        self._handle = _native.StringGenerator.regex(
-            pattern, fullmatch, alphabet_handle, unicodedata.unidata_version
-        )
+        self._handle = _native.StringGenerator.regex(pattern, fullmatch, alphabet_handle)
         self.label = REGEX_LABEL
 
     def do_draw(self, tc: TestCase) -> str:

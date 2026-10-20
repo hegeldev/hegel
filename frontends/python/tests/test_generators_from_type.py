@@ -542,3 +542,48 @@ def test_bytes_are_sequences_of_integers(type_):
 )
 def test_bytes_are_not_sequences_of_other_things(type_):
     check_all(gs.from_type(type_), lambda v: not isinstance(v, bytes))
+
+
+def test_from_type_honours_an_explicit_signature_without_self():
+    class Model:
+        __signature__ = inspect.Signature(
+            [
+                inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+                inspect.Parameter("n", inspect.Parameter.KEYWORD_ONLY, annotation=int),
+            ]
+        )
+
+        def __init__(self, **kwargs: int) -> None:
+            self.n = kwargs["n"]
+
+    value = find_example(gs.from_type(Model))
+    assert isinstance(value.n, int)
+
+
+def test_from_type_ignores_variadic_parameters():
+    class Variadic:
+        def __init__(self, x: int, *args: str, **kwargs: str) -> None:
+            self.x = x
+
+    assert isinstance(find_example(gs.from_type(Variadic)).x, int)
+
+
+def test_from_type_keeps_an_explicit_signature_without_self():
+    class Model:
+        __signature__ = inspect.Signature(
+            [inspect.Parameter("n", inspect.Parameter.KEYWORD_ONLY, annotation=int)]
+        )
+
+        def __init__(self, **kwargs: int) -> None:
+            self.n = kwargs["n"]
+
+    assert isinstance(find_example(gs.from_type(Model)).n, int)
+
+
+def test_from_type_requires_annotations_for_required_arguments():
+    class Needs:
+        def __init__(self, x, *args, **kwargs):
+            self.x = x
+
+    with pytest.raises(hegel.InvalidArgument, match="x"):
+        gs.from_type(Needs)

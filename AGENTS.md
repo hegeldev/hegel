@@ -29,7 +29,7 @@ just --list libhegel      # a component's recipes
 ## Versioning and releases
 
 - Components version independently. A release of a component at `<path>` is tagged `<path>/<version>`: `libhegel/0.47.1`, `frontends/rust/0.50.1`, `frontends/python/0.1.0`. Only libhegel tags carry a GitHub release (the prebuilt binaries); the Rust crates publish to crates.io and the Python wheels to PyPI.
-- A PR that changes `<component>/src/` (or `frontends/rust/macros/`, or the Python frontend's `python/hegel/`, `Cargo.toml` or `pyproject.toml`) needs a `<component>/RELEASE.md` — see that component's `RELEASE-sample.md` and the `changelog` skill. On merge, `.github/scripts/release.py` bumps the version, moves the entry into `<component>/CHANGELOG.md`, tags, and publishes.
+- A PR that changes `<component>/src/` (or `frontends/rust/macros/`, or the Python frontend's `python/hegel/`, `Cargo.toml` or `pyproject.toml`) needs a `<component>/RELEASE.md` — see `CONTRIBUTING.md` and the `changelog` skill. On merge, `.github/scripts/release.py` bumps the version, moves the entry into `<component>/CHANGELOG.md`, tags, and publishes.
 - Every frontend ships the engine (`hegeltest` pins `hegeltest-c` exactly; the Python wheels compile libhegel in), so a libhegel release also patch-bumps and republishes every frontend; a frontend's changelog entry is auto-generated unless the PR writes its `RELEASE.md` too.
 - The release automation's component list is `COMPONENTS` in `.github/scripts/release.py`; `just check-release-script` runs its tests.
 

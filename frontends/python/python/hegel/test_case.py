@@ -63,19 +63,14 @@ def _discard(_line: str) -> None:
 
 class _Global:
     """State shared by every handle onto one test case: whether drawn
-    values are reported, and where, and per-test-case state kept by layers
-    built on Hegel (see :meth:`TestCase._per_case`)."""
+    values are reported, and where."""
 
-    __slots__ = ("emit", "explicit", "is_final", "per_case", "sink")
+    __slots__ = ("emit", "explicit", "sink")
 
-    def __init__(
-        self, emit: bool, sink: OutputSink | None, explicit: Any, is_final: bool = False
-    ) -> None:
+    def __init__(self, emit: bool, sink: OutputSink | None, explicit: Any) -> None:
         self.emit = emit
         self.sink: OutputSink = sink if (emit and sink is not None) else _discard
         self.explicit = explicit
-        self.is_final = is_final
-        self.per_case: dict[Any, Any] = {}
 
 
 class _DrawState:
@@ -128,10 +123,9 @@ class TestCase:
         emit: bool = False,
         sink: OutputSink | None = None,
         explicit: Any = None,
-        is_final: bool = False,
     ) -> None:
         self._handle = handle
-        self._global = _Global(emit, sink, explicit, is_final)
+        self._global = _Global(emit, sink, explicit)
         self._span_depth = 0
         self._printing_depth = 0
         self._printer: PrettyPrinter | None = None
@@ -489,23 +483,6 @@ class TestCase:
             return
         for line in output.splitlines():
             self._global.sink(line)
-
-    def _per_case(self, key: Any, factory: Callable[[], T]) -> T:
-        """State keyed by ``key`` that lives as long as this test case and
-        is shared by every handle onto it, created by ``factory`` on first
-        use."""
-        store = self._global.per_case
-        if key not in store:
-            store[key] = factory()
-        return store[key]  # type: ignore[no-any-return]
-
-    @property
-    def _is_final(self) -> bool:
-        """Whether this case's output is reported: an explicit test case,
-        or a case the engine stamped for capture (the final replay of a
-        failure, a confirmation replay, or a generation case under
-        nondeterministic handling)."""
-        return self._global.is_final
 
     # -- spans -----------------------------------------------------------
 

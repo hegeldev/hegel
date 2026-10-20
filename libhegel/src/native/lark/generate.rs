@@ -517,7 +517,7 @@ impl GrammarSpec {
                 }
                 (None, Some(regexp)) => {
                     let compiled =
-                        CompiledRegex::compile(regexp, alphabet.clone(), UnicodeVersion::LATEST)
+                        CompiledRegex::compile(regexp, alphabet.clone(), UnicodeVersion::host())
                             .map_err(|e| GrammarError::new(format!("{e}")))?;
                     term_min.push(term.min_width);
                     term_typical.push(typical_size(&compiled, term.min_width));

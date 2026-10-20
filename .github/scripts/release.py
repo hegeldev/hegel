@@ -33,7 +33,6 @@ class Component:
     manifests: tuple[str, ...]
     crates: tuple[str, ...]
     source_dirs: tuple[str, ...]
-    release_sample: str
     engine_bump_entry: str | None = None
 
     @property
@@ -62,14 +61,12 @@ LIBHEGEL = Component(
     manifests=("libhegel/Cargo.toml",),
     crates=("hegeltest-c",),
     source_dirs=("libhegel/src/",),
-    release_sample="frontends/rust/RELEASE-sample.md",
 )
 RUST = Component(
     path="frontends/rust",
     manifests=("frontends/rust/Cargo.toml", "frontends/rust/macros/Cargo.toml"),
     crates=("hegeltest", "hegeltest-macros"),
     source_dirs=("frontends/rust/src/", "frontends/rust/macros/"),
-    release_sample="frontends/rust/RELEASE-sample.md",
     engine_bump_entry="This release updates the `hegeltest-c` dependency to {version}.",
 )
 PYTHON = Component(
@@ -82,7 +79,6 @@ PYTHON = Component(
         "frontends/python/Cargo.toml",
         "frontends/python/pyproject.toml",
     ),
-    release_sample="frontends/python/RELEASE-sample.md",
     engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
 )
 FRONTENDS = [RUST, PYTHON]
@@ -305,8 +301,7 @@ def check(base_ref: str) -> None:
             [
                 f"Every pull request changing {component.path} requires a "
                 f"{component.release_file} file.",
-                "You can find an example and instructions in "
-                f"{component.release_sample}.",
+                "You can find an example and instructions in CONTRIBUTING.md.",
             ],
             required=required,
         )
