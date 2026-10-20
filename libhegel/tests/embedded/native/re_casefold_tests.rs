@@ -5,7 +5,8 @@
 //! (see `unicodedata_tests.rs`).
 
 use super::*;
-use crate::native::re::constants::{SRE_FLAG_ASCII, SRE_FLAG_IGNORECASE};
+use crate::native::re::constants::{SRE_FLAG_ASCII, SRE_FLAG_IGNORECASE, unicode_version_flags};
+use crate::unicodedata::UnicodeVersion;
 use alloc::vec;
 
 const IC: u32 = SRE_FLAG_IGNORECASE;
@@ -56,6 +57,23 @@ fn extra_cases_table_is_symmetric_and_lowercase() {
             assert_eq!(lower(v, 0), v, "{v:?}");
         }
     }
+}
+
+#[test]
+fn case_folding_follows_the_unicode_version_of_the_flags() {
+    let v16 = unicode_version_flags(UnicodeVersion::parse("16.0.0").unwrap());
+    assert_eq!(lower('\u{A7CE}', 0), '\u{A7CF}');
+    assert_eq!(lower('\u{A7CE}', v16), '\u{A7CE}');
+    assert!(is_cased('\u{A7CF}', 0));
+    assert!(!is_cased('\u{A7CF}', v16));
+    assert_eq!(uppers_of('\u{A7CF}', 0), &['\u{A7CE}']);
+    assert!(uppers_of('\u{A7CF}', v16).is_empty());
+    assert_eq!(uppers_of('k', v16), &['K', '\u{212A}']);
+    assert!(literal_matches('\u{A7CE}', '\u{A7CF}', IC));
+    assert!(!literal_matches('\u{A7CE}', '\u{A7CF}', IC | v16));
+    let mut out = Vec::new();
+    push_equivalents(&mut out, '\u{A7CF}', IC | v16);
+    assert_eq!(out, vec!['\u{A7CF}']);
 }
 
 #[test]

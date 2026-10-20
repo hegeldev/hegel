@@ -2,23 +2,27 @@
 set ignore-comments := true
 
 # Per-component recipes live next to the code they drive and run from that
-# directory: `just libhegel::test`, `just rust::test`. Recipes here are the
-# ones that span the whole Cargo workspace (libhegel + the Rust frontend
-# share one workspace, lockfile and coverage report).
+# directory: `just libhegel::test`, `just rust::test`, `just python::test`.
+# Recipes here are the ones that span the whole Cargo workspace (libhegel,
+# the Rust frontend and the Python extension share one workspace and
+# lockfile; the coverage report covers the first two).
 
 # The libhegel engine
 mod libhegel
 # The Rust frontend
 mod rust 'frontends/rust'
+# The Python frontend (needs uv; `just python::setup` first)
+mod python 'frontends/python'
 
 # Definition of done for the whole repo: lint + every component's tests.
-check: check-lint libhegel::check rust::check
+check: check-lint libhegel::check rust::check python::check
 
 # Lints spanning the Cargo workspace, plus each component's own.
-check-lint: check-format check-clippy check-nocov-style check-test-modules check-internal-asserts check-release-script libhegel::check-lint rust::check-lint
+check-lint: check-format check-clippy check-nocov-style check-test-modules check-internal-asserts check-release-script libhegel::check-lint rust::check-lint python::check-lint
 
 format:
     cargo fmt --all
+    just python::format
     # also run format-nix if we have nix installed
     @which nix && just format-nix || true
 
@@ -71,7 +75,9 @@ check-tests-minimal-versions:
     # the cdylib `cargo test` alone does not produce (see `c-test-smoke` in
     # libhegel/justfile).
     cargo build --locked -p hegeltest-c
-    HEGEL_RUNNING_TESTS_WITH_RUST_NIGHTLY=1 RUST_BACKTRACE=1 cargo test --workspace --locked --all-features
+    # The Python extension's tests are its pytest suite; with --all-features
+    # its `extension-module` build would not even link outside maturin.
+    HEGEL_RUNNING_TESTS_WITH_RUST_NIGHTLY=1 RUST_BACKTRACE=1 cargo test --workspace --exclude hegel-python --locked --all-features
 
 # Run cargo-insta, installing it first if it's missing. Pinned to the same
 # version as the `insta` dev-dependency so snapshot format stays consistent.
@@ -83,6 +89,6 @@ insta *ARGS:
 # These aliases are provided as ux improvements for local developers. CI
 # should use the longer forms.
 
-test: libhegel::test rust::test
+test: libhegel::test rust::test python::check-tests
 coverage: check-coverage
 lint: check-lint

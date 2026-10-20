@@ -13,6 +13,7 @@ use crate::native::core::{
     float_restrict_and_redraw,
 };
 use crate::native::intervalsets::IntervalSet;
+use crate::unicodedata::UnicodeVersion;
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
@@ -121,6 +122,11 @@ pub fn generate_float(ntc: &mut NativeTestCase, spec: &FloatSpec) -> Result<f64,
         } else {
             max_value.next_down()
         };
+    }
+    if !spec.allow_infinity && (min_value == f64::INFINITY || max_value == f64::NEG_INFINITY) {
+        return Err(EngineError::InvalidArgument(format!(
+            "allow_infinity=false leaves no value in [{min_value}, {max_value}]"
+        )));
     }
     if spec.width == 32 && !spec.allow_infinity {
         min_value = min_value.max(f64::from(f32::MIN));
@@ -297,16 +303,18 @@ impl StringSpec {
         })
     }
 
-    /// A regex draw: strings matching `pattern`. `alphabet`, when given,
-    /// must be a text spec; its intervals constrain the padding and
-    /// wildcard characters. Errors on an invalid pattern, and on one the
-    /// alphabet can supply no string of (see
-    /// [`CompiledRegex::producible`](regex::CompiledRegex::producible)),
+    /// A regex draw: strings matching `pattern`, whose categories, word
+    /// boundaries and case folding follow the Unicode tables of
+    /// `unicode_version`. `alphabet`, when given, must be a text spec; its
+    /// intervals constrain the padding and wildcard characters. Errors on
+    /// an invalid pattern, and on one the alphabet can supply no string of
+    /// (see [`CompiledRegex::producible`](regex::CompiledRegex::producible)),
     /// which would otherwise reject every draw.
     pub fn regex(
         pattern: &str,
         fullmatch: bool,
         alphabet: Option<&StringSpec>,
+        unicode_version: UnicodeVersion,
     ) -> Result<StringSpec, EngineError> {
         let alphabet = match alphabet {
             None => None,
@@ -317,7 +325,7 @@ impl StringSpec {
                 ));
             }
         };
-        let compiled = regex::CompiledRegex::compile(pattern, alphabet)?;
+        let compiled = regex::CompiledRegex::compile(pattern, alphabet, unicode_version)?;
         if !compiled.producible() {
             return Err(compiled.unproducible_error());
         }

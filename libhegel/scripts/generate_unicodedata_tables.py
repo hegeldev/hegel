@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Generate libhegel/src/unicodedata/{categories,nfd_bases,case}.txt from the UCD.
+"""Generate the engine's Unicode tables in libhegel/src/unicodedata/ from the UCD.
 
-Run from the repo root:
+Run from anywhere:
 
-    python scripts/generate_unicodedata_tables.py
+    python3 libhegel/scripts/generate_unicodedata_tables.py
 
-Reads `libhegel/src/unicodedata/UnicodeData.txt` and `SpecialCasing.txt`
-(vendored from https://www.unicode.org/Public/<UNICODE_VERSION>/ucd/) and
-writes three compact text files included into the Rust crate via
-`include_str!`:
+Reads `UnicodeData.txt` and `SpecialCasing.txt` for UNICODE_VERSION, the
+engine's latest, from `libhegel/src/unicodedata/` (vendored from
+https://www.unicode.org/Public/<UNICODE_VERSION>/ucd/), and for each of
+OLDER_VERSIONS from `target/ucd/<version>/`, downloaded from the same place
+on first use rather than vendored. Writes compact text files included into
+the Rust crate via `include_str!`:
 
   - `categories.txt`: one line per contiguous run, `<hex_end> <cat>`,
     where `cat` is a two-character General Category code. Entries are
@@ -27,17 +29,37 @@ writes three compact text files included into the Rust crate via
     UnicodeData.txt, or the first codepoint of the full mapping for a
     codepoint SpecialCasing.txt lists unconditionally.
 
-All three files are parsed lazily at first lookup. The test reference in
+  - `delta-<version>.txt`, for each older version: where that version's
+    categories and case mappings differ from the next newer version's.
+    `C <hex_start> <hex_end> <cat>` lines give the category, in that
+    version, of a run of codepoints whose category the newer version
+    changed (mostly `Cn`, for the characters it assigned); `M <hex_cp>
+    <hex_lower> <hex_upper>` lines give the case mapping of a codepoint
+    whose mapping differs (its own codepoint for both when that version has
+    none). The engine builds an older version's tables by applying its
+    delta to the newer version's. Lines of each kind are sorted by
+    codepoint.
+
+The NFD bases are not versioned: a canonical decomposition never changes
+once assigned, and the shrinker, their only user, treats them as a
+preference, so a base for a character the host does not know yet is
+harmless.
+
+All files are parsed lazily at first lookup. The test reference in
 `scripts/generate_unicodedata_python_reference.py` must be regenerated for
-the same Unicode version.
+the same versions.
 """
 
 from __future__ import annotations
 
 import sys
+import urllib.request
 from pathlib import Path
 
 UNICODE_VERSION = "17.0.0"
+# Newest first; each version's delta is against the one before it in this
+# list (UNICODE_VERSION for the first).
+OLDER_VERSIONS = ["16.0.0", "15.1.0", "15.0.0", "14.0.0"]
 
 LIBHEGEL = Path(__file__).resolve().parent.parent
 UCD_DIR = LIBHEGEL / "src" / "unicodedata"
@@ -46,6 +68,7 @@ SPECIAL_CASING_PATH = UCD_DIR / "SpecialCasing.txt"
 CATEGORIES_PATH = UCD_DIR / "categories.txt"
 NFD_BASES_PATH = UCD_DIR / "nfd_bases.txt"
 CASE_PATH = UCD_DIR / "case.txt"
+DOWNLOAD_DIR = LIBHEGEL.parent / "target" / "ucd"
 
 # Categories in the same order as the Rust enum. Keeping them in a stable
 # order means the generated file only churns when the underlying data
@@ -61,6 +84,30 @@ CATEGORIES = [
 ]
 
 MAX_CP = 0x10FFFF
+
+
+def delta_path(version: str) -> Path:
+    return UCD_DIR / f"delta-{version}.txt"
+
+
+def ucd_paths(version: str) -> tuple[Path, Path]:
+    """The UnicodeData.txt and SpecialCasing.txt of `version`: the vendored
+    files for UNICODE_VERSION, otherwise a cached download."""
+    if version == UNICODE_VERSION:
+        return UCD_PATH, SPECIAL_CASING_PATH
+    directory = DOWNLOAD_DIR / version
+    paths = []
+    for name in ("UnicodeData.txt", "SpecialCasing.txt"):
+        path = directory / name
+        if not path.exists():
+            url = f"https://www.unicode.org/Public/{version}/ucd/{name}"
+            print(f"Downloading {url}")
+            with urllib.request.urlopen(url) as response:
+                data = response.read()
+            directory.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        paths.append(path)
+    return paths[0], paths[1]
 
 
 def parse_unicode_data(path: Path) -> dict[int, str]:
@@ -197,11 +244,40 @@ def build_ranges(entries: dict[int, str]) -> list[tuple[int, int, str]]:
     return ranges
 
 
-def emit_categories(ranges: list[tuple[int, int, str]], path: Path) -> None:
-    seen_cats = sorted({r[2] for r in ranges})
-    unknown = [c for c in seen_cats if c not in CATEGORIES]
+def category_delta(older: dict[int, str], newer: dict[int, str]) -> list[tuple[int, int, str]]:
+    """The categories of `older` where they differ from `newer`, as runs."""
+    runs: list[tuple[int, int, str]] = []
+    for cp in range(MAX_CP + 1):
+        cat = older.get(cp, "Cn")
+        if cat == newer.get(cp, "Cn"):
+            continue
+        if runs and runs[-1][1] == cp - 1 and runs[-1][2] == cat:
+            runs[-1] = (runs[-1][0], cp, cat)
+        else:
+            runs.append((cp, cp, cat))
+    return runs
+
+
+def case_delta(
+    older: dict[int, tuple[int, int]], newer: dict[int, tuple[int, int]]
+) -> list[tuple[int, int, int]]:
+    """The case mappings of `older` where they differ from `newer`, a
+    codepoint mapping to itself where `older` has none."""
+    return [
+        (cp, *older.get(cp, (cp, cp)))
+        for cp in sorted(older.keys() | newer.keys())
+        if older.get(cp) != newer.get(cp)
+    ]
+
+
+def check_categories(categories: set[str], source: str) -> None:
+    unknown = sorted(c for c in categories if c not in CATEGORIES)
     if unknown:
-        sys.exit(f"Unknown categories in UnicodeData.txt: {unknown}")
+        sys.exit(f"Unknown categories in {source}: {unknown}")
+
+
+def emit_categories(ranges: list[tuple[int, int, str]], path: Path) -> None:
+    check_categories({r[2] for r in ranges}, "UnicodeData.txt")
     lines = [f"{end:x} {cat}" for _, end, cat in ranges]
     path.write_text("\n".join(lines) + "\n")
 
@@ -213,6 +289,18 @@ def emit_nfd_bases(nfd_bases: dict[int, int], path: Path) -> None:
 
 def emit_case(mappings: dict[int, tuple[int, int]], path: Path) -> None:
     lines = [f"{cp:x} {lower:x} {upper:x}" for cp, (lower, upper) in sorted(mappings.items())]
+    path.write_text("\n".join(lines) + "\n")
+
+
+def emit_delta(
+    version: str,
+    categories: list[tuple[int, int, str]],
+    cases: list[tuple[int, int, int]],
+    path: Path,
+) -> None:
+    check_categories({r[2] for r in categories}, f"UnicodeData.txt {version}")
+    lines = [f"C {start:x} {end:x} {cat}" for start, end, cat in categories]
+    lines += [f"M {cp:x} {lower:x} {upper:x}" for cp, lower, upper in cases]
     path.write_text("\n".join(lines) + "\n")
 
 
@@ -229,6 +317,17 @@ def main() -> None:
         f"{NFD_BASES_PATH} ({len(nfd_bases)} NFD base entries) and "
         f"{CASE_PATH} ({len(mappings)} case mappings)."
     )
+    for version in OLDER_VERSIONS:
+        ucd_path, special_casing_path = ucd_paths(version)
+        older_entries = parse_unicode_data(ucd_path)
+        older_mappings = case_mappings(ucd_path, special_casing_path)
+        categories = category_delta(older_entries, entries)
+        cases = case_delta(older_mappings, mappings)
+        path = delta_path(version)
+        emit_delta(version, categories, cases, path)
+        print(f"Wrote {path} ({len(categories)} category runs, {len(cases)} case mappings).")
+        entries = older_entries
+        mappings = older_mappings
 
 
 if __name__ == "__main__":

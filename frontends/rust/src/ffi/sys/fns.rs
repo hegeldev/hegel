@@ -94,6 +94,7 @@ macro_rules! for_each_hegel_fn {
             fn hegel_run_start(ctx: *mut HegelContext, settings: *const HegelSettings, callback: hegel_output_callback_t, user_data: *mut c_void, out_run: *mut *mut HegelRun) -> hegel_result_t;
             fn hegel_run_start_blob(ctx: *mut HegelContext, settings: *const HegelSettings, blob: hegel_string_t, callback: hegel_output_callback_t, user_data: *mut c_void, out_run: *mut *mut HegelRun) -> hegel_result_t;
             fn hegel_set_default_profile(ctx: *mut HegelContext, name: hegel_string_t) -> hegel_result_t;
+            fn hegel_set_unicode_version(ctx: *mut HegelContext, version: hegel_string_t) -> hegel_result_t;
             fn hegel_settings_free(ctx: *mut HegelContext, s: *mut HegelSettings) -> hegel_result_t;
             fn hegel_settings_get_backend(ctx: *mut HegelContext, s: *const HegelSettings, out: *mut hegel_backend_t) -> hegel_result_t;
             fn hegel_settings_get_database(ctx: *mut HegelContext, s: *const HegelSettings, out_database: *mut *const hegel_string_t) -> hegel_result_t;

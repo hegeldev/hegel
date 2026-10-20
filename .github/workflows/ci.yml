@@ -1,18 +1,20 @@
 # The CI entry point. Works out which components a change touches, runs the
 # workspace-wide checks, calls each component's reusable workflow
-# (libhegel.yml, frontend-rust.yml) only when that component is affected,
-# and — on a push to main — releases whatever has a RELEASE.md.
+# (libhegel.yml, frontend-rust.yml, frontend-python.yml) only when that
+# component is affected, and — on a push to main — releases whatever has a
+# RELEASE.md.
 #
 # Adding a frontend: add a `frontends/<lang>/**` filter below, a
 # `.github/workflows/frontend-<lang>.yml` reusable workflow, a job here that
-# calls it, and list that job in the release job's `needs`.
+# calls it, list that job in the `ci-ok` and `release` jobs' `needs`, add
+# the component to `COMPONENTS` in `.github/scripts/release.py`, and give
+# the release job (plus any follow-on publish jobs) its publishing steps.
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 permissions: {}
 
@@ -34,6 +36,7 @@ jobs:
     outputs:
       libhegel: ${{ github.event_name != 'pull_request' || steps.filter.outputs.libhegel == 'true' }}
       rust: ${{ github.event_name != 'pull_request' || steps.filter.outputs.rust == 'true' }}
+      python: ${{ github.event_name != 'pull_request' || steps.filter.outputs.python == 'true' }}
     steps:
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         if: github.event_name == 'pull_request'
@@ -58,6 +61,10 @@ jobs:
               - *shared
               - 'libhegel/**'
               - 'frontends/rust/**'
+            python:
+              - *shared
+              - 'libhegel/**'
+              - 'frontends/python/**'
 
   # Workspace-wide lints: formatting, clippy, the scripts/check-*.py lints,
   # each component's own lints (via `just check-lint`), the workflow lint and
@@ -74,6 +81,10 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           components: rustfmt clippy
+          # The Python frontend's lints (ruff, mypy) run in its virtualenv.
+          tools: just uv
+      - name: Set up the Python frontend
+        run: just python::setup
       - name: Check lint
         run: just check-lint
       - name: Check zizmor
@@ -87,10 +98,12 @@ jobs:
         # The packaged hegeltest has no libhegel/ sibling, so its build.rs
         # would fetch the pinned hegeltest-c from crates.io — which does not
         # exist yet on a release PR. HEGEL_C_LIB_DIR short-circuits that with
-        # the cdylib built from this checkout.
+        # the cdylib built from this checkout. The Python extension crate is
+        # never published to crates.io (maturin packages it), so it is left
+        # out.
         run: |
           cargo build -p hegeltest-c
-          HEGEL_C_LIB_DIR="$PWD/target/debug" cargo package --workspace
+          HEGEL_C_LIB_DIR="$PWD/target/debug" cargo package --workspace --exclude hegel-python
 
   libhegel:
     name: libhegel
@@ -107,6 +120,14 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/frontend-rust.yml
+
+  python:
+    name: python
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/frontend-python.yml
 
   # Test with the minimal versions of every dependency in the workspace.
   test-minimal-versions:
@@ -230,7 +251,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [lint, libhegel, rust, test-minimal-versions, coverage, nix]
+    needs: [lint, libhegel, rust, python, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -249,22 +270,27 @@ jobs:
     # every dependency is required; the `!cancelled()` form is what lets this
     # job evaluate its condition at all when a dependency was skipped.
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && github.event_name == 'push' && github.repository == 'hegeldev/hegel' }}
-    needs: [lint, libhegel, rust, test-minimal-versions, coverage, nix]
+    needs: [lint, libhegel, rust, python, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       # id-token: "enables the workflow to request and use an OIDC token from GitHub's OIDC provider".
       # Used by our trusted publishing flow
       id-token: write
-    # Expose the libhegel release to `release-binaries` (cross-platform library
-    # builds). `c_released` lets those jobs run only when libhegel changed — a
-    # frontend-only release ships no new binaries. `version` is the post-bump
-    # libhegel version and `libhegel_tag` the `libhegel/<version>` tag
-    # release.py cut for it, which they check out and upload against.
+    # Expose what released to the follow-on jobs. `c_released` lets the
+    # cross-platform libhegel library builds run only when libhegel changed —
+    # a frontend-only release ships no new binaries; `version` is the
+    # post-bump libhegel version and `libhegel_tag` the `libhegel/<version>`
+    # tag release.py cut for it, which they check out and upload against.
+    # `python_released` / `python_tag` do the same for the Python wheel
+    # builds. Each is read off the tags release.py left on the release
+    # commit, so a frontend dragged along by a libhegel release counts too.
     outputs:
-      c_released: ${{ steps.check.outputs.c_release == 'true' }}
-      version: ${{ steps.released-version.outputs.version }}
-      libhegel_tag: ${{ steps.released-version.outputs.tag }}
+      c_released: ${{ steps.released.outputs.libhegel_tag != '' }}
+      version: ${{ steps.released.outputs.libhegel_version }}
+      libhegel_tag: ${{ steps.released.outputs.libhegel_tag }}
+      python_released: ${{ steps.released.outputs.python_tag != '' }}
+      python_tag: ${{ steps.released.outputs.python_tag }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -273,15 +299,16 @@ jobs:
       - name: Check for release files
         id: check
         run: |
-          if [ ! -f frontends/rust/RELEASE.md ] && [ ! -f libhegel/RELEASE.md ]; then
+          # Every component release.py knows keeps its RELEASE.md at one
+          # of these paths.
+          skip=true
+          for f in libhegel/RELEASE.md frontends/*/RELEASE.md; do
+            if [ -f "$f" ]; then
+              skip=false
+            fi
+          done
+          if [ "$skip" = true ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-          fi
-          # A libhegel/RELEASE.md means the libhegel binaries are released:
-          # hegeltest-c is republished and a tagged GitHub release with
-          # cross-platform binaries is cut. Captured here, before the release
-          # commit consumes the file.
-          if [ -f libhegel/RELEASE.md ]; then
-            echo "c_release=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Generate app token
@@ -313,33 +340,42 @@ jobs:
           HEGEL_RELEASE_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
         run: python .github/scripts/release.py release
 
-      - name: Capture released libhegel version
-        id: released-version
-        if: steps.check.outputs.skip != 'true' && steps.check.outputs.c_release == 'true'
+      # Which components release.py tagged. An empty tag means that component
+      # did not release this time; a present libhegel tag must come with a
+      # version in its manifest.
+      - name: Capture released versions
+        id: released
+        if: steps.check.outputs.skip != 'true'
         run: |
           set -euo pipefail
-          VERSION=$(grep '^version' libhegel/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
-          TAG=$(git tag --points-at HEAD --list 'libhegel/*')
-          if [ -z "$TAG" ]; then
-            echo "release.py left no libhegel/* tag on the release commit" >&2
+          libhegel_tag=$(git tag --points-at HEAD --list 'libhegel/*')
+          rust_tag=$(git tag --points-at HEAD --list 'frontends/rust/*')
+          python_tag=$(git tag --points-at HEAD --list 'frontends/python/*')
+          if [ -z "$libhegel_tag$rust_tag$python_tag" ]; then
+            echo "release.py left no release tag on the release commit" >&2
             exit 1
           fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          libhegel_version=$(grep '^version' libhegel/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          {
+            echo "libhegel_tag=$libhegel_tag"
+            echo "libhegel_version=$libhegel_version"
+            echo "rust_tag=$rust_tag"
+            echo "python_tag=$python_tag"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Authenticate with crates.io
-        if: steps.check.outputs.skip != 'true'
+        if: steps.check.outputs.skip != 'true' && (steps.released.outputs.rust_tag != '' || steps.released.outputs.libhegel_tag != '')
         uses: rust-lang/crates-io-auth-action@b7e9a28eded4986ec6b1fa40eeee8f8f165559ec # v1.0.3
         id: crates-io-auth
 
       - name: Publish hegeltest-macros
-        if: steps.check.outputs.skip != 'true'
+        if: steps.check.outputs.skip != 'true' && steps.released.outputs.rust_tag != ''
         run: cargo publish -p hegeltest-macros
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
 
       - name: Wait for crates.io index
-        if: steps.check.outputs.skip != 'true'
+        if: steps.check.outputs.skip != 'true' && steps.released.outputs.rust_tag != ''
         run: |
           VERSION=$(grep '^version' frontends/rust/macros/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
           echo "waiting for hegeltest-macros $VERSION to appear on crates.io..."
@@ -353,7 +389,7 @@ jobs:
           exit 1
 
       - name: Publish hegeltest-c
-        if: steps.check.outputs.skip != 'true' && steps.check.outputs.c_release == 'true'
+        if: steps.check.outputs.skip != 'true' && steps.released.outputs.libhegel_tag != ''
         # The engine crate. hegeltest depends on it, so it must be published
         # (and indexed) before hegeltest. Its other role is to reserve the
         # name; the useful artefact for non-Rust consumers is the
@@ -367,7 +403,7 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
 
       - name: Wait for hegeltest-c on crates.io index
-        if: steps.check.outputs.skip != 'true' && steps.check.outputs.c_release == 'true'
+        if: steps.check.outputs.skip != 'true' && steps.released.outputs.libhegel_tag != ''
         run: |
           VERSION=$(grep '^version' libhegel/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
           echo "waiting for hegeltest-c $VERSION to appear on crates.io..."
@@ -381,7 +417,7 @@ jobs:
           exit 1
 
       - name: Publish hegeltest
-        if: steps.check.outputs.skip != 'true'
+        if: steps.check.outputs.skip != 'true' && steps.released.outputs.rust_tag != ''
         # HEGEL_C_LIB_DIR keeps the publish verify build from depending on
         # the just-published hegeltest-c being visible in the registry yet.
         run: |
@@ -647,6 +683,92 @@ jobs:
           # so it must happen last.
           gh release edit "$tag" --repo "$REPO" --draft=false
           echo "Published release $tag."
+
+  # The Python frontend's wheels, one job per platform (the libhegel binary
+  # platforms less windows-arm64), each building for every supported CPython via
+  # the composite action the PR `package` job also uses. They check out the
+  # `frontends/python/<version>` tag the `release` job pushed; the sdist and
+  # the PyPI upload follow in the next two jobs.
+  release-python-wheels:
+    name: release-python-wheels (${{ matrix.platform }})
+    if: github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.outputs.python_released == 'true'
+    needs: release
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-amd64,   runner: ubuntu-latest }
+          - { platform: linux-arm64,   runner: ubuntu-24.04-arm }
+          - { platform: darwin-arm64,  runner: macos-14 }
+          - { platform: windows-amd64, runner: windows-latest }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.release.outputs.python_tag }}
+      - uses: ./.github/actions/setup-rust
+        with:
+          tools: just uv
+      - uses: ./.github/actions/build-python-wheels
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-wheels-${{ matrix.platform }}
+          path: frontends/python/dist/*.whl
+          if-no-files-found: error
+
+  release-python-sdist:
+    name: release-python-sdist
+    if: github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.outputs.python_released == 'true'
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.release.outputs.python_tag }}
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: uv
+      - name: Build the sdist
+        working-directory: frontends/python
+        run: uvx --from 'maturin>=1.7,<2.0' maturin sdist --out dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-sdist
+          path: frontends/python/dist/*.tar.gz
+          if-no-files-found: error
+
+  # Upload every wheel and the sdist to PyPI through trusted publishing (the
+  # `hegeltest` project trusts this repository's ci.yml). `skip-existing`
+  # makes a re-run after a partial upload idempotent.
+  release-python-publish:
+    name: release-python-publish
+    if: github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.outputs.python_released == 'true'
+    needs: [release, release-python-wheels, release-python-sdist]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: python-*
+          merge-multiple: true
+          path: dist
+      - name: List the distributions
+        run: ls -l dist
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist
+          skip-existing: true
 
   # Notify each downstream language binding that still lives in its own repo
   # that a new libhegel release is live so it can bump its pinned version.

@@ -36,6 +36,7 @@
 use super::categories::class_ranges;
 use super::constants::{
     AtCode, ChCode, MAXREPEAT, SRE_FLAG_DOTALL, SRE_FLAG_IGNORECASE, SRE_FLAG_UNICODE,
+    unicode_version,
 };
 use super::matcher::{Touch, at_matches, combine_flags, literal_eq, set_matches};
 use super::parser::{OpCode, ParsedPattern, SetItem, SubPattern};
@@ -102,7 +103,9 @@ impl Unit {
                                 ChCode::Space | ChCode::NotSpace => ChCode::Space,
                                 ChCode::Word | ChCode::NotWord => ChCode::Word,
                             };
-                            for &(lo, hi) in class_ranges(class).unwrap_or(&[]) {
+                            for &(lo, hi) in
+                                class_ranges(class, unicode_version(flags)).unwrap_or(&[])
+                            {
                                 range(lo, hi);
                             }
                         }

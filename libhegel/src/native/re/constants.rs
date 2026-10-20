@@ -4,6 +4,8 @@
 //! Variant names mirror the Python constants verbatim so cross-referencing
 //! between CPython's `_constants.py` and this file stays mechanical.
 
+use crate::unicodedata::UnicodeVersion;
+
 pub const MAXREPEAT: u32 = u32::MAX;
 /// Deliberately far below CPython's `MAXGROUPS` (2^30 - 1): every capture
 /// group costs the generator per-draw bookkeeping, so the cap bounds memory
@@ -29,6 +31,24 @@ pub const SRE_FLAG_VERBOSE: u32 = 64;
 pub const SRE_FLAG_ASCII: u32 = 256;
 
 pub const TYPE_FLAGS: u32 = SRE_FLAG_ASCII | SRE_FLAG_LOCALE | SRE_FLAG_UNICODE;
+
+/// The bits of a flags word above CPython's flags, which carry the
+/// [`UnicodeVersion`] a pattern's categories, word boundaries and case
+/// folding follow (its [`index`](UnicodeVersion::index); `0`, the bits
+/// of CPython's own flags, is the latest). Set once on a pattern's flags
+/// and carried through its inline flag groups like the type flags.
+pub const UNICODE_VERSION_SHIFT: u32 = 16;
+pub const UNICODE_VERSION_MASK: u32 = 0xFF << UNICODE_VERSION_SHIFT;
+
+/// The Unicode version `flags` carries (see [`UNICODE_VERSION_MASK`]).
+pub fn unicode_version(flags: u32) -> UnicodeVersion {
+    UnicodeVersion::from_index((flags & UNICODE_VERSION_MASK) >> UNICODE_VERSION_SHIFT)
+}
+
+/// The flag bits carrying `version` (see [`UNICODE_VERSION_MASK`]).
+pub fn unicode_version_flags(version: UnicodeVersion) -> u32 {
+    version.index() << UNICODE_VERSION_SHIFT
+}
 
 /// Position assertion codes. Matches Python's `ATCODES` in `_constants.py`,
 /// restricted to the subset the parser actually emits and the regex

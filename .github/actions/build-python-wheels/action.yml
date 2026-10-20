@@ -1,0 +1,61 @@
+name: Build Python wheels
+description: >-
+  Build the Python frontend's wheels for this runner into
+  frontends/python/dist, one per supported CPython version. On Linux the
+  build runs in maturin's manylinux container (via PyO3/maturin-action) so
+  the wheels work on any mainstream distribution; on macOS and Windows it
+  runs natively against interpreters uv installs. Used by the PR `package`
+  job and by the release wheel jobs, so what ships is what CI tested.
+inputs:
+  interpreters:
+    description: space-separated CPython versions to build for
+    default: "3.11 3.12 3.13 3.14"
+runs:
+  using: composite
+  steps:
+    # The manylinux image also ships free-threaded CPython and PyPy, which
+    # `--find-interpreter` would build for; name the interpreters instead so
+    # every platform builds the same set (maturin-action puts the image's
+    # `python3.X` on the PATH).
+    - name: Choose the manylinux interpreters
+      if: runner.os == 'Linux'
+      id: manylinux
+      shell: bash
+      env:
+        INTERPRETERS: ${{ inputs.interpreters }}
+      run: |
+        args=""
+        for v in $INTERPRETERS; do
+          args="$args --interpreter python$v"
+        done
+        echo "args=$args" >> "$GITHUB_OUTPUT"
+    - name: Build manylinux wheels
+      if: runner.os == 'Linux'
+      uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+      with:
+        working-directory: frontends/python
+        target: ${{ runner.arch == 'ARM64' && 'aarch64' || 'x86_64' }}
+        manylinux: auto
+        args: --release --out dist ${{ steps.manylinux.outputs.args }}
+    - name: Install the interpreters
+      if: runner.os != 'Linux'
+      shell: bash
+      env:
+        INTERPRETERS: ${{ inputs.interpreters }}
+      run: uv python install $INTERPRETERS
+    - name: Build native wheels
+      if: runner.os != 'Linux'
+      shell: bash
+      working-directory: frontends/python
+      env:
+        INTERPRETERS: ${{ inputs.interpreters }}
+      run: |
+        set -euo pipefail
+        args=()
+        for v in $INTERPRETERS; do
+          args+=(--interpreter "$(uv python find "$v")")
+        done
+        uvx --from 'maturin>=1.7,<2.0' maturin build --release --out dist "${args[@]}"
+    - name: List the wheels
+      shell: bash
+      run: ls -l frontends/python/dist

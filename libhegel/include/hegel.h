@@ -1183,6 +1183,31 @@ hegel_result_t hegel_settings_register_profile(hegel_context_t *ctx,
 
 /*
  Parameters:
+ `version`: The Unicode version the string generators follow, as a
+   version number like `"15.1.0"`: the host language's (Python's
+   `unicodedata.unidata_version`, Go's `unicode.Version`), so that a
+   text generator's category constraints, and the character classes
+   (`\w`, `\d`, `\s`), word boundaries and case-insensitive matching
+   of regex and grammar patterns, follow the host's tables rather than
+   the engine's newest: a character the host does not know yet is in no
+   category, and one it classifies differently is in the category it
+   says. Empty for the engine's own tables, the newest it has (Unicode
+   17.0.0; versions back to 14.0.0 are supported); a newer version uses
+   those too, as the nearest the engine has.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for a string that is not
+ UTF-8 or not a version number, or a version the engine has no tables
+ for.
+
+ Sets the version for the whole process. It is read when a generator
+ (`hegel_string_generator_text`, `hegel_string_generator_regex`,
+ `hegel_grammar_new`) is built, so generators built earlier keep the
+ version they were built with; a binding sets it once, at startup.
+ */
+hegel_result_t hegel_set_unicode_version(hegel_context_t *ctx, hegel_string_t version);
+
+/*
+ Parameters:
  `name`: The profile the `default` alias should resolve to, or an empty string to
    clear an earlier call. The name is not required to exist yet; naming
    the `default` alias itself is rejected.
@@ -2278,6 +2303,9 @@ hegel_result_t hegel_generate_bytes_result_free(hegel_context_t *ctx,
    `include_characters` are included first, then characters in
    `exclude_characters` are removed.
 
+ The category constraints follow the Unicode version set with
+ `hegel_set_unicode_version`, read when the generator is built.
+
  Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for constraints that leave
  no characters while `max_size > 0`.
  */
@@ -2304,6 +2332,10 @@ hegel_result_t hegel_string_generator_text(hegel_context_t *ctx,
    Otherwise, the match may be padded on either side.
  `alphabet`: Optional (NULL for none). Must be a text generator. Every
    character of the string, padding included, is one of its characters.
+
+ The pattern's character classes (`\w`, `\d`, `\s`), word boundaries
+ and case-insensitive matching follow the Unicode version set with
+ `hegel_set_unicode_version`, read when the generator is built.
 
  A string drawn from the generator is recorded as one string choice the
  pattern constrains, replayed as long as it still matches and shrunk
@@ -2482,6 +2514,10 @@ hegel_result_t hegel_grammar_builder_free(hegel_context_t *ctx, hegel_grammar_bu
    occurrence of such a terminal in a drawn string is a placeholder
    marker (see `hegel_grammar_placeholder`) for the caller to replace.
  `out_grammar`: Receives the grammar handle.
+
+ The terminals' patterns follow the Unicode version set with
+ `hegel_set_unicode_version`, read when the grammar is built, as
+ `hegel_string_generator_regex` patterns do.
 
  Returns `HEGEL_OK`; `HEGEL_E_INVALID_HANDLE` for a NULL builder;
  `HEGEL_E_INVALID_ARG` with a message describing what is wrong with the

@@ -1577,10 +1577,9 @@ fn err_named_backref_starts_with_digit() {
 }
 
 #[test]
-fn err_z_anchor_not_supported() {
-    let err = parse_err(r"\z");
-    assert!(err.msg.contains("bad escape"), "{}", err.msg);
-    parse_pattern(r"\Z", 0).unwrap();
+fn z_anchor_is_the_end_of_the_string() {
+    assert_eq!(parsed(r"a\z").data, parsed(r"a\Z").data);
+    assert_eq!(parsed(r"\z").data, vec![OpCode::At(AtCode::EndString)]);
 }
 
 #[test]

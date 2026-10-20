@@ -13,9 +13,11 @@ use super::ast::{Expr, Pattern, PatternKind, Symbol};
 use super::builder::{BuiltGrammar, terminal_pattern};
 use super::escape::pattern_to_regexp;
 use super::{GrammarError, GrammarResult};
+use crate::native::re::constants::unicode_version_flags;
 use crate::native::re::parser::{ParsedPattern, parse_pattern};
 use crate::native::re::width::get_width;
 use crate::native::{HashMap, HashSet};
+use crate::unicodedata::UnicodeVersion;
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -220,9 +222,10 @@ fn is_identifier(value: &str) -> bool {
 }
 
 /// A pattern's regex form parsed with the engine's Python-syntax regex
-/// parser.
+/// parser, following the host's Unicode version.
 pub fn parse_terminal_pattern(name: &str, pattern: &Pattern) -> GrammarResult<ParsedPattern> {
-    parse_pattern(&pattern_to_regexp(pattern), 0)
+    let flags = unicode_version_flags(UnicodeVersion::host());
+    parse_pattern(&pattern_to_regexp(pattern), flags)
         .map_err(|e| GrammarError::new(format!("Cannot compile token {name}: {e}")))
 }
 

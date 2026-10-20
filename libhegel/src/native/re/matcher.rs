@@ -22,7 +22,7 @@ use super::casefold;
 use super::categories;
 use super::constants::{
     AtCode, ChCode, MAXREPEAT, SRE_FLAG_ASCII, SRE_FLAG_DOTALL, SRE_FLAG_IGNORECASE,
-    SRE_FLAG_MULTILINE, TYPE_FLAGS,
+    SRE_FLAG_MULTILINE, TYPE_FLAGS, unicode_version,
 };
 use super::parser::{OpCode, ParsedPattern, SetItem, SubPattern};
 use super::width::get_width_in;
@@ -1201,43 +1201,45 @@ pub(crate) fn set_matches(items: &[SetItem], c: char, flags: u32) -> bool {
         SetItem::Negate => false,
         SetItem::Literal(cp) => literal_eq(*cp, c, flags),
         SetItem::Range(lo, hi) => casefold::range_matches(*lo, *hi, c, flags),
-        SetItem::Category(category) => in_category(probe, *category, unicode(flags)),
+        SetItem::Category(category) => in_category(probe, *category, flags),
     });
     contained != negate
 }
 
-/// CPython's category tests: the `UNI_` variants in Unicode mode, the
-/// ASCII ones otherwise.
-pub(crate) fn in_category(c: char, category: ChCode, unicode: bool) -> bool {
+/// CPython's category tests under `flags`: the `UNI_` variants in
+/// Unicode mode, for the Unicode version the flags carry, the ASCII ones
+/// otherwise.
+pub(crate) fn in_category(c: char, category: ChCode, flags: u32) -> bool {
     match category {
-        ChCode::Digit => is_digit(c, unicode),
-        ChCode::NotDigit => !is_digit(c, unicode),
-        ChCode::Space => is_space(c, unicode),
-        ChCode::NotSpace => !is_space(c, unicode),
-        ChCode::Word => is_word(c, unicode),
-        ChCode::NotWord => !is_word(c, unicode),
+        ChCode::Digit => is_digit(c, flags),
+        ChCode::NotDigit => !is_digit(c, flags),
+        ChCode::Space => is_space(c, flags),
+        ChCode::NotSpace => !is_space(c, flags),
+        ChCode::Word => is_word(c, flags),
+        ChCode::NotWord => !is_word(c, flags),
     }
 }
 
-fn is_digit(c: char, unicode: bool) -> bool {
-    if unicode && !c.is_ascii() {
-        categories::in_class(c, ChCode::Digit)
+fn is_digit(c: char, flags: u32) -> bool {
+    if unicode(flags) && !c.is_ascii() {
+        categories::in_class(c, ChCode::Digit, unicode_version(flags))
     } else {
         c.is_ascii_digit()
     }
 }
 
-fn is_space(c: char, unicode: bool) -> bool {
-    if unicode {
-        categories::is_space_by_code(c) || (!c.is_ascii() && categories::in_class(c, ChCode::Space))
+fn is_space(c: char, flags: u32) -> bool {
+    if unicode(flags) {
+        categories::is_space_by_code(c)
+            || (!c.is_ascii() && categories::in_class(c, ChCode::Space, unicode_version(flags)))
     } else {
         matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c')
     }
 }
 
-fn is_word(c: char, unicode: bool) -> bool {
-    if unicode && !c.is_ascii() {
-        categories::in_class(c, ChCode::Word)
+fn is_word(c: char, flags: u32) -> bool {
+    if unicode(flags) && !c.is_ascii() {
+        categories::in_class(c, ChCode::Word, unicode_version(flags))
     } else {
         c == '_' || c.is_ascii_alphanumeric()
     }
@@ -1258,9 +1260,8 @@ pub(super) fn at_matches(at: AtCode, text: &[char], pos: usize, flags: u32) -> b
 }
 
 fn is_word_boundary(text: &[char], pos: usize, flags: u32) -> bool {
-    let unicode = unicode(flags);
-    let before = pos > 0 && is_word(text[pos - 1], unicode);
-    let after = pos < text.len() && is_word(text[pos], unicode);
+    let before = pos > 0 && is_word(text[pos - 1], flags);
+    let after = pos < text.len() && is_word(text[pos], flags);
     before != after
 }
 

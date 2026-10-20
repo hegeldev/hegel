@@ -1,0 +1,7 @@
+# Point pyo3's build script at the project virtualenv (created by `just setup`)
+# so plain cargo commands (`cargo clippy`, `cargo test`) configure and link
+# against the same interpreter maturin builds for, rather than whatever
+# `python3` is first on PATH. maturin sets PYO3_PYTHON itself, and an
+# explicit PYO3_PYTHON in the environment still takes precedence.
+[env]
+PYO3_PYTHON = { value = ".venv/bin/python", relative = true }

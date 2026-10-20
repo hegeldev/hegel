@@ -13,7 +13,7 @@ just libhegel::miri           # C-ABI lifecycle tests under Miri (nightly + miri
 just libhegel::check-lark     # parse engine-generated strings with Lark itself (needs uv)
 just libhegel::check-parse    # compare the engine's grammar parser with Lark's (needs uv)
 just libhegel::lark-fixtures  # regenerate the Lark fixtures' .expected files (needs uv)
-just libhegel::unicodedata    # regenerate the Unicode tables from the vendored UCD files (needs uv)
+just libhegel::unicodedata    # regenerate the Unicode tables and per-version deltas (downloads older UCD files; needs uv)
 cargo test -p hegeltest-c test_name
 ```
 

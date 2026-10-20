@@ -799,20 +799,16 @@ impl<'a> Engine<'a> {
             let mut shrunk_origins: crate::native::HashSet<String> =
                 crate::native::HashSet::default();
             loop {
-                let mut pending: Vec<String> = self
-                    .origins
-                    .live_origins()
-                    .into_iter()
-                    .filter(|o| !shrunk_origins.contains(o.as_str()))
-                    .collect();
-                if pending.is_empty() {
-                    break;
-                }
-                pending.sort();
+                let mut live = self.origins.live_origins();
+                live.sort();
                 let origin = if report_multiple {
-                    pending.remove(0)
+                    live.into_iter().find(|o| !shrunk_origins.contains(o))
                 } else {
-                    self.smallest_origin(pending)?
+                    self.smallest_origin(live)
+                        .filter(|o| !shrunk_origins.contains(o))
+                };
+                let Some(origin) = origin else {
+                    break;
                 };
                 let initial = self
                     .origins
@@ -824,7 +820,7 @@ impl<'a> Engine<'a> {
                     .unwrap_or_default();
                 shrink_timed_out |= self
                     .shrink_origin(
-                        origin.clone(),
+                        origin,
                         initial,
                         verbosity,
                         &output,
@@ -832,12 +828,6 @@ impl<'a> Engine<'a> {
                         &mut shrunk_origins,
                     )
                     .await?;
-                if !report_multiple
-                    && shrunk_origins.contains(&origin)
-                    && self.origins.incumbent(&origin).is_some()
-                {
-                    break;
-                }
             }
 
             if shrink_timed_out && verbosity != Verbosity::Quiet {
@@ -892,17 +882,16 @@ impl<'a> Engine<'a> {
     }
 
     /// Of `origins`, all live, the one whose incumbent is smallest by
-    /// [`sort_key`]: the single failure a run that reports one shrinks,
-    /// the rest being persisted as found. Ties keep `origins`'s order.
-    fn smallest_origin(&self, origins: Vec<String>) -> Result<String, InternalError> {
-        let smallest = origins.into_iter().min_by(|a, b| {
+    /// [`sort_key`]: the failure a run that reports one would report now,
+    /// so the one it shrinks next unless it is shrunk already. Shrinking
+    /// it can run into another origin with a smaller example, which then
+    /// takes its place; the rest are persisted as found. Ties keep
+    /// `origins`'s order; `None` when there are no origins.
+    fn smallest_origin(&self, origins: Vec<String>) -> Option<String> {
+        origins.into_iter().min_by(|a, b| {
             let key = |o: &String| self.origins.incumbent(o).map(sort_key);
             key(a).cmp(&key(b))
-        });
-        Ok(crate::control::hegel_internal_unwrap!(
-            smallest,
-            "smallest_origin: no origins to choose from"
-        ))
+        })
     }
 
     /// The test cases counted against the `test_cases` budget: the valid

@@ -31,14 +31,14 @@ use crate::native::intervalsets::IntervalSet;
 use crate::native::re::casefold;
 use crate::native::re::constants::{
     AtCode, ChCode, MAXREPEAT, SRE_FLAG_ASCII, SRE_FLAG_DOTALL, SRE_FLAG_IGNORECASE,
-    SRE_FLAG_MULTILINE,
+    SRE_FLAG_MULTILINE, UNICODE_VERSION_MASK, unicode_version, unicode_version_flags,
 };
 use crate::native::re::constraint::{RegexConstraint, matches as pattern_matches};
 use crate::native::re::matcher::{combine_flags, in_category};
 use crate::native::re::parser::{OpCode, ParsedPattern, SetItem, SubPattern, parse_pattern};
 use crate::native::rng::EngineRng;
 use crate::sys::sync::{Lazy, Mutex};
-use crate::unicodedata::{self, Category};
+use crate::unicodedata::{Category, UnicodeVersion};
 use alloc::string::ToString;
 
 use super::{Draws, many_more};
@@ -47,8 +47,9 @@ fn is_surrogate_cp(cp: u32) -> bool {
     (0xD800..=0xDFFF).contains(&cp)
 }
 
-/// The flag bits that change which characters a literal or class matches.
-const CASE_FLAGS: u32 = SRE_FLAG_IGNORECASE | SRE_FLAG_ASCII;
+/// The flag bits that change which characters a literal or class matches:
+/// the case flags and the Unicode version.
+const CASE_FLAGS: u32 = SRE_FLAG_IGNORECASE | SRE_FLAG_ASCII | UNICODE_VERSION_MASK;
 
 /// Cache key for a `(IN, items)` node's character set: the `SetItem` slice's
 /// address and length (stable because the AST is owned by the enclosing
@@ -305,12 +306,15 @@ impl CompiledRegex {
     }
 
     /// Parse `pattern`, reporting an invalid-argument diagnostic so a bad
-    /// pattern surfaces at construction time rather than mid-draw.
+    /// pattern surfaces at construction time rather than mid-draw. Its
+    /// categories, word boundaries and case folding follow the Unicode
+    /// tables of `version`.
     pub(crate) fn compile(
         pattern: &str,
         alphabet: Option<IntervalSet>,
+        version: UnicodeVersion,
     ) -> Result<Self, EngineError> {
-        let parsed = parse_pattern(pattern, 0).map_err(|e| {
+        let parsed = parse_pattern(pattern, unicode_version_flags(version)).map_err(|e| {
             EngineError::InvalidArgument(format!("invalid regex pattern {pattern:?}: {e}"))
         })?;
         let intervals = match &alphabet {
@@ -1231,10 +1235,7 @@ fn in_set<'c>(
 fn cached_default_in_set(items: &[SetItem], flags: u32) -> Result<InSet, InternalError> {
     type Cache = Mutex<HashMap<(Vec<SetItem>, u32), InSet>>;
     static CACHE: Lazy<Cache> = Lazy::new(|| Mutex::new(HashMap::default()));
-    let cache_key = (
-        items.to_vec(),
-        flags & (SRE_FLAG_IGNORECASE | SRE_FLAG_ASCII),
-    );
+    let cache_key = (items.to_vec(), flags & CASE_FLAGS);
     {
         let guard = CACHE.lock();
         if let Some(cached) = guard.get(&cache_key) {
@@ -1322,7 +1323,6 @@ fn build_in_set(
     alphabet: &Option<IntervalSet>,
 ) -> Result<InSet, InternalError> {
     let negate = matches!(items.first(), Some(SetItem::Negate));
-    let ascii = flags & SRE_FLAG_ASCII != 0;
 
     let mut members: Vec<char> = Vec::new();
     let mut categories: Vec<ChCode> = Vec::new();
@@ -1358,7 +1358,7 @@ fn build_in_set(
                 &categories,
                 false,
                 &seen,
-                ascii,
+                flags,
             ));
         }
         Ok(InSet::Listed(Arc::new(Chars::from(out))))
@@ -1383,7 +1383,7 @@ fn build_in_set(
                 &categories,
                 true,
                 &excluded,
-                ascii,
+                flags,
             )))))
         }
     }
@@ -1420,8 +1420,9 @@ const CATEGORY_ALONE_FROM: u32 = 0x100;
 /// Gather, in codepoint order, the characters of `alphabet` (or of the BMP
 /// minus the surrogates when no alphabet is given) that are in any of
 /// `categories` — or, with `negate`, in none of them — leaving out
-/// `excluded`, with the categories' ASCII definitions when `ascii`. Walks
-/// the General Category runs and decides each run at once by
+/// `excluded`, with the categories' definitions under `flags` (the ASCII
+/// ones under the ASCII flag, else those of the Unicode version the flags
+/// carry). Walks the General Category runs and decides each run at once by
 /// [`category_in`] when nothing distinguishes its characters: it starts at
 /// or after [`CATEGORY_ALONE_FROM`] and contains no excluded character.
 /// The runs below that, and those containing an exclusion, are checked
@@ -1431,13 +1432,15 @@ fn gather_category_class(
     categories: &[ChCode],
     negate: bool,
     excluded: &HashSet<char>,
-    ascii: bool,
+    flags: u32,
 ) -> Vec<char> {
+    let ascii = flags & SRE_FLAG_ASCII != 0;
+    let version = unicode_version(flags);
     let mut excluded: Vec<u32> = excluded.iter().map(|c| *c as u32).collect();
     excluded.sort_unstable();
     let mut out = Vec::new();
     let mut gather = |lo: u32, hi: u32| {
-        for (start, end, category) in unicodedata::category_runs_in(lo, hi) {
+        for (start, end, category) in version.category_runs_in(lo, hi) {
             let next_excluded = excluded.partition_point(|&cp| cp < start);
             let uniform = start >= CATEGORY_ALONE_FROM
                 && excluded.get(next_excluded).is_none_or(|&cp| cp > end);
@@ -1452,7 +1455,7 @@ fn gather_category_class(
             } else {
                 for c in (start..=end).filter_map(char::from_u32) {
                     if excluded.binary_search(&(c as u32)).is_err()
-                        && categories.iter().any(|cat| in_category(c, *cat, !ascii)) != negate
+                        && categories.iter().any(|cat| in_category(c, *cat, flags)) != negate
                     {
                         out.push(c);
                     }

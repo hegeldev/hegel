@@ -140,8 +140,9 @@ lark-fixtures:
     scripts/gen-lark-fixtures.py
 
 # Regenerate the engine's Unicode tables from the vendored UCD files in
-# src/unicodedata/, and the Python reference they are tested against (needs
-# uv, which fetches unicodedata2 for that Unicode version).
+# src/unicodedata/ (and the deltas for the older versions, whose UCD files it
+# downloads), and the Python references they are tested against (needs uv,
+# which fetches a CPython for each Unicode version).
 unicodedata:
     python3 scripts/generate_unicodedata_tables.py
     scripts/generate_unicodedata_python_reference.py
