@@ -8,8 +8,9 @@ from decimal import Decimal
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
+from hegel._labels import label_from_name
 from hegel.errors import InvalidArgument
-from hegel.generators.base import Generator, label_from_name
+from hegel.generators.base import Generator
 
 if TYPE_CHECKING:
     from hegel.test_case import TestCase

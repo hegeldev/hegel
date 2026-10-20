@@ -125,7 +125,3 @@ rarely necessary: :func:`composite` covers almost every case.
 
 .. autoclass:: Generator
    :members: map, filter, flat_map, print_with, print_as_call, do_draw, do_draw_and_print
-
-.. autofunction:: label_from_name
-
-.. autofunction:: combine_labels

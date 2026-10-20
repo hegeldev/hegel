@@ -19,8 +19,6 @@ __all__ = [
     "Mapped",
     "PrintedAsCall",
     "PrintedWith",
-    "combine_labels",
-    "label_from_name",
 ]
 
 T = TypeVar("T")
@@ -59,8 +57,7 @@ class Generator(Generic[T]):
     :meth:`do_draw_and_print`; the default prints the drawn value with
     :func:`hegel.pretty_print`). ``label`` identifies the generator
     to the engine's shrinker: generators drawing the same shape of value
-    share one, built from :func:`label_from_name` and
-    :func:`combine_labels`.
+    share one.
     """
 
     label: int = label_from_name("hegel.generator")

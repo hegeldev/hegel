@@ -6,15 +6,9 @@ import enum
 from collections.abc import Callable, Iterable, MutableSequence, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from hegel._labels import combine_labels, label_from_name
 from hegel.errors import InvalidArgument
-from hegel.generators.base import (
-    FILTER_LABEL,
-    NOOP_PRINTER,
-    Generator,
-    _name,
-    combine_labels,
-    label_from_name,
-)
+from hegel.generators.base import FILTER_LABEL, NOOP_PRINTER, Generator, _name
 from hegel.pretty import PrettyPrinter, pretty_print
 
 if TYPE_CHECKING:

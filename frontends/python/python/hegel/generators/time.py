@@ -5,8 +5,9 @@ from __future__ import annotations
 import datetime as dt
 from typing import TYPE_CHECKING, Any
 
+from hegel._labels import combine_labels, label_from_name
 from hegel.errors import InvalidArgument
-from hegel.generators.base import Generator, combine_labels, label_from_name
+from hegel.generators.base import Generator
 from hegel.generators.combinators import as_generator, just
 
 if TYPE_CHECKING:

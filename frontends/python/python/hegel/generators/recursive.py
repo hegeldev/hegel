@@ -7,9 +7,10 @@ import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, TypeVar
 
+from hegel._labels import combine_labels, label_from_name
 from hegel._native import RetrySignal
 from hegel.errors import InvalidArgument
-from hegel.generators.base import NOOP_PRINTER, Generator, combine_labels, label_from_name
+from hegel.generators.base import NOOP_PRINTER, Generator
 from hegel.generators.combinators import as_generator
 from hegel.pretty import PrettyPrinter
 

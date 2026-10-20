@@ -6,6 +6,7 @@ import pytest
 
 import hegel
 from hegel import generators as gs
+from hegel._labels import label_from_name
 from hegel.generators.base import Filtered, FlatMapped, Generator, Mapped
 from hegel.generators.combinators import Nothing, OneOf, as_generator
 from hegel.pretty import PrettyPrinter
@@ -256,7 +257,7 @@ def test_generator_base_class():
     with pytest.raises(NotImplementedError):
         Bare().do_draw(None)
     assert repr(Bare()) == "Bare()"
-    assert Bare().label == gs.label_from_name("hegel.generator")
+    assert Bare().label == label_from_name("hegel.generator")
 
     printer = PrettyPrinter.noop()
 

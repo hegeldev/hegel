@@ -7,8 +7,9 @@ import inspect
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from hegel._labels import combine_labels, label_from_name
 from hegel.errors import InvalidArgument
-from hegel.generators.base import NOOP_PRINTER, Generator, combine_labels, label_from_name
+from hegel.generators.base import NOOP_PRINTER, Generator
 from hegel.generators.combinators import as_generator
 from hegel.pretty import PrettyPrinter
 

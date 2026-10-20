@@ -5,15 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from hegel._labels import combine_labels, label_from_name
 from hegel.errors import InvalidArgument
-from hegel.generators.base import (
-    NOOP_PRINTER,
-    Filtered,
-    Generator,
-    Mapped,
-    combine_labels,
-    label_from_name,
-)
+from hegel.generators.base import NOOP_PRINTER, Filtered, Generator, Mapped
 from hegel.generators.combinators import FilteredSample, Just, SampledFrom, as_generator
 from hegel.generators.numeric import Booleans, Integers
 from hegel.pretty import PrettyPrinter, pretty_print

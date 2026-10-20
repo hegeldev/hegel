@@ -48,6 +48,7 @@ pub use generators::{
 pub(crate) use generators::{
     FILTER_ATTEMPT_LABEL, FILTER_ATTEMPTS, draw_and_print_value, draw_filtered_and_print_value,
 };
+#[doc(hidden)]
 pub use labels::{combine_labels, label_from_name};
 pub use lark::{LarkGenerator, from_lark};
 pub use misc::{BoolGenerator, JustGenerator, booleans, just, unit, weighted_booleans};

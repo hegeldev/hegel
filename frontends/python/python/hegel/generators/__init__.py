@@ -4,11 +4,7 @@ Import as ``from hegel import generators as gs`` and draw with
 ``tc.draw(gs.integers())``.
 """
 
-from hegel.generators.base import (
-    Generator,
-    combine_labels,
-    label_from_name,
-)
+from hegel.generators.base import Generator
 from hegel.generators.collections import (
     dicts,
     fixed_dicts,
@@ -52,7 +48,6 @@ __all__ = [
     "booleans",
     "builds",
     "characters",
-    "combine_labels",
     "composite",
     "dates",
     "datetimes",
@@ -69,7 +64,6 @@ __all__ = [
     "ip_addresses",
     "iterables",
     "just",
-    "label_from_name",
     "lists",
     "none",
     "nothing",

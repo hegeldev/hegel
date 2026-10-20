@@ -67,9 +67,7 @@ typing_root_type = (typing._Final, typing._GenericAlias)  # type: ignore[attr-de
 
 _NOT_GENERATORS = {
     "Generator",
-    "combine_labels",
     "composite",
-    "label_from_name",
     "register_type_generator",
 }
 _all_generators = {name: getattr(gs, name) for name in gs.__all__ if name not in _NOT_GENERATORS}
