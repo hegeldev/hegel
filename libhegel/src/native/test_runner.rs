@@ -802,19 +802,13 @@ impl<'a> Engine<'a> {
                 let mut live = self.origins.live_origins();
                 live.sort();
                 let origin = if report_multiple {
-                    match live.into_iter().find(|o| !shrunk_origins.contains(o)) {
-                        Some(origin) => origin,
-                        None => break,
-                    }
+                    live.into_iter().find(|o| !shrunk_origins.contains(o))
                 } else {
-                    if live.is_empty() {
-                        break;
-                    }
-                    let smallest = self.smallest_origin(live)?;
-                    if shrunk_origins.contains(&smallest) {
-                        break;
-                    }
-                    smallest
+                    self.smallest_origin(live)
+                        .filter(|o| !shrunk_origins.contains(o))
+                };
+                let Some(origin) = origin else {
+                    break;
                 };
                 let initial = self
                     .origins
@@ -892,16 +886,12 @@ impl<'a> Engine<'a> {
     /// so the one it shrinks next unless it is shrunk already. Shrinking
     /// it can run into another origin with a smaller example, which then
     /// takes its place; the rest are persisted as found. Ties keep
-    /// `origins`'s order.
-    fn smallest_origin(&self, origins: Vec<String>) -> Result<String, InternalError> {
-        let smallest = origins.into_iter().min_by(|a, b| {
+    /// `origins`'s order; `None` when there are no origins.
+    fn smallest_origin(&self, origins: Vec<String>) -> Option<String> {
+        origins.into_iter().min_by(|a, b| {
             let key = |o: &String| self.origins.incumbent(o).map(sort_key);
             key(a).cmp(&key(b))
-        });
-        Ok(crate::control::hegel_internal_unwrap!(
-            smallest,
-            "smallest_origin: no origins to choose from"
-        ))
+        })
     }
 
     /// The test cases counted against the `test_cases` budget: the valid

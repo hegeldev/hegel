@@ -17,8 +17,8 @@ build:
     create_environment:
       - uv venv "${READTHEDOCS_VIRTUALENV_PATH}"
     install:
-      - cd frontends/python && UV_PROJECT_ENVIRONMENT="${READTHEDOCS_VIRTUALENV_PATH}" uv sync --frozen --no-dev --group docs
-      - cd frontends/python && UV_PROJECT_ENVIRONMENT="${READTHEDOCS_VIRTUALENV_PATH}" uv run --frozen --no-dev --group docs maturin develop --uv --release
+      - cd frontends/python && UV_PROJECT_ENVIRONMENT="${READTHEDOCS_VIRTUALENV_PATH}" uv sync --frozen --group docs
+      - cd frontends/python && UV_PROJECT_ENVIRONMENT="${READTHEDOCS_VIRTUALENV_PATH}" uv run --frozen --group docs maturin develop --uv --release
 
 sphinx:
   configuration: frontends/python/docs/conf.py
