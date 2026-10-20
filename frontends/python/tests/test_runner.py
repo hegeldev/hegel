@@ -317,7 +317,7 @@ def test_health_check_can_be_suppressed():
 
 def test_rejecting_every_case_is_unsatisfiable_even_with_health_checks_suppressed():
     def body(tc):
-        tc.draw(gs.integers(0, 10**6).filter(lambda x: x == 12345))
+        tc.draw(gs.integers(0, 10**6).filter(lambda x: x < 0))
 
     error = failing(
         body, hegel.Unsatisfiable, test_cases=5, suppress_health_check=hegel.HealthCheck.all()

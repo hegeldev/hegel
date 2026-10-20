@@ -34,7 +34,7 @@ dependencies = []
 [project.urls]
 Homepage = "https://hegel.dev"
 Repository = "https://github.com/hegeldev/hegel"
-Documentation = "https://hegel-python.readthedocs.io"
+Documentation = "https://hegel.readthedocs.io"
 Changelog = "https://github.com/hegeldev/hegel/blob/main/frontends/python/CHANGELOG.md"
 
 [project.entry-points.pytest11]

@@ -38,9 +38,6 @@ differently marked `xfail` and a note per file of what was dropped.
   repeated replay and reports it with a caveat describing how reliably it
   reproduced. `nondeterminism_strictness` makes that silent (the default), a
   one-line notice, or a `Flaky` error, which is Hypothesis's behaviour.
-- Statistics for every run (`show_statistics`), including `event_value`
-  numeric observations.
-- The `urandom` backend for workload-style runs.
 - An engine shared with the Rust, Go, TypeScript and other bindings, so the
   example database and reproduce blobs behave the same everywhere.
 
