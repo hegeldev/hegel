@@ -1,0 +1,29 @@
+[package]
+name = "sqlite_bank"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.86"
+publish = false
+description = "Bank workload testing SQLite's ACID guarantees with Hegel's concurrent state machines"
+
+# This package is its own workspace, so the repo's workspace never sees
+# it: SQLite is a C library that takes a while to compile, and nothing but
+# this example needs it. (The root workspace cannot `exclude` it, since
+# cargo treats everything under a member's directory as a member.)
+[workspace]
+
+[dependencies]
+hegeltest = { path = "../.." }
+rusqlite = { version = "0.40", features = ["bundled"] }
+tempfile = "3"
+
+# The engine is compute-heavy unoptimized; this mirrors the root workspace's
+# dev profile so `cargo test` here is not much slower than in the workspace.
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+
+[features]
+# Skips the balance check in the transfer transaction, so the run fails on
+# the "no negative balance" check.
+inject-bug = []

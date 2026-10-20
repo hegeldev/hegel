@@ -69,6 +69,8 @@ jobs:
           toolchain: ${{ matrix.rust }}
       - name: Compile examples
         run: just rust::compile-examples
+      - name: Check the SQLite bank example
+        run: just rust::check-sqlite-bank
 
   docs:
     name: docs

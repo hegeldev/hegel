@@ -11,6 +11,9 @@ exclude = [
   # sources makes `cargo package` strip the [[bin]] targets from the published
   # crate, so downstream builds and `cargo install` never see them.
   "/tests/fixtures",
+  # A standalone example package with its own `[workspace]` table; not part
+  # of the published crate.
+  "/examples/sqlite_bank",
 ]
 license = "MIT"
 readme = "README.md"
