@@ -863,14 +863,15 @@ fn string_generators_follow_the_unicode_version() {
             let b = grammar_builder(ctx, "start: WORD\nWORD: /\\w/\n", &[]).unwrap();
             let mut g: *mut HegelGrammar = ptr::null_mut();
             let rc = hegel_grammar_new(ctx, b, ptr::null(), 0, 0, alphabet, ptr::null(), 0, &mut g);
-            ok(hegel_grammar_builder_free(ctx, b));
-            if rc == HEGEL_OK {
+            let result = if rc == HEGEL_OK {
                 ok(hegel_grammar_free(ctx, g));
                 Ok(())
             } else {
                 assert_eq!(rc, HEGEL_E_INVALID_ARG);
                 Err(last_error(ctx))
-            }
+            };
+            ok(hegel_grammar_builder_free(ctx, b));
+            result
         };
 
         for version in ["16.0.0", "18.0.0", ""] {
@@ -889,7 +890,10 @@ fn string_generators_follow_the_unicode_version() {
         assert!(last_error(ctx).contains("matches no string over the alphabet"));
         assert!(g.is_null());
         let err = word_grammar().unwrap_err();
-        assert!(err.contains("matches no string over the alphabet"), "{err}");
+        assert!(
+            err.contains("cannot be produced over the alphabet"),
+            "{err}"
+        );
         ok(set("".into()));
         ok(hegel_string_generator_free(ctx, alphabet));
     }
