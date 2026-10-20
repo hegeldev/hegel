@@ -23,8 +23,6 @@ Numbers and booleans
 
 .. autofunction:: booleans
 
-.. autofunction:: weighted_booleans
-
 Text and bytes
 --------------
 
