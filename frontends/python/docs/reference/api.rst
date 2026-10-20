@@ -22,6 +22,9 @@ The test case
 .. autoclass:: hegel.TestCase()
    :members: draw, draw_silent, assume, reject, note, target, event, event_value, repeat
 
+.. autoclass:: hegel.Collection()
+   :members:
+
 Settings
 --------
 
