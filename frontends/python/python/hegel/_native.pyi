@@ -53,6 +53,15 @@ TIMEZONE_TAG_LEGACY: int
 AMBIGUOUS_BOTH: int
 AMBIGUOUS_EARLIER: int
 AMBIGUOUS_LATER: int
+PRECISION_MICROSECONDS: int
+PRECISION_MILLISECONDS: int
+PRECISION_SECONDS: int
+PRECISION_MINUTES: int
+PRECISION_HOURS: int
+GRANULARITY_HOURS: int
+GRANULARITY_QUARTER_HOURS: int
+GRANULARITY_MINUTES: int
+GRANULARITY_SECONDS: int
 
 # -- functions ----------------------------------------------------------------
 
@@ -213,21 +222,27 @@ class TestCase:
     def generate_bytes(self, min_size: int, max_size: int | None) -> bytes: ...
     def generate_string(self, generator: StringGenerator) -> bytes: ...
     def generate_date(
-        self, min_value: tuple[int, int, int], max_value: tuple[int, int, int]
+        self,
+        min_value: tuple[int, int, int],
+        max_value: tuple[int, int, int],
+        options: DateOptions | None,
     ) -> tuple[int, int, int]: ...
     def generate_time(
         self,
         min_value: tuple[int, int, int, int],
         max_value: tuple[int, int, int, int],
+        precision: int,
     ) -> tuple[int, int, int, int]: ...
     def generate_datetime(
         self,
         min_value: tuple[int, int, int, int, int, int, int],
         max_value: tuple[int, int, int, int, int, int, int],
+        precision: int,
     ) -> tuple[int, int, int, int, int, int, int]: ...
     def generate_duration(
-        self, min_value: tuple[int, int], max_value: tuple[int, int]
+        self, min_value: tuple[int, int], max_value: tuple[int, int], precision: int
     ) -> tuple[int, int]: ...
+    def generate_offset(self, min_seconds: int, max_seconds: int, granularity: int) -> int: ...
     def generate_timezone(self, spec: TimeZoneSpec) -> str: ...
     def generate_zoned_datetime(
         self, tz_spec: TimeZoneSpec, zoned_spec: ZonedSpec
@@ -260,6 +275,9 @@ class TestCase:
         step_count: int,
     ) -> tuple[StateMachine, int]: ...
 
+class DateOptions:
+    def __init__(self, weekdays: int | None, months: int | None) -> None: ...
+
 class TimeZoneSpec:
     def __init__(
         self,
@@ -278,6 +296,7 @@ class ZonedSpec:
         ]
         | None,
         instant_bounds: tuple[tuple[int, int], tuple[int, int]] | None,
+        precision: int,
         allow_imaginary: bool,
         ambiguous: int,
     ) -> None: ...

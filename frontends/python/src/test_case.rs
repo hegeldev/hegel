@@ -1,6 +1,6 @@
 use crate::printer::{Printer, with_options};
 use crate::time::{
-    PRECISION, PyDate, PyDateTime, PyDuration, PyTime, TimeZoneSpec, ZonedSpec, date_from_c,
+    DateOptions, PyDate, PyDateTime, PyDuration, PyTime, TimeZoneSpec, ZonedSpec, date_from_c,
     date_to_c, datetime_from_c, datetime_to_c, duration_from_c, duration_to_c, time_from_c,
     time_to_c, timestamp_from_c,
 };
@@ -419,7 +419,15 @@ impl TestCase {
         Ok(PyBytes::new(py, &bytes))
     }
 
-    fn generate_date(&self, min_value: PyDate, max_value: PyDate) -> PyResult<PyDate> {
+    /// Draw a date in `[min_value, max_value]` on the weekdays and in the
+    /// months `options` allows (every one for `None`).
+    #[pyo3(signature = (min_value, max_value, options))]
+    fn generate_date(
+        &self,
+        min_value: PyDate,
+        max_value: PyDate,
+        options: Option<&DateOptions>,
+    ) -> PyResult<PyDate> {
         let mut out = date_to_c(min_value);
         with_ctx(|ctx| {
             check(unsafe {
@@ -428,7 +436,7 @@ impl TestCase {
                     self.tc(),
                     date_to_c(min_value),
                     date_to_c(max_value),
-                    ptr::null(),
+                    options.map_or(ptr::null(), DateOptions::raw),
                     &mut out,
                 )
             })
@@ -436,8 +444,14 @@ impl TestCase {
         Ok(date_from_c(out))
     }
 
-    /// Draw a time of day in `[min_value, max_value]` of whole microseconds.
-    fn generate_time(&self, min_value: PyTime, max_value: PyTime) -> PyResult<PyTime> {
+    /// Draw a time of day in `[min_value, max_value]` that is a whole
+    /// number of `precision` units (a `PRECISION_*` constant).
+    fn generate_time(
+        &self,
+        min_value: PyTime,
+        max_value: PyTime,
+        precision: u32,
+    ) -> PyResult<PyTime> {
         let mut out = time_to_c(min_value);
         with_ctx(|ctx| {
             check(unsafe {
@@ -446,7 +460,7 @@ impl TestCase {
                     self.tc(),
                     time_to_c(min_value),
                     time_to_c(max_value),
-                    PRECISION,
+                    precision,
                     &mut out,
                 )
             })
@@ -454,12 +468,13 @@ impl TestCase {
         Ok(time_from_c(out))
     }
 
-    /// Draw a naive datetime in `[min_value, max_value]` of whole
-    /// microseconds.
+    /// Draw a naive datetime in `[min_value, max_value]` whose time of day
+    /// is a whole number of `precision` units.
     fn generate_datetime(
         &self,
         min_value: PyDateTime,
         max_value: PyDateTime,
+        precision: u32,
     ) -> PyResult<PyDateTime> {
         let mut out = datetime_to_c(min_value);
         with_ctx(|ctx| {
@@ -469,7 +484,7 @@ impl TestCase {
                     self.tc(),
                     datetime_to_c(min_value),
                     datetime_to_c(max_value),
-                    PRECISION,
+                    precision,
                     &mut out,
                 )
             })
@@ -477,12 +492,13 @@ impl TestCase {
         Ok(datetime_from_c(out))
     }
 
-    /// Draw a signed duration in `[min_value, max_value]` of whole
-    /// microseconds, as `(seconds, nanoseconds)` of one sign.
+    /// Draw a signed duration in `[min_value, max_value]` that is a whole
+    /// number of `precision` units, as `(seconds, nanoseconds)` of one sign.
     fn generate_duration(
         &self,
         min_value: PyDuration,
         max_value: PyDuration,
+        precision: u32,
     ) -> PyResult<PyDuration> {
         let mut out = duration_to_c(min_value);
         with_ctx(|ctx| {
@@ -492,12 +508,40 @@ impl TestCase {
                     self.tc(),
                     duration_to_c(min_value),
                     duration_to_c(max_value),
-                    PRECISION,
+                    precision,
                     &mut out,
                 )
             })
         })?;
         Ok(duration_from_c(out))
+    }
+
+    /// Draw a known UTC offset in `[min_seconds, max_seconds]` that is a
+    /// whole number of `granularity` units (a `GRANULARITY_*` constant).
+    fn generate_offset(
+        &self,
+        min_seconds: i32,
+        max_seconds: i32,
+        granularity: u32,
+    ) -> PyResult<i32> {
+        let mut out = c::hegel_offset_t {
+            seconds: 0,
+            known: false,
+        };
+        with_ctx(|ctx| {
+            check(unsafe {
+                c::hegel_generate_offset(
+                    ctx,
+                    self.tc(),
+                    min_seconds,
+                    max_seconds,
+                    granularity,
+                    false,
+                    &mut out,
+                )
+            })
+        })?;
+        Ok(out.seconds)
     }
 
     /// Draw an IANA time zone name `spec` allows.

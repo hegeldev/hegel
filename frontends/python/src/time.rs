@@ -9,10 +9,6 @@ pub(crate) type PyDateTime = (i32, u8, u8, u8, u8, u8, u32);
 pub(crate) type PyTimestamp = (i64, u32);
 pub(crate) type PyDuration = (i64, i32);
 
-/// Python's `datetime` resolution: every time-of-day, datetime and
-/// duration draw counts whole microseconds.
-pub(crate) const PRECISION: u32 = c::hegel_precision_t::HEGEL_PRECISION_MICROSECONDS as u32;
-
 pub(crate) fn date_to_c(d: PyDate) -> c::hegel_date_t {
     c::hegel_date_t {
         year: d.0,
@@ -79,6 +75,50 @@ pub(crate) fn duration_from_c(d: c::hegel_duration_t) -> PyDuration {
     (d.seconds, d.nanoseconds)
 }
 
+/// An owned libhegel date-options handle: the weekday and month masks of a
+/// date draw. Immutable after construction.
+#[pyclass(frozen, name = "DateOptions", module = "hegel._native")]
+pub(crate) struct DateOptions {
+    raw: SendPtr<c::HegelDateOptions>,
+}
+
+impl DateOptions {
+    pub(crate) fn raw(&self) -> *const c::HegelDateOptions {
+        self.raw.0
+    }
+}
+
+impl Drop for DateOptions {
+    fn drop(&mut self) {
+        with_ctx(|ctx| unsafe {
+            let _ = c::hegel_date_options_free(ctx, self.raw.0);
+        });
+    }
+}
+
+#[pymethods]
+impl DateOptions {
+    /// Bit sets with bit 0 for Monday and bit 0 for January; `None` leaves
+    /// every weekday or month allowed.
+    #[new]
+    #[pyo3(signature = (weekdays, months))]
+    fn new(weekdays: Option<u32>, months: Option<u32>) -> PyResult<Self> {
+        let mut raw: *mut c::HegelDateOptions = ptr::null_mut();
+        with_ctx(|ctx| check(unsafe { c::hegel_date_options_new(ctx, &mut raw) }))?;
+        let options = DateOptions { raw: SendPtr(raw) };
+        with_ctx(|ctx| {
+            if let Some(mask) = weekdays {
+                check(unsafe { c::hegel_date_options_set_weekdays(ctx, raw, mask) })?;
+            }
+            if let Some(mask) = months {
+                check(unsafe { c::hegel_date_options_set_months(ctx, raw, mask) })?;
+            }
+            Ok::<(), PyErr>(())
+        })?;
+        Ok(options)
+    }
+}
+
 /// An owned libhegel time-zone-spec handle: the names a time zone draw may
 /// yield. Immutable after construction, so it may be shared across test
 /// cases and threads.
@@ -134,9 +174,8 @@ impl TimeZoneSpec {
     }
 }
 
-/// An owned libhegel zoned-datetime-spec handle: the bounds and policies
-/// of a zoned datetime draw, at microsecond precision. Immutable after
-/// construction.
+/// An owned libhegel zoned-datetime-spec handle: the bounds, precision and
+/// policies of a zoned datetime draw. Immutable after construction.
 #[pyclass(frozen, name = "ZonedSpec", module = "hegel._native")]
 pub(crate) struct ZonedSpec {
     raw: SendPtr<c::HegelZonedSpec>,
@@ -159,13 +198,15 @@ impl Drop for ZonedSpec {
 #[pymethods]
 impl ZonedSpec {
     /// Bounds on the wall clock (`civil_bounds`) or on the instant
-    /// (`instant_bounds`), whether a skipped wall time may be drawn, and
-    /// which instant a repeated one means (an `AMBIGUOUS_*` constant).
+    /// (`instant_bounds`), the unit the time of day is counted in (a
+    /// `PRECISION_*` constant), whether a skipped wall time may be drawn,
+    /// and which instant a repeated one means (an `AMBIGUOUS_*` constant).
     #[new]
-    #[pyo3(signature = (civil_bounds, instant_bounds, allow_imaginary, ambiguous))]
+    #[pyo3(signature = (civil_bounds, instant_bounds, precision, allow_imaginary, ambiguous))]
     fn new(
         civil_bounds: Option<(PyDateTime, PyDateTime)>,
         instant_bounds: Option<(PyTimestamp, PyTimestamp)>,
+        precision: u32,
         allow_imaginary: bool,
         ambiguous: u32,
     ) -> PyResult<Self> {
@@ -178,7 +219,7 @@ impl ZonedSpec {
             c::hegel_imaginary_t::HEGEL_IMAGINARY_AVOID
         } as u32;
         with_ctx(|ctx| {
-            check(unsafe { c::hegel_zoned_spec_set_precision(ctx, raw, PRECISION) })?;
+            check(unsafe { c::hegel_zoned_spec_set_precision(ctx, raw, precision) })?;
             check(unsafe { c::hegel_zoned_spec_set_imaginary(ctx, raw, imaginary) })?;
             check(unsafe { c::hegel_zoned_spec_set_ambiguous(ctx, raw, ambiguous) })?;
             if let Some((min, max)) = civil_bounds {
