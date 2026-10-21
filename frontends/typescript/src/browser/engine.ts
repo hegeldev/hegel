@@ -57,9 +57,16 @@ export class WasmEngine implements Engine {
     if (control && code === -1) throw new StopTestError();
     if (control && code === -2) throw new AssumeError();
     // Copy before the arena or an owned handle can be released.
-    const message =
-      ctx === 0 ? "" : this.memory.cString(this.abi.call("context_last_error", ctx) >>> 0);
+    const message = ctx === 0 ? "" : this.readLastError(ctx);
     throw new EngineError(`hegel_${op} failed (${code})${message ? `: ${message}` : ""}`);
+  }
+
+  private readLastError(ctx: number): string {
+    return WasmArena.scoped(this.abi, (a) => {
+      const out = a.alloc(8, 4);
+      this.abi.call("context_last_error", out, ctx);
+      return a.string(out);
+    });
   }
 
   private output<T>(
@@ -88,14 +95,19 @@ export class WasmEngine implements Engine {
     this.handles.delete(handle);
   }
 
-  private string(op: Operation, args: Argument[]): string | null {
-    return this.output(0, op, args, 4, 4, (a, p) => a.cString(a.pointer(p)));
+  private string(op: Operation, args: Argument[]): string {
+    return this.output(0, op, args, 8, 4, (a, p) => a.string(p));
+  }
+
+  private optionalString(op: Operation, args: Argument[]): string | null {
+    return this.output(0, op, args, 4, 4, (a, p) => {
+      const ptr = a.pointer(p);
+      return ptr === 0 ? null : a.string(ptr);
+    });
   }
 
   version(): string {
-    const value = this.string("version", [0]);
-    if (value === null) throw new EngineError("Wasm version string is null");
-    return value;
+    return this.string("version", [0]);
   }
   newContext(): ContextHandle {
     return this.owned(this.abi.call("context_new") >>> 0);
@@ -105,7 +117,7 @@ export class WasmEngine implements Engine {
     this.handles.delete(ctx);
   }
   lastError(ctx: ContextHandle): string {
-    return this.memory.cString(this.abi.call("context_last_error", this.ptr(ctx)) >>> 0) ?? "";
+    return this.readLastError(this.ptr(ctx));
   }
   newSettings(ctx: ContextHandle): SettingsHandle {
     const ptr = this.ptr(ctx);
@@ -131,13 +143,13 @@ export class WasmEngine implements Engine {
       throw new EngineError("Filesystem databases are not supported in the browser");
     WasmArena.scoped(this.abi, (a) => {
       const c = this.ptr(ctx);
-      this.check(c, "settings_set_database", [c, this.ptr(s), a.utf8CString("")]);
+      this.check(c, "settings_set_database", [c, this.ptr(s), a.text("")]);
     });
   }
   setDatabaseKey(ctx: ContextHandle, s: SettingsHandle, key: string): void {
     WasmArena.scoped(this.abi, (a) => {
       const c = this.ptr(ctx);
-      this.check(c, "settings_set_database_key", [c, this.ptr(s), a.utf8CString(key)]);
+      this.check(c, "settings_set_database_key", [c, this.ptr(s), a.text(key)]);
     });
   }
   setSuppressHealthCheck(s: SettingsHandle, checks: number): void {
@@ -167,20 +179,10 @@ export class WasmEngine implements Engine {
   freeRun(run: RunHandle): void {
     this.free("run_free", run);
   }
-  testCaseFromBlob(
-    ctx: ContextHandle,
-    settings: SettingsHandle,
-    blob: string | null,
-  ): TestCaseHandle {
+  testCaseFromBlob(ctx: ContextHandle, settings: SettingsHandle, blob: string): TestCaseHandle {
     return WasmArena.scoped(this.abi, (a) => {
       const c = this.ptr(ctx);
-      return this.handle(c, "test_case_from_blob", [
-        c,
-        this.ptr(settings),
-        a.utf8CString(blob),
-        0,
-        0,
-      ]);
+      return this.handle(c, "test_case_from_blob", [c, this.ptr(settings), a.text(blob), 0, 0]);
     });
   }
   freeTestCase(tc: TestCaseHandle): void {
@@ -280,7 +282,11 @@ export class WasmEngine implements Engine {
         failure = error;
       } finally {
         try {
-          this.check(0, `${op}_result_free`, [0, out]);
+          this.check(
+            0,
+            op === "generate_bytes" ? "generate_bytes_result_free" : "owned_string_free",
+            [0, out],
+          );
         } catch (cleanup) {
           failure = failed
             ? new EngineError("Wasm buffer copy and release failed", {
@@ -319,17 +325,15 @@ export class WasmEngine implements Engine {
         c,
         u64(opts.minSize),
         u64(opts.maxSize),
-        a.utf8CString(opts.codec),
+        a.text(opts.codec),
         u32(opts.minCodepoint),
         u32(opts.maxCodepoint),
         a.stringList(opts.categories),
         opts.categories?.length ?? 0,
         a.stringList(opts.excludeCategories),
         opts.excludeCategories?.length ?? 0,
-        a.input(opts.includeCharacters),
-        opts.includeCharacters?.length ?? 0,
-        a.input(opts.excludeCharacters),
-        opts.excludeCharacters?.length ?? 0,
+        a.bytesValue(opts.includeCharacters),
+        a.bytesValue(opts.excludeCharacters),
       ]);
     });
   }
@@ -340,16 +344,7 @@ export class WasmEngine implements Engine {
   ): StringGeneratorHandle {
     return WasmArena.scoped(this.abi, (a) => {
       const c = this.ptr(ctx);
-      // The ABI takes the pattern as a length-delimited UTF-8 buffer (so it may
-      // contain NUL, which `re` accepts), not a NUL-terminated C string.
-      const bytes = new TextEncoder().encode(pattern);
-      return this.handle(c, "string_generator_regex", [
-        c,
-        a.input(bytes),
-        bytes.length,
-        +fullmatch,
-        0,
-      ]);
+      return this.handle(c, "string_generator_regex", [c, a.text(pattern), +fullmatch, 0]);
     });
   }
   stringGeneratorEmail(ctx: ContextHandle): StringGeneratorHandle {
@@ -508,7 +503,7 @@ export class WasmEngine implements Engine {
       this.check(
         c,
         "collection_reject",
-        [c, this.ptr(tc), this.ptr(collection), a.utf8CString(why)],
+        [c, this.ptr(tc), this.ptr(collection), a.text(why)],
         true,
       );
     });
@@ -524,7 +519,7 @@ export class WasmEngine implements Engine {
   ): void {
     WasmArena.scoped(this.abi, (a) => {
       const c = this.ptr(ctx);
-      this.check(c, "mark_complete", [c, this.ptr(tc), u32(status), a.utf8CString(origin)]);
+      this.check(c, "mark_complete", [c, this.ptr(tc), u32(status), a.text(origin)]);
     });
   }
   newPool(ctx: ContextHandle, tc: TestCaseHandle): PoolHandle {
@@ -663,7 +658,7 @@ export class WasmEngine implements Engine {
     );
   }
   runError(r: RunResultHandle): string | null {
-    return this.string("run_result_error", [0, this.ptr(r)]);
+    return this.optionalString("run_result_error", [0, this.ptr(r)]);
   }
   failureCount(r: RunResultHandle): number {
     return this.output(0, "run_result_failure_count", [0, this.ptr(r)], 4, 4, (a, p) =>
@@ -677,12 +672,10 @@ export class WasmEngine implements Engine {
     this.free("failure_free", f);
   }
   failureOrigin(fp: FailureHandle): string {
-    const value = this.string("failure_origin", [0, this.ptr(fp)]);
-    if (value === null) throw new EngineError("Wasm failure origin is null");
-    return value;
+    return this.string("failure_origin", [0, this.ptr(fp)]);
   }
   reproductionBlob(fp: FailureHandle): string | null {
-    return this.string("failure_reproduction_blob", [0, this.ptr(fp)]);
+    return this.optionalString("failure_reproduction_blob", [0, this.ptr(fp)]);
   }
 }
 

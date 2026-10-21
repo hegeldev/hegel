@@ -1,5 +1,6 @@
 import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "url";
+import { nativeLibraryPath } from "./scripts/engine.mjs";
 
 export default defineConfig({
   resolve: {
@@ -11,6 +12,7 @@ export default defineConfig({
     },
   },
   test: {
+    env: { HEGEL_LIBHEGEL_PATH: nativeLibraryPath() },
     include: ["tests/**/*.test.ts"],
     testTimeout: 30000,
     silent: "passed-only",

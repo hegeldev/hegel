@@ -500,10 +500,9 @@ describe("WasmEngine error and ownership boundaries", () => {
     const ctx = engine.newContext(),
       s = engine.newSettings(ctx);
     expect(engine.lastError(ctx)).toBe("");
-    expect(() => engine.setDatabaseKey(ctx, s, "bad\0key")).toThrow(/NUL/);
+    engine.setDatabaseKey(ctx, s, "key\0with NUL");
     expect(() => engine.setDatabase(ctx, s, "path")).toThrow(/Filesystem/);
     expect(() => engine.testCaseFromBlob(ctx, s, "bad blob")).toThrow(/failed/);
-    expect(() => engine.testCaseFromBlob(ctx, s, null)).toThrow(/blob pointer is null/);
     expect(() => engine.setVerbosity(s, 99)).toThrow(/failed/);
     expect(() => wasmFixture().engine.freeSettings(s)).toThrow(/Foreign/);
     engine.freeSettings(s);

@@ -1,40 +1,48 @@
+# Recipes for the TypeScript frontend (the `@hegeldev/hegel` npm package). Run
+# as `just typescript::<recipe>` from anywhere in the repo; recipes execute
+# from this directory. The engine is the in-tree libhegel: `build-libhegel`
+# compiles it natively and to Wasm into the workspace's `target/`, and the
+# tests load those builds (scripts/engine.mjs; `HEGEL_LIBHEGEL_PATH` and
+# `HEGEL_WASM_PATH` override them).
 set ignore-comments := true
 
-# Download the host's published libhegel library and the Wasm module of the
-# pinned release into native/<version>/ (if missing), each verified against the
-# release's checksum sidecar, and print the library's path. Used to run tests
-# against the real engine. (End users instead get the library from the
-# @hegeldev/hegel-<os>-<arch> platform packages and the Wasm module from the
-# main package's dist/browser/; see scripts/make-platform-packages.mjs and
-# `npm run build`.)
-@fetch-libhegel:
-    node scripts/fetch-libhegel.mjs
+# Install the package's dependencies (needs Node >= 20.11).
+setup:
+    npm ci
 
-# Build libhegel from a sibling ../hegel monorepo checkout (for local development
-# against an unreleased engine). Prints the path to export as
-# HEGEL_LIBHEGEL_PATH. (For the Wasm side, `cargo build -p hegeltest-c
-# --release --target wasm32-unknown-unknown` there and export the module's
-# path as HEGEL_WASM_PATH.)
+# Install the browser packaging fixture's dependencies and Chromium.
+setup-browser:
+    cd tests/browser && npm ci && npx playwright install chromium
+
+# Build libhegel natively and for wasm32-unknown-unknown (needs that rustup target).
 build-libhegel:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cargo build --release -p hegeltest-c --manifest-path ../hegel/Cargo.toml
-    echo "../hegel/target/release/libhegel_c.so"
+    cargo build --release -p hegeltest-c --manifest-path ../../Cargo.toml
+    cargo build --release -p hegeltest-c --manifest-path ../../Cargo.toml --target wasm32-unknown-unknown
 
-# Regenerate src/libhegel-version.ts from a libhegel release (hegeldev/hegel's
-# `libhegel/<version>` tags). Targets the latest release; pass a version
-# (e.g. `just update-libhegel 0.47.2`, or the tag `libhegel/0.47.2`) to pin
-# an exact one.
-update-libhegel version="":
-    node scripts/update-libhegel.mjs {{version}}
-    npx prettier --write src/libhegel-version.ts
+# Compile to dist/ and bundle the Wasm module next to the browser entry.
+build: build-libhegel
+    npm run build
 
-check-test:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    export HEGEL_LIBHEGEL_PATH="${HEGEL_LIBHEGEL_PATH:-$(node scripts/fetch-libhegel.mjs)}"
+# vitest against the real engine, native and Wasm, requiring 100% coverage.
+check-test: build-libhegel
     npx vitest run --coverage
     python3 scripts/check-coverage.py
+
+# The packaging scripts and the export map (node --test).
+check-packaging: build-libhegel
+    node --test scripts/packaging.test.mjs
+
+# Pack the package, bundle it four ways and run it in Chromium (`setup-browser` first).
+check-browser: build-libhegel
+    node tests/browser/run.mjs
+
+# src/libhegel-version.ts must mirror libhegel/Cargo.toml.
+check-libhegel-version:
+    node scripts/engine.mjs check-version
+
+# Regenerate src/libhegel-version.ts from libhegel/Cargo.toml.
+update-libhegel-version:
+    node scripts/engine.mjs write-version
 
 format:
     npx prettier --write .
@@ -42,20 +50,22 @@ format:
 check-format:
     npx prettier --check .
 
-check-lint:
+check-lint: check-format check-libhegel-version
     npx eslint .
     npx tsc --noEmit
     npm run typecheck:portable
 
+# typedoc, with warnings as errors.
 check-docs:
     npx typedoc
 
-docs:
-    npx typedoc
+docs: check-docs
     open docs/index.html
 
-# these aliases are provided as ux improvements for local developers. CI should use the longer
-# forms.
+check: check-lint check-docs check-test check-packaging
+
+# These aliases are provided as ux improvements for local developers. CI
+# should use the longer forms.
+
 test: check-test
-lint: check-format check-lint
-check: lint check-docs check-test
+lint: check-lint

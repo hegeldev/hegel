@@ -110,7 +110,7 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     stringGeneratorUrl: () => 0,
     stringGeneratorDomain: () => 0,
     generateString: () => 0,
-    generateStringResultFree: noop,
+    ownedStringFree: noop,
     generateDate: () => 0,
     generateTime: () => 0,
     generateDatetime: () => 0,
@@ -145,7 +145,7 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     runResultFailureCount: () => 0,
     runResultFailure: () => ({}),
     failureFree: noop,
-    failureOrigin: () => null,
+    failureOrigin: () => "",
     failureReproductionBlob: () => null,
     version: () => "0.0.0",
     ...overrides,
@@ -260,20 +260,17 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
     }
   });
 
-  it("lastError maps a NULL message to the empty string", () => {
-    const lib = new Libhegel(fakeBindings({ contextLastError: () => null }));
-    expect(lib.lastError(null)).toBe("");
-  });
-
-  it("failureOrigin maps NULL to empty; reproductionBlob and runError pass NULL through", () => {
+  it("passes lastError and failureOrigin through; reproductionBlob and runError pass NULL through", () => {
     const lib = new Libhegel(
       fakeBindings({
-        failureOrigin: () => null,
+        contextLastError: () => "diagnostic",
+        failureOrigin: () => "origin",
         failureReproductionBlob: () => null,
         runResultError: () => null,
       }),
     );
-    expect(lib.failureOrigin(null)).toBe("");
+    expect(lib.lastError(null)).toBe("diagnostic");
+    expect(lib.failureOrigin(null)).toBe("origin");
     expect(lib.reproductionBlob(null)).toBeNull();
     expect(lib.runError(null)).toBeNull();
   });
@@ -685,7 +682,7 @@ describe("Libhegel ABI 0.42.4 regressions", () => {
           return 0;
         },
         generateBytesResultFree: bytesFree,
-        generateStringResultFree: stringFree,
+        ownedStringFree: stringFree,
       }),
     );
     expect(() => lib.generateBytes(null, null, 0)).toThrow("Invalid native buffer result");
@@ -694,7 +691,7 @@ describe("Libhegel ABI 0.42.4 regressions", () => {
     expect(stringFree).toHaveBeenCalledExactlyOnceWith({ data: null, len: -1 });
   });
 
-  it("checks rejected native setters and rejects NUL before C-string truncation", () => {
+  it("checks rejected native setters and passes NUL-containing strings through", () => {
     const lib = Libhegel.load(testLibPath());
     const ctx = lib.newContext();
     const settings = lib.newSettings(ctx);
@@ -707,10 +704,7 @@ describe("Libhegel ABI 0.42.4 regressions", () => {
       expect(() => lib.setReportMultipleFailures(null, true)).toThrow(LibhegelError);
       expect(() => lib.setDatabase(ctx, null, "")).toThrow(LibhegelError);
       expect(() => lib.setDatabaseKey(ctx, null, "key")).toThrow(LibhegelError);
-      expect(() => lib.setDatabase(ctx, settings, "path\0suffix")).toThrow("must not contain NUL");
-      expect(() => lib.setDatabaseKey(ctx, settings, "key\0suffix")).toThrow(
-        "must not contain NUL",
-      );
+      lib.setDatabaseKey(ctx, settings, "key\0suffix");
     } finally {
       lib.freeSettings(settings);
       lib.freeContext(ctx);
@@ -751,8 +745,8 @@ describe("Libhegel ABI 0.42.4 regressions", () => {
 describe("bindLibrary checked ABI declarations", () => {
   it("checks configuration codes even when no context diagnostic is available", () => {
     const func = vi.fn((prototype: string) => {
-      if (prototype.includes("hegel_context_last_error")) return () => null;
-      if (prototype.includes("hegel_settings_set_database(")) return () => -5;
+      if (prototype === "hegel_context_last_error") return () => ({ data: null, len: 0 });
+      if (prototype === "hegel_settings_set_database") return () => -5;
       return () => 0;
     });
     const bindings = bindLibrary({ func } as unknown as LibraryHandle);
@@ -783,7 +777,7 @@ it("Libhegel frees engine results when Koffi copying throws", () => {
         return 0;
       },
       generateBytesResultFree: bytesFree,
-      generateStringResultFree: stringFree,
+      ownedStringFree: stringFree,
     }),
   );
   try {

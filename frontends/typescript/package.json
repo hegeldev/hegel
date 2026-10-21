@@ -5,7 +5,11 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hegeldev/hegel-typescript.git"
+    "url": "git+https://github.com/hegeldev/hegel.git",
+    "directory": "frontends/typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/hegeldev/hegel/issues"
   },
   "publishConfig": {
     "access": "public",
@@ -34,7 +38,7 @@
     "printWidth": 100
   },
   "scripts": {
-    "build": "tsc && node scripts/fetch-libhegel.mjs --wasm dist/browser",
+    "build": "tsc && node scripts/engine.mjs wasm dist/browser",
     "test": "vitest run --coverage",
     "lint": "prettier --check . && eslint . && tsc --noEmit",
     "format": "prettier --write .",
@@ -67,12 +71,5 @@
   },
   "dependencies": {
     "koffi": "^3.0.2"
-  },
-  "optionalDependencies": {
-    "@hegeldev/hegel-darwin-arm64": "0.4.10",
-    "@hegeldev/hegel-linux-arm64": "0.4.10",
-    "@hegeldev/hegel-linux-x64": "0.4.10",
-    "@hegeldev/hegel-win32-arm64": "0.4.10",
-    "@hegeldev/hegel-win32-x64": "0.4.10"
   }
 }

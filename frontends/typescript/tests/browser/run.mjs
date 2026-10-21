@@ -4,9 +4,9 @@
 //
 // The bundlers and Playwright are this fixture's own dependencies
 // (tests/browser/package.json), not the library's: run `npm ci` here and
-// `npx playwright install chromium` first, then `npm run test:browser` at the
-// repository root. Needs the pinned native library fetched
-// (`just fetch-libhegel`); the Wasm module is fetched on demand.
+// `npx playwright install chromium` first (`just typescript::setup-browser`),
+// then `just typescript::check-browser`. Needs the in-tree libhegel builds
+// (`just typescript::build-libhegel`).
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -22,7 +22,8 @@ import { rollup } from "rollup";
 import { nodeResolve } from "@rollup/plugin-node-resolve";
 import ts from "typescript";
 import { fileURLToPath } from "node:url";
-import { PLATFORMS, WASM_ASSET, fetchWasm, sha256 } from "../../scripts/fetch-libhegel.mjs";
+import { PLATFORMS, sha256 } from "../../scripts/fetch-libhegel.mjs";
+import { WASM_ASSET, wasmPath } from "../../scripts/engine.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -48,10 +49,9 @@ function files(dir) {
 
 let browser;
 try {
-  // The pinned release's Wasm module, as fetched (and checksum-verified) into native/.
-  const wasmBytes = fs.readFileSync(await fetchWasm());
+  const wasmBytes = fs.readFileSync(wasmPath());
   const verifyBytes = (bytes) => {
-    assert(Buffer.from(bytes).equals(wasmBytes), "Wasm differs from the pinned release asset");
+    assert(Buffer.from(bytes).equals(wasmBytes), "Wasm differs from the in-tree build");
     assert(WebAssembly.validate(bytes), "Invalid Wasm");
   };
   const packOutput = run("npm", ["pack", "--json", "--pack-destination", temp], ROOT);
@@ -62,7 +62,7 @@ try {
       /(?:native\/|platform-packages\/|\.dylib$|\.so$|\.dll$|\.node$)/.test(f.path),
     ),
   );
-  run("node", ["scripts/make-platform-packages.mjs", "--host", "--offline"], ROOT);
+  run("node", ["scripts/make-platform-packages.mjs", "--local"], ROOT);
   const host = PLATFORMS.find(
     ({ platform, arch }) => platform === process.platform && arch === process.arch,
   );

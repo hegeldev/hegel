@@ -8,7 +8,7 @@ import { wasmFixture } from "./wasmFixture.js";
 import * as gs from "../src/generators/index.js";
 
 describe("WasmEngine malformed outputs and cleanup", () => {
-  it("rejects null context/settings/version outputs and accepts null context diagnostics", () => {
+  it("rejects null context/settings outputs and accepts empty context diagnostics", () => {
     const { abi } = wasmFixture(),
       engine = new WasmEngine(abi);
     const call = abi.call.bind(abi);
@@ -16,12 +16,9 @@ describe("WasmEngine malformed outputs and cleanup", () => {
       .spyOn(abi, "call")
       .mockImplementation((op, ...args) => (op === "context_new" ? 0 : call(op, ...args)));
     expect(() => engine.newContext()).toThrow("null owned handle");
-    spy.mockImplementation((op, ...args) =>
-      op === "settings_new" || op === "version" ? 0 : call(op, ...args),
-    );
+    spy.mockImplementation((op, ...args) => (op === "settings_new" ? 0 : call(op, ...args)));
     const ctx = engine.newContext();
     expect(() => engine.newSettings(ctx)).toThrow("null owned handle");
-    expect(() => engine.version()).toThrow("version string is null");
     spy.mockImplementation((op, ...args) => (op === "context_last_error" ? 0 : call(op, ...args)));
     expect(engine.lastError(ctx)).toBe("");
     engine.freeContext(ctx);
@@ -119,7 +116,7 @@ describe("WasmEngine malformed outputs and cleanup", () => {
       return code;
     });
     expect(engine.generateString(ctx, tc, generator)).toBe("\ud800");
-    expect(spy).toHaveBeenCalledWith("generate_string_result_free", 0, result);
+    expect(spy).toHaveBeenCalledWith("owned_string_free", 0, result);
     engine.freeStringGenerator(generator);
     engine.freeTestCase(tc);
     engine.freeRun(run);
@@ -147,7 +144,7 @@ describe("WasmEngine malformed outputs and cleanup", () => {
     engine.freeContext(ctx);
   });
 
-  it("rejects null failure origins without replay and exercises browser no-op host services", () => {
+  it("rejects corrupt failure origins without replay and exercises browser no-op host services", () => {
     const { engine, abi } = wasmFixture(),
       call = abi.call.bind(abi);
     const runtime = browserRuntime(engine);
@@ -155,9 +152,12 @@ describe("WasmEngine malformed outputs and cleanup", () => {
       { class: "test", function: "test", file: "test.ts", beginLine: 1 },
       true,
     );
-    vi.spyOn(abi, "call").mockImplementation((op, ...args) =>
-      op === "failure_origin" ? 0 : call(op, ...args),
-    );
+    vi.spyOn(abi, "call").mockImplementation((op, ...args) => {
+      if (op !== "failure_origin") return call(op, ...args);
+      const out = Number(args.at(-1));
+      new WasmMemory(abi.memory).view(out, 8).setUint32(4, 1, true);
+      return 0;
+    });
     expect(() =>
       createRunner(runtime).test(
         (tc) => {
@@ -166,6 +166,6 @@ describe("WasmEngine malformed outputs and cleanup", () => {
         },
         { seed: 42 },
       ),
-    ).toThrow("failure origin is null");
+    ).toThrow("memory range");
   });
 });

@@ -29,16 +29,14 @@ export class WasmMemory {
     return value === 1;
   }
 
-  cString(ptr: number): string | null {
-    if (ptr === 0) return null;
-    this.bytes(ptr, 1);
-    const bytes = new Uint8Array(this.memory.buffer);
-    const end = bytes.indexOf(0, ptr);
-    if (end === -1) throw new EngineError("Unterminated Wasm C string");
+  /** Decode the `hegel_string_t` (`{data, len}`) stored at `ptr`. */
+  string(ptr: number): string {
+    const view = this.view(ptr, 8);
+    const bytes = this.bytes(view.getUint32(0, true), view.getUint32(4, true));
     try {
-      return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(ptr, end));
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     } catch (cause) {
-      throw new EngineError("Invalid UTF-8 in Wasm C string", { cause });
+      throw new EngineError("Invalid UTF-8 in Wasm string", { cause });
     }
   }
 }
@@ -75,21 +73,31 @@ export class WasmArena extends WasmMemory {
     return ptr;
   }
 
-  utf8CString(value: string | null): number {
-    if (value === null) return 0;
-    if (value.includes("\0")) throw new EngineError("C string must not contain NUL");
-    const bytes = new TextEncoder().encode(value);
-    const ptr = this.alloc(bytes.length + 1);
-    this.bytes(ptr, bytes.length).set(bytes);
+  private writeString(ptr: number, value: Uint8Array | null): void {
+    const data = this.input(value);
+    const view = this.view(ptr, 8);
+    view.setUint32(0, data, true);
+    view.setUint32(4, value?.length ?? 0, true);
+  }
+
+  /** A `hegel_string_t` viewing `value`: `null` is the `{NULL, 0}` empty string. */
+  bytesValue(value: Uint8Array | null): number {
+    const ptr = this.alloc(8, 4);
+    this.writeString(ptr, value);
     return ptr;
   }
 
+  /** A `hegel_string_t` of `value`'s UTF-8, or NULL for `null`. */
+  text(value: string | null): number {
+    return value === null ? 0 : this.bytesValue(new TextEncoder().encode(value));
+  }
+
+  /** An array of `hegel_string_t`, or NULL for `null`. */
   stringList(values: readonly string[] | null): number {
     if (values === null) return 0;
-    const ptr = this.alloc(Math.max(4, values.length * 4), 4);
+    const ptr = this.alloc(Math.max(8, values.length * 8), 4);
     values.forEach((value, index) => {
-      const string = this.utf8CString(value);
-      this.view(ptr + index * 4, 4).setUint32(0, string, true);
+      this.writeString(ptr + index * 8, new TextEncoder().encode(value));
     });
     return ptr;
   }

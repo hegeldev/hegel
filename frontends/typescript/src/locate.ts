@@ -7,8 +7,8 @@
  * don't match the host, so exactly one is installed. Resolution is:
  *
  * 1. `$HEGEL_LIBHEGEL_PATH`, if set — used directly (a local build / override).
- *    This is also how the repo's own test runs point at the pinned engine
- *    downloaded by `just fetch-libhegel`.
+ *    This is also how the repo's own test runs point at the in-tree engine
+ *    build.
  * 2. The installed platform package's `./binary` export.
  *
  * Resolution is synchronous: the library must be available before the

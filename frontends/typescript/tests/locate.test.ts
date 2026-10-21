@@ -43,12 +43,16 @@ describe("platform matrix consistency", () => {
     const pkg = JSON.parse(
       fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"),
     ) as {
-      optionalDependencies: Record<string, string>;
+      optionalDependencies?: Record<string, string>;
     };
-    // every scripts-side target passes locate.ts validation and is pinned as
-    // an optionalDependency; no pins exist beyond the scripts-side targets.
+    // every scripts-side target passes locate.ts validation; the pins are
+    // injected at publish time (scripts/make-platform-packages.mjs --pin),
+    // never committed.
     const names = PLATFORMS.map((p) => libhegelPackageName(p.platform, p.arch));
-    expect(names.toSorted()).toEqual(Object.keys(pkg.optionalDependencies).toSorted());
+    expect(names.toSorted()).toEqual(
+      PLATFORMS.map((p) => `@hegeldev/hegel-${p.platform}-${p.arch}`).toSorted(),
+    );
+    expect(pkg.optionalDependencies).toBeUndefined();
   });
 });
 

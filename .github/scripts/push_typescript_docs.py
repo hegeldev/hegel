@@ -1,3 +1,11 @@
+"""Publish the TypeScript frontend's API reference to hegel.dev/typescript.
+
+Run by the `release-typescript-docs` job of ci.yml with the frontend built
+(`just typescript::check-docs` has filled frontends/typescript/docs/) and the
+hegeldev/website repository checked out at `website/`.
+"""
+
+import json
 import os
 import shutil
 import subprocess
@@ -5,8 +13,9 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
+FRONTEND = ROOT / "frontends" / "typescript"
 WEBSITE = ROOT / "website"
-DOCS_SRC = ROOT / "docs"
+DOCS_SRC = FRONTEND / "docs"
 DOCS_DEST = WEBSITE / "public" / "typescript"
 # The docs are served at hegel.dev/typescript. Vercel's `trailingSlash: false`
 # strips the trailing slash from the root page, so the browser resolves
@@ -32,7 +41,7 @@ def inject_base_href(root: Path, href: str) -> None:
 
 
 def main() -> None:
-    version = os.environ["VERSION"]
+    version = json.loads((FRONTEND / "package.json").read_text())["version"]
     app_id = os.environ["HEGEL_RELEASE_APP_ID"]
     app_slug = os.environ["HEGEL_RELEASE_APP_SLUG"]
 
@@ -53,12 +62,12 @@ def main() -> None:
         print("No doc changes to publish.")
         return
 
-    git("commit", "-m", f"Update hegel-typescript docs to v{version}")
+    git("commit", "-m", f"Update the TypeScript docs to v{version}")
 
     # Sibling hegel language releases can push to website main at the same
     # time. On a rejected push, rebase onto the new main and retry — each
     # language's docs live at a distinct path, so the rebase is clean. (Two
-    # overlapping releases of *this* repo would conflict; the rebase then
+    # overlapping releases of this frontend would conflict; the rebase then
     # fails the job loudly and rerunning the newer job recovers.)
     for attempt in range(PUSH_ATTEMPTS):
         result = subprocess.run(["git", "push", "origin", "HEAD:main"], cwd=WEBSITE)
@@ -69,7 +78,6 @@ def main() -> None:
                 f"Push to website main failed after {PUSH_ATTEMPTS} attempts."
             )
         print("Push rejected; rebasing onto origin/main and retrying.")
-        # Optional pacing between contending pushers; not needed for correctness.
         time.sleep(2)
         git("fetch", "origin", "main")
         git("rebase", "origin/main")

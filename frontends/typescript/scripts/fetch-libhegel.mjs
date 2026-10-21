@@ -1,26 +1,13 @@
-// Downloads prebuilt libhegel artifacts into `native/`. Run directly it
-// fetches the host platform's shared library and the Wasm module for local
-// test runs (`just fetch-libhegel`); `scripts/make-platform-packages.mjs`
-// imports the helpers here to fetch every platform's library when assembling
-// the per-platform npm packages, and `npm run build` uses `--wasm` to place
-// the Wasm module in `dist/browser/`.
-//
-// The release to download is pinned by LIBHEGEL_VERSION in
-// src/libhegel-version.ts (run `just update-libhegel` to bump it); its assets
-// hang off the `libhegel/<version>` tag of the hegeldev/hegel monorepo
-// (releases before 0.47.2 live on hegeldev/hegel-rust under
-// `libhegel-v<version>` tags, from before libhegel moved). Every asset is verified
-// against the `<asset>.sha256` sidecar the release publishes next to it.
-// Artifacts land in a per-version directory (native/<version>/), so a pin bump
-// simply misses the cache and downloads fresh — no invalidation logic needed.
+// Downloads the prebuilt libhegel shared libraries of a libhegel release into
+// `native/<version>/`, each verified against the `<asset>.sha256` sidecar the
+// release publishes next to it. The release pipeline uses this through
+// `scripts/make-platform-packages.mjs` to assemble the per-platform npm
+// packages for the libhegel version in `libhegel/Cargo.toml`, whose binaries
+// hang off the monorepo's `libhegel/<version>` tag. Development and tests use
+// the in-tree build instead (see scripts/engine.mjs).
 //
 // Usage:
-//   node scripts/fetch-libhegel.mjs              # host library + Wasm; print the library's path
-//   node scripts/fetch-libhegel.mjs --wasm       # the Wasm module; print its path
-//   node scripts/fetch-libhegel.mjs --wasm <dir> # ...and copy it into <dir>; print the copy's path
-//
-// The printed path goes to stdout (so `just fetch-libhegel` can capture it);
-// progress is logged to stderr.
+//   node scripts/fetch-libhegel.mjs   # every platform's library; print the directory
 
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
@@ -28,43 +15,20 @@ import * as fs from "node:fs";
 import { get as httpsGet } from "node:https";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ROOT, libhegelVersion } from "./engine.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const VERSION_TS = path.join(ROOT, "src", "libhegel-version.ts");
 const NATIVE_DIR = path.join(ROOT, "native");
 
-/**
- * libhegel moved from hegeldev/hegel-rust (tags `libhegel-v<version>`) into
- * the hegeldev/hegel monorepo (tags `libhegel/<version>`) with 0.47.2; older
- * releases stay where they were published.
- */
 export const RELEASE_REPO = "hegeldev/hegel";
-const LEGACY_RELEASE_REPO = "hegeldev/hegel-rust";
-const FIRST_MONOREPO_VERSION = "0.47.2";
-
-function isLegacyRelease(version) {
-  const parse = (v) => v.split(".").map((part) => Number.parseInt(part, 10));
-  const [a, b] = [parse(version), parse(FIRST_MONOREPO_VERSION)];
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const diff = (a[i] ?? 0) - (b[i] ?? 0);
-    if (diff !== 0) return diff < 0;
-  }
-  return false;
-}
-
-/** The GitHub repository that carries the libhegel release of a version. */
-export function releaseRepo(version) {
-  return isLegacyRelease(version) ? LEGACY_RELEASE_REPO : RELEASE_REPO;
-}
 
 /** The tag that carries the libhegel release of a version. */
 export function releaseTag(version) {
-  return isLegacyRelease(version) ? `libhegel-v${version}` : `libhegel/${version}`;
+  return `libhegel/${version}`;
 }
 
 /** The download URL of an asset of the libhegel release of a version. */
 export function assetUrl(asset, version) {
-  return `https://github.com/${releaseRepo(version)}/releases/download/${releaseTag(version)}/${asset}`;
+  return `https://github.com/${RELEASE_REPO}/releases/download/${releaseTag(version)}/${asset}`;
 }
 
 export const PLATFORMS = [
@@ -75,26 +39,9 @@ export const PLATFORMS = [
   { platform: "win32", arch: "arm64", asset: "libhegel-windows-arm64.dll" },
 ];
 
-/** The Wasm module the browser entry loads (see src/browser/artifact.ts). */
-export const WASM_ASSET = "libhegel-wasm32-unknown-unknown.wasm";
-
-/** Parse the pinned libhegel version out of src/libhegel-version.ts. */
-export function pinnedVersion() {
-  const text = fs.readFileSync(VERSION_TS, "utf8");
-  const match = /export const LIBHEGEL_VERSION = "([^"]+)";/.exec(text);
-  if (!match) {
-    throw new Error("could not find LIBHEGEL_VERSION in src/libhegel-version.ts");
-  }
-  return match[1];
-}
-
-/** The published asset filename for the host platform/arch. */
-export function hostAsset() {
-  const entry = PLATFORMS.find((p) => p.platform === process.platform && p.arch === process.arch);
-  if (entry === undefined) {
-    throw new Error(`unsupported host ${process.platform}/${process.arch} for libhegel`);
-  }
-  return entry.asset;
+/** The PLATFORMS entry for the host, or undefined on an unsupported host. */
+export function hostPlatform() {
+  return PLATFORMS.find((p) => p.platform === process.platform && p.arch === process.arch);
 }
 
 export function sha256(bytes) {
@@ -147,15 +94,12 @@ function download(url, dest, redirects = 5) {
  * Fetch a single asset of the given release into native/<version>/, verifying
  * it against the checksum sidecar published next to it.
  */
-export async function fetchAsset(asset, version, { offline = false } = {}) {
+export async function fetchAsset(asset, version) {
   const dest = path.join(NATIVE_DIR, version, asset);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   if (fs.existsSync(dest)) {
     process.stderr.write(`libhegel: ${asset} already present\n`);
     return dest;
-  }
-  if (offline) {
-    throw new Error(`libhegel: ${asset} is not fetched; run \`just fetch-libhegel\` first`);
   }
   const url = assetUrl(asset, version);
   const tmp = `${dest}.${process.pid}.partial`;
@@ -177,30 +121,15 @@ export async function fetchAsset(asset, version, { offline = false } = {}) {
   return dest;
 }
 
-/** Fetch the pinned release's Wasm module. */
-export function fetchWasm(version = pinnedVersion()) {
-  return fetchAsset(WASM_ASSET, version);
-}
-
 async function main(args) {
-  const version = pinnedVersion();
-  if (args[0] === "--wasm" && args.length <= 2) {
-    let dest = await fetchWasm(version);
-    if (args[1] !== undefined) {
-      fs.mkdirSync(args[1], { recursive: true });
-      const copy = path.join(args[1], WASM_ASSET);
-      fs.copyFileSync(dest, copy);
-      dest = copy;
-    }
-    process.stdout.write(`${dest}\n`);
-    return;
-  }
   if (args.length > 0) {
-    throw new Error("usage: fetch-libhegel.mjs [--wasm [<dir>]]");
+    throw new Error("usage: fetch-libhegel.mjs");
   }
-  const host = await fetchAsset(hostAsset(), version);
-  await fetchWasm(version);
-  process.stdout.write(`${host}\n`);
+  const version = libhegelVersion();
+  for (const { asset } of PLATFORMS) {
+    await fetchAsset(asset, version);
+  }
+  process.stdout.write(`${path.join(NATIVE_DIR, version)}\n`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

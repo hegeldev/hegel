@@ -6,7 +6,7 @@ import { EngineError } from "../engine.js";
 export const signatures = {
   context_new: "",
   context_free: "I",
-  context_last_error: "I",
+  context_last_error: "II",
   settings_new: "II",
   settings_free: "II",
   settings_set_test_cases: "IIL",
@@ -30,14 +30,14 @@ export const signatures = {
   generate_float: "IIIDDIIIIDI",
   generate_bytes: "IILLI",
   generate_bytes_result_free: "II",
-  string_generator_text: "ILLIIIIIIIIIIII",
-  string_generator_regex: "IIIIII",
+  string_generator_text: "ILLIIIIIIIIII",
+  string_generator_regex: "IIIII",
   string_generator_email: "II",
   string_generator_url: "II",
   string_generator_domain: "ILI",
   string_generator_free: "II",
   generate_string: "IIII",
-  generate_string_result_free: "II",
+  owned_string_free: "II",
   generate_date: "IIIII",
   generate_time: "IIIII",
   generate_datetime: "IIIII",
@@ -72,6 +72,9 @@ export const signatures = {
 } as const;
 
 export type Operation = keyof typeof signatures;
+
+/** Operations whose Wasm export returns nothing (struct results go through an sret pointer). */
+export const voidOperations: ReadonlySet<Operation> = new Set<Operation>(["context_last_error"]);
 export type Argument = number | bigint;
 export type RawFunction = (...args: Argument[]) => number;
 
@@ -127,12 +130,24 @@ export class WasmAbi implements Allocator {
     ) as Record<Operation, RawFunction>;
   }
 
-  private invoke(fn: RawFunction, args: Argument[]): number {
+  private invoke(fn: RawFunction, args: Argument[]): unknown {
     try {
       return fn(...args);
     } catch (cause) {
       throw new EngineError("Wasm engine call trapped", { cause });
     }
+  }
+
+  private i32(result: unknown, message: string): number {
+    if (
+      typeof result !== "number" ||
+      !Number.isInteger(result) ||
+      result < -0x80000000 ||
+      result > 0x7fffffff
+    ) {
+      throw new EngineError(message);
+    }
+    return result;
   }
 
   call(op: Operation, ...args: Argument[]): number {
@@ -151,18 +166,16 @@ export class WasmAbi implements Allocator {
       if (!valid) throw new EngineError(`Invalid ${type} argument ${i} for ${op}`);
     });
     const result = this.invoke(this.functions[op], args);
-    if (!Number.isInteger(result) || result < -0x80000000 || result > 0x7fffffff) {
-      throw new EngineError(`Invalid i32 result from ${op}`);
+    if (voidOperations.has(op)) {
+      if (result !== undefined) throw new EngineError(`Unexpected result from ${op}`);
+      return 0;
     }
-    return result;
+    return this.i32(result, `Invalid i32 result from ${op}`);
   }
 
   alloc(size: number, align: number): number {
     const result = this.invoke(this.allocate, [size, align]);
-    if (!Number.isInteger(result) || result < -0x80000000 || result > 0x7fffffff) {
-      throw new EngineError("Invalid Wasm allocation pointer");
-    }
-    return result >>> 0;
+    return this.i32(result, "Invalid Wasm allocation pointer") >>> 0;
   }
 
   dealloc(ptr: number, size: number, align: number): void {

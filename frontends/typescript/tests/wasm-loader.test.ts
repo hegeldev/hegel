@@ -134,6 +134,13 @@ describe("WasmAbi", () => {
     expect(() =>
       new WasmAbi({ ...exports, hegel_context_new: () => NaN }).call("context_new"),
     ).toThrow("i32 result");
+    expect(() =>
+      new WasmAbi({ ...exports, hegel_context_last_error: (_out: number, _ctx: number) => 0 }).call(
+        "context_last_error",
+        0,
+        0,
+      ),
+    ).toThrow("Unexpected result");
     const badAlloc = (_size: number, _align: number) => NaN;
     expect(() => new WasmAbi({ ...exports, hegel_alloc: badAlloc }).alloc(4, 4)).toThrow(
       "allocation pointer",

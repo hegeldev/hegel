@@ -171,11 +171,7 @@ export interface Engine {
   runResult(ctx: ContextHandle, run: RunHandle): RunResultHandle;
   freeRunResult(r: RunResultHandle): void;
   freeRun(run: RunHandle): void;
-  testCaseFromBlob(
-    ctx: ContextHandle,
-    settings: SettingsHandle,
-    blob: string | null,
-  ): TestCaseHandle;
+  testCaseFromBlob(ctx: ContextHandle, settings: SettingsHandle, blob: string): TestCaseHandle;
   freeTestCase(tc: TestCaseHandle): void;
   generateBoolean(ctx: ContextHandle, tc: TestCaseHandle, p: number): boolean;
   generateInteger(ctx: ContextHandle, tc: TestCaseHandle, min: bigint, max: bigint): bigint;

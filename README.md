@@ -13,7 +13,8 @@ Specifically, right now it contains:
 | libhegel | [`libhegel/`](libhegel/) | The engine, with a C ABI. Published as prebuilt libraries on [GitHub releases](https://github.com/hegeldev/hegel/releases) and as the `hegeltest-c` crate. |
 | Hegel for Rust | [`frontends/rust/`](frontends/rust/) | The [`hegeltest`](https://docs.rs/hegeltest) crate. |
 | Hegel for Python | [`frontends/python/`](frontends/python/) | The [`hegeltest`](https://pypi.org/project/hegeltest/) package, imported as `hegel`. |
+| Hegel for TypeScript | [`frontends/typescript/`](frontends/typescript/) | The [`@hegeldev/hegel`](https://www.npmjs.com/package/@hegeldev/hegel) package, for Node, Bun, Deno and browsers. |
 
-Each component is versioned and released independently; releases are tagged `<path>/<version>`, for example `libhegel/0.47.1`, `frontends/rust/0.50.1` or `frontends/python/0.1.0`.
+Each component is versioned and released independently; releases are tagged `<path>/<version>`, for example `libhegel/0.47.1`, `frontends/rust/0.50.1`, `frontends/python/0.1.0` or `frontends/typescript/0.4.10`.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.

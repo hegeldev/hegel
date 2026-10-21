@@ -11,27 +11,34 @@ afterEach(() => {
 });
 
 describe("WasmArena and WasmMemory", () => {
-  it("marshals C strings and present empty/NUL-containing buffers separately", () => {
+  it("marshals hegel_string_t values, lists and present empty/NUL-containing buffers", () => {
     const { abi } = wasmFixture();
     WasmArena.scoped(abi, (a) => {
-      for (const value of [null, "", "hello", "héllo 🙂"])
-        expect(a.cString(a.utf8CString(value))).toBe(value);
-      expect(() => a.utf8CString("a\0b")).toThrow("NUL");
+      expect(a.text(null)).toBe(0);
+      for (const value of ["", "hello", "héllo 🙂", "a\0b"]) {
+        const ptr = a.text(value);
+        expect(a.pointer(ptr)).not.toBe(0);
+        expect(a.string(ptr)).toBe(value);
+      }
       expect(a.input(null)).toBe(0);
       expect(a.input(new Uint8Array())).not.toBe(0);
       const ptr = a.input(new Uint8Array([0, 1, 0]));
       expect(a.bytes(ptr, 3)).toEqual(new Uint8Array([0, 1, 0]));
+      const empty = a.bytesValue(null);
+      expect([a.pointer(empty), a.pointer(empty + 4)]).toEqual([0, 0]);
+      expect(a.string(empty)).toBe("");
+      const present = a.bytesValue(new Uint8Array([0, 1, 0]));
+      expect(a.pointer(present)).not.toBe(0);
+      expect(a.bytes(a.pointer(present), a.pointer(present + 4))).toEqual(
+        new Uint8Array([0, 1, 0]),
+      );
       expect(a.stringList(null)).toBe(0);
       expect(a.stringList([])).not.toBe(0);
       const list = a.stringList(["", "Ll", "🙂"]);
-      expect([0, 4, 8].map((offset) => a.cString(a.pointer(list + offset)))).toEqual([
-        "",
-        "Ll",
-        "🙂",
-      ]);
+      expect([0, 8, 16].map((offset) => a.string(list + offset))).toEqual(["", "Ll", "🙂"]);
     });
   });
-  it("checks memory bounds, boolean layout and C string termination/UTF-8", () => {
+  it("checks memory bounds, boolean layout and string ranges/UTF-8", () => {
     const memory = new WebAssembly.Memory({ initial: 1 }),
       a = new WasmMemory(memory);
     for (const [ptr, length] of [
@@ -53,10 +60,15 @@ describe("WasmArena and WasmMemory", () => {
     a.bytes(4, 1)[0] = 1;
     expect(a.boolean(4)).toBe(true);
     a.bytes(4, 2).set([255, 0]);
-    expect(() => a.cString(4)).toThrow("UTF-8");
-    a.bytes(65535, 1)[0] = 1;
-    expect(() => a.cString(65535)).toThrow("Unterminated");
-    expect(() => a.cString(65536)).toThrow("range");
+    a.view(8, 8).setUint32(0, 4, true);
+    a.view(8, 8).setUint32(4, 2, true);
+    expect(() => a.string(8)).toThrow("UTF-8");
+    a.view(8, 8).setUint32(0, 65535, true);
+    expect(() => a.string(8)).toThrow("range");
+    a.view(8, 8).setUint32(0, 0, true);
+    a.view(8, 8).setUint32(4, 1, true);
+    expect(() => a.string(8)).toThrow("range");
+    expect(() => a.string(65532)).toThrow("range");
   });
   it("rejects invalid allocations and cleans every registered layout after a failure", () => {
     const { abi } = wasmFixture();

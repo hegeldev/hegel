@@ -1,6 +1,6 @@
 /**
- * Thin, typed binding to the native `libhegel` C ABI (see
- * `hegel-rust/hegel-c/include/hegel.h`, version 0.45.4) via {@link koffi}.
+ * Thin, typed binding to the native `libhegel` C ABI (declared in
+ * `libhegel/include/hegel.h` of this repository) via {@link koffi}.
  *
  * The {@link Libhegel} class owns the loaded library's function pointers and
  * exposes ergonomic wrappers. Every fallible call takes a `hegel_context_t*`
@@ -86,8 +86,10 @@ export class LibhegelError extends EngineError {
 }
 
 /**
- * A `hegel_generate_bytes_result_t` / `hegel_generate_string_result_t` as
- * koffi decodes it: an engine-owned buffer pointer plus its byte length.
+ * A `hegel_string_t` (so also a `hegel_owned_string_t`) or a
+ * `hegel_generate_bytes_result_t` as koffi marshals it: a buffer pointer plus
+ * its byte length. Read back from the engine it is engine-owned; passed in it
+ * views a JS `Buffer`.
  */
 export interface NativeBuffer {
   data: Ptr;
@@ -109,10 +111,11 @@ const timeType: TypeObject = koffi.struct({
   nanosecond: "uint32_t",
 });
 const datetimeType: TypeObject = koffi.struct({ date: dateType, time: timeType });
-// Both *_result_t structs are {pointer, len}. `data` is bound as uint8_t*
-// rather than char* so koffi hands back the raw pointer (the buffers are not
-// NUL-terminated and may contain interior NULs).
-const bufferResultType: TypeObject = koffi.struct({ data: "uint8_t*", len: "size_t" });
+// hegel_string_t, hegel_owned_string_t and hegel_generate_bytes_result_t are
+// all {pointer, len}. `data` is bound as uint8_t* rather than char* so koffi
+// hands back the raw pointer: the strings may contain interior NULs, so they
+// are read by `len`.
+const stringType: TypeObject = koffi.struct({ data: "uint8_t*", len: "size_t" });
 
 /**
  * The set of C functions bound from the shared library.
@@ -127,11 +130,17 @@ const bufferResultType: TypeObject = koffi.struct({ data: "uint8_t*", len: "size
  * unknown profile or a `hegel.toml` is malformed. The output callback taken by
  * `hegel_run_start` / `hegel_test_case_from_blob` is likewise absorbed as NULL
  * (engine output stays on stderr).
+ *
+ * String arguments are marshalled to `hegel_string_t` views of their UTF-8
+ * bytes (length-delimited, so they may contain NUL), `null` to a NULL
+ * pointer where the ABI takes an optional string; borrowed string results
+ * are decoded to JS strings here, so only the owned `hegel_generate_string`
+ * result reaches {@link Libhegel} as a raw buffer.
  */
 export interface Bindings {
   contextNew: () => Ptr;
   contextFree: (ctx: Ptr) => void;
-  contextLastError: (ctx: Ptr) => string | null;
+  contextLastError: (ctx: Ptr) => string;
 
   settingsNew: (ctx: Ptr, out: Ptr[]) => number;
   settingsFree: (s: Ptr) => void;
@@ -150,7 +159,7 @@ export interface Bindings {
   runResultFree: (r: Ptr) => void;
   runFree: (run: Ptr) => void;
 
-  testCaseFromBlob: (ctx: Ptr, s: Ptr, blob: string | null, out: Ptr[]) => number;
+  testCaseFromBlob: (ctx: Ptr, s: Ptr, blob: string, out: Ptr[]) => number;
   testCaseFree: (tc: Ptr) => void;
 
   /**
@@ -180,17 +189,15 @@ export interface Bindings {
   stringGeneratorFree: (generator: Ptr) => void;
   stringGeneratorText: (ctx: Ptr, opts: TextGeneratorOptions, out: Ptr[]) => number;
   /**
-   * `pattern` is marshalled to the ABI's length-delimited UTF-8 buffer
-   * (`pattern_len` derived from the encoded bytes), and the optional `alphabet`
-   * generator is absorbed as NULL (this client never constrains the regex
-   * alphabet).
+   * The optional `alphabet` generator is absorbed as NULL (this client never
+   * constrains the regex alphabet).
    */
   stringGeneratorRegex: (ctx: Ptr, pattern: string, fullmatch: boolean, out: Ptr[]) => number;
   stringGeneratorEmail: (ctx: Ptr, out: Ptr[]) => number;
   stringGeneratorUrl: (ctx: Ptr, out: Ptr[]) => number;
   stringGeneratorDomain: (ctx: Ptr, maxLength: number, out: Ptr[]) => number;
   generateString: (ctx: Ptr, tc: Ptr, generator: Ptr, out: NativeBuffer[]) => number;
-  generateStringResultFree: (result: NativeBuffer) => void;
+  ownedStringFree: (result: NativeBuffer) => void;
 
   generateDate: (ctx: Ptr, tc: Ptr, min: NativeDate, max: NativeDate, out: NativeDate[]) => number;
   generateTime: (ctx: Ptr, tc: Ptr, min: NativeTime, max: NativeTime, out: NativeTime[]) => number;
@@ -264,7 +271,7 @@ export interface Bindings {
   runResultFailureCount: (r: Ptr) => number;
   runResultFailure: (r: Ptr, index: number) => Ptr;
   failureFree: (f: Ptr) => void;
-  failureOrigin: (f: Ptr) => string | null;
+  failureOrigin: (f: Ptr) => string;
   failureReproductionBlob: (f: Ptr) => string | null;
 
   version: () => string;
@@ -294,7 +301,7 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
 
   const contextNew = f("void* hegel_context_new()");
   const contextFree = f("int hegel_context_free(void* ctx)");
-  const contextLastError = f("const char* hegel_context_last_error(void* ctx)");
+  const contextLastError = lib.func("hegel_context_last_error", stringType, ["void*"]);
 
   const settingsNew = f("int hegel_settings_new(void* ctx, _Out_ void** out)");
   const settingsFree = f("int hegel_settings_free(void* ctx, void* s)");
@@ -304,10 +311,16 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     "int hegel_settings_set_seed(void* ctx, void* s, uint64_t seed, bool has_seed)",
   );
   const settingsDerandomize = f("int hegel_settings_set_derandomize(void* ctx, void* s, bool d)");
-  const settingsDatabase = f("int hegel_settings_set_database(void* ctx, void* s, const char* db)");
-  const settingsDatabaseKey = f(
-    "int hegel_settings_set_database_key(void* ctx, void* s, const char* key)",
-  );
+  const settingsDatabase = fs("hegel_settings_set_database", [
+    "void*",
+    "void*",
+    koffi.pointer(stringType),
+  ]);
+  const settingsDatabaseKey = fs("hegel_settings_set_database_key", [
+    "void*",
+    "void*",
+    koffi.pointer(stringType),
+  ]);
   const settingsSuppressHealthCheck = f(
     "int hegel_settings_set_suppress_health_check(void* ctx, void* s, uint32_t checks)",
   );
@@ -323,9 +336,14 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   const runResultFree = f("int hegel_run_result_free(void* ctx, void* r)");
   const runFree = f("int hegel_run_free(void* ctx, void* run)");
 
-  const testCaseFromBlob = f(
-    "int hegel_test_case_from_blob(void* ctx, void* s, const char* blob, void* callback, void* user_data, _Out_ void** out_tc)",
-  );
+  const testCaseFromBlob = fs("hegel_test_case_from_blob", [
+    "void*",
+    "void*",
+    stringType,
+    "void*",
+    "void*",
+    koffi.out(koffi.pointer("void*")),
+  ]);
   const testCaseFree = f("int hegel_test_case_free(void* ctx, void* tc)");
 
   const generateBoolean = f(
@@ -345,20 +363,36 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     "void*",
     "uint64_t",
     "uint64_t",
-    koffi.out(koffi.pointer(bufferResultType)),
+    koffi.out(koffi.pointer(stringType)),
   ]);
-  const generateBytesResultFree = lib.func("hegel_generate_bytes_result_free", "int", [
+  const generateBytesResultFree = fs("hegel_generate_bytes_result_free", [
     "void*",
-    koffi.pointer(bufferResultType),
+    koffi.pointer(stringType),
   ]);
 
   const stringGeneratorFree = f("int hegel_string_generator_free(void* ctx, void* generator)");
-  const stringGeneratorText = f(
-    "int hegel_string_generator_text(void* ctx, uint64_t min_size, uint64_t max_size, const char* codec, uint32_t min_codepoint, uint32_t max_codepoint, const char** categories, size_t categories_len, const char** exclude_categories, size_t exclude_categories_len, const uint8_t* include_characters, size_t include_characters_len, const uint8_t* exclude_characters, size_t exclude_characters_len, _Out_ void** out)",
-  );
-  const stringGeneratorRegex = f(
-    "int hegel_string_generator_regex(void* ctx, const uint8_t* pattern, size_t pattern_len, bool fullmatch, void* alphabet, _Out_ void** out)",
-  );
+  const stringGeneratorText = fs("hegel_string_generator_text", [
+    "void*",
+    "uint64_t",
+    "uint64_t",
+    koffi.pointer(stringType),
+    "uint32_t",
+    "uint32_t",
+    koffi.pointer(stringType),
+    "size_t",
+    koffi.pointer(stringType),
+    "size_t",
+    stringType,
+    stringType,
+    koffi.out(koffi.pointer("void*")),
+  ]);
+  const stringGeneratorRegex = fs("hegel_string_generator_regex", [
+    "void*",
+    stringType,
+    "bool",
+    "void*",
+    koffi.out(koffi.pointer("void*")),
+  ]);
   const stringGeneratorEmail = f("int hegel_string_generator_email(void* ctx, _Out_ void** out)");
   const stringGeneratorUrl = f("int hegel_string_generator_url(void* ctx, _Out_ void** out)");
   const stringGeneratorDomain = f(
@@ -368,12 +402,9 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     "void*",
     "void*",
     "void*",
-    koffi.out(koffi.pointer(bufferResultType)),
+    koffi.out(koffi.pointer(stringType)),
   ]);
-  const generateStringResultFree = lib.func("hegel_generate_string_result_free", "int", [
-    "void*",
-    koffi.pointer(bufferResultType),
-  ]);
+  const ownedStringFree = fs("hegel_owned_string_free", ["void*", koffi.pointer(stringType)]);
 
   const generateDate = fs("hegel_generate_date", [
     "void*",
@@ -410,13 +441,19 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   const collectionMore = f(
     "int hegel_collection_more(void* ctx, void* tc, void* collection, _Out_ bool* out)",
   );
-  const collectionReject = f(
-    "int hegel_collection_reject(void* ctx, void* tc, void* collection, const char* why)",
-  );
+  const collectionReject = fs("hegel_collection_reject", [
+    "void*",
+    "void*",
+    "void*",
+    koffi.pointer(stringType),
+  ]);
   const collectionFree = f("int hegel_collection_free(void* ctx, void* collection)");
-  const markComplete = f(
-    "int hegel_mark_complete(void* ctx, void* tc, uint32_t status, const char* origin)",
-  );
+  const markComplete = fs("hegel_mark_complete", [
+    "void*",
+    "void*",
+    "uint32_t",
+    koffi.pointer(stringType),
+  ]);
 
   const newPool = f("int hegel_new_pool(void* ctx, void* tc, _Out_ void** out_pool)");
   const poolAdd = f(
@@ -427,9 +464,22 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   );
   const poolFree = f("int hegel_pool_free(void* ctx, void* pool)");
 
-  const newStateMachine = f(
-    "int hegel_new_state_machine(void* ctx, void* tc, const char** rule_names, const int64_t* rule_groups, const double* rule_weights, size_t num_rules, const char** invariant_names, const bool* invariant_always_check, size_t num_invariants, int64_t min_concurrency, int64_t max_concurrency, int64_t step_count, _Out_ void** out_state_machine, _Out_ int64_t* out_concurrency)",
-  );
+  const newStateMachine = fs("hegel_new_state_machine", [
+    "void*",
+    "void*",
+    koffi.pointer(stringType),
+    koffi.pointer("int64_t"),
+    koffi.pointer("double"),
+    "size_t",
+    koffi.pointer(stringType),
+    koffi.pointer("bool"),
+    "size_t",
+    "int64_t",
+    "int64_t",
+    "int64_t",
+    koffi.out(koffi.pointer("void*")),
+    koffi.out(koffi.pointer("int64_t")),
+  ]);
   const stateMachineNextGroup = f(
     "int hegel_state_machine_next_group(void* ctx, void* tc, void* state_machine, _Out_ int64_t* out_group_id)",
   );
@@ -445,7 +495,7 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   const stateMachineFree = f("int hegel_state_machine_free(void* ctx, void* state_machine)");
 
   const runResultStatus = f("int hegel_run_result_status(void* ctx, void* r, _Out_ int* out)");
-  const runResultError = f("int hegel_run_result_error(void* ctx, void* r, _Out_ char** out)");
+  const runResultError = f("int hegel_run_result_error(void* ctx, void* r, _Out_ void** out)");
   const runResultFailureCount = f(
     "int hegel_run_result_failure_count(void* ctx, void* r, _Out_ size_t* out)",
   );
@@ -453,27 +503,39 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     "int hegel_run_result_failure(void* ctx, void* r, size_t index, _Out_ void** out)",
   );
   const failureFree = f("int hegel_failure_free(void* ctx, void* f)");
-  const failureOrigin = f("int hegel_failure_origin(void* ctx, void* f, _Out_ char** out)");
+  const failureOrigin = fs("hegel_failure_origin", [
+    "void*",
+    "void*",
+    koffi.out(koffi.pointer(stringType)),
+  ]);
   const failureReproductionBlob = f(
-    "int hegel_failure_reproduction_blob(void* ctx, void* f, _Out_ char** out)",
+    "int hegel_failure_reproduction_blob(void* ctx, void* f, _Out_ void** out)",
   );
-  const version = f("int hegel_version(void* ctx, _Out_ char** out)");
+  const version = fs("hegel_version", ["void*", koffi.out(koffi.pointer(stringType))]);
+
+  const readString = (result: NativeBuffer): string => wtf8ToString(copyNativeBuffer(result));
+  const readOptionalString = (pointer: Ptr): string | null =>
+    pointer === null ? null : readString(koffi.decode(pointer, stringType) as NativeBuffer);
+  const nativeString = (value: string): NativeBuffer => {
+    const data = Buffer.from(value, "utf8");
+    return { data, len: data.length };
+  };
+  const optionalString = (value: string | null): NativeBuffer | null =>
+    value === null ? null : nativeString(value);
+  const nativeBytes = (value: Uint8Array | null): NativeBuffer =>
+    value === null ? { data: null, len: 0 } : { data: value, len: value.length };
 
   const checked = (code: number, op: string, ctx: Ptr = null): void => {
     if (code !== RESULT_OK) {
-      const message = ctx === null ? "" : (contextLastError(ctx) ?? "");
+      const message = ctx === null ? "" : readString(contextLastError(ctx));
       throw new LibhegelError(`${op} failed${message ? `: ${message}` : ""}`, code);
     }
-  };
-  const cString = (value: string | null): string | null => {
-    if (value?.includes("\0")) throw new EngineError("C string must not contain NUL");
-    return value;
   };
 
   return {
     contextNew: () => contextNew(),
     contextFree: (ctx) => checked(contextFree(ctx), "hegel_context_free"),
-    contextLastError: (ctx) => contextLastError(ctx),
+    contextLastError: (ctx) => readString(contextLastError(ctx)),
     settingsNew: (ctx, out) => settingsNew(ctx, out),
     settingsFree: (s) => checked(settingsFree(null, s), "hegel_settings_free"),
     settingsTestCases: (s, n) => checked(settingsTestCases(null, s, n), "settingsTestCases"),
@@ -483,9 +545,9 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     settingsDerandomize: (s, on) =>
       checked(settingsDerandomize(null, s, on), "settingsDerandomize"),
     settingsDatabase: (ctx, s, db) =>
-      checked(settingsDatabase(ctx, s, cString(db)), "settingsDatabase", ctx),
+      checked(settingsDatabase(ctx, s, optionalString(db)), "settingsDatabase", ctx),
     settingsDatabaseKey: (ctx, s, key) =>
-      checked(settingsDatabaseKey(ctx, s, cString(key)), "settingsDatabaseKey", ctx),
+      checked(settingsDatabaseKey(ctx, s, optionalString(key)), "settingsDatabaseKey", ctx),
     settingsSuppressHealthCheck: (s, checks) =>
       checked(settingsSuppressHealthCheck(null, s, checks), "settingsSuppressHealthCheck"),
     settingsReportMultipleFailures: (s, yes) =>
@@ -496,7 +558,7 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     runResultFree: (r) => checked(runResultFree(null, r), "runResultFree"),
     runFree: (run) => checked(runFree(null, run), "runFree"),
     testCaseFromBlob: (ctx, s, blob, out) =>
-      testCaseFromBlob(ctx, s, cString(blob), null, null, out),
+      testCaseFromBlob(ctx, s, nativeString(blob), null, null, out),
     testCaseFree: (tc) => checked(testCaseFree(null, tc), "testCaseFree"),
     generateBoolean: (ctx, tc, p, out) => generateBoolean(ctx, tc, p, false, false, out),
     generateInteger: (ctx, tc, min, max, out) => generateInteger(ctx, tc, min, max, out),
@@ -536,32 +598,24 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
         ctx,
         opts.minSize,
         opts.maxSize,
-        cString(opts.codec),
+        optionalString(opts.codec),
         opts.minCodepoint,
         opts.maxCodepoint,
-        opts.categories?.map((category) => cString(category)) ?? null,
+        opts.categories?.map(nativeString) ?? null,
         opts.categories === null ? 0 : opts.categories.length,
-        opts.excludeCategories?.map((category) => cString(category)) ?? null,
+        opts.excludeCategories?.map(nativeString) ?? null,
         opts.excludeCategories === null ? 0 : opts.excludeCategories.length,
-        opts.includeCharacters,
-        opts.includeCharacters === null ? 0 : opts.includeCharacters.length,
-        opts.excludeCharacters,
-        opts.excludeCharacters === null ? 0 : opts.excludeCharacters.length,
+        nativeBytes(opts.includeCharacters),
+        nativeBytes(opts.excludeCharacters),
         out,
       ),
-    stringGeneratorRegex: (ctx, pattern, fullmatch, out) => {
-      // The ABI takes the pattern as a length-delimited UTF-8 buffer, so it may
-      // contain NUL (`re` accepts it); encode rather than route through the
-      // NUL-rejecting cString, and derive pattern_len from the encoded bytes.
-      const bytes = Buffer.from(pattern, "utf8");
-      return stringGeneratorRegex(ctx, bytes, bytes.length, fullmatch, null, out);
-    },
+    stringGeneratorRegex: (ctx, pattern, fullmatch, out) =>
+      stringGeneratorRegex(ctx, nativeString(pattern), fullmatch, null, out),
     stringGeneratorEmail: (ctx, out) => stringGeneratorEmail(ctx, out),
     stringGeneratorUrl: (ctx, out) => stringGeneratorUrl(ctx, out),
     stringGeneratorDomain: (ctx, maxLength, out) => stringGeneratorDomain(ctx, maxLength, out),
     generateString: (ctx, tc, generator, out) => generateString(ctx, tc, generator, out),
-    generateStringResultFree: (result) =>
-      checked(generateStringResultFree(null, result), "generateStringResultFree"),
+    ownedStringFree: (result) => checked(ownedStringFree(null, result), "ownedStringFree"),
     generateDate: (ctx, tc, min, max, out) => generateDate(ctx, tc, min, max, out),
     generateTime: (ctx, tc, min, max, out) => generateTime(ctx, tc, min, max, out),
     generateDatetime: (ctx, tc, min, max, out) => generateDatetime(ctx, tc, min, max, out),
@@ -574,9 +628,10 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     newCollection: (ctx, tc, min, max, out) => newCollection(ctx, tc, min, max, out),
     collectionMore: (ctx, tc, collection, out) => collectionMore(ctx, tc, collection, out),
     collectionReject: (ctx, tc, collection, why) =>
-      collectionReject(ctx, tc, collection, cString(why)),
+      collectionReject(ctx, tc, collection, optionalString(why)),
     collectionFree: (collection) => checked(collectionFree(null, collection), "collectionFree"),
-    markComplete: (ctx, tc, status, origin) => markComplete(ctx, tc, status, cString(origin)),
+    markComplete: (ctx, tc, status, origin) =>
+      markComplete(ctx, tc, status, optionalString(origin)),
     newPool: (ctx, tc, out) => newPool(ctx, tc, out),
     poolAdd: (ctx, tc, pool, out) => poolAdd(ctx, tc, pool, out),
     poolGenerate: (ctx, tc, pool, consume, out) => poolGenerate(ctx, tc, pool, consume, out),
@@ -585,11 +640,11 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
       newStateMachine(
         ctx,
         tc,
-        opts.ruleNames.map((name) => cString(name)),
+        opts.ruleNames.map(nativeString),
         opts.ruleGroups,
         null,
         opts.ruleNames.length,
-        opts.invariantNames.map((name) => cString(name)),
+        opts.invariantNames.map(nativeString),
         opts.invariantAlwaysCheck,
         opts.invariantNames.length,
         opts.minConcurrency,
@@ -612,9 +667,9 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
       return out[0];
     },
     runResultError: (r) => {
-      const out: (string | null)[] = [null];
+      const out: Ptr[] = [null];
       checked(runResultError(null, r, out), "runResultError");
-      return out[0];
+      return readOptionalString(out[0]);
     },
     runResultFailureCount: (r) => {
       const out: (number | bigint)[] = [0];
@@ -628,26 +683,36 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     },
     failureFree: (fp) => checked(failureFree(null, fp), "failureFree"),
     failureOrigin: (fp) => {
-      const out: (string | null)[] = [null];
+      const out: NativeBuffer[] = [{ data: null, len: 0 }];
       checked(failureOrigin(null, fp, out), "failureOrigin");
-      return out[0];
+      return readString(out[0]);
     },
     failureReproductionBlob: (fp) => {
-      const out: (string | null)[] = [null];
+      const out: Ptr[] = [null];
       checked(failureReproductionBlob(null, fp, out), "failureReproductionBlob");
-      return out[0];
+      return readOptionalString(out[0]);
     },
     version: () => {
-      // `hegel_version` always writes a non-null static string (it only fails on
-      // a NULL out-pointer, which we never pass), so the seeded "" is never read.
-      const out: string[] = [""];
+      const out: NativeBuffer[] = [{ data: null, len: 0 }];
       checked(version(null, out), "version");
-      return out[0];
+      return readString(out[0]);
     },
   };
 }
 
 const UINT64_MAX = 0xffffffffffffffffn;
+
+/** Copy an engine-owned `{data, len}` buffer into a JS-owned Buffer. */
+function copyNativeBuffer(result: NativeBuffer): Buffer {
+  const len = Number(result.len);
+  if (!Number.isSafeInteger(len) || len < 0 || (len > 0 && result.data === null)) {
+    throw new EngineError("Invalid native buffer result");
+  }
+  if (len === 0) {
+    return Buffer.alloc(0);
+  }
+  return Buffer.from(koffi.decode(result.data, "uint8_t", len) as unknown as number[]);
+}
 
 /**
  * High-level wrapper over the libhegel C ABI.
@@ -687,7 +752,7 @@ export class Libhegel implements Engine {
   }
 
   lastError(ctx: Ptr): string {
-    return this.fns.contextLastError(ctx) ?? "";
+    return this.fns.contextLastError(ctx);
   }
 
   /**
@@ -779,7 +844,7 @@ export class Libhegel implements Engine {
    * {@link reproductionBlob}). Owned by the caller — release with
    * {@link freeTestCase}. Throws {@link LibhegelError} on a malformed blob.
    */
-  testCaseFromBlob(ctx: Ptr, settings: Ptr, blob: string | null): TestCaseHandle {
+  testCaseFromBlob(ctx: Ptr, settings: Ptr, blob: string): TestCaseHandle {
     const out: Ptr[] = [null];
     this.check(
       ctx,
@@ -864,7 +929,7 @@ export class Libhegel implements Engine {
       "hegel_generate_bytes",
     );
     try {
-      return this.copyNativeBuffer(out[0]);
+      return copyNativeBuffer(out[0]);
     } finally {
       this.fns.generateBytesResultFree(out[0]);
     }
@@ -918,22 +983,10 @@ export class Libhegel implements Engine {
     const out: NativeBuffer[] = [{ data: null, len: 0 }];
     this.check(ctx, this.fns.generateString(ctx, tc, generator, out), "hegel_generate_string");
     try {
-      return wtf8ToString(this.copyNativeBuffer(out[0]));
+      return wtf8ToString(copyNativeBuffer(out[0]));
     } finally {
-      this.fns.generateStringResultFree(out[0]);
+      this.fns.ownedStringFree(out[0]);
     }
-  }
-
-  /** Copy an engine-owned `{data, len}` buffer into a JS-owned Buffer. */
-  private copyNativeBuffer(result: NativeBuffer): Buffer {
-    const len = Number(result.len);
-    if (!Number.isSafeInteger(len) || len < 0 || (len > 0 && result.data === null)) {
-      throw new EngineError("Invalid native buffer result");
-    }
-    if (len === 0) {
-      return Buffer.alloc(0);
-    }
-    return Buffer.from(koffi.decode(result.data, "uint8_t", len) as unknown as number[]);
   }
 
   /** Draw a date in `[min, max]`. */
@@ -1158,7 +1211,7 @@ export class Libhegel implements Engine {
   }
 
   failureOrigin(fp: Ptr): string {
-    return this.fns.failureOrigin(fp) ?? "";
+    return this.fns.failureOrigin(fp);
   }
 
   /**

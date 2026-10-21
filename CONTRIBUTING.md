@@ -16,13 +16,14 @@ just check
 just libhegel::check
 just rust::check
 just python::check   # needs uv, and `just python::setup` once
+just typescript::check   # needs Node, and `just typescript::setup` once
 ```
 
-Of course, you can also run the underlying `cargo` commands if you prefer not to install `just`. The Python frontend needs [`uv`](https://docs.astral.sh/uv/) as well.
+Of course, you can also run the underlying `cargo` commands if you prefer not to install `just`. The Python frontend needs [`uv`](https://docs.astral.sh/uv/) as well, and the TypeScript frontend needs [Node](https://nodejs.org/) (20.11 or later) plus the `wasm32-unknown-unknown` Rust target (`rustup target add wasm32-unknown-unknown`) to build the engine for browsers.
 
 ## Release notes
 
-Every pull request that changes what a component ships needs a `RELEASE.md` in that component's directory: `libhegel/RELEASE.md` for a change under `libhegel/src/`, `frontends/rust/RELEASE.md` for one under `frontends/rust/src/` or `frontends/rust/macros/`, and `frontends/python/RELEASE.md` for one to the Python frontend's `src/`, `python/hegel/`, `Cargo.toml` or `pyproject.toml`. A pull request that touches only tests, docs or CI doesn't need one. CI checks this (`.github/scripts/release.py check`).
+Every pull request that changes what a component ships needs a `RELEASE.md` in that component's directory: `libhegel/RELEASE.md` for a change under `libhegel/src/`, `frontends/rust/RELEASE.md` for one under `frontends/rust/src/` or `frontends/rust/macros/`, `frontends/python/RELEASE.md` for one to the Python frontend's `src/`, `python/hegel/`, `Cargo.toml` or `pyproject.toml`, and `frontends/typescript/RELEASE.md` for one to the TypeScript frontend's `src/` or `package.json`. A pull request that touches only tests, docs or CI doesn't need one. CI checks this (`.github/scripts/release.py check`).
 
 The file is a `RELEASE_TYPE` line followed by the changelog entry:
 
@@ -38,4 +39,4 @@ The entry describes the public-facing change and why, with `single backticks` fo
 
 The components version independently and are tagged `<path>/<version>`. Every frontend ships the engine, so a libhegel release also republishes every frontend: when a pull request releases libhegel and makes no user-facing change to a frontend, write only `libhegel/RELEASE.md` and the frontend's changelog entry is generated as an engine bump. That is a judgment call, not an automatic one: an engine fix that changes what a frontend's users see deserves an entry in that frontend's `RELEASE.md` too.
 
-On merge, the release job bumps the component's version in its `Cargo.toml` (the Python frontend's `pyproject.toml` declares the version dynamic), moves the entry into its `CHANGELOG.md`, tags, and publishes.
+On merge, the release job bumps the component's version in its `Cargo.toml` (the Python frontend's `pyproject.toml` declares the version dynamic; the TypeScript frontend's version is in its `package.json` and lockfile), moves the entry into its `CHANGELOG.md`, tags, and publishes.
