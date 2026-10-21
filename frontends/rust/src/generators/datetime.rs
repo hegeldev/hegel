@@ -785,10 +785,11 @@ impl ZonedDateTimeGenerator {
     }
 
     /// Whether a wall time the clocks skipped may be drawn (`true` by
-    /// default). Allowed, it is reported with kind [`Kind::Gap`], both
-    /// offsets and the instant it resolves to with the pre-transition
-    /// offset; disallowed, another wall time is drawn, and a replayed or
-    /// shrunk value that lands in a gap is moved past it.
+    /// default). Allowed, it is reported with kind
+    /// [`Kind::Gap`](crate::datetime::Kind::Gap), both offsets and the
+    /// instant it resolves to with the pre-transition offset; disallowed,
+    /// another wall time is drawn, and a replayed or shrunk value that
+    /// lands in a gap is moved past it.
     pub fn allow_imaginary(mut self, allow: bool) -> Self {
         self.allow_imaginary = allow;
         self.spec = OnceLock::new();
