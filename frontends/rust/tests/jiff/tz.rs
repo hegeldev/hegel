@@ -1,5 +1,5 @@
 use crate::common::utils::{assert_all_examples, check_can_generate_examples, find_any, minimal};
-use hegel::datetime::{Ambiguous, Granularity, Imaginary, Precision, Tag, UNKNOWN_ZONE, info};
+use hegel::datetime::{Ambiguous, Granularity, Precision, Tag, UNKNOWN_ZONE, info};
 use hegel::extras::jiff as jiff_gs;
 use hegel::generators as gs;
 use jiff::civil::DateTime;
@@ -76,8 +76,8 @@ fn iana_name(zone: &TimeZone) -> &str {
 
 #[test]
 fn test_jiff_time_zones_default() {
-    check_can_generate_examples(jiff_gs::time_zones());
-    assert_all_examples(jiff_gs::time_zones(), |zone| {
+    check_can_generate_examples(jiff_gs::timezones());
+    assert_all_examples(jiff_gs::timezones(), |zone| {
         let info = info(iana_name(zone)).unwrap();
         !info.tags.contains(&Tag::Legacy) && *zone != TimeZone::unknown()
     });
@@ -85,10 +85,10 @@ fn test_jiff_time_zones_default() {
 
 #[test]
 fn test_jiff_time_zones_resolve_through_jiff() {
-    find_any(jiff_gs::time_zones(), |zone| {
+    find_any(jiff_gs::timezones(), |zone| {
         iana_name(zone) == "Asia/Calcutta"
     });
-    assert_all_examples(jiff_gs::time_zones(), |zone| {
+    assert_all_examples(jiff_gs::timezones(), |zone| {
         jiff::tz::db()
             .available()
             .any(|name| name.as_str() == iana_name(zone))
@@ -99,61 +99,61 @@ fn test_jiff_time_zones_resolve_through_jiff() {
 #[test]
 fn test_jiff_time_zones_names() {
     let names = ["Europe/London", "Asia/Calcutta"];
-    assert_all_examples(jiff_gs::time_zones().names(names), move |zone| {
+    assert_all_examples(jiff_gs::timezones().names(names), move |zone| {
         names.contains(&iana_name(zone))
     });
-    find_any(jiff_gs::time_zones().names(names), |zone| {
+    find_any(jiff_gs::timezones().names(names), |zone| {
         iana_name(zone) == "Asia/Calcutta"
     });
 }
 
 #[test]
 fn test_jiff_time_zones_names_accept_the_unknown_zone() {
-    assert_all_examples(jiff_gs::time_zones().names([UNKNOWN_ZONE]), |zone| {
+    assert_all_examples(jiff_gs::timezones().names([UNKNOWN_ZONE]), |zone| {
         *zone == TimeZone::unknown()
     });
 }
 
 #[test]
 fn test_jiff_time_zones_links() {
-    assert_all_examples(jiff_gs::time_zones().links(false), |zone| {
+    assert_all_examples(jiff_gs::timezones().links(false), |zone| {
         !info(iana_name(zone)).unwrap().is_link
     });
-    find_any(jiff_gs::time_zones(), |zone| {
+    find_any(jiff_gs::timezones(), |zone| {
         info(iana_name(zone)).unwrap().is_link
     });
 }
 
 #[test]
 fn test_jiff_time_zones_legacy() {
-    find_any(jiff_gs::time_zones().legacy(true), |zone| {
+    find_any(jiff_gs::timezones().legacy(true), |zone| {
         info(iana_name(zone)).unwrap().tags.contains(&Tag::Legacy)
     });
 }
 
 #[test]
 fn test_jiff_time_zones_unknown() {
-    find_any(jiff_gs::time_zones().unknown(true), |zone| {
+    find_any(jiff_gs::timezones().unknown(true), |zone| {
         *zone == TimeZone::unknown()
     });
 }
 
 #[test]
 fn test_jiff_time_zones_in_vec() {
-    assert_all_examples(gs::vecs(jiff_gs::time_zones()).max_size(5), |v| {
+    assert_all_examples(gs::vecs(jiff_gs::timezones()).max_size(5), |v| {
         v.iter().all(|zone| zone.iana_name().is_some())
     });
 }
 
 #[test]
 fn test_jiff_time_zones_shrink_to_utc() {
-    assert_eq!(minimal(jiff_gs::time_zones(), |_| true), TimeZone::UTC);
+    assert_eq!(minimal(jiff_gs::timezones(), |_| true), TimeZone::UTC);
 }
 
 #[hegel::test]
 #[should_panic(expected = "jiff's time zone database does not know \"Mars/Olympus_Mons\"")]
 fn test_jiff_time_zones_reject_a_name_jiff_lacks(tc: hegel::TestCase) {
-    tc.draw(jiff_gs::time_zones().names(["Europe/London", "Mars/Olympus_Mons"]));
+    tc.draw(jiff_gs::timezones().names(["Europe/London", "Mars/Olympus_Mons"]));
 }
 
 #[test]
@@ -243,11 +243,11 @@ fn test_jiff_zoned_default_generator() {
 #[test]
 fn test_jiff_zoneds_time_zones() {
     assert_all_examples(
-        jiff_gs::zoneds().time_zones(jiff_gs::time_zones().names(["Europe/London"])),
+        jiff_gs::zoneds().timezones(jiff_gs::timezones().names(["Europe/London"])),
         |z| iana_name(z.time_zone()) == "Europe/London" && resolved_as_jiff_would(z),
     );
     assert_all_examples(
-        jiff_gs::zoneds().time_zones(jiff_gs::time_zones().names([UNKNOWN_ZONE])),
+        jiff_gs::zoneds().timezones(jiff_gs::timezones().names([UNKNOWN_ZONE])),
         |z| *z.time_zone() == TimeZone::unknown() && z.offset() == Offset::UTC,
     );
 }
@@ -336,30 +336,26 @@ fn test_jiff_zoneds_precision() {
 
 #[test]
 fn test_jiff_zoneds_imaginary() {
-    let london = || jiff_gs::time_zones().names(["Europe/London"]);
+    let london = || jiff_gs::timezones().names(["Europe/London"]);
     assert_all_examples(
-        jiff_gs::zoneds()
-            .time_zones(london())
-            .imaginary(Imaginary::Allow),
+        jiff_gs::zoneds().timezones(london()).allow_imaginary(true),
         resolved_as_jiff_would,
     );
     assert_all_examples(
-        jiff_gs::zoneds()
-            .time_zones(london())
-            .imaginary(Imaginary::Avoid),
+        jiff_gs::zoneds().timezones(london()).allow_imaginary(false),
         resolved_as_jiff_would,
     );
 }
 
 #[test]
 fn test_jiff_zoneds_imaginary_allow_shifts_a_gap_forward() {
-    let apia = jiff_gs::time_zones().names(["Pacific/Apia"]);
+    let apia = jiff_gs::timezones().names(["Pacific/Apia"]);
     assert_all_examples(
         jiff_gs::zoneds()
-            .time_zones(apia)
+            .timezones(apia)
             .min_value(DateTime::constant(2011, 12, 30, 0, 0, 0, 0))
             .max_value(DateTime::constant(2011, 12, 30, 23, 59, 59, 999_999_999))
-            .imaginary(Imaginary::Allow),
+            .allow_imaginary(true),
         |z| {
             z.date() == jiff::civil::Date::constant(2011, 12, 31)
                 && z.offset() == Offset::from_hours(14).unwrap()
@@ -395,7 +391,7 @@ fn test_jiff_zoneds_stay_in_instant_bounds_where_jiff_reports_a_fold_the_engine_
     let max = dummy + jiff::SignedDuration::from_hours(1);
     assert_all_examples(
         jiff_gs::zoneds()
-            .time_zones(jiff_gs::time_zones().names(["America/Nuuk"]))
+            .timezones(jiff_gs::timezones().names(["America/Nuuk"]))
             .min_instant(min)
             .max_instant(max),
         move |z| z.timestamp() >= min && z.timestamp() <= max,
@@ -493,7 +489,7 @@ fn test_jiff_zoneds_stay_in_bounds_where_jiff_misreads_the_last_second_before_a_
     let max = DateTime::constant(1946, 5, 31, 23, 59, 59, 999_999_999);
     assert_all_examples(
         jiff_gs::zoneds()
-            .time_zones(jiff_gs::time_zones().names(["Europe/Istanbul"]))
+            .timezones(jiff_gs::timezones().names(["Europe/Istanbul"]))
             .min_value(min)
             .max_value(max),
         move |z| z.datetime() >= min && z.datetime() <= max && resolved_as_jiff_would(z),
@@ -506,7 +502,7 @@ fn test_jiff_zoneds_stay_in_bounds_where_jiff_reports_a_fold_the_engine_does_not
     let max = DateTime::constant(2023, 10, 29, 23, 59, 59, 0);
     assert_all_examples(
         jiff_gs::zoneds()
-            .time_zones(jiff_gs::time_zones().names(["America/Nuuk"]))
+            .timezones(jiff_gs::timezones().names(["America/Nuuk"]))
             .min_value(min)
             .max_value(max),
         move |z| z.datetime() >= min && z.datetime() <= max,

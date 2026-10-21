@@ -5,7 +5,7 @@ use crate::common::utils::{
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
 use hegel::HealthCheck;
-use hegel::datetime::{Ambiguous, Imaginary, Precision, Tag, info};
+use hegel::datetime::{Ambiguous, Precision, Tag, info};
 use hegel::extras::chrono as chrono_gs;
 use hegel::generators as gs;
 
@@ -22,7 +22,7 @@ fn resolves_to_itself(dt: &DateTime<Tz>) -> bool {
 
 #[test]
 fn test_time_zones_default() {
-    assert_all_examples(chrono_gs::time_zones(), |tz| {
+    assert_all_examples(chrono_gs::timezones(), |tz| {
         info(tz.name()).is_none_or(|info| !info.tags.contains(&Tag::Legacy))
     });
 }
@@ -30,7 +30,7 @@ fn test_time_zones_default() {
 #[test]
 fn test_time_zones_names() {
     assert_all_examples(
-        chrono_gs::time_zones().names([Tz::Europe__London, Tz::Asia__Tokyo]),
+        chrono_gs::timezones().names([Tz::Europe__London, Tz::Asia__Tokyo]),
         |tz| *tz == Tz::Europe__London || *tz == Tz::Asia__Tokyo,
     );
 }
@@ -38,24 +38,24 @@ fn test_time_zones_names() {
 #[test]
 fn test_time_zones_names_reach_every_name() {
     find_any(
-        chrono_gs::time_zones().names([Tz::Europe__London, Tz::Asia__Tokyo]),
+        chrono_gs::timezones().names([Tz::Europe__London, Tz::Asia__Tokyo]),
         |tz| *tz == Tz::Asia__Tokyo,
     );
 }
 
 #[test]
 fn test_time_zones_links() {
-    find_any(chrono_gs::time_zones(), |tz| {
+    find_any(chrono_gs::timezones(), |tz| {
         info(tz.name()).is_some_and(|info| info.is_link)
     });
-    assert_all_examples(chrono_gs::time_zones().links(false), |tz| {
+    assert_all_examples(chrono_gs::timezones().links(false), |tz| {
         info(tz.name()).is_none_or(|info| !info.is_link)
     });
 }
 
 #[test]
 fn test_time_zones_legacy() {
-    find_any(chrono_gs::time_zones().legacy(true), |tz| {
+    find_any(chrono_gs::timezones().legacy(true), |tz| {
         info(tz.name()).is_some_and(|info| info.tags.contains(&Tag::Legacy))
     });
 }
@@ -63,7 +63,7 @@ fn test_time_zones_legacy() {
 #[test]
 fn test_time_zones_in_vec() {
     assert_all_examples(
-        gs::vecs(chrono_gs::time_zones().names([Tz::UTC, Tz::Europe__Paris])).max_size(5),
+        gs::vecs(chrono_gs::timezones().names([Tz::UTC, Tz::Europe__Paris])).max_size(5),
         |v| {
             v.iter()
                 .all(|tz| *tz == Tz::UTC || *tz == Tz::Europe__Paris)
@@ -78,7 +78,7 @@ fn test_time_zone_default_generator() {
 
 #[test]
 fn test_time_zones_shrink_to_utc() {
-    let tz: Tz = minimal(chrono_gs::time_zones(), |_| true);
+    let tz: Tz = minimal(chrono_gs::timezones(), |_| true);
     assert_eq!(tz, Tz::UTC);
 }
 
@@ -87,7 +87,7 @@ fn test_time_zones_empty_names_is_a_usage_error() {
     expect_panic(
         || {
             hegel::Hegel::new(|tc| {
-                let _ = tc.draw(chrono_gs::time_zones().names([]));
+                let _ = tc.draw(chrono_gs::timezones().names([]));
             })
             .settings(hegel::Settings::new().database(None))
             .run();
@@ -99,7 +99,7 @@ fn test_time_zones_empty_names_is_a_usage_error() {
 #[test]
 fn test_datetimes_tz_default() {
     assert_all_examples(
-        chrono_gs::datetimes().timezones(chrono_gs::time_zones()),
+        chrono_gs::datetimes().timezones(chrono_gs::timezones()),
         resolves_to_itself,
     );
 }
@@ -112,7 +112,7 @@ fn test_datetime_tz_default_generator() {
 #[test]
 fn test_datetimes_tz_in_vec() {
     assert_all_examples(
-        gs::vecs(chrono_gs::datetimes().timezones(chrono_gs::time_zones())).max_size(3),
+        gs::vecs(chrono_gs::datetimes().timezones(chrono_gs::timezones())).max_size(3),
         |v| v.iter().all(resolves_to_itself),
     );
 }
@@ -123,7 +123,7 @@ fn test_datetimes_tz_wall_clock_bounds() {
     let max = new_york((2024, 12, 31), (23, 59, 59));
     assert_all_examples(
         chrono_gs::datetimes()
-            .timezones(chrono_gs::time_zones())
+            .timezones(chrono_gs::timezones())
             .min_value(min)
             .max_value(max),
         move |dt| dt.naive_local() >= min && dt.naive_local() <= max,
@@ -136,7 +136,7 @@ fn test_datetimes_tz_instant_bounds() {
     let max = DateTime::<Utc>::from_timestamp(1_800_000_000, 0).unwrap();
     assert_all_examples(
         chrono_gs::datetimes()
-            .timezones(chrono_gs::time_zones())
+            .timezones(chrono_gs::timezones())
             .min_instant(min)
             .max_instant(max),
         move |dt| *dt >= min && *dt <= max,
@@ -147,7 +147,7 @@ fn test_datetimes_tz_instant_bounds() {
 fn test_datetimes_tz_precision() {
     assert_all_examples(
         chrono_gs::datetimes()
-            .timezones(chrono_gs::time_zones())
+            .timezones(chrono_gs::timezones())
             .precision(Precision::Seconds),
         |dt| dt.nanosecond() == 0,
     );
@@ -157,7 +157,7 @@ fn test_datetimes_tz_precision() {
 fn test_datetimes_tz_avoids_gaps_by_default() {
     assert_all_examples(
         chrono_gs::datetimes()
-            .timezones(chrono_gs::time_zones().names([Tz::America__New_York]))
+            .timezones(chrono_gs::timezones().names([Tz::America__New_York]))
             .min_value(new_york((2024, 3, 10), (0, 0, 0)))
             .max_value(new_york((2024, 3, 10), (23, 59, 59))),
         |dt| {
@@ -174,10 +174,10 @@ fn test_datetimes_tz_allows_gaps_as_the_shifted_instant() {
     let max = new_york((2024, 3, 10), (2, 59, 59));
     assert_all_examples(
         chrono_gs::datetimes()
-            .timezones(chrono_gs::time_zones().names([Tz::America__New_York]))
+            .timezones(chrono_gs::timezones().names([Tz::America__New_York]))
             .min_value(new_york((2024, 3, 10), (2, 0, 0)))
             .max_value(max)
-            .imaginary(Imaginary::Allow),
+            .allow_imaginary(true),
         move |dt| {
             dt.naive_local() > max
                 && dt.naive_local() < new_york((2024, 3, 10), (4, 0, 0))
@@ -190,7 +190,7 @@ fn test_datetimes_tz_allows_gaps_as_the_shifted_instant() {
 fn test_datetimes_tz_draws_both_repeats_of_a_fold() {
     let generator = || {
         chrono_gs::datetimes()
-            .timezones(chrono_gs::time_zones().names([Tz::America__New_York]))
+            .timezones(chrono_gs::timezones().names([Tz::America__New_York]))
             .min_value(new_york((2024, 11, 3), (1, 0, 0)))
             .max_value(new_york((2024, 11, 3), (1, 59, 59)))
     };
@@ -206,7 +206,7 @@ fn test_datetimes_tz_draws_both_repeats_of_a_fold() {
 fn test_datetimes_tz_ambiguous_earlier() {
     assert_all_examples(
         chrono_gs::datetimes()
-            .timezones(chrono_gs::time_zones().names([Tz::America__New_York]))
+            .timezones(chrono_gs::timezones().names([Tz::America__New_York]))
             .min_value(new_york((2024, 11, 3), (1, 0, 0)))
             .max_value(new_york((2024, 11, 3), (1, 59, 59)))
             .ambiguous(Ambiguous::Earlier),
@@ -218,7 +218,7 @@ fn test_datetimes_tz_ambiguous_earlier() {
 fn test_datetimes_tz_ambiguous_later() {
     assert_all_examples(
         chrono_gs::datetimes()
-            .timezones(chrono_gs::time_zones().names([Tz::America__New_York]))
+            .timezones(chrono_gs::timezones().names([Tz::America__New_York]))
             .min_value(new_york((2024, 11, 3), (1, 0, 0)))
             .max_value(new_york((2024, 11, 3), (1, 59, 59)))
             .ambiguous(Ambiguous::Later),
@@ -235,7 +235,7 @@ fn test_datetimes_tz_unreachable_instant_is_rejected() {
             hegel::Hegel::new(move |tc| {
                 let _ = tc.draw(
                     chrono_gs::datetimes()
-                        .timezones(chrono_gs::time_zones().names([Tz::America__New_York]))
+                        .timezones(chrono_gs::timezones().names([Tz::America__New_York]))
                         .min_value(min)
                         .max_value(max),
                 );
@@ -250,7 +250,7 @@ fn test_datetimes_tz_unreachable_instant_is_rejected() {
 #[test]
 fn test_datetimes_tz_shrinks_to_2000_at_utc() {
     let dt: DateTime<Tz> = minimal(
-        chrono_gs::datetimes().timezones(chrono_gs::time_zones()),
+        chrono_gs::datetimes().timezones(chrono_gs::timezones()),
         |_| true,
     );
     assert_eq!(dt.timezone(), Tz::UTC);
@@ -269,7 +269,7 @@ fn test_datetimes_tz_property(tc: hegel::TestCase) {
     let max = DateTime::<Utc>::from_timestamp(hi, 999_999_999).unwrap();
     let dt = tc.draw(
         chrono_gs::datetimes()
-            .timezones(chrono_gs::time_zones())
+            .timezones(chrono_gs::timezones())
             .min_instant(min)
             .max_instant(max),
     );
@@ -280,7 +280,7 @@ fn test_datetimes_tz_property(tc: hegel::TestCase) {
 #[hegel::test]
 fn test_datetimes_tz_rebuilt_after_a_draw_uses_the_new_bounds(tc: hegel::TestCase) {
     let max = new_york((2000, 1, 1), (0, 0, 0));
-    let g = chrono_gs::datetimes().timezones(chrono_gs::time_zones().names([Tz::UTC]));
+    let g = chrono_gs::datetimes().timezones(chrono_gs::timezones().names([Tz::UTC]));
     let _ = tc.draw(&g);
     let dt = tc.draw(g.max_value(max));
     assert!(dt.naive_local() <= max);
@@ -292,7 +292,7 @@ fn test_datetimes_tz_stay_in_bounds_where_chrono_tz_and_the_engine_disagree_on_a
     let max = new_york((2027, 3, 14), (3, 59, 59));
     AssertAllExamples::new(
         chrono_gs::datetimes()
-            .timezones(chrono_gs::time_zones().names([Tz::America__Edmonton]))
+            .timezones(chrono_gs::timezones().names([Tz::America__Edmonton]))
             .min_value(min)
             .max_value(max),
         move |dt| dt.naive_local() >= min && dt.naive_local() <= max && resolves_to_itself(dt),
@@ -306,7 +306,7 @@ fn test_datetimes_tz_stay_in_instant_bounds_where_chrono_tz_applies_no_daylight_
     let max = min + chrono::TimeDelta::hours(2);
     let new_york_2100 = || {
         chrono_gs::datetimes()
-            .timezones(chrono_gs::time_zones().names([Tz::America__New_York]))
+            .timezones(chrono_gs::timezones().names([Tz::America__New_York]))
             .min_instant(min)
             .max_instant(max)
     };

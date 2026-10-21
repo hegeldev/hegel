@@ -11,7 +11,7 @@ use super::{
     DateGenerator, DateTimeGenerator, EraGenerator, ISOWeekDateGenerator, MAX_CIVIL, MIN_CIVIL,
     OffsetGenerator, SignedDurationGenerator, SpanGenerator, TimeGenerator, TimestampGenerator,
     WeekdayGenerator, ZonedGenerator, dates, datetimes, eras, iso_week_dates, offsets,
-    signed_durations, spans, time_zones, times, timestamps, weekdays, zoneds,
+    signed_durations, spans, times, timestamps, timezones, weekdays, zoneds,
 };
 
 impl DefaultGenerator for Date {
@@ -87,7 +87,7 @@ impl DefaultGenerator for Offset {
 impl DefaultGenerator for TimeZone {
     type Generator = BoxedGenerator<'static, TimeZone>;
     fn default_generator() -> Self::Generator {
-        one_of([time_zones().boxed(), offsets().map(TimeZone::fixed).boxed()]).boxed()
+        one_of([timezones().boxed(), offsets().map(TimeZone::fixed).boxed()]).boxed()
     }
 }
 
@@ -103,10 +103,10 @@ impl DefaultGenerator for Zoned {
 /// jiff has not yet resolved.
 fn ambiguous_draws() -> ZonedDateTimeGenerator {
     gs::zoned_datetimes()
-        .time_zones(time_zones().engine_generator())
+        .timezones(timezones().engine_generator())
         .min_value(super::engine_datetime(MIN_CIVIL))
         .max_value(super::engine_datetime(MAX_CIVIL))
-        .imaginary(crate::datetime::Imaginary::Allow)
+        .allow_imaginary(true)
         .ambiguous(crate::datetime::Ambiguous::Earlier)
 }
 

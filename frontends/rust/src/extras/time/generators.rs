@@ -417,8 +417,8 @@ pub struct OffsetDateTimeGenerator {
 impl OffsetDateTimeGenerator {
     /// Draw the time zone whose offset the value carries from `zones`
     /// rather than from every bundled IANA name.
-    pub fn time_zones(mut self, zones: gs::TimeZoneGenerator) -> Self {
-        self.inner = self.inner.time_zones(zones);
+    pub fn timezones(mut self, zones: gs::TimeZoneGenerator) -> Self {
+        self.inner = self.inner.timezones(zones);
         self
     }
 
@@ -524,7 +524,7 @@ impl PrintableGenerator<OffsetDateTime> for OffsetDateTimeGenerator {
 /// Generate [`time::OffsetDateTime`] values: a wall-clock time in a drawn
 /// IANA time zone, carrying the offset that zone had in force.
 ///
-/// By default any zone [`time_zones`](crate::generators::time_zones)
+/// By default any zone [`timezones`](crate::generators::timezones)
 /// draws and any wall-clock time of the [`primitive_datetimes()`] range at
 /// nanosecond precision, with both repeats of a wall time the clocks
 /// repeated drawn and a wall time the clocks skipped never drawn; shrinks
@@ -550,8 +550,8 @@ impl PrintableGenerator<OffsetDateTime> for OffsetDateTimeGenerator {
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
-///     let zones = gs::time_zones().names(["Europe/London", "America/New_York"]);
-///     let dt = tc.draw(time_gs::offset_datetimes().time_zones(zones));
+///     let zones = gs::timezones().names(["Europe/London", "America/New_York"]);
+///     let dt = tc.draw(time_gs::offset_datetimes().timezones(zones));
 ///     assert!(dt.offset().whole_hours() >= -5 && dt.offset().whole_hours() <= 1);
 /// }
 /// ```
@@ -560,7 +560,7 @@ pub fn offset_datetimes() -> OffsetDateTimeGenerator {
         inner: gs::zoned_datetimes()
             .min_value(hegel_datetime(PrimitiveDateTime::MIN))
             .max_value(hegel_datetime(PrimitiveDateTime::MAX))
-            .imaginary(datetime::Imaginary::Avoid),
+            .allow_imaginary(false),
         bounds: OffsetDateTimeBounds::Civil(PrimitiveDateTime::MIN, PrimitiveDateTime::MAX),
     }
 }

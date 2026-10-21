@@ -565,17 +565,17 @@ mod datetime_validation {
     }
 
     #[test]
-    fn test_time_zones_empty_names() {
+    fn test_timezones_empty_names() {
         expect_draw_panic(
-            gs::time_zones().names(Vec::<String>::new()),
+            gs::timezones().names(Vec::<String>::new()),
             "at least one allowed name",
         );
     }
 
     #[test]
-    fn test_time_zones_unknown_name() {
+    fn test_timezones_unknown_name() {
         expect_draw_panic(
-            gs::time_zones().names(["Mars/Olympus"]),
+            gs::timezones().names(["Mars/Olympus"]),
             "unknown time zone \"Mars/Olympus\"",
         );
     }
@@ -626,9 +626,9 @@ mod datetime_validation {
     }
 
     #[test]
-    fn test_zoned_datetimes_time_zones_are_validated() {
+    fn test_zoned_datetimes_timezones_are_validated() {
         expect_draw_panic(
-            gs::zoned_datetimes().time_zones(gs::time_zones().names(["Mars/Olympus"])),
+            gs::zoned_datetimes().timezones(gs::timezones().names(["Mars/Olympus"])),
             "unknown time zone",
         );
     }

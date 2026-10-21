@@ -610,28 +610,28 @@ arithmetic, no parsing, no conversions and no constructors beyond `new`
 functions that check the §4 ranges, so a user of any date library wraps
 the struct with `map` and nothing here competes with their library. The
 option enums of §6 (`Precision`, `Granularity`, `Weekday`, `Month`,
-`Imaginary`, `Ambiguous`, `SpanSign`, `SpanUnit`, `Tag`) and the query
+`Ambiguous`, `SpanSign`, `SpanUnit`, `Tag`) and the query
 functions `tzdb_version`, `resolve`, `offset_at` and `info` live in the
 same module.
 Generators over these types live in `hegel::generators` under the names
 the extras also use (`dates`, `times`, `datetimes`, `timestamps`,
-`utc_offsets`, `time_zones`, `zoned_datetimes`, `signed_durations`,
+`utc_offsets`, `timezones`, `zoned_datetimes`, `signed_durations`,
 `spans`), each with the builder options of §6 (`min_value`/`max_value`,
-`precision`, `weekdays`/`months`, `imaginary`, `ambiguous`, `unknown`,
-and `opaque` on `time_zones`); `spans()` enables every unit by default,
+`precision`, `weekdays`/`months`, `allow_imaginary` as a `bool` like
+Hypothesis, `ambiguous`, `unknown`, and `opaque` on `timezones`); `spans()` enables every unit by default,
 and the first `unit_bounds` call replaces that default.
 `durations()` over `std::time::Duration` keeps its API on the engine
 draw, gaining `precision`, and `system_times()` is added. The extras are
 thin maps over these.
 
 `extras::jiff` becomes complete: `dates`, `times`, `datetimes`,
-`timestamps`, `offsets`, `time_zones()` (IANA, from the engine, resolved
+`timestamps`, `offsets`, `timezones()` (IANA, from the engine, resolved
 with `TimeZone::get`; the spec is restricted to `tz::db().available()`,
 and `Etc/Unknown` maps to `TimeZone::unknown()`, so today's default zone
 generator of UTC, unknown or a fixed offset is reproduced by composition),
 `zoneds()` built on `generate_zoned_datetime` with wall-clock or instant
-bounds and `.imaginary(Avoid)` by default since `Zoned` cannot hold a gap
-time; both folds via `to_ambiguous_zoned` + `earlier()`/`later()`;
+bounds and `.allow_imaginary(false)` by default since `Zoned` cannot hold
+a gap time; both folds via `to_ambiguous_zoned` + `earlier()`/`later()`;
 `spans()` over the span draw with per-unit builders and a `non_negative`
 switch (a jiff `Span` is single-signed, so there is no `mixed` policy);
 `signed_durations`; `iso_week_dates`, `weekdays`, `eras` as mappings.
@@ -660,10 +660,14 @@ since an `OffsetDateTime` holds a civil time and one offset),
 ### 8.3 Other frontends (mapping only)
 
 - **Python:** `datetimes(timezones=, allow_imaginary=)` keeps its API and
-  gains instant-mode bounds; `timezone_keys()` from the engine with
-  `ZoneInfo` resolution; fold set from the engine; `tzdata`-package
-  version compared to `hegel_tzdb_version`. A `whenever` extra maps
-  `ZonedDateTime`/`OffsetDateTime` with `disambiguate`.
+  gains instant-mode bounds, `precision` and `ambiguous`; `dates` gains
+  `weekdays`/`months` masks, `times` and `timedeltas` a `precision`,
+  `utc_offsets(granularity=)` draws `datetime.timezone`;
+  `timezone_keys()`/`timezones()` take `names`, `links` and `legacy` and
+  pass the host's `zoneinfo` keys the engine knows as the spec, with
+  `ZoneInfo` resolution; fold set from the engine. Precision and
+  granularity are the strings `isoformat(timespec=)` uses. A `whenever`
+  extra maps `ZonedDateTime`/`OffsetDateTime` with `disambiguate`.
 - **Java:** `zoneIds()` from the engine; `zonedDateTimes()` via
   `ZonedDateTime.ofLocal(ldt, zone, preferredOffset)` with the preferred
   offset chosen by fold; gap times via the shifted instant.
