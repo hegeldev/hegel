@@ -637,21 +637,27 @@ class TestCase:
             draw.provide(value(terminal))
         return draw.result()
 
-    def _generate_date(self, min_value: _dt.date, max_value: _dt.date) -> _dt.date:
+    def _generate_date(
+        self, min_value: _dt.date, max_value: _dt.date, options: _native.DateOptions | None
+    ) -> _dt.date:
         year, month, day = self._handle.generate_date(
             (min_value.year, min_value.month, min_value.day),
             (max_value.year, max_value.month, max_value.day),
+            options,
         )
         return _dt.date(year, month, day)
 
-    def _generate_time(self, min_value: _dt.time, max_value: _dt.time) -> _dt.time:
+    def _generate_time(self, min_value: _dt.time, max_value: _dt.time, precision: int) -> _dt.time:
         hour, minute, second, nanosecond = self._handle.generate_time(
             (min_value.hour, min_value.minute, min_value.second, min_value.microsecond * 1000),
             (max_value.hour, max_value.minute, max_value.second, max_value.microsecond * 1000),
+            precision,
         )
         return _dt.time(hour, minute, second, nanosecond // 1000)
 
-    def _generate_datetime(self, min_value: _dt.datetime, max_value: _dt.datetime) -> _dt.datetime:
+    def _generate_datetime(
+        self, min_value: _dt.datetime, max_value: _dt.datetime, precision: int
+    ) -> _dt.datetime:
         result = self._handle.generate_datetime(
             (
                 min_value.year,
@@ -671,17 +677,21 @@ class TestCase:
                 max_value.second,
                 max_value.microsecond * 1000,
             ),
+            precision,
         )
         year, month, day, hour, minute, second, nanosecond = result
         return _dt.datetime(year, month, day, hour, minute, second, nanosecond // 1000)
 
     def _generate_timedelta(
-        self, min_value: _dt.timedelta, max_value: _dt.timedelta
+        self, min_value: _dt.timedelta, max_value: _dt.timedelta, precision: int
     ) -> _dt.timedelta:
         seconds, nanoseconds = self._handle.generate_duration(
-            _duration_of(min_value), _duration_of(max_value)
+            _duration_of(min_value), _duration_of(max_value), precision
         )
         return _dt.timedelta(seconds=seconds, microseconds=nanoseconds // 1000)
+
+    def _generate_offset(self, min_seconds: int, max_seconds: int, granularity: int) -> int:
+        return self._handle.generate_offset(min_seconds, max_seconds, granularity)
 
     def _generate_timezone(self, spec: _native.TimeZoneSpec) -> str:
         return self._handle.generate_timezone(spec)

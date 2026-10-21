@@ -45,6 +45,12 @@ does, with a note per file of what was dropped.
   repeated replay and reports it with a caveat describing how reliably it
   reproduced. `nondeterminism_strictness` makes that silent (the default), a
   one-line notice, or a `Flaky` error, which is Hypothesis's behaviour.
+- Date and time options every Hegel frontend shares: `dates()` takes
+  `weekdays` and `months`, `times()`, `datetimes()` and `timedeltas()` a
+  `precision` (the `timespec` names of `isoformat`), `datetimes()` an
+  `ambiguous` policy for repeated wall times, `timezone_keys()` and
+  `timezones()` a `names` list, and `utc_offsets()` draws fixed
+  `datetime.timezone` offsets at a `granularity`.
 - An engine shared with the Rust, Go, TypeScript and other bindings, so the
   example database and reproduce blobs behave the same everywhere.
 

@@ -107,6 +107,8 @@ Dates and times
 
 .. autofunction:: timezone_keys
 
+.. autofunction:: utc_offsets
+
 Identifiers and network values
 ------------------------------
 
