@@ -567,3 +567,9 @@ fn a_successful_call_clears_the_context_error() {
     });
     assert!(last_error_string().is_empty());
 }
+
+#[test]
+fn static_string_copies_an_empty_engine_string() {
+    assert_eq!(static_string(hegel_c::hegel_string_t::default()), "");
+    assert_eq!(static_string(view(b"UTC")), "UTC");
+}
