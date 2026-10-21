@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import zoneinfo
+from collections.abc import Iterable
 from functools import cache
 from typing import TYPE_CHECKING, Any
 
@@ -16,7 +17,15 @@ from hegel.generators.combinators import as_generator
 if TYPE_CHECKING:
     from hegel.test_case import TestCase
 
-__all__ = ["dates", "datetimes", "timedeltas", "times", "timezone_keys", "timezones"]
+__all__ = [
+    "dates",
+    "datetimes",
+    "timedeltas",
+    "times",
+    "timezone_keys",
+    "timezones",
+    "utc_offsets",
+]
 
 DATE_LABEL = label_from_name("hegel.dates")
 TIME_LABEL = label_from_name("hegel.times")
@@ -24,10 +33,31 @@ DATETIME_LABEL = label_from_name("hegel.datetimes")
 TIMEDELTA_LABEL = label_from_name("hegel.timedeltas")
 TIMEZONE_KEY_LABEL = label_from_name("hegel.timezone_keys")
 TIMEZONE_LABEL = label_from_name("hegel.timezones")
+UTC_OFFSET_LABEL = label_from_name("hegel.utc_offsets")
 
 _EPOCH = dt.datetime(1970, 1, 1, tzinfo=dt.UTC)
 _MICROSECOND = dt.timedelta(microseconds=1)
-_ZERO = dt.timedelta(0)
+_SECOND = dt.timedelta(seconds=1)
+_MAX_OFFSET = dt.timedelta(hours=23, minutes=59, seconds=59)
+
+_PRECISIONS: dict[str, tuple[int, int]] = {
+    "microseconds": (_native.PRECISION_MICROSECONDS, 1),
+    "milliseconds": (_native.PRECISION_MILLISECONDS, 1_000),
+    "seconds": (_native.PRECISION_SECONDS, 1_000_000),
+    "minutes": (_native.PRECISION_MINUTES, 60_000_000),
+    "hours": (_native.PRECISION_HOURS, 3_600_000_000),
+}
+_GRANULARITIES: dict[str, tuple[int, int]] = {
+    "hours": (_native.GRANULARITY_HOURS, 3600),
+    "quarter_hours": (_native.GRANULARITY_QUARTER_HOURS, 900),
+    "minutes": (_native.GRANULARITY_MINUTES, 60),
+    "seconds": (_native.GRANULARITY_SECONDS, 1),
+}
+_AMBIGUOUS: dict[str, int] = {
+    "both": _native.AMBIGUOUS_BOTH,
+    "earlier": _native.AMBIGUOUS_EARLIER,
+    "later": _native.AMBIGUOUS_LATER,
+}
 
 
 def _check_type(name: str, value: Any, cls: type) -> None:
@@ -35,20 +65,77 @@ def _check_type(name: str, value: Any, cls: type) -> None:
         raise InvalidArgument(f"{name}={value!r} must be a {cls.__name__}")
 
 
+def _check_choice(name: str, value: Any, choices: Iterable[str]) -> None:
+    if not isinstance(value, str) or value not in choices:
+        options = ", ".join(repr(choice) for choice in choices)
+        raise InvalidArgument(f"{name}={value!r} must be one of {options}")
+
+
+def _precision(precision: Any) -> tuple[int, int]:
+    """The engine constant and the unit in microseconds of a ``precision``
+    argument, one of the ``timespec`` values of ``isoformat``."""
+    _check_choice("precision", precision, _PRECISIONS)
+    return _PRECISIONS[precision]
+
+
+def _check_fits(unit_name: str, min_units: int, max_units: int, unit: int, what: str) -> None:
+    """Raise unless some whole multiple of ``unit`` lies in
+    ``[min_units, max_units]``."""
+    if -(-min_units // unit) * unit > max_units:
+        raise InvalidArgument(
+            f"no {what} between min_value and max_value is a whole number of {unit_name}"
+        )
+
+
+def _mask(name: str, values: Any, lowest: int, highest: int) -> int:
+    """A bit set over ``values``, each an int in ``[lowest, highest]``, with
+    bit 0 for ``lowest``."""
+    if isinstance(values, (str, bytes)) or not isinstance(values, Iterable):
+        raise InvalidArgument(f"{name}={values!r} must be an iterable of ints")
+    mask = 0
+    for value in values:
+        if not isinstance(value, int) or isinstance(value, bool) or not lowest <= value <= highest:
+            raise InvalidArgument(
+                f"{name}={values!r} must contain ints from {lowest} to {highest}, not {value!r}"
+            )
+        mask |= 1 << (value - lowest)
+    if mask == 0:
+        raise InvalidArgument(f"{name}={values!r} must not be empty")
+    return mask
+
+
 class Dates(Generator[dt.date]):
-    def __init__(self, min_value: dt.date, max_value: dt.date) -> None:
+    def __init__(
+        self, min_value: dt.date, max_value: dt.date, weekdays: int | None, months: int | None
+    ) -> None:
         self.min_value = min_value
         self.max_value = max_value
+        self.weekdays = weekdays
+        self.months = months
+        self.options = (
+            None if weekdays is None and months is None else _native.DateOptions(weekdays, months)
+        )
         self.label = DATE_LABEL
 
+    def allows(self, value: dt.date) -> bool:
+        return (self.weekdays is None or bool(self.weekdays >> value.weekday() & 1)) and (
+            self.months is None or bool(self.months >> (value.month - 1) & 1)
+        )
+
     def do_draw(self, tc: TestCase) -> dt.date:
-        return tc._generate_date(self.min_value, self.max_value)
+        return tc._generate_date(self.min_value, self.max_value, self.options)
 
     def __repr__(self) -> str:
         return f"dates(min_value={self.min_value!r}, max_value={self.max_value!r})"
 
 
-def dates(min_value: dt.date = dt.date.min, max_value: dt.date = dt.date.max) -> Generator[dt.date]:
+def dates(
+    min_value: dt.date = dt.date.min,
+    max_value: dt.date = dt.date.max,
+    *,
+    weekdays: Iterable[int] | None = None,
+    months: Iterable[int] | None = None,
+) -> Generator[dt.date]:
     """Generate :class:`datetime.date` objects in ``[min_value, max_value]``,
     inclusive, shrinking toward 2000-01-01 (or the bound nearest it).
 
@@ -57,8 +144,17 @@ def dates(min_value: dt.date = dt.date.min, max_value: dt.date = dt.date.max) ->
     leap days nearest the bounds, the year boundaries, the 2038 and 2106
     overflow days and the days of an ISO week 53.
 
-    Bounds that are not dates (a ``datetime`` is not accepted), or
-    ``min_value > max_value``, are an :class:`~hegel.InvalidArgument`.
+    ``weekdays`` restricts the draw to those days of the week, numbered as
+    :meth:`datetime.date.weekday` does (Monday is 0, Sunday 6, so
+    ``weekdays=[5, 6]`` draws weekends), and ``months`` to those months,
+    numbered 1 to 12. A drawn date outside them is moved to the nearest
+    allowed date inside the bounds rather than rejected, so the draw never
+    filters, and the dates still shrink toward 2000-01-01.
+
+    Bounds that are not dates (a ``datetime`` is not accepted),
+    ``min_value > max_value``, an empty or out-of-range ``weekdays`` or
+    ``months``, or bounds holding no allowed date are an
+    :class:`~hegel.InvalidArgument`.
     """
     _check_type("min_value", min_value, dt.date)
     _check_type("max_value", max_value, dt.date)
@@ -66,22 +162,39 @@ def dates(min_value: dt.date = dt.date.min, max_value: dt.date = dt.date.max) ->
         raise InvalidArgument("dates() bounds must be date objects, not datetimes")
     if min_value > max_value:
         raise InvalidArgument(f"Cannot have max_value={max_value!r} < min_value={min_value!r}")
-    return Dates(min_value, max_value)
+    weekday_mask = None if weekdays is None else _mask("weekdays", weekdays, 0, 6)
+    month_mask = None if months is None else _mask("months", months, 1, 12)
+    result = Dates(min_value, max_value, weekday_mask, month_mask)
+    if result.options is not None:
+        candidate = min_value
+        while not result.allows(candidate):
+            if candidate == max_value or candidate - min_value > dt.timedelta(days=400):
+                raise InvalidArgument(
+                    f"no date between min_value={min_value!r} and max_value={max_value!r} "
+                    f"falls on weekdays={weekdays!r} and months={months!r}"
+                )
+            candidate += dt.timedelta(days=1)
+    return result
 
 
 class Times(Generator[dt.time]):
     def __init__(
-        self, min_value: dt.time, max_value: dt.time, timezones: Generator[Any] | None
+        self,
+        min_value: dt.time,
+        max_value: dt.time,
+        timezones: Generator[Any] | None,
+        precision: int,
     ) -> None:
         self.min_value = min_value
         self.max_value = max_value
         self.timezones = timezones
+        self.precision = precision
         self.label = (
             TIME_LABEL if timezones is None else combine_labels([TIME_LABEL, timezones.label])
         )
 
     def do_draw(self, tc: TestCase) -> dt.time:
-        value = tc._generate_time(self.min_value, self.max_value)
+        value = tc._generate_time(self.min_value, self.max_value, self.precision)
         if self.timezones is not None:
             value = value.replace(tzinfo=tc.draw_silent(self.timezones))
         return value
@@ -90,11 +203,16 @@ class Times(Generator[dt.time]):
         return f"times(min_value={self.min_value!r}, max_value={self.max_value!r})"
 
 
+def _time_microseconds(value: dt.time) -> int:
+    return ((value.hour * 60 + value.minute) * 60 + value.second) * 1_000_000 + value.microsecond
+
+
 def times(
     min_value: dt.time = dt.time.min,
     max_value: dt.time = dt.time.max,
     *,
     timezones: Generator[Any] | None = None,
+    precision: str = "microseconds",
 ) -> Generator[dt.time]:
     """Generate :class:`datetime.time` objects in ``[min_value, max_value]``,
     inclusive, shrinking toward midnight.
@@ -103,6 +221,12 @@ def times(
     ``timezones`` is given: a generator of :class:`datetime.tzinfo` objects
     (such as :func:`timezones`), one of which is attached to each time.
     ``fold`` is never set.
+
+    ``precision`` names the unit every drawn time is a whole number of,
+    as the ``timespec`` argument of :meth:`~datetime.time.isoformat` does:
+    ``"microseconds"`` (the default), ``"milliseconds"``, ``"seconds"``,
+    ``"minutes"`` or ``"hours"``. Bounds holding no time at the precision
+    are an :class:`~hegel.InvalidArgument`.
     """
     _check_type("min_value", min_value, dt.time)
     _check_type("max_value", max_value, dt.time)
@@ -110,10 +234,16 @@ def times(
         raise InvalidArgument("times() bounds must be naive")
     if min_value > max_value:
         raise InvalidArgument(f"Cannot have max_value={max_value!r} < min_value={min_value!r}")
-    return Times(min_value, max_value, None if timezones is None else as_generator(timezones))
+    constant, unit = _precision(precision)
+    _check_fits(
+        precision, _time_microseconds(min_value), _time_microseconds(max_value), unit, "time"
+    )
+    return Times(
+        min_value, max_value, None if timezones is None else as_generator(timezones), constant
+    )
 
 
-def _select_keys(available: set[str], links: bool, legacy: bool) -> list[str]:
+def _select_keys(available: Iterable[str], links: bool, legacy: bool) -> list[str]:
     """The IANA names in ``available`` the engine's database also knows,
     sorted, without link names unless ``links`` and without legacy names
     unless ``legacy``."""
@@ -157,21 +287,53 @@ def _engine_spec(tz: dt.tzinfo) -> _native.TimeZoneSpec | None:
     return None
 
 
+def _check_names(names: Any, *, loadable: bool) -> tuple[str, ...]:
+    if isinstance(names, (str, bytes)) or not isinstance(names, Iterable):
+        raise InvalidArgument(f"names={names!r} must be an iterable of IANA time zone names")
+    checked = tuple(names)
+    if not checked:
+        raise InvalidArgument("names must not be empty")
+    for name in checked:
+        if not isinstance(name, str):
+            raise InvalidArgument(f"names={names!r} must contain strings, not {name!r}")
+        if _native.timezone_info(name) is None:
+            raise InvalidArgument(f"{name!r} is not a name in Hegel's time zone database")
+        if loadable:
+            try:
+                zoneinfo.ZoneInfo(name)
+            except (zoneinfo.ZoneInfoNotFoundError, ValueError) as error:
+                raise InvalidArgument(
+                    f"{name!r} is not a time zone this Python can load: {error}"
+                ) from None
+    return checked
+
+
 class TimeZoneKeys(Generator[str]):
-    def __init__(self, links: bool, legacy: bool) -> None:
+    def __init__(self, names: tuple[str, ...] | None, links: bool, legacy: bool) -> None:
+        self.names = names
         self.links = links
         self.legacy = legacy
-        self.spec = _host_spec(links, legacy)
+        self.spec = (
+            _host_spec(links, legacy)
+            if names is None
+            else _native.TimeZoneSpec(list(names), links, legacy, False, False)
+        )
         self.label = TIMEZONE_KEY_LABEL
 
     def do_draw(self, tc: TestCase) -> str:
         return tc._generate_timezone(self.spec)
 
+    def arguments(self) -> str:
+        names = "" if self.names is None else f"names={list(self.names)!r}, "
+        return f"{names}links={self.links!r}, legacy={self.legacy!r}"
+
     def __repr__(self) -> str:
-        return f"timezone_keys(links={self.links!r}, legacy={self.legacy!r})"
+        return f"timezone_keys({self.arguments()})"
 
 
-def timezone_keys(*, links: bool = True, legacy: bool = False) -> Generator[str]:
+def timezone_keys(
+    *, names: Iterable[str] | None = None, links: bool = True, legacy: bool = False
+) -> Generator[str]:
     """Generate IANA time zone names, such as ``"America/New_York"``,
     shrinking toward ``"UTC"``.
 
@@ -184,6 +346,10 @@ def timezone_keys(*, links: bool = True, legacy: bool = False) -> Generator[str]
     included and legacy names such as ``"EST5EDT"`` and ``"US/Eastern"``
     are excluded; ``links`` and ``legacy`` switch each.
 
+    ``names`` restricts the draw to those names, each of which must be in
+    Hegel's database; ``links`` and ``legacy`` do not apply to an explicit
+    list.
+
     Half the draws are uniform over the names and half weighted toward
     zones with a rare feature (a fractional offset, negative daylight
     saving, a skipped day, ...), so each is reached by a short run. A name
@@ -193,7 +359,8 @@ def timezone_keys(*, links: bool = True, legacy: bool = False) -> Generator[str]
     """
     _check_type("links", links, bool)
     _check_type("legacy", legacy, bool)
-    return TimeZoneKeys(links, legacy)
+    checked = None if names is None else _check_names(names, loadable=False)
+    return TimeZoneKeys(checked, links, legacy)
 
 
 class TimeZones(Generator[zoneinfo.ZoneInfo]):
@@ -209,27 +376,30 @@ class TimeZones(Generator[zoneinfo.ZoneInfo]):
         return self.resolve(tc._generate_timezone(self.keys.spec))
 
     def __repr__(self) -> str:
-        return (
-            f"timezones(no_cache={self.no_cache!r}, links={self.keys.links!r}, "
-            f"legacy={self.keys.legacy!r})"
-        )
+        return f"timezones({self.keys.arguments()}, no_cache={self.no_cache!r})"
 
 
 def timezones(
-    *, no_cache: bool = False, links: bool = True, legacy: bool = False
+    *,
+    names: Iterable[str] | None = None,
+    no_cache: bool = False,
+    links: bool = True,
+    legacy: bool = False,
 ) -> Generator[zoneinfo.ZoneInfo]:
     """Generate IANA time zones, as :class:`zoneinfo.ZoneInfo` objects,
     shrinking toward UTC.
 
     The zones are those :func:`timezone_keys` names, with the same
-    ``links`` and ``legacy`` switches. With ``no_cache=True`` each is built
-    with :meth:`zoneinfo.ZoneInfo.no_cache`, so it is not the same object
-    as ``ZoneInfo(key)``.
+    ``names``, ``links`` and ``legacy`` arguments; a name in ``names``
+    must also be one this Python can load. With ``no_cache=True`` each
+    zone is built with :meth:`zoneinfo.ZoneInfo.no_cache`, so it is not
+    the same object as ``ZoneInfo(key)``.
     """
     _check_type("no_cache", no_cache, bool)
     _check_type("links", links, bool)
     _check_type("legacy", legacy, bool)
-    return TimeZones(TimeZoneKeys(links, legacy), no_cache)
+    checked = None if names is None else _check_names(names, loadable=True)
+    return TimeZones(TimeZoneKeys(checked, links, legacy), no_cache)
 
 
 def _instant(value: dt.datetime) -> dt.timedelta:
@@ -244,14 +414,13 @@ def _timestamp(value: dt.datetime) -> tuple[int, int]:
     return seconds, remainder * 1000
 
 
-def _utc_wall(value: dt.datetime) -> dt.datetime:
-    """The naive UTC wall time of an aware datetime, clamped into the range
-    :class:`datetime.datetime` represents."""
+def _local_wall(value: dt.datetime, tz: dt.tzinfo) -> dt.datetime:
+    """The naive wall time of an aware datetime in ``tz``, clamped into the
+    range :class:`datetime.datetime` represents."""
     try:
-        return value.astimezone(dt.UTC).replace(tzinfo=None)
+        return value.astimezone(tz).replace(tzinfo=None)
     except OverflowError:
-        offset = value.utcoffset()
-        return dt.datetime.min if offset is not None and offset > _ZERO else dt.datetime.max
+        return dt.datetime.max if value.year > 5000 else dt.datetime.min
 
 
 def _is_imaginary(value: dt.datetime) -> bool:
@@ -282,27 +451,32 @@ class Datetimes(Generator[dt.datetime]):
         max_value: dt.datetime,
         timezones: Generator[Any] | None,
         allow_imaginary: bool,
+        ambiguous: int,
+        precision: int,
     ) -> None:
         self.min_value = min_value
         self.max_value = max_value
         self.timezones = timezones
         self.allow_imaginary = allow_imaginary
+        self.ambiguous = ambiguous
+        self.precision = precision
         self.aware = min_value.tzinfo is not None
         if self.aware:
-            bounds = _native.ZonedSpec(
+            self.zoned_spec = _native.ZonedSpec(
                 None,
                 (_timestamp(min_value), _timestamp(max_value)),
+                precision,
                 allow_imaginary,
-                _native.AMBIGUOUS_BOTH,
+                ambiguous,
             )
         else:
-            bounds = _native.ZonedSpec(
+            self.zoned_spec = _native.ZonedSpec(
                 (_components(min_value), _components(max_value)),
                 None,
+                precision,
                 allow_imaginary,
-                _native.AMBIGUOUS_BOTH,
+                ambiguous,
             )
-        self.zoned_spec = bounds
         self.label = (
             DATETIME_LABEL
             if timezones is None
@@ -320,21 +494,27 @@ class Datetimes(Generator[dt.datetime]):
                     f"timezones={self.timezones!r} generated None, but with aware bounds "
                     "every datetime needs a tzinfo"
                 )
-            return tc._generate_datetime(self.min_value, self.max_value)
+            return tc._generate_datetime(self.min_value, self.max_value, self.precision)
         if not isinstance(tz, dt.tzinfo):
             raise InvalidArgument(f"timezones must generate tzinfo objects, got {tz!r}")
         spec = _engine_spec(tz)
         if spec is not None:
             return tc._generate_zoned_datetime(spec, self.zoned_spec)[1].replace(tzinfo=tz)
         if self.aware:
-            utc = tc._generate_datetime(_utc_wall(self.min_value), _utc_wall(self.max_value))
-            try:
-                return utc.replace(tzinfo=dt.UTC).astimezone(tz)
-            except OverflowError:
+            lo, hi = _local_wall(self.min_value, tz), _local_wall(self.max_value, tz)
+            if lo > hi:
                 tc.reject()
-        value = tc._generate_datetime(self.min_value, self.max_value).replace(tzinfo=tz)
+        else:
+            lo, hi = self.min_value, self.max_value
+        value = tc._generate_datetime(lo, hi, self.precision).replace(tzinfo=tz)
         if not self.allow_imaginary and _is_imaginary(value):
             tc.reject()
+        if self.aware:
+            instant = _instant(value)
+            if (lo != dt.datetime.min and instant < _instant(self.min_value)) or (
+                hi != dt.datetime.max and instant > _instant(self.max_value)
+            ):
+                tc.reject()
         return value
 
     def __repr__(self) -> str:
@@ -347,6 +527,8 @@ def datetimes(
     *,
     timezones: Generator[Any] | None = None,
     allow_imaginary: bool = True,
+    ambiguous: str = "both",
+    precision: str = "microseconds",
 ) -> Generator[dt.datetime]:
     """Generate :class:`datetime.datetime` objects, naive or aware, in
     ``[min_value, max_value]``, shrinking toward 2000-01-01 00:00 (or the
@@ -381,23 +563,34 @@ def datetimes(
     of one, or of a well-known instant such as the Unix epoch or the end
     of the signed 32-bit epoch, so the skipped and repeated wall times
     where date bugs live are generated deliberately. A repeated wall time
-    is drawn with either value of ``fold``. A skipped one (a wall time the
-    clocks jumped over, which :mod:`datetime` represents but which never
-    occurred) is drawn by default, because malformed timestamps are a
-    common source of bugs; with ``allow_imaginary=False`` the engine draws
-    a real wall time instead. Fixed offsets (:class:`datetime.timezone`)
-    and other ``tzinfo`` implementations have no transitions the engine
-    can see: with naive bounds the drawn wall-clock time is attached to
-    them as is, with ``fold`` 0, and an imaginary one rejects the test
-    case under ``allow_imaginary=False``; with aware bounds the instant is
-    drawn and converted.
+    is drawn with either value of ``fold`` by default; ``ambiguous``
+    chooses ``"earlier"`` (``fold=0``) or ``"later"`` (``fold=1``)
+    instead of ``"both"``. A skipped wall time (one the clocks jumped
+    over, which :mod:`datetime` represents but which never occurred) is
+    drawn by default, because malformed timestamps are a common source of
+    bugs; with ``allow_imaginary=False`` the engine draws a real wall time
+    instead. Fixed offsets (:class:`datetime.timezone`) and other
+    ``tzinfo`` implementations have no transitions the engine can see:
+    the drawn wall-clock time is attached to them as is, with ``fold`` 0
+    whatever ``ambiguous`` says, and an imaginary one rejects the test
+    case under ``allow_imaginary=False``; with aware bounds a wall time
+    whose instant falls outside them rejects the test case too.
+
+    **Precision.** ``precision`` names the unit every drawn time of day
+    is a whole number of, as the ``timespec`` argument of
+    :meth:`~datetime.datetime.isoformat` does: ``"microseconds"`` (the
+    default), ``"milliseconds"``, ``"seconds"``, ``"minutes"`` or
+    ``"hours"``.
 
     Bounds that are not datetimes, a mix of a naive and an aware bound,
-    ``min_value > max_value``, or a ``timezones`` generator producing
-    something other than ``tzinfo`` objects (or ``None`` with aware
-    bounds) are an :class:`~hegel.InvalidArgument`.
+    ``min_value > max_value``, bounds holding no wall time at the
+    precision, or a ``timezones`` generator producing something other
+    than ``tzinfo`` objects (or ``None`` with aware bounds) are an
+    :class:`~hegel.InvalidArgument`.
     """
     _check_type("allow_imaginary", allow_imaginary, bool)
+    _check_choice("ambiguous", ambiguous, _AMBIGUOUS)
+    precision_constant, unit = _precision(precision)
     bounds = (("min_value", min_value), ("max_value", max_value))
     for name, value in bounds:
         if value is not None:
@@ -421,7 +614,7 @@ def datetimes(
                 "comparing as moments in time"
             )
         zones = (
-            TimeZones(TimeZoneKeys(True, False), False)
+            TimeZones(TimeZoneKeys(None, True, False), False)
             if timezones is None
             else as_generator(timezones)
         )
@@ -432,33 +625,121 @@ def datetimes(
             max_value = dt.datetime.max
         if min_value > max_value:
             raise InvalidArgument(f"Cannot have max_value={max_value!r} < min_value={min_value!r}")
+        _check_fits(
+            precision,
+            (min_value - dt.datetime.min) // _MICROSECOND,
+            (max_value - dt.datetime.min) // _MICROSECOND,
+            unit,
+            "datetime",
+        )
         zones = None if timezones is None else as_generator(timezones)
-    return Datetimes(min_value, max_value, zones, allow_imaginary)
+    return Datetimes(
+        min_value, max_value, zones, allow_imaginary, _AMBIGUOUS[ambiguous], precision_constant
+    )
 
 
 class Timedeltas(Generator[dt.timedelta]):
-    def __init__(self, min_value: dt.timedelta, max_value: dt.timedelta) -> None:
+    def __init__(self, min_value: dt.timedelta, max_value: dt.timedelta, precision: int) -> None:
         self.min_value = min_value
         self.max_value = max_value
+        self.precision = precision
         self.label = TIMEDELTA_LABEL
 
     def do_draw(self, tc: TestCase) -> dt.timedelta:
-        return tc._generate_timedelta(self.min_value, self.max_value)
+        return tc._generate_timedelta(self.min_value, self.max_value, self.precision)
 
     def __repr__(self) -> str:
         return f"timedeltas(min_value={self.min_value!r}, max_value={self.max_value!r})"
 
 
 def timedeltas(
-    min_value: dt.timedelta = dt.timedelta.min, max_value: dt.timedelta = dt.timedelta.max
+    min_value: dt.timedelta = dt.timedelta.min,
+    max_value: dt.timedelta = dt.timedelta.max,
+    *,
+    precision: str = "microseconds",
 ) -> Generator[dt.timedelta]:
     """Generate :class:`datetime.timedelta` objects in
     ``[min_value, max_value]``, inclusive, shrinking toward zero. The
     bounds default to the whole range :mod:`datetime` supports. One draw
     in twenty on average targets a round duration, such as a second, an
-    hour, a day, 25 hours or a week, of either sign."""
+    hour, a day, 25 hours or a week, of either sign.
+
+    ``precision`` names the unit every drawn delta is a whole number of:
+    ``"microseconds"`` (the default), ``"milliseconds"``, ``"seconds"``,
+    ``"minutes"`` or ``"hours"``. Bounds holding no delta at the
+    precision are an :class:`~hegel.InvalidArgument`.
+    """
     _check_type("min_value", min_value, dt.timedelta)
     _check_type("max_value", max_value, dt.timedelta)
     if min_value > max_value:
         raise InvalidArgument(f"Cannot have max_value={max_value!r} < min_value={min_value!r}")
-    return Timedeltas(min_value, max_value)
+    constant, unit = _precision(precision)
+    _check_fits(precision, min_value // _MICROSECOND, max_value // _MICROSECOND, unit, "timedelta")
+    return Timedeltas(min_value, max_value, constant)
+
+
+class UtcOffsets(Generator[dt.timezone]):
+    def __init__(self, min_value: dt.timedelta, max_value: dt.timedelta, granularity: str) -> None:
+        self.min_value = min_value
+        self.max_value = max_value
+        self.granularity = granularity
+        self.label = UTC_OFFSET_LABEL
+
+    def do_draw(self, tc: TestCase) -> dt.timezone:
+        seconds = tc._generate_offset(
+            self.min_value // _SECOND,
+            self.max_value // _SECOND,
+            _GRANULARITIES[self.granularity][0],
+        )
+        return dt.timezone(dt.timedelta(seconds=seconds))
+
+    def __repr__(self) -> str:
+        return (
+            f"utc_offsets(min_value={self.min_value!r}, max_value={self.max_value!r}, "
+            f"granularity={self.granularity!r})"
+        )
+
+
+def utc_offsets(
+    min_value: dt.timedelta = -_MAX_OFFSET,
+    max_value: dt.timedelta = _MAX_OFFSET,
+    *,
+    granularity: str = "seconds",
+) -> Generator[dt.timezone]:
+    """Generate fixed UTC offsets, as :class:`datetime.timezone` objects,
+    with an offset in ``[min_value, max_value]``, shrinking toward
+    :attr:`datetime.timezone.utc`.
+
+    The bounds are whole seconds within the day :class:`datetime.timezone`
+    allows, from -23:59:59 to +23:59:59 (the defaults). ``granularity``
+    names the unit every drawn offset is a whole number of:
+    ``"hours"``, ``"quarter_hours"``, ``"minutes"`` or ``"seconds"`` (the
+    default). One draw in twenty on average targets an offset some IANA
+    zone has used, or a limit such as ±18:00 or ±00:00:01, when it lies in
+    the bounds at the granularity.
+
+    Bounds that are not whole-second ``timedelta`` objects within the
+    range, ``min_value > max_value``, or bounds holding no offset at the
+    granularity are an :class:`~hegel.InvalidArgument`.
+    """
+    _check_type("min_value", min_value, dt.timedelta)
+    _check_type("max_value", max_value, dt.timedelta)
+    for name, value in (("min_value", min_value), ("max_value", max_value)):
+        if value.microseconds:
+            raise InvalidArgument(f"{name}={value!r} must be a whole number of seconds")
+        if not -_MAX_OFFSET <= value <= _MAX_OFFSET:
+            raise InvalidArgument(
+                f"{name}={value!r} must be between -23:59:59 and +23:59:59, the offsets "
+                "datetime.timezone allows"
+            )
+    if min_value > max_value:
+        raise InvalidArgument(f"Cannot have max_value={max_value!r} < min_value={min_value!r}")
+    _check_choice("granularity", granularity, _GRANULARITIES)
+    _check_fits(
+        granularity,
+        min_value // _SECOND,
+        max_value // _SECOND,
+        _GRANULARITIES[granularity][1],
+        "offset",
+    )
+    return UtcOffsets(min_value, max_value, granularity)

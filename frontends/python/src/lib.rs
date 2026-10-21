@@ -25,7 +25,7 @@ pub(crate) use printer::Printer;
 pub(crate) use settings::Settings;
 pub(crate) use strings::StringGenerator;
 pub(crate) use test_case::{Collection, Pool, Recursion, Run, RunResult, StateMachine, TestCase};
-pub(crate) use time::{TimeZoneSpec, ZonedSpec};
+pub(crate) use time::{DateOptions, TimeZoneSpec, ZonedSpec};
 
 // Defined here, but exported (and so named) from hegel.errors.
 create_exception!(
@@ -287,6 +287,7 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Pool>()?;
     m.add_class::<StateMachine>()?;
     m.add_class::<StringGenerator>()?;
+    m.add_class::<DateOptions>()?;
     m.add_class::<TimeZoneSpec>()?;
     m.add_class::<ZonedSpec>()?;
     m.add_class::<Printer>()?;
@@ -417,6 +418,42 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     m.add("TIMEZONE_TAG_LINK", c::HEGEL_TIMEZONE_TAG_LINK)?;
     m.add("TIMEZONE_TAG_LEGACY", c::HEGEL_TIMEZONE_TAG_LEGACY)?;
+    m.add(
+        "PRECISION_MICROSECONDS",
+        c::hegel_precision_t::HEGEL_PRECISION_MICROSECONDS as u32,
+    )?;
+    m.add(
+        "PRECISION_MILLISECONDS",
+        c::hegel_precision_t::HEGEL_PRECISION_MILLISECONDS as u32,
+    )?;
+    m.add(
+        "PRECISION_SECONDS",
+        c::hegel_precision_t::HEGEL_PRECISION_SECONDS as u32,
+    )?;
+    m.add(
+        "PRECISION_MINUTES",
+        c::hegel_precision_t::HEGEL_PRECISION_MINUTES as u32,
+    )?;
+    m.add(
+        "PRECISION_HOURS",
+        c::hegel_precision_t::HEGEL_PRECISION_HOURS as u32,
+    )?;
+    m.add(
+        "GRANULARITY_HOURS",
+        c::hegel_offset_granularity_t::HEGEL_OFFSET_GRANULARITY_HOURS as u32,
+    )?;
+    m.add(
+        "GRANULARITY_QUARTER_HOURS",
+        c::hegel_offset_granularity_t::HEGEL_OFFSET_GRANULARITY_QUARTER_HOURS as u32,
+    )?;
+    m.add(
+        "GRANULARITY_MINUTES",
+        c::hegel_offset_granularity_t::HEGEL_OFFSET_GRANULARITY_MINUTES as u32,
+    )?;
+    m.add(
+        "GRANULARITY_SECONDS",
+        c::hegel_offset_granularity_t::HEGEL_OFFSET_GRANULARITY_SECONDS as u32,
+    )?;
     m.add(
         "AMBIGUOUS_BOTH",
         c::hegel_ambiguous_t::HEGEL_AMBIGUOUS_BOTH as u32,

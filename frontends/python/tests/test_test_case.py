@@ -223,12 +223,16 @@ def test_primitive_draws():
             _native.StringGenerator.text(1, 1, "ascii", 0, None, None, None, None, None)
         )
         assert len(s) == 1
-        d = tc._generate_date(dt.date(2000, 1, 1), dt.date(2000, 1, 2))
+        d = tc._generate_date(dt.date(2000, 1, 1), dt.date(2000, 1, 2), None)
         assert d in (dt.date(2000, 1, 1), dt.date(2000, 1, 2))
-        t = tc._generate_time(dt.time(1, 2, 3, 4), dt.time(1, 2, 3, 4))
+        t = tc._generate_time(
+            dt.time(1, 2, 3, 4), dt.time(1, 2, 3, 4), _native.PRECISION_MICROSECONDS
+        )
         assert t == dt.time(1, 2, 3, 4)
         when = tc._generate_datetime(
-            dt.datetime(2000, 1, 1, 1, 2, 3, 4), dt.datetime(2000, 1, 1, 1, 2, 3, 4)
+            dt.datetime(2000, 1, 1, 1, 2, 3, 4),
+            dt.datetime(2000, 1, 1, 1, 2, 3, 4),
+            _native.PRECISION_MICROSECONDS,
         )
         assert when == dt.datetime(2000, 1, 1, 1, 2, 3, 4)
         assert uuid.UUID(bytes=tc._generate_uuid(4)).version == 4
