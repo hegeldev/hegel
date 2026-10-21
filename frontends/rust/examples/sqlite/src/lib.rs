@@ -1,21 +1,11 @@
-//! Bank workload for testing an ACID database (here, SQLite) with Hegel's
-//! concurrent stateful testing.
+//! This is an example of a typical workload for testing an ACID database (here, SQLite) with
+//! Hegel's concurrent stateful testing.
 //!
 //! The crate runs two ways: `src/main.rs` is a `#[hegel::main]` binary whose
 //! every invocation is one run of the workload, and `tests/bank.rs` is a
 //! `#[hegel::test]` that runs it as a regular Hegel test. Both build the
-//! machine with [`bank_machine`]. Sizing comes from the `BANK_*`
-//! environment variables documented on [`WorkloadConfig`].
-//!
-//! The state-machine object is a [`Bank`]: a handle to the system under
-//! test (a file-backed SQLite database in WAL mode with one
-//! `accounts(account_id, balance, opCount)` table) plus the client-side
-//! bookkeeping of the workload (attempted, committed, total).
-//!
-//! WAL mode is what makes the verification rules sound while transfers are
-//! in flight: readers see a consistent snapshot and never block the writer.
-//! Writers are still serialized, so transfers take the write lock up front
-//! with `BEGIN IMMEDIATE`.
+//! machine with [`bank_machine`], sized by a [`WorkloadConfig`] drawn from
+//! the test case.
 
 use hegel::TestCase;
 use hegel::generators as gs;
@@ -27,36 +17,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tempfile::TempDir;
 
-/// How long a connection waits on a locked database before failing with
-/// `SQLITE_BUSY`. Such a failure counts as "attempted but not known to have
-/// committed", like a timeout against a networked database.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// How the bank is initialised.
 #[derive(Debug, Clone, Copy)]
 pub struct BankConfig {
-    /// `N`, the number of accounts.
     pub accounts: i64,
-    /// `B`, the initial balance of every account.
     pub initial_balance: i64,
-    /// The largest amount a transfer may move. Larger than `B` so that the
-    /// insufficient-funds path is exercised regularly.
     pub max_amount: i64,
 }
 
-/// How a run is sized. Every field can be fixed from the environment;
-/// anything left unset is drawn from the test case, so a run with no
-/// variables set explores configurations and a run with all of them set
-/// soaks one fixed shape.
-///
-/// | Variable | Meaning | Unset |
-/// |---|---|---|
-/// | `BANK_ACCOUNTS` | `N`, number of accounts (≥ 1) | drawn, 1..=16 |
-/// | `BANK_INITIAL_BALANCE` | `B`, starting balance per account (≥ 0) | drawn, 0..=1000 |
-/// | `BANK_MAX_AMOUNT` | largest transfer amount (≥ 0) | drawn, 0..=2B+10 |
-/// | `BANK_STEPS` | rounds per test case (≥ 1) | 200 |
-/// | `BANK_MIN_CONCURRENCY` | fewest worker threads (≥ 1) | 2 |
-/// | `BANK_MAX_CONCURRENCY` | most worker threads (≥ min) | 8 |
 #[derive(Debug, Clone, Copy)]
 pub struct WorkloadConfig {
     pub bank: BankConfig,
@@ -66,67 +35,37 @@ pub struct WorkloadConfig {
 }
 
 impl WorkloadConfig {
-    /// Resolve the configuration from the environment, drawing whatever the
-    /// environment leaves unset. Panics on a malformed variable.
-    pub fn from_env_or_draw(tc: &TestCase) -> Self {
-        let accounts = env_i64("BANK_ACCOUNTS", 1)
-            .unwrap_or_else(|| tc.draw(gs::integers::<i64>().min_value(1).max_value(16)));
-        let initial_balance = env_i64("BANK_INITIAL_BALANCE", 0)
-            .unwrap_or_else(|| tc.draw(gs::integers::<i64>().min_value(0).max_value(1_000)));
-        let max_amount = env_i64("BANK_MAX_AMOUNT", 0).unwrap_or_else(|| {
-            tc.draw(
-                gs::integers::<i64>()
-                    .min_value(0)
-                    .max_value(2 * initial_balance + 10),
-            )
-        });
-        let min_concurrency = env_i64("BANK_MIN_CONCURRENCY", 1).unwrap_or(2);
-        let max_concurrency =
-            env_i64("BANK_MAX_CONCURRENCY", min_concurrency).unwrap_or(8.max(min_concurrency));
+    pub fn draw(tc: &TestCase) -> Self {
+        let accounts = tc.draw(gs::integers::<i64>().min_value(1).max_value(16));
+        let initial_balance = tc.draw(gs::integers::<i64>().min_value(0).max_value(1_000));
+        let max_amount = tc.draw(
+            gs::integers::<i64>()
+                .min_value(0)
+                .max_value(2 * initial_balance + 10),
+        );
         WorkloadConfig {
             bank: BankConfig {
                 accounts,
                 initial_balance,
                 max_amount,
             },
-            steps: env_i64("BANK_STEPS", 1).unwrap_or(200),
-            min_concurrency,
-            max_concurrency,
+            steps: 200,
+            min_concurrency: 2,
+            max_concurrency: 8,
         }
     }
 }
 
-fn env_i64(name: &str, min: i64) -> Option<i64> {
-    let raw = std::env::var(name).ok()?;
-    if raw.trim().is_empty() {
-        return None;
-    }
-    let value: i64 = raw
-        .trim()
-        .parse()
-        .unwrap_or_else(|_| panic!("{name}={raw:?} is not an integer"));
-    assert!(value >= min, "{name}={value} must be at least {min}");
-    Some(value)
-}
-
-/// What the client observed for a transfer attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransferOutcome {
-    /// `COMMIT` returned successfully.
     Committed,
-    /// Rolled back because the source balance was insufficient.
     InsufficientFunds,
-    /// SQLite returned an error, such as `SQLITE_BUSY`. Whether the
-    /// transaction committed is unknown.
     Error,
 }
 
 pub struct Bank {
     _dir: TempDir,
     path: PathBuf,
-    /// Idle connections. Rules run on worker threads with `&self`, and a
-    /// `Connection` is `Send` but not `Sync`, so each rule checks one out
-    /// for the duration of a transaction.
     pool: Mutex<Vec<Connection>>,
     config: BankConfig,
     attempted: AtomicU64,
@@ -296,10 +235,6 @@ fn open(path: &Path) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
-/// All rules share the `"bank"` group, so any of them may overlap with any
-/// other: transfers race transfers, and the verifiers read while transfers
-/// are in flight. The same verifications are also invariants, which Hegel
-/// checks on the initial and final state and samples between rounds.
 #[hegel::concurrent_state_machine]
 impl Bank {
     #[rule(group = "bank", weight = 6)]
@@ -350,8 +285,6 @@ impl Bank {
     }
 }
 
-/// Build a fresh bank for this test case and configure the machine from
-/// `config`. The caller runs it with `.run_concurrent(tc)`.
 pub fn bank_machine(tc: &TestCase, config: WorkloadConfig) -> Machine<Bank> {
     let bank = Bank::init(config.bank).expect("initialise the bank database");
     tc.note(&format!("workload: {config:?}"));

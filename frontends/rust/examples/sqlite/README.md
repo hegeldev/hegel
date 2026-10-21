@@ -63,18 +63,11 @@ definitive test that no commit was lost.
 
 ## Sizing a run
 
-Every parameter can be fixed from the environment; whatever is left unset
-is drawn by Hegel, so a run with nothing set explores configurations and a
-run with everything set soaks one fixed shape.
-
-| Variable | Meaning | Unset |
-|---|---|---|
-| `BANK_ACCOUNTS` | `N`, number of accounts | drawn, 1..=16 |
-| `BANK_INITIAL_BALANCE` | `B`, starting balance per account | drawn, 0..=1000 |
-| `BANK_MAX_AMOUNT` | largest transfer amount | drawn, 0..=2B+10 |
-| `BANK_STEPS` | rounds per test case | 200 |
-| `BANK_MIN_CONCURRENCY` | fewest worker threads | 2 |
-| `BANK_MAX_CONCURRENCY` | most worker threads | 8 |
+Every test case draws its own bank: `N` accounts in `1..=16`, a starting
+balance `B` in `0..=1000`, and a largest transfer amount in `0..=2B+10`,
+larger than `B` so that the insufficient-funds path is exercised regularly.
+It then runs 200 rounds on 2 to 8 worker threads. The ranges are in
+`WorkloadConfig::draw` in `src/lib.rs`.
 
 Inside Antithesis, Hegel detects `ANTITHESIS_OUTPUT_DIR` and switches to its
 `workload` profile: every draw is handed to the fuzzer, the failure database
