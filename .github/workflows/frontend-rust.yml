@@ -67,6 +67,7 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           toolchain: ${{ matrix.rust }}
+          components: rustfmt clippy
       - name: Compile examples
         run: just rust::compile-examples
       - name: Check the SQLite bank example
