@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1 - 2026-10-20
+
+This release fixes the source distribution. PyPI rejected `hegeltest-0.2.0.tar.gz` because its metadata declared a `LICENSE` file at the archive's root while maturin, which builds a Cargo workspace member's sdist with the whole workspace as its root, had put the file under `frontends/python/`, so 0.2.0 is on PyPI as wheels only. `pyproject.toml` now lists the license file explicitly in `license-files` and gives the license as the SPDX expression `MIT`, which puts `LICENSE` at the root of the sdist and the license in the metadata's `License-Expression` field. Building from the sdist now requires maturin 1.9.3 or newer.
+
 ## 0.2.0 - 2026-10-20
 
 This release makes `text()`, `characters()`, `from_regex()` and `from_lark()` follow this Python's Unicode version (`unicodedata.unidata_version`) rather than the engine's newer tables. A `characters()` or `text()` generator with category constraints no longer draws a character this Python does not know yet or puts in another category, and a `from_regex()` draw, or a grammar terminal's, always matches the pattern as this Python's `re` reads it: `\w`, `\d` and `\s`, word boundaries and `re.IGNORECASE` all follow the host's tables.

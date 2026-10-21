@@ -58,10 +58,12 @@ jobs:
 
   # Build the wheels exactly as a release would (same composite action), then
   # install one into a fresh virtualenv and import it from outside the
-  # checkout; on linux-amd64 also build the sdist and install from that, which
-  # proves the bundled libhegel sources compile standalone. The sdist goes to
-  # its own directory: the manylinux container builds the wheels as root, so
-  # `dist` is not writable afterwards.
+  # checkout; on linux-amd64 also build the sdist, check that its metadata
+  # names only files it contains (PyPI rejects the upload otherwise, and
+  # `twine check` does not look), and install from it, which proves the
+  # bundled libhegel sources compile standalone. The sdist goes to its own
+  # directory: the manylinux container builds the wheels as root, so `dist`
+  # is not writable afterwards.
   package:
     name: package (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
@@ -89,7 +91,10 @@ jobs:
       - name: Build the sdist
         if: matrix.platform == 'linux-amd64'
         working-directory: frontends/python
-        run: uvx --from 'maturin>=1.7,<2.0' maturin sdist --out sdist
+        run: uvx --from 'maturin>=1.9.3,<2.0' maturin sdist --out sdist
+      - name: Check the sdist's metadata against its contents
+        if: matrix.platform == 'linux-amd64'
+        run: python3 frontends/python/scripts/check_sdist.py frontends/python/sdist/*.tar.gz
       # A virtualenv keeps its interpreter under bin/ on POSIX and Scripts/
       # on Windows.
       - name: Locate the virtualenv interpreter

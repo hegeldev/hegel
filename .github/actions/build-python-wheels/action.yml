@@ -55,7 +55,7 @@ runs:
         for v in $INTERPRETERS; do
           args+=(--interpreter "$(uv python find "$v")")
         done
-        uvx --from 'maturin>=1.7,<2.0' maturin build --release --out dist "${args[@]}"
+        uvx --from 'maturin>=1.9.3,<2.0' maturin build --release --out dist "${args[@]}"
     - name: List the wheels
       shell: bash
       run: ls -l frontends/python/dist
