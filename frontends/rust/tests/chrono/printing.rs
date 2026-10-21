@@ -16,8 +16,8 @@ fn every_chrono_generator_prints_its_drawn_value() {
 #[cfg(feature = "chrono-tz")]
 #[test]
 fn every_chrono_tz_generator_prints_its_drawn_value() {
-    printed_draw_lines(chrono_gs::time_zones());
-    printed_draw_lines(chrono_gs::datetimes().timezones(chrono_gs::time_zones()));
+    printed_draw_lines(chrono_gs::timezones());
+    printed_draw_lines(chrono_gs::datetimes().timezones(chrono_gs::timezones()));
 }
 
 #[test]

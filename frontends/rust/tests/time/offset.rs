@@ -91,7 +91,7 @@ fn test_utc_offsets_min_greater_than_max(tc: hegel::TestCase) {
 
 fn london() -> time_gs::OffsetDateTimeGenerator {
     time_gs::offset_datetimes()
-        .time_zones(gs::time_zones().names(["Europe/London"]))
+        .timezones(gs::timezones().names(["Europe/London"]))
         .min_value(datetime(1900, 1, 1, 0, 0, 0))
         .max_value(datetime(2100, 12, 31, 23, 59, 59))
 }
@@ -150,11 +150,11 @@ fn test_offset_datetimes_reach_both_repeats_of_a_fold() {
 #[test]
 fn test_offset_datetimes_time_zones() {
     assert_all_examples(
-        time_gs::offset_datetimes().time_zones(gs::time_zones().names(["Etc/GMT+5"])),
+        time_gs::offset_datetimes().timezones(gs::timezones().names(["Etc/GMT+5"])),
         |dt| dt.offset() == UtcOffset::from_hms(-5, 0, 0).unwrap(),
     );
     assert_all_examples(
-        time_gs::offset_datetimes().time_zones(gs::time_zones().names([UNKNOWN_ZONE])),
+        time_gs::offset_datetimes().timezones(gs::timezones().names([UNKNOWN_ZONE])),
         |dt| dt.offset() == UtcOffset::UTC,
     );
 }
@@ -263,7 +263,7 @@ fn test_offset_datetimes_reject_a_wall_time_past_the_time_range(tc: hegel::TestC
     let last = PrimitiveDateTime::MAX.assume_utc();
     tc.draw(
         time_gs::offset_datetimes()
-            .time_zones(gs::time_zones().names(["Etc/GMT-14"]))
+            .timezones(gs::timezones().names(["Etc/GMT-14"]))
             .min_instant(last)
             .max_instant(last),
     );
@@ -279,14 +279,14 @@ fn test_offset_datetimes_instants_stay_within_the_time_range() {
     let day = time::Duration::days(1);
     AssertAllExamples::new(
         time_gs::offset_datetimes()
-            .time_zones(gs::time_zones().names(["Etc/GMT+12"]))
+            .timezones(gs::timezones().names(["Etc/GMT+12"]))
             .min_value(PrimitiveDateTime::MAX - day),
         instant_in_the_time_range,
     )
     .run_with_health_checks_suppressed(&[HealthCheck::FilterTooMuch]);
     AssertAllExamples::new(
         time_gs::offset_datetimes()
-            .time_zones(gs::time_zones().names(["Etc/GMT-14"]))
+            .timezones(gs::timezones().names(["Etc/GMT-14"]))
             .max_value(PrimitiveDateTime::MIN + day),
         instant_in_the_time_range,
     )

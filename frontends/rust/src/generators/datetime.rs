@@ -3,11 +3,10 @@ use std::sync::OnceLock;
 
 use super::{Generator, PrintableGenerator, TestCase, label_from_name};
 use crate::datetime::{
-    Ambiguous, Date, DateTime, Granularity, Imaginary, MAX_INSTANT, MAX_YEAR, MIN_INSTANT,
-    MIN_YEAR, Month, Precision, SignedDuration, Span, SpanSign, SpanUnit, Time, TimeZone,
-    Timestamp, UtcOffset, Weekday, ZonedDateTime, date_from_c, date_to_c, datetime_from_c,
-    datetime_to_c, info, kind_from_c, offset_from_c, time_from_c, time_to_c, timestamp_from_c,
-    timestamp_to_c,
+    Ambiguous, Date, DateTime, Granularity, MAX_INSTANT, MAX_YEAR, MIN_INSTANT, MIN_YEAR, Month,
+    Precision, SignedDuration, Span, SpanSign, SpanUnit, Time, TimeZone, Timestamp, UtcOffset,
+    Weekday, ZonedDateTime, date_from_c, date_to_c, datetime_from_c, datetime_to_c, info,
+    kind_from_c, offset_from_c, time_from_c, time_to_c, timestamp_from_c, timestamp_to_c,
 };
 use crate::ffi;
 use crate::ffi::sys as hegel_c;
@@ -17,18 +16,12 @@ use std::sync::LazyLock;
 
 static DATE_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetime.dates"));
 static TIME_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetime.times"));
-static DATETIME_LABEL: LazyLock<u64> =
-    LazyLock::new(|| label_from_name("hegel.datetime.datetimes"));
-static TIMESTAMP_LABEL: LazyLock<u64> =
-    LazyLock::new(|| label_from_name("hegel.datetime.timestamps"));
-static UTC_OFFSET_LABEL: LazyLock<u64> =
-    LazyLock::new(|| label_from_name("hegel.datetime.utc_offsets"));
-static TIME_ZONE_LABEL: LazyLock<u64> =
-    LazyLock::new(|| label_from_name("hegel.datetime.time_zones"));
-static ZONED_DATETIME_LABEL: LazyLock<u64> =
-    LazyLock::new(|| label_from_name("hegel.datetime.zoned_datetimes"));
-static SIGNED_DURATION_LABEL: LazyLock<u64> =
-    LazyLock::new(|| label_from_name("hegel.datetime.signed_durations"));
+static DATETIME_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetime.datetimes"));
+static TIMESTAMP_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetime.timestamps"));
+static UTC_OFFSET_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetime.utc_offsets"));
+static TIME_ZONE_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetime.timezones"));
+static ZONED_DATETIME_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetime.zoned_datetimes"));
+static SIGNED_DURATION_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetime.signed_durations"));
 static SPAN_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetime.spans"));
 
 /// The first wall-clock time of the engine's civil range.
@@ -93,11 +86,12 @@ fn granularity_to_c(granularity: Granularity) -> u32 {
     }) as u32
 }
 
-fn imaginary_to_c(imaginary: Imaginary) -> u32 {
+fn imaginary_to_c(allow: bool) -> u32 {
     use hegel_c::hegel_imaginary_t as c;
-    (match imaginary {
-        Imaginary::Allow => c::HEGEL_IMAGINARY_ALLOW,
-        Imaginary::Avoid => c::HEGEL_IMAGINARY_AVOID,
+    (if allow {
+        c::HEGEL_IMAGINARY_ALLOW
+    } else {
+        c::HEGEL_IMAGINARY_AVOID
     }) as u32
 }
 
@@ -591,7 +585,7 @@ pub fn utc_offsets() -> UtcOffsetGenerator {
     }
 }
 
-/// Generator for [`TimeZone`] values. Created by [`time_zones()`].
+/// Generator for [`TimeZone`] values. Created by [`timezones()`].
 pub struct TimeZoneGenerator {
     names: Option<Vec<String>>,
     links: bool,
@@ -699,11 +693,11 @@ impl PrintableGenerator<TimeZone> for TimeZoneGenerator {
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
-///     let zone = tc.draw(gs::time_zones().names(["Europe/London", "Asia/Calcutta"]));
+///     let zone = tc.draw(gs::timezones().names(["Europe/London", "Asia/Calcutta"]));
 ///     assert!(zone.primary_name == "Europe/London" || zone.primary_name == "Asia/Kolkata");
 /// }
 /// ```
-pub fn time_zones() -> TimeZoneGenerator {
+pub fn timezones() -> TimeZoneGenerator {
     TimeZoneGenerator {
         names: None,
         links: true,
@@ -725,14 +719,14 @@ pub struct ZonedDateTimeGenerator {
     zones: TimeZoneGenerator,
     bounds: ZonedBounds,
     precision: Precision,
-    imaginary: Imaginary,
+    allow_imaginary: bool,
     ambiguous: Ambiguous,
     spec: OnceLock<ffi::ZonedSpec>,
 }
 
 impl ZonedDateTimeGenerator {
     /// Draw the zone from `zones` rather than from every bundled name.
-    pub fn time_zones(mut self, zones: TimeZoneGenerator) -> Self {
+    pub fn timezones(mut self, zones: TimeZoneGenerator) -> Self {
         self.zones = zones;
         self
     }
@@ -791,10 +785,13 @@ impl ZonedDateTimeGenerator {
         self
     }
 
-    /// What to do with a wall time the clocks skipped
-    /// ([`Imaginary::Allow`] by default).
-    pub fn imaginary(mut self, imaginary: Imaginary) -> Self {
-        self.imaginary = imaginary;
+    /// Whether a wall time the clocks skipped may be drawn (`true` by
+    /// default). Allowed, it is reported with kind [`Kind::Gap`], both
+    /// offsets and the instant it resolves to with the pre-transition
+    /// offset; disallowed, another wall time is drawn, and a replayed or
+    /// shrunk value that lands in a gap is moved past it.
+    pub fn allow_imaginary(mut self, allow: bool) -> Self {
+        self.allow_imaginary = allow;
         self.spec = OnceLock::new();
         self
     }
@@ -825,7 +822,7 @@ impl ZonedDateTimeGenerator {
                     configured(spec.set_instant_bounds(timestamp_to_c(min), timestamp_to_c(max)));
                 }
             }
-            configured(spec.set_imaginary(imaginary_to_c(self.imaginary)));
+            configured(spec.set_imaginary(imaginary_to_c(self.allow_imaginary)));
             configured(spec.set_ambiguous(ambiguous_to_c(self.ambiguous)));
             spec
         })
@@ -861,7 +858,7 @@ impl PrintableGenerator<ZonedDateTime> for ZonedDateTimeGenerator {
 /// Generate [`ZonedDateTime`] values: a zone, a wall-clock time in it
 /// and, when the clocks repeated that time, which repeat is meant.
 ///
-/// By default any zone [`time_zones()`] draws and any wall-clock time of
+/// By default any zone [`timezones()`] draws and any wall-clock time of
 /// the engine's range at nanosecond precision, with skipped wall times
 /// reported as [`Kind::Gap`](crate::datetime::Kind::Gap) and both repeats
 /// of a fold drawn; shrinks down the zone ladder, then toward
@@ -878,21 +875,21 @@ impl PrintableGenerator<ZonedDateTime> for ZonedDateTimeGenerator {
 /// # Example
 ///
 /// ```no_run
-/// use hegel::datetime::{Imaginary, Kind};
+/// use hegel::datetime::Kind;
 /// use hegel::generators as gs;
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
-///     let z = tc.draw(gs::zoned_datetimes().imaginary(Imaginary::Avoid));
+///     let z = tc.draw(gs::zoned_datetimes().allow_imaginary(false));
 ///     assert_ne!(z.kind, Kind::Gap);
 /// }
 /// ```
 pub fn zoned_datetimes() -> ZonedDateTimeGenerator {
     ZonedDateTimeGenerator {
-        zones: time_zones(),
+        zones: timezones(),
         bounds: ZonedBounds::Civil(MIN_DATETIME, MAX_DATETIME),
         precision: Precision::Nanoseconds,
-        imaginary: Imaginary::Allow,
+        allow_imaginary: true,
         ambiguous: Ambiguous::Both,
         spec: OnceLock::new(),
     }

@@ -9,7 +9,7 @@
 //! [`datetimes`](crate::generators::datetimes),
 //! [`timestamps`](crate::generators::timestamps),
 //! [`utc_offsets`](crate::generators::utc_offsets),
-//! [`time_zones`](crate::generators::time_zones),
+//! [`timezones`](crate::generators::timezones),
 //! [`zoned_datetimes`](crate::generators::zoned_datetimes),
 //! [`signed_durations`](crate::generators::signed_durations) and
 //! [`spans`](crate::generators::spans); the option enums of their builders
@@ -564,17 +564,6 @@ pub enum Month {
     October,
     November,
     December,
-}
-
-/// What a zoned datetime draw does with a wall time the clocks skipped.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Imaginary {
-    /// Report it, with kind [`Kind::Gap`], both offsets and the instant
-    /// it resolves to with the pre-transition offset.
-    Allow,
-    /// Draw another wall time; a replayed or shrunk value that lands in a
-    /// gap is moved past it.
-    Avoid,
 }
 
 /// Which instant a zoned datetime draw means by a wall time the clocks

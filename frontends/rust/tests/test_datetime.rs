@@ -2,9 +2,9 @@ mod common;
 
 use common::utils::{assert_all_examples, check_can_generate_examples, find_any, minimal};
 use hegel::datetime::{
-    Ambiguous, Date, DateTime, Granularity, Imaginary, Kind, MAX_INSTANT, MAX_OFFSET, MAX_YEAR,
-    MIN_INSTANT, MIN_YEAR, Month, Precision, SignedDuration, Span, SpanSign, SpanUnit, Tag, Time,
-    TimeZone, Timestamp, UNKNOWN_ZONE, UtcOffset, Weekday, ZonedDateTime, info, offset_at, resolve,
+    Ambiguous, Date, DateTime, Granularity, Kind, MAX_INSTANT, MAX_OFFSET, MAX_YEAR, MIN_INSTANT,
+    MIN_YEAR, Month, Precision, SignedDuration, Span, SpanSign, SpanUnit, Tag, Time, TimeZone,
+    Timestamp, UNKNOWN_ZONE, UtcOffset, Weekday, ZonedDateTime, info, offset_at, resolve,
     tzdb_version,
 };
 use hegel::generators as gs;
@@ -771,8 +771,8 @@ fn test_utc_offsets_property(tc: hegel::TestCase) {
 }
 
 #[test]
-fn test_time_zones_default() {
-    assert_all_examples(gs::time_zones(), |zone| {
+fn test_timezones_default() {
+    assert_all_examples(gs::timezones(), |zone| {
         let info = info(&zone.name).unwrap();
         info.primary_name == zone.primary_name
             && !info.tags.contains(&Tag::Legacy)
@@ -782,60 +782,60 @@ fn test_time_zones_default() {
 }
 
 #[test]
-fn test_time_zones_names() {
+fn test_timezones_names() {
     let names = ["Europe/London", "Asia/Calcutta"];
-    assert_all_examples(gs::time_zones().names(names), move |zone| {
+    assert_all_examples(gs::timezones().names(names), move |zone| {
         names.contains(&zone.name.as_str())
     });
-    find_any(gs::time_zones().names(names), |zone| {
+    find_any(gs::timezones().names(names), |zone| {
         zone.primary_name == "Asia/Kolkata"
     });
 }
 
 #[test]
-fn test_time_zones_links() {
-    assert_all_examples(gs::time_zones().links(false), |zone| {
+fn test_timezones_links() {
+    assert_all_examples(gs::timezones().links(false), |zone| {
         !info(&zone.name).unwrap().is_link
     });
-    find_any(gs::time_zones(), |zone| info(&zone.name).unwrap().is_link);
+    find_any(gs::timezones(), |zone| info(&zone.name).unwrap().is_link);
 }
 
 #[test]
-fn test_time_zones_legacy() {
-    find_any(gs::time_zones().legacy(true), |zone| {
+fn test_timezones_legacy() {
+    find_any(gs::timezones().legacy(true), |zone| {
         info(&zone.name).unwrap().tags.contains(&Tag::Legacy)
     });
 }
 
 #[test]
-fn test_time_zones_unknown() {
-    find_any(gs::time_zones().unknown(true), |zone| {
+fn test_timezones_unknown() {
+    find_any(gs::timezones().unknown(true), |zone| {
         zone.name == UNKNOWN_ZONE
     });
 }
 
 #[test]
-fn test_time_zones_opaque() {
+fn test_timezones_opaque() {
     assert_all_examples(
-        gs::time_zones().names(["Mars/Olympus"]).opaque(true),
+        gs::timezones().names(["Mars/Olympus"]).opaque(true),
         |zone| zone.name == "Mars/Olympus" && zone.primary_name == "Mars/Olympus",
     );
 }
 
 #[test]
-fn test_time_zones_shrink_to_utc() {
-    assert_eq!(minimal(gs::time_zones(), |_| true).name, "UTC");
+fn test_timezones_shrink_to_utc() {
+    assert_eq!(minimal(gs::timezones(), |_| true).name, "UTC");
 }
 
 #[test]
-fn test_time_zones_in_vec() {
-    assert_all_examples(gs::vecs(gs::time_zones()).max_size(5), |v| {
+fn test_timezones_in_vec() {
+    assert_all_examples(gs::vecs(gs::timezones()).max_size(5), |v| {
         v.iter().all(|zone| info(&zone.name).is_some())
     });
 }
 
 #[test]
-fn test_time_zones_default_generator() {
+fn test_timezones_default_generator() {
     check_can_generate_examples(gs::default::<TimeZone>());
 }
 
@@ -890,13 +890,13 @@ fn test_zoned_datetimes_reach_gaps_and_both_folds() {
 fn test_zoned_datetimes_time_zones() {
     assert_all_examples(
         gs::zoned_datetimes()
-            .time_zones(gs::time_zones().names(["Europe/London"]))
+            .timezones(gs::timezones().names(["Europe/London"]))
             .min_value(JIFF_MIN)
             .max_value(JIFF_MAX),
         |z| z.zone.name == "Europe/London" && zoned_agrees_with_jiff(z),
     );
     assert_all_examples(
-        gs::zoned_datetimes().time_zones(gs::time_zones().names([UNKNOWN_ZONE])),
+        gs::zoned_datetimes().timezones(gs::timezones().names([UNKNOWN_ZONE])),
         |z| {
             z.zone.name == UNKNOWN_ZONE
                 && z.offset == UtcOffset::Unknown
@@ -972,7 +972,7 @@ fn test_zoned_datetimes_imaginary() {
         gs::zoned_datetimes()
             .min_value(JIFF_MIN)
             .max_value(JIFF_MAX)
-            .imaginary(Imaginary::Avoid),
+            .allow_imaginary(false),
         |z| z.kind != Kind::Gap && zoned_agrees_with_jiff(z),
     );
 }
@@ -1009,11 +1009,11 @@ fn test_zoned_datetimes_shrink_to_utc_at_the_millennium() {
 
 #[test]
 fn test_zoned_datetimes_shrink_past_a_fold_at_the_lower_bound() {
-    let new_york = || gs::time_zones().names(["America/New_York"]);
+    let new_york = || gs::timezones().names(["America/New_York"]);
     let in_fold = datetime(2024, 11, 3, 1, 30, 0);
     let both = minimal(
         gs::zoned_datetimes()
-            .time_zones(new_york())
+            .timezones(new_york())
             .min_value(in_fold),
         |_| true,
     );
@@ -1023,7 +1023,7 @@ fn test_zoned_datetimes_shrink_past_a_fold_at_the_lower_bound() {
     );
     let repeated = minimal(
         gs::zoned_datetimes()
-            .time_zones(new_york())
+            .timezones(new_york())
             .min_value(in_fold),
         |z| z.kind == Kind::Fold,
     );
@@ -1033,7 +1033,7 @@ fn test_zoned_datetimes_shrink_past_a_fold_at_the_lower_bound() {
     );
     let earlier = minimal(
         gs::zoned_datetimes()
-            .time_zones(new_york())
+            .timezones(new_york())
             .min_value(in_fold)
             .ambiguous(Ambiguous::Earlier),
         |_| true,
@@ -1060,7 +1060,7 @@ fn test_zoned_datetimes_property(tc: hegel::TestCase) {
 
 #[hegel::test]
 fn test_offset_at_agrees_with_jiff(tc: hegel::TestCase) {
-    let zone = tc.draw(gs::time_zones());
+    let zone = tc.draw(gs::timezones());
     let min = Timestamp::new(-377_700_000_000, 0).unwrap();
     let max = Timestamp::new(253_402_207_200, 0).unwrap();
     let t = tc.draw(gs::timestamps().min_value(min).max_value(max));
