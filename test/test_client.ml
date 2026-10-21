@@ -48,6 +48,7 @@ let test_default_settings_not_ci () =
     Alcotest.(check int) "all phases" 5 (List.length s.phases);
     Alcotest.(check bool) "print_blob on" true s.print_blob;
     Alcotest.(check bool) "report_multiple_failures off" false s.report_multiple_failures;
+    Alcotest.(check bool) "stop_on_first_failure on" true s.stop_on_first_failure;
     Alcotest.(check bool) "show_statistics off" false s.show_statistics;
     Alcotest.(check bool)
       "development is the base settings"
@@ -115,6 +116,7 @@ let test_register_profile_round_trip () =
         ; phases = [ Settings.Generate; Settings.Shrink ]
         ; print_blob = i mod 2 = 0
         ; report_multiple_failures = true
+        ; stop_on_first_failure = i mod 2 = 1
         ; show_statistics = true
         ; backend = (if i mod 2 = 0 then Settings.Default else Settings.Urandom)
         ; nondeterminism_strictness =

@@ -1,5 +1,5 @@
 (* Low-level ctypes bindings to libhegel, the native property-based testing
-   engine exposed as a C library by hegel-rust (hegel-c/include/hegel.h).
+   engine exposed as a C library by hegeldev/hegel (libhegel/include/hegel.h).
 
    This module is a thin, mechanical 1:1 wrapper over the C ABI: it locates and
    [dlopen]s the shared library and exposes the functions used by the OCaml
@@ -93,16 +93,49 @@ module Bytes_result = struct
   let () = seal t
 end
 
-(* [hegel_generate_string_result_t]: an engine-allocated UTF-8 buffer (not
-   NUL-terminated), freed with [hegel_generate_string_result_free]. *)
-module String_result = struct
+(* [hegel_string_t]: a UTF-8 string view passed by value, also the
+   [hegel_owned_string_t] that [hegel_generate_string] returns. *)
+module Str = struct
   type s
 
-  let t : s structure typ = structure "hegel_generate_string_result_t"
+  let t : s structure typ = structure "hegel_string_t"
   let data = field t "data" (ptr char)
   let len = field t "len" size_t
   let () = seal t
 end
+
+(* The struct and its bytes share one buffer, so the struct value keeps the
+   bytes alive. ctypes holds each argument's converted value until the call
+   returns, which is what makes [str] and [str_opt] safe as argument types. *)
+let str_of_string s =
+  let n = String.length s in
+  let header = sizeof Str.t in
+  let buf = allocate_n char ~count:(header + n) in
+  let bytes = buf +@ header in
+  String.iteri (fun i c -> bytes +@ i <-@ c) s;
+  let v = !@(coerce (ptr char) (ptr Str.t) buf) in
+  setf v Str.data bytes;
+  setf v Str.len (Unsigned.Size_t.of_int n);
+  v
+;;
+
+let string_of_str v =
+  match Unsigned.Size_t.to_int (getf v Str.len) with
+  | 0 -> ""
+  | n -> string_from_ptr (getf v Str.data) ~length:n
+;;
+
+let str : string typ = view ~read:string_of_str ~write:str_of_string Str.t
+
+(* [const hegel_string_t *] where NULL means absent. *)
+let str_opt : string option typ =
+  view
+    ~read:(fun p -> if is_null p then None else Some (string_of_str !@p))
+    ~write:(function
+      | None -> from_voidp Str.t null
+      | Some s -> addr (str_of_string s))
+    (ptr Str.t)
+;;
 
 (* [hegel_printer_value_result_t]: an engine-allocated UTF-8 buffer (not
    NUL-terminated), freed with [hegel_printer_value_result_free]. *)
@@ -216,13 +249,13 @@ let c_settings_show_statistics =
 let c_settings_database =
   foreign
     "hegel_settings_set_database"
-    (handle_t @-> handle_t @-> string_opt @-> returning int)
+    (handle_t @-> handle_t @-> str_opt @-> returning int)
 ;;
 
 let c_settings_database_key =
   foreign
     "hegel_settings_set_database_key"
-    (handle_t @-> handle_t @-> string_opt @-> returning int)
+    (handle_t @-> handle_t @-> str_opt @-> returning int)
 ;;
 
 let c_settings_test_location =
@@ -230,17 +263,17 @@ let c_settings_test_location =
     "hegel_settings_set_test_location"
     (handle_t
      @-> handle_t
-     @-> string (* file *)
+     @-> str (* file *)
      @-> uint32_t (* begin_line *)
-     @-> string (* class_name *)
-     @-> string (* function *)
+     @-> str (* class_name *)
+     @-> str (* function *)
      @-> returning int)
 ;;
 
 let c_settings_new_for_profile =
   foreign
     "hegel_settings_new_for_profile"
-    (handle_t @-> string @-> ptr handle_t @-> returning int)
+    (handle_t @-> str @-> ptr handle_t @-> returning int)
 ;;
 
 let c_settings_print_blob =
@@ -252,11 +285,11 @@ let c_settings_print_blob =
 let c_settings_register_profile =
   foreign
     "hegel_settings_register_profile"
-    (handle_t @-> string @-> handle_t @-> returning int)
+    (handle_t @-> str @-> handle_t @-> returning int)
 ;;
 
 let c_set_default_profile =
-  foreign "hegel_set_default_profile" (handle_t @-> string_opt @-> returning int)
+  foreign "hegel_set_default_profile" (handle_t @-> str @-> returning int)
 ;;
 
 let c_settings_get_test_cases =
@@ -286,7 +319,7 @@ let c_settings_get_derandomize =
 let c_settings_get_database =
   foreign
     "hegel_settings_get_database"
-    (handle_t @-> handle_t @-> ptr string_opt @-> returning int)
+    (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
 ;;
 
 let c_settings_get_phases =
@@ -299,6 +332,18 @@ let c_settings_get_suppress_health_check =
   foreign
     "hegel_settings_get_suppress_health_check"
     (handle_t @-> handle_t @-> ptr uint32_t @-> returning int)
+;;
+
+let c_settings_stop_on_first_failure =
+  foreign
+    "hegel_settings_set_stop_on_first_failure"
+    (handle_t @-> handle_t @-> bool @-> returning int)
+;;
+
+let c_settings_get_stop_on_first_failure =
+  foreign
+    "hegel_settings_get_stop_on_first_failure"
+    (handle_t @-> handle_t @-> ptr bool @-> returning int)
 ;;
 
 let c_settings_get_report_multiple_failures =
@@ -357,7 +402,7 @@ let c_run_start_blob =
     "hegel_run_start_blob"
     (handle_t
      @-> handle_t
-     @-> string
+     @-> str
      @-> handle_t
      @-> handle_t
      @-> ptr handle_t
@@ -462,17 +507,15 @@ let c_string_generator_text =
     (handle_t
      @-> uint64_t
      (* min_size *) @-> uint64_t (* max_size *)
-     @-> string_opt
+     @-> str_opt
      (* codec *) @-> uint32_t (* min_codepoint *)
      @-> uint32_t (* max_codepoint *)
-     @-> ptr (ptr char) (* categories *)
+     @-> ptr Str.t (* categories *)
      @-> size_t
-     @-> ptr (ptr char) (* exclude_categories *)
+     @-> ptr Str.t (* exclude_categories *)
      @-> size_t
-     @-> ptr char (* include_characters *)
-     @-> size_t
-     @-> ptr char (* exclude_characters *)
-     @-> size_t
+     @-> str (* include_characters *)
+     @-> str (* exclude_characters *)
      @-> ptr handle_t (* out_generator *)
      @-> returning int)
 ;;
@@ -481,8 +524,7 @@ let c_string_generator_regex =
   foreign
     "hegel_string_generator_regex"
     (handle_t
-     @-> string (* pattern *)
-     @-> size_t (* pattern_len *)
+     @-> str (* pattern *)
      @-> bool (* fullmatch *)
      @-> handle_t (* alphabet (nullable) *)
      @-> ptr handle_t
@@ -510,13 +552,11 @@ let c_string_generator_free =
 let c_generate_string =
   foreign
     "hegel_generate_string"
-    (handle_t @-> handle_t @-> handle_t @-> ptr String_result.t @-> returning int)
+    (handle_t @-> handle_t @-> handle_t @-> ptr Str.t @-> returning int)
 ;;
 
-let c_generate_string_result_free =
-  foreign
-    "hegel_generate_string_result_free"
-    (handle_t @-> ptr String_result.t @-> returning int)
+let c_owned_string_free =
+  foreign "hegel_owned_string_free" (handle_t @-> ptr Str.t @-> returning int)
 ;;
 
 let c_generate_date =
@@ -565,7 +605,7 @@ let c_start_span =
 ;;
 
 let c_label_from_name =
-  foreign "hegel_label_from_name" (handle_t @-> string @-> ptr uint64_t @-> returning int)
+  foreign "hegel_label_from_name" (handle_t @-> str @-> ptr uint64_t @-> returning int)
 ;;
 
 let c_label_combine =
@@ -593,7 +633,7 @@ let c_collection_more =
 let c_collection_reject =
   foreign
     "hegel_collection_reject"
-    (handle_t @-> handle_t @-> handle_t @-> string_opt @-> returning int)
+    (handle_t @-> handle_t @-> handle_t @-> str_opt @-> returning int)
 ;;
 
 let c_collection_free =
@@ -616,6 +656,12 @@ let c_pool_generate =
     (handle_t @-> handle_t @-> handle_t @-> bool @-> ptr int64_t @-> returning int)
 ;;
 
+let c_pool_restore =
+  foreign
+    "hegel_pool_restore"
+    (handle_t @-> handle_t @-> handle_t @-> int64_t @-> returning int)
+;;
+
 let c_pool_free = foreign "hegel_pool_free" (handle_t @-> handle_t @-> returning int)
 
 let c_new_state_machine =
@@ -623,11 +669,11 @@ let c_new_state_machine =
     "hegel_new_state_machine"
     (handle_t
      @-> handle_t
-     @-> ptr (ptr char)
+     @-> ptr Str.t
      @-> ptr int64_t
      @-> ptr double
      @-> size_t
-     @-> ptr (ptr char)
+     @-> ptr Str.t
      @-> ptr bool
      @-> size_t
      @-> int64_t
@@ -667,18 +713,18 @@ let c_state_machine_free =
 ;;
 
 let c_target =
-  foreign "hegel_target" (handle_t @-> handle_t @-> double @-> string @-> returning int)
+  foreign "hegel_target" (handle_t @-> handle_t @-> double @-> str @-> returning int)
 ;;
 
-let c_event = foreign "hegel_event" (handle_t @-> handle_t @-> string @-> returning int)
+let c_event = foreign "hegel_event" (handle_t @-> handle_t @-> str @-> returning int)
 
 let c_event_value =
   foreign
     "hegel_event_value"
-    (handle_t @-> handle_t @-> double @-> string @-> returning int)
+    (handle_t @-> handle_t @-> double @-> str @-> returning int)
 ;;
 
-let text_len_typ = handle_t @-> handle_t @-> string @-> size_t @-> returning int
+let text_typ = handle_t @-> handle_t @-> str @-> returning int
 
 let c_printer_options_new =
   foreign "hegel_printer_options_new" (handle_t @-> ptr handle_t @-> returning int)
@@ -699,10 +745,10 @@ let c_printer_new =
 ;;
 
 let c_printer_free = foreign "hegel_printer_free" (handle_t @-> handle_t @-> returning int)
-let c_printer_text = foreign "hegel_printer_text" text_len_typ
-let c_printer_breakable = foreign "hegel_printer_breakable" text_len_typ
-let c_printer_if_break = foreign "hegel_printer_if_break" text_len_typ
-let c_printer_comment = foreign "hegel_printer_comment" text_len_typ
+let c_printer_text = foreign "hegel_printer_text" text_typ
+let c_printer_breakable = foreign "hegel_printer_breakable" text_typ
+let c_printer_if_break = foreign "hegel_printer_if_break" text_typ
+let c_printer_comment = foreign "hegel_printer_comment" text_typ
 
 let c_printer_hard_break =
   foreign "hegel_printer_hard_break" (handle_t @-> handle_t @-> returning int)
@@ -711,10 +757,10 @@ let c_printer_hard_break =
 let c_printer_begin_group =
   foreign
     "hegel_printer_begin_group"
-    (handle_t @-> handle_t @-> uint64_t @-> string @-> size_t @-> returning int)
+    (handle_t @-> handle_t @-> uint64_t @-> str @-> returning int)
 ;;
 
-let c_printer_end_group = foreign "hegel_printer_end_group" text_len_typ
+let c_printer_end_group = foreign "hegel_printer_end_group" text_typ
 
 let c_printer_shift_indent =
   foreign
@@ -766,12 +812,12 @@ let c_test_case_printer =
     (handle_t @-> handle_t @-> handle_t @-> ptr handle_t @-> returning int)
 ;;
 
-let c_note = foreign "hegel_note" text_len_typ
+let c_note = foreign "hegel_note" text_typ
 
 let c_mark_complete =
   foreign
     "hegel_mark_complete"
-    (handle_t @-> handle_t @-> int @-> string_opt @-> returning int)
+    (handle_t @-> handle_t @-> int @-> str_opt @-> returning int)
 ;;
 
 let c_result_status =
@@ -781,7 +827,7 @@ let c_result_status =
 let c_result_error =
   foreign
     "hegel_run_result_error"
-    (handle_t @-> handle_t @-> ptr (ptr char) @-> returning int)
+    (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
 ;;
 
 let c_result_failure_count =
@@ -799,26 +845,26 @@ let c_result_failure =
 let c_failure_blob =
   foreign
     "hegel_failure_reproduction_blob"
-    (handle_t @-> handle_t @-> ptr (ptr char) @-> returning int)
+    (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
 ;;
 
 let c_failure_caveat =
   foreign
     "hegel_failure_caveat"
-    (handle_t @-> handle_t @-> ptr (ptr char) @-> returning int)
+    (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
 ;;
 
 let c_failure_origin =
   foreign
     "hegel_failure_origin"
-    (handle_t @-> handle_t @-> ptr (ptr char) @-> returning int)
+    (handle_t @-> handle_t @-> ptr str @-> returning int)
 ;;
 
 let c_last_error_message =
-  foreign "hegel_context_last_error" (handle_t @-> returning string)
+  foreign "hegel_context_last_error" (handle_t @-> returning str)
 ;;
 
-let c_version = foreign "hegel_version" (handle_t @-> ptr (ptr char) @-> returning int)
+let c_version = foreign "hegel_version" (handle_t @-> ptr str @-> returning int)
 
 (* ------------------------------------------------------------------ *)
 (* Public types                                                        *)
@@ -975,16 +1021,14 @@ let check_rc ctx rc =
     raise (Internal_error (label ^ detail)))
 ;;
 
-let byte_len s = Unsigned.Size_t.of_int (String.length s)
-
 (* ------------------------------------------------------------------ *)
 (* Diagnostics                                                         *)
 (* ------------------------------------------------------------------ *)
 
 let version ctx =
-  let out = allocate (ptr char) (from_voidp char null) in
+  let out = allocate str "" in
   check_rc ctx (c_version ctx out);
-  coerce (ptr char) string !@out
+  !@out
 ;;
 
 (* ------------------------------------------------------------------ *)
@@ -1043,6 +1087,10 @@ let settings_report_multiple_failures ctx s b =
   check_rc ctx (c_settings_report_multiple_failures ctx s b)
 ;;
 
+let settings_stop_on_first_failure ctx s b =
+  check_rc ctx (c_settings_stop_on_first_failure ctx s b)
+;;
+
 let settings_show_statistics ctx s b = check_rc ctx (c_settings_show_statistics ctx s b)
 let settings_database ctx s d = check_rc ctx (c_settings_database ctx s d)
 let settings_database_key ctx s k = check_rc ctx (c_settings_database_key ctx s k)
@@ -1079,7 +1127,8 @@ let settings_register_profile ctx name s =
   check_rc ctx (c_settings_register_profile ctx name s)
 ;;
 
-let set_default_profile ctx name = check_rc ctx (c_set_default_profile ctx name)
+let set_default_profile ctx name =
+  check_rc ctx (c_set_default_profile ctx (Option.value name ~default:""))
 
 let settings_get_test_cases ctx s =
   let out = allocate uint64_t Unsigned.UInt64.zero in
@@ -1109,7 +1158,7 @@ let get_bool getter ctx s =
 let settings_get_derandomize ctx s = get_bool c_settings_get_derandomize ctx s
 
 let settings_get_database ctx s =
-  let out = allocate string_opt None in
+  let out = allocate str_opt None in
   check_rc ctx (c_settings_get_database ctx s out);
   !@out
 ;;
@@ -1128,6 +1177,10 @@ let settings_get_suppress_health_check ctx s =
 
 let settings_get_report_multiple_failures ctx s =
   get_bool c_settings_get_report_multiple_failures ctx s
+;;
+
+let settings_get_stop_on_first_failure ctx s =
+  get_bool c_settings_get_stop_on_first_failure ctx s
 ;;
 
 let settings_get_show_statistics ctx s = get_bool c_settings_get_show_statistics ctx s
@@ -1204,20 +1257,20 @@ let test_case_should_capture ctx tc =
 (* Per-test-case primitives                                            *)
 (* ------------------------------------------------------------------ *)
 
-(* Marshal an OCaml string list into a [const char *const *] paired with a GC
+(* Marshal an OCaml string list into a [const hegel_string_t *] paired with a GC
    root that pins its backing memory. The caller MUST {!Ctypes.Root.release} the
    returned root once the C side has copied the names; until then the root keeps
-   the name buffers and the pointer table alive.
+   the name buffers and the struct table alive.
 
-   The explicit root is necessary because [CArray.of_list string] stores only
-   the raw [char *] pointers and leaves each name's buffer unrooted, so the GC
-   may free the names out from under the engine and cause flaky tests *)
+   The explicit root is necessary because [CArray.of_list] copies each struct's
+   [data] pointer and leaves the name's buffer unrooted, so the GC may free the
+   names out from under the engine and cause flaky tests *)
 let to_string_array = function
-  | [] -> from_voidp (ptr char) null, Root.create ()
+  | [] -> from_voidp Str.t null, Root.create ()
   | names ->
-    let buffers = List.map CArray.of_string names in
-    let table = CArray.of_list (ptr char) (List.map CArray.start buffers) in
-    CArray.start table, Root.create (buffers, table)
+    let structs = List.map str_of_string names in
+    let table = CArray.of_list Str.t structs in
+    CArray.start table, Root.create (structs, table)
 ;;
 
 let generate_boolean ctx tc p forced =
@@ -1285,24 +1338,16 @@ let generate_bytes ctx tc ~min_size ~max_size =
   s
 ;;
 
-(* Marshal an optional OCaml string into a [char *] + byte length. Returns a
-   null pointer and length 0 for [None]. The returned [CArray] (via the pointer)
-   is kept alive by the caller for the duration of the C call. *)
-let optional_bytes_arg = function
-  | None -> from_voidp char null, Unsigned.Size_t.of_int 0
-  | Some s -> CArray.start (CArray.of_string s), Unsigned.Size_t.of_int (String.length s)
-;;
-
-(* Marshal an optional string list into a [const char *const *] + length + GC
+(* Marshal an optional string list into a [const hegel_string_t *] + length + GC
    root, distinguishing three cases the text-generator API cares about: [None] →
    NULL (no restriction); [Some []] → a non-NULL pointer with length 0 (an
    explicit *empty* set); [Some names] → the names. *)
 let optional_string_array = function
-  | None -> from_voidp (ptr char) null, Root.create (), Unsigned.Size_t.of_int 0
+  | None -> from_voidp Str.t null, Root.create (), Unsigned.Size_t.of_int 0
   | Some [] ->
     (* A non-NULL pointer with length 0: the C side treats NULL and non-NULL
        empty differently (empty alphabet vs no restriction). *)
-    let dummy = CArray.make (ptr char) 1 in
+    let dummy = CArray.make Str.t 1 in
     CArray.start dummy, Root.create dummy, Unsigned.Size_t.of_int 0
   | Some names ->
     let ptr, root = to_string_array names in
@@ -1328,8 +1373,6 @@ let string_generator_text
   in
   let cats_ptr, cats_root, cats_len = optional_string_array categories in
   let excats_ptr, excats_root, excats_len = optional_string_array exclude_categories in
-  let inc_ptr, inc_len = optional_bytes_arg include_characters in
-  let exc_ptr, exc_len = optional_bytes_arg exclude_characters in
   let out = allocate handle_t null_handle in
   let rc =
     c_string_generator_text
@@ -1343,10 +1386,8 @@ let string_generator_text
       cats_len
       excats_ptr
       excats_len
-      inc_ptr
-      inc_len
-      exc_ptr
-      exc_len
+      (Option.value include_characters ~default:"")
+      (Option.value exclude_characters ~default:"")
       out
   in
   Root.release cats_root;
@@ -1359,7 +1400,7 @@ let string_generator_regex ctx ~pattern ~fullmatch =
   let out = allocate handle_t null_handle in
   check_rc
     ctx
-    (c_string_generator_regex ctx pattern (byte_len pattern) fullmatch null_handle out);
+    (c_string_generator_regex ctx pattern fullmatch null_handle out);
   !@out
 ;;
 
@@ -1384,12 +1425,10 @@ let string_generator_domain ctx ~max_length =
 let string_generator_free ctx sg = ignore (c_string_generator_free ctx sg : int)
 
 let generate_string ctx tc sg =
-  let result = make String_result.t in
+  let result = make Str.t in
   check_rc ctx (c_generate_string ctx tc sg (addr result));
-  let n = Unsigned.Size_t.to_int (getf result String_result.len) in
-  let data = getf result String_result.data in
-  let s = string_from_ptr data ~length:n in
-  ignore (c_generate_string_result_free ctx (addr result) : int);
+  let s = string_of_str result in
+  ignore (c_owned_string_free ctx (addr result) : int);
   s
 ;;
 
@@ -1551,6 +1590,10 @@ let pool_generate ctx tc ~pool ~consume =
   Int64.to_int !@out
 ;;
 
+let pool_restore ctx tc ~pool ~variable_id =
+  check_rc ctx (c_pool_restore ctx tc pool (Int64.of_int variable_id))
+;;
+
 let pool_free ctx pool = check_rc ctx (c_pool_free ctx pool)
 
 let new_state_machine
@@ -1676,25 +1719,21 @@ let printer_new ctx options =
 ;;
 
 let printer_free ctx printer = check_rc ctx (c_printer_free ctx printer)
-let printer_text ctx p s = check_rc ctx (c_printer_text ctx p s (byte_len s))
+let printer_text ctx p s = check_rc ctx (c_printer_text ctx p s)
 
-let printer_breakable ctx p sep =
-  check_rc ctx (c_printer_breakable ctx p sep (byte_len sep))
-;;
+let printer_breakable ctx p sep = check_rc ctx (c_printer_breakable ctx p sep)
 
-let printer_if_break ctx p s = check_rc ctx (c_printer_if_break ctx p s (byte_len s))
-let printer_comment ctx p s = check_rc ctx (c_printer_comment ctx p s (byte_len s))
+let printer_if_break ctx p s = check_rc ctx (c_printer_if_break ctx p s)
+let printer_comment ctx p s = check_rc ctx (c_printer_comment ctx p s)
 let printer_hard_break ctx p = check_rc ctx (c_printer_hard_break ctx p)
 
 let printer_begin_group ctx p ~indent open_ =
   check_rc
     ctx
-    (c_printer_begin_group ctx p (Unsigned.UInt64.of_int indent) open_ (byte_len open_))
+    (c_printer_begin_group ctx p (Unsigned.UInt64.of_int indent) open_)
 ;;
 
-let printer_end_group ctx p close =
-  check_rc ctx (c_printer_end_group ctx p close (byte_len close))
-;;
+let printer_end_group ctx p close = check_rc ctx (c_printer_end_group ctx p close)
 
 let printer_shift_indent ctx p delta =
   check_rc ctx (c_printer_shift_indent ctx p (Int64.of_int delta))
@@ -1733,7 +1772,7 @@ let test_case_printer ctx tc options =
   !@out
 ;;
 
-let note ctx tc text = check_rc ctx (c_note ctx tc text (byte_len text))
+let note ctx tc text = check_rc ctx (c_note ctx tc text)
 
 let mark_complete ctx tc status origin =
   check_rc ctx (c_mark_complete ctx tc (status_to_int status) origin)
@@ -1755,9 +1794,9 @@ let result_status ctx r =
 ;;
 
 let result_error ctx r =
-  let out = allocate (ptr char) (from_voidp char null) in
+  let out = allocate str_opt None in
   check_rc ctx (c_result_error ctx r out);
-  coerce (ptr char) string_opt !@out
+  !@out
 ;;
 
 let result_failure_count ctx r =
@@ -1781,21 +1820,21 @@ let result_failures ctx r =
 ;;
 
 let failure_origin ctx f =
-  let out = allocate (ptr char) (from_voidp char null) in
+  let out = allocate str "" in
   check_rc ctx (c_failure_origin ctx f out);
-  coerce (ptr char) string_opt !@out
+  !@out
 ;;
 
 let failure_blob ctx f =
-  let out = allocate (ptr char) (from_voidp char null) in
+  let out = allocate str_opt None in
   check_rc ctx (c_failure_blob ctx f out);
-  coerce (ptr char) string_opt !@out
+  !@out
 ;;
 
 let failure_caveat ctx f =
-  let out = allocate (ptr char) (from_voidp char null) in
+  let out = allocate str_opt None in
   check_rc ctx (c_failure_caveat ctx f out);
-  coerce (ptr char) string_opt !@out
+  !@out
 ;;
 
 #ifdef OXCAML
@@ -1816,6 +1855,7 @@ let settings_nondeterminism_strictness = Obj.magic_portable settings_nondetermin
 let settings_seed = Obj.magic_portable settings_seed
 let settings_derandomize = Obj.magic_portable settings_derandomize
 let settings_report_multiple_failures = Obj.magic_portable settings_report_multiple_failures
+let settings_stop_on_first_failure = Obj.magic_portable settings_stop_on_first_failure
 let settings_show_statistics = Obj.magic_portable settings_show_statistics
 let settings_database = Obj.magic_portable settings_database
 let settings_database_key = Obj.magic_portable settings_database_key
@@ -1831,6 +1871,7 @@ let settings_get_database = Obj.magic_portable settings_get_database
 let settings_get_phases = Obj.magic_portable settings_get_phases
 let settings_get_suppress_health_check = Obj.magic_portable settings_get_suppress_health_check
 let settings_get_report_multiple_failures = Obj.magic_portable settings_get_report_multiple_failures
+let settings_get_stop_on_first_failure = Obj.magic_portable settings_get_stop_on_first_failure
 let settings_get_show_statistics = Obj.magic_portable settings_get_show_statistics
 let settings_get_print_blob = Obj.magic_portable settings_get_print_blob
 let settings_get_backend = Obj.magic_portable settings_get_backend
@@ -1878,6 +1919,7 @@ let collection_free = Obj.magic_portable collection_free
 let new_pool = Obj.magic_portable new_pool
 let pool_add = Obj.magic_portable pool_add
 let pool_generate = Obj.magic_portable pool_generate
+let pool_restore = Obj.magic_portable pool_restore
 let pool_free = Obj.magic_portable pool_free
 let new_state_machine = Obj.magic_portable new_state_machine
 let state_machine_next_group = Obj.magic_portable state_machine_next_group

@@ -4,8 +4,8 @@ open Generators
 (** Test: one_of with empty list raises. *)
 let test_one_of_empty () =
   match one_of [] with
-  | exception Failure _ -> ()
-  | _ -> Alcotest.fail "expected Failure"
+  | exception Hegel.Usage_error _ -> ()
+  | _ -> Alcotest.fail "expected Usage_error"
 ;;
 
 (** Test: one_of with a single generator is accepted. *)

@@ -3,8 +3,8 @@
    Search order: 1. [$HEGEL_LIBHEGEL_PATH] — an explicit path to the library
    file (or a directory containing [libhegel.<ext>]). 2. A prebuilt libhegel
    bundled into the installed package via the [libhegel] dune-site (release
-   tarballs ship the matching-platform binary there). 3. A sibling
-   [../hegel-rust/target/release/] (then [.../debug/]) checkout relative to the
+   tarballs ship the matching-platform binary there). 3. A sibling hegeldev/hegel
+   checkout's [../hegel/target/release/] (then [.../debug/]) relative to the
    current working directory, under the name cargo gives the cdylib
    ([libhegel_c.<ext>]). 4. A SHA-256-verified copy downloaded from the
    libhegel GitHub release (see [release_base]), cached under
@@ -184,14 +184,14 @@ let from_site () =
        Hegel_sites.Sites.libhegel)
 ;;
 
-(* 3. Sibling hegel-rust checkout relative to the working directory. *)
+(* 3. Sibling hegel checkout relative to the working directory. *)
 let from_sibling ext =
   let cwd = Sys.getcwd () in
   let candidate sub =
     List.fold_left
       Filename.concat
       cwd
-      [ ".."; "hegel-rust"; "target"; sub; sibling_basename ext ]
+      [ ".."; "hegel"; "target"; sub; sibling_basename ext ]
   in
   List.find_opt is_file [ candidate "release"; candidate "debug" ]
 ;;
@@ -262,8 +262,8 @@ let from_cache_or_download os_id ext =
       failwith
         (Printf.sprintf
            "hegel: no baked-in libhegel checksum for platform %s (not published upstream \
-            for %s). Build hegel-rust and set HEGEL_LIBHEGEL_PATH to the resulting \
-            libhegel.%s."
+            for %s). Build libhegel from hegeldev/hegel and set HEGEL_LIBHEGEL_PATH to \
+            the resulting libhegel_c.%s."
            key
            release_tag
            ext)
@@ -278,8 +278,8 @@ let from_cache_or_download os_id ext =
          (Printf.sprintf
             "hegel: libhegel not found and downloads are disabled \
              (HEGEL_LIBHEGEL_NO_DOWNLOAD). Looked at $HEGEL_LIBHEGEL_PATH, \
-             ../hegel-rust/target/{release,debug}/, and %s. Build hegel-rust or set \
-             HEGEL_LIBHEGEL_PATH."
+             ../hegel/target/{release,debug}/, and %s. Build libhegel from \
+             hegeldev/hegel or set HEGEL_LIBHEGEL_PATH."
             cache_path)
      | None -> ());
     let url = Printf.sprintf "%s/%s" release_base (release_artifact key ext) in

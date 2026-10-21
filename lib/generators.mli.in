@@ -221,14 +221,15 @@ val integers : ?min_value:int -> ?max_value:int -> unit -> (int, printable) gene
      ?allow_infinity ()] creates a generator for floating-point values.
 
     Defaults:
-    - [min_value]: 64-bit float min (only when both [allow_nan] and
-      [allow_infinity] are [false])
-    - [max_value]: 64-bit float max (only when both [allow_nan] and
-      [allow_infinity] are [false])
+    - [min_value] / [max_value]: unbounded. With [allow_infinity = false] the
+      range is [[-max_float, max_float]].
     - [exclude_min]: [false]
     - [exclude_max]: [false]
     - [allow_nan]: [true] only when no bounds are set
     - [allow_infinity]: [true] when at most one bound is set
+
+    Bounds that only allow infinity to be generated while [allow_infinity] is [false], 
+    such as [~min_value:infinity], raise [Usage_error].
 
     {[
       let%hegel_test floats_example tc =
@@ -258,8 +259,9 @@ val floats
       [["L"; "Nd"]]). Mutually exclusive with [exclude_categories].
     - [exclude_categories]: blacklist of Unicode general categories. Mutually
       exclusive with [categories].
-    - [include_characters]: always include these characters even if excluded by
-      other filters
+    - [include_characters]: add these characters even if the codepoint range or
+      categories exclude them. Each must be encodable in [codec] and must not
+      also appear in [exclude_characters], or the draw raises [Usage_error].
     - [exclude_characters]: always exclude these characters
     - [alphabet]: fixed set of allowed characters. Mutually exclusive with all
       individual character filtering parameters.
@@ -444,11 +446,7 @@ val%template hash_tables
 [@@mode m = (nonportable, portable)]
 
 (** [sampled_from options] creates a generator that samples from a non-empty
-    list of values. Sampling is {e not} uniform: the engine's bounded-integer
-    draw deliberately over-weights boundary and "interesting" indices, so the
-    first element (and, to a lesser extent, the last) is drawn noticeably more
-    often than the middle ones, matching the sibling Hegel client libraries.
-    The output type is the caller's, so the result carries no printer.
+    list of values.
 
     {[
       let%hegel_test sampled_from_example tc =
@@ -461,7 +459,7 @@ val%template sampled_from
 [@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
 
 (** [one_of generators] creates a generator that picks from one of the given
-    printable [generators]. Requires at least one generator. On a failing
+    printable [generators]. Raises [Usage_error] if [generators] is empty. On a failing
     replay, the drawn value prints through the printer of the branch it was
     drawn from. The recorded branch is per generator value: if one [one_of]
     generator is drawn several times before printing (e.g. as the element
@@ -809,7 +807,8 @@ val ip_addresses : ?version:[ `V4 | `V6 ] -> unit -> (Ipaddr.t, printable) gener
 (** [from_regex pattern ?fullmatch ()] creates a generator for strings matching
     a regular expression [pattern], written in the syntax of Python's [re]
     module. When [fullmatch] is [true] (the default) the whole string must match
-    [pattern]; otherwise a match anywhere suffices.
+    [pattern]; otherwise a match anywhere suffices. A pattern that does not
+    parse, or that no string matches, raises [Usage_error] when drawn.
 
     {[
       let%hegel_test from_regex_example tc =
@@ -958,8 +957,9 @@ end
     direct use — no stability guarantees. *)
 module Private : sig
   (** Span labels: opaque values identifying a generator to the engine, which
-      treats two spans with the same label as coming from the same generator
-      when shrinking. *)
+      treats two spans with the same label as coming from the same generator,
+      and so as candidates for swapping, duplicating, and reordering during
+      shrinking and mutation. *)
   module Labels : sig
     (** [from_name name] is the label of a generator named [name] (64-bit
         FNV-1a, as [hegel_label_from_name]). *)

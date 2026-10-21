@@ -33,8 +33,8 @@ exception Stop_test = Ffi.Stop_test
 (** Raised when an assumption or engine draw rejects the case. *)
 exception Assume_rejected = Ffi.Assume_rejected
 
-(** Raised when the engine detects a flaky strategy definition or when
-    the client side pool diverges from the engine side pool. *)
+(** Raised when the client-side pool table diverges from the engine's pool (an
+    id the engine drew is unknown to the client). The case is marked invalid. *)
 exception Flaky_strategy
 
 open Settings
@@ -598,6 +598,13 @@ let pool_generate tc ~pool ?(consume = false) () =
   with_stop_guard tc (fun () -> Ffi.pool_generate tc.context tc.handle ~pool ~consume)
 ;;
 
+(** [pool_restore tc ~pool ~variable_id] puts back a variable that a consuming
+    {!pool_generate} removed from [pool]. *)
+let pool_restore tc ~pool ~variable_id =
+  with_stop_guard tc (fun () ->
+    Ffi.pool_restore tc.context tc.handle ~pool ~variable_id)
+;;
+
 let state_machine_next_group tc ~state_machine =
   with_stop_guard tc (fun () ->
     Ffi.state_machine_next_group tc.context tc.handle ~state_machine)
@@ -738,12 +745,12 @@ let reraise failure = Printexc.raise_with_backtrace failure.exn failure.backtrac
       optional key scoping persisted/replayed failing examples and, under [derandomize],
       the per-test seed. Defaults to the test's [test_location] (as
       [file:function_name]) so each [let%hegel_test] gets a stable, distinct
-      key; pass an explicit key to override. When both are absent, the engine
-      uses its own default key.
+      key; pass an explicit key to override. When both are absent, the run has
+      no database key, so failures are neither stored nor replayed.
     @param failure_blobs
       a list of base64 encoded strings (blobs), where each string encodes the choices
-      made in a failing test run. When the list is nonempty, only the first blob
-      is decoded and run. The blob is only guaranteed to reproduce a failure within
+      made in a failing test run. Only the first blob is used. The blob is only guaranteed 
+      to reproduce a failure within
       a specific version of Hegel *)
 let run_test
       ~(settings : Settings.t)

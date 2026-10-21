@@ -15,8 +15,8 @@ exception Stop_test
 (** Raised when an assumption or engine draw rejects the case. *)
 exception Assume_rejected
 
-(** Raised when the engine detects a flaky strategy definition or when the
-    client side pool diverges from the engine side pool. *)
+(** Raised when the client-side pool table diverges from the engine's pool (an
+    id the engine drew is unknown to the client). The case is marked invalid. *)
 exception Flaky_strategy
 
 (** An opaque per-test-case handle, threaded to the test function and to the
@@ -175,9 +175,10 @@ val generate_ipv6 : test_case -> string
     {!Assume_rejected}) and does not consult [tc]. *)
 val assume : test_case -> bool -> unit
 
-(** [note tc message] prints [message] to stderr subject to the run's
-    [Settings.verbosity]: never under [Quiet], only on the final (failing) replay
-    under [Normal], and on every test case under [Verbose] or [Debug]. *)
+(** [note tc message] appends [message] to the test case's output document,
+    subject to the run's [Settings.verbosity]: never under [Quiet], on the
+    cases the engine stamps for capture under [Normal] (their output appears in
+    the failure report), and on every test case under [Verbose] or [Debug]. *)
 val note : test_case -> string -> unit
 
 (**/**)
@@ -298,8 +299,14 @@ val pool_add : test_case -> pool:pool -> int
 (** [pool_generate tc ~pool ?consume ()] draws a variable id from [pool]. When
     [consume] is [true] (default [false]), the variable is also removed from the
     pool. Drawing from an empty pool raises {!Assume_rejected} (the engine
-    rejects the test case as invalid). *)
+    returns [HEGEL_E_ASSUME]). Inside a rule this rejects the rule. Otherwise,
+    it rejects the test case. *)
 val pool_generate : test_case -> pool:pool -> ?consume:bool -> unit -> int
+
+(** [pool_restore tc ~pool ~variable_id] puts back a variable that a consuming
+    {!pool_generate} removed from [pool], so it can be drawn again. Raises
+    {!Usage_error} if [variable_id] is not a consumed variable of [pool]. *)
+val pool_restore : test_case -> pool:pool -> variable_id:int -> unit
 
 (** An engine-owned state machine. Each one must be released exactly once with
     {!state_machine_free}. *)
@@ -307,7 +314,9 @@ type state_machine = Hegel_ffi.Ffi.state_machine
 
 (** Registers a sequential or concurrent engine-owned state machine and
     returns its handle with the concurrency level selected by libhegel. Raises
-    {!Usage_error} if [rule_weights] contains a non-positive float. *)
+    {!Usage_error} if there are no rules, a weight is not finite and positive,
+    [step_count < 1], or the bounds do not satisfy
+    [1 <= min_concurrency <= max_concurrency]. *)
 val new_state_machine_with_concurrency
   :  test_case
   -> rule_names:string list
@@ -375,9 +384,8 @@ val state_machine_free : test_case -> state_machine:state_machine -> unit
       would use.
     @param failure_blobs
       a list of base64 encoded strings (blobs), where each string encodes the
-      choices made in a failing test run. When the list is nonempty, only the
-      first blob is decoded and run. The blob is only guaranteed to reproduce a
-      failure within a specific version of Hegel *)
+      choices made in a failing test run. Only the first blob is used. The blob 
+      is only guaranteed to reproduce a failure within a specific version of Hegel *)
 val run_test
   :  settings:Settings.t
   -> ?test_location:test_location

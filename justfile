@@ -9,7 +9,7 @@ check-tests:
     # in real-time — dune runtest buffers output until completion, hiding
     # diagnostic messages when a test hangs. The native libhegel engine is
     # located automatically at runtime (HEGEL_LIBHEGEL_PATH > sibling
-    # ../hegel-rust/target build > verified download); see lib/ffi/loader.ml.
+    # ../hegel/target build > verified download); see lib/ffi/loader.ml.
     dune build --instrument-with bisect_ppx \
       test/test_hegel.exe \
       test/test_lazy_load.exe \

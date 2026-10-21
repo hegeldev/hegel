@@ -187,6 +187,7 @@
       | [HEGEL_DERANDOMIZE]               | settings              | [derandomize]: [true], [1], [yes], [false], [0], or [no].                      |
       | [HEGEL_PRINT_BLOB]                | settings              | [print_blob]: the same values as [HEGEL_DERANDOMIZE].                          |
       | [HEGEL_NONDETERMINISM_STRICTNESS] | settings              | [nondeterminism_strictness]: [quiet], [warn], or [error].                      |
+      | [HEGEL_STOP_ON_FIRST_FAILURE]     | settings              | [stop_on_first_failure]: the same values as [HEGEL_DERANDOMIZE].               |
     }
 
     An empty variable is ignored. A malformed variable makes {!default} and {!from_profile}
@@ -231,9 +232,8 @@ type backend =
   (** A seeded PRNG: runs are reproducible from the seed, and shrinking and
       replay work as usual. The base setting. *)
   | Urandom
-  (** Reads bytes from [/dev/urandom] on every draw, so Antithesis's fuzzer
-      controls every choice. Selected by the [workload] profile. You almost
-      certainly don't want it otherwise. *)
+  (** Takes fresh entropy on every draw. Selected by the [workload] profile. You
+      almost certainly don't want it otherwise. *)
 
 (** How a run handles nondeterministic test behavior. In [hegel.toml]:
     [quiet], [warn], or [error]. *)
@@ -275,7 +275,9 @@ val phase_to_string : phase -> string
     ]} *)
 
 type t =
-  { test_cases : int (** Number of test cases to run. 100 in the [base] profile. *)
+  { test_cases : int
+    (** Maximum number of valid test cases to generate. Cases rejected by
+        [assume] or a filter do not count. 100 in the [base] profile. *)
   ; verbosity : verbosity (** How much Hegel prints. [Normal] in the [base] profile. *)
   ; seed : int option
     (** A fixed seed for reproducibility; [None]/[seed = "none"] in [hegel.toml]
@@ -296,8 +298,13 @@ type t =
     (** Print a [rerun with:] line whose base64 blob encodes the choices that
         led to a failure. [true] in the [base] settings. *)
   ; report_multiple_failures : bool
-    (** Report every distinct failure the run found rather than just the first.
-        [false] by default. *)
+    (** Report every distinct failure the run found. When [false] (the default),
+        only the smallest failure is shrunk and reported. Other failures are still
+        stored in the database. *)
+  ; stop_on_first_failure : bool
+    (** Stop at the first failure found and report it. When [false], the run
+        uses its whole [test_cases] budget before reporting. [true] in the
+        [base] profile. *)
   ; show_statistics : bool
     (** Print an end-of-run statistics block aggregating [event] /
         [event_value] observations. [false] by default. *)

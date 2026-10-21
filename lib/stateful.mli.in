@@ -192,8 +192,8 @@
     Concurrent failures are usually nondeterministic. Use [Settings.nondeterminism_strictness]
     to configure how Hegel handles nondeterministic failures.
 
-    In the failure output, each rule execution is labeled with its worker and the
-    time in milliseconds since the test case began to aid debugging.
+    In the failure output, each line a worker prints is prefixed with
+    the worker index and the time since the test case began.
 
     {v
     --- Failure: concurrent_store (...) -------------------------
@@ -310,7 +310,7 @@ module Pool : sig
   val size : _ t -> int
 
   (** Draws a value without removing it. A draw from an empty pool rejects the
-      current rule.
+      current rule, or the test case when drawn outside a rule.
 
       {[
       let existing = draw_silent tc (Stateful.Pool.values_reusable pool)
@@ -318,7 +318,8 @@ module Pool : sig
   val values_reusable : 'a t -> ('a, Generators.unprintable) Generators.generator
 
   (** Draws and removes a value. A draw from an empty pool rejects the current
-      rule.
+      rule, or the test case when drawn outside a rule. Filtering this
+      generator removes only the value it returns.
 
       {[
       let taken = draw_silent tc (Stateful.Pool.values_consumed pool)
@@ -344,11 +345,12 @@ module Concurrent_pool : sig PORTABLE
   val size : _ t -> int
 
   (** Draws a value without removing it. A draw from an empty pool rejects the
-      current rule. *)
+      current rule, or the test case when drawn outside a rule. *)
   val values_reusable : 'a t -> ('a, Generators.unprintable) Generators.generator
 
   (** Draws and removes a value. A draw from an empty pool rejects the current
-      rule. *)
+      rule, or the test case when drawn outside a rule. Filtering this
+      generator removes only the value it returns. *)
   val values_consumed : 'a t -> ('a, Generators.unprintable) Generators.generator
 end
 
@@ -413,7 +415,7 @@ module Invariant : sig PORTABLE
       Every invariant is checked on the initial and final states.
 
       With the PPX, an invariant takes the following option:
-      [[@@invariant { always_checked = true | false }]].
+      [[@@invariant { always_check = true | false }]].
 
       {[
       let short =
@@ -511,8 +513,8 @@ end
     checked on the initial and the final state. After a step, invariants are
     randomly sampled unless they were created with [always_check:true]. Raises
     [Hegel.Usage_error] if [M] has no rules or [step_count] is below 1.
-    [step_count] defaults to 50. Each case runs at least one step and at most
-    [step_count].
+    [step_count] defaults to 50. Each case completes at least one step and at
+    most [step_count].
 
     {[
     let%hegel_test counter tc =

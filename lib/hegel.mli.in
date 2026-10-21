@@ -92,13 +92,13 @@
 
     This test asserts that any integer is less than 50, which is obviously
     incorrect. Hegel finds a test case that makes the assertion fail, then shrinks
-    it to the smallest counterexample ([n = 50]). The final replay prints the
+    it to the smallest counterexample ([n = 50]). The failure report prints the
     drawn values, the exception, and a [rerun with:] line that replays the exact case:
 
     {v
       --- Failure: every_int_is_small (my_tests.ml:3) ------------------
 
-        n = 50
+      n = 50
 
       Exception: File "my_tests.ml", line 5, characters 2-8: Assertion failed
       rerun with: [@@failure_blobs [ "AAEAAAAACgEAAAAy" ]]
@@ -301,7 +301,7 @@
     {v
       --- Failure: every_int_is_small (my_tests.ml:3) ------------------
 
-        n = 50
+      n = 50
 
       Exception: File "my_tests.ml", line 5, characters 2-8: Assertion failed
       rerun with: [@@failure_blobs [ "AAEAAAAACgEAAAAy" ]]
@@ -416,13 +416,13 @@ type test_location = Internal.test_location =
     optional key scoping persisted/replayed failing examples and, under [derandomize],
     the per-test seed. Defaults to the test's [test_location] (as
     [file:function_name]) so each [let%hegel_test] gets a stable, distinct
-    key; pass an explicit key to override. When both are absent, the engine
-    uses its own default key.
+    key; pass an explicit key to override. When both are absent, the run has
+    no database key, so failures are neither stored nor replayed.
     @param failure_blobs
     a list of base64 encoded strings (blobs), where each string encodes the choices
-    made in a failing test run. When the list is nonempty, only the first blob
-    is decoded and run. A blob is only guaranteed to reproduce a failure within
-    the same version of Hegel. *)
+    made in a failing test run. Only the first blob is used. If no replay fails, the 
+    run raises [Failure] saying the blob did not reproduce. A blob is only guaranteed 
+    to reproduce a failure within the same version of Hegel. *)
 val run_hegel_test
   :  ?settings:Settings.t
   -> ?test_location:test_location
@@ -548,7 +548,8 @@ exception Assume_rejected
         assert (List.hd xs :: List.tl xs = xs)
     ]}
 
-    Discarding too many cases trips the [Filter_too_much] health check. For a
+    Discarding too many cases trips the [Filter_too_much] health check, and a
+    run in which every case is rejected fails with [Unsatisfiable]. For a
     narrow precondition, write a generator that generates valid inputs by
     construction (e.g. making the minimum size of the list 1 in the example above).
 
@@ -556,8 +557,8 @@ exception Assume_rejected
     primitives; the rejection itself is client-side and does not consult [tc]. *)
 val assume : test_case -> bool -> unit
 
-(** [target tc ~label ~value] sends a target command to guide the search engine
-    toward higher values.
+(** [target tc ~label ~value] records [value] as a targeting score under
+    [label]. Hegel steers generation toward higher scores.
 
     {[
       let%hegel_test grow_size tc =
