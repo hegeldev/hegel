@@ -20,6 +20,7 @@ mod printer;
 mod settings;
 mod strings;
 mod test_case;
+mod time;
 
 pub(crate) use grammar::{Grammar, GrammarBuilder, GrammarDraw};
 pub(crate) use printer::Printer;
@@ -28,6 +29,7 @@ pub(crate) use strings::StringGenerator;
 pub(crate) use test_case::{
     Collection, Pool, Recursion, Repeat, Run, RunResult, StateMachine, TestCase,
 };
+pub(crate) use time::{TimeZoneSpec, ZonedSpec};
 
 // Defined here, but exported (and so named) from hegel.errors.
 create_exception!(
@@ -301,11 +303,16 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Pool>()?;
     m.add_class::<StateMachine>()?;
     m.add_class::<StringGenerator>()?;
+    m.add_class::<TimeZoneSpec>()?;
+    m.add_class::<ZonedSpec>()?;
     m.add_class::<Printer>()?;
     m.add_class::<GrammarBuilder>()?;
     m.add_class::<Grammar>()?;
     m.add_class::<GrammarDraw>()?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
+    m.add_function(wrap_pyfunction!(time::tzdb_version, m)?)?;
+    m.add_function(wrap_pyfunction!(time::timezone_info, m)?)?;
+    m.add_function(wrap_pyfunction!(time::timezone_resolve, m)?)?;
     m.add_function(wrap_pyfunction!(label_from_name, m)?)?;
     m.add_function(wrap_pyfunction!(label_combine, m)?)?;
     m.add_function(wrap_pyfunction!(set_default_profile, m)?)?;
@@ -415,6 +422,32 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add(
         "RUN_ERROR_UNSATISFIABLE",
         c::hegel_run_error_kind_t::HEGEL_RUN_ERROR_UNSATISFIABLE as u32,
+    )?;
+    m.add(
+        "TIMEZONE_KIND_UNIQUE",
+        c::hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_UNIQUE as u32,
+    )?;
+    m.add(
+        "TIMEZONE_KIND_GAP",
+        c::hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_GAP as u32,
+    )?;
+    m.add(
+        "TIMEZONE_KIND_FOLD",
+        c::hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_FOLD as u32,
+    )?;
+    m.add("TIMEZONE_TAG_LINK", c::HEGEL_TIMEZONE_TAG_LINK)?;
+    m.add("TIMEZONE_TAG_LEGACY", c::HEGEL_TIMEZONE_TAG_LEGACY)?;
+    m.add(
+        "AMBIGUOUS_BOTH",
+        c::hegel_ambiguous_t::HEGEL_AMBIGUOUS_BOTH as u32,
+    )?;
+    m.add(
+        "AMBIGUOUS_EARLIER",
+        c::hegel_ambiguous_t::HEGEL_AMBIGUOUS_EARLIER as u32,
+    )?;
+    m.add(
+        "AMBIGUOUS_LATER",
+        c::hegel_ambiguous_t::HEGEL_AMBIGUOUS_LATER as u32,
     )?;
     Ok(())
 }

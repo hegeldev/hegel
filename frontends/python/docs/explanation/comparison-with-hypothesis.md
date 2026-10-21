@@ -59,8 +59,8 @@ does, with a note per file of what was dropped.
 - `find()`, `.example()`, `@seed` (set `seed` in the settings instead),
   `register_random` and the per-test-case seeding of the global `random`.
 - The strategies `shared`, `runner`, `slices`, `functions`, `randoms`,
-  `random_module`, `decimals`, `fractions`, `complex_numbers`,
-  `timezone_keys`, and `floats(width=16)`.
+  `random_module`, `decimals`, `fractions`, `complex_numbers`, and
+  `floats(width=16)`.
 - `@precondition`, `@initialize`, `consumes`, `multiple` and `Bundle`
   semantics for state machines, `stateful_step_count` and a minimum step
   count, and `MachineClass.TestCase`. A pool shrinks toward the first value
@@ -124,8 +124,21 @@ does, with a note per file of what was dropped.
 - A skipped test ends the run before anything is saved to the database.
 - Generator arguments are validated when the generator is built, not when
   the test runs.
-- `datetimes()` and `times()` never set `fold`, and there is no targeting of
-  DST folds, gaps or leap seconds.
+- `timezone_keys()` and `timezones()` draw from Hegel's own copy of the
+  IANA database, restricted to the names this Python can load, so a saved
+  failure means the same zone on every machine; the `posix/` and `right/`
+  variants are never generated (there is no `allow_prefix`), and legacy
+  names such as `EST5EDT` are excluded unless `legacy=True`. A name shrinks
+  down a ladder from `UTC` through the zones with a whole-hour offset and a
+  simple daylight-saving rule, not alphabetically.
+- `datetimes()` draws the wall-clock time and the time zone in one engine
+  draw, so `fold` is set only when the wall time is repeated and a skipped
+  wall time is drawn deliberately rather than by luck; `times()` never sets
+  `fold`. A `tzinfo` that is not a `zoneinfo.ZoneInfo` (pytz, dateutil, a
+  fixed `datetime.timezone`) gets the drawn wall-clock time attached as
+  Hypothesis attaches it, without the targeting of its transitions.
+- `timedeltas()` shrink toward zero as a whole, so the simplest negative
+  delta is a microsecond below zero rather than a whole day.
 - `from_regex` depends on the engine's regex generator rather than Python's
   `re`. A pattern
   that can match nothing over its alphabet is rejected when the generator is
