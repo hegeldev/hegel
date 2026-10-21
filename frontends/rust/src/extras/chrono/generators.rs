@@ -1008,7 +1008,7 @@ where
 /// time chrono can hold at nanosecond precision, shrinking toward
 /// 2000-01-01T00:00:00 at UTC. With the `chrono-tz` feature,
 /// `timezones()` draws IANA zones instead, and then the
-/// [`imaginary`](DateTimeGenerator::imaginary) and
+/// [`allow_imaginary`](DateTimeGenerator::allow_imaginary) and
 /// [`ambiguous`](DateTimeGenerator::ambiguous) options say what a wall time
 /// the clocks skipped or repeated means. See [`DateTimeGenerator`] for the
 /// builder methods.
