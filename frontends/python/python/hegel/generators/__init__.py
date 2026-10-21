@@ -40,7 +40,7 @@ from hegel.generators.strings import (
     urls,
     uuids,
 )
-from hegel.generators.time import dates, datetimes, timedeltas, times, timezones
+from hegel.generators.time import dates, datetimes, timedeltas, times, timezone_keys, timezones
 
 __all__ = [
     "Generator",
@@ -79,6 +79,7 @@ __all__ = [
     "text",
     "timedeltas",
     "times",
+    "timezone_keys",
     "timezones",
     "tuples",
     "urls",

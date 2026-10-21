@@ -1,4 +1,9 @@
 use crate::printer::{Printer, with_options};
+use crate::time::{
+    PRECISION, PyDate, PyDateTime, PyDuration, PyTime, TimeZoneSpec, ZonedSpec, date_from_c,
+    date_to_c, datetime_from_c, datetime_to_c, duration_from_c, duration_to_c, time_from_c,
+    time_to_c, timestamp_from_c,
+};
 use crate::{
     InternalError, OutputBuffer, SendPtr, Settings, StringGenerator, big_from_le, big_to_le, check,
     hstr, hstr_bytes, hstrs, opt_string_from, output_trampoline, output_user_data, string_from,
@@ -220,52 +225,6 @@ impl TestCase {
     }
 }
 
-fn date_to_c(d: (i32, u8, u8)) -> c::hegel_date_t {
-    c::hegel_date_t {
-        year: d.0,
-        month: d.1,
-        day: d.2,
-    }
-}
-
-fn date_from_c(d: c::hegel_date_t) -> (i32, u8, u8) {
-    (d.year, d.month, d.day)
-}
-
-fn time_to_c(t: (u8, u8, u8, u32)) -> c::hegel_time_t {
-    c::hegel_time_t {
-        hour: t.0,
-        minute: t.1,
-        second: t.2,
-        nanosecond: t.3,
-    }
-}
-
-fn time_from_c(t: c::hegel_time_t) -> (u8, u8, u8, u32) {
-    (t.hour, t.minute, t.second, t.nanosecond)
-}
-
-type PyDateTime = (i32, u8, u8, u8, u8, u8, u32);
-
-fn datetime_to_c(d: PyDateTime) -> c::hegel_datetime_t {
-    c::hegel_datetime_t {
-        date: date_to_c((d.0, d.1, d.2)),
-        time: time_to_c((d.3, d.4, d.5, d.6)),
-    }
-}
-
-fn datetime_from_c(d: c::hegel_datetime_t) -> PyDateTime {
-    (
-        d.date.year,
-        d.date.month,
-        d.date.day,
-        d.time.hour,
-        d.time.minute,
-        d.time.second,
-        d.time.nanosecond,
-    )
-}
-
 #[pymethods]
 impl TestCase {
     /// A handle with an independent choice stream, for another thread.
@@ -454,11 +413,7 @@ impl TestCase {
         Ok(PyBytes::new(py, &bytes))
     }
 
-    fn generate_date(
-        &self,
-        min_value: (i32, u8, u8),
-        max_value: (i32, u8, u8),
-    ) -> PyResult<(i32, u8, u8)> {
+    fn generate_date(&self, min_value: PyDate, max_value: PyDate) -> PyResult<PyDate> {
         let mut out = date_to_c(min_value);
         with_ctx(|ctx| {
             check(unsafe {
@@ -467,6 +422,7 @@ impl TestCase {
                     self.tc(),
                     date_to_c(min_value),
                     date_to_c(max_value),
+                    ptr::null(),
                     &mut out,
                 )
             })
@@ -474,11 +430,8 @@ impl TestCase {
         Ok(date_from_c(out))
     }
 
-    fn generate_time(
-        &self,
-        min_value: (u8, u8, u8, u32),
-        max_value: (u8, u8, u8, u32),
-    ) -> PyResult<(u8, u8, u8, u32)> {
+    /// Draw a time of day in `[min_value, max_value]` of whole microseconds.
+    fn generate_time(&self, min_value: PyTime, max_value: PyTime) -> PyResult<PyTime> {
         let mut out = time_to_c(min_value);
         with_ctx(|ctx| {
             check(unsafe {
@@ -487,6 +440,7 @@ impl TestCase {
                     self.tc(),
                     time_to_c(min_value),
                     time_to_c(max_value),
+                    PRECISION,
                     &mut out,
                 )
             })
@@ -494,6 +448,8 @@ impl TestCase {
         Ok(time_from_c(out))
     }
 
+    /// Draw a naive datetime in `[min_value, max_value]` of whole
+    /// microseconds.
     fn generate_datetime(
         &self,
         min_value: PyDateTime,
@@ -507,11 +463,93 @@ impl TestCase {
                     self.tc(),
                     datetime_to_c(min_value),
                     datetime_to_c(max_value),
+                    PRECISION,
                     &mut out,
                 )
             })
         })?;
         Ok(datetime_from_c(out))
+    }
+
+    /// Draw a signed duration in `[min_value, max_value]` of whole
+    /// microseconds, as `(seconds, nanoseconds)` of one sign.
+    fn generate_duration(
+        &self,
+        min_value: PyDuration,
+        max_value: PyDuration,
+    ) -> PyResult<PyDuration> {
+        let mut out = duration_to_c(min_value);
+        with_ctx(|ctx| {
+            check(unsafe {
+                c::hegel_generate_duration(
+                    ctx,
+                    self.tc(),
+                    duration_to_c(min_value),
+                    duration_to_c(max_value),
+                    PRECISION,
+                    &mut out,
+                )
+            })
+        })?;
+        Ok(duration_from_c(out))
+    }
+
+    /// Draw an IANA time zone name `spec` allows.
+    fn generate_timezone(&self, spec: &TimeZoneSpec) -> PyResult<String> {
+        let mut result = c::hegel_owned_string_t::default();
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_generate_timezone(ctx, self.tc(), spec.raw(), &mut result) })?;
+            let name = string_from(result);
+            let _ = unsafe { c::hegel_owned_string_free(ctx, &mut result) };
+            Ok(name)
+        })
+    }
+
+    /// Draw a zoned datetime, as `(zone, civil, fold, kind, offset_seconds,
+    /// offset_known, timestamp)`.
+    #[allow(clippy::type_complexity)]
+    fn generate_zoned_datetime(
+        &self,
+        tz_spec: &TimeZoneSpec,
+        zoned_spec: &ZonedSpec,
+    ) -> PyResult<(String, PyDateTime, bool, u32, i32, bool, (i64, u32))> {
+        let mut zone = c::hegel_owned_string_t::default();
+        let mut out = c::hegel_zoned_datetime_t {
+            civil: datetime_to_c((2000, 1, 1, 0, 0, 0, 0)),
+            offset_seconds: 0,
+            offset_known: false,
+            fold: false,
+            kind: c::hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_UNIQUE,
+            offset_before: 0,
+            offset_after: 0,
+            timestamp: c::hegel_timestamp_t {
+                second: 0,
+                nanosecond: 0,
+            },
+        };
+        with_ctx(|ctx| {
+            check(unsafe {
+                c::hegel_generate_zoned_datetime(
+                    ctx,
+                    self.tc(),
+                    tz_spec.raw(),
+                    zoned_spec.raw(),
+                    &mut out,
+                    &mut zone,
+                )
+            })?;
+            let name = string_from(zone);
+            let _ = unsafe { c::hegel_owned_string_free(ctx, &mut zone) };
+            Ok((
+                name,
+                datetime_from_c(out.civil),
+                out.fold,
+                out.kind as u32,
+                out.offset_seconds,
+                out.offset_known,
+                timestamp_from_c(out.timestamp),
+            ))
+        })
     }
 
     #[pyo3(signature = (version))]

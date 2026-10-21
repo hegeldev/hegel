@@ -103,6 +103,8 @@ Dates and times
 
 .. autofunction:: timezones
 
+.. autofunction:: timezone_keys
+
 Identifiers and network values
 ------------------------------
 
