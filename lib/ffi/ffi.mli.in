@@ -754,4 +754,4 @@ val failure_blob : context -> failure -> string option
 (** [failure_caveat ctx f] is the caveat of [f] under nondeterministic
     handling. [None] for a deterministic failure. *)
 val failure_caveat : context -> failure -> string option
-val failure_origin : context -> failure -> string option
+val failure_origin : context -> failure -> string

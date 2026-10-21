@@ -208,7 +208,12 @@ collections, pools, state machines (`new_state_machine` takes the per-machine
 `~step_count` since libhegel 0.38.0; there is no settings-level step count),
 `target`, `event`/`event_value`, derived handles (`test_case_clone`,
 `test_case_block`), the pretty-printer document (`printer_*`,
-`test_case_printer`, `note` — see Pretty printing below), `mark_complete`. There is no CBOR: each value is
+`test_case_printer`, `note` — see Pretty printing below), `mark_complete`. Strings cross the ABI as `hegel_string_t`
+(`{data; len}`, by value; `const hegel_string_t *` where NULL means absent;
+libhegel 0.46.0): the `str`/`str_opt` ctypes views build the struct and its
+bytes in one buffer, so the struct keeps the bytes alive for the call (ctypes
+retains each argument's converted value until the call returns). The header
+now lives at `libhegel/include/hegel.h` in hegeldev/hegel (0.47.2 onward). There is no CBOR: each value is
 drawn by a dedicated typed call rather than a schema round-trip (this replaced the
 removed `hegel_generate`/CBOR-schema path in libhegel 0.26.0). There is no
 engine thread (removed in libhegel 0.30.1): `hegel_next_test_case` runs all

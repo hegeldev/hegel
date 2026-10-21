@@ -189,8 +189,8 @@
     The [snapshot] group runs separately. The invariant compares stored values
     with an atomic count of completed increments.
 
-    With [max_concurrency > 1], failures are reported without shrinking, replay,
-    database persistence, or reproduction blobs.
+    Concurrent failures are usually nondeterministic. Use [Settings.nondeterminism_strictness]
+    to configure how Hegel handles nondeterministic failures.
 
     In the failure output, each rule execution is labeled with its worker and the
     time in milliseconds since the test case began to aid debugging.

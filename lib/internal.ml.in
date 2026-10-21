@@ -818,7 +818,7 @@ let run_test
     | Some _ | None -> Hashtbl.replace captured failure.origin (failure, outcome)
   in
   let report_failure failure =
-    let origin = Option.value (Ffi.failure_origin ctx failure) ~default:"" in
+    let origin = Ffi.failure_origin ctx failure in
     let failure_case, outcome = Hashtbl.find captured origin in
     print_failure_body
       ~settings

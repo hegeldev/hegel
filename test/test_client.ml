@@ -719,19 +719,22 @@ let test_run_primitive_defaults () =
     assert (v >= 0 && a >= 0 && b >= 0))
 ;;
 
+(* Every case overruns, so with the health checks suppressed the run ends
+   [Unsatisfiable] rather than reporting a failure. *)
 let test_stop_test_does_not_fail_run () =
-  run_hegel_test
-    ~settings:
-      { (Hegel.Settings.create ~test_cases:1 ()) with
-        suppress_health_check =
-          [ Settings.Test_cases_too_large
-          ; Settings.Filter_too_much
-          ; Settings.Large_initial_test_case
-          ]
-      }
-    (fun tc ->
-       ignore (Hegel.draw_silent tc int_gen : int);
-       raise Internal.Stop_test)
+  Test_helpers.expect_unsatisfiable (fun () ->
+    run_hegel_test
+      ~settings:
+        { (Hegel.Settings.create ~test_cases:1 ()) with
+          suppress_health_check =
+            [ Settings.Test_cases_too_large
+            ; Settings.Filter_too_much
+            ; Settings.Large_initial_test_case
+            ]
+        }
+      (fun tc ->
+         ignore (Hegel.draw_silent tc int_gen : int);
+         raise Internal.Stop_test))
 ;;
 
 let tests =

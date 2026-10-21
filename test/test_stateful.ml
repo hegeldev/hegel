@@ -217,17 +217,10 @@ let stateful_no_rules_test () =
    from an empty pool rejects the test case with [Assume_rejected], not
    [Internal.Stop_test]. *)
 let empty_pool_draw_rejects_test () =
-  match
+  Test_helpers.expect_unsatisfiable (fun () ->
     Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:1 ()) (fun tc ->
       let pool = Hegel.Internal.new_pool tc in
-      ignore (Hegel.Internal.pool_generate tc ~pool () : int))
-  with
-  | () -> Alcotest.fail "expected Unsatisfiable"
-  | exception Failure msg ->
-    Alcotest.(check bool)
-      "failure msg"
-      (String.is_substring_at msg ~pos:0 ~substring:"Unsatisfiable")
-      true
+      ignore (Hegel.Internal.pool_generate tc ~pool () : int)))
 ;;
 
 let stateful_step_count_forwarded_test () =
@@ -674,17 +667,10 @@ let pool_reusable_clones_test () =
 
 let pool_empty_draw_rejects_test () =
   let module P = Hegel.Stateful.Pool in
-  match
+  Test_helpers.expect_unsatisfiable (fun () ->
     Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:1 ()) (fun tc ->
       let pool = P.create tc in
-      ignore (Hegel.draw_silent tc (P.values_consumed pool) : int))
-  with
-  | () -> Alcotest.fail "expected Unsatisfiable"
-  | exception Failure msg ->
-    Alcotest.(check bool)
-      "empty draw rejects"
-      true
-      (String.is_substring_at msg ~pos:0 ~substring:"Unsatisfiable")
+      ignore (Hegel.draw_silent tc (P.values_consumed pool) : int)))
 ;;
 
 let pool_parallel_adds_test ~concurrency () =
