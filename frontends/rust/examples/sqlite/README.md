@@ -8,7 +8,7 @@ The package lives outside the Cargo workspace so that compiling SQLite is
 only ever paid for by someone running this example. It runs two ways:
 
 ```sh
-cd frontends/rust/examples/sqlite_bank
+cd frontends/rust/examples/sqlite
 cargo test --release                       # a Hegel test: 10 test cases
 cargo run --release                        # the binary: one run per invocation
 cargo run --release --features inject-bug  # a broken transfer; the run fails

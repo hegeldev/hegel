@@ -28,16 +28,16 @@ check-tests-all-features:
 compile-examples:
     cargo build -p hegeltest --examples --all-features
 
-# examples/sqlite_bank is its own Cargo workspace (it compiles SQLite, which
+# examples/sqlite is its own Cargo workspace (it compiles SQLite, which
 # the main workspace should not pay for), so the workspace-wide lint and
 # test recipes never reach it. Its test is a `#[hegel::test]` over the
 # workload; its binary is a `#[hegel::main]` whose every invocation is one
 # run of the workload.
-check-sqlite-bank:
-    cargo fmt --manifest-path examples/sqlite_bank/Cargo.toml --check
-    cargo clippy --manifest-path examples/sqlite_bank/Cargo.toml --all-targets --all-features -- -D warnings
-    RUST_BACKTRACE=1 cargo test --manifest-path examples/sqlite_bank/Cargo.toml
-    RUST_BACKTRACE=1 cargo run --manifest-path examples/sqlite_bank/Cargo.toml
+check-sqlite:
+    cargo fmt --manifest-path examples/sqlite/Cargo.toml --check
+    cargo clippy --manifest-path examples/sqlite/Cargo.toml --all-targets --all-features -- -D warnings
+    RUST_BACKTRACE=1 cargo test --manifest-path examples/sqlite/Cargo.toml
+    RUST_BACKTRACE=1 cargo run --manifest-path examples/sqlite/Cargo.toml
 
 check-docs:
     cargo +nightly docs-rs

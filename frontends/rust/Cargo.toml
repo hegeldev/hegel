@@ -13,7 +13,7 @@ exclude = [
   "/tests/fixtures",
   # A standalone example package with its own `[workspace]` table; not part
   # of the published crate.
-  "/examples/sqlite_bank",
+  "/examples/sqlite",
 ]
 license = "MIT"
 readme = "README.md"
