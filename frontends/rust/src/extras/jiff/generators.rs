@@ -6,8 +6,8 @@ use jiff::tz::{Offset, TimeZone};
 use jiff::{SignedDuration, Span, Timestamp, Zoned};
 
 use crate::datetime::{
-    self as dt, Ambiguous, Granularity, Imaginary, Kind, Month, Precision, SpanSign, SpanUnit, Tag,
-    UtcOffset, info,
+    self as dt, Ambiguous, Granularity, Kind, Month, Precision, SpanSign, SpanUnit, Tag, UtcOffset,
+    info,
 };
 use crate::generators::{
     self as gs, BoolGenerator, Generator, IntegerGenerator, Mapped, PrintableGenerator, TestCase,
@@ -23,7 +23,7 @@ const TIMESTAMP_LABEL: u64 = label_from_name("hegel.jiff.timestamps");
 const SPAN_LABEL: u64 = label_from_name("hegel.jiff.spans");
 const SIGNED_DURATION_LABEL: u64 = label_from_name("hegel.jiff.signed_durations");
 const OFFSET_LABEL: u64 = label_from_name("hegel.jiff.offsets");
-const TIME_ZONE_LABEL: u64 = label_from_name("hegel.jiff.time_zones");
+const TIME_ZONE_LABEL: u64 = label_from_name("hegel.jiff.timezones");
 const ZONED_LABEL: u64 = label_from_name("hegel.jiff.zoneds");
 
 const NANOS_PER_SECOND: i128 = 1_000_000_000;
@@ -766,7 +766,7 @@ impl PrintableGenerator<Offset> for OffsetGenerator {
 /// targets an offset some time zone has used, so `+05:45` and `-00:44:30`
 /// appear. An [`Offset`] is always known, so the engine's unknown offset
 /// is never drawn; a zone with an unknown offset is
-/// [`TimeZone::unknown`], which [`time_zones()`] draws when asked to. See
+/// [`TimeZone::unknown`], which [`timezones()`] draws when asked to. See
 /// [`OffsetGenerator`] for builder methods.
 ///
 /// # Example
@@ -826,7 +826,7 @@ fn default_names(known: &[KnownName], links: bool, legacy: bool) -> gs::TimeZone
              jiff's tzdb features, such as tzdb-bundle-platform or tzdb-bundle-always"
         );
     }
-    gs::time_zones().names(
+    gs::timezones().names(
         known
             .iter()
             .filter(|known| (links || !known.link) && (legacy || !known.legacy))
@@ -835,7 +835,7 @@ fn default_names(known: &[KnownName], links: bool, legacy: bool) -> gs::TimeZone
 }
 
 /// Generator for [`jiff::tz::TimeZone`] values named in the IANA
-/// database. Created by [`time_zones()`].
+/// database. Created by [`timezones()`].
 pub struct TimeZoneGenerator {
     names: Option<Vec<String>>,
     links: bool,
@@ -890,7 +890,7 @@ impl TimeZoneGenerator {
                         invalid_argument!("jiff's time zone database does not know {name:?}");
                     }
                 }
-                gs::time_zones().names(names.clone()).opaque(true)
+                gs::timezones().names(names.clone()).opaque(true)
             }
             None => default_names(known_names(), self.links, self.legacy),
         };
@@ -950,11 +950,11 @@ impl PrintableGenerator<TimeZone> for TimeZoneGenerator {
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
-///     let zone = tc.draw(jiff_gs::time_zones().names(["Europe/London", "Asia/Calcutta"]));
+///     let zone = tc.draw(jiff_gs::timezones().names(["Europe/London", "Asia/Calcutta"]));
 ///     assert!(zone.iana_name() == Some("Europe/London") || zone.iana_name() == Some("Asia/Calcutta"));
 /// }
 /// ```
-pub fn time_zones() -> TimeZoneGenerator {
+pub fn timezones() -> TimeZoneGenerator {
     TimeZoneGenerator {
         names: None,
         links: true,
@@ -982,7 +982,7 @@ pub struct ZonedGenerator {
     zones: TimeZoneGenerator,
     bounds: ZonedBounds,
     precision: Precision,
-    imaginary: Imaginary,
+    allow_imaginary: bool,
     ambiguous: Ambiguous,
     inner: OnceLock<gs::ZonedDateTimeGenerator>,
 }
@@ -990,7 +990,7 @@ pub struct ZonedGenerator {
 impl ZonedGenerator {
     /// Draw the zone from `zones` rather than from every name both
     /// databases know.
-    pub fn time_zones(mut self, zones: TimeZoneGenerator) -> Self {
+    pub fn timezones(mut self, zones: TimeZoneGenerator) -> Self {
         self.zones = zones;
         self.inner = OnceLock::new();
         self
@@ -1050,15 +1050,14 @@ impl ZonedGenerator {
         self
     }
 
-    /// What to do with a wall time the clocks skipped
-    /// ([`Imaginary::Avoid`] by default, since a [`Zoned`] cannot hold
-    /// one). Under [`Imaginary::Allow`] the value is the instant the
-    /// skipped time resolves to with the offset in force before the
-    /// transition, as jiff's own `compatible` resolution would give; its
-    /// own wall time lies past the gap, so it can exceed
+    /// Whether a wall time the clocks skipped may be drawn (`false` by
+    /// default, since a [`Zoned`] cannot hold one). Allowed, the value is
+    /// the instant the skipped time resolves to with the offset in force
+    /// before the transition, as jiff's own `compatible` resolution would
+    /// give; its own wall time lies past the gap, so it can exceed
     /// [`max_value`](Self::max_value) by the gap's width.
-    pub fn imaginary(mut self, imaginary: Imaginary) -> Self {
-        self.imaginary = imaginary;
+    pub fn allow_imaginary(mut self, allow: bool) -> Self {
+        self.allow_imaginary = allow;
         self.inner = OnceLock::new();
         self
     }
@@ -1074,9 +1073,9 @@ impl ZonedGenerator {
     fn inner(&self) -> &gs::ZonedDateTimeGenerator {
         self.inner.get_or_init(|| {
             let generator = gs::zoned_datetimes()
-                .time_zones(self.zones.engine_generator())
+                .timezones(self.zones.engine_generator())
                 .precision(self.precision)
-                .imaginary(self.imaginary)
+                .allow_imaginary(self.allow_imaginary)
                 .ambiguous(self.ambiguous);
             match self.bounds {
                 ZonedBounds::Civil(min, max) => {
@@ -1158,7 +1157,7 @@ impl PrintableGenerator<Zoned> for ZonedGenerator {
 /// Generate [`jiff::Zoned`] values: a zone, a wall-clock time in it and,
 /// when the clocks repeated that time, which repeat is meant.
 ///
-/// By default any zone [`time_zones()`] draws and any wall-clock time
+/// By default any zone [`timezones()`] draws and any wall-clock time
 /// from [`MIN_CIVIL`] to [`MAX_CIVIL`] at nanosecond precision, skipped
 /// wall times avoided and both repeats of a fold drawn; shrinks down the
 /// zone ladder, then toward 2000-01-01T00:00:00, preferring a unique wall
@@ -1185,17 +1184,17 @@ impl PrintableGenerator<Zoned> for ZonedGenerator {
 /// fn my_test(tc: hegel::TestCase) {
 ///     let min = DateTime::constant(2024, 1, 1, 0, 0, 0, 0);
 ///     let z = tc.draw(jiff_gs::zoneds()
-///         .time_zones(jiff_gs::time_zones().names(["Europe/London"]))
+///         .timezones(jiff_gs::timezones().names(["Europe/London"]))
 ///         .min_value(min));
 ///     assert!(z.datetime() >= min && z.time_zone().iana_name() == Some("Europe/London"));
 /// }
 /// ```
 pub fn zoneds() -> ZonedGenerator {
     ZonedGenerator {
-        zones: time_zones(),
+        zones: timezones(),
         bounds: ZonedBounds::Civil(MIN_CIVIL, MAX_CIVIL),
         precision: Precision::Nanoseconds,
-        imaginary: Imaginary::Avoid,
+        allow_imaginary: false,
         ambiguous: Ambiguous::Both,
         inner: OnceLock::new(),
     }

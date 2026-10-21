@@ -5,7 +5,7 @@
 //! value, converted to jiff's type at the boundary: [`dates`], [`times`],
 //! [`datetimes`], [`timestamps`], [`offsets`], [`signed_durations`] and
 //! [`spans`] with the bounds, precision, granularity and per-unit options
-//! of their first-party counterparts; [`time_zones`], the IANA names both
+//! of their first-party counterparts; [`timezones`], the IANA names both
 //! jiff's database and the engine's know, resolved with
 //! [`TimeZone::get`](jiff::tz::TimeZone::get); and [`zoneds`], a zone and
 //! a wall-clock time in it built with jiff's own resolution rules
@@ -19,8 +19,7 @@
 //! The option enums come from [`hegel::datetime`](crate::datetime):
 //! [`Precision`](crate::datetime::Precision),
 //! [`Granularity`](crate::datetime::Granularity),
-//! [`Month`](crate::datetime::Month),
-//! [`Imaginary`](crate::datetime::Imaginary) and
+//! [`Month`](crate::datetime::Month) and
 //! [`Ambiguous`](crate::datetime::Ambiguous).
 //!
 //! The engine's bundled time zone database decides which zone and wall

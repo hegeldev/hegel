@@ -250,10 +250,10 @@ fn test_datetimes_fixed_offset_property(tc: hegel::TestCase) {
 
 #[test]
 fn test_datetimes_imaginary_and_ambiguous_accepted_without_transitions() {
-    use hegel::datetime::{Ambiguous, Imaginary};
+    use hegel::datetime::Ambiguous;
     check_can_generate_examples(
         chrono_gs::datetimes()
-            .imaginary(Imaginary::Allow)
+            .allow_imaginary(true)
             .ambiguous(Ambiguous::Later),
     );
 }

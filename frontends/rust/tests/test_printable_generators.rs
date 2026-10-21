@@ -602,7 +602,7 @@ fn datetime_generators_print_the_rfc_9557_form() {
         vec!["let draw_1 = +00:00;"]
     );
     assert_eq!(
-        printed_draw_lines(gs::time_zones()),
+        printed_draw_lines(gs::timezones()),
         vec!["let draw_1 = UTC;"]
     );
     assert_eq!(

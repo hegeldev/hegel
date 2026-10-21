@@ -8,8 +8,8 @@ use super::{
     SystemTimeGenerator, TextGenerator, TimeGenerator, TimeZoneGenerator, TimestampGenerator,
     UtcOffsetGenerator, VecGenerator, ZonedDateTimeGenerator, booleans, btree_maps, btree_sets,
     characters, collections::ArrayGenerator, dates, datetimes, durations, floats, hashmaps,
-    hashsets, integers, ip_addresses, optional, signed_durations, spans, system_times, text,
-    time_zones, times, timestamps, utc_offsets, vecs, zoned_datetimes,
+    hashsets, integers, ip_addresses, optional, signed_durations, spans, system_times, text, times,
+    timestamps, timezones, utc_offsets, vecs, zoned_datetimes,
 };
 use crate::datetime::{
     Date, DateTime, SignedDuration, Span, Time, TimeZone, Timestamp, UtcOffset, ZonedDateTime,
@@ -260,7 +260,7 @@ impl DefaultGenerator for UtcOffset {
 impl DefaultGenerator for TimeZone {
     type Generator = TimeZoneGenerator;
     fn default_generator() -> Self::Generator {
-        time_zones()
+        timezones()
     }
 }
 

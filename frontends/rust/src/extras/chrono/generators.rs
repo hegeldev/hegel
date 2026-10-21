@@ -1,5 +1,5 @@
 use crate::datetime as hd;
-use crate::datetime::{Ambiguous, Granularity, Imaginary, Precision};
+use crate::datetime::{Ambiguous, Granularity, Precision};
 use crate::generators as gs;
 use crate::generators::{
     DefaultGenerator, Generator, PrintableGenerator, TestCase, combine_labels, hashsets, integers,
@@ -16,7 +16,7 @@ const NAIVE_DATETIME_LABEL: u64 = label_from_name("hegel.chrono.naive_datetimes"
 const NAIVE_WEEK_LABEL: u64 = label_from_name("hegel.chrono.naive_weeks");
 const DATETIME_LABEL: u64 = label_from_name("hegel.chrono.datetimes");
 #[cfg(feature = "chrono-tz")]
-const TIME_ZONE_LABEL: u64 = label_from_name("hegel.chrono.time_zones");
+const TIME_ZONE_LABEL: u64 = label_from_name("hegel.chrono.timezones");
 
 use crate::test_case::invalid_argument;
 use chrono::{
@@ -709,7 +709,7 @@ fn nanos_to_utc_datetime(n: i128) -> DateTime<Utc> {
 
 mod zoned {
     use super::{hegel_datetime, hegel_timestamp, is_leap_second};
-    use crate::datetime::{Ambiguous, Imaginary, Precision};
+    use crate::datetime::{Ambiguous, Precision};
     use crate::generators as gs;
     use crate::generators::TestCase;
     use crate::test_case::invalid_argument;
@@ -728,7 +728,7 @@ mod zoned {
     pub struct Config {
         pub bounds: Bounds,
         pub precision: Precision,
-        pub imaginary: Imaginary,
+        pub allow_imaginary: bool,
         pub ambiguous: Ambiguous,
     }
 
@@ -753,9 +753,9 @@ mod zoned {
 
         pub fn generator(&self, zones: gs::TimeZoneGenerator) -> gs::ZonedDateTimeGenerator {
             let generator = gs::zoned_datetimes()
-                .time_zones(zones)
+                .timezones(zones)
                 .precision(self.precision)
-                .imaginary(self.imaginary)
+                .allow_imaginary(self.allow_imaginary)
                 .ambiguous(self.ambiguous);
             match self.bounds {
                 Bounds::Civil(min, max) => generator
@@ -783,7 +783,7 @@ mod zoned {
 
 /// A source of time zones for [`datetimes()`]: any generator of [`Utc`]
 /// or [`FixedOffset`] values, such as [`gs::just(Utc)`](gs::just) or
-/// [`fixed_offsets()`], and, with the `chrono-tz` feature, `time_zones()`
+/// [`fixed_offsets()`], and, with the `chrono-tz` feature, `timezones()`
 /// for IANA zones. The trait is sealed: a zone source has to be one the
 /// engine can classify wall times in.
 pub trait TimeZones<Tz: TimeZone>: zoned::Zones<Tz> {}
@@ -924,14 +924,13 @@ impl<G, Tz: TimeZone> DateTimeGenerator<G, Tz> {
         self
     }
 
-    /// What to do with a wall time the clocks skipped
-    /// ([`Imaginary::Avoid`] by default). Under [`Imaginary::Allow`] the
-    /// value is the instant the skipped wall time shifts forward to, whose
-    /// own wall time lies past the gap, so it can exceed
-    /// [`max_value`](Self::max_value) by the gap's width. Only an IANA
-    /// zone has gaps.
-    pub fn imaginary(mut self, imaginary: Imaginary) -> Self {
-        self.config.imaginary = imaginary;
+    /// Whether a wall time the clocks skipped may be drawn (`false` by
+    /// default). Allowed, the value is the instant the skipped wall time
+    /// shifts forward to, whose own wall time lies past the gap, so it
+    /// can exceed [`max_value`](Self::max_value) by the gap's width. Only
+    /// an IANA zone has gaps.
+    pub fn allow_imaginary(mut self, allow: bool) -> Self {
+        self.config.allow_imaginary = allow;
         self.zoned = OnceLock::new();
         self
     }
@@ -1000,7 +999,7 @@ where
 /// By default a [`FixedOffset`] from [`fixed_offsets()`] and any wall-clock
 /// time chrono can hold at nanosecond precision, shrinking toward
 /// 2000-01-01T00:00:00 at UTC. With the `chrono-tz` feature,
-/// `time_zones()` draws IANA zones instead, and then the
+/// `timezones()` draws IANA zones instead, and then the
 /// [`imaginary`](DateTimeGenerator::imaginary) and
 /// [`ambiguous`](DateTimeGenerator::ambiguous) options say what a wall time
 /// the clocks skipped or repeated means. See [`DateTimeGenerator`] for the
@@ -1046,7 +1045,7 @@ pub fn datetimes() -> DateTimeGenerator<FixedOffsetGenerator, FixedOffset> {
                 DateTime::<Utc>::MAX_UTC.naive_utc(),
             ),
             precision: Precision::Nanoseconds,
-            imaginary: Imaginary::Avoid,
+            allow_imaginary: false,
             ambiguous: Ambiguous::Both,
         },
         zoned: OnceLock::new(),
@@ -1054,7 +1053,7 @@ pub fn datetimes() -> DateTimeGenerator<FixedOffsetGenerator, FixedOffset> {
     }
 }
 
-/// Generator for [`chrono_tz::Tz`] values. Created by [`time_zones()`].
+/// Generator for [`chrono_tz::Tz`] values. Created by [`timezones()`].
 #[cfg(feature = "chrono-tz")]
 #[cfg_attr(docsrs, doc(cfg(feature = "chrono-tz")))]
 pub struct TimeZoneGenerator {
@@ -1111,7 +1110,7 @@ impl TimeZoneGenerator {
     }
 
     fn zone_generator(&self) -> gs::TimeZoneGenerator {
-        gs::time_zones().names(self.allowed()).opaque(true)
+        gs::timezones().names(self.allowed()).opaque(true)
     }
 }
 
@@ -1198,7 +1197,7 @@ fn chrono_tz_datetime(
 ///
 /// The zones are the names chrono-tz and the engine's bundled IANA
 /// database share, link names in and legacy names out by default, drawn
-/// and shrunk as [`gs::time_zones()`] draws them: down a ladder of names
+/// and shrunk as [`gs::timezones()`] draws them: down a ladder of names
 /// to `UTC`, with half the draws weighted toward zones with rare features.
 /// See [`TimeZoneGenerator`] for builder methods.
 ///
@@ -1211,15 +1210,15 @@ fn chrono_tz_datetime(
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
-///     let zone = tc.draw(chrono_gs::time_zones().names([Tz::Europe__London, Tz::Asia__Tokyo]));
+///     let zone = tc.draw(chrono_gs::timezones().names([Tz::Europe__London, Tz::Asia__Tokyo]));
 ///     assert!(zone == Tz::Europe__London || zone == Tz::Asia__Tokyo);
-///     let dt = tc.draw(chrono_gs::datetimes().timezones(chrono_gs::time_zones()));
+///     let dt = tc.draw(chrono_gs::datetimes().timezones(chrono_gs::timezones()));
 ///     assert_eq!(dt.timezone().from_utc_datetime(&dt.naive_utc()), dt);
 /// }
 /// ```
 #[cfg(feature = "chrono-tz")]
 #[cfg_attr(docsrs, doc(cfg(feature = "chrono-tz")))]
-pub fn time_zones() -> TimeZoneGenerator {
+pub fn timezones() -> TimeZoneGenerator {
     TimeZoneGenerator {
         names: None,
         links: true,

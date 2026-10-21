@@ -43,8 +43,7 @@ pub use compose::ComposedGenerator;
 pub use datetime::{
     DateGenerator, DateTimeGenerator, SignedDurationGenerator, SpanGenerator, TimeGenerator,
     TimeZoneGenerator, TimestampGenerator, UtcOffsetGenerator, ZonedDateTimeGenerator, dates,
-    datetimes, signed_durations, spans, time_zones, times, timestamps, utc_offsets,
-    zoned_datetimes,
+    datetimes, signed_durations, spans, times, timestamps, timezones, utc_offsets, zoned_datetimes,
 };
 pub use default::{DefaultGenerator, default};
 pub use deferred::{DeferredGeneratorDefinition, deferred, deferred_silent};

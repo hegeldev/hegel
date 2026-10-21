@@ -122,7 +122,7 @@ impl DefaultGenerator for DateTime<FixedOffset> {
 impl DefaultGenerator for chrono_tz::Tz {
     type Generator = super::TimeZoneGenerator;
     fn default_generator() -> Self::Generator {
-        super::time_zones()
+        super::timezones()
     }
 }
 
@@ -130,6 +130,6 @@ impl DefaultGenerator for chrono_tz::Tz {
 impl DefaultGenerator for DateTime<chrono_tz::Tz> {
     type Generator = DateTimeGenerator<super::TimeZoneGenerator, chrono_tz::Tz>;
     fn default_generator() -> Self::Generator {
-        datetimes().timezones(super::time_zones())
+        datetimes().timezones(super::timezones())
     }
 }
