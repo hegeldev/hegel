@@ -75,6 +75,7 @@ end
 
     Every core carries its span [label] (see {!Labels}), fixed at construction
     from the core's own kind and its components' labels. *)
+
 type 'a core CROSSING =
   | Leaf :
       { draw : (Internal.test_case -> 'a)
@@ -113,7 +114,8 @@ type 'a core CROSSING =
       -> 'a core
   | Values :
       { pool : Internal.pool
-      ; select : (Internal.test_case -> 'a)
+      ; consume : bool
+      ; select : (Internal.test_case -> filter:(int64 * ('a -> bool)) option -> 'a)
       }
       -> 'a core
   | Function :
@@ -359,7 +361,43 @@ let resolve_pool_draw ~find ~remove ~consume variable_id =
 let pick tc ~find ~remove ~is_empty pool ~consume =
   Internal.assume tc (not (is_empty ()));
   let variable_id = Internal.pool_generate tc ~pool ~consume () in
-  resolve_pool_draw ~find ~remove ~consume variable_id
+  variable_id, resolve_pool_draw ~find ~remove ~consume variable_id
+;;
+
+(* A filter on a consuming pool draw. Each attempt consumes its id in libhegel
+   only. An accepted value is then removed from the OCaml pool, and every other
+   consumed id is restored. *)
+let filter_consumed ~size ~pick ~remove ~pool tc (label, predicate) =
+  let rejected = ref [] in
+  let restore () =
+    List.iter (fun variable_id -> Internal.pool_restore tc ~pool ~variable_id) !rejected
+  in
+  let rec attempt i =
+    if i > max_filter_attempts || size () <= List.length !rejected
+    then raise Internal.Assume_rejected
+    else (
+      Internal.start_span ~label tc;
+      let variable_id, value = pick tc in
+      rejected := variable_id :: !rejected;
+      (* unconditional cons b/c predicate can raise *)
+      if predicate value
+      then (
+        remove variable_id;
+        rejected := List.tl !rejected; (* pop accepted *)
+        Internal.stop_span tc;
+        value)
+      else (
+        Internal.stop_span ~discard:true tc;
+        attempt (i + 1)))
+  in
+  match attempt 1 with
+  | value ->
+    restore ();
+    value
+  | exception exn ->
+    let backtrace = Printexc.get_raw_backtrace () in
+    restore ();
+    Printexc.raise_with_backtrace exn backtrace
 ;;
 
 (** Defined for convenience *)
@@ -408,19 +446,32 @@ module Int_pool = struct
 
   let pool_values { pool; values; clone } ~consume =
     let clone = if consume then Fun.id else clone in
+    let pick tc ~remove =
+      pick
+        tc
+        ~find:(fun id -> Option.map clone (Tbl.find_opt values id))
+        ~remove
+        ~is_empty:(fun () -> Tbl.length values = 0)
+        pool
+        ~consume
+    in
     Unprintable
       { core =
           Values
             { pool
+            ; consume
             ; select =
-                (fun tc ->
-                  pick
-                    tc
-                    ~find:(fun id -> Option.map clone (Tbl.find_opt values id))
-                    ~remove:(fun id -> Tbl.remove values id)
-                    ~is_empty:(fun () -> Tbl.length values = 0)
-                    pool
-                    ~consume)
+                (fun tc ~filter ->
+                  match filter with
+                  | None -> snd (pick tc ~remove:(Tbl.remove values))
+                  | Some filter ->
+                    filter_consumed
+                      ~size:(fun () -> Tbl.length values)
+                      ~pick:(pick ~remove:ignore)
+                      ~remove:(Tbl.remove values)
+                      ~pool
+                      tc
+                      filter)
             }
       }
   ;;
@@ -463,25 +514,49 @@ module%template Int_pool_concurrent = struct
 
   let pool_values { pool; values; clone } ~consume =
     let clone = if consume then Fun.id else clone in
+    let pick tc values ~remove =
+      pick
+        tc
+        ~find:(fun id -> Option.map clone (Tbl.find_opt values id))
+        ~remove
+        ~is_empty:(fun () -> Tbl.length values = 0)
+        pool
+        ~consume
+    in
     Unprintable
       { core =
           Values
             { pool
+            ; consume
             ; select =
-                (fun tc ->
-                  L.protect values (fun values ->
-                    pick
+                (fun tc ~filter ->
+                  match filter with
+                  | None ->
+                    L.protect values (fun values ->
+                      snd (pick tc values ~remove:(Tbl.remove values)))
+                  | Some filter ->
+                    filter_consumed
+                      ~size:(fun () -> L.protect values Tbl.length)
+                      ~pick:(fun tc ->
+                        L.protect values (fun values -> pick tc values ~remove:ignore))
+                      ~remove:(fun id -> L.protect values (fun values -> Tbl.remove values id))
+                      ~pool
                       tc
-                      ~find:(fun id -> Option.map clone (Tbl.find_opt values id))
-                      ~remove:(fun id -> Tbl.remove values id)
-                      ~is_empty:(fun () -> Tbl.length values = 0)
-                      pool
-                      ~consume))
+                      filter)
             }
       }
   ;;
 end
 [@@mode (m, c) = ((portable, contended), (nonportable, uncontended))]
+
+(* A filter over a filter checks both predicates in one round of attempts, so a
+   consuming pool under the chain sees every predicate at once. *)
+let rec flatten_filter (core : 'a core) (predicate : 'a -> bool) =
+  match core with
+  | Filtered { source; predicate = inner; _ } ->
+    flatten_filter source (fun value -> inner value && predicate value)
+  | _ -> core, predicate
+;;
 
 (** [do_draw core data] produces a typed value from generation structure [core]
     using the given test case [data]. *)
@@ -499,21 +574,25 @@ let rec do_draw : type a. a core -> Internal.test_case -> a =
       let second_core = f first in
       do_draw second_core data)
   | Filtered { source; predicate; label } ->
-    let rec attempt i =
-      if i > max_filter_attempts
-      then raise Internal.Assume_rejected
-      else (
-        Internal.start_span ~label data;
-        let value = do_draw source data in
-        if predicate value
-        then (
-          Internal.stop_span data;
-          value)
-        else (
-          Internal.stop_span ~discard:true data;
-          attempt (i + 1)))
-    in
-    attempt 1
+    (match flatten_filter source predicate with
+     | Values { consume = true; select; _ }, predicate ->
+       select data ~filter:(Some (label, predicate)) (* consuming pools *)
+     | source, predicate -> (* any other generator *)
+       let rec attempt i =
+         if i > max_filter_attempts
+         then raise Internal.Assume_rejected
+         else (
+           Internal.start_span ~label data;
+           let value = do_draw source data in
+           if predicate value
+           then (
+             Internal.stop_span data;
+             value)
+           else (
+             Internal.stop_span ~discard:true data;
+             attempt (i + 1)))
+       in
+       attempt 1)
   | CompositeList { elements; min_size; max_size; label } ->
     group label data (fun () ->
       with_collection ~min_size ?max_size data (fun coll ->
@@ -524,9 +603,10 @@ let rec do_draw : type a. a core -> Internal.test_case -> a =
         in
         collect []))
   | Composite { label; generate_fn } -> group label data (fun () -> generate_fn data)
-  | Values { select; _ } -> select data
+  | Values { select; _ } -> select data ~filter:None
   | Function { build; _ } -> build ~name:None data
 ;;
+
 
 (** [draw_named ~label ~repeatable tc gen] is the naming-aware draw the
     [let%hegel_test] PPX rewrites bindings to; it is not intended for direct use
