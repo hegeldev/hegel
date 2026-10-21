@@ -418,3 +418,296 @@ fn test_from_lark_rejects_impossible_caps() {
         "may be at most 500",
     );
 }
+
+mod datetime_validation {
+    use super::expect_draw_panic;
+    use hegel::datetime::{
+        Date, DateTime, Precision, SignedDuration, SpanSign, SpanUnit, Time, Timestamp, UtcOffset,
+        Weekday,
+    };
+    use hegel::generators as gs;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    fn date(year: i32, month: u8, day: u8) -> Date {
+        Date::new(year, month, day).unwrap()
+    }
+
+    fn time(hour: u8, minute: u8, second: u8, nanosecond: u32) -> Time {
+        Time::new(hour, minute, second, nanosecond).unwrap()
+    }
+
+    fn datetime(year: i32, month: u8, day: u8) -> DateTime {
+        DateTime::new(date(year, month, day), time(0, 0, 0, 0)).unwrap()
+    }
+
+    #[test]
+    fn test_dates_min_greater_than_max() {
+        expect_draw_panic(
+            gs::dates()
+                .min_value(date(2024, 1, 2))
+                .max_value(date(2024, 1, 1)),
+            "max_value < min_value",
+        );
+    }
+
+    #[test]
+    fn test_dates_invalid_bound() {
+        let bad = Date {
+            year: 2024,
+            month: 2,
+            day: 30,
+        };
+        expect_draw_panic(gs::dates().min_value(bad), "not a valid date");
+    }
+
+    #[test]
+    fn test_dates_empty_weekdays() {
+        expect_draw_panic(gs::dates().weekdays([]), "weekdays mask");
+    }
+
+    #[test]
+    fn test_dates_empty_months() {
+        expect_draw_panic(gs::dates().months([]), "months mask");
+    }
+
+    #[test]
+    fn test_dates_no_allowed_day_in_bounds() {
+        expect_draw_panic(
+            gs::dates()
+                .min_value(date(2024, 1, 1))
+                .max_value(date(2024, 1, 5))
+                .weekdays([Weekday::Sunday]),
+            "no date in",
+        );
+    }
+
+    #[test]
+    fn test_times_min_greater_than_max() {
+        expect_draw_panic(
+            gs::times()
+                .min_value(time(1, 0, 0, 0))
+                .max_value(time(0, 0, 0, 0)),
+            "max_value < min_value",
+        );
+    }
+
+    #[test]
+    fn test_times_no_value_at_precision() {
+        expect_draw_panic(
+            gs::times()
+                .min_value(time(0, 0, 0, 1))
+                .max_value(time(0, 0, 0, 2))
+                .precision(Precision::Seconds),
+            "no value at precision",
+        );
+    }
+
+    #[test]
+    fn test_datetimes_min_greater_than_max() {
+        expect_draw_panic(
+            gs::datetimes()
+                .min_value(datetime(2024, 1, 2))
+                .max_value(datetime(2024, 1, 1)),
+            "max_value < min_value",
+        );
+    }
+
+    #[test]
+    fn test_timestamps_min_greater_than_max() {
+        expect_draw_panic(
+            gs::timestamps()
+                .min_value(Timestamp::new(1, 0).unwrap())
+                .max_value(Timestamp::new(0, 0).unwrap()),
+            "max_value < min_value",
+        );
+    }
+
+    #[test]
+    fn test_timestamps_invalid_bound() {
+        let bad = Timestamp {
+            second: 0,
+            nanosecond: 1_000_000_000,
+        };
+        expect_draw_panic(
+            gs::timestamps().max_value(bad),
+            "nanosecond must be at most",
+        );
+    }
+
+    #[test]
+    fn test_utc_offsets_min_greater_than_max() {
+        expect_draw_panic(
+            gs::utc_offsets()
+                .min_value(UtcOffset::Known(1))
+                .max_value(UtcOffset::Known(0)),
+            "max_value < min_value",
+        );
+    }
+
+    #[test]
+    fn test_utc_offsets_unknown_bound() {
+        expect_draw_panic(
+            gs::utc_offsets().min_value(UtcOffset::Unknown),
+            "min_value must be a known offset",
+        );
+        expect_draw_panic(
+            gs::utc_offsets().max_value(UtcOffset::Unknown),
+            "max_value must be a known offset",
+        );
+    }
+
+    #[test]
+    fn test_utc_offsets_out_of_range_bound() {
+        expect_draw_panic(
+            gs::utc_offsets().max_value(UtcOffset::Known(100_000)),
+            "max_seconds must be in",
+        );
+    }
+
+    #[test]
+    fn test_time_zones_empty_names() {
+        expect_draw_panic(
+            gs::time_zones().names(Vec::<String>::new()),
+            "at least one allowed name",
+        );
+    }
+
+    #[test]
+    fn test_time_zones_unknown_name() {
+        expect_draw_panic(
+            gs::time_zones().names(["Mars/Olympus"]),
+            "unknown time zone \"Mars/Olympus\"",
+        );
+    }
+
+    #[test]
+    fn test_zoned_datetimes_min_greater_than_max() {
+        expect_draw_panic(
+            gs::zoned_datetimes()
+                .min_value(datetime(2024, 1, 2))
+                .max_value(datetime(2024, 1, 1)),
+            "max_value < min_value",
+        );
+    }
+
+    #[test]
+    fn test_zoned_datetimes_min_instant_greater_than_max_instant() {
+        expect_draw_panic(
+            gs::zoned_datetimes()
+                .min_instant(Timestamp::new(1, 0).unwrap())
+                .max_instant(Timestamp::new(0, 0).unwrap()),
+            "max_instant < min_instant",
+        );
+    }
+
+    #[test]
+    fn test_zoned_datetimes_invalid_civil_bound() {
+        let bad = DateTime {
+            date: Date {
+                year: 2024,
+                month: 2,
+                day: 30,
+            },
+            time: time(0, 0, 0, 0),
+        };
+        expect_draw_panic(gs::zoned_datetimes().max_value(bad), "not a valid date");
+    }
+
+    #[test]
+    fn test_zoned_datetimes_invalid_instant_bound() {
+        let bad = Timestamp {
+            second: 0,
+            nanosecond: 1_000_000_000,
+        };
+        expect_draw_panic(
+            gs::zoned_datetimes().min_instant(bad),
+            "nanosecond must be at most",
+        );
+    }
+
+    #[test]
+    fn test_zoned_datetimes_time_zones_are_validated() {
+        expect_draw_panic(
+            gs::zoned_datetimes().time_zones(gs::time_zones().names(["Mars/Olympus"])),
+            "unknown time zone",
+        );
+    }
+
+    #[test]
+    fn test_signed_durations_min_greater_than_max() {
+        expect_draw_panic(
+            gs::signed_durations()
+                .min_value(SignedDuration::new(1, 0).unwrap())
+                .max_value(SignedDuration::new(0, 0).unwrap()),
+            "max_value < min_value",
+        );
+    }
+
+    #[test]
+    fn test_signed_durations_invalid_bound() {
+        let bad = SignedDuration {
+            seconds: 1,
+            nanoseconds: -1,
+        };
+        expect_draw_panic(
+            gs::signed_durations().max_value(bad),
+            "not a valid duration",
+        );
+    }
+
+    #[test]
+    fn test_spans_inverted_unit_bounds() {
+        expect_draw_panic(
+            gs::spans().unit_bounds(SpanUnit::Days, 5, 3),
+            "requires min <= max for Days",
+        );
+    }
+
+    #[test]
+    fn test_spans_negative_bound_under_nonnegative_sign() {
+        expect_draw_panic(
+            gs::spans()
+                .unit_bounds(SpanUnit::Days, -5, 3)
+                .sign(SpanSign::NonNegative),
+            "nonnegative sign policy requires min >= 0",
+        );
+    }
+
+    #[test]
+    fn test_spans_uniform_sign_with_no_common_sign() {
+        expect_draw_panic(
+            gs::spans()
+                .unit_bounds(SpanUnit::Days, 1, 3)
+                .unit_bounds(SpanUnit::Hours, -3, -1),
+            "admit none in common",
+        );
+    }
+
+    #[test]
+    fn test_durations_min_greater_than_max() {
+        expect_draw_panic(
+            gs::durations()
+                .min_value(Duration::from_secs(2))
+                .max_value(Duration::from_secs(1)),
+            "max_value < min_value",
+        );
+    }
+
+    #[test]
+    fn test_durations_min_unrepresentable() {
+        expect_draw_panic(
+            gs::durations().min_value(Duration::from_secs(u64::MAX)),
+            "largest generatable Duration",
+        );
+    }
+
+    #[test]
+    fn test_system_times_min_greater_than_max() {
+        expect_draw_panic(
+            gs::system_times()
+                .min_value(UNIX_EPOCH + Duration::from_secs(1))
+                .max_value(UNIX_EPOCH),
+            "max_value < min_value",
+        );
+    }
+}

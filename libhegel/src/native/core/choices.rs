@@ -9,6 +9,7 @@ use crate::control::{
 };
 use crate::native::HashSet;
 use crate::native::bignum::{BigInt, BigUint, ToPrimitive, Zero};
+use crate::native::draws::timezone::TimeZoneConstraint;
 use crate::native::floats::sign_aware_lte;
 use crate::native::intervalsets::IntervalSet;
 use crate::native::lark::constraint::GrammarConstraint;
@@ -337,12 +338,14 @@ impl BytesChoice {
 /// reverse, then characters above `'Z'` in natural order.
 ///
 /// What narrows a string choice beyond its length bounds and alphabet: a
-/// grammar that must derive the string, or a regex that must match it.
-/// Either compares and hashes by identity.
+/// grammar that must derive the string, a regex that must match it, or
+/// the set of time zone names the string must be one of. Each compares
+/// and hashes by identity.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Constraint {
     Grammar(Arc<GrammarConstraint>),
     Regex(Arc<RegexConstraint>),
+    TimeZone(Arc<TimeZoneConstraint>),
 }
 
 /// How many codepoints of drawn strings a constraint remembers before
@@ -391,6 +394,7 @@ impl Constraint {
         match self {
             Constraint::Grammar(grammar) => grammar.accepts(text),
             Constraint::Regex(regex) => regex.accepts(text),
+            Constraint::TimeZone(zones) => zones.accepts(text),
         }
     }
 
@@ -400,6 +404,7 @@ impl Constraint {
         match self {
             Constraint::Grammar(grammar) => grammar.note_drawn(text),
             Constraint::Regex(regex) => regex.note_drawn(text),
+            Constraint::TimeZone(_) => {}
         }
     }
 
@@ -408,6 +413,7 @@ impl Constraint {
         match self {
             Constraint::Grammar(grammar) => grammar.simplest(),
             Constraint::Regex(regex) => regex.simplest(),
+            Constraint::TimeZone(zones) => Some(zones.simplest()),
         }
     }
 
@@ -415,7 +421,15 @@ impl Constraint {
     pub fn grammar(&self) -> Option<&Arc<GrammarConstraint>> {
         match self {
             Constraint::Grammar(grammar) => Some(grammar),
-            Constraint::Regex(_) => None,
+            Constraint::Regex(_) | Constraint::TimeZone(_) => None,
+        }
+    }
+
+    /// The time zone set, when the constraint is one.
+    pub fn timezone(&self) -> Option<&Arc<TimeZoneConstraint>> {
+        match self {
+            Constraint::TimeZone(zones) => Some(zones),
+            Constraint::Grammar(_) | Constraint::Regex(_) => None,
         }
     }
 }
@@ -1712,6 +1726,9 @@ impl ChoiceNode {
 /// Cross-variant order is `Scalar < Seq < Clone`; scalars compare by
 /// `(magnitude, sign)`, sequence variants shortlex on length then per-element
 /// keys, and clones recursively by their child sequences' [`NodesSortKey`].
+/// A string under a time zone constraint is a scalar: its position on the
+/// constraint's rank ladder, so that a lower-ranked name is a smaller
+/// value however it is spelled.
 /// The per-element keys for [`SeqKeys`] are resolved lazily during
 /// comparison — `String` defers `codepoint_key` to the moment of compare —
 /// so no `Vec<u32>` ever gets allocated.
@@ -1838,7 +1855,15 @@ impl ChoiceNode {
                 NodeSortKeyRef::Scalar(BigUint::from(mag), neg)
             }
             ChoiceData::Bytes(_, v) => NodeSortKeyRef::Seq(SeqKeys::Bytes(v)),
-            ChoiceData::String(sc, v) => NodeSortKeyRef::Seq(SeqKeys::String(sc.as_ref(), v)),
+            ChoiceData::String(sc, v) => {
+                match sc.constraint.as_ref().and_then(Constraint::timezone) {
+                    Some(zones) => NodeSortKeyRef::Scalar(
+                        BigUint::from(zones.position(v).unwrap_or(zones.ladder().len()) as u64),
+                        false,
+                    ),
+                    None => NodeSortKeyRef::Seq(SeqKeys::String(sc.as_ref(), v)),
+                }
+            }
             ChoiceData::Clone(rs) => NodeSortKeyRef::Clone(rs),
         }
     }

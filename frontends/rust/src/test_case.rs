@@ -1092,31 +1092,94 @@ impl TestCase {
         self.draw_or_raise(|ctc| ctc.generate_grammar(grammar, max_size))
     }
 
-    /// Draw a Gregorian calendar date in `[min, max]`.
+    /// Draw a Gregorian calendar date in `[min, max]` on the weekdays and
+    /// in the months `options` allows (every one for `None`).
     pub(crate) fn generate_date(
         &self,
         min: hegel_c::hegel_date_t,
         max: hegel_c::hegel_date_t,
+        options: Option<&crate::ffi::DateOptions>,
     ) -> hegel_c::hegel_date_t {
-        self.draw_or_raise(|ctc| ctc.generate_date(min, max))
+        self.draw_or_raise(|ctc| ctc.generate_date(min, max, options))
     }
 
-    /// Draw a time of day in `[min, max]`.
+    /// Draw a time of day in `[min, max]` at the `hegel_precision_t`
+    /// `precision`.
     pub(crate) fn generate_time(
         &self,
         min: hegel_c::hegel_time_t,
         max: hegel_c::hegel_time_t,
+        precision: u32,
     ) -> hegel_c::hegel_time_t {
-        self.draw_or_raise(|ctc| ctc.generate_time(min, max))
+        self.draw_or_raise(|ctc| ctc.generate_time(min, max, precision))
     }
 
-    /// Draw a naive datetime in `[min, max]`.
+    /// Draw a naive datetime in `[min, max]` at the `hegel_precision_t`
+    /// `precision`.
     pub(crate) fn generate_datetime(
         &self,
         min: hegel_c::hegel_datetime_t,
         max: hegel_c::hegel_datetime_t,
+        precision: u32,
     ) -> hegel_c::hegel_datetime_t {
-        self.draw_or_raise(|ctc| ctc.generate_datetime(min, max))
+        self.draw_or_raise(|ctc| ctc.generate_datetime(min, max, precision))
+    }
+
+    /// Draw an instant in `[min, max]` at the `hegel_precision_t`
+    /// `precision`.
+    pub(crate) fn generate_timestamp(
+        &self,
+        min: hegel_c::hegel_timestamp_t,
+        max: hegel_c::hegel_timestamp_t,
+        precision: u32,
+    ) -> hegel_c::hegel_timestamp_t {
+        self.draw_or_raise(|ctc| ctc.generate_timestamp(min, max, precision))
+    }
+
+    /// Draw a UTC offset in `[min_seconds, max_seconds]` at the
+    /// `hegel_offset_granularity_t` `granularity`, or the unknown offset
+    /// when `allow_unknown`.
+    pub(crate) fn generate_offset(
+        &self,
+        min_seconds: i32,
+        max_seconds: i32,
+        granularity: u32,
+        allow_unknown: bool,
+    ) -> hegel_c::hegel_offset_t {
+        self.draw_or_raise(|ctc| {
+            ctc.generate_offset(min_seconds, max_seconds, granularity, allow_unknown)
+        })
+    }
+
+    /// Draw a duration in `[min, max]` at the `hegel_precision_t`
+    /// `precision`.
+    pub(crate) fn generate_duration(
+        &self,
+        min: hegel_c::hegel_duration_t,
+        max: hegel_c::hegel_duration_t,
+        precision: u32,
+    ) -> hegel_c::hegel_duration_t {
+        self.draw_or_raise(|ctc| ctc.generate_duration(min, max, precision))
+    }
+
+    /// Draw a calendar span within a prebuilt libhegel span spec.
+    pub(crate) fn generate_span(&self, spec: &crate::ffi::SpanSpec) -> hegel_c::hegel_span_t {
+        self.draw_or_raise(|ctc| ctc.generate_span(spec))
+    }
+
+    /// Draw a time zone name a prebuilt libhegel time zone spec allows.
+    pub(crate) fn generate_timezone(&self, spec: &crate::ffi::TimeZoneSpec) -> String {
+        self.draw_or_raise(|ctc| ctc.generate_timezone(spec))
+    }
+
+    /// Draw a zoned datetime in a zone `tz_spec` allows within
+    /// `zoned_spec`'s bounds, with the zone's name.
+    pub(crate) fn generate_zoned_datetime(
+        &self,
+        tz_spec: &crate::ffi::TimeZoneSpec,
+        zoned_spec: &crate::ffi::ZonedSpec,
+    ) -> (hegel_c::hegel_zoned_datetime_t, String) {
+        self.draw_or_raise(|ctc| ctc.generate_zoned_datetime(tz_spec, zoned_spec))
     }
 
     /// Draw a UUID's 16 big-endian bytes, optionally forcing the version.
