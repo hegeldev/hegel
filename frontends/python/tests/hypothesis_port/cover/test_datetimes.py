@@ -66,6 +66,12 @@ def test_can_find_positive_delta():
     assert minimal(timedeltas(), lambda x: x.days > 0) == dt.timedelta(1)
 
 
+@pytest.mark.xfail(
+    reason="Hegel shrinks a timedelta toward zero as a whole, so the simplest negative "
+    "delta is a microsecond below zero, where Hypothesis shrinks days, seconds and "
+    "microseconds one at a time",
+    strict=True,
+)
 def test_can_find_negative_delta():
     assert minimal(timedeltas(max_value=dt.timedelta(10**6)), lambda x: x.days < 0) == dt.timedelta(
         -1

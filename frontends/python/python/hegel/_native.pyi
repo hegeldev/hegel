@@ -45,6 +45,14 @@ RUN_ERROR_HEALTH_CHECK: int
 RUN_ERROR_FLAKY: int
 RUN_ERROR_NONDETERMINISTIC: int
 RUN_ERROR_UNSATISFIABLE: int
+TIMEZONE_KIND_UNIQUE: int
+TIMEZONE_KIND_GAP: int
+TIMEZONE_KIND_FOLD: int
+TIMEZONE_TAG_LINK: int
+TIMEZONE_TAG_LEGACY: int
+AMBIGUOUS_BOTH: int
+AMBIGUOUS_EARLIER: int
+AMBIGUOUS_LATER: int
 
 # -- functions ----------------------------------------------------------------
 
@@ -54,6 +62,11 @@ def label_combine(labels: Sequence[int]) -> int: ...
 def set_default_profile(name: str | None) -> None: ...
 def set_unicode_version(version: str) -> None: ...
 def register_profile(name: str, settings: Settings) -> None: ...
+def tzdb_version() -> str: ...
+def timezone_info(name: str) -> tuple[str, bool, int, int] | None: ...
+def timezone_resolve(
+    name: str, civil: tuple[int, int, int, int, int, int, int]
+) -> tuple[int, int, int, int, bool, tuple[int, int]]: ...
 
 # -- classes ------------------------------------------------------------------
 
@@ -212,6 +225,15 @@ class TestCase:
         min_value: tuple[int, int, int, int, int, int, int],
         max_value: tuple[int, int, int, int, int, int, int],
     ) -> tuple[int, int, int, int, int, int, int]: ...
+    def generate_duration(
+        self, min_value: tuple[int, int], max_value: tuple[int, int]
+    ) -> tuple[int, int]: ...
+    def generate_timezone(self, spec: TimeZoneSpec) -> str: ...
+    def generate_zoned_datetime(
+        self, tz_spec: TimeZoneSpec, zoned_spec: ZonedSpec
+    ) -> tuple[
+        str, tuple[int, int, int, int, int, int, int], bool, int, int, bool, tuple[int, int]
+    ]: ...
     def generate_uuid(self, version: int | None) -> bytes: ...
     def generate_ipv4(self) -> bytes: ...
     def generate_ipv6(self) -> bytes: ...
@@ -237,6 +259,28 @@ class TestCase:
         max_concurrency: int,
         step_count: int,
     ) -> tuple[StateMachine, int]: ...
+
+class TimeZoneSpec:
+    def __init__(
+        self,
+        names: Sequence[str] | None,
+        links: bool,
+        legacy: bool,
+        unknown: bool,
+        opaque: bool,
+    ) -> None: ...
+
+class ZonedSpec:
+    def __init__(
+        self,
+        civil_bounds: tuple[
+            tuple[int, int, int, int, int, int, int], tuple[int, int, int, int, int, int, int]
+        ]
+        | None,
+        instant_bounds: tuple[tuple[int, int], tuple[int, int]] | None,
+        allow_imaginary: bool,
+        ambiguous: int,
+    ) -> None: ...
 
 class Collection:
     def more(self, tc: TestCase) -> bool: ...

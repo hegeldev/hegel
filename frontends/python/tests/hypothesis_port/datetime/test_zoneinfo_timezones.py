@@ -19,13 +19,14 @@
 # internals: transition probing, ConjectureData);
 # test_timezone_keys_argument_validation,
 # test_can_generate_prefixes_if_allowed_and_available,
-# test_can_disallow_prefixes (timezone_keys());
+# test_can_disallow_prefixes (timezone_keys() has no allow_prefix: the
+# posix/ and right/ variants are never generated);
 # test_datetimes_stay_within_aware_bounds,
 # test_allow_imaginary_is_not_an_error_for_aware_bounds,
 # test_bounds_at_either_side_of_a_fold, test_fold_bound_with_long_interval,
 # test_bounds_inside_a_fold, test_equal_bounds_at_ambiguous_moment_preserves_fold
-# (timezone-aware bounds); test_generates_ambiguous_datetimes_in_both_folds
-# (fold=1 generation and DST fold targeting).
+# and test_generates_ambiguous_datetimes_in_both_folds are covered by
+# tests/test_generators_time.py against Hegel's own semantics.
 
 import datetime as dt
 import zoneinfo
