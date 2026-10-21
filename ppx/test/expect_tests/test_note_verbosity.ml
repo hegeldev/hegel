@@ -51,6 +51,7 @@ let%expect_test "Verbose notes on every case (not just the final replay)" =
   [%expect
     {|
     Starting phase: Generate
+    Running test case
     draw_1 = 0
     NOTE_MARKER
     Running test case

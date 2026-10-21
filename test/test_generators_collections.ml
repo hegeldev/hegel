@@ -128,21 +128,23 @@ let test_lists_filtered_unique_e2e () =
 (** Test: lists(filtered, unique=true) with impossible constraints terminates
     via the engine's rejection limit instead of hanging. Uses
     min_value=max_value=0 so every second element is a guaranteed duplicate,
-    which causes the engine to send StopTest after its rejection threshold. *)
+    which causes the engine to send StopTest after its rejection threshold. No
+    case is ever valid, so the run ends [Unsatisfiable]. *)
 let test_lists_filtered_unique_exhaustion_e2e () =
-  Hegel.run_hegel_test
-    ~settings:
-      { (Hegel.Settings.create ~test_cases:10 ()) with
-        suppress_health_check = [ Settings.Filter_too_much ]
-      }
-    (fun tc ->
-       let elem = filter (fun _ -> true) (integers ~min_value:0 ~max_value:0 ()) in
-       (* Asking for ≥2 unique elements from {0} — impossible. The engine's
-         many.reject() limit will fire and send StopTest, which
-         collection_reject raises Internal.Stop_test. *)
-       let gen = lists elem ~min_size:2 ~unique:true () in
-       ignore (Hegel.draw tc gen : int list);
-       Alcotest.fail "an impossible unique list returned a value")
+  Test_helpers.expect_unsatisfiable (fun () ->
+    Hegel.run_hegel_test
+      ~settings:
+        { (Hegel.Settings.create ~test_cases:10 ()) with
+          suppress_health_check = [ Settings.Filter_too_much ]
+        }
+      (fun tc ->
+         let elem = filter (fun _ -> true) (integers ~min_value:0 ~max_value:0 ()) in
+         (* Asking for ≥2 unique elements from {0} — impossible. The engine's
+           many.reject() limit will fire and send StopTest, which
+           collection_reject raises Internal.Stop_test. *)
+         let gen = lists elem ~min_size:2 ~unique:true () in
+         ignore (Hegel.draw tc gen : int list);
+         Alcotest.fail "an impossible unique list returned a value"))
 ;;
 
 (** Test: assoc_lists(filtered keys) E2E — generates pairs. *)
@@ -168,24 +170,25 @@ let test_assoc_lists_filtered_values_e2e () =
 (** Uniqueness applies to transformed values: a constant map cannot supply
     the two distinct elements requested by this generator. *)
 let test_lists_unique_under_map_e2e () =
-  Hegel.run_hegel_test
-    ~settings:
-      { (Hegel.Settings.create ~test_cases:5 ()) with
-        suppress_health_check = [ Settings.Filter_too_much ]
-      }
-    (fun tc ->
-       let gen =
-         lists
-           (with_printer
-              Core.Int.sexp_of_t
-              (map (fun _ -> 0) (integers ~min_value:0 ~max_value:1 ())))
-           ~min_size:2
-           ~max_size:2
-           ~unique:true
-           ()
-       in
-       ignore (Hegel.draw tc gen : int list);
-       Alcotest.fail "a constant map cannot produce two unique elements")
+  Test_helpers.expect_unsatisfiable (fun () ->
+    Hegel.run_hegel_test
+      ~settings:
+        { (Hegel.Settings.create ~test_cases:5 ()) with
+          suppress_health_check = [ Settings.Filter_too_much ]
+        }
+      (fun tc ->
+         let gen =
+           lists
+             (with_printer
+                Core.Int.sexp_of_t
+                (map (fun _ -> 0) (integers ~min_value:0 ~max_value:1 ())))
+             ~min_size:2
+             ~max_size:2
+             ~unique:true
+             ()
+         in
+         ignore (Hegel.draw tc gen : int list);
+         Alcotest.fail "a constant map cannot produce two unique elements"))
 ;;
 
 (** Test: hash_tables produces a [Hashtbl.t] within the size bounds, holding the
@@ -216,24 +219,26 @@ let test_hash_tables_min_greater_than_max () =
 (** Regression: [assoc_lists] with a filtered key generator must still enforce
     key uniqueness. With keys constrained to a single value, the dedup loop
     rejects every duplicate; the engine's reject limit eventually fires
-    StopTest, which is caught by the test runner and skips the case.*)
+    StopTest, which is caught by the test runner and skips the case. No case
+    is ever valid, so the run ends [Unsatisfiable]. *)
 let test_assoc_lists_unique_keys_under_filter_e2e () =
-  Hegel.run_hegel_test
-    ~settings:
-      { (Hegel.Settings.create ~test_cases:5 ()) with
-        suppress_health_check = [ Settings.Filter_too_much ]
-      }
-    (fun tc ->
-       let gen =
-         assoc_lists
-           (filter (fun _ -> true) (integers ~min_value:0 ~max_value:0 ()))
-           (booleans ())
-           ~min_size:2
-           ~max_size:2
-           ()
-       in
-       ignore (Hegel.draw tc gen : (int * bool) list);
-       Alcotest.fail "a singleton key space cannot produce two unique keys")
+  Test_helpers.expect_unsatisfiable (fun () ->
+    Hegel.run_hegel_test
+      ~settings:
+        { (Hegel.Settings.create ~test_cases:5 ()) with
+          suppress_health_check = [ Settings.Filter_too_much ]
+        }
+      (fun tc ->
+         let gen =
+           assoc_lists
+             (filter (fun _ -> true) (integers ~min_value:0 ~max_value:0 ()))
+             (booleans ())
+             ~min_size:2
+             ~max_size:2
+             ()
+         in
+         ignore (Hegel.draw tc gen : (int * bool) list);
+         Alcotest.fail "a singleton key space cannot produce two unique keys"))
 ;;
 
 let tests =

@@ -279,19 +279,24 @@ let%expect_test "function call prints every time in verbose/debug verbosity" =
     function 10 = 586
     function 10 = 586
     function 10 = 586
+    Running test case
     function 10 = 586
     function 10 = 586
     function 10 = 586
+    Running test case
     function 10 = 586
     function 10 = 586
     function 10 = 586
+    Running test case
     function 10 = 586
     function 10 = 586
     function 10 = 586
+    Running test case
     function 10 = 586
     function 10 = 586
     function 10 = 586
     Ending phase: Generate
+    Running test case
     function 10 = 586
     function 10 = 586
     function 10 = 586

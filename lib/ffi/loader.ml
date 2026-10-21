@@ -3,8 +3,8 @@
    Search order: 1. [$HEGEL_LIBHEGEL_PATH] — an explicit path to the library
    file (or a directory containing [libhegel.<ext>]). 2. A prebuilt libhegel
    bundled into the installed package via the [libhegel] dune-site (release
-   tarballs ship the matching-platform binary there). 3. A sibling
-   [../hegel-rust/target/release/] (then [.../debug/]) checkout relative to the
+   tarballs ship the matching-platform binary there). 3. A sibling hegeldev/hegel
+   checkout's [../hegel/target/release/] (then [.../debug/]) relative to the
    current working directory, under the name cargo gives the cdylib
    ([libhegel_c.<ext>]). 4. A SHA-256-verified copy downloaded from the
    libhegel GitHub release (see [release_base]), cached under
@@ -15,7 +15,7 @@
    filesystem/network branches are not subject to the coverage gate. *)
 
 (** The libhegel version these bindings target. *)
-let version = "0.45.1"
+let version = "0.48.0"
 
 (* Baked-in SHA-256 checksums of the published [libhegel-<os>-<arch>.<ext>]
    artifacts for {!version}, keyed by "<os>-<arch>". Platforms without an entry
@@ -23,11 +23,11 @@ let version = "0.45.1"
 
    Regenerate after bumping {!version} with: scripts/update-checksums.py *)
 let checksums =
-  [ "darwin-arm64", "63adc3ee6356129c434cbb905bd295f369fcf7d01a75ae9dc943e470a044c0d5"
-  ; "linux-amd64", "9b1accb3ef6fae0582916919318eaadfb6ad74aee3d01ddb862bce62324838e1"
-  ; "linux-arm64", "654122fa67b07df49ee1ab1915fe2ccde484285c8cfb6b75145c6ed820a84e61"
-  ; "windows-amd64", "dbeff36e777363cb55478e552cd43071a4856a7ef2122f47e7de78e4d6afba3b"
-  ; "windows-arm64", "e34acf219e82e16b0aded21254802466fde905ce06f2f5cfb1eb51fd90d10df9"
+  [ "darwin-arm64", "6a2be1c6d4dcf1a380e14278b0dfbbb1dadb8fd9027f34ce4cff247d361a7dda"
+  ; "linux-amd64", "7662636b658065f08962ead44d0cd4e5d1e93dde09bc4117f7cee0320f42561e"
+  ; "linux-arm64", "ef654e8f552a09a5adfe26cb2bc270a3efa3160327763e38d9077407cec4a879"
+  ; "windows-amd64", "bc82157d99e259d97f3159108157461f6db7794c089bade5e10b59e7800dfd0e"
+  ; "windows-arm64", "4d47ec3dbc715d33801fc3a33c713e0f65cd5717178909201f85b13f0f769e94"
   ]
 ;;
 
@@ -184,14 +184,14 @@ let from_site () =
        Hegel_sites.Sites.libhegel)
 ;;
 
-(* 3. Sibling hegel-rust checkout relative to the working directory. *)
+(* 3. Sibling hegel checkout relative to the working directory. *)
 let from_sibling ext =
   let cwd = Sys.getcwd () in
   let candidate sub =
     List.fold_left
       Filename.concat
       cwd
-      [ ".."; "hegel-rust"; "target"; sub; sibling_basename ext ]
+      [ ".."; "hegel"; "target"; sub; sibling_basename ext ]
   in
   List.find_opt is_file [ candidate "release"; candidate "debug" ]
 ;;
@@ -262,8 +262,8 @@ let from_cache_or_download os_id ext =
       failwith
         (Printf.sprintf
            "hegel: no baked-in libhegel checksum for platform %s (not published upstream \
-            for %s). Build hegel-rust and set HEGEL_LIBHEGEL_PATH to the resulting \
-            libhegel.%s."
+            for %s). Build libhegel from hegeldev/hegel and set HEGEL_LIBHEGEL_PATH to \
+            the resulting libhegel_c.%s."
            key
            release_tag
            ext)
@@ -278,8 +278,8 @@ let from_cache_or_download os_id ext =
          (Printf.sprintf
             "hegel: libhegel not found and downloads are disabled \
              (HEGEL_LIBHEGEL_NO_DOWNLOAD). Looked at $HEGEL_LIBHEGEL_PATH, \
-             ../hegel-rust/target/{release,debug}/, and %s. Build hegel-rust or set \
-             HEGEL_LIBHEGEL_PATH."
+             ../hegel/target/{release,debug}/, and %s. Build libhegel from \
+             hegeldev/hegel or set HEGEL_LIBHEGEL_PATH."
             cache_path)
      | None -> ());
     let url = Printf.sprintf "%s/%s" release_base (release_artifact key ext) in

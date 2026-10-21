@@ -217,17 +217,10 @@ let stateful_no_rules_test () =
    from an empty pool rejects the test case with [Assume_rejected], not
    [Internal.Stop_test]. *)
 let empty_pool_draw_rejects_test () =
-  match
+  Test_helpers.expect_unsatisfiable (fun () ->
     Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:1 ()) (fun tc ->
       let pool = Hegel.Internal.new_pool tc in
-      ignore (Hegel.Internal.pool_generate tc ~pool () : int))
-  with
-  | () -> Alcotest.fail "expected Unsatisfiable"
-  | exception Failure msg ->
-    Alcotest.(check bool)
-      "failure msg"
-      (String.is_substring_at msg ~pos:0 ~substring:"Unsatisfiable")
-      true
+      ignore (Hegel.Internal.pool_generate tc ~pool () : int)))
 ;;
 
 let stateful_step_count_forwarded_test () =
@@ -674,17 +667,98 @@ let pool_reusable_clones_test () =
 
 let pool_empty_draw_rejects_test () =
   let module P = Hegel.Stateful.Pool in
-  match
+  Test_helpers.expect_unsatisfiable (fun () ->
     Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:1 ()) (fun tc ->
       let pool = P.create tc in
-      ignore (Hegel.draw_silent tc (P.values_consumed pool) : int))
-  with
-  | () -> Alcotest.fail "expected Unsatisfiable"
-  | exception Failure msg ->
+      ignore (Hegel.draw_silent tc (P.values_consumed pool) : int)))
+;;
+
+(* A filter over a consuming pool draw puts back every value it rejected: the
+   engine pool must still hold each of them, which [drain] checks by consuming
+   them all (an id the engine no longer has rejects the test case). *)
+let filtered_consume_test
+      (type p)
+      ~(create : Hegel.Internal.test_case -> p)
+      ~(add : p -> Hegel.Internal.test_case -> int -> unit)
+      ~(size : p -> int)
+      ~(values_consumed :
+         p -> (int, Hegel.Generators.unprintable) Hegel.Generators.generator)
+      ()
+  =
+  let filter = Hegel.Generators.filter in
+  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:20 ()) (fun tc ->
+    let fresh values =
+      let pool = create tc in
+      List.iter values ~f:(add pool tc);
+      pool
+    in
+    let drain pool =
+      List.sort
+        ~compare:Int.compare
+        (List.init (size pool) ~f:(fun _ -> Hegel.draw_silent tc (values_consumed pool)))
+    in
+    let rejects gen =
+      match Hegel.draw_silent tc gen with
+      | _ -> false
+      | exception Hegel.Internal.Assume_rejected -> true
+    in
+    let one = fresh [ 7 ] in
     Alcotest.(check bool)
-      "empty draw rejects"
+      "every value rejected"
       true
-      (String.is_substring_at msg ~pos:0 ~substring:"Unsatisfiable")
+      (rejects (filter (fun _ -> false) (values_consumed one)));
+    Alcotest.(check (list int)) "rejected value put back" [ 7 ] (drain one);
+    let many = fresh (List.range 0 10) in
+    Alcotest.(check bool)
+      "attempts run out"
+      true
+      (rejects (filter (fun _ -> false) (values_consumed many)));
+    Alcotest.(check (list int)) "all ten put back" (List.range 0 10) (drain many);
+    let pair = fresh [ 1; 2 ] in
+    Alcotest.(check int)
+      "accepted value"
+      2
+      (Hegel.draw_silent tc (filter (fun v -> v = 2) (values_consumed pair)));
+    Alcotest.(check (list int)) "only the accepted value consumed" [ 1 ] (drain pair);
+    let chained = fresh [ 1; 2; 4 ] in
+    let chained_gen =
+      filter (fun v -> v > 2) (filter (fun v -> v % 2 = 0) (values_consumed chained))
+    in
+    Alcotest.(check int) "both predicates apply" 4 (Hegel.draw_silent tc chained_gen);
+    Alcotest.(check (list int)) "chain puts back rejections" [ 1; 2 ] (drain chained);
+    let raising = fresh [ 1; 2; 3 ] in
+    let calls = ref 0 in
+    let raising_gen =
+      filter
+        (fun _ ->
+           incr calls;
+           if !calls > 1 then raise Exit else false)
+        (values_consumed raising)
+    in
+    (match Hegel.draw_silent tc raising_gen with
+     | _ -> Alcotest.fail "the predicate raises on its second call"
+     | exception Exit -> ());
+    Alcotest.(check (list int)) "put back after a raise" [ 1; 2; 3 ] (drain raising))
+;;
+
+let pool_filtered_consume_test () =
+  let module P = Hegel.Stateful.Pool in
+  filtered_consume_test
+    ~create:(fun tc -> P.create tc)
+    ~add:P.add
+    ~size:P.size
+    ~values_consumed:P.values_consumed
+    ()
+;;
+
+let concurrent_pool_filtered_consume_test () =
+  let module P = Hegel.Stateful.Concurrent_pool in
+  filtered_consume_test
+    ~create:(fun tc -> P.create tc)
+    ~add:P.add
+    ~size:P.size
+    ~values_consumed:P.values_consumed
+    ()
 ;;
 
 let pool_parallel_adds_test ~concurrency () =
@@ -1299,6 +1373,14 @@ let tests =
       "stateful: pool empty draw rejects"
       `Quick
       pool_empty_draw_rejects_test
+  ; Alcotest.test_case
+      "stateful: filter puts back rejected pool values"
+      `Quick
+      pool_filtered_consume_test
+  ; Alcotest.test_case
+      "stateful: filter puts back rejected concurrent pool values"
+      `Quick
+      concurrent_pool_filtered_consume_test
   ; Alcotest.test_case
       "stateful: pool retains parallel additions (threads)"
       `Quick

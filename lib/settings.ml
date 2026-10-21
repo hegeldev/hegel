@@ -60,6 +60,7 @@ type t =
   ; phases : phase list
   ; print_blob : bool
   ; report_multiple_failures : bool
+  ; stop_on_first_failure : bool
   ; show_statistics : bool
   ; backend : backend
   ; nondeterminism_strictness : Nondeterminism_strictness.t
@@ -147,6 +148,7 @@ let of_ffi ctx s =
   ; phases = of_bitmask phase_bit all_phases (Ffi.settings_get_phases ctx s)
   ; print_blob = Ffi.settings_get_print_blob ctx s
   ; report_multiple_failures = Ffi.settings_get_report_multiple_failures ctx s
+  ; stop_on_first_failure = Ffi.settings_get_stop_on_first_failure ctx s
   ; show_statistics = Ffi.settings_get_show_statistics ctx s
   ; backend = backend_of_ffi (Ffi.settings_get_backend ctx s)
   ; nondeterminism_strictness =
@@ -161,6 +163,7 @@ let to_ffi ctx t ~database_key =
   Ffi.settings_seed ctx s t.seed;
   Ffi.settings_derandomize ctx s t.derandomize;
   Ffi.settings_report_multiple_failures ctx s t.report_multiple_failures;
+  Ffi.settings_stop_on_first_failure ctx s t.stop_on_first_failure;
   Ffi.settings_show_statistics ctx s t.show_statistics;
   Ffi.settings_backend ctx s (ffi_backend t.backend);
   Ffi.settings_nondeterminism_strictness

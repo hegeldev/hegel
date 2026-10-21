@@ -253,6 +253,10 @@ val settings_seed : context -> settings -> int option -> unit
 val settings_derandomize : context -> settings -> bool -> unit
 val settings_report_multiple_failures : context -> settings -> bool -> unit
 
+(** [settings_stop_on_first_failure ctx s b] records whether generation stops
+    at the first failure found. *)
+val settings_stop_on_first_failure : context -> settings -> bool -> unit
+
 (** [settings_show_statistics ctx s b] makes the engine print an end-of-run
     statistics block aggregating {!event}/{!event_value} observations. *)
 val settings_show_statistics : context -> settings -> bool -> unit
@@ -306,6 +310,7 @@ val settings_get_database : context -> settings -> string option
 val settings_get_phases : context -> settings -> int
 val settings_get_suppress_health_check : context -> settings -> int
 val settings_get_report_multiple_failures : context -> settings -> bool
+val settings_get_stop_on_first_failure : context -> settings -> bool
 val settings_get_show_statistics : context -> settings -> bool
 val settings_get_print_blob : context -> settings -> bool
 val settings_get_backend : context -> settings -> backend
@@ -526,6 +531,11 @@ val pool_add : context -> test_case -> pool:pool -> int
 (** [pool_generate ctx tc ~pool ~consume] draws (and optionally consumes) a
     variable id from the pool. Raises {!Stop_test} if the pool is empty. *)
 val pool_generate : context -> test_case -> pool:pool -> consume:bool -> int
+
+(** [pool_restore ctx tc ~pool ~variable_id] puts back a variable that a
+    consuming {!pool_generate} removed. Raises {!Usage_error} if [variable_id]
+    is not a consumed variable of [pool]. *)
+val pool_restore : context -> test_case -> pool:pool -> variable_id:int -> unit
 
 (** [pool_free ctx pool] releases [pool]. *)
 val pool_free : context -> pool -> unit
@@ -754,4 +764,4 @@ val failure_blob : context -> failure -> string option
 (** [failure_caveat ctx f] is the caveat of [f] under nondeterministic
     handling. [None] for a deterministic failure. *)
 val failure_caveat : context -> failure -> string option
-val failure_origin : context -> failure -> string option
+val failure_origin : context -> failure -> string

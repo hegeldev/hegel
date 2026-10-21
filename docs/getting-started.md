@@ -51,7 +51,7 @@ Run it with `dune runtest`. You should see Alcotest report the test as `OK`.
 
 Let's look at what's happening in more detail. The `let%hegel_test name tc =
 body` extension defines `name` as a `unit -> unit` function that runs `body`
-100 times by default. The `tc` parameter is a test case, which represents the 
+up to 100 times by default. The `tc` parameter is a test case, which represents the 
 state of the Hegel test. The example above draws a random integer and checks 
 that it is equal to itself.
 
@@ -162,7 +162,7 @@ like `lists` that expect a *printable* element generator, attach a printer with
 ## Debug your failing test cases
 
 When a test fails, Hegel replays the minimal failing example and prints a
-report: the test's name and source location, how many cases ran, the values you
+report: the test's name and source location, the values you
 drew (as s-expressions, named after their `let` binding), the exception, and a
 copy-pasteable line that replays the exact case.
 
@@ -178,7 +178,7 @@ On failure this prints:
 ```
 --- Failure: reverse_is_identity (test/my_tests.ml:1) ------------------
 
-  xs = (0 1)
+xs = (0 1)
 
 Exception: File "test/my_tests.ml", line 3, characters 2-8: Assertion failed
 rerun with: [@@failure_blobs [ "AXic..." ]]
@@ -212,8 +212,7 @@ The same `let x` runs on each iteration, so Hegel disambiguates the draws as
 `draw ~label:"y" tc (integers ())`.
 
 Some combinators hand the result type to your own code and so carry no printer:
-`map`, `flat_map`, `sampled_from`, `just`, and generators from `[@@deriving
-hegel_generator]`. Either draw it with `draw_silent` (which prints nothing):
+`map`, `flat_map`, `sampled_from`, and `just`. Either draw it with `draw_silent` (which prints nothing):
 
 ```ocaml
 let parity = draw_silent tc (map (fun n -> n mod 2) (integers ()))
@@ -271,7 +270,7 @@ marked `[@@invariant { always_check = true }]`. Pass `?sexp_of_state` to
 module%hegel_state_machine Stack = struct
   type state = int list ref
 
-  let sexp_of_state stack = sexp_of_list sexp_of_int !stack
+  let sexp_of_state (stack : state) = sexp_of_list sexp_of_int !stack
 
   let push tc stack =
     let n = draw tc (integers ~min_value:0 ~max_value:9 ()) in
@@ -289,17 +288,17 @@ When a sequence fails, the report shows each step, the draws it made, the state
 after it, and which step broke the invariant:
 
 ```
-  state = ()
-  Step 1: push
-    n = 0
-  state = (0)
-  Step 2: push
-    n = 0
-  state = (0 0)
-  Step 3: push
-    n = 0
-  state = (0 0 0)
-  Invariant stack_stays_small violated after step 3.
+state = ()
+Step 1: push
+  n = 0
+state = (0)
+Step 2: push
+  n = 0
+state = (0 0)
+Step 3: push
+  n = 0
+state = (0 0 0)
+Invariant stack_stays_small violated after step 3.
 ```
 
 State machines can also be created without the PPX. Create the rules and

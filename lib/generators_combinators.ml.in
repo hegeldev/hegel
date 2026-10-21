@@ -45,7 +45,7 @@ let%template one_of (generators : ('a, printable) generator list MODE(m))
   : ('a, printable) generator MODE(m)
   =
   match generators with
-  | [] -> failwith "one_of requires at least one generator"
+  | [] -> raise (Internal.Usage_error "one_of requires at least one generator")
   | _ :: _ ->
     let n = List.length generators in
     (* the branch the last draw came from; 0 (the first branch) before any draw *)

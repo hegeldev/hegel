@@ -44,6 +44,18 @@ let expect_usage_error gen substring =
   | () -> Alcotest.fail "expected Usage_error"
 ;;
 
+(** [expect_unsatisfiable run] runs [run] and checks that it raises the
+    engine's [Unsatisfiable] run error: no test case was valid. *)
+let expect_unsatisfiable run =
+  match run () with
+  | () -> Alcotest.fail "expected Unsatisfiable"
+  | exception Failure msg ->
+    Alcotest.(check bool)
+      (Printf.sprintf "%S is Unsatisfiable" msg)
+      true
+      (String.is_prefix msg ~prefix:"Unsatisfiable")
+;;
+
 (** [contains_substring s sub] returns [true] if [sub] appears anywhere in [s]. *)
 let contains_substring s sub =
   let slen = String.length s

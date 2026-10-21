@@ -48,6 +48,7 @@ let test_default_settings_not_ci () =
     Alcotest.(check int) "all phases" 5 (List.length s.phases);
     Alcotest.(check bool) "print_blob on" true s.print_blob;
     Alcotest.(check bool) "report_multiple_failures off" false s.report_multiple_failures;
+    Alcotest.(check bool) "stop_on_first_failure on" true s.stop_on_first_failure;
     Alcotest.(check bool) "show_statistics off" false s.show_statistics;
     Alcotest.(check bool)
       "development is the base settings"
@@ -115,6 +116,7 @@ let test_register_profile_round_trip () =
         ; phases = [ Settings.Generate; Settings.Shrink ]
         ; print_blob = i mod 2 = 0
         ; report_multiple_failures = true
+        ; stop_on_first_failure = i mod 2 = 1
         ; show_statistics = true
         ; backend = (if i mod 2 = 0 then Settings.Default else Settings.Urandom)
         ; nondeterminism_strictness =
@@ -719,19 +721,22 @@ let test_run_primitive_defaults () =
     assert (v >= 0 && a >= 0 && b >= 0))
 ;;
 
+(* Every case overruns, so with the health checks suppressed the run ends
+   [Unsatisfiable] rather than reporting a failure. *)
 let test_stop_test_does_not_fail_run () =
-  run_hegel_test
-    ~settings:
-      { (Hegel.Settings.create ~test_cases:1 ()) with
-        suppress_health_check =
-          [ Settings.Test_cases_too_large
-          ; Settings.Filter_too_much
-          ; Settings.Large_initial_test_case
-          ]
-      }
-    (fun tc ->
-       ignore (Hegel.draw_silent tc int_gen : int);
-       raise Internal.Stop_test)
+  Test_helpers.expect_unsatisfiable (fun () ->
+    run_hegel_test
+      ~settings:
+        { (Hegel.Settings.create ~test_cases:1 ()) with
+          suppress_health_check =
+            [ Settings.Test_cases_too_large
+            ; Settings.Filter_too_much
+            ; Settings.Large_initial_test_case
+            ]
+        }
+      (fun tc ->
+         ignore (Hegel.draw_silent tc int_gen : int);
+         raise Internal.Stop_test))
 ;;
 
 let tests =
