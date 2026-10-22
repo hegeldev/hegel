@@ -269,7 +269,7 @@ jobs:
   nix:
     name: nix
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.cpp == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
