@@ -10,9 +10,10 @@ import java.util.List;
 /**
  * Reflection-based generator derivation. Maps a Java type to a default generator: scalar wrappers
  * to their primitive generators, {@code OptionalInt}/{@code OptionalLong}/{@code OptionalDouble} to
- * optionals over them, enums to a choice over their constants, records to a generator over their
- * components, and {@code List}/{@code Set}/{@code Optional}/{@code Map} to the matching collection
- * generators (using the declared element types).
+ * optionals over them, the {@code java.time} value types to their generators (so {@code DayOfWeek}
+ * and {@code Month} draw like any enum), enums to a choice over their constants, records to a
+ * generator over their components, and {@code List}/{@code Set}/{@code Optional}/{@code Map} to
+ * the matching collection generators (using the declared element types).
  */
 public final class Derive {
     private Derive() {}
@@ -99,13 +100,28 @@ public final class Derive {
             return Generators.datetimes().offsets(Generators.zoneOffsets());
         }
         if (cls == java.time.ZonedDateTime.class) {
-            return Generators.datetimes().timezones(Generators.zoneIds());
+            return Generators.zonedDateTimes();
         }
         if (cls == java.time.ZoneOffset.class) {
             return Generators.zoneOffsets();
         }
         if (cls == java.time.ZoneId.class) {
             return Generators.zoneIds();
+        }
+        if (cls == java.time.Instant.class) {
+            return Generators.instants();
+        }
+        if (cls == java.time.Period.class) {
+            return Generators.periods();
+        }
+        if (cls == java.time.Year.class) {
+            return Generators.dates().map(d -> java.time.Year.of(d.getYear()));
+        }
+        if (cls == java.time.YearMonth.class) {
+            return Generators.dates().map(java.time.YearMonth::from);
+        }
+        if (cls == java.time.MonthDay.class) {
+            return Generators.dates().map(java.time.MonthDay::from);
         }
         return null;
     }

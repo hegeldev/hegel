@@ -62,6 +62,8 @@ class JnaLibhegelTest {
         // Through a `const hegel_string_t *`, NULL is absent and a pointer is read.
         assertNull(JnaLibhegel.readStringAt(null));
         assertEquals("a\0b", JnaLibhegel.readStringAt(string));
+        assertFalse(JnaLibhegel.jbool((byte) 0));
+        assertTrue(JnaLibhegel.jbool((byte) 1));
     }
 
     @Test
@@ -115,12 +117,7 @@ class JnaLibhegelTest {
     @Test
     void structuredDrawsReportNullHandles() {
         JnaLibhegel lib = real();
-        java.time.LocalDate d = java.time.LocalDate.of(2000, 1, 1);
-        assertEquals(Abi.E_INVALID_HANDLE, lib.generateDate(0, d, d, new java.time.LocalDate[1]));
-        java.time.LocalTime t = java.time.LocalTime.NOON;
-        assertEquals(Abi.E_INVALID_HANDLE, lib.generateTime(0, t, t, new java.time.LocalTime[1]));
-        java.time.LocalDateTime dt = java.time.LocalDateTime.of(d, t);
-        assertEquals(Abi.E_INVALID_HANDLE, lib.generateDatetime(0, dt, dt, new java.time.LocalDateTime[1]));
+        BindingEdges.structuredDrawsReportNullHandles(lib);
     }
 
     @Test
