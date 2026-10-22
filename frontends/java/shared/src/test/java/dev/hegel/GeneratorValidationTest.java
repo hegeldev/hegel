@@ -98,6 +98,16 @@ class GeneratorValidationTest {
         doubles().min(-1.0).max(1.0).allowSubnormal(false);
         // Same-valued bounds allow subnormals only when the value is one.
         floats().min(Float.MIN_VALUE).max(Float.MIN_VALUE).allowSubnormal(true);
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> floats().min(-1.0f).max(-1.0f).allowSubnormal(true));
+        // By default, same-valued bounds admit subnormals only when the value is one.
+        doubles().min(-1.0).max(-1.0);
+        doubles().min(1.0).max(1.0);
+        doubles().min(-Double.MIN_VALUE).max(-Double.MIN_VALUE);
+        floats().min(-1.0f).max(-1.0f);
+        floats().min(1.0f).max(1.0f);
+        floats().min(Float.MIN_VALUE).max(Float.MIN_VALUE);
     }
 
     @Test
