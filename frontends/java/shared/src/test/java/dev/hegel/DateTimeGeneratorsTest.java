@@ -39,6 +39,7 @@ import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 /** The date and time generators against the real engine, plus their fake-driven edge paths. */
@@ -214,7 +215,16 @@ class DateTimeGeneratorsTest {
         assertAllExamples(
                 zoneIds().names(List.of("Asia/Kolkata")), z -> z.getId().equals("Asia/Kolkata"));
         assertEquals(ZoneId.of("UTC"), minimal(zoneIds(), z -> true));
-        assertTrue(findAny(zoneIds(), z -> z.getId().equals("Asia/Calcutta")) != null);
+        AtomicBoolean drewLink = new AtomicBoolean(false);
+        Hegel.test(
+                tc -> {
+                    ZoneId z = tc.draw(zoneIds());
+                    if (tc.timezoneInfo(z.getId()).link()) {
+                        drewLink.set(true);
+                    }
+                },
+                new Settings().database(Database.disabled()).testCases(500));
+        assertTrue(drewLink.get());
         assertTrue(findAny(zoneIds(), z -> z.getId().startsWith("Europe/")) != null);
     }
 
