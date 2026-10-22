@@ -20,8 +20,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import json
+import re
 import release
-from release import CPP, LIBHEGEL, PYTHON, RUST, TYPESCRIPT
+from release import CPP, JAVA, LIBHEGEL, PYTHON, RUST, TYPESCRIPT
 
 RUST_CARGO = """\
 [package]
@@ -105,6 +106,44 @@ project(hegel-cpp VERSION 0.13.1 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 """
 
+# The Java frontend's version lives in Maven poms: the parent pom's project
+# version, repeated by each module pom's <parent> reference (the modules
+# declare no version of their own).
+JAVA_PARENT_POM = """\
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>dev.hegel</groupId>
+  <artifactId>hegel-parent</artifactId>
+  <version>0.10.2</version>
+  <packaging>pom</packaging>
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.11.4</version>
+    </dependency>
+  </dependencies>
+</project>
+"""
+JAVA_MODULE_POM = """\
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>dev.hegel</groupId>
+    <artifactId>hegel-parent</artifactId>
+    <version>0.10.2</version>
+  </parent>
+  <artifactId>hegel</artifactId>
+  <dependencies>
+    <dependency>
+      <groupId>net.java.dev.jna</groupId>
+      <artifactId>jna</artifactId>
+      <version>5.17.0</version>
+    </dependency>
+  </dependencies>
+</project>
+"""
+
 PATCH = ("patch", "This patch does a thing.")
 MINOR = ("minor", "This release breaks the C ABI.")
 
@@ -122,6 +161,10 @@ class ApplyVersionBumpTest(unittest.TestCase):
             ("frontends/typescript/package-lock.json", json.dumps(TYPESCRIPT_LOCK, indent=2) + "\n"),
             ("frontends/typescript/src/libhegel-version.ts", TYPESCRIPT_PIN),
             ("frontends/cpp/CMakeLists.txt", CPP_CMAKE),
+            ("frontends/java/pom.xml", JAVA_PARENT_POM),
+            ("frontends/java/hegel-lowlevel/pom.xml", JAVA_MODULE_POM),
+            ("frontends/java/hegel/pom.xml", JAVA_MODULE_POM),
+            ("frontends/java/hegel-jna/pom.xml", JAVA_MODULE_POM),
         ]:
             path = self.root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -163,6 +206,16 @@ class ApplyVersionBumpTest(unittest.TestCase):
         self.assertEqual(lock["packages"][""]["version"], "0.4.11")
         self.assertEqual(lock["packages"]["node_modules/koffi"]["version"], "3.0.2")
 
+    def test_bumps_the_maven_parent_and_every_module_parent_reference(self) -> None:
+        # Only the project version (parent pom) and the <parent> references
+        # (module poms) move: dependency versions stay where they are.
+        release.apply_version_bump(self.root, {JAVA: "0.10.3"})
+        self.assertEqual(
+            self.read("frontends/java/pom.xml"), JAVA_PARENT_POM.replace("0.10.2", "0.10.3")
+        )
+        for rel in JAVA.manifests[1:]:
+            self.assertEqual(self.read(rel), JAVA_MODULE_POM.replace("0.10.2", "0.10.3"), rel)
+
     def test_rewrites_npm_manifests_in_npm_style(self) -> None:
         # npm writes two-space indented JSON with a trailing newline; keeping
         # that layout makes the release commit's diff only the version lines.
@@ -183,6 +236,8 @@ class ApplyVersionBumpTest(unittest.TestCase):
             json.dumps(TYPESCRIPT_PACKAGE, indent=2) + "\n",
         )
         self.assertEqual(self.read("frontends/typescript/src/libhegel-version.ts"), TYPESCRIPT_PIN)
+        self.assertEqual(self.read("frontends/java/pom.xml"), JAVA_PARENT_POM)
+        self.assertEqual(self.read("frontends/java/hegel/pom.xml"), JAVA_MODULE_POM)
 
     def test_engine_pin_follows_the_libhegel_version(self) -> None:
         # The TypeScript frontend's generated pin moves with libhegel whether
@@ -251,6 +306,7 @@ CURRENT = {
     PYTHON: "0.1.0",
     TYPESCRIPT: "0.4.10",
     CPP: "0.13.1",
+    JAVA: "0.10.2",
 }
 
 
@@ -279,6 +335,7 @@ class PlanReleaseTest(unittest.TestCase):
                     "0.13.2",
                     "This release updates the bundled libhegel engine to 0.5.1.",
                 ),
+                JAVA: ("0.10.3", "This release updates the bundled libhegel engine to 0.5.1."),
             },
         )
 
@@ -291,6 +348,7 @@ class PlanReleaseTest(unittest.TestCase):
         self.assertEqual(plan[PYTHON][0], "0.1.1")
         self.assertEqual(plan[TYPESCRIPT][0], "0.4.11")
         self.assertEqual(plan[CPP][0], "0.13.2")
+        self.assertEqual(plan[JAVA][0], "0.10.3")
 
     def test_a_frontend_release_file_overrides_the_engine_entry(self) -> None:
         plan = release.plan_release(CURRENT, {RUST: PATCH, LIBHEGEL: MINOR})
@@ -312,6 +370,10 @@ class PlanReleaseTest(unittest.TestCase):
     def test_cpp_only_bumps_cpp_and_leaves_the_rest(self) -> None:
         plan = release.plan_release(CURRENT, {CPP: PATCH})
         self.assertEqual(plan, {CPP: ("0.13.2", "This patch does a thing.")})
+
+    def test_java_only_bumps_java_and_leaves_the_rest(self) -> None:
+        plan = release.plan_release(CURRENT, {JAVA: PATCH})
+        self.assertEqual(plan, {JAVA: ("0.10.3", "This patch does a thing.")})
 
 
 class CurrentVersionTest(unittest.TestCase):
@@ -342,6 +404,16 @@ class CurrentVersionTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 release.set_version(manifest, "0.13.2")
 
+    def test_reads_a_maven_pom_version(self) -> None:
+        # A module pom's first <version> is its parent reference, which is
+        # the component's version too.
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "pom.xml"
+            manifest.write_text(JAVA_PARENT_POM)
+            self.assertEqual(release.current_version(manifest), "0.10.2")
+            manifest.write_text(JAVA_MODULE_POM)
+            self.assertEqual(release.current_version(manifest), "0.10.2")
+
 
 class ComponentTest(unittest.TestCase):
     def test_tags_are_path_slash_version(self) -> None:
@@ -350,6 +422,7 @@ class ComponentTest(unittest.TestCase):
         self.assertEqual(PYTHON.tag("0.2.0"), "frontends/python/0.2.0")
         self.assertEqual(TYPESCRIPT.tag("0.4.11"), "frontends/typescript/0.4.11")
         self.assertEqual(CPP.tag("0.13.2"), "frontends/cpp/0.13.2")
+        self.assertEqual(JAVA.tag("0.10.3"), "frontends/java/0.10.3")
 
     def test_release_files_live_in_the_component(self) -> None:
         for component in release.COMPONENTS:
@@ -390,6 +463,10 @@ def release_name(manifest: Path) -> str:
         for line in manifest.read_text().splitlines():
             if line.startswith("project("):
                 return line.removeprefix("project(").split()[0]
+    if manifest.suffix == ".xml":
+        # The pom's own artifactId: the first one outside the <parent> element.
+        own = re.sub(r"<parent>.*?</parent>", "", manifest.read_text(), flags=re.DOTALL)
+        return re.search(r"<artifactId>([^<]+)</artifactId>", own).group(1)
     for line in manifest.read_text().splitlines():
         if line.startswith("name = "):
             return line.split('"')[1]

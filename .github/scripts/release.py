@@ -19,15 +19,15 @@ class Component:
     `path` is the component's directory relative to the repo root. It doubles
     as the tag prefix: a release of version X.Y.Z is tagged `<path>/X.Y.Z`.
     `manifests` are the manifests that carry the component's version (Cargo
-    manifests, npm's `package.json` and `package-lock.json`, or a
-    `CMakeLists.txt` with a `project(... VERSION x.y.z ...)` line; the first
-    is the one its version is read from) and `crates` the packages those
+    manifests, npm's `package.json` and `package-lock.json`, a
+    `CMakeLists.txt` with a `project(... VERSION x.y.z ...)` line, or Maven's
+    `pom.xml` files; the first is the one its version is read from) and `crates` the packages those
     manifests declare, all at the component's version; `source_dirs` are the
     paths whose changes require a `<path>/RELEASE.md` on a PR.
 
     A frontend ships the engine (the Rust frontend pins the `hegeltest-c`
     crate exactly, the Python frontend compiles libhegel into its wheels, the
-    TypeScript frontend bundles the libhegel binaries, the C++ frontend
+    TypeScript and Java frontends bundle the libhegel binaries, the C++ frontend
     builds the in-tree libhegel it is fetched with), so a libhegel release
     also patch-bumps every frontend without a RELEASE.md of its own, giving it
     `engine_bump_entry` (with `{version}` filled in) as its changelog entry.
@@ -115,7 +115,30 @@ CPP = Component(
     ),
     engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
 )
-FRONTENDS = [RUST, PYTHON, TYPESCRIPT, CPP]
+JAVA = Component(
+    path="frontends/java",
+    # The parent pom carries the version; each module pom repeats it in its
+    # <parent> element, which must move with the release.
+    manifests=(
+        "frontends/java/pom.xml",
+        "frontends/java/hegel-lowlevel/pom.xml",
+        "frontends/java/hegel/pom.xml",
+        "frontends/java/hegel-jna/pom.xml",
+    ),
+    crates=("hegel-parent", "hegel-lowlevel", "hegel", "hegel-jna"),
+    source_dirs=(
+        "frontends/java/shared/src/main/",
+        "frontends/java/hegel-lowlevel/src/main/",
+        "frontends/java/hegel/src/main/",
+        "frontends/java/hegel-jna/src/main/",
+        "frontends/java/pom.xml",
+        "frontends/java/hegel-lowlevel/pom.xml",
+        "frontends/java/hegel/pom.xml",
+        "frontends/java/hegel-jna/pom.xml",
+    ),
+    engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
+)
+FRONTENDS = [RUST, PYTHON, TYPESCRIPT, CPP, JAVA]
 COMPONENTS = [LIBHEGEL, *FRONTENDS]
 
 
@@ -180,8 +203,10 @@ CMAKE_PROJECT_VERSION = re.compile(
 
 def current_version(manifest: Path) -> str:
     """The version of the package manifest at `manifest`: the `version = "..."`
-    of a Cargo manifest, the `"version"` of an npm one, or the `project()`
-    version of a CMakeLists.txt."""
+    of a Cargo manifest, the `"version"` of an npm one, the `project()`
+    version of a CMakeLists.txt, or the first `<version>` of a Maven pom (the
+    project's own in a parent pom, the parent reference in a module pom;
+    `modelVersion` is a different tag)."""
     if manifest.suffix == ".json":
         return json.loads(manifest.read_text())["version"]
     if manifest.name == "CMakeLists.txt":
@@ -189,6 +214,8 @@ def current_version(manifest: Path) -> str:
         if m is None:
             raise ValueError(f"no project(... VERSION x.y.z ...) in {manifest}")
         return m.group(2)
+    if manifest.suffix == ".xml":
+        return re.search(r"<version>([^<]+)</version>", manifest.read_text()).group(1)
     m = re.search(r'^version = "([^"]+)"', manifest.read_text(), re.MULTILINE)
     return m.group(1)
 
@@ -211,6 +238,16 @@ def set_version(manifest: Path, new_version: str) -> None:
         if root_package is not None:
             root_package["version"] = new_version
         manifest.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        return
+    if manifest.suffix == ".xml":
+        manifest.write_text(
+            re.sub(
+                r"<version>[^<]+</version>",
+                f"<version>{new_version}</version>",
+                manifest.read_text(),
+                count=1,
+            )
+        )
         return
     text = manifest.read_text()
     new_text = re.sub(
