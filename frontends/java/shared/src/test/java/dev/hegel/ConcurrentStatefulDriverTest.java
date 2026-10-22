@@ -334,13 +334,29 @@ class ConcurrentStatefulDriverTest {
         assertEquals(1, fake.freedStateMachines);
     }
 
-    /** A rule that interrupts the driving thread while it waits at the join point. */
+    /**
+     * A rule that interrupts the driving thread while it waits at the join point, then keeps its
+     * worker alive until the driver comes to join it, so the join is what sees the interrupt.
+     */
     static final class DriverInterrupting {
         final Thread driver = Thread.currentThread();
 
         @Rule
         void interrupt(TestCase t) {
             driver.interrupt();
+            while (!isJoining(driver)) {
+                Thread.onSpinWait();
+            }
+        }
+
+        private static boolean isJoining(Thread thread) {
+            for (StackTraceElement frame : thread.getStackTrace()) {
+                if (frame.getClassName().equals("java.lang.Thread")
+                        && frame.getMethodName().equals("join")) {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 
