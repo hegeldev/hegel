@@ -332,12 +332,14 @@
  */
 
 #include "core.h"
+#include "datetime.h"
 #include "settings.h"
 #include "test_case.h"
 
 #include "generators/builds.h"
 #include "generators/collections.h"
 #include "generators/combinators.h"
+#include "generators/datetime.h"
 #include "generators/default.h"
 #include "generators/formats.h"
 #include "generators/numeric.h"

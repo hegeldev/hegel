@@ -181,53 +181,6 @@ namespace hegel::generators {
             }
         };
 
-        /// ISO 8601 `YYYY-MM-DD`.
-        std::string format_date(const hegel_date_t& d) {
-            char buf[16];
-            std::snprintf(buf, sizeof(buf), "%04d-%02u-%02u",
-                          static_cast<int>(d.year), d.month, d.day);
-            return buf;
-        }
-
-        /// ISO 8601 `HH:MM:SS[.ffffff]` — the fractional part is present
-        /// iff the microsecond is nonzero, matching `isoformat()`. The
-        /// engine draws nanosecond precision; the serialization keeps
-        /// microseconds.
-        std::string format_time(const hegel_time_t& t) {
-            char buf[24];
-            unsigned microsecond = static_cast<unsigned>(t.nanosecond / 1000);
-            if (microsecond != 0) {
-                std::snprintf(buf, sizeof(buf), "%02u:%02u:%02u.%06u", t.hour,
-                              t.minute, t.second, microsecond);
-            } else {
-                std::snprintf(buf, sizeof(buf), "%02u:%02u:%02u", t.hour,
-                              t.minute, t.second);
-            }
-            return buf;
-        }
-
-        class DatesGenerator : public IGenerator<std::string> {
-          public:
-            std::string do_draw(const TestCase& tc) const override {
-                return format_date(impl::draw_date(tc));
-            }
-        };
-
-        class TimesGenerator : public IGenerator<std::string> {
-          public:
-            std::string do_draw(const TestCase& tc) const override {
-                return format_time(impl::draw_time(tc));
-            }
-        };
-
-        class DatetimesGenerator : public IGenerator<std::string> {
-          public:
-            std::string do_draw(const TestCase& tc) const override {
-                hegel_datetime_t dt = impl::draw_datetime(tc);
-                return format_date(dt.date) + "T" + format_time(dt.time);
-            }
-        };
-
         class IpGenerator : public IGenerator<std::string> {
           public:
             explicit IpGenerator(int version) : version_(version) {}
@@ -321,18 +274,6 @@ namespace hegel::generators {
             version = static_cast<uint8_t>(*params.version);
         }
         return Generator<std::string>(new UuidGenerator(version));
-    }
-
-    Generator<std::string> dates() {
-        return Generator<std::string>(new DatesGenerator());
-    }
-
-    Generator<std::string> times() {
-        return Generator<std::string>(new TimesGenerator());
-    }
-
-    Generator<std::string> datetimes() {
-        return Generator<std::string>(new DatetimesGenerator());
     }
 
     HegelRandom::HegelRandom(const TestCase& tc)
