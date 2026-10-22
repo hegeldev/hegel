@@ -44,7 +44,10 @@ def publish(package_dir: Path) -> tuple[str, str]:
     if is_published(name, version):
         print(f"{name}@{version} already published, skipping")
     else:
-        subprocess.run(["npm", "publish"], check=True, cwd=package_dir)
+        # npm reports a failed trusted-publishing token exchange (the registry's
+        # reason included) only at verbose level, then falls back to the
+        # placeholder token from setup-node and fails with a bare 404.
+        subprocess.run(["npm", "publish", "--loglevel", "verbose"], check=True, cwd=package_dir)
     return name, version
 
 
