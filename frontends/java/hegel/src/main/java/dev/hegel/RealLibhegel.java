@@ -6,6 +6,7 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_DOUBLE;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
+import static java.lang.foreign.ValueLayout.JAVA_SHORT;
 
 import dev.hegel.lowlevel.Abi;
 import dev.hegel.lowlevel.Libhegel;
@@ -21,6 +22,8 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -72,12 +75,66 @@ final class RealLibhegel implements Libhegel {
     private static final StructLayout DATETIME_LAYOUT =
             MemoryLayout.structLayout(DATE_LAYOUT.withName("date"), TIME_LAYOUT.withName("time"));
 
+    // struct hegel_timestamp_t { int64_t second; uint32_t nanosecond; }
+    private static final StructLayout TIMESTAMP_LAYOUT = MemoryLayout.structLayout(
+            JAVA_LONG.withName("second"), JAVA_INT.withName("nanosecond"), MemoryLayout.paddingLayout(4));
+
+    // struct hegel_offset_t { int32_t seconds; bool known; }
+    private static final StructLayout OFFSET_LAYOUT = MemoryLayout.structLayout(
+            JAVA_INT.withName("seconds"), JAVA_BOOLEAN.withName("known"), MemoryLayout.paddingLayout(3));
+
+    // struct hegel_duration_t { int64_t seconds; int32_t nanoseconds; }
+    private static final StructLayout DURATION_LAYOUT = MemoryLayout.structLayout(
+            JAVA_LONG.withName("seconds"), JAVA_INT.withName("nanoseconds"), MemoryLayout.paddingLayout(4));
+
+    // struct hegel_span_t { int64_t years; ... int64_t nanoseconds; } — ten units.
+    private static final int SPAN_UNITS = 10;
+    private static final StructLayout SPAN_LAYOUT = MemoryLayout.structLayout(
+            MemoryLayout.sequenceLayout(SPAN_UNITS, JAVA_LONG).withName("units"));
+
+    // struct hegel_zoned_datetime_t { hegel_datetime_t civil; int32_t offset_seconds; bool offset_known;
+    //     bool fold; hegel_timezone_kind_t kind; int32_t offset_before; int32_t offset_after;
+    //     hegel_timestamp_t timestamp; }
+    private static final StructLayout ZONED_LAYOUT = MemoryLayout.structLayout(
+            DATETIME_LAYOUT.withName("civil"),
+            JAVA_INT.withName("offset_seconds"),
+            JAVA_BOOLEAN.withName("offset_known"),
+            JAVA_BOOLEAN.withName("fold"),
+            MemoryLayout.paddingLayout(2),
+            JAVA_INT.withName("kind"),
+            JAVA_INT.withName("offset_before"),
+            JAVA_INT.withName("offset_after"),
+            MemoryLayout.paddingLayout(4),
+            TIMESTAMP_LAYOUT.withName("timestamp"));
+    private static final long ZONED_OFFSET_SECONDS = DATETIME_LAYOUT.byteSize();
+    private static final long ZONED_OFFSET_KNOWN = ZONED_OFFSET_SECONDS + 4;
+    private static final long ZONED_FOLD = ZONED_OFFSET_KNOWN + 1;
+    private static final long ZONED_KIND = ZONED_FOLD + 3;
+    private static final long ZONED_OFFSET_BEFORE = ZONED_KIND + 4;
+    private static final long ZONED_OFFSET_AFTER = ZONED_OFFSET_BEFORE + 4;
+    private static final long ZONED_TIMESTAMP = ZONED_OFFSET_AFTER + 8;
+
     // struct hegel_string_t { const char *data; size_t len; } — the shape every string crosses in
     // since libhegel 0.46 (by value, or by nullable pointer where absent is meaningful), shared by
     // hegel_owned_string_t and hegel_generate_bytes_result_t.
     private static final StructLayout STRING_LAYOUT =
             MemoryLayout.structLayout(ADDRESS.withName("data"), JAVA_LONG.withName("len"));
     private static final long LEN_OFFSET = ADDRESS.byteSize();
+
+    // struct hegel_timezone_info_t { bool known; hegel_string_t primary_name; bool is_link;
+    //     uint16_t rank; uint32_t tags; }
+    private static final StructLayout TIMEZONE_INFO_LAYOUT = MemoryLayout.structLayout(
+            JAVA_BOOLEAN.withName("known"),
+            MemoryLayout.paddingLayout(7),
+            STRING_LAYOUT.withName("primary_name"),
+            JAVA_BOOLEAN.withName("is_link"),
+            MemoryLayout.paddingLayout(1),
+            JAVA_SHORT.withName("rank"),
+            JAVA_INT.withName("tags"));
+    private static final long INFO_PRIMARY_NAME = 8;
+    private static final long INFO_IS_LINK = INFO_PRIMARY_NAME + STRING_LAYOUT.byteSize();
+    private static final long INFO_RANK = INFO_IS_LINK + 2;
+    private static final long INFO_TAGS = INFO_RANK + 2;
 
     private static final FunctionDescriptor OUTPUT_CALLBACK_DESC =
             FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, JAVA_LONG);
@@ -138,6 +195,34 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle generateDate;
     private final MethodHandle generateTime;
     private final MethodHandle generateDatetime;
+    private final MethodHandle generateTimestamp;
+    private final MethodHandle generateOffset;
+    private final MethodHandle generateDuration;
+    private final MethodHandle generateTimezone;
+    private final MethodHandle generateZonedDatetime;
+    private final MethodHandle generateSpan;
+    private final MethodHandle dateOptionsNew;
+    private final MethodHandle dateOptionsFree;
+    private final MethodHandle dateOptionsSetWeekdays;
+    private final MethodHandle dateOptionsSetMonths;
+    private final MethodHandle timezoneSpecNew;
+    private final MethodHandle timezoneSpecFree;
+    private final MethodHandle timezoneSpecSetNames;
+    private final MethodHandle timezoneSpecSetLinks;
+    private final MethodHandle timezoneSpecSetLegacy;
+    private final MethodHandle zonedSpecNew;
+    private final MethodHandle zonedSpecFree;
+    private final MethodHandle zonedSpecSetCivilBounds;
+    private final MethodHandle zonedSpecSetInstantBounds;
+    private final MethodHandle zonedSpecSetPrecision;
+    private final MethodHandle zonedSpecSetImaginary;
+    private final MethodHandle zonedSpecSetAmbiguous;
+    private final MethodHandle spanSpecNew;
+    private final MethodHandle spanSpecFree;
+    private final MethodHandle spanSpecSetUnitBounds;
+    private final MethodHandle spanSpecSetSign;
+    private final MethodHandle timezoneInfo;
+    private final MethodHandle tzdbVersion;
     private final MethodHandle generateUuid;
     private final MethodHandle generateIpv4;
     private final MethodHandle generateIpv6;
@@ -347,17 +432,129 @@ final class RealLibhegel implements Libhegel {
                 linker,
                 lookup,
                 "hegel_generate_date",
-                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, DATE_LAYOUT, DATE_LAYOUT, ADDRESS));
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, DATE_LAYOUT, DATE_LAYOUT, ADDRESS, ADDRESS));
         this.generateTime = h(
                 linker,
                 lookup,
                 "hegel_generate_time",
-                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, TIME_LAYOUT, TIME_LAYOUT, ADDRESS));
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, TIME_LAYOUT, TIME_LAYOUT, JAVA_INT, ADDRESS));
         this.generateDatetime = h(
                 linker,
                 lookup,
                 "hegel_generate_datetime",
-                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, DATETIME_LAYOUT, DATETIME_LAYOUT, ADDRESS));
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, DATETIME_LAYOUT, DATETIME_LAYOUT, JAVA_INT, ADDRESS));
+        this.generateTimestamp = h(
+                linker,
+                lookup,
+                "hegel_generate_timestamp",
+                FunctionDescriptor.of(
+                        JAVA_INT, ADDRESS, ADDRESS, TIMESTAMP_LAYOUT, TIMESTAMP_LAYOUT, JAVA_INT, ADDRESS));
+        this.generateOffset = h(
+                linker,
+                lookup,
+                "hegel_generate_offset",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_BOOLEAN, ADDRESS));
+        this.generateDuration = h(
+                linker,
+                lookup,
+                "hegel_generate_duration",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, DURATION_LAYOUT, DURATION_LAYOUT, JAVA_INT, ADDRESS));
+        this.generateTimezone = h(
+                linker,
+                lookup,
+                "hegel_generate_timezone",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+        this.generateZonedDatetime = h(
+                linker,
+                lookup,
+                "hegel_generate_zoned_datetime",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+        this.generateSpan = h(
+                linker,
+                lookup,
+                "hegel_generate_span",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+        this.dateOptionsNew =
+                h(linker, lookup, "hegel_date_options_new", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.dateOptionsFree =
+                h(linker, lookup, "hegel_date_options_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.dateOptionsSetWeekdays = h(
+                linker,
+                lookup,
+                "hegel_date_options_set_weekdays",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT));
+        this.dateOptionsSetMonths = h(
+                linker,
+                lookup,
+                "hegel_date_options_set_months",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT));
+        this.timezoneSpecNew =
+                h(linker, lookup, "hegel_timezone_spec_new", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.timezoneSpecFree =
+                h(linker, lookup, "hegel_timezone_spec_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.timezoneSpecSetNames = h(
+                linker,
+                lookup,
+                "hegel_timezone_spec_set_names",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, JAVA_LONG));
+        this.timezoneSpecSetLinks = h(
+                linker,
+                lookup,
+                "hegel_timezone_spec_set_links",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_BOOLEAN));
+        this.timezoneSpecSetLegacy = h(
+                linker,
+                lookup,
+                "hegel_timezone_spec_set_legacy",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_BOOLEAN));
+        this.zonedSpecNew =
+                h(linker, lookup, "hegel_zoned_spec_new", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.zonedSpecFree =
+                h(linker, lookup, "hegel_zoned_spec_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.zonedSpecSetCivilBounds = h(
+                linker,
+                lookup,
+                "hegel_zoned_spec_set_civil_bounds",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, DATETIME_LAYOUT, DATETIME_LAYOUT));
+        this.zonedSpecSetInstantBounds = h(
+                linker,
+                lookup,
+                "hegel_zoned_spec_set_instant_bounds",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, TIMESTAMP_LAYOUT, TIMESTAMP_LAYOUT));
+        this.zonedSpecSetPrecision = h(
+                linker,
+                lookup,
+                "hegel_zoned_spec_set_precision",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT));
+        this.zonedSpecSetImaginary = h(
+                linker,
+                lookup,
+                "hegel_zoned_spec_set_imaginary",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT));
+        this.zonedSpecSetAmbiguous = h(
+                linker,
+                lookup,
+                "hegel_zoned_spec_set_ambiguous",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT));
+        this.spanSpecNew = h(linker, lookup, "hegel_span_spec_new", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.spanSpecFree =
+                h(linker, lookup, "hegel_span_spec_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.spanSpecSetUnitBounds = h(
+                linker,
+                lookup,
+                "hegel_span_spec_set_unit_bounds",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, JAVA_LONG, JAVA_LONG));
+        this.spanSpecSetSign = h(
+                linker,
+                lookup,
+                "hegel_span_spec_set_sign",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT));
+        this.timezoneInfo = h(
+                linker,
+                lookup,
+                "hegel_timezone_info",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, STRING_LAYOUT, ADDRESS));
+        this.tzdbVersion = h(linker, lookup, "hegel_tzdb_version", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
         this.generateUuid = h(
                 linker,
                 lookup,
@@ -892,8 +1089,7 @@ final class RealLibhegel implements Libhegel {
             MemorySegment result = arena.allocate(STRING_LAYOUT);
             int code = rc(generateString, segment(tc), segment(generator), result);
             if (code == Abi.OK) {
-                out[0] = new String(copyBuffer(result), StandardCharsets.UTF_8);
-                check("hegel_owned_string_free", rc(ownedStringFree, result));
+                out[0] = takeOwnedString(result);
             }
             return code;
         }
@@ -907,10 +1103,16 @@ final class RealLibhegel implements Libhegel {
     }
 
     @Override
-    public int generateDate(long tc, LocalDate min, LocalDate max, LocalDate[] out) {
+    public int generateDate(long tc, LocalDate min, LocalDate max, long options, LocalDate[] out) {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment outSeg = arena.allocate(DATE_LAYOUT);
-            int code = rc(generateDate, segment(tc), dateSegment(arena, min), dateSegment(arena, max), outSeg);
+            int code = rc(
+                    generateDate,
+                    segment(tc),
+                    dateSegment(arena, min),
+                    dateSegment(arena, max),
+                    segment(options),
+                    outSeg);
             if (code == Abi.OK) {
                 out[0] = readDate(outSeg, 0);
             }
@@ -919,10 +1121,11 @@ final class RealLibhegel implements Libhegel {
     }
 
     @Override
-    public int generateTime(long tc, LocalTime min, LocalTime max, LocalTime[] out) {
+    public int generateTime(long tc, LocalTime min, LocalTime max, int precision, LocalTime[] out) {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment outSeg = arena.allocate(TIME_LAYOUT);
-            int code = rc(generateTime, segment(tc), timeSegment(arena, min), timeSegment(arena, max), outSeg);
+            int code =
+                    rc(generateTime, segment(tc), timeSegment(arena, min), timeSegment(arena, max), precision, outSeg);
             if (code == Abi.OK) {
                 out[0] = readTime(outSeg, 0);
             }
@@ -931,15 +1134,256 @@ final class RealLibhegel implements Libhegel {
     }
 
     @Override
-    public int generateDatetime(long tc, LocalDateTime min, LocalDateTime max, LocalDateTime[] out) {
+    public int generateDatetime(long tc, LocalDateTime min, LocalDateTime max, int precision, LocalDateTime[] out) {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment outSeg = arena.allocate(DATETIME_LAYOUT);
-            int code =
-                    rc(generateDatetime, segment(tc), datetimeSegment(arena, min), datetimeSegment(arena, max), outSeg);
+            int code = rc(
+                    generateDatetime,
+                    segment(tc),
+                    datetimeSegment(arena, min),
+                    datetimeSegment(arena, max),
+                    precision,
+                    outSeg);
             if (code == Abi.OK) {
-                out[0] = LocalDateTime.of(readDate(outSeg, 0), readTime(outSeg, DATE_LAYOUT.byteSize()));
+                out[0] = readDatetime(outSeg, 0);
             }
             return code;
+        }
+    }
+
+    @Override
+    public int generateTimestamp(long tc, Instant min, Instant max, int precision, Instant[] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment outSeg = arena.allocate(TIMESTAMP_LAYOUT);
+            int code = rc(
+                    generateTimestamp,
+                    segment(tc),
+                    timestampSegment(arena, min),
+                    timestampSegment(arena, max),
+                    precision,
+                    outSeg);
+            if (code == Abi.OK) {
+                out[0] = readTimestamp(outSeg, 0);
+            }
+            return code;
+        }
+    }
+
+    @Override
+    public int generateOffset(
+            long tc,
+            int minSeconds,
+            int maxSeconds,
+            int granularity,
+            boolean allowUnknown,
+            int[] outSeconds,
+            boolean[] outKnown) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment outSeg = arena.allocate(OFFSET_LAYOUT);
+            int code = rc(generateOffset, segment(tc), minSeconds, maxSeconds, granularity, allowUnknown, outSeg);
+            if (code == Abi.OK) {
+                outSeconds[0] = outSeg.get(JAVA_INT, 0);
+                outKnown[0] = outSeg.get(JAVA_BOOLEAN, 4);
+            }
+            return code;
+        }
+    }
+
+    @Override
+    public int generateDuration(long tc, Duration min, Duration max, int precision, Duration[] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment outSeg = arena.allocate(DURATION_LAYOUT);
+            int code = rc(
+                    generateDuration,
+                    segment(tc),
+                    durationSegment(arena, min),
+                    durationSegment(arena, max),
+                    precision,
+                    outSeg);
+            if (code == Abi.OK) {
+                out[0] = Duration.ofSeconds(outSeg.get(JAVA_LONG, 0), outSeg.get(JAVA_INT, 8));
+            }
+            return code;
+        }
+    }
+
+    @Override
+    public int generateTimezone(long tc, long spec, String[] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment result = arena.allocate(STRING_LAYOUT);
+            int code = rc(generateTimezone, segment(tc), segment(spec), result);
+            if (code == Abi.OK) {
+                out[0] = takeOwnedString(result);
+            }
+            return code;
+        }
+    }
+
+    /** Copy an owned string out and release it with {@code hegel_owned_string_free}. */
+    private String takeOwnedString(MemorySegment result) {
+        String value = new String(copyBuffer(result), StandardCharsets.UTF_8);
+        check("hegel_owned_string_free", rc(ownedStringFree, result));
+        return value;
+    }
+
+    @Override
+    public int generateZonedDatetime(long tc, long tzSpec, long zonedSpec, ZonedDatetime[] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment value = arena.allocate(ZONED_LAYOUT);
+            MemorySegment zone = arena.allocate(STRING_LAYOUT);
+            int code = rc(generateZonedDatetime, segment(tc), segment(tzSpec), segment(zonedSpec), value, zone);
+            if (code == Abi.OK) {
+                out[0] = new ZonedDatetime(
+                        takeOwnedString(zone),
+                        readDatetime(value, 0),
+                        value.get(JAVA_INT, ZONED_OFFSET_SECONDS),
+                        value.get(JAVA_BOOLEAN, ZONED_OFFSET_KNOWN),
+                        value.get(JAVA_BOOLEAN, ZONED_FOLD),
+                        value.get(JAVA_INT, ZONED_KIND),
+                        value.get(JAVA_INT, ZONED_OFFSET_BEFORE),
+                        value.get(JAVA_INT, ZONED_OFFSET_AFTER),
+                        readTimestamp(value, ZONED_TIMESTAMP));
+            }
+            return code;
+        }
+    }
+
+    @Override
+    public int generateSpan(long tc, long spec, long[] out10) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment outSeg = arena.allocate(SPAN_LAYOUT);
+            int code = rc(generateSpan, segment(tc), segment(spec), outSeg);
+            if (code == Abi.OK) {
+                MemorySegment.copy(outSeg, JAVA_LONG, 0, out10, 0, SPAN_UNITS);
+            }
+            return code;
+        }
+    }
+
+    // --- date options, time zone specs, zoned specs and span specs ---
+
+    @Override
+    public int dateOptionsNew(long[] out) {
+        return handleConstructor(dateOptionsNew, out);
+    }
+
+    @Override
+    public void dateOptionsFree(long options) {
+        check("hegel_date_options_free", rc(dateOptionsFree, segment(options)));
+    }
+
+    @Override
+    public int dateOptionsSetWeekdays(long options, int mask) {
+        return rc(dateOptionsSetWeekdays, segment(options), mask);
+    }
+
+    @Override
+    public int dateOptionsSetMonths(long options, int mask) {
+        return rc(dateOptionsSetMonths, segment(options), mask);
+    }
+
+    @Override
+    public int timezoneSpecNew(long[] out) {
+        return handleConstructor(timezoneSpecNew, out);
+    }
+
+    @Override
+    public void timezoneSpecFree(long spec) {
+        check("hegel_timezone_spec_free", rc(timezoneSpecFree, segment(spec)));
+    }
+
+    @Override
+    public int timezoneSpecSetNames(long spec, List<String> names) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(timezoneSpecSetNames, segment(spec), strArray(arena, names), (long) names.size());
+        }
+    }
+
+    @Override
+    public void timezoneSpecSetLinks(long spec, boolean links) {
+        check("hegel_timezone_spec_set_links", rc(timezoneSpecSetLinks, segment(spec), links));
+    }
+
+    @Override
+    public void timezoneSpecSetLegacy(long spec, boolean legacy) {
+        check("hegel_timezone_spec_set_legacy", rc(timezoneSpecSetLegacy, segment(spec), legacy));
+    }
+
+    @Override
+    public int zonedSpecNew(long[] out) {
+        return handleConstructor(zonedSpecNew, out);
+    }
+
+    @Override
+    public void zonedSpecFree(long spec) {
+        check("hegel_zoned_spec_free", rc(zonedSpecFree, segment(spec)));
+    }
+
+    @Override
+    public int zonedSpecSetCivilBounds(long spec, LocalDateTime min, LocalDateTime max) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(zonedSpecSetCivilBounds, segment(spec), datetimeSegment(arena, min), datetimeSegment(arena, max));
+        }
+    }
+
+    @Override
+    public int zonedSpecSetInstantBounds(long spec, Instant min, Instant max) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(
+                    zonedSpecSetInstantBounds,
+                    segment(spec),
+                    timestampSegment(arena, min),
+                    timestampSegment(arena, max));
+        }
+    }
+
+    @Override
+    public int zonedSpecSetPrecision(long spec, int precision) {
+        return rc(zonedSpecSetPrecision, segment(spec), precision);
+    }
+
+    @Override
+    public int zonedSpecSetImaginary(long spec, int imaginary) {
+        return rc(zonedSpecSetImaginary, segment(spec), imaginary);
+    }
+
+    @Override
+    public int zonedSpecSetAmbiguous(long spec, int ambiguous) {
+        return rc(zonedSpecSetAmbiguous, segment(spec), ambiguous);
+    }
+
+    @Override
+    public int spanSpecNew(long[] out) {
+        return handleConstructor(spanSpecNew, out);
+    }
+
+    @Override
+    public void spanSpecFree(long spec) {
+        check("hegel_span_spec_free", rc(spanSpecFree, segment(spec)));
+    }
+
+    @Override
+    public int spanSpecSetUnitBounds(long spec, int unit, long min, long max) {
+        return rc(spanSpecSetUnitBounds, segment(spec), unit, min, max);
+    }
+
+    @Override
+    public int spanSpecSetSign(long spec, int sign) {
+        return rc(spanSpecSetSign, segment(spec), sign);
+    }
+
+    @Override
+    public TimezoneInfo timezoneInfo(String name) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment outSeg = arena.allocate(TIMEZONE_INFO_LAYOUT);
+            check("hegel_timezone_info", rc(timezoneInfo, str(arena, name), outSeg));
+            String primary = readString(outSeg.asSlice(INFO_PRIMARY_NAME, STRING_LAYOUT.byteSize()));
+            return new TimezoneInfo(
+                    outSeg.get(JAVA_BOOLEAN, 0),
+                    primary == null ? "" : primary,
+                    outSeg.get(JAVA_BOOLEAN, INFO_IS_LINK),
+                    Short.toUnsignedInt(outSeg.get(JAVA_SHORT, INFO_RANK)),
+                    outSeg.get(JAVA_INT, INFO_TAGS));
         }
     }
 
@@ -959,6 +1403,38 @@ final class RealLibhegel implements Libhegel {
         MemorySegment seg = arena.allocate(DATETIME_LAYOUT);
         writeDate(seg, 0, dt.toLocalDate());
         writeTime(seg, DATE_LAYOUT.byteSize(), dt.toLocalTime());
+        return seg;
+    }
+
+    private static LocalDateTime readDatetime(MemorySegment seg, long offset) {
+        return LocalDateTime.of(readDate(seg, offset), readTime(seg, offset + DATE_LAYOUT.byteSize()));
+    }
+
+    private static MemorySegment timestampSegment(Arena arena, Instant instant) {
+        MemorySegment seg = arena.allocate(TIMESTAMP_LAYOUT);
+        seg.set(JAVA_LONG, 0, instant.getEpochSecond());
+        seg.set(JAVA_INT, 8, instant.getNano());
+        return seg;
+    }
+
+    private static Instant readTimestamp(MemorySegment seg, long offset) {
+        return Instant.ofEpochSecond(seg.get(JAVA_LONG, offset), seg.get(JAVA_INT, offset + 8));
+    }
+
+    /**
+     * A {@code hegel_duration_t}: a {@link Duration} carries a non-negative nanosecond adjustment
+     * on a floored second count, where the engine's seconds and nanoseconds share a sign.
+     */
+    private static MemorySegment durationSegment(Arena arena, Duration duration) {
+        MemorySegment seg = arena.allocate(DURATION_LAYOUT);
+        long seconds = duration.getSeconds();
+        int nanos = duration.getNano();
+        if (seconds < 0 && nanos > 0) {
+            seconds += 1;
+            nanos -= 1_000_000_000;
+        }
+        seg.set(JAVA_LONG, 0, seconds);
+        seg.set(JAVA_INT, 8, nanos);
         return seg;
     }
 
@@ -1340,9 +1816,19 @@ final class RealLibhegel implements Libhegel {
 
     @Override
     public String version() {
+        return staticString(version, "hegel_version");
+    }
+
+    @Override
+    public String tzdbVersion() {
+        return staticString(tzdbVersion, "hegel_tzdb_version");
+    }
+
+    /** Read a static string the engine writes into a caller-provided {@code hegel_string_t}. */
+    private String staticString(MethodHandle reader, String op) {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment seg = arena.allocate(STRING_LAYOUT);
-            check("hegel_version", rc(version, seg));
+            check(op, rc(reader, seg));
             return readString(seg);
         }
     }

@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.hegel.lowlevel.Abi;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -38,9 +40,40 @@ class BindingErrorPathsTest {
         assertEquals(2.5, ds.generateFloat(64, 0, 10, false, false, false, false, Double.MIN_VALUE));
         assertArrayEquals(new byte[] {1, 2}, ds.generateBytes(0, 4));
         assertEquals("drawn", ds.generateString(ds.emailGenerator()));
-        assertEquals(DATE, ds.generateDate(DATE, DATE));
-        assertEquals(TIME, ds.generateTime(TIME, TIME));
-        assertEquals(DATETIME, ds.generateDatetime(DATETIME, DATETIME));
+        assertEquals(DATE, ds.generateDate(DATE, DATE, null));
+        assertEquals(TIME, ds.generateTime(TIME, TIME, Abi.PRECISION_NANOSECONDS));
+        assertEquals(DATETIME, ds.generateDatetime(DATETIME, DATETIME, Abi.PRECISION_NANOSECONDS));
+        assertEquals(Instant.EPOCH, ds.generateTimestamp(Instant.EPOCH, Instant.EPOCH, Abi.PRECISION_SECONDS));
+        assertEquals(-3600, ds.generateOffset(-3600, 3600, Abi.OFFSET_GRANULARITY_HOURS));
+        assertEquals(Duration.ZERO, ds.generateDuration(Duration.ZERO, Duration.ZERO, Abi.PRECISION_NANOSECONDS));
+        SpecHandle zones = ds.timezoneSpec(List.of("UTC"), false, true);
+        assertEquals(List.of("UTC"), fake.timezoneNames);
+        assertEquals(false, fake.timezoneLinks);
+        assertEquals(true, fake.timezoneLegacy);
+        assertEquals("UTC", ds.generateTimezone(zones));
+        SpecHandle zoned = ds.zonedSpec(
+                DATETIME, DATETIME, null, null, Abi.PRECISION_MINUTES, Abi.IMAGINARY_AVOID, Abi.AMBIGUOUS_LATER);
+        assertEquals(DATETIME, fake.civilBounds[0]);
+        assertEquals(Abi.PRECISION_MINUTES, fake.zonedPrecision);
+        assertEquals(Abi.IMAGINARY_AVOID, fake.zonedImaginary);
+        assertEquals(Abi.AMBIGUOUS_LATER, fake.zonedAmbiguous);
+        assertEquals(fake.zonedValue, ds.generateZonedDatetime(zones, zoned));
+        SpecHandle instants = ds.zonedSpec(
+                null, null, Instant.EPOCH, Instant.EPOCH, Abi.PRECISION_HOURS, Abi.IMAGINARY_ALLOW, Abi.AMBIGUOUS_BOTH);
+        assertEquals(Instant.EPOCH, fake.instantBounds[1]);
+        assertTrue(ds.ownsSpec(instants));
+        SpecHandle span =
+                ds.spanSpec(new int[] {Abi.SPAN_UNIT_DAYS}, new long[] {1}, new long[] {2}, Abi.SPAN_SIGN_MIXED);
+        assertEquals(Abi.SPAN_SIGN_MIXED, fake.spanSign);
+        assertArrayEquals(new long[] {Abi.SPAN_UNIT_DAYS, 1, 2}, fake.spanUnitBounds.get(0));
+        assertArrayEquals(new long[10], ds.generateSpan(span));
+        SpecHandle options = ds.dateOptions(0b1, 0b11);
+        assertEquals(1, fake.weekdayMask);
+        assertEquals(3, fake.monthMask);
+        assertEquals(DATE, ds.generateDate(DATE, DATE, options));
+        assertEquals(FakeLibhegel.DATE_OPTIONS, fake.dateOptionsPassed);
+        assertTrue(ds.timezoneInfo("UTC").known());
+        assertFalse(ds.timezoneInfo("Mars/Olympus_Mons").known());
         assertEquals(new UUID(0, 1), ds.generateUuid(null));
         assertArrayEquals(new byte[] {127, 0, 0, 1}, ds.generateIpv4());
         assertArrayEquals(new byte[16], ds.generateIpv6());
@@ -154,9 +187,29 @@ class BindingErrorPathsTest {
         assertThrows(StopTest.class, () -> ds.generateFloat(64, 0, 1, false, false, false, false, 1e-300));
         assertThrows(StopTest.class, () -> ds.generateBytes(0, 1));
         assertThrows(StopTest.class, () -> ds.generateString(null));
-        assertThrows(StopTest.class, () -> ds.generateDate(DATE, DATE));
-        assertThrows(StopTest.class, () -> ds.generateTime(TIME, TIME));
-        assertThrows(StopTest.class, () -> ds.generateDatetime(DATETIME, DATETIME));
+        assertThrows(StopTest.class, () -> ds.generateDate(DATE, DATE, null));
+        assertThrows(StopTest.class, () -> ds.generateTime(TIME, TIME, Abi.PRECISION_NANOSECONDS));
+        assertThrows(StopTest.class, () -> ds.generateDatetime(DATETIME, DATETIME, Abi.PRECISION_NANOSECONDS));
+        assertThrows(StopTest.class, () -> ds.generateTimestamp(Instant.EPOCH, Instant.EPOCH, Abi.PRECISION_SECONDS));
+        assertThrows(StopTest.class, () -> ds.generateOffset(0, 0, Abi.OFFSET_GRANULARITY_SECONDS));
+        assertThrows(
+                StopTest.class, () -> ds.generateDuration(Duration.ZERO, Duration.ZERO, Abi.PRECISION_NANOSECONDS));
+        assertThrows(StopTest.class, () -> ds.generateTimezone(null));
+        assertThrows(StopTest.class, () -> ds.generateZonedDatetime(null, null));
+        assertThrows(StopTest.class, () -> ds.generateSpan(null));
+        assertThrows(StopTest.class, () -> ds.dateOptions(1, 1));
+        assertThrows(StopTest.class, () -> ds.timezoneSpec(List.of("UTC"), true, false));
+        assertThrows(
+                StopTest.class,
+                () -> ds.zonedSpec(
+                        DATETIME,
+                        DATETIME,
+                        null,
+                        null,
+                        Abi.PRECISION_NANOSECONDS,
+                        Abi.IMAGINARY_ALLOW,
+                        Abi.AMBIGUOUS_BOTH));
+        assertThrows(StopTest.class, () -> ds.spanSpec(new int[0], new long[0], new long[0], Abi.SPAN_SIGN_MIXED));
         assertThrows(StopTest.class, () -> ds.generateUuid(4));
         assertThrows(StopTest.class, () -> ds.generateIpv4());
         assertThrows(StopTest.class, () -> ds.generateIpv6());
@@ -196,6 +249,51 @@ class BindingErrorPathsTest {
         StringGeneratorHandle email = ds.emailGenerator();
         assertThrows(AssumeRejected.class, () -> ds.generateString(email));
         assertTrue(ds.isAborted());
+    }
+
+    @Test
+    void rejectedSpecSettersReleaseTheHandle() {
+        FakeLibhegel weekdays = new FakeLibhegel();
+        weekdays.dateOptionsSetWeekdaysRc = Abi.E_INVALID_ARG;
+        weekdays.lastError = "empty mask";
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class, () -> source(weekdays).dateOptions(1, 0));
+        assertTrue(e.getMessage().contains("empty mask"));
+        assertEquals(1, weekdays.freedDateOptions);
+
+        FakeLibhegel months = new FakeLibhegel();
+        months.dateOptionsSetMonthsRc = Abi.E_INVALID_ARG;
+        assertThrows(IllegalArgumentException.class, () -> source(months).dateOptions(0, 1));
+        assertEquals(1, months.freedDateOptions);
+
+        FakeLibhegel names = new FakeLibhegel();
+        names.timezoneSpecSetNamesRc = Abi.E_INVALID_ARG;
+        assertThrows(
+                IllegalArgumentException.class, () -> source(names).timezoneSpec(List.of("Mars/Olympus"), true, false));
+        assertEquals(1, names.freedTimezoneSpecs);
+
+        FakeLibhegel bounds = new FakeLibhegel();
+        bounds.zonedSpecSetInstantBoundsRc = Abi.E_INVALID_ARG;
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> source(bounds)
+                        .zonedSpec(
+                                null,
+                                null,
+                                Instant.EPOCH,
+                                Instant.EPOCH,
+                                Abi.PRECISION_NANOSECONDS,
+                                Abi.IMAGINARY_ALLOW,
+                                Abi.AMBIGUOUS_BOTH));
+        assertEquals(1, bounds.freedZonedSpecs);
+
+        FakeLibhegel sign = new FakeLibhegel();
+        sign.spanSpecSetSignRc = Abi.E_INVALID_ARG;
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> source(sign).spanSpec(new int[] {Abi.SPAN_UNIT_DAYS}, new long[] {-1}, new long[] {1}, 7));
+        assertEquals(1, sign.freedSpanSpecs);
+        assertTrue(sign.spanUnitBounds.isEmpty());
     }
 
     @Test

@@ -13,12 +13,14 @@ import dev.hegel.generators.DoubleGenerator;
 import dev.hegel.generators.DurationGenerator;
 import dev.hegel.generators.EmailGenerator;
 import dev.hegel.generators.FloatGenerator;
+import dev.hegel.generators.InstantGenerator;
 import dev.hegel.generators.IntegerGenerator;
 import dev.hegel.generators.IpAddressGenerator;
 import dev.hegel.generators.ListGenerator;
 import dev.hegel.generators.LongGenerator;
 import dev.hegel.generators.MapGenerator;
 import dev.hegel.generators.OneOfGenerator;
+import dev.hegel.generators.PeriodGenerator;
 import dev.hegel.generators.RecordGenerator;
 import dev.hegel.generators.RegexGenerator;
 import dev.hegel.generators.SampledFromGenerator;
@@ -28,13 +30,18 @@ import dev.hegel.generators.TimeGenerator;
 import dev.hegel.generators.TupleGenerator;
 import dev.hegel.generators.UrlGenerator;
 import dev.hegel.generators.UuidGenerator;
+import dev.hegel.generators.ZoneIdGenerator;
 import dev.hegel.generators.ZoneOffsetGenerator;
+import dev.hegel.generators.ZonedDateTimeGenerator;
 import dev.hegel.lowlevel.Abi;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.Period;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -566,7 +573,9 @@ public final class Generators {
 
     /**
      * Generates {@link LocalDate} values spanning years 1 to 9999 by default, shrinking toward
-     * 2000-01-01. Narrow the range with {@link DateGenerator#min} / {@link DateGenerator#max}.
+     * 2000-01-01. Narrow the range with {@link DateGenerator#min} / {@link DateGenerator#max}, and
+     * restrict it to some days of the week or months with {@link DateGenerator#weekdays} / {@link
+     * DateGenerator#months}.
      *
      * @return a date generator
      */
@@ -575,9 +584,9 @@ public final class Generators {
     }
 
     /**
-     * Generates {@link LocalTime} values across the whole day by default (at the engine's
-     * microsecond resolution), shrinking toward the lower bound. Narrow the range with {@link
-     * TimeGenerator#min} / {@link TimeGenerator#max}.
+     * Generates {@link LocalTime} values across the whole day by default, at nanosecond
+     * resolution, shrinking toward the lower bound. Narrow the range with {@link TimeGenerator#min}
+     * / {@link TimeGenerator#max} and the resolution with {@link TimeGenerator#precision}.
      *
      * @return a time generator
      */
@@ -586,11 +595,12 @@ public final class Generators {
     }
 
     /**
-     * Generates {@link java.time.LocalDateTime} values (at the engine's microsecond resolution),
-     * shrinking toward 2000-01-01T00:00:00. Narrow the range with {@link DateTimeGenerator#min} /
-     * {@link DateTimeGenerator#max}. Call {@link DateTimeGenerator#timezones} to produce zone-aware
-     * {@link java.time.ZonedDateTime} values or {@link DateTimeGenerator#offsets} for offset-aware
-     * {@link java.time.OffsetDateTime} values instead.
+     * Generates {@link java.time.LocalDateTime} values at nanosecond resolution, shrinking toward
+     * 2000-01-01T00:00:00. Narrow the range with {@link DateTimeGenerator#min} / {@link
+     * DateTimeGenerator#max} and the resolution with {@link DateTimeGenerator#precision}. Call
+     * {@link DateTimeGenerator#timezones} to produce zone-aware {@link ZonedDateTime} values or
+     * {@link DateTimeGenerator#offsets} for offset-aware {@link java.time.OffsetDateTime} values
+     * instead.
      *
      * @return a datetime generator
      */
@@ -599,9 +609,21 @@ public final class Generators {
     }
 
     /**
-     * Generates {@link ZoneOffset} values (fixed UTC offsets). Configure with the fluent methods on
-     * {@link ZoneOffsetGenerator}. Pair with {@link DateTimeGenerator#offsets} to build offset-aware
-     * datetimes.
+     * Generates {@link Instant} values across the engine's range of years {@code [-999999,
+     * 999999]} by default, at nanosecond resolution, shrinking toward 2000-01-01T00:00:00Z. Narrow
+     * the range with {@link InstantGenerator#min} / {@link InstantGenerator#max} and the resolution
+     * with {@link InstantGenerator#precision}.
+     *
+     * @return an instant generator
+     */
+    public static InstantGenerator instants() {
+        return new InstantGenerator();
+    }
+
+    /**
+     * Generates {@link ZoneOffset} values (fixed UTC offsets), shrinking toward {@link
+     * ZoneOffset#UTC}. Configure with the fluent methods on {@link ZoneOffsetGenerator}. Pair with
+     * {@link DateTimeGenerator#offsets} to build offset-aware datetimes.
      *
      * @return a zone-offset generator
      */
@@ -610,27 +632,60 @@ public final class Generators {
     }
 
     /**
-     * Generates {@link ZoneId} values spanning the full range of region zones the JVM supports
-     * ({@link ZoneId#getAvailableZoneIds()}). Pair with {@link DateTimeGenerator#timezones} to build
-     * DST-aware datetimes.
+     * Generates region {@link ZoneId} values: every zone of the engine's bundled IANA database that
+     * this JVM also knows, shrinking toward {@code UTC}. Configure with the fluent methods on
+     * {@link ZoneIdGenerator}. Pair with {@link #zonedDateTimes()} or {@link
+     * DateTimeGenerator#timezones} to build DST-aware datetimes.
      *
      * @return a zone-id generator
      */
-    public static Generator<ZoneId> zoneIds() {
-        return sampledFrom(AVAILABLE_ZONE_IDS);
+    public static ZoneIdGenerator zoneIds() {
+        return new ZoneIdGenerator();
     }
 
-    private static final List<ZoneId> AVAILABLE_ZONE_IDS =
-            ZoneId.getAvailableZoneIds().stream().sorted().map(ZoneId::of).toList();
+    /**
+     * Generates {@link ZonedDateTime} values: a zone from {@link #zoneIds()} and a wall-clock time
+     * in it, with the daylight-saving transitions of the zone targeted deliberately. Configure the
+     * zones, the bounds (on the wall clock or the instant), the precision and what repeated and
+     * skipped wall times mean with the fluent methods on {@link ZonedDateTimeGenerator}.
+     *
+     * @return a zoned-datetime generator
+     */
+    public static ZonedDateTimeGenerator zonedDateTimes() {
+        return new ZonedDateTimeGenerator();
+    }
 
     /**
-     * Generates {@link Duration} values across the representable nanosecond range. Configure with the
-     * fluent methods on {@link DurationGenerator}.
+     * Generates {@link Duration} values across the whole signed range {@link Duration} represents,
+     * at nanosecond resolution, shrinking toward {@link Duration#ZERO}. Configure with the fluent
+     * methods on {@link DurationGenerator}.
      *
      * @return a duration generator
      */
     public static DurationGenerator durations() {
-        return new DurationGenerator(0, Long.MAX_VALUE);
+        return new DurationGenerator();
+    }
+
+    /**
+     * Generates {@link Period} values with years, months and days each anywhere in the {@code int}
+     * range by default, shrinking toward {@link Period#ZERO}. Configure with the fluent methods on
+     * {@link PeriodGenerator}.
+     *
+     * @return a period generator
+     */
+    public static PeriodGenerator periods() {
+        return new PeriodGenerator();
+    }
+
+    /**
+     * The IANA release of the time zone database bundled in the engine, such as {@code "2026a"}.
+     * The JVM's own database ({@link java.time.zone.ZoneRulesProvider}) is updated separately, so
+     * the two may differ; {@link #zonedDateTimes()} rejects a draw the two resolve differently.
+     *
+     * @return the engine's time zone database version
+     */
+    public static String tzdbVersion() {
+        return Engine.get().tzdbVersion();
     }
 
     /**

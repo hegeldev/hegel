@@ -78,6 +78,9 @@ public final class Label {
     /** A value built imperatively from several draws ({@link Generators#composite}). */
     public static final long COMPOSITE = of("dev.hegel.composite");
 
+    /** A zone and a wall-clock time in it ({@link Generators#zonedDateTimes}). */
+    public static final long ZONED_DATETIME = of("dev.hegel.zoned_datetime");
+
     /**
      * Mint a stable label from a name: the 64-bit FNV-1a hash of its UTF-8 bytes. The same name
      * always yields the same label, so a frontend can label its generators by fully-qualified name.

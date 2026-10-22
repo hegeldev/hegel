@@ -143,7 +143,7 @@ class GeneratorValidationTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> durations().min(java.time.Duration.ofSeconds(2)).max(java.time.Duration.ofSeconds(1)));
-        assertThrows(IllegalArgumentException.class, () -> durations().min(java.time.Duration.ofSeconds(-1)));
+        durations().min(java.time.Duration.ofSeconds(-1));
     }
 
     @Test

@@ -2,6 +2,8 @@ package dev.hegel;
 
 import dev.hegel.lowlevel.Abi;
 import dev.hegel.lowlevel.Libhegel;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -24,6 +26,10 @@ final class FakeLibhegel implements Libhegel {
     static final long TC = 0x300;
     static final long RESULT = 0x400;
     static final long STRING_GEN = 0x600;
+    static final long DATE_OPTIONS = 0x700;
+    static final long TIMEZONE_SPEC = 0x800;
+    static final long ZONED_SPEC = 0x900;
+    static final long SPAN_SPEC = 0xA00;
     /** Clone handles are {@code CLONE_BASE + n} for the n-th clone made, so they are distinct from {@link #TC}. */
     static final long CLONE_BASE = 0x1000;
 
@@ -96,8 +102,60 @@ final class FakeLibhegel implements Libhegel {
     int generateStringRc = Abi.OK;
     String stringValue = "s";
     int generateDateRc = Abi.OK;
+    Long dateOptionsPassed; // the options handle the last date draw received
     int generateTimeRc = Abi.OK;
+    Integer timePrecision; // what the last time draw received
     int generateDatetimeRc = Abi.OK;
+    int generateTimestampRc = Abi.OK;
+    int generateOffsetRc = Abi.OK;
+    Integer offsetGranularity;
+    int generateDurationRc = Abi.OK;
+    int generateTimezoneRc = Abi.OK;
+    String timezoneValue = "UTC";
+    int generateZonedDatetimeRc = Abi.OK;
+    Libhegel.ZonedDatetime zonedValue = new Libhegel.ZonedDatetime(
+            "UTC",
+            LocalDateTime.of(2000, 1, 1, 0, 0),
+            0,
+            true,
+            false,
+            Abi.TIMEZONE_KIND_UNIQUE,
+            0,
+            0,
+            Instant.ofEpochSecond(946684800));
+    int generateSpanRc = Abi.OK;
+    long[] spanValue = new long[10];
+    // Configuration handles: return codes, captured arguments and free counts.
+    int dateOptionsSetWeekdaysRc = Abi.OK;
+    int dateOptionsSetMonthsRc = Abi.OK;
+    Integer weekdayMask;
+    Integer monthMask;
+    int freedDateOptions;
+    int timezoneSpecSetNamesRc = Abi.OK;
+    List<String> timezoneNames;
+    Boolean timezoneLinks;
+    Boolean timezoneLegacy;
+    int freedTimezoneSpecs;
+    int zonedSpecSetCivilBoundsRc = Abi.OK;
+    int zonedSpecSetInstantBoundsRc = Abi.OK;
+    int zonedSpecSetPrecisionRc = Abi.OK;
+    int zonedSpecSetImaginaryRc = Abi.OK;
+    int zonedSpecSetAmbiguousRc = Abi.OK;
+    LocalDateTime[] civilBounds;
+    Instant[] instantBounds;
+    Integer zonedPrecision;
+    Integer zonedImaginary;
+    Integer zonedAmbiguous;
+    int freedZonedSpecs;
+    int spanSpecSetUnitBoundsRc = Abi.OK;
+    int spanSpecSetSignRc = Abi.OK;
+    final List<long[]> spanUnitBounds = new ArrayList<>(); // {unit, min, max} per call
+    Integer spanSign;
+    int freedSpanSpecs;
+    /** The names timezoneInfo reports as known (every other name is unknown). */
+    List<String> knownZones = List.of("UTC", "Europe/London", "America/New_York", "Asia/Calcutta", "EST5EDT");
+
+    String tzdbVersion = "2026a";
     int generateUuidRc = Abi.OK;
     byte[] uuidBytes = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
     int generateIpv4Rc = Abi.OK;
@@ -412,27 +470,210 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
-    public int generateDate(long tc, LocalDate min, LocalDate max, LocalDate[] out) {
+    public int generateDate(long tc, LocalDate min, LocalDate max, long options, LocalDate[] out) {
         if (generateDateRc == Abi.OK) {
+            dateOptionsPassed = options;
             out[0] = min;
         }
         return generateDateRc;
     }
 
     @Override
-    public int generateTime(long tc, LocalTime min, LocalTime max, LocalTime[] out) {
+    public int generateTime(long tc, LocalTime min, LocalTime max, int precision, LocalTime[] out) {
         if (generateTimeRc == Abi.OK) {
+            timePrecision = precision;
             out[0] = min;
         }
         return generateTimeRc;
     }
 
     @Override
-    public int generateDatetime(long tc, LocalDateTime min, LocalDateTime max, LocalDateTime[] out) {
+    public int generateDatetime(long tc, LocalDateTime min, LocalDateTime max, int precision, LocalDateTime[] out) {
         if (generateDatetimeRc == Abi.OK) {
             out[0] = min;
         }
         return generateDatetimeRc;
+    }
+
+    @Override
+    public int generateTimestamp(long tc, Instant min, Instant max, int precision, Instant[] out) {
+        if (generateTimestampRc == Abi.OK) {
+            out[0] = min;
+        }
+        return generateTimestampRc;
+    }
+
+    @Override
+    public int generateOffset(
+            long tc,
+            int minSeconds,
+            int maxSeconds,
+            int granularity,
+            boolean allowUnknown,
+            int[] outSeconds,
+            boolean[] outKnown) {
+        if (generateOffsetRc == Abi.OK) {
+            offsetGranularity = granularity;
+            outSeconds[0] = minSeconds;
+            outKnown[0] = true;
+        }
+        return generateOffsetRc;
+    }
+
+    @Override
+    public int generateDuration(long tc, Duration min, Duration max, int precision, Duration[] out) {
+        if (generateDurationRc == Abi.OK) {
+            out[0] = min;
+        }
+        return generateDurationRc;
+    }
+
+    @Override
+    public int generateTimezone(long tc, long spec, String[] out) {
+        if (generateTimezoneRc == Abi.OK) {
+            out[0] = timezoneValue;
+        }
+        return generateTimezoneRc;
+    }
+
+    @Override
+    public int generateZonedDatetime(long tc, long tzSpec, long zonedSpec, ZonedDatetime[] out) {
+        if (generateZonedDatetimeRc == Abi.OK) {
+            out[0] = zonedValue;
+        }
+        return generateZonedDatetimeRc;
+    }
+
+    @Override
+    public int generateSpan(long tc, long spec, long[] out10) {
+        if (generateSpanRc == Abi.OK) {
+            System.arraycopy(spanValue, 0, out10, 0, 10);
+        }
+        return generateSpanRc;
+    }
+
+    @Override
+    public int dateOptionsNew(long[] out) {
+        out[0] = DATE_OPTIONS;
+        return Abi.OK;
+    }
+
+    @Override
+    public void dateOptionsFree(long options) {
+        freedDateOptions++;
+    }
+
+    @Override
+    public int dateOptionsSetWeekdays(long options, int mask) {
+        weekdayMask = mask;
+        return dateOptionsSetWeekdaysRc;
+    }
+
+    @Override
+    public int dateOptionsSetMonths(long options, int mask) {
+        monthMask = mask;
+        return dateOptionsSetMonthsRc;
+    }
+
+    @Override
+    public int timezoneSpecNew(long[] out) {
+        out[0] = TIMEZONE_SPEC;
+        return Abi.OK;
+    }
+
+    @Override
+    public void timezoneSpecFree(long spec) {
+        freedTimezoneSpecs++;
+    }
+
+    @Override
+    public int timezoneSpecSetNames(long spec, List<String> names) {
+        timezoneNames = names;
+        return timezoneSpecSetNamesRc;
+    }
+
+    @Override
+    public void timezoneSpecSetLinks(long spec, boolean links) {
+        timezoneLinks = links;
+    }
+
+    @Override
+    public void timezoneSpecSetLegacy(long spec, boolean legacy) {
+        timezoneLegacy = legacy;
+    }
+
+    @Override
+    public int zonedSpecNew(long[] out) {
+        out[0] = ZONED_SPEC;
+        return Abi.OK;
+    }
+
+    @Override
+    public void zonedSpecFree(long spec) {
+        freedZonedSpecs++;
+    }
+
+    @Override
+    public int zonedSpecSetCivilBounds(long spec, LocalDateTime min, LocalDateTime max) {
+        civilBounds = new LocalDateTime[] {min, max};
+        return zonedSpecSetCivilBoundsRc;
+    }
+
+    @Override
+    public int zonedSpecSetInstantBounds(long spec, Instant min, Instant max) {
+        instantBounds = new Instant[] {min, max};
+        return zonedSpecSetInstantBoundsRc;
+    }
+
+    @Override
+    public int zonedSpecSetPrecision(long spec, int precision) {
+        zonedPrecision = precision;
+        return zonedSpecSetPrecisionRc;
+    }
+
+    @Override
+    public int zonedSpecSetImaginary(long spec, int imaginary) {
+        zonedImaginary = imaginary;
+        return zonedSpecSetImaginaryRc;
+    }
+
+    @Override
+    public int zonedSpecSetAmbiguous(long spec, int ambiguous) {
+        zonedAmbiguous = ambiguous;
+        return zonedSpecSetAmbiguousRc;
+    }
+
+    @Override
+    public int spanSpecNew(long[] out) {
+        out[0] = SPAN_SPEC;
+        return Abi.OK;
+    }
+
+    @Override
+    public void spanSpecFree(long spec) {
+        freedSpanSpecs++;
+    }
+
+    @Override
+    public int spanSpecSetUnitBounds(long spec, int unit, long min, long max) {
+        spanUnitBounds.add(new long[] {unit, min, max});
+        return spanSpecSetUnitBoundsRc;
+    }
+
+    @Override
+    public int spanSpecSetSign(long spec, int sign) {
+        spanSign = sign;
+        return spanSpecSetSignRc;
+    }
+
+    @Override
+    public TimezoneInfo timezoneInfo(String name) {
+        if (!knownZones.contains(name)) {
+            return new TimezoneInfo(false, "", false, 0, 0);
+        }
+        boolean link = name.equals("Asia/Calcutta");
+        int tags = name.equals("EST5EDT") ? Abi.TIMEZONE_TAG_LEGACY : 0;
+        return new TimezoneInfo(true, link ? "Asia/Kolkata" : name, link, name.equals("UTC") ? 0 : 1, tags);
     }
 
     @Override
@@ -725,5 +966,10 @@ final class FakeLibhegel implements Libhegel {
     @Override
     public String version() {
         return version;
+    }
+
+    @Override
+    public String tzdbVersion() {
+        return tzdbVersion;
     }
 }
