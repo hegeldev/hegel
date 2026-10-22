@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.13.1</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.13.2</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -104,13 +104,14 @@ Install Hegel</h2>
 <div class="fragment"><div class="line">include(FetchContent)</div>
 <div class="line">FetchContent_Declare(</div>
 <div class="line">    hegel</div>
-<div class="line">    GIT_REPOSITORY https://github.com/hegeldev/hegel-cpp.git</div>
-<div class="line">    GIT_TAG v0.13.1</div>
+<div class="line">    GIT_REPOSITORY https://github.com/hegeldev/hegel.git</div>
+<div class="line">    GIT_TAG frontends/cpp/0.13.1</div>
+<div class="line">    SOURCE_SUBDIR frontends/cpp</div>
 <div class="line">)</div>
 <div class="line">FetchContent_MakeAvailable(hegel)</div>
 <div class="line"> </div>
 <div class="line">target_link_libraries(your_target PRIVATE hegel)</div>
-</div><!-- fragment --><p>Hegel requires CMake 3.14 and, by default, a C++20 compiler. The build downloads a small prebuilt shared library (libhegel, Hegel's native engine) for your platform; no other tooling is required.</p>
+</div><!-- fragment --><p>Hegel requires CMake 3.14 and, by default, a C++20 compiler. The library lives in the hegeldev/hegel repository next to libhegel, Hegel's native engine, which the build compiles with <span class="tt">cargo</span> (a Rust toolchain from <a href="https://rustup.rs">https://rustup.rs</a>). To link a libhegel built elsewhere instead, so that no Rust toolchain is needed, configure with <span class="tt">-DHEGEL_LIBHEGEL_LIBRARY=/path/to/libhegel_c.&lt;ext&gt;</span>.</p>
 <p>To consume Hegel from C++17, configure with <span class="tt">-DHEGEL_REFLECTION=OFF</span>. This drops the reflect-cpp dependency: you lose <a class="el" href="namespacehegel_1_1generators.html#ad9b81c483bbe307a0e598693a55cc6d5">default_generator</a> (type-directed derivation for structs), but every other generator and combinator still works. (The designated-initializer parameter API, e.g. <span class="tt">integers&lt;int&gt;({.min_value = 0})</span>, then relies on a GCC/Clang C++17 extension.)</p>
 <h2 class="doxsection"><a class="anchor" id="first_test"></a>
 Write your first test</h2>
@@ -131,7 +132,7 @@ Write your first test</h2>
 <div class="line">    <span class="keywordflow">return</span> 0;</div>
 <div class="line">}</div>
 <div class="ttc" id="aclasshegel_1_1TestCase_html"><div class="ttname"><a href="classhegel_1_1TestCase.html">hegel::TestCase</a></div><div class="ttdoc">Handle to the currently-executing test case.</div><div class="ttdef"><b>Definition</b> test_case.h:40</div></div>
-<div class="ttc" id="agroup__test__macros_html_ga169f32a3b09c62f6b25e6c9217c46ca0"><div class="ttname"><a href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a></div><div class="ttdeci">#define HEGEL_TEST(name,...)</div><div class="ttdoc">Define a Hegel property test.</div><div class="ttdef"><b>Definition</b> hegel.h:575</div></div>
+<div class="ttc" id="agroup__test__macros_html_ga169f32a3b09c62f6b25e6c9217c46ca0"><div class="ttname"><a href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a></div><div class="ttdeci">#define HEGEL_TEST(name,...)</div><div class="ttdoc">Define a Hegel property test.</div><div class="ttdef"><b>Definition</b> hegel.h:579</div></div>
 <div class="ttc" id="anamespacehegel_1_1generators_html"><div class="ttname"><a href="namespacehegel_1_1generators.html">hegel::generators</a></div><div class="ttdoc">Hegel generators.</div><div class="ttdef"><b>Definition</b> core.h:17</div></div>
 </div><!-- fragment --><p>Now build and run the test. You should see that this test passes.</p>
 <p>Let's look at what's happening in more detail. <a class="el" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a> defines a property test as an ordinary function, <span class="tt">self_equality</span>. Running the test executes your test body 100 times by default. While you may call the function from <span class="tt">main()</span>, if you use a test framework, write the property inside one of its tests instead. We officially support gtest (see <a class="el" href="#use_gtest">Hegel and test frameworks</a>). Please make an issue on Github if Hegel does not integrate well with your framework.</p>
@@ -152,7 +153,7 @@ Write your first test</h2>
 <div class="line"> </div>
 <div class="line">Exception: std::runtime_error: n should be below 50</div>
 <div class="line">rerun with: <a class="code hl_define" href="group__test__macros.html#ga999f42b20aca6caffe4f89a6767ec847">HEGEL_REPRODUCE_FAILURE</a>(below_50, <span class="stringliteral">&quot;AAEAAAAACgEAAAAy&quot;</span>)</div>
-<div class="ttc" id="agroup__test__macros_html_ga999f42b20aca6caffe4f89a6767ec847"><div class="ttname"><a href="group__test__macros.html#ga999f42b20aca6caffe4f89a6767ec847">HEGEL_REPRODUCE_FAILURE</a></div><div class="ttdeci">#define HEGEL_REPRODUCE_FAILURE(name, blob,...)</div><div class="ttdoc">Replay a failing example for a HEGEL_TEST from its blob.</div><div class="ttdef"><b>Definition</b> hegel.h:613</div></div>
+<div class="ttc" id="agroup__test__macros_html_ga999f42b20aca6caffe4f89a6767ec847"><div class="ttname"><a href="group__test__macros.html#ga999f42b20aca6caffe4f89a6767ec847">HEGEL_REPRODUCE_FAILURE</a></div><div class="ttdeci">#define HEGEL_REPRODUCE_FAILURE(name, blob,...)</div><div class="ttdoc">Replay a failing example for a HEGEL_TEST from its blob.</div><div class="ttdef"><b>Definition</b> hegel.h:617</div></div>
 </div><!-- fragment --><p>The header names the test and where it is defined, the count says how many cases it took to find the failure, and the falsifying value(s). The last line replays that exact failure. See <a class="el" href="group__test__macros.html#ga999f42b20aca6caffe4f89a6767ec847">HEGEL_REPRODUCE_FAILURE</a>.</p>
 <p>To fix this test, you can constrain the integers you generate with the <span class="tt">min_value</span> and <span class="tt">max_value</span> parameters:</p>
 <div class="fragment"><div class="line"><a class="code hl_define" href="group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0">HEGEL_TEST</a>(below_50)(<a class="code hl_class" href="classhegel_1_1TestCase.html">hegel::TestCase</a>&amp; tc) {</div>

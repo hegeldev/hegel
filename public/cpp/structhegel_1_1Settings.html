@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.13.1</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.13.2</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -111,6 +111,8 @@ std::optional&lt; uint64_t &gt;&#160;</td><td class="memItemRight" valign="botto
 <tr class="memdesc:a29a9dde11122aa2a79941dfcfa6f6fae"><td class="mdescLeft">&#160;</td><td class="mdescRight">Explicit seed for the test. <br /></td></tr>
 <tr class="memitem:a0896b073ca6424ac89612eba5356d86b" id="r_a0896b073ca6424ac89612eba5356d86b"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a0896b073ca6424ac89612eba5356d86b">derandomize</a> = internal::in_ci()</td></tr>
 <tr class="memitem:ad3e01a504ec505a4b403b5c09932271b" id="r_ad3e01a504ec505a4b403b5c09932271b"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ad3e01a504ec505a4b403b5c09932271b">report_multiple_failures</a> = false</td></tr>
+<tr class="memitem:ad8a21b99549ed31b6d570f3912a993e8" id="r_ad8a21b99549ed31b6d570f3912a993e8"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ad8a21b99549ed31b6d570f3912a993e8">stop_on_first_failure</a> = true</td></tr>
+<tr class="memitem:a75747c4a1c6471551ccb42c4ab451046" id="r_a75747c4a1c6471551ccb42c4ab451046"><td class="memItemLeft" align="right" valign="top"><a class="el" href="namespacehegel.html#acf2c3692138ebc619357b95b916322a9">NondeterminismStrictness</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a75747c4a1c6471551ccb42c4ab451046">nondeterminism_strictness</a></td></tr>
 <tr class="memitem:a159c2ab2f567c872a6f0b7f403ff180e" id="r_a159c2ab2f567c872a6f0b7f403ff180e"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a159c2ab2f567c872a6f0b7f403ff180e">print_blob</a> = true</td></tr>
 <tr class="memitem:aaf5e3db526f4e7c051644a6d28d5c53d" id="r_aaf5e3db526f4e7c051644a6d28d5c53d"><td class="memItemLeft" align="right" valign="top"><a class="el" href="classhegel_1_1Database.html">Database</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aaf5e3db526f4e7c051644a6d28d5c53d">database</a></td></tr>
 <tr class="memitem:a30f1d654505c64bbe59624bc30dbc18c" id="r_a30f1d654505c64bbe59624bc30dbc18c"><td class="memItemLeft" align="right" valign="top">std::optional&lt; std::string &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a30f1d654505c64bbe59624bc30dbc18c">database_key</a></td></tr>
@@ -151,8 +153,8 @@ std::optional&lt; uint64_t &gt;&#160;</td><td class="memItemRight" valign="botto
 </div><div class="memdoc">
 <b>Initial value:</b><div class="fragment"><div class="line">=</div>
 <div class="line">            internal::in_ci() ? <a class="code hl_function" href="classhegel_1_1Database.html#a117dd4e9d11f8bdb8012f1152fdbfd6e">Database::disabled</a>() : <a class="code hl_class" href="classhegel_1_1Database.html">Database</a>::unset()</div>
-<div class="ttc" id="aclasshegel_1_1Database_html"><div class="ttname"><a href="classhegel_1_1Database.html">hegel::Database</a></div><div class="ttdoc">Configure the Hegel database.</div><div class="ttdef"><b>Definition</b> settings.h:112</div></div>
-<div class="ttc" id="aclasshegel_1_1Database_html_a117dd4e9d11f8bdb8012f1152fdbfd6e"><div class="ttname"><a href="classhegel_1_1Database.html#a117dd4e9d11f8bdb8012f1152fdbfd6e">hegel::Database::disabled</a></div><div class="ttdeci">static Database disabled()</div><div class="ttdef"><b>Definition</b> settings.h:128</div></div>
+<div class="ttc" id="aclasshegel_1_1Database_html"><div class="ttname"><a href="classhegel_1_1Database.html">hegel::Database</a></div><div class="ttdoc">Configure the Hegel database.</div><div class="ttdef"><b>Definition</b> settings.h:128</div></div>
+<div class="ttc" id="aclasshegel_1_1Database_html_a117dd4e9d11f8bdb8012f1152fdbfd6e"><div class="ttname"><a href="classhegel_1_1Database.html#a117dd4e9d11f8bdb8012f1152fdbfd6e">hegel::Database::disabled</a></div><div class="ttdeci">static Database disabled()</div><div class="ttdef"><b>Definition</b> settings.h:144</div></div>
 </div><!-- fragment --><p>Configure the Hegel database. See <a class="el" href="classhegel_1_1Database.html" title="Configure the Hegel database.">Database</a>. Defaults to a database at <span class="tt">.<a class="el" href="namespacehegel.html" title="Main namespace.">hegel</a></span>, or disabled when a CI environment is detected. </p>
 
 </div>
@@ -184,6 +186,24 @@ std::optional&lt; uint64_t &gt;&#160;</td><td class="memItemRight" valign="botto
       </table>
 </div><div class="memdoc">
 <p>If true, use a deterministic RNG, making the test deterministic across executions. Defaults to true when a CI environment is detected, false otherwise. </p>
+
+</div>
+</div>
+<a id="a75747c4a1c6471551ccb42c4ab451046" name="a75747c4a1c6471551ccb42c4ab451046"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a75747c4a1c6471551ccb42c4ab451046">&#9670;&#160;</a></span>nondeterminism_strictness</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="namespacehegel.html#acf2c3692138ebc619357b95b916322a9">NondeterminismStrictness</a> hegel::Settings::nondeterminism_strictness</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<b>Initial value:</b><div class="fragment"><div class="line">=</div>
+<div class="line">            <a class="code hl_enumvalue" href="namespacehegel.html#acf2c3692138ebc619357b95b916322a9a098753f8980036f4b936e3d4b6997111">NondeterminismStrictness::Quiet</a></div>
+<div class="ttc" id="anamespacehegel_html_acf2c3692138ebc619357b95b916322a9a098753f8980036f4b936e3d4b6997111"><div class="ttname"><a href="namespacehegel.html#acf2c3692138ebc619357b95b916322a9a098753f8980036f4b936e3d4b6997111">hegel::NondeterminismStrictness::Quiet</a></div><div class="ttdeci">@ Quiet</div><div class="ttdef"><b>Definition</b> settings.h:115</div></div>
+</div><!-- fragment --><p>How the run reacts to a test whose outcome or draws change when the same generated data is replayed. Defaults to <a class="el" href="namespacehegel.html#acf2c3692138ebc619357b95b916322a9a098753f8980036f4b936e3d4b6997111">NondeterminismStrictness::Quiet</a>. </p>
 
 </div>
 </div>
@@ -244,6 +264,21 @@ std::optional&lt; uint64_t &gt;&#160;</td><td class="memItemRight" valign="botto
       </table>
 </div><div class="memdoc">
 <p>The maximum number of steps a stateful test case attempts. Each case runs at least one step and at most this many. Must be at least 1; <a class="el" href="namespacehegel.html#a8297e7dfc6b7c1088c84b50b8ba4d996" title="Run a Hegel test.">hegel::test()</a> rejects other values with std::invalid_argument. </p>
+
+</div>
+</div>
+<a id="ad8a21b99549ed31b6d570f3912a993e8" name="ad8a21b99549ed31b6d570f3912a993e8"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad8a21b99549ed31b6d570f3912a993e8">&#9670;&#160;</a></span>stop_on_first_failure</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool hegel::Settings::stop_on_first_failure = true</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<p>If true (the default), stop generating once a failure is found and move on to shrinking and reporting it. If false, the run uses its whole test_cases budget before reporting, whatever it finds along the way; every distinct failure found is persisted to the database either way. </p>
 
 </div>
 </div>

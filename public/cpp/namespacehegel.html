@@ -28,7 +28,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">Hegel<span id="projectnumber">&#160;0.13.1</span>
+   <div id="projectname">Hegel<span id="projectnumber">&#160;0.13.2</span>
    </div>
    <div id="projectbrief">Property-based testing for C++</div>
   </td>
@@ -151,6 +151,11 @@ Enumerations</h2></td></tr>
 , <a class="el" href="#a887e0714b99c358aa474848809bca688a27584154da40f4f2174d452ef7de4a75">Urandom</a>
  }</td></tr>
 <tr class="memdesc:a887e0714b99c358aa474848809bca688"><td class="mdescLeft">&#160;</td><td class="mdescRight">Source of randomness the engine draws from.  <a href="#a887e0714b99c358aa474848809bca688">More...</a><br /></td></tr>
+<tr class="memitem:acf2c3692138ebc619357b95b916322a9" id="r_acf2c3692138ebc619357b95b916322a9"><td class="memItemLeft" align="right" valign="top">enum class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#acf2c3692138ebc619357b95b916322a9">NondeterminismStrictness</a> { <a class="el" href="#acf2c3692138ebc619357b95b916322a9a098753f8980036f4b936e3d4b6997111">Quiet</a>
+, <a class="el" href="#acf2c3692138ebc619357b95b916322a9a56525ae64d370c0b448ac0d60710ef17">Warn</a>
+, <a class="el" href="#acf2c3692138ebc619357b95b916322a9a902b0d55fddef6f8d651fe1035b7d4bd">Error</a>
+ }</td></tr>
+<tr class="memdesc:acf2c3692138ebc619357b95b916322a9"><td class="mdescLeft">&#160;</td><td class="mdescRight">How a run reacts when it detects nondeterministic test behavior: a test whose structure or outcome changes when the same choices are replayed.  <a href="#acf2c3692138ebc619357b95b916322a9">More...</a><br /></td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-func-members" class="groupheader"><a id="func-members" name="func-members"></a>
 Functions</h2></td></tr>
@@ -229,6 +234,38 @@ Functions</h2></td></tr>
 <tr><td class="fieldname"><a id="a98e2c0a6bc324370d8fb109cd3a2c71da3f27234a3a1dcb8a808efcb61cf83870" name="a98e2c0a6bc324370d8fb109cd3a2c71da3f27234a3a1dcb8a808efcb61cf83870"></a>TestCasesTooLarge&#160;</td><td class="fielddoc"><p>Generated test cases are too large. </p>
 </td></tr>
 <tr><td class="fieldname"><a id="a98e2c0a6bc324370d8fb109cd3a2c71daa057e626223174c2433962916cbfaca0" name="a98e2c0a6bc324370d8fb109cd3a2c71daa057e626223174c2433962916cbfaca0"></a>LargeInitialTestCase&#160;</td><td class="fielddoc"><p>First generated test case is unusually large. </p>
+</td></tr>
+</table>
+
+</div>
+</div>
+<a id="acf2c3692138ebc619357b95b916322a9" name="acf2c3692138ebc619357b95b916322a9"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#acf2c3692138ebc619357b95b916322a9">&#9670;&#160;</a></span>NondeterminismStrictness</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">enum class <a class="el" href="#acf2c3692138ebc619357b95b916322a9">hegel::NondeterminismStrictness</a></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel strong">strong</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>How a run reacts when it detects nondeterministic test behavior: a test whose structure or outcome changes when the same choices are replayed. </p>
+<table class="fieldtable">
+<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="acf2c3692138ebc619357b95b916322a9a098753f8980036f4b936e3d4b6997111" name="acf2c3692138ebc619357b95b916322a9a098753f8980036f4b936e3d4b6997111"></a>Quiet&#160;</td><td class="fielddoc"><p>Switch to nondeterministic handling silently: failures are confirmed by repeated replay before they are shrunk or reported, and the report says how reliably each one reproduced. The default. </p>
+</td></tr>
+<tr><td class="fieldname"><a id="acf2c3692138ebc619357b95b916322a9a56525ae64d370c0b448ac0d60710ef17" name="acf2c3692138ebc619357b95b916322a9a56525ae64d370c0b448ac0d60710ef17"></a>Warn&#160;</td><td class="fielddoc"><p>Switch as under Quiet, printing a one-line notice once per run. </p>
+</td></tr>
+<tr><td class="fieldname"><a id="acf2c3692138ebc619357b95b916322a9a902b0d55fddef6f8d651fe1035b7d4bd" name="acf2c3692138ebc619357b95b916322a9a902b0d55fddef6f8d651fe1035b7d4bd"></a>Error&#160;</td><td class="fielddoc"><p>Fail the run with a flaky-test error, for suites that use determinism as a lint. </p>
 </td></tr>
 </table>
 

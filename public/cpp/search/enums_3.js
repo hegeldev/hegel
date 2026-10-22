@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['phase_0',['Phase',['../namespacehegel.html#aee0a47457861d4028b314d518cd50b6a',1,'hegel']]]
+  ['nondeterminismstrictness_0',['NondeterminismStrictness',['../namespacehegel.html#acf2c3692138ebc619357b95b916322a9',1,'hegel']]]
 ];

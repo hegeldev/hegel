@@ -63,7 +63,7 @@ var NAVTREE =
 var NAVTREEINDEX =
 [
 "annotated.html",
-"namespacemembers_func.html"
+"namespacehegel_1_1stateful.html#aeb35e3b6f52e8aff4f8471f1333faf37"
 ];
 
 var SYNCONMSG = 'click to disable panel synchronization';
