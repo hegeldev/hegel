@@ -377,7 +377,7 @@ def test_timezone_keys_are_the_hosts():
     ]
     with pytest.raises(hegel.InvalidArgument, match="install the tzdata package"):
         _select_keys({"Mars/Olympus_Mons"}, True, False)
-    assert re.fullmatch(r"\d{4}[a-z]", _native.tzdb_version())
+    assert re.fullmatch(r"\d{4}[a-z]", gs.tzdb_version())
 
 
 def test_timezones():
