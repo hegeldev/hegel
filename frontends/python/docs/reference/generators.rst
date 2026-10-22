@@ -105,6 +105,8 @@ Dates and times
 
 .. autofunction:: timezone_keys
 
+.. autofunction:: tzdb_version
+
 .. autofunction:: utc_offsets
 
 Identifiers and network values

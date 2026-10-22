@@ -47,6 +47,7 @@ from hegel.generators.time import (
     times,
     timezone_keys,
     timezones,
+    tzdb_version,
     utc_offsets,
 )
 
@@ -89,6 +90,7 @@ __all__ = [
     "times",
     "timezone_keys",
     "timezones",
+    "tzdb_version",
     "utc_offsets",
     "tuples",
     "urls",
