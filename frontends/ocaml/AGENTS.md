@@ -1,26 +1,76 @@
-# Hegel for OCaml
+# OCaml frontend
 
-## Build Commands
+Hegel for OCaml: the `hegel`, `ppx_hegel_compat`, `ppx_hegel_generator` and
+`ppx_hegel_test` opam packages. The client drives libhegel, the engine in
+`../../libhegel`, in-process through its C ABI (`../../libhegel/include/hegel.h`)
+via ctypes: there is no subprocess and no wire protocol. Repo-wide conventions
+are in the root `AGENTS.md`.
+
+## Commands
 
 ```bash
-# No setup step: libhegel is located (or downloaded + cached) at runtime.
-just test          # Run tests with 100% coverage enforcement
-just format        # Auto-format code with ocamlformat
-just check-format  # Check formatting (fails if unformatted)
-just docs          # Build API documentation with odoc
-just check         # Run check-format + check-docs + check-tests (the full CI check)
+just ocaml::setup            # opam install the dependencies into the current switch (once)
+just ocaml::build-libhegel   # cargo-build the engine into the workspace's target/
+just ocaml::check-test       # the suite with bisect_ppx against the in-tree engine (fails if < 100%)
+just ocaml::check-lint       # dune build @fmt + the generated *.opam files are current + opam lint
+just ocaml::format           # dune fmt
+just ocaml::check-docs       # odoc, warnings fatal
+just ocaml::check            # lint + docs + test — what CI runs, less the compat/smoke/OxCaml jobs
 ```
+
+- The test recipes build libhegel first (incremental, so cheap once built)
+  and export `HEGEL_LIBHEGEL_PATH` pointing at `target/release/libhegel_c.<ext>`
+  under the workspace's `target/` (or `CARGO_TARGET_DIR`); an already-set
+  `HEGEL_LIBHEGEL_PATH` wins. `scripts/libhegel-path.sh` is the one place
+  that knows where the build is. Plain `dune runtest` works too after
+  `just ocaml::build-libhegel`: the loader walks up from the working
+  directory to the checkout's `target/` (see Native backend).
+- `just ocaml::check-test-no-coverage` is the suite without bisect_ppx, for
+  switches without the dev-setup dependencies (CI's `compat` and `oxcaml`
+  jobs); `HEGEL_SKIP_JANE_TESTS=1` skips the `hegel.jane` suites where the
+  `core`/`async` depopts are not installed, `HEGEL_SKIP_EXPECT_TESTS=1` the
+  ppx_expect suite, and `HEGEL_CONCURRENT_TESTS=1` opts into the OxCaml
+  concurrent suites.
 
 ## Tooling
 
-- **OCaml**: 5.2.1
-- **Build system**: Dune 3.21.1
-- **Test framework**: Alcotest 1.9.1
+- **OCaml**: 5.2.1 in CI's main jobs; 5.1.1 and 5.5.0 in the `compat` job; the `5.2.0+ox` OxCaml compiler in the `oxcaml` job
+- **Build system**: Dune (>= 3.16)
+- **Test framework**: Alcotest
 - **Code coverage**: bisect_ppx 2.8.3 (enforced at 100% via scripts/check-coverage.py)
 - **Formatter**: OCamlFormat 0.29.0 (version pinned in .ocamlformat)
-- **Documentation**: odoc 3.1.0
-- **Package manager**: opam 2.1.5
-- **PPX derivation**: ppxlib 0.35.0 (for `[@@deriving hegel_generator]`)
+- **Documentation**: odoc
+- **Package manager**: opam
+- **PPX derivation**: ppxlib (for `[@@deriving hegel_generator]`)
+
+## Releases
+
+- **Every PR that changes what ships needs a `RELEASE.md` here**: any change
+  to `lib/`, `ppx/`, `template/` or `dune-project`. See the root
+  `CONTRIBUTING.md` for the format and the semver rules (on 0.x, breaking
+  changes are `minor`, everything else `patch`). CI checks this
+  (`.github/scripts/release.py check`); on merge to main the release job
+  bumps `(version ...)` in `dune-project` and the generated `*.opam` files,
+  moves the text into `CHANGELOG.md` and tags `frontends/ocaml/<version>`.
+  `Hegel.version` is generated from the dune-project version
+  (`lib/dune`'s `hegel_version.ml` rule), never edited. Never edit
+  `CHANGELOG.md` by hand.
+- The `release-ocaml` job of `.github/workflows/ci.yml` then builds the opam
+  source tarball from the tag — the `frontends/ocaml` subtree plus a
+  `prebuilt/` directory holding the Linux amd64/arm64 and macOS arm64
+  libhegel libraries of the engine version in `libhegel/Cargo.toml`
+  (downloaded from that libhegel GitHub release and sha256-verified) and
+  `.github/ocaml/prebuilt.dune`, whose rules install the host's library into
+  the `libhegel` dune-site — creates a GitHub release on the
+  `frontends/ocaml/<version>` tag and attaches the tarball there, and
+  `release-ocaml-docs` pushes the odoc output to hegel.dev/ocaml. Publishing
+  to opam-repository stays a manual step, as it was before the monorepo:
+  `.github/workflows/ocaml-opam-release.yml` (Actions -> "ocaml opam release"
+  -> Run workflow with the tag) runs `opam publish` with that tarball.
+- A libhegel release re-releases this frontend too, with an auto-generated
+  engine-bump entry unless the PR writes a `RELEASE.md` here. There is no
+  engine version pin in this frontend: the engine it ships is whatever
+  `libhegel/Cargo.toml` says at the tag.
 
 ## Project Structure
 
@@ -43,8 +93,8 @@ lib/                         # Library source
                              #   handles; typed draws + string-generator handles;
                              #   events; the pretty-printer document (printer_*,
                              #   test_case_printer, note)
-    loader.ml                # locate/download libhegel at runtime (env > site >
-                             #   sibling ../hegel build (libhegel_c.<ext>) > release)
+    loader.ml                # locate libhegel at runtime (env > site > the
+                             #   checkout's in-tree target/ build (libhegel_c.<ext>))
   cli.ml / cli.mli           # Hegel.main: cmdliner flags (--profile applied
                              #   first, through set_default_profile, before the
                              #   caller's settings thunk runs), single_test_case
@@ -188,6 +238,8 @@ examples/                    # Example programs demonstrating the library
 
 scripts/
   check-coverage.py          # Parses bisect-ppx-report, enforces 100%
+  libhegel-path.sh           # The in-tree libhegel build the justfile points
+                             #   the tests at
 
 README.md                    # Project overview, install, quick-start
 ```
@@ -197,17 +249,17 @@ README.md                    # Project overview, install, quick-start
 ### Native backend (lib/ffi/ffi.ml)
 
 There is no subprocess, socket, or wire protocol. The engine is the native
-`libhegel` C library (from hegeldev/hegel, header `libhegel/include/hegel.h`), called
-in-process via ctypes. `Hegel_ffi.Loader` resolves the shared library at runtime
-(mirroring hegel-go): `$HEGEL_LIBHEGEL_PATH`, then a sibling
-`../hegel/target/{release,debug}/libhegel_c.<ext>` checkout (the name
-`cargo build -p hegeltest-c` gives the cdylib; dune sandboxes run tests from
-`_build/.sandbox/...`, so that relative path does not resolve under
-`dune runtest` — set `HEGEL_LIBHEGEL_PATH` there), then a SHA-256-verified
-download from the libhegel GitHub release (hegeldev/hegel, tag
-`libhegel/<version>`; releases before 0.47.2 are on hegel-rust) cached under
-`~/.cache/hegel-ocaml/libhegel/<version>/` (opt out with
-`HEGEL_LIBHEGEL_NO_DOWNLOAD=1`). `Hegel_ffi.Ffi` `dlopen`s that path and exposes
+`libhegel` C library (`../../libhegel`, header `libhegel/include/hegel.h`), called
+in-process via ctypes. `Hegel_ffi.Loader` resolves the shared library at runtime:
+`$HEGEL_LIBHEGEL_PATH`, then the `libhegel` dune-site of an installed package
+(the opam release tarball bundles the host's library there, see Releases),
+then the in-tree cargo build — `target/{release,debug}/libhegel_c.<ext>` (the
+name `cargo build -p hegeltest-c` gives the cdylib) under `$CARGO_TARGET_DIR`
+or under the nearest ancestor of the working directory that has a `target/`
+with one, which is how a test executable finds the checkout it runs in whether
+dune runs it from `_build/default/...` or from a `_build/.sandbox/...`
+sandbox. Nothing is ever downloaded: a missing engine is a `Failure` telling
+the user to build it or set `HEGEL_LIBHEGEL_PATH`. `Hegel_ffi.Ffi` `dlopen`s that path and exposes
 thin 1:1 wrappers: settings handles, the run lifecycle (`run_start`,
 `next_test_case`, `run_result`, `run_free`), and per-test-case primitives — the
 typed draws (`generate_integer`, `generate_boolean`, `generate_float`,
@@ -221,8 +273,7 @@ collections, pools, state machines (`new_state_machine` takes the per-machine
 (`{data; len}`, by value; `const hegel_string_t *` where NULL means absent;
 libhegel 0.46.0): the `str`/`str_opt` ctypes views build the struct and its
 bytes in one buffer, so the struct keeps the bytes alive for the call (ctypes
-retains each argument's converted value until the call returns). The header
-now lives at `libhegel/include/hegel.h` in hegeldev/hegel (0.47.2 onward). There is no CBOR: each value is
+retains each argument's converted value until the call returns). There is no CBOR: each value is
 drawn by a dedicated typed call rather than a schema round-trip (this replaced the
 removed `hegel_generate`/CBOR-schema path in libhegel 0.26.0). There is no
 engine thread (removed in libhegel 0.30.1): `hegel_next_test_case` runs all
@@ -550,11 +601,8 @@ Who owns what in hegel-ocaml:
   an engine call that had just read `tc.context` (a `note` from an invariant
   body segfaulted under a small minor heap).
 
-Note: the published reference at <https://hegel.dev/reference/libhegel> is
-**stale on this point** — it still documents the pre-0.31.0 `int64_t` ids and
-lists no destructors for these three. The authority is
-`hegel-c/include/hegel.h` at the pinned tag (and `nm` on the downloaded
-`libhegel`, which exports all four of the functions above).
+The authority on the ABI is `../../libhegel/include/hegel.h` in this
+checkout, not the published reference at <https://hegel.dev/reference/libhegel>.
 
 ### Pretty printing (engine-side layout)
 
@@ -963,7 +1011,7 @@ guards the syntax upstream cannot parse (`@ m`, kind annotations).
   nonportable; use `failwith`.
 - **Building locally.** `dune build --build-dir _build_ox …` in the
   `5.2.0+ox` switch (delete `_build_ox` afterwards). The ox CI job installs
-  `capsule0`, `concurrent`, and `parallel` from `.github/oxcaml-ci.opam`, in
+  `capsule0`, `concurrent`, and `parallel` from `../../.github/ocaml/oxcaml-ci.opam`, in
   the same `opam install` as the with-test deps (a second solver call can
   drop packages the first one installed). ocamlformat cannot parse OxCaml
   syntax: `.in` files are outside `dune fmt`, and `lib/locked.capsule.ml` is
@@ -980,9 +1028,11 @@ guards the syntax upstream cannot parse (`@ m`, kind annotations).
 ### Testing
 
 - Every lib module has a corresponding `test/test_<module>.ml`
-- All tests run against the real engine: libhegel is dlopen'd in-process (and
-  downloaded on demand), so there are no fake engines. Some test names carry a
-  historical `_e2e` suffix; it no longer signals a different harness
+- All tests run against the real engine: the in-tree libhegel is dlopen'd
+  in-process, so there are no fake engines. An engine divergence is fixed in
+  `../../libhegel` (with a `libhegel/RELEASE.md`) in the same PR, not worked
+  around in the bindings. Some test names carry a historical `_e2e` suffix;
+  it no longer signals a different harness
 - `test/` must build under `-p hegel` (opam-repo-ci runs it): plain Alcotest
   functions calling `Hegel.run_hegel_test`, no `let%hegel_test`, no PPX beyond
   the `ppx_js_style` linter. White-box tests use the doc-hidden `(**/**)`
@@ -1096,10 +1146,8 @@ draw, and always freed (`Internal.with_string_generator`).
     a separate dune stanza with PPX preprocessing.
 
 12. **opam not on PATH in shell spawned by `just`**: The `just` tool starts a fresh shell that
-    does not source `.bashrc` or `.profile`. Fix: add
-    `export PATH := env("HOME") + "/.opam/5.2.1/bin:" + env("PATH")` at the top of the
-    justfile, and use `eval $(opam env)` inside recipes that need the full opam environment.
-    The `export PATH` line in justfile is evaluated by `just` itself, not the shell.
+    does not source `.bashrc` or `.profile`, so the recipes `eval $(opam env)` themselves;
+    `opam` itself must be on the PATH `just` inherits (CI puts the switch's `bin` there).
 
 ### Coverage and bisect_ppx
 

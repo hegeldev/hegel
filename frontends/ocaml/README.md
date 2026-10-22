@@ -10,9 +10,9 @@ Hegel is a property-based testing library for OCaml based on
 opam install hegel
 ```
 
-The Hegel version in [opam](https://opam.ocaml.org/packages/hegel/) sometimes lags behind the version in Github. To pin the version in Github:
+The Hegel version in [opam](https://opam.ocaml.org/packages/hegel/) sometimes lags behind the version in GitHub. To pin the version in GitHub (the frontend lives in the [hegeldev/hegel](https://github.com/hegeldev/hegel) monorepo, under `frontends/ocaml`):
 ```bash
-opam pin add hegel "git+https://github.com/hegeldev/hegel-ocaml.git"
+opam pin add --subpath frontends/ocaml hegel "git+https://github.com/hegeldev/hegel.git"
 ```
 
 Hegel calls the native `libhegel` shared library and locates it automatically
@@ -20,20 +20,21 @@ at runtime. It looks for the following in order:
 
 1. `$HEGEL_LIBHEGEL_PATH`, an explicit path to the library (or a directory
    containing it)
-2. a copy bundled into the installed package, when the release ships one
-3. a sibling [hegel](https://github.com/hegeldev/hegel) checkout's build at
-   `../hegel/target/release/` relative to the current
-   working directory.
-4. a checksum-verified download of the matching version from libhegel's GitHub
-   releases on [hegeldev/hegel](https://github.com/hegeldev/hegel) (the
-   `libhegel/<version>` tag), cached under
-   `~/.cache/hegel-ocaml/libhegel/<version>/`.
+2. a copy bundled into the installed package: every opam release ships the
+   matching engine, so `opam install hegel` needs nothing else
+3. the in-tree build of a [hegeldev/hegel](https://github.com/hegeldev/hegel)
+   checkout: `target/release/libhegel_c.<ext>` (then `target/debug/`) under
+   `$CARGO_TARGET_DIR`, or under the nearest directory above the current
+   working directory that has one — what `cargo build --release -p hegeltest-c`
+   produces.
 
-Set `HEGEL_LIBHEGEL_NO_DOWNLOAD=1` to opt out of the download fallback.
+A git pin ships no engine, so set `HEGEL_LIBHEGEL_PATH` to a library from the
+matching [libhegel release](https://github.com/hegeldev/hegel/releases) (the
+`libhegel/<version>` tags) or build one in a checkout.
 
 Hegel for OCaml supports **Linux** (amd64/arm64) and **macOS** (Apple Silicon).
 macOS amd64 (Intel) has no published `libhegel` artifact, so on that platform set
-`HEGEL_LIBHEGEL_PATH` to a locally built `libhegel.dylib`.
+`HEGEL_LIBHEGEL_PATH` to a locally built `libhegel_c.dylib`.
 
 ## Quick start
 
@@ -88,7 +89,12 @@ For a full walkthrough, see the [docs](https://hegel.dev/ocaml).
 
 ## Development
 
+The frontend is developed in the [hegeldev/hegel](https://github.com/hegeldev/hegel) monorepo and built and tested against the engine in `libhegel/`:
+
 ```bash
-just check       # Full CI: lint + docs + tests with 100% coverage
-just test        # Run tests only
+just ocaml::setup   # install the opam dependencies (needs opam)
+just ocaml::check   # lint + docs + tests with 100% coverage, against the in-tree libhegel
+just ocaml::test    # tests only
 ```
+
+See `AGENTS.md` for the architecture and `../../CONTRIBUTING.md` for how to contribute.

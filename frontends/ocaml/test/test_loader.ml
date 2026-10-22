@@ -1,207 +1,76 @@
-(** Tests for the libhegel download protocol ([Hegel_ffi.Loader]).
-
-    The protocol is exercised against a stubbed [curl] (a shell script placed
-    first on [PATH]) that writes a fixed payload in two chunks with a pause
-    between them, widening the window of any race between concurrent
-    downloaders. The tests supply their own expected checksum, so no network
-    access or real libhegel artifact is involved. *)
+(** Tests for the in-tree libhegel lookup ([Hegel_ffi.Loader.from_in_tree]):
+    the walk from a working directory up to the nearest [target/] holding a
+    [cargo build -p hegeltest-c] output, exercised on a directory tree of the
+    test's own rather than the real checkout. *)
 
 open! Core
 module Loader = Hegel_ffi.Loader
 
-let payload = "first half of the payload second half of the payload"
-
-(* A [curl] stand-in: honors [-o <dest>] and writes {!payload} to it in two
-   chunks with a pause in between. [FAKE_CURL_EXIT] forces a failure exit code
-   (simulating a network error) without writing anything. *)
-let fake_curl_script =
-  {|#!/bin/sh
-if [ -n "${FAKE_CURL_EXIT:-}" ]; then exit "$FAKE_CURL_EXIT"; fi
-out=
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "-o" ]; then out=$2; shift 2; else shift 1; fi
-done
-printf 'first half of the payload ' > "$out"
-sleep 0.4
-printf 'second half of the payload' >> "$out"
-|}
+let rec remove_tree path =
+  if Stdlib.Sys.is_directory path
+  then (
+    Stdlib.Sys.readdir path
+    |> Array.iter ~f:(fun name -> remove_tree (Filename.concat path name));
+    Core_unix.rmdir path)
+  else Stdlib.Sys.remove path
 ;;
 
-(* Set up a tempdir containing the stubbed [curl] and pass its path, the PATH
-   value that puts the stub first, and an independently computed SHA-256
-   checksum of the payload to [f]. *)
-let with_download_fixture ~f =
+(* A tree under a fresh tempdir, removed (recursively, unlike
+   [Test_helpers.with_tempdir]'s flat cleanup) on exit. *)
+let with_tree ~f =
   Test_helpers.with_tempdir ~prefix:"hegel-loader-test-" ~f:(fun dir ->
-    let curl_path = Filename.concat dir "curl" in
-    Out_channel.write_all curl_path ~data:fake_curl_script;
-    Core_unix.chmod curl_path ~perm:0o755;
-    let expected = "69d91e90de5efd13c7d722f8bac95cf77c3ef7f957203e8753828e8f6b1c8637" in
-    let stub_path =
-      dir ^ ":" ^ Option.value (Sys.getenv "PATH") ~default:"/usr/bin:/bin"
-    in
-    f ~dir ~stub_path ~expected)
+    let root = Filename.concat dir "checkout" in
+    Core_unix.mkdir_p root;
+    Exn.protect ~finally:(fun () -> remove_tree root) ~f:(fun () -> f root))
 ;;
 
-(* Run [f] with PATH set to [path], restoring the previous value on exit. *)
-let with_path path ~f =
-  let prev = Sys.getenv "PATH" in
-  Core_unix.putenv ~key:"PATH" ~data:path;
-  Exn.protect
-    ~finally:(fun () ->
-      match prev with
-      | Some v -> Core_unix.putenv ~key:"PATH" ~data:v
-      | None -> Test_helpers.unsetenv "PATH")
-    ~f
+let touch root rel =
+  let path = Filename.concat root rel in
+  Core_unix.mkdir_p (Filename.dirname path);
+  Out_channel.write_all path ~data:"";
+  path
 ;;
 
-let leftover_tmp_files dir =
-  Stdlib.Sys.readdir dir
-  |> Array.to_list
-  |> List.filter ~f:(fun name -> Test_helpers.contains_substring name ".tmp")
+let test_finds_the_nearest_ancestor_build () =
+  with_tree ~f:(fun root ->
+    let built = touch root "target/release/libhegel_c.so" in
+    let start = Filename.concat root "frontends/ocaml/_build/default/test" in
+    Core_unix.mkdir_p start;
+    Alcotest.(check (option string))
+      "walks up to the checkout's target/"
+      (Some built)
+      (Loader.from_in_tree ~start "so"))
 ;;
 
-(* Regression test for the cold-cache download race: multiple processes (e.g.
-   several test binaries starting concurrently on a fresh machine) download
-   libhegel at the same time. Every downloader must end up with a verified
-   library, and the cache file must not be corrupted. Before the fix all
-   processes shared a single temporary path ([<cache>.tmp]), so the first
-   process to finish renamed the file the others were still writing out from
-   under them and the losers crashed. *)
-let test_concurrent_downloads_all_succeed () =
-  with_download_fixture ~f:(fun ~dir ~stub_path ~expected ->
-    let cache_path = Filename.concat dir "libhegel.so" in
-    let n = 4 in
-    let children =
-      List.init n ~f:(fun i ->
-        match Core_unix.fork () with
-        | `In_the_parent pid -> pid
-        | `In_the_child ->
-          let status =
-            try
-              Core_unix.putenv ~key:"PATH" ~data:stub_path;
-              (* Stagger the children so their downloads overlap at
-                 different phases rather than starting in lockstep. *)
-              ignore (Core_unix.nanosleep (Float.of_int i *. 0.15));
-              let got =
-                Loader.download_verified
-                  ~url:"http://example.invalid/libhegel.so"
-                  ~expected
-                  ~cache_path
-              in
-              if String.equal (In_channel.read_all got) payload then 0 else 1
-            with
-            | _ -> 1
-          in
-          Core_unix.exit_immediately status)
-    in
-    let failures =
-      List.count children ~f:(fun pid -> Result.is_error (Core_unix.waitpid pid))
-    in
-    Alcotest.(check int) "all concurrent downloaders succeed" 0 failures;
-    Alcotest.(check string)
-      "cache file holds the verified payload"
-      payload
-      (In_channel.read_all cache_path);
-    Alcotest.(check (list string))
-      "no leftover temporary files"
-      []
-      (leftover_tmp_files dir))
+let test_prefers_release_over_debug () =
+  with_tree ~f:(fun root ->
+    let debug = touch root "target/debug/libhegel_c.so" in
+    Alcotest.(check (option string))
+      "a debug build is found when it is the only one"
+      (Some debug)
+      (Loader.from_in_tree ~start:root "so");
+    let release = touch root "target/release/libhegel_c.so" in
+    Alcotest.(check (option string))
+      "the release build wins once it exists"
+      (Some release)
+      (Loader.from_in_tree ~start:root "so"))
 ;;
 
-(* A stale temporary file left by a killed downloader (partial download) must
-   not break, or leak into, a later download. *)
-let test_stale_tmp_file_is_harmless () =
-  with_download_fixture ~f:(fun ~dir ~stub_path ~expected ->
-    let cache_path = Filename.concat dir "libhegel.so" in
-    Out_channel.write_all (cache_path ^ ".tmp") ~data:"partial garbage";
-    Out_channel.write_all (cache_path ^ ".12345.abc123.tmp") ~data:"more garbage";
-    let got =
-      with_path stub_path ~f:(fun () ->
-        Loader.download_verified
-          ~url:"http://example.invalid/libhegel.so"
-          ~expected
-          ~cache_path)
-    in
-    Alcotest.(check string) "returns the cache path" cache_path got;
-    Alcotest.(check string)
-      "cache file holds the verified payload"
-      payload
-      (In_channel.read_all cache_path))
-;;
-
-let test_checksum_mismatch_fails_and_cleans_up () =
-  with_download_fixture ~f:(fun ~dir ~stub_path ~expected:_ ->
-    let cache_path = Filename.concat dir "libhegel.so" in
-    let raised =
-      with_path stub_path ~f:(fun () ->
-        try
-          ignore
-            (Loader.download_verified
-               ~url:"http://example.invalid/libhegel.so"
-               ~expected:(String.make 64 '0')
-               ~cache_path);
-          false
-        with
-        | Failure msg -> Test_helpers.contains_substring msg "SHA-256 mismatch")
-    in
-    Alcotest.(check bool) "raises a SHA-256 mismatch failure" true raised;
-    Alcotest.(check bool)
-      "does not install the corrupt file"
-      false
-      (Stdlib.Sys.file_exists cache_path);
-    Alcotest.(check (list string))
-      "no leftover temporary files"
-      []
-      (leftover_tmp_files dir))
-;;
-
-let test_download_failure_fails_and_cleans_up () =
-  with_download_fixture ~f:(fun ~dir ~stub_path ~expected ->
-    let cache_path = Filename.concat dir "libhegel.so" in
-    let prev = Sys.getenv "FAKE_CURL_EXIT" in
-    let raised =
-      Exn.protect
-        ~finally:(fun () ->
-          match prev with
-          | Some v -> Core_unix.putenv ~key:"FAKE_CURL_EXIT" ~data:v
-          | None -> Test_helpers.unsetenv "FAKE_CURL_EXIT")
-        ~f:(fun () ->
-          Core_unix.putenv ~key:"FAKE_CURL_EXIT" ~data:"9";
-          with_path stub_path ~f:(fun () ->
-            try
-              ignore
-                (Loader.download_verified
-                   ~url:"http://example.invalid/libhegel.so"
-                   ~expected
-                   ~cache_path);
-              false
-            with
-            | Failure msg -> Test_helpers.contains_substring msg "curl exit 9"))
-    in
-    Alcotest.(check bool) "raises a download failure" true raised;
-    Alcotest.(check bool)
-      "does not install anything"
-      false
-      (Stdlib.Sys.file_exists cache_path);
-    Alcotest.(check (list string))
-      "no leftover temporary files"
-      []
-      (leftover_tmp_files dir))
+let test_ignores_other_extensions () =
+  with_tree ~f:(fun root ->
+    ignore (touch root "target/release/libhegel_c.so" : string);
+    Alcotest.(check (option string))
+      "a library for another platform does not count"
+      None
+      (Loader.from_in_tree ~start:root "dylib"))
 ;;
 
 let tests =
   [ Alcotest.test_case
-      "concurrent cold-cache downloads all succeed"
+      "finds the nearest ancestor build"
       `Quick
-      test_concurrent_downloads_all_succeed
-  ; Alcotest.test_case "stale tmp file is harmless" `Quick test_stale_tmp_file_is_harmless
-  ; Alcotest.test_case
-      "checksum mismatch fails and cleans up"
-      `Quick
-      test_checksum_mismatch_fails_and_cleans_up
-  ; Alcotest.test_case
-      "download failure fails and cleans up"
-      `Quick
-      test_download_failure_fails_and_cleans_up
+      test_finds_the_nearest_ancestor_build
+  ; Alcotest.test_case "prefers release over debug" `Quick test_prefers_release_over_debug
+  ; Alcotest.test_case "ignores other extensions" `Quick test_ignores_other_extensions
   ]
 ;;

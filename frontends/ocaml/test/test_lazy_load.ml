@@ -19,10 +19,9 @@ let expect_load_failure ~path () =
 ;;
 
 let test_generators_do_not_load_libhegel () =
-  (* Point the loader at a file that does not exist, and stop it falling back to
-     a download, so any attempt to load the library fails loudly. *)
+  (* Point the loader at a file that does not exist, so any attempt to load
+     the library fails loudly. *)
   Unix.putenv ~key:"HEGEL_LIBHEGEL_PATH" ~data:missing_library;
-  Unix.putenv ~key:"HEGEL_LIBHEGEL_NO_DOWNLOAD" ~data:"1";
   (* Building generators is pure OCaml. *)
   let (_ : (int list, Hegel.printable) Hegel.generator) =
     Hegel.lists (Hegel.integers ()) ()

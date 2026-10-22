@@ -1,8 +1,9 @@
-; Copied to `prebuilt/dune` inside the published opam release tarball by
-; .github/workflows/opam-release.yml (alongside the prebuilt libhegel-<os>-<arch>
-; binaries). It is intentionally NOT named `dune` and lives outside the source
-; tree so dune does not process it in a dev checkout (where no prebuilt binaries
-; exist and the loader falls back to its download path).
+; Copied to `prebuilt/dune` inside the published opam release tarball of the
+; OCaml frontend by the `release-ocaml` job of ../workflows/ci.yml (alongside
+; the prebuilt libhegel-<os>-<arch> binaries of the engine release). It is
+; intentionally NOT named `dune` and lives outside frontends/ocaml so dune does
+; not process it in a dev checkout (where no prebuilt binaries exist and the
+; loader falls back to the in-tree cargo build).
 ;
 ; The rules select the binary matching the build platform, rename it to the
 ; extension-less `libhegel_bundled` (the loader opens it by absolute path, so the
@@ -39,7 +40,7 @@
   (copy libhegel-darwin-arm64.dylib libhegel_bundled)))
 
 ; Install only on the platforms we ship a prebuilt for; elsewhere nothing is
-; installed and the loader falls back to its download path.
+; installed and the loader needs HEGEL_LIBHEGEL_PATH.
 (install
  (package hegel)
  (enabled_if

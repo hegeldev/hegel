@@ -1,22 +1,5 @@
-.venv/
-.hegel/
-.hypothesis/
-.vscode/
-__pycache__/
-*.pyc
-.DS_Store
-# whitelist .claude files, rather than blacklist. Some local claude files
-# (skills, agents) have to live in .claude - as opposed to eg CLAUDE.local.md,
-# which we gitignore at the top level.
-.claude/*
-!.claude/CLAUDE.md
-!.claude/skills/
-.claude/skills/*
-!.claude/skills/changelog/
-!.claude/skills/self-review/
-!.claude/skills/coverage/
-CLAUDE.local.md
 _build/
+_build_ox/
 _coverage/
 *.cmi
 *.cmx
@@ -27,12 +10,7 @@ _coverage/
 *.native
 *.o
 *.a
-.hegelator/
-
-bench/
-bstrun/
-rbtrun/
-stlcrun/
 # Prebuilt libhegel binaries are bundled into the opam release tarball by CI
-# (.github/workflows/opam-release.yml); they must never be committed.
+# (the release-ocaml job in ../../.github/workflows/ci.yml); they must never
+# be committed.
 /prebuilt/

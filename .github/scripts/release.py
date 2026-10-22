@@ -20,15 +20,17 @@ class Component:
     as the tag prefix: a release of version X.Y.Z is tagged `<path>/X.Y.Z`.
     `manifests` are the manifests that carry the component's version (Cargo
     manifests, npm's `package.json` and `package-lock.json`, a
-    `CMakeLists.txt` with a `project(... VERSION x.y.z ...)` line, or Maven's
-    `pom.xml` files; the first is the one its version is read from) and `crates` the packages those
-    manifests declare, all at the component's version; `source_dirs` are the
-    paths whose changes require a `<path>/RELEASE.md` on a PR.
+    `CMakeLists.txt` with a `project(... VERSION x.y.z ...)` line, Maven's
+    `pom.xml` files, or dune's `dune-project` and the `.opam` files it
+    generates; the first is the one its version is read from) and `crates` the
+    packages those manifests declare, all at the component's version;
+    `source_dirs` are the paths whose changes require a `<path>/RELEASE.md` on
+    a PR.
 
     A frontend ships the engine (the Rust frontend pins the `hegeltest-c`
     crate exactly, the Python frontend compiles libhegel into its wheels, the
-    TypeScript and Java frontends bundle the libhegel binaries, the C++ frontend
-    builds the in-tree libhegel it is fetched with), so a libhegel release
+    TypeScript, Java and OCaml frontends bundle the libhegel binaries, the C++
+    frontend builds the in-tree libhegel it is fetched with), so a libhegel release
     also patch-bumps every frontend without a RELEASE.md of its own, giving it
     `engine_bump_entry` (with `{version}` filled in) as its changelog entry.
     libhegel itself has no such entry. A frontend that records the engine
@@ -138,7 +140,25 @@ JAVA = Component(
     ),
     engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
 )
-FRONTENDS = [RUST, PYTHON, TYPESCRIPT, CPP, JAVA]
+OCAML = Component(
+    path="frontends/ocaml",
+    manifests=(
+        "frontends/ocaml/dune-project",
+        "frontends/ocaml/hegel.opam",
+        "frontends/ocaml/ppx_hegel_compat.opam",
+        "frontends/ocaml/ppx_hegel_generator.opam",
+        "frontends/ocaml/ppx_hegel_test.opam",
+    ),
+    crates=("hegel", "ppx_hegel_compat", "ppx_hegel_generator", "ppx_hegel_test"),
+    source_dirs=(
+        "frontends/ocaml/lib/",
+        "frontends/ocaml/ppx/",
+        "frontends/ocaml/template/",
+        "frontends/ocaml/dune-project",
+    ),
+    engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
+)
+FRONTENDS = [RUST, PYTHON, TYPESCRIPT, CPP, JAVA, OCAML]
 COMPONENTS = [LIBHEGEL, *FRONTENDS]
 
 
@@ -201,12 +221,23 @@ CMAKE_PROJECT_VERSION = re.compile(
 )
 
 
+def version_pattern(manifest: Path) -> tuple[str, str]:
+    """The regex matching the version line of a text manifest, and the
+    replacement line for a new version (with `{version}` to fill in)."""
+    if manifest.name == "dune-project":
+        return r"^\(version [^)]+\)", "(version {version})"
+    if manifest.suffix == ".opam":
+        return r'^version: "[^"]+"', 'version: "{version}"'
+    return r'^version = "[^"]+"', 'version = "{version}"'
+
+
 def current_version(manifest: Path) -> str:
     """The version of the package manifest at `manifest`: the `version = "..."`
     of a Cargo manifest, the `"version"` of an npm one, the `project()`
-    version of a CMakeLists.txt, or the first `<version>` of a Maven pom (the
+    version of a CMakeLists.txt, the first `<version>` of a Maven pom (the
     project's own in a parent pom, the parent reference in a module pom;
-    `modelVersion` is a different tag)."""
+    `modelVersion` is a different tag), the `(version ...)` of a dune-project
+    or the `version: "..."` of an opam file."""
     if manifest.suffix == ".json":
         return json.loads(manifest.read_text())["version"]
     if manifest.name == "CMakeLists.txt":
@@ -216,8 +247,9 @@ def current_version(manifest: Path) -> str:
         return m.group(2)
     if manifest.suffix == ".xml":
         return re.search(r"<version>([^<]+)</version>", manifest.read_text()).group(1)
-    m = re.search(r'^version = "([^"]+)"', manifest.read_text(), re.MULTILINE)
-    return m.group(1)
+    pattern, _ = version_pattern(manifest)
+    m = re.search(pattern, manifest.read_text(), re.MULTILINE)
+    return re.search(r"\d+\.\d+\.\d+", m.group(0)).group(0)
 
 
 def set_version(manifest: Path, new_version: str) -> None:
@@ -250,9 +282,10 @@ def set_version(manifest: Path, new_version: str) -> None:
         )
         return
     text = manifest.read_text()
+    pattern, replacement = version_pattern(manifest)
     new_text = re.sub(
-        r'^version = "[^"]+"',
-        f'version = "{new_version}"',
+        pattern,
+        replacement.format(version=new_version),
         text,
         count=1,
         flags=re.MULTILINE,

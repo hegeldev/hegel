@@ -89,17 +89,14 @@
               pkgs.dune_3
               pkgs.opam
               pkgs.just
-              # curl is used by the loader's download fallback (see below).
-              pkgs.curl
             ];
             # The native engine (libhegel) is resolved at runtime by
             # lib/ffi/loader.ml, not provided by Nix: it checks
-            # $HEGEL_LIBHEGEL_PATH, then a sibling
-            # ../hegel/target/{release,debug}/libhegel_c.<ext> checkout, then a
-            # SHA-256-verified download cached under ~/.cache/hegel-ocaml.
-            # Build hegeldev/hegel locally (`cargo build -p hegeltest-c`) and
-            # set HEGEL_LIBHEGEL_PATH to skip the download (or rely on the
-            # sibling-checkout lookup).
+            # $HEGEL_LIBHEGEL_PATH, then the installed package's libhegel
+            # site, then the monorepo's in-tree cargo build
+            # (target/{release,debug}/ of the enclosing checkout). Build it
+            # with `cargo build --release -p hegeltest-c` or set
+            # HEGEL_LIBHEGEL_PATH.
           };
         }
       );

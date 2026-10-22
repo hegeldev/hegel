@@ -1,15 +1,41 @@
+# Recipes for the OCaml frontend (the `hegel`, `ppx_hegel_compat`,
+# `ppx_hegel_generator` and `ppx_hegel_test` opam packages). Run as
+# `just ocaml::<recipe>` from anywhere in the repo; recipes execute from this
+# directory. The engine is the in-tree libhegel: `build-libhegel` compiles it
+# into the workspace's `target/`, and the test recipes point the loader at
+# that build through `HEGEL_LIBHEGEL_PATH` (an already-set value wins;
+# scripts/libhegel-path.sh is the one place that knows where the build is).
 set ignore-comments := true
 
-check-tests:
+# Install the opam dependencies into the current switch (needs opam; OCaml >= 5.1).
+setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # --confirm-level=unsafe-yes lets opam run the system package manager
+    # (e.g. brew, for ctypes' libffi) non-interactively; plain --yes refuses.
+    opam install . --deps-only --with-test --with-doc --with-dev-setup --confirm-level=unsafe-yes
+    # The hegel.jane and hegel.jane.async sublibraries' depopts, which the
+    # coverage-enforcing suite needs.
+    opam install core async --confirm-level=unsafe-yes
+
+# Build libhegel (release) into the workspace's target/.
+build-libhegel:
+    cargo build --release -p hegeltest-c --manifest-path ../../Cargo.toml
+
+# Print the path of the in-tree libhegel build the tests load.
+libhegel-path:
+    @scripts/libhegel-path.sh
+
+# The full suite with bisect_ppx, enforcing 100% coverage of lib/ and lib/jane/.
+check-test: build-libhegel
     #!/usr/bin/env bash
     set -euo pipefail
     eval $(opam env)
+    export HEGEL_LIBHEGEL_PATH="${HEGEL_LIBHEGEL_PATH:-$(scripts/libhegel-path.sh)}"
     find _build -name '*.coverage' -delete 2>/dev/null || true
     # Run test binaries directly (not via dune runtest) so output streams
     # in real-time — dune runtest buffers output until completion, hiding
-    # diagnostic messages when a test hangs. The native libhegel engine is
-    # located automatically at runtime (HEGEL_LIBHEGEL_PATH > sibling
-    # ../hegel/target build > verified download); see lib/ffi/loader.ml.
+    # diagnostic messages when a test hangs.
     dune build --instrument-with bisect_ppx \
       test/test_hegel.exe \
       test/test_lazy_load.exe \
@@ -33,45 +59,13 @@ check-tests:
     ./_build/default/lib/jane/async/test/test_hegel_jane_async.exe
     ./_build/default/ppx/test/test_ppx_hegel_test_async.exe
     python3 scripts/check-coverage.py
-    
-format:
+
+# The suite without coverage, for switches missing the dev-setup deps (CI's compat/oxcaml jobs).
+check-test-no-coverage: build-libhegel
     #!/usr/bin/env bash
     set -euo pipefail
     eval $(opam env)
-    dune fmt || true
-    # also run format-nix if we have nix installed
-    @which nix && just format-nix || true
-
-format-nix:
-    nix run nixpkgs#nixfmt -- nix/flake.nix
-
-check-format-nix:
-    nix run nixpkgs#nixfmt -- --check nix/flake.nix
-
-check-format:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    eval $(opam env)
-    dune build @fmt
-
-check-docs:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    eval $(opam env)
-    # Scope to the `hegel` package so the internal ppx_hegel_* packages are
-    # excluded from the generated docs. odoc warnings are fatal in the dev
-    # profile (see the root `dune` file), so a cached success is genuinely
-    # warning-free — no cold rebuild needed. (Deleting _build/default/_doc to
-    # force one corrupted dune's incremental odoc state after source edits.)
-    dune build @doc --only-packages hegel
-
-docs: check-docs
-    open _build/default/_doc/_html/index.html
-
-check-tests-no-coverage:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    eval $(opam env)
+    export HEGEL_LIBHEGEL_PATH="${HEGEL_LIBHEGEL_PATH:-$(scripts/libhegel-path.sh)}"
     dune build test/test_hegel.exe test/test_lazy_load.exe \
       ppx/test/test_ppx_derive.exe ppx/test/test_ppx_hegel_test.exe
     ./_build/default/ppx/test/test_ppx_derive.exe
@@ -110,7 +104,47 @@ check-tests-no-coverage:
       ./_build/default/ppx/test/test_ppx_hegel_test_async_concurrent.exe
     fi
 
-# these aliases are provided as ux improvements for local developers. CI should use the longer
-# forms.
-test: check-tests
-check: check-format check-docs check-tests
+format:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval $(opam env)
+    dune fmt || true
+
+check-format:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval $(opam env)
+    dune build @fmt
+
+# The generated *.opam files must match dune-project, and lint clean.
+check-opam:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval $(opam env)
+    dune build ./*.opam
+    git diff --exit-code -- '*.opam'
+    opam lint ./*.opam
+
+check-lint: check-format check-opam
+
+check-docs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval $(opam env)
+    # Scope to the `hegel` package so the internal ppx_hegel_* packages are
+    # excluded from the generated docs. odoc warnings are fatal in the dev
+    # profile (see the root `dune` file), so a cached success is genuinely
+    # warning-free — no cold rebuild needed. (Deleting _build/default/_doc to
+    # force one corrupted dune's incremental odoc state after source edits.)
+    dune build @doc --only-packages hegel
+
+docs: check-docs
+    open _build/default/_doc/_html/index.html
+
+check: check-lint check-docs check-test
+
+# These aliases are provided as ux improvements for local developers. CI
+# should use the longer forms.
+
+test: check-test
+lint: check-lint

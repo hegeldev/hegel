@@ -32,7 +32,7 @@
     The version of Hegel in OPAM sometimes lags behind the version in Github. To pin the
     version in Github:
     {@shell[
-      opam pin add hegel "git+https://github.com/hegeldev/hegel-ocaml.git"
+      opam pin add --subpath frontends/ocaml hegel "git+https://github.com/hegeldev/hegel.git"
     ]}
 
     Hegel for OCaml supports {b Linux} (amd64/arm64) and {b macOS} (Apple Silicon).

@@ -7,13 +7,13 @@ This guide walks you through the basics of installing Hegel and writing your fir
 Add `hegel` to your opam environment:
 
 ```bash
-opam pin add hegel "git+ssh://git@github.com/hegeldev/hegel-ocaml.git"
+opam install hegel
 ```
 
-Hegel calls the native `libhegel` shared library and locates (or downloads and
-caches) it automatically at runtime, so there is no separate install step. See
-the [README](../README.md#install-hegel) for how the library is resolved and the
-supported platforms.
+Hegel calls the native `libhegel` shared library and locates it automatically
+at runtime; the opam release bundles it, so there is no separate install step.
+See the [README](../README.md#install-hegel) for how the library is resolved
+and the supported platforms.
 
 ## Write your first test
 

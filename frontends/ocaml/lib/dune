@@ -19,6 +19,7 @@
  (private_modules
   io
   locked
+  hegel_version
   generators_core
   generators_primitives
   generators_collections
@@ -28,6 +29,16 @@
   (pps ppx_js_style hegel.template))
  (instrumentation
   (backend bisect_ppx)))
+
+; Hegel.version is the package version in dune-project (what the release
+; automation bumps), not a second copy of it.
+
+(rule
+ (target hegel_version.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "let version = \"%{version:hegel}\"\n"))))
 
 ; Only compiler-flavor detection needs a shell. Run cppo directly before PPX.
 

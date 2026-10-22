@@ -9,7 +9,7 @@
 (using dune_site 0.1)
 
 (source
- (github hegeldev/hegel-ocaml))
+ (github hegeldev/hegel))
 
 (license MIT)
 

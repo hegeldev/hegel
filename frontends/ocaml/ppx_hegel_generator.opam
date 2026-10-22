@@ -7,8 +7,8 @@ description:
 maintainer: ["Ethan Chou <ethan.chou@antithesis.com>"]
 authors: ["Hegel Developers <https://github.com/hegeldev>"]
 license: "MIT"
-homepage: "https://github.com/hegeldev/hegel-ocaml"
-bug-reports: "https://github.com/hegeldev/hegel-ocaml/issues"
+homepage: "https://github.com/hegeldev/hegel"
+bug-reports: "https://github.com/hegeldev/hegel/issues"
 depends: [
   "dune" {>= "3.16"}
   "ocaml" {>= "5.1"}
@@ -22,7 +22,7 @@ depends: [
   "core_unix" {with-test & >= "v0.17"}
   "odoc" {with-doc}
 ]
-dev-repo: "git+https://github.com/hegeldev/hegel-ocaml.git"
+dev-repo: "git+https://github.com/hegeldev/hegel.git"
 available: arch != "riscv64"
 build: [
   ["dune" "subst"] {dev}

@@ -1,18 +1,25 @@
 name: Set up opam
-description: Install opam, restore/save the opam cache, create the requested OCaml switch, and install dependencies.
+description: >-
+  Install opam, restore/save the opam cache, create the requested OCaml switch
+  and install the OCaml frontend's dependencies (frontends/ocaml). Every OCaml
+  job in this repo starts with this so the setup logic lives in one place.
 inputs:
   ocaml-version:
     description: OCaml compiler version to create the switch for (also used as the switch name).
     required: false
     default: "5.2.1"
   cache-key:
-    description: Full key for the opam cache (e.g. opam-Linux-lint-<hash>).
+    description: Full key for the opam cache (e.g. opam-Linux-5.2.1-with-test-<hash>).
     required: true
   cache-restore-keys:
     description: Newline-separated restore-keys prefix for the opam cache.
     required: true
   deps-flags:
     description: Extra flags passed to `opam install . --deps-only` (e.g. --with-test).
+    required: false
+    default: ""
+  packages:
+    description: Space-separated extra opam packages to install after the dependencies (e.g. bisect_ppx.2.8.3 core async).
     required: false
     default: ""
 runs:
@@ -93,8 +100,10 @@ runs:
 
     - name: Install OCaml dependencies
       shell: bash
+      working-directory: frontends/ocaml
       env:
         DEPS_FLAGS: ${{ inputs.deps-flags }}
+        PACKAGES: ${{ inputs.packages }}
       run: |
         eval $(opam env)
         # --confirm-level=unsafe-yes lets opam run the system package manager
@@ -102,3 +111,6 @@ runs:
         # plain --yes refuses to invoke it and aborts with exit 10. It implies
         # "yes", so --yes is dropped. No-op when no depexts are missing (Linux).
         opam install . --deps-only $DEPS_FLAGS --confirm-level=unsafe-yes
+        if [ -n "$PACKAGES" ]; then
+          opam install $PACKAGES --confirm-level=unsafe-yes
+        fi

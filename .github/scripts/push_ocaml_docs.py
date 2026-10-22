@@ -1,12 +1,21 @@
+"""Publish the OCaml frontend's API reference to hegel.dev/ocaml.
+
+Run by the `release-ocaml-docs` job of ci.yml with the docs built
+(`just ocaml::check-docs` has filled frontends/ocaml/_build/default/_doc/_html/)
+and the hegeldev/website repository checked out at `website/`.
+"""
+
 import os
+import re
 import shutil
 import subprocess
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
+FRONTEND = ROOT / "frontends" / "ocaml"
 WEBSITE = ROOT / "website"
-DOCS_SRC = ROOT / "_build" / "default" / "_doc" / "_html"
+DOCS_SRC = FRONTEND / "_build" / "default" / "_doc" / "_html"
 DOCS_DEST = WEBSITE / "public" / "ocaml"
 # The docs are served at hegel.dev/ocaml. Vercel's `trailingSlash: false` +
 # `cleanUrls: true` serve `/ocaml/hegel/Hegel/index.html` at the URL
@@ -24,6 +33,11 @@ def git(*args: str) -> None:
     subprocess.run(["git", *args], check=True, cwd=WEBSITE)
 
 
+def frontend_version() -> str:
+    text = (FRONTEND / "dune-project").read_text()
+    return re.search(r"^\(version ([^)]+)\)", text, re.MULTILINE).group(1)
+
+
 def inject_base_href(root: Path) -> None:
     for html_path in root.rglob("*.html"):
         rel_dir = html_path.parent.relative_to(root).as_posix()
@@ -35,14 +49,11 @@ def inject_base_href(root: Path) -> None:
 
 
 def push_with_retry() -> None:
-    # Concurrent hegel releases (a libhegel release cascades into several
-    # library releases) can push to website main at the same time. Each flow
-    # touches a distinct path, so a rebase onto the winner is always clean:
-    # on rejection, fetch + rebase + retry.
+    # Sibling hegel language releases can push to website main at the same
+    # time. Each touches a distinct path, so a rebase onto the winner is
+    # always clean: on rejection, fetch + rebase + retry.
     for attempt in range(PUSH_ATTEMPTS):
-        result = subprocess.run(
-            ["git", "push", "origin", "HEAD:main"], cwd=WEBSITE
-        )
+        result = subprocess.run(["git", "push", "origin", "HEAD:main"], cwd=WEBSITE)
         if result.returncode == 0:
             return
         if attempt < PUSH_ATTEMPTS - 1:
@@ -53,7 +64,7 @@ def push_with_retry() -> None:
 
 
 def main() -> None:
-    version = os.environ["VERSION"]
+    version = frontend_version()
     app_id = os.environ["HEGEL_RELEASE_APP_ID"]
     app_slug = os.environ["HEGEL_RELEASE_APP_SLUG"]
 
@@ -83,7 +94,7 @@ def main() -> None:
         print("No doc changes to publish.")
         return
 
-    git("commit", "-m", f"Update hegel-ocaml docs to v{version}")
+    git("commit", "-m", f"Update the OCaml docs to v{version}")
     push_with_retry()
 
 

@@ -7,8 +7,8 @@ description:
 maintainer: ["Ethan Chou <ethan.chou@antithesis.com>"]
 authors: ["Hegel Developers <https://github.com/hegeldev>"]
 license: "MIT"
-homepage: "https://github.com/hegeldev/hegel-ocaml"
-bug-reports: "https://github.com/hegeldev/hegel-ocaml/issues"
+homepage: "https://github.com/hegeldev/hegel"
+bug-reports: "https://github.com/hegeldev/hegel/issues"
 depends: [
   "dune" {>= "3.16"}
   "cppo" {build}
@@ -36,7 +36,7 @@ depopts: [
   "concurrent"
   "ppx_template"
 ]
-dev-repo: "git+https://github.com/hegeldev/hegel-ocaml.git"
+dev-repo: "git+https://github.com/hegeldev/hegel.git"
 available: arch != "riscv64"
 build: [
   ["dune" "subst"] {dev}
