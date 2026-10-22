@@ -344,22 +344,52 @@ namespace hegel::impl {
             ~StringResultGuard() { hegel_owned_string_free(ctx, &result); }
         };
 
-        // Construct a string generator, converting an engine rejection into
-        // std::invalid_argument at generator-construction time.
+        // Convert an engine rejection of a configuration call into
+        // std::invalid_argument at generator-construction or query time.
+        void require_configured(hegel_context_t* ctx, const char* what,
+                                hegel_result_t rc) {
+            if (rc == HEGEL_OK) {
+                return;
+            }
+            std::string msg = last_error(ctx);
+            throw std::invalid_argument(
+                std::string(what) +
+                (msg.empty() ? ": invalid arguments" : ": " + msg));
+        }
+
         template <typename F>
         hegel_string_generator_t* make_string_generator(const char* what,
                                                         F&& build) {
             hegel_context_t* ctx = thread_context();
             hegel_string_generator_t* generator = nullptr;
-            hegel_result_t rc = build(ctx, &generator);
-            if (rc != HEGEL_OK) {
-                std::string msg = last_error(ctx);
-                throw std::invalid_argument(
-                    std::string(what) +
-                    (msg.empty() ? ": invalid arguments" : ": " + msg));
-            }
+            require_configured(ctx, what, build(ctx, &generator));
             return generator;
         }
+
+        // Owns a handle while its setters run, so that a rejected setter
+        // frees it before the exception leaves the constructor.
+        template <typename H> struct Building {
+            hegel_context_t* ctx;
+            hegel_result_t (*free_handle)(hegel_context_t*, H*);
+            H* handle = nullptr;
+
+            Building(hegel_context_t* context,
+                     hegel_result_t (*free_fn)(hegel_context_t*, H*))
+                : ctx(context), free_handle(free_fn) {}
+            ~Building() {
+                if (handle != nullptr) {
+                    free_handle(ctx, handle);
+                }
+            }
+            Building(const Building&) = delete;
+            Building& operator=(const Building&) = delete;
+
+            H* release() {
+                H* built = handle;
+                handle = nullptr;
+                return built;
+            }
+        };
 
     } // namespace
 
@@ -462,35 +492,270 @@ namespace hegel::impl {
         return value;
     }
 
-    hegel_date_t draw_date(const TestCase& tc) {
+    hegel_date_options_t* date_options_new(uint32_t weekday_mask,
+                                           uint32_t month_mask) {
+        Building<hegel_date_options_t> building{thread_context(),
+                                                hegel_date_options_free};
+        require_configured(
+            building.ctx, "dates",
+            hegel_date_options_new(building.ctx, &building.handle));
+        require_configured(building.ctx, "dates",
+                           hegel_date_options_set_weekdays(
+                               building.ctx, building.handle, weekday_mask));
+        require_configured(building.ctx, "dates",
+                           hegel_date_options_set_months(
+                               building.ctx, building.handle, month_mask));
+        return building.release();
+    }
+
+    void date_options_free(hegel_date_options_t* options) {
+        hegel_date_options_free(thread_context(), options);
+    }
+
+    hegel_timezone_spec_t*
+    timezone_spec_new(const std::optional<std::vector<std::string>>& names,
+                      bool links, bool legacy, bool unknown, bool opaque) {
+        Building<hegel_timezone_spec_t> building{thread_context(),
+                                                 hegel_timezone_spec_free};
+        require_configured(
+            building.ctx, "timezones",
+            hegel_timezone_spec_new(building.ctx, &building.handle));
+        require_configured(building.ctx, "timezones",
+                           hegel_timezone_spec_set_opaque(
+                               building.ctx, building.handle, opaque));
+        if (names.has_value()) {
+            std::vector<hegel_string_t> strings;
+            strings.reserve(names->size());
+            for (const std::string& name : *names) {
+                strings.push_back(borrow(name));
+            }
+            require_configured(
+                building.ctx, "timezones",
+                hegel_timezone_spec_set_names(building.ctx, building.handle,
+                                              strings.data(), strings.size()));
+        }
+        require_configured(building.ctx, "timezones",
+                           hegel_timezone_spec_set_links(
+                               building.ctx, building.handle, links));
+        require_configured(building.ctx, "timezones",
+                           hegel_timezone_spec_set_legacy(
+                               building.ctx, building.handle, legacy));
+        require_configured(building.ctx, "timezones",
+                           hegel_timezone_spec_set_unknown(
+                               building.ctx, building.handle, unknown));
+        return building.release();
+    }
+
+    void timezone_spec_free(hegel_timezone_spec_t* spec) {
+        hegel_timezone_spec_free(thread_context(), spec);
+    }
+
+    hegel_zoned_spec_t* zoned_spec_new(const ZonedSpecParams& params) {
+        Building<hegel_zoned_spec_t> building{thread_context(),
+                                              hegel_zoned_spec_free};
+        require_configured(
+            building.ctx, "zoned_datetimes",
+            hegel_zoned_spec_new(building.ctx, &building.handle));
+        require_configured(building.ctx, "zoned_datetimes",
+                           hegel_zoned_spec_set_precision(building.ctx,
+                                                          building.handle,
+                                                          params.precision));
+        if (params.civil_bounds.has_value()) {
+            require_configured(
+                building.ctx, "zoned_datetimes",
+                hegel_zoned_spec_set_civil_bounds(building.ctx, building.handle,
+                                                  params.civil_bounds->first,
+                                                  params.civil_bounds->second));
+        }
+        if (params.instant_bounds.has_value()) {
+            require_configured(building.ctx, "zoned_datetimes",
+                               hegel_zoned_spec_set_instant_bounds(
+                                   building.ctx, building.handle,
+                                   params.instant_bounds->first,
+                                   params.instant_bounds->second));
+        }
+        require_configured(building.ctx, "zoned_datetimes",
+                           hegel_zoned_spec_set_imaginary(building.ctx,
+                                                          building.handle,
+                                                          params.imaginary));
+        require_configured(building.ctx, "zoned_datetimes",
+                           hegel_zoned_spec_set_ambiguous(building.ctx,
+                                                          building.handle,
+                                                          params.ambiguous));
+        return building.release();
+    }
+
+    void zoned_spec_free(hegel_zoned_spec_t* spec) {
+        hegel_zoned_spec_free(thread_context(), spec);
+    }
+
+    hegel_span_spec_t*
+    span_spec_new(const std::array<std::optional<SpanUnitBounds>, 10>& bounds,
+                  uint32_t sign) {
+        Building<hegel_span_spec_t> building{thread_context(),
+                                             hegel_span_spec_free};
+        require_configured(building.ctx, "spans",
+                           hegel_span_spec_new(building.ctx, &building.handle));
+        require_configured(
+            building.ctx, "spans",
+            hegel_span_spec_set_sign(building.ctx, building.handle, sign));
+        uint32_t unit = 0;
+        for (const std::optional<SpanUnitBounds>& unit_bounds : bounds) {
+            if (unit_bounds.has_value()) {
+                require_configured(building.ctx, "spans",
+                                   hegel_span_spec_set_unit_bounds(
+                                       building.ctx, building.handle, unit,
+                                       unit_bounds->min_value,
+                                       unit_bounds->max_value));
+            }
+            ++unit;
+        }
+        return building.release();
+    }
+
+    void span_spec_free(hegel_span_spec_t* spec) {
+        hegel_span_spec_free(thread_context(), spec);
+    }
+
+    std::string tzdb_version() {
+        hegel_context_t* ctx = thread_context();
+        hegel_string_t version{nullptr, 0};
+        require_configured(ctx, "tzdb_version",
+                           hegel_tzdb_version(ctx, &version));
+        return std::string(version.data, version.len);
+    }
+
+    hegel_timezone_info_t timezone_info(std::string_view name) {
+        hegel_context_t* ctx = thread_context();
+        hegel_timezone_info_t info{};
+        require_configured(ctx, "info",
+                           hegel_timezone_info(ctx, borrow(name), &info));
+        return info;
+    }
+
+    hegel_timezone_resolution_t timezone_resolve(std::string_view name,
+                                                 hegel_datetime_t civil) {
+        hegel_context_t* ctx = thread_context();
+        hegel_timezone_resolution_t resolution{};
+        require_configured(
+            ctx, "resolve",
+            hegel_timezone_resolve(ctx, borrow(name), civil, &resolution));
+        return resolution;
+    }
+
+    hegel_timezone_offset_t timezone_offset_at(std::string_view name,
+                                               hegel_timestamp_t timestamp) {
+        hegel_context_t* ctx = thread_context();
+        hegel_timezone_offset_t offset{};
+        require_configured(
+            ctx, "offset_at",
+            hegel_timezone_offset_at(ctx, borrow(name), timestamp, &offset));
+        return offset;
+    }
+
+    hegel_date_t draw_date(const TestCase& tc, hegel_date_t min_value,
+                           hegel_date_t max_value,
+                           const hegel_date_options_t* options) {
         DrawScope scope(tc);
         hegel_date_t value{};
-        scope.raise_for_rc(
-            hegel_generate_date(scope.ctx, scope.tc, hegel_date_t{1, 1, 1},
-                                hegel_date_t{9999, 12, 31}, &value),
-            "hegel_generate_date");
+        scope.raise_for_rc(hegel_generate_date(scope.ctx, scope.tc, min_value,
+                                               max_value, options, &value),
+                           "hegel_generate_date");
         return value;
     }
 
-    hegel_time_t draw_time(const TestCase& tc) {
+    hegel_time_t draw_time(const TestCase& tc, hegel_time_t min_value,
+                           hegel_time_t max_value, uint32_t precision) {
         DrawScope scope(tc);
         hegel_time_t value{};
-        scope.raise_for_rc(
-            hegel_generate_time(scope.ctx, scope.tc, hegel_time_t{0, 0, 0, 0},
-                                hegel_time_t{23, 59, 59, 999999999}, &value),
-            "hegel_generate_time");
+        scope.raise_for_rc(hegel_generate_time(scope.ctx, scope.tc, min_value,
+                                               max_value, precision, &value),
+                           "hegel_generate_time");
         return value;
     }
 
-    hegel_datetime_t draw_datetime(const TestCase& tc) {
+    hegel_datetime_t draw_datetime(const TestCase& tc,
+                                   hegel_datetime_t min_value,
+                                   hegel_datetime_t max_value,
+                                   uint32_t precision) {
         DrawScope scope(tc);
         hegel_datetime_t value{};
-        hegel_datetime_t min_value{{1, 1, 1}, {0, 0, 0, 0}};
-        hegel_datetime_t max_value{{9999, 12, 31}, {23, 59, 59, 999999999}};
         scope.raise_for_rc(hegel_generate_datetime(scope.ctx, scope.tc,
                                                    min_value, max_value,
-                                                   &value),
+                                                   precision, &value),
                            "hegel_generate_datetime");
+        return value;
+    }
+
+    hegel_timestamp_t draw_timestamp(const TestCase& tc,
+                                     hegel_timestamp_t min_value,
+                                     hegel_timestamp_t max_value,
+                                     uint32_t precision) {
+        DrawScope scope(tc);
+        hegel_timestamp_t value{};
+        scope.raise_for_rc(hegel_generate_timestamp(scope.ctx, scope.tc,
+                                                    min_value, max_value,
+                                                    precision, &value),
+                           "hegel_generate_timestamp");
+        return value;
+    }
+
+    hegel_offset_t draw_offset(const TestCase& tc, int32_t min_seconds,
+                               int32_t max_seconds, uint32_t granularity,
+                               bool allow_unknown) {
+        DrawScope scope(tc);
+        hegel_offset_t value{};
+        scope.raise_for_rc(
+            hegel_generate_offset(scope.ctx, scope.tc, min_seconds, max_seconds,
+                                  granularity, allow_unknown, &value),
+            "hegel_generate_offset");
+        return value;
+    }
+
+    hegel_duration_t draw_duration(const TestCase& tc,
+                                   hegel_duration_t min_value,
+                                   hegel_duration_t max_value,
+                                   uint32_t precision) {
+        DrawScope scope(tc);
+        hegel_duration_t value{};
+        scope.raise_for_rc(hegel_generate_duration(scope.ctx, scope.tc,
+                                                   min_value, max_value,
+                                                   precision, &value),
+                           "hegel_generate_duration");
+        return value;
+    }
+
+    std::string draw_timezone(const TestCase& tc,
+                              const hegel_timezone_spec_t* spec) {
+        DrawScope scope(tc);
+        StringResultGuard guard{scope.ctx};
+        scope.raise_for_rc(
+            hegel_generate_timezone(scope.ctx, scope.tc, spec, &guard.result),
+            "hegel_generate_timezone");
+        std::string value(guard.result.data, guard.result.len);
+        return value;
+    }
+
+    ZonedDraw draw_zoned_datetime(const TestCase& tc,
+                                  const hegel_timezone_spec_t* tz_spec,
+                                  const hegel_zoned_spec_t* zoned_spec) {
+        DrawScope scope(tc);
+        StringResultGuard guard{scope.ctx};
+        hegel_zoned_datetime_t value{};
+        scope.raise_for_rc(hegel_generate_zoned_datetime(scope.ctx, scope.tc,
+                                                         tz_spec, zoned_spec,
+                                                         &value, &guard.result),
+                           "hegel_generate_zoned_datetime");
+        return ZonedDraw{value,
+                         std::string(guard.result.data, guard.result.len)};
+    }
+
+    hegel_span_t draw_span(const TestCase& tc, const hegel_span_spec_t* spec) {
+        DrawScope scope(tc);
+        hegel_span_t value{};
+        scope.raise_for_rc(
+            hegel_generate_span(scope.ctx, scope.tc, spec, &value),
+            "hegel_generate_span");
         return value;
     }
 

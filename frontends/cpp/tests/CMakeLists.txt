@@ -91,13 +91,13 @@ function(hegel_add_test)
 endfunction()
 
 foreach(name IN ITEMS integers floats strings collections flatmap
-        mixed_types)
+        mixed_types datetime)
     hegel_add_test(NAME test_shrink_quality_${name}
         SOURCE shrink_quality/test_${name}.cpp
         USE_UTILS)
 endforeach()
 
-foreach(name IN ITEMS integers floats strings collections one_of)
+foreach(name IN ITEMS integers floats strings collections one_of datetime)
     hegel_add_test(NAME test_find_quality_${name}
         SOURCE find_quality/test_${name}.cpp
         USE_UTILS)
@@ -121,6 +121,9 @@ hegel_add_test(NAME test_generators_combinators
     SOURCE test_generators_combinators.cpp)
 hegel_add_test(NAME test_generators_random
     SOURCE test_generators_random.cpp)
+hegel_add_test(NAME test_generators_datetime
+    SOURCE test_generators_datetime.cpp
+    USE_UTILS)
 hegel_add_test(NAME test_stateful
     SOURCE test_stateful.cpp
     USE_UTILS
