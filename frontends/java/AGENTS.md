@@ -113,15 +113,18 @@ unsupported); the Maven CLI is authoritative.
 Data crosses the FFI boundary through libhegel's **typed draw functions**
 (`hegel_generate_integer`, `hegel_generate_float`, `hegel_generate_string`
 through opaque `hegel_string_generator_t` handles, structured
-date/time/datetime/uuid/ip draws, …). Every fallible call takes a per-thread
-`hegel_context_t*` first argument and returns a `hegel_result_t`; results come
-back through out-parameters, and every handle is caller-owned and explicitly
-freed.
+date/time/datetime/timestamp/offset/duration/uuid/ip draws, time zone names,
+zoned datetimes and calendar spans through opaque `hegel_date_options_t`,
+`hegel_timezone_spec_t`, `hegel_zoned_spec_t` and `hegel_span_spec_t`
+handles, …). Every fallible call takes a per-thread `hegel_context_t*` first
+argument and returns a `hegel_result_t`; results come back through
+out-parameters, and every handle is caller-owned and explicitly freed.
 
 Layers live in `dev.hegel`; the concrete generator implementations are in the
 `dev.hegel.generators` subpackage (one class per generator: `IntegerGenerator`,
 `TextGenerator`, `ListGenerator`, `RegexGenerator`, `EmailGenerator`,
-`DateTimeGenerator`, `Derive`/`RecordGenerator`, etc.). The public
+`DateTimeGenerator`, `ZonedDateTimeGenerator`, `Derive`/`RecordGenerator`,
+etc.). The public
 `Generator`/`TestCase`/`Generators`/`Hegel`/`Stateful` surface stays in
 `dev.hegel`.
 
@@ -136,7 +139,11 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   process-wide lazy holder of the loaded shared object (with a test hook) — it
   caches only the immutable, thread-safe library, never per-test state. Both
   bindings keep one libhegel error context per thread (read back by
-  `lastErrorMessage()`), pass date/time/datetime structs by value, pass every
+  `lastErrorMessage()`), pass date/time/datetime/timestamp/duration structs by
+  value (a `Duration`'s floored seconds and `[0, 1e9)` nanoseconds are
+  converted to and from the engine's same-sign pair) and read the
+  `hegel_zoned_datetime_t` and `hegel_timezone_info_t` structs into the
+  `Libhegel.ZonedDatetime` and `Libhegel.TimezoneInfo` records, pass every
   string as the engine's `hegel_string_t` (`{const char *data; size_t len}`:
   by value for a required string, by nullable pointer where absent is
   meaningful, as a contiguous struct array for name lists; a Java `null`
@@ -235,7 +242,18 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   `hegel_string_generator_t` handle once per configuration and cache it
   (`HandleCache`, rebuilt if a test swaps the `Engine` binding);
   `StringGeneratorHandle` frees the engine allocation via a `Cleaner` when
-  unreachable. `Generators` is the factory facade.
+  unreachable. The date and time generators do the same with the engine's
+  configuration handles (`SpecHandle` + `SpecCache`: date options for
+  `weekdays`/`months`, a time zone spec for `zoneIds()` — the engine's names
+  intersected with `ZoneId.getAvailableZoneIds()` through
+  `hegel_timezone_info`, cached per links/legacy combination — a zoned spec
+  and a span spec); `LiveDataSource` frees a handle whose setter the engine
+  rejected before throwing. `ZonedDateTimeGenerator` builds the value from
+  the engine's civil fields and offset (or its instant, for a skipped wall
+  time) with the JVM's own rules and `assume`s the two instants agree, so a
+  JVM/engine tzdata disagreement rejects the case rather than erroring; a
+  `ZoneOffset` or a region only the JVM knows falls back to a plain datetime
+  draw attached to the zone. `Generators` is the factory facade.
 - **Public API** — `Hegel.test`/`Hegel.run`, `TestCase`
   (`draw`/`assume`/`note`/`target`/`isFinal`/`span`), `Label` (span labels;
   `Label.of(name)` mints FNV-1a labels), `Reporter`, `RunReport`,

@@ -2,6 +2,8 @@ package dev.hegel;
 
 import dev.hegel.lowlevel.Abi;
 import dev.hegel.lowlevel.Libhegel;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -125,27 +127,169 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
-    public LocalDate generateDate(LocalDate min, LocalDate max) {
+    public LocalDate generateDate(LocalDate min, LocalDate max, SpecHandle options) {
         checkLive();
         LocalDate[] out = new LocalDate[1];
-        translate(lib.generateDate(tc, min, max, out), "generate_date");
+        translate(lib.generateDate(tc, min, max, options == null ? 0 : options.handle, out), "generate_date");
         return out[0];
     }
 
     @Override
-    public LocalTime generateTime(LocalTime min, LocalTime max) {
+    public LocalTime generateTime(LocalTime min, LocalTime max, int precision) {
         checkLive();
         LocalTime[] out = new LocalTime[1];
-        translate(lib.generateTime(tc, min, max, out), "generate_time");
+        translate(lib.generateTime(tc, min, max, precision, out), "generate_time");
         return out[0];
     }
 
     @Override
-    public LocalDateTime generateDatetime(LocalDateTime min, LocalDateTime max) {
+    public LocalDateTime generateDatetime(LocalDateTime min, LocalDateTime max, int precision) {
         checkLive();
         LocalDateTime[] out = new LocalDateTime[1];
-        translate(lib.generateDatetime(tc, min, max, out), "generate_datetime");
+        translate(lib.generateDatetime(tc, min, max, precision, out), "generate_datetime");
         return out[0];
+    }
+
+    @Override
+    public Instant generateTimestamp(Instant min, Instant max, int precision) {
+        checkLive();
+        Instant[] out = new Instant[1];
+        translate(lib.generateTimestamp(tc, min, max, precision, out), "generate_timestamp");
+        return out[0];
+    }
+
+    @Override
+    public int generateOffset(int minSeconds, int maxSeconds, int granularity) {
+        checkLive();
+        int[] seconds = new int[1];
+        boolean[] known = new boolean[1];
+        translate(
+                lib.generateOffset(tc, minSeconds, maxSeconds, granularity, false, seconds, known), "generate_offset");
+        return seconds[0];
+    }
+
+    @Override
+    public Duration generateDuration(Duration min, Duration max, int precision) {
+        checkLive();
+        Duration[] out = new Duration[1];
+        translate(lib.generateDuration(tc, min, max, precision, out), "generate_duration");
+        return out[0];
+    }
+
+    @Override
+    public String generateTimezone(SpecHandle spec) {
+        checkLive();
+        String[] out = new String[1];
+        translate(lib.generateTimezone(tc, spec.handle, out), "generate_timezone");
+        return out[0];
+    }
+
+    @Override
+    public Libhegel.ZonedDatetime generateZonedDatetime(SpecHandle tzSpec, SpecHandle zonedSpec) {
+        checkLive();
+        Libhegel.ZonedDatetime[] out = new Libhegel.ZonedDatetime[1];
+        translate(lib.generateZonedDatetime(tc, tzSpec.handle, zonedSpec.handle, out), "generate_zoned_datetime");
+        return out[0];
+    }
+
+    @Override
+    public long[] generateSpan(SpecHandle spec) {
+        checkLive();
+        long[] out = new long[10];
+        translate(lib.generateSpan(tc, spec.handle, out), "generate_span");
+        return out;
+    }
+
+    private void configure(long handle, SpecHandle.Freer freer, int rc, String op) {
+        if (rc != Abi.OK) {
+            freer.free(lib, handle);
+        }
+        translate(rc, op);
+    }
+
+    @Override
+    public SpecHandle dateOptions(int weekdayMask, int monthMask) {
+        checkLive();
+        long[] out = new long[1];
+        translate(lib.dateOptionsNew(out), "date_options_new");
+        SpecHandle.Freer freer = Libhegel::dateOptionsFree;
+        if (weekdayMask != 0) {
+            configure(out[0], freer, lib.dateOptionsSetWeekdays(out[0], weekdayMask), "date_options_set_weekdays");
+        }
+        if (monthMask != 0) {
+            configure(out[0], freer, lib.dateOptionsSetMonths(out[0], monthMask), "date_options_set_months");
+        }
+        return new SpecHandle(lib, out[0], freer);
+    }
+
+    @Override
+    public SpecHandle timezoneSpec(List<String> names, boolean links, boolean legacy) {
+        checkLive();
+        long[] out = new long[1];
+        translate(lib.timezoneSpecNew(out), "timezone_spec_new");
+        SpecHandle.Freer freer = Libhegel::timezoneSpecFree;
+        configure(out[0], freer, lib.timezoneSpecSetNames(out[0], names), "timezone_spec_set_names");
+        lib.timezoneSpecSetLinks(out[0], links);
+        lib.timezoneSpecSetLegacy(out[0], legacy);
+        return new SpecHandle(lib, out[0], freer);
+    }
+
+    @Override
+    public SpecHandle zonedSpec(
+            LocalDateTime civilMin,
+            LocalDateTime civilMax,
+            Instant instantMin,
+            Instant instantMax,
+            int precision,
+            int imaginary,
+            int ambiguous) {
+        checkLive();
+        long[] out = new long[1];
+        translate(lib.zonedSpecNew(out), "zoned_spec_new");
+        long spec = out[0];
+        SpecHandle.Freer freer = Libhegel::zonedSpecFree;
+        configure(spec, freer, lib.zonedSpecSetPrecision(spec, precision), "zoned_spec_set_precision");
+        if (civilMin != null) {
+            configure(
+                    spec, freer, lib.zonedSpecSetCivilBounds(spec, civilMin, civilMax), "zoned_spec_set_civil_bounds");
+        } else {
+            configure(
+                    spec,
+                    freer,
+                    lib.zonedSpecSetInstantBounds(spec, instantMin, instantMax),
+                    "zoned_spec_set_instant_bounds");
+        }
+        configure(spec, freer, lib.zonedSpecSetImaginary(spec, imaginary), "zoned_spec_set_imaginary");
+        configure(spec, freer, lib.zonedSpecSetAmbiguous(spec, ambiguous), "zoned_spec_set_ambiguous");
+        return new SpecHandle(lib, spec, freer);
+    }
+
+    @Override
+    public SpecHandle spanSpec(int[] units, long[] mins, long[] maxs, int sign) {
+        checkLive();
+        long[] out = new long[1];
+        translate(lib.spanSpecNew(out), "span_spec_new");
+        long spec = out[0];
+        SpecHandle.Freer freer = Libhegel::spanSpecFree;
+        configure(spec, freer, lib.spanSpecSetSign(spec, sign), "span_spec_set_sign");
+        for (int i = 0; i < units.length; i++) {
+            configure(
+                    spec,
+                    freer,
+                    lib.spanSpecSetUnitBounds(spec, units[i], mins[i], maxs[i]),
+                    "span_spec_set_unit_bounds");
+        }
+        return new SpecHandle(lib, spec, freer);
+    }
+
+    @Override
+    public boolean ownsSpec(SpecHandle spec) {
+        return spec.lib == lib;
+    }
+
+    @Override
+    public Libhegel.TimezoneInfo timezoneInfo(String name) {
+        return lib.timezoneInfo(name);
     }
 
     @Override

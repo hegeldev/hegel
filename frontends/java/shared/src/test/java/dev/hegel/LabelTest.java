@@ -35,9 +35,24 @@ class LabelTest {
     @Test
     void frontendConstantsAreDistinct() {
         long[] all = {
-            Label.LIST, Label.LIST_ELEMENT, Label.SET, Label.SET_ELEMENT, Label.MAP, Label.MAP_ENTRY,
-            Label.TUPLE, Label.ONE_OF, Label.OPTIONAL, Label.FIXED_DICT, Label.FLAT_MAP, Label.FILTER,
-            Label.MAPPED, Label.SAMPLED_FROM, Label.ENUM_VARIANT, Label.STATEFUL_RULE, Label.COMPOSITE,
+            Label.LIST,
+            Label.LIST_ELEMENT,
+            Label.SET,
+            Label.SET_ELEMENT,
+            Label.MAP,
+            Label.MAP_ENTRY,
+            Label.TUPLE,
+            Label.ONE_OF,
+            Label.OPTIONAL,
+            Label.FIXED_DICT,
+            Label.FLAT_MAP,
+            Label.FILTER,
+            Label.MAPPED,
+            Label.SAMPLED_FROM,
+            Label.ENUM_VARIANT,
+            Label.STATEFUL_RULE,
+            Label.COMPOSITE,
+            Label.ZONED_DATETIME,
         };
         for (int i = 0; i < all.length; i++) {
             for (int j = i + 1; j < all.length; j++) {
