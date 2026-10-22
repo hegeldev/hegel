@@ -324,7 +324,8 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   `setAccessible(true)` succeeded in `Stateful`. Adding one is the Java
   equivalent of `// nocov` and needs the same explicit human permission.
   Everything else is covered by real-engine integration tests plus
-  `FakeLibhegel`-driven error-path tests.
+  `FakeLibhegel`-driven error-path tests. `scripts/uncovered.py` lists the
+  lines a failed gate left uncovered (CI runs it on failure).
 - **Never mock the engine for behaviour.** The behaviour suite runs against
   the real libhegel through both backends; `FakeLibhegel` exists only for the
   result-code and error paths the engine cannot be driven into.

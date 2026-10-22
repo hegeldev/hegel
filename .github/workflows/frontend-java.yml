@@ -34,6 +34,9 @@ jobs:
           cache: maven
       - name: Test with 100% coverage enforcement
         run: just java::check-test
+      - name: Report uncovered lines
+        if: failure()
+        run: python3 frontends/java/scripts/uncovered.py
 
   # hegel-lowlevel and hegel-jna on the JDKs the JNA artifact supports.
   test-jna:
@@ -57,6 +60,9 @@ jobs:
           cache: maven
       - name: Test hegel-jna with 100% coverage enforcement
         run: just java::check-test-jna
+      - name: Report uncovered lines
+        if: failure()
+        run: python3 frontends/java/scripts/uncovered.py
 
   # The suite on the other platforms the jars bundle an engine for.
   test-os:
