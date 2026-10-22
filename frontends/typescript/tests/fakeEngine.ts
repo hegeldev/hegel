@@ -12,6 +12,10 @@ import {
   type StringGeneratorHandle,
   type PoolHandle,
   type StateMachineHandle,
+  type DateOptionsHandle,
+  type TimeZoneSpecHandle,
+  type ZonedSpecHandle,
+  type SpanSpecHandle,
 } from "../src/engine.js";
 import { Database, Verbosity } from "../src/runnerCore.js";
 import type { RuntimeServices } from "../src/runtime.js";
@@ -27,6 +31,12 @@ export const collection = {} as CollectionHandle;
 export const stringGenerator = {} as StringGeneratorHandle;
 export const pool = {} as PoolHandle;
 export const stateMachine = {} as StateMachineHandle;
+export const dateOptions = {} as DateOptionsHandle;
+export const timeZoneSpec = {} as TimeZoneSpecHandle;
+export const zonedSpec = {} as ZonedSpecHandle;
+export const spanSpec = {} as SpanSpecHandle;
+
+const epoch2000 = { second: 946_684_800n, nanosecond: 0 };
 
 /** Deterministic Engine double; no ABI pointers or generated engine logic. */
 export function fakeEngine() {
@@ -66,6 +76,10 @@ export function fakeEngine() {
     stringGeneratorUrl: vi.fn<Engine["stringGeneratorUrl"]>(() => stringGenerator),
     stringGeneratorDomain: vi.fn<Engine["stringGeneratorDomain"]>(() => stringGenerator),
     generateString: vi.fn<Engine["generateString"]>(() => "value"),
+    dateOptionsNew: vi.fn<Engine["dateOptionsNew"]>(() => dateOptions),
+    dateOptionsSetWeekdays: vi.fn<Engine["dateOptionsSetWeekdays"]>(),
+    dateOptionsSetMonths: vi.fn<Engine["dateOptionsSetMonths"]>(),
+    freeDateOptions: vi.fn<Engine["freeDateOptions"]>(),
     generateDate: vi.fn<Engine["generateDate"]>(() => ({ year: 2024, month: 2, day: 29 })),
     generateTime: vi.fn<Engine["generateTime"]>(() => ({
       hour: 1,
@@ -76,6 +90,58 @@ export function fakeEngine() {
     generateDatetime: vi.fn<Engine["generateDatetime"]>(() => ({
       date: { year: 2024, month: 2, day: 29 },
       time: { hour: 1, minute: 2, second: 3, nanosecond: 1 },
+    })),
+    generateTimestamp: vi.fn<Engine["generateTimestamp"]>(() => epoch2000),
+    generateOffset: vi.fn<Engine["generateOffset"]>(() => ({ seconds: 0, known: true })),
+    timezoneInfo: vi.fn<Engine["timezoneInfo"]>(() => ({
+      known: true,
+      primaryName: "UTC",
+      isLink: false,
+      rank: 0,
+      tags: 0,
+    })),
+    timezoneSpecNew: vi.fn<Engine["timezoneSpecNew"]>(() => timeZoneSpec),
+    timezoneSpecSetNames: vi.fn<Engine["timezoneSpecSetNames"]>(),
+    freeTimezoneSpec: vi.fn<Engine["freeTimezoneSpec"]>(),
+    generateTimezone: vi.fn<Engine["generateTimezone"]>(() => "UTC"),
+    zonedSpecNew: vi.fn<Engine["zonedSpecNew"]>(() => zonedSpec),
+    zonedSpecSetCivilBounds: vi.fn<Engine["zonedSpecSetCivilBounds"]>(),
+    zonedSpecSetInstantBounds: vi.fn<Engine["zonedSpecSetInstantBounds"]>(),
+    zonedSpecSetPrecision: vi.fn<Engine["zonedSpecSetPrecision"]>(),
+    zonedSpecSetImaginary: vi.fn<Engine["zonedSpecSetImaginary"]>(),
+    zonedSpecSetAmbiguous: vi.fn<Engine["zonedSpecSetAmbiguous"]>(),
+    freeZonedSpec: vi.fn<Engine["freeZonedSpec"]>(),
+    generateZonedDatetime: vi.fn<Engine["generateZonedDatetime"]>(() => ({
+      value: {
+        civil: {
+          date: { year: 2000, month: 1, day: 1 },
+          time: { hour: 0, minute: 0, second: 0, nanosecond: 0 },
+        },
+        offsetSeconds: 0,
+        offsetKnown: true,
+        fold: false,
+        kind: 0,
+        offsetBefore: 0,
+        offsetAfter: 0,
+        timestamp: epoch2000,
+      },
+      zone: "UTC",
+    })),
+    spanSpecNew: vi.fn<Engine["spanSpecNew"]>(() => spanSpec),
+    spanSpecSetUnitBounds: vi.fn<Engine["spanSpecSetUnitBounds"]>(),
+    spanSpecSetSign: vi.fn<Engine["spanSpecSetSign"]>(),
+    freeSpanSpec: vi.fn<Engine["freeSpanSpec"]>(),
+    generateSpan: vi.fn<Engine["generateSpan"]>(() => ({
+      years: 0n,
+      months: 0n,
+      weeks: 0n,
+      days: 0n,
+      hours: 0n,
+      minutes: 0n,
+      seconds: 0n,
+      milliseconds: 0n,
+      microseconds: 0n,
+      nanoseconds: 0n,
     })),
     generateUuid: vi.fn<Engine["generateUuid"]>(() =>
       Uint8Array.from([

@@ -16,6 +16,15 @@ import {
   type NativeDate,
   type NativeTime,
   type NativeDatetime,
+  type NativeTimestamp,
+  type NativeOffset,
+  type NativeSpan,
+  type NativeZonedDatetime,
+  type NativeTimeZoneInfo,
+  type DateOptionsHandle,
+  type TimeZoneSpecHandle,
+  type ZonedSpecHandle,
+  type SpanSpecHandle,
   type NativeFloatOptions,
   type TextGeneratorOptions,
   type UuidVersion,
@@ -260,44 +269,57 @@ export class WasmEngine implements Engine {
     );
   }
 
+  /** Run `read` over the engine-owned buffer at `out`, then release it with `free`. */
+  private released<T>(
+    free: "generate_bytes_result_free" | "owned_string_free",
+    out: number,
+    read: () => T,
+  ): T {
+    let result!: T;
+    let failure: unknown;
+    let failed = false;
+    try {
+      result = read();
+    } catch (error) {
+      failed = true;
+      failure = error;
+    } finally {
+      try {
+        this.check(0, free, [0, out]);
+      } catch (cleanup) {
+        failure = failed
+          ? new EngineError("Wasm buffer copy and release failed", {
+              cause: new AggregateError([failure, cleanup]),
+            })
+          : cleanup;
+        failed = true;
+      }
+    }
+    if (failed) throw failure;
+    return result;
+  }
+
+  private copyBuffer<T>(a: WasmArena, out: number, decode: (bytes: Uint8Array) => T): T {
+    const data = a.pointer(out),
+      length = a.pointer(out + 4);
+    if (data === 0) throw new EngineError("Wasm returned a null generated buffer");
+    return decode(a.bytes(data, length).slice());
+  }
+
   private buffer<T>(
     ctx: number,
-    op: "generate_bytes" | "generate_string",
+    op: "generate_bytes" | "generate_string" | "generate_timezone",
     args: Argument[],
     decode: (bytes: Uint8Array) => T,
   ): T {
     return WasmArena.scoped(this.abi, (a) => {
       const out = a.alloc(8, 4);
       this.check(ctx, op, [...args, out], true);
-      let result!: T;
-      let failure: unknown;
-      let failed = false;
-      try {
-        const data = a.pointer(out),
-          length = a.pointer(out + 4);
-        if (data === 0) throw new EngineError("Wasm returned a null generated buffer");
-        result = decode(a.bytes(data, length).slice());
-      } catch (error) {
-        failed = true;
-        failure = error;
-      } finally {
-        try {
-          this.check(
-            0,
-            op === "generate_bytes" ? "generate_bytes_result_free" : "owned_string_free",
-            [0, out],
-          );
-        } catch (cleanup) {
-          failure = failed
-            ? new EngineError("Wasm buffer copy and release failed", {
-                cause: new AggregateError([failure, cleanup]),
-              })
-            : cleanup;
-          failed = true;
-        }
-      }
-      if (failed) throw failure;
-      return result;
+      return this.released(
+        op === "generate_bytes" ? "generate_bytes_result_free" : "owned_string_free",
+        out,
+        () => this.copyBuffer(a, out, decode),
+      );
     });
   }
   generateBytes(
@@ -363,7 +385,7 @@ export class WasmEngine implements Engine {
     this.free("string_generator_free", generator);
   }
 
-  // These three by-value C inputs lower to pointers in the pinned raw artifact.
+  // The by-value C struct inputs lower to pointers in the pinned raw artifact.
   // Reinspect signatures and fixed-value tests before changing its source/toolchain.
   private temporal<T>(
     ctx: ContextHandle,
@@ -371,55 +393,247 @@ export class WasmEngine implements Engine {
     op: Operation,
     min: T,
     max: T,
-    size: number,
-    write: (view: DataView, value: T) => void,
-    read: (view: DataView) => T,
+    extra: Argument[],
+    layout: Layout<T>,
   ): T {
     return WasmArena.scoped(this.abi, (a) => {
-      const lo = a.alloc(size, 4),
-        hi = a.alloc(size, 4),
-        out = a.alloc(size, 4);
-      write(a.view(lo, size), min);
-      write(a.view(hi, size), max);
+      const lo = this.struct(a, layout, min),
+        hi = this.struct(a, layout, max),
+        out = a.alloc(layout.size, layout.align);
       const c = this.ptr(ctx);
-      this.check(c, op, [c, this.ptr(tc), lo, hi, out], true);
-      return read(a.view(out, size));
+      this.check(c, op, [c, this.ptr(tc), lo, hi, ...extra, out], true);
+      return layout.read(a.view(out, layout.size));
     });
+  }
+  /** Configure a spec through `op`, whose arguments follow the context and spec pointers. */
+  private configure(
+    ctx: ContextHandle,
+    op: Operation,
+    spec: object,
+    args: (a: WasmArena) => Argument[],
+  ): void {
+    WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      this.check(c, op, [c, this.ptr(spec), ...args(a)]);
+    });
+  }
+  private struct<T>(a: WasmArena, layout: Layout<T>, value: T): number {
+    const ptr = a.alloc(layout.size, layout.align);
+    layout.write(a.view(ptr, layout.size), value);
+    return ptr;
+  }
+  dateOptionsNew(ctx: ContextHandle): DateOptionsHandle {
+    const c = this.ptr(ctx);
+    return this.handle(c, "date_options_new", [c]);
+  }
+  dateOptionsSetWeekdays(ctx: ContextHandle, options: DateOptionsHandle, mask: number): void {
+    this.configure(ctx, "date_options_set_weekdays", options, () => [u32(mask)]);
+  }
+  dateOptionsSetMonths(ctx: ContextHandle, options: DateOptionsHandle, mask: number): void {
+    this.configure(ctx, "date_options_set_months", options, () => [u32(mask)]);
+  }
+  freeDateOptions(options: DateOptionsHandle): void {
+    this.free("date_options_free", options);
   }
   generateDate(
     ctx: ContextHandle,
     tc: TestCaseHandle,
     min: NativeDate,
     max: NativeDate,
+    options: DateOptionsHandle | null,
   ): NativeDate {
-    return this.temporal(ctx, tc, "generate_date", min, max, 8, writeDate, readDate);
+    const extra = [options === null ? 0 : this.ptr(options)];
+    return this.temporal(ctx, tc, "generate_date", min, max, extra, dateLayout);
   }
   generateTime(
     ctx: ContextHandle,
     tc: TestCaseHandle,
     min: NativeTime,
     max: NativeTime,
+    precision: number,
   ): NativeTime {
-    return this.temporal(ctx, tc, "generate_time", min, max, 8, writeTime, readTime);
+    return this.temporal(ctx, tc, "generate_time", min, max, [u32(precision)], timeLayout);
   }
   generateDatetime(
     ctx: ContextHandle,
     tc: TestCaseHandle,
     min: NativeDatetime,
     max: NativeDatetime,
+    precision: number,
   ): NativeDatetime {
-    return this.temporal(
-      ctx,
-      tc,
-      "generate_datetime",
-      min,
-      max,
-      16,
-      (view, value) => {
-        writeDate(view, value.date);
-        writeTime(view, value.time, 8);
+    const extra = [u32(precision)];
+    return this.temporal(ctx, tc, "generate_datetime", min, max, extra, datetimeLayout);
+  }
+  generateTimestamp(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    min: NativeTimestamp,
+    max: NativeTimestamp,
+    precision: number,
+  ): NativeTimestamp {
+    const extra = [u32(precision)];
+    return this.temporal(ctx, tc, "generate_timestamp", min, max, extra, timestampLayout);
+  }
+  generateOffset(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    min: number,
+    max: number,
+    granularity: number,
+    allowUnknown: boolean,
+  ): NativeOffset {
+    const c = this.ptr(ctx);
+    return this.output(
+      c,
+      "generate_offset",
+      [c, this.ptr(tc), i32(min), i32(max), u32(granularity), allowUnknown ? 1 : 0],
+      8,
+      4,
+      (a, p) => ({ seconds: a.view(p, 4).getInt32(0, true), known: a.boolean(p + 4) }),
+      true,
+    );
+  }
+  timezoneInfo(ctx: ContextHandle, name: string): NativeTimeZoneInfo {
+    return WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      const out = a.alloc(20, 4);
+      this.check(c, "timezone_info", [c, a.text(name), out]);
+      const view = a.view(out, 20);
+      const known = a.boolean(out);
+      return {
+        known,
+        primaryName: known ? a.string(out + 4) : "",
+        isLink: a.boolean(out + 12),
+        rank: view.getUint16(14, true),
+        tags: view.getUint32(16, true),
+      };
+    });
+  }
+  timezoneSpecNew(ctx: ContextHandle): TimeZoneSpecHandle {
+    const c = this.ptr(ctx);
+    return this.handle(c, "timezone_spec_new", [c]);
+  }
+  timezoneSpecSetNames(
+    ctx: ContextHandle,
+    spec: TimeZoneSpecHandle,
+    names: readonly string[],
+  ): void {
+    this.configure(ctx, "timezone_spec_set_names", spec, (a) => [
+      a.stringList(names),
+      u32(names.length),
+    ]);
+  }
+  freeTimezoneSpec(spec: TimeZoneSpecHandle): void {
+    this.free("timezone_spec_free", spec);
+  }
+  generateTimezone(ctx: ContextHandle, tc: TestCaseHandle, spec: TimeZoneSpecHandle): string {
+    const c = this.ptr(ctx);
+    return this.buffer(c, "generate_timezone", [c, this.ptr(tc), this.ptr(spec)], wtf8ToString);
+  }
+  zonedSpecNew(ctx: ContextHandle): ZonedSpecHandle {
+    const c = this.ptr(ctx);
+    return this.handle(c, "zoned_spec_new", [c]);
+  }
+  zonedSpecSetCivilBounds(
+    ctx: ContextHandle,
+    spec: ZonedSpecHandle,
+    min: NativeDatetime,
+    max: NativeDatetime,
+  ): void {
+    this.configure(ctx, "zoned_spec_set_civil_bounds", spec, (a) => [
+      this.struct(a, datetimeLayout, min),
+      this.struct(a, datetimeLayout, max),
+    ]);
+  }
+  zonedSpecSetInstantBounds(
+    ctx: ContextHandle,
+    spec: ZonedSpecHandle,
+    min: NativeTimestamp,
+    max: NativeTimestamp,
+  ): void {
+    this.configure(ctx, "zoned_spec_set_instant_bounds", spec, (a) => [
+      this.struct(a, timestampLayout, min),
+      this.struct(a, timestampLayout, max),
+    ]);
+  }
+  zonedSpecSetPrecision(ctx: ContextHandle, spec: ZonedSpecHandle, precision: number): void {
+    this.configure(ctx, "zoned_spec_set_precision", spec, () => [u32(precision)]);
+  }
+  zonedSpecSetImaginary(ctx: ContextHandle, spec: ZonedSpecHandle, imaginary: number): void {
+    this.configure(ctx, "zoned_spec_set_imaginary", spec, () => [u32(imaginary)]);
+  }
+  zonedSpecSetAmbiguous(ctx: ContextHandle, spec: ZonedSpecHandle, ambiguous: number): void {
+    this.configure(ctx, "zoned_spec_set_ambiguous", spec, () => [u32(ambiguous)]);
+  }
+  freeZonedSpec(spec: ZonedSpecHandle): void {
+    this.free("zoned_spec_free", spec);
+  }
+  generateZonedDatetime(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    tzSpec: TimeZoneSpecHandle,
+    zonedSpec: ZonedSpecHandle,
+  ): { value: NativeZonedDatetime; zone: string } {
+    return WasmArena.scoped(this.abi, (a) => {
+      const value = a.alloc(zonedLayout.size, zonedLayout.align),
+        zone = a.alloc(8, 4);
+      const c = this.ptr(ctx);
+      this.check(
+        c,
+        "generate_zoned_datetime",
+        [c, this.ptr(tc), this.ptr(tzSpec), this.ptr(zonedSpec), value, zone],
+        true,
+      );
+      return this.released("owned_string_free", zone, () => ({
+        value: zonedLayout.read(a.view(value, zonedLayout.size)),
+        zone: this.copyBuffer(a, zone, wtf8ToString),
+      }));
+    });
+  }
+  spanSpecNew(ctx: ContextHandle): SpanSpecHandle {
+    const c = this.ptr(ctx);
+    return this.handle(c, "span_spec_new", [c]);
+  }
+  spanSpecSetUnitBounds(
+    ctx: ContextHandle,
+    spec: SpanSpecHandle,
+    unit: number,
+    min: bigint,
+    max: bigint,
+  ): void {
+    this.configure(ctx, "span_spec_set_unit_bounds", spec, () => [u32(unit), i64(min), i64(max)]);
+  }
+  spanSpecSetSign(ctx: ContextHandle, spec: SpanSpecHandle, sign: number): void {
+    this.configure(ctx, "span_spec_set_sign", spec, () => [u32(sign)]);
+  }
+  freeSpanSpec(spec: SpanSpecHandle): void {
+    this.free("span_spec_free", spec);
+  }
+  generateSpan(ctx: ContextHandle, tc: TestCaseHandle, spec: SpanSpecHandle): NativeSpan {
+    const c = this.ptr(ctx);
+    return this.output(
+      c,
+      "generate_span",
+      [c, this.ptr(tc), this.ptr(spec)],
+      80,
+      8,
+      (a, p) => {
+        const view = a.view(p, 80);
+        const field = (index: number) => view.getBigInt64(index * 8, true);
+        return {
+          years: field(0),
+          months: field(1),
+          weeks: field(2),
+          days: field(3),
+          hours: field(4),
+          minutes: field(5),
+          seconds: field(6),
+          milliseconds: field(7),
+          microseconds: field(8),
+          nanoseconds: field(9),
+        };
       },
-      (view) => ({ date: readDate(view), time: readTime(view, 8) }),
+      true,
     );
   }
   generateUuid(ctx: ContextHandle, tc: TestCaseHandle, version?: UuidVersion): Uint8Array {
@@ -684,8 +898,25 @@ function integer(value: number, min: number, max: number): number {
     throw new EngineError("Invalid temporal field");
   return value;
 }
+function i32(value: number): number {
+  return integer(value, -0x80000000, 0x7fffffff);
+}
+function i64(value: bigint): bigint {
+  if (value < -0x8000000000000000n || value > 0x7fffffffffffffffn)
+    throw new EngineError("Invalid temporal field");
+  return value;
+}
+
+/** The wasm32 layout of a by-value C struct: its size, alignment and field codec. */
+interface Layout<T> {
+  size: number;
+  align: number;
+  write(view: DataView, value: T): void;
+  read(view: DataView): T;
+}
+
 function writeDate(view: DataView, date: NativeDate): void {
-  view.setInt32(0, integer(date.year, -0x80000000, 0x7fffffff), true);
+  view.setInt32(0, i32(date.year), true);
   view.setUint8(4, integer(date.month, 1, 12));
   view.setUint8(5, integer(date.day, 1, 31));
 }
@@ -710,3 +941,58 @@ function readTime(view: DataView, offset = 0): NativeTime {
     nanosecond: integer(view.getUint32(offset + 4, true), 0, 999999999),
   };
 }
+function writeDatetime(view: DataView, value: NativeDatetime): void {
+  writeDate(view, value.date);
+  writeTime(view, value.time, 8);
+}
+function readDatetime(view: DataView): NativeDatetime {
+  return { date: readDate(view), time: readTime(view, 8) };
+}
+function writeTimestamp(view: DataView, value: NativeTimestamp): void {
+  view.setBigInt64(0, i64(value.second), true);
+  view.setUint32(8, integer(value.nanosecond, 0, 999999999), true);
+}
+function readTimestamp(view: DataView, offset = 0): NativeTimestamp {
+  return {
+    second: view.getBigInt64(offset, true),
+    nanosecond: integer(view.getUint32(offset + 8, true), 0, 999999999),
+  };
+}
+function readBoolean(view: DataView, offset: number): boolean {
+  return integer(view.getUint8(offset), 0, 1) === 1;
+}
+
+const dateLayout: Layout<NativeDate> = { size: 8, align: 4, write: writeDate, read: readDate };
+const timeLayout: Layout<NativeTime> = {
+  size: 8,
+  align: 4,
+  write: (view, value) => writeTime(view, value),
+  read: (view) => readTime(view),
+};
+const datetimeLayout: Layout<NativeDatetime> = {
+  size: 16,
+  align: 4,
+  write: writeDatetime,
+  read: readDatetime,
+};
+const timestampLayout: Layout<NativeTimestamp> = {
+  size: 16,
+  align: 8,
+  write: writeTimestamp,
+  read: (view) => readTimestamp(view),
+};
+/** `hegel_zoned_datetime_t` is output only: civil at 0, offsets and flags from 16, timestamp at 40. */
+const zonedLayout = {
+  size: 56,
+  align: 8,
+  read: (view: DataView): NativeZonedDatetime => ({
+    civil: readDatetime(view),
+    offsetSeconds: view.getInt32(16, true),
+    offsetKnown: readBoolean(view, 20),
+    fold: readBoolean(view, 21),
+    kind: integer(view.getUint32(24, true), 0, 2),
+    offsetBefore: view.getInt32(28, true),
+    offsetAfter: view.getInt32(32, true),
+    timestamp: readTimestamp(view, 40),
+  }),
+};

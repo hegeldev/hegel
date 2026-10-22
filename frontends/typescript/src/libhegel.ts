@@ -43,6 +43,15 @@ import {
   type NativeDate,
   type NativeTime,
   type NativeDatetime,
+  type NativeTimestamp,
+  type NativeOffset,
+  type NativeSpan,
+  type NativeZonedDatetime,
+  type NativeTimeZoneInfo,
+  type DateOptionsHandle,
+  type TimeZoneSpecHandle,
+  type ZonedSpecHandle,
+  type SpanSpecHandle,
   type TextGeneratorOptions,
   type NativeFloatOptions,
   type UuidVersion,
@@ -54,6 +63,11 @@ export {
   type NativeDate,
   type NativeTime,
   type NativeDatetime,
+  type NativeTimestamp,
+  type NativeOffset,
+  type NativeSpan,
+  type NativeZonedDatetime,
+  type NativeTimeZoneInfo,
   type TextGeneratorOptions,
   type NativeFloatOptions,
   type StateMachineOptions,
@@ -111,11 +125,72 @@ const timeType: TypeObject = koffi.struct({
   nanosecond: "uint32_t",
 });
 const datetimeType: TypeObject = koffi.struct({ date: dateType, time: timeType });
+const timestampType: TypeObject = koffi.struct({ second: "int64_t", nanosecond: "uint32_t" });
+const offsetType: TypeObject = koffi.struct({ seconds: "int32_t", known: "bool" });
+const spanType: TypeObject = koffi.struct({
+  years: "int64_t",
+  months: "int64_t",
+  weeks: "int64_t",
+  days: "int64_t",
+  hours: "int64_t",
+  minutes: "int64_t",
+  seconds: "int64_t",
+  milliseconds: "int64_t",
+  microseconds: "int64_t",
+  nanoseconds: "int64_t",
+});
+const zonedDatetimeType: TypeObject = koffi.struct({
+  civil: datetimeType,
+  offset_seconds: "int32_t",
+  offset_known: "bool",
+  fold: "bool",
+  kind: "uint32_t",
+  offset_before: "int32_t",
+  offset_after: "int32_t",
+  timestamp: timestampType,
+});
 // hegel_string_t, hegel_owned_string_t and hegel_generate_bytes_result_t are
 // all {pointer, len}. `data` is bound as uint8_t* rather than char* so koffi
 // hands back the raw pointer: the strings may contain interior NULs, so they
 // are read by `len`.
 const stringType: TypeObject = koffi.struct({ data: "uint8_t*", len: "size_t" });
+const timezoneInfoType: TypeObject = koffi.struct({
+  known: "bool",
+  primary_name: stringType,
+  is_link: "bool",
+  rank: "uint16_t",
+  tags: "uint32_t",
+});
+
+/** A `hegel_timestamp_t` as koffi marshals it: the `int64_t` may come back as a `number`. */
+interface RawTimestamp {
+  second: number | bigint;
+  nanosecond: number;
+}
+
+/** A `hegel_zoned_datetime_t` as koffi marshals it, with the C field names. */
+interface RawZonedDatetime {
+  civil: NativeDatetime;
+  offset_seconds: number;
+  offset_known: boolean;
+  fold: boolean;
+  kind: number;
+  offset_before: number;
+  offset_after: number;
+  timestamp: RawTimestamp;
+}
+
+/** A `hegel_timezone_info_t` as koffi marshals it, with the C field names. */
+interface RawTimeZoneInfo {
+  known: boolean;
+  primary_name: NativeBuffer;
+  is_link: boolean;
+  rank: number;
+  tags: number;
+}
+
+/** A `hegel_span_t` as koffi marshals it: each `int64_t` may come back as a `number`. */
+type RawSpan = Record<keyof NativeSpan, number | bigint>;
 
 /**
  * The set of C functions bound from the shared library.
@@ -199,15 +274,86 @@ export interface Bindings {
   generateString: (ctx: Ptr, tc: Ptr, generator: Ptr, out: NativeBuffer[]) => number;
   ownedStringFree: (result: NativeBuffer) => void;
 
-  generateDate: (ctx: Ptr, tc: Ptr, min: NativeDate, max: NativeDate, out: NativeDate[]) => number;
-  generateTime: (ctx: Ptr, tc: Ptr, min: NativeTime, max: NativeTime, out: NativeTime[]) => number;
+  dateOptionsNew: (ctx: Ptr, out: Ptr[]) => number;
+  dateOptionsFree: (options: Ptr) => void;
+  dateOptionsSetWeekdays: (ctx: Ptr, options: Ptr, mask: number) => number;
+  dateOptionsSetMonths: (ctx: Ptr, options: Ptr, mask: number) => number;
+  generateDate: (
+    ctx: Ptr,
+    tc: Ptr,
+    min: NativeDate,
+    max: NativeDate,
+    options: Ptr,
+    out: NativeDate[],
+  ) => number;
+  generateTime: (
+    ctx: Ptr,
+    tc: Ptr,
+    min: NativeTime,
+    max: NativeTime,
+    precision: number,
+    out: NativeTime[],
+  ) => number;
   generateDatetime: (
     ctx: Ptr,
     tc: Ptr,
     min: NativeDatetime,
     max: NativeDatetime,
+    precision: number,
     out: NativeDatetime[],
   ) => number;
+  generateTimestamp: (
+    ctx: Ptr,
+    tc: Ptr,
+    min: NativeTimestamp,
+    max: NativeTimestamp,
+    precision: number,
+    out: RawTimestamp[],
+  ) => number;
+  generateOffset: (
+    ctx: Ptr,
+    tc: Ptr,
+    min: number,
+    max: number,
+    granularity: number,
+    allowUnknown: boolean,
+    out: NativeOffset[],
+  ) => number;
+  timezoneInfo: (ctx: Ptr, name: string, out: RawTimeZoneInfo[]) => number;
+  timezoneSpecNew: (ctx: Ptr, out: Ptr[]) => number;
+  timezoneSpecFree: (spec: Ptr) => void;
+  timezoneSpecSetNames: (ctx: Ptr, spec: Ptr, names: readonly string[]) => number;
+  generateTimezone: (ctx: Ptr, tc: Ptr, spec: Ptr, out: NativeBuffer[]) => number;
+  zonedSpecNew: (ctx: Ptr, out: Ptr[]) => number;
+  zonedSpecFree: (spec: Ptr) => void;
+  zonedSpecSetCivilBounds: (
+    ctx: Ptr,
+    spec: Ptr,
+    min: NativeDatetime,
+    max: NativeDatetime,
+  ) => number;
+  zonedSpecSetInstantBounds: (
+    ctx: Ptr,
+    spec: Ptr,
+    min: NativeTimestamp,
+    max: NativeTimestamp,
+  ) => number;
+  zonedSpecSetPrecision: (ctx: Ptr, spec: Ptr, precision: number) => number;
+  zonedSpecSetImaginary: (ctx: Ptr, spec: Ptr, imaginary: number) => number;
+  zonedSpecSetAmbiguous: (ctx: Ptr, spec: Ptr, ambiguous: number) => number;
+  generateZonedDatetime: (
+    ctx: Ptr,
+    tc: Ptr,
+    tzSpec: Ptr,
+    zonedSpec: Ptr,
+    outValue: RawZonedDatetime[],
+    outZone: NativeBuffer[],
+  ) => number;
+  spanSpecNew: (ctx: Ptr, out: Ptr[]) => number;
+  spanSpecFree: (spec: Ptr) => void;
+  spanSpecSetUnitBounds: (ctx: Ptr, spec: Ptr, unit: number, min: bigint, max: bigint) => number;
+  spanSpecSetSign: (ctx: Ptr, spec: Ptr, sign: number) => number;
+  generateSpan: (ctx: Ptr, tc: Ptr, spec: Ptr, out: RawSpan[]) => number;
   generateUuid: (
     ctx: Ptr,
     tc: Ptr,
@@ -406,11 +552,20 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   ]);
   const ownedStringFree = fs("hegel_owned_string_free", ["void*", koffi.pointer(stringType)]);
 
+  const dateOptionsNew = f("int hegel_date_options_new(void* ctx, _Out_ void** out)");
+  const dateOptionsFree = f("int hegel_date_options_free(void* ctx, void* options)");
+  const dateOptionsSetWeekdays = f(
+    "int hegel_date_options_set_weekdays(void* ctx, void* options, uint32_t mask)",
+  );
+  const dateOptionsSetMonths = f(
+    "int hegel_date_options_set_months(void* ctx, void* options, uint32_t mask)",
+  );
   const generateDate = fs("hegel_generate_date", [
     "void*",
     "void*",
     dateType,
     dateType,
+    "void*",
     koffi.out(koffi.pointer(dateType)),
   ]);
   const generateTime = fs("hegel_generate_time", [
@@ -418,6 +573,7 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     "void*",
     timeType,
     timeType,
+    "uint32_t",
     koffi.out(koffi.pointer(timeType)),
   ]);
   const generateDatetime = fs("hegel_generate_datetime", [
@@ -425,7 +581,87 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     "void*",
     datetimeType,
     datetimeType,
+    "uint32_t",
     koffi.out(koffi.pointer(datetimeType)),
+  ]);
+  const generateTimestamp = fs("hegel_generate_timestamp", [
+    "void*",
+    "void*",
+    timestampType,
+    timestampType,
+    "uint32_t",
+    koffi.out(koffi.pointer(timestampType)),
+  ]);
+  const generateOffset = fs("hegel_generate_offset", [
+    "void*",
+    "void*",
+    "int32_t",
+    "int32_t",
+    "uint32_t",
+    "bool",
+    koffi.out(koffi.pointer(offsetType)),
+  ]);
+  const timezoneInfo = fs("hegel_timezone_info", [
+    "void*",
+    stringType,
+    koffi.out(koffi.pointer(timezoneInfoType)),
+  ]);
+  const timezoneSpecNew = f("int hegel_timezone_spec_new(void* ctx, _Out_ void** out)");
+  const timezoneSpecFree = f("int hegel_timezone_spec_free(void* ctx, void* spec)");
+  const timezoneSpecSetNames = fs("hegel_timezone_spec_set_names", [
+    "void*",
+    "void*",
+    koffi.pointer(stringType),
+    "size_t",
+  ]);
+  const generateTimezone = fs("hegel_generate_timezone", [
+    "void*",
+    "void*",
+    "void*",
+    koffi.out(koffi.pointer(stringType)),
+  ]);
+  const zonedSpecNew = f("int hegel_zoned_spec_new(void* ctx, _Out_ void** out)");
+  const zonedSpecFree = f("int hegel_zoned_spec_free(void* ctx, void* spec)");
+  const zonedSpecSetCivilBounds = fs("hegel_zoned_spec_set_civil_bounds", [
+    "void*",
+    "void*",
+    datetimeType,
+    datetimeType,
+  ]);
+  const zonedSpecSetInstantBounds = fs("hegel_zoned_spec_set_instant_bounds", [
+    "void*",
+    "void*",
+    timestampType,
+    timestampType,
+  ]);
+  const zonedSpecSetPrecision = f(
+    "int hegel_zoned_spec_set_precision(void* ctx, void* spec, uint32_t precision)",
+  );
+  const zonedSpecSetImaginary = f(
+    "int hegel_zoned_spec_set_imaginary(void* ctx, void* spec, uint32_t imaginary)",
+  );
+  const zonedSpecSetAmbiguous = f(
+    "int hegel_zoned_spec_set_ambiguous(void* ctx, void* spec, uint32_t ambiguous)",
+  );
+  const generateZonedDatetime = fs("hegel_generate_zoned_datetime", [
+    "void*",
+    "void*",
+    "void*",
+    "void*",
+    koffi.out(koffi.pointer(zonedDatetimeType)),
+    koffi.out(koffi.pointer(stringType)),
+  ]);
+  const spanSpecNew = f("int hegel_span_spec_new(void* ctx, _Out_ void** out)");
+  const spanSpecFree = f("int hegel_span_spec_free(void* ctx, void* spec)");
+  const spanSpecSetUnitBounds = f(
+    "int hegel_span_spec_set_unit_bounds(void* ctx, void* spec, uint32_t unit, int64_t min, int64_t max)",
+  );
+  const spanSpecSetSign = f("int hegel_span_spec_set_sign(void* ctx, void* spec, uint32_t sign)");
+  const generateSpan = fs("hegel_generate_span", [
+    "void*",
+    "void*",
+    "void*",
+    koffi.out(koffi.pointer(spanType)),
   ]);
   const generateUuid = f(
     "int hegel_generate_uuid(void* ctx, void* tc, uint8_t version, bool has_version, _Out_ uint8_t* out_bytes)",
@@ -616,9 +852,42 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     stringGeneratorDomain: (ctx, maxLength, out) => stringGeneratorDomain(ctx, maxLength, out),
     generateString: (ctx, tc, generator, out) => generateString(ctx, tc, generator, out),
     ownedStringFree: (result) => checked(ownedStringFree(null, result), "ownedStringFree"),
-    generateDate: (ctx, tc, min, max, out) => generateDate(ctx, tc, min, max, out),
-    generateTime: (ctx, tc, min, max, out) => generateTime(ctx, tc, min, max, out),
-    generateDatetime: (ctx, tc, min, max, out) => generateDatetime(ctx, tc, min, max, out),
+    dateOptionsNew: (ctx, out) => dateOptionsNew(ctx, out),
+    dateOptionsFree: (options) => checked(dateOptionsFree(null, options), "dateOptionsFree"),
+    dateOptionsSetWeekdays: (ctx, options, mask) => dateOptionsSetWeekdays(ctx, options, mask),
+    dateOptionsSetMonths: (ctx, options, mask) => dateOptionsSetMonths(ctx, options, mask),
+    generateDate: (ctx, tc, min, max, options, out) =>
+      generateDate(ctx, tc, min, max, options, out),
+    generateTime: (ctx, tc, min, max, precision, out) =>
+      generateTime(ctx, tc, min, max, precision, out),
+    generateDatetime: (ctx, tc, min, max, precision, out) =>
+      generateDatetime(ctx, tc, min, max, precision, out),
+    generateTimestamp: (ctx, tc, min, max, precision, out) =>
+      generateTimestamp(ctx, tc, min, max, precision, out),
+    generateOffset: (ctx, tc, min, max, granularity, allowUnknown, out) =>
+      generateOffset(ctx, tc, min, max, granularity, allowUnknown, out),
+    timezoneInfo: (ctx, name, out) => timezoneInfo(ctx, nativeString(name), out),
+    timezoneSpecNew: (ctx, out) => timezoneSpecNew(ctx, out),
+    timezoneSpecFree: (spec) => checked(timezoneSpecFree(null, spec), "timezoneSpecFree"),
+    timezoneSpecSetNames: (ctx, spec, names) =>
+      timezoneSpecSetNames(ctx, spec, names.map(nativeString), names.length),
+    generateTimezone: (ctx, tc, spec, out) => generateTimezone(ctx, tc, spec, out),
+    zonedSpecNew: (ctx, out) => zonedSpecNew(ctx, out),
+    zonedSpecFree: (spec) => checked(zonedSpecFree(null, spec), "zonedSpecFree"),
+    zonedSpecSetCivilBounds: (ctx, spec, min, max) => zonedSpecSetCivilBounds(ctx, spec, min, max),
+    zonedSpecSetInstantBounds: (ctx, spec, min, max) =>
+      zonedSpecSetInstantBounds(ctx, spec, min, max),
+    zonedSpecSetPrecision: (ctx, spec, precision) => zonedSpecSetPrecision(ctx, spec, precision),
+    zonedSpecSetImaginary: (ctx, spec, imaginary) => zonedSpecSetImaginary(ctx, spec, imaginary),
+    zonedSpecSetAmbiguous: (ctx, spec, ambiguous) => zonedSpecSetAmbiguous(ctx, spec, ambiguous),
+    generateZonedDatetime: (ctx, tc, tzSpec, zonedSpec, outValue, outZone) =>
+      generateZonedDatetime(ctx, tc, tzSpec, zonedSpec, outValue, outZone),
+    spanSpecNew: (ctx, out) => spanSpecNew(ctx, out),
+    spanSpecFree: (spec) => checked(spanSpecFree(null, spec), "spanSpecFree"),
+    spanSpecSetUnitBounds: (ctx, spec, unit, min, max) =>
+      spanSpecSetUnitBounds(ctx, spec, unit, min, max),
+    spanSpecSetSign: (ctx, spec, sign) => spanSpecSetSign(ctx, spec, sign),
+    generateSpan: (ctx, tc, spec, out) => generateSpan(ctx, tc, spec, out),
     generateUuid: (ctx, tc, version, hasVersion, outBytes) =>
       generateUuid(ctx, tc, version, hasVersion, outBytes),
     generateIpv4: (ctx, tc, outBytes) => generateIpv4(ctx, tc, outBytes),
@@ -701,6 +970,17 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
 }
 
 const UINT64_MAX = 0xffffffffffffffffn;
+
+function emptyDatetime(): NativeDatetime {
+  return {
+    date: { year: 0, month: 0, day: 0 },
+    time: { hour: 0, minute: 0, second: 0, nanosecond: 0 },
+  };
+}
+
+function timestampFromRaw(raw: RawTimestamp): NativeTimestamp {
+  return { second: BigInt(raw.second), nanosecond: raw.nanosecond };
+}
 
 /** Copy an engine-owned `{data, len}` buffer into a JS-owned Buffer. */
 function copyNativeBuffer(result: NativeBuffer): Buffer {
@@ -989,30 +1269,299 @@ export class Libhegel implements Engine {
     }
   }
 
-  /** Draw a date in `[min, max]`. */
-  generateDate(ctx: Ptr, tc: Ptr, min: NativeDate, max: NativeDate): NativeDate {
+  /** Create date options allowing every weekday and month; release with {@link freeDateOptions}. */
+  dateOptionsNew(ctx: Ptr): DateOptionsHandle {
+    const out: Ptr[] = [null];
+    this.check(ctx, this.fns.dateOptionsNew(ctx, out), "hegel_date_options_new");
+    return this.requireHandle<DateOptionsHandle>(out[0], "dateOptionsNew");
+  }
+
+  dateOptionsSetWeekdays(ctx: Ptr, options: Ptr, mask: number): void {
+    this.check(
+      ctx,
+      this.fns.dateOptionsSetWeekdays(ctx, options, mask),
+      "hegel_date_options_set_weekdays",
+    );
+  }
+
+  dateOptionsSetMonths(ctx: Ptr, options: Ptr, mask: number): void {
+    this.check(
+      ctx,
+      this.fns.dateOptionsSetMonths(ctx, options, mask),
+      "hegel_date_options_set_months",
+    );
+  }
+
+  freeDateOptions(options: Ptr): void {
+    this.fns.dateOptionsFree(options);
+  }
+
+  /** Draw a date in `[min, max]`, within `options` when given. */
+  generateDate(ctx: Ptr, tc: Ptr, min: NativeDate, max: NativeDate, options: Ptr): NativeDate {
     const out: NativeDate[] = [{ year: 0, month: 0, day: 0 }];
-    this.check(ctx, this.fns.generateDate(ctx, tc, min, max, out), "hegel_generate_date");
+    this.check(ctx, this.fns.generateDate(ctx, tc, min, max, options, out), "hegel_generate_date");
     return out[0];
   }
 
-  /** Draw a time of day in `[min, max]`. */
-  generateTime(ctx: Ptr, tc: Ptr, min: NativeTime, max: NativeTime): NativeTime {
+  /** Draw a time of day in `[min, max]` at `precision`. */
+  generateTime(ctx: Ptr, tc: Ptr, min: NativeTime, max: NativeTime, precision: number): NativeTime {
     const out: NativeTime[] = [{ hour: 0, minute: 0, second: 0, nanosecond: 0 }];
-    this.check(ctx, this.fns.generateTime(ctx, tc, min, max, out), "hegel_generate_time");
+    this.check(
+      ctx,
+      this.fns.generateTime(ctx, tc, min, max, precision, out),
+      "hegel_generate_time",
+    );
     return out[0];
   }
 
-  /** Draw a naive datetime in `[min, max]`. */
-  generateDatetime(ctx: Ptr, tc: Ptr, min: NativeDatetime, max: NativeDatetime): NativeDatetime {
-    const out: NativeDatetime[] = [
+  /** Draw a naive datetime in `[min, max]` at `precision`. */
+  generateDatetime(
+    ctx: Ptr,
+    tc: Ptr,
+    min: NativeDatetime,
+    max: NativeDatetime,
+    precision: number,
+  ): NativeDatetime {
+    const out: NativeDatetime[] = [emptyDatetime()];
+    this.check(
+      ctx,
+      this.fns.generateDatetime(ctx, tc, min, max, precision, out),
+      "hegel_generate_datetime",
+    );
+    return out[0];
+  }
+
+  /** Draw an instant in `[min, max]` at `precision`. */
+  generateTimestamp(
+    ctx: Ptr,
+    tc: Ptr,
+    min: NativeTimestamp,
+    max: NativeTimestamp,
+    precision: number,
+  ): NativeTimestamp {
+    const out: RawTimestamp[] = [{ second: 0, nanosecond: 0 }];
+    this.check(
+      ctx,
+      this.fns.generateTimestamp(ctx, tc, min, max, precision, out),
+      "hegel_generate_timestamp",
+    );
+    return timestampFromRaw(out[0]);
+  }
+
+  /** Draw a UTC offset in `[min, max]` seconds at `granularity`. */
+  generateOffset(
+    ctx: Ptr,
+    tc: Ptr,
+    min: number,
+    max: number,
+    granularity: number,
+    allowUnknown: boolean,
+  ): NativeOffset {
+    const out: NativeOffset[] = [{ seconds: 0, known: false }];
+    this.check(
+      ctx,
+      this.fns.generateOffset(ctx, tc, min, max, granularity, allowUnknown, out),
+      "hegel_generate_offset",
+    );
+    return out[0];
+  }
+
+  /** Look `name` up in the bundled time zone database; `known` is false for an unknown name. */
+  timezoneInfo(ctx: Ptr, name: string): NativeTimeZoneInfo {
+    const out: RawTimeZoneInfo[] = [
+      { known: false, primary_name: { data: null, len: 0 }, is_link: false, rank: 0, tags: 0 },
+    ];
+    this.check(ctx, this.fns.timezoneInfo(ctx, name, out), "hegel_timezone_info");
+    const info = out[0];
+    return {
+      known: info.known,
+      primaryName: info.known ? wtf8ToString(copyNativeBuffer(info.primary_name)) : "",
+      isLink: info.is_link,
+      rank: info.rank,
+      tags: info.tags,
+    };
+  }
+
+  /** Create a time zone spec allowing every bundled name; release with {@link freeTimezoneSpec}. */
+  timezoneSpecNew(ctx: Ptr): TimeZoneSpecHandle {
+    const out: Ptr[] = [null];
+    this.check(ctx, this.fns.timezoneSpecNew(ctx, out), "hegel_timezone_spec_new");
+    return this.requireHandle<TimeZoneSpecHandle>(out[0], "timezoneSpecNew");
+  }
+
+  /** Restrict `spec` to `names`. Throws {@link LibhegelError} for a name the database lacks. */
+  timezoneSpecSetNames(ctx: Ptr, spec: Ptr, names: readonly string[]): void {
+    this.check(
+      ctx,
+      this.fns.timezoneSpecSetNames(ctx, spec, names),
+      "hegel_timezone_spec_set_names",
+    );
+  }
+
+  freeTimezoneSpec(spec: Ptr): void {
+    this.fns.timezoneSpecFree(spec);
+  }
+
+  /** Draw a time zone name allowed by `spec`. */
+  generateTimezone(ctx: Ptr, tc: Ptr, spec: Ptr): string {
+    const out: NativeBuffer[] = [{ data: null, len: 0 }];
+    this.check(ctx, this.fns.generateTimezone(ctx, tc, spec, out), "hegel_generate_timezone");
+    try {
+      return wtf8ToString(copyNativeBuffer(out[0]));
+    } finally {
+      this.fns.ownedStringFree(out[0]);
+    }
+  }
+
+  /** Create a zoned datetime spec at its defaults; release with {@link freeZonedSpec}. */
+  zonedSpecNew(ctx: Ptr): ZonedSpecHandle {
+    const out: Ptr[] = [null];
+    this.check(ctx, this.fns.zonedSpecNew(ctx, out), "hegel_zoned_spec_new");
+    return this.requireHandle<ZonedSpecHandle>(out[0], "zonedSpecNew");
+  }
+
+  zonedSpecSetCivilBounds(ctx: Ptr, spec: Ptr, min: NativeDatetime, max: NativeDatetime): void {
+    this.check(
+      ctx,
+      this.fns.zonedSpecSetCivilBounds(ctx, spec, min, max),
+      "hegel_zoned_spec_set_civil_bounds",
+    );
+  }
+
+  zonedSpecSetInstantBounds(ctx: Ptr, spec: Ptr, min: NativeTimestamp, max: NativeTimestamp): void {
+    this.check(
+      ctx,
+      this.fns.zonedSpecSetInstantBounds(ctx, spec, min, max),
+      "hegel_zoned_spec_set_instant_bounds",
+    );
+  }
+
+  zonedSpecSetPrecision(ctx: Ptr, spec: Ptr, precision: number): void {
+    this.check(
+      ctx,
+      this.fns.zonedSpecSetPrecision(ctx, spec, precision),
+      "hegel_zoned_spec_set_precision",
+    );
+  }
+
+  zonedSpecSetImaginary(ctx: Ptr, spec: Ptr, imaginary: number): void {
+    this.check(
+      ctx,
+      this.fns.zonedSpecSetImaginary(ctx, spec, imaginary),
+      "hegel_zoned_spec_set_imaginary",
+    );
+  }
+
+  zonedSpecSetAmbiguous(ctx: Ptr, spec: Ptr, ambiguous: number): void {
+    this.check(
+      ctx,
+      this.fns.zonedSpecSetAmbiguous(ctx, spec, ambiguous),
+      "hegel_zoned_spec_set_ambiguous",
+    );
+  }
+
+  freeZonedSpec(spec: Ptr): void {
+    this.fns.zonedSpecFree(spec);
+  }
+
+  /** Draw a zone from `tzSpec` and a wall-clock time in it within `zonedSpec`. */
+  generateZonedDatetime(
+    ctx: Ptr,
+    tc: Ptr,
+    tzSpec: Ptr,
+    zonedSpec: Ptr,
+  ): { value: NativeZonedDatetime; zone: string } {
+    const outValue: RawZonedDatetime[] = [
       {
-        date: { year: 0, month: 0, day: 0 },
-        time: { hour: 0, minute: 0, second: 0, nanosecond: 0 },
+        civil: emptyDatetime(),
+        offset_seconds: 0,
+        offset_known: false,
+        fold: false,
+        kind: 0,
+        offset_before: 0,
+        offset_after: 0,
+        timestamp: { second: 0, nanosecond: 0 },
       },
     ];
-    this.check(ctx, this.fns.generateDatetime(ctx, tc, min, max, out), "hegel_generate_datetime");
-    return out[0];
+    const outZone: NativeBuffer[] = [{ data: null, len: 0 }];
+    this.check(
+      ctx,
+      this.fns.generateZonedDatetime(ctx, tc, tzSpec, zonedSpec, outValue, outZone),
+      "hegel_generate_zoned_datetime",
+    );
+    try {
+      const raw = outValue[0];
+      return {
+        value: {
+          civil: raw.civil,
+          offsetSeconds: raw.offset_seconds,
+          offsetKnown: raw.offset_known,
+          fold: raw.fold,
+          kind: raw.kind,
+          offsetBefore: raw.offset_before,
+          offsetAfter: raw.offset_after,
+          timestamp: timestampFromRaw(raw.timestamp),
+        },
+        zone: wtf8ToString(copyNativeBuffer(outZone[0])),
+      };
+    } finally {
+      this.fns.ownedStringFree(outZone[0]);
+    }
+  }
+
+  /** Create a span spec with no unit enabled; release with {@link freeSpanSpec}. */
+  spanSpecNew(ctx: Ptr): SpanSpecHandle {
+    const out: Ptr[] = [null];
+    this.check(ctx, this.fns.spanSpecNew(ctx, out), "hegel_span_spec_new");
+    return this.requireHandle<SpanSpecHandle>(out[0], "spanSpecNew");
+  }
+
+  spanSpecSetUnitBounds(ctx: Ptr, spec: Ptr, unit: number, min: bigint, max: bigint): void {
+    this.check(
+      ctx,
+      this.fns.spanSpecSetUnitBounds(ctx, spec, unit, min, max),
+      "hegel_span_spec_set_unit_bounds",
+    );
+  }
+
+  spanSpecSetSign(ctx: Ptr, spec: Ptr, sign: number): void {
+    this.check(ctx, this.fns.spanSpecSetSign(ctx, spec, sign), "hegel_span_spec_set_sign");
+  }
+
+  freeSpanSpec(spec: Ptr): void {
+    this.fns.spanSpecFree(spec);
+  }
+
+  /** Draw a calendar span within `spec`'s bounds. */
+  generateSpan(ctx: Ptr, tc: Ptr, spec: Ptr): NativeSpan {
+    const out: RawSpan[] = [
+      {
+        years: 0,
+        months: 0,
+        weeks: 0,
+        days: 0,
+        hours: 0,
+        minutes: 0,
+        seconds: 0,
+        milliseconds: 0,
+        microseconds: 0,
+        nanoseconds: 0,
+      },
+    ];
+    this.check(ctx, this.fns.generateSpan(ctx, tc, spec, out), "hegel_generate_span");
+    const raw = out[0];
+    return {
+      years: BigInt(raw.years),
+      months: BigInt(raw.months),
+      weeks: BigInt(raw.weeks),
+      days: BigInt(raw.days),
+      hours: BigInt(raw.hours),
+      minutes: BigInt(raw.minutes),
+      seconds: BigInt(raw.seconds),
+      milliseconds: BigInt(raw.milliseconds),
+      microseconds: BigInt(raw.microseconds),
+      nanoseconds: BigInt(raw.nanoseconds),
+    };
   }
 
   /** Draw a UUID as its 16 big-endian bytes. */
