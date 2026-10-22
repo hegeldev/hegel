@@ -24,6 +24,7 @@ __all__ = [
     "times",
     "timezone_keys",
     "timezones",
+    "tzdb_version",
     "utc_offsets",
 ]
 
@@ -241,6 +242,19 @@ def times(
     return Times(
         min_value, max_value, None if timezones is None else as_generator(timezones), constant
     )
+
+
+def tzdb_version() -> str:
+    """The IANA release of the time zone database bundled in Hegel's engine,
+    such as ``"2026e"``.
+
+    The engine decides which zones and transitions to generate from its own
+    copy, identically on every machine, and :mod:`zoneinfo` decides what a
+    generated datetime means; compare this with the version your
+    ``tzdata`` package or system reports when the two disagree on a
+    transition.
+    """
+    return _native.tzdb_version()
 
 
 def _select_keys(available: Iterable[str], links: bool, legacy: bool) -> list[str]:
