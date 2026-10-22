@@ -14,6 +14,7 @@
 namespace gs = hegel::generators;
 using hegel::Database;
 using hegel::HealthCheck;
+using hegel::NondeterminismStrictness;
 using hegel::Settings;
 
 TEST(Settings, DefaultRuns100TestCases) {
@@ -146,6 +147,7 @@ TEST(FlakyReporting, FlakyReplay) {
                 }
             },
             {.test_cases = 1,
+             .nondeterminism_strictness = NondeterminismStrictness::Error,
              .suppress_health_check = {HealthCheck::LargeInitialTestCase}});
         FAIL() << "Expected std::runtime_error";
     } catch (const std::runtime_error& e) {
@@ -166,6 +168,7 @@ TEST(FlakyReporting, FlakyGeneration) {
                 global_counter++;
             },
             {.test_cases = 10,
+             .nondeterminism_strictness = NondeterminismStrictness::Error,
              .suppress_health_check = {HealthCheck::LargeInitialTestCase}});
         FAIL() << "Expected std::runtime_error";
     } catch (const std::runtime_error& e) {
@@ -174,6 +177,87 @@ TEST(FlakyReporting, FlakyGeneration) {
                   std::string::npos)
             << "Unexpected error message: " << e.what();
     }
+}
+
+// A failure that never replays is reported unconfirmed, without a
+// reproduce blob: the first one from its outcome alone (its case revealed
+// the nondeterminism, so the engine had not asked for its output), a later
+// one from the output the engine had the run capture. By the thirtieth
+// case the engine has finished replaying the first failure and is
+// generating again.
+TEST(FlakyReporting, QuietReportsUnconfirmedFailures) {
+    int calls = 0;
+    testing::internal::CaptureStderr();
+    std::string message;
+    try {
+        hegel::test(
+            [&](hegel::TestCase& tc) {
+                auto x = tc.draw(gs::integers<int>());
+                tc.note("saw " + std::to_string(x));
+                calls++;
+                if (calls == 1) {
+                    throw std::runtime_error("first case fails");
+                }
+                if (calls == 30) {
+                    throw std::logic_error("thirtieth case fails");
+                }
+            },
+            {.test_cases = 30,
+             .report_multiple_failures = true,
+             .stop_on_first_failure = false,
+             .database = Database::disabled(),
+             .suppress_health_check = hegel::all_health_checks()});
+    } catch (const std::runtime_error& e) {
+        message = e.what();
+    }
+    std::string output = testing::internal::GetCapturedStderr();
+    EXPECT_NE(message.find("2 distinct failures"), std::string::npos)
+        << message;
+    EXPECT_NE(output.find("note: unconfirmed failure"), std::string::npos)
+        << output;
+    EXPECT_NE(output.find("Exception: std::runtime_error: first case fails"),
+              std::string::npos)
+        << output;
+    EXPECT_NE(output.find("Exception: std::logic_error: thirtieth case fails"),
+              std::string::npos)
+        << output;
+    EXPECT_NE(output.find("saw "), std::string::npos) << output;
+    EXPECT_EQ(output.find("rerun with:"), std::string::npos) << output;
+}
+
+TEST(FlakyReporting, WarnStrictnessKeepsRunning) {
+    global_counter = 0;
+    EXPECT_NO_THROW(hegel::test(
+        [&](hegel::TestCase& tc) {
+            tc.draw(gs::integers<int>({.min_value = global_counter,
+                                       .max_value = global_counter + 1}));
+            global_counter++;
+        },
+        {.test_cases = 10,
+         .nondeterminism_strictness = NondeterminismStrictness::Warn,
+         .database = Database::disabled(),
+         .suppress_health_check = {HealthCheck::LargeInitialTestCase}}));
+    EXPECT_GE(global_counter, 10);
+}
+
+TEST(Settings, StopOnFirstFailureOffUsesTheWholeBudget) {
+    int calls = 0;
+    try {
+        hegel::test(
+            [&](hegel::TestCase& tc) {
+                (void)tc.draw(gs::integers<int>());
+                calls++;
+                throw std::runtime_error("always fails");
+            },
+            {.test_cases = 10,
+             .stop_on_first_failure = false,
+             .database = Database::disabled(),
+             .phases = {hegel::Phase::Generate}});
+        FAIL() << "Expected std::runtime_error";
+    } catch (const std::runtime_error& e) {
+        EXPECT_EQ(std::string(e.what()), "always fails");
+    }
+    EXPECT_GE(calls, 10);
 }
 
 std::optional<int> failed_value = std::nullopt;

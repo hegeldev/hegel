@@ -52,8 +52,8 @@ if(HEGEL_SANITIZE)
     add_link_options(-fsanitize=${HEGEL_SANITIZE})
 endif()
 
-# Acquire libhegel (Hegel's native engine, called in-process via its C ABI)
-# and expose it as the imported target hegel::libhegel.
+# The in-tree libhegel (Hegel's native engine, called in-process via its C
+# ABI), exposed as the imported target hegel::libhegel.
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/libhegel.cmake)
 
 # spawn()/Worker in the public headers use std::thread / std::future.
@@ -98,7 +98,6 @@ target_include_directories(hegel PUBLIC
 
     PRIVATE
         src
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libhegel>
 )
 target_link_libraries(hegel
   PUBLIC
@@ -109,6 +108,10 @@ target_link_libraries(hegel
     # spawn()/Worker run test bodies on std::thread; PUBLIC so consumers link it.
     Threads::Threads
 )
+
+if(TARGET hegel_libhegel_build)
+    add_dependencies(hegel hegel_libhegel_build)
+endif()
 
 if(HEGEL_REFLECTION)
     target_link_libraries(hegel PUBLIC reflectcpp)
@@ -152,6 +155,19 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RENAME "${HEGEL_LIBHEGEL_LOCAL_NAME}"
   )
+  if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    # cargo's dylib carries its build path as its install name; the
+    # installed copy is found through the consumer's RPATH instead.
+    install(CODE "
+      execute_process(
+        COMMAND install_name_tool -id \"@rpath/${HEGEL_LIBHEGEL_LOCAL_NAME}\"
+          \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/${HEGEL_LIBHEGEL_LOCAL_NAME}\"
+        RESULT_VARIABLE _hegel_install_name_rc)
+      if(NOT _hegel_install_name_rc EQUAL 0)
+        message(FATAL_ERROR \"install_name_tool failed: \${_hegel_install_name_rc}\")
+      endif()
+    ")
+  endif()
 
   install(DIRECTORY include/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}

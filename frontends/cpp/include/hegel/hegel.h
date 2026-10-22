@@ -20,17 +20,21 @@
  * include(FetchContent)
  * FetchContent_Declare(
  *     hegel
- *     GIT_REPOSITORY https://github.com/hegeldev/hegel-cpp.git
- *     GIT_TAG v0.13.1
+ *     GIT_REPOSITORY https://github.com/hegeldev/hegel.git
+ *     GIT_TAG frontends/cpp/0.13.1
+ *     SOURCE_SUBDIR frontends/cpp
  * )
  * FetchContent_MakeAvailable(hegel)
  *
  * target_link_libraries(your_target PRIVATE hegel)
  * @endcode
  *
- * Hegel requires CMake 3.14 and, by default, a C++20 compiler. The build
- * downloads a small prebuilt shared library (libhegel, Hegel's native engine)
- * for your platform; no other tooling is required.
+ * Hegel requires CMake 3.14 and, by default, a C++20 compiler. The library
+ * lives in the hegeldev/hegel repository next to libhegel, Hegel's native
+ * engine, which the build compiles with `cargo` (a Rust toolchain from
+ * https://rustup.rs). To link a libhegel built elsewhere instead, so that
+ * no Rust toolchain is needed, configure with
+ * `-DHEGEL_LIBHEGEL_LIBRARY=/path/to/libhegel_c.<ext>`.
  *
  * To consume Hegel from C++17, configure with `-DHEGEL_REFLECTION=OFF`. This
  * drops the reflect-cpp dependency: you lose @ref

@@ -3,7 +3,7 @@ set ignore-comments := true
 
 # Per-component recipes live next to the code they drive and run from that
 # directory: `just libhegel::test`, `just rust::test`, `just python::test`,
-# `just typescript::test`.
+# `just typescript::test`, `just cpp::test`.
 # Recipes here are the ones that span the whole Cargo workspace (libhegel,
 # the Rust frontend and the Python extension share one workspace and
 # lockfile; the coverage report covers the first two).
@@ -16,17 +16,21 @@ mod rust 'frontends/rust'
 mod python 'frontends/python'
 # The TypeScript frontend (needs Node; `just typescript::setup` first)
 mod typescript 'frontends/typescript'
+# The C++ frontend (needs CMake and a C++20 compiler; clang-format via uvx,
+# clang-tidy, doxygen and llvm-cov for its lints, docs and coverage)
+mod cpp 'frontends/cpp'
 
 # Definition of done for the whole repo: lint + every component's tests.
-check: check-lint libhegel::check rust::check python::check typescript::check
+check: check-lint libhegel::check rust::check python::check typescript::check cpp::check
 
 # Lints spanning the Cargo workspace, plus each component's own.
-check-lint: check-format check-clippy check-nocov-style check-test-modules check-internal-asserts check-release-script libhegel::check-lint rust::check-lint python::check-lint typescript::check-lint
+check-lint: check-format check-clippy check-nocov-style check-test-modules check-internal-asserts check-release-script libhegel::check-lint rust::check-lint python::check-lint typescript::check-lint cpp::check-lint
 
 format:
     cargo fmt --all
     just python::format
     just typescript::format
+    just cpp::format
     # also run format-nix if we have nix installed
     @which nix && just format-nix || true
 
@@ -93,6 +97,6 @@ insta *ARGS:
 # These aliases are provided as ux improvements for local developers. CI
 # should use the longer forms.
 
-test: libhegel::test rust::test python::check-tests typescript::check-test
+test: libhegel::test rust::test python::check-tests typescript::check-test cpp::check-tests
 coverage: check-coverage
 lint: check-lint

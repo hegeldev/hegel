@@ -262,14 +262,21 @@ TEST(CompositeFallback, SampledFromStringLiterals) {
 }
 
 TEST(CompositeFallback, UnsatisfiableUniqueMapIsRejected) {
-    hegel::test(
-        [](hegel::TestCase& tc) {
-            // Only two possible keys (0, 1) but at least five required.
-            (void)tc.draw(
-                gs::maps(gs::integers<int>({.min_value = 0, .max_value = 1}),
-                         gs::integers<int>(), {.min_size = 5}));
-        },
-        hegel::Settings{.test_cases = 10,
-                        .database = hegel::Database::disabled(),
-                        .suppress_health_check = hegel::all_health_checks()});
+    try {
+        hegel::test(
+            [](hegel::TestCase& tc) {
+                // Only two possible keys (0, 1) but at least five required.
+                (void)tc.draw(gs::maps(
+                    gs::integers<int>({.min_value = 0, .max_value = 1}),
+                    gs::integers<int>(), {.min_size = 5}));
+            },
+            hegel::Settings{.test_cases = 10,
+                            .database = hegel::Database::disabled(),
+                            .suppress_health_check =
+                                hegel::all_health_checks()});
+        FAIL() << "expected an Unsatisfiable error";
+    } catch (const std::runtime_error& error) {
+        std::string message = error.what();
+        EXPECT_NE(message.find("Unsatisfiable"), std::string::npos) << message;
+    }
 }

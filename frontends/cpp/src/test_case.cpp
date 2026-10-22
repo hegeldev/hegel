@@ -63,7 +63,7 @@ namespace hegel {
     void TestCase::reject() const { throw internal::HegelReject(); }
 
     void TestCase::target(double score, std::string_view label) const {
-        impl::target(*this, score, std::string(label).c_str());
+        impl::target(*this, score, label);
     }
 
     void TestCase::repeat(const std::function<void()>& body) const {

@@ -18,7 +18,7 @@ Checks over the library sources (src/, include/hegel/):
    since they intentionally cover a whole boundary region.
 
 3. Exclusion ratchet: the number of lines hidden from coverage via the markers
-   must not EXCEED `.github/coverage-ratchet.json`. Only a human may raise it
+   must not EXCEED `coverage-ratchet.json`. Only a human may raise it
    (admitting more excluded code); if the count drops the ratchet auto-tightens
    to the new lower number. The count comes from the source markers, so it is
    identical regardless of compiler/gcov.
@@ -39,7 +39,7 @@ import re
 import sys
 from pathlib import Path
 
-RATCHET_FILE = Path(".github/coverage-ratchet.json")
+RATCHET_FILE = Path("coverage-ratchet.json")
 SOURCE_DIRS = [Path("src"), Path("include/hegel")]
 SOURCE_GLOBS = ("*.cpp", "*.h")
 

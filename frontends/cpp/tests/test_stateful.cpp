@@ -521,6 +521,30 @@ namespace {
         }
     };
 
+    // Fails on its first rule call and once more in its thirtieth case: by
+    // then the engine has finished replaying the first failure and is
+    // generating again, so the second failure is found by a generation
+    // case.
+    struct BoomTwice : hs::ConcurrentStateMachine<BoomTwice> {
+        static inline std::atomic<int> cases{0};
+        static inline std::atomic<bool> first_fired{false};
+        int index = ++cases;
+        std::atomic<bool> fired{false};
+        std::vector<hs::ConcurrentRule<BoomTwice>> rules() {
+            return {hs::ConcurrentRule<BoomTwice>(
+                "boom twice", [](hegel::TestCase& tc, BoomTwice& machine) {
+                    int value = tc.draw(hegel::generators::integers<int>());
+                    tc.note("value " + std::to_string(value));
+                    if (!first_fired.exchange(true)) {
+                        throw std::runtime_error("first call fails");
+                    }
+                    if (machine.index == 30 && !machine.fired.exchange(true)) {
+                        throw std::logic_error("thirtieth case fails");
+                    }
+                })};
+        }
+    };
+
     struct RejectsEveryRule : hs::ConcurrentStateMachine<RejectsEveryRule> {
         std::vector<hs::ConcurrentRule<RejectsEveryRule>> rules() {
             return {hs::ConcurrentRule<RejectsEveryRule>(
@@ -642,9 +666,6 @@ TEST(ConcurrentStateful, WorkerExceptionHasOriginAndBufferedOutput) {
     std::string output = testing::internal::GetCapturedStderr();
 
     EXPECT_NE(message.find("concurrent boom"), std::string::npos) << message;
-    EXPECT_NE(output.find("Concurrent state machine detected"),
-              std::string::npos)
-        << output;
     EXPECT_NE(output.find("---------------- Round 1: group \"<anonymous>\" "
                           "----------------"),
               std::string::npos)
@@ -652,17 +673,62 @@ TEST(ConcurrentStateful, WorkerExceptionHasOriginAndBufferedOutput) {
 
     std::smatch rule_match;
     std::regex rule_pattern(
-        R"(\[worker ([0-9]+) \+[0-9]+\.[0-9]{3}ms\] Rule: boom)");
+        R"(\[worker ([0-9]+) \+[0-9]+\.[0-9]{3}ms\] +Rule: boom)");
     ASSERT_TRUE(std::regex_search(output, rule_match, rule_pattern)) << output;
     std::string worker = rule_match[1].str();
     std::regex draw_pattern("\\[worker " + worker +
-                            " \\+[0-9]+\\.[0-9]{3}ms\\]   auto "
+                            " \\+[0-9]+\\.[0-9]{3}ms\\] +auto "
                             "draw_[0-9]+ =");
     EXPECT_TRUE(std::regex_search(output, draw_pattern)) << output;
     EXPECT_NE(output.find("Exception: std::runtime_error: concurrent boom"),
               std::string::npos)
         << output;
     EXPECT_EQ(output.find("<unknown>"), std::string::npos) << output;
+    EXPECT_NE(output.find("rerun with:"), std::string::npos) << output;
+}
+
+// Failures that never replay are reported unconfirmed, without a reproduce
+// blob; one found after the run switched to nondeterministic handling is
+// reported from the worker output the engine had the run capture.
+TEST(ConcurrentStateful, UnconfirmedFailuresAreReportedFromCapturedOutput) {
+    BoomTwice::cases = 0;
+    BoomTwice::first_fired = false;
+    testing::internal::CaptureStderr();
+    std::string message;
+    try {
+        hegel::test(
+            [](hegel::TestCase& tc) {
+                BoomTwice machine;
+                hs::run_concurrent(machine, tc, 2, 2);
+            },
+            hegel::Settings{.test_cases = 60,
+                            .report_multiple_failures = true,
+                            .stop_on_first_failure = false,
+                            .database = hegel::Database::disabled(),
+                            .suppress_health_check =
+                                hegel::all_health_checks()});
+    } catch (const std::exception& error) {
+        message = error.what();
+    }
+    std::string output = testing::internal::GetCapturedStderr();
+
+    EXPECT_NE(message.find("2 distinct failures"), std::string::npos)
+        << message;
+    EXPECT_NE(output.find("note: unconfirmed failure"), std::string::npos)
+        << output;
+    EXPECT_NE(output.find("Exception: std::runtime_error: first call fails"),
+              std::string::npos)
+        << output;
+    EXPECT_NE(output.find("Exception: std::logic_error: thirtieth case fails"),
+              std::string::npos)
+        << output;
+    EXPECT_NE(output.find("---------------- Round 1: group \"<anonymous>\" "
+                          "----------------"),
+              std::string::npos)
+        << output;
+    std::regex rule_pattern(
+        R"(\[worker [0-9]+ \+[0-9]+\.[0-9]{3}ms\] +Rule: boom twice)");
+    EXPECT_TRUE(std::regex_search(output, rule_pattern)) << output;
     EXPECT_EQ(output.find("rerun with:"), std::string::npos) << output;
 }
 

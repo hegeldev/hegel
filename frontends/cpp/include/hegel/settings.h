@@ -107,6 +107,22 @@ namespace hegel {
     };
 
     /**
+     * @brief How a run reacts when it detects nondeterministic test behavior:
+     * a test whose structure or outcome changes when the same choices are
+     * replayed.
+     */
+    enum class NondeterminismStrictness {
+        Quiet, ///< Switch to nondeterministic handling silently: failures
+               ///< are confirmed by repeated replay before they are shrunk
+               ///< or reported, and the report says how reliably each one
+               ///< reproduced. The default.
+        Warn,  ///< Switch as under Quiet, printing a one-line notice once
+               ///< per run.
+        Error, ///< Fail the run with a flaky-test error, for suites that use
+               ///< determinism as a lint.
+    };
+
+    /**
      * @brief Configure the Hegel database.
      */
     class Database {
@@ -213,6 +229,19 @@ namespace hegel {
         /// additional distinct bugs, and report all of them. If false (the
         /// default), stop the run at the first failing example.
         bool report_multiple_failures = false;
+
+        /// If true (the default), stop generating once a failure is found
+        /// and move on to shrinking and reporting it. If false, the run uses
+        /// its whole test_cases budget before reporting, whatever it finds
+        /// along the way; every distinct failure found is persisted to the
+        /// database either way.
+        bool stop_on_first_failure = true;
+
+        /// How the run reacts to a test whose outcome or draws change when
+        /// the same generated data is replayed. Defaults to
+        /// NondeterminismStrictness::Quiet.
+        NondeterminismStrictness nondeterminism_strictness =
+            NondeterminismStrictness::Quiet;
 
         /// If true (the default), a failure report ends with a
         /// `rerun with:` line holding the base64 blob that replays the

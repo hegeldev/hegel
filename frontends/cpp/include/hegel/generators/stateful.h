@@ -974,13 +974,18 @@ namespace hegel::stateful {
             static_cast<std::size_t>(machine_handle.concurrency());
         RoundState state;
         state.events.resize(worker_count);
+        std::vector<TestCase> worker_cases;
+        worker_cases.reserve(worker_count);
+        for (std::size_t worker = 0; worker < worker_count; ++worker) {
+            worker_cases.push_back(tc.clone());
+            internal::set_concurrent_worker(worker_cases.back(), worker);
+        }
         std::vector<std::thread> workers;
         workers.reserve(worker_count);
         for (std::size_t worker = 0; worker < worker_count; ++worker) {
-            TestCase worker_tc = tc.clone();
-            internal::set_concurrent_worker(worker_tc, worker);
             workers.emplace_back(
-                [&, worker, worker_tc = std::move(worker_tc)]() mutable {
+                [&, worker,
+                 worker_tc = std::move(worker_cases[worker])]() mutable {
                     uint64_t observed_round_number = 0;
                     while (true) {
                         {

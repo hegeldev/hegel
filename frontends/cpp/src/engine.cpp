@@ -9,6 +9,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -31,11 +32,28 @@ namespace hegel::impl {
         return context.ctx;
     }
 
+    namespace {
+
+        // A borrowed hegel_string_t over `text`, valid while `text` lives.
+        hegel_string_t borrow(std::string_view text) {
+            return hegel_string_t{text.data(), text.size()};
+        }
+
+        // The C++ copy of an engine-owned string, or nullopt for NULL.
+        std::optional<std::string> copy_optional(const hegel_string_t* text) {
+            if (text == nullptr) {
+                return std::nullopt;
+            }
+            return std::string(text->data, text->len);
+        }
+
+    } // namespace
+
     // GCOVR_EXCL_START
 
     std::string last_error(hegel_context_t* ctx) {
-        const char* msg = hegel_context_last_error(ctx);
-        return msg ? std::string(msg) : std::string();
+        hegel_string_t msg = hegel_context_last_error(ctx);
+        return std::string(msg.data, msg.len);
     }
 
     namespace {
@@ -104,16 +122,6 @@ namespace hegel::impl {
         check_rc(ctx, hegel_settings_set_report_multiple_failures(ctx, s, yes));
     }
 
-    void settings_set_database(hegel_context_t* ctx, hegel_settings_t* s,
-                               const char* path) {
-        check_rc(ctx, hegel_settings_set_database(ctx, s, path));
-    }
-
-    void settings_set_database_key(hegel_context_t* ctx, hegel_settings_t* s,
-                                   const char* key) {
-        check_rc(ctx, hegel_settings_set_database_key(ctx, s, key));
-    }
-
     void settings_set_suppress_health_check(hegel_context_t* ctx,
                                             hegel_settings_t* s,
                                             uint32_t mask) {
@@ -144,17 +152,6 @@ namespace hegel::impl {
         return run;
     }
 
-    hegel_test_case_t* test_case_from_blob(hegel_context_t* ctx,
-                                           hegel_settings_t* s,
-                                           const char* blob) {
-        hegel_test_case_t* tc = nullptr;
-        // A NULL output callback (and user data) keeps engine output on
-        // stderr.
-        check_rc(ctx, hegel_test_case_from_blob(ctx, s, blob, nullptr, nullptr,
-                                                &tc));
-        return tc;
-    }
-
     hegel_test_case_t* next_test_case(hegel_context_t* ctx, hegel_run_t* run) {
         hegel_test_case_t* tc = nullptr;
         check_rc(ctx, hegel_next_test_case(ctx, run, &tc));
@@ -168,19 +165,6 @@ namespace hegel::impl {
         return clone;
     }
 
-    bool test_case_is_nondeterministic(hegel_context_t* ctx,
-                                       const hegel_test_case_t* tc) {
-        bool nondeterministic = false;
-        check_rc(ctx, hegel_test_case_is_nondeterministic(ctx, tc,
-                                                          &nondeterministic));
-        return nondeterministic;
-    }
-
-    void mark_complete(hegel_context_t* ctx, hegel_test_case_t* tc,
-                       hegel_status_t status, const char* origin) {
-        check_rc(ctx, hegel_mark_complete(ctx, tc, status, origin));
-    }
-
     hegel_run_result_t* run_result(hegel_context_t* ctx, hegel_run_t* run) {
         hegel_run_result_t* result = nullptr;
         check_rc(ctx, hegel_run_result(ctx, run, &result));
@@ -192,13 +176,6 @@ namespace hegel::impl {
         hegel_run_status_t status = HEGEL_RUN_STATUS_PASSED;
         check_rc(ctx, hegel_run_result_status(ctx, result, &status));
         return status;
-    }
-
-    const char* run_result_error(hegel_context_t* ctx,
-                                 const hegel_run_result_t* result) {
-        const char* err = nullptr;
-        check_rc(ctx, hegel_run_result_error(ctx, result, &err));
-        return err;
     }
 
     size_t run_result_failure_count(hegel_context_t* ctx,
@@ -216,33 +193,103 @@ namespace hegel::impl {
         return failure;
     }
 
-    const char* failure_reproduction_blob(hegel_context_t* ctx,
-                                          const hegel_failure_t* failure) {
-        const char* blob = nullptr;
-        check_rc(ctx, hegel_failure_reproduction_blob(ctx, failure, &blob));
-        return blob;
-    }
-
-    const char* failure_origin(hegel_context_t* ctx,
-                               const hegel_failure_t* failure) {
-        const char* origin = nullptr;
-        check_rc(ctx, hegel_failure_origin(ctx, failure, &origin));
-        return origin;
-    }
-
     // GCOVR_EXCL_STOP
 
-    void settings_set_test_location(hegel_context_t* ctx, hegel_settings_t* s,
-                                    const char* file, uint32_t begin_line,
-                                    const char* class_name,
-                                    const char* function) {
-        check_rc(ctx, hegel_settings_set_test_location(ctx, s, file, begin_line,
-                                                       class_name, function));
+    void settings_set_stop_on_first_failure(hegel_context_t* ctx,
+                                            hegel_settings_t* s, bool yes) {
+        check_rc(ctx, hegel_settings_set_stop_on_first_failure(ctx, s, yes));
     }
 
-    uint64_t label_from_name(hegel_context_t* ctx, const char* name) {
+    void settings_set_nondeterminism_strictness(hegel_context_t* ctx,
+                                                hegel_settings_t* s,
+                                                uint32_t strictness) {
+        check_rc(ctx, hegel_settings_set_nondeterminism_strictness(ctx, s,
+                                                                   strictness));
+    }
+
+    void settings_set_database(hegel_context_t* ctx, hegel_settings_t* s,
+                               std::string_view path) {
+        hegel_string_t database = borrow(path);
+        check_rc(ctx, hegel_settings_set_database(ctx, s, &database));
+    }
+
+    void settings_set_database_key(hegel_context_t* ctx, hegel_settings_t* s,
+                                   std::string_view key) {
+        hegel_string_t database_key = borrow(key);
+        check_rc(ctx, hegel_settings_set_database_key(ctx, s, &database_key));
+    }
+
+    hegel_test_case_t* test_case_from_blob(hegel_context_t* ctx,
+                                           hegel_settings_t* s,
+                                           std::string_view blob) {
+        hegel_test_case_t* tc = nullptr;
+        // A NULL output callback (and user data) keeps engine output on
+        // stderr.
+        check_rc(ctx, hegel_test_case_from_blob(ctx, s, borrow(blob), nullptr,
+                                                nullptr, &tc));
+        return tc;
+    }
+
+    bool test_case_should_capture(hegel_context_t* ctx,
+                                  const hegel_test_case_t* tc) {
+        bool should_capture = false;
+        check_rc(ctx, hegel_test_case_should_capture(ctx, tc, &should_capture));
+        return should_capture;
+    }
+
+    void mark_complete(hegel_context_t* ctx, hegel_test_case_t* tc,
+                       hegel_status_t status,
+                       const std::optional<std::string>& origin) {
+        hegel_string_t origin_string{nullptr, 0};
+        if (origin.has_value()) {
+            origin_string = borrow(*origin);
+        }
+        check_rc(ctx, hegel_mark_complete(ctx, tc, status,
+                                          origin.has_value() ? &origin_string
+                                                             : nullptr));
+    }
+
+    std::optional<std::string>
+    run_result_error(hegel_context_t* ctx, const hegel_run_result_t* result) {
+        const hegel_string_t* err = nullptr;
+        check_rc(ctx, hegel_run_result_error(ctx, result, &err));
+        return copy_optional(err);
+    }
+
+    std::optional<std::string>
+    failure_reproduction_blob(hegel_context_t* ctx,
+                              const hegel_failure_t* failure) {
+        const hegel_string_t* blob = nullptr;
+        check_rc(ctx, hegel_failure_reproduction_blob(ctx, failure, &blob));
+        return copy_optional(blob);
+    }
+
+    std::string failure_origin(hegel_context_t* ctx,
+                               const hegel_failure_t* failure) {
+        hegel_string_t origin{nullptr, 0};
+        check_rc(ctx, hegel_failure_origin(ctx, failure, &origin));
+        return std::string(origin.data, origin.len);
+    }
+
+    std::optional<std::string> failure_caveat(hegel_context_t* ctx,
+                                              const hegel_failure_t* failure) {
+        const hegel_string_t* caveat = nullptr;
+        check_rc(ctx, hegel_failure_caveat(ctx, failure, &caveat));
+        return copy_optional(caveat);
+    }
+
+    void settings_set_test_location(hegel_context_t* ctx, hegel_settings_t* s,
+                                    std::string_view file, uint32_t begin_line,
+                                    std::string_view class_name,
+                                    std::string_view function) {
+        check_rc(ctx, hegel_settings_set_test_location(
+                          ctx, s, borrow(file), begin_line, borrow(class_name),
+                          borrow(function)));
+    }
+
+    uint64_t label_from_name(hegel_context_t* ctx, std::string_view name) {
         uint64_t label = 0;
-        check_rc(ctx, hegel_label_from_name(ctx, name, &label));
+        check_rc(ctx, hegel_label_from_name(ctx, borrow(name), &label));
         return label;
     }
 
@@ -293,10 +340,8 @@ namespace hegel::impl {
 
         struct StringResultGuard {
             hegel_context_t* ctx;
-            hegel_generate_string_result_t result{nullptr, 0};
-            ~StringResultGuard() {
-                hegel_generate_string_result_free(ctx, &result);
-            }
+            hegel_owned_string_t result{nullptr, 0};
+            ~StringResultGuard() { hegel_owned_string_free(ctx, &result); }
         };
 
         // Construct a string generator, converting an engine rejection into
@@ -320,51 +365,51 @@ namespace hegel::impl {
 
     hegel_string_generator_t*
     string_generator_text(const TextGeneratorParams& params) {
-        std::vector<const char*> categories;
-        std::vector<const char*> exclude_categories;
-        if (params.categories) {
-            for (const auto& c : *params.categories) {
-                categories.push_back(c.c_str());
+        auto borrow_all = [](const std::vector<std::string>* names) {
+            std::vector<hegel_string_t> strings;
+            if (names != nullptr) {
+                for (const std::string& name : *names) {
+                    strings.push_back(borrow(name));
+                }
             }
-        }
-        if (params.exclude_categories) {
-            for (const auto& c : *params.exclude_categories) {
-                exclude_categories.push_back(c.c_str());
-            }
-        }
-        auto chars = [](const std::string* s) {
-            return s ? reinterpret_cast<const uint8_t*>(s->data()) : nullptr;
+            return strings;
         };
+        auto borrow_chars = [](const std::string* chars) {
+            return chars != nullptr ? borrow(*chars)
+                                    : hegel_string_t{nullptr, 0};
+        };
+        std::vector<hegel_string_t> categories = borrow_all(params.categories);
+        std::vector<hegel_string_t> exclude_categories =
+            borrow_all(params.exclude_categories);
+        hegel_string_t codec{nullptr, 0};
+        if (params.codec != nullptr) {
+            codec = borrow(params.codec);
+        }
         return make_string_generator(
             "text", [&](hegel_context_t* ctx, hegel_string_generator_t** out) {
                 return hegel_string_generator_text(
-                    ctx, params.min_size, params.max_size, params.codec,
+                    ctx, params.min_size, params.max_size,
+                    params.codec != nullptr ? &codec : nullptr,
                     params.min_codepoint, params.max_codepoint,
                     params.categories ? categories.data() : nullptr,
                     categories.size(),
                     params.exclude_categories ? exclude_categories.data()
                                               : nullptr,
-                    exclude_categories.size(), chars(params.include_characters),
-                    params.include_characters
-                        ? params.include_characters->size()
-                        : 0,
-                    chars(params.exclude_characters),
-                    params.exclude_characters
-                        ? params.exclude_characters->size()
-                        : 0,
-                    out);
+                    exclude_categories.size(),
+                    borrow_chars(params.include_characters),
+                    borrow_chars(params.exclude_characters), out);
             });
     }
 
-    hegel_string_generator_t* string_generator_regex(const char* pattern,
+    hegel_string_generator_t* string_generator_regex(std::string_view pattern,
                                                      bool fullmatch) {
         return make_string_generator(
             "from_regex",
             [&](hegel_context_t* ctx, hegel_string_generator_t** out) {
                 // A NULL alphabet lets padding and wildcards draw from all
                 // of Unicode; from_regex() exposes no alphabet.
-                return hegel_string_generator_regex(ctx, pattern, fullmatch,
-                                                    nullptr, out);
+                return hegel_string_generator_regex(ctx, borrow(pattern),
+                                                    fullmatch, nullptr, out);
             });
     }
 
@@ -502,10 +547,11 @@ namespace hegel::impl {
         return value;
     }
 
-    void target(const TestCase& tc, double score, const char* label) {
+    void target(const TestCase& tc, double score, std::string_view label) {
         DrawScope scope(tc);
-        scope.raise_for_rc(hegel_target(scope.ctx, scope.tc, score, label),
-                           "hegel_target");
+        scope.raise_for_rc(
+            hegel_target(scope.ctx, scope.tc, score, borrow(label)),
+            "hegel_target");
     }
 
 } // namespace hegel::impl
@@ -662,8 +708,10 @@ namespace hegel::internal {
 
     void CollectionHandle::reject(const TestCase& tc, const char* why) {
         impl::DrawScope scope(tc);
+        hegel_string_t reason{why, why != nullptr ? std::strlen(why) : 0};
         scope.raise_for_rc(
-            hegel_collection_reject(scope.ctx, scope.tc, handle_, why),
+            hegel_collection_reject(scope.ctx, scope.tc, handle_,
+                                    why != nullptr ? &reason : nullptr),
             "hegel_collection_reject");
     }
 
@@ -702,26 +750,28 @@ namespace hegel::internal {
         int64_t min_concurrency, int64_t max_concurrency) {
         impl::DrawScope scope(tc);
 
-        auto to_cstrings = [](const std::vector<std::string>& names) {
-            std::vector<char*> cstrings;
-            cstrings.reserve(names.size());
-            for (const std::string& name : names)
-                cstrings.push_back(const_cast<char*>(name.c_str()));
-            return cstrings;
+        auto to_strings = [](const std::vector<std::string>& names) {
+            std::vector<hegel_string_t> strings;
+            strings.reserve(names.size());
+            for (const std::string& name : names) {
+                strings.push_back(hegel_string_t{name.data(), name.size()});
+            }
+            return strings;
         };
 
-        std::vector<char*> rule_name_cstrings = to_cstrings(rule_names);
-        std::vector<char*> invariant_name_cstrings =
-            to_cstrings(invariant_names);
+        std::vector<hegel_string_t> rule_name_strings = to_strings(rule_names);
+        std::vector<hegel_string_t> invariant_name_strings =
+            to_strings(invariant_names);
 
-        // A NULL `invariant_always_check` array leaves every invariant
-        // sampled at its default probability; the public API exposes no
-        // always-check flag. The step budget is Settings::stateful_step_count,
-        // carried on the test case.
+        // A NULL `rule_weights` array gives every rule the same weight and a
+        // NULL `invariant_always_check` array leaves every invariant sampled
+        // at its default probability; the public API exposes neither. The
+        // step budget is Settings::stateful_step_count, carried on the test
+        // case.
         scope.raise_for_rc(hegel_new_state_machine(
-                               scope.ctx, scope.tc, rule_name_cstrings.data(),
-                               rule_groups.data(), rule_names.size(),
-                               invariant_name_cstrings.data(), nullptr,
+                               scope.ctx, scope.tc, rule_name_strings.data(),
+                               rule_groups.data(), nullptr, rule_names.size(),
+                               invariant_name_strings.data(), nullptr,
                                invariant_names.size(), min_concurrency,
                                max_concurrency, tc.data()->stateful_step_count,
                                &handle_, &concurrency_),

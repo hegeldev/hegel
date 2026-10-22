@@ -2,6 +2,16 @@ set ignore-comments := true
 
 jobs := num_cpus()
 
+# Homebrew's llvm kegs are deliberately off PATH; fall back to them when
+# clang-tidy is not installed anywhere else, preferring the version CI runs
+# (newer check sets flag code CI accepts).
+clang_tidy := env("CLANG_TIDY", if path_exists("/opt/homebrew/opt/llvm@18/bin/clang-tidy") == "true" { "/opt/homebrew/opt/llvm@18/bin/clang-tidy" } else if path_exists("/opt/homebrew/opt/llvm/bin/clang-tidy") == "true" { "/opt/homebrew/opt/llvm/bin/clang-tidy" } else { "clang-tidy" })
+
+# Build the in-tree engine the frontend links (cmake/libhegel.cmake runs this
+# itself; the recipe is for warming the cache and for CI).
+build-libhegel:
+    cargo build --release -p hegeltest-c --manifest-path ../../Cargo.toml
+
 build:
     cmake -B build ${CMAKE_FLAGS:-}
     cmake --build build -j{{ jobs }}
@@ -41,9 +51,24 @@ check-format:
     find . \( -name "*.cpp" -o -name "*.h" -o -name "*.hpp" \) ! -path "./build/*" \
         | xargs uvx clang-format --dry-run -Werror
 
+# A clang-tidy that is not Apple's (Homebrew's, say) does not know where
+# the macOS SDK keeps the system headers, and an older one cannot parse
+# the SDK's libc++ either, so it gets the SDK and its own libc++.
 check-tidy: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tidy='{{ clang_tidy }}'
+    extra_args=()
+    if [ "$(uname -s)" = Darwin ] && command -v xcrun >/dev/null 2>&1; then
+        extra_args+=(--extra-arg=-isysroot --extra-arg="$(xcrun --show-sdk-path)")
+        keg="$(cd "$(dirname "$tidy")/.." && pwd)"
+        if [ -d "$keg/include/c++/v1" ]; then
+            extra_args+=(--extra-arg=-nostdinc++ --extra-arg="-isystem$keg/include/c++/v1")
+        fi
+    fi
     find src -name '*.cpp' \
-        | xargs -P{{ jobs }} -I{} clang-tidy -p build -warnings-as-errors='*' {}
+        | xargs -P{{ jobs }} -I{} "$tidy" -p build \
+            ${extra_args[@]+"${extra_args[@]}"} -warnings-as-errors='*' {}
 
 check-docs:
     cmake -B build -DHEGEL_BUILD_DOCS=ON ${CMAKE_FLAGS:-}
@@ -54,24 +79,35 @@ docs:
     cmake --build build --target docs
     open build/docs/html/index.html
 
-# MODE is one of: subdirectory, fetchcontent, install, tests_on.
+# MODE is one of: subdirectory, fetchcontent, install, tests_on. The
+# fetchcontent mode clones the monorepo at HEAD (so it only sees committed
+# changes) and links the engine this checkout already built instead of
+# building a second one inside the clone.
 check-consumer MODE="subdirectory":
     #!/usr/bin/env bash
     set -euo pipefail
     ROOT=$(pwd)
     BUILD_DIR="$ROOT/build/consumer-{{ MODE }}"
+    EXTRA_ARGS=()
     if [ "{{ MODE }}" = "install" ]; then
         cmake -B build/consumer-hegel-install \
             -DHEGEL_BUILD_TESTS=OFF
         cmake --build build/consumer-hegel-install -j{{ jobs }}
         cmake --install build/consumer-hegel-install \
             --prefix "$ROOT/build/consumer-hegel-prefix"
-        PREFIX_ARG=-DCMAKE_PREFIX_PATH="$ROOT/build/consumer-hegel-prefix"
-    else
-        PREFIX_ARG=""
+        EXTRA_ARGS+=(-DCMAKE_PREFIX_PATH="$ROOT/build/consumer-hegel-prefix")
+    elif [ "{{ MODE }}" = "fetchcontent" ]; then
+        just build-libhegel
+        target_dir="${CARGO_TARGET_DIR:-$ROOT/../../target}"
+        case "$(uname -s)" in
+            Darwin) lib="$target_dir/release/libhegel_c.dylib" ;;
+            *) lib="$target_dir/release/libhegel_c.so" ;;
+        esac
+        EXTRA_ARGS+=(-DHEGEL_LIBHEGEL_LIBRARY="$lib")
     fi
     cmake -B "$BUILD_DIR" -S "tests/consumer/{{ MODE }}" \
-        -DHEGEL_ROOT="$ROOT" -DHEGEL_REF=HEAD $PREFIX_ARG
+        -DHEGEL_ROOT="$ROOT" -DHEGEL_MONOREPO_ROOT="$ROOT/../.." \
+        -DHEGEL_REF=HEAD ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
     cmake --build "$BUILD_DIR" -j{{ jobs }}
     "$BUILD_DIR/consumer"
 

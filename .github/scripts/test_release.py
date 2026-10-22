@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import json
 import release
-from release import LIBHEGEL, PYTHON, RUST, TYPESCRIPT
+from release import CPP, LIBHEGEL, PYTHON, RUST, TYPESCRIPT
 
 RUST_CARGO = """\
 [package]
@@ -97,6 +97,14 @@ TYPESCRIPT_PIN = (
     'export const LIBHEGEL_VERSION = "0.5.0";\n'
 )
 
+# The C++ frontend's version is the project() version of its CMakeLists.txt.
+CPP_CMAKE = """\
+cmake_minimum_required(VERSION 3.14)
+project(hegel-cpp VERSION 0.13.1 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+"""
+
 PATCH = ("patch", "This patch does a thing.")
 MINOR = ("minor", "This release breaks the C ABI.")
 
@@ -113,6 +121,7 @@ class ApplyVersionBumpTest(unittest.TestCase):
             ("frontends/typescript/package.json", json.dumps(TYPESCRIPT_PACKAGE, indent=2) + "\n"),
             ("frontends/typescript/package-lock.json", json.dumps(TYPESCRIPT_LOCK, indent=2) + "\n"),
             ("frontends/typescript/src/libhegel-version.ts", TYPESCRIPT_PIN),
+            ("frontends/cpp/CMakeLists.txt", CPP_CMAKE),
         ]:
             path = self.root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -129,7 +138,13 @@ class ApplyVersionBumpTest(unittest.TestCase):
         # frontend and the TypeScript frontend version independently.
         release.apply_version_bump(
             self.root,
-            {RUST: "0.19.2", LIBHEGEL: "0.6.0", PYTHON: "0.1.1", TYPESCRIPT: "0.4.11"},
+            {
+                RUST: "0.19.2",
+                LIBHEGEL: "0.6.0",
+                PYTHON: "0.1.1",
+                TYPESCRIPT: "0.4.11",
+                CPP: "0.13.2",
+            },
         )
         for rel in RUST.manifests:
             self.assertIn('version = "0.19.2"', self.read(rel), rel)
@@ -137,6 +152,10 @@ class ApplyVersionBumpTest(unittest.TestCase):
         self.assertIn('version = "0.6.0"', self.read("libhegel/Cargo.toml"))
         self.assertNotIn('version = "0.5.0"', self.read("libhegel/Cargo.toml"))
         self.assertIn('version = "0.1.1"', self.read("frontends/python/Cargo.toml"))
+        self.assertIn(
+            "project(hegel-cpp VERSION 0.13.2 LANGUAGES CXX)",
+            self.read("frontends/cpp/CMakeLists.txt"),
+        )
         package = json.loads(self.read("frontends/typescript/package.json"))
         self.assertEqual(package["version"], "0.4.11")
         lock = json.loads(self.read("frontends/typescript/package-lock.json"))
@@ -226,7 +245,13 @@ class ApplyVersionBumpTest(unittest.TestCase):
         )
 
 
-CURRENT = {RUST: "0.19.1", LIBHEGEL: "0.5.0", PYTHON: "0.1.0", TYPESCRIPT: "0.4.10"}
+CURRENT = {
+    RUST: "0.19.1",
+    LIBHEGEL: "0.5.0",
+    PYTHON: "0.1.0",
+    TYPESCRIPT: "0.4.10",
+    CPP: "0.13.1",
+}
 
 
 class PlanReleaseTest(unittest.TestCase):
@@ -250,6 +275,10 @@ class PlanReleaseTest(unittest.TestCase):
                     "0.4.11",
                     "This release updates the bundled libhegel engine to 0.5.1.",
                 ),
+                CPP: (
+                    "0.13.2",
+                    "This release updates the bundled libhegel engine to 0.5.1.",
+                ),
             },
         )
 
@@ -261,6 +290,7 @@ class PlanReleaseTest(unittest.TestCase):
         self.assertEqual(plan[RUST][0], "0.19.2")
         self.assertEqual(plan[PYTHON][0], "0.1.1")
         self.assertEqual(plan[TYPESCRIPT][0], "0.4.11")
+        self.assertEqual(plan[CPP][0], "0.13.2")
 
     def test_a_frontend_release_file_overrides_the_engine_entry(self) -> None:
         plan = release.plan_release(CURRENT, {RUST: PATCH, LIBHEGEL: MINOR})
@@ -279,6 +309,10 @@ class PlanReleaseTest(unittest.TestCase):
         plan = release.plan_release(CURRENT, {TYPESCRIPT: PATCH})
         self.assertEqual(plan, {TYPESCRIPT: ("0.4.11", "This patch does a thing.")})
 
+    def test_cpp_only_bumps_cpp_and_leaves_the_rest(self) -> None:
+        plan = release.plan_release(CURRENT, {CPP: PATCH})
+        self.assertEqual(plan, {CPP: ("0.13.2", "This patch does a thing.")})
+
 
 class CurrentVersionTest(unittest.TestCase):
     def test_reads_the_package_version(self) -> None:
@@ -293,6 +327,21 @@ class CurrentVersionTest(unittest.TestCase):
             manifest.write_text(json.dumps(TYPESCRIPT_PACKAGE))
             self.assertEqual(release.current_version(manifest), "0.4.10")
 
+    def test_reads_a_cmake_project_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "CMakeLists.txt"
+            manifest.write_text(CPP_CMAKE)
+            self.assertEqual(release.current_version(manifest), "0.13.1")
+
+    def test_a_cmake_manifest_without_a_project_version_is_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "CMakeLists.txt"
+            manifest.write_text("project(hegel-cpp LANGUAGES CXX)\n")
+            with self.assertRaises(ValueError):
+                release.current_version(manifest)
+            with self.assertRaises(ValueError):
+                release.set_version(manifest, "0.13.2")
+
 
 class ComponentTest(unittest.TestCase):
     def test_tags_are_path_slash_version(self) -> None:
@@ -300,6 +349,7 @@ class ComponentTest(unittest.TestCase):
         self.assertEqual(LIBHEGEL.tag("0.24.0"), "libhegel/0.24.0")
         self.assertEqual(PYTHON.tag("0.2.0"), "frontends/python/0.2.0")
         self.assertEqual(TYPESCRIPT.tag("0.4.11"), "frontends/typescript/0.4.11")
+        self.assertEqual(CPP.tag("0.13.2"), "frontends/cpp/0.13.2")
 
     def test_release_files_live_in_the_component(self) -> None:
         for component in release.COMPONENTS:
@@ -336,6 +386,10 @@ class ComponentTest(unittest.TestCase):
 def release_name(manifest: Path) -> str:
     if manifest.suffix == ".json":
         return json.loads(manifest.read_text())["name"]
+    if manifest.name == "CMakeLists.txt":
+        for line in manifest.read_text().splitlines():
+            if line.startswith("project("):
+                return line.removeprefix("project(").split()[0]
     for line in manifest.read_text().splitlines():
         if line.startswith("name = "):
             return line.split('"')[1]

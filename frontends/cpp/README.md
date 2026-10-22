@@ -1,5 +1,5 @@
 > [!IMPORTANT]
-> We're excited you're checking out Hegel! Hegel is in beta, and we'd love for you to try it and [report any feedback](https://github.com/hegeldev/hegel-cpp/issues/new).
+> We're excited you're checking out Hegel! Hegel is in beta, and we'd love for you to try it and [report any feedback](https://github.com/hegeldev/hegel/issues/new).
 >
 > As part of our beta, we may make breaking changes if it makes Hegel a better property-based testing library. If that instability bothers you, please check back in a few months for a stable release!
 >
@@ -22,19 +22,21 @@ To install with CMake, add this to your `CMakeLists.txt` (CMake 3.14+ required):
 include(FetchContent)
 FetchContent_Declare(
     hegel
-    GIT_REPOSITORY https://github.com/hegeldev/hegel-cpp.git
-    GIT_TAG v0.13.1
+    GIT_REPOSITORY https://github.com/hegeldev/hegel.git
+    GIT_TAG frontends/cpp/0.13.1
+    SOURCE_SUBDIR frontends/cpp
 )
 FetchContent_MakeAvailable(hegel)
 
 target_link_libraries(your_target PRIVATE hegel)
 ```
 
-At configure time the build downloads a small prebuilt shared library
-([libhegel](https://github.com/hegeldev/hegel/tree/main/libhegel),
-Hegel's native engine) for your platform and verifies it against its published
-SHA-256, then links it. To link a locally built engine instead, pass 
-`-DHEGEL_LIBHEGEL_LIBRARY=/path/to/libhegel_c.<ext>`. 
+The library lives in the [hegeldev/hegel](https://github.com/hegeldev/hegel)
+repository next to [libhegel](https://github.com/hegeldev/hegel/tree/main/libhegel),
+Hegel's native engine, which the build compiles with `cargo` (a Rust
+toolchain from [rustup](https://rustup.rs)) and links. To link a libhegel
+built elsewhere instead, so that no Rust toolchain is needed, pass
+`-DHEGEL_LIBHEGEL_LIBRARY=/path/to/libhegel_c.<ext>`.
 See https://hegel.dev/reference/installation for details.
 
 ## Quickstart

@@ -275,7 +275,7 @@ namespace hegel::generators {
     Generator<std::string> from_regex(const std::string& pattern,
                                       bool fullmatch) {
         return Generator<std::string>(new StringDrawGenerator(
-            impl::string_generator_regex(pattern.c_str(), fullmatch)));
+            impl::string_generator_regex(pattern, fullmatch)));
     }
 
     Generator<std::string> emails() {

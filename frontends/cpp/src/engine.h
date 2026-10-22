@@ -12,6 +12,7 @@
 #include <hegel.h>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace hegel {
@@ -42,10 +43,15 @@ namespace hegel::impl {
                                   bool derandomize);
     void settings_set_report_multiple_failures(hegel_context_t* ctx,
                                                hegel_settings_t* s, bool yes);
+    void settings_set_stop_on_first_failure(hegel_context_t* ctx,
+                                            hegel_settings_t* s, bool yes);
+    void settings_set_nondeterminism_strictness(hegel_context_t* ctx,
+                                                hegel_settings_t* s,
+                                                uint32_t strictness);
     void settings_set_database(hegel_context_t* ctx, hegel_settings_t* s,
-                               const char* path);
+                               std::string_view path);
     void settings_set_database_key(hegel_context_t* ctx, hegel_settings_t* s,
-                                   const char* key);
+                                   std::string_view key);
     void settings_set_suppress_health_check(hegel_context_t* ctx,
                                             hegel_settings_t* s, uint32_t mask);
     void settings_set_phases(hegel_context_t* ctx, hegel_settings_t* s,
@@ -55,19 +61,19 @@ namespace hegel::impl {
     /// Where the test lives. Inside Antithesis the engine reports the run's
     /// verdict under `<class_name>::<function>`; elsewhere it is unused.
     void settings_set_test_location(hegel_context_t* ctx, hegel_settings_t* s,
-                                    const char* file, uint32_t begin_line,
-                                    const char* class_name,
-                                    const char* function);
+                                    std::string_view file, uint32_t begin_line,
+                                    std::string_view class_name,
+                                    std::string_view function);
     /// A handle initialized from the engine's default settings profile.
     hegel_settings_t* settings_new(hegel_context_t* ctx);
 
     /// The span label for a generator kind: a stable hash of `name`.
-    uint64_t label_from_name(hegel_context_t* ctx, const char* name);
+    uint64_t label_from_name(hegel_context_t* ctx, std::string_view name);
 
     hegel_run_t* run_start(hegel_context_t* ctx, hegel_settings_t* s);
     hegel_test_case_t* test_case_from_blob(hegel_context_t* ctx,
                                            hegel_settings_t* s,
-                                           const char* blob);
+                                           std::string_view blob);
     /// NULL once the engine has no more cases to hand out. The returned
     /// handle is caller-owned; release it with hegel_test_case_free.
     hegel_test_case_t* next_test_case(hegel_context_t* ctx, hegel_run_t* run);
@@ -76,28 +82,38 @@ namespace hegel::impl {
     /// returned handle is caller-owned; release it with hegel_test_case_free.
     hegel_test_case_t* test_case_clone(hegel_context_t* ctx,
                                        const hegel_test_case_t* tc);
-    bool test_case_is_nondeterministic(hegel_context_t* ctx,
-                                       const hegel_test_case_t* tc);
+    /// Whether the engine stamped `tc` for capture: its output and, if it
+    /// fails, its diagnostic are the material for that origin's report.
+    bool test_case_should_capture(hegel_context_t* ctx,
+                                  const hegel_test_case_t* tc);
     void mark_complete(hegel_context_t* ctx, hegel_test_case_t* tc,
-                       hegel_status_t status, const char* origin);
+                       hegel_status_t status,
+                       const std::optional<std::string>& origin);
 
     /// Caller-owned result snapshot; release with hegel_run_result_free.
     hegel_run_result_t* run_result(hegel_context_t* ctx, hegel_run_t* run);
     hegel_run_status_t run_result_status(hegel_context_t* ctx,
                                          const hegel_run_result_t* result);
-    const char* run_result_error(hegel_context_t* ctx,
-                                 const hegel_run_result_t* result);
+    std::optional<std::string>
+    run_result_error(hegel_context_t* ctx, const hegel_run_result_t* result);
     size_t run_result_failure_count(hegel_context_t* ctx,
                                     const hegel_run_result_t* result);
     /// Caller-owned failure snapshot; release with hegel_failure_free.
     hegel_failure_t* run_result_failure(hegel_context_t* ctx,
                                         const hegel_run_result_t* result,
                                         size_t index);
-    const char* failure_reproduction_blob(hegel_context_t* ctx,
-                                          const hegel_failure_t* failure);
+    /// The base64 blob that replays the failure, or nullopt when the engine
+    /// produced none for it.
+    std::optional<std::string>
+    failure_reproduction_blob(hegel_context_t* ctx,
+                              const hegel_failure_t* failure);
     /// The origin string the engine grouped this failure's probes under.
-    const char* failure_origin(hegel_context_t* ctx,
+    std::string failure_origin(hegel_context_t* ctx,
                                const hegel_failure_t* failure);
+    /// The failure's standing under the run's nondeterministic handling, or
+    /// nullopt for a deterministic failure.
+    std::optional<std::string> failure_caveat(hegel_context_t* ctx,
+                                              const hegel_failure_t* failure);
 
     // String-generator construction. Each validates its parameters
     // immediately and throws std::invalid_argument (with the engine's
@@ -118,7 +134,7 @@ namespace hegel::impl {
 
     hegel_string_generator_t*
     string_generator_text(const TextGeneratorParams& params);
-    hegel_string_generator_t* string_generator_regex(const char* pattern,
+    hegel_string_generator_t* string_generator_regex(std::string_view pattern,
                                                      bool fullmatch);
     hegel_string_generator_t* string_generator_email();
     hegel_string_generator_t* string_generator_url();
@@ -129,7 +145,7 @@ namespace hegel::impl {
     // generators.cpp. (The template-visible ones live in
     // hegel::internal — see include/hegel/internal.h.)
 
-    void target(const TestCase& tc, double score, const char* label);
+    void target(const TestCase& tc, double score, std::string_view label);
 
     std::string draw_string(const TestCase& tc,
                             const hegel_string_generator_t* generator);

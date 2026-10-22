@@ -5,6 +5,7 @@
 
 #include <limits>
 #include <stdexcept>
+#include <string>
 
 #include <hegel/hegel.h>
 
@@ -32,18 +33,28 @@ TEST(Reject, DiscardsCaseNotFailure) {
 
 // reject() does not return: nothing after it runs. If it returned, the throw
 // below would surface as a failure and hegel::test() would re-raise it.
+// Rejecting every case leaves the run without a valid input, which the
+// engine reports as Unsatisfiable.
 TEST(Reject, DoesNotReturn) {
-    EXPECT_NO_THROW(hegel::test(
-        [](hegel::TestCase& tc) {
-            (void)tc.draw(gs::integers<int>());
-            tc.reject();
-            throw std::runtime_error("reject() returned"); // unreachable
-        },
-        hegel::Settings{
-            .test_cases = 20,
-            .derandomize = true,
-            .database = hegel::Database::disabled(),
-            .suppress_health_check = {hegel::HealthCheck::FilterTooMuch}}));
+    try {
+        hegel::test(
+            [](hegel::TestCase& tc) {
+                (void)tc.draw(gs::integers<int>());
+                tc.reject();
+                throw std::runtime_error("reject() returned"); // unreachable
+            },
+            hegel::Settings{
+                .test_cases = 20,
+                .derandomize = true,
+                .database = hegel::Database::disabled(),
+                .suppress_health_check = {hegel::HealthCheck::FilterTooMuch}});
+        FAIL() << "expected an Unsatisfiable error";
+    } catch (const std::runtime_error& error) {
+        std::string message = error.what();
+        EXPECT_NE(message.find("Unsatisfiable"), std::string::npos) << message;
+        EXPECT_EQ(message.find("reject() returned"), std::string::npos)
+            << message;
+    }
 }
 
 // ---------------------------------------------------------------------------

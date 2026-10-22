@@ -1,37 +1,47 @@
-# CLAUDE.md
+# C++ frontend
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Hegel for C++: the `hegel` CMake library. It drives libhegel, the engine in
+`../../libhegel`, **in-process** through its C ABI (`../../libhegel/include/hegel.h`)
+to generate random test data and perform shrinking. There is no server
+process and no download: `cmake/libhegel.cmake` builds the in-tree engine
+with `cargo build --release -p hegeltest-c` and links the shared library
+from the Cargo workspace's `target/` directory. Repo-wide conventions are in
+the root `AGENTS.md`.
 
-## Project Overview
-
-This is the C++ library for Hegel, a universal property-based testing protocol. The library drives Hegel's native engine (libhegel, the Hypothesis-derived engine from the hegeldev/hegel monorepo) **in-process** through its C ABI to generate random test data and perform shrinking. There is no server process: libhegel is a small prebuilt shared library that the build downloads for the host platform.
-
-## Build & Test Commands
+## Commands
 
 ```bash
-just test     # alias for check-tests: cmake -B build && cmake --build build && ctest --test-dir build/tests
-just check    # check-lint check-tests check-docs check-coverage (the required CI checks)
-just format   # clang-format on all .cpp/.h files
-just docs     # build Doxygen documentation and open it
+just cpp::build-libhegel   # cargo-build the engine (the CMake build also does this itself)
+just cpp::test             # alias for check-tests: cmake -B build && cmake --build build && ctest --test-dir build/tests (twice: with and without the throw-site hook)
+just cpp::check            # check-lint check-tests check-docs check-coverage (the required CI checks)
+just cpp::format           # clang-format (through uvx) on all .cpp/.h files
+just cpp::docs             # build the Doxygen documentation and open it
 ```
 
 Run a single test:
 ```bash
-cmake -B build && cmake --build build
+cd frontends/cpp && cmake -B build && cmake --build build
 ctest --test-dir build/tests -R test_name
 ```
 
+Tools: CMake 3.14+, a C++20 compiler, a Rust toolchain (for the engine),
+`uv` (clang-format runs as `uvx clang-format`), `clang-tidy` (set
+`CLANG_TIDY` to its path; Homebrew's `/opt/homebrew/opt/llvm/bin/clang-tidy`
+is found automatically), `doxygen` 1.10+ with graphviz for the docs, and
+`llvm-profdata`/`llvm-cov` matching the compiler for coverage (`xcrun` finds
+Apple's).
+
 Other recipes worth knowing before touching build/CI files:
-- `just check-sanitizers` — separate `address,undefined` and `thread` builds under `build/san-*`; LSan suppressions at `tests/lsan-suppressions.txt`.
-- `just check-tidy` — clang-tidy over `src/`, warnings-as-errors.
-- `just check-consumer MODE` (`subdirectory` / `fetchcontent` / `install` / `tests_on`) and `just check-consumer-all` — build the library the way a downstream project would, not part of `just check`.
-- `just check-cxx17` — builds and installs with `HEGEL_REFLECTION=OFF`, then builds/runs a standalone C++17 consumer.
-- CMake options: `HEGEL_BUILD_TESTS`, `HEGEL_BUILD_DOCS` (OFF), `HEGEL_COVERAGE` (OFF), `HEGEL_REFLECTION` (ON), `HEGEL_THROW_SITE` (ON; OFF for statically linked C++ runtimes), plus `HEGEL_SANITIZE`, `HEGEL_LIBHEGEL_VERSION`/`HEGEL_LIBHEGEL_LIBRARY`, and `tests/CMakeLists.txt`'s `HEGEL_APPROVAL_TESTS` (ON).
+- `just cpp::check-sanitizers` — separate `address,undefined` and `thread` builds under `build/san-*`; LSan suppressions at `tests/lsan-suppressions.txt`.
+- `just cpp::check-tidy` — clang-tidy over `src/`, warnings-as-errors.
+- `just cpp::check-consumer MODE` (`subdirectory` / `fetchcontent` / `install` / `tests_on`) and `just cpp::check-consumer-all` — build the library the way a downstream project would, not part of `just cpp::check`. The `fetchcontent` mode clones the monorepo at `HEAD` (`SOURCE_SUBDIR frontends/cpp`), so it only sees committed changes, and links the engine this checkout already built.
+- `just cpp::check-cxx17` — builds and installs with `HEGEL_REFLECTION=OFF`, then builds/runs a standalone C++17 consumer.
+- CMake options: `HEGEL_BUILD_TESTS`, `HEGEL_BUILD_DOCS` (OFF), `HEGEL_COVERAGE` (OFF), `HEGEL_REFLECTION` (ON), `HEGEL_THROW_SITE` (ON; OFF for statically linked C++ runtimes), plus `HEGEL_SANITIZE`, `HEGEL_LIBHEGEL_LIBRARY` (link a libhegel built elsewhere; cargo is then not needed), `HEGEL_LIBHEGEL_INCLUDE_DIR` (that library's `hegel.h`), and `tests/CMakeLists.txt`'s `HEGEL_APPROVAL_TESTS` (ON).
 
 ## VERY IMPORTANT: Comments
 
 - Adhere to ASD-STE100 Simplified Technical English
-- After making a change, do not describe what code was there previously and why 
+- After making a change, do not describe what code was there previously and why
 the code was changed.
 - Do not mention Hypothesis, or any other Hegel library, even when the user prompts
 you to port a feature from there.
@@ -42,12 +52,12 @@ you to port a feature from there.
 
 - C++20 compiler by default. The only hard C++20 dependency is reflect-cpp (used by `default_generator`). Configure with `-DHEGEL_REFLECTION=OFF` to drop reflect-cpp and build/consume at C++17 — `default_generator` and automatic struct parsing become unavailable, but everything else works. The feature is gated by the `HEGEL_HAS_REFLECTION` macro (set from the CMake option; see `include/hegel/config.h`). Designated-initializer params (`integers<int>({.min_value = 0})`) then rely on a GCC/Clang C++17 extension.
 - CMake 3.14+
-- libhegel (Hegel's native engine) — a prebuilt shared library downloaded at configure time by `cmake/libhegel.cmake` from the `libhegel/<version>` GitHub release on hegeldev/hegel, verified against its published SHA-256, and linked. Override with `-DHEGEL_LIBHEGEL_LIBRARY=/path/to/libhegel_c.<ext>`. The vendored C ABI header lives at `libhegel/hegel.h`. Its version is bumped by a bot (`.github/workflows/bump-hegel-rust.yml` running `.github/scripts/bump_hegel_rust.py`) that rewrites `cmake/libhegel.cmake`, `libhegel/hegel.h`, and `nix/flake.nix` together in one PR — do not hand-bump it.
-- reflect-cpp v0.22.0 (type-directed generator derivation via reflection). Version pinned in `CMakeLists.txt`; keep it in sync with `nix/flake.nix`'s `fetchDeps.reflectcpp`.
+- libhegel (Hegel's native engine) — the in-tree `hegeltest-c` crate. `cmake/libhegel.cmake` adds a custom target that runs `cargo build --release -p hegeltest-c` against the workspace `Cargo.toml` (`CARGO_TARGET_DIR` moves the output, as for cargo) and links `target/release/libhegel_c.{dylib,so}` as the imported target `hegel::libhegel`. The C ABI header is `../../libhegel/include/hegel.h`; the wrappers in `src/engine.{h,cpp}` must track it when the ABI changes (a PR changing the ABI changes this frontend in the same PR). `install()` ships the library next to `libhegel.a` (on macOS with its install name rewritten to `@rpath`).
+- reflect-cpp v0.22.0 (type-directed generator derivation via reflection). Version pinned in `CMakeLists.txt`.
 - Google Test v1.14.0 (for unit tests)
-- ApprovalTests.cpp v.10.13.0 (test-only; snapshot tests in `tests/approvals/`). Fetched at configure time — keep the version in `tests/CMakeLists.txt` and `nix/flake.nix`'s `fetchDeps.approvaltests` in sync. `-DHEGEL_APPROVAL_TESTS=OFF` skips the fetch and the snapshot suites for offline builds. A mismatch writes a sibling `*.received.txt`; accept it by rerunning the test binary with `APPROVAL_TESTS_USE_REPORTER=AutoApproveReporter`.
-- Coverage gate (`scripts/check-coverage.py`, run by `just check-coverage`): every non-excluded line in `src/` and `include/hegel/` must be covered, and lines hidden via `// GCOVR_EXCL_*` markers must not exceed the ratchet in `.github/coverage-ratchet.json`. Only a human raises the ratchet; it auto-tightens when the excluded count drops.
-- Releases: a PR touching library behavior needs a `RELEASE.md` at the repo root (`RELEASE_TYPE: major|minor|patch` + changelog body, see the `changelog` skill) or the `skip release` label, or `check-release.yml` fails the PR. Merging to `main` auto-cuts a release and auto-publishes Doxygen docs.
+- ApprovalTests.cpp v.10.13.0 (test-only; snapshot tests in `tests/approvals/`). Fetched at configure time. `-DHEGEL_APPROVAL_TESTS=OFF` skips the fetch and the snapshot suites for offline builds. A mismatch writes a sibling `*.received.txt`; accept it by rerunning the test binary with `APPROVAL_TESTS_USE_REPORTER=AutoApproveReporter`.
+- Coverage gate (`scripts/check-coverage.py`, run by `just cpp::check-coverage`): every non-excluded line in `src/` and `include/hegel/` must be covered, and lines hidden via `// GCOVR_EXCL_*` markers must not exceed the ratchet in `coverage-ratchet.json`. Only a human raises the ratchet; it auto-tightens when the excluded count drops.
+- Releases: a PR touching `src/`, `include/`, `cmake/` or `CMakeLists.txt` needs a `RELEASE.md` in this directory (`RELEASE_TYPE: major|minor|patch` + changelog body, see the `changelog` skill), or `.github/scripts/release.py check` fails the PR. On merge the release job bumps the `project()` version in `CMakeLists.txt`, moves the entry into `CHANGELOG.md`, tags `frontends/cpp/<version>` (the tag is the release: consumers fetch it with `FetchContent` and `SOURCE_SUBDIR frontends/cpp`) and pushes the Doxygen output to hegel.dev/cpp (`.github/scripts/push_cpp_docs.py`). A libhegel release patch-bumps this frontend too.
 
 ## Architecture
 
@@ -56,11 +66,13 @@ you to port a feature from there.
 The library calls libhegel's C ABI (`hegel_*` functions) directly, in-process — no subprocess, no socket. `hegel::test()` (`src/hegel.cpp`) drives the run:
 1. Get this thread's error-reporting context (`impl::thread_context()`, one `hegel_context_t` per thread, mirroring hegel-rust) and a settings handle (`hegel_settings_new`); map `hegel::Settings` onto `hegel_settings_set_*`.
 2. `hegel_run_start` builds the run; no engine work happens yet.
-3. Loop `hegel_next_test_case` until it yields NULL; run the user body for each case and `hegel_mark_complete` it (VALID / INVALID / OVERRUN / INTERESTING). libhegel has no background thread: all engine work (generation, mutation, shrinking) happens on the calling thread inside `hegel_next_test_case`.
-4. `hegel_run_result` reports passed / failed / errored. On failure, each counterexample blob is replayed via `hegel_test_case_from_blob` to reproduce the user's notes and the failing exception message.
-5. The replay is wrapped in a framed report: a header naming the test and its source line, a `Falsified after N test cases (M discarded):` line, the indented body of drawn values and notes, `Exception: <type>: <message>`, and a `rerun with:` line. Counting stops at the first failing case, so the number says how many cases it took to find the bug rather than how much the shrinker did. `hegel::test()` has an overload taking a `TestLocation`; `internal::test_from_macro` is what `HEGEL_TEST` expands to, and only it prints the `HEGEL_REPRODUCE_FAILURE` form of the rerun line.
+3. Loop `hegel_next_test_case` until it yields NULL; run the user body for each case and `hegel_mark_complete` it (VALID / INVALID / OVERRUN / INTERESTING). libhegel has no background thread: all engine work (generation, mutation, shrinking, the final replay of every failure it will report) happens on the calling thread inside `hegel_next_test_case`. Every failing case stores a capture keyed by the failure's origin; a case the engine stamped for capture (`hegel_test_case_should_capture`) buffers its draw/note lines into that capture instead of printing them.
+4. `hegel_run_result` reports passed / failed / errored. On failure, each counterexample with a reproduce blob (`hegel_failure_reproduction_blob`) is replayed via `hegel_test_case_from_blob` to reproduce the user's notes and the failing exception message; one without a blob (an unconfirmed nondeterministic failure), or whose replay passes, is reported from its capture.
+5. The replay is wrapped in a framed report: a header naming the test and its source line, a `Falsified after N test cases (M discarded):` line, the indented body of drawn values and notes, `Exception: <type>: <message>`, a `note: <caveat>` line when the engine qualifies how reliably the failure reproduced (`hegel_failure_caveat`), and a `rerun with:` line when there is a blob. Counting stops at the first failing case, so the number says how many cases it took to find the bug rather than how much the shrinker did. `hegel::test()` has an overload taking a `TestLocation`; `internal::test_from_macro` is what `HEGEL_TEST` expands to, and only it prints the `HEGEL_REPRODUCE_FAILURE` form of the rerun line.
 
 Hegel runs no tests for you: `HEGEL_TEST` defines a function the user calls from `main()`, and there is no registry. With a test framework, the property goes inside one of its tests and calls `hegel::test()`.
+
+Nondeterminism (a test whose outcome or draws change when the same data is replayed) is the engine's business: under the default `Settings::nondeterminism_strictness` (`Quiet`) it confirms failures by replay and reports each with a caveat; `Warn` adds a notice; `Error` fails the run with the flaky-test error (what the `FlakyReporting` tests ask for). `Settings::stop_on_first_failure = false` makes a run use its whole `test_cases` budget before reporting.
 
 ### Test-framework integration
 
@@ -80,6 +92,7 @@ Hegel is a static library, so its definition lands in the test executable and wi
 ### Draw path
 
 A `draw()` calls libhegel's typed draw primitives (`hegel_generate_integer`, `hegel_generate_float`, `hegel_generate_boolean`, `hegel_generate_bytes`, `hegel_generate_string`, `hegel_generate_date`/`_time`/`_datetime`, `hegel_generate_ipv4`/`_ipv6`, `hegel_generate_uuid`) directly — there is no schema or serialization layer. The template-visible primitives (`draw_integer`, `draw_integer_unsigned`, `draw_float`, `draw_boolean`, spans, collections) are declared in `include/hegel/internal.h` and implemented in `src/engine.cpp`; the string/bytes/date draws used only by `src/generators.cpp` live in `src/engine.h` (`hegel::impl`).
+- Strings cross the ABI as borrowed `hegel_string_t` (`{data, len}`) values built by `engine.cpp`'s `borrow()`; optional ones travel as a nullable pointer to one. Engine-owned strings come back as `hegel_string_t` values (copied out at once) or, for `hegel_generate_string`, an `hegel_owned_string_t` freed with `hegel_owned_string_free`.
 - Integer ranges that don't fit in `int64_t` (e.g. `integers<uint64_t>()`) go through `hegel_generate_integer_big` with two's-complement little-endian bound buffers.
 - String-family generators (`text`, `characters`, `from_regex`, `emails`, `urls`, `domains`) build a validated, immutable `hegel_string_generator_t` handle once at generator construction and draw through it with `hegel_generate_string`.
 - `HEGEL_E_STOP_TEST` → `HegelStopTest` (case marked OVERRUN); `HEGEL_E_ASSUME` → `HegelReject` (INVALID); other non-OK codes throw `std::runtime_error` with `hegel_context_last_error`.
@@ -91,7 +104,7 @@ Public headers in `include/hegel/`:
 - **`gtest.h`** - GoogleTest integration (header-only): `hegel::GTestFailure` and the `FrameworkHooks` it installs
 - **`test_case.h`** - TestCase class (move-only) with `draw()`, `assume()`, `reject()`, `target()`, `repeat()`, `note()`, `clone()`, `spawn()` (returns a move-only `Worker<T>` for threaded drawing) methods passed to the test callback
 - **`core.h`** - `IGenerator<T>`, `Generator<T>` with `map()`, `flat_map()`, `filter()` combinators, `CompositeGenerator<T>`, `MappedGenerator<T, U>`, and `compose()` to build a generator from an imperative `TestCase`-drawing lambda
-- **`settings.h`** - `Settings`, `Database`, `Verbosity` enum
+- **`settings.h`** - `Settings`, `Database`, `Verbosity`, `NondeterminismStrictness` enums
 - **`internal.h`** - The typed draw primitives (`draw_integer`, `draw_float`, `draw_boolean`, spans, collections), the owning handles over the engine's compound-draw objects (`Collection`, and the `PoolHandle` / `StateMachineHandle` backing `stateful.h`, each of which frees its handle in its destructor), `SpanLabel` (the kinds of span the generators open; `src/engine.cpp` derives each kind's engine label from a `hegel-cpp.<kind>` name with `hegel_label_from_name`), `NoteIndentScope`, `DrawLogScope`, and the `HegelReject` / `HegelStopTest` exceptions (internal only; users interact via `TestCase` methods and the macros)
 - **`generators/`** - Strategy factory functions in `hegel::generators` namespace, split by category: `primitives.h`, `numeric.h`, `strings.h`, `collections.h`, `combinators.h`, `formats.h`, `builds.h`, `default.h` (type-directed derivation via reflect-cpp), `random.h`, `stateful.h` (model-based/stateful testing — see Stateful testing below)
 
@@ -99,7 +112,7 @@ Private implementation in `src/`:
 - **`engine.{h,cpp}`** - Wrappers over the libhegel C ABI: run-lifecycle helpers (`hegel::impl`), string-generator construction, and the draw-primitive implementations
 - **`test_case.{h,cpp}`** - Private `TestCaseData` struct (owns the `hegel_test_case_t*` — freed in its destructor — plus per-iteration state; the error-reporting context is per-thread via `impl::thread_context()`) and the `TestCase` method implementations, including `DrawLogScope` — each outermost `TestCase::draw` prints its composed value as a C++ declaration (`auto <name> = <value>;`, rendered by `include/hegel/repr.h`) on the final replay / at Verbose+
 - **`generators.cpp` / `hegel.cpp`** - implementations for the corresponding public headers; `hegel.cpp` also holds the `hegel::test()` run loop and the failure report
-- **`cmake/libhegel.cmake`** - downloads/verifies/links libhegel and exposes the `hegel::libhegel` imported target; `libhegel/hegel.h` is the vendored C ABI header
+- **`cmake/libhegel.cmake`** - builds the in-tree libhegel with cargo (or takes `HEGEL_LIBHEGEL_LIBRARY`) and exposes the `hegel::libhegel` imported target
 
 ### Generator Pattern
 
@@ -118,13 +131,15 @@ Spans exist so the shrinker can reason about a group of draws as a unit; open on
 
 `stateful::run()` opens `SpanLabel::StatefulRule` around each rule application so the shrinker can delete or reorder a whole step as a unit, and draws which rule fires via `hegel_state_machine_next_rule`. The engine owns the stepping lifecycle: each `next_rule` call first makes the stop decision itself, and writes `HEGEL_STATE_MACHINE_DONE` (mirrored as `internal::state_machine_done`) when the sequence ends — the loop breaks there, leaving the final span open for the engine to freeze. Every case runs at least one step and at most `Settings::stateful_step_count` (default 50; `hegel::test()` rejects values below 1 with `std::invalid_argument`, and the value travels on `TestCaseData` to the `step_count` argument of `hegel_new_state_machine`). Replay (`Mode::SingleTestCase`) is unbounded engine-side: a failing sequence reruns for real until a rule throws or an invariant fails, not until the step budget expires. A step that hits `assume()` closes its span with `discard=true` and reports itself through `hegel_state_machine_rule_rejected`, so it does not count against the step budget.
 
+`run_concurrent()` clones the test case once per worker (`hegel_test_case_clone`) *before* it starts the worker threads: a clone can fail (the engine stops an overrun case at the clone), and a failure after a thread was started would destroy a joinable `std::thread`.
+
 ### Test Suite Organization
 
-`tests/CMakeLists.txt` defines `hegel_add_test(NAME ... SOURCE ... [USE_UTILS] [INTERNAL] [APPROVALS])`, wrapping `gtest_discover_tests`; `APPROVALS` swaps `gtest_main` for `tests/common/approval_main.cpp` + `ApprovalTests::ApprovalTests`, and stores snapshots under `tests/approvals/`. `find_quality/test_*.cpp` and `shrink_quality/test_*.cpp` (one file per generator family) are ordinary GTest cases using `tests/common/utils.h`'s `find_any()`/`minimal()` helpers, which run `hegel::test()` against a predicate and assert the engine reaches (find_quality) or shrinks to (shrink_quality) a known value. `property_tests.cpp` holds worked-example properties, distinct from `test_generators_*.cpp`, which unit-test generator construction/validation one family per file. `subject_main.cpp` builds a standalone `subject` binary with argv-selected failure scenarios; `test_printing.cpp` forks it via `tests/common/subprocess.h` and approves its stderr through `tests/common/approvals.h`'s scrubbers, because failure-report formatting (throw-site stability under ASLR, multi-failure grouping) must be observed from a fresh process, not in-process. `tests/consumer/{subdirectory,fetchcontent,install,tests_on,cxx17}/` each exercise one way of consuming the library as a dependency, driven by `just check-consumer`/`check-consumer-all`. `tests/nix/` is a `find_package`-based smoke test of the *installed* package, driven by the Nix flake — distinct from `nix/` at the repo root, which is the flake itself.
+`tests/CMakeLists.txt` defines `hegel_add_test(NAME ... SOURCE ... [USE_UTILS] [INTERNAL] [APPROVALS])`, wrapping `gtest_discover_tests`; `APPROVALS` swaps `gtest_main` for `tests/common/approval_main.cpp` + `ApprovalTests::ApprovalTests`, and stores snapshots under `tests/approvals/`. `find_quality/test_*.cpp` and `shrink_quality/test_*.cpp` (one file per generator family) are ordinary GTest cases using `tests/common/utils.h`'s `find_any()`/`minimal()` helpers, which run `hegel::test()` against a predicate and assert the engine reaches (find_quality) or shrinks to (shrink_quality) a known value. `property_tests.cpp` holds worked-example properties, distinct from `test_generators_*.cpp`, which unit-test generator construction/validation one family per file. `subject_main.cpp` builds a standalone `subject` binary with argv-selected failure scenarios; `test_printing.cpp` forks it via `tests/common/subprocess.h` and approves its stderr through `tests/common/approvals.h`'s scrubbers, because failure-report formatting (throw-site stability under ASLR, multi-failure grouping) must be observed from a fresh process, not in-process. `tests/consumer/{subdirectory,fetchcontent,install,tests_on,cxx17}/` each exercise one way of consuming the library as a dependency, driven by `just cpp::check-consumer`/`check-consumer-all`.
 
 ## Code Style
 
-- **Formatting**: LLVM base style, 4-space indentation, left-aligned pointers (`int*`). Run `just format` before committing.
+- **Formatting**: LLVM base style, 4-space indentation, left-aligned pointers (`int*`). Run `just cpp::format` before committing.
 - **Headers**: Use `.h` extension (not `.hpp`)
 - **Namespaces**: `hegel` for public API (including run configuration types like `Settings`, `Database`, `Verbosity`), `hegel::generators` for generators and strategies, `hegel::internal` for internals referenced in public headers, `hegel::impl::*` for purely private implementation
 - **Includes**: Public headers use relative includes (`#include "settings.h"`), source files use angle brackets for both public (`<hegel/internal.h>`) and private (`<engine.h>`, `<test_case.h>`) headers
