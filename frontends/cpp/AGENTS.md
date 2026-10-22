@@ -36,6 +36,7 @@ Other recipes worth knowing before touching build/CI files:
 - `just cpp::check-tidy` — clang-tidy over `src/`, warnings-as-errors.
 - `just cpp::check-consumer MODE` (`subdirectory` / `fetchcontent` / `install` / `tests_on`) and `just cpp::check-consumer-all` — build the library the way a downstream project would, not part of `just cpp::check`. The `fetchcontent` mode clones the monorepo at `HEAD` (`SOURCE_SUBDIR frontends/cpp`), so it only sees committed changes, and links the engine this checkout already built.
 - `just cpp::check-cxx17` — builds and installs with `HEGEL_REFLECTION=OFF`, then builds/runs a standalone C++17 consumer.
+- `just cpp::check-nix` — builds and runs the Nix consumer project in `tests/nix` with `nix-build` against the flake's package. `nix/flake.nix` exports `lib.mkHegelCppProject` for downstream Nix users and builds the engine from the in-tree libhegel through the root flake's `lib.mkLibhegel`; `nix/default.nix` is its flake-compat entry point. Needs nix; not part of `just cpp::check`.
 - CMake options: `HEGEL_BUILD_TESTS`, `HEGEL_BUILD_DOCS` (OFF), `HEGEL_COVERAGE` (OFF), `HEGEL_REFLECTION` (ON), `HEGEL_THROW_SITE` (ON; OFF for statically linked C++ runtimes), plus `HEGEL_SANITIZE`, `HEGEL_LIBHEGEL_LIBRARY` (link a libhegel built elsewhere; cargo is then not needed), `HEGEL_LIBHEGEL_INCLUDE_DIR` (that library's `hegel.h`), and `tests/CMakeLists.txt`'s `HEGEL_APPROVAL_TESTS` (ON).
 
 ## VERY IMPORTANT: Comments

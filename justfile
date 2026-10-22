@@ -35,13 +35,13 @@ format:
     @which nix && just format-nix || true
 
 format-nix:
-    nix run nixpkgs#nixfmt -- nix/flake.nix
+    nix run nixpkgs#nixfmt -- nix/flake.nix frontends/cpp/nix/flake.nix
 
 check-format:
     cargo fmt --all --check
 
 check-format-nix:
-    nix run nixpkgs#nixfmt -- --check nix/flake.nix
+    nix run nixpkgs#nixfmt -- --check nix/flake.nix frontends/cpp/nix/flake.nix
 
 check-clippy:
     cargo clippy --workspace --all-features --all-targets -- -D warnings

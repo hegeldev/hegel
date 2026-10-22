@@ -16,16 +16,19 @@
       forAllSystems = nixpkgs.lib.genAttrs nixpkgs.lib.systems.flakeExposed;
     in
     {
-      # Build the native engine cdylib (`libhegel.so`) used by the C-ABI
-      # bindings and other language bindings (e.g. hegel-ocaml's ctypes
-      # loader). Callers may override `cargoDeps` to plug in their own
-      # vendoring; the default uses `importCargoLock` against the workspace `Cargo.lock`.
+      # Build the native engine cdylib (`lib/libhegel_c.so` or `.dylib`, plus
+      # `lib/libhegel.so` on Linux for older callers) and its C header
+      # (`include/hegel.h`) for the C-ABI bindings and the language frontends'
+      # flakes (frontends/cpp/nix). Callers may override `cargoDeps` to plug in
+      # their own vendoring; the default uses `importCargoLock` against the
+      # workspace `Cargo.lock`.
       lib.mkLibhegel =
         {
           pkgs,
           cargoDeps ? pkgs.rustPlatform.importCargoLock { lockFile = ../Cargo.lock; },
         }:
         let
+          ext = pkgs.stdenv.hostPlatform.extensions.sharedLibrary;
           cargoTomlLines = builtins.filter builtins.isString (
             builtins.split "\n" (builtins.readFile ../libhegel/Cargo.toml)
           );
@@ -47,9 +50,13 @@
           # the cdylib. The artifact may land in target/<triple>/release/ or
           # target/release/ depending on whether --target is in play.
           postInstall = ''
-            mkdir -p $out/lib
-            cp "$(find target -name 'libhegel_c.so' -path '*/release/*' | 
-            head -n1)" $out/lib/libhegel.so
+            mkdir -p $out/lib $out/include
+            cp "$(find target -name 'libhegel_c${ext}' -path '*/release/*' | head -n1)" \
+              "$out/lib/libhegel_c${ext}"
+            cp libhegel/include/hegel.h $out/include/hegel.h
+          ''
+          + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+            ln -s libhegel_c.so $out/lib/libhegel.so
           '';
         };
 

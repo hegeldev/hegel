@@ -152,6 +152,18 @@ check-cxx17:
     cmake --build build/cxx17-consumer -j{{ jobs }}
     "$ROOT/build/cxx17-consumer/consumer"
 
+# Build and run the Nix consumer project (tests/nix) against the flake's
+# package (nix/flake.nix), whose engine the root flake builds from the
+# in-tree libhegel. Needs nix.
+check-nix:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p build
+    nix-build tests/nix --out-link build/nix-result
+    build/nix-result/bin/nix_test | tee build/nix-test.log
+    grep -q test_nix_integration_canary build/nix-test.log
+    grep -q "All nix integration tests passed!" build/nix-test.log
+
 check-coverage:
     #!/usr/bin/env bash
     set -euo pipefail
