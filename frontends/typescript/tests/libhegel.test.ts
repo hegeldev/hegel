@@ -111,9 +111,45 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     stringGeneratorDomain: () => 0,
     generateString: () => 0,
     ownedStringFree: noop,
+    dateOptionsNew: (_ctx, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    dateOptionsFree: noop,
+    dateOptionsSetWeekdays: () => 0,
+    dateOptionsSetMonths: () => 0,
     generateDate: () => 0,
     generateTime: () => 0,
     generateDatetime: () => 0,
+    generateTimestamp: () => 0,
+    generateOffset: () => 0,
+    timezoneInfo: () => 0,
+    timezoneSpecNew: (_ctx, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    timezoneSpecFree: noop,
+    timezoneSpecSetNames: () => 0,
+    generateTimezone: () => 0,
+    zonedSpecNew: (_ctx, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    zonedSpecFree: noop,
+    zonedSpecSetCivilBounds: () => 0,
+    zonedSpecSetInstantBounds: () => 0,
+    zonedSpecSetPrecision: () => 0,
+    zonedSpecSetImaginary: () => 0,
+    zonedSpecSetAmbiguous: () => 0,
+    generateZonedDatetime: () => 0,
+    spanSpecNew: (_ctx, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    spanSpecFree: noop,
+    spanSpecSetUnitBounds: () => 0,
+    spanSpecSetSign: () => 0,
+    generateSpan: () => 0,
     generateUuid: () => 0,
     generateIpv4: () => 0,
     generateIpv6: () => 0,
@@ -423,12 +459,77 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
       }),
     ).toBe(0);
     expect(
-      lib.generateDate(null, null, { year: 1, month: 1, day: 1 }, { year: 2, month: 1, day: 1 }),
+      lib.generateDate(
+        null,
+        null,
+        { year: 1, month: 1, day: 1 },
+        { year: 2, month: 1, day: 1 },
+        null,
+      ),
     ).toEqual({
       year: 0,
       month: 0,
       day: 0,
     });
+  });
+
+  it("marshals the zeroed date and time outputs of fake bindings", () => {
+    const lib = new Libhegel(fakeBindings({}));
+    const zero = { second: 0n, nanosecond: 0 };
+    expect(lib.generateTimestamp(null, null, zero, zero, 0)).toEqual(zero);
+    expect(lib.generateOffset(null, null, 0, 0, 0, false)).toEqual({ seconds: 0, known: false });
+    expect(lib.timezoneInfo(null, "Nowhere/Unknown")).toEqual({
+      known: false,
+      primaryName: "",
+      isLink: false,
+      rank: 0,
+      tags: 0,
+    });
+    expect(lib.generateTimezone(null, null, null)).toBe("");
+    expect(lib.generateZonedDatetime(null, null, null, null)).toEqual({
+      value: {
+        civil: {
+          date: { year: 0, month: 0, day: 0 },
+          time: { hour: 0, minute: 0, second: 0, nanosecond: 0 },
+        },
+        offsetSeconds: 0,
+        offsetKnown: false,
+        fold: false,
+        kind: 0,
+        offsetBefore: 0,
+        offsetAfter: 0,
+        timestamp: zero,
+      },
+      zone: "",
+    });
+    expect(lib.generateSpan(null, null, null)).toEqual({
+      years: 0n,
+      months: 0n,
+      weeks: 0n,
+      days: 0n,
+      hours: 0n,
+      minutes: 0n,
+      seconds: 0n,
+      milliseconds: 0n,
+      microseconds: 0n,
+      nanoseconds: 0n,
+    });
+    for (const method of [
+      "dateOptionsNew",
+      "timezoneSpecNew",
+      "zonedSpecNew",
+      "spanSpecNew",
+    ] as const) {
+      const nullHandle = new Libhegel(
+        fakeBindings({
+          [method]: (_ctx: Ptr, out: Ptr[]) => {
+            out[0] = null;
+            return 0;
+          },
+        }),
+      );
+      expect(() => nullHandle[method](null)).toThrow("returned a null handle");
+    }
   });
 });
 
@@ -721,12 +822,12 @@ describe("Libhegel ABI 0.42.4 regressions", () => {
     const tc = lib.nextTestCase(ctx, run);
     try {
       const date = { year: -12345, month: 6, day: 17 };
-      expect(lib.generateDate(ctx, tc, date, date)).toEqual(date);
+      expect(lib.generateDate(ctx, tc, date, date, null)).toEqual(date);
       for (const nanosecond of [1, 123456789, 999999999]) {
         const time = { hour: 12, minute: 34, second: 56, nanosecond };
-        expect(lib.generateTime(ctx, tc, time, time)).toEqual(time);
+        expect(lib.generateTime(ctx, tc, time, time, 0)).toEqual(time);
         const datetime = { date, time };
-        expect(lib.generateDatetime(ctx, tc, datetime, datetime)).toEqual(datetime);
+        expect(lib.generateDatetime(ctx, tc, datetime, datetime, 0)).toEqual(datetime);
       }
       const uuid = lib.generateUuid(ctx, tc, 4);
       expect(uuid).toHaveLength(16);

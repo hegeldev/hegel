@@ -1,8 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { generateValue, StringGeneratorCache } from "../src/generate.js";
-import { EngineError } from "../src/engine.js";
+import { generateValue, HandleCache } from "../src/generate.js";
+import { EngineError, type Engine, type ContextHandle } from "../src/engine.js";
 import { AssumeError, StopTestError } from "../src/testCase.js";
 import { fakeEngine, context, testCase } from "./fakeEngine.js";
+
+const emailGenerator = (lib: Engine, ctx: ContextHandle) => {
+  const generator = lib.stringGeneratorEmail(ctx);
+  return { value: generator, free: () => lib.freeStringGenerator(generator) };
+};
 
 const boolean = { type: "boolean" };
 const compoundSchemas = [
@@ -83,19 +88,19 @@ describe("generateValue compound cleanup", () => {
   });
 });
 
-describe("StringGeneratorCache ownership", () => {
+describe("HandleCache ownership", () => {
   it("reuses schema identity only within its engine and disposes exactly once", () => {
     const first = fakeEngine();
     const second = fakeEngine();
-    const firstCache = new StringGeneratorCache(first);
-    const secondCache = new StringGeneratorCache(second);
+    const firstCache = new HandleCache(first);
+    const secondCache = new HandleCache(second);
     const schema = { type: "email" };
     generateValue(first, context, testCase, schema, firstCache);
     generateValue(first, context, testCase, schema, firstCache);
     generateValue(second, context, testCase, schema, secondCache);
     expect(first.stringGeneratorEmail).toHaveBeenCalledTimes(1);
     expect(second.stringGeneratorEmail).toHaveBeenCalledTimes(1);
-    expect(() => firstCache.get(second, context, schema)).toThrow("another engine");
+    expect(() => firstCache.get(second, context, schema, emailGenerator)).toThrow("another engine");
     firstCache.dispose();
     firstCache.dispose();
     secondCache.dispose();
@@ -105,12 +110,12 @@ describe("StringGeneratorCache ownership", () => {
 
   it("bounds live cached generators and frees evictions before constructing replacements", () => {
     const engine = fakeEngine();
-    const cache = new StringGeneratorCache(engine);
+    const cache = new HandleCache(engine);
     const oldest = { type: "email" };
-    cache.get(engine, context, oldest);
-    for (let i = 0; i < 256; i++) cache.get(engine, context, { type: "email" });
+    cache.get(engine, context, oldest, emailGenerator);
+    for (let i = 0; i < 256; i++) cache.get(engine, context, { type: "email" }, emailGenerator);
     expect(engine.freeStringGenerator).toHaveBeenCalledTimes(1);
-    cache.get(engine, context, oldest);
+    cache.get(engine, context, oldest, emailGenerator);
     expect(engine.stringGeneratorEmail).toHaveBeenCalledTimes(258);
     cache.dispose();
     expect(engine.freeStringGenerator).toHaveBeenCalledTimes(258);
@@ -129,9 +134,9 @@ describe("StringGeneratorCache ownership", () => {
 
   it("tries every destructor after an eviction/free error", () => {
     const engine = fakeEngine();
-    const cache = new StringGeneratorCache(engine);
-    cache.get(engine, context, { type: "email" });
-    cache.get(engine, context, { type: "url" });
+    const cache = new HandleCache(engine);
+    cache.get(engine, context, { type: "email" }, emailGenerator);
+    cache.get(engine, context, { type: "url" }, emailGenerator);
     engine.freeStringGenerator.mockImplementationOnce(() => {
       throw new EngineError("free failed");
     });
@@ -160,11 +165,11 @@ describe("StringGeneratorCache ownership", () => {
   });
 });
 
-it("StringGeneratorCache reports multiple failed destructors without retrying handles", () => {
+it("HandleCache reports multiple failed destructors without retrying handles", () => {
   const engine = fakeEngine();
-  const cache = new StringGeneratorCache(engine);
-  cache.get(engine, context, { type: "email" });
-  cache.get(engine, context, { type: "url" });
+  const cache = new HandleCache(engine);
+  cache.get(engine, context, { type: "email" }, emailGenerator);
+  cache.get(engine, context, { type: "url" }, emailGenerator);
   engine.freeStringGenerator.mockImplementation(() => {
     throw new EngineError("free failed");
   });

@@ -5,7 +5,7 @@
  * @packageDocumentation
  */
 
-import { generateValue, StringGeneratorCache } from "./generate.js";
+import { generateValue, HandleCache } from "./generate.js";
 import {
   TestCase,
   StopTestError,
@@ -101,7 +101,7 @@ export class EngineDataSource implements DataSource {
     lib: Engine,
     ctx: ContextHandle,
     tc: TestCaseHandle,
-    private readonly cache = new StringGeneratorCache(lib),
+    private readonly cache = new HandleCache(lib),
     readonly diagnostics: Diagnostics = portableDiagnostics,
     private readonly ownsCache = true,
   ) {
@@ -493,7 +493,7 @@ export class Hegel {
     const contextErrors: unknown[] = [];
     try {
       const settings = lib.newSettings(ctx);
-      const cache = new StringGeneratorCache(lib);
+      const cache = new HandleCache(lib);
       const settingsErrors: unknown[] = [];
       try {
         configureSettings(lib, ctx, settings, this._settings, this.testFn);
