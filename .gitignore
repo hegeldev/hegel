@@ -1,4 +1,6 @@
 /target/
+# The C++ frontend's CMake build trees
+/frontends/cpp/build/
 **/*.rs.bk
 .idea/
 .vscode/

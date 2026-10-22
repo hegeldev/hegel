@@ -19,14 +19,16 @@ class Component:
     `path` is the component's directory relative to the repo root. It doubles
     as the tag prefix: a release of version X.Y.Z is tagged `<path>/X.Y.Z`.
     `manifests` are the manifests that carry the component's version (Cargo
-    manifests, or npm's `package.json` and `package-lock.json`; the first is
-    the one its version is read from) and `crates` the packages those
+    manifests, npm's `package.json` and `package-lock.json`, or a
+    `CMakeLists.txt` with a `project(... VERSION x.y.z ...)` line; the first
+    is the one its version is read from) and `crates` the packages those
     manifests declare, all at the component's version; `source_dirs` are the
     paths whose changes require a `<path>/RELEASE.md` on a PR.
 
     A frontend ships the engine (the Rust frontend pins the `hegeltest-c`
     crate exactly, the Python frontend compiles libhegel into its wheels, the
-    TypeScript frontend bundles the libhegel binaries), so a libhegel release
+    TypeScript frontend bundles the libhegel binaries, the C++ frontend
+    builds the in-tree libhegel it is fetched with), so a libhegel release
     also patch-bumps every frontend without a RELEASE.md of its own, giving it
     `engine_bump_entry` (with `{version}` filled in) as its changelog entry.
     libhegel itself has no such entry. A frontend that records the engine
@@ -98,7 +100,22 @@ TYPESCRIPT = Component(
     engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
     engine_pin="frontends/typescript/src/libhegel-version.ts",
 )
-FRONTENDS = [RUST, PYTHON, TYPESCRIPT]
+# The C++ frontend has no package index: a consumer fetches the monorepo at
+# the `frontends/cpp/<version>` tag with CMake's FetchContent, so the tag is
+# the release. Its version is the `project()` version in its CMakeLists.txt.
+CPP = Component(
+    path="frontends/cpp",
+    manifests=("frontends/cpp/CMakeLists.txt",),
+    crates=("hegel-cpp",),
+    source_dirs=(
+        "frontends/cpp/src/",
+        "frontends/cpp/include/",
+        "frontends/cpp/cmake/",
+        "frontends/cpp/CMakeLists.txt",
+    ),
+    engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
+)
+FRONTENDS = [RUST, PYTHON, TYPESCRIPT, CPP]
 COMPONENTS = [LIBHEGEL, *FRONTENDS]
 
 
@@ -156,16 +173,36 @@ def bump_version(current: str, release_type: str) -> str:
     return f"{major}.{minor}.{patch}"
 
 
+CMAKE_PROJECT_VERSION = re.compile(
+    r"^(project\(\s*[\w-]+\s+VERSION\s+)(\d+\.\d+\.\d+)", re.MULTILINE
+)
+
+
 def current_version(manifest: Path) -> str:
     """The version of the package manifest at `manifest`: the `version = "..."`
-    of a Cargo manifest, or the `"version"` of an npm one."""
+    of a Cargo manifest, the `"version"` of an npm one, or the `project()`
+    version of a CMakeLists.txt."""
     if manifest.suffix == ".json":
         return json.loads(manifest.read_text())["version"]
+    if manifest.name == "CMakeLists.txt":
+        m = CMAKE_PROJECT_VERSION.search(manifest.read_text())
+        if m is None:
+            raise ValueError(f"no project(... VERSION x.y.z ...) in {manifest}")
+        return m.group(2)
     m = re.search(r'^version = "([^"]+)"', manifest.read_text(), re.MULTILINE)
     return m.group(1)
 
 
 def set_version(manifest: Path, new_version: str) -> None:
+    if manifest.name == "CMakeLists.txt":
+        text = manifest.read_text()
+        new_text, count = CMAKE_PROJECT_VERSION.subn(
+            lambda m: m.group(1) + new_version, text, count=1
+        )
+        if count != 1:
+            raise ValueError(f"no project(... VERSION x.y.z ...) in {manifest}")
+        manifest.write_text(new_text)
+        return
     if manifest.suffix == ".json":
         data = json.loads(manifest.read_text())
         data["version"] = new_version
@@ -248,7 +285,7 @@ def apply_version_bump(root: Path, versions: dict[Component, str]) -> None:
     }
     for component in COMPONENTS:
         for rel in component.manifests:
-            if (root / rel).suffix != ".json":
+            if (root / rel).suffix == ".toml":
                 bump_internal_path_deps(root / rel, pins)
         if component.engine_pin is not None:
             set_engine_pin(root / component.engine_pin, pins[LIBHEGEL.crates[0]])

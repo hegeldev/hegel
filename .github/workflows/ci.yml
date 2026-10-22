@@ -1,7 +1,8 @@
 # The CI entry point. Works out which components a change touches, runs the
 # workspace-wide checks, calls each component's reusable workflow
 # (libhegel.yml, frontend-rust.yml, frontend-python.yml,
-# frontend-typescript.yml) only when that component is affected, and — on a
+# frontend-typescript.yml, frontend-cpp.yml) only when that component is
+# affected, and — on a
 # push to main — releases whatever has a RELEASE.md.
 #
 # Adding a frontend: add a `frontends/<lang>/**` filter below, a
@@ -38,6 +39,7 @@ jobs:
       rust: ${{ github.event_name != 'pull_request' || steps.filter.outputs.rust == 'true' }}
       python: ${{ github.event_name != 'pull_request' || steps.filter.outputs.python == 'true' }}
       typescript: ${{ github.event_name != 'pull_request' || steps.filter.outputs.typescript == 'true' }}
+      cpp: ${{ github.event_name != 'pull_request' || steps.filter.outputs.cpp == 'true' }}
     steps:
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         if: github.event_name == 'pull_request'
@@ -70,6 +72,10 @@ jobs:
               - *shared
               - 'libhegel/**'
               - 'frontends/typescript/**'
+            cpp:
+              - *shared
+              - 'libhegel/**'
+              - 'frontends/cpp/**'
 
   # Workspace-wide lints: formatting, clippy, the scripts/check-*.py lints,
   # each component's own lints (via `just check-lint`), the workflow lint and
@@ -97,7 +103,13 @@ jobs:
           node-version: "22"
       - name: Set up the TypeScript frontend
         run: just typescript::setup
+      # The C++ frontend's lints are clang-format (through uvx) and
+      # clang-tidy over a configured build.
+      - name: Install clang-tidy
+        run: sudo apt-get update && sudo apt-get install -y clang-tidy-18
       - name: Check lint
+        env:
+          CLANG_TIDY: clang-tidy-18
         run: just check-lint
       - name: Check zizmor
         run: |
@@ -148,6 +160,14 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/frontend-typescript.yml
+
+  cpp:
+    name: cpp
+    needs: changes
+    if: needs.changes.outputs.cpp == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/frontend-cpp.yml
 
   # Test with the minimal versions of every dependency in the workspace.
   test-minimal-versions:
@@ -271,7 +291,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [lint, libhegel, rust, python, typescript, test-minimal-versions, coverage, nix]
+    needs: [lint, libhegel, rust, python, typescript, cpp, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -290,7 +310,7 @@ jobs:
     # every dependency is required; the `!cancelled()` form is what lets this
     # job evaluate its condition at all when a dependency was skipped.
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && github.event_name == 'push' && github.repository == 'hegeldev/hegel' }}
-    needs: [lint, libhegel, rust, python, typescript, test-minimal-versions, coverage, nix]
+    needs: [lint, libhegel, rust, python, typescript, cpp, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -303,8 +323,9 @@ jobs:
     # post-bump libhegel version and `libhegel_tag` the `libhegel/<version>`
     # tag release.py cut for it, which they check out and upload against.
     # `python_released` / `python_tag` do the same for the Python wheel
-    # builds and `typescript_released` / `typescript_tag` for the npm
-    # publish. Each is read off the tags release.py left on the release
+    # builds, `typescript_released` / `typescript_tag` for the npm
+    # publish and `cpp_released` / `cpp_tag` for the C++ docs push. Each
+    # is read off the tags release.py left on the release
     # commit, so a frontend dragged along by a libhegel release counts too.
     outputs:
       c_released: ${{ steps.released.outputs.libhegel_tag != '' }}
@@ -314,6 +335,8 @@ jobs:
       python_tag: ${{ steps.released.outputs.python_tag }}
       typescript_released: ${{ steps.released.outputs.typescript_tag != '' }}
       typescript_tag: ${{ steps.released.outputs.typescript_tag }}
+      cpp_released: ${{ steps.released.outputs.cpp_tag != '' }}
+      cpp_tag: ${{ steps.released.outputs.cpp_tag }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -375,7 +398,8 @@ jobs:
           rust_tag=$(git tag --points-at HEAD --list 'frontends/rust/*')
           python_tag=$(git tag --points-at HEAD --list 'frontends/python/*')
           typescript_tag=$(git tag --points-at HEAD --list 'frontends/typescript/*')
-          if [ -z "$libhegel_tag$rust_tag$python_tag$typescript_tag" ]; then
+          cpp_tag=$(git tag --points-at HEAD --list 'frontends/cpp/*')
+          if [ -z "$libhegel_tag$rust_tag$python_tag$typescript_tag$cpp_tag" ]; then
             echo "release.py left no release tag on the release commit" >&2
             exit 1
           fi
@@ -386,6 +410,7 @@ jobs:
             echo "rust_tag=$rust_tag"
             echo "python_tag=$python_tag"
             echo "typescript_tag=$typescript_tag"
+            echo "cpp_tag=$cpp_tag"
           } >> "$GITHUB_OUTPUT"
 
       - name: Authenticate with crates.io
@@ -881,6 +906,49 @@ jobs:
           HEGEL_RELEASE_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
         run: python3 .github/scripts/push_typescript_docs.py
 
+  # The C++ frontend has no package index: a consumer fetches the
+  # `frontends/cpp/<version>` tag with CMake's FetchContent, so the tag is
+  # the release. What remains is its API reference (Doxygen), pushed to
+  # hegel.dev/cpp (the hegeldev/website repository) for every C++ release.
+  release-cpp-docs:
+    name: release-cpp-docs
+    if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.cpp_released == 'true' }}
+    needs: release
+    runs-on: ubuntu-latest
+    # The website push uses the app token below, not GITHUB_TOKEN.
+    permissions:
+      contents: read
+    steps:
+      - name: Generate app token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        id: app-token
+        with:
+          app-id: ${{ vars.HEGEL_RELEASE_APP_ID }}
+          private-key: ${{ secrets.HEGEL_RELEASE_APP_PRIVATE_KEY }}
+          repositories: website
+      - name: Checkout release commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.release.outputs.cpp_tag }}
+      - name: Checkout website # zizmor: ignore[artipacked]
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: hegeldev/website
+          token: ${{ steps.app-token.outputs.token }}
+          path: website
+      - uses: ./.github/actions/setup-rust
+        with:
+          tools: just doxygen
+      - name: Build the documentation
+        run: just cpp::check-docs
+      - name: Push the documentation to the website repository
+        env:
+          HEGEL_RELEASE_APP_ID: ${{ vars.HEGEL_RELEASE_APP_ID }}
+          HEGEL_RELEASE_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: python3 .github/scripts/push_cpp_docs.py
+
   # Notify each downstream language binding that still lives in its own repo
   # that a new libhegel release is live so it can bump its pinned version.
   # One matrix entry per consumer repo; remove an entry when that frontend
@@ -900,7 +968,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        repo: [hegel-go, hegel-ocaml, hegel-cpp]
+        repo: [hegel-go, hegel-ocaml]
     steps:
       - name: Generate app token
         uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
