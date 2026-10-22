@@ -37,5 +37,6 @@ resources
 !.agents/skills/new-default-generator/
 !.agents/skills/add-library-support/
 !.agents/skills/new-setting/
+!.agents/skills/typescript-ffi/
 
 docs/superpowers

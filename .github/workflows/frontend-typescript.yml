@@ -1,0 +1,127 @@
+# CI for the TypeScript frontend (the `@hegeldev/hegel` npm package in
+# frontends/typescript/, driving libhegel through koffi natively and through
+# the raw Wasm exports in browsers). Called from ci.yml when the frontend,
+# libhegel (which it bundles) or the shared workspace changed. Every job
+# builds the in-tree engine first: the tests never fetch a released binary.
+name: typescript
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  # vitest against the native and Wasm builds (100% coverage), the packaging
+  # scripts, and the packed package bundled four ways and run in Chromium.
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22"
+      - name: Set up the frontend
+        run: just typescript::setup
+      - name: Build libhegel
+        run: just typescript::build-libhegel
+      - name: Run the test suite with coverage
+        run: just typescript::check-test
+      - name: Check the packaging scripts
+        run: just typescript::check-packaging
+      - name: Install the browser test fixture (bundlers, Playwright)
+        working-directory: frontends/typescript/tests/browser
+        run: npm ci --no-audit --no-fund
+      - name: Install Chromium
+        working-directory: frontends/typescript/tests/browser
+        run: npx playwright install --with-deps chromium
+      - name: Test the packed package in four browser bundlers
+        run: just typescript::check-browser
+
+  # The built package on the oldest supported Node and on Bun and Deno.
+  smoke:
+    name: smoke (${{ matrix.runtime }} ${{ matrix.version }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runtime: node, version: "20" }
+          - { runtime: bun, version: "1.2.5" }
+          - { runtime: bun, version: latest }
+          - { runtime: deno, version: "2.0.0" }
+          - { runtime: deno, version: v2.x }
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          targets: wasm32-unknown-unknown
+      # Node builds the package and installs the fixture whichever runtime
+      # runs it.
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ matrix.runtime == 'node' && matrix.version || '22' }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: matrix.runtime == 'bun'
+        with:
+          bun-version: ${{ matrix.version }}
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        if: matrix.runtime == 'deno'
+        with:
+          deno-version: ${{ matrix.version }}
+      - name: Set up the frontend
+        run: just typescript::setup
+      - name: Build the package
+        run: just typescript::build
+      - name: Point the fixture at the in-tree engine
+        working-directory: frontends/typescript
+        run: echo "HEGEL_LIBHEGEL_PATH=$(node scripts/engine.mjs native)" >> "$GITHUB_ENV"
+      - name: Install the fixture
+        working-directory: frontends/typescript/tests/smoke
+        run: npm install --no-audit --no-fund
+      - name: Run the smoke tests
+        working-directory: frontends/typescript/tests/smoke
+        env:
+          RUNTIME: ${{ matrix.runtime }}
+        run: |
+          set -euo pipefail
+          for f in *.mjs; do
+            echo "Running $f"
+            case "$RUNTIME" in
+              node) node "$f" ;;
+              bun) bun "$f" ;;
+              deno) deno run --allow-ffi --allow-read --allow-env "$f" ;;
+            esac
+          done
+
+  # The API reference (typedoc), with warnings as errors.
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22"
+      - name: Set up the frontend
+        run: just typescript::setup
+      - name: Build the documentation
+        run: just typescript::check-docs

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -17,16 +18,20 @@ class Component:
 
     `path` is the component's directory relative to the repo root. It doubles
     as the tag prefix: a release of version X.Y.Z is tagged `<path>/X.Y.Z`.
-    `manifests` are the Cargo manifests that carry the component's version
-    (the first is the one its version is read from) and `crates` the crates
-    those manifests declare, all at the component's version; `source_dirs`
-    are the paths whose changes require a `<path>/RELEASE.md` on a PR.
+    `manifests` are the manifests that carry the component's version (Cargo
+    manifests, or npm's `package.json` and `package-lock.json`; the first is
+    the one its version is read from) and `crates` the packages those
+    manifests declare, all at the component's version; `source_dirs` are the
+    paths whose changes require a `<path>/RELEASE.md` on a PR.
 
     A frontend ships the engine (the Rust frontend pins the `hegeltest-c`
-    crate exactly, the Python frontend compiles libhegel into its wheels), so
-    a libhegel release also patch-bumps every frontend without a RELEASE.md
-    of its own, giving it `engine_bump_entry` (with `{version}` filled in) as
-    its changelog entry. libhegel itself has no such entry.
+    crate exactly, the Python frontend compiles libhegel into its wheels, the
+    TypeScript frontend bundles the libhegel binaries), so a libhegel release
+    also patch-bumps every frontend without a RELEASE.md of its own, giving it
+    `engine_bump_entry` (with `{version}` filled in) as its changelog entry.
+    libhegel itself has no such entry. A frontend that records the engine
+    version it ships in a generated source file names it in `engine_pin`;
+    its `LIBHEGEL_VERSION = "..."` follows the libhegel version.
     """
 
     path: str
@@ -34,6 +39,7 @@ class Component:
     crates: tuple[str, ...]
     source_dirs: tuple[str, ...]
     engine_bump_entry: str | None = None
+    engine_pin: str | None = None
 
     @property
     def release_file(self) -> str:
@@ -81,7 +87,18 @@ PYTHON = Component(
     ),
     engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
 )
-FRONTENDS = [RUST, PYTHON]
+TYPESCRIPT = Component(
+    path="frontends/typescript",
+    manifests=(
+        "frontends/typescript/package.json",
+        "frontends/typescript/package-lock.json",
+    ),
+    crates=("@hegeldev/hegel",),
+    source_dirs=("frontends/typescript/src/", "frontends/typescript/package.json"),
+    engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
+    engine_pin="frontends/typescript/src/libhegel-version.ts",
+)
+FRONTENDS = [RUST, PYTHON, TYPESCRIPT]
 COMPONENTS = [LIBHEGEL, *FRONTENDS]
 
 
@@ -96,6 +113,7 @@ RELEASE_PATHS = [
     "Cargo.lock",
     *(m for c in COMPONENTS for m in c.manifests),
     *(c.changelog for c in COMPONENTS),
+    *(c.engine_pin for c in COMPONENTS if c.engine_pin is not None),
 ]
 
 
@@ -138,14 +156,26 @@ def bump_version(current: str, release_type: str) -> str:
     return f"{major}.{minor}.{patch}"
 
 
-def current_version(cargo_toml: Path) -> str:
-    """The `version = "..."` of the package manifest at `cargo_toml`."""
-    m = re.search(r'^version = "([^"]+)"', cargo_toml.read_text(), re.MULTILINE)
+def current_version(manifest: Path) -> str:
+    """The version of the package manifest at `manifest`: the `version = "..."`
+    of a Cargo manifest, or the `"version"` of an npm one."""
+    if manifest.suffix == ".json":
+        return json.loads(manifest.read_text())["version"]
+    m = re.search(r'^version = "([^"]+)"', manifest.read_text(), re.MULTILINE)
     return m.group(1)
 
 
-def set_version(cargo_toml: Path, new_version: str) -> None:
-    text = cargo_toml.read_text()
+def set_version(manifest: Path, new_version: str) -> None:
+    if manifest.suffix == ".json":
+        data = json.loads(manifest.read_text())
+        data["version"] = new_version
+        # package-lock.json repeats the root package's version under packages[""].
+        root_package = data.get("packages", {}).get("")
+        if root_package is not None:
+            root_package["version"] = new_version
+        manifest.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        return
+    text = manifest.read_text()
     new_text = re.sub(
         r'^version = "[^"]+"',
         f'version = "{new_version}"',
@@ -153,7 +183,18 @@ def set_version(cargo_toml: Path, new_version: str) -> None:
         count=1,
         flags=re.MULTILINE,
     )
-    cargo_toml.write_text(new_text)
+    manifest.write_text(new_text)
+
+
+def set_engine_pin(pin: Path, version: str) -> None:
+    """Point a frontend's generated `LIBHEGEL_VERSION = "..."` at `version`."""
+    text = pin.read_text()
+    new_text, count = re.subn(
+        r'LIBHEGEL_VERSION = "[^"]+"', f'LIBHEGEL_VERSION = "{version}"', text
+    )
+    if count != 1:
+        raise ValueError(f"expected exactly one LIBHEGEL_VERSION in {pin}, found {count}")
+    pin.write_text(new_text)
 
 
 def bump_internal_path_deps(cargo_toml: Path, versions: dict[str, str]) -> None:
@@ -191,10 +232,10 @@ def apply_version_bump(root: Path, versions: dict[Component, str]) -> None:
     """Rewrite the workspace manifests to their new versions.
 
     `versions` maps each component being released to its new version; the
-    others keep their current version. Internal path-dependency pins follow
-    the crate they point at, whether or not that crate moved. Pure file
-    rewriting, factored out of `release()` so it can be tested without the
-    publish/git/gh machinery.
+    others keep their current version. Internal path-dependency pins and the
+    frontends' engine pins follow the crate they point at, whether or not
+    that crate moved. Pure file rewriting, factored out of `release()` so it
+    can be tested without the publish/git/gh machinery.
     """
     for component, version in versions.items():
         for rel in component.manifests:
@@ -207,7 +248,10 @@ def apply_version_bump(root: Path, versions: dict[Component, str]) -> None:
     }
     for component in COMPONENTS:
         for rel in component.manifests:
-            bump_internal_path_deps(root / rel, pins)
+            if (root / rel).suffix != ".json":
+                bump_internal_path_deps(root / rel, pins)
+        if component.engine_pin is not None:
+            set_engine_pin(root / component.engine_pin, pins[LIBHEGEL.crates[0]])
 
 
 def add_changelog(path: Path, *, version: str, content: str) -> None:

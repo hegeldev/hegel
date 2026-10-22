@@ -1,0 +1,71 @@
+# Recipes for the TypeScript frontend (the `@hegeldev/hegel` npm package). Run
+# as `just typescript::<recipe>` from anywhere in the repo; recipes execute
+# from this directory. The engine is the in-tree libhegel: `build-libhegel`
+# compiles it natively and to Wasm into the workspace's `target/`, and the
+# tests load those builds (scripts/engine.mjs; `HEGEL_LIBHEGEL_PATH` and
+# `HEGEL_WASM_PATH` override them).
+set ignore-comments := true
+
+# Install the package's dependencies (needs Node >= 20.11).
+setup:
+    npm ci
+
+# Install the browser packaging fixture's dependencies and Chromium.
+setup-browser:
+    cd tests/browser && npm ci && npx playwright install chromium
+
+# Build libhegel natively and for wasm32-unknown-unknown (needs that rustup target).
+build-libhegel:
+    cargo build --release -p hegeltest-c --manifest-path ../../Cargo.toml
+    cargo build --release -p hegeltest-c --manifest-path ../../Cargo.toml --target wasm32-unknown-unknown
+
+# Compile to dist/ and bundle the Wasm module next to the browser entry.
+build: build-libhegel
+    npm run build
+
+# vitest against the real engine, native and Wasm, requiring 100% coverage.
+check-test: build-libhegel
+    npx vitest run --coverage
+    python3 scripts/check-coverage.py
+
+# The packaging scripts and the export map (node --test).
+check-packaging: build-libhegel
+    node --test scripts/packaging.test.mjs
+
+# Pack the package, bundle it four ways and run it in Chromium (`setup-browser` first).
+check-browser: build-libhegel
+    node tests/browser/run.mjs
+
+# src/libhegel-version.ts must mirror libhegel/Cargo.toml.
+check-libhegel-version:
+    node scripts/engine.mjs check-version
+
+# Regenerate src/libhegel-version.ts from libhegel/Cargo.toml.
+update-libhegel-version:
+    node scripts/engine.mjs write-version
+
+format:
+    npx prettier --write .
+
+check-format:
+    npx prettier --check .
+
+check-lint: check-format check-libhegel-version
+    npx eslint .
+    npx tsc --noEmit
+    npm run typecheck:portable
+
+# typedoc, with warnings as errors.
+check-docs:
+    npx typedoc
+
+docs: check-docs
+    open docs/index.html
+
+check: check-lint check-docs check-test check-packaging
+
+# These aliases are provided as ux improvements for local developers. CI
+# should use the longer forms.
+
+test: check-test
+lint: check-lint
