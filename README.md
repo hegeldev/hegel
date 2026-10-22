@@ -15,7 +15,8 @@ Specifically, right now it contains:
 | Hegel for Python | [`frontends/python/`](frontends/python/) | The [`hegeltest`](https://pypi.org/project/hegeltest/) package, imported as `hegel`. |
 | Hegel for TypeScript | [`frontends/typescript/`](frontends/typescript/) | The [`@hegeldev/hegel`](https://www.npmjs.com/package/@hegeldev/hegel) package, for Node, Bun, Deno and browsers. |
 | Hegel for C++ | [`frontends/cpp/`](frontends/cpp/) | The `hegel` CMake library, fetched from this repository with `FetchContent`. |
+| Hegel for Java | [`frontends/java/`](frontends/java/) | The [`dev.hegel:hegel`](https://central.sonatype.com/artifact/dev.hegel/hegel) (Java 22+) and [`dev.hegel:hegel-jna`](https://central.sonatype.com/artifact/dev.hegel/hegel-jna) (Java 17+) artifacts on Maven Central. |
 
-Each component is versioned and released independently; releases are tagged `<path>/<version>`, for example `libhegel/0.47.1`, `frontends/rust/0.50.1`, `frontends/python/0.1.0`, `frontends/typescript/0.4.10` or `frontends/cpp/0.13.1`.
+Each component is versioned and released independently; releases are tagged `<path>/<version>`, for example `libhegel/0.47.1`, `frontends/rust/0.50.1`, `frontends/python/0.1.0`, `frontends/typescript/0.4.10`, `frontends/cpp/0.13.1` or `frontends/java/0.10.2`.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.

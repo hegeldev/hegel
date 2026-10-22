@@ -34,13 +34,36 @@
         </configuration>
       </plugin>
 
-      <!-- BuildInfo.ENGINE_VERSION is filtered from <libhegel.version> (parent pluginManagement). -->
+      <!-- This module bundles no natives: instead of staging them, scripts/engine.py generates
+           BuildInfo.ENGINE_VERSION from the in-tree libhegel's Cargo.toml. -->
       <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-resources-plugin</artifactId>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>stage-natives</id>
+            <phase>none</phase>
+          </execution>
+          <execution>
+            <id>build-info</id>
+            <phase>generate-sources</phase>
+            <goals>
+              <goal>exec</goal>
+            </goals>
+            <configuration>
+              <executable>${hegel.python}</executable>
+              <arguments>
+                <argument>${maven.multiModuleProjectDirectory}/scripts/engine.py</argument>
+                <argument>build-info</argument>
+                <argument>--out</argument>
+                <argument>${project.build.directory}/generated-sources/engine</argument>
+              </arguments>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
 
-      <!-- This module has no shared sources: only the filtered template joins the compile path,
+      <!-- This module has no shared sources: only the generated BuildInfo joins the compile path,
            and the shared test tree (which needs a binding and the engine) is not added. -->
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
@@ -50,7 +73,7 @@
             <id>add-shared-sources</id>
             <configuration combine.self="override">
               <sources>
-                <source>${project.build.directory}/generated-sources/java-templates</source>
+                <source>${project.build.directory}/generated-sources/engine</source>
               </sources>
             </configuration>
           </execution>

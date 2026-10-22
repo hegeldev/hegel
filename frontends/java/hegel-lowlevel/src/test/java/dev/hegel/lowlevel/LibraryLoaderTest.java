@@ -250,7 +250,7 @@ class LibraryLoaderTest {
 
     @Test
     void targetEngineVersionIsBundled() {
-        // BuildInfo is filtered from the pom's <libhegel.version> at build time.
+        // BuildInfo is generated from libhegel/Cargo.toml at build time.
         String v = LibraryLoader.targetEngineVersion();
         assertNotNull(v);
         assertTrue(v.contains("."), v);

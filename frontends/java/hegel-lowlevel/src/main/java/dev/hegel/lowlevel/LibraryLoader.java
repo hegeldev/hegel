@@ -29,7 +29,7 @@ import java.util.function.Function;
  * </ol>
  *
  * <p>The bundled libraries are placed on the classpath at build time (see {@code
- * scripts/fetch_natives.py}), so the shipped jar is self-contained and nothing is downloaded at
+ * scripts/engine.py}), so the shipped jar is self-contained and nothing is downloaded at
  * runtime. The per-user cache is purely a performance optimization: when it cannot be read or
  * written (e.g. a sandbox that denies access to the user cache dir), the library is extracted to a
  * fresh directory under the system temp dir instead. Configuration (environment, cache dir,

@@ -11,7 +11,7 @@
 
   <name>hegel-java parent</name>
   <description>Property-based testing for Java, built on Hypothesis</description>
-  <url>https://github.com/hegeldev/hegel-java</url>
+  <url>https://github.com/hegeldev/hegel/tree/main/frontends/java</url>
 
   <licenses>
     <license>
@@ -32,14 +32,14 @@
   </developers>
 
   <scm>
-    <connection>scm:git:https://github.com/hegeldev/hegel-java.git</connection>
-    <developerConnection>scm:git:ssh://git@github.com/hegeldev/hegel-java.git</developerConnection>
-    <url>https://github.com/hegeldev/hegel-java</url>
+    <connection>scm:git:https://github.com/hegeldev/hegel.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/hegeldev/hegel.git</developerConnection>
+    <url>https://github.com/hegeldev/hegel/tree/main/frontends/java</url>
   </scm>
 
   <issueManagement>
     <system>GitHub</system>
-    <url>https://github.com/hegeldev/hegel-java/issues</url>
+    <url>https://github.com/hegeldev/hegel/issues</url>
   </issueManagement>
 
   <modules>
@@ -53,14 +53,15 @@
     <maven.compiler.release>22</maven.compiler.release>
     <junit.version>5.11.4</junit.version>
     <jacoco.version>0.8.14</jacoco.version>
-    <!-- The libhegel/hegel-rust release whose native libraries are bundled into the jars.
-         Bump this and rebuild to ship a new engine; scripts/fetch_natives.py fetches the
-         matching shared objects at build time. -->
-    <libhegel.version>0.45.0</libhegel.version>
-    <!-- Set -Dhegel.natives.skip=true to skip the build-time native fetch (e.g. offline
-         local dev against a sibling hegel-rust checkout). -->
+    <!-- The engine is the in-tree libhegel (../../libhegel), built by `just java::build-libhegel`;
+         scripts/engine.py stages it into each frontend jar's build output as the bundled native for
+         the host (`local`), or every platform's library from the GitHub release of the libhegel
+         version in ../../libhegel/Cargo.toml (`release`, which the release profile selects). -->
+    <hegel.natives.source>local</hegel.natives.source>
+    <!-- Set -Dhegel.natives.skip=true to skip the staging (e.g. to build the javadoc without an
+         engine build). -->
     <hegel.natives.skip>false</hegel.natives.skip>
-    <!-- The Python interpreter used to run scripts/fetch_natives.py; the windows-python
+    <!-- The Python interpreter used to run scripts/engine.py; the windows-python
          profile overrides it, since Windows installs no python3 launcher. -->
     <hegel.python>python3</hegel.python>
     <!-- FFM (and JNA on Java 24+) requires native access; surefire passes this to the test JVM. -->
@@ -109,34 +110,7 @@
           <version>3.4.2</version>
         </plugin>
 
-        <!-- Filter a module's java-templates into generated-sources, substituting
-             ${libhegel.version} into BuildInfo.ENGINE_VERSION (hegel-lowlevel). build-helper
-             (below) adds the output to the compile path. -->
-        <plugin>
-          <groupId>org.apache.maven.plugins</groupId>
-          <artifactId>maven-resources-plugin</artifactId>
-          <version>3.3.1</version>
-          <executions>
-            <execution>
-              <id>filter-java-templates</id>
-              <phase>generate-sources</phase>
-              <goals>
-                <goal>copy-resources</goal>
-              </goals>
-              <configuration>
-                <outputDirectory>${project.build.directory}/generated-sources/java-templates</outputDirectory>
-                <resources>
-                  <resource>
-                    <directory>${project.basedir}/src/main/java-templates</directory>
-                    <filtering>true</filtering>
-                  </resource>
-                </resources>
-              </configuration>
-            </execution>
-          </executions>
-        </plugin>
-
-        <!-- Register the shared sources, shared tests, and the filtered templates as
+        <!-- Register the shared sources, shared tests, and the generated BuildInfo as
              compile/test source roots. -->
         <plugin>
           <groupId>org.codehaus.mojo</groupId>
@@ -152,7 +126,7 @@
               <configuration>
                 <sources>
                   <source>${hegel.shared}/src/main/java</source>
-                  <source>${project.build.directory}/generated-sources/java-templates</source>
+                  <source>${project.build.directory}/generated-sources/engine</source>
                 </sources>
               </configuration>
             </execution>
@@ -180,7 +154,7 @@
           <version>3.5.0</version>
           <executions>
             <execution>
-              <id>fetch-natives</id>
+              <id>stage-natives</id>
               <phase>generate-resources</phase>
               <goals>
                 <goal>exec</goal>
@@ -189,9 +163,10 @@
                 <skip>${hegel.natives.skip}</skip>
                 <executable>${hegel.python}</executable>
                 <arguments>
-                  <argument>${maven.multiModuleProjectDirectory}/scripts/fetch_natives.py</argument>
-                  <argument>--version</argument>
-                  <argument>${libhegel.version}</argument>
+                  <argument>${maven.multiModuleProjectDirectory}/scripts/engine.py</argument>
+                  <argument>stage</argument>
+                  <argument>--source</argument>
+                  <argument>${hegel.natives.source}</argument>
                   <argument>--out</argument>
                   <argument>${project.build.outputDirectory}</argument>
                 </arguments>
@@ -301,7 +276,6 @@
           <java>
             <includes>
               <include>shared/src/main/java/**/*.java</include>
-              <include>hegel-lowlevel/src/main/java-templates/**/*.java</include>
               <include>shared/src/test/java/**/*.java</include>
             </includes>
             <palantirJavaFormat>
@@ -327,9 +301,13 @@
       </properties>
     </profile>
 
-    <!-- Activated for publishing to Maven Central, via `mvn deploy -P release`. -->
+    <!-- Activated for publishing to Maven Central, via `mvn deploy -P release`. The jars bundle
+         every platform's library from the libhegel GitHub release. -->
     <profile>
       <id>release</id>
+      <properties>
+        <hegel.natives.source>release</hegel.natives.source>
+      </properties>
       <build>
         <plugins>
           <!-- Sources jar -->
