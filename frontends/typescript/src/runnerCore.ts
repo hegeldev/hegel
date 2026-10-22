@@ -5,7 +5,7 @@
  * @packageDocumentation
  */
 
-import { generateValue, StringGeneratorCache, withCleanup, type GrammarSpec } from "./generate.js";
+import { generateValue, HandleCache, withCleanup, type GrammarSpec } from "./generate.js";
 import {
   TestCase,
   StopTestError,
@@ -79,7 +79,7 @@ export type { Settings, TestLocation } from "./settings.js";
  * fault any of them hit.
  */
 interface Family {
-  readonly cache: StringGeneratorCache;
+  readonly cache: HandleCache;
   readonly ownsCache: boolean;
   readonly collections: CollectionHandle[];
   readonly repeats: RepeatHandle[];
@@ -112,7 +112,7 @@ export class EngineDataSource implements DataSource {
     private readonly lib: Engine,
     private readonly ctx: ContextHandle,
     private readonly tc: TestCaseHandle,
-    cache = new StringGeneratorCache(lib),
+    cache = new HandleCache(lib),
     ownsCache = true,
     family?: Family,
   ) {
@@ -843,7 +843,7 @@ export class Hegel {
     const contextErrors: unknown[] = [];
     try {
       const settings = newSettingsHandle(lib, ctx, this._settings);
-      const cache = new StringGeneratorCache(lib, this.runtime.readGrammarFile);
+      const cache = new HandleCache(lib, this.runtime.readGrammarFile);
       const settingsErrors: unknown[] = [];
       try {
         applySettings(lib, ctx, settings, this._settings);
@@ -888,7 +888,7 @@ export class Hegel {
     lib: Engine,
     ctx: ContextHandle,
     settings: SettingsHandle,
-    cache: StringGeneratorCache,
+    cache: HandleCache,
   ): Generator<Step, void, TestCaseResult> {
     const verbosity = lib.getVerbosity(settings);
     const quiet = verbosity === NativeVerbosity.QUIET;
@@ -967,7 +967,7 @@ export class Hegel {
     lib: Engine,
     ctx: ContextHandle,
     run: RunHandle,
-    cache: StringGeneratorCache,
+    cache: HandleCache,
     quiet: boolean,
     verbose: boolean,
     printBlob: boolean,

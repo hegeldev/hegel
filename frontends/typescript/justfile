@@ -44,13 +44,21 @@ check-libhegel-version:
 update-libhegel-version:
     node scripts/engine.mjs write-version
 
+# src/timezone-names.ts must mirror libhegel/src/tzdata/tzdata.txt.
+check-timezone-names:
+    node scripts/engine.mjs check-timezone-names
+
+# Regenerate src/timezone-names.ts from libhegel/src/tzdata/tzdata.txt.
+update-timezone-names:
+    node scripts/engine.mjs write-timezone-names
+
 format:
     npx prettier --write .
 
 check-format:
     npx prettier --check .
 
-check-lint: check-format check-libhegel-version
+check-lint: check-format check-libhegel-version check-timezone-names
     npx eslint .
     npx tsc --noEmit
     npm run typecheck:portable

@@ -1,10 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
-import { generateValue, StringGeneratorCache, type GrammarSpec } from "../src/generate.js";
-import { EngineError, type Engine } from "../src/engine.js";
+import { generateValue, HandleCache, type GrammarSpec } from "../src/generate.js";
+import { EngineError, type Engine, type ContextHandle } from "../src/engine.js";
 import { getLibhegel } from "../src/session.js";
 import { wasmFixture } from "./wasmFixture.js";
 import { AssumeError, StopTestError } from "../src/testCase.js";
 import { fakeEngine, context, testCase } from "./fakeEngine.js";
+
+const emailGenerator = (lib: Engine, ctx: ContextHandle) => {
+  const generator = lib.stringGeneratorEmail(ctx);
+  return { value: generator, free: () => lib.freeStringGenerator(generator) };
+};
 
 const boolean = { type: "boolean" };
 const compoundSchemas = [
@@ -89,19 +94,19 @@ describe("generateValue compound cleanup", () => {
   });
 });
 
-describe("StringGeneratorCache ownership", () => {
+describe("HandleCache ownership", () => {
   it("reuses schema identity only within its engine and disposes exactly once", () => {
     const first = fakeEngine();
     const second = fakeEngine();
-    const firstCache = new StringGeneratorCache(first);
-    const secondCache = new StringGeneratorCache(second);
+    const firstCache = new HandleCache(first);
+    const secondCache = new HandleCache(second);
     const schema = { type: "email" };
     generateValue(first, context, testCase, schema, firstCache);
     generateValue(first, context, testCase, schema, firstCache);
     generateValue(second, context, testCase, schema, secondCache);
     expect(first.stringGeneratorEmail).toHaveBeenCalledTimes(1);
     expect(second.stringGeneratorEmail).toHaveBeenCalledTimes(1);
-    expect(() => firstCache.get(second, context, schema)).toThrow("another engine");
+    expect(() => firstCache.get(second, context, schema, emailGenerator)).toThrow("another engine");
     firstCache.dispose();
     firstCache.dispose();
     secondCache.dispose();
@@ -111,12 +116,12 @@ describe("StringGeneratorCache ownership", () => {
 
   it("bounds live cached generators and frees evictions before constructing replacements", () => {
     const engine = fakeEngine();
-    const cache = new StringGeneratorCache(engine);
+    const cache = new HandleCache(engine);
     const oldest = { type: "email" };
-    cache.get(engine, context, oldest);
-    for (let i = 0; i < 256; i++) cache.get(engine, context, { type: "email" });
+    cache.get(engine, context, oldest, emailGenerator);
+    for (let i = 0; i < 256; i++) cache.get(engine, context, { type: "email" }, emailGenerator);
     expect(engine.freeStringGenerator).toHaveBeenCalledTimes(1);
-    cache.get(engine, context, oldest);
+    cache.get(engine, context, oldest, emailGenerator);
     expect(engine.stringGeneratorEmail).toHaveBeenCalledTimes(258);
     cache.dispose();
     expect(engine.freeStringGenerator).toHaveBeenCalledTimes(258);
@@ -135,9 +140,9 @@ describe("StringGeneratorCache ownership", () => {
 
   it("tries every destructor after an eviction/free error", () => {
     const engine = fakeEngine();
-    const cache = new StringGeneratorCache(engine);
-    cache.get(engine, context, { type: "email" });
-    cache.get(engine, context, { type: "url" });
+    const cache = new HandleCache(engine);
+    cache.get(engine, context, { type: "email" }, emailGenerator);
+    cache.get(engine, context, { type: "url" }, emailGenerator);
     engine.freeStringGenerator.mockImplementationOnce(() => {
       throw new EngineError("free failed");
     });
@@ -166,11 +171,11 @@ describe("StringGeneratorCache ownership", () => {
   });
 });
 
-it("StringGeneratorCache reports multiple failed destructors without retrying handles", () => {
+it("HandleCache reports multiple failed destructors without retrying handles", () => {
   const engine = fakeEngine();
-  const cache = new StringGeneratorCache(engine);
-  cache.get(engine, context, { type: "email" });
-  cache.get(engine, context, { type: "url" });
+  const cache = new HandleCache(engine);
+  cache.get(engine, context, { type: "email" }, emailGenerator);
+  cache.get(engine, context, { type: "url" }, emailGenerator);
   engine.freeStringGenerator.mockImplementation(() => {
     throw new EngineError("free failed");
   });
@@ -180,9 +185,9 @@ it("StringGeneratorCache reports multiple failed destructors without retrying ha
   expect(engine.freeStringGenerator).toHaveBeenCalledTimes(2);
 });
 
-it("StringGeneratorCache compiles a grammar once and frees it on dispose, even after a failed free", () => {
+it("HandleCache compiles a grammar once and frees it on dispose, even after a failed free", () => {
   const engine = fakeEngine();
-  const cache = new StringGeneratorCache(engine);
+  const cache = new HandleCache(engine);
   const spec = {
     text: "start: B",
     start: null,
@@ -197,7 +202,7 @@ it("StringGeneratorCache compiles a grammar once and frees it on dispose, even a
   cache.releaseGrammar(spec);
   expect(engine.newGrammar).toHaveBeenCalledTimes(1);
   expect(engine.freeGrammarBuilder).toHaveBeenCalledTimes(1);
-  cache.get(engine, context, { type: "email" });
+  cache.get(engine, context, { type: "email" }, emailGenerator);
   engine.freeGrammar.mockImplementation(() => {
     throw new EngineError("grammar free failed");
   });
@@ -210,7 +215,7 @@ it("StringGeneratorCache compiles a grammar once and frees it on dispose, even a
 describe.each([
   ["native", () => getLibhegel() as Engine],
   ["wasm", () => wasmFixture().engine as Engine],
-])("StringGeneratorCache grammars on the %s engine", (_name, engine) => {
+])("HandleCache grammars on the %s engine", (_name, engine) => {
   const spec = (n: number): GrammarSpec => ({
     text: `start: "${n}"`,
     start: null,
@@ -225,7 +230,7 @@ describe.each([
     const lib = engine();
     const freeGrammar = vi.spyOn(lib, "freeGrammar");
     const ctx = lib.newContext();
-    const cache = new StringGeneratorCache(lib);
+    const cache = new HandleCache(lib);
     const outer = spec(0);
     const borrowed = cache.borrowGrammar(ctx, outer);
     const specs = Array.from({ length: 256 }, (_, i) => spec(i + 1));

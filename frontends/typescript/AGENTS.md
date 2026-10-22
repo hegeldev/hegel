@@ -72,7 +72,11 @@ the koffi entry; `scripts/packaging.test.mjs` pins that ordering.
 (`just typescript::update-libhegel-version`; `check-lint` fails when it is
 stale) and is what the runtime version checks compare the loaded engine
 against. The release script rewrites it on a libhegel release. Never edit it
-by hand.
+by hand. `src/timezone-names.ts` is likewise generated from
+`libhegel/src/tzdata/tzdata.txt` (`just typescript::update-timezone-names`,
+checked by `check-lint`): the C ABI has no call that lists the bundled time
+zones, so the frontend carries the list and filters it at run time through the
+engine's `hegel_timezone_info` and the host's `Intl`.
 
 ## Architecture
 
@@ -115,8 +119,10 @@ so a Node import creeping into a shared module fails `check-lint`.
    and drives those calls through `Engine`, handling compound structure
    (`one_of`, `tuple`, `list`, `dict`, `constant`) client-side with the
    matching shrinker spans and the collection protocol. String-shaped draws go
-   through a per-engine `StringGeneratorCache` of `hegel_string_generator_t`
-   handles, bounded and freed with the runner. The same run-owned cache
+   through a per-engine `HandleCache` of `hegel_string_generator_t` handles,
+   and the date and time draws through the engine's date options and time
+   zone, zoned datetime and span specs, kept in the same cache keyed by
+   schema object, bounded and freed with the runner. The same run-owned cache
    compiles each `fromLark` generator's grammar once (the builder loop, with
    imported files read through `RuntimeServices.readGrammarFile`) and frees
    the `hegel_grammar_t` handles when the run ends. Each kind is capped at 256
@@ -124,9 +130,13 @@ so a Node import creeping into a shared module fails `check-lint`.
    progress borrows is never evicted. A grammar draw
    (`EngineDataSource.drawGrammar`) is one `hegel_grammar_draw_t` loop per
    value, the frontend drawing each explicit terminal's value between
-   `hegel_grammar_draw_next` and `hegel_grammar_draw_provide`. Text and binary
-   draws without a `maxSize` pass `HEGEL_MAX_SIZE_DEFAULT`, and `filter` tries
-   `HEGEL_FILTER_ATTEMPTS` values: both constants live in `src/engine.ts`.
+   `hegel_grammar_draw_next` and `hegel_grammar_draw_provide`. Time zone draws
+   are limited to the bundled names the host's `Intl` knows (worked out once
+   per engine from `src/timezone-names.ts`; `src/hostZones.ts` is the `Intl`
+   side), and a zoned draw whose offset the host disagrees with is rejected
+   like a failed assumption. Text and binary draws without a `maxSize` pass
+   `HEGEL_MAX_SIZE_DEFAULT`, and `filter` tries `HEGEL_FILTER_ATTEMPTS`
+   values: both constants live in `src/engine.ts`.
 5. **Runtime services** (`src/runtime.ts`, `src/nodeRuntime.ts`,
    `src/browser/runtime.ts`) — `RuntimeServices` is the small set of
    host-specific things the shared loop needs: how to get the `Engine`,
@@ -196,7 +206,11 @@ so a Node import creeping into a shared module fails `check-lint`.
 8. **Generators** (`src/generators/`) — transport-agnostic: they build plain
    schema records and draw through the `DataSource` interface. `composite`
    (imperative) and `record` (declarative) in `compose.ts` are the composition
-   entry points.
+   entry points. The date and time generators (`datetime.ts`) draw the
+   immutable value classes of `src/datetime.ts` (`PlainDate`, `PlainTime`,
+   `PlainDateTime`, `Instant`, `ZonedDateTime`, `Duration`), property bags
+   shaped like their `Temporal` namesakes with RFC 9557 `toString()`s, and
+   validate their options eagerly with plain `Error`s like `integers()` does.
 
 Both adapters hand out handles as fresh opaque objects mapped to the engine's
 pointers, never the pointers themselves, and forget the mapping when the

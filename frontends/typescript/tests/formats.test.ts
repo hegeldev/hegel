@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
+import { PlainDate, PlainTime, PlainDateTime } from "../src/datetime.js";
 
 describe("gs.emails()", () => {
   test("exposes a schema via asBasic", () => {
@@ -55,15 +56,12 @@ describe("gs.dates()", () => {
     expect(gs.dates().asBasic()).not.toBeNull();
   });
 
-  test("generates ISO 8601 date strings (YYYY-MM-DD)", () =>
+  test("generates PlainDates that print as ISO 8601", () =>
     hegel.test(
       (tc) => {
-        const dateStr = tc.draw(gs.dates());
-        expect(typeof dateStr).toBe("string");
-        expect(dateStr).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-        // Must be a valid calendar date
-        const parsed = new Date(dateStr + "T00:00:00Z");
-        expect(parsed.getTime()).not.toBeNaN();
+        const date = tc.draw(gs.dates({ minValue: { year: 1, month: 1, day: 1 } }));
+        expect(date).toBeInstanceOf(PlainDate);
+        expect(date.toString()).toMatch(/^(\+\d{6}|\d{4})-\d{2}-\d{2}$/);
       },
       { testCases: 30 },
     ));
@@ -74,12 +72,12 @@ describe("gs.times()", () => {
     expect(gs.times().asBasic()).not.toBeNull();
   });
 
-  test("generates time strings containing ':'", () =>
+  test("generates PlainTimes that print as ISO 8601", () =>
     hegel.test(
       (tc) => {
-        const timeStr = tc.draw(gs.times());
-        expect(typeof timeStr).toBe("string");
-        expect(timeStr).toContain(":");
+        const time = tc.draw(gs.times());
+        expect(time).toBeInstanceOf(PlainTime);
+        expect(time.toString()).toMatch(/^\d{2}:\d{2}:\d{2}(\.\d{1,9})?$/);
       },
       { testCases: 30 },
     ));
@@ -90,12 +88,12 @@ describe("gs.datetimes()", () => {
     expect(gs.datetimes().asBasic()).not.toBeNull();
   });
 
-  test("generates datetime strings containing 'T'", () =>
+  test("generates PlainDateTimes that print as ISO 8601", () =>
     hegel.test(
       (tc) => {
-        const dtStr = tc.draw(gs.datetimes());
-        expect(typeof dtStr).toBe("string");
-        expect(dtStr).toContain("T");
+        const value = tc.draw(gs.datetimes());
+        expect(value).toBeInstanceOf(PlainDateTime);
+        expect(value.toString()).toContain("T");
       },
       { testCases: 30 },
     ));
