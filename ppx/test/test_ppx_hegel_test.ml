@@ -67,9 +67,7 @@ let%hegel_main failing_main (tc : Hegel.test_case) =
 
 let () =
   match Sys.getenv "HEGEL_TEST_MAIN_CHILD" with
-  | Some _ ->
-    (try failing_main () with
-     | _ -> Stdlib.exit 1)
+  | Some _ -> failing_main ()
   | None -> ()
 ;;
 
@@ -83,7 +81,10 @@ let test_main_reports () =
         ()
     in
     Core_unix.close process.stdin;
-    Alcotest.(check bool) "fails" true (Result.is_error (Core_unix.waitpid process.pid));
+    Alcotest.(check bool)
+      "exits with status 1"
+      true
+      (Poly.equal (Core_unix.waitpid process.pid) (Error (`Exit_non_zero 1)));
     let sdk = In_channel.read_all (Filename.concat dir "sdk.jsonl") in
     Alcotest.(check bool)
       "the verdict names the binding"

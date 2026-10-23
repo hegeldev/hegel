@@ -385,6 +385,9 @@ type rerun_hint =
       uses its own default key.
     @param rerun_hint
       the form of the [rerun with:] hint. Defaults to [Argument].
+    @param on_failure
+      called after a failure is reported and before its exception is
+      re-raised. [Hegel.main] exits from it.
     @param failure_blobs
       a list of base64 encoded strings (blobs), where each string encodes the
       choices made in a failing test run. Only the first blob is used. The blob 
@@ -393,6 +396,7 @@ val run_test
   :  settings:Settings.t
   -> ?test_location:test_location
   -> ?rerun_hint:rerun_hint
+  -> ?on_failure:(unit -> unit)
   -> ?database_key:string
   -> ?failure_blobs:string list
   -> (test_case -> unit)

@@ -183,6 +183,8 @@ examples/                    # Example programs demonstrating the library
   real_world.ml              # Real-world scenario: sorted-merge property test
   derived_types.ml           # Derived generators via [@@deriving hegel_generator]
   higher_order.ml            # Function generators: functions/functions2/functions3
+  workload.ml                # let%hegel_main binary: a buggy account state machine
+                             #   to try the Hegel.main command line on
 
 scripts/
   check-coverage.py          # Parses bisect-ppx-report, enforces 100%
@@ -725,7 +727,10 @@ its capture: the output, the exception, `note: <caveat>`
 (`hegel_failure_caveat`, only under nondeterministic handling), and
 `rerun with:` when the failure has a blob (an unconfirmed failure has none).
 A single failure re-raises its captured exception with its backtrace; several
-are aggregated into "N failures found!". `drive` serves both a normal run and
+are aggregated into "N failures found!". `?on_failure` runs after the report and
+before that raise; `Hegel.main` exits 1 from it (the exit cannot live in the
+portable `Internal`), so a binary prints only the report. Run and usage errors
+still escape `main` as exceptions, since nothing has printed them. `drive` serves both a normal run and
 a `failure_blobs` replay. `run`/`settings` handles are freed in a
 `Fun.protect ~finally`.
 

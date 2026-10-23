@@ -454,7 +454,8 @@ val run_hegel_test_ppx
 
 (** [main ?settings ?test_location ?database_key test_fn] is the entry point of
     a binary that runs one test case per invocation. It parses the process's 
-    command line, runs [test_fn] once, and exits.
+    command line, runs [test_fn] once, and exits with status 0 if the test case
+    passes and 1 if it fails.
 
     {[
       let%hegel_main workload tc =

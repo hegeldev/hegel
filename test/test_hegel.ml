@@ -9,13 +9,10 @@ let () =
   | None -> ()
 ;;
 
-(* [Test_cli] runs [Hegel.main] in a child the same way. A failure's
-   exception is caught here so the child exits through [at_exit]. *)
+(* [Test_cli] runs [Hegel.main] in a child the same way. *)
 let () =
   match Stdlib.Sys.getenv_opt "HEGEL_TEST_MAIN_CHILD" with
-  | Some mode ->
-    (try Test_cli.main_child mode with
-     | _ -> Stdlib.exit 1)
+  | Some mode -> Test_cli.main_child mode
   | None -> ()
 ;;
 

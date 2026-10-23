@@ -157,15 +157,12 @@ let main ?(settings = Settings.default) ?test_location ?database_key test_fn =
       ~settings:(single_test_case settings)
       ?test_location
       ~rerun_hint:Command_line
+      ~on_failure:(fun () -> exit 1)
       ?database_key
       ?failure_blobs:(Option.map (fun blob -> [ blob ]) failure_blob)
       test_fn
   in
-  let info =
-    Cmd.info
-      (Filename.basename Sys.executable_name)
-      ~doc:"Run one Hegel test case as a standalone binary."
-  in
+  let info = Cmd.info (Filename.basename Sys.executable_name) in
   let term = Term.(const run $ settings_term ~default_settings:settings) in
   exit (Cmd.eval ~catch:false (Cmd.v info term))
 ;;
