@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.26.4 - 2026-10-23
+
+This patch adds `Hegel.main` and the `let%hegel_main` PPX, for creating an executable that runs one test case per invocation, such as a workload in Antithesis.
+
+```ocaml
+let%hegel_main workload tc = Counter.run ~step_count:max_int tc ~init:(ref 0)
+let () = workload ()
+```
+
 ## 0.26.3 - 2026-10-21
 
 This patch bumps our pinned libhegel ([hegeldev/hegel](https://github.com/hegeldev/hegel)) from [0.45.1](https://github.com/hegeldev/hegel-rust/releases/tag/libhegel-v0.45.1) to [0.48.0](https://github.com/hegeldev/hegel/releases/tag/libhegel/0.48.0).
