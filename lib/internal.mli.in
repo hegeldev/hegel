@@ -363,6 +363,12 @@ val state_machine_free : test_case -> state_machine:state_machine -> unit
 
 (**/**)
 
+(** How a failing run's [rerun with:] prints *)
+type rerun_hint =
+  | Argument
+  | Attribute
+  | Command_line
+
 (** [run_test ~settings ?test_location ?database_key ?failure_blobs test_fn]
     runs a property test using the given settings against the native engine.
 
@@ -377,11 +383,8 @@ val state_machine_free : test_case -> state_machine:state_machine -> unit
       (as [file:function_name]) so each [let%hegel_test] gets a stable, distinct
       key; pass an explicit key to override. When both are absent, the engine
       uses its own default key.
-    @param from_ppx
-      [true] when the run is driven by the [let%hegel_test] PPX; only set by the
-      PPX. Selects the [[@@failure_blobs [...]]] attribute form of the
-      [rerun with:] hint vs. the [~failure_blobs] argument form a plain caller
-      would use.
+    @param rerun_hint
+      the form of the [rerun with:] hint. Defaults to [Argument].
     @param failure_blobs
       a list of base64 encoded strings (blobs), where each string encodes the
       choices made in a failing test run. Only the first blob is used. The blob 
@@ -389,7 +392,7 @@ val state_machine_free : test_case -> state_machine:state_machine -> unit
 val run_test
   :  settings:Settings.t
   -> ?test_location:test_location
-  -> ?from_ppx:bool
+  -> ?rerun_hint:rerun_hint
   -> ?database_key:string
   -> ?failure_blobs:string list
   -> (test_case -> unit)
@@ -409,7 +412,7 @@ val run_test
 val run_hegel_test
   :  ?settings:Settings.t
   -> ?test_location:test_location
-  -> ?from_ppx:bool
+  -> ?rerun_hint:rerun_hint
   -> ?database_key:string
   -> ?failure_blobs:string list
   -> (test_case -> unit)

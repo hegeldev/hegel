@@ -9,6 +9,16 @@ let () =
   | None -> ()
 ;;
 
+(* [Test_cli] runs [Hegel.main] in a child the same way. A failure's
+   exception is caught here so the child exits through [at_exit]. *)
+let () =
+  match Stdlib.Sys.getenv_opt "HEGEL_TEST_MAIN_CHILD" with
+  | Some mode ->
+    (try Test_cli.main_child mode with
+     | _ -> Stdlib.exit 1)
+  | None -> ()
+;;
+
 let () =
   Alcotest.run
     "hegel"
@@ -17,6 +27,7 @@ let () =
          stateful suites spawn domains, so [loader] runs first. *)
       "loader", Test_loader.tests
     ; "client", Test_client.tests
+    ; "cli", Test_cli.tests
     ; "clone", Test_clone.tests
     ; "concurrency", Test_concurrency.tests
     ; "generators_core", Test_generators_core.tests

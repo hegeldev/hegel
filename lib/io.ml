@@ -24,7 +24,7 @@ module Make (B : S) = struct
       Internal.run_hegel_test
         ?settings
         ?test_location
-        ~from_ppx:true
+        ~rerun_hint:Attribute
         ?database_key
         ?failure_blobs
         (fun tc -> wait (fun () -> test_fn tc)))

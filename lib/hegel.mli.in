@@ -1,8 +1,10 @@
 #ifdef OXCAML
 @@ portable
 #define MODE(m) @ m
+#define NONPORTABLE @@ nonportable
 #else
 #define MODE(m)
+#define NONPORTABLE
 #endif
 (** {2 Introduction}
     Property-based testing for OCaml, powered by the native {{:https://hegel.dev} Hegel} engine based on {{:https://hypothesis.works} Hypothesis}.
@@ -359,6 +361,7 @@ include module type of Derive
 (* Excluded from the documentation, not for direct use *)
 
 module Internal = Internal
+module Cli = Cli
 
 (* [Hegel_jane_async] applies [Make] to Async. *)
 
@@ -446,6 +449,40 @@ val run_hegel_test_ppx
   -> unit
 
 (**/**)
+
+(** {3 Standalone binaries} *)
+
+(** [main ?settings ?test_location ?database_key test_fn] is the entry point of
+    a binary that runs one test case per invocation. It parses the process's 
+    command line, runs [test_fn] once, and exits.
+
+    {[
+      let%hegel_main workload tc =
+        Counter.run ~step_count:max_int tc ~init:(ref 0)
+
+      let () = workload ()
+    ]}
+
+    The run's [test_cases] is always 1, and the [Too_slow] and
+    [Test_cases_too_large] health checks are always suppressed.
+
+    If you run a stateful test this way, you probably want a very 
+    large [step_count].
+
+    The flags are [--profile], [--seed], [--verbosity], [--derandomize],
+    [--database], [--suppress-health-check], [--backend], [--failure-blob],
+    and [--help].
+
+    @param settings
+    creates the settings. Defaults to {!Settings.default}. The flags override
+    settings. *)
+val main
+  :  ?settings:(unit -> Settings.t)
+  -> ?test_location:test_location
+  -> ?database_key:string
+  -> (test_case -> unit)
+  -> unit
+  NONPORTABLE
 
 (** {3 Drawing values} *)
 

@@ -17,6 +17,7 @@ depends: [
   "ctypes" {>= "0.20"}
   "ctypes-foreign" {>= "0.20"}
   "ipaddr" {>= "5.0"}
+  "cmdliner" {>= "1.1.0"}
   "dune-site" {>= "3.16"}
   "alcotest" {with-test & >= "1.7"}
   "core_unix" {with-test & >= "v0.17"}

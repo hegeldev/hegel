@@ -22,6 +22,10 @@ include Derive
     tests, not for direct use. *)
 module Internal = Internal
 
+(** Command-line parsing for {!main}; re-exported (doc-hidden) for white-box
+    tests. *)
+module Cli = Cli
+
 module type Io = Io.S
 
 module Make = Io.Make
@@ -63,10 +67,16 @@ let run_hegel_test_ppx ?settings ?test_location ?database_key ?failure_blobs tes
   Internal.run_hegel_test
     ?settings
     ?test_location
-    ~from_ppx:true
+    ~rerun_hint:Attribute
     ?database_key
     ?failure_blobs
     test_fn
+;;
+
+(** [main ?settings ?test_location ?database_key test_fn] runs [test_fn] as
+    one test case configured from the command line, then exits. *)
+let main ?settings ?test_location ?database_key test_fn =
+  Cli.main ?settings ?test_location ?database_key test_fn
 ;;
 
 (** [assume tc condition] rejects the current test case if [condition] is

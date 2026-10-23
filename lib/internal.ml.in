@@ -708,7 +708,12 @@ let print_failure_header test_location =
   Printf.eprintf "%s\n%!" (stderr_color ansi_red rule)
 ;;
 
-let print_failure_body ~(settings : Settings.t) ~from_ppx ~blob ~caveat ~exn ~output =
+type rerun_hint =
+  | Argument
+  | Attribute
+  | Command_line
+
+let print_failure_body ~(settings : Settings.t) ~rerun_hint ~blob ~caveat ~exn ~output =
   if not (String.equal output "") then Printf.eprintf "\n%s\n%!" output;
   Printf.eprintf "Exception: %s\n%!" (Stdlib.Printexc.to_string exn);
   Option.iter (fun caveat -> Printf.eprintf "note: %s\n%!" caveat) caveat;
@@ -716,9 +721,10 @@ let print_failure_body ~(settings : Settings.t) ~from_ppx ~blob ~caveat ~exn ~ou
   then
     Option.iter
       (fun blob ->
-         if from_ppx
-         then Printf.eprintf "rerun with: [@@failure_blobs [ \"%s\" ]]\n%!" blob
-         else Printf.eprintf "rerun with: ~failure_blobs:[ \"%s\" ]\n%!" blob)
+         match rerun_hint with
+         | Argument -> Printf.eprintf "rerun with: ~failure_blobs:[ \"%s\" ]\n%!" blob
+         | Attribute -> Printf.eprintf "rerun with: [@@failure_blobs [ \"%s\" ]]\n%!" blob
+         | Command_line -> Printf.eprintf "rerun with: --failure-blob %s\n%!" blob)
       blob
 ;;
 
@@ -737,10 +743,11 @@ let reraise failure = Printexc.raise_with_backtrace failure.exn failure.backtrac
       reports the run's result as an assertion at that location. It is also the
       default database key. Provided automatically by the [let%hegel_test]
       PPX. When omitted, nothing is reported.
-    @param from_ppx
-      [true] when the run is driven by the [let%hegel_test] PPX; only set by the
-      PPX. Selects the [[@@failure_blobs [...]]] attribute form of the [rerun with:]
-      hint vs. the [~failure_blobs] argument form a plain caller would use.
+    @param rerun_hint
+      the form of the [rerun with:] hint: the [~failure_blobs] argument a plain
+      caller would use (the default), the [[@@failure_blobs [...]]] attribute
+      for the [let%hegel_test] PPX, or the [--failure-blob] flag for a
+      [Hegel.main] binary.
     @param database_key
       optional key scoping persisted/replayed failing examples and, under [derandomize],
       the per-test seed. Defaults to the test's [test_location] (as
@@ -755,7 +762,7 @@ let reraise failure = Printexc.raise_with_backtrace failure.exn failure.backtrac
 let run_test
       ~(settings : Settings.t)
       ?test_location
-      ?(from_ppx = false)
+      ?(rerun_hint = Argument)
       ?database_key
       ?(failure_blobs = [])
       test_fn
@@ -829,7 +836,7 @@ let run_test
     let failure_case, outcome = Hashtbl.find captured origin in
     print_failure_body
       ~settings
-      ~from_ppx
+      ~rerun_hint
       ~blob:(Ffi.failure_blob ctx failure)
       ~caveat:(Ffi.failure_caveat ctx failure)
       ~exn:failure_case.exn
@@ -921,10 +928,10 @@ let run_test
 let run_hegel_test
       ?(settings = Settings.default ())
       ?test_location
-      ?from_ppx
+      ?rerun_hint
       ?database_key
       ?failure_blobs
       test_fn
   =
-  run_test ~settings ?test_location ?from_ppx ?database_key ?failure_blobs test_fn
+  run_test ~settings ?test_location ?rerun_hint ?database_key ?failure_blobs test_fn
 ;;
