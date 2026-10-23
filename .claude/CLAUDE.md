@@ -45,6 +45,13 @@ lib/                         # Library source
                              #   test_case_printer, note)
     loader.ml                # locate/download libhegel at runtime (env > site >
                              #   sibling ../hegel build (libhegel_c.<ext>) > release)
+  cli.ml / cli.mli           # Hegel.main: cmdliner flags (--profile applied
+                             #   first, through set_default_profile, before the
+                             #   caller's settings thunk runs), single_test_case
+                             #   (test_cases = 1, Too_slow + Test_cases_too_large
+                             #   suppressed, which lifts the choice limit), and
+                             #   main (Cmd.eval ~catch:false, then exit).
+                             #   Doc-hidden re-export Hegel.Cli for tests
   settings.ml / settings.mli # Hegel.Settings: the settings record (type t), its
                              #   verbosity/database/phase/health_check/backend enums,
                              #   default ()/from_profile/create materialized from
@@ -176,6 +183,8 @@ examples/                    # Example programs demonstrating the library
   real_world.ml              # Real-world scenario: sorted-merge property test
   derived_types.ml           # Derived generators via [@@deriving hegel_generator]
   higher_order.ml            # Function generators: functions/functions2/functions3
+  workload.ml                # let%hegel_main binary: a buggy account state machine
+                             #   to try the Hegel.main command line on
 
 scripts/
   check-coverage.py          # Parses bisect-ppx-report, enforces 100%
@@ -228,7 +237,7 @@ typed-draw migrations.
 
 ### Dependencies: core-free main library + optional hegel.jane
 
-The `hegel` library depends on the stdlib plus `sexplib0` (printer type
+The `hegel` library depends on the stdlib plus `cmdliner` (`Hegel.main`), `sexplib0` (printer type
 `'a -> Sexplib0.Sexp.t`, the same type as `Core.Sexp.t`), `unix` (isatty for
 color detection), `threads.posix`, ctypes/ipaddr/dune-site (`yojson` is a test-only dependency of
 the PPX test that parses the engine's `sdk.jsonl`). `core`
@@ -361,6 +370,17 @@ A function made printable (via `with_printer`) is drawn with
 `draw`; `draw_named` threads the label the same way (even when nested) and prints
 the usual `x = value` line — the function renders as `<fun>` through its printer —
 only at the top level, suppressing it when nested like any other draw.
+
+`let%hegel_main name tc = body` (same rewriter) expands to `let name () =
+Hegel.main ~settings:(fun () -> <[@@settings]>) ~test_location (fun tc ->
+body)` with the same draw-name injection: the entry point of an executable
+that runs exactly one test case per invocation (hegel-rust's
+`#[hegel::main]`). The user writes `let () = name ()`. It rejects
+`[@@failure_blobs]` (the binary takes `--failure-blob`, and failures print
+that form: `Internal.rerun_hint = Command_line`) and `[@async]`. There are no
+user-defined flags: an unknown argument is a cmdliner error (exit 124), as in
+Rust. `Hegel.main` exits, so `test_cli.ml` and `test_ppx_hegel_test.ml`
+re-execute their own binary with `HEGEL_TEST_MAIN_CHILD` set to test it.
 
 Because the PPX only produces a callable and never calls it, a
 `let%hegel_test` composes with any test framework: drop the produced
@@ -592,19 +612,19 @@ The engine runs in-process, so there is no subprocess or session to manage.
 The public entry point is `Hegel.run_hegel_test ?settings ?test_location
 test_fn` — `Internal.run_hegel_test`, which is `Internal.run_test` with [settings]
 defaulting to `Settings.default ()`. The `let%hegel_test` PPX targets the
-doc-hidden `Hegel.run_hegel_test_ppx` — a thin wrapper that sets `~from_ppx:true`
-on `Internal.run_hegel_test` — so the PPX-vs-plain signal never appears on the
-public `run_hegel_test`. The `[@@failure_blobs ...]` record/replay workflow is
+doc-hidden `Hegel.run_hegel_test_ppx` — a thin wrapper that sets
+`~rerun_hint:Attribute` on `Internal.run_hegel_test` — so the PPX-vs-plain
+signal never appears on the public `run_hegel_test`. The `[@@failure_blobs ...]` record/replay workflow is
 supported: the PPX forwards the listed blobs as `~failure_blobs`, which starts
 the run with `hegel_run_start_blob` on the first blob (pair it with
 `print_blob = false` to suppress the `rerun with:` line that failing runs
 print by default). The engine replays the blob until a replay fails; the run
 goes through the same loop and report as a normal run, with no `rerun with:`
 line, and a run that passes raises "The failure blob did not reproduce an
-error". `hegel_run_start_blob` rejects an undecodable blob with
-`HEGEL_E_INVALID_ARG`, so `check_rc` raises `Usage_error`. `from_ppx` selects that line's syntax: a
-`[@@failure_blobs [...]]` attribute under the PPX, a `~failure_blobs:[...]`
-argument for a plain `run_hegel_test` caller. For persisting and replaying
+error". `run_test ?rerun_hint` (`Argument` | `Attribute` | `Command_line`) picks the
+form of the `rerun with:` line; the PPX entry points pass `Attribute`,
+`Hegel.main` passes `Command_line`. `hegel_run_start_blob` rejects an undecodable blob with
+`HEGEL_E_INVALID_ARG`, so `check_rc` raises `Usage_error`. For persisting and replaying
 failing examples across runs, use `database` / `database_key`.
 
 ### Test location and Antithesis reporting (libhegel 0.41.1)
@@ -707,7 +727,10 @@ its capture: the output, the exception, `note: <caveat>`
 (`hegel_failure_caveat`, only under nondeterministic handling), and
 `rerun with:` when the failure has a blob (an unconfirmed failure has none).
 A single failure re-raises its captured exception with its backtrace; several
-are aggregated into "N failures found!". `drive` serves both a normal run and
+are aggregated into "N failures found!". `?on_failure` runs after the report and
+before that raise; `Hegel.main` exits 1 from it (the exit cannot live in the
+portable `Internal`), so a binary prints only the report. Run and usage errors
+still escape `main` as exceptions, since nothing has printed them. `drive` serves both a normal run and
 a `failure_blobs` replay. `run`/`settings` handles are freed in a
 `Fun.protect ~finally`.
 

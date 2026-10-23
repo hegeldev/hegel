@@ -5,6 +5,7 @@
   test_hegel
   test_helpers
   test_client
+  test_cli
   test_clone
   test_concurrency
   test_generators_core
@@ -14,7 +15,15 @@
   test_generators_functions
   test_stateful
   test_loader)
- (libraries hegel hegel_ffi alcotest core core_unix ipaddr threads.posix)
+ (libraries
+  hegel
+  hegel_ffi
+  alcotest
+  cmdliner
+  core
+  core_unix
+  ipaddr
+  threads.posix)
  (preprocess
   (pps ppx_js_style hegel.template -- -allow-unannotated-ignores))
  (foreign_stubs

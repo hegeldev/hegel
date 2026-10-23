@@ -2,6 +2,7 @@
  (name hegel)
  (public_name hegel)
  (libraries
+  cmdliner
   hegel_ffi
   ipaddr
   sexplib0

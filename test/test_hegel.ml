@@ -9,6 +9,13 @@ let () =
   | None -> ()
 ;;
 
+(* [Test_cli] runs [Hegel.main] in a child the same way. *)
+let () =
+  match Stdlib.Sys.getenv_opt "HEGEL_TEST_MAIN_CHILD" with
+  | Some mode -> Test_cli.main_child mode
+  | None -> ()
+;;
+
 let () =
   Alcotest.run
     "hegel"
@@ -17,6 +24,7 @@ let () =
          stateful suites spawn domains, so [loader] runs first. *)
       "loader", Test_loader.tests
     ; "client", Test_client.tests
+    ; "cli", Test_cli.tests
     ; "clone", Test_clone.tests
     ; "concurrency", Test_concurrency.tests
     ; "generators_core", Test_generators_core.tests
