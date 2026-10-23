@@ -43,15 +43,21 @@
           duneVersion = "3";
           nativeBuildInputs = [ ocamlPackages.cppo ];
           propagatedBuildInputs = with ocamlPackages; [
+            cmdliner
             core
             core_unix
             ctypes
             ctypes-foreign
+            dune-site
+            ipaddr
             ocplib-endian
             ppx_js_style
+            ppx_sexp_conv
             ppxlib
+            sexplib0
             yojson
           ];
+          checkInputs = with ocamlPackages; [ alcotest ];
           buildPhase = ''
             runHook preBuild
             dune build -p hegel,ppx_hegel_compat,ppx_hegel_test,ppx_hegel_generator -j $NIX_BUILD_CORES
@@ -89,10 +95,11 @@
             # The native engine (libhegel) is resolved at runtime by
             # lib/ffi/loader.ml, not provided by Nix: it checks
             # $HEGEL_LIBHEGEL_PATH, then a sibling
-            # ../hegel-rust/target/{release,debug}/ checkout, then a
+            # ../hegel/target/{release,debug}/libhegel_c.<ext> checkout, then a
             # SHA-256-verified download cached under ~/.cache/hegel-ocaml.
-            # Build hegel-rust locally and set HEGEL_LIBHEGEL_PATH to skip the
-            # download (or rely on the sibling-checkout lookup).
+            # Build hegeldev/hegel locally (`cargo build -p hegeltest-c`) and
+            # set HEGEL_LIBHEGEL_PATH to skip the download (or rely on the
+            # sibling-checkout lookup).
           };
         }
       );
