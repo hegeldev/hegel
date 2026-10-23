@@ -1,4 +1,5 @@
-(** PPX expander for [let%hegel_test ...] and [module%hegel_state_machine ...].
+(** PPX expander for [let%hegel_test ...], [let%hegel_main ...], and
+    [module%hegel_state_machine ...].
 
     Rewrites:
     {[
@@ -19,6 +20,10 @@
 
     [my_test] has the type [unit -> unit]. The [@@settings ...] and
     [@@failure_blobs ...] attributes are both optional.
+
+    [let%hegel_main name tc = body [@@settings expr]] is rewritten into 
+    [let name () = Hegel.main ~settings:(fun () -> expr) ~test_location (fun tc -> body)], 
+    a binary entry point that runs one test case configured from the command line. 
 
     A state machine is a module whose rules and invariants are marked:
     {[
@@ -435,6 +440,42 @@ let expand_value_binding ~loc (vb : value_binding) : structure_item list =
     ~async:(Option.is_some async)
 ;;
 
+(** Expander for a single [let%hegel_main ...] structure item:
+    [let name () = Hegel.main [~settings:(fun () -> expr)] ~test_location body_fn]. *)
+let expand_main_binding ~loc (vb : value_binding) : structure_item list =
+  let function_name = extract_function_name ~what:"main" vb.pvb_pat in
+  let vb, settings_expr = consume settings_attribute vb in
+  let vb, failure_blobs = consume failure_blobs_attribute vb in
+  let vb, async = consume async_test_attribute vb in
+  Option.iter
+    (fun (attr_loc, _) ->
+       Location.raise_errorf
+         ~loc:attr_loc
+         "ppx_hegel_test: let%%hegel_main does not take [@@@@failure_blobs]. Pass \
+          --failure-blob on the command line")
+    failure_blobs;
+  if Option.is_some async
+  then
+    Location.raise_errorf
+      ~loc
+      "ppx_hegel_test: let%%hegel_main does not support [@@async]";
+  let loc = { loc with loc_ghost = true } in
+  let location_record = build_location_record ~loc ~function_name in
+  let body_fn = inject_labels vb.pvb_expr in
+  let call =
+    match settings_expr with
+    | Some s ->
+      [%expr
+        Hegel.main
+          ~settings:(fun () -> [%e s])
+          ~test_location:[%e location_record]
+          [%e body_fn]]
+    | None -> [%expr Hegel.main ~test_location:[%e location_record] [%e body_fn]]
+  in
+  let pat = Ast_builder.Default.pvar ~loc function_name in
+  [ set_attributes vb.pvb_attributes [%stri let [%p pat] = fun () -> [%e call]] ]
+;;
+
 (** A marker attribute on a binding inside a [module%hegel_state_machine]. *)
 type marker =
   | Rule of
@@ -703,6 +744,14 @@ let extension =
     (fun ~loc ~path:_ vb -> expand_value_binding ~loc vb)
 ;;
 
+let main_extension =
+  Extension.declare_inline
+    "hegel_main"
+    Extension.Context.structure_item
+    Ast_pattern.(pstr (pstr_value nonrecursive (__ ^:: nil) ^:: nil))
+    (fun ~loc ~path:_ vb -> expand_main_binding ~loc vb)
+;;
+
 let state_machine_extension =
   Extension.declare_inline
     "hegel_state_machine"
@@ -724,6 +773,7 @@ let () =
     "ppx_hegel_test"
     ~rules:
       [ Context_free.Rule.extension extension
+      ; Context_free.Rule.extension main_extension
       ; Context_free.Rule.extension state_machine_extension
       ; Context_free.Rule.extension concurrent_state_machine_extension
       ]
