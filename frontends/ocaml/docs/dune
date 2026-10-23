@@ -1,0 +1,5 @@
+; Hand-written odoc pages, mostly for OxCaml files.
+
+(documentation
+ (package hegel)
+ (mld_files index hegel_jane_concurrent hegel_jane_async oxcaml_api))

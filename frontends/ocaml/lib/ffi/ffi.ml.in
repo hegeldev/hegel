@@ -1,0 +1,1964 @@
+(* Low-level ctypes bindings to libhegel, the native property-based testing
+   engine exposed as a C library by hegeldev/hegel (libhegel/include/hegel.h).
+
+   This module is a thin, mechanical 1:1 wrapper over the C ABI: it locates and
+   [dlopen]s the shared library and exposes the functions used by the OCaml
+   frontend. Wrappers copy borrowed C buffers into OCaml strings and
+   translate negative status codes into exceptions. *)
+
+open Ctypes
+
+(* ------------------------------------------------------------------ *)
+(* Locating and opening the shared library                            *)
+(* ------------------------------------------------------------------ *)
+
+(* [memoize] is a thread-safe lazy value, used to avoid an eager dlopen in code
+   that wants to derive hegel generators but doesn't run the hegel engine and
+   hence doesn't require libhegel. *)
+let memoize f =
+  let mutex = Mutex.create () in
+  let value = lazy (f ()) in
+  let forced = Atomic.make None in
+  fun () ->
+    match Atomic.get forced with
+    | Some v -> v
+    | None ->
+      Mutex.protect mutex (fun () ->
+        let v = Lazy.force value in
+        Atomic.set forced (Some v);
+        v)
+;;
+
+let lib =
+  memoize (fun () ->
+    let path = Loader.locate () in
+    try Dl.dlopen ~filename:path ~flags:[ Dl.RTLD_NOW; Dl.RTLD_GLOBAL ] with
+    | Dl.DL_error msg ->
+      failwith (Printf.sprintf "hegel: failed to load libhegel from %s: %s" path msg))
+;;
+
+let binding_initializers = ref []
+
+let foreign ?(release_runtime_lock = false) name typ =
+  let binding =
+    memoize (fun () -> Foreign.foreign ~from:(lib ()) ~release_runtime_lock name typ)
+  in
+  let initialize () =
+    let (_ : _ -> _) = binding () in
+    ()
+  in
+  binding_initializers := initialize :: !binding_initializers;
+  fun arg ->
+    let f = binding () in
+    f arg
+;;
+
+(* [hegel_next_test_case] runs the engine on the calling thread. An engine call
+   can take a while, so release the OCaml runtime lock for its duration to let
+   other OCaml threads run. *)
+let foreign_blocking name typ = foreign ~release_runtime_lock:true name typ
+
+(* ------------------------------------------------------------------ *)
+(* Handles                                                            *)
+(* ------------------------------------------------------------------ *)
+
+(* In OxCaml they cross portability and contention since libhegel's threading
+   contract says a handle may move between threads and belongs to one thread at a
+   time. ptr doesn't have a kind, but libhegel handles are captured in many places
+   so we need to wrap it in a type with the kind value mod portable contended to keep
+   portability and contention. *)
+#ifdef OXCAML
+type handle : value mod portable contended = H of unit ptr
+[@@unboxed] [@@unsafe_allow_any_mode_crossing]
+#else
+type handle = H of unit ptr [@@unboxed]
+#endif
+
+let raw (H p) = p
+let handle_t : handle typ = view ~read:(fun p -> H p) ~write:raw (ptr void)
+let null_handle = H null
+
+(* ------------------------------------------------------------------ *)
+(* C structs returned by the typed draws                              *)
+(* ------------------------------------------------------------------ *)
+
+(* [hegel_generate_bytes_result_t]: an engine-allocated byte buffer, freed with
+   [hegel_generate_bytes_result_free]. *)
+module Bytes_result = struct
+  type s
+
+  let t : s structure typ = structure "hegel_generate_bytes_result_t"
+  let data = field t "data" (ptr uint8_t)
+  let len = field t "len" size_t
+  let () = seal t
+end
+
+(* [hegel_string_t]: a UTF-8 string view passed by value, also the
+   [hegel_owned_string_t] that [hegel_generate_string] returns. *)
+module Str = struct
+  type s
+
+  let t : s structure typ = structure "hegel_string_t"
+  let data = field t "data" (ptr char)
+  let len = field t "len" size_t
+  let () = seal t
+end
+
+(* The struct and its bytes share one buffer, so the struct value keeps the
+   bytes alive. ctypes holds each argument's converted value until the call
+   returns, which is what makes [str] and [str_opt] safe as argument types. *)
+let str_of_string s =
+  let n = String.length s in
+  let header = sizeof Str.t in
+  let buf = allocate_n char ~count:(header + n) in
+  let bytes = buf +@ header in
+  String.iteri (fun i c -> bytes +@ i <-@ c) s;
+  let v = !@(coerce (ptr char) (ptr Str.t) buf) in
+  setf v Str.data bytes;
+  setf v Str.len (Unsigned.Size_t.of_int n);
+  v
+;;
+
+let string_of_str v =
+  match Unsigned.Size_t.to_int (getf v Str.len) with
+  | 0 -> ""
+  | n -> string_from_ptr (getf v Str.data) ~length:n
+;;
+
+let str : string typ = view ~read:string_of_str ~write:str_of_string Str.t
+
+(* [const hegel_string_t *] where NULL means absent. *)
+let str_opt : string option typ =
+  view
+    ~read:(fun p -> if is_null p then None else Some (string_of_str !@p))
+    ~write:(function
+      | None -> from_voidp Str.t null
+      | Some s -> addr (str_of_string s))
+    (ptr Str.t)
+;;
+
+(* [hegel_printer_value_result_t]: an engine-allocated UTF-8 buffer (not
+   NUL-terminated), freed with [hegel_printer_value_result_free]. *)
+module Printer_value_result = struct
+  type s
+
+  let t : s structure typ = structure "hegel_printer_value_result_t"
+  let data = field t "data" (ptr char)
+  let len = field t "len" size_t
+  let () = seal t
+end
+
+(* [hegel_date_t]: proleptic Gregorian date. [year] in [-999999, 999999]
+   (bounded by the range passed to [hegel_generate_date]), [month] in [1, 12],
+   [day] in [1, 31]. *)
+module Date_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_date_t"
+  let year = field t "year" int32_t
+  let month = field t "month" uint8_t
+  let day = field t "day" uint8_t
+  let () = seal t
+end
+
+(* [hegel_time_t]: hour in [0, 23], minute/second in [0, 59], nanosecond in [0, 999999999]. *)
+module Time_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_time_t"
+  let hour = field t "hour" uint8_t
+  let minute = field t "minute" uint8_t
+  let second = field t "second" uint8_t
+  let nanosecond = field t "nanosecond" uint32_t
+  let () = seal t
+end
+
+(* [hegel_datetime_t]: a [hegel_date_t] plus a [hegel_time_t]. *)
+module Datetime_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_datetime_t"
+  let date = field t "date" Date_struct.t
+  let time = field t "time" Time_struct.t
+  let () = seal t
+end
+
+(* ------------------------------------------------------------------ *)
+(* Test context                                                        *)
+(* ------------------------------------------------------------------ *)
+
+let c_context_new = foreign "hegel_context_new" (void @-> returning handle_t)
+let c_context_free = foreign "hegel_context_free" (handle_t @-> returning int)
+
+(* ------------------------------------------------------------------ *)
+(* Raw bindings                                                        *)
+(* ------------------------------------------------------------------ *)
+
+let c_settings_new =
+  foreign "hegel_settings_new" (handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_settings_free =
+  foreign "hegel_settings_free" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_settings_backend =
+  foreign "hegel_settings_set_backend" (handle_t @-> handle_t @-> int @-> returning int)
+;;
+
+let c_settings_test_cases =
+  foreign
+    "hegel_settings_set_test_cases"
+    (handle_t @-> handle_t @-> uint64_t @-> returning int)
+;;
+
+let c_settings_verbosity =
+  foreign "hegel_settings_set_verbosity" (handle_t @-> handle_t @-> int @-> returning int)
+;;
+
+let c_settings_nondeterminism_strictness =
+  foreign
+    "hegel_settings_set_nondeterminism_strictness"
+    (handle_t @-> handle_t @-> int @-> returning int)
+;;
+
+let c_settings_seed =
+  foreign
+    "hegel_settings_set_seed"
+    (handle_t @-> handle_t @-> uint64_t @-> bool @-> returning int)
+;;
+
+let c_settings_derandomize =
+  foreign
+    "hegel_settings_set_derandomize"
+    (handle_t @-> handle_t @-> bool @-> returning int)
+;;
+
+let c_settings_report_multiple_failures =
+  foreign
+    "hegel_settings_set_report_multiple_failures"
+    (handle_t @-> handle_t @-> bool @-> returning int)
+;;
+
+let c_settings_show_statistics =
+  foreign
+    "hegel_settings_set_show_statistics"
+    (handle_t @-> handle_t @-> bool @-> returning int)
+;;
+
+let c_settings_database =
+  foreign
+    "hegel_settings_set_database"
+    (handle_t @-> handle_t @-> str_opt @-> returning int)
+;;
+
+let c_settings_database_key =
+  foreign
+    "hegel_settings_set_database_key"
+    (handle_t @-> handle_t @-> str_opt @-> returning int)
+;;
+
+let c_settings_test_location =
+  foreign
+    "hegel_settings_set_test_location"
+    (handle_t
+     @-> handle_t
+     @-> str (* file *)
+     @-> uint32_t (* begin_line *)
+     @-> str (* class_name *)
+     @-> str (* function *)
+     @-> returning int)
+;;
+
+let c_settings_new_for_profile =
+  foreign
+    "hegel_settings_new_for_profile"
+    (handle_t @-> str @-> ptr handle_t @-> returning int)
+;;
+
+let c_settings_print_blob =
+  foreign
+    "hegel_settings_set_print_blob"
+    (handle_t @-> handle_t @-> bool @-> returning int)
+;;
+
+let c_settings_register_profile =
+  foreign
+    "hegel_settings_register_profile"
+    (handle_t @-> str @-> handle_t @-> returning int)
+;;
+
+let c_set_default_profile =
+  foreign "hegel_set_default_profile" (handle_t @-> str @-> returning int)
+;;
+
+let c_settings_get_test_cases =
+  foreign
+    "hegel_settings_get_test_cases"
+    (handle_t @-> handle_t @-> ptr uint64_t @-> returning int)
+;;
+
+let c_settings_get_verbosity =
+  foreign
+    "hegel_settings_get_verbosity"
+    (handle_t @-> handle_t @-> ptr int @-> returning int)
+;;
+
+let c_settings_get_seed =
+  foreign
+    "hegel_settings_get_seed"
+    (handle_t @-> handle_t @-> ptr uint64_t @-> ptr bool @-> returning int)
+;;
+
+let c_settings_get_derandomize =
+  foreign
+    "hegel_settings_get_derandomize"
+    (handle_t @-> handle_t @-> ptr bool @-> returning int)
+;;
+
+let c_settings_get_database =
+  foreign
+    "hegel_settings_get_database"
+    (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
+;;
+
+let c_settings_get_phases =
+  foreign
+    "hegel_settings_get_phases"
+    (handle_t @-> handle_t @-> ptr uint32_t @-> returning int)
+;;
+
+let c_settings_get_suppress_health_check =
+  foreign
+    "hegel_settings_get_suppress_health_check"
+    (handle_t @-> handle_t @-> ptr uint32_t @-> returning int)
+;;
+
+let c_settings_stop_on_first_failure =
+  foreign
+    "hegel_settings_set_stop_on_first_failure"
+    (handle_t @-> handle_t @-> bool @-> returning int)
+;;
+
+let c_settings_get_stop_on_first_failure =
+  foreign
+    "hegel_settings_get_stop_on_first_failure"
+    (handle_t @-> handle_t @-> ptr bool @-> returning int)
+;;
+
+let c_settings_get_report_multiple_failures =
+  foreign
+    "hegel_settings_get_report_multiple_failures"
+    (handle_t @-> handle_t @-> ptr bool @-> returning int)
+;;
+
+let c_settings_get_show_statistics =
+  foreign
+    "hegel_settings_get_show_statistics"
+    (handle_t @-> handle_t @-> ptr bool @-> returning int)
+;;
+
+let c_settings_get_print_blob =
+  foreign
+    "hegel_settings_get_print_blob"
+    (handle_t @-> handle_t @-> ptr bool @-> returning int)
+;;
+
+let c_settings_get_backend =
+  foreign
+    "hegel_settings_get_backend"
+    (handle_t @-> handle_t @-> ptr int @-> returning int)
+;;
+
+let c_settings_get_nondeterminism_strictness =
+  foreign
+    "hegel_settings_get_nondeterminism_strictness"
+    (handle_t @-> handle_t @-> ptr int @-> returning int)
+;;
+
+let c_settings_phases =
+  foreign
+    "hegel_settings_set_phases"
+    (handle_t @-> handle_t @-> uint32_t @-> returning int)
+;;
+
+let c_settings_suppress_health_check =
+  foreign
+    "hegel_settings_set_suppress_health_check"
+    (handle_t @-> handle_t @-> uint32_t @-> returning int)
+;;
+
+(* [hegel_run_start]'s [callback]/[user_data] (the third and fourth arguments)
+   redirect the engine's own output off stderr. We always pass NULL for both,
+   keeping it on stderr. *)
+let c_run_start =
+  foreign
+    "hegel_run_start"
+    (handle_t @-> handle_t @-> handle_t @-> handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_run_start_blob =
+  foreign
+    "hegel_run_start_blob"
+    (handle_t
+     @-> handle_t
+     @-> str
+     @-> handle_t
+     @-> handle_t
+     @-> ptr handle_t
+     @-> returning int)
+;;
+
+let c_next_test_case =
+  foreign_blocking
+    "hegel_next_test_case"
+    (handle_t @-> handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_run_result =
+  foreign "hegel_run_result" (handle_t @-> handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_run_free = foreign "hegel_run_free" (handle_t @-> handle_t @-> returning int)
+
+let c_run_result_free =
+  foreign "hegel_run_result_free" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_failure_free = foreign "hegel_failure_free" (handle_t @-> handle_t @-> returning int)
+
+let c_test_case_free =
+  foreign "hegel_test_case_free" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_test_case_should_capture =
+  foreign
+    "hegel_test_case_should_capture"
+    (handle_t @-> handle_t @-> ptr bool @-> returning int)
+;;
+
+let c_test_case_clone =
+  foreign
+    "hegel_test_case_clone"
+    (handle_t @-> handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_test_case_set_worker =
+  foreign
+    "hegel_test_case_set_worker"
+    (handle_t @-> handle_t @-> int64_t @-> returning int)
+;;
+
+let c_test_case_block =
+  foreign
+    "hegel_test_case_block"
+    (handle_t @-> handle_t @-> uint64_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_generate_boolean =
+  foreign
+    "hegel_generate_boolean"
+    (handle_t @-> handle_t @-> double @-> bool @-> bool @-> ptr bool @-> returning int)
+;;
+
+let c_generate_integer =
+  foreign
+    "hegel_generate_integer"
+    (handle_t @-> handle_t @-> int64_t @-> int64_t @-> ptr int64_t @-> returning int)
+;;
+
+let c_generate_float =
+  foreign
+    "hegel_generate_float"
+    (handle_t
+     @-> handle_t
+     @-> uint32_t
+     @-> double
+     @-> double
+     @-> bool
+     @-> bool
+     @-> bool
+     @-> bool
+     @-> double
+     @-> ptr double
+     @-> returning int)
+;;
+
+let c_generate_bytes =
+  foreign
+    "hegel_generate_bytes"
+    (handle_t
+     @-> handle_t
+     @-> uint64_t
+     @-> uint64_t
+     @-> ptr Bytes_result.t
+     @-> returning int)
+;;
+
+let c_generate_bytes_result_free =
+  foreign
+    "hegel_generate_bytes_result_free"
+    (handle_t @-> ptr Bytes_result.t @-> returning int)
+;;
+
+let c_string_generator_text =
+  foreign
+    "hegel_string_generator_text"
+    (handle_t
+     @-> uint64_t
+     (* min_size *) @-> uint64_t (* max_size *)
+     @-> str_opt
+     (* codec *) @-> uint32_t (* min_codepoint *)
+     @-> uint32_t (* max_codepoint *)
+     @-> ptr Str.t (* categories *)
+     @-> size_t
+     @-> ptr Str.t (* exclude_categories *)
+     @-> size_t
+     @-> str (* include_characters *)
+     @-> str (* exclude_characters *)
+     @-> ptr handle_t (* out_generator *)
+     @-> returning int)
+;;
+
+let c_string_generator_regex =
+  foreign
+    "hegel_string_generator_regex"
+    (handle_t
+     @-> str (* pattern *)
+     @-> bool (* fullmatch *)
+     @-> handle_t (* alphabet (nullable) *)
+     @-> ptr handle_t
+     @-> returning int)
+;;
+
+let c_string_generator_email =
+  foreign "hegel_string_generator_email" (handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_string_generator_url =
+  foreign "hegel_string_generator_url" (handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_string_generator_domain =
+  foreign
+    "hegel_string_generator_domain"
+    (handle_t @-> uint64_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_string_generator_free =
+  foreign "hegel_string_generator_free" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_generate_string =
+  foreign
+    "hegel_generate_string"
+    (handle_t @-> handle_t @-> handle_t @-> ptr Str.t @-> returning int)
+;;
+
+let c_owned_string_free =
+  foreign "hegel_owned_string_free" (handle_t @-> ptr Str.t @-> returning int)
+;;
+
+let c_generate_date =
+  foreign
+    "hegel_generate_date"
+    (handle_t
+     @-> handle_t
+     @-> Date_struct.t
+     @-> Date_struct.t
+     @-> ptr Date_struct.t
+     @-> returning int)
+;;
+
+let c_generate_time =
+  foreign
+    "hegel_generate_time"
+    (handle_t
+     @-> handle_t
+     @-> Time_struct.t
+     @-> Time_struct.t
+     @-> ptr Time_struct.t
+     @-> returning int)
+;;
+
+let c_generate_datetime =
+  foreign
+    "hegel_generate_datetime"
+    (handle_t
+     @-> handle_t
+     @-> Datetime_struct.t
+     @-> Datetime_struct.t
+     @-> ptr Datetime_struct.t
+     @-> returning int)
+;;
+
+let c_generate_ipv4 =
+  foreign "hegel_generate_ipv4" (handle_t @-> handle_t @-> ptr uint8_t @-> returning int)
+;;
+
+let c_generate_ipv6 =
+  foreign "hegel_generate_ipv6" (handle_t @-> handle_t @-> ptr uint8_t @-> returning int)
+;;
+
+let c_start_span =
+  foreign "hegel_start_span" (handle_t @-> handle_t @-> uint64_t @-> returning int)
+;;
+
+let c_label_from_name =
+  foreign "hegel_label_from_name" (handle_t @-> str @-> ptr uint64_t @-> returning int)
+;;
+
+let c_label_combine =
+  foreign
+    "hegel_label_combine"
+    (handle_t @-> ptr uint64_t @-> size_t @-> ptr uint64_t @-> returning int)
+;;
+
+let c_stop_span =
+  foreign "hegel_stop_span" (handle_t @-> handle_t @-> bool @-> returning int)
+;;
+
+let c_new_collection =
+  foreign
+    "hegel_new_collection"
+    (handle_t @-> handle_t @-> uint64_t @-> uint64_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_collection_more =
+  foreign
+    "hegel_collection_more"
+    (handle_t @-> handle_t @-> handle_t @-> ptr bool @-> returning int)
+;;
+
+let c_collection_reject =
+  foreign
+    "hegel_collection_reject"
+    (handle_t @-> handle_t @-> handle_t @-> str_opt @-> returning int)
+;;
+
+let c_collection_free =
+  foreign "hegel_collection_free" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_new_pool =
+  foreign "hegel_new_pool" (handle_t @-> handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_pool_add =
+  foreign
+    "hegel_pool_add"
+    (handle_t @-> handle_t @-> handle_t @-> ptr int64_t @-> returning int)
+;;
+
+let c_pool_generate =
+  foreign
+    "hegel_pool_generate"
+    (handle_t @-> handle_t @-> handle_t @-> bool @-> ptr int64_t @-> returning int)
+;;
+
+let c_pool_restore =
+  foreign
+    "hegel_pool_restore"
+    (handle_t @-> handle_t @-> handle_t @-> int64_t @-> returning int)
+;;
+
+let c_pool_free = foreign "hegel_pool_free" (handle_t @-> handle_t @-> returning int)
+
+let c_new_state_machine =
+  foreign
+    "hegel_new_state_machine"
+    (handle_t
+     @-> handle_t
+     @-> ptr Str.t
+     @-> ptr int64_t
+     @-> ptr double
+     @-> size_t
+     @-> ptr Str.t
+     @-> ptr bool
+     @-> size_t
+     @-> int64_t
+     @-> int64_t
+     @-> int64_t
+     @-> ptr handle_t
+     @-> ptr int64_t
+     @-> returning int)
+;;
+
+let c_state_machine_next_group =
+  foreign
+    "hegel_state_machine_next_group"
+    (handle_t @-> handle_t @-> handle_t @-> ptr int64_t @-> returning int)
+;;
+
+let c_state_machine_next_rule =
+  foreign
+    "hegel_state_machine_next_rule"
+    (handle_t @-> handle_t @-> handle_t @-> int64_t @-> ptr int64_t @-> returning int)
+;;
+
+let c_state_machine_rule_rejected =
+  foreign
+    "hegel_state_machine_rule_rejected"
+    (handle_t @-> handle_t @-> handle_t @-> int64_t @-> returning int)
+;;
+
+let c_state_machine_should_check_invariant =
+  foreign
+    "hegel_state_machine_should_check_invariant"
+    (handle_t @-> handle_t @-> handle_t @-> int64_t @-> ptr bool @-> returning int)
+;;
+
+let c_state_machine_free =
+  foreign "hegel_state_machine_free" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_target =
+  foreign "hegel_target" (handle_t @-> handle_t @-> double @-> str @-> returning int)
+;;
+
+let c_event = foreign "hegel_event" (handle_t @-> handle_t @-> str @-> returning int)
+
+let c_event_value =
+  foreign
+    "hegel_event_value"
+    (handle_t @-> handle_t @-> double @-> str @-> returning int)
+;;
+
+let text_typ = handle_t @-> handle_t @-> str @-> returning int
+
+let c_printer_options_new =
+  foreign "hegel_printer_options_new" (handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_printer_options_free =
+  foreign "hegel_printer_options_free" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_printer_options_set_max_width =
+  foreign
+    "hegel_printer_options_set_max_width"
+    (handle_t @-> handle_t @-> uint64_t @-> returning int)
+;;
+
+let c_printer_new =
+  foreign "hegel_printer_new" (handle_t @-> handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_printer_free = foreign "hegel_printer_free" (handle_t @-> handle_t @-> returning int)
+let c_printer_text = foreign "hegel_printer_text" text_typ
+let c_printer_breakable = foreign "hegel_printer_breakable" text_typ
+let c_printer_if_break = foreign "hegel_printer_if_break" text_typ
+let c_printer_comment = foreign "hegel_printer_comment" text_typ
+
+let c_printer_hard_break =
+  foreign "hegel_printer_hard_break" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_printer_begin_group =
+  foreign
+    "hegel_printer_begin_group"
+    (handle_t @-> handle_t @-> uint64_t @-> str @-> returning int)
+;;
+
+let c_printer_end_group = foreign "hegel_printer_end_group" text_typ
+
+let c_printer_shift_indent =
+  foreign
+    "hegel_printer_shift_indent"
+    (handle_t @-> handle_t @-> int64_t @-> returning int)
+;;
+
+let c_printer_deferred =
+  foreign
+    "hegel_printer_deferred"
+    (handle_t @-> handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_printer_begin_speculative =
+  foreign "hegel_printer_begin_speculative" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_printer_commit_speculative =
+  foreign "hegel_printer_commit_speculative" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_printer_abort_speculative =
+  foreign "hegel_printer_abort_speculative" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_printer_resolve =
+  foreign "hegel_printer_resolve" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_printer_is_live =
+  foreign "hegel_printer_is_live" (handle_t @-> handle_t @-> ptr bool @-> returning int)
+;;
+
+let c_printer_value =
+  foreign
+    "hegel_printer_value"
+    (handle_t @-> handle_t @-> ptr Printer_value_result.t @-> returning int)
+;;
+
+let c_printer_value_result_free =
+  foreign
+    "hegel_printer_value_result_free"
+    (handle_t @-> ptr Printer_value_result.t @-> returning int)
+;;
+
+let c_test_case_printer =
+  foreign
+    "hegel_test_case_printer"
+    (handle_t @-> handle_t @-> handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_note = foreign "hegel_note" text_typ
+
+let c_mark_complete =
+  foreign
+    "hegel_mark_complete"
+    (handle_t @-> handle_t @-> int @-> str_opt @-> returning int)
+;;
+
+let c_result_status =
+  foreign "hegel_run_result_status" (handle_t @-> handle_t @-> ptr int @-> returning int)
+;;
+
+let c_result_error =
+  foreign
+    "hegel_run_result_error"
+    (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
+;;
+
+let c_result_failure_count =
+  foreign
+    "hegel_run_result_failure_count"
+    (handle_t @-> handle_t @-> ptr size_t @-> returning int)
+;;
+
+let c_result_failure =
+  foreign
+    "hegel_run_result_failure"
+    (handle_t @-> handle_t @-> size_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_failure_blob =
+  foreign
+    "hegel_failure_reproduction_blob"
+    (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
+;;
+
+let c_failure_caveat =
+  foreign
+    "hegel_failure_caveat"
+    (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
+;;
+
+let c_failure_origin =
+  foreign
+    "hegel_failure_origin"
+    (handle_t @-> handle_t @-> ptr str @-> returning int)
+;;
+
+let c_last_error_message =
+  foreign "hegel_context_last_error" (handle_t @-> returning str)
+;;
+
+let c_version = foreign "hegel_version" (handle_t @-> ptr str @-> returning int)
+
+(* ------------------------------------------------------------------ *)
+(* Public types                                                        *)
+(* ------------------------------------------------------------------ *)
+
+type context = handle
+type settings = handle
+type run = handle
+type test_case = handle
+type run_result = handle
+type failure = handle
+type string_generator = handle
+type collection = handle
+type pool = handle
+type state_machine = handle
+type printer = handle
+type printer_options = handle
+
+type backend =
+  | Default
+  | Urandom
+
+type verbosity =
+  | Quiet
+  | Normal
+  | Verbose
+  | Debug
+
+type nondeterminism_strictness =
+  | Nondeterminism_quiet
+  | Nondeterminism_warn
+  | Nondeterminism_error
+
+type status =
+  | Valid
+  | Invalid
+  | Overrun
+  | Interesting
+
+type run_status =
+  | Run_passed
+  | Run_failed
+  | Run_error
+
+exception Stop_test
+exception Assume_rejected
+exception Internal_error of string
+exception Usage_error of string
+
+(* Status codes returned by the C primitives [HEGEL_OK] / [HEGEL_E_*]. *)
+let ok = 0
+let e_stop_test = -1
+let e_assume = -2
+let e_backend = -3
+let e_invalid_handle = -4
+let e_invalid_arg = -5
+let e_already_complete = -6
+let e_not_complete = -7
+let e_internal = -8
+let e_concurrent_use = -9
+
+(* Phase bitmask values [HEGEL_PHASE_*]. *)
+let phase_explicit = 1
+let phase_reuse = 1 lsl 1
+let phase_generate = 1 lsl 2
+let phase_target = 1 lsl 3
+let phase_shrink = 1 lsl 4
+
+(* Health-check bitmask values [HEGEL_HC_*]. *)
+let hc_filter_too_much = 1
+let hc_too_slow = 1 lsl 1
+let hc_test_cases_too_large = 1 lsl 2
+let hc_large_initial_test_case = 1 lsl 3
+
+(* ------------------------------------------------------------------ *)
+(* Helpers                                                             *)
+(* ------------------------------------------------------------------ *)
+
+let backend_to_int = function
+  | Default -> 1
+  | Urandom -> 2
+;;
+
+let verbosity_to_int = function
+  | Normal -> 0
+  | Quiet -> 1
+  | Verbose -> 2
+  | Debug -> 3
+;;
+
+let verbosity_of_int = function
+  | 0 -> Normal
+  | 1 -> Quiet
+  | 2 -> Verbose
+  | 3 -> Debug
+  | n -> raise (Internal_error (Printf.sprintf "hegel: unknown verbosity %d" n))
+;;
+
+let nondeterminism_strictness_to_int = function
+  | Nondeterminism_quiet -> 0
+  | Nondeterminism_warn -> 1
+  | Nondeterminism_error -> 2
+;;
+
+let nondeterminism_strictness_of_int = function
+  | 0 -> Nondeterminism_quiet
+  | 1 -> Nondeterminism_warn
+  | 2 -> Nondeterminism_error
+  | n ->
+    raise (Internal_error (Printf.sprintf "hegel: unknown nondeterminism strictness %d" n))
+;;
+
+let backend_of_int = function
+  | 1 -> Default
+  | 2 -> Urandom
+  | n -> raise (Internal_error (Printf.sprintf "hegel: unknown backend %d" n))
+;;
+
+let status_to_int = function
+  | Valid -> 0
+  | Invalid -> 1
+  | Overrun -> 2
+  | Interesting -> 3
+;;
+
+(* Translate a libhegel return code into success or an exception. *)
+let check_rc ctx rc =
+  if rc = ok
+  then ()
+  else if rc = e_stop_test
+  then raise Stop_test
+  else if rc = e_assume
+  then raise Assume_rejected
+  else if rc = e_invalid_arg
+  then raise (Usage_error (c_last_error_message ctx))
+  else (
+    let label =
+      if rc = e_backend
+      then "backend error"
+      else if rc = e_invalid_handle
+      then "invalid handle"
+      else if rc = e_already_complete
+      then "test case already complete"
+      else if rc = e_not_complete
+      then "previous test case not complete"
+      else if rc = e_internal
+      then "internal error"
+      else if rc = e_concurrent_use
+      then "concurrent use of a test-case or collection handle"
+      else Printf.sprintf "unknown error code %d" rc
+    in
+    let msg = c_last_error_message ctx in
+    let detail = if String.length msg = 0 then "" else ": " ^ msg in
+    raise (Internal_error (label ^ detail)))
+;;
+
+(* ------------------------------------------------------------------ *)
+(* Diagnostics                                                         *)
+(* ------------------------------------------------------------------ *)
+
+let version ctx =
+  let out = allocate str "" in
+  check_rc ctx (c_version ctx out);
+  !@out
+;;
+
+(* ------------------------------------------------------------------ *)
+(* Test context                                                       *)
+(* ------------------------------------------------------------------ *)
+
+let context_free ctx = ignore (c_context_free ctx : int)
+
+let initialize =
+  memoize (fun () ->
+    (* Resolve the full ABI before exposing a context. *)
+    List.iter (fun initialize -> initialize ()) (List.rev !binding_initializers);
+    binding_initializers := [])
+;;
+
+let context_new () =
+  initialize ();
+  c_context_new ()
+;;
+
+(* ------------------------------------------------------------------ *)
+(* Settings                                                            *)
+(* ------------------------------------------------------------------ *)
+
+let settings_new ctx =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_settings_new ctx out);
+  !@out
+;;
+
+let settings_free ctx s = check_rc ctx (c_settings_free ctx s)
+let settings_backend ctx s b = check_rc ctx (c_settings_backend ctx s (backend_to_int b))
+
+let settings_test_cases ctx s n =
+  check_rc ctx (c_settings_test_cases ctx s (Unsigned.UInt64.of_int n))
+;;
+
+let settings_verbosity ctx s v =
+  check_rc ctx (c_settings_verbosity ctx s (verbosity_to_int v))
+;;
+
+let settings_nondeterminism_strictness ctx s n =
+  check_rc
+    ctx
+    (c_settings_nondeterminism_strictness ctx s (nondeterminism_strictness_to_int n))
+;;
+
+let settings_seed ctx s = function
+  | Some seed -> check_rc ctx (c_settings_seed ctx s (Unsigned.UInt64.of_int seed) true)
+  | None -> check_rc ctx (c_settings_seed ctx s Unsigned.UInt64.zero false)
+;;
+
+let settings_derandomize ctx s b = check_rc ctx (c_settings_derandomize ctx s b)
+
+let settings_report_multiple_failures ctx s b =
+  check_rc ctx (c_settings_report_multiple_failures ctx s b)
+;;
+
+let settings_stop_on_first_failure ctx s b =
+  check_rc ctx (c_settings_stop_on_first_failure ctx s b)
+;;
+
+let settings_show_statistics ctx s b = check_rc ctx (c_settings_show_statistics ctx s b)
+let settings_database ctx s d = check_rc ctx (c_settings_database ctx s d)
+let settings_database_key ctx s k = check_rc ctx (c_settings_database_key ctx s k)
+
+let settings_test_location ctx s ~file ~begin_line ~class_name ~function_name =
+  check_rc
+    ctx
+    (c_settings_test_location
+       ctx
+       s
+       file
+       (Unsigned.UInt32.of_int begin_line)
+       class_name
+       function_name)
+;;
+
+let settings_phases ctx s mask =
+  check_rc ctx (c_settings_phases ctx s (Unsigned.UInt32.of_int mask))
+;;
+
+let settings_suppress_health_check ctx s mask =
+  check_rc ctx (c_settings_suppress_health_check ctx s (Unsigned.UInt32.of_int mask))
+;;
+
+let settings_print_blob ctx s b = check_rc ctx (c_settings_print_blob ctx s b)
+
+let settings_new_for_profile ctx name =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_settings_new_for_profile ctx name out);
+  !@out
+;;
+
+let settings_register_profile ctx name s =
+  check_rc ctx (c_settings_register_profile ctx name s)
+;;
+
+let set_default_profile ctx name =
+  check_rc ctx (c_set_default_profile ctx (Option.value name ~default:""))
+
+let settings_get_test_cases ctx s =
+  let out = allocate uint64_t Unsigned.UInt64.zero in
+  check_rc ctx (c_settings_get_test_cases ctx s out);
+  Unsigned.UInt64.to_int !@out
+;;
+
+let settings_get_verbosity ctx s =
+  let out = allocate int 0 in
+  check_rc ctx (c_settings_get_verbosity ctx s out);
+  verbosity_of_int !@out
+;;
+
+let settings_get_seed ctx s =
+  let seed = allocate uint64_t Unsigned.UInt64.zero in
+  let has_seed = allocate bool false in
+  check_rc ctx (c_settings_get_seed ctx s seed has_seed);
+  if !@has_seed then Some (Unsigned.UInt64.to_int !@seed) else None
+;;
+
+let get_bool getter ctx s =
+  let out = allocate bool false in
+  check_rc ctx (getter ctx s out);
+  !@out
+;;
+
+let settings_get_derandomize ctx s = get_bool c_settings_get_derandomize ctx s
+
+let settings_get_database ctx s =
+  let out = allocate str_opt None in
+  check_rc ctx (c_settings_get_database ctx s out);
+  !@out
+;;
+
+let get_mask getter ctx s =
+  let out = allocate uint32_t Unsigned.UInt32.zero in
+  check_rc ctx (getter ctx s out);
+  Unsigned.UInt32.to_int !@out
+;;
+
+let settings_get_phases ctx s = get_mask c_settings_get_phases ctx s
+
+let settings_get_suppress_health_check ctx s =
+  get_mask c_settings_get_suppress_health_check ctx s
+;;
+
+let settings_get_report_multiple_failures ctx s =
+  get_bool c_settings_get_report_multiple_failures ctx s
+;;
+
+let settings_get_stop_on_first_failure ctx s =
+  get_bool c_settings_get_stop_on_first_failure ctx s
+;;
+
+let settings_get_show_statistics ctx s = get_bool c_settings_get_show_statistics ctx s
+let settings_get_print_blob ctx s = get_bool c_settings_get_print_blob ctx s
+
+let settings_get_backend ctx s =
+  let out = allocate int 0 in
+  check_rc ctx (c_settings_get_backend ctx s out);
+  backend_of_int !@out
+;;
+
+let settings_get_nondeterminism_strictness ctx s =
+  let out = allocate int 0 in
+  check_rc ctx (c_settings_get_nondeterminism_strictness ctx s out);
+  nondeterminism_strictness_of_int !@out
+;;
+
+(* ------------------------------------------------------------------ *)
+(* Run lifecycle                                                       *)
+(* ------------------------------------------------------------------ *)
+
+let run_start ctx s =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_run_start ctx s null_handle null_handle out);
+  !@out
+;;
+
+let run_start_blob ctx s blob =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_run_start_blob ctx s blob null_handle null_handle out);
+  !@out
+;;
+
+let next_test_case ctx run =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_next_test_case ctx run out);
+  if is_null (raw !@out) then None else Some !@out
+;;
+
+let run_result ctx run =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_run_result ctx run out);
+  !@out
+;;
+
+let run_free ctx run = check_rc ctx (c_run_free ctx run)
+let run_result_free ctx r = check_rc ctx (c_run_result_free ctx r)
+let failure_free ctx f = check_rc ctx (c_failure_free ctx f)
+let test_case_free ctx tc = check_rc ctx (c_test_case_free ctx tc)
+
+let test_case_clone ctx tc =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_test_case_clone ctx tc out);
+  !@out
+;;
+
+let test_case_set_worker ctx tc ~worker_index =
+  check_rc ctx (c_test_case_set_worker ctx tc (Int64.of_int worker_index))
+;;
+
+let test_case_block ctx tc ~indent =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_test_case_block ctx tc (Unsigned.UInt64.of_int indent) out);
+  !@out
+;;
+
+let test_case_should_capture ctx tc =
+  let out = allocate bool false in
+  check_rc ctx (c_test_case_should_capture ctx tc out);
+  !@out
+;;
+
+(* ------------------------------------------------------------------ *)
+(* Per-test-case primitives                                            *)
+(* ------------------------------------------------------------------ *)
+
+(* Marshal an OCaml string list into a [const hegel_string_t *] paired with a GC
+   root that pins its backing memory. The caller MUST {!Ctypes.Root.release} the
+   returned root once the C side has copied the names; until then the root keeps
+   the name buffers and the struct table alive.
+
+   The explicit root is necessary because [CArray.of_list] copies each struct's
+   [data] pointer and leaves the name's buffer unrooted, so the GC may free the
+   names out from under the engine and cause flaky tests *)
+let to_string_array = function
+  | [] -> from_voidp Str.t null, Root.create ()
+  | names ->
+    let structs = List.map str_of_string names in
+    let table = CArray.of_list Str.t structs in
+    CArray.start table, Root.create (structs, table)
+;;
+
+let generate_boolean ctx tc p forced =
+  let out_ptr = allocate bool false in
+  let rc =
+    match forced with
+    | Some b -> c_generate_boolean ctx tc p b true out_ptr
+    | None -> c_generate_boolean ctx tc p false false out_ptr
+  in
+  check_rc ctx rc;
+  !@out_ptr
+;;
+
+let generate_integer ctx tc ~min_value ~max_value =
+  let out = allocate int64_t 0L in
+  check_rc
+    ctx
+    (c_generate_integer ctx tc (Int64.of_int min_value) (Int64.of_int max_value) out);
+  Int64.to_int !@out
+;;
+
+let generate_float
+      ctx
+      tc
+      ~min_value
+      ~max_value
+      ~allow_nan
+      ~allow_infinity
+      ~exclude_min
+      ~exclude_max
+      ~smallest_nonzero_magnitude
+  =
+  let out = allocate double 0.0 in
+  check_rc
+    ctx
+    (c_generate_float
+       ctx
+       tc
+       (Unsigned.UInt32.of_int 64)
+       min_value
+       max_value
+       allow_nan
+       allow_infinity
+       exclude_min
+       exclude_max
+       smallest_nonzero_magnitude
+       out);
+  !@out
+;;
+
+let generate_bytes ctx tc ~min_size ~max_size =
+  let result = make Bytes_result.t in
+  let max_u =
+    match max_size with
+    | Some m -> Unsigned.UInt64.of_int m
+    | None -> Unsigned.UInt64.max_int
+  in
+  check_rc
+    ctx
+    (c_generate_bytes ctx tc (Unsigned.UInt64.of_int min_size) max_u (addr result));
+  let n = Unsigned.Size_t.to_int (getf result Bytes_result.len) in
+  let data = getf result Bytes_result.data in
+  let s = string_from_ptr (coerce (ptr uint8_t) (ptr char) data) ~length:n in
+  ignore (c_generate_bytes_result_free ctx (addr result) : int);
+  s
+;;
+
+(* Marshal an optional string list into a [const hegel_string_t *] + length + GC
+   root, distinguishing three cases the text-generator API cares about: [None] →
+   NULL (no restriction); [Some []] → a non-NULL pointer with length 0 (an
+   explicit *empty* set); [Some names] → the names. *)
+let optional_string_array = function
+  | None -> from_voidp Str.t null, Root.create (), Unsigned.Size_t.of_int 0
+  | Some [] ->
+    (* A non-NULL pointer with length 0: the C side treats NULL and non-NULL
+       empty differently (empty alphabet vs no restriction). *)
+    let dummy = CArray.make Str.t 1 in
+    CArray.start dummy, Root.create dummy, Unsigned.Size_t.of_int 0
+  | Some names ->
+    let ptr, root = to_string_array names in
+    ptr, root, Unsigned.Size_t.of_int (List.length names)
+;;
+
+let string_generator_text
+      ctx
+      ~min_size
+      ~max_size
+      ~codec
+      ~min_codepoint
+      ~max_codepoint
+      ~categories
+      ~exclude_categories
+      ~include_characters
+      ~exclude_characters
+  =
+  let max_u =
+    match max_size with
+    | Some m -> Unsigned.UInt64.of_int m
+    | None -> Unsigned.UInt64.max_int
+  in
+  let cats_ptr, cats_root, cats_len = optional_string_array categories in
+  let excats_ptr, excats_root, excats_len = optional_string_array exclude_categories in
+  let out = allocate handle_t null_handle in
+  let rc =
+    c_string_generator_text
+      ctx
+      (Unsigned.UInt64.of_int min_size)
+      max_u
+      codec
+      (Unsigned.UInt32.of_int min_codepoint)
+      (Unsigned.UInt32.of_int max_codepoint)
+      cats_ptr
+      cats_len
+      excats_ptr
+      excats_len
+      (Option.value include_characters ~default:"")
+      (Option.value exclude_characters ~default:"")
+      out
+  in
+  Root.release cats_root;
+  Root.release excats_root;
+  check_rc ctx rc;
+  !@out
+;;
+
+let string_generator_regex ctx ~pattern ~fullmatch =
+  let out = allocate handle_t null_handle in
+  check_rc
+    ctx
+    (c_string_generator_regex ctx pattern fullmatch null_handle out);
+  !@out
+;;
+
+let string_generator_email ctx =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_string_generator_email ctx out);
+  !@out
+;;
+
+let string_generator_url ctx =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_string_generator_url ctx out);
+  !@out
+;;
+
+let string_generator_domain ctx ~max_length =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_string_generator_domain ctx (Unsigned.UInt64.of_int max_length) out);
+  !@out
+;;
+
+let string_generator_free ctx sg = ignore (c_string_generator_free ctx sg : int)
+
+let generate_string ctx tc sg =
+  let result = make Str.t in
+  check_rc ctx (c_generate_string ctx tc sg (addr result));
+  let s = string_of_str result in
+  ignore (c_owned_string_free ctx (addr result) : int);
+  s
+;;
+
+type date =
+  { year : int
+  ; month : int
+  ; day : int
+  }
+
+type time =
+  { hour : int
+  ; minute : int
+  ; second : int
+  ; nanosecond : int
+  }
+
+(* Build the by-value bound structs from [date]/[time] records. *)
+let make_date { year; month; day } =
+  let d = make Date_struct.t in
+  setf d Date_struct.year (Int32.of_int year);
+  setf d Date_struct.month (Unsigned.UInt8.of_int month);
+  setf d Date_struct.day (Unsigned.UInt8.of_int day);
+  d
+;;
+
+let make_time { hour; minute; second; nanosecond } =
+  let t = make Time_struct.t in
+  setf t Time_struct.hour (Unsigned.UInt8.of_int hour);
+  setf t Time_struct.minute (Unsigned.UInt8.of_int minute);
+  setf t Time_struct.second (Unsigned.UInt8.of_int second);
+  setf t Time_struct.nanosecond (Unsigned.UInt32.of_int nanosecond);
+  t
+;;
+
+let make_datetime (date, time) =
+  let dt = make Datetime_struct.t in
+  setf dt Datetime_struct.date (make_date date);
+  setf dt Datetime_struct.time (make_time time);
+  dt
+;;
+
+let read_date d =
+  { year = Int32.to_int (getf d Date_struct.year)
+  ; month = Unsigned.UInt8.to_int (getf d Date_struct.month)
+  ; day = Unsigned.UInt8.to_int (getf d Date_struct.day)
+  }
+;;
+
+let read_time t =
+  { hour = Unsigned.UInt8.to_int (getf t Time_struct.hour)
+  ; minute = Unsigned.UInt8.to_int (getf t Time_struct.minute)
+  ; second = Unsigned.UInt8.to_int (getf t Time_struct.second)
+  ; nanosecond = Unsigned.UInt32.to_int (getf t Time_struct.nanosecond)
+  }
+;;
+
+let generate_date ctx tc ~min_value ~max_value =
+  let result = make Date_struct.t in
+  check_rc
+    ctx
+    (c_generate_date ctx tc (make_date min_value) (make_date max_value) (addr result));
+  read_date result
+;;
+
+let generate_time ctx tc ~min_value ~max_value =
+  let result = make Time_struct.t in
+  check_rc
+    ctx
+    (c_generate_time ctx tc (make_time min_value) (make_time max_value) (addr result));
+  read_time result
+;;
+
+let generate_datetime ctx tc ~min_value ~max_value =
+  let result = make Datetime_struct.t in
+  check_rc
+    ctx
+    (c_generate_datetime
+       ctx
+       tc
+       (make_datetime min_value)
+       (make_datetime max_value)
+       (addr result));
+  ( read_date (getf result Datetime_struct.date)
+  , read_time (getf result Datetime_struct.time) )
+;;
+
+let generate_ip_bytes ctx tc c_fn n =
+  let buf = CArray.make uint8_t n in
+  check_rc ctx (c_fn ctx tc (CArray.start buf));
+  string_from_ptr (coerce (ptr uint8_t) (ptr char) (CArray.start buf)) ~length:n
+;;
+
+let generate_ipv4 ctx tc = generate_ip_bytes ctx tc c_generate_ipv4 4
+let generate_ipv6 ctx tc = generate_ip_bytes ctx tc c_generate_ipv6 16
+
+let start_span ctx tc label =
+  check_rc ctx (c_start_span ctx tc (Unsigned.UInt64.of_int64 label))
+;;
+
+let label_from_name ctx name =
+  let out = allocate uint64_t Unsigned.UInt64.zero in
+  check_rc ctx (c_label_from_name ctx name out);
+  Unsigned.UInt64.to_int64 !@out
+;;
+
+let label_combine ctx labels =
+  let arr = CArray.of_list uint64_t (List.map Unsigned.UInt64.of_int64 labels) in
+  let out = allocate uint64_t Unsigned.UInt64.zero in
+  check_rc
+    ctx
+    (c_label_combine
+       ctx
+       (CArray.start arr)
+       (Unsigned.Size_t.of_int (CArray.length arr))
+       out);
+  Unsigned.UInt64.to_int64 !@out
+;;
+
+let stop_span ctx tc discard = check_rc ctx (c_stop_span ctx tc discard)
+
+let new_collection ctx tc ~min_size ~max_size =
+  let out = allocate handle_t null_handle in
+  let max_u =
+    match max_size with
+    | Some m -> Unsigned.UInt64.of_int m
+    | None -> Unsigned.UInt64.max_int
+  in
+  check_rc ctx (c_new_collection ctx tc (Unsigned.UInt64.of_int min_size) max_u out);
+  !@out
+;;
+
+let collection_more ctx tc collection =
+  let out = allocate bool false in
+  check_rc ctx (c_collection_more ctx tc collection out);
+  !@out
+;;
+
+let collection_reject ctx tc collection why =
+  check_rc ctx (c_collection_reject ctx tc collection why)
+;;
+
+let collection_free ctx collection = check_rc ctx (c_collection_free ctx collection)
+
+let new_pool ctx tc =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_new_pool ctx tc out);
+  !@out
+;;
+
+let pool_add ctx tc ~pool =
+  let out = allocate int64_t 0L in
+  check_rc ctx (c_pool_add ctx tc pool out);
+  Int64.to_int !@out
+;;
+
+let pool_generate ctx tc ~pool ~consume =
+  let out = allocate int64_t 0L in
+  check_rc ctx (c_pool_generate ctx tc pool consume out);
+  Int64.to_int !@out
+;;
+
+let pool_restore ctx tc ~pool ~variable_id =
+  check_rc ctx (c_pool_restore ctx tc pool (Int64.of_int variable_id))
+;;
+
+let pool_free ctx pool = check_rc ctx (c_pool_free ctx pool)
+
+let new_state_machine
+      ctx
+      tc
+      ~rule_names
+      ~rule_groups
+      ~rule_weights
+      ~invariant_names
+      ~invariants_always_check
+      ~min_concurrency
+      ~max_concurrency
+      ~step_count
+  =
+  let rules_ptr, rules_root = to_string_array rule_names in
+  let groups = CArray.of_list int64_t (List.map Int64.of_int rule_groups) in
+  let weights = CArray.of_list double rule_weights in
+  let invariants_always_check = CArray.of_list bool invariants_always_check in
+  let invs_ptr, invs_root = to_string_array invariant_names in
+  let out = allocate handle_t null_handle in
+  let out_concurrency = allocate int64_t 0L in
+  let rc =
+    c_new_state_machine
+      ctx
+      tc
+      rules_ptr
+      (CArray.start groups)
+      (CArray.start weights)
+      (Unsigned.Size_t.of_int (List.length rule_names))
+      invs_ptr
+      (CArray.start invariants_always_check)
+      (Unsigned.Size_t.of_int (List.length invariant_names))
+      (Int64.of_int min_concurrency)
+      (Int64.of_int max_concurrency)
+      (Int64.of_int step_count)
+      out
+      out_concurrency
+  in
+  Root.release rules_root;
+  Root.release invs_root;
+  check_rc ctx rc;
+  !@out, Int64.to_int !@out_concurrency
+;;
+
+(* [HEGEL_STATE_MACHINE_DONE]: written to the out parameter by
+   [hegel_state_machine_next_group] when the state machine has terminated and by
+   [hegel_state_machine_next_rule] when the worker's round is over. *)
+let state_machine_done = Int64.min_int
+
+let read_index out =
+  let v = !@out in
+  if Int64.equal v state_machine_done then None else Some (Int64.to_int v)
+;;
+
+let state_machine_next_group ctx tc ~state_machine =
+  let out = allocate int64_t 0L in
+  check_rc ctx (c_state_machine_next_group ctx tc state_machine out);
+  read_index out
+;;
+
+let state_machine_next_rule ctx tc ~state_machine ~worker_index =
+  let out = allocate int64_t 0L in
+  check_rc
+    ctx
+    (c_state_machine_next_rule ctx tc state_machine (Int64.of_int worker_index) out);
+  read_index out
+;;
+
+let state_machine_rule_rejected ctx tc ~state_machine ~worker_index =
+  check_rc
+    ctx
+    (c_state_machine_rule_rejected ctx tc state_machine (Int64.of_int worker_index))
+;;
+
+let state_machine_should_check_invariant ctx tc ~state_machine ~invariant_index =
+  let out = allocate bool false in
+  check_rc
+    ctx
+    (c_state_machine_should_check_invariant
+       ctx
+       tc
+       state_machine
+       (Int64.of_int invariant_index)
+       out);
+  !@out
+;;
+
+let state_machine_free ctx state_machine =
+  check_rc ctx (c_state_machine_free ctx state_machine)
+;;
+
+let target ctx tc value label = check_rc ctx (c_target ctx tc value label)
+let event ctx tc label = check_rc ctx (c_event ctx tc label)
+let event_value ctx tc value label = check_rc ctx (c_event_value ctx tc value label)
+
+(* ------------------------------------------------------------------ *)
+(* Pretty printer                                                      *)
+(* ------------------------------------------------------------------ *)
+
+let opt_handle = function
+  | Some p -> p
+  | None -> null_handle
+;;
+
+let printer_options_new ctx =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_printer_options_new ctx out);
+  !@out
+;;
+
+let printer_options_free ctx options = check_rc ctx (c_printer_options_free ctx options)
+
+let printer_options_set_max_width ctx options max_width =
+  check_rc
+    ctx
+    (c_printer_options_set_max_width ctx options (Unsigned.UInt64.of_int max_width))
+;;
+
+let printer_new ctx options =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_printer_new ctx (opt_handle options) out);
+  !@out
+;;
+
+let printer_free ctx printer = check_rc ctx (c_printer_free ctx printer)
+let printer_text ctx p s = check_rc ctx (c_printer_text ctx p s)
+
+let printer_breakable ctx p sep = check_rc ctx (c_printer_breakable ctx p sep)
+
+let printer_if_break ctx p s = check_rc ctx (c_printer_if_break ctx p s)
+let printer_comment ctx p s = check_rc ctx (c_printer_comment ctx p s)
+let printer_hard_break ctx p = check_rc ctx (c_printer_hard_break ctx p)
+
+let printer_begin_group ctx p ~indent open_ =
+  check_rc
+    ctx
+    (c_printer_begin_group ctx p (Unsigned.UInt64.of_int indent) open_)
+;;
+
+let printer_end_group ctx p close = check_rc ctx (c_printer_end_group ctx p close)
+
+let printer_shift_indent ctx p delta =
+  check_rc ctx (c_printer_shift_indent ctx p (Int64.of_int delta))
+;;
+
+let printer_deferred ctx p =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_printer_deferred ctx p out);
+  !@out
+;;
+
+let printer_begin_speculative ctx p = check_rc ctx (c_printer_begin_speculative ctx p)
+let printer_commit_speculative ctx p = check_rc ctx (c_printer_commit_speculative ctx p)
+let printer_abort_speculative ctx p = check_rc ctx (c_printer_abort_speculative ctx p)
+let printer_resolve ctx p = check_rc ctx (c_printer_resolve ctx p)
+
+let printer_is_live ctx p =
+  let out = allocate bool false in
+  check_rc ctx (c_printer_is_live ctx p out);
+  !@out
+;;
+
+let printer_value ctx p =
+  let result = make Printer_value_result.t in
+  check_rc ctx (c_printer_value ctx p (addr result));
+  let n = Unsigned.Size_t.to_int (getf result Printer_value_result.len) in
+  let data = getf result Printer_value_result.data in
+  let s = string_from_ptr data ~length:n in
+  ignore (c_printer_value_result_free ctx (addr result) : int);
+  s
+;;
+
+let test_case_printer ctx tc options =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_test_case_printer ctx tc (opt_handle options) out);
+  !@out
+;;
+
+let note ctx tc text = check_rc ctx (c_note ctx tc text)
+
+let mark_complete ctx tc status origin =
+  check_rc ctx (c_mark_complete ctx tc (status_to_int status) origin)
+;;
+
+(* ------------------------------------------------------------------ *)
+(* Result inspection                                                   *)
+(* ------------------------------------------------------------------ *)
+
+(* [HEGEL_RUN_STATUS_*] values. The catch-all maps any unknown future status to
+   [Run_error]. *)
+let result_status ctx r =
+  let out = allocate int 0 in
+  check_rc ctx (c_result_status ctx r out);
+  match !@out with
+  | 0 -> Run_passed
+  | 1 -> Run_failed
+  | _ -> Run_error
+;;
+
+let result_error ctx r =
+  let out = allocate str_opt None in
+  check_rc ctx (c_result_error ctx r out);
+  !@out
+;;
+
+let result_failure_count ctx r =
+  let out = allocate size_t (Unsigned.Size_t.of_int 0) in
+  check_rc ctx (c_result_failure_count ctx r out);
+  Unsigned.Size_t.to_int !@out
+;;
+
+let result_failure ctx r i =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_result_failure ctx r (Unsigned.Size_t.of_int i) out);
+  if is_null (raw !@out) then None else Some !@out
+;;
+
+let result_failures ctx r =
+  let n = result_failure_count ctx r in
+  List.init n (fun i ->
+    match result_failure ctx r i with
+    | Some f -> f
+    | None -> raise (Internal_error "hegel: failure disappeared mid-iteration"))
+;;
+
+let failure_origin ctx f =
+  let out = allocate str "" in
+  check_rc ctx (c_failure_origin ctx f out);
+  !@out
+;;
+
+let failure_blob ctx f =
+  let out = allocate str_opt None in
+  check_rc ctx (c_failure_blob ctx f out);
+  !@out
+;;
+
+let failure_caveat ctx f =
+  let out = allocate str_opt None in
+  check_rc ctx (c_failure_caveat ctx f out);
+  !@out
+;;
+
+#ifdef OXCAML
+(* ctypes 0.24.0+ox doesn't have mode annotations. libhegel's threading
+   contract makes these safe to call from any thread or domain *)
+let version = Obj.magic_portable version
+let context_new = Obj.magic_portable context_new
+let context_free = Obj.magic_portable context_free
+let settings_new = Obj.magic_portable settings_new
+let settings_new_for_profile = Obj.magic_portable settings_new_for_profile
+let settings_register_profile = Obj.magic_portable settings_register_profile
+let set_default_profile = Obj.magic_portable set_default_profile
+let settings_free = Obj.magic_portable settings_free
+let settings_backend = Obj.magic_portable settings_backend
+let settings_test_cases = Obj.magic_portable settings_test_cases
+let settings_verbosity = Obj.magic_portable settings_verbosity
+let settings_nondeterminism_strictness = Obj.magic_portable settings_nondeterminism_strictness
+let settings_seed = Obj.magic_portable settings_seed
+let settings_derandomize = Obj.magic_portable settings_derandomize
+let settings_report_multiple_failures = Obj.magic_portable settings_report_multiple_failures
+let settings_stop_on_first_failure = Obj.magic_portable settings_stop_on_first_failure
+let settings_show_statistics = Obj.magic_portable settings_show_statistics
+let settings_database = Obj.magic_portable settings_database
+let settings_database_key = Obj.magic_portable settings_database_key
+let settings_test_location = Obj.magic_portable settings_test_location
+let settings_phases = Obj.magic_portable settings_phases
+let settings_suppress_health_check = Obj.magic_portable settings_suppress_health_check
+let settings_print_blob = Obj.magic_portable settings_print_blob
+let settings_get_test_cases = Obj.magic_portable settings_get_test_cases
+let settings_get_verbosity = Obj.magic_portable settings_get_verbosity
+let settings_get_seed = Obj.magic_portable settings_get_seed
+let settings_get_derandomize = Obj.magic_portable settings_get_derandomize
+let settings_get_database = Obj.magic_portable settings_get_database
+let settings_get_phases = Obj.magic_portable settings_get_phases
+let settings_get_suppress_health_check = Obj.magic_portable settings_get_suppress_health_check
+let settings_get_report_multiple_failures = Obj.magic_portable settings_get_report_multiple_failures
+let settings_get_stop_on_first_failure = Obj.magic_portable settings_get_stop_on_first_failure
+let settings_get_show_statistics = Obj.magic_portable settings_get_show_statistics
+let settings_get_print_blob = Obj.magic_portable settings_get_print_blob
+let settings_get_backend = Obj.magic_portable settings_get_backend
+
+let settings_get_nondeterminism_strictness =
+  Obj.magic_portable settings_get_nondeterminism_strictness
+;;
+
+let run_start = Obj.magic_portable run_start
+let run_start_blob = Obj.magic_portable run_start_blob
+let next_test_case = Obj.magic_portable next_test_case
+let run_result = Obj.magic_portable run_result
+let run_free = Obj.magic_portable run_free
+let run_result_free = Obj.magic_portable run_result_free
+let failure_free = Obj.magic_portable failure_free
+let test_case_free = Obj.magic_portable test_case_free
+let test_case_clone = Obj.magic_portable test_case_clone
+let test_case_block = Obj.magic_portable test_case_block
+let test_case_set_worker = Obj.magic_portable test_case_set_worker
+let test_case_should_capture = Obj.magic_portable test_case_should_capture
+let generate_boolean = Obj.magic_portable generate_boolean
+let generate_integer = Obj.magic_portable generate_integer
+let generate_float = Obj.magic_portable generate_float
+let generate_bytes = Obj.magic_portable generate_bytes
+let string_generator_text = Obj.magic_portable string_generator_text
+let string_generator_regex = Obj.magic_portable string_generator_regex
+let string_generator_email = Obj.magic_portable string_generator_email
+let string_generator_url = Obj.magic_portable string_generator_url
+let string_generator_domain = Obj.magic_portable string_generator_domain
+let string_generator_free = Obj.magic_portable string_generator_free
+let generate_string = Obj.magic_portable generate_string
+let generate_date = Obj.magic_portable generate_date
+let generate_time = Obj.magic_portable generate_time
+let generate_datetime = Obj.magic_portable generate_datetime
+let generate_ipv4 = Obj.magic_portable generate_ipv4
+let generate_ipv6 = Obj.magic_portable generate_ipv6
+let start_span = Obj.magic_portable start_span
+let stop_span = Obj.magic_portable stop_span
+let label_from_name = Obj.magic_portable label_from_name
+let label_combine = Obj.magic_portable label_combine
+let new_collection = Obj.magic_portable new_collection
+let collection_more = Obj.magic_portable collection_more
+let collection_reject = Obj.magic_portable collection_reject
+let collection_free = Obj.magic_portable collection_free
+let new_pool = Obj.magic_portable new_pool
+let pool_add = Obj.magic_portable pool_add
+let pool_generate = Obj.magic_portable pool_generate
+let pool_restore = Obj.magic_portable pool_restore
+let pool_free = Obj.magic_portable pool_free
+let new_state_machine = Obj.magic_portable new_state_machine
+let state_machine_next_group = Obj.magic_portable state_machine_next_group
+let state_machine_next_rule = Obj.magic_portable state_machine_next_rule
+let state_machine_rule_rejected = Obj.magic_portable state_machine_rule_rejected
+let state_machine_should_check_invariant = Obj.magic_portable state_machine_should_check_invariant
+let state_machine_free = Obj.magic_portable state_machine_free
+let target = Obj.magic_portable target
+let event = Obj.magic_portable event
+let event_value = Obj.magic_portable event_value
+let mark_complete = Obj.magic_portable mark_complete
+let printer_options_new = Obj.magic_portable printer_options_new
+let printer_options_free = Obj.magic_portable printer_options_free
+let printer_options_set_max_width = Obj.magic_portable printer_options_set_max_width
+let printer_new = Obj.magic_portable printer_new
+let printer_free = Obj.magic_portable printer_free
+let printer_text = Obj.magic_portable printer_text
+let printer_breakable = Obj.magic_portable printer_breakable
+let printer_if_break = Obj.magic_portable printer_if_break
+let printer_comment = Obj.magic_portable printer_comment
+let printer_hard_break = Obj.magic_portable printer_hard_break
+let printer_begin_group = Obj.magic_portable printer_begin_group
+let printer_end_group = Obj.magic_portable printer_end_group
+let printer_shift_indent = Obj.magic_portable printer_shift_indent
+let printer_deferred = Obj.magic_portable printer_deferred
+let printer_begin_speculative = Obj.magic_portable printer_begin_speculative
+let printer_commit_speculative = Obj.magic_portable printer_commit_speculative
+let printer_abort_speculative = Obj.magic_portable printer_abort_speculative
+let printer_resolve = Obj.magic_portable printer_resolve
+let printer_is_live = Obj.magic_portable printer_is_live
+let printer_value = Obj.magic_portable printer_value
+let test_case_printer = Obj.magic_portable test_case_printer
+let note = Obj.magic_portable note
+let result_status = Obj.magic_portable result_status
+let result_error = Obj.magic_portable result_error
+let result_failure_count = Obj.magic_portable result_failure_count
+let result_failure = Obj.magic_portable result_failure
+let result_failures = Obj.magic_portable result_failures
+let failure_blob = Obj.magic_portable failure_blob
+let failure_caveat = Obj.magic_portable failure_caveat
+let failure_origin = Obj.magic_portable failure_origin
+#endif

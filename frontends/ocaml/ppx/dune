@@ -1,0 +1,38 @@
+; Internal OCaml/OxCaml AST compatibility shim shared by the deriver and
+; the test rewriter. The accompanying [.mli] is checked in; the [.ml] is
+; selected by the rule at the bottom of this file based on the compiler
+; flavor.
+
+(library
+ (name ppx_compat)
+ (public_name ppx_hegel_compat)
+ (libraries ppxlib ppx_sexp_conv.expander)
+ (modules ppx_compat))
+
+(library
+ (name ppx_hegel_generator)
+ (public_name ppx_hegel_generator)
+ (kind ppx_deriver)
+ ; hegel.template makes [@mode portable] work for users of this deriver.
+ (libraries ppxlib ppx_hegel_compat hegel.template)
+ (modules ppx_hegel_generator)
+ (preprocess
+  (pps ppx_js_style ppxlib.metaquot)))
+
+(library
+ (name ppx_hegel_test)
+ (public_name ppx_hegel_test)
+ (kind ppx_rewriter)
+ ; hegel.template makes [@mode portable] work for users of this rewriter.
+ (libraries ppxlib ppx_hegel_compat hegel.template)
+ (modules ppx_hegel_test)
+ (preprocess
+  (pps ppx_js_style ppxlib.metaquot)))
+
+(rule
+ (target ppx_compat.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (bash
+    "case '%{ocaml_version}' in *+ox*) cat %{dep:ppx_compat_oxcaml.ml};; *) ver=$(grep '^version' %{lib:ppxlib:META} | head -1 | cut -d'\"' -f2); if [ \"$(echo $ver | cut -d. -f1)\" -gt 0 ] || [ \"$(echo $ver | cut -d. -f2)\" -ge 36 ]; then cat %{dep:ppx_compat_post-53.ml}; else cat %{dep:ppx_compat_pre-53.ml}; fi;; esac"))))

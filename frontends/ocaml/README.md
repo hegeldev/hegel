@@ -1,0 +1,94 @@
+# Hegel for OCaml
+
+Hegel is a property-based testing library for OCaml based on
+[Hypothesis](https://github.com/hypothesisworks/hypothesis), and runs the native
+[libhegel](https://hegel.dev/reference/libhegel) backend in-process.
+
+## Install Hegel
+
+```bash
+opam install hegel
+```
+
+The Hegel version in [opam](https://opam.ocaml.org/packages/hegel/) sometimes lags behind the version in Github. To pin the version in Github:
+```bash
+opam pin add hegel "git+https://github.com/hegeldev/hegel-ocaml.git"
+```
+
+Hegel calls the native `libhegel` shared library and locates it automatically
+at runtime. It looks for the following in order:
+
+1. `$HEGEL_LIBHEGEL_PATH`, an explicit path to the library (or a directory
+   containing it)
+2. a copy bundled into the installed package, when the release ships one
+3. a sibling [hegel](https://github.com/hegeldev/hegel) checkout's build at
+   `../hegel/target/release/` relative to the current
+   working directory.
+4. a checksum-verified download of the matching version from libhegel's GitHub
+   releases on [hegeldev/hegel](https://github.com/hegeldev/hegel) (the
+   `libhegel/<version>` tag), cached under
+   `~/.cache/hegel-ocaml/libhegel/<version>/`.
+
+Set `HEGEL_LIBHEGEL_NO_DOWNLOAD=1` to opt out of the download fallback.
+
+Hegel for OCaml supports **Linux** (amd64/arm64) and **macOS** (Apple Silicon).
+macOS amd64 (Intel) has no published `libhegel` artifact, so on that platform set
+`HEGEL_LIBHEGEL_PATH` to a locally built `libhegel.dylib`.
+
+## Quick start
+
+Hegel works with whatever test framework your project already uses. The examples below use
+[Alcotest](https://github.com/mirage/alcotest).
+
+Add `hegel` and `alcotest` to your dune test stanza:
+
+```
+(test
+ (name my_tests)
+ (libraries hegel alcotest)
+ (preprocess (pps ppx_hegel_test)))
+```
+
+Write a property test using `let%hegel_test`:
+
+```ocaml
+open Hegel
+
+let%hegel_test commutative_addition tc =
+  let a = draw tc (integers ~min_value:(-1000) ~max_value:1000 ()) in
+  let b = draw tc (integers ~min_value:(-1000) ~max_value:1000 ()) in
+  assert (a + b = b + a)
+;;
+
+let () =
+  Alcotest.run
+    "my_tests"
+    [ "properties", [ Alcotest.test_case "commutative addition" `Quick commutative_addition ] ]
+;;
+```
+
+Run `dune runtest`. Hegel generates up to 100 random input pairs and reports the
+minimal counterexample if it finds one. When a test fails, Hegel prints a
+report naming each value you drew from the failing case (`a = …`, `b = …`, named
+after the `let` binding) and a copy-pasteable line to replay it. Alcotest
+reports the test as failed and exits non-zero.
+
+To override the default settings, attach a `[@@settings ...]` attribute:
+
+```ocaml
+let%hegel_test commutative_addition tc =
+  let a = draw tc (integers ()) in
+  let b = draw tc (integers ()) in
+  assert (a + b = b + a)
+[@@settings Settings.create ~test_cases:500 ()]
+;;
+```
+
+For a full walkthrough, see the [docs](https://hegel.dev/ocaml).
+
+## Development
+
+```bash
+just check       # Full CI: lint + docs + tests with 100% coverage
+just test        # Run tests only
+```

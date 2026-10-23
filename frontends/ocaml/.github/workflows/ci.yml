@@ -1,0 +1,396 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+
+      - uses: ./.github/actions/setup-opam
+        with:
+          cache-key: opam-${{ runner.os }}-lint-${{ hashFiles('*.opam', '.ocamlformat') }}
+          cache-restore-keys: |
+            opam-${{ runner.os }}-lint-
+
+      - name: Install ocamlformat
+        run: |
+          eval $(opam env)
+          opam install ocamlformat.0.29.0 --yes
+
+      - name: Check formatting
+        run: just check-format
+
+      - name: Check opam files are up to date
+        run: |
+          eval $(opam env)
+          opam exec -- dune build ./*.opam && git diff --exit-code '*.opam'
+
+      - name: Lint opam metadata
+        run: |
+          eval $(opam env)
+          opam lint ./*.opam
+
+      - name: Check zizmor
+        run: |
+          pipx install zizmor==1.23.1
+          zizmor --format plain .github/
+
+  compat:
+    name: compat (ocaml ${{ matrix.ocaml }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        ocaml: ["5.1.1", "5.5.0"]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+
+      - uses: ./.github/actions/setup-opam
+        with:
+          ocaml-version: ${{ matrix.ocaml }}
+          # The OCaml version is part of the cache key so the matrix legs don't
+          # share (and clobber) one ~/.opam.
+          cache-key: opam-${{ runner.os }}-${{ matrix.ocaml }}-with-test-${{ hashFiles('*.opam') }}
+          cache-restore-keys: |
+            opam-${{ runner.os }}-${{ matrix.ocaml }}-with-test-
+          deps-flags: --with-test
+
+      - name: Stage libhegel from the matching GitHub release
+        id: libhegel
+        run: |
+          ASSET="libhegel-linux-amd64.so"
+          URL_BASE=$(.github/scripts/libhegel-release-url.sh)
+          DEST="${RUNNER_TEMP}/libhegel.so"
+          curl -fsSL -o "${DEST}" "${URL_BASE}/${ASSET}"
+          curl -fsSL -o "${DEST}.sha256" "${URL_BASE}/${ASSET}.sha256"
+          WANT=$(awk '{print $1}' "${DEST}.sha256")
+          echo "${WANT}  ${DEST}" | sha256sum -c -
+          echo "path=${DEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Run tests (no coverage)
+        env:
+          HEGEL_LIBHEGEL_PATH: ${{ steps.libhegel.outputs.path }}
+          # This job installs deps via `--deps-only --with-test`, which
+          # doesn't pull the core opam depopt that hegel.jane
+          # needs.
+          HEGEL_SKIP_JANE_TESTS: "1"
+        run: just check-tests-no-coverage
+
+      - name: Mirror opam-repo-ci (isolated release build + tests)
+        env:
+          # Verbosity 2 streams sub-command output so build warnings land in
+          # the log we grep below.
+          OPAMVERBOSE: "2"
+        run: |
+          set -o pipefail
+          eval $(opam env)
+          opam install ./*.opam --with-test --confirm-level=unsafe-yes 2>&1 \
+            | tee "$RUNNER_TEMP/opam-install.log"
+          # Release-profile builds (dune -p) print warnings but never fail on
+          # them (release flags are just `-w -40`), so a new compiler's
+          # warnings scroll past silently. Only our packages build here (deps
+          # are preinstalled), so any warning is ours: fail on it.
+          if grep -E 'Warning [0-9]+ \[' "$RUNNER_TEMP/opam-install.log"; then
+            echo "::error::OCaml warnings emitted during the release-profile build"
+            exit 1
+          fi
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+
+      - uses: ./.github/actions/setup-opam
+        with:
+          cache-key: opam-${{ runner.os }}-with-test-${{ hashFiles('*.opam') }}
+          cache-restore-keys: |
+            opam-${{ runner.os }}-with-test-
+          deps-flags: --with-test
+
+      - name: Install bisect_ppx
+        run: |
+          eval $(opam env)
+          opam install bisect_ppx.2.8.3 --yes
+
+      - name: Install hegel.jane test dependencies
+        run: |
+          eval $(opam env)
+          opam install core async --yes
+
+      - name: Stage libhegel from the matching GitHub release
+        id: libhegel
+        run: |
+          ASSET="libhegel-linux-amd64.so"
+          URL_BASE=$(.github/scripts/libhegel-release-url.sh)
+          DEST="${RUNNER_TEMP}/libhegel.so"
+          curl -fsSL -o "${DEST}" "${URL_BASE}/${ASSET}"
+          curl -fsSL -o "${DEST}.sha256" "${URL_BASE}/${ASSET}.sha256"
+          WANT=$(awk '{print $1}' "${DEST}.sha256")
+          echo "${WANT}  ${DEST}" | sha256sum -c -
+          echo "path=${DEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Run tests with coverage
+        env:
+          HEGEL_LIBHEGEL_PATH: ${{ steps.libhegel.outputs.path }}
+        run: just check-tests
+
+      - name: Mirror opam-repo-ci (isolated release build + tests)
+        env:
+          OPAMVERBOSE: "2"
+        run: |
+          set -o pipefail
+          eval $(opam env)
+          opam install ./*.opam --with-test --confirm-level=unsafe-yes 2>&1 \
+            | tee "$RUNNER_TEMP/opam-install.log"
+          if grep -E 'Warning [0-9]+ \[' "$RUNNER_TEMP/opam-install.log"; then
+            echo "::error::OCaml warnings emitted during the release-profile build"
+            exit 1
+          fi
+
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+
+      - uses: ./.github/actions/setup-opam
+        with:
+          cache-key: opam-${{ runner.os }}-with-doc-${{ hashFiles('*.opam') }}
+          cache-restore-keys: |
+            opam-${{ runner.os }}-with-doc-
+          deps-flags: --with-doc
+
+      - name: Install hegel.jane doc dependencies
+        run: |
+          eval $(opam env)
+          # core/async are opam depopts (not pulled by --deps-only
+          # --with-doc); install them so hegel_jane and hegel_jane_async build
+          # and lib/hegel.mli's {!Hegel_jane...} cross-references resolve
+          # instead of erroring.
+          opam install core async --yes
+
+      - name: Check docs
+        run: just check-docs
+
+  nix:
+    name: nix
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: cachix/install-nix-action@1ca7d21a94afc7c957383a2d217460d980de4934 # v31.10.1
+
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+
+      - name: lint
+        run: just check-format-nix
+
+  # Cross-platform compatibility check: build and run the suite on macOS
+  # against the matching libhegel artifact. The job stages the release asset
+  # and points the loader at it via HEGEL_LIBHEGEL_PATH (so the loader does not
+  # need to download or verify checksums on the runner).
+  smoke:
+    name: smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            asset: libhegel-darwin-arm64.dylib
+            libname: libhegel.dylib
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-opam
+        with:
+          cache-key: opam-${{ runner.os }}-smoke-${{ hashFiles('*.opam') }}
+          cache-restore-keys: |
+            opam-${{ runner.os }}-smoke-
+          deps-flags: --with-test
+
+      - name: Stage libhegel from the matching GitHub release
+        id: libhegel
+        shell: bash
+        env:
+          ASSET: ${{ matrix.asset }}
+          LIBNAME: ${{ matrix.libname }}
+        run: |
+          URL_BASE=$(.github/scripts/libhegel-release-url.sh)
+          DEST="${RUNNER_TEMP}/${LIBNAME}"
+          curl -fsSL -o "${DEST}" "${URL_BASE}/${ASSET}"
+          curl -fsSL -o "${DEST}.sha256" "${URL_BASE}/${ASSET}.sha256"
+          WANT=$(awk '{print $1}' "${DEST}.sha256")
+          if command -v sha256sum >/dev/null 2>&1; then
+            echo "${WANT}  ${DEST}" | sha256sum -c -
+          else
+            echo "${WANT}  ${DEST}" | shasum -a 256 -c -
+          fi
+          echo "path=${DEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Run tests
+        shell: bash
+        env:
+          HEGEL_LIBHEGEL_PATH: ${{ steps.libhegel.outputs.path }}
+        run: opam exec -- dune runtest
+
+  release:
+    name: release
+    if: github.event_name == 'push' && github.repository == 'hegeldev/hegel-ocaml'
+    needs: [lint, test, compat, docs, nix]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Check for RELEASE.md
+        id: check
+        run: |
+          if [ ! -f RELEASE.md ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate app token
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        id: app-token
+        with:
+          app-id: ${{ vars.HEGEL_RELEASE_APP_ID }}
+          private-key: ${{ secrets.HEGEL_RELEASE_APP_PRIVATE_KEY }}
+
+      - name: Re-checkout with app token # zizmor: ignore[artipacked]
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Release
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          HEGEL_RELEASE_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: python .github/scripts/release.py release
+
+      - name: Emit version
+        if: steps.check.outputs.skip != 'true'
+        id: version
+        run: |
+          VERSION=$(sed -n 's/^(version \([0-9.]*\)).*/\1/p' dune-project)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+  push-docs:
+    name: push-docs
+    needs: [release]
+    if: needs.release.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Generate app token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        id: app-token
+        with:
+          app-id: ${{ vars.HEGEL_RELEASE_APP_ID }}
+          private-key: ${{ secrets.HEGEL_RELEASE_APP_PRIVATE_KEY }}
+          repositories: hegel-ocaml, website
+
+      - name: Checkout hegel-ocaml at release tag
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: v${{ needs.release.outputs.version }}
+          persist-credentials: false
+
+      - name: Checkout website
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 # zizmor: ignore[artipacked]
+        with:
+          repository: hegeldev/website
+          token: ${{ steps.app-token.outputs.token }}
+          path: website
+
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+
+      - uses: ./.github/actions/setup-opam
+        with:
+          cache-key: opam-${{ runner.os }}-with-doc-${{ hashFiles('*.opam') }}
+          cache-restore-keys: |
+            opam-${{ runner.os }}-with-doc-
+          deps-flags: --with-doc
+
+      - name: Build docs
+        run: just check-docs
+
+      - name: Push docs to website repo
+        env:
+          HEGEL_RELEASE_APP_ID: ${{ vars.HEGEL_RELEASE_APP_ID }}
+          HEGEL_RELEASE_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: python3 .github/scripts/push_docs.py

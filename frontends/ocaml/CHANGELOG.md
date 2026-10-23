@@ -1,0 +1,1084 @@
+# Changelog
+
+## 0.26.4 - 2026-10-23
+
+This patch adds `Hegel.main` and the `let%hegel_main` PPX, for creating an executable that runs one test case per invocation, such as a workload in Antithesis.
+
+```ocaml
+let%hegel_main workload tc = Counter.run ~step_count:max_int tc ~init:(ref 0)
+let () = workload ()
+```
+
+## 0.26.3 - 2026-10-21
+
+This patch bumps our pinned libhegel ([hegeldev/hegel](https://github.com/hegeldev/hegel)) from [0.45.1](https://github.com/hegeldev/hegel-rust/releases/tag/libhegel-v0.45.1) to [0.48.0](https://github.com/hegeldev/hegel/releases/tag/libhegel/0.48.0).
+
+Changes:
+- A run that never generates a valid test case now always fails with `Unsatisfiable`.
+- Verbose output now prints `Running test case` before every test case.
+- Character classes and text categories now use Unicode 17.0 instead of 15.1.
+- A new `Settings.stop_on_first_failure` field (default `true`). Set it to `false` to spend the whole `test_cases` budget before reporting. A profile's `stop_on_first_failure` key now carries through `Settings.from_profile`.
+- Filtering `Stateful.Pool.values_consumed` or `Stateful.Concurrent_pool.values_consumed` now removes only the value it returns. Before, every value the filter rejected was also removed from the pool.
+- `one_of []` now raises `Usage_error` instead of `Failure`.
+- Hegel now looks for a local libhegel build in `../hegel/target/`.
+- General shrinking improvements
+
+## 0.26.2 - 2026-10-19
+
+This patch points the `libhegel` download fallback at libhegel's new home: since 0.47.2, libhegel is released from the [hegeldev/hegel](https://github.com/hegeldev/hegel) monorepo as GitHub releases tagged `libhegel/<version>`. Earlier versions, including the currently pinned one, are still fetched from hegel-rust's `libhegel-v<version>` releases, so nothing changes for existing installs.
+
+## 0.26.1 - 2026-10-07
+
+This patch makes `from_regex` match Python's `re` semantics. A pattern may now contain the NUL character.
+
+## 0.26.0 - 2026-10-02
+
+This release removes `require_equal` and `Hegel_jane.set_sexp_diff`.
+Use `require` with an equality predicate instead.
+
+`hegel.jane` no longer depends on `sexp_diff`.
+
+## 0.25.0 - 2026-09-29
+
+This release changes how Hegel handles nondeterminism.
+
+A flaky test now fails with its own exception instead of "Flaky test detected". The failure report includes how reliably the failure reproduced:
+
+```
+--- Failure --------------------------------------------------------------------
+Exception: Failure("first call only")
+note: unconfirmed failure: failed 0 of 10 replays after the observed failure — a rare failure, or the environment changed between executions
+```
+
+The new `Settings.t` field `nondeterminism_strictness` controls how Hegel handles nondeterminism. The corresponding
+environment variable is `HEGEL_NONDETERMINISM_STRICTNESS`. In `hegel.toml`, the key is `nondeterminism_strictness`.
+
+A failing concurrent state machine now shrinks its counterexample.
+
+Hegel now attempts to reproduce a flaky failure from a `[@@failure_blobs ...]` blob.
+
+## 0.24.2 - 2026-09-28
+
+This patch adds the optional `hegel.jane.async` sublibrary for testing code
+using Jane Street's `Async` library.
+
+A test body, rule, or invariant can now return `unit Deferred.t`. Hegel waits on
+each Deferred on the Async scheduler in the execution context
+when the test started.
+
+`Hegel_jane_async.Stateful` has the sequential API of `Hegel.Stateful` with
+the same names (e.g. `Rule`, `Invariant`, `run`).
+
+With the `ppx_hegel_test` PPX, mark a test or a state machine `[@async]`:
+
+```ocaml
+module%hegel_state_machine [@async] Counter_machine = struct
+  type state =
+    { counter : Counter.t
+    ; mutable model : int
+    }
+
+  let incr _tc s =
+    s.model <- s.model + 1;
+    Counter.incr s.counter
+  [@@rule]
+
+  let matches _tc s =
+    Counter.read s.counter >>| fun n -> assert (n = s.model)
+  [@@invariant]
+end
+
+let%hegel_test [@async] counter tc =
+  Counter.create () >>= fun counter ->
+  Counter_machine.run tc ~init:{ counter; model = 0 }
+;;
+```
+
+On OxCaml with Jane Street's `concurrent` library installed, concurrent state
+machines can be Async too:
+
+```ocaml
+module%hegel_concurrent_state_machine [@async] Counter_machine = struct
+  type state =
+    { counter : Counter.t
+    ; mutable model : int
+    }
+
+  let incr _tc s =
+    s.model <- s.model + 1;
+    Counter.incr s.counter
+  [@@rule { group = "ops" }]
+
+  let matches _tc s =
+    Counter.read s.counter >>| fun n -> assert (n = s.model)
+  [@@invariant { always_check = true }]
+end
+
+let%hegel_test [@async] counter tc =
+  Counter.create () >>= fun counter ->
+  Counter_machine.run tc ~init:{ counter; model = 0 } ~max_concurrency:4
+;;
+```
+
+On OxCaml, `Hegel_jane_async.Stateful` also has `Concurrent_rule`,
+`Concurrent_pool`, and `run_concurrent`. Unlike their `Hegel.Stateful`
+counterparts, they do not take a `ctx` or `concurrency` argument,
+
+## 0.24.1 - 2026-09-23
+
+This release fixes `Concurrency.domains` on machines with 128 or more cores.
+Its pool occupied one domain per core until process exit, so it could use
+all 128 domains. Any later `Domain.spawn` then failed. The pool now grows only
+to the largest number of workers that a `spawn_join_n` call requests.
+
+## 0.24.0 - 2026-09-23
+
+**OxCaml only:**
+This release limits OxCaml mode requirements to concurrent state machines.
+
+A generator that a concurrent rule body captures must be portable. Each
+combinator has a portable version, which you select with `[@mode portable]`:
+
+```ocaml
+let keys = (map [@mode portable]) Key.of_int (integers ~min_value:0 ~max_value:99 ())
+```
+
+The primitive generators, such as `integers` and `text`, are already portable.
+`[@mode portable]` requires `ppx_template`, which `ppx_hegel_test`,
+`ppx_hegel_generator`, and `ppx_jane` also include. On upstream OCaml, the 
+attribute has no effect.
+
+`[@@deriving hegel_generator ~portable]` makes a derived generator portable.
+On upstream OCaml it has no effect.
+
+Generators no longer cross portability. A generator that a portable closure
+captures must now be annotated with `[@mode portable]`, and a derived one with 
+`[@@deriving hegel_generator ~portable]`.
+
+`just`, `sampled_from`, and `Stateful.Pool` now accept any element type.
+
+**Both OxCaml and OCaml:**
+A concurrent state machine must use the new `Stateful.Concurrent_pool`
+instead of `Stateful.Pool`.
+
+## 0.23.0 - 2026-09-22
+
+This release adds weights to stateful rules, adds concurrency capabilities to concurrent
+rules, and changes how options are passed to `[@@rule]` and `[@@invariant]`.
+
+A rule's weight is a hint about how often libhegel should pick that rule
+relative to other rules. It defaults to `1.0`, and may be written as either an
+integer or a float:
+
+```ocaml
+module%hegel_state_machine Stack = struct
+  let push tc stack =
+    let n = draw tc (integers ~min_value:0 ~max_value:9 ()) in
+    stack := n :: !stack
+  [@@rule { weight = 3.0 }]
+end
+```
+Without the PPX, pass `?weight` to `Stateful.Rule.create`/`Stateful.Concurrent_rule.create`. 
+A weight must be finite and strictly positive.
+
+`Stateful.Rule.create` now takes a trailing unit argument.
+
+Options on `[@@rule]` and `[@@invariant]` are now a record:
+
+```ocaml
+(* before *)
+let withdraw tc account = ... [@@rule "money"]
+let positive _tc account = ... [@@invariant always_check]
+
+(* after *)
+let withdraw tc ctx account = ... [@@rule { group = "money"; weight = 2.0 }]
+let positive _tc account = ... [@@invariant { always_check = true }]
+```
+The options may be given in any order or left out.
+
+Concurrent rules now receive the worker's context `ctx`. 
+
+`Hegel.Concurrency.t` takes the context's type as a parameter. `Stateful.Concurrent_state_machine`
+declares `type ctx`, and `Stateful.run_concurrent` takes `~concurrency` as a required argument. 
+
+A `module%hegel_concurrent_state_machine` that does not declare `type ctx` uses threads by default
+and its rules take `()` as the context.
+
+On OxCaml, `Hegel_jane_concurrent.of_concurrent` passes `Hegel_jane_concurrent.ctx` defined as follows:
+
+```
+type 'a ctx =
+  { context : 'a
+  ; concurrent : 'a Concurrent.t
+  }
+```
+
+`context` is the scheduler's per-task context and `concurrent` is a concurrency capability.
+
+## 0.22.1 - 2026-09-21
+
+This patch makes `let%hegel_test` and `module%hegel_state_machine` well-behaved
+when used with Merlin.  
+
+A documentation comment above a `let%hegel_test` binding is now kept on the
+function the PPX generates, so Merlin and odoc show it.
+
+A mistyped or misplaced attribute is now reported rather than ignored.
+Every Hegel attribute can be qualified with `hegel` (e.g. `[@@hegel.rule]`).
+
+## 0.22.0 - 2026-09-21
+
+This release changes how stateful rules update their state, adds concurrent
+stateful testing, and removes `Hegel.spawn`, `Hegel.join` and `Hegel.worker`.
+
+A rule now mutates its state in place instead of returning a new one, so 
+rules return `unit`:
+
+```ocaml
+(* before *)
+module%hegel_state_machine Stack = struct
+  type state = int list [@@deriving sexp_of]
+
+  let push tc stack =
+    let n = draw tc (integers ~min_value:0 ~max_value:9 ()) in
+    n :: stack
+  [@@rule]
+end
+
+let%hegel_test stack_model tc = Stack.run tc ~init:[]
+
+(* after *)
+module%hegel_state_machine Stack = struct
+  type state = int list ref
+
+  let sexp_of_state stack = sexp_of_list sexp_of_int !stack
+
+  let push tc stack =
+    let n = draw tc (integers ~min_value:0 ~max_value:9 ()) in
+    stack := n :: !stack
+  [@@rule]
+end
+
+let%hegel_test stack_model tc = Stack.run tc ~init:(ref [])
+```
+
+In concurrent stateful testing, stateful tests run rules concurrently 
+from a number of workers. See the Stateful module documentation for details.
+
+`Stateful.Pool.add` now takes the test case of the rule adding the value.
+`Pool.create` accepts `?clone` to copy mutable values on reusable draws. 
+Pool operations are safe to call from multiple workers.
+
+The optional `hegel.jane.concurrent` sublibrary provides 
+`Hegel_jane_concurrent.of_concurrent` to wrap a Jane Street `Concurrent.t`.
+
+Failure reports no longer print `Checking invariants on the initial state.`
+or the `Falsified after ...` count. Failure-blob replay preserves the original
+exception backtrace, and a malformed blob is a usage error.
+
+## 0.21.2 - 2026-09-17
+
+This patch bumps our pinned libhegel ([hegel-rust](https://github.com/hegeldev/hegel-rust)) from [0.42.0](https://github.com/hegeldev/hegel-rust/releases/tag/libhegel-v0.42.0) to [0.42.4](https://github.com/hegeldev/hegel-rust/releases/tag/libhegel-v0.42.4), which raises the limit on the number of choices a single test case may make from 8,192 to 2^20 and improves shrinking in several situations.
+
+The library now downloads `libhegel` from hegel-rust's `libhegel-v<version>` release tags, where libhegel releases and their binaries live since libhegel 0.42.1 (the plain `v<version>` tags now belong to the `hegeltest` crate). Earlier libhegel releases carry both tags, so a `HEGEL_LIBHEGEL_PATH` or cached copy from before this change keeps working.
+
+## 0.21.1 - 2026-09-15
+
+This patch moves the Antithesis integration into libhegel. The assertion name is 
+now `<path>::<function> passes properties`, where `path` is the test's file
+name without `.ml`.
+
+## 0.21.0 - 2026-09-14
+
+This release reworks how settings are created. Settings are now in the
+`Settings` submodule, so their fields and constructors no longer collide with
+top-level names. All `with_*` settings functions have been removed in favor of
+record update syntax.
+
+```ocaml
+(* before *)
+[@@settings settings ~test_cases:500 () |> with_verbosity Verbose]
+
+(* after *)
+[@@settings { (Settings.create ~test_cases:500 ()) with verbosity = Settings.Verbose }]
+```
+
+`Hegel.settings` is now `Hegel.Settings.create`, `Hegel.default_settings` is
+now `Hegel.Settings.default`. The `settings`, `verbosity`, `database`, `phase`,
+and `health_check` types are now in `Settings`. The `phases` field is now a
+`phase list`, and `Settings.t` gains a `backend` field (`Default` or
+`Urandom`).
+
+Settings now start from a named profile. The `development` (local runs), `ci` 
+(selected automatically on CI servers), and `workload` (selected automatically 
+inside Antithesis) profiles are built in.
+
+Custom profiles can be defined in a `hegel.toml` at the project root. Every
+field of `Settings.t` is a key and `extends` sets the parent profile:
+
+```toml
+default = "nightly"   # optional: the default profile for this project
+
+[profiles.ci]         # merges onto the built-in ci profile
+test_cases = 1000
+
+[profiles.nightly]
+extends = "ci"
+test_cases = 10000
+```
+
+`Settings.default ()` is the resolved default profile. `Settings.from_profile
+"name"` selects a profile by name, `Settings.register_profile` defines one
+from code, and `Settings.set_default_profile` (or the `HEGEL_DEFAULT_PROFILE`
+environment variable, or the `default` entry in `hegel.toml`) sets the
+suite-wide default. `HEGEL_CONFIG` sets the `hegel.toml` path.
+
+This release also fixes a use-after-free in stateful tests and `spawn`ed clones.
+
+## 0.20.1 - 2026-09-11
+
+This patch loads `libhegel` lazily, on the first `Hegel_ffi.Ffi.context_new`, rather
+than at module initialization. This avoids having to load the dynamic library in code
+that only builds generators.
+
+## 0.20.0 - 2026-09-11
+
+This release reworks stateful testing around a state machine module. 
+`Stateful.run` now takes a module of the new type `Stateful.State_machine`:
+
+```
+module type State_machine = sig
+  type state
+
+  val rules : state Rule.t list
+  val invariants : state Invariant.t list
+end
+```
+
+The step count is now set per test. `Stateful.run` takes an optional `?step_count`
+argument (default 50). The `stateful_step_count` settings field and
+`with_stateful_step_count` have been removed. 
+
+Invariants now take a test case.
+
+State machines can now be defined using `module%hegel_state_machine M = struct … end`. Rules are marked with `[@@rule]` and invariants with `[@@invariant]` or 
+`[@@invariant always_check]`. Each rule and invariant is named after its binding,
+and draws in its body print under their `let`-bound names. If the module defines `sexp_of_state`, `run` uses it to print the state after each step.
+
+A local libhegel built by `cargo build -p hegeltest-c` is now picked up by the library 
+loader. Previously it looked for a nonexistent file, so the sibling checkout was never used.
+
+## 0.19.1 - 2026-09-09
+
+This patch changes how Hegel prints.
+
+- An aggregate value exceeding the maximum line width when printed now prints with one 
+  element per line, instead of filling each line with elements until the maximum width.
+- A test case's output now prints after the test case completes, instead of streaming
+  while the test runs.
+- Output from cloned test cases now appears at the point the clone was made, instead 
+  of being dependent on thread scheduling.
+- A `note` message now must be valid UTF-8.
+
+## 0.19.0 - 2026-09-09
+
+This release adds test statistics and functions for recording observations.
+
+`event : test_case -> label:string -> unit` records `label` as observed within a test case.
+`event_value : test_case -> label:string -> value:float -> unit` records numeric observations.
+`with_show_statistics : bool -> settings -> settings` sets whether or not to print statistics.
+When `true`, statistics are printed after every run.
+
+```ocaml
+let%hegel_test list_statistics tc =
+  let xs = draw_silent tc (lists (integers ()) ()) in
+  (match xs with
+   | [] -> event tc ~label:"empty input"
+   | _ -> ());
+  event_value tc ~label:"length" ~value:(float_of_int (List.length xs))
+```
+
+```
+Statistics (over 100 test cases):
+  * empty input: 5.0% of test cases
+  * length: count 100, min 0, median 4, mean 5.12, p90 9, max 15
+```
+
+This release also changes `target` to take its arguments as labels.
+
+## 0.18.2 - 2026-09-09
+
+This patch bumps our pinned libhegel ([hegel-rust](hegeldev/hegel-rust)) from [0.37.5](https://github.com/hegeldev/hegel-rust/releases/tag/v0.37.5) to [0.37.7](https://github.com/hegeldev/hegel-rust/releases/tag/v0.37.7).
+
+## 0.18.1 - 2026-09-09
+
+This patch adds support for providing the location of a printed draw. `Hegel.draw` now accepts a `loc : Lexing.position` argument.
+The OxCaml compiler automatically provides the location when omitted. On standard OCaml, the argument is optional.
+A draw with a location is displayed as `name @ filename:line = value`.
+
+The OxCaml warning `Alert unsafe_multidomain: Stdlib.Domain.DLS` has also been resolved.
+
+## 0.18.0 - 2026-09-08
+
+This release changes how invariants in stateful tests are created. The type of invariants is now `Invariant.t`.
+Invariants are created with `create : name:string -> inv:('state -> unit) -> ?always_check:bool -> unit -> 'state t`.
+
+Invariants previously were always sampled between steps, but the user can now set which invariants are always
+run with `always_check` in `create`. Invariants are sampled by default.
+
+## 0.17.3 - 2026-09-08
+
+This patch adds `Hegel_jane.Derive.Time_ns.Ofday`, so `[@@deriving hegel_generator]` works
+on `Time_ns.Ofday.t` fields.
+
+## 0.17.2 - 2026-09-04
+
+This patch bumps our pinned libhegel ([hegel-rust](hegeldev/hegel-rust)) from [0.36.0](https://github.com/hegeldev/hegel-rust/releases/tag/v0.36.0) to [0.36.3](https://github.com/hegeldev/hegel-rust/releases/tag/v0.36.3).
+
+## 0.17.1 - 2026-09-04
+
+This patch adds support for deriving `hegel_generator` declarations in module signatures.
+
+## 0.17.0 - 2026-09-04
+
+This release makes the following changes:
+
+- `char` is now `chars` (also `Hegel_jane.char` to `Hegel_jane.chars`).
+- `Hegel_jane.times` is now `Hegel_jane.ofdays`.
+- `Hegel_jane.time_ns` is now `Hegel_jane.times`, and `Hegel_jane.time_ns_spans` is now `Hegel_jane.time_spans`.
+- Single-test-case mode has been removed. Set `test_cases` to 1 in the settings instead.
+- `Hegel_jane.datetimes` has been removed.
+
+Times of day are now drawn at nanosecond resolution. `times ()` and `datetimes ()` print the subsecond component as nine digits (`HH:MM:SS.fffffffff`) instead of six, and `Hegel_jane.ofdays ()` now produces every `Core.Time_ns.Ofday.t`.
+
+Every date and time generator now accepts optional inclusive bounds. The default generators take them as `date`/`time` records (a `(date * time)` pair for `datetimes`). The `Hegel_jane` generators take them as the `Core` values they produce.
+
+The `of_parts` parameter of `make_dates`, `make_times`, and `make_datetimes` is now `of_date`, `of_time`, and `of_datetime` respectively, and takes `Hegel.date`/`Hegel.time` records.
+
+`Hegel_jane.times ()` and `Hegel_jane.time_spans ()` now default to the representable `Core.Time_ns` ranges rather than the full 63-bit integer range.
+
+In stateful testing, a subset of invariants is now randomly chosen after running a rule rather than running all of them. All invariants still run on the initial and final state.
+
+Invalid generator arguments and settings now raise the new `Hegel.Usage_error` and report the `libhegel` diagnostic.
+
+## 0.16.2 - 2026-08-11
+
+This patch bumps our pinned libhegel ([hegel-rust](hegeldev/hegel-rust)) from [0.32.2](https://github.com/hegeldev/hegel-rust/releases/tag/v0.32.2) to [0.32.3](https://github.com/hegeldev/hegel-rust/releases/tag/v0.32.3).
+
+## 0.16.1 - 2026-08-11
+
+This patch re-exports generators from the Generators module to the Hegel module.
+
+## 0.16.0 - 2026-08-10
+
+This release bumps our pinned libhegel ([hegel-rust](hegeldev/hegel-rust)) from [0.30.5](https://github.com/hegeldev/hegel-rust/releases/tag/v0.30.5) to [0.32.2](https://github.com/hegeldev/hegel-rust/releases/tag/v0.32.2).
+
+## 0.15.0 - 2026-08-07
+
+This release improves the ergonomics of the `[@@deriving hegel_generator]`
+PPX deriver and adds more derivable types.
+
+Breaking changes:
+
+- Derived generators have new names. The type `t` now derives `hegel_generator`.
+  Any other type `foo` derives `hegel_generator_foo`.
+  A generator for the type `t` in a module `M` derives `M.hegel_generator`.
+- Files that use the deriver now require an open `Hegel` in scope.
+- Derived generators are now printable. A derived generator containing a field 
+  whose type has no `sexp_of_*` converter in scope no longer compiles unless the 
+  it is annotated with `[@sexp.opaque]`.
+
+New features:
+
+- `char` and inline-record constructors (`C of { ... }`) now derive.
+- The `[@hegel.generator expr]` attribute replaces the generator for a
+  type occurrence, such as a record field.
+- The `[@hegel.do_not_generate]` attribute excludes a variant constructor
+  from generation.
+- The `Hegel_jane.Derive` module in `hegel.jane` allows the deriver to use
+  Core-typed generators.
+
+## 0.14.1 - 2026-08-05
+
+This patch updates `booleans` to take an optional parameter `p` to control the 
+probability of drawing `true`. It also adds a `char` generator for `char`/`Core.Char.t`, 
+a `Hegel_jane.time_ns` generator for `Core.Time_ns.t`, and a `Hegel_jane.time_ns_spans` generator for `Core.Time_ns.Span.t`.
+
+## 0.14.0 - 2026-08-05
+
+This release removes Jane Street's `core`, `core_unix`, and `sexp_diff` from
+Hegel's dependencies.
+
+`Generators.dates`, `times`, and `datetimes` now generate ISO 8601 strings.
+
+`Generators.hash_tables` now generates a `Stdlib.Hashtbl.t` instead of 
+`Core.Hashtbl.t`.
+
+Projects that use `Core` can use the optional `hegel.jane` sublibrary to generate
+equivalent `Core` values. `Hegel_jane.dates`, `times`, and `datetimes` generate
+`Core.Date.t` and `Core.Time_ns.Ofday.t` values, and `Hegel_jane.hash_tables`
+generates a `Core.Hashtbl.t`.
+
+`require_equal` failures now print the two values in full. The structural Jane 
+Street `sexp_diff` rendering is now opt-in.
+
+Thanks to @c-cube for his help with this release.
+
+## 0.13.1 - 2026-08-04
+
+This patch bumps our pinned libhegel ([hegel-rust](hegeldev/hegel-rust)) from [0.29.0](https://github.com/hegeldev/hegel-rust/releases/tag/v0.29.0) to [0.30.5](https://github.com/hegeldev/hegel-rust/releases/tag/v0.30.5).
+
+## 0.13.0 - 2026-08-03
+
+This release removes `hegel_test_runtime`. Users are are now expected to run
+Hegel tests using a test framework like Alcotest.
+
+## 0.12.2 - 2026-07-21
+
+This patch fixes redundant output from generated functions on a failing replay.
+When a drawn function was applied more than once to the same argument, every
+application printed its own `name arg = result` line, so a loop calling `f 10`
+three times produced three identical lines. Now, under the default verbosity 
+only the first application with a given argument prints. Applications with that
+same argument after do not print. Under `Verbose` or `Debug` verbosity every
+application prints.
+
+## 0.12.1 - 2026-07-15
+
+This patch adds support for driving generation from more than one thread within a
+single test. A test-case handle may only be drawn from by one thread at a time, so
+to generate concurrently you clone it and give each thread its own clone. Each
+clone draws from its own independent stream while the clones share the test case's
+outcome and budget, so a failure still shrinks and its blob replays deterministically
+(as long as your own code is deterministic).
+
+`Hegel.clone tc` returns a fresh clone. `Hegel.spawn` clones `tc` and runs the
+worker on a new thread, and `Hegel.join` waits for it and re-raises any exception 
+the worker raised.
+
+## 0.12.0 - 2026-07-14
+
+Removed `format_time`, `format_date`, and `format_datetime` as they duplicated
+functionality from `Core`.
+
+## 0.11.0 - 2026-07-14
+
+This release cleans up several generator APIs where documentation and behavior disagreed.
+
+**Breaking**: `dates`, `times`, and `datetimes` now generate typed values
+instead of ISO 8601 strings: `dates` produces `Core.Date.t`, `times` produces
+`Core.Time_ns.Ofday.t` (microsecond precision), and `datetimes` produces
+`Core.Date.t * Core.Time_ns.Ofday.t` pairs. Previously the engine's structured
+date/time values were formatted away into strings at the draw. The
+`format_date` / `format_time` / `format_datetime` helpers are now documented
+public API and render the new typed values in the old ISO 8601 forms, so
+string-oriented tests migrate with a single function call:
+
+```ocaml
+(* before *)
+let s = draw tc (dates ()) in
+
+(* after *)
+let d = draw tc (dates ()) in
+let s = format_date d in
+```
+
+`[@@deriving hegel_generator]`'s `t list` fields now generate through the
+same engine-driven collection protocol as `Generators.lists`. Previously the
+deriver drew a length in a hidden, unconfigurable `[0, 20]` range and looped,
+so derived lists could never exceed 20 elements and the engine could not
+shrink them by deleting individual elements. Derived `t option` fields
+likewise now go through the same machinery as `Generators.optional`.
+
+`[@@deriving hegel_generator]` no longer clamps derived `int` fields to
+±2³⁰−1. Derived ints now use the same full native-`int` default range as a
+hand-written `integers ()`. The clamp deliberately weakened generation so
+user arithmetic could not overflow — hiding exactly the bugs a property test
+should find. Properties that relied on products of derived ints never
+overflowing must handle overflow themselves (or bound their generators
+explicitly).
+
+**Breaking**: `ip_addresses` now takes `?version:[`V4 | `V6]` instead of
+`?version:int`, and generates typed `Ipaddr.t` values instead of strings
+(`ipaddr` was already a dependency). Previously `~version:5` type-checked and
+then failed at draw time, and the typed address the implementation built was
+thrown away via `to_string`. Render a drawn address with `Ipaddr.to_string`:
+
+```ocaml
+(* before *)
+let s = draw tc (ip_addresses ~version:4 ()) in
+
+(* after *)
+let ip = draw tc (ip_addresses ~version:`V4 ()) in
+let s = Ipaddr.to_string ip in
+```
+
+`one_of` now prints a drawn value through the printer of the branch it was
+actually drawn from. Previously every branch's values printed through the
+first branch's printer. The recorded branch is per generator value, so one
+`one_of` generator drawn several times before printing (e.g. as the element
+generator of `lists`) still prints every value through a single branch's
+printer — now the most recently drawn branch rather than the first.
+
+The internal PPX/engine plumbing that `Hegel.Generators` previously exposed
+at its top level (`Labels`, `group`, `discardable_group`, `new_collection`,
+`collection_more`, `collection_reject`, `pool_values`, `resolve_draw`,
+`max_filter_attempts`, `composite_with_label`, and the `collection` type) has
+moved into `Hegel.Generators.Ppx_internal`, an explicitly internal submodule
+with no stability guarantees. These values were never documented API;
+`open Hegel.Generators` no longer brings them into scope.
+
+`with_suppress_health_check` now sets the suppressed-health-check list like
+every other `with_*` builder, replacing any previously suppressed list.
+Previously it appended, so repeated calls accumulated duplicates and a
+suppression could never be undone. To suppress several checks, pass them in
+one list.
+
+Documentation corrections: `sampled_from` no longer claims uniform sampling
+(the engine's bounded-integer draw deliberately over-weights boundary
+indices, favoring earlier elements); the `Explicit` phase is documented as
+reserved for future use (hegel-ocaml has no explicit-examples facility yet,
+so selecting it has no effect); `assume` documents that its test-case handle
+is accepted for API symmetry and the rejection is client-side; and drawing
+from an empty pool is documented (and pinned by a test) as raising
+`Assume_rejected` rather than `Data_exhausted`.
+
+## 0.10.1 - 2026-07-14
+
+This patch fixes a crash when several test binaries start at the same time
+with a cold libhegel cache. Every process downloaded the library to the same
+temporary file and renamed it into place, so the first process to finish
+pulled the file out from under the others, which then failed with checksum or
+missing-file errors (and could corrupt the cached library). Each process now
+downloads to its own temporary file and atomically renames it into place, so
+concurrent first runs all succeed. Partial downloads left behind by a killed
+process no longer interfere with later downloads.
+
+## 0.10.0 - 2026-07-13
+
+This release overhauls what Hegel prints when a property fails.
+
+Failing runs now produce a framed report: a header naming the test and its
+source location, a `Falsified after N test cases (M discarded):` line, an
+indented body of the drawn values and `note`s, the exception, and 
+`rerun with: [@@failure_blobs [ "..." ]]`. Failure blobs are now printed by default. 
+A run that finds multiple failures reports each in its own numbered section, and
+on a terminal the report is colorized (`HEGEL_COLOR=1|0` forces it on or off).
+
+In stateful testing, the draws a rule makes are nested under its step header, 
+and an invariant violation is attributed to the index of the invariant in the 
+invariant list (`Invariant N violated after step M`).
+
+It also adds two ways to make a failure more informative:
+
+- `require` and `require_equal` for assertions inside a test. `require_equal`
+  renders a structural s-expression diff of the two values in the report
+
+- `?sexp_of_state` on `Stateful.run`, which prints the model state after the
+  initial state and after each step.
+
+## 0.9.2 - 2026-07-13
+
+This patch bumps our pinned libhegel ([hegel-rust](hegeldev/hegel-rust)) from [0.28.0](https://github.com/hegeldev/hegel-rust/releases/tag/v0.28.0) to [0.29.0](https://github.com/hegeldev/hegel-rust/releases/tag/v0.29.0).
+
+## 0.9.1 - 2026-07-13
+
+This patch adds `functions`, `functions2`, and `functions3` in `Hegel.Generators` for 
+generating functions. `functions2` and `functions3` generate curried two and three 
+argument functions. Function generators are unprintable.
+
+When a property over a generated function fails, Hegel prints the function application(s)
+and its result(s). For example, a property that wrongly assumes applying a function twice 
+returns the original value:
+
+```ocaml
+let%hegel_test involution tc =
+  let f = draw_silent tc (functions ~sexp_of_arg:Int.sexp_of_t ~returns:(integers ()) ()) in
+  let x = draw tc (integers ()) in
+  assert (f (f x) = x)
+```
+
+fails with a concrete counterexample:
+
+```
+x = 0
+f 0 = 1
+f 1 = 1
+```
+
+## 0.9.0 - 2026-07-09
+
+The `hashmaps` generator is replaced by two generators that say what they
+mean: `assoc_lists`, which produces what `hashmaps` actually
+produced — a `(key * value) list` in generation order with unique keys —
+and `hash_tables`, which produces a real polymorphic `Hashtbl.t` with the
+same entry generation. Existing uses of `hashmaps` translate directly to
+`assoc_lists`.
+
+## 0.8.2 - 2026-07-09
+
+This patch bumps our pinned libhegel ([hegel-rust](hegeldev/hegel-rust)) from [0.27.0](https://github.com/hegeldev/hegel-rust/releases/tag/v0.27.0) to [0.28.0](https://github.com/hegeldev/hegel-rust/releases/tag/v0.28.0).
+
+## 0.8.1 - 2026-07-06
+
+This patch bumps our pinned libhegel ([hegel-rust](hegeldev/hegel-rust)) from [0.23.1](https://github.com/hegeldev/hegel-rust/releases/tag/v0.23.1) to [0.27.0](https://github.com/hegeldev/hegel-rust/releases/tag/v0.27.0).
+
+## 0.8.0 - 2026-07-02
+
+This release reexports many functions from the `Client` module to the `Hegel` module.
+The `Client` module has been renamed to `Internal`. Hegel tests should only use the 
+`Hegel`, `Hegel.Generators`, and `Hegel.Stateful` modules.
+
+## 0.7.6 - 2026-07-01
+
+Adds database key as an optional argument to `Hegel.run_hegel_test`. If `ppx_hegel_test` 
+is used, the key "file_name:test_name" is automatically passed in by let%hegel_test.
+
+## 0.7.5 - 2026-06-30
+
+Add support for using ppx_hegel_test with OCaml 5.3+.
+
+## 0.7.4 - 2026-06-30
+
+This release publishes Hegel for OCaml to the opam repository, with the native 
+Hegel engine (`libhegel`) bundled into the package. Installing through opam also
+installs the prebuilt `libhegel` matching your platform.
+
+## 0.7.3 - 2026-06-26
+
+This patch bumps our pinned libhegel ([hegel-rust](hegeldev/hegel-rust)) from [0.23.0](https://github.com/hegeldev/hegel-rust/releases/tag/v0.23.0) to [0.23.1](https://github.com/hegeldev/hegel-rust/releases/tag/v0.23.1).
+
+## 0.7.2 - 2026-06-24
+
+Fixes formatting when reporting multiple failures.
+
+## 0.7.1 - 2026-06-24
+
+This patch bumps our pinned libhegel ([hegel-rust](hegeldev/hegel-rust)) from [0.21.2](https://github.com/hegeldev/hegel-rust/releases/tag/v0.21.2) to [0.23.0](https://github.com/hegeldev/hegel-rust/releases/tag/v0.23.0).
+
+## 0.7.0 - 2026-06-22
+
+This release reworks the stateful-testing value-pool API. The `Stateful.Variables`
+module is renamed to `Stateful.Pool`. The `draw` and `consume` functions have been
+replaced by two unprintable generators `values_consumed` and `values_reusable` 
+(which can be made printable using `with_printer`). This lets pool picks compose
+with the rest of the generator combinators (`map`, `filter`, `with_printer`, …) 
+and be drawn through the normal `draw` / `draw_silent` path.
+
+`Pool.create` no longer takes a `?sexp_of` argument.
+
+```ocaml
+(* before *)
+let vars = Stateful.Variables.create ~sexp_of:Int.sexp_of_t tc in
+Stateful.Variables.add vars id;
+let reused = Stateful.Variables.draw vars in
+let taken = Stateful.Variables.consume vars in
+
+(* after *)
+let vars = Stateful.Pool.create tc in
+Stateful.Pool.add vars id;
+let reused = Hegel.draw_silent tc (Stateful.Pool.values_reusable vars) in
+let taken = Hegel.draw_silent tc (Stateful.Pool.values_consumed vars) in
+(* to print a pick on a failing replay: *)
+let taken = Hegel.draw tc (with_printer Int.sexp_of_t (Stateful.Pool.values_consumed vars)) in
+```
+
+Updating your stateful tests requires renaming `Variables` to `Pool`,
+replacing `draw`/`consume` calls with a `draw`/`draw_silent` of the corresponding
+generator, and dropping the `~sexp_of` argument to `create`.
+
+## 0.6.3 - 2026-06-19
+
+This patch bumps our pinned libhegel ([hegel-rust](hegeldev/hegel-rust)) from [0.19.2](https://github.com/hegeldev/hegel-rust/releases/tag/v0.19.2) to [0.21.2](https://github.com/hegeldev/hegel-rust/releases/tag/v0.21.2).
+
+## 0.6.2 - 2026-06-18
+
+This patch fixes a bug that caused stateful test generation to terminate early.
+
+## 0.6.1 - 2026-06-17
+
+This patch bumps our pinned libhegel ([hegel-rust](hegeldev/hegel-rust)) from [0.19.1](https://github.com/hegeldev/hegel-rust/releases/tag/v0.19.1) to [0.19.2](https://github.com/hegeldev/hegel-rust/releases/tag/v0.19.2).
+
+## 0.6.0 - 2026-06-17
+
+This release makes Hegel print the values it drew as s-expressions when a test fails. 
+On the final replay of a failing property, each draw is reported as`name = value`. 
+Inside a `let%hegel_test`, each draw is labeled with the variable it was bound to:
+
+```ocaml
+let%hegel_test sorted_after_insert tc =
+  let xs = Hegel.draw tc (lists (integers ()) ()) in
+  let x = Hegel.draw tc (integers ()) in
+  assert (is_sorted (insert x (List.sort compare xs)))
+;;
+
+(* On failure, prints:
+     xs = (3 1)
+     x = 0  *)
+```
+
+A named draw that is shadowed or inside a loop is numbered
+(`x_1`, `x_2`, …). An unnamed `draw` or a draw outside of a `let%hegel_test` 
+binding is named `draw_1`, `draw_2`, …. The label can also be passed explicitly.
+
+**Generators are now `('a, 'p) generator`.** The phantom `'p` is `printable`
+when the generator carries a printer and `unprintable` otherwise. 
+
+**`map`, `flat_map`, `sampled_from`, and `just` are unprintable by default.** 
+Draw from them with `draw_silent` (no printing).
+```ocaml
+(* before *)
+let v = Hegel.draw tc (sampled_from [ 10; 20; 30 ])
+
+(* after — not printed *)
+let v = Hegel.draw_silent tc (sampled_from [ 10; 20; 30 ])
+```
+
+Attach a printer with the new `with_printer` to make a printable generator.
+Draw from them with `draw`. `with_printer` takes any `'a -> Sexp.t`.
+
+```ocaml
+(* after — printed on failure *)
+let sexp_of_int n = ...
+
+let v =
+  Hegel.draw tc (with_printer sexp_of_int (sampled_from [ 10; 20; 30 ]))
+```
+
+**`[@@deriving generator]` is now `[@@deriving hegel_generator]`, and emits a generator
+value.** The deriver previously produced a `test_case -> t` function; it now
+produces a `(t, unprintable) generator` value named `<t>_generator`.
+
+```ocaml
+type point = { x : int; y : int } [@@deriving hegel_generator]
+
+(* before: let p = point_generator tc *)
+let p = Hegel.draw_silent tc point_generator
+```
+
+To print a value from a derived generator:
+
+```ocaml
+type point = { x : int; y : int } [@@deriving hegel_generator]
+
+let sexp_of_point p = ...
+
+let p = Hegel.draw tc (Hegel.with_printer sexp_of_point point_generator)
+```
+                                                      
+For a given type `t`, [`ppx_sexp_conv`](https://github.com/janestreet/ppx_sexp_conv) can be used to automatically 
+derive `sexp_of_<t>`.
+
+Stateful tests gain a `?sexp_of` argument on `Variables.create`; when given, each
+variable that is drawn or consumed prints as `v<id> = <sexp>` on a failing
+replay.
+
+## 0.5.5 - 2026-06-16
+
+This patch fixes a bug where `note` ignored the `verbosity` setting.
+
+## 0.5.4 - 2026-06-15
+
+Adds `with_stateful_step_count` to allow controlling the number of steps in a stateful test
+and [swarm testing](https://users.cs.utah.edu/~regehr/papers/swarm12.pdf) to stateful tests. Internal changes to stateful test generation.
+
+## 0.5.3 - 2026-06-15
+
+This patch bumps our pinned libhegel ([hegel-rust](hegeldev/hegel-rust)) from [0.18.0](https://github.com/hegeldev/hegel-rust/releases/tag/v0.18.0) to [0.19.1](https://github.com/hegeldev/hegel-rust/releases/tag/v0.19.1).
+
+## 0.5.2 - 2026-06-12
+
+This release updates the bindings to libhegel 0.18.0 and has internal control 
+flow refactors.
+
+## 0.5.1 - 2026-06-12
+
+Make reporting multiple failures false by default.
+
+## 0.5.0 - 2026-06-09
+
+This release replaces the hegel-core Python engine with the `libhegel` Rust engine, 
+called in-process via ctypes. There is no longer a subprocess, socket,
+or wire protocol. `libhegel` is located (or downloaded) at runtime and `dlopen`ed.
+
+The breaking change is the removal of the `Hegel.Protocol`, `Hegel.Connection`, and
+`Hegel.Session` modules.
+
+## 0.4.2 - 2026-05-29
+
+Implements reproducing a test case with failure blobs.
+When a test fails, the following is outputted:
+
+```
+<some exception here>
+...
+[hegel] To replay the failure, add to your test: [@@failure_blobs [ "<blob string>"; ... ]]
+```
+
+To replay:
+
+```ocaml
+let%hegel_test my_test tc = body
+[@@failure_blobs [ "<blob string>"; ... ]]
+```
+
+## 0.4.1 - 2026-05-27
+
+Fixes uniqueness of hashmap keys and lists when unique=true not being preserved after transformation.
+
+## 0.4.0 - 2026-05-27
+
+This release changes the public API for running Hegel tests to a new `let%hegel_test` PPX extension.
+
+```ocaml
+(* before *)
+let my_invariant =
+  Hegel.run_hegel_test (fun tc -> ...)
+
+(* after *)
+let%hegel_test my_invariant tc = ...
+```
+
+The top-level `Hegel.run_hegel_test` has been removed from the public API.
+Existing callers should migrate to `let%hegel_test`. The generated function
+remains directly callable as an ordinary `unit -> unit`, so it works with any
+test runner.
+
+Per-test settings can be supplied with the `[@@settings ...]` attribute:
+
+```ocaml
+let%hegel_test my_invariant tc = ...
+[@@settings Hegel.settings ~test_cases:1000 ()]
+```
+
+This release also adds integration with Antithesis. Each `let%hegel_test`
+emits an always assertion recording whether the property test passed or
+failed. Outside Antithesis, the integration is a no-op.
+
+### Discovering tests with `dune runtest`
+
+If you use dune, add the PPX as an `inline_tests` backend so `dune runtest`
+discovers every `let%hegel_test` automatically:
+
+```
+(library
+ (name my_tests)
+ (libraries hegel)
+ (inline_tests (backend ppx_hegel_test))
+ (preprocess (pps ppx_hegel_test)))
+```
+
+After that, `dune runtest` finds and runs every `let%hegel_test` in the
+library.
+
+## 0.3.19 - 2026-05-19
+
+Add `Single_test_case` mode setting for running exactly one test case with no shrinking or replay. 
+This mode is mostly intended for long-running workloads. Stateful testing will keep running rules indefinitely when in this mode.
+
+## 0.3.18 - 2026-05-18
+
+This patch bumps our pinned hegel-core from [0.8.0](https://github.com/hegeldev/hegel-core/releases/tag/v0.8.0) to [0.9.1](https://github.com/hegeldev/hegel-core/releases/tag/v0.9.1).
+
+## 0.3.17 - 2026-05-14
+
+Internal checksum refactor.
+
+## 0.3.16 - 2026-05-14
+
+Add `Hegel.Stateful` module for rule based stateful testing.
+
+## 0.3.15 - 2026-05-13
+
+Reexports `settings` in the top level `Hegel` module.
+
+## 0.3.14 - 2026-05-13
+
+This release adds the `phase` enum and using `with_phases` to control which test lifecycle phases run.
+
+## 0.3.13 - 2026-05-07
+
+Bump our pinned hegel-core to [0.8.0](https://github.com/hegeldev/hegel-core/releases/tag/v0.8.0).
+
+## 0.3.12 - 2026-05-06
+
+Raise conformance to hegel-core 0.7.0.
+
+## 0.3.11 - 2026-05-06
+
+Restore compatibility with OxCaml.
+
+## 0.3.10 - 2026-05-05
+
+Bump our pinned hegel-core from 0.5.0 to [0.7.0](https://github.com/hegeldev/hegel-core/releases/tag/v0.7.0)
+
+## 0.3.9 - 2026-05-05
+
+`ip_addresses` now emits the protocol schema `{"type": "ip_address", "version": 4|6}` instead of different types per version (`{"type": "ipv4"}` / `{"type": "ipv6"}`)
+
+## 0.3.8 - 2026-05-05
+
+`one_of` no longer wraps each child schema in a tagged tuple. It now sends the raw children and relies on the new protocol contract in which the server emits `[index, value]` for `one_of` schemas.
+
+This release also bumps our pinned hegel-core to [0.5.0](https://github.com/hegeldev/hegel-core/releases/tag/v0.5.0), which ships the matching server-side protocol change:
+
+> This release changes the `one_of` protocol request to return a tuple of `[index, value]`, rather than just `value`.
+>
+> — [v0.5.0](https://github.com/hegeldev/hegel-core/releases/tag/v0.5.0)
+
+## 0.3.7 - 2026-04-29
+
+Bump our pinned hegel-core version from `0.4.1` to [`0.4.14`](https://github.com/hegeldev/hegel-core/releases/tag/v0.4.14).
+
+## 0.3.6 - 2026-04-17
+
+Properly handle flaky generation failures.
+
+## 0.3.5 - 2026-04-16
+
+Add support for building and running on the OxCaml compiler (`ocaml-variants.5.2.0+ox`). The `ppx_hegel_generator` PPX deriver now works on both standard OCaml and OxCaml by abstracting over ppxlib AST differences (labeled tuples, constructor modalities) via a platform-selected compatibility module.
+
+## 0.3.4 - 2026-04-14
+
+Handle `StopTest` in `collection_reject` so that unique non-basic lists terminate cleanly when the server's rejection limit is reached, instead of raising an unhandled protocol error.
+
+## 0.3.3 - 2026-04-14
+
+Restore timeouts to stream receive operations, which were dropped when switching from polling to `Condition.wait`.
+
+## 0.3.2 - 2026-04-14
+
+Add `characters()` generator, and add more options to `text()`
+
+## 0.3.1 - 2026-04-08
+
+Add support for new hegel-core protocol versions.
+
+## 0.3.0 - 2026-03-30
+
+This release moves the library over to use the Jane Street standard library instead of the Inria one.
+
+## 0.2.0 - 2026-03-27
+
+This release brings the OCaml library in line with hegel-rust, including a **breaking API change**: test functions now receive an explicit `test_case` parameter.
+
+* **Breaking**: `draw`, `assume`, `note`, and `target` now take a `test_case` first argument. Test functions change from `unit -> unit` to `test_case -> unit`. PPX-derived generators change from `unit -> 'a` to `test_case -> 'a`.
+* Switch from Unix socket to `--stdio` pipe-based transport, eliminating temp directories and socket polling.
+* Add a background reader thread for packet dispatch, replacing the demand-driven reader model.
+* Add `Settings` API with `health_check`, `verbosity`, `database`, `derandomize`, and `suppress_health_check` support.
+* Auto-install `hegel-core` via `uv` when not found on PATH.
+* Add server crash detection via a monitor thread.
+* Bump supported protocol versions to 0.1–0.7.
+
+## 0.1.3 - 2026-03-11
+
+Add validation to generator arguments, and drop `name` from `run_hegel_test`.
+
+## 0.1.2 - 2026-03-04
+
+Split out generators.ml into multiple files.
+
+## 0.1.1 - 2026-03-03
+
+Remove some unnecessary code only present for testing.
+

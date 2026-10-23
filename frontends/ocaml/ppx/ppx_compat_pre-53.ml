@@ -1,0 +1,63 @@
+open Ppxlib
+
+let extract_tuple_types ct =
+  match ct.ptyp_desc with
+  | Ptyp_tuple cts -> Some cts
+  | _ -> None
+;;
+
+type constr_args =
+  | Tuple of core_type list
+  | Record of label_declaration list
+
+let extract_constr_args = function
+  | Pcstr_tuple cts -> Tuple cts
+  | Pcstr_record labels -> Record labels
+;;
+
+let map_constr_arg_types f = function
+  | Pcstr_tuple cts -> Pcstr_tuple (List.map f cts)
+  | Pcstr_record labels ->
+    Pcstr_record (List.map (fun ld -> { ld with pld_type = f ld.pld_type }) labels)
+;;
+
+let sexp_of_str_type_decl = Ppx_sexp_conv_expander.Sexp_of.str_type_decl
+
+let unwrap_pattern_constraint pat =
+  match pat.ppat_desc with
+  | Ppat_constraint (inner, _) -> Some inner
+  | _ -> None
+;;
+
+let expr_first_param_pat e =
+  match e.pexp_desc with
+  | Pexp_fun (_, _, pat, _) -> Some pat
+  | _ -> None
+;;
+
+let rec peel_fun_params e =
+  match e.pexp_desc with
+  | Pexp_fun (_, _, _, body) -> peel_fun_params body
+  | _ -> e
+;;
+
+let is_function_expr e =
+  match e.pexp_desc with
+  | Pexp_fun _ | Pexp_function _ -> true
+  | _ -> false
+;;
+
+let extract_let_bindings e =
+  match e.pexp_desc with
+  | Pexp_let (_, vbs, _) -> Some vbs
+  | _ -> None
+;;
+
+let map_let_value_bindings f e =
+  match e.pexp_desc with
+  | Pexp_let (rec_flag, vbs, body) ->
+    { e with pexp_desc = Pexp_let (rec_flag, f vbs, body) }
+  | _ -> e
+;;
+
+let portable_value_description vd = vd
