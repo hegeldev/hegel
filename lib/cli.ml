@@ -148,8 +148,7 @@ let settings_term ~default_settings =
            "failure-blob"
            Arg.string
            ~docv:"BLOB"
-           "Replay a failure from the blob instead of generating a test case."
-      ))
+           "Replay a failure from the blob instead of generating a test case."))
 ;;
 
 let main ?(settings = Settings.default) ?test_location ?database_key test_fn =
@@ -163,7 +162,9 @@ let main ?(settings = Settings.default) ?test_location ?database_key test_fn =
       test_fn
   in
   let info =
-    Cmd.info (Filename.basename Sys.executable_name) ~doc:"Run one Hegel test case as a standalone binary."
+    Cmd.info
+      (Filename.basename Sys.executable_name)
+      ~doc:"Run one Hegel test case as a standalone binary."
   in
   let term = Term.(const run $ settings_term ~default_settings:settings) in
   exit (Cmd.eval ~catch:false (Cmd.v info term))

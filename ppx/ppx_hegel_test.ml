@@ -21,9 +21,9 @@
     [my_test] has the type [unit -> unit]. The [@@settings ...] and
     [@@failure_blobs ...] attributes are both optional.
 
-    [let%hegel_main name tc = body [@@settings expr]] is rewritten into 
-    [let name () = Hegel.main ~settings:(fun () -> expr) ~test_location (fun tc -> body)], 
-    a binary entry point that runs one test case configured from the command line. 
+    [let%hegel_main name tc = body [@@settings expr]] is rewritten into
+    [let name () = Hegel.main ~settings:(fun () -> expr) ~test_location (fun tc -> body)],
+    a binary entry point that runs one test case configured from the command line.
 
     A state machine is a module whose rules and invariants are marked:
     {[

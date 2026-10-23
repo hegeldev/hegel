@@ -59,6 +59,40 @@ let%hegel_test no_settings (tc : Hegel.test_case) =
   ()
 ;;
 
+let%hegel_main failing_main (tc : Hegel.test_case) =
+  let n = Hegel.draw tc (Hegel.integers ~min_value:0 ~max_value:100 ()) in
+  if n >= 0 then failwith "deliberate failure"
+[@@settings { (Hegel.Settings.default ()) with database = Hegel.Settings.Disabled }]
+;;
+
+let () =
+  match Sys.getenv "HEGEL_TEST_MAIN_CHILD" with
+  | Some _ ->
+    (try failing_main () with
+     | _ -> Stdlib.exit 1)
+  | None -> ()
+;;
+
+let test_main_reports () =
+  with_tempdir ~f:(fun dir ->
+    let process =
+      Core_unix.create_process_env
+        ~prog:Stdlib.Sys.executable_name
+        ~args:[]
+        ~env:(`Extend [ "HEGEL_TEST_MAIN_CHILD", "1"; env_var, dir ])
+        ()
+    in
+    Core_unix.close process.stdin;
+    Alcotest.(check bool) "fails" true (Result.is_error (Core_unix.waitpid process.pid));
+    let sdk = In_channel.read_all (Filename.concat dir "sdk.jsonl") in
+    Alcotest.(check bool)
+      "the verdict names the binding"
+      true
+      (String.is_substring
+         sdk
+         ~substring:"test_ppx_hegel_test::failing_main passes properties"))
+;;
+
 let test_passing_writes_sdk_jsonl () =
   with_tempdir ~f:(fun dir ->
     with_env_dir dir ~f:(fun () ->
@@ -253,6 +287,7 @@ let () =
             "failing test writes condition:false"
             `Quick
             test_failing_writes_condition_false
+        ; Alcotest.test_case "let%hegel_main" `Quick test_main_reports
         ; Alcotest.test_case
             "no [@@settings] uses defaults"
             `Quick
