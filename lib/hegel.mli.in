@@ -470,13 +470,9 @@ val run_hegel_test_ppx
     If you run a stateful test this way, you probably want a very 
     large [step_count].
 
-    The flags are [--profile], [--seed], [--verbosity], [--derandomize],
+    The supported flags are [--profile], [--seed], [--verbosity], [--derandomize],
     [--database], [--suppress-health-check], [--backend], [--failure-blob],
-    and [--help].
-
-    @param settings
-    creates the settings. Defaults to {!Settings.default}. The flags override
-    settings. *)
+    and [--help]. *)
 val main
   :  ?settings:(unit -> Settings.t)
   -> ?test_location:test_location
