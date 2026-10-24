@@ -384,12 +384,6 @@ let%hegel_test missing_example_value tc =
 [@@example { a = 1 }]
 ;;
 
-let%hegel_test rejecting_example tc =
-  let n = Hegel.draw tc (Hegel.integers ()) in
-  Hegel.assume tc (n > 0)
-[@@example { n = 0 }]
-;;
-
 let%hegel_test cloning_example tc =
   let n = Hegel.draw tc (Hegel.integers ()) in
   ignore (Hegel.draw_silent (Hegel.clone tc) (Hegel.integers ()) + n : int)
@@ -421,7 +415,6 @@ let test_example_usage_errors () =
   in
   expect "unused value" unused_example_value "never drawn: n";
   expect "missing value" missing_example_value "no value for the draw b";
-  expect "assume" rejecting_example "assumptions do not hold";
   expect "clone" cloning_example "generated data";
   expect "draw_silent" silent_draw_in_example "draw_silent";
   expect "silently drawn function" function_in_example "no value for the draw f";
@@ -453,13 +446,46 @@ let test_examples_without_location () =
 let%hegel_test examples_and_blobs tc =
   let n = Hegel.draw tc (Hegel.integers ~min_value:0 ~max_value:9 ()) in
   assert (n <> 100)
-[@@example { n = 100 }]
-[@@failure_blobs [ "AAEAAAAACgEAAAAy" ]]
-[@@settings { (Hegel.Settings.create ()) with report_multiple_failures = true }]
+[@@example { n = 100 }] [@@failure_blobs [ "AAEAAAAACgEAAAAy" ]]
 ;;
 
 let test_examples_with_failure_blobs () =
   match examples_and_blobs () with
+  | () -> Alcotest.fail "expected the blob not to reproduce"
+  | exception Hegel.Did_not_reproduce _ -> ()
+;;
+
+let%hegel_test rejecting_example tc =
+  let n = Hegel.draw tc (Hegel.integers ()) in
+  Hegel.assume tc (n <> 0);
+  assert (n <> 0)
+[@@example { n = 0 }]
+[@@settings { (Hegel.Settings.create ()) with phases = [ Hegel.Settings.Explicit ] }]
+;;
+
+let%hegel_test explicit_reject_and_repeat tc =
+  let n = Hegel.draw tc (Hegel.integers ()) in
+  Hegel.repeat tc (fun tc ->
+    if n = 0 then Hegel.reject tc;
+    Int.incr generated_calls)
+[@@example { n = 0 }]
+[@@example { n = 1 }]
+[@@settings { (Hegel.Settings.create ()) with phases = [ Hegel.Settings.Explicit ] }]
+;;
+
+let%hegel_test failing_repeat_example tc =
+  let n = Hegel.draw tc (Hegel.integers ()) in
+  Hegel.repeat tc (fun _ -> assert (n <> 7))
+[@@example { n = 7 }]
+[@@settings { (Hegel.Settings.create ()) with phases = [ Hegel.Settings.Explicit ] }]
+;;
+
+let test_explicit_rejection_and_repeat () =
+  rejecting_example ();
+  generated_calls := 0;
+  explicit_reject_and_repeat ();
+  Alcotest.(check int) "only the n = 1 iteration finished" 1 !generated_calls;
+  match failing_repeat_example () with
   | () -> Alcotest.fail "expected the example to fail"
   | exception Assert_failure _ -> ()
 ;;
@@ -495,6 +521,10 @@ let () =
             "examples with failure blobs"
             `Quick
             test_examples_with_failure_blobs
+        ; Alcotest.test_case
+            "explicit rejection and repeat"
+            `Quick
+            test_explicit_rejection_and_repeat
         ; Alcotest.test_case
             "no [@@settings] uses defaults"
             `Quick

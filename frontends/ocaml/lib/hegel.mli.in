@@ -308,9 +308,12 @@
 
     Every draw an example reaches must be a named [draw] it gives a value for,
     and every value it gives must be drawn; otherwise the test raises
-    {!Usage_error}. An example that fails is reported with the values it gave
-    and ends the run, unless [report_multiple_failures] is set. Examples run in
-    the [Explicit] phase, so leaving it out of [phases] skips them.
+    {!Usage_error}. An example that {!assume} or {!reject} rejects is skipped:
+    it neither passes nor fails. In an example, {!repeat} runs its body once.
+    An example that fails is reported with the values it gave and ends the
+    run, unless [report_multiple_failures] is set. Examples run in the
+    [Explicit] phase, so leaving it out of [phases] skips them, and a run that
+    replays failure blobs does not run them.
 
     {3 Debugging failing test cases}
 
@@ -468,7 +471,8 @@ type test_location = Internal.test_location =
     made in a failing test run. Each blob is replayed in turn, and every failure
     they reproduce is reported. If none of them reproduces a failure, the run
     raises {!Did_not_reproduce}. A blob is only guaranteed to reproduce a failure
-    within the same version of Hegel.
+    within the same version of Hegel. A run that replays blobs replays only
+    them: the test's explicit examples do not run.
 
     A failing test re-raises the test's own exception after the failure report.
     When the run reports several distinct failures it raises
@@ -809,7 +813,8 @@ val%template with_printer
     Each iteration runs [body] on a test case whose output is indented under a
     [// Repetition #n] note. An iteration that rejects itself (with {!assume}
     or {!reject}) is skipped, and the loop continues; any other exception
-    fails the test case.
+    fails the test case. In an explicit example, [body] runs once, on the
+    example's own test case.
 
     {[
       let%hegel_test counter_stays_non_negative tc =

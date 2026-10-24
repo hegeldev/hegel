@@ -162,9 +162,9 @@ let run_iteration tc body =
     Printexc.raise_with_backtrace exn backtrace
 ;;
 
-(** [repeat tc body] runs [body] on a block of [tc] until the engine ends the
-    loop, then ends the test case. *)
-let repeat tc body =
+(** [repeat_generated tc body] runs [body] on a block of [tc] until the
+    engine ends the loop, then ends the test case. *)
+let repeat_generated tc body =
   let min_size =
     Generators.draw_silent tc (Generators.integers ~min_value:0 ~max_value:(1 lsl 40) ())
   in
@@ -178,6 +178,21 @@ let repeat tc body =
     in
     loop 1);
   raise Internal.Repeat_done
+;;
+
+(** [repeat_explicit tc body] is {!repeat} in an explicit example: [body]
+    runs once, as an explicit value can be drawn only once. *)
+let repeat_explicit tc body =
+  note tc "// Repetition #1";
+  (match body tc with
+   | () | (exception Assume_rejected) -> ());
+  raise Internal.Repeat_done
+;;
+
+(** [repeat tc body] is {!repeat_explicit} in an explicit example and
+    {!repeat_generated} otherwise. *)
+let repeat tc body =
+  if Internal.is_explicit tc then repeat_explicit tc body else repeat_generated tc body
 ;;
 
 (** [with_printer print gen] displays [gen]'s drawn values with [print]. See

@@ -100,6 +100,10 @@ val owned_clone_count : test_case -> int
 (** Tags subsequent output from [tc] with a concurrent worker index. *)
 val set_worker_index : test_case -> int -> unit
 
+(** [is_explicit tc] is [true] when [tc] is an explicit example's test case,
+    which has no engine behind it. *)
+val is_explicit : test_case -> bool
+
 (** [check_drawable tc ~label] raises {!Usage_error} when [tc] is an explicit
     example's test case, where only the draws the example gives values for may
     run (through {!explicit_draw}). [label] names the draw in the message. *)
@@ -553,9 +557,11 @@ type rerun_hint =
       a list of base64 encoded strings (blobs), where each string encodes the
       choices made in a failing test run. Each blob is replayed in turn, and
       every failure they reproduce is reported. A blob is only guaranteed to
-      reproduce a failure within a specific version of Hegel
+      reproduce a failure within a specific version of Hegel. A run that
+      replays blobs replays only them: the explicit examples do not run.
     @param examples
-      explicit examples, run first when [settings.phases] includes [Explicit]:
+      explicit examples, run first when [settings.phases] includes [Explicit]
+      and no [failure_blobs] are given:
       each is the names of the draws it gives values for, and the test body
       with those values substituted (see {!explicit_draw}). A failing example
       is reported and ends the run, unless [settings.report_multiple_failures]

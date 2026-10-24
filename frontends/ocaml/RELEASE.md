@@ -82,7 +82,7 @@ let trees =
 
 `[@@deriving hegel_generator]` now supports recursive and mutually recursive types. A variant whose constructors refer to the type itself, such as `type tree = Leaf of int | Node of tree * tree`, is generated with `recursive`, its non-recursive constructors as the leaves; other recursive types are generated through `deferred`.
 
-`let%hegel_test` takes explicit examples: each `[@@example { n = 0; s = "" }]` attribute runs the test once, before generation, with every `let n = draw tc gen` binding taking the example's value for `n`. A failing example is reported with the values it gave. Examples run in the `Explicit` phase, which used to do nothing.
+`let%hegel_test` takes explicit examples: each `[@@example { n = 0; s = "" }]` attribute runs the test once, before generation, with every `let n = draw tc gen` binding taking the example's value for `n`. A failing example is reported with the values it gave. An example that `assume` or `reject` rejects is skipped, and in an example `repeat` runs its body once. Examples run in the `Explicit` phase, which used to do nothing, and do not run when the test replays failure blobs.
 
 ```ocaml
 let%hegel_test round_trips tc =
@@ -108,7 +108,7 @@ New generators:
 
 `filter` now takes its number of attempts before rejecting the test case (3) from libhegel, so it rejects as often as a filter in any other frontend.
 
-Tuples, arrays, permutations and `filter` attempts now mark their draws for libhegel with the same labels as in the other frontends, so the engine shrinks and mutates them the same way.
+Tuples, arrays, permutations, unique lists, association lists, hash tables and `filter` attempts now mark their draws for libhegel with the same labels as in the other frontends, so the engine shrinks and mutates them the same way.
 
 `Hegel.main` binaries now have a flag for every setting: `--phases`, `--report-multiple-failures`, `--stop-on-first-failure`, `--show-statistics`, `--print-blob`, `--nondeterminism-strictness` and `--database-key` join the existing ones. Each flag is named after its `hegel.toml` key and takes the values `hegel.toml` takes, which libhegel parses, so the flags and `hegel.toml` always agree. `--seed` no longer accepts a negative number, as libhegel's seeds are unsigned, and `--suppress-health-check ""` now suppresses none.
 

@@ -182,6 +182,9 @@ let explicit_unsupported =
    a [let x = draw tc ...] binding the example gives a value for"
 ;;
 
+(** [is_explicit tc] is [true] when [tc] is an explicit example's test case. *)
+let is_explicit (tc : test_case) = Option.is_some tc.explicit
+
 (** [require_engine tc] raises {!Usage_error} when [tc] is an explicit
     example's test case, which has no engine behind it. *)
 let require_engine (tc : test_case) =
@@ -1055,21 +1058,16 @@ let run_example ~(settings : Settings.t) ~test_location index (names, body) =
       ~finally:(fun () -> DLS.set in_test_context false)
       (fun () ->
          match body tc with
-         | () -> None
-         | exception Assume_rejected ->
-           raise
-             (Usage_error
-                (Printf.sprintf
-                   "Explicit example %d: its assumptions do not hold (assume or reject \
-                    rejected it)"
-                   index))
+         | () | (exception Repeat_done) -> `Passed
+         | exception Assume_rejected -> `Skipped
          | exception ((Usage_error _ | Internal_error _) as error) -> raise error
          | exception exn ->
            let backtrace = Printexc.get_raw_backtrace () in
-           Some { origin = extract_origin exn; exn; backtrace })
+           `Failed { origin = extract_origin exn; exn; backtrace })
   in
   match outcome with
-  | None ->
+  | `Skipped -> None
+  | `Passed ->
     (match
        let drawn = Locked.protect explicit (fun e -> e.drawn) in
        List.filter (fun name -> not (List.mem name drawn)) names
@@ -1082,7 +1080,7 @@ let run_example ~(settings : Settings.t) ~test_location index (names, body) =
                "Explicit example %d gives values that were never drawn: %s"
                index
                (String.concat ", " unused))))
-  | Some failure ->
+  | `Failed failure ->
     if settings.verbosity <> Quiet
     then (
       let title =
@@ -1144,7 +1142,9 @@ let did_not_reproduce_message =
     @param failure_blobs
       a list of base64 encoded strings (blobs), where each string encodes the
       choices made in a failing test run. Every blob is replayed. A blob is only
-      guaranteed to reproduce a failure within a specific version of Hegel *)
+      guaranteed to reproduce a failure within a specific version of Hegel. A
+      run that replays blobs replays only them: the explicit examples do not
+      run. *)
 let run_test
       ~(settings : Settings.t)
       ?test_location
@@ -1313,23 +1313,23 @@ let run_test
               failure :: run_examples (index + 1) rest
             | Some failure -> [ failure ])
        in
-       let explicit_failures =
-         if List.mem Explicit settings.phases then run_examples 1 examples else []
-       in
-       if (not (List.is_empty explicit_failures)) && not settings.report_multiple_failures
-       then raise_failures explicit_failures
-       else (
        match failure_blobs with
-       | [] -> raise_failures (explicit_failures @ drive (Ffi.run_start ctx ffi_settings))
+       | [] ->
+         let explicit_failures =
+           if List.mem Explicit settings.phases then run_examples 1 examples else []
+         in
+         if (not (List.is_empty explicit_failures))
+            && not settings.report_multiple_failures
+         then raise_failures explicit_failures
+         else raise_failures (explicit_failures @ drive (Ffi.run_start ctx ffi_settings))
        | blobs ->
          (match
-            explicit_failures
-            @ List.concat_map
-                (fun blob -> drive (Ffi.run_start_blob ctx ffi_settings blob))
-                blobs
+            List.concat_map
+              (fun blob -> drive (Ffi.run_start_blob ctx ffi_settings blob))
+              blobs
           with
           | [] -> raise (Did_not_reproduce did_not_reproduce_message)
-          | failures -> raise_failures failures)))
+          | failures -> raise_failures failures))
 ;;
 
 (** [run_hegel_test ?settings ?test_location ?database_key ?failure_blobs test_fn]
