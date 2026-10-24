@@ -30,7 +30,7 @@ public final class Settings {
     final long seed;
     final Boolean derandomize;
     final Database database;
-    final int suppressMask;
+    final Integer suppressMask; // null = leave the engine's profile / HEGEL_* value
     final Integer phasesMask; // null = leave the engine default (all phases)
     final Verbosity verbosity;
     final Backend backend;
@@ -115,7 +115,7 @@ public final class Settings {
         long seed = 0L;
         Boolean derandomize = null;
         Database database = Database.unset();
-        int suppressMask = 0;
+        Integer suppressMask = null;
         Integer phasesMask = null;
         Verbosity verbosity = Verbosity.DEFAULT;
         Backend backend = Backend.AUTO;
@@ -205,7 +205,8 @@ public final class Settings {
     /**
      * Pin the RNG seed for a reproducible run.
      *
-     * @param seed the seed
+     * @param seed the seed: the engine reads its bits as an unsigned 64-bit value, so a negative
+     *     {@code long} gives a seed of {@code 2^63} or more
      * @return a new settings instance
      */
     public Settings seed(long seed) {
@@ -239,17 +240,21 @@ public final class Settings {
     }
 
     /**
-     * Suppress the listed health checks.
+     * Suppress exactly the listed health checks, replacing any previously set suppressions. Unless
+     * this is called, the suppressions come from the engine's settings profile and the {@code
+     * HEGEL_*} environment variables; calling it with no checks runs every health check even where
+     * the profile suppresses some.
      *
      * @param checks the checks to disable
      * @return a new settings instance
      */
     public Settings suppressHealthCheck(HealthCheck... checks) {
-        return with(b -> {
-            for (HealthCheck c : checks) {
-                b.suppressMask |= c.bit;
-            }
-        });
+        int mask = 0;
+        for (HealthCheck c : checks) {
+            mask |= c.bit;
+        }
+        int suppressed = mask;
+        return with(b -> b.suppressMask = suppressed);
     }
 
     /**

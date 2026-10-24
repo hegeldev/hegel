@@ -115,7 +115,7 @@ class CoverageTest {
         assertNull(noSeed.derandomize);
         assertNull(noSeed.phasesMask);
         assertEquals(Database.Kind.UNSET, noSeed.database.kind);
-        assertEquals(0, noSeed.suppressMask);
+        assertNull(noSeed.suppressMask);
         assertEquals(Backend.AUTO, noSeed.backend);
         assertEquals(NondeterminismStrictness.DEFAULT, noSeed.nondeterminismStrictness);
         assertNull(noSeed.reportMultipleFailures);
@@ -138,7 +138,7 @@ class CoverageTest {
         Settings c = HegelTestExtension.settingsFrom(configured.getAnnotation(HegelTest.class), configured);
         assertEquals(Boolean.TRUE, c.derandomize);
         assertEquals(Integer.valueOf(Phase.GENERATE.bit), c.phasesMask);
-        assertEquals(HealthCheck.TOO_SLOW.bit, c.suppressMask);
+        assertEquals(Integer.valueOf(HealthCheck.TOO_SLOW.bit), c.suppressMask);
         assertEquals(Backend.URANDOM, c.backend);
         assertEquals(NondeterminismStrictness.ERROR, c.nondeterminismStrictness);
         assertEquals(Boolean.TRUE, c.reportMultipleFailures);

@@ -399,6 +399,17 @@ class RunnerTest {
     }
 
     @Test
+    void suppressingNoHealthChecksIsSentAndReplacesEarlierSuppressions() {
+        FakeLibhegel unset = new FakeLibhegel();
+        run(unset, new Settings(), tc -> {});
+        assertEquals(-1, unset.suppressMask);
+
+        FakeLibhegel none = new FakeLibhegel();
+        run(none, new Settings().suppressHealthCheck(HealthCheck.TOO_SLOW).suppressHealthCheck(), tc -> {});
+        assertEquals(0, none.suppressMask);
+    }
+
+    @Test
     void databaseDisabledAndCiDefaults() {
         // A disabled database still sends the key: the engine derives the derandomized seed from it.
         FakeLibhegel disabled = new FakeLibhegel();

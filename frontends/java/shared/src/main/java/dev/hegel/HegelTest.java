@@ -55,7 +55,10 @@ public @interface HegelTest {
     long testCases() default 0;
 
     /**
-     * A fixed RNG seed for reproducibility, or {@link #NO_SEED} for none.
+     * A fixed RNG seed for reproducibility, or {@link #NO_SEED} for none. The engine's seed is an
+     * unsigned 64-bit value, read from this {@code long}'s bits; the one seed this attribute cannot
+     * give is {@code 2^63}, whose bits are {@link #NO_SEED}'s, which {@link Settings#seed(long)} and
+     * the {@code HEGEL_SEED} environment variable can.
      *
      * @return the seed
      */
@@ -95,7 +98,11 @@ public @interface HegelTest {
     Phase[] phases() default {Phase.EXPLICIT, Phase.REUSE, Phase.GENERATE, Phase.TARGET, Phase.SHRINK};
 
     /**
-     * Health checks to suppress (because the flagged behaviour is intentional).
+     * Health checks to suppress (because the flagged behaviour is intentional). Empty (the
+     * default) leaves the suppressions to the engine's settings profile and the {@code HEGEL_*}
+     * environment variables; to run every check where the profile suppresses some, use {@link
+     * Settings#suppressHealthCheck(HealthCheck...)} with no checks, or a profile that suppresses
+     * none.
      *
      * @return the checks to disable
      */

@@ -89,7 +89,6 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
         s = s.verbosity(ann.verbosity())
                 .backend(ann.backend())
                 .nondeterminismStrictness(ann.nondeterminismStrictness())
-                .suppressHealthCheck(ann.suppressHealthCheck())
                 .name(name)
                 .testLocation(TestLocation.of(className, null, 0, method.getName()));
         // The annotation cannot express "unset" for a primitive: 0 test cases (its default) leaves
@@ -111,6 +110,9 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
         }
         if (ann.unboundedChoices() != OptBoolean.DEFAULT) {
             s = s.unboundedChoices(ann.unboundedChoices() == OptBoolean.TRUE);
+        }
+        if (ann.suppressHealthCheck().length > 0) {
+            s = s.suppressHealthCheck(ann.suppressHealthCheck());
         }
         if (ann.seed() != HegelTest.NO_SEED) {
             s = s.seed(ann.seed());

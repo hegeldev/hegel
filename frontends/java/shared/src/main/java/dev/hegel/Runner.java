@@ -512,7 +512,7 @@ final class Runner {
         if (st.backend.code != null) {
             lib.settingsBackend(s, st.backend.code);
         }
-        if (st.suppressMask != 0) {
+        if (st.suppressMask != null) {
             lib.settingsSuppressHealthCheck(s, st.suppressMask);
         }
         if (st.phasesMask != null) {

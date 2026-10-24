@@ -16,6 +16,8 @@ New settings, each also an `@HegelTest` attribute:
 - `unboundedChoices(boolean)`: lift the engine's per-test-case limit on choices, for very long test cases such as long-running concurrent state machines.
 - `testLocation(TestLocation)`: where the test lives, which the engine reports each run's verdict under inside Antithesis. `@HegelTest` locates a test at its method, and `Hegel.test` and `Hegel.run` at their caller, so this is only needed to override that.
 
+`Settings.suppressHealthCheck(...)` now replaces any earlier suppressions instead of adding to them, and only sends a suppression set when it is called, so a `hegel.toml` profile or `HEGEL_*` variable that suppresses health checks applies unless the test says otherwise. Calling it with no checks runs every health check even where the profile suppresses some.
+
 Settings profiles are now reachable from Java:
 
 ```java
