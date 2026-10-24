@@ -227,6 +227,36 @@ TEST(Explicit, RejectionIsAnError) {
         failure_message([](hegel::TestCase& tc) { tc.assume(false); },
                         {hegel::ExplicitTestCase()});
     EXPECT_NE(message.find("was rejected"), std::string::npos) << message;
+    EXPECT_NE(message.find("Explicit test cases must not be rejected"),
+              std::string::npos)
+        << message;
+}
+
+TEST(Explicit, RejectionAfterADrawIsAnError) {
+    std::string message = failure_message(
+        [](hegel::TestCase& tc) {
+            int n = tc.draw(gs::integers<int>());
+            tc.assume(n > 5);
+        },
+        {hegel::ExplicitTestCase(1)});
+    EXPECT_NE(message.find("Explicit test cases must not be rejected"),
+              std::string::npos)
+        << message;
+}
+
+TEST(Explicit, RejectionInsideRepeatIsAnError) {
+    bool ran = false;
+    std::string message = failure_message(
+        [&ran](hegel::TestCase& tc) {
+            tc.repeat([&] {
+                ran = true;
+                tc.reject();
+            });
+        },
+        {hegel::ExplicitTestCase()});
+    EXPECT_FALSE(ran);
+    EXPECT_NE(message.find("needs generated data"), std::string::npos)
+        << message;
 }
 
 TEST(Explicit, CloneIsAnError) {
