@@ -2,6 +2,7 @@ package dev.hegel;
 
 import dev.hegel.lowlevel.Abi;
 import dev.hegel.lowlevel.LibhegelException;
+import java.math.BigInteger;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -455,6 +456,11 @@ public final class TestCase {
     /** @hidden */
     public long generateInteger(long min, long max) {
         return source.generateInteger(min, max);
+    }
+
+    /** @hidden */
+    public BigInteger generateIntegerBig(BigInteger min, BigInteger max) {
+        return source.generateIntegerBig(min, max);
     }
 
     /** @hidden */

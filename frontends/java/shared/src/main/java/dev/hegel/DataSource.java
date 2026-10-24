@@ -1,6 +1,7 @@
 package dev.hegel;
 
 import dev.hegel.lowlevel.Libhegel;
+import java.math.BigInteger;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -20,6 +21,9 @@ interface DataSource {
     boolean generateBoolean(double p);
 
     long generateInteger(long min, long max);
+
+    /** An integer in {@code [min, max]}, of any magnitude ({@code hegel_generate_integer_big} when outside {@code long}). */
+    BigInteger generateIntegerBig(BigInteger min, BigInteger max);
 
     double generateFloat(
             int width,

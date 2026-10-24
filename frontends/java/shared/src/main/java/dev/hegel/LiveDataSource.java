@@ -2,6 +2,7 @@ package dev.hegel;
 
 import dev.hegel.lowlevel.Abi;
 import dev.hegel.lowlevel.Libhegel;
+import java.math.BigInteger;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -98,6 +99,32 @@ final class LiveDataSource implements DataSource {
         long[] out = new long[1];
         translate(lib.generateInteger(tc, min, max, out), "generate_integer");
         return out[0];
+    }
+
+    @Override
+    public BigInteger generateIntegerBig(BigInteger min, BigInteger max) {
+        if (min.bitLength() < 64 && max.bitLength() < 64) {
+            return BigInteger.valueOf(generateInteger(min.longValueExact(), max.longValueExact()));
+        }
+        checkLive();
+        byte[][] out = new byte[1][];
+        translate(lib.generateIntegerBig(tc, littleEndian(min), littleEndian(max), out), "generate_integer_big");
+        byte[] value = out[0];
+        byte[] bigEndian = new byte[Math.max(value.length, 1)];
+        for (int i = 0; i < value.length; i++) {
+            bigEndian[bigEndian.length - 1 - i] = value[i];
+        }
+        return new BigInteger(bigEndian);
+    }
+
+    /** {@code value}'s minimal two's-complement encoding, least significant byte first. */
+    private static byte[] littleEndian(BigInteger value) {
+        byte[] bigEndian = value.toByteArray();
+        byte[] out = new byte[bigEndian.length];
+        for (int i = 0; i < bigEndian.length; i++) {
+            out[i] = bigEndian[bigEndian.length - 1 - i];
+        }
+        return out;
     }
 
     @Override

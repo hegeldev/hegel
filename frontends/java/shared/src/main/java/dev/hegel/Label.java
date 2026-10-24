@@ -73,6 +73,12 @@ public final class Label {
     /** A recursive value or one of its subtrees ({@link Generators#recursive}). */
     public static final long RECURSIVE = of("hegel.recursive");
 
+    /** A permutation of a fixed list ({@link Generators#permutations}). */
+    public static final long PERMUTATION = of("hegel.permutation");
+
+    /** A fixed-length array ({@link Generators#arrays}). */
+    public static final long ARRAY = of("hegel.array");
+
     /** A value built imperatively from several draws ({@link Generators#composite}). */
     public static final long COMPOSITE = of("hegel.composite");
 

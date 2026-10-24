@@ -1,5 +1,7 @@
 package dev.hegel;
 
+import dev.hegel.generators.ArrayGenerator;
+import dev.hegel.generators.BigIntegerGenerator;
 import dev.hegel.generators.BinaryGenerator;
 import dev.hegel.generators.BooleanGenerator;
 import dev.hegel.generators.CompositeGenerator;
@@ -19,6 +21,8 @@ import dev.hegel.generators.ListGenerator;
 import dev.hegel.generators.LongGenerator;
 import dev.hegel.generators.MapGenerator;
 import dev.hegel.generators.OneOfGenerator;
+import dev.hegel.generators.OptionalGenerator;
+import dev.hegel.generators.PermutationGenerator;
 import dev.hegel.generators.RecordGenerator;
 import dev.hegel.generators.RecursiveGenerator;
 import dev.hegel.generators.RegexGenerator;
@@ -31,6 +35,7 @@ import dev.hegel.generators.UrlGenerator;
 import dev.hegel.generators.UuidGenerator;
 import dev.hegel.generators.ZoneOffsetGenerator;
 import dev.hegel.lowlevel.Abi;
+import java.math.BigInteger;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -44,6 +49,7 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.function.IntFunction;
 
 /**
  * Factory methods for all built-in generators.
@@ -71,6 +77,17 @@ public final class Generators {
      */
     public static LongGenerator longs() {
         return new LongGenerator(Long.MIN_VALUE, Long.MAX_VALUE);
+    }
+
+    /**
+     * Generates {@link BigInteger} values of any magnitude. Narrow the range with the fluent
+     * methods on {@link BigIntegerGenerator}; an unset bound reaches {@code 2^127} values beyond
+     * the other bound, or beyond zero.
+     *
+     * @return a big-integer generator
+     */
+    public static BigIntegerGenerator bigIntegers() {
+        return new BigIntegerGenerator(null, null);
     }
 
     // --- floats & doubles ---
@@ -149,6 +166,16 @@ public final class Generators {
     }
 
     /**
+     * Always generates {@code null}, for example as one alternative of a {@link #oneOf}.
+     *
+     * @param <T> the value type
+     * @return a generator of {@code null}
+     */
+    public static <T> Generator<T> nulls() {
+        return new ConstantGenerator<>(null);
+    }
+
+    /**
      * Picks one of the given values (the first is the simplest for shrinking).
      *
      * @param values the candidate values
@@ -199,7 +226,7 @@ public final class Generators {
      * @return an optional generator
      */
     public static <T> Generator<Optional<T>> optional(Generator<T> generator) {
-        return oneOf(just(Optional.<T>empty()), generator.map(Optional::of));
+        return new OptionalGenerator<>(generator, Optional::of, Optional.empty());
     }
 
     /**
@@ -209,7 +236,7 @@ public final class Generators {
      * @return an optional-int generator
      */
     public static Generator<OptionalInt> optionalInts(Generator<Integer> generator) {
-        return oneOf(just(OptionalInt.empty()), generator.map(OptionalInt::of));
+        return new OptionalGenerator<>(generator, OptionalInt::of, OptionalInt.empty());
     }
 
     /**
@@ -219,7 +246,7 @@ public final class Generators {
      * @return an optional-long generator
      */
     public static Generator<OptionalLong> optionalLongs(Generator<Long> generator) {
-        return oneOf(just(OptionalLong.empty()), generator.map(OptionalLong::of));
+        return new OptionalGenerator<>(generator, OptionalLong::of, OptionalLong.empty());
     }
 
     /**
@@ -229,7 +256,7 @@ public final class Generators {
      * @return an optional-double generator
      */
     public static Generator<OptionalDouble> optionalDoubles(Generator<Double> generator) {
-        return oneOf(just(OptionalDouble.empty()), generator.map(OptionalDouble::of));
+        return new OptionalGenerator<>(generator, OptionalDouble::of, OptionalDouble.empty());
     }
 
     // --- collections ---
@@ -243,6 +270,45 @@ public final class Generators {
      */
     public static <T> ListGenerator<T> lists(Generator<T> element) {
         return new ListGenerator<>(element, 0, Abi.UNBOUNDED);
+    }
+
+    /**
+     * Generates permutations of {@code elements}: each list holds every element, in an order the
+     * engine chooses, shrinking toward the original order.
+     *
+     * @param elements the elements to permute
+     * @param <T> the element type
+     * @return a permutation generator
+     */
+    public static <T> Generator<List<T>> permutations(List<T> elements) {
+        return new PermutationGenerator<>(elements);
+    }
+
+    /**
+     * Generates permutations of {@code elements}: each list holds every element, in an order the
+     * engine chooses, shrinking toward the original order.
+     *
+     * @param elements the elements to permute
+     * @param <T> the element type
+     * @return a permutation generator
+     */
+    @SafeVarargs
+    public static <T> Generator<List<T>> permutations(T... elements) {
+        return permutations(List.of(elements));
+    }
+
+    /**
+     * Generates arrays of exactly {@code length} elements drawn from {@code element}, such as
+     * {@code arrays(integers(), 3, Integer[]::new)}.
+     *
+     * @param element the element generator
+     * @param length the array length
+     * @param newArray creates an array of the given length
+     * @param <T> the element type
+     * @return an array generator
+     */
+    public static <T> Generator<T[]> arrays(Generator<T> element, int length, IntFunction<T[]> newArray) {
+        return new ArrayGenerator<>(element, length, newArray);
     }
 
     /**

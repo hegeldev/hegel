@@ -59,3 +59,15 @@ A filtered consuming pool draw, `pool.consuming().filter(...)` on a `Pool` or `C
 `Generators.recursive(base, extend)` generates recursively defined data, such as trees or JSON documents, through the engine's recursion support: `base` generates the leaves and `extend` builds a branch from a generator of sub-values. The engine decides where the value branches, steers each value toward a size drawn from across its leaf budget, and lets the shrinker replace a tree with one of its subtrees. Limit the shape with `maxDepth` (default 32) and `maxLeaves` (default 100). `Generators.deferred()` remains for mutually recursive generators.
 
 `dev.hegel.lowlevel.Libhegel` gains `poolRestore`, `newRecursion`, `recursionBranch`, `recursionLeaf`, `recursionRetry`, `recursionFinish`, `recursionFree`, `event`, `eventValue`, `generateIntegerBig`, `settingsGetPhases` and `settingsGetReportMultipleFailures`. A third-party binding needs to implement them.
+
+New generators, matching the other Hegel frontends:
+
+- `Generators.bigIntegers()` generates `BigInteger` values of any magnitude, narrowed with `min` and `max`. An unset bound reaches `2^127` values beyond the other bound, or beyond zero. `Generators.forType(BigInteger.class)` derives it.
+- `lists(...).unique()` and `lists(...).uniqueBy(key)` generate lists whose elements, or their keys, are distinct.
+- `Generators.permutations(elements)` generates reorderings of a fixed list, shrinking toward the original order.
+- `Generators.arrays(element, length, newArray)` generates arrays of a fixed length, such as `arrays(integers(), 3, Integer[]::new)`.
+- `Generators.nulls()` always generates `null`.
+- `text().alphabet(chars)` draws only from the given characters, and `text().codec(name)` restricts to the characters `"ascii"`, `"latin-1"` (or `"iso-8859-1"`) or `"utf-8"` can encode. An alphabet cannot be combined with the other character restrictions.
+- `fromRegex(pattern).alphabet(characters)` restricts every character of a generated string, padding included, to those `characters` can generate, such as `characters().codec("ascii")`.
+
+`optional`, `optionalInts`, `optionalLongs` and `optionalDoubles` now draw under the engine's standard `hegel.optional` label, as the other frontends' optional generators do, rather than as a `oneOf`. Values still shrink toward empty, but stored failures involving optional values may no longer replay.

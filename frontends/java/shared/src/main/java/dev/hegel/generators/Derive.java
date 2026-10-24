@@ -74,6 +74,9 @@ public final class Derive {
         if (cls == java.util.OptionalDouble.class) {
             return Generators.optionalDoubles(Generators.doubles());
         }
+        if (cls == java.math.BigInteger.class) {
+            return Generators.bigIntegers();
+        }
         if (cls == String.class) {
             return Generators.text();
         }
