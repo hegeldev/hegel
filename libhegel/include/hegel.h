@@ -1178,6 +1178,41 @@ hegel_result_t hegel_settings_set_suppress_health_check(hegel_context_t *ctx,
 hegel_result_t hegel_settings_set_print_blob(hegel_context_t *ctx, hegel_settings_t *s, bool yes);
 
 /*
+ Set one setting from text, as a command line gives it: what the
+ settings' other setters do, under the names and with the values a
+ `hegel.toml` profile uses, parsed by the same parser. A frontend's
+ command-line interface passes each flag through, so every setting is
+ settable from it without the frontend knowing the vocabulary.
+
+ Parameters:
+ `key`: The setting's `hegel.toml` key: `test_cases`, `seed`,
+   `derandomize`, `database`, `verbosity`, `phases`,
+   `suppress_health_check`, `report_multiple_failures`,
+   `stop_on_first_failure`, `show_statistics`, `print_blob`, `backend`,
+   `nondeterminism_strictness`, or `unbounded_choices` (which
+   `hegel.toml` has no key for).
+ `value`: The value, in that key's `hegel.toml` vocabulary, with these
+   spellings for values that are not strings there:
+   - an integer (`test_cases`, `seed`) in decimal; `seed` also takes
+     `none`, which unsets it;
+   - a boolean as `true`, `1`, `yes`, `false`, `0` or `no`, as the
+     `HEGEL_*` environment variables take it;
+   - a list (`phases`, `suppress_health_check`) as its names separated
+     by commas, with the empty string for none; `suppress_health_check`
+     also takes `all`.
+   `database` takes a path, `disabled`, or `default` for the default
+   location.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown key or a
+ value outside its vocabulary, with a message naming the key and what
+ it accepts. On error the settings are unchanged.
+ */
+hegel_result_t hegel_settings_set_from_string(hegel_context_t *ctx,
+                                              hegel_settings_t *s,
+                                              hegel_string_t key,
+                                              hegel_string_t value);
+
+/*
  Parameters:
  `name`: The profile name to register: ASCII letters, digits, `-` and
    `_` only. The reserved names `base` and `default` are rejected.
@@ -1293,7 +1328,8 @@ hegel_result_t hegel_settings_get_derandomize(hegel_context_t *ctx,
  `out_database`: Receives NULL for the default database, a pointer to an
    empty string for disabled, or a pointer to the root directory string.
    The string borrows the handle and stays valid until
-   the next `hegel_settings_set_database` call on it or
+   the next `hegel_settings_set_database` call on it, the next
+   `hegel_settings_set_from_string` call on it that sets `database`, or
    `hegel_settings_free`.
 
  Returns `HEGEL_OK`.

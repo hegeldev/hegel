@@ -117,6 +117,7 @@ macro_rules! for_each_hegel_fn {
             fn hegel_settings_set_database(ctx: *mut HegelContext, s: *mut HegelSettings, database: *const hegel_string_t) -> hegel_result_t;
             fn hegel_settings_set_database_key(ctx: *mut HegelContext, s: *mut HegelSettings, key: *const hegel_string_t) -> hegel_result_t;
             fn hegel_settings_set_derandomize(ctx: *mut HegelContext, s: *mut HegelSettings, derandomize: bool) -> hegel_result_t;
+            fn hegel_settings_set_from_string(ctx: *mut HegelContext, s: *mut HegelSettings, key: hegel_string_t, value: hegel_string_t) -> hegel_result_t;
             fn hegel_settings_set_nondeterminism_strictness(ctx: *mut HegelContext, s: *mut HegelSettings, strictness: u32) -> hegel_result_t;
             fn hegel_settings_set_phases(ctx: *mut HegelContext, s: *mut HegelSettings, phases: u32) -> hegel_result_t;
             fn hegel_settings_set_print_blob(ctx: *mut HegelContext, s: *mut HegelSettings, yes: bool) -> hegel_result_t;

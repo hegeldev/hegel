@@ -765,17 +765,23 @@ pub struct HegelSettings {
 
 impl HegelSettings {
     fn from_settings(inner: Settings) -> Self {
-        let database_c = match &inner.database {
+        let mut settings = HegelSettings {
+            inner,
+            database_key: None,
+            database_c: None,
+            test_location: None,
+        };
+        settings.sync_database_c();
+        settings
+    }
+
+    /// Bring `database_c` in step with `inner.database`.
+    fn sync_database_c(&mut self) {
+        self.database_c = match &self.inner.database {
             Database::Unset => None,
             Database::Disabled => Some(String::new().into()),
             Database::Path(path) => Some(path.clone().into()),
         };
-        HegelSettings {
-            inner,
-            database_key: None,
-            database_c,
-            test_location: None,
-        }
     }
 
     /// The reporter for a run or blob replay under these settings, writing
@@ -1787,6 +1793,70 @@ pub unsafe extern "C" fn hegel_settings_set_print_blob(
     HEGEL_OK
 }
 
+/// Set one setting from text, as a command line gives it: what the
+/// settings' other setters do, under the names and with the values a
+/// `hegel.toml` profile uses, parsed by the same parser. A frontend's
+/// command-line interface passes each flag through, so every setting is
+/// settable from it without the frontend knowing the vocabulary.
+///
+/// Parameters:
+/// `key`: The setting's `hegel.toml` key: `test_cases`, `seed`,
+///   `derandomize`, `database`, `verbosity`, `phases`,
+///   `suppress_health_check`, `report_multiple_failures`,
+///   `stop_on_first_failure`, `show_statistics`, `print_blob`, `backend`,
+///   `nondeterminism_strictness`, or `unbounded_choices` (which
+///   `hegel.toml` has no key for).
+/// `value`: The value, in that key's `hegel.toml` vocabulary, with these
+///   spellings for values that are not strings there:
+///   - an integer (`test_cases`, `seed`) in decimal; `seed` also takes
+///     `none`, which unsets it;
+///   - a boolean as `true`, `1`, `yes`, `false`, `0` or `no`, as the
+///     `HEGEL_*` environment variables take it;
+///   - a list (`phases`, `suppress_health_check`) as its names separated
+///     by commas, with the empty string for none; `suppress_health_check`
+///     also takes `all`.
+///   `database` takes a path, `disabled`, or `default` for the default
+///   location.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown key or a
+/// value outside its vocabulary, with a message naming the key and what
+/// it accepts. On error the settings are unchanged.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_settings_set_from_string(
+    ctx: *mut HegelContext,
+    s: *mut HegelSettings,
+    key: hegel_string_t,
+    value: hegel_string_t,
+) -> hegel_result_t {
+    const FN: &str = "hegel_settings_set_from_string";
+    clear_last_error(ctx);
+    let handle = match unsafe { settings_mut(ctx, s, FN) } {
+        Ok(h) => h,
+        Err(rc) => return rc,
+    };
+    let key = match unsafe { required_utf8_arg(ctx, FN, "key", key) } {
+        Ok(k) => k,
+        Err(rc) => return rc,
+    };
+    let value = match unsafe { required_utf8_arg(ctx, FN, "value", value) } {
+        Ok(v) => v,
+        Err(rc) => return rc,
+    };
+    match crate::config::parse_setting(&key, &value) {
+        Ok(delta) => {
+            delta.apply(&mut handle.inner);
+            if delta.database.is_some() {
+                handle.sync_database_c();
+            }
+            HEGEL_OK
+        }
+        Err(message) => {
+            set_last_error(ctx, &format!("{FN}: {message}"));
+            HEGEL_E_INVALID_ARG
+        }
+    }
+}
+
 /// Parameters:
 /// `name`: The profile name to register: ASCII letters, digits, `-` and
 ///   `_` only. The reserved names `base` and `default` are rejected.
@@ -2025,7 +2095,8 @@ pub unsafe extern "C" fn hegel_settings_get_derandomize(
 /// `out_database`: Receives NULL for the default database, a pointer to an
 ///   empty string for disabled, or a pointer to the root directory string.
 ///   The string borrows the handle and stays valid until
-///   the next `hegel_settings_set_database` call on it or
+///   the next `hegel_settings_set_database` call on it, the next
+///   `hegel_settings_set_from_string` call on it that sets `database`, or
 ///   `hegel_settings_free`.
 ///
 /// Returns `HEGEL_OK`.
