@@ -27,7 +27,6 @@ describe("gs.integers()", () => {
     hegel.test(
       (tc) => {
         const v = tc.draw(gs.integers());
-        // Large integers may come back as bigint from CBOR
         expect(typeof v === "number" || typeof v === "bigint").toBe(true);
       },
       { testCases: 10 },

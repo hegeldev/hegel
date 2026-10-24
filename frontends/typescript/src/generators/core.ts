@@ -82,7 +82,7 @@ export abstract class Generator<T> {
 
 /**
  * Schema-based generator descriptor. Holds a schema and an optional parse
- * callback that transforms the raw server response into a value of type T.
+ * callback that transforms the raw drawn value into a value of type T.
  *
  * Other generators produce a BasicGenerator from `asBasic()` when they can be
  * expressed as a single schema, letting parent generators (oneOf, arrays, ...)

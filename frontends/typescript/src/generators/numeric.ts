@@ -33,9 +33,6 @@ class IntegersGenerator extends Generator<number> {
         "integers() bounds must be within Number.MIN_SAFE_INTEGER..Number.MAX_SAFE_INTEGER. Use bigIntegers() for larger ranges.",
       );
     }
-    // Encode bounds as BigInt so they always serialize as CBOR integers: the
-    // native engine strictly rejects float-encoded integer bounds, and cbor-x
-    // encodes plain JS numbers above 2**32 as CBOR floats.
     this.schema = { type: "integer", min_value: BigInt(min), max_value: BigInt(max) };
   }
 

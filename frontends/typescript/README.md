@@ -10,7 +10,7 @@
 - [Documentation](https://hegel.dev/typescript)
 - [Website](https://hegel.dev)
 
-Hegel is a property-based testing library for TypeScript. Hegel is based on [Hypothesis](https://github.com/hypothesisworks/hypothesis), using the [Hegel protocol](https://hegel.dev/).
+Hegel is a property-based testing library for TypeScript, built on libhegel, the [Hegel](https://hegel.dev/) engine. It runs in-process: as a native library on Node, Bun and Deno, and as the same engine compiled to WebAssembly in browsers.
 
 ## Installation
 
@@ -20,9 +20,7 @@ Hegel requires Node 20.11+, Bun 1.2.5+, or Deno 2+. (Note that Deno requires `--
 
 Linux amd64/arm64, macOS arm64, and Windows amd64/arm64 are supported.
 
-Browser support uses the same package imports and initializes the Rust Wasm engine during ESM module loading. It requires top-level await and secure-context Web Crypto. Tests and shrinking run on the main thread; browser persistence is unsupported.
-
-The upstream Wasm support is merged and published in libhegel 0.42.4. See [the browser guide](./BROWSER.md) for bundler configuration and how the Wasm module is packaged. Node, Bun and Deno continue to use Koffi.
+Browser support uses the same package imports and initializes the Wasm engine during ESM module loading. It requires top-level await and secure-context Web Crypto. Tests and shrinking run on the main thread; browser persistence is unsupported. See [the browser guide](./BROWSER.md) for bundler configuration and how the Wasm module is packaged.
 
 ## Quickstart
 

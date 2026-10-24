@@ -1,7 +1,7 @@
 /**
- * Hegel is a property-based testing library for TypeScript. Hegel is based on
- * [Hypothesis](https://github.com/hypothesisworks/hypothesis), using the
- * [Hegel protocol](https://hegel.dev/).
+ * Hegel is a property-based testing library for TypeScript, built on libhegel,
+ * the [Hegel](https://hegel.dev/) engine: a native library on Node, Bun and
+ * Deno, and the same engine compiled to WebAssembly in browsers.
  *
  * # Getting started
  *
@@ -160,6 +160,20 @@
  *   const drivingLicense = age >= 18 ? tc.draw(gs.booleans()) : false;
  *   return { age, name, drivingLicense };
  * });
+ * ```
+ *
+ * For recursive data, such as trees or JSON documents, use
+ * `gs.recursive`: give it the generator of leaves, and a function that builds
+ * one level of structure from a generator of sub-values. The engine decides
+ * where values branch and keeps them within `maxDepth` and `maxLeaves`; use
+ * `gs.deferred` for definitions that refer to each other.
+ *
+ * ```ts
+ * type Json = null | boolean | number | string | Json[];
+ * const json = gs.recursive<Json>(
+ *   gs.oneOf<Json>(gs.none(), gs.booleans(), gs.floats(), gs.text()),
+ *   (children) => gs.arrays(children, { maxSize: 5 }),
+ * );
  * ```
  *
  * ## Debug your failing test cases

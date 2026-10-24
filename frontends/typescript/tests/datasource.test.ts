@@ -1,7 +1,7 @@
 /**
  * Tests using fake DataSource implementations to exercise code paths in
  * testCase.ts, generators.ts, and runner.ts that are unreachable through
- * the real hegel server.
+ * the real engine.
  */
 
 import { describe, it, expect } from "vitest";
@@ -351,6 +351,12 @@ describe("Generator parse error paths", () => {
     const ds = new FakeDataSource({ generates: ["not array"] });
     const tc = new TestCase(ds, false);
     expect(() => tc.draw(gs.tuples(gs.integers(), gs.integers()))).toThrow("Expected array");
+  });
+
+  it("record parse throws on non-array", () => {
+    const ds = new FakeDataSource({ generates: ["not array"] });
+    const tc = new TestCase(ds, false);
+    expect(() => tc.draw(gs.record({ a: gs.integers() }))).toThrow("Expected array");
   });
 });
 

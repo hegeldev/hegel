@@ -2,9 +2,9 @@
  * Tests for the collection protocol path (non-basic element generators).
  *
  * When a generator doesn't have asBasic() (e.g. after .filter()), the
- * collection generators (arrays, sets, maps) must use the server's
+ * collection generators (arrays, sets, maps) must use the engine's
  * collection protocol (new_collection / collection_more / collection_reject)
- * instead of sending a schema.
+ * instead of drawing from a schema.
  *
  * Ported from hegel-rust tests/test_collections.rs and the old
  * tests/generators/collections.test.ts.
@@ -15,7 +15,7 @@ import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
 
 // Collection protocol tests use fewer test cases because each test case
-// involves many server round-trips (one per collection element).
+// involves many engine calls (several per collection element).
 const FEW = { testCases: 20 };
 
 // .filter(() => true) is a no-op filter that strips asBasic(),
