@@ -7,6 +7,8 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.function.IntFunction;
 
 /**
  * The per-test-case primitive surface that generators draw against.
@@ -78,6 +80,31 @@ interface DataSource {
      * from.
      */
     boolean ownsStringGenerator(StringGeneratorHandle generator);
+
+    /**
+     * Compile a grammar in Lark's syntax ({@code hegel_grammar_builder_*} then {@code
+     * hegel_grammar_new}). {@code files} maps the path of each file an {@code %import} needs to
+     * its text, or to {@code null} for a missing one. A rejected grammar throws {@link
+     * IllegalArgumentException} with the engine's diagnostic.
+     */
+    GrammarHandle grammar(
+            String text,
+            String start,
+            long maxSize,
+            int maxDepth,
+            StringGeneratorHandle alphabet,
+            List<String> explicitNames,
+            Function<String, String> files);
+
+    /**
+     * Draw a string of {@code grammar} ({@code hegel_grammar_draw_t}), asking {@code terminal} for
+     * the value of each occurrence of an explicit terminal, by its index among the grammar's
+     * explicit names. The engine splices the values in and keeps the string under its size cap.
+     */
+    String generateGrammar(GrammarHandle grammar, IntFunction<String> terminal);
+
+    /** Whether {@code grammar} was built by the binding behind this source; see {@link #ownsStringGenerator}. */
+    boolean ownsGrammar(GrammarHandle grammar);
 
     void startSpan(long label);
 

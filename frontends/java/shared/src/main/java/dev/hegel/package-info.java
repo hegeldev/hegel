@@ -92,7 +92,8 @@
  * {@code oneOf}, {@code optional}, {@code nulls}, {@code sampledFrom}, {@code just}, {@code durations} ({@code java.time.Duration}), and the temporal
  * generators {@code dates}, {@code times}, and {@code datetimes} (which produce
  * {@code java.time.LocalDate}/{@code LocalTime}/{@code LocalDateTime}), plus format generators
- * ({@code emails}, {@code urls}, {@code ipAddresses}, {@code uuids}, {@code fromRegex}, …).
+ * ({@code emails}, {@code urls}, {@code ipAddresses}, {@code uuids}, {@code fromRegex}, …) and
+ * {@code fromLark}, which generates strings of a grammar written in Lark's syntax.
  *
  * <p>For zone-aware datetimes, attach a timezone to a {@code datetimes()} generator:
  *

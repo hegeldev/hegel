@@ -12,6 +12,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.function.IntFunction;
 import java.util.function.Supplier;
 
 /**
@@ -588,6 +590,28 @@ public final class TestCase {
     /** @hidden */
     public boolean ownsStringGenerator(StringGeneratorHandle generator) {
         return source.ownsStringGenerator(generator);
+    }
+
+    /** @hidden */
+    public GrammarHandle grammar(
+            String text,
+            String start,
+            long maxSize,
+            int maxDepth,
+            StringGeneratorHandle alphabet,
+            List<String> explicitNames,
+            Function<String, String> files) {
+        return source.grammar(text, start, maxSize, maxDepth, alphabet, explicitNames, files);
+    }
+
+    /** @hidden */
+    public String generateGrammar(GrammarHandle grammar, IntFunction<String> terminal) {
+        return source.generateGrammar(grammar, terminal);
+    }
+
+    /** @hidden */
+    public boolean ownsGrammar(GrammarHandle grammar) {
+        return source.ownsGrammar(grammar);
     }
 
     /**

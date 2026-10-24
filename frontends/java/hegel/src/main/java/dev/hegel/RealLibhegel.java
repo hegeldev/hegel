@@ -176,6 +176,17 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle stringGeneratorUrl;
     private final MethodHandle stringGeneratorDomain;
     private final MethodHandle stringGeneratorFree;
+    private final MethodHandle grammarBuilderNew;
+    private final MethodHandle grammarBuilderFile;
+    private final MethodHandle grammarBuilderProvide;
+    private final MethodHandle grammarBuilderFree;
+    private final MethodHandle grammarNew;
+    private final MethodHandle grammarFree;
+    private final MethodHandle grammarDrawNew;
+    private final MethodHandle grammarDrawNext;
+    private final MethodHandle grammarDrawProvide;
+    private final MethodHandle grammarDrawResult;
+    private final MethodHandle grammarDrawFree;
     private final MethodHandle startSpan;
     private final MethodHandle stopSpan;
     private final MethodHandle newCollection;
@@ -551,6 +562,53 @@ final class RealLibhegel implements Libhegel {
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG, ADDRESS));
         this.stringGeneratorFree =
                 h(linker, lookup, "hegel_string_generator_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.grammarBuilderNew = h(
+                linker,
+                lookup,
+                "hegel_grammar_builder_new",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, STRING_LAYOUT, ADDRESS));
+        this.grammarBuilderFile = h(
+                linker,
+                lookup,
+                "hegel_grammar_builder_file",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS));
+        this.grammarBuilderProvide = h(
+                linker,
+                lookup,
+                "hegel_grammar_builder_provide",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS));
+        this.grammarBuilderFree =
+                h(linker, lookup, "hegel_grammar_builder_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.grammarNew = h(
+                linker,
+                lookup,
+                "hegel_grammar_new",
+                FunctionDescriptor.of(
+                        JAVA_INT, ADDRESS, ADDRESS, ADDRESS, JAVA_LONG, JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG,
+                        ADDRESS));
+        this.grammarFree = h(linker, lookup, "hegel_grammar_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.grammarDrawNew = h(
+                linker,
+                lookup,
+                "hegel_grammar_draw_new",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS));
+        this.grammarDrawNext = h(
+                linker,
+                lookup,
+                "hegel_grammar_draw_next",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+        this.grammarDrawProvide = h(
+                linker,
+                lookup,
+                "hegel_grammar_draw_provide",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT));
+        this.grammarDrawResult = h(
+                linker,
+                lookup,
+                "hegel_grammar_draw_result",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.grammarDrawFree =
+                h(linker, lookup, "hegel_grammar_draw_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
         this.startSpan =
                 h(linker, lookup, "hegel_start_span", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG));
         this.stopSpan =
@@ -1519,6 +1577,115 @@ final class RealLibhegel implements Libhegel {
     @Override
     public void stringGeneratorFree(long generator) {
         check("hegel_string_generator_free", rc(stringGeneratorFree, segment(generator)));
+    }
+
+    // --- grammars ---
+
+    @Override
+    public int grammarBuilderNew(String text, long[] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment outSeg = arena.allocate(ADDRESS);
+            int code = rc(grammarBuilderNew, str(arena, text), outSeg);
+            out[0] = outSeg.get(ADDRESS, 0).address();
+            return code;
+        }
+    }
+
+    @Override
+    public int grammarBuilderFile(long builder, long index, String[] outPath) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment path = arena.allocate(STRING_LAYOUT);
+            int code = rc(grammarBuilderFile, segment(builder), index, path);
+            outPath[0] = readString(path);
+            return code;
+        }
+    }
+
+    @Override
+    public int grammarBuilderProvide(long builder, long index, String text) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(grammarBuilderProvide, segment(builder), index, strPtr(arena, text));
+        }
+    }
+
+    @Override
+    public void grammarBuilderFree(long builder) {
+        check("hegel_grammar_builder_free", rc(grammarBuilderFree, segment(builder)));
+    }
+
+    @Override
+    public int grammarNew(
+            long builder,
+            String start,
+            long maxSize,
+            int maxDepth,
+            long alphabet,
+            List<String> explicitNames,
+            long[] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment outSeg = arena.allocate(ADDRESS);
+            int code = rc(
+                    grammarNew,
+                    segment(builder),
+                    strPtr(arena, start),
+                    maxSize,
+                    maxDepth,
+                    segment(alphabet),
+                    strArray(arena, explicitNames),
+                    (long) explicitNames.size(),
+                    outSeg);
+            out[0] = outSeg.get(ADDRESS, 0).address();
+            return code;
+        }
+    }
+
+    @Override
+    public void grammarFree(long grammar) {
+        check("hegel_grammar_free", rc(grammarFree, segment(grammar)));
+    }
+
+    @Override
+    public long grammarDrawNew(long grammar, long maxSize) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment outSeg = arena.allocate(ADDRESS);
+            check("hegel_grammar_draw_new", rc(grammarDrawNew, segment(grammar), maxSize, outSeg));
+            return outSeg.get(ADDRESS, 0).address();
+        }
+    }
+
+    @Override
+    public int grammarDrawNext(long tc, long draw, long[] outTerminal) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment outSeg = arena.allocate(JAVA_LONG);
+            int code = rc(grammarDrawNext, segment(tc), segment(draw), outSeg);
+            outTerminal[0] = outSeg.get(JAVA_LONG, 0);
+            return code;
+        }
+    }
+
+    @Override
+    public int grammarDrawProvide(long draw, String value) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(grammarDrawProvide, segment(draw), str(arena, value));
+        }
+    }
+
+    @Override
+    public int grammarDrawResult(long draw, String[] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment result = arena.allocate(STRING_LAYOUT);
+            int code = rc(grammarDrawResult, segment(draw), result);
+            if (code == Abi.OK) {
+                out[0] = new String(copyBuffer(result), StandardCharsets.UTF_8);
+                check("hegel_owned_string_free", rc(ownedStringFree, result));
+            }
+            return code;
+        }
+    }
+
+    @Override
+    public void grammarDrawFree(long draw) {
+        check("hegel_grammar_draw_free", rc(grammarDrawFree, segment(draw)));
     }
 
     // --- structure ---

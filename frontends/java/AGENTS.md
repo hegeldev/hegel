@@ -161,7 +161,9 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   same `hegel.<kind>` names as the other frontends (`hegel.lists`,
   `hegel.one_of`, ...); Java-only spans are `dev.hegel.<kind>`. The engine's
   `hegel_set_unicode_version` has no Java surface (Java reports no Unicode
-  version), and the grammar functions are not bound yet.
+  version). The grammar functions are bound except `hegel_grammar_placeholder`
+  and `hegel_generate_grammar`: the frontend draws every grammar string through
+  a `hegel_grammar_draw_t`, which splices in explicit terminals' values engine-side.
 - **Per-case primitives** — `DataSource` is the abstraction generators draw
   against; `LiveDataSource` wraps the engine, translating return codes
   (`StopTest` → OVERRUN, `AssumeRejected` → INVALID, `INVALID_ARG` →
@@ -274,7 +276,17 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   `hegel_string_generator_t` handle once per configuration and cache it
   (`HandleCache`, rebuilt if a test swaps the `Engine` binding);
   `StringGeneratorHandle` frees the engine allocation via a `Cleaner` when
-  unreachable. `Generators.recursive` (`RecursiveGenerator`) drives
+  unreachable. `Generators.fromLark` (`LarkGenerator`) compiles its grammar once per
+  configuration (`TestCase.grammar`: `hegel_grammar_builder_*`, reading each
+  `%import`ed file from its `importPath`, then `hegel_grammar_new`; a
+  `GrammarHandle` frees it via a `Cleaner`) and draws each string through a
+  `hegel_grammar_draw_t` (`LiveDataSource.generateGrammar`): the engine asks for
+  each explicit terminal's value in turn, the generator draws it silently from
+  the user's generator, and the engine splices the values in, keeps the string
+  under the size cap and retries or rejects; nothing about the splicing lives in
+  Java. Text and binary generators with no `maxSize` send
+  `Abi.MAX_SIZE_DEFAULT` for the engine to apply its default, and `filter` tries
+  `Abi.FILTER_ATTEMPTS` (`HEGEL_FILTER_ATTEMPTS`) values. `Generators.recursive` (`RecursiveGenerator`) drives
   `hegel_new_recursion`: the engine decides each node's `recursionBranch`,
   and a leaf over budget (`recursionLeaf` → `E_RETRY`) unwinds the attempt
   with `OverBudget` and retries it. The engine closes a retried attempt's

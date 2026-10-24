@@ -2,6 +2,7 @@ package dev.hegel;
 
 import dev.hegel.lowlevel.Abi;
 import dev.hegel.lowlevel.Libhegel;
+import java.lang.ref.Reference;
 import java.math.BigInteger;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -9,6 +10,8 @@ import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.function.IntFunction;
 
 /**
  * A {@link DataSource} backed by the real engine for one in-flight test case.
@@ -291,6 +294,75 @@ final class LiveDataSource implements DataSource {
     @Override
     public boolean ownsStringGenerator(StringGeneratorHandle generator) {
         return generator.lib == lib;
+    }
+
+    @Override
+    public GrammarHandle grammar(
+            String text,
+            String start,
+            long maxSize,
+            int maxDepth,
+            StringGeneratorHandle alphabet,
+            List<String> explicitNames,
+            Function<String, String> files) {
+        checkLive();
+        long[] builder = new long[1];
+        translate(lib.grammarBuilderNew(text, builder), "grammar_builder_new");
+        try {
+            String[] path = new String[1];
+            for (long index = 0; ; index++) {
+                int rc = lib.grammarBuilderFile(builder[0], index, path);
+                if (rc == Abi.E_NOT_FOUND) {
+                    break;
+                }
+                translate(rc, "grammar_builder_file");
+                translate(
+                        lib.grammarBuilderProvide(builder[0], index, files.apply(path[0])), "grammar_builder_provide");
+            }
+            long[] grammar = new long[1];
+            translate(
+                    lib.grammarNew(
+                            builder[0],
+                            start,
+                            maxSize,
+                            maxDepth,
+                            alphabet == null ? 0 : alphabet.handle,
+                            explicitNames,
+                            grammar),
+                    "grammar_new");
+            return new GrammarHandle(lib, grammar[0]);
+        } finally {
+            lib.grammarBuilderFree(builder[0]);
+            Reference.reachabilityFence(alphabet);
+        }
+    }
+
+    @Override
+    public String generateGrammar(GrammarHandle grammar, IntFunction<String> terminal) {
+        checkLive();
+        long draw = lib.grammarDrawNew(grammar.handle, 0);
+        try {
+            long[] index = new long[1];
+            int rc;
+            while ((rc = lib.grammarDrawNext(tc, draw, index)) == Abi.OK) {
+                String value = terminal.apply((int) index[0]);
+                translate(lib.grammarDrawProvide(draw, value), "grammar_draw_provide");
+            }
+            if (rc != Abi.E_NOT_FOUND) {
+                translate(rc, "grammar_draw_next");
+            }
+            String[] out = new String[1];
+            translate(lib.grammarDrawResult(draw, out), "grammar_draw_result");
+            return out[0];
+        } finally {
+            lib.grammarDrawFree(draw);
+            Reference.reachabilityFence(grammar);
+        }
+    }
+
+    @Override
+    public boolean ownsGrammar(GrammarHandle grammar) {
+        return grammar.lib == lib;
     }
 
     @Override

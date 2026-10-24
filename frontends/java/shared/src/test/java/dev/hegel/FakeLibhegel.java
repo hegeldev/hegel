@@ -880,6 +880,75 @@ final class FakeLibhegel implements Libhegel {
         freedStringGenerators++;
     }
 
+    /** Return code of every grammar-draw advance: by default the string is complete at once. */
+    int grammarDrawNextRc = Abi.E_NOT_FOUND;
+    /** Grammars compiled through grammarNew. */
+    int grammarsBuilt;
+    /** Grammar draw handles released through grammarDrawFree. */
+    int freedGrammarDraws;
+
+    @Override
+    public int grammarBuilderNew(String text, long[] out) {
+        out[0] = 0x700;
+        return Abi.OK;
+    }
+
+    @Override
+    public int grammarBuilderFile(long builder, long index, String[] outPath) {
+        return Abi.E_NOT_FOUND;
+    }
+
+    @Override
+    public int grammarBuilderProvide(long builder, long index, String text) {
+        return Abi.OK;
+    }
+
+    @Override
+    public void grammarBuilderFree(long builder) {}
+
+    @Override
+    public int grammarNew(
+            long builder,
+            String start,
+            long maxSize,
+            int maxDepth,
+            long alphabet,
+            List<String> explicitNames,
+            long[] out) {
+        grammarsBuilt++;
+        out[0] = 0x710;
+        return Abi.OK;
+    }
+
+    @Override
+    public void grammarFree(long grammar) {}
+
+    @Override
+    public long grammarDrawNew(long grammar, long maxSize) {
+        return 0x720;
+    }
+
+    @Override
+    public int grammarDrawNext(long tc, long draw, long[] outTerminal) {
+        return grammarDrawNextRc;
+    }
+
+    @Override
+    public int grammarDrawProvide(long draw, String value) {
+        return Abi.OK;
+    }
+
+    @Override
+    public int grammarDrawResult(long draw, String[] out) {
+        out[0] = "";
+        return Abi.OK;
+    }
+
+    @Override
+    public void grammarDrawFree(long draw) {
+        freedGrammarDraws++;
+    }
+
     @Override
     public int startSpan(long tc, long label) {
         if (startSpanRc == Abi.OK) {

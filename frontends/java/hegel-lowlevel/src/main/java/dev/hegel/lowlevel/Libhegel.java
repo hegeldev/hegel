@@ -426,6 +426,85 @@ public interface Libhegel {
 
     void stringGeneratorFree(long generator);
 
+    // Grammars: see hegel_grammar_builder_t, hegel_grammar_t and hegel_grammar_draw_t. The
+    // constructors and the per-draw calls return the raw rc; the frees throw on a non-OK code.
+
+    /**
+     * {@code hegel_grammar_builder_new}: start gathering a grammar in Lark's syntax and the files
+     * its {@code %import}s need. Returns the raw rc ({@link Abi#E_INVALID_ARG} for a grammar that
+     * does not parse); {@code out[0]} receives the handle on {@link Abi#OK} and {@code 0}
+     * otherwise. Release it with {@link #grammarBuilderFree}.
+     */
+    int grammarBuilderNew(String text, long[] out);
+
+    /**
+     * {@code hegel_grammar_builder_file}: the path of the {@code index}-th file the grammar needs.
+     * Returns the raw rc: {@link Abi#E_NOT_FOUND} past the end of the list, which grows as files
+     * are provided. {@code outPath[0]} receives the path on {@link Abi#OK} and {@code null}
+     * otherwise.
+     */
+    int grammarBuilderFile(long builder, long index, String[] outPath);
+
+    /**
+     * {@code hegel_grammar_builder_provide}: supply the {@code index}-th file's text, or {@code
+     * null} for a missing file. Returns the raw rc ({@link Abi#E_INVALID_ARG} for text that does
+     * not parse, or a missing file with no bundled grammar to stand in for it).
+     */
+    int grammarBuilderProvide(long builder, long index, String text);
+
+    /** {@code hegel_grammar_builder_free}. {@code 0} is a no-op. */
+    void grammarBuilderFree(long builder);
+
+    /**
+     * {@code hegel_grammar_new}: compile the gathered grammar. {@code start} is the rule to
+     * generate ({@code null} for {@code start}), {@code maxSize} and {@code maxDepth} take the
+     * engine's defaults at {@code 0}, {@code alphabet} is a text generator handle or {@code 0}, and
+     * {@code explicitNames} are the terminals whose values the caller supplies through a grammar
+     * draw. Returns the raw rc ({@link Abi#E_INVALID_ARG} with the engine's description of what
+     * is wrong); {@code out[0]} receives the handle on {@link Abi#OK} and {@code 0} otherwise.
+     * Release it with {@link #grammarFree} once no draw uses it.
+     */
+    int grammarNew(
+            long builder,
+            String start,
+            long maxSize,
+            int maxDepth,
+            long alphabet,
+            List<String> explicitNames,
+            long[] out);
+
+    /** {@code hegel_grammar_free}. {@code 0} is a no-op. */
+    void grammarFree(long grammar);
+
+    /**
+     * {@code hegel_grammar_draw_new}: start a draw of a string of {@code grammar} of at most
+     * {@code maxSize} characters, the explicit terminals' values included ({@code 0} for the
+     * grammar's own cap). The handle borrows the grammar; release it with {@link
+     * #grammarDrawFree}.
+     */
+    long grammarDrawNew(long grammar, long maxSize);
+
+    /**
+     * {@code hegel_grammar_draw_next}: advance the draw, drawing from {@code tc}. Returns the raw
+     * rc: {@link Abi#OK} when a value is due for the explicit terminal whose index {@code
+     * outTerminal[0]} receives, {@link Abi#E_NOT_FOUND} when the string is complete, or the
+     * test-case codes a draw returns ({@link Abi#E_ASSUME}, {@link Abi#E_STOP_TEST}, ...).
+     */
+    int grammarDrawNext(long tc, long draw, long[] outTerminal);
+
+    /** {@code hegel_grammar_draw_provide}: the value of the terminal last asked for. Returns the raw rc. */
+    int grammarDrawProvide(long draw, String value);
+
+    /**
+     * {@code hegel_grammar_draw_result}: the finished string, once {@link #grammarDrawNext} has
+     * returned {@link Abi#E_NOT_FOUND}. Returns the raw rc ({@link Abi#E_NOT_COMPLETE} before
+     * then); on OK {@code out[0]} receives the string.
+     */
+    int grammarDrawResult(long draw, String[] out);
+
+    /** {@code hegel_grammar_draw_free}. {@code 0} is a no-op. */
+    void grammarDrawFree(long draw);
+
     // Structure: spans, collections, pools, state machines. Each returns the raw rc.
     int startSpan(long tc, long label);
 

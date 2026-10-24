@@ -305,8 +305,7 @@ public final class TextGenerator implements Generator<String> {
     /** @hidden */
     @Override
     public String doDraw(TestCase tc) {
-        return tc.generateString(
-                cache.get(tc, t -> buildHandle(t, minSize, Sizes.engineMax(maxSize))));
+        return tc.generateString(cache.get(tc, t -> buildHandle(t, minSize, Sizes.engineMax(maxSize))));
     }
 
     /** A handle over this generator's characters alone, as a regex's alphabet. */

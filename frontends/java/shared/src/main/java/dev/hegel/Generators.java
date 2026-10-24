@@ -17,6 +17,7 @@ import dev.hegel.generators.EmailGenerator;
 import dev.hegel.generators.FloatGenerator;
 import dev.hegel.generators.IntegerGenerator;
 import dev.hegel.generators.IpAddressGenerator;
+import dev.hegel.generators.LarkGenerator;
 import dev.hegel.generators.ListGenerator;
 import dev.hegel.generators.LongGenerator;
 import dev.hegel.generators.MapGenerator;
@@ -737,5 +738,42 @@ public final class Generators {
      */
     public static RegexGenerator fromRegex(String pattern) {
         return new RegexGenerator(pattern, true);
+    }
+
+    /**
+     * Generates strings matching a grammar written in the syntax of the <a
+     * href="https://lark-parser.readthedocs.io/en/stable/grammar.html">Lark</a> parsing library,
+     * starting from its {@code start} rule.
+     *
+     * <p>The whole grammar language is supported: rules, terminals with string and regex patterns
+     * and priorities, {@code %import} (including Lark's bundled {@code common}, {@code python},
+     * {@code unicode} and {@code lark} grammars), {@code %ignore}, {@code %declare}, {@code
+     * %override}, {@code %extend} and templates. Generated strings are ones Lark's Earley parser
+     * accepts for the grammar, with {@code %ignore}d terminals such as whitespace and comments
+     * inserted wherever a lexer would skip them. A draw that cannot produce such a string after
+     * several attempts rejects the test case, as a failed {@link TestCase#assume(boolean) assume}
+     * does.
+     *
+     * <p>Strings range up to 8192 characters by default, biased toward the larger end; use {@link
+     * LarkGenerator#maxSize(int)} and {@link LarkGenerator#maxDepth(int)} to keep them smaller.
+     *
+     * <pre>{@code
+     * String grammar = """
+     *     ?start: sum
+     *     ?sum: product | sum "+" product
+     *     ?product: atom | product "*" atom
+     *     ?atom: NUMBER | "(" sum ")"
+     *     %import common.NUMBER
+     *     %import common.WS
+     *     %ignore WS
+     *     """;
+     * String expression = tc.draw(fromLark(grammar).maxSize(200));
+     * }</pre>
+     *
+     * @param grammar the grammar, in Lark's syntax
+     * @return a grammar generator
+     */
+    public static LarkGenerator fromLark(String grammar) {
+        return new LarkGenerator(grammar);
     }
 }

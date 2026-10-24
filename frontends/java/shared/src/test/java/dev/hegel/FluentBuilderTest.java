@@ -71,7 +71,6 @@ class FluentBuilderTest {
         assertEquals(java.util.List.of("Cs"), fake.textExcludeCategories);
         assertEquals(null, fake.textCategories);
 
-
         testCase()
                 .draw(text().codepoints('a', 'z')
                         .categories("Nd")

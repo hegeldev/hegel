@@ -370,6 +370,30 @@ class RealLibhegelTest {
     }
 
     @Test
+    void aGrammarDrawIsReadOnlyOnceComplete() {
+        RealLibhegel lib = real();
+        long[] builder = new long[1];
+        assertEquals(Abi.OK, lib.grammarBuilderNew("start: \"a\"", builder));
+        String[] path = new String[1];
+        assertEquals(Abi.E_NOT_FOUND, lib.grammarBuilderFile(builder[0], 0, path));
+        assertNull(path[0]);
+        long[] grammar = new long[1];
+        assertEquals(Abi.OK, lib.grammarNew(builder[0], null, 0, 0, 0, List.of(), grammar));
+        lib.grammarBuilderFree(builder[0]);
+        long draw = lib.grammarDrawNew(grammar[0], 0);
+        String[] out = new String[1];
+        assertEquals(Abi.E_NOT_COMPLETE, lib.grammarDrawResult(draw, out));
+        assertNull(out[0]);
+        assertEquals(Abi.E_INVALID_ARG, lib.grammarDrawProvide(draw, "x"));
+        lib.grammarDrawFree(draw);
+        lib.grammarFree(grammar[0]);
+        assertThrows(HegelException.class, () -> lib.grammarDrawNew(0, 0));
+        lib.grammarDrawFree(0);
+        lib.grammarFree(0);
+        lib.grammarBuilderFree(0);
+    }
+
+    @Test
     void regexGeneratorAcceptsATextAlphabet() {
         RealLibhegel lib = real();
         long[] alphabet = new long[1];

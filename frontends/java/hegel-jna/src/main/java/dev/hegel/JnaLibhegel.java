@@ -264,6 +264,37 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_string_generator_free(Pointer ctx, Pointer generator);
 
+        int hegel_grammar_builder_new(Pointer ctx, HegelString.ByValue text, PointerByReference out);
+
+        int hegel_grammar_builder_file(Pointer ctx, Pointer builder, long index, HegelString outPath);
+
+        int hegel_grammar_builder_provide(Pointer ctx, Pointer builder, long index, HegelString text);
+
+        int hegel_grammar_builder_free(Pointer ctx, Pointer builder);
+
+        int hegel_grammar_new(
+                Pointer ctx,
+                Pointer builder,
+                HegelString start,
+                long maxSize,
+                int maxDepth,
+                Pointer alphabet,
+                Pointer explicitNames,
+                long explicitLen,
+                PointerByReference out);
+
+        int hegel_grammar_free(Pointer ctx, Pointer grammar);
+
+        int hegel_grammar_draw_new(Pointer ctx, Pointer grammar, long maxSize, PointerByReference out);
+
+        int hegel_grammar_draw_next(Pointer ctx, Pointer tc, Pointer draw, LongByReference outTerminal);
+
+        int hegel_grammar_draw_provide(Pointer ctx, Pointer draw, HegelString.ByValue value);
+
+        int hegel_grammar_draw_result(Pointer ctx, Pointer draw, HegelString out);
+
+        int hegel_grammar_draw_free(Pointer ctx, Pointer draw);
+
         int hegel_start_span(Pointer ctx, Pointer tc, long label);
 
         int hegel_stop_span(Pointer ctx, Pointer tc, byte discard);
@@ -1199,6 +1230,99 @@ final class JnaLibhegel implements Libhegel {
     @Override
     public void stringGeneratorFree(long generator) {
         check("hegel_string_generator_free", lib.hegel_string_generator_free(ctx(), pointer(generator)));
+    }
+
+    // --- grammars ---
+
+    @Override
+    public int grammarBuilderNew(String text, long[] out) {
+        PointerByReference outRef = new PointerByReference();
+        int code = lib.hegel_grammar_builder_new(ctx(), str(text), outRef);
+        out[0] = address(outRef.getValue());
+        return code;
+    }
+
+    @Override
+    public int grammarBuilderFile(long builder, long index, String[] outPath) {
+        HegelString path = new HegelString();
+        int code = lib.hegel_grammar_builder_file(ctx(), pointer(builder), index, path);
+        outPath[0] = readString(path);
+        return code;
+    }
+
+    @Override
+    public int grammarBuilderProvide(long builder, long index, String text) {
+        return lib.hegel_grammar_builder_provide(ctx(), pointer(builder), index, strPtr(text));
+    }
+
+    @Override
+    public void grammarBuilderFree(long builder) {
+        check("hegel_grammar_builder_free", lib.hegel_grammar_builder_free(ctx(), pointer(builder)));
+    }
+
+    @Override
+    public int grammarNew(
+            long builder,
+            String start,
+            long maxSize,
+            int maxDepth,
+            long alphabet,
+            List<String> explicitNames,
+            long[] out) {
+        PointerByReference outRef = new PointerByReference();
+        int code = lib.hegel_grammar_new(
+                ctx(),
+                pointer(builder),
+                strPtr(start),
+                maxSize,
+                maxDepth,
+                pointer(alphabet),
+                strArray(explicitNames),
+                explicitNames.size(),
+                outRef);
+        out[0] = address(outRef.getValue());
+        return code;
+    }
+
+    @Override
+    public void grammarFree(long grammar) {
+        check("hegel_grammar_free", lib.hegel_grammar_free(ctx(), pointer(grammar)));
+    }
+
+    @Override
+    public long grammarDrawNew(long grammar, long maxSize) {
+        PointerByReference outRef = new PointerByReference();
+        check("hegel_grammar_draw_new", lib.hegel_grammar_draw_new(ctx(), pointer(grammar), maxSize, outRef));
+        return address(outRef.getValue());
+    }
+
+    @Override
+    public int grammarDrawNext(long tc, long draw, long[] outTerminal) {
+        LongByReference ref = new LongByReference();
+        int code = lib.hegel_grammar_draw_next(ctx(), pointer(tc), pointer(draw), ref);
+        outTerminal[0] = ref.getValue();
+        return code;
+    }
+
+    @Override
+    public int grammarDrawProvide(long draw, String value) {
+        return lib.hegel_grammar_draw_provide(ctx(), pointer(draw), str(value));
+    }
+
+    @Override
+    public int grammarDrawResult(long draw, String[] out) {
+        HegelString result = new HegelString();
+        int code = lib.hegel_grammar_draw_result(ctx(), pointer(draw), result);
+        if (code == Abi.OK) {
+            out[0] = new String(copyBuffer(result), StandardCharsets.UTF_8);
+            check("hegel_owned_string_free", lib.hegel_owned_string_free(ctx(), result));
+        }
+        return code;
+    }
+
+    @Override
+    public void grammarDrawFree(long draw) {
+        check("hegel_grammar_draw_free", lib.hegel_grammar_draw_free(ctx(), pointer(draw)));
     }
 
     // --- structure ---
