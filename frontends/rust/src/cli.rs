@@ -89,6 +89,9 @@ where
                 (flag, args.get(i).cloned())
             }
         };
+        if name.contains('_') {
+            return Err(CliError::Parse(format!("Unknown argument: --{name}")));
+        }
         if name == "test-cases" {
             return Err(CliError::Parse(
                 "--test-cases cannot be set: a #[hegel::main] binary runs exactly one test case"

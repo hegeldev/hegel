@@ -254,6 +254,22 @@ fn test_test_cases_flag_is_rejected() {
 }
 
 #[test]
+fn test_underscore_flag_is_unknown_argument() {
+    for (args, flag) in [
+        (&["--test_cases", "3"][..], "--test_cases"),
+        (&["--test_cases=3"][..], "--test_cases"),
+        (&["--seed_", "3"][..], "--seed_"),
+        (&["--database_key", "k"][..], "--database_key"),
+    ] {
+        let err = try_apply_cli_args(Settings::new, s(args)).unwrap_err();
+        match err {
+            CliError::Parse(msg) => assert_eq!(msg, format!("Unknown argument: {flag}")),
+            other => panic!("expected parse error, got {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn test_positional_argument_is_unknown() {
     for arg in ["positional", "--"] {
         let err = try_apply_cli_args(Settings::new, s(&[arg])).unwrap_err();
