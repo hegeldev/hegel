@@ -29,10 +29,9 @@ let expect_error args substring =
 ;;
 
 (* Each flag draws its argument and the change it should make to the parsed
-   settings and failure blob. *)
+   settings and failure blobs. *)
 let flags
-  : (test_case -> string * (Settings.t * string option -> Settings.t * string option))
-      list
+  : (test_case -> string * (Settings.t * string list -> Settings.t * string list)) list
   =
   let choose tc values = draw_silent tc (sampled_from values) in
   let health_checks =
@@ -105,7 +104,7 @@ let flags
       "--backend=" ^ name, fun (s, blob) -> { s with backend }, blob)
   ; (fun tc ->
       let blob = draw_silent tc (text ~min_size:1 ()) in
-      "--failure-blob=" ^ blob, fun (s, _) -> s, Some blob)
+      "--failure-blob=" ^ blob, fun (s, blobs) -> s, blobs @ [ blob ])
   ]
 ;;
 
@@ -126,7 +125,7 @@ let test_flags_select_settings () =
     let expected =
       List.fold
         present
-        ~init:(Settings.create ~seed:3 (), None)
+        ~init:(Settings.create ~seed:3 (), [])
         ~f:(fun acc (_, apply) -> apply acc)
     in
     match parse args with
@@ -165,12 +164,11 @@ let test_single_test_case () =
       }
   in
   Alcotest.(check int) "one test case" 1 settings.test_cases;
+  Alcotest.(check bool) "unbounded choices" true settings.unbounded_choices;
   Alcotest.(check bool)
     "suppressions added"
     true
-    (List.for_all
-       [ Settings.Too_slow; Test_cases_too_large; Filter_too_much ]
-       ~f:(fun check -> List.mem settings.suppress_health_check check ~equal:Poly.equal))
+    (Poly.equal settings.suppress_health_check [ Settings.Too_slow; Filter_too_much ])
 ;;
 
 (* [Hegel.main] exits, so it runs in a child: this binary re-executed with
@@ -264,7 +262,19 @@ let test_main_failure_replays_from_blob () =
     Alcotest.(check bool)
       "replay reports the failure"
       true
-      (String.is_substring output ~substring:"deliberate failure"))
+      (String.is_substring output ~substring:"deliberate failure");
+    let status, output =
+      run_child ~mode:"fail" ~log [ "--failure-blob"; blob; "--failure-blob"; blob ]
+    in
+    Alcotest.(check bool)
+      "replaying two blobs exits with status 1"
+      true
+      (Poly.equal status (Error (`Exit_non_zero 1)));
+    Alcotest.(check int)
+      "both blobs reproduce"
+      2
+      (List.count (String.split_lines output) ~f:(fun line ->
+         String.is_substring line ~substring:"Exception:")))
 ;;
 
 let tests =

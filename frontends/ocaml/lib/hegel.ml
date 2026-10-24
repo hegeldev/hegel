@@ -49,6 +49,12 @@ type test_location = Internal.test_location =
 
 exception Assume_rejected = Internal.Assume_rejected
 exception Usage_error = Internal.Usage_error
+exception Failed_health_check = Internal.Failed_health_check
+exception Flaky = Internal.Flaky
+exception Unsatisfiable = Internal.Unsatisfiable
+exception Run_error = Internal.Run_error
+exception Multiple_failures = Internal.Multiple_failures
+exception Did_not_reproduce = Internal.Did_not_reproduce
 
 (** {2 Convenience re-exports} *)
 

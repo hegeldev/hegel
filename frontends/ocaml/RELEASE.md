@@ -36,3 +36,28 @@ The other changes you may need to make:
 - `[@@deriving hegel_generator]` no longer defines `sexp_of_<t>`, needs no sexp converter for its field types, and no longer needs `[@sexp.opaque]` on a field. If you used the derived `sexp_of_<t>`, derive it with `ppx_sexp_conv` instead. `Hegel.Derive` no longer re-exports the `Sexplib0.Sexp_conv` converters.
 
 `text` and `characters` now leave character-set validation to the engine. `~categories` may name a category that contains the surrogates, such as `"C"`, and the engine drops the surrogates from it; constraints that leave no characters at all (`~categories:["Cs"]`) raise `Usage_error` when the generator is drawn from rather than when it is built.
+
+A run that ends without a verdict on the property now raises an exception saying why, chosen by the engine's classification of the error, instead of `Failure` with the engine's message:
+
+- `Failed_health_check { check; message }` when a health check failed, naming the check.
+- `Flaky` when the test behaved nondeterministically under the `Error` `nondeterminism_strictness`.
+- `Unsatisfiable` when no valid test case was generated.
+- `Run_error` for any other run error.
+
+A run with several distinct failures raises `Multiple_failures` with their exceptions instead of `Failure "N failures found!"`, a `~failure_blobs` replay that reproduces nothing raises `Did_not_reproduce` instead of `Failure`, and calling `run_hegel_test` from inside a test raises `Usage_error`. Code matching `Failure` for these cases needs to match the new exceptions instead:
+
+```ocaml
+(* before *)
+match run_hegel_test test with
+| () -> ()
+| exception Failure msg when String.starts_with ~prefix:"FailedHealthCheck" msg -> ...
+
+(* after *)
+match run_hegel_test test with
+| () -> ()
+| exception Failed_health_check { check; message } -> ...
+```
+
+`~failure_blobs` now replays every blob in the list, in turn, and reports every failure they reproduce; it used to replay only the first. `Hegel.main` binaries accept `--failure-blob` more than once.
+
+`Settings.t` has a new `unbounded_choices` field. Setting it lets a test case make any number of choices, rather than stopping it as an overrun once it has made 2^20. `Hegel.main` now sets it instead of suppressing the `Test_cases_too_large` health check.

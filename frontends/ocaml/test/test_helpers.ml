@@ -49,7 +49,7 @@ let expect_usage_error gen substring =
 let expect_unsatisfiable run =
   match run () with
   | () -> Alcotest.fail "expected Unsatisfiable"
-  | exception Failure msg ->
+  | exception Hegel.Unsatisfiable msg ->
     Alcotest.(check bool)
       (Printf.sprintf "%S is Unsatisfiable" msg)
       true

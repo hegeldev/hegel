@@ -421,9 +421,15 @@ type test_location = Internal.test_location =
     no database key, so failures are neither stored nor replayed.
     @param failure_blobs
     a list of base64 encoded strings (blobs), where each string encodes the choices
-    made in a failing test run. Only the first blob is used. If no replay fails, the 
-    run raises [Failure] saying the blob did not reproduce. A blob is only guaranteed 
-    to reproduce a failure within the same version of Hegel. *)
+    made in a failing test run. Each blob is replayed in turn, and every failure
+    they reproduce is reported. If none of them reproduces a failure, the run
+    raises {!Did_not_reproduce}. A blob is only guaranteed to reproduce a failure
+    within the same version of Hegel.
+
+    A failing test re-raises the test's own exception after the failure report.
+    When the run reports several distinct failures it raises
+    {!Multiple_failures} instead. A run that ends without a verdict raises
+    {!Failed_health_check}, {!Flaky}, {!Unsatisfiable} or {!Run_error}. *)
 val run_hegel_test
   :  ?settings:Settings.t
   -> ?test_location:test_location
@@ -431,6 +437,41 @@ val run_hegel_test
   -> ?failure_blobs:string list
   -> (test_case -> unit)
   -> unit
+
+(** {3 Run errors} *)
+
+(** A health check failed: the run was likely to test poorly or slowly, such as
+    one that rejects nearly every test case. [check] names the health check
+    that failed; add it to [suppress_health_check] if the behaviour is
+    intentional. [message] is the engine's explanation. *)
+exception
+  Failed_health_check of
+    { check : Settings.health_check option
+    ; message : string
+    }
+
+(** The test behaved nondeterministically under the [Error]
+    [nondeterminism_strictness]: it gave different outcomes, or generated
+    different data, when replayed. The default strictness instead confirms such
+    failures by replaying them and reports them with a caveat. *)
+exception Flaky of string
+
+(** No valid test case was generated: the test's assumptions and filters
+    rejected everything. *)
+exception Unsatisfiable of string
+
+(** Any other run that ended without a verdict: a misuse of the engine at run
+    scope, or a violated engine invariant (a bug in Hegel). *)
+exception Run_error of string
+
+(** The run found several distinct failures (with [report_multiple_failures]).
+    Each is reported before this is raised; it carries their exceptions in the
+    order they were reported. *)
+exception Multiple_failures of exn list
+
+(** None of the [failure_blobs] reproduced a failure: the failure is fixed, or
+    a nondeterministic failure did not occur again in the replays. *)
+exception Did_not_reproduce of string
 
 (**/**)
 
@@ -462,15 +503,16 @@ val run_hegel_test_ppx
       let () = workload ()
     ]}
 
-    The run's [test_cases] is always 1, and the [Too_slow] and
-    [Test_cases_too_large] health checks are always suppressed.
+    The run's [test_cases] is always 1, the [Too_slow] health check is always
+    suppressed, and [unbounded_choices] is set, so the test case may make any
+    number of choices.
 
     If you run a stateful test this way, you probably want a very 
     large [step_count].
 
     The supported flags are [--profile], [--seed], [--verbosity], [--derandomize],
     [--database], [--suppress-health-check], [--backend], [--failure-blob],
-    and [--help]. *)
+    and [--help]. [--failure-blob] may be repeated to replay several blobs. *)
 val main
   :  ?settings:(unit -> Settings.t)
   -> ?test_location:test_location

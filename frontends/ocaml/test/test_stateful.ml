@@ -1072,7 +1072,7 @@ let concurrent_worker_control_exceptions_test () =
          | Hegel.Internal.Internal_error expected ->
            Alcotest.(check string) "internal error propagated" expected message
          | _ -> Alcotest.fail "unexpected internal error")
-      | exception Failure message ->
+      | exception Hegel.Failed_health_check { message; _ } ->
         (match error with
          | Hegel.Internal.Flaky_strategy | Hegel.Internal.Assume_rejected ->
            Alcotest.(check bool)

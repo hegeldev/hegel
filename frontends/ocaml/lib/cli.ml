@@ -5,8 +5,8 @@ exception Parse of string
 let single_test_case (settings : Settings.t) =
   { settings with
     test_cases = 1
-  ; suppress_health_check =
-      Too_slow :: Test_cases_too_large :: settings.suppress_health_check
+  ; suppress_health_check = Too_slow :: settings.suppress_health_check
+  ; unbounded_choices = true
   }
 ;;
 
@@ -75,7 +75,7 @@ let settings_term ~default_settings =
         database
         suppress_health_check
         backend
-        failure_blob
+        failure_blobs
     =
     match
       Option.iter set_default_profile profile;
@@ -93,7 +93,7 @@ let settings_term ~default_settings =
       ; backend = override backend s.backend
       }
     with
-    | settings -> Ok (settings, failure_blob)
+    | settings -> Ok (settings, failure_blobs)
     | exception Parse message -> Error (`Msg message)
   in
   Term.(
@@ -144,22 +144,26 @@ let settings_term ~default_settings =
            ~docv:"BACKEND"
            "Source of randomness: $(b,default) (a seeded generator) or $(b,urandom) \
             (fresh entropy for every choice)."
-       $ flag
-           "failure-blob"
-           Arg.string
-           ~docv:"BLOB"
-           "Replay a failure from the blob instead of generating a test case."))
+       $ Arg.(
+           value
+           & opt_all string []
+           & info
+               [ "failure-blob" ]
+               ~docv:"BLOB"
+               ~doc:
+                 "Replay a failure from the blob instead of generating a test case. \
+                  Repeat it to replay several blobs.")))
 ;;
 
 let main ?(settings = Settings.default) ?test_location ?database_key test_fn =
-  let run (settings, failure_blob) =
+  let run (settings, failure_blobs) =
     Internal.run_test
       ~settings:(single_test_case settings)
       ?test_location
       ~rerun_hint:Command_line
       ~on_failure:(fun () -> exit 1)
       ?database_key
-      ?failure_blobs:(Option.map (fun blob -> [ blob ]) failure_blob)
+      ~failure_blobs
       test_fn
   in
   let info = Cmd.info (Filename.basename Sys.executable_name) in

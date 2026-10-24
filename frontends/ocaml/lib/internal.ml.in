@@ -733,13 +733,39 @@ let print_failure_body ~(settings : Settings.t) ~rerun_hint ~blob ~caveat ~exn ~
 
 let reraise failure = Printexc.raise_with_backtrace failure.exn failure.backtrace
 
+exception
+  Failed_health_check of
+    { check : Settings.health_check option
+    ; message : string
+    }
+
+exception Flaky of string
+exception Unsatisfiable of string
+exception Run_error of string
+exception Multiple_failures of exn list
+exception Did_not_reproduce of string
+
+let run_error_exn ((kind : Ffi.run_error_kind), health_check) message =
+  match kind with
+  | Run_error_health_check ->
+    Failed_health_check { check = Settings.health_check_of_bit health_check; message }
+  | Run_error_flaky -> Flaky message
+  | Run_error_unsatisfiable -> Unsatisfiable message
+  | Run_error_other -> Run_error message
+;;
+
+let did_not_reproduce_message =
+  "The failure blob did not reproduce an error. The failure is fixed, or a \
+   nondeterministic failure did not occur again in the replays."
+;;
+
 (** [run_test ~settings ?test_location ?database_key ?failure_blobs test_fn] runs
     a property test using the given settings against the native engine.
 
-    With an empty [failure_blobs] (the default) it executes the database replay, 
-    generation, and shrinking phases. With a non-empty [failure_blobs]
-    the engine replays the first blob until a replay fails, and ignores the
-    other blobs.
+    With an empty [failure_blobs] (the default) it executes the database replay,
+    generation, and shrinking phases. With a non-empty [failure_blobs] the
+    engine replays each blob in turn, until a replay of it fails, and every
+    failure the blobs reproduced is reported.
 
     @param test_location
       source location of the test. Passed to libhegel, which inside Antithesis
@@ -761,10 +787,9 @@ let reraise failure = Printexc.raise_with_backtrace failure.exn failure.backtrac
       key; pass an explicit key to override. When both are absent, the run has
       no database key, so failures are neither stored nor replayed.
     @param failure_blobs
-      a list of base64 encoded strings (blobs), where each string encodes the choices
-      made in a failing test run. Only the first blob is used. The blob is only guaranteed 
-      to reproduce a failure within
-      a specific version of Hegel *)
+      a list of base64 encoded strings (blobs), where each string encodes the
+      choices made in a failing test run. Every blob is replayed. A blob is only
+      guaranteed to reproduce a failure within a specific version of Hegel *)
 let run_test
       ~(settings : Settings.t)
       ?test_location
@@ -775,7 +800,7 @@ let run_test
       test_fn
   =
   if DLS.get in_test_context
-  then failwith "Cannot nest test cases - already inside a test case";
+  then raise (Usage_error "Cannot nest test cases - already inside a test case");
   (* Default the database key to the test's identity so each [let%hegel_test]
      gets a stable, distinct key: this scopes its persisted corpus and, under
      [derandomize], its per-test seed. An explicit [database_key] wins. *)
@@ -850,47 +875,37 @@ let run_test
       ~output:outcome.output;
     failure_case
   in
-  let handle_result ~is_replay result =
+  let run_error result =
+    run_error_exn
+      (Ffi.result_error_kind ctx result)
+      (Option.value (Ffi.result_error ctx result) ~default:"hegel: run error (no message)")
+  in
+  let handle_result result =
     match Ffi.result_status ctx result with
-    | Run_passed ->
-      if is_replay
-      then
-        failwith
-          "The failure blob did not reproduce an error. The failure is fixed, or a \
-           nondeterministic failure did not occur again in the replays."
-    | Run_error ->
-      raise
-        (Failure
-           (Option.value
-              (Ffi.result_error ctx result)
-              ~default:"hegel: run error (no message)"))
-    | Run_failed ->
+    | Ffi.Run_passed -> []
+    | Ffi.Run_error -> raise (run_error result)
+    | Ffi.Run_failed ->
       let failures = Ffi.result_failures ctx result in
       Fun.protect
         ~finally:(fun () -> List.iter (fun f -> Ffi.failure_free ctx f) failures)
         (fun () ->
            print_failure_header test_location;
            match failures with
-           | [ failure ] ->
-             let failure_case = report_failure failure in
-             on_failure ();
-             reraise failure_case
+           | [ failure ] -> [ report_failure failure ]
            | failures ->
              let count = List.length failures in
-             List.iteri
+             List.mapi
                (fun i failure ->
                   Printf.eprintf
                     "\n%s%!"
                     (stderr_color
                        ansi_red
                        (Printf.sprintf "Failure %d of %d:" (i + 1) count));
-                  (* print failure messages but don't reraise exn *)
-                  ignore (report_failure failure : interesting_case))
-               failures;
-             on_failure ();
-             failwith (Printf.sprintf "%d failures found!" count))
+                  report_failure failure)
+               failures)
   in
-  let drive ~is_replay run =
+  let drive run =
+    Hashtbl.reset captured;
     Fun.protect
       ~finally:(fun () -> Ffi.run_free ctx run)
       (fun () ->
@@ -916,15 +931,32 @@ let run_test
          let result = Ffi.run_result ctx run in
          Fun.protect
            ~finally:(fun () -> Ffi.run_result_free ctx result)
-           (fun () -> handle_result ~is_replay result))
+           (fun () -> handle_result result))
+  in
+  let raise_failures = function
+    | [] -> ()
+    | [ failure ] ->
+      on_failure ();
+      reraise failure
+    | failures ->
+      on_failure ();
+      raise (Multiple_failures (List.map (fun failure -> failure.exn) failures))
   in
   Fun.protect
     ~finally:(fun () ->
       Ffi.settings_free ctx ffi_settings;
       Ffi.context_free ctx)
-    (fun () -> match failure_blobs with
-    | [] -> drive ~is_replay:false (Ffi.run_start ctx ffi_settings)
-    | blob :: _ -> drive ~is_replay:true (Ffi.run_start_blob ctx ffi_settings blob))
+    (fun () ->
+       match failure_blobs with
+       | [] -> raise_failures (drive (Ffi.run_start ctx ffi_settings))
+       | blobs ->
+         (match
+            List.concat_map
+              (fun blob -> drive (Ffi.run_start_blob ctx ffi_settings blob))
+              blobs
+          with
+          | [] -> raise (Did_not_reproduce did_not_reproduce_message)
+          | failures -> raise_failures failures))
 ;;
 
 (** [run_hegel_test ?settings ?test_location ?database_key ?failure_blobs test_fn]

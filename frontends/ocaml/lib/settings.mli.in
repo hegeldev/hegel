@@ -209,6 +209,10 @@ type health_check =
 (** [health_check_to_string hc] returns the canonical name for [hc]. *)
 val health_check_to_string : health_check -> string
 
+(** [health_check_of_bit bit] is the health check whose [HEGEL_HC_*] bit is
+    [bit], if any. *)
+val health_check_of_bit : int -> health_check option
+
 (**/**)
 
 (** How much output Hegel produces during a run. In [hegel.toml]: [quiet],
@@ -314,6 +318,13 @@ type t =
   ; nondeterminism_strictness : Nondeterminism_strictness.t
     (** How a run handles nondeterministic test behavior. [Quiet] in the
         [base] profile. *)
+  ; unbounded_choices : bool
+    (** Let a test case make any number of choices (draws, spans, collection
+        and clone steps). When [false] (the base setting), a test case that
+        makes more than 2{^20} choices is stopped as an overrun. A long-running
+        test case, such as a concurrent state machine driven for hours, needs
+        it; the cost is the memory to record every choice. Suppressing
+        [Test_cases_too_large] also lifts the limit. *)
   }
 
 (** {2:functions Functions} *)

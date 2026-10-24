@@ -368,7 +368,49 @@ val state_machine_should_check_invariant
     the test case has aborted, and safe in any order relative to freeing it. *)
 val state_machine_free : test_case -> state_machine:state_machine -> unit
 
+(** {2 Run errors}
+
+    A run that ends without a verdict on the property raises one of these,
+    chosen by the engine's classification of the error. Each carries the
+    engine's message. *)
+
+(** A health check failed: the run was likely to test poorly or slowly, such
+    as one that rejects nearly every test case. [check] is the health check
+    that failed; suppress it with [suppress_health_check] if the behaviour is
+    intentional. *)
+exception
+  Failed_health_check of
+    { check : Settings.health_check option
+    ; message : string
+    }
+
+(** The test behaved nondeterministically under the [Error]
+    [nondeterminism_strictness]: it gave different outcomes, or generated
+    different data, when replayed. *)
+exception Flaky of string
+
+(** No valid test case was generated: the test's assumptions and filters
+    rejected everything. *)
+exception Unsatisfiable of string
+
+(** Any other run error: a misuse of the engine at run scope, or a violated
+    engine invariant (a bug in Hegel). *)
+exception Run_error of string
+
+(** A run found several distinct failures (with [report_multiple_failures]).
+    Each is reported before this is raised; it carries their exceptions. *)
+exception Multiple_failures of exn list
+
+(** None of the [failure_blobs] reproduced a failure: the failure is fixed, or
+    a nondeterministic failure did not occur again in the replays. *)
+exception Did_not_reproduce of string
+
 (**/**)
+
+(** [run_error_exn (kind, health_check) message] is the exception for a run
+    that errored with [kind] (and, for a health check, the failed check's
+    bit). *)
+val run_error_exn : Hegel_ffi.Ffi.run_error_kind * int -> string -> exn
 
 (** How a failing run's [rerun with:] prints *)
 type rerun_hint =
@@ -397,8 +439,9 @@ type rerun_hint =
       re-raised. [Hegel.main] exits from it.
     @param failure_blobs
       a list of base64 encoded strings (blobs), where each string encodes the
-      choices made in a failing test run. Only the first blob is used. The blob 
-      is only guaranteed to reproduce a failure within a specific version of Hegel *)
+      choices made in a failing test run. Each blob is replayed in turn, and
+      every failure they reproduce is reported. A blob is only guaranteed to
+      reproduce a failure within a specific version of Hegel *)
 val run_test
   :  settings:Settings.t
   -> ?test_location:test_location

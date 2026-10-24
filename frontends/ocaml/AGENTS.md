@@ -98,8 +98,8 @@ lib/                         # Library source
   cli.ml / cli.mli           # Hegel.main: cmdliner flags (--profile applied
                              #   first, through set_default_profile, before the
                              #   caller's settings thunk runs), single_test_case
-                             #   (test_cases = 1, Too_slow + Test_cases_too_large
-                             #   suppressed, which lifts the choice limit), and
+                             #   (test_cases = 1, Too_slow suppressed,
+                             #   unbounded_choices set), and
                              #   main (Cmd.eval ~catch:false, then exit).
                              #   Doc-hidden re-export Hegel.Cli for tests
   settings.ml / settings.mli # Hegel.Settings: the settings record (type t), its
@@ -431,8 +431,11 @@ Hegel.main ~settings:(fun () -> <[@@settings]>) ~test_location (fun tc ->
 body)` with the same draw-name injection: the entry point of an executable
 that runs exactly one test case per invocation (hegel-rust's
 `#[hegel::main]`). The user writes `let () = name ()`. It rejects
-`[@@failure_blobs]` (the binary takes `--failure-blob`, and failures print
-that form: `Internal.rerun_hint = Command_line`) and `[@async]`. There are no
+`[@@failure_blobs]` (the binary takes `--failure-blob`, repeatable, and
+failures print that form: `Internal.rerun_hint = Command_line`) and `[@async]`.
+`Cli.single_test_case` sets `test_cases = 1`, suppresses `Too_slow` and sets
+`unbounded_choices`, so a long-running test case is not cut off at the
+engine's choice limit. There are no
 user-defined flags: an unknown argument is a cmdliner error (exit 124), as in
 Rust. `Hegel.main` exits, so `test_cli.ml` and `test_ppx_hegel_test.ml`
 re-execute their own binary with `HEGEL_TEST_MAIN_CHILD` set to test it.
@@ -669,13 +672,15 @@ defaulting to `Settings.default ()`. The `let%hegel_test` PPX targets the
 doc-hidden `Hegel.run_hegel_test_ppx` — a thin wrapper that sets
 `~rerun_hint:Attribute` on `Internal.run_hegel_test` — so the PPX-vs-plain
 signal never appears on the public `run_hegel_test`. The `[@@failure_blobs ...]` record/replay workflow is
-supported: the PPX forwards the listed blobs as `~failure_blobs`, which starts
-the run with `hegel_run_start_blob` on the first blob (pair it with
-`print_blob = false` to suppress the `rerun with:` line that failing runs
-print by default). The engine replays the blob until a replay fails; the run
-goes through the same loop and report as a normal run, with no `rerun with:`
-line, and a run that passes raises "The failure blob did not reproduce an
-error". `run_test ?rerun_hint` (`Argument` | `Attribute` | `Command_line`) picks the
+supported: the PPX forwards the listed blobs as `~failure_blobs`, and
+`run_test` starts one `hegel_run_start_blob` run per blob, in order (pair it
+with `print_blob = false` to suppress the `rerun with:` line that failing
+runs print by default). The engine replays each blob until a replay fails;
+each run goes through the same loop and report as a normal run, with no
+`rerun with:` line. The failures of every run are then raised together as
+for a normal run (one re-raises its exception, several raise
+`Multiple_failures`), and when no blob reproduced, the run raises
+`Did_not_reproduce`. `run_test ?rerun_hint` (`Argument` | `Attribute` | `Command_line`) picks the
 form of the `rerun with:` line; the PPX entry points pass `Attribute`,
 `Hegel.main` passes `Command_line`. `hegel_run_start_blob` rejects an undecodable blob with
 `HEGEL_E_INVALID_ARG`, so `check_rc` raises `Usage_error`. For persisting and replaying
@@ -781,7 +786,13 @@ its capture: the output, the exception, `note: <caveat>`
 (`hegel_failure_caveat`, only under nondeterministic handling), and
 `rerun with:` when the failure has a blob (an unconfirmed failure has none).
 A single failure re-raises its captured exception with its backtrace; several
-are aggregated into "N failures found!". `?on_failure` runs after the report and
+raise `Multiple_failures` with their exceptions. A run that ends in
+`Run_error` raises the exception for the engine's
+`hegel_run_result_error_kind` (`Internal.run_error_exn`):
+`Failed_health_check { check; message }` (the check from the kind's
+health-check bit), `Flaky` (flaky and nondeterministic), `Unsatisfiable`, or
+`Run_error` (usage, internal, or an unknown kind), each with the engine's
+message. A nested run raises `Usage_error`. `?on_failure` runs after the report and
 before that raise; `Hegel.main` exits 1 from it (the exit cannot live in the
 portable `Internal`), so a binary prints only the report. Run and usage errors
 still escape `main` as exceptions, since nothing has printed them. `drive` serves both a normal run and

@@ -64,6 +64,7 @@ type t =
   ; show_statistics : bool
   ; backend : backend
   ; nondeterminism_strictness : Nondeterminism_strictness.t
+  ; unbounded_choices : bool
   }
 
 (* ------------------------------------------------------------------ *)
@@ -127,6 +128,10 @@ let health_check_bit = function
   | Large_initial_test_case -> Ffi.hc_large_initial_test_case
 ;;
 
+let health_check_of_bit bit =
+  List.find_opt (fun hc -> health_check_bit hc = bit) all_health_checks
+;;
+
 let bitmask bit_of items = List.fold_left (fun acc x -> acc lor bit_of x) 0 items
 let of_bitmask bit_of all mask = List.filter (fun x -> mask land bit_of x <> 0) all
 
@@ -153,6 +158,7 @@ let of_ffi ctx s =
   ; backend = backend_of_ffi (Ffi.settings_get_backend ctx s)
   ; nondeterminism_strictness =
       nondeterminism_strictness_of_ffi (Ffi.settings_get_nondeterminism_strictness ctx s)
+  ; unbounded_choices = Ffi.settings_get_unbounded_choices ctx s
   }
 ;;
 
@@ -171,6 +177,7 @@ let to_ffi ctx t ~database_key =
     s
     (ffi_nondeterminism_strictness t.nondeterminism_strictness);
   Ffi.settings_print_blob ctx s t.print_blob;
+  Ffi.settings_unbounded_choices ctx s t.unbounded_choices;
   Ffi.settings_database
     ctx
     s

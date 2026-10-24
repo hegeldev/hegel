@@ -124,6 +124,7 @@ let test_register_profile_round_trip () =
              | 0 -> Quiet
              | 1 -> Warn
              | _ -> Error)
+        ; unbounded_choices = i mod 2 = 0
         }
       in
       Settings.register_profile name s;
@@ -409,7 +410,8 @@ let test_run_nested_guard () =
      run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:5 ()) (fun _tc ->
        run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:1 ()) (fun _ -> ()))
    with
-   | Failure msg when Test_helpers.contains_substring msg "nest" -> got_failure := true
+   | Usage_error msg when Test_helpers.contains_substring msg "nest" ->
+     got_failure := true
    | _ -> ());
   Alcotest.(check bool) "nested run rejected" true !got_failure
 ;;
@@ -605,25 +607,21 @@ exception B
 
 (** Two distinct failing assertions surface as an aggregate failure. *)
 let test_run_multiple_failures () =
-  let msg =
-    try
-      run_hegel_test
-        ~settings:
-          { (Hegel.Settings.create ~test_cases:300 ~seed:9 ()) with
-            report_multiple_failures = true
-          }
-        (fun tc ->
-           let v = Hegel.draw tc int_gen in
-           if v >= 60 then raise A;
-           if v <= 30 then raise B);
-      None
-    with
-    | Failure m -> Some m
-    | _ -> None
-  in
-  match msg with
-  | Some m -> Alcotest.(check string) "reports both failures" "2 failures found!" m
-  | None -> Alcotest.fail "expected multiple failures"
+  match
+    run_hegel_test
+      ~settings:
+        { (Hegel.Settings.create ~test_cases:300 ~seed:9 ()) with
+          report_multiple_failures = true
+        }
+      (fun tc ->
+         let v = Hegel.draw tc int_gen in
+         if v >= 60 then raise A;
+         if v <= 30 then raise B)
+  with
+  | () -> Alcotest.fail "expected multiple failures"
+  | exception Hegel.Multiple_failures [ A; B ] -> ()
+  | exception Hegel.Multiple_failures exns ->
+    Alcotest.failf "unexpected failures: %d" (List.length exns)
 ;;
 
 (** [color_enabled] decision table: a HEGEL_COLOR override of 1/0 wins, anything
@@ -676,22 +674,64 @@ let test_stderr_color () =
     Alcotest.(check string) "disabled is identity" "x" (Internal.stderr_color "31" "x"))
 ;;
 
-(** A health-check failure is a run-level error (no counterexample), surfaced as
-    a [Failure] carrying the engine's error message. *)
+(** A health-check failure is a run-level error (no counterexample), raised as
+    [Failed_health_check] naming the check, with the engine's message. *)
 let test_run_health_check_failure () =
-  let raised =
-    try
-      run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:50 ()) (fun tc ->
-        let v = Hegel.draw tc int_gen in
-        (* Always-false precondition: every case is invalid →
-           FilterTooMuch. *)
-        assume tc (v > 1_000_000));
-      false
-    with
-    | Failure msg -> String.is_substring msg ~substring:"FailedHealthCheck: FilterTooMuch"
-    | _ -> false
+  match
+    run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:50 ()) (fun tc ->
+      let v = Hegel.draw tc int_gen in
+      (* Always-false precondition: every case is invalid →
+         FilterTooMuch. *)
+      assume tc (v > 1_000_000))
+  with
+  | () -> Alcotest.fail "expected Failed_health_check"
+  | exception Hegel.Failed_health_check { check; message } ->
+    Alcotest.(check bool)
+      "the failed check"
+      true
+      (Poly.equal check (Some Settings.Filter_too_much));
+    Alcotest.(check bool)
+      "filter health-check diagnostic surfaced"
+      true
+      (String.is_substring message ~substring:"FilterTooMuch")
+;;
+
+(** Each engine run-error kind maps to its own exception. *)
+let test_run_error_kinds () =
+  let classify kind health_check =
+    Internal.run_error_exn (kind, health_check) "message"
   in
-  Alcotest.(check bool) "filter health-check diagnostic surfaced" true raised
+  Alcotest.(check bool)
+    "health check"
+    true
+    (match classify Hegel_ffi.Ffi.Run_error_health_check Hegel_ffi.Ffi.hc_too_slow with
+     | Hegel.Failed_health_check { check = Some Settings.Too_slow; message = "message" }
+       -> true
+     | _ -> false);
+  Alcotest.(check bool)
+    "unknown health check"
+    true
+    (match classify Hegel_ffi.Ffi.Run_error_health_check 0 with
+     | Hegel.Failed_health_check { check = None; _ } -> true
+     | _ -> false);
+  Alcotest.(check bool)
+    "flaky"
+    true
+    (match classify Hegel_ffi.Ffi.Run_error_flaky 0 with
+     | Hegel.Flaky "message" -> true
+     | _ -> false);
+  Alcotest.(check bool)
+    "unsatisfiable"
+    true
+    (match classify Hegel_ffi.Ffi.Run_error_unsatisfiable 0 with
+     | Hegel.Unsatisfiable "message" -> true
+     | _ -> false);
+  Alcotest.(check bool)
+    "other"
+    true
+    (match classify Hegel_ffi.Ffi.Run_error_other 0 with
+     | Hegel.Run_error "message" -> true
+     | _ -> false)
 ;;
 
 (** Exercise the optional-argument default paths of the primitives:
@@ -790,6 +830,7 @@ let tests =
   ; Alcotest.test_case "run flaky strategy" `Quick test_run_flaky_strategy
   ; Alcotest.test_case "run multiple failures" `Quick test_run_multiple_failures
   ; Alcotest.test_case "run health-check failure" `Quick test_run_health_check_failure
+  ; Alcotest.test_case "run error kinds" `Quick test_run_error_kinds
   ; Alcotest.test_case "run primitive defaults" `Quick test_run_primitive_defaults
   ]
 ;;

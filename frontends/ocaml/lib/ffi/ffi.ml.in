@@ -246,6 +246,12 @@ let c_settings_show_statistics =
     (handle_t @-> handle_t @-> bool @-> returning int)
 ;;
 
+let c_settings_unbounded_choices =
+  foreign
+    "hegel_settings_set_unbounded_choices"
+    (handle_t @-> handle_t @-> bool @-> returning int)
+;;
+
 let c_settings_database =
   foreign
     "hegel_settings_set_database"
@@ -355,6 +361,12 @@ let c_settings_get_report_multiple_failures =
 let c_settings_get_show_statistics =
   foreign
     "hegel_settings_get_show_statistics"
+    (handle_t @-> handle_t @-> ptr bool @-> returning int)
+;;
+
+let c_settings_get_unbounded_choices =
+  foreign
+    "hegel_settings_get_unbounded_choices"
     (handle_t @-> handle_t @-> ptr bool @-> returning int)
 ;;
 
@@ -836,6 +848,12 @@ let c_result_error =
     (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
 ;;
 
+let c_result_error_kind =
+  foreign
+    "hegel_run_result_error_kind"
+    (handle_t @-> handle_t @-> ptr int @-> ptr uint32_t @-> returning int)
+;;
+
 let c_result_failure_count =
   foreign
     "hegel_run_result_failure_count"
@@ -914,6 +932,12 @@ type run_status =
   | Run_passed
   | Run_failed
   | Run_error
+
+type run_error_kind =
+  | Run_error_health_check
+  | Run_error_flaky
+  | Run_error_unsatisfiable
+  | Run_error_other
 
 exception Stop_test
 exception Assume_rejected
@@ -1098,6 +1122,10 @@ let settings_stop_on_first_failure ctx s b =
 ;;
 
 let settings_show_statistics ctx s b = check_rc ctx (c_settings_show_statistics ctx s b)
+
+let settings_unbounded_choices ctx s b =
+  check_rc ctx (c_settings_unbounded_choices ctx s b)
+;;
 let settings_database ctx s d = check_rc ctx (c_settings_database ctx s d)
 let settings_database_key ctx s k = check_rc ctx (c_settings_database_key ctx s k)
 
@@ -1190,6 +1218,10 @@ let settings_get_stop_on_first_failure ctx s =
 ;;
 
 let settings_get_show_statistics ctx s = get_bool c_settings_get_show_statistics ctx s
+
+let settings_get_unbounded_choices ctx s =
+  get_bool c_settings_get_unbounded_choices ctx s
+;;
 let settings_get_print_blob ctx s = get_bool c_settings_get_print_blob ctx s
 
 let settings_get_backend ctx s =
@@ -1806,6 +1838,25 @@ let result_error ctx r =
   !@out
 ;;
 
+(* [HEGEL_RUN_ERROR_*] values: flaky and nondeterministic runs are both
+   [Run_error_flaky]; usage, internal and any unknown future kind are
+   [Run_error_other]. *)
+let run_error_kinds =
+  [ 1, Run_error_health_check
+  ; 2, Run_error_flaky
+  ; 3, Run_error_flaky
+  ; 4, Run_error_unsatisfiable
+  ]
+;;
+
+let result_error_kind ctx r =
+  let kind = allocate int 0 in
+  let health_check = allocate uint32_t Unsigned.UInt32.zero in
+  check_rc ctx (c_result_error_kind ctx r kind health_check);
+  ( Option.value (List.assoc_opt !@kind run_error_kinds) ~default:Run_error_other
+  , Unsigned.UInt32.to_int !@health_check )
+;;
+
 let result_failure_count ctx r =
   let out = allocate size_t (Unsigned.Size_t.of_int 0) in
   check_rc ctx (c_result_failure_count ctx r out);
@@ -1864,6 +1915,7 @@ let settings_derandomize = Obj.magic_portable settings_derandomize
 let settings_report_multiple_failures = Obj.magic_portable settings_report_multiple_failures
 let settings_stop_on_first_failure = Obj.magic_portable settings_stop_on_first_failure
 let settings_show_statistics = Obj.magic_portable settings_show_statistics
+let settings_unbounded_choices = Obj.magic_portable settings_unbounded_choices
 let settings_database = Obj.magic_portable settings_database
 let settings_database_key = Obj.magic_portable settings_database_key
 let settings_test_location = Obj.magic_portable settings_test_location
@@ -1880,6 +1932,7 @@ let settings_get_suppress_health_check = Obj.magic_portable settings_get_suppres
 let settings_get_report_multiple_failures = Obj.magic_portable settings_get_report_multiple_failures
 let settings_get_stop_on_first_failure = Obj.magic_portable settings_get_stop_on_first_failure
 let settings_get_show_statistics = Obj.magic_portable settings_get_show_statistics
+let settings_get_unbounded_choices = Obj.magic_portable settings_get_unbounded_choices
 let settings_get_print_blob = Obj.magic_portable settings_get_print_blob
 let settings_get_backend = Obj.magic_portable settings_get_backend
 
@@ -1963,6 +2016,7 @@ let test_case_printer = Obj.magic_portable test_case_printer
 let note = Obj.magic_portable note
 let result_status = Obj.magic_portable result_status
 let result_error = Obj.magic_portable result_error
+let result_error_kind = Obj.magic_portable result_error_kind
 let result_failure_count = Obj.magic_portable result_failure_count
 let result_failure = Obj.magic_portable result_failure
 let result_failures = Obj.magic_portable result_failures

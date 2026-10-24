@@ -149,6 +149,21 @@ type run_status =
   | Run_failed
   | Run_error
 
+(** Why a run ended in {!Run_error} ([hegel_run_error_kind_t]), read with
+    {!result_error_kind}.
+
+    - [Run_error_health_check]: a health check failed.
+    - [Run_error_flaky]: under the [error] nondeterminism strictness, the test
+      gave different outcomes, or generated different data, when replayed.
+    - [Run_error_unsatisfiable]: no valid test case was generated.
+    - [Run_error_other]: a usage error, a violated engine invariant, or a kind
+      this binding does not know. *)
+type run_error_kind =
+  | Run_error_health_check
+  | Run_error_flaky
+  | Run_error_unsatisfiable
+  | Run_error_other
+
 (** Raised when a primitive returns [HEGEL_E_STOP_TEST]. The engine has
     exhausted its choice budget for the current test case. *)
 exception Stop_test
@@ -261,6 +276,10 @@ val settings_stop_on_first_failure : context -> settings -> bool -> unit
     statistics block aggregating {!event}/{!event_value} observations. *)
 val settings_show_statistics : context -> settings -> bool -> unit
 
+(** [settings_unbounded_choices ctx s b] lifts the per-test-case choice limit
+    when [b] is [true]. *)
+val settings_unbounded_choices : context -> settings -> bool -> unit
+
 (** [settings_database ctx s db] configures the on-disk example database: [None]
     leaves the default, [Some ""] disables it, [Some dir] uses [dir]. *)
 val settings_database : context -> settings -> string option -> unit
@@ -312,6 +331,7 @@ val settings_get_suppress_health_check : context -> settings -> int
 val settings_get_report_multiple_failures : context -> settings -> bool
 val settings_get_stop_on_first_failure : context -> settings -> bool
 val settings_get_show_statistics : context -> settings -> bool
+val settings_get_unbounded_choices : context -> settings -> bool
 val settings_get_print_blob : context -> settings -> bool
 val settings_get_backend : context -> settings -> backend
 val settings_get_nondeterminism_strictness
@@ -754,6 +774,12 @@ val result_status : context -> run_result -> run_status
     client mistake, or a violated internal engine invariant. [None] when the run
     completed normally. *)
 val result_error : context -> run_result -> string option
+
+(** [result_error_kind ctx r] is why the run errored, with the
+    [HEGEL_HC_*] bit of the failed health check for
+    {!Run_error_health_check} (0 otherwise). Only meaningful when the run's
+    status is {!Run_error}. *)
+val result_error_kind : context -> run_result -> run_error_kind * int
 
 val result_failure_count : context -> run_result -> int
 
