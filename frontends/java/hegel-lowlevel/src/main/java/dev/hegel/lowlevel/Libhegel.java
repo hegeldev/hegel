@@ -266,6 +266,87 @@ public interface Libhegel {
      */
     void testCaseSetWorker(long tc, long workerIndex);
 
+    /**
+     * {@code hegel_test_case_block}: a caller-owned handle onto the <em>same</em> choice stream as
+     * {@code tc} whose print region is a block nested in {@code tc}'s at the current position, every
+     * line of it {@code indent} columns further in. Drawing through it is drawing through {@code tc},
+     * so the two must not be driven concurrently. Returns the raw rc and on OK writes the handle into
+     * {@code out[0]}; release it with {@link #testCaseFree}.
+     */
+    int testCaseBlock(long tc, long indent, long[] out);
+
+    // Output. The engine owns a per-test-case document that every handle of the family prints
+    // into; it lays the document out and attributes worker lines, and the frontend reads it back.
+
+    /**
+     * {@code hegel_note}: append {@code text} to {@code tc}'s print region, each {@code \n}-separated
+     * line its own output line. Returns the raw rc ({@link Abi#E_INVALID_HANDLE} once the
+     * document has been read).
+     */
+    int note(long tc, String text);
+
+    /**
+     * {@code hegel_test_case_printer} with default options: a caller-owned printer onto {@code
+     * tc}'s print region. Returns the raw rc and on OK writes the handle into {@code out[0]};
+     * release it with {@link #printerFree}.
+     */
+    int testCasePrinter(long tc, long[] out);
+
+    /**
+     * {@code hegel_printer_new} with default options: a caller-owned standalone document, released
+     * with {@link #printerFree}.
+     */
+    long printerNew();
+
+    /** {@code hegel_printer_free}. Freeing never discards document content. */
+    void printerFree(long printer);
+
+    /**
+     * {@code hegel_printer_text}: unbreakable text, which must not contain newlines. The printer
+     * calls return the raw rc: {@link Abi#E_INVALID_HANDLE} once the region is dead.
+     */
+    int printerText(long printer, String text);
+
+    /** {@code hegel_printer_breakable}: {@code sep} when the enclosing group fits, a line break when not. */
+    int printerBreakable(long printer, String sep);
+
+    /** {@code hegel_printer_hard_break}: an unconditional newline. */
+    int printerHardBreak(long printer);
+
+    /** {@code hegel_printer_begin_group}: emit {@code open} and indent break points by {@code indent}. */
+    int printerBeginGroup(long printer, long indent, String open);
+
+    /** {@code hegel_printer_end_group}: close the innermost group and emit {@code close}. */
+    int printerEndGroup(long printer, String close);
+
+    /**
+     * {@code hegel_printer_reflow} with default options: lay out a flat one-line representation
+     * (a {@code toString()}) through groups recovered from its brackets.
+     */
+    int printerReflow(long printer, String text);
+
+    /** {@code hegel_printer_begin_speculative}: buffer later writes until committed or aborted. */
+    int printerBeginSpeculative(long printer);
+
+    /** {@code hegel_printer_commit_speculative}: keep the innermost speculative region. */
+    int printerCommitSpeculative(long printer);
+
+    /** {@code hegel_printer_abort_speculative}: discard the innermost speculative region. */
+    int printerAbortSpeculative(long printer);
+
+    /**
+     * {@code hegel_printer_resolve}: splice every deferred region (a clone's output) in at its anchor
+     * and seal the document, through its root handle. Returns the raw rc: {@link
+     * Abi#E_INVALID_ARG} when there is nothing to resolve.
+     */
+    int printerResolve(long printer);
+
+    /**
+     * {@code hegel_printer_value}: read (and seal) the whole document through its root handle.
+     * Returns the raw rc and on OK writes the text into {@code out[0]}.
+     */
+    int printerValue(long printer, String[] out);
+
     // Per-test-case draws. Each returns the raw rc.
     int generateBoolean(long tc, double p, boolean[] out);
 

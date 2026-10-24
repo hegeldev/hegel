@@ -37,7 +37,7 @@ class LibraryApiTest {
         assertEquals(1, report.failures().size());
         Failure f = report.failures().get(0);
         assertEquals(Map.of("x", 11), f.draws());
-        assertEquals(List.of("observed x=11"), f.notes());
+        assertEquals(List.of("x = 11;", "observed x=11"), f.output());
         assertTrue(f.exception() instanceof AssertionError);
         assertTrue(f.exception().getMessage().contains("x was too big: 11"));
         assertTrue(f.origin().startsWith("AssertionFailedError at "), f.origin());

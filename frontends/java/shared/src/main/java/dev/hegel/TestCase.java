@@ -4,11 +4,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -21,165 +19,157 @@ import java.util.function.Supplier;
  * context with {@link #note(String)}, and guide the search with {@link #target(double)}.
  *
  * <p>On an execution the engine stamped for capture ({@link #isFinal()}) — the final replay of a
- * minimal failing example among them — each top-level {@code draw} and each note is recorded, and
- * if the case fails and the engine reports that failure, they are handed to the run's {@link
- * Reporter} (the default prints {@code x = 42;}) and carried by the resulting {@link Failure}, so
- * the counterexample is readable. Under {@link Verbosity#VERBOSE} or higher the reporter sees every
- * case's draws and notes live. A label drawn more than once in a case is numbered from its second
- * use ({@code x}, {@code x_2}, {@code x_3}); unlabelled draws are {@code draw_1}, {@code draw_2},
- * ...
+ * minimal failing example among them — and on every execution of a {@linkplain Verbosity#VERBOSE
+ * verbose} run, each top-level {@code draw} is printed as {@code x = 42;} and each note as its
+ * text into the engine's document for the case, which lays out long values over several lines and
+ * attributes concurrent workers' lines. If the case fails and the engine reports that failure, the
+ * run's {@link Reporter} receives the rendered lines and the resulting {@link Failure} carries
+ * them, so the counterexample is readable. A label drawn more than once in a case is numbered from
+ * its second use ({@code x}, {@code x_2}, {@code x_3}); unlabelled draws are {@code draw_1}, {@code
+ * draw_2}, ...
  *
  * <p>Frontends implementing their own composite generators enclose their draws in a labelled
  * {@link #span(long, Supplier) span} so the engine can shrink the structure they build.
  */
 public final class TestCase {
     private final DataSource source;
-    /** Whether the engine stamped this execution for capture: its draws and notes are recorded. */
-    private final boolean captured;
-    /** Whether draws and notes reach the reporter live (a verbose run). */
-    private final boolean reporting;
-
-    private final Reporter reporter;
-    /**
-     * The root handle of this test case, whose draw-name counter every handle of the case shares:
-     * {@code this} for the root, the root for a worker handle (see {@link #forWorker}).
-     */
-    private final TestCase root;
-    /** The concurrent worker this is a per-round handle for, or {@code -1} for the root. */
-    private final int worker;
-    /** Reference instant for a worker handle's line stamps ({@link System#nanoTime()}). */
-    private final long startNanos;
-
-    private final Map<String, Object> draws = new LinkedHashMap<>();
-    private final List<String> notes = new ArrayList<>();
-    /**
-     * The recorded draws and notes in report order. On a worker handle this is the round's
-     * buffer, absorbed by the root at the join point ({@link #absorb}).
-     */
-    private final List<Event> events = new ArrayList<>();
-    /**
-     * Uses per draw name, for numbering repeats ({@code x}, {@code x_2}, ...; {@code draw_N}).
-     * Only the root's is used; worker handles go through {@link #nextName} on the root.
-     */
-    private final Map<String, Integer> nameUses = new HashMap<>();
-    /** Notes made while a top-level draw is in progress; flushed after that draw's line. */
-    private final List<String> pendingNotes = new ArrayList<>();
+    /** What every handle of one test case shares: the capture decision, draw names and draws. */
+    private final Shared shared;
+    /** This handle's printer onto its own print region, fetched on its first printed draw. */
+    private Printer printer;
 
     private int drawDepth;
 
-    /** A recorded draw ({@code message == null}) or note, as the reporter would be told about it. */
-    private static final class Event {
-        /** The draw's name as reported (stamped with the worker prefix on a worker handle). */
-        final String name;
-        /** The draw's plain name, the key it is recorded under. */
-        final String key;
+    /** The state every handle of one test case shares, whichever thread it is driven from. */
+    private static final class Shared {
+        /** Whether the engine stamped this execution for capture: its draws are recorded. */
+        final boolean captured;
+        /** Whether draws and notes are printed to the case's document at all. */
+        final boolean emits;
+        /** Uses per draw name, for numbering repeats ({@code x}, {@code x_2}, ...; {@code draw_N}). */
+        private final Map<String, Integer> nameUses = new HashMap<>();
 
-        final Object value;
-        final String message;
+        private final Map<String, Object> draws = new LinkedHashMap<>();
+        /** Every block handle opened in the case, kept alive until the case is over. */
+        private final List<TestCase> blocks = new ArrayList<>();
 
-        Event(String name, String key, Object value, String message) {
-            this.name = name;
-            this.key = key;
-            this.value = value;
-            this.message = message;
+        Shared(boolean captured, boolean verbose) {
+            this.captured = captured;
+            this.emits = captured || verbose;
         }
 
-        void replay(Reporter reporter, boolean finalReplay) {
-            if (message != null) {
-                reporter.note(message, finalReplay);
-            } else {
-                reporter.draw(name, value, finalReplay);
+        /**
+         * The name a top-level draw reports under: a label prints bare the first time and numbered
+         * from its second use ({@code x}, {@code x_2}, ...); an unlabelled draw is {@code draw_N},
+         * counting unlabelled draws only. Names are unique across the whole case, so concurrent
+         * workers name their draws through here too.
+         */
+        synchronized String nextName(String label) {
+            String base = label != null ? label : "draw";
+            int uses = nameUses.merge(base, 1, Integer::sum);
+            if (label == null) {
+                return base + "_" + uses;
+            }
+            return uses == 1 ? label : label + "_" + uses;
+        }
+
+        synchronized void record(String name, Object value) {
+            if (captured) {
+                draws.put(name, value);
             }
         }
+
+        synchronized Map<String, Object> draws() {
+            return new LinkedHashMap<>(draws);
+        }
+
+        synchronized void addBlock(TestCase block) {
+            blocks.add(block);
+        }
+
+        synchronized List<TestCase> takeBlocks() {
+            List<TestCase> taken = new ArrayList<>(blocks);
+            blocks.clear();
+            return taken;
+        }
     }
 
-    TestCase(DataSource source, boolean captured, Reporter reporter) {
-        this(source, captured, false, reporter);
+    TestCase(DataSource source, boolean captured) {
+        this(source, captured, false);
     }
 
-    TestCase(DataSource source, boolean captured, boolean verbose, Reporter reporter) {
+    TestCase(DataSource source, boolean captured, boolean verbose) {
+        this(source, new Shared(captured, verbose));
+    }
+
+    private TestCase(DataSource source, Shared shared) {
         this.source = source;
-        this.captured = captured;
-        this.reporting = verbose;
-        this.reporter = reporter;
-        this.root = this;
-        this.worker = -1;
-        this.startNanos = 0;
-    }
-
-    private TestCase(DataSource source, TestCase root, int worker, long startNanos) {
-        this.source = source;
-        this.captured = root.captured;
-        this.reporting = root.reporting;
-        this.reporter = root.reporter;
-        this.root = root;
-        this.worker = worker;
-        this.startNanos = startNanos;
+        this.shared = shared;
     }
 
     /**
      * A handle for concurrent worker {@code worker} to draw through for one round of a stateful
      * machine: an independent choice stream of the same case (see {@link
-     * DataSource#cloneForWorker}) whose draws and notes are buffered, stamped {@code [worker N
-     * +X.XXXms]} with the time since {@code startNanos}, and handed to this root at the join point
-     * by {@link #absorb}. Release it with {@link #release()} once the round is over.
+     * DataSource#cloneForWorker}) whose output the engine stamps {@code [worker N +X.XXXms]} and
+     * anchors where the handle was made. Release it with {@link #release()} once the round is over.
      */
-    TestCase forWorker(int worker, long startNanos) {
-        return new TestCase(source.cloneForWorker(worker), this, worker, startNanos);
+    TestCase forWorker(int worker) {
+        return new TestCase(source.cloneForWorker(worker), shared);
     }
 
-    /** The worker this handle belongs to, or {@code -1} for the root. */
-    int worker() {
-        return worker;
+    /**
+     * A handle for an indented section of this one's output, such as a stateful rule's body under
+     * its heading: it draws from this handle's own choice stream (so the two must not be driven
+     * concurrently) and everything it prints lands in a block {@code indent} columns further in.
+     * The handle stays valid until the case is over — a {@link Pool} made inside a rule keeps
+     * drawing through it — and is freed by {@link #releaseBlocks()}.
+     */
+    TestCase block(long indent) {
+        TestCase block = new TestCase(source.block(indent), shared);
+        shared.addBlock(block);
+        return block;
     }
 
-    /** Free the clone handle behind a worker handle from {@link #forWorker}. */
+    /** Free a handle from {@link #forWorker}, and its printer. */
     void release() {
-        source.release();
+        try {
+            closePrinter();
+        } finally {
+            source.release();
+        }
+    }
+
+    /** Free every block handle opened in the case, and their printers. Called once the case is over. */
+    void releaseBlocks() {
+        for (TestCase block : shared.takeBlocks()) {
+            block.release();
+        }
+    }
+
+    private void closePrinter() {
+        if (printer != null) {
+            Printer p = printer;
+            printer = null;
+            p.close();
+        }
     }
 
     /**
-     * Take over a worker handle's buffered draws and notes: record them here (on a captured
-     * execution) and hand them to the reporter (on a verbose one), in the order the worker made
-     * them. Called on the root at a join point, once the worker has finished its round, so the
-     * reporter only ever hears from the driving thread.
+     * The case's rendered output, one entry per line: every draw and note printed through any of
+     * its handles, laid out by the engine. Reading seals the document, so this is called once, on
+     * the root handle, after the body has finished. Empty when nothing was printed (the execution
+     * was neither stamped for capture nor verbose).
      */
-    void absorb(TestCase workerHandle) {
-        for (Event event : workerHandle.events) {
-            record(event);
+    List<String> output() {
+        closePrinter();
+        if (!shared.emits) {
+            return List.of();
         }
-        workerHandle.events.clear();
-    }
-
-    /** The stamp a worker handle's lines carry; empty on the root. */
-    private String prefix() {
-        if (worker < 0) {
-            return "";
+        String text;
+        try (Printer root = source.printer()) {
+            text = root.read();
         }
-        double elapsedMillis = (System.nanoTime() - startNanos) / 1e6;
-        return String.format(Locale.ROOT, "[worker %d +%.3fms] ", worker, elapsedMillis);
-    }
-
-    /**
-     * Deliver a draw or note: buffered on a worker handle until the root absorbs it; on the root,
-     * kept for the report when captured and reported live when verbose.
-     */
-    private void record(Event event) {
-        if (worker >= 0) {
-            events.add(event);
-            return;
-        }
-        if (captured) {
-            events.add(event);
-            if (event.message != null) {
-                notes.add(event.message);
-            } else {
-                draws.put(event.key, event.value);
-            }
-        }
-        if (reporting) {
-            event.replay(reporter, false);
-        }
+        return text.lines().toList();
     }
 
     /**
@@ -187,13 +177,14 @@ public final class TestCase {
      * final replay of a minimal counterexample (or of a {@link Settings#reproduceFailure(String)}
      * blob), the replays that confirm a discovered failure — as opposed to one of the many cases it
      * runs while generating and shrinking. Draws and notes are recorded only on a stamped
-     * execution, and reported only if it fails and the engine reports that failure; a test body can
-     * use this to do its own expensive diagnostics only where they may be seen.
+     * execution (or on every execution of a verbose run), and reported only if it fails and the
+     * engine reports that failure; a test body can use this to do its own expensive diagnostics
+     * only where they may be seen.
      *
      * @return {@code true} on an execution stamped for capture
      */
     public boolean isFinal() {
-        return captured;
+        return shared.captured;
     }
 
     /**
@@ -216,54 +207,46 @@ public final class TestCase {
      * @return the generated value
      */
     public <T> T draw(Generator<T> generator, String label) {
-        boolean top = drawDepth == 0;
-        drawDepth++;
-        T value;
-        boolean completed = false;
+        if (drawDepth > 0 || !shared.emits) {
+            return drawNested(generator);
+        }
+        // Notes made while the value is generated are held back by the engine until the draw's
+        // line is committed (or abandoned), so they follow the value instead of splitting it.
+        Printer p = printer();
+        p.beginSpeculative();
+        boolean committed = false;
         try {
-            value = generator.doDraw(this);
-            completed = true;
+            T value = drawNested(generator);
+            String name = shared.nextName(label);
+            shared.record(name, value);
+            p.text(name + " = ");
+            p.value(value);
+            p.text(";");
+            p.hardBreak();
+            p.commitSpeculative();
+            committed = true;
+            return value;
+        } finally {
+            if (!committed) {
+                p.abortSpeculative();
+            }
+        }
+    }
+
+    private <T> T drawNested(Generator<T> generator) {
+        drawDepth++;
+        try {
+            return generator.doDraw(this);
         } finally {
             drawDepth--;
-            if (top && !completed) {
-                // No draw line will follow; do not lose the notes made on the way to the failure.
-                flushPendingNotes();
-            }
         }
-        if (top) {
-            if (captured || reporting) {
-                String name = root.nextName(label);
-                record(new Event(prefix() + name, name, value, null));
-            }
-            flushPendingNotes();
-        }
-        return value;
     }
 
-    /**
-     * The name a top-level draw reports under: a label prints bare the first time and numbered from
-     * its second use ({@code x}, {@code x_2}, ...); an unlabelled draw is {@code draw_N}, counting
-     * unlabelled draws only. Names are unique across the whole case — worker handles number
-     * through the root — hence synchronized: concurrent workers name their draws at the same time.
-     */
-    private synchronized String nextName(String label) {
-        String base = label != null ? label : "draw";
-        int uses = nameUses.merge(base, 1, Integer::sum);
-        if (label == null) {
-            return base + "_" + uses;
+    private Printer printer() {
+        if (printer == null) {
+            printer = source.printer();
         }
-        return uses == 1 ? label : label + "_" + uses;
-    }
-
-    private void flushPendingNotes() {
-        for (String message : pendingNotes) {
-            emitNote(message);
-        }
-        pendingNotes.clear();
-    }
-
-    private void emitNote(String message) {
-        record(new Event(null, null, null, prefix() + message));
+        return printer;
     }
 
     /**
@@ -280,20 +263,15 @@ public final class TestCase {
 
     /**
      * Record a debug message, reported with the counterexample when this case's failure is
-     * reported (and live on every case under {@link Verbosity#VERBOSE}). A note made while a
-     * top-level draw is in progress — from inside a composite generator — is reported after that
-     * draw's value, never before it.
+     * reported (and on every case under {@link Verbosity#VERBOSE}). A note made while a top-level
+     * draw is in progress — from inside a composite generator — is reported after that draw's
+     * value, never before it. A message may span several lines.
      *
      * @param message the message to record
      */
     public void note(String message) {
-        if (!(captured || reporting)) {
-            return;
-        }
-        if (drawDepth > 0) {
-            pendingNotes.add(message);
-        } else {
-            emitNote(message);
+        if (shared.emits) {
+            source.note(message);
         }
     }
 
@@ -560,53 +538,6 @@ public final class TestCase {
 
     /** The top-level draws recorded on a captured execution, in draw order. */
     Map<String, Object> draws() {
-        return draws;
-    }
-
-    /** The notes recorded on a captured execution, in order. */
-    List<String> notes() {
-        return notes;
-    }
-
-    /** Hand the recorded draws and notes to {@code reporter}, in report order, flagged as a replay. */
-    void replayTo(Reporter reporter) {
-        for (Event event : events) {
-            event.replay(reporter, true);
-        }
-    }
-
-    static String repr(Object value) {
-        if (value == null) {
-            return "null";
-        }
-        if (value instanceof String s) {
-            return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
-        }
-        if (value instanceof byte[] b) {
-            return Arrays.toString(b);
-        }
-        if (value instanceof List<?> list) {
-            StringBuilder sb = new StringBuilder("[");
-            for (int i = 0; i < list.size(); i++) {
-                if (i > 0) {
-                    sb.append(", ");
-                }
-                sb.append(repr(list.get(i)));
-            }
-            return sb.append("]").toString();
-        }
-        if (value instanceof Map<?, ?> map) {
-            StringBuilder sb = new StringBuilder("{");
-            boolean first = true;
-            for (Map.Entry<?, ?> e : map.entrySet()) {
-                if (!first) {
-                    sb.append(", ");
-                }
-                first = false;
-                sb.append(repr(e.getKey())).append(": ").append(repr(e.getValue()));
-            }
-            return sb.append("}").toString();
-        }
-        return String.valueOf(value);
+        return shared.draws();
     }
 }

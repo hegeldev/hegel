@@ -88,6 +88,48 @@ class JnaLibhegelTest {
     }
 
     @Test
+    void outputCallsReportNullHandles() {
+        JnaLibhegel lib = real();
+        // Out-slots are seeded with sentinels: a failed call must not copy anything out.
+        long[] handle = {7};
+        assertEquals(Abi.E_INVALID_HANDLE, lib.testCaseBlock(0, 2, handle));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.testCasePrinter(0, handle));
+        assertEquals(7, handle[0]);
+        String[] text = {"unchanged"};
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerValue(0, text));
+        assertEquals("unchanged", text[0]);
+        assertEquals(Abi.E_INVALID_HANDLE, lib.note(0, "n"));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerText(0, "t"));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerBreakable(0, " "));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerHardBreak(0));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerBeginGroup(0, 1, "["));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerEndGroup(0, "]"));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerReflow(0, "x"));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerBeginSpeculative(0));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerCommitSpeculative(0));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerAbortSpeculative(0));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerResolve(0));
+        lib.printerFree(0);
+    }
+
+    @Test
+    void aStandaloneDocumentRoundTrips() {
+        JnaLibhegel lib = real();
+        long printer = lib.printerNew();
+        assertEquals(Abi.OK, lib.printerBeginGroup(printer, 1, "["));
+        assertEquals(Abi.OK, lib.printerText(printer, "a"));
+        assertEquals(Abi.OK, lib.printerText(printer, ","));
+        assertEquals(Abi.OK, lib.printerBreakable(printer, " "));
+        assertEquals(Abi.OK, lib.printerReflow(printer, "Point(x=1, y=\"\u00e9\")"));
+        assertEquals(Abi.OK, lib.printerEndGroup(printer, "]"));
+        assertEquals(Abi.E_INVALID_ARG, lib.printerResolve(printer));
+        String[] text = new String[1];
+        assertEquals(Abi.OK, lib.printerValue(printer, text));
+        assertEquals("[a, Point(x=1, y=\"\u00e9\")]", text[0]);
+        lib.printerFree(printer);
+    }
+
+    @Test
     void runWithDefaultOutputStartsAndFrees() {
         JnaLibhegel lib = real();
         long s = newSettings(lib);

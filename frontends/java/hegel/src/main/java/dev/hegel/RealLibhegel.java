@@ -137,6 +137,23 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle testCaseShouldCapture;
     private final MethodHandle testCaseClone;
     private final MethodHandle testCaseSetWorker;
+    private final MethodHandle testCaseBlock;
+    private final MethodHandle note;
+    private final MethodHandle testCasePrinter;
+    private final MethodHandle printerNew;
+    private final MethodHandle printerFree;
+    private final MethodHandle printerText;
+    private final MethodHandle printerBreakable;
+    private final MethodHandle printerHardBreak;
+    private final MethodHandle printerBeginGroup;
+    private final MethodHandle printerEndGroup;
+    private final MethodHandle printerReflow;
+    private final MethodHandle printerBeginSpeculative;
+    private final MethodHandle printerCommitSpeculative;
+    private final MethodHandle printerAbortSpeculative;
+    private final MethodHandle printerResolve;
+    private final MethodHandle printerValue;
+    private final MethodHandle printerValueResultFree;
     private final MethodHandle generateBoolean;
     private final MethodHandle generateInteger;
     private final MethodHandle generateFloat;
@@ -355,6 +372,56 @@ final class RealLibhegel implements Libhegel {
                 lookup,
                 "hegel_test_case_set_worker",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG));
+        this.testCaseBlock = h(
+                linker,
+                lookup,
+                "hegel_test_case_block",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS));
+        this.note = h(linker, lookup, "hegel_note", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT));
+        this.testCasePrinter = h(
+                linker,
+                lookup,
+                "hegel_test_case_printer",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+        this.printerNew =
+                h(linker, lookup, "hegel_printer_new", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.printerFree = h(linker, lookup, "hegel_printer_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.printerText = h(
+                linker, lookup, "hegel_printer_text", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT));
+        this.printerBreakable = h(
+                linker,
+                lookup,
+                "hegel_printer_breakable",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT));
+        this.printerHardBreak =
+                h(linker, lookup, "hegel_printer_hard_break", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.printerBeginGroup = h(
+                linker,
+                lookup,
+                "hegel_printer_begin_group",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, STRING_LAYOUT));
+        this.printerEndGroup = h(
+                linker,
+                lookup,
+                "hegel_printer_end_group",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT));
+        this.printerReflow = h(
+                linker,
+                lookup,
+                "hegel_printer_reflow",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, STRING_LAYOUT));
+        this.printerBeginSpeculative =
+                h(linker, lookup, "hegel_printer_begin_speculative", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.printerCommitSpeculative = h(
+                linker, lookup, "hegel_printer_commit_speculative", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.printerAbortSpeculative =
+                h(linker, lookup, "hegel_printer_abort_speculative", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.printerResolve =
+                h(linker, lookup, "hegel_printer_resolve", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.printerValue =
+                h(linker, lookup, "hegel_printer_value", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.printerValueResultFree =
+                h(linker, lookup, "hegel_printer_value_result_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
         this.generateBoolean = h(
                 linker,
                 lookup,
@@ -953,6 +1020,120 @@ final class RealLibhegel implements Libhegel {
     @Override
     public void testCaseSetWorker(long tc, long workerIndex) {
         check("hegel_test_case_set_worker", rc(testCaseSetWorker, segment(tc), workerIndex));
+    }
+
+    @Override
+    public int testCaseBlock(long tc, long indent, long[] out) {
+        MemorySegment seg = Arena.ofAuto().allocate(ADDRESS);
+        int code = rc(testCaseBlock, segment(tc), indent, seg);
+        if (code == Abi.OK) {
+            out[0] = seg.get(ADDRESS, 0).address();
+        }
+        return code;
+    }
+
+    // --- output ---
+
+    @Override
+    public int note(long tc, String text) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(note, segment(tc), str(arena, text));
+        }
+    }
+
+    @Override
+    public int testCasePrinter(long tc, long[] out) {
+        MemorySegment seg = Arena.ofAuto().allocate(ADDRESS);
+        int code = rc(testCasePrinter, segment(tc), MemorySegment.NULL, seg);
+        if (code == Abi.OK) {
+            out[0] = seg.get(ADDRESS, 0).address();
+        }
+        return code;
+    }
+
+    @Override
+    public long printerNew() {
+        MemorySegment seg = Arena.ofAuto().allocate(ADDRESS);
+        check("hegel_printer_new", rc(printerNew, MemorySegment.NULL, seg));
+        return seg.get(ADDRESS, 0).address();
+    }
+
+    @Override
+    public void printerFree(long printer) {
+        check("hegel_printer_free", rc(printerFree, segment(printer)));
+    }
+
+    @Override
+    public int printerText(long printer, String text) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(printerText, segment(printer), str(arena, text));
+        }
+    }
+
+    @Override
+    public int printerBreakable(long printer, String sep) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(printerBreakable, segment(printer), str(arena, sep));
+        }
+    }
+
+    @Override
+    public int printerHardBreak(long printer) {
+        return rc(printerHardBreak, segment(printer));
+    }
+
+    @Override
+    public int printerBeginGroup(long printer, long indent, String open) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(printerBeginGroup, segment(printer), indent, str(arena, open));
+        }
+    }
+
+    @Override
+    public int printerEndGroup(long printer, String close) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(printerEndGroup, segment(printer), str(arena, close));
+        }
+    }
+
+    @Override
+    public int printerReflow(long printer, String text) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(printerReflow, segment(printer), MemorySegment.NULL, str(arena, text));
+        }
+    }
+
+    @Override
+    public int printerBeginSpeculative(long printer) {
+        return rc(printerBeginSpeculative, segment(printer));
+    }
+
+    @Override
+    public int printerCommitSpeculative(long printer) {
+        return rc(printerCommitSpeculative, segment(printer));
+    }
+
+    @Override
+    public int printerAbortSpeculative(long printer) {
+        return rc(printerAbortSpeculative, segment(printer));
+    }
+
+    @Override
+    public int printerResolve(long printer) {
+        return rc(printerResolve, segment(printer));
+    }
+
+    @Override
+    public int printerValue(long printer, String[] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment result = arena.allocate(STRING_LAYOUT);
+            int code = rc(printerValue, segment(printer), result);
+            if (code == Abi.OK) {
+                out[0] = new String(copyBuffer(result), StandardCharsets.UTF_8);
+                check("hegel_printer_value_result_free", rc(printerValueResultFree, result));
+            }
+            return code;
+        }
     }
 
     // --- draws ---

@@ -186,7 +186,7 @@ class CoverageTest {
     }
 
     private static <T> T drawWith(FakeLibhegel fake, Generator<T> gen) {
-        TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false, Reporter.silent());
+        TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false);
         return tc.draw(gen);
     }
 
@@ -222,7 +222,7 @@ class CoverageTest {
     @Test
     void poolTracksValuesByVariableId() {
         FakeLibhegel fake = new FakeLibhegel();
-        TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false, Reporter.silent());
+        TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false);
         Pool<String> pool = new Pool<>(tc);
         assertTrue(pool.isEmpty());
         pool.add("first");
@@ -395,7 +395,7 @@ class CoverageTest {
     }
 
     private static TestCase fakeTestCase(FakeLibhegel fake) {
-        return new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false, Reporter.silent());
+        return new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false);
     }
 
     @Test
@@ -408,7 +408,7 @@ class CoverageTest {
                 throw new AssertionError("rule failed");
             }
         }
-        TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false, Reporter.silent());
+        TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false);
         AssertionError e = assertThrows(AssertionError.class, () -> Stateful.run(new Failing(), tc));
         assertEquals("rule failed", e.getMessage());
 
@@ -422,7 +422,7 @@ class CoverageTest {
             }
         }
         FakeLibhegel fake2 = new FakeLibhegel();
-        TestCase tc2 = new TestCase(new LiveDataSource(fake2, FakeLibhegel.TC), false, Reporter.silent());
+        TestCase tc2 = new TestCase(new LiveDataSource(fake2, FakeLibhegel.TC), false);
         assertThrows(AssertionError.class, () -> Stateful.run(new FailingInvariant(), tc2));
     }
 

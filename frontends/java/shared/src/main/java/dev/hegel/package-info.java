@@ -74,6 +74,9 @@
  * n = 50;
  * }</pre>
  *
+ * <p>Long values are laid out over several lines, one element per line, and notes from {@link
+ * dev.hegel.TestCase#note(String)} appear in order among the draws.
+ *
  * <p>This report is produced by the run's {@link dev.hegel.Reporter}; the default prints to
  * {@code System.err}. Pass your own to {@link dev.hegel.Hegel#test(java.util.function.Consumer,
  * dev.hegel.Settings, dev.hegel.Reporter)} to route it elsewhere, or {@link
@@ -233,7 +236,8 @@
  * {@link dev.hegel.RunReport} with the verdict ({@link dev.hegel.RunStatus}), the
  * {@link dev.hegel.RunStatistics case counts}, the engine's message for an errored run, and one
  * {@link dev.hegel.Failure} per distinct counterexample carrying the exception the body threw, the
- * labelled top-level draws of the minimal example as Java values, the notes, and the reproduce blob.
+ * labelled top-level draws of the minimal example as Java values, its printed report line by line,
+ * and the reproduce blob.
  * A {@link dev.hegel.Reporter} receives the same information as callbacks while the run proceeds,
  * which is how a frontend owns its output instead of sharing {@code System.err}:
  *

@@ -36,16 +36,9 @@ final class PrintingReporter implements Reporter {
     }
 
     @Override
-    public void draw(String label, Object value, boolean finalReplay) {
+    public void caseOutput(String line, boolean finalReplay) {
         if (!quiet) {
-            out.println(label + " = " + TestCase.repr(value) + ";");
-        }
-    }
-
-    @Override
-    public void note(String message, boolean finalReplay) {
-        if (!quiet) {
-            out.println(message);
+            out.println(line);
         }
     }
 

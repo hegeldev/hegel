@@ -30,6 +30,9 @@ class HandleLeakTest {
         final Set<Long> liveCollections = new HashSet<>();
         final Set<Long> livePools = new HashSet<>();
         final Set<Long> liveTestCases = new HashSet<>();
+        final Set<Long> livePrinters = new HashSet<>();
+        int blocksCreated;
+        int printersCreated;
         int collectionsCreated;
         int poolsCreated;
         final Map<Thread, Boolean> threadReleased = new HashMap<>();
@@ -77,19 +80,37 @@ class HandleLeakTest {
                         liveTestCases.add(((long[]) args[1])[0]);
                     }
                 }
+                case "testCaseBlock" -> {
+                    if (ok) {
+                        blocksCreated++;
+                        liveTestCases.add(((long[]) args[2])[0]);
+                    }
+                }
                 case "testCaseFree" -> assertTrue(liveTestCases.remove((Long) args[0]));
+                case "testCasePrinter" -> {
+                    if (ok) {
+                        printersCreated++;
+                        livePrinters.add(((long[]) args[1])[0]);
+                    }
+                }
+                case "printerFree" -> assertTrue(livePrinters.remove((Long) args[0]));
                 default -> {}
             }
         }
 
         RunReport run(Consumer<TestCase> body) {
-            return Runner.run(lib, new Settings().database(Database.disabled()), body, Reporter.silent());
+            return run(new Settings(), body);
+        }
+
+        RunReport run(Settings settings, Consumer<TestCase> body) {
+            return Runner.run(lib, settings.database(Database.disabled()), body, Reporter.silent());
         }
 
         void assertNothingLeaked() {
             assertEquals(Set.of(), liveCollections);
             assertEquals(Set.of(), livePools);
             assertEquals(Set.of(), liveTestCases);
+            assertEquals(Set.of(), livePrinters);
         }
 
         List<Thread> workerThreads() {
@@ -146,5 +167,30 @@ class HandleLeakTest {
         for (Thread worker : workers) {
             assertTrue(tracker.threadReleased.get(worker), worker + " exited without releasing its context");
         }
+    }
+
+    @Test
+    void printersAndRuleBlocksAreFreed() {
+        Tracker tracker = new Tracker(Engine.get());
+        RunReport report =
+                tracker.run(new Settings().verbosity(Verbosity.VERBOSE).testCases(20), tc -> {
+                    tc.draw(integers(), "x");
+                    Stateful.run(new StatefulTest.PoolMachine(), tc);
+                });
+        assertTrue(report.passed());
+        assertTrue(tracker.blocksCreated > 0);
+        assertTrue(tracker.printersCreated > 0);
+        tracker.assertNothingLeaked();
+
+        Tracker concurrent = new Tracker(Engine.get());
+        report = concurrent.run(
+                new Settings().verbosity(Verbosity.VERBOSE).testCases(20),
+                tc -> Stateful.run(
+                        new ConcurrentStatefulTest.PoolMachine(tc),
+                        tc,
+                        Stateful.options().minConcurrency(2).maxConcurrency(3)));
+        assertTrue(report.passed());
+        assertTrue(concurrent.blocksCreated > 0);
+        concurrent.assertNothingLeaked();
     }
 }

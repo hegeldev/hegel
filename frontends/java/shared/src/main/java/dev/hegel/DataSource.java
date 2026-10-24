@@ -138,8 +138,22 @@ interface DataSource {
      */
     DataSource cloneForWorker(long workerIndex);
 
-    /** Free the handle behind a source from {@link #cloneForWorker}. Safe once the case is aborted. */
+    /**
+     * A source over a block handle ({@code hegel_test_case_block}): the <em>same</em> choice stream
+     * as this one, whose output lands in a block nested in this source's print region, every line
+     * {@code indent} columns further in. It shares this source's abort state. Release it with
+     * {@link #release()}.
+     */
+    DataSource block(long indent);
+
+    /** Free the handle behind a source from {@link #cloneForWorker} or {@link #block}. Safe once the case is aborted. */
     void release();
+
+    /** Append {@code message} to this source's print region ({@code hegel_note}). */
+    void note(String message);
+
+    /** A caller-owned printer onto this source's print region ({@code hegel_test_case_printer}). */
+    Printer printer();
 
     /** The engine's sampling decision for invariant {@code invariantIndex} at this join point. */
     boolean stateMachineShouldCheckInvariant(long stateMachineId, long invariantIndex);

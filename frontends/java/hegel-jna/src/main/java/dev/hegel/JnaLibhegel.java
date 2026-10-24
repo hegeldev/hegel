@@ -151,6 +151,40 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_test_case_set_worker(Pointer ctx, Pointer tc, long workerIndex);
 
+        int hegel_test_case_block(Pointer ctx, Pointer tc, long indent, PointerByReference out);
+
+        int hegel_note(Pointer ctx, Pointer tc, HegelString.ByValue text);
+
+        int hegel_test_case_printer(Pointer ctx, Pointer tc, Pointer options, PointerByReference out);
+
+        int hegel_printer_new(Pointer ctx, Pointer options, PointerByReference out);
+
+        int hegel_printer_free(Pointer ctx, Pointer printer);
+
+        int hegel_printer_text(Pointer ctx, Pointer printer, HegelString.ByValue text);
+
+        int hegel_printer_breakable(Pointer ctx, Pointer printer, HegelString.ByValue sep);
+
+        int hegel_printer_hard_break(Pointer ctx, Pointer printer);
+
+        int hegel_printer_begin_group(Pointer ctx, Pointer printer, long indent, HegelString.ByValue open);
+
+        int hegel_printer_end_group(Pointer ctx, Pointer printer, HegelString.ByValue close);
+
+        int hegel_printer_reflow(Pointer ctx, Pointer printer, Pointer options, HegelString.ByValue text);
+
+        int hegel_printer_begin_speculative(Pointer ctx, Pointer printer);
+
+        int hegel_printer_commit_speculative(Pointer ctx, Pointer printer);
+
+        int hegel_printer_abort_speculative(Pointer ctx, Pointer printer);
+
+        int hegel_printer_resolve(Pointer ctx, Pointer printer);
+
+        int hegel_printer_value(Pointer ctx, Pointer printer, HegelString out);
+
+        int hegel_printer_value_result_free(Pointer ctx, HegelString result);
+
         int hegel_generate_boolean(Pointer ctx, Pointer tc, double p, byte hasForced, byte forced, ByteByReference out);
 
         int hegel_generate_integer(Pointer ctx, Pointer tc, long min, long max, LongByReference out);
@@ -737,6 +771,106 @@ final class JnaLibhegel implements Libhegel {
     @Override
     public void testCaseSetWorker(long tc, long workerIndex) {
         check("hegel_test_case_set_worker", lib.hegel_test_case_set_worker(ctx(), pointer(tc), workerIndex));
+    }
+
+    @Override
+    public int testCaseBlock(long tc, long indent, long[] out) {
+        PointerByReference ref = new PointerByReference();
+        int code = lib.hegel_test_case_block(ctx(), pointer(tc), indent, ref);
+        if (code == Abi.OK) {
+            out[0] = address(ref.getValue());
+        }
+        return code;
+    }
+
+    // --- output ---
+
+    @Override
+    public int note(long tc, String text) {
+        return lib.hegel_note(ctx(), pointer(tc), str(text));
+    }
+
+    @Override
+    public int testCasePrinter(long tc, long[] out) {
+        PointerByReference ref = new PointerByReference();
+        int code = lib.hegel_test_case_printer(ctx(), pointer(tc), null, ref);
+        if (code == Abi.OK) {
+            out[0] = address(ref.getValue());
+        }
+        return code;
+    }
+
+    @Override
+    public long printerNew() {
+        PointerByReference ref = new PointerByReference();
+        check("hegel_printer_new", lib.hegel_printer_new(ctx(), null, ref));
+        return address(ref.getValue());
+    }
+
+    @Override
+    public void printerFree(long printer) {
+        check("hegel_printer_free", lib.hegel_printer_free(ctx(), pointer(printer)));
+    }
+
+    @Override
+    public int printerText(long printer, String text) {
+        return lib.hegel_printer_text(ctx(), pointer(printer), str(text));
+    }
+
+    @Override
+    public int printerBreakable(long printer, String sep) {
+        return lib.hegel_printer_breakable(ctx(), pointer(printer), str(sep));
+    }
+
+    @Override
+    public int printerHardBreak(long printer) {
+        return lib.hegel_printer_hard_break(ctx(), pointer(printer));
+    }
+
+    @Override
+    public int printerBeginGroup(long printer, long indent, String open) {
+        return lib.hegel_printer_begin_group(ctx(), pointer(printer), indent, str(open));
+    }
+
+    @Override
+    public int printerEndGroup(long printer, String close) {
+        return lib.hegel_printer_end_group(ctx(), pointer(printer), str(close));
+    }
+
+    @Override
+    public int printerReflow(long printer, String text) {
+        return lib.hegel_printer_reflow(ctx(), pointer(printer), null, str(text));
+    }
+
+    @Override
+    public int printerBeginSpeculative(long printer) {
+        return lib.hegel_printer_begin_speculative(ctx(), pointer(printer));
+    }
+
+    @Override
+    public int printerCommitSpeculative(long printer) {
+        return lib.hegel_printer_commit_speculative(ctx(), pointer(printer));
+    }
+
+    @Override
+    public int printerAbortSpeculative(long printer) {
+        return lib.hegel_printer_abort_speculative(ctx(), pointer(printer));
+    }
+
+    @Override
+    public int printerResolve(long printer) {
+        return lib.hegel_printer_resolve(ctx(), pointer(printer));
+    }
+
+    @Override
+    public int printerValue(long printer, String[] out) {
+        HegelString result = new HegelString();
+        int code = lib.hegel_printer_value(ctx(), pointer(printer), result);
+        if (code == Abi.OK) {
+            out[0] = new String(copyBuffer(result), StandardCharsets.UTF_8);
+            check("hegel_printer_value_result_free", lib.hegel_printer_value_result_free(ctx(), result));
+        }
+        return code;
     }
 
     // --- draws ---

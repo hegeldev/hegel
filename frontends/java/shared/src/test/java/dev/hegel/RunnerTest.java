@@ -186,7 +186,7 @@ class RunnerTest {
                 Reporter.printing(capture(buf)));
         assertSame(err, report.failures().get(0).exception());
         assertTrue(report.failures().get(0).draws().isEmpty());
-        assertTrue(report.failures().get(0).notes().isEmpty());
+        assertTrue(report.failures().get(0).output().isEmpty());
         assertEquals("", buf.toString(StandardCharsets.UTF_8));
     }
 

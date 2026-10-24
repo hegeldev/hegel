@@ -5,7 +5,10 @@ import dev.hegel.lowlevel.Libhegel;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +29,112 @@ final class FakeLibhegel implements Libhegel {
     static final long STRING_GEN = 0x600;
     /** Clone handles are {@code CLONE_BASE + n} for the n-th clone made, so they are distinct from {@link #TC}. */
     static final long CLONE_BASE = 0x1000;
+    /** Block handles are {@code BLOCK_BASE + n} for the n-th block opened. */
+    static final long BLOCK_BASE = 0x8000;
+    /** Printer handles are {@code PRINTER_BASE + n} for the n-th printer fetched. */
+    static final long PRINTER_BASE = 0x20000;
+
+    // Output. Like the engine, the fake keeps one document per test case made of regions: the
+    // root handle's region is the body, and a clone or block opens a child region at its source's
+    // current position, so concurrent workers never interleave. Text, group delimiters and
+    // separators are appended as they come (groups never break); a line starts with its region's
+    // block indentation and, for a worker's region, "[worker N] "; notes made inside a speculative
+    // region are held back until the outermost one closes.
+    private Region root = new Region(0, null);
+
+    private final Map<Long, Region> regions = new HashMap<>();
+    /** The handle each block was opened on. */
+    final Map<Long, Long> blockParents = new HashMap<>();
+    /** The test-case handle each printer was fetched for. */
+    final Map<Long, Long> printerOwners = new LinkedHashMap<>();
+    /** Printer handles released through printerFree, in order. */
+    final List<Long> freedPrinters = new ArrayList<>();
+    /** Block handles released through testCaseFree, in order. */
+    final List<Long> freedBlocks = new ArrayList<>();
+    /** Every note, as received. */
+    final List<String> notes = java.util.Collections.synchronizedList(new ArrayList<>());
+
+    /** One handle's print region: its own text and the regions anchored in it, in order. */
+    private static final class Region {
+        final long indent;
+        Long worker;
+        private final List<Object> parts = new ArrayList<>();
+        private boolean atLineStart = true;
+        private final Deque<int[]> speculations = new ArrayDeque<>();
+        private final List<String> held = new ArrayList<>();
+
+        Region(long indent, Long worker) {
+            this.indent = indent;
+            this.worker = worker;
+        }
+
+        synchronized Region child(long extraIndent) {
+            Region child = new Region(indent + extraIndent, worker);
+            parts.add(child);
+            return child;
+        }
+
+        synchronized void text(String text) {
+            if (atLineStart) {
+                parts.add(" ".repeat((int) indent) + (worker == null ? "" : "[worker " + worker + "] "));
+                atLineStart = false;
+            }
+            parts.add(text);
+        }
+
+        synchronized void newline() {
+            parts.add("\n");
+            atLineStart = true;
+        }
+
+        synchronized void note(String text) {
+            if (!speculations.isEmpty()) {
+                held.add(text);
+                return;
+            }
+            for (String line : text.split("\n", -1)) {
+                text(line);
+                newline();
+            }
+        }
+
+        synchronized void beginSpeculative() {
+            speculations.push(new int[] {parts.size(), atLineStart ? 1 : 0});
+        }
+
+        synchronized void endSpeculative(boolean commit) {
+            int[] mark = speculations.pop();
+            if (!commit) {
+                parts.subList(mark[0], parts.size()).clear();
+                atLineStart = mark[1] == 1;
+            }
+            if (speculations.isEmpty()) {
+                List<String> notes = new ArrayList<>(held);
+                held.clear();
+                for (String note : notes) {
+                    note(note);
+                }
+            }
+        }
+
+        synchronized void render(StringBuilder out) {
+            for (Object part : parts) {
+                if (part instanceof Region region) {
+                    region.render(out);
+                } else {
+                    out.append(part);
+                }
+            }
+        }
+    }
+
+    private Region region(long tc) {
+        return tc == TC ? root : regions.get(tc);
+    }
+
+    int testCaseBlockRc = Abi.OK;
+    int testCasePrinterRc = Abi.OK;
+    int printerValueRc = Abi.OK;
 
     // Test-case clones (concurrent stateful workers).
     int cloneRc = Abi.OK;
@@ -375,6 +484,7 @@ final class FakeLibhegel implements Libhegel {
             return 0;
         }
         casesServed++;
+        resetDocument();
         return TC;
     }
 
@@ -403,34 +513,155 @@ final class FakeLibhegel implements Libhegel {
     public int testCaseFromBlob(long settings, String blob, Consumer<String> output, long[] out) {
         if (fromBlobRc == Abi.OK) {
             replayedBlobs.add(blob);
+            resetDocument();
             out[0] = TC;
         }
         return fromBlobRc;
     }
 
     @Override
-    public void testCaseFree(long tc) {
+    public synchronized void testCaseFree(long tc) {
         freedTestCases++;
-        if (tc != TC) {
+        if (blockParents.containsKey(tc)) {
+            freedBlocks.add(tc);
+        } else if (tc != TC) {
             freedClones.add(tc);
         }
     }
 
     @Override
-    public int testCaseClone(long tc, long[] out) {
+    public synchronized int testCaseBlock(long tc, long indent, long[] out) {
+        if (testCaseBlockRc == Abi.OK) {
+            long block = BLOCK_BASE + blockParents.size();
+            blockParents.put(block, tc);
+            regions.put(block, region(tc).child(indent));
+            out[0] = block;
+        }
+        return testCaseBlockRc;
+    }
+
+    private void resetDocument() {
+        root = new Region(0, null);
+    }
+
+    @Override
+    public int note(long tc, String text) {
+        notes.add(text);
+        region(tc).note(text);
+        return Abi.OK;
+    }
+
+    @Override
+    public synchronized int testCasePrinter(long tc, long[] out) {
+        if (testCasePrinterRc == Abi.OK) {
+            long printer = PRINTER_BASE + printerOwners.size();
+            printerOwners.put(printer, tc);
+            out[0] = printer;
+        }
+        return testCasePrinterRc;
+    }
+
+    @Override
+    public long printerNew() {
+        throw new UnsupportedOperationException("the fake has no standalone documents");
+    }
+
+    @Override
+    public synchronized void printerFree(long printer) {
+        freedPrinters.add(printer);
+    }
+
+    private synchronized Region printerRegion(long printer) {
+        return region(printerOwners.get(printer));
+    }
+
+    @Override
+    public int printerText(long printer, String text) {
+        printerRegion(printer).text(text);
+        return Abi.OK;
+    }
+
+    @Override
+    public int printerBreakable(long printer, String sep) {
+        return printerText(printer, sep);
+    }
+
+    @Override
+    public int printerHardBreak(long printer) {
+        printerRegion(printer).newline();
+        return Abi.OK;
+    }
+
+    @Override
+    public int printerBeginGroup(long printer, long indent, String open) {
+        return printerText(printer, open);
+    }
+
+    @Override
+    public int printerEndGroup(long printer, String close) {
+        return printerText(printer, close);
+    }
+
+    @Override
+    public int printerReflow(long printer, String text) {
+        return printerText(printer, text);
+    }
+
+    @Override
+    public int printerBeginSpeculative(long printer) {
+        printerRegion(printer).beginSpeculative();
+        return Abi.OK;
+    }
+
+    @Override
+    public int printerCommitSpeculative(long printer) {
+        printerRegion(printer).endSpeculative(true);
+        return Abi.OK;
+    }
+
+    @Override
+    public int printerAbortSpeculative(long printer) {
+        printerRegion(printer).endSpeculative(false);
+        return Abi.OK;
+    }
+
+    /** The current case's document as the engine would hand it back. */
+    String document() {
+        StringBuilder out = new StringBuilder();
+        root.render(out);
+        return out.toString();
+    }
+
+    @Override
+    public int printerResolve(long printer) {
+        return Abi.OK;
+    }
+
+    @Override
+    public int printerValue(long printer, String[] out) {
+        if (printerValueRc == Abi.OK) {
+            out[0] = document();
+        }
+        return printerValueRc;
+    }
+
+    @Override
+    public synchronized int testCaseClone(long tc, long[] out) {
         if (cloneRc == Abi.OK) {
             out[0] = CLONE_BASE + clonesMade.size();
             clonesMade.add(tc);
+            regions.put(out[0], region(tc).child(0));
         }
         return cloneRc;
     }
 
     @Override
-    public void testCaseSetWorker(long tc, long workerIndex) {
+    public synchronized void testCaseSetWorker(long tc, long workerIndex) {
         if (setWorkerFails) {
             throw new HegelException("hegel_test_case_set_worker failed: " + lastError);
         }
         workersSet.put(tc, workerIndex);
+        region(tc).worker = workerIndex;
     }
 
     @Override

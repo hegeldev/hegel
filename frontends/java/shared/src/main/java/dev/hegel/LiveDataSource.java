@@ -22,22 +22,26 @@ final class LiveDataSource implements DataSource {
     private final long tc;
     /** The pools created anywhere in this test-case family, shared by the root and its clones. */
     private final List<Long> pools;
-
-    private boolean aborted;
+    /**
+     * Whether the choice stream has been concluded, shared by the source and the blocks opened on
+     * it (they draw from the same stream); a clone draws from its own stream and has its own.
+     */
+    private final boolean[] aborted;
 
     LiveDataSource(Libhegel lib, long tc) {
-        this(lib, tc, new ArrayList<>());
+        this(lib, tc, new ArrayList<>(), new boolean[1]);
     }
 
-    private LiveDataSource(Libhegel lib, long tc, List<Long> pools) {
+    private LiveDataSource(Libhegel lib, long tc, List<Long> pools, boolean[] aborted) {
         this.lib = lib;
         this.tc = tc;
         this.pools = pools;
+        this.aborted = aborted;
     }
 
     @Override
     public boolean isAborted() {
-        return aborted;
+        return aborted[0];
     }
 
     private void translate(int rc, String op) {
@@ -45,10 +49,10 @@ final class LiveDataSource implements DataSource {
             case Abi.OK:
                 return;
             case Abi.E_STOP_TEST:
-                aborted = true;
+                aborted[0] = true;
                 throw new StopTest();
             case Abi.E_ASSUME:
-                aborted = true;
+                aborted[0] = true;
                 throw new AssumeRejected();
             case Abi.E_INVALID_ARG:
                 throw new IllegalArgumentException(nullToEmpty(lib.lastErrorMessage()));
@@ -68,7 +72,7 @@ final class LiveDataSource implements DataSource {
     }
 
     private void checkLive() {
-        if (aborted) {
+        if (aborted[0]) {
             throw new StopTest();
         }
     }
@@ -263,7 +267,7 @@ final class LiveDataSource implements DataSource {
 
     @Override
     public void stopSpan(boolean discard) {
-        if (aborted) {
+        if (aborted[0]) {
             return;
         }
         translate(lib.stopSpan(tc, discard), "stop_span");
@@ -404,7 +408,26 @@ final class LiveDataSource implements DataSource {
             lib.testCaseFree(clone[0]);
             throw e;
         }
-        return new LiveDataSource(lib, clone[0], pools);
+        return new LiveDataSource(lib, clone[0], pools, new boolean[1]);
+    }
+
+    @Override
+    public DataSource block(long indent) {
+        long[] block = new long[1];
+        translate(lib.testCaseBlock(tc, indent, block), "test_case_block");
+        return new LiveDataSource(lib, block[0], pools, aborted);
+    }
+
+    @Override
+    public void note(String message) {
+        lib.note(tc, message);
+    }
+
+    @Override
+    public Printer printer() {
+        long[] printer = new long[1];
+        translate(lib.testCasePrinter(tc, printer), "test_case_printer");
+        return new Printer(lib, printer[0]);
     }
 
     @Override

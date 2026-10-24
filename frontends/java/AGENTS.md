@@ -164,20 +164,40 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   (`StopTest` → OVERRUN, `AssumeRejected` → INVALID, `INVALID_ARG` →
   `IllegalArgumentException` with the engine's diagnostic, other negatives →
   `HegelException`) and short-circuiting once a case is aborted.
+- **Output** — all of a case's output goes through the engine's per-case
+  document: `TestCase.note` is `hegel_note`, and a top-level `draw` prints
+  `name = value;` through the handle's `hegel_test_case_printer` inside a
+  speculative region (committed once the value is drawn, aborted if the draw
+  throws; the engine holds back notes made mid-draw until the region closes).
+  `Printer.value` renders Java syntax — quoted, escaped strings and chars,
+  arrays and collections as `[a, b]`, maps as `{k: v}`, each a group with
+  breakables so the engine can lay it out — and hands anything else's
+  `toString()` to `hegel_printer_reflow`. Draw names (`x`, `x_2`, `draw_N`)
+  are numbered Java-side; the engine has no naming. Indented sections use
+  `hegel_test_case_block` (`TestCase.block`, kept alive until the case ends,
+  since a `Pool` made inside a rule keeps drawing through its handle, then
+  freed by `TestCase.releaseBlocks`), worker attribution is
+  `hegel_test_case_set_worker`, and after the body the runner reads the
+  document (`hegel_printer_resolve` + `hegel_printer_value`) into lines for
+  the `Reporter` (`caseOutput`) and `Failure.output()`. Nothing is buffered
+  Java-side.
 - **Run loop** — `Runner` builds the settings handle and drives
   `hegel_run_start` → `hegel_next_test_case` → `hegel_mark_complete`. The
   engine owns the *whole* run — generation, shrinking, the replays that confirm
   a failure, and the final replay of every failure it is about to report — so
   the runner never replays anything itself. It reads
   `hegel_test_case_should_capture` once per case: a *stamped* case's `TestCase`
-  records its top-level draws and notes (`isFinal()` exposes the stamp), and
+  (or any case of a verbose run) prints its top-level draws and notes into the
+  engine's per-case document (see **Output**; `isFinal()` exposes the
+  stamp), a stamped case also records its draws as Java values, and
   every interesting case's exception is kept per origin in a capture map (a
   stamped capture outranks an unstamped one, newest wins at equal rank — the
   unstamped discovery of a failure that never fails again is all there is for
   an *unconfirmed* nondeterministic failure). After the loop drains,
   `hegel_run_result` yields PASSED, FAILED, or ERROR. On FAILED each distinct
-  failure is built from its origin's capture: the recorded draws/notes are
-  replayed to the reporter (`caseStarted(true)` … `caseFinished(true)`), and
+  failure is built from its origin's capture: the rendered lines go to the
+  reporter (`caseStarted(true)`, `caseOutput(line, true)` …
+  `caseFinished(true)`) and become `Failure.output()`, and
   the `Failure` carries the body's own exception, the reproduce blob
   (`hegel_failure_reproduction_blob`, null for an unconfirmed failure and for a
   blob replay) and the **caveat** (`hegel_failure_caveat`, non-null for a
@@ -276,7 +296,8 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   checks run every invariant unconditionally:
   - `maxConcurrency == 1` → the **sequential** driver: everything on the
     calling thread and the root handle as worker 0, one `STATEFUL_RULE` span
-    per round (discarded on rejection), `Step N: rule` notes.
+    per round (discarded on rejection), each rule's body under a `Step N: rule {`
+    note in a `hegel_test_case_block` (indent 2) and closed by a `}` note.
   - `maxConcurrency > 1` → the **concurrent** driver, modelled on the Rust
     frontend's `run_concurrent_machine` (even when the drawn level is 1, so a
     run's output format is uniform). Persistent daemon worker threads
@@ -285,13 +306,13 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
     makes a **fresh clone per worker** (`hegel_test_case_clone` +
     `hegel_test_case_set_worker`; cloning is a draw and can return
     `E_STOP_TEST` on a replay, hence the raw-rc convention for
-    `Libhegel.testCaseClone`), hands each worker its clone through a queue,
-    waits for one event per worker (the join point), absorbs the workers'
-    buffered draws/notes into the root in worker order (each line stamped
-    `[worker N +X.XXXms]` client-side — Java notes never go through
-    `hegel_note`, so the engine's own attribution is invisible here; draw
-    names stay unique family-wide through the root's synchronized name counter
-    and are recorded plain), frees the clones, and resolves the round in the
+    `Libhegel.testCaseClone`), hands each worker its clone through a queue
+    (a worker notes `Rule: name {` on it, runs the rule in a block and notes
+    `}`), waits for one event per worker (the join point), frees the clones (their
+    output stays in the document, anchored where each clone was made and
+    stamped `[worker N +X.XXXms]` by the engine; draw names stay unique
+    family-wide through the case's shared, synchronized name counter and are
+    recorded plain), and resolves the round in the
     Rust frontend's precedence: a control error
     (`LibhegelException`/`IllegalArgumentException`, or a worker that exited
     without reporting) is rethrown first; then an overrun or an engine-level
@@ -303,7 +324,8 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
     theirs (an overrun aborts the family engine-side anyway). No spans are
     opened in the concurrent path (none of the bindings do; the engine owns
     rule structure). The `Reporter` is only ever called from the driving
-    thread: verbose output of worker lines is delivered at the join. Workers
+    thread: a case's output, worker lines included, is read once its body has
+    finished. Workers
     are stopped and joined in a `finally` before any leftover clone is freed.
   The machine handle is freed in a `finally`. Pools are family-wide: every pool
   created on a test case or its clones is freed by the runner when the case

@@ -20,7 +20,7 @@ class FluentBuilderTest {
 
     private TestCase testCase() {
         fake = new FakeLibhegel();
-        return new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false, Reporter.silent());
+        return new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false);
     }
 
     @Test

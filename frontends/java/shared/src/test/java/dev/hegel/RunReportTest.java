@@ -41,13 +41,8 @@ class RunReportTest {
         }
 
         @Override
-        public void draw(String label, Object value, boolean finalReplay) {
-            events.add("draw:" + label + "=" + value + ":" + finalReplay);
-        }
-
-        @Override
-        public void note(String message, boolean finalReplay) {
-            events.add("note:" + message + ":" + finalReplay);
+        public void caseOutput(String line, boolean finalReplay) {
+            events.add("output:" + line + ":" + finalReplay);
         }
 
         @Override
@@ -148,12 +143,12 @@ class RunReportTest {
         assertSame(err, f.exception());
         assertFalse(f.nondeterministic());
         assertEquals(Optional.empty(), f.caveat());
-        // The fake stamps the case for capture, so its draws and notes are the report.
+        // The fake stamps the case for capture, so its draws and output are the report.
         assertEquals(List.of("x", "draw_1"), List.copyOf(f.draws().keySet()));
         assertEquals(7, f.draws().get("x"));
-        assertEquals(List.of("saw 7"), f.notes());
+        assertEquals(List.of("x = 7;", "draw_1 = 7;", "saw 7"), f.output());
         assertThrows(UnsupportedOperationException.class, () -> f.draws().put("y", 1));
-        assertThrows(UnsupportedOperationException.class, () -> f.notes().add("more"));
+        assertThrows(UnsupportedOperationException.class, () -> f.output().add("more"));
         assertThrows(UnsupportedOperationException.class, () -> r.failures().clear());
         // The engine ran the one case; nothing is replayed client-side.
         assertEquals(1, r.statistics().total());
@@ -204,6 +199,7 @@ class RunReportTest {
         assertEquals(Optional.empty(), f.reproduceBlob());
         assertSame(err, f.exception());
         assertTrue(f.draws().isEmpty());
+        assertTrue(f.output().isEmpty());
         assertSame(err, assertThrows(AssertionError.class, r::throwIfFailed));
     }
 
@@ -222,7 +218,7 @@ class RunReportTest {
             tc.note("case " + n);
             throw new AssertionError("always");
         });
-        assertEquals(List.of("case 3"), r.failures().get(0).notes());
+        assertEquals(List.of("case 3"), r.failures().get(0).output());
     }
 
     @Test
@@ -318,7 +314,7 @@ class RunReportTest {
                 reporter);
         // Engine output goes through the run's callback to the reporter, whenever it arrives.
         fake.output.accept("engine says hi");
-        // The stamped case's draws and notes are not reported live; they are replayed, flagged as
+        // The stamped case's output is not reported live; it is replayed, flagged as
         // such, once the engine reports the failure.
         assertEquals(
                 List.of(
@@ -327,8 +323,8 @@ class RunReportTest {
                         "caseFinished:INTERESTING:false",
                         "failuresFound:1",
                         "caseStarted:true",
-                        "draw:x=3:true",
-                        "note:hi:true",
+                        "output:x = 3;:true",
+                        "output:hi:true",
                         "caseFinished:INTERESTING:true",
                         "failure:" + r.failures().get(0).origin(),
                         "runFinished:FAILED",
@@ -351,13 +347,15 @@ class RunReportTest {
                     throw new AssertionError("boom");
                 },
                 reporter);
-        // The case's draws and notes are reported live (flagged as such) ...
-        assertTrue(reporter.events.contains("draw:x=3:false"), reporter.events.toString());
-        assertTrue(reporter.events.contains("note:hi:false"), reporter.events.toString());
+        // The case's output is reported once its body has finished (flagged as live), before the
+        // case is reported finished ...
+        int finished = reporter.events.indexOf("caseFinished:INTERESTING:false");
+        assertEquals(
+                List.of("output:x = 3;:false", "output:hi:false"), reporter.events.subList(finished - 2, finished));
         // ... and replayed with the failure report.
-        assertTrue(reporter.events.contains("draw:x=3:true"), reporter.events.toString());
+        assertTrue(reporter.events.contains("output:x = 3;:true"), reporter.events.toString());
         assertEquals(Map.of("x", 3), r.failures().get(0).draws());
-        assertEquals(List.of("hi"), r.failures().get(0).notes());
+        assertEquals(List.of("x = 3;", "hi"), r.failures().get(0).output());
     }
 
     @Test
@@ -422,7 +420,7 @@ class RunReportTest {
                         "caseFinished:INTERESTING:false",
                         "failuresFound:1",
                         "caseStarted:true",
-                        "draw:x=1:true",
+                        "output:x = 1;:true",
                         "caseFinished:INTERESTING:true"),
                 reporter.events.subList(0, 7));
         assertEquals("runFinished:FAILED", reporter.events.get(reporter.events.size() - 1));

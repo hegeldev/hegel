@@ -136,6 +136,7 @@ report.status();                        // PASSED, FAILED, or ERROR
 report.statistics();                    // valid / invalid / overrun / interesting case counts
 for (Failure f : report.failures()) {   // one per distinct counterexample
   f.draws();                            // labelled draws of the minimal example, as Java values
+  f.output();                           // the printed report of the minimal example, line by line
   f.exception();                        // the body's own throwable
   f.reproduceBlob();                    // Optional: replay it later with Settings.reproduceFailure
   f.caveat();                           // Optional: how reliably a nondeterministic failure reproduced

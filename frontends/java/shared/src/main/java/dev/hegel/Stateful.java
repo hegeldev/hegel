@@ -123,7 +123,7 @@ import java.util.concurrent.LinkedBlockingQueue;
  * reported, so a rule that blocks forever hangs the test case as it would sequentially. When
  * several workers fail in the same round the lowest-numbered worker's exception is reported and the
  * others are noted as dropped. The report groups each round's output by worker under the round's
- * header, each line stamped {@code [worker N +X.XXXms]} with the time since the machine started, so
+ * header, each line stamped {@code [worker N +X.XXXms]} with the time since the test case started, so
  * it can be read across workers. A concurrency bug that depends on thread scheduling may not
  * reproduce on replay; the engine then confirms it by repeated replay and reports it with a
  * caveat (see {@link Failure#caveat()}).
@@ -338,9 +338,10 @@ public final class Stateful {
                 }
                 Method rule = rules.get(ruleIndex(index, rules));
                 step++;
-                tc.note("Step " + step + ": " + rule.getName());
+                tc.note("Step " + step + ": " + rule.getName() + " {");
+                TestCase ruleTc = tc.block(2);
                 try {
-                    invokeMachineMethod(machine, rule, tc);
+                    invokeMachineMethod(machine, rule, ruleTc);
                 } catch (AssumeRejected e) {
                     if (tc.isAborted()) {
                         // The engine itself concluded the case invalid (e.g. a draw inside the
@@ -352,7 +353,7 @@ public final class Stateful {
                     // the next rule.
                     tc.stateMachineRuleRejected(machineId, 0);
                     roundRejected = true;
-                    tc.note("Rule stopped early due to violated assumption.");
+                    ruleTc.note("Rule stopped early due to violated assumption.");
                 } catch (RuntimeException | Error e) {
                     // Everything else — including StopTest, so an out-of-data case is reported as
                     // an overrun instead of returning normally with a half-applied rule — unwinds
@@ -360,6 +361,8 @@ public final class Stateful {
                     // down.
                     tc.stopSpan(false);
                     throw e;
+                } finally {
+                    tc.note("}");
                 }
             }
             tc.stopSpan(roundRejected);
@@ -375,9 +378,9 @@ public final class Stateful {
     /**
      * The same protocol driven by worker threads, mirroring hegel-rust's concurrent runner. The
      * calling thread owns the root handle: it advances rounds, clones a fresh per-round handle for
-     * each worker right after the round's header (so the round's lines land under it), waits for
-     * every worker to report, absorbs their output, resolves the round's outcome and samples the
-     * invariants. Workers persist for the whole test case and only ever touch their own handle.
+     * each worker right after the round's header (so the engine anchors the round's lines under
+     * it, each stamped with its worker), waits for every worker to report, resolves the round's
+     * outcome and samples the invariants. Workers persist for the whole test case and only ever touch their own handle.
      * No spans are opened: the engine owns rule structure through {@code next_rule} / {@code
      * rule_rejected}, and a round's draws are spread over several streams.
      */
@@ -389,7 +392,6 @@ public final class Stateful {
             TestCase tc,
             long machineId,
             int concurrency) {
-        long startNanos = System.nanoTime();
         tc.note("Concurrency level: " + concurrency);
         if (!invariants.isEmpty()) {
             tc.note("Checking invariants on the initial state.");
@@ -415,7 +417,7 @@ public final class Stateful {
                 tc.note("---------------- Round " + round + ": group \"" + groupNames.get((int) group)
                         + "\" ----------------");
                 for (Worker worker : workers) {
-                    handles.add(tc.forWorker(worker.index, startNanos));
+                    handles.add(tc.forWorker(worker.index));
                 }
                 for (int w = 0; w < concurrency; w++) {
                     workers[w].inbox.add(handles.get(w));
@@ -424,10 +426,10 @@ public final class Stateful {
                 for (int w = 0; w < concurrency; w++) {
                     events[w] = workers[w].await();
                 }
-                // Every worker has reported, so no handle is in use any more: fold the round's
-                // output into the report and release the clones before judging the round.
+                // Every worker has reported, so no handle is in use any more: release the clones
+                // before judging the round. Their output stays in the case's document, anchored
+                // where each clone was made.
                 for (TestCase handle : handles) {
-                    tc.absorb(handle);
                     handle.release();
                 }
                 handles.clear();
@@ -593,9 +595,10 @@ public final class Stateful {
                         return WorkerEvent.DONE;
                     }
                     Method rule = rules.get(ruleIndex(index, rules));
-                    wtc.note("Rule: " + rule.getName());
+                    wtc.note("Rule: " + rule.getName() + " {");
+                    TestCase ruleTc = wtc.block(2);
                     try {
-                        invokeMachineMethod(machine, rule, wtc);
+                        invokeMachineMethod(machine, rule, ruleTc);
                     } catch (AssumeRejected e) {
                         if (wtc.isAborted()) {
                             // The engine concluded the case invalid inside the rule, not the
@@ -604,7 +607,9 @@ public final class Stateful {
                         }
                         // The engine does not count the slot; the next next_rule retries it.
                         wtc.stateMachineRuleRejected(machineId, this.index);
-                        wtc.note("Rule stopped early due to violated assumption.");
+                        ruleTc.note("Rule stopped early due to violated assumption.");
+                    } finally {
+                        wtc.note("}");
                     }
                 }
             } catch (AssumeRejected e) {

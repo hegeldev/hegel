@@ -17,11 +17,12 @@ import java.util.function.LongFunction;
  * <p>The engine owns the whole run — generation, shrinking, the replays that confirm a failure, and
  * the final replay of every failure it is about to report — so the loop only pumps cases and keeps
  * the report material as they run. The engine stamps the executions a failure report can be built
- * from ({@code hegel_test_case_should_capture}); a stamped case records its draws and notes, and
- * every interesting case's exception is kept per origin, a stamped capture winning over an unstamped
- * one and the newest winning at equal rank. Once the loop drains, each reported failure is built
- * from its origin's capture: the draws and notes are replayed to the reporter, the exception is the
- * body's own, and the engine's caveat and reproduce blob are attached. A {@link
+ * from ({@code hegel_test_case_should_capture}); a stamped case prints its draws and notes into the
+ * engine's document for the case and keeps the rendered lines, and every interesting case's
+ * exception is kept per origin, a stamped capture winning over an unstamped one and the newest
+ * winning at equal rank. Once the loop drains, each reported failure is built from its origin's
+ * capture: the rendered lines go to the reporter, the exception is the body's own, and the
+ * engine's caveat and reproduce blob are attached. A {@link
  * Settings#reproduceFailure} run is the same loop over {@code hegel_run_start_blob}. Run-level errors
  * (a failed health check, a nondeterminism abort under {@link NondeterminismStrictness#ERROR}, an
  * engine panic) surface with the engine's own message.
@@ -49,24 +50,33 @@ final class Runner {
             + " is fixed.";
 
     /**
-     * The body's outcome against one case: the case (holding its draws and notes when the engine
-     * stamped it for capture), the exception that made it interesting ({@code null} otherwise), and
-     * the origin the case was marked complete with.
+     * The body's outcome against one case: whether the engine stamped it for capture, its rendered
+     * output and draws (when it was stamped), the exception that made it interesting ({@code null}
+     * otherwise), and the origin the case was marked complete with.
      */
     private static final class CaseRun {
-        final TestCase testCase;
+        final boolean captured;
+        final List<String> output;
+        final Map<String, Object> draws;
         final Throwable interesting;
         final String origin;
 
-        CaseRun(TestCase testCase, Throwable interesting, String origin) {
-            this.testCase = testCase;
+        CaseRun(
+                boolean captured,
+                List<String> output,
+                Map<String, Object> draws,
+                Throwable interesting,
+                String origin) {
+            this.captured = captured;
+            this.output = output;
+            this.draws = draws;
             this.interesting = interesting;
             this.origin = origin;
         }
 
         /** A stamped capture outranks an unstamped one, whose only material is the exception. */
         int rank() {
-            return testCase.isFinal() ? 1 : 0;
+            return captured ? 1 : 0;
         }
     }
 
@@ -240,15 +250,17 @@ final class Runner {
                         "internal error: failure " + i + " (" + origin + ") has no captured failing execution");
             }
             reporter.caseStarted(true);
-            capture.testCase.replayTo(reporter);
+            for (String line : capture.output) {
+                reporter.caseOutput(line, true);
+            }
             reporter.caseFinished(CaseOutcome.INTERESTING, true);
             Failure failure = new Failure(
                     origin,
                     lib.failureBlob(result, i),
                     lib.failureCaveat(result, i),
                     capture.interesting,
-                    capture.testCase.draws(),
-                    capture.testCase.notes());
+                    capture.draws,
+                    capture.output);
             reporter.failure(failure);
             failures.add(failure);
         }
@@ -258,8 +270,8 @@ final class Runner {
     /**
      * Run the body once against {@code tc}, report the outcome to the engine and the reporter, and
      * free the handle. The returned {@link CaseRun} carries the exception that made the case
-     * interesting ({@code null} for any other outcome) and the case itself, whose draws and notes
-     * were recorded if the engine stamped it for capture.
+     * interesting ({@code null} for any other outcome) and, if the engine stamped the case for
+     * capture, its rendered output and draws.
      */
     private static CaseRun driveOneCase(
             Libhegel lib,
@@ -270,35 +282,13 @@ final class Runner {
             RunStatistics.Counter counts) {
         LiveDataSource source = new LiveDataSource(lib, tc);
         try {
-            boolean verbose = settings.verbosity.code >= Verbosity.VERBOSE.code;
-            TestCase testCase = new TestCase(source, lib.testCaseShouldCapture(tc), verbose, reporter);
-            reporter.caseStarted(false);
-            CaseOutcome outcome;
-            String origin = null;
-            Throwable interesting = null;
+            TestCase testCase = new TestCase(
+                    source, lib.testCaseShouldCapture(tc), settings.verbosity.code >= Verbosity.VERBOSE.code);
             try {
-                body.accept(testCase);
-                outcome = CaseOutcome.VALID;
-            } catch (AssumeRejected e) {
-                outcome = CaseOutcome.INVALID;
-            } catch (StopTest e) {
-                outcome = CaseOutcome.OVERRUN;
-            } catch (LibhegelException e) {
-                // A binding/engine error, not a property failure: abort the whole run.
-                throw e;
-            } catch (Throwable e) {
-                outcome = CaseOutcome.INTERESTING;
-                origin = originOf(e, settings.infrastructurePackages);
-                interesting = e;
+                return runBody(lib, tc, testCase, body, settings, reporter, counts);
+            } finally {
+                testCase.releaseBlocks();
             }
-            int rc = lib.markComplete(tc, outcome.status, origin);
-            if (rc != Abi.OK) {
-                throw new HegelException(
-                        "hegel_mark_complete failed (rc=" + rc + "): " + nullToEmpty(lib.lastErrorMessage()));
-            }
-            counts.record(outcome);
-            reporter.caseFinished(outcome, false);
-            return new CaseRun(testCase, interesting, origin);
         } finally {
             // The handles are caller-owned. On the error paths above the case may be incomplete;
             // the run still holds its own reference and completes it when freed.
@@ -308,6 +298,52 @@ final class Runner {
                 lib.testCaseFree(tc);
             }
         }
+    }
+
+    /** Run the body against {@code testCase}, collect its output and report the outcome. */
+    private static CaseRun runBody(
+            Libhegel lib,
+            long tc,
+            TestCase testCase,
+            Consumer<TestCase> body,
+            Settings settings,
+            Reporter reporter,
+            RunStatistics.Counter counts) {
+        reporter.caseStarted(false);
+        CaseOutcome outcome;
+        String origin = null;
+        Throwable interesting = null;
+        try {
+            body.accept(testCase);
+            outcome = CaseOutcome.VALID;
+        } catch (AssumeRejected e) {
+            outcome = CaseOutcome.INVALID;
+        } catch (StopTest e) {
+            outcome = CaseOutcome.OVERRUN;
+        } catch (LibhegelException e) {
+            // A binding/engine error, not a property failure: abort the whole run.
+            throw e;
+        } catch (Throwable e) {
+            outcome = CaseOutcome.INTERESTING;
+            origin = originOf(e, settings.infrastructurePackages);
+            interesting = e;
+        }
+        List<String> output = testCase.output();
+        if (settings.verbosity.code >= Verbosity.VERBOSE.code) {
+            for (String line : output) {
+                reporter.caseOutput(line, false);
+            }
+        }
+        int rc = lib.markComplete(tc, outcome.status, origin);
+        if (rc != Abi.OK) {
+            throw new HegelException(
+                    "hegel_mark_complete failed (rc=" + rc + "): " + nullToEmpty(lib.lastErrorMessage()));
+        }
+        counts.record(outcome);
+        reporter.caseFinished(outcome, false);
+        return testCase.isFinal()
+                ? new CaseRun(true, output, testCase.draws(), interesting, origin)
+                : new CaseRun(false, List.of(), Map.of(), interesting, origin);
     }
 
     /**

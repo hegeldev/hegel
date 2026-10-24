@@ -36,3 +36,12 @@ An errored run now raises an exception typed by the engine's classification of t
 `Label.of` and `Label.combine` are now computed by the engine, and the labels of the standard generators (`Label.LIST`, `Label.ONE_OF`, `Label.OPTIONAL`, `Label.FILTER` and so on) now use the same names as the other Hegel frontends, so their values change. Labels are only identities, so this changes nothing but the values of those constants.
 
 `dev.hegel.lowlevel.Libhegel` gains a method for each newly bound C function: `collectionFree`, `poolFree`, `releaseThreadContext`, `settingsNewForProfile`, `settingsRegisterProfile`, `setDefaultProfile`, `settingsGetVerbosity`, `settingsStopOnFirstFailure`, `settingsShowStatistics`, `settingsUnboundedChoices`, `settingsTestLocation`, `runResultErrorKind`, `labelFromName` and `labelCombine`. A third-party binding needs to implement them.
+
+All output a test case prints now goes through the engine, as in the other Hegel frontends. `TestCase.note` hands the note to the engine, and a top-level draw prints into the engine's document for the case, which lays out a long list, map, array or record over several lines, one element per line, instead of on one long line. Strings and characters print as escaped Java literals, so a drawn string containing a newline stays on its line. In a stateful test each rule's draws and notes are indented under its `Step N: rule {` line and closed by `}`, and in a concurrent one the engine stamps each worker's lines with `[worker N +X.XXXms]`, timed from the start of the test case rather than of the machine.
+
+The `Reporter` and `Failure` APIs change to match:
+
+- `Reporter.draw(label, value, finalReplay)` and `Reporter.note(message, finalReplay)` are replaced by `Reporter.caseOutput(line, finalReplay)`, which receives the case's rendered output one line at a time. Under `Verbosity.VERBOSE` a case's lines now arrive once its body has finished rather than as each draw is made.
+- `Failure.notes()` is replaced by `Failure.output()`, the counterexample's printed report as a list of lines. `Failure.draws()` still gives the drawn values.
+
+`dev.hegel.lowlevel.Libhegel` gains `testCaseBlock`, `note`, `testCasePrinter`, `printerNew`, `printerFree`, `printerText`, `printerBreakable`, `printerHardBreak`, `printerBeginGroup`, `printerEndGroup`, `printerReflow`, `printerBeginSpeculative`, `printerCommitSpeculative`, `printerAbortSpeculative`, `printerResolve` and `printerValue`, for the engine's printer. A third-party binding needs to implement them.
