@@ -430,8 +430,9 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   the root `CONTRIBUTING.md` for the format and the semver rules (on 0.x,
   breaking changes are `minor`, everything else `patch`). CI checks this
   (`.github/scripts/release.py check`); on merge to main the release job bumps
-  the version in the parent `pom.xml` and each module pom's `<parent>`, moves
-  the text into `CHANGELOG.md`, tags `frontends/java/<version>`, and the
+  the version in the parent `pom.xml` and each module pom's `<parent>` and the
+  README's install snippet (which must name the current version, or the
+  release fails), moves the text into `CHANGELOG.md`, tags `frontends/java/<version>`, and the
   `release-java` job publishes the three artifacts to Maven Central
   (`.github/scripts/publish_java.py`: `mvn -P release deploy`, signed with
   the Hegel release key, bundling the libhegel GitHub release's binaries). A
