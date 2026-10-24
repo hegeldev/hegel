@@ -10,7 +10,6 @@ import { Generator } from "./core.js";
 
 const DEFAULT_MAX_DEPTH = 32;
 const DEFAULT_MAX_LEAVES = 100;
-const MAX_DEFERRED_DEPTH = 64;
 
 /**
  * Unwinds a recursive attempt that drew more leaves than its budget, back to
@@ -213,7 +212,6 @@ class DeferredGenerator<T> extends Generator<T> {
   }
 
   doDraw(tc: TestCase): T {
-    if (tc.openSpanDepth > MAX_DEFERRED_DEPTH) tc.reject();
     return this.resolve().doDraw(tc);
   }
 }
@@ -228,10 +226,10 @@ class DeferredGenerator<T> extends Generator<T> {
  * const tree: Generator<Tree> = deferred(() => oneOf<Tree>(just(null), tuples(tree, tree)));
  * ```
  *
- * A draw nested more than 64 levels deep rejects the test case, so a
- * definition that always refers back to itself cannot recurse forever. A
- * definition that resolves only to itself throws when drawn from. For
- * recursive data with engine-controlled size, prefer {@link recursive}.
+ * A definition that always refers back to itself is cut off by the engine's
+ * limit on nested spans, which rejects the test case. A definition that
+ * resolves only to itself throws when drawn from. For recursive data with
+ * engine-controlled size, prefer {@link recursive}.
  */
 export function deferred<T>(definition: () => Generator<T>): Generator<T> {
   return new DeferredGenerator(definition);

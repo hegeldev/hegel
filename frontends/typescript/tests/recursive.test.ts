@@ -161,6 +161,20 @@ describe("gs.deferred()", () => {
     ).toThrow(hegel.RunError);
   });
 
+  test("draws normally beneath many levels of other structure", () => {
+    let nested: Generator<unknown> = gs.deferred(() => gs.integers({ minValue: 0, maxValue: 9 }));
+    for (let i = 0; i < 200; i++) nested = gs.tuples(nested);
+    let completed = 0;
+    hegel.test(
+      (tc) => {
+        tc.draw(nested);
+        completed++;
+      },
+      { testCases: 5, ...deterministic },
+    );
+    expect(completed).toBeGreaterThan(0);
+  });
+
   test("follows a definition that is itself deferred", () => {
     const resolved = gs.deferred(() => gs.integers({ minValue: 0, maxValue: 9 }));
     const viaResolved = gs.deferred(() => resolved);
