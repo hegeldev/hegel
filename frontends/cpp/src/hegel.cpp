@@ -7,6 +7,7 @@
  */
 
 #include <hegel/errors.h>
+#include <hegel/explicit.h>
 #include <hegel/hegel.h>
 #include <hegel/internal.h>
 #include <hegel/settings.h>
@@ -98,6 +99,22 @@ extern "C" void __cxa_throw(void* exception, ThrowTypeInfo* type_info,
 #endif
 
 namespace hegel {
+
+    namespace impl {
+        // Demangle a typeid name, owning the malloc'd result. The fallback
+        // covers unparseable input and the demangler's allocation failure.
+        std::string demangle(const char* name) {
+            int status = 0;
+            char* demangled =
+                abi::__cxa_demangle(name, nullptr, nullptr, &status);
+            if (demangled == nullptr) {
+                return name; // GCOVR_EXCL_LINE
+            }
+            std::string out = demangled;
+            std::free(demangled);
+            return out;
+        }
+    } // namespace impl
 
     namespace {
         /*
@@ -203,19 +220,7 @@ namespace hegel {
                 CapturedFailure{outcome, std::move(lines)};
         }
 
-        // Demangle a typeid name, owning the malloc'd result. The fallback
-        // covers unparseable input and the demangler's allocation failure.
-        std::string demangle(const char* name) {
-            int status = 0;
-            char* demangled =
-                abi::__cxa_demangle(name, nullptr, nullptr, &status);
-            if (demangled == nullptr) {
-                return name; // GCOVR_EXCL_LINE
-            }
-            std::string out = demangled;
-            std::free(demangled);
-            return out;
-        }
+        using impl::demangle;
 
 #if HEGEL_HAS_THROW_SITE
         std::string to_hex(uintptr_t value) {
@@ -389,9 +394,8 @@ namespace hegel {
         // Width the framed report's header rule is padded to.
         constexpr size_t frame_width = 72;
 
-        void print_failure_header(const std::optional<TestLocation>& location,
-                                  uint64_t cases_run,
-                                  uint64_t cases_discarded) {
+        // The rule that opens a framed report, naming the test.
+        void print_failure_title(const std::optional<TestLocation>& location) {
             std::string title = "Failure";
             if (location.has_value()) {
                 title += ": " + location->name + " (" + location->file + ":" +
@@ -403,6 +407,12 @@ namespace hegel {
                                 : frame_width - prefix.size();
             std::fprintf(stderr, "%s%s\n", prefix.c_str(),
                          std::string(dashes, '-').c_str());
+        }
+
+        void print_failure_header(const std::optional<TestLocation>& location,
+                                  uint64_t cases_run,
+                                  uint64_t cases_discarded) {
+            print_failure_title(location);
             std::fprintf(stderr,
                          "Falsified after %llu test case%s (%llu discarded):\n",
                          static_cast<unsigned long long>(cases_run),
@@ -797,6 +807,94 @@ namespace hegel {
             throw MultipleFailures(std::move(exceptions));
         }
 
+        // How an explicit test case reads in a report: its values, in the
+        // order it was given them.
+        std::string describe(const ExplicitTestCase& test_case) {
+            std::string out = "(";
+            const char* separator = "";
+            for (const ExplicitTestCase::Value& value : test_case.values()) {
+                out += separator;
+                if (value.name) {
+                    out += *value.name + " = ";
+                }
+                out += value.render(value.value);
+                separator = ", ";
+            }
+            return out + ")";
+        }
+
+        // Throws std::invalid_argument when the draws of an explicit test
+        // case did not take all of its values.
+        void check_fully_used(const impl::test_case::ExplicitState& state) {
+            std::string unused;
+            const std::vector<ExplicitTestCase::Value>& values =
+                state.test_case.values();
+            for (size_t i = 0; i < values.size(); ++i) {
+                if (state.used[i]) {
+                    continue;
+                }
+                unused += unused.empty() ? "" : ", ";
+                unused +=
+                    values[i].name ? *values[i].name : "a positional value";
+            }
+            if (!unused.empty()) {
+                throw std::invalid_argument(
+                    "The explicit test case " + describe(state.test_case) +
+                    " gave values that no draw took: " + unused);
+            }
+        }
+
+        // Runs each explicit test case once, in order. The first that fails
+        // is reported, and its exception propagates.
+        void run_explicit_cases(
+            const std::function<void(TestCase&)>& test_fn,
+            const RunConfig& config,
+            const std::optional<TestLocation>& location,
+            const std::vector<ExplicitTestCase>& explicit_cases) {
+            bool verbose = config.verbosity == Verbosity::Verbose ||
+                           config.verbosity == Verbosity::Debug;
+            bool quiet = config.verbosity == Verbosity::Quiet;
+            for (const ExplicitTestCase& test_case : explicit_cases) {
+                auto data = std::make_unique<impl::test_case::TestCaseData>(
+                    nullptr, false, config.stateful_step_count);
+                auto state =
+                    std::make_shared<impl::test_case::ExplicitState>(test_case);
+                data->explicit_state = state;
+                TestCase tc(std::move(data));
+                if (verbose) {
+                    std::fprintf(stderr, "Running explicit test case %s\n",
+                                 describe(test_case).c_str());
+                }
+                BodyOutcome outcome = run_body(test_fn, tc);
+                if (verbose) {
+                    for (const std::string& line : state->lines) {
+                        std::fprintf(stderr, "%s\n", line.c_str());
+                    }
+                }
+                if (outcome.status == HEGEL_STATUS_INVALID) {
+                    throw std::invalid_argument(
+                        "The explicit test case " + describe(test_case) +
+                        " was rejected (TestCase::assume() or "
+                        "TestCase::reject()). Explicit test cases must not "
+                        "be rejected.");
+                }
+                if (outcome.status == HEGEL_STATUS_INTERESTING) {
+                    if (!quiet) {
+                        print_failure_title(location);
+                        std::fprintf(stderr,
+                                     "Falsified by explicit test case %s:\n",
+                                     describe(test_case).c_str());
+                        print_report_body(state->lines);
+                        print_failure_body(config, location, RerunForm::Call,
+                                           outcome, std::nullopt, std::nullopt,
+                                           !state->lines.empty());
+                    }
+                    std::rethrow_exception(outcome.exception);
+                }
+                check_fully_used(*state);
+            }
+        }
+
         // Replays each blob in a run of its own, then re-raises what they
         // reproduced.
         void run_from_blobs(const std::function<void(TestCase&)>& test_fn,
@@ -847,6 +945,13 @@ namespace hegel {
                 static std::map<std::string, std::vector<std::string>> registry;
                 return registry;
             }
+
+            std::map<std::string, std::vector<ExplicitTestCase>>&
+            explicit_registry() {
+                static std::map<std::string, std::vector<ExplicitTestCase>>
+                    registry;
+                return registry;
+            }
         } // namespace
 
         bool install_framework_hooks(const FrameworkHooks& hooks) {
@@ -891,6 +996,20 @@ namespace hegel {
             }
             return blob->second;
         }
+
+        bool register_explicit_case(const char* name,
+                                    ExplicitTestCase test_case) {
+            explicit_registry()[name].push_back(std::move(test_case));
+            return true;
+        }
+
+        std::vector<ExplicitTestCase> explicit_cases_for(const char* name) {
+            auto cases = explicit_registry().find(name);
+            if (cases == explicit_registry().end()) {
+                return {};
+            }
+            return cases->second;
+        }
     } // namespace internal
 
     namespace {
@@ -900,7 +1019,8 @@ namespace hegel {
                       const std::optional<TestLocation>& location,
                       RerunForm rerun_form, const Settings& settings,
                       const std::string& default_key,
-                      const std::vector<std::string>& failure_blobs) {
+                      const std::vector<std::string>& failure_blobs,
+                      const std::vector<ExplicitTestCase>& explicit_cases) {
             hegel_context_t* ctx = impl::thread_context();
 
             SettingsGuard settings_guard{ctx};
@@ -918,6 +1038,11 @@ namespace hegel {
                              settings.stateful_step_count};
 
             if (failure_blobs.empty()) {
+                if ((impl::settings_get_phases(ctx, s) &
+                     HEGEL_PHASE_EXPLICIT) != 0) {
+                    run_explicit_cases(test_fn, config, location,
+                                       explicit_cases);
+                }
                 run_from_engine(test_fn, ctx, s, config, location, rerun_form);
             } else {
                 run_from_blobs(test_fn, ctx, s, config, location, rerun_form,
@@ -938,6 +1063,7 @@ namespace hegel {
     void test(const std::function<void(TestCase&)>& test_fn,
               const Settings& settings,
               const std::vector<std::string>& failure_blobs,
+              const std::vector<ExplicitTestCase>& explicit_cases,
               const char* caller_file, const char* caller_function,
               int caller_line) {
         std::string file = caller_file == nullptr ? "" : caller_file;
@@ -951,14 +1077,17 @@ namespace hegel {
             key_name = caller_function;
         }
         run_test(test_fn, location, RerunForm::Call, settings,
-                 database_key_for(file, key_name), failure_blobs);
+                 database_key_for(file, key_name), failure_blobs,
+                 explicit_cases);
     }
 
     void test(const std::function<void(TestCase&)>& test_fn,
               const TestLocation& location, const Settings& settings,
-              const std::vector<std::string>& failure_blobs) {
+              const std::vector<std::string>& failure_blobs,
+              const std::vector<ExplicitTestCase>& explicit_cases) {
         run_test(test_fn, location, RerunForm::Call, settings,
-                 database_key_for(location.file, location.name), failure_blobs);
+                 database_key_for(location.file, location.name), failure_blobs,
+                 explicit_cases);
     }
 
     void register_profile(const std::string& name, const Settings& settings) {
@@ -977,13 +1106,14 @@ namespace hegel {
     }
 
     namespace internal {
-        void test_from_macro(const std::function<void(TestCase&)>& test_fn,
-                             const TestLocation& location,
-                             const Settings& settings,
-                             const std::vector<std::string>& failure_blobs) {
+        void
+        test_from_macro(const std::function<void(TestCase&)>& test_fn,
+                        const TestLocation& location, const Settings& settings,
+                        const std::vector<std::string>& failure_blobs,
+                        const std::vector<ExplicitTestCase>& explicit_cases) {
             run_test(test_fn, location, RerunForm::Annotation, settings,
                      database_key_for(location.file, location.name),
-                     failure_blobs);
+                     failure_blobs, explicit_cases);
         }
     } // namespace internal
 } // namespace hegel

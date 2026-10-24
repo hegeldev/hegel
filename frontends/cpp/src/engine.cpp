@@ -320,6 +320,13 @@ namespace hegel::impl {
         return yes;
     }
 
+    uint32_t settings_get_phases(hegel_context_t* ctx,
+                                 const hegel_settings_t* s) {
+        uint32_t phases = 0;
+        check_rc(ctx, hegel_settings_get_phases(ctx, s, &phases));
+        return phases;
+    }
+
     hegel_run_t* run_start_blob(hegel_context_t* ctx, hegel_settings_t* s,
                                 std::string_view blob) {
         hegel_run_t* run = nullptr;
@@ -478,6 +485,12 @@ namespace hegel::impl {
             hegel_test_case_t* tc;
 
             explicit DrawScope(const TestCase& obj) {
+                if (obj.data()->explicit_state) {
+                    throw std::invalid_argument(
+                        "This operation needs generated data, which an "
+                        "explicit test case does not have: it gives values "
+                        "only to TestCase::draw().");
+                }
                 ctx = thread_context();
                 tc = obj.data()->tc;
             }

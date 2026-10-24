@@ -5,6 +5,7 @@
  */
 
 #include <hegel.h>
+#include <hegel/explicit.h>
 
 #include <cstdint>
 #include <map>
@@ -20,6 +21,17 @@ namespace hegel::impl::test_case {
     struct DrawNames {
         std::map<std::string, int> counts;
         std::set<std::string> taken;
+    };
+
+    // The state of an explicit test case: the values it was given, which
+    // of them the draws took, and what it printed.
+    struct ExplicitState {
+        explicit ExplicitState(const ExplicitTestCase& test_case)
+            : test_case(test_case), used(test_case.values().size(), false) {}
+
+        const ExplicitTestCase& test_case;
+        std::vector<bool> used;
+        std::vector<std::string> lines;
     };
 
     // Per-case runtime state.
@@ -53,6 +65,8 @@ namespace hegel::impl::test_case {
         // This handle's printer onto its region of the case's document,
         // fetched at the first print.
         hegel_printer_t* printer = nullptr;
+        // Set for an explicit test case, which has no engine handle.
+        std::shared_ptr<ExplicitState> explicit_state;
     };
 
     // Reads the document of drawn values and notes that `data`'s test case

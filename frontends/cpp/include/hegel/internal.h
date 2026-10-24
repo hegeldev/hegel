@@ -3,12 +3,14 @@
 #include "printer.h"
 #include "test_case.h"
 
+#include <any>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <typeinfo>
 #include <vector>
 
 /// @cond INTERNAL
@@ -179,21 +181,11 @@ namespace hegel::internal {
     // Thrown out of the generators of a recursive value when its attempt
     // has more leaves than its budget. The recursive generator catches it,
     // discards the attempt and starts again.
-    class LeafBudgetExceeded : public std::exception {
-      public:
-        const char* what() const noexcept override {
-            return "recursive value exceeded its leaf budget";
-        }
-    };
+    class LeafBudgetExceeded : public std::exception {};
 
     // Thrown when the engine discards a completed recursive value. The
     // recursive generator catches it and starts again.
-    class AttemptMispriced : public std::exception {
-      public:
-        const char* what() const noexcept override {
-            return "recursive value discarded by the engine";
-        }
-    };
+    class AttemptMispriced : public std::exception {};
 
     inline constexpr int64_t state_machine_done = INT64_MIN;
     class StateMachineHandle {
@@ -252,6 +244,19 @@ namespace hegel::internal {
         const TestCase& tc_;
         bool outermost_;
     };
+
+    // Whether `tc` runs an explicit test case, whose draws take the values
+    // it was given instead of generating them.
+    bool is_explicit(const TestCase& tc);
+
+    // Takes the value that the explicit test case `tc` gives a draw, and
+    // records the draw for the failure report: the value named for the
+    // draw's display name, else the next positional value. Throws
+    // std::invalid_argument when there is none, or when its type is not
+    // `type`.
+    const std::any& take_explicit_value(const TestCase& tc,
+                                        std::string_view name, bool repeatable,
+                                        const std::type_info& type);
 
     // Whether notes and drawn values of `tc` are recorded in the engine's
     // document (see TestCase::note).

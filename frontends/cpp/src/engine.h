@@ -29,6 +29,9 @@ namespace hegel::impl {
     /// Most recent error message recorded on `ctx` (empty string if none).
     std::string last_error(hegel_context_t* ctx);
 
+    /// The readable form of a typeid name.
+    std::string demangle(const char* name);
+
     // Safe wrappers over the libhegel C ABI: each forwards to its `hegel_*`
     // entry point and routes the return code through an internal check that
     // throws std::runtime_error (with the context diagnostic) on failure.
@@ -87,6 +90,9 @@ namespace hegel::impl {
     hegel_verbosity_t settings_get_verbosity(hegel_context_t* ctx,
                                              const hegel_settings_t* s);
     bool settings_get_print_blob(hegel_context_t* ctx,
+                                 const hegel_settings_t* s);
+    /// The enabled phases, as a bitwise OR of hegel_phase_t values.
+    uint32_t settings_get_phases(hegel_context_t* ctx,
                                  const hegel_settings_t* s);
 
     /// The span label for a generator kind: a stable hash of `name`.

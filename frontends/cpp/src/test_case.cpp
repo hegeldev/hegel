@@ -1,3 +1,4 @@
+#include <hegel/explicit.h>
 #include <hegel/internal.h>
 #include <hegel/printer.h>
 #include <hegel/test_case.h>
@@ -11,7 +12,9 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -57,6 +60,10 @@ namespace hegel {
     TestCase::~TestCase() = default;
 
     TestCase TestCase::clone() const {
+        if (data_->explicit_state) {
+            throw std::invalid_argument(
+                "clone() is not supported in an explicit test case");
+        }
         hegel_test_case_t* handle =
             impl::test_case_clone(impl::thread_context(), data_->tc);
         return TestCase(std::make_unique<impl::test_case::TestCaseData>(
@@ -72,14 +79,23 @@ namespace hegel {
     void TestCase::reject() const { throw internal::HegelReject(); }
 
     void TestCase::target(double score, std::string_view label) const {
+        if (data_->explicit_state) {
+            return;
+        }
         impl::target(*this, score, label);
     }
 
     void TestCase::event(std::string_view label) const {
+        if (data_->explicit_state) {
+            return;
+        }
         impl::event(*this, label);
     }
 
     void TestCase::event_value(std::string_view label, double value) const {
+        if (data_->explicit_state) {
+            return;
+        }
         impl::event_value(*this, label, value);
     }
 
@@ -102,6 +118,14 @@ namespace hegel {
     }
 
     void TestCase::note(std::string_view message) const {
+        if (data_->explicit_state) {
+            std::istringstream lines{std::string(message)};
+            std::string line;
+            while (std::getline(lines, line)) {
+                data_->explicit_state->lines.push_back(line);
+            }
+            return;
+        }
         if (!data_->emit) {
             return;
         }
@@ -118,6 +142,49 @@ namespace hegel {
         NestedDraw::~NestedDraw() { tc_.data()->draw_depth--; }
 
         bool records_output(const TestCase& tc) { return tc.data()->emit; }
+
+        bool is_explicit(const TestCase& tc) {
+            return tc.data()->explicit_state != nullptr;
+        }
+
+        const std::any& take_explicit_value(const TestCase& tc,
+                                            std::string_view name,
+                                            bool repeatable,
+                                            const std::type_info& type) {
+            impl::test_case::ExplicitState& state = *tc.data()->explicit_state;
+            const std::vector<ExplicitTestCase::Value>& values =
+                state.test_case.values();
+            std::string display = draw_display_name(tc, name, repeatable);
+            std::optional<size_t> chosen;
+            for (size_t i = 0; i < values.size() && !chosen; ++i) {
+                if (!state.used[i] && values[i].name == display) {
+                    chosen = i;
+                }
+            }
+            for (size_t i = 0; i < values.size() && !chosen; ++i) {
+                if (!state.used[i] && !values[i].name) {
+                    chosen = i;
+                }
+            }
+            if (!chosen) {
+                throw std::invalid_argument(
+                    "The explicit test case has no value for the draw " +
+                    display + ". Give one with hegel::named(\"" + display +
+                    "\", value), or add a positional value.");
+            }
+            const ExplicitTestCase::Value& value = values[*chosen];
+            if (value.value.type() != type) {
+                throw std::invalid_argument(
+                    "The explicit test case value for the draw " + display +
+                    " has type " + impl::demangle(value.value.type().name()) +
+                    ", but the draw produces " + impl::demangle(type.name()) +
+                    ".");
+            }
+            state.used[*chosen] = true;
+            state.lines.push_back("auto " + display + " = " +
+                                  value.render(value.value) + ";");
+            return value.value;
+        }
 
         Printer test_case_printer(const TestCase& tc) {
             impl::test_case::TestCaseData* data = tc.data();

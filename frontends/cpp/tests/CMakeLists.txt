@@ -134,6 +134,9 @@ hegel_add_test(NAME test_stateful
     APPROVALS)
 
 
+# Explicit test cases: values given in advance, run before generation.
+hegel_add_test(NAME test_explicit SOURCE test_explicit.cpp)
+
 # Guiding generation: reject(), target(), repeat().
 hegel_add_test(NAME test_guiding SOURCE test_guiding.cpp)
 

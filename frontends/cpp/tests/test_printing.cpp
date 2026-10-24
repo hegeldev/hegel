@@ -173,7 +173,7 @@ TEST(FailureReport, LocationNamesTheTest) {
 TEST(FailureReport, MacroDefinedTestGetsAnnotationRerunHint) {
     std::string out = capture_report([] {
         hegel::internal::test_from_macro(throw_boom, kLocation,
-                                         report_settings(), {});
+                                         report_settings(), {}, {});
     });
     Approvals::verify(out, scrub_blob());
 }

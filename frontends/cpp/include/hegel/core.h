@@ -1,5 +1,6 @@
 #pragma once
 
+#include <any>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -8,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <typeinfo>
 
 #include "config.h"
 #include "internal.h"
@@ -336,6 +338,10 @@ namespace hegel {
     template <typename T>
     T TestCase::draw(std::string_view name, const generators::Generator<T>& gen,
                      bool repeatable) const {
+        if (internal::is_explicit(*this)) {
+            return std::any_cast<T>(internal::take_explicit_value(
+                *this, name, repeatable, typeid(T)));
+        }
         internal::NestedDraw nested(*this);
         T value = gen.do_draw(*this);
         if (nested.outermost() && internal::records_output(*this)) {

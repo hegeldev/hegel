@@ -288,6 +288,25 @@
  * Settings when invoking the test (`self_equality({.test_cases = 5})`)
  * replaces them for that run.
  *
+ * @subsection explicit_cases Always test some values
+ *
+ * To run a test with values you choose, before Hegel generates any, add an
+ * explicit test case with @ref HEGEL_EXPLICIT_TEST_CASE. Its values go to
+ * the test's draws: positional values in draw order, and hegel::named()
+ * values to the draw of that name.
+ *
+ * @code{.cpp}
+ * HEGEL_EXPLICIT_TEST_CASE(self_equality, 0)
+ * HEGEL_EXPLICIT_TEST_CASE(self_equality,
+ *                          hegel::named("n", std::numeric_limits<int>::min()))
+ * HEGEL_TEST(self_equality)(hegel::TestCase& tc) {
+ *     auto n = tc.draw("n", gs::integers<int>());
+ *     // ...
+ * }
+ * @endcode
+ *
+ * With hegel::test(), pass the cases as a list of hegel::ExplicitTestCase.
+ *
  * @subsection use_gtest Hegel and test frameworks
  *
  * With a test framework, write the property inside one of its tests and call
@@ -332,6 +351,7 @@
 
 #include "core.h"
 #include "errors.h"
+#include "explicit.h"
 #include "settings.h"
 #include "test_case.h"
 
@@ -467,6 +487,9 @@ namespace hegel {
      * @param failure_blobs Reproduce blobs from earlier failure reports. If
      *                      any are given, the test replays each blob instead
      *                      of generating test cases.
+     * @param explicit_cases Test cases to run with the values they give,
+     *                       before any generated test case, when the
+     *                       Explicit phase is enabled. See ExplicitTestCase.
      * @param caller_file Filled in by the compiler with the file of the call.
      * @param caller_function Filled in by the compiler with the function
      *                        holding the call.
@@ -484,6 +507,7 @@ namespace hegel {
     void test(const std::function<void(TestCase&)>& test_fn,
               const Settings& settings = {},
               const std::vector<std::string>& failure_blobs = {},
+              const std::vector<ExplicitTestCase>& explicit_cases = {},
               const char* caller_file = HEGEL_CALLER_FILE,
               const char* caller_function = HEGEL_CALLER_FUNCTION,
               int caller_line = HEGEL_CALLER_LINE);
@@ -506,12 +530,16 @@ namespace hegel {
      * @param failure_blobs Reproduce blobs from earlier failure reports. If
      *                      any are given, the test replays each blob instead
      *                      of generating test cases.
+     * @param explicit_cases Test cases to run with the values they give,
+     *                       before any generated test case, when the
+     *                       Explicit phase is enabled. See ExplicitTestCase.
      * @throws MultipleFailures, RunError, DidNotReproduce,
      *         std::invalid_argument as the overload above.
      */
     void test(const std::function<void(TestCase&)>& test_fn,
               const TestLocation& location, const Settings& settings = {},
-              const std::vector<std::string>& failure_blobs = {});
+              const std::vector<std::string>& failure_blobs = {},
+              const std::vector<ExplicitTestCase>& explicit_cases = {});
 
     /// @cond INTERNAL
     namespace internal {
@@ -534,11 +562,18 @@ namespace hegel {
         // look up the failure blobs associated with a test
         std::vector<std::string> reproduce_blobs_for(const char* name);
 
+        // add an explicit test case for a test
+        bool register_explicit_case(const char* name,
+                                    ExplicitTestCase test_case);
+        // look up the explicit test cases of a test, in registration order
+        std::vector<ExplicitTestCase> explicit_cases_for(const char* name);
+
         // What HEGEL_TEST expands to.
-        void test_from_macro(const std::function<void(TestCase&)>& test_fn,
-                             const TestLocation& location,
-                             const Settings& settings,
-                             const std::vector<std::string>& failure_blobs);
+        void
+        test_from_macro(const std::function<void(TestCase&)>& test_fn,
+                        const TestLocation& location, const Settings& settings,
+                        const std::vector<std::string>& failure_blobs,
+                        const std::vector<ExplicitTestCase>& explicit_cases);
     } // namespace internal
     /// @endcond
 } // namespace hegel
@@ -592,7 +627,8 @@ namespace hegel {
         ::hegel::internal::test_from_macro(                                    \
             hegel_test_body_##name,                                            \
             ::hegel::TestLocation{#name, __FILE__, __LINE__}, settings,        \
-            ::hegel::internal::reproduce_blobs_for(__FILE__ "::" #name));      \
+            ::hegel::internal::reproduce_blobs_for(__FILE__ "::" #name),       \
+            ::hegel::internal::explicit_cases_for(__FILE__ "::" #name));       \
     }                                                                          \
     static void hegel_test_body_##name
 
@@ -625,6 +661,38 @@ namespace hegel {
     [[maybe_unused]] static const bool hegel_reproduce_registered_##name =     \
         ::hegel::internal::register_blob(__FILE__ "::" #name,                  \
                                          {blob, __VA_ARGS__});
+
+/// @cond INTERNAL
+#define HEGEL_CONCAT_IMPL(a, b) a##b
+#define HEGEL_CONCAT(a, b) HEGEL_CONCAT_IMPL(a, b)
+/// @endcond
+
+/**
+ * @brief Add an explicit test case to a @ref HEGEL_TEST.
+ *
+ * Place it above the matching HEGEL_TEST, keyed by the same name. The
+ * arguments are the values of a hegel::ExplicitTestCase: positional values,
+ * taken by the test's draws in order, and hegel::named() values, taken by
+ * the draw of that name. Each explicit test case runs once, in the order
+ * they appear, before any generated test case.
+ *
+ * @code{.cpp}
+ * HEGEL_EXPLICIT_TEST_CASE(sorted_is_idempotent, std::vector<int>{})
+ * HEGEL_EXPLICIT_TEST_CASE(sorted_is_idempotent,
+ *                          hegel::named("xs", std::vector<int>{1, 1}))
+ * HEGEL_TEST(sorted_is_idempotent)(hegel::TestCase& tc) {
+ *     auto xs = tc.draw("xs", gs::vectors(gs::integers<int>()));
+ *     // ...
+ * }
+ * @endcode
+ *
+ * @see hegel::ExplicitTestCase
+ */
+#define HEGEL_EXPLICIT_TEST_CASE(name, ...)                                    \
+    [[maybe_unused]] static const bool HEGEL_CONCAT(                           \
+        hegel_explicit_registered_##name##_, __LINE__) =                       \
+        ::hegel::internal::register_explicit_case(                             \
+            __FILE__ "::" #name, ::hegel::ExplicitTestCase(__VA_ARGS__));
 /** @} */
 
 // GoogleTest integration, picked up when <gtest/gtest.h> is already visible.
