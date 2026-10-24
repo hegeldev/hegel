@@ -28,8 +28,9 @@ just ocaml::check            # lint + docs + test — what CI runs, less the com
 - `just ocaml::check-test-no-coverage` is the suite without bisect_ppx, for
   switches without the dev-setup dependencies (CI's `compat` and `oxcaml`
   jobs); `HEGEL_SKIP_JANE_TESTS=1` skips the `hegel.jane` suites where the
-  `core`/`async` depopts are not installed, `HEGEL_SKIP_EXPECT_TESTS=1` the
-  ppx_expect suite, and `HEGEL_CONCURRENT_TESTS=1` opts into the OxCaml
+  `core`/`async` depopts are not installed, `HEGEL_SKIP_ZARITH_TESTS=1` the
+  `hegel.zarith` suite where the `zarith` depopt is not,
+  `HEGEL_SKIP_EXPECT_TESTS=1` the ppx_expect suite, and `HEGEL_CONCURRENT_TESTS=1` opts into the OxCaml
   concurrent suites.
 
 ## Tooling
@@ -89,42 +90,50 @@ lib/                         # Library source
                              #   locked.capsule.ml is OxCaml syntax and listed in
                              #   .ocamlformat-ignore
   ffi/                       # ctypes bindings to native libhegel (NOT instrumented)
-    ffi.ml                   # dlopen + 1:1 C-ABI wrappers; settings/run/test_case
+    ffi.ml.in/.mli.in        # dlopen + 1:1 C-ABI wrappers; settings/run/test_case
                              #   handles; typed draws + string-generator handles;
-                             #   events; the pretty-printer document (printer_*,
+                             #   grammar builder/grammar/draw handles; events; the pretty-printer document (printer_*,
                              #   test_case_printer, note)
     loader.ml                # locate libhegel at runtime (env > site > the
                              #   checkout's in-tree target/ build (libhegel_c.<ext>))
   cli.ml / cli.mli           # Hegel.main: cmdliner flags (--profile applied
                              #   first, through set_default_profile, before the
-                             #   caller's settings thunk runs), single_test_case
-                             #   (test_cases = 1, Too_slow + Test_cases_too_large
-                             #   suppressed, which lifts the choice limit), and
+                             #   caller's settings thunk runs; one flag per
+                             #   setting in settings_flags, each value parsed by
+                             #   the engine through Settings.set_from_strings /
+                             #   hegel_settings_set_from_string), single_test_case
+                             #   (test_cases = 1, Too_slow suppressed,
+                             #   unbounded_choices set), and
                              #   main (Cmd.eval ~catch:false, then exit).
                              #   Doc-hidden re-export Hegel.Cli for tests
-  settings.ml / settings.mli # Hegel.Settings: the settings record (type t), its
+  settings.ml/.mli.in       # Hegel.Settings: the settings record (type t), its
                              #   verbosity/database/phase/health_check/backend enums,
                              #   default ()/from_profile/create materialized from
                              #   the engine's settings profiles (to_ffi/of_ffi)
-  internal.ml.in             # Test runner + run lifecycle + typed-draw wrappers on
-                             #   top of Hegel_ffi.Ffi; note/print_line/render_sexp +
+  internal.ml.in/.mli.in     # Test runner + run lifecycle + typed-draw wrappers on
+                             #   top of Hegel_ffi.Ffi; note/print_line +
                              #   capture_document (engine-side output, see Pretty
                              #   printing); events (cppo → internal.ml)
-  generators.ml.in           # Re-export shim: include the four generators_* modules
+  printer.ml / printer.mli.in # Hegel.Printer: the OCaml-syntax document type
+                             #   (doc), value printers (int, string, list, …),
+                             #   structural builders (record, constructor, tuple,
+                             #   apply), render (doc → engine printer) and to_string
+  generators.ml.in           # Re-export shim: include the five generators_* modules
                              #   (cppo → generators.ml; generators.mli.in likewise)
-  generators_core.ml         # generator type; draw/draw_silent, map/flat_map/filter,
+  generators_core.ml.in      # generator type; draw/draw_silent, map/flat_map/filter,
                              #   composite, span labels — the discriminated union
-  generators_primitives.ml   # integers, booleans, floats, text, binary, just, formats
-  generators_collections.ml  # lists, assoc_lists, hash_tables (+ the table-agnostic
+  generators_primitives.ml.in # integers, booleans, floats, text, binary, just, formats
+  generators_collections.ml.in # lists, assoc_lists, hash_tables (+ the table-agnostic
                              #   make_hash_tables), and the collection protocol
-  generators_combinators.ml  # sampled_from, one_of, tuples2/3/4
-  generators_functions.ml    # functions/functions2/functions3: memoized
+  generators_combinators.ml.in # sampled_from, one_of, tuples2..8, permutations,
+                             #   from_lark
+  generators_functions.ml.in # functions/functions2/functions3: memoized
                              #   function generators (Claessen's show/shrink,
                              #   but no trie — the engine shrinks results)
-  derive.ml                  # Hegel.Derive: scope-resolved names derived code
+  derive.ml/.mli.in          # Hegel.Derive: scope-resolved names derived code
                              #   refers to (hegel_generator_int/…/char/list/
-                             #   option + the Sexplib0 sexp_of_* converters)
-  stateful.ml.in             # Stateful testing: Pool (shared by both machine kinds),
+                             #   option)
+  stateful.ml.in/.mli.in     # Stateful testing: Pool (shared by both machine kinds),
                              #   Rule (sequential, plain mutating step), Concurrent_rule
                              #   (?group, portable step taking the worker's ctx),
                              #   Invariant, State_machine + run tc (module M) ~init,
@@ -184,6 +193,13 @@ lib/                         # Library source
                              #   job): dune only allows env variables in an
                              #   executable's enabled_if, and an (optional)
                              #   executable is still requested by the default alias
+  zarith/                    # Optional hegel.zarith sublibrary ((optional) in dune,
+    hegel_zarith.ml/.mli     #   zarith depopt): integers over Z.t, drawn through
+    test/                    #   hegel_generate_integer_big (two's-complement
+                             #   little-endian bytes). Instrumented +
+                             #   coverage-gated like lib/; its suite is skipped
+                             #   with HEGEL_SKIP_ZARITH_TESTS in
+                             #   check-test-no-coverage
 
 template/                    # hegel.template ppx: links ppx_template on
                              #   OxCaml; upstream, hegel_template.upstream.ml
@@ -220,7 +236,17 @@ test/                        # hegel's own test suite (one executable: test_hege
   test_concurrency.ml.in     # Concurrency tests (cppo: the domains tests exist
                              #   upstream only)
   test_client.ml             # Internal config + run lifecycle tests (real engine)
-  test_generators_*.ml       # Generator core / primitives / collections / combinators
+  test_cli.ml                # Hegel.main flags and single_test_case
+  test_clone.ml              # Hegel.clone
+  test_loader.ml             # Hegel_ffi.Loader resolution
+  test_lazy_load.ml          # Separate executable: the engine is loaded lazily
+  test_generators_*.ml       # Generator core / primitives / collections /
+                             #   combinators / functions, and _extra (uuids,
+                             #   arrays, sets, unique_by, tuples5..8, ...)
+  test_printer.ml            # Hegel.Printer rendering through the engine printer
+  test_lark.ml               # from_lark grammar generation
+  test_recursive.ml          # recursive and deferred
+  test_repeat.ml             # repeat
   test_stateful.ml           # Stateful testing tests
 
 docs/                        # Tutorial and guide documents
@@ -233,11 +259,12 @@ examples/                    # Example programs demonstrating the library
   real_world.ml              # Real-world scenario: sorted-merge property test
   derived_types.ml           # Derived generators via [@@deriving hegel_generator]
   higher_order.ml            # Function generators: functions/functions2/functions3
-  workload.ml                # let%hegel_main binary: a buggy account state machine
-                             #   to try the Hegel.main command line on
 
 scripts/
   check-coverage.py          # Parses bisect-ppx-report, enforces 100%
+  check-ffi-constants.py     # The #define values ffi.ml.in copies (tagged
+                             #   (* [HEGEL_NAME]. *)) must match hegel.h;
+                             #   part of check-lint
   libhegel-path.sh           # The in-tree libhegel build the justfile points
                              #   the tests at
 
@@ -264,7 +291,7 @@ thin 1:1 wrappers: settings handles, the run lifecycle (`run_start`,
 `next_test_case`, `run_result`, `run_free`), and per-test-case primitives — the
 typed draws (`generate_integer`, `generate_boolean`, `generate_float`,
 `generate_bytes`, `generate_string` + the `string_generator_*` handle
-constructors, `generate_date`/`time`/`datetime`, `generate_ipv4`/`ipv6`), spans,
+constructors, the grammar handles (`grammar_builder_*`, `grammar_new`, `grammar_draw_*`), `generate_date`/`time`/`datetime`, `generate_ipv4`/`ipv6`), spans,
 collections, pools, state machines (`new_state_machine` takes the per-machine
 `~step_count` since libhegel 0.38.0; there is no settings-level step count),
 `target`, `event`/`event_value`, derived handles (`test_case_clone`,
@@ -286,10 +313,10 @@ mechanical marshalling out of the 100%-coverage gate (no `[@coverage off]`).
 the old Python-subprocess install flow were removed in the native-backend and
 typed-draw migrations.
 
-### Dependencies: core-free main library + optional hegel.jane
+### Dependencies: core-free main library + optional hegel.jane and hegel.zarith
 
-The `hegel` library depends on the stdlib plus `cmdliner` (`Hegel.main`), `sexplib0` (printer type
-`'a -> Sexplib0.Sexp.t`, the same type as `Core.Sexp.t`), `unix` (isatty for
+The `hegel` library depends on the stdlib plus `cmdliner` (`Hegel.main`), `sexplib0` (only for
+`Printer.of_sexp`, which prints a type that has a `sexp_of_t`), `unix` (isatty for
 color detection), `threads.posix`, ctypes/ipaddr/dune-site (`yojson` is a test-only dependency of
 the PPX test that parses the engine's `sdk.jsonl`). `core`
 and `core_unix` are NOT dependencies of the library: `core` is an opam
@@ -299,9 +326,9 @@ container or renderer a Jane Street type used to provide, the dependency is
 refunctionalized — the code takes the operations as closures/parameters, and
 each side instantiates them:
 - pools: `Int_pool` (an `Int_table` of values, no lock: a sequential machine runs its rules one at a time) and `Int_pool_concurrent` (the same table behind a `Locked`) are the client-side pools; `resolve_pool_draw` (find/remove closures) is the shared id-resolution step
-- hash tables: `make_hash_tables ~of_pairs ~sexp_of_t` ← `hash_tables` (Stdlib.Hashtbl) / `Hegel_jane.hash_tables` (Hashtbl.Poly)
-- dates/times: `make_dates ~of_date`/`make_times ~of_time`/`make_datetimes ~of_datetime` (+ `~sexp_of`) (+ `?min_date`/`?min_time`/`?min_datetime` and `max_*` bounds) ← `dates`/`times`/`datetimes` (ISO 8601 strings) / `Hegel_jane.dates`/`ofdays` (Core values)
-- chars: `make_characters ~of_char ~sexp_of` ← `chars` / `Hegel_jane.chars`. `Core.Char.t = char`, so both sides draw the same value and only the printer differs (`sexp_of_char` vs `Core.Char.sexp_of_t`) — unlike the other refunctionalized pairs, `of_char` is `Fun.id` on both sides, kept only for symmetry with `~of_date`
+- hash tables: `make_hash_tables ~of_pairs ~print_of_pairs` ← `hash_tables` (Stdlib.Hashtbl) / `Hegel_jane.hash_tables` (Hashtbl.Poly)
+- dates/times: `make_dates ~of_date`/`make_times ~of_time`/`make_datetimes ~of_datetime` (+ `~print`) (+ `?min_date`/`?min_time`/`?min_datetime` and `max_*` bounds) ← `dates`/`times`/`datetimes` (ISO 8601 strings) / `Hegel_jane.dates`/`ofdays` (Core values)
+- chars: `make_characters ~of_char ~print` ← `chars` / `Hegel_jane.chars`. `Core.Char.t = char`, so both sides draw the same value and print it with `Printer.char` — unlike the other refunctionalized pairs, `of_char` is `Fun.id` on both sides, kept only for symmetry with `~of_date`
 
 The test suite still links `core`/`core_unix` (test-only dependencies; users
 never install them). `core` being an opam depopt is about the
@@ -313,6 +340,12 @@ suite (`test_hegel_jane.ml` Alcotest). `just check-tests` (the coverage-enforcin
 always runs it; `just check-tests-no-coverage` (the `compat`/`oxcaml` CI jobs,
 which don't install `core`) skips it via `HEGEL_SKIP_JANE_TESTS=1`
 — see the justfile.
+
+`zarith` is likewise an opam depopt, gating the `(optional)` sublibrary
+`hegel.zarith` (`lib/zarith/`, module `Hegel_zarith`, big integers). It is
+instrumented and coverage-gated like `lib/jane/`, with its own
+`lib/zarith/test/` suite, skipped by `check-test-no-coverage` under
+`HEGEL_SKIP_ZARITH_TESTS=1`.
 
 ### Generator System (generators_core.ml + generators_{primitives,collections,combinators}.ml)
 
@@ -328,7 +361,7 @@ Public`, and the signature narrows `Public` to the constructors). `Generators` d
 end`, so odoc lists the constructors on the `Generators` page and never shows
 `Public`. `hegel.mli`/`hegel.ml` re-export them unqualified with the same
 `include` (inside `hegel.mli`'s doc-hidden block, so they aren't listed
-twice), next to the `generator`/`printable`/`unprintable` types, so
+twice), next to the `generator` type, so
 `open Hegel` alone is enough — `integers ()` and `Generators.integers ()`
 name the same value, and the templated portable instances come along. A new
 constructor goes in `Public` only; `Generators` stays the documented reference. Project code prefers the unqualified form
@@ -338,12 +371,12 @@ Generators are a discriminated union:
 - **Leaf** — holds a `draw : test_case -> 'a` closure that performs a single typed engine draw (via one of the `Internal.generate_*` primitives). Calling `map` on a Leaf composes the closure in place (no extra span), since the engine already wraps every primitive draw in its own span.
 - **Mapped** — wraps source + transform function (adds a `mapped` span).
 - **FlatMapped** — wraps source + a function returning a generator. Evaluated recursively inside a `flat_map` span.
-- **Filtered** — wraps source + predicate. Up to `max_filter_attempts` retries before `assume false`; see **Values** for a consuming pool source.
+- **Filtered** — wraps source + predicate. Up to `max_filter_attempts` (`Ffi.filter_attempts`, the header's `HEGEL_FILTER_ATTEMPTS`) attempts before `assume false`; see **Values** for a consuming pool source.
 - **CompositeList** — lists of any element core. Uses the collection protocol (with_collection / collection_more) to generate elements one at a time.
 - **Composite** — a `generate_fn` thunk run inside a labeled span; used by tuples, one_of, `lists ~unique`, and hash tables (all of which now always drive the collection protocol / draw sub-values directly — there is no schema fast path).
-- **Values** — the engine-pool core behind `Stateful.Pool` and `Concurrent_pool`: `{ pool; consume; select : test_case -> filter:(label * predicate) option -> 'a }`, where `select ~filter:None` draws an id from the engine pool and resolves it against the client table. On a consuming pool, `filter` calls `select ~filter:(Some _)`, which runs the attempts itself (`filter_consumed`, given the pool's `size`/`take`/`keep`; the concurrent pool runs the predicate between lock sections): every id an attempt takes stays consumed until the attempts end, then all but the accepted one go back through `hegel_pool_restore` (libhegel 0.45.13), on every exit including a raising predicate, so filtering consumes only the value the test receives. A filter over a filter folds both predicates into one round of attempts (`do_draw_filtered`), as hegel-rust does. `Generators.Int_pool_concurrent` does that under the pool's `Locked`, so the table never disagrees with the engine about which ids exist while workers share it; the sequential `Generators.Int_pool` needs no lock. Both are doc-hidden client sides over `Int_table`; `resolve_pool_draw` is the shared id-resolution step. `hash_tables` is refunctionalized at the API level: `make_hash_tables ~of_pairs ~sexp_of_t` is table-agnostic, `hash_tables` closes it over `Stdlib.Hashtbl`, `Hegel_jane.hash_tables` over `Core.Hashtbl.Poly`.
-- **Span labels** (libhegel 0.39.0) — a label is an opaque `uint64_t` (OCaml `int64`) identifying the generator that opened a span; the engine treats two spans with the same label as coming from the same generator when it shrinks and mutates, and does nothing else with it. There are no predefined label constants in the ABI any more. `Generators_core.Labels.from_name`/`combine` compute the engine's own hashes (64-bit FNV-1a over the name's bytes / over the labels' little-endian bytes in order — `hegel_label_from_name`/`hegel_label_combine`, pinned equal by `test_labels_match_engine` through the `Ffi.label_*` bindings) so no context is needed at generator construction. Every core stores its `label`, fixed at construction: a `Leaf` from its primitive's name (`leaf ~name:"integers"` → `hegel_ocaml.integers`), and everything built from other generators as `combine [own kind; components' labels…]` (`lists (integers ())` ≠ `lists (text ())`; `map` on a leaf stays a leaf but combines `Labels.mapped` in; `with_printer` leaves the label alone; `Values` is the constant `Labels.pool`). `label_of_core`/`Ppx_internal.label_of` read it back. The deriver emits `combine [fixed_dict|enum_variant; from_name "<type name>"]` so two derived types of the same shape stay distinct. Names are prefixed `hegel_ocaml.` to keep clear of libhegel's own `hegel.<kind>` spans.
-- **Function** — a generated function (`functions`/`functions2`/`functions3`). `build ~name` returns a fresh per-test-case memoized function that draws each result from `returns` on first application (memoized on the argument via structural hash/equality — a polymorphic `Stdlib.Hashtbl` — so `sexp_of_arg` is display-only and an omitted one shows `<opaque>` without collapsing the key) and shows applied pairs as `name arg = result` in the print region of a printing case. Only *top-level* applications print — a pair applied at draw depth > 0 (inside a span) is suppressed, like a nested draw. A distinct core so `draw_silent_named` / `draw_named` can thread the draw-site binding name into the function (see the PPX note below); the name threads even when the function is drawn nested. Result draws are wrapped in a span labelled `combine [Labels.function_result; label of returns]`.
+- **Values** — the engine-pool core behind `Stateful.Pool` and `Concurrent_pool`: `{ pool; consume; select : test_case -> filter:(label * predicate) option -> 'a }`, where `select ~filter:None` draws an id from the engine pool and resolves it against the client table. On a consuming pool, `filter` calls `select ~filter:(Some _)`, which runs the attempts itself (`filter_consumed`, given the pool's `size`/`take`/`keep`; the concurrent pool runs the predicate between lock sections): every id an attempt takes stays consumed until the attempts end, then all but the accepted one go back through `hegel_pool_restore` (libhegel 0.45.13), on every exit including a raising predicate, so filtering consumes only the value the test receives. A filter over a filter folds both predicates into one round of attempts (`do_draw_filtered`), as hegel-rust does. `Generators.Int_pool_concurrent` does that under the pool's `Locked`, so the table never disagrees with the engine about which ids exist while workers share it; the sequential `Generators.Int_pool` needs no lock. Both are doc-hidden client sides over `Int_table`; `resolve_pool_draw` is the shared id-resolution step. `hash_tables` is refunctionalized at the API level: `make_hash_tables ~of_pairs ~print_of_pairs` is table-agnostic, `hash_tables` closes it over `Stdlib.Hashtbl`, `Hegel_jane.hash_tables` over `Core.Hashtbl.Poly`.
+- **Span labels** (libhegel 0.39.0) — a label identifies the generator that opened a span; the engine treats two spans with the same label as coming from the same generator when it shrinks and mutates, and does nothing else with it. There are no predefined label constants in the ABI. A label is an `Internal.Label.t`: a description (`Label.of_name name` or `Label.combine [labels…]`) with an atomic cache, computed by libhegel's `hegel_label_from_name`/`hegel_label_combine` (through the `Ffi.label_*` bindings, with the test case's context) the first time a span uses it, and reused afterwards. Building a generator never calls the engine, so it doesn't load libhegel (`test_lazy_load`). `Internal.start_span ~label` resolves it. Every core stores its `label`, fixed at construction: a `Leaf` from its primitive's name (`leaf ~name:"integers"` → `hegel.integers`), and everything built from other generators as `combine [own kind; components' labels…]` (`lists (integers ())` ≠ `lists (text ())`; `map` on a leaf stays a leaf but combines `Labels.mapped` in; `with_printer` leaves the label alone; `Values` is the constant `Labels.pool`). `Generators.Private.label_of` reads it back. The deriver emits `combine [fixed_dict|enum_variant; from_name "<type name>"]` so two derived types of the same shape stay distinct. Names are `hegel.<kind>`, the names the other frontends use for the same generator: `hegel.lists` (unique lists too), `hegel.sets`, `hegel.dicts` (assoc lists and hash tables), `hegel.fixed_dicts`, `hegel.one_of`, `hegel.optional` as in Python, TypeScript and Java, `hegel.tuple`, `hegel.array`, `hegel.permutation` as in Rust. A filter draws inside its own `combine [hegel.filter; source]` span, and each attempt inside a `hegel.filter.attempt` span (discarded when rejected), as Rust and Python do.
+- **Function** — a generated function (`functions`/`functions2`/`functions3`). `build ~name` returns a fresh per-test-case memoized function that draws each result from `returns` on first application (memoized on the argument via structural hash/equality — a polymorphic `Stdlib.Hashtbl` — so `print_arg` is display-only and an omitted one shows `<abstr>` without collapsing the key) and shows applied pairs as `name arg = result` (an OCaml application, `Printer.apply`) in the print region of a printing case. Only *top-level* applications print — a pair applied at draw depth > 0 (inside a span) is suppressed, like a nested draw. A distinct core so `draw_silent_named` / `draw_named` can thread the draw-site binding name into the function (see the PPX note below); the name threads even when the function is drawn nested. Result draws are wrapped in a span labelled `combine [Labels.function_result; label of returns]`.
 
 ### Inline Test Integration (ppx/ppx_hegel_test.ml)
 
@@ -356,7 +389,7 @@ analogue of hegel-rust's `#[hegel::state_machine] impl`. At expansion time it
 collects the bindings marked `[@@rule]` or `[@@invariant]` into appended
 `rules` and `invariants` lists (`Rule.create ~name:"<binding>" ~weight
 ~step:<binding> ()` and the same for `Invariant.create`) plus a
-`run ?step_count ?sexp_of_state tc ~init`. A marker's options are a *record*
+`run ?step_count ?print_state tc ~init`. A marker's options are a *record*
 payload and nothing else — `[@@rule { weight = 2.5 }]`,
 `[@@invariant { always_check = true }]`, bare `[@@rule]` for the defaults.
 `rule_attribute` spells out one `Ast_pattern` alternative per field
@@ -368,7 +401,7 @@ as the text of a float literal (an int payload gains a `.`) and defaults to
 also takes `group` (which the sequential form rejects). Its rule bodies take
 the worker's context between the test case and the state (`tc ctx state`).
 If the module declares `type ctx`, the generated `run ~concurrency
-?min_concurrency ?max_concurrency ?step_count ?sexp_of_state tc ~init` makes
+?min_concurrency ?max_concurrency ?step_count ?print_state tc ~init` makes
 the capability required, since no default can supply that context; otherwise
 the PPX appends `type ctx = unit` and the `run` defaults `?concurrency` to
 `Hegel.Concurrency.threads` (`declares_type`). Both call
@@ -376,9 +409,8 @@ the PPX appends `type ctx = unit` and the `run` defaults `?concurrency` to
 is no registry and no runtime discovery. The generated `run` calls the
 doc-hidden `Stateful.run_internal`, which takes the lists directly, because
 the expanded module need not declare `type state` and the public
-`Stateful.run` takes a `State_machine` module. `sexp_of_state` defaults to
-the module's own when it binds one or derives it on `type state`
-(`defines_sexp_of_state`). The markers are stripped from the emitted items,
+`Stateful.run` takes a `State_machine` module. `print_state` defaults to
+the module's own when it binds one (`has_print_state`). The markers are stripped from the emitted items,
 every other item is kept, and a module with no `[@@rule]` is a compile error.
 `[@async]` before the name (`let%hegel_test [@async] t tc`,
 `module%hegel_state_machine [@async] M`; the trailing `[@@async]` is the same
@@ -417,18 +449,28 @@ where it labels the shown `x arg = result` pairs; it is ignored for every other
 generator, and attaches at the draw site (so it works through an intermediate
 `let g = functions ..; let f = draw_silent tc g` binding). Precedence: an explicit
 `?name` on `functions` always wins, else the draw-site binding name, else `"function"`.
-A function made printable (via `with_printer`) is drawn with
-`draw`; `draw_named` threads the label the same way (even when nested) and prints
-the usual `x = value` line — the function renders as `<fun>` through its printer —
-only at the top level, suppressing it when nested like any other draw.
+A function given a printer (via `with_printer`) still threads the name: `draw_named`
+threads the label the same way (even when nested) and prints the usual
+`x = value` line through that printer only at the top level, suppressing it when
+nested like any other draw. A function drawn without one prints no line of its
+own, only its applications.
 
 `let%hegel_main name tc = body` (same rewriter) expands to `let name () =
 Hegel.main ~settings:(fun () -> <[@@settings]>) ~test_location (fun tc ->
 body)` with the same draw-name injection: the entry point of an executable
 that runs exactly one test case per invocation (hegel-rust's
 `#[hegel::main]`). The user writes `let () = name ()`. It rejects
-`[@@failure_blobs]` (the binary takes `--failure-blob`, and failures print
-that form: `Internal.rerun_hint = Command_line`) and `[@async]`. There are no
+`[@@failure_blobs]` (the binary takes `--failure-blob`, repeatable, and
+failures print that form: `Internal.rerun_hint = Command_line`) and `[@async]`.
+`Cli.single_test_case` sets `test_cases = 1`, suppresses `Too_slow` and sets
+`unbounded_choices`, so a long-running test case is not cut off at the
+engine's choice limit. Every other setting has a flag (`Cli.settings_flags`,
+named after its `hegel.toml` key), and the CLI knows none of their
+vocabularies: `Settings.set_from_strings` writes the settings record to a
+handle, applies each flag through `hegel_settings_set_from_string`, and reads
+the handle back, so a bad value is the engine's `Usage_error`, reported as a
+cmdliner error. `--database-key` goes through the engine too, for validation,
+and then replaces `main`'s `?database_key`. There are no
 user-defined flags: an unknown argument is a cmdliner error (exit 124), as in
 Rust. `Hegel.main` exits, so `test_cli.ml` and `test_ppx_hegel_test.ml`
 re-execute their own binary with `HEGEL_TEST_MAIN_CHILD` set to test it.
@@ -444,7 +486,7 @@ handwritten property test built on `Hegel.run_hegel_test` directly.
 
 ### Type-Directed Derivation (ppx/ + lib/derive.ml)
 
-The `ppx_hegel_generator` PPX deriver synthesizes a printable generator from
+The `ppx_hegel_generator` PPX deriver synthesizes a generator from
 type declarations annotated with `[@@deriving hegel_generator]`. It follows
 the base_quickcheck conventions:
 
@@ -459,22 +501,23 @@ the base_quickcheck conventions:
    (int, bool, float, string, char, list, option), and `Hegel` includes it,
    so `open Hegel` is enough in a deriving file. A module opened later can
    shadow the names — that is how `Hegel_jane.Derive` swaps in Core flavors.
-3. **Always printable**: the deriver also emits `sexp_of_<t>` (it calls
-   `Ppx_sexp_conv_expander.Sexp_of.str_type_decl`; ppx_sexp_conv is a build
-   dependency of the PPX package, not of user projects) and wraps the
-   generator in `with_printer sexp_of_<t>`. Draw with `draw` to print on a
-   failing replay, or `draw_silent` to stay silent. Deriving `sexp`/`sexp_of`
-   alongside stays legal: the identical `sexp_of_<t>` definitions shadow.
-   `[@sexp.opaque]` on a field type is the escape hatch for un-sexpable
-   fields. `Hegel.Derive` re-exports the `Sexplib0.Sexp_conv` primitive
-   converters because ppx_sexp_conv resolves builtins by unqualified name.
+3. **Prints as OCaml syntax**: a derived generator builds its display as it
+   draws, from its components' draws (`Ppx_internal.draw` returns the value
+   and a lazy `show`): a record shows `{ x = 1; y = 2 }` (`Printer.record`),
+   a constructor `C (a, b)` (`Printer.constructor`), a tuple `(a, b)`. A
+   component whose generator has no printer (a `map`, an override) shows as
+   `<abstr>`; no type needs a printer to derive. An all-nullary variant is a
+   `sampled_from` given a `with_printer` that names the constructor. Because
+   the deriver no longer emits a printer that reads every field, it emits
+   `field_reads` (`let _ = fun ({ f = _; … } : t) -> ()`, or an exhaustive
+   match for inline records) to keep warning 69 quiet on records only
+   constructed by the generator.
 4. **Attributes**: `[@hegel.generator EXPR]` on any type occurrence (record
    field, constructor argument, tuple component) replaces that occurrence's
    generator with `EXPR` — the quickcheck idiom for ranges and custom
    generators. `[@hegel.do_not_generate]` on a variant constructor excludes
-   it from generation: its argument types need no generator, the derived
-   printer renders them opaque (the deriver injects `[@sexp.opaque]` before
-   invoking the sexp expander), and the deriver emits one
+   it from generation: its argument types need no generator or printer, and
+   the deriver emits one
    `let _ = fun … -> C …` item per excluded constructor to suppress
    warning 37 (nothing else constructs it).
 5. **Type shapes**: records emit a `test_case -> t` thunk wrapped with
@@ -485,7 +528,7 @@ the base_quickcheck conventions:
    (`Pcstr_record`) construct the record literal directly inside the
    constructor — `C expr` is illegal syntax for an inline record; aliases
    reuse the aliased type's generator expression directly. The
-   `Ppx_compat.extract_constr_args`/`map_constr_arg_types` helpers abstract
+   `Ppx_compat.extract_constr_args` helper abstracts
    the constructor-argument representation across the three toolchains.
 6. **`~portable`**: `[@@deriving hegel_generator ~portable]` wraps every
    combinator the deriver emits (`composite`, `composite_with_label`,
@@ -507,8 +550,12 @@ the base_quickcheck conventions:
    `Core.Date.hegel_generator` does not exist. One
    `open Hegel_jane.Derive` replaces `open Hegel.Derive`.
 
-See `GAPS.md` for the deriver's remaining gaps versus base_quickcheck
-(recursion, type parameters, polymorphic variants, …). Note `lib/derive.ml`
+The deriver's remaining gaps versus base_quickcheck (recursive and mutually
+recursive types are supported, through `recursive` and `deferred`):
+parameterized type declarations ("parameterized types not supported"), and type expressions
+other than constructors and tuples, such as polymorphic variants, type
+variables, arrows and objects ("unsupported type in [@@deriving
+hegel_generator]"). Note `lib/derive.ml`
 previously held qualified runtime helpers (`generate_option`/`generate_list`);
 that module was deleted and the filename now hosts `Hegel.Derive`, the
 scope-resolution module described above.
@@ -532,8 +579,8 @@ type entity =
   }
 [@@deriving hegel_generator]
 
-(* Derived generators are printable: draw with [draw] to print the value on
-   a failing replay, or [draw_silent] to stay silent. *)
+(* Derived generators print what they drew as OCaml syntax on a failing
+   replay ([p = { x = 0; y = 0 }]); [draw_silent] prints nothing. *)
 let%hegel_test derived_types_smoke tc =
   let p = Hegel.draw tc hegel_generator_point in
   let c = Hegel.draw_silent tc hegel_generator_color in
@@ -609,13 +656,14 @@ checkout, not the published reference at <https://hegel.dev/reference/libhegel>.
 All user-visible test output — notes, drawn values, stateful traces — is assembled in libhegel's per-test-case *document*
 (`hegel_test_case_printer` / `hegel_note`), not streamed to stderr as it
 happens. `Internal.note` appends verbatim (pre-indented, possibly multi-line)
-lines; `Internal.print_line` assembles a draw line from `Text`/`Value`
-segments, laying each sexp out engine-side with `Internal.render_sexp`: an
-atom is its `Sexp.to_string` escaping, a list is a group — `(`, children
-separated by breakable spaces, `)` — so a value that fits the line prints
-inline (byte-identical to `Sexp.to_string_hum`; pinned by a test) and one
-that doesn't breaks all-or-nothing, one child per line (unlike `pp_hum`'s
-fill style), at the document's default width 79. After `mark_complete`,
+lines; `Internal.print_line` writes a `Printer.doc` (built OCaml-side as a tree of
+text, breakables, groups and reflowed text) through `Printer.render`, which
+replays it onto the engine printer (`hegel_printer_text`/`breakable`/
+`begin_group`/`end_group`/`hard_break`/`reflow`): a group either fits on the
+line or breaks at every breakable directly inside it, one element per line, at
+the document's default width 79. Draws build their doc lazily: `do_draw`
+returns `(value, show)`, and `show ()` is only forced when the line is printed,
+so a non-printing case never formats anything. After `mark_complete`,
 `run_case` reads the document back (`capture_document`:
 `printer_resolve` — required when clone regions exist, an argument error
 otherwise, hence the catch — then `printer_value`); the runner keeps it with
@@ -663,13 +711,15 @@ defaulting to `Settings.default ()`. The `let%hegel_test` PPX targets the
 doc-hidden `Hegel.run_hegel_test_ppx` — a thin wrapper that sets
 `~rerun_hint:Attribute` on `Internal.run_hegel_test` — so the PPX-vs-plain
 signal never appears on the public `run_hegel_test`. The `[@@failure_blobs ...]` record/replay workflow is
-supported: the PPX forwards the listed blobs as `~failure_blobs`, which starts
-the run with `hegel_run_start_blob` on the first blob (pair it with
-`print_blob = false` to suppress the `rerun with:` line that failing runs
-print by default). The engine replays the blob until a replay fails; the run
-goes through the same loop and report as a normal run, with no `rerun with:`
-line, and a run that passes raises "The failure blob did not reproduce an
-error". `run_test ?rerun_hint` (`Argument` | `Attribute` | `Command_line`) picks the
+supported: the PPX forwards the listed blobs as `~failure_blobs`, and
+`run_test` starts one `hegel_run_start_blob` run per blob, in order (pair it
+with `print_blob = false` to suppress the `rerun with:` line that failing
+runs print by default). The engine replays each blob until a replay fails;
+each run goes through the same loop and report as a normal run, with no
+`rerun with:` line. The failures of every run are then raised together as
+for a normal run (one re-raises its exception, several raise
+`Multiple_failures`), and when no blob reproduced, the run raises
+`Did_not_reproduce`. `run_test ?rerun_hint` (`Argument` | `Attribute` | `Command_line`) picks the
 form of the `rerun with:` line; the PPX entry points pass `Attribute`,
 `Hegel.main` passes `Command_line`. `hegel_run_start_blob` rejects an undecodable blob with
 `HEGEL_E_INVALID_ARG`, so `check_rc` raises `Usage_error`. For persisting and replaying
@@ -706,7 +756,9 @@ unlike `hegel.toml`). Invalid UTF-8 in any string is `HEGEL_E_INVALID_ARG` →
 `Hegel.Settings` is a plain record (`Settings.t`) in the base_quickcheck
 `Test.Config.t` style: `Settings.default ()` is the engine's resolved
 `default` settings profile, `Settings.create ?test_cases ?seed ()` layers the
-two most common overrides (taking `seed` as an `int`), and every other field
+two most common overrides (taking `seed` as a non-negative `int`; the field is an
+`Unsigned.UInt64.t option`, so a seed of libhegel's full `u64` range survives
+`of_ffi`/`to_ffi`), and every other field
 is set with OCaml's record update syntax —
 `{ (Settings.create ~seed:0 ()) with verbosity = Settings.Verbose }`.
 There are deliberately no `with_*` builder functions. The enums (`verbosity`,
@@ -775,7 +827,13 @@ its capture: the output, the exception, `note: <caveat>`
 (`hegel_failure_caveat`, only under nondeterministic handling), and
 `rerun with:` when the failure has a blob (an unconfirmed failure has none).
 A single failure re-raises its captured exception with its backtrace; several
-are aggregated into "N failures found!". `?on_failure` runs after the report and
+raise `Multiple_failures` with their exceptions. A run that ends in
+`Run_error` raises the exception for the engine's
+`hegel_run_result_error_kind` (`Internal.run_error_exn`):
+`Failed_health_check { check; message }` (the check from the kind's
+health-check bit), `Flaky` (flaky and nondeterministic), `Unsatisfiable`, or
+`Run_error` (usage, internal, or an unknown kind), each with the engine's
+message. A nested run raises `Usage_error`. `?on_failure` runs after the report and
 before that raise; `Hegel.main` exits 1 from it (the exit cannot live in the
 portable `Internal`), so a binary prints only the report. Run and usage errors
 still escape `main` as exceptions, since nothing has printed them. `drive` serves both a normal run and
@@ -866,8 +924,7 @@ contended array cannot be read. Once any domain has been spawned `Unix.fork`
 fails for the rest of the process, so `test_hegel.ml` runs the forking
 `loader` suite first. Jane Street's `Concurrent` library is OxCaml-only and
 depends on `core`, which is why its adapter is the optional
-`hegel.jane.concurrent` sublibrary. See `plan.md` for the OxCaml portability
-phase.
+`hegel.jane.concurrent` sublibrary.
 
 ### OxCaml portability (cppo, modes, the trust boundary)
 
@@ -1006,9 +1063,8 @@ guards the syntax upstream cannot parse (`@ m`, kind annotations).
   optional parameters `?(max_size : int option)`). Bookkeeping in rule bodies
   is `Atomic`, never `ref`. `Thread.yield`/`Thread.delay` are nonportable;
   use `Domain.cpu_relax`/`Caml_unix.sleepf`. Under `open Core`, `Atomic` is
-  Core's and a different type: `module Atomic = Stdlib.Atomic`. A printer
-  application is `(printer gen) v`. `Alcotest.fail` inside a rule body is
-  nonportable; use `failwith`.
+  Core's and a different type: `module Atomic = Stdlib.Atomic`.
+  `Alcotest.fail` inside a rule body is nonportable; use `failwith`.
 - **Building locally.** `dune build --build-dir _build_ox …` in the
   `5.2.0+ox` switch (delete `_build_ox` afterwards). The ox CI job installs
   `capsule0`, `concurrent`, and `parallel` from `../../.github/ocaml/oxcaml-ci.opam`, in
@@ -1059,11 +1115,12 @@ typed FFI call (`Hegel_ffi.Ffi` / `Internal.generate_*`):
 - `integers` → `generate_integer ~min_value ~max_value` (i64 bounds; OCaml native int fits)
 - `booleans` → `generate_boolean 0.5 None`
 - `floats` → `generate_float ~min_value ~max_value ~allow_nan ~allow_infinity ~exclude_min ~exclude_max ~smallest_nonzero_magnitude` (width 64; unbounded ends are ±infinity)
-- `binary` → `generate_bytes ~min_size ~max_size`
+- `binary` → `generate_bytes ~min_size ~max_size` (an omitted `max_size` passes `HEGEL_MAX_SIZE_DEFAULT`, `Ffi.max_size_default`, so the engine applies its default of 100 or `min_size + 100`; `text` does the same)
 - `text` / `characters` → build a text `string_generator` handle (codec / codepoint bounds / categories / include-exclude chars) then `generate_string`; surrogates auto-excluded
-- `chars` → `generate_text` fixed to `min_size:max_size:1`, codepoints 0-0xFF (Latin-1), decoded via `String.get_utf_8_uchar` (a codepoint above 127 encodes to 2 UTF-8 bytes, so this can't just index byte 0) into a native `char` via `make_characters ~of_char ~sexp_of`
+- `chars` → `generate_text` fixed to `min_size:max_size:1`, codepoints 0-0xFF (Latin-1), decoded via `String.get_utf_8_uchar` (a codepoint above 127 encodes to 2 UTF-8 bytes, so this can't just index byte 0) into a native `char` via `make_characters ~of_char ~print`
 - `from_regex` / `emails` / `urls` / `domains` → the matching `string_generator_*` handle + `generate_string`
-- `dates` / `times` / `datetimes` → `generate_date`/`time`/`datetime` structs, bounded by the caller's `?min_date`/`?max_date`, `?min_time`/`?max_time`, `?min_datetime`/`?max_datetime` (validated by the engine: a bad bound is `HEGEL_E_INVALID_ARG`, which `check_rc` raises as `Usage_error` and the runner propagates unshrunk). The parts are the `date`/`time` records (`hegel_time_t` carries nanoseconds since libhegel 0.36.0) and feed the refunctionalized builders `make_dates`/`make_times`/`make_datetimes` (`~of_date`/`~of_time`/`~of_datetime` constructor + `~sexp_of` printer); the public `dates`/`times`/`datetimes` close them over ISO 8601 strings (`YYYY-MM-DD`, `HH:MM:SS.fffffffff` with the fraction always printed, joined by `T`). A typed date library plugs in its own `~of_date` (no string parsing round-trip)
+- `from_lark` → `Internal.generate_grammar`: the grammar is compiled once per generator, on its first draw (`hegel_grammar_builder_*`, reading `%import`ed files from `?import_path`, then `hegel_grammar_new`), under the generator's `Locked` so concurrent first draws compile once, and kept in an `Atomic`; a `Gc.finalise` (`Gc.Safe.finalise` under OxCaml) on the `Internal.grammar` record frees it, so `generate_grammar` keeps the record alive (`Sys.opaque_identity` in its `finally`) until the engine is done with the handle. Each draw is a `hegel_grammar_draw_t`: `grammar_draw_next` names the explicit terminal whose value is due, the generator `?explicit` gives it is drawn (`do_draw`, no print line of its own) and handed over with `grammar_draw_provide`, and the engine splices it in, keeps the string under the size cap and rejects after `HEGEL_FILTER_ATTEMPTS` attempts that do not fit. The frontend's own checks are only those the ABI cannot make: `max_size`/`max_depth` below 1 (0 is the engine's "default") and a terminal given two generators
+- `dates` / `times` / `datetimes` → `generate_date`/`time`/`datetime` structs, bounded by the caller's `?min_date`/`?max_date`, `?min_time`/`?max_time`, `?min_datetime`/`?max_datetime` (validated by the engine: a bad bound is `HEGEL_E_INVALID_ARG`, which `check_rc` raises as `Usage_error` and the runner propagates unshrunk). The parts are the `date`/`time` records (`hegel_time_t` carries nanoseconds since libhegel 0.36.0) and feed the refunctionalized builders `make_dates`/`make_times`/`make_datetimes` (`~of_date`/`~of_time`/`~of_datetime` constructor + `~print` printer); the public `dates`/`times`/`datetimes` close them over ISO 8601 strings (`YYYY-MM-DD`, `HH:MM:SS.fffffffff` with the fraction always printed, joined by `T`). A typed date library plugs in its own `~of_date` (no string parsing round-trip)
 - `ip_addresses` → `generate_ipv4`/`generate_ipv6` raw bytes, rendered to strings by the `ipaddr` library (`Ipaddr.V4/V6.{of_octets_exn, to_string}`; RFC 5952 for v6)
 - `sampled_from` → `generate_integer 0 (n-1)` then index into the values array
 - `just` → a Leaf whose `draw` ignores the engine and returns the constant
@@ -1078,20 +1135,18 @@ draw, and always freed (`Internal.with_string_generator`).
 - `scripts/check-coverage.py` parses `bisect-ppx-report summary` output
 - Unreachable engine-contract violations use `failwith "..."` (tested via unit tests on the transform)
 - `[@coverage off]` annotations are never used
-- Only the instrumented `hegel` library and the `hegel.jane` sublibrary are measured; the `hegel_ffi` bindings, examples, and PPX code are not
+- Only the instrumented `hegel` library and the `hegel.jane` and `hegel.zarith` sublibraries are measured; the `hegel_ffi` bindings, examples, and PPX code are not
 
 ## Lessons Learned
 
 ### PPX Deriver Implementation
 
-1. **PPX generates printable generators**: The deriver emits `sexp_of_<t>`
-   (through ppx_sexp_conv's expander library) and wraps the generator in
-   `with_printer sexp_of_<t>`, yielding a `(t, printable) generator` named by
+1. **PPX generators print structurally**: The deriver builds each value's
+   display from its components' draws, yielding a `t generator` named by
    the quickcheck convention (`hegel_generator` for `t`,
-   `hegel_generator_foo` otherwise). A field whose type cannot sexp needs
-   `[@sexp.opaque]`; that is the one way bare deriving can fail to compile.
-   (Earlier revisions emitted unprintable `<t>_generator` values drawn only
-   with `draw_silent`.)
+   `hegel_generator_foo` otherwise). (Earlier revisions emitted
+   `sexp_of_<t>` through ppx_sexp_conv and wrapped the generator in
+   `with_printer`, which made every field type need a sexp converter.)
 
 2. **PPX tests need a separate executable**: Because the PPX needs
    `(preprocess (pps ppx_hegel_generator))`, the test file using `[@@deriving hegel_generator]`

@@ -42,15 +42,13 @@
     Hegel works with whatever test framework your project already uses. The
     examples below use {{:https://github.com/mirage/alcotest} Alcotest}.
 
-    Add [hegel] and [alcotest] to your dune test stanza. The examples in this
-    documentation also use [ppx_sexp_conv]'s [\[%sexp_of: t\]] to write value
-    printers.
+    Add [hegel] and [alcotest] to your dune test stanza:
 
     {[
       (test
        (name my_tests)
        (libraries hegel alcotest)
-       (preprocess (pps ppx_hegel_test ppx_sexp_conv)))
+       (preprocess (pps ppx_hegel_test)))
     ]}
 
     {3 Write your first test}
@@ -200,7 +198,7 @@
 
     The type [t] derives a value named [hegel_generator]. Any other type
     [foo] derives [hegel_generator_foo]. Derived generators print drawn values
-    as s-expressions.
+    as OCaml syntax, as in [{ x = 1; y = 2 }].
 
     Deriving generators also works on types in modules:
 
@@ -217,6 +215,22 @@
     ]}
 
     The [reading] generator draws its [temp] field through [Temperature.hegel_generator].
+
+    Recursive types derive too:
+
+    {[
+      type tree =
+        | Leaf of int
+        | Node of tree * tree
+      [@@deriving hegel_generator]
+    ]}
+
+    A variant whose constructors refer to the type is generated with
+    {!Generators.recursive}: the constructors that don't refer to it ([Leaf])
+    are the leaves, and the engine bounds the size of the tree. Other
+    recursive types, such as a record with a [t option] field, and mutually
+    recursive types ([type a = ... and b = ...]) are generated through
+    {!Generators.deferred}.
 
     [\[@hegel.generator expr\]] sets the generator for a type instead of deriving it:
 
@@ -238,20 +252,19 @@
       [@@deriving hegel_generator]
     ]}
 
-    If a field's type has no [sexp_of_*] representation, mark the field
-    [\[@sexp.opaque\]]:
+    A derived generator prints what it draws as OCaml syntax, each part as
+    its own generator prints it: a field whose generator has no printer (a
+    [map] without {!with_printer}, say) shows as [<abstr>]:
 
     {[
-      type connection = { send : bytes -> unit }
-
       type session =
         { id : int
-        ; conn : (connection [@sexp.opaque])
+        ; tag : (int[@hegel.generator map (fun n -> n * 2) (integers ())])
         }
       [@@deriving hegel_generator]
     ]}
 
-    The [conn] field prints as [<opaque>].
+    A drawn [session] prints as [{ id = 3; tag = <abstr> }].
 
     {3 Changing test settings}
 
@@ -276,6 +289,31 @@
         require tc (a + b = b + a)
       [@@settings { (Settings.create ~test_cases:500 ()) with verbosity = Settings.Verbose }]
     ]}
+
+    {3 Explicit examples}
+
+    Attach [\[@@example ...\]] to run a test on specific values before any
+    generated ones. The record gives a value for each named draw: in an
+    example, [let n = draw tc gen] binds [n] to the example's [n] instead of
+    drawing from [gen].
+
+    {[
+      let%hegel_test parses_what_it_prints tc =
+        let n = draw tc (integers ()) in
+        let s = draw tc (text ()) in
+        assert (parse (print n s) = (n, s))
+      [@@example { n = 0; s = "" }]
+      [@@example { n = -1; s = "a b" }]
+    ]}
+
+    Every draw an example reaches must be a named [draw] it gives a value for,
+    and every value it gives must be drawn; otherwise the test raises
+    {!Usage_error}. An example that {!assume} or {!reject} rejects is skipped:
+    it neither passes nor fails. In an example, {!repeat} runs its body once.
+    An example that fails is reported with the values it gave and ends the
+    run, unless [report_multiple_failures] is set. Examples run in the
+    [Explicit] phase, so leaving it out of [phases] skips them, and a run that
+    replays failure blobs does not run them.
 
     {3 Debugging failing test cases}
 
@@ -327,6 +365,12 @@
     Projects that use Jane Street's [Core] can also use the optional
     {!Hegel_jane} library to generate [Core] values. See {!Hegel_jane}.
 
+    {3 Arbitrary-precision integers}
+
+    The optional [hegel.zarith] library, built when
+    {{:https://github.com/ocaml/Zarith} zarith} is installed, generates
+    zarith's [Z.t] integers of any magnitude. See {!Hegel_zarith}.
+
     {3 Learning more}
     See {!Generators} for the generators and {!Stateful} for state-machine testing.
     *)
@@ -369,9 +413,7 @@ module type Io = Io.S
 
 module Make (B : Io) : module type of Io.Make (B)
 
-type ('a, 'p) generator = ('a, 'p) Generators.generator
-type printable = Generators.printable
-type unprintable = Generators.unprintable
+type 'a generator = 'a Generators.generator
 
 include module type of struct
   include Generators.Public
@@ -382,6 +424,9 @@ end
 (** {3 Settings} *)
 
 module Settings = Settings
+
+(** Printing drawn values as OCaml syntax. *)
+module Printer = Printer
 
 (** {3 Running tests} *)
 
@@ -423,9 +468,16 @@ type test_location = Internal.test_location =
     no database key, so failures are neither stored nor replayed.
     @param failure_blobs
     a list of base64 encoded strings (blobs), where each string encodes the choices
-    made in a failing test run. Only the first blob is used. If no replay fails, the 
-    run raises [Failure] saying the blob did not reproduce. A blob is only guaranteed 
-    to reproduce a failure within the same version of Hegel. *)
+    made in a failing test run. Each blob is replayed in turn, and every failure
+    they reproduce is reported. If none of them reproduces a failure, the run
+    raises {!Did_not_reproduce}. A blob is only guaranteed to reproduce a failure
+    within the same version of Hegel. A run that replays blobs replays only
+    them: the test's explicit examples do not run.
+
+    A failing test re-raises the test's own exception after the failure report.
+    When the run reports several distinct failures it raises
+    {!Multiple_failures} instead. A run that ends without a verdict raises
+    {!Failed_health_check}, {!Flaky}, {!Unsatisfiable} or {!Run_error}. *)
 val run_hegel_test
   :  ?settings:Settings.t
   -> ?test_location:test_location
@@ -434,17 +486,54 @@ val run_hegel_test
   -> (test_case -> unit)
   -> unit
 
+(** {3 Run errors} *)
+
+(** A health check failed: the run was likely to test poorly or slowly, such as
+    one that rejects nearly every test case. [check] names the health check
+    that failed; add it to [suppress_health_check] if the behaviour is
+    intentional. [message] is the engine's explanation. *)
+exception
+  Failed_health_check of
+    { check : Settings.health_check option
+    ; message : string
+    }
+
+(** The test behaved nondeterministically under the [Error]
+    [nondeterminism_strictness]: it gave different outcomes, or generated
+    different data, when replayed. The default strictness instead confirms such
+    failures by replaying them and reports them with a caveat. *)
+exception Flaky of string
+
+(** No valid test case was generated: the test's assumptions and filters
+    rejected everything. *)
+exception Unsatisfiable of string
+
+(** Any other run that ended without a verdict: a misuse of the engine at run
+    scope, or a violated engine invariant (a bug in Hegel). *)
+exception Run_error of string
+
+(** The run found several distinct failures (with [report_multiple_failures]).
+    Each is reported before this is raised; it carries their exceptions in the
+    order they were reported. *)
+exception Multiple_failures of exn list
+
+(** None of the [failure_blobs] reproduced a failure: the failure is fixed, or
+    a nondeterministic failure did not occur again in the replays. *)
+exception Did_not_reproduce of string
+
 (**/**)
 
 (** [run_hegel_test_ppx] is {!run_hegel_test} with the PPX replay hint enabled,
     so a failing run suggests the [[@@failure_blobs [...]]] attribute rather than
-    the [~failure_blobs] argument. The [let%hegel_test] PPX targets it; not for
-    direct use. *)
+    the [~failure_blobs] argument, and with the test's [[@@example]]s, each the
+    names it gives values for and the test body with those values in place.
+    The [let%hegel_test] PPX targets it; not for direct use. *)
 val run_hegel_test_ppx
   :  ?settings:Settings.t
   -> ?test_location:test_location
   -> ?database_key:string
   -> ?failure_blobs:string list
+  -> ?examples:(string list * (test_case -> unit)) list
   -> (test_case -> unit)
   -> unit
 
@@ -464,15 +553,25 @@ val run_hegel_test_ppx
       let () = workload ()
     ]}
 
-    The run's [test_cases] is always 1, and the [Too_slow] and
-    [Test_cases_too_large] health checks are always suppressed.
+    The run's [test_cases] is always 1, the [Too_slow] health check is always
+    suppressed, and [unbounded_choices] is set, so the test case may make any
+    number of choices.
 
     If you run a stateful test this way, you probably want a very 
     large [step_count].
 
-    The supported flags are [--profile], [--seed], [--verbosity], [--derandomize],
-    [--database], [--suppress-health-check], [--backend], [--failure-blob],
-    and [--help]. *)
+    Every other setting has a flag, named after its [hegel.toml] key with
+    dashes for underscores and taking the values [hegel.toml] takes:
+    [--seed], [--verbosity], [--derandomize], [--database], [--database-key],
+    [--phases], [--suppress-health-check], [--report-multiple-failures],
+    [--stop-on-first-failure], [--show-statistics], [--print-blob],
+    [--backend] and [--nondeterminism-strictness]. Lists such as [--phases]
+    are comma-separated, and booleans are [true]/[false], [1]/[0] or
+    [yes]/[no]. The engine reads each value, as it reads [hegel.toml], so a
+    value it does not accept is reported as a usage error. [--profile]
+    selects the settings profile the flags apply on top of,
+    [--failure-blob] (which may be repeated) replays failures from their
+    blobs, and [--help] lists the flags. *)
 val main
   :  ?settings:(unit -> Settings.t)
   -> ?test_location:test_location
@@ -483,16 +582,18 @@ val main
 
 (** {3 Drawing values} *)
 
-(** [draw ?label ?loc tc gen] produces a typed value from the printable generator
-    [gen] using test case [tc].
+(** [draw ?label ?loc tc gen] produces a typed value from the generator [gen]
+    using test case [tc].
 
     On the final replay of a failing test (or on every case under verbose
-    output), an outermost draw prints its value through [Internal.note] as
-    [name = value] when no location is supplied. The [name] is [label] when given,
-    else ["draw"]. An unlabeled draw is numbered ([draw_1], [draw_2], …).
-    Draws nested inside a span (e.g. composite elements) are suppressed so only
-    the outermost value shows. To draw a generator with no printer, use
-    {!draw_silent} or attach a printer with {!with_printer}.
+    output), an outermost draw prints its value as OCaml syntax (see
+    {!Printer}) as [name = value] when no location is supplied. The [name] is
+    [label] when given, else ["draw"]. An unlabeled draw is numbered
+    ([draw_1], [draw_2], …). Draws nested inside a span (e.g. composite
+    elements) are suppressed so only the outermost value shows. A value whose
+    generator has no printer shows as [<abstr>]; attach one with
+    {!with_printer}. A drawn function ({!functions}) prints no line of its
+    own; each application of it prints instead.
 
     [?loc] adds the source filename and line to the printed draw. In OxCaml, the
     compiler automatically supplies the caller's position when omitted. Providing
@@ -517,7 +618,7 @@ val draw
   -> ?loc:Lexing.position
 #endif
   -> test_case
-  -> ('a, printable) generator
+  -> 'a generator
   -> 'a
 
 (**/**)
@@ -534,29 +635,28 @@ val draw_named
 #endif
   -> repeatable:bool
   -> test_case
-  -> ('a, printable) generator
+  -> 'a generator
   -> 'a
 
 (**/**)
 
-(** [draw_silent tc gen] produces a typed value from any generator without
+(** [draw_silent tc gen] produces a typed value from a generator without
     recording it for the final-replay output. Use it for draws whose value is not
-    a useful part of the printed counterexample, or for generators that carry no
-    printer.
+    a useful part of the printed counterexample.
 
     {[
       let%hegel_test draw_silent_example tc =
         let n = draw_silent tc (map (fun x -> x * 2) (integers ~min_value:0 ~max_value:9 ())) in
         assert (n >= 0)
     ]} *)
-val draw_silent : test_case -> ('a, 'p) generator -> 'a
+val draw_silent : test_case -> 'a generator -> 'a
 
 (**/**)
 
 (** [draw_silent_named ~name tc gen] is the naming-aware {!draw_silent} the
     [let%hegel_test] PPX rewrites bindings to; not intended for direct use
     (prefer {!draw_silent}). See {!Generators.draw_silent_named}. *)
-val draw_silent_named : name:string -> test_case -> ('a, 'p) generator -> 'a
+val draw_silent_named : name:string -> test_case -> 'a generator -> 'a
 
 (** Raised by {!run_hegel_test} when the engine rejects an argument as
     invalid. *)
@@ -590,6 +690,18 @@ exception Assume_rejected
     The [tc] handle is accepted for API symmetry with the other per-test-case
     primitives; the rejection itself is client-side and does not consult [tc]. *)
 val assume : test_case -> bool -> unit
+
+(** [reject tc] discards the current test case, like [assume tc false]. Its
+    result type is any type, so it can end a branch of a [match]:
+
+    {[
+      let%hegel_test parse_roundtrip tc =
+        let s = draw tc (text ()) in
+        match parse s with
+        | None -> reject tc
+        | Some v -> assert (parse (print v) = Some v)
+    ]} *)
+val reject : test_case -> 'a
 
 (** [target tc ~label ~value] records [value] as a targeting score under
     [label]. Hegel steers generation toward higher scores.
@@ -672,25 +784,80 @@ val note : test_case -> string -> unit
     ]} *)
 val require : test_case -> ?msg:string -> bool -> unit
 
-(** [with_printer sexp_of gen] attaches (or replaces) [gen]'s printer, yielding a
-    printable generator that {!draw} accepts. This is how a
-    [map]/[flat_map]/[sampled_from]/[just] result is made drawable with {!draw}.
+(** [with_printer print gen] displays [gen]'s drawn values with [print],
+    replacing the display [gen] had. This is how a
+    [map]/[sampled_from]/[just]/[composite] result, whose values otherwise show
+    as [<abstr>], prints its values. See {!Printer} for the printers to build
+    one from.
 
     {[
       let%hegel_test with_printer_example tc =
         let doubled = map (fun x -> x * 2) (integers ~min_value:0 ~max_value:9 ()) in
-        let n = draw tc (with_printer [%sexp_of: int] doubled) in
+        let n = draw tc (with_printer Printer.int doubled) in
         assert (n >= 0)
     ]} *)
 val%template with_printer
-  :  ('a -> Sexplib0.Sexp.t) MODE(m)
-  -> ('a, 'p) generator MODE(m)
-  -> ('a, printable) generator MODE(m)
+  :  ('a -> Printer.doc) MODE(m)
+  -> 'a generator MODE(m)
+  -> 'a generator MODE(m)
 [@@mode m = (nonportable, portable)]
+
+(** {3 Repeating a body} *)
+
+(** [repeat tc body] runs [body] again and again, as long as the engine wants
+    more iterations, and then ends the test case: it never returns. Use it for
+    a test that should run "forever", such as a workload driving a system
+    under test, so that Hegel decides how many iterations to run and can
+    shrink a failure to the fewest.
+
+    Each iteration runs [body] on a test case whose output is indented under a
+    [// Repetition #n] note. An iteration that rejects itself (with {!assume}
+    or {!reject}) is skipped, and the loop continues; any other exception
+    fails the test case. In an explicit example, [body] runs once, on the
+    example's own test case.
+
+    {[
+      let%hegel_test counter_stays_non_negative tc =
+        let total = ref 0 in
+        repeat tc (fun tc ->
+          let n = draw tc (integers ~min_value:0 ~max_value:10 ()) in
+          total := !total + n;
+          assert (!total >= 0))
+    ]} *)
+val repeat : test_case -> (test_case -> unit) -> 'a
 
 (** {3 Cloning a test case} *)
 
 (** [clone tc] creates an independent clone of [tc]. It has its own choice stream
     forked from the parent test case. When the parent test case is freed, its
-    clones are freed with it. Each concurrent task must have its own clone. *)
+    clones are freed with it. Each concurrent task must have its own clone.
+
+    A clone lets your test draw from several threads at once: give each thread
+    its own clone, and name the thread with {!set_worker} so the failure report
+    says which worker printed each line.
+
+    {[
+      let%hegel_test concurrent_pushes tc =
+        let queue = Queue.create () in
+        let mutex = Mutex.create () in
+        let workers =
+          List.init 2 (fun i ->
+            let worker = clone tc in
+            set_worker worker i;
+            Thread.create
+              (fun () ->
+                 let n = draw worker (integers ()) in
+                 Mutex.protect mutex (fun () -> Queue.push n queue))
+              ())
+        in
+        List.iter Thread.join workers;
+        assert (Queue.length queue = 2)
+    ]} *)
 val clone : test_case -> test_case
+
+(** [set_worker tc worker_index] attributes everything [tc] prints from now on
+    (its drawn values and notes) to concurrent worker [worker_index], so the
+    failure report prefixes those lines with [\[worker N +X.XXXms\]]. Clones
+    taken from [tc] afterwards inherit the attribution. [worker_index] must be
+    non-negative. *)
+val set_worker : test_case -> int -> unit

@@ -167,7 +167,7 @@ let%expect_test "stale blobs that pass, reject, or overrun do not reproduce an e
            body
        with
        | () -> failwith "expected stale blob failure"
-       | exception Failure msg -> print_endline msg)
+       | exception Hegel.Did_not_reproduce msg -> print_endline msg)
     [ (fun _ -> ())
     ; (fun tc -> Hegel.assume tc false)
     ; (fun _ -> raise Hegel.Internal.Stop_test)
@@ -191,26 +191,19 @@ let%expect_test "an invalid supplied blob raises a usage error" =
       {| hegel_run_start_blob: the supplied failure blob could not be decoded. It may be corrupt or from an incompatible Hegel version. |}]
 ;;
 
-let%expect_test "only the first blob is actually replayed" =
+let%expect_test "every blob is replayed" =
   expect_failure "deliberate failure" (fun () ->
     Hegel.run_hegel_test ~settings:(settings ()) prop);
-  let recorded = [%expect.output] in
-  let blob = extract_blob recorded in
-  print_string (Expect_scrub.scrub_report recorded);
-  [%expect
-    {|
-    --- Failure --------------------------------------------------------------------
-
-    draw_1 = true
-
-    Exception: Failure("deliberate failure")
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
-    |}];
+  let blob = extract_blob [%expect.output] in
+  (match
+     Hegel.run_hegel_test ~settings:(settings ()) (fun tc ->
+       if not (Hegel.draw tc (Hegel.booleans ())) then failwith "false drawn")
+   with
+   | () -> assert false
+   | exception Failure _ -> ());
+  let stale = extract_blob [%expect.output] in
   expect_failure "deliberate failure" (fun () ->
-    Hegel.run_hegel_test
-      ~settings:(settings ())
-      ~failure_blobs:[ blob; "INVALID_BLOB" ]
-      prop);
+    Hegel.run_hegel_test ~settings:(settings ()) ~failure_blobs:[ stale; blob ] prop);
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
@@ -219,6 +212,27 @@ let%expect_test "only the first blob is actually replayed" =
     draw_1 = true
 
     Exception: Failure("deliberate failure")
+    |}];
+  (match
+     Hegel.run_hegel_test ~settings:(settings ()) ~failure_blobs:[ blob; blob ] prop
+   with
+   | () -> assert false
+   | exception Hegel.Multiple_failures exns ->
+     Printf.printf "%d failures\n" (List.length exns));
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    draw_1 = true
+
+    Exception: Failure("deliberate failure")
+    --- Failure --------------------------------------------------------------------
+
+    draw_1 = true
+
+    Exception: Failure("deliberate failure")
+    2 failures
     |}]
 ;;
 
@@ -244,7 +258,8 @@ let%hegel_test multi_fail_test tc =
 let%expect_test "recording groups each failure's draws with its diagnostic" =
   (match multi_fail_test () with
    | () -> assert false
-   | exception Failure msg -> Printf.printf "%s" msg);
+   | exception Hegel.Multiple_failures exns ->
+     Printf.printf "%d failures raised" (List.length exns));
   Printf.printf "%s" (Expect_scrub.scrub_report (normalize [%expect.output]));
   [%expect
     {|
@@ -261,7 +276,7 @@ let%expect_test "recording groups each failure's draws with its diagnostic" =
 
     Exception: Expect_tests.Test_failure_blobs_record.B
     rerun with: [@@failure_blobs [ "<BLOB>" ]]
-    2 failures found!
+    2 failures raised
     |}]
 ;;
 
@@ -276,7 +291,8 @@ let%expect_test "the multi-failure report omits blobs when print_blob is off" =
   in
   (match Hegel.run_hegel_test ~settings multi_prop with
    | () -> assert false
-   | exception Failure msg -> Printf.printf "%s" msg);
+   | exception Hegel.Multiple_failures exns ->
+     Printf.printf "%d failures raised" (List.length exns));
   Printf.printf "%s" (Expect_scrub.scrub_report (normalize [%expect.output]));
   [%expect
     {|
@@ -291,7 +307,7 @@ let%expect_test "the multi-failure report omits blobs when print_blob is off" =
     draw_1 = 0
 
     Exception: Expect_tests.Test_failure_blobs_record.B
-    2 failures found!
+    2 failures raised
     |}]
 ;;
 

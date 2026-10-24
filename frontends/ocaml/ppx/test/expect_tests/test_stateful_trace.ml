@@ -15,11 +15,11 @@ let run_failing body =
 ;;
 
 (* A state machine module: [inc] and [my_inv] are collected into its [rules]
-   and [invariants], and the derived [sexp_of_state] traces the state. *)
+   and [invariants], and its [print_state] traces the state. *)
 module%hegel_state_machine Counter = struct
   type state = int ref
 
-  let sexp_of_state n = sexp_of_int !n
+  let print_state n = Hegel.Printer.int !n
   let inc _tc n = incr n [@@rule]
 
   let my_inv tc n =
@@ -78,7 +78,7 @@ let%expect_test "invariant violated in the initial state" =
 module%hegel_state_machine Stack = struct
   type state = int list ref
 
-  let sexp_of_state stack = [%sexp_of: int list] !stack
+  let print_state stack = Hegel.Printer.(list int) !stack
 
   let push tc stack =
     let n = Hegel.draw tc (integers ~min_value:0 ~max_value:100 ()) in
@@ -103,10 +103,10 @@ let%expect_test "state trace across multiple rules" =
     {|
     --- Failure --------------------------------------------------------------------
 
-    state = ()
+    state = []
     Step 1: push
       n = 50
-    state = (50)
+    state = [50]
     Step 2: pop
 
     Exception: File "ppx/test/expect_tests/test_stateful_trace.ml", line LINE, characters C1-C2: Assertion failed
@@ -203,7 +203,7 @@ let%expect_test "one concurrent worker remains deterministic" =
 module%hegel_concurrent_state_machine Concurrent_counter = struct
   type state = int Atomic.t
 
-  let sexp_of_state state = Sexplib0.Sexp.Atom (Int.to_string (Atomic.get state))
+  let print_state state = Hegel.Printer.int (Atomic.get state)
   let increment _tc () state = Atomic.incr state [@@rule { group = "writes" }]
 
   let stays_zero _tc state = if Atomic.get state <> 0 then failwith "invariant boom"

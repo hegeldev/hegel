@@ -20,14 +20,13 @@ and the supported platforms.
 You're now ready to write your first test. Hegel works with whatever test 
 framework your project already uses. This guide uses [Alcotest](https://github.com/mirage/alcotest).
 
-Add `hegel` and `alcotest` to your dune test stanza. This guide also uses
-`ppx_sexp_conv` to write value printers with `[%sexp_of: t]`, but it is optional.
+Add `hegel` and `alcotest` to your dune test stanza.
 
 ```
 (test
  (name my_tests)
  (libraries hegel alcotest)
- (preprocess (pps ppx_hegel_test ppx_sexp_conv)))
+ (preprocess (pps ppx_hegel_test)))
 ```
 
 Then create a test file:
@@ -146,24 +145,23 @@ If you instead want a first-class `generator` value wrap the function with `comp
 
 ```ocaml
 let person_generator = composite generate_person
-(* person_generator : (person, unprintable) generator *)
+(* person_generator : person generator *)
 
 let%hegel_test people_are_generatable tc =
-  let p = draw_silent tc person_generator in
+  let p = draw tc person_generator in
   assert (p.age >= 0)
 ;;
 ```
 
-`composite` carries no printer (the value type is yours), so draw it with
-`draw_silent`. To print it on a failing replay or to feed it into combinators
-like `lists` that expect a *printable* element generator, attach a printer with
-`with_printer` (see [Debugging failures](#debug-your-failing-test-cases)).
+`composite` has no way to show a value of your type, so a failing replay prints
+what it drew as `<abstr>`. To print it, attach a printer with `with_printer`
+(see [Debugging failures](#debug-your-failing-test-cases)).
 
 ## Debug your failing test cases
 
 When a test fails, Hegel replays the minimal failing example and prints a
 report: the test's name and source location, the values you
-drew (as s-expressions, named after their `let` binding), the exception, and a
+drew (as OCaml syntax, named after their `let` binding), the exception, and a
 copy-pasteable line that replays the exact case.
 
 ```ocaml
@@ -178,7 +176,7 @@ On failure this prints:
 ```
 --- Failure: reverse_is_identity (test/my_tests.ml:1) ------------------
 
-xs = (0 1)
+xs = [0; 1]
 
 Exception: File "test/my_tests.ml", line 3, characters 2-8: Assertion failed
 rerun with: [@@failure_blobs [ "AXic..." ]]
@@ -211,28 +209,30 @@ The same `let x` runs on each iteration, so Hegel disambiguates the draws as
 `x_1`, `x_2`, `x_3` in draw order. You can override the name with `~label`:
 `draw ~label:"y" tc (integers ())`.
 
-Some combinators hand the result type to your own code and so carry no printer:
-`map`, `flat_map`, `sampled_from`, and `just`. Either draw it with `draw_silent` (which prints nothing):
+Values print as OCaml syntax: lists as `[1; 2; 3]`, tuples as `(1, "a")`,
+options as `Some 3`, records as `{ x = 1; y = 2 }`, and strings always quoted.
+Structural generators (`lists`, `tuples2`, `optional`, `one_of`, `filter`,
+`flat_map`, derived generators, ...) print what they drew. Combinators that hand
+the result type to your own code (`map`, `sampled_from`, `just`, `composite`)
+have no way to show it, so their values print as `<abstr>`:
 
 ```ocaml
-let parity = draw_silent tc (map (fun n -> n mod 2) (integers ()))
+let parity = draw tc (map (fun n -> n mod 2) (integers ()))
+(* prints: parity = <abstr> *)
 ```
-or attach a printer with `with_printer`. A printer is a function of type
-`'a -> Sexplib0.Sexp.t`.
+
+Attach a printer with `with_printer`. A printer is a function of type
+`'a -> Printer.doc`; `Hegel.Printer` has printers for the standard types
+(`Printer.int`, `Printer.(list string)`, ...), builders for your own types
+(`Printer.constructor`, `Printer.record`, `Printer.tuple`), and
+`Printer.of_to_string` for a type that has a `to_string`:
+
 ```ocaml
-let parity =
-  draw
-    tc
-    (with_printer
-       (fun n -> Sexplib0.Sexp.Atom (string_of_int n))
-       (map (fun n -> n mod 2) (integers ())))
+let parity = draw tc (with_printer Printer.int (map (fun n -> n mod 2) (integers ())))
+(* prints: parity = 0 *)
 ```
-If you have [`ppx_sexp_conv`](https://github.com/janestreet/ppx_sexp_conv) in your
-`(preprocess (pps ...))`, `[%sexp_of: int]` is a shorthand for that printer:
-```ocaml
-let parity =
-  draw tc (with_printer [%sexp_of: int] (map (fun n -> n mod 2) (integers ())))
-```
+
+To draw without printing anything, use `draw_silent`.
 
 You can also attach your own debug information with `note`:
 
@@ -262,15 +262,15 @@ rules with `[@@rule]` and invariants with `[@@invariant]`. A rule takes the
 test case and the state and updates the state in place. Rules may be weighted
 with `[@@rule { weight = <weight> }]`. Every invariant is checked on the initial
 and final states and sampled after intermediate steps, or after every step when
-marked `[@@invariant { always_check = true }]`. Pass `?sexp_of_state` to 
-`Stateful.run` to trace the model state. Draws are also printed with their 
+marked `[@@invariant { always_check = true }]`. Define `print_state` (or pass
+`?print_state` to `Stateful.run`) to trace the model state. Draws are also printed with their 
 `let`-bound name.
 
 ```ocaml
 module%hegel_state_machine Stack = struct
   type state = int list ref
 
-  let sexp_of_state (stack : state) = sexp_of_list sexp_of_int !stack
+  let print_state (stack : state) = Printer.(list int) !stack
 
   let push tc stack =
     let n = draw tc (integers ~min_value:0 ~max_value:9 ()) in
@@ -288,16 +288,16 @@ When a sequence fails, the report shows each step, the draws it made, the state
 after it, and which step broke the invariant:
 
 ```
-state = ()
+state = []
 Step 1: push
   n = 0
-state = (0)
+state = [0]
 Step 2: push
   n = 0
-state = (0 0)
+state = [0; 0]
 Step 3: push
   n = 0
-state = (0 0 0)
+state = [0; 0; 0]
 Invariant stack_stays_small violated after step 3.
 ```
 
@@ -331,7 +331,7 @@ let%hegel_test stack_model tc =
     tc
     (module Stack)
     ~init:(ref [])
-    ~sexp_of_state:(fun stack -> [%sexp_of: int list] !stack)
+    ~print_state:(fun stack -> Printer.(list int) !stack)
 ```
 
 In state machines not written with the PPX, draws print as `draw_1`, `draw_2`, ... unless given a `~label`.

@@ -35,6 +35,7 @@ depopts: [
   "async"
   "concurrent"
   "ppx_template"
+  "zarith" {>= "1.13"}
 ]
 dev-repo: "git+https://github.com/hegeldev/hegel.git"
 available: arch != "riscv64"

@@ -246,6 +246,12 @@ let c_settings_show_statistics =
     (handle_t @-> handle_t @-> bool @-> returning int)
 ;;
 
+let c_settings_unbounded_choices =
+  foreign
+    "hegel_settings_set_unbounded_choices"
+    (handle_t @-> handle_t @-> bool @-> returning int)
+;;
+
 let c_settings_database =
   foreign
     "hegel_settings_set_database"
@@ -280,6 +286,12 @@ let c_settings_print_blob =
   foreign
     "hegel_settings_set_print_blob"
     (handle_t @-> handle_t @-> bool @-> returning int)
+;;
+
+let c_settings_set_from_string =
+  foreign
+    "hegel_settings_set_from_string"
+    (handle_t @-> handle_t @-> str @-> str @-> returning int)
 ;;
 
 let c_settings_register_profile =
@@ -355,6 +367,12 @@ let c_settings_get_report_multiple_failures =
 let c_settings_get_show_statistics =
   foreign
     "hegel_settings_get_show_statistics"
+    (handle_t @-> handle_t @-> ptr bool @-> returning int)
+;;
+
+let c_settings_get_unbounded_choices =
+  foreign
+    "hegel_settings_get_unbounded_choices"
     (handle_t @-> handle_t @-> ptr bool @-> returning int)
 ;;
 
@@ -559,6 +577,71 @@ let c_owned_string_free =
   foreign "hegel_owned_string_free" (handle_t @-> ptr Str.t @-> returning int)
 ;;
 
+let c_grammar_builder_new =
+  foreign
+    "hegel_grammar_builder_new"
+    (handle_t @-> str @-> ptr handle_t @-> returning int)
+;;
+
+let c_grammar_builder_file =
+  foreign
+    "hegel_grammar_builder_file"
+    (handle_t @-> handle_t @-> size_t @-> ptr Str.t @-> returning int)
+;;
+
+let c_grammar_builder_provide =
+  foreign
+    "hegel_grammar_builder_provide"
+    (handle_t @-> handle_t @-> size_t @-> str_opt @-> returning int)
+;;
+
+let c_grammar_builder_free =
+  foreign "hegel_grammar_builder_free" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_grammar_new =
+  foreign
+    "hegel_grammar_new"
+    (handle_t
+     @-> handle_t (* builder *)
+     @-> str_opt (* start *)
+     @-> uint64_t (* max_size *)
+     @-> uint32_t (* max_depth *)
+     @-> handle_t (* alphabet, nullable *)
+     @-> ptr Str.t (* explicit_names *)
+     @-> size_t (* explicit_len *)
+     @-> ptr handle_t
+     @-> returning int)
+;;
+
+let c_grammar_free = foreign "hegel_grammar_free" (handle_t @-> handle_t @-> returning int)
+
+let c_grammar_draw_new =
+  foreign
+    "hegel_grammar_draw_new"
+    (handle_t @-> handle_t @-> uint64_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_grammar_draw_next =
+  foreign
+    "hegel_grammar_draw_next"
+    (handle_t @-> handle_t @-> handle_t @-> ptr size_t @-> returning int)
+;;
+
+let c_grammar_draw_provide =
+  foreign "hegel_grammar_draw_provide" (handle_t @-> handle_t @-> str @-> returning int)
+;;
+
+let c_grammar_draw_result =
+  foreign
+    "hegel_grammar_draw_result"
+    (handle_t @-> handle_t @-> ptr Str.t @-> returning int)
+;;
+
+let c_grammar_draw_free =
+  foreign "hegel_grammar_draw_free" (handle_t @-> handle_t @-> returning int)
+;;
+
 let c_generate_date =
   foreign
     "hegel_generate_date"
@@ -598,6 +681,55 @@ let c_generate_ipv4 =
 
 let c_generate_ipv6 =
   foreign "hegel_generate_ipv6" (handle_t @-> handle_t @-> ptr uint8_t @-> returning int)
+;;
+
+let c_generate_uuid =
+  foreign
+    "hegel_generate_uuid"
+    (handle_t @-> handle_t @-> uint8_t @-> bool @-> ptr uint8_t @-> returning int)
+;;
+
+let c_generate_integer_big =
+  foreign
+    "hegel_generate_integer_big"
+    (handle_t
+     @-> handle_t
+     @-> ptr uint8_t
+     @-> size_t
+     @-> ptr uint8_t
+     @-> size_t
+     @-> ptr uint8_t
+     @-> size_t
+     @-> ptr size_t
+     @-> returning int)
+;;
+
+let c_new_recursion =
+  foreign
+    "hegel_new_recursion"
+    (handle_t @-> handle_t @-> uint64_t @-> uint64_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_recursion_branch =
+  foreign
+    "hegel_recursion_branch"
+    (handle_t @-> handle_t @-> handle_t @-> uint64_t @-> ptr bool @-> returning int)
+;;
+
+let c_recursion_leaf =
+  foreign "hegel_recursion_leaf" (handle_t @-> handle_t @-> handle_t @-> returning int)
+;;
+
+let c_recursion_retry =
+  foreign "hegel_recursion_retry" (handle_t @-> handle_t @-> handle_t @-> returning int)
+;;
+
+let c_recursion_finish =
+  foreign "hegel_recursion_finish" (handle_t @-> handle_t @-> handle_t @-> returning int)
+;;
+
+let c_recursion_free =
+  foreign "hegel_recursion_free" (handle_t @-> handle_t @-> returning int)
 ;;
 
 let c_start_span =
@@ -750,6 +882,12 @@ let c_printer_breakable = foreign "hegel_printer_breakable" text_typ
 let c_printer_if_break = foreign "hegel_printer_if_break" text_typ
 let c_printer_comment = foreign "hegel_printer_comment" text_typ
 
+let c_printer_reflow =
+  foreign
+    "hegel_printer_reflow"
+    (handle_t @-> handle_t @-> handle_t @-> str @-> returning int)
+;;
+
 let c_printer_hard_break =
   foreign "hegel_printer_hard_break" (handle_t @-> handle_t @-> returning int)
 ;;
@@ -830,6 +968,12 @@ let c_result_error =
     (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
 ;;
 
+let c_result_error_kind =
+  foreign
+    "hegel_run_result_error_kind"
+    (handle_t @-> handle_t @-> ptr int @-> ptr uint32_t @-> returning int)
+;;
+
 let c_result_failure_count =
   foreign
     "hegel_run_result_failure_count"
@@ -880,6 +1024,13 @@ type string_generator = handle
 type collection = handle
 type pool = handle
 type state_machine = handle
+type recursion = handle
+type grammar = handle
+type grammar_builder = handle
+type grammar_draw = handle
+
+let null_context = null_handle
+let null_test_case = null_handle
 type printer = handle
 type printer_options = handle
 
@@ -909,10 +1060,17 @@ type run_status =
   | Run_failed
   | Run_error
 
+type run_error_kind =
+  | Run_error_health_check
+  | Run_error_flaky
+  | Run_error_unsatisfiable
+  | Run_error_other
+
 exception Stop_test
 exception Assume_rejected
 exception Internal_error of string
 exception Usage_error of string
+exception Retry
 
 (* Status codes returned by the C primitives [HEGEL_OK] / [HEGEL_E_*]. *)
 let ok = 0
@@ -925,6 +1083,8 @@ let e_already_complete = -6
 let e_not_complete = -7
 let e_internal = -8
 let e_concurrent_use = -9
+let e_retry = -10
+let e_not_found = -11
 
 (* Phase bitmask values [HEGEL_PHASE_*]. *)
 let phase_explicit = 1
@@ -932,6 +1092,12 @@ let phase_reuse = 1 lsl 1
 let phase_generate = 1 lsl 2
 let phase_target = 1 lsl 3
 let phase_shrink = 1 lsl 4
+
+(* [HEGEL_FILTER_ATTEMPTS]. *)
+let filter_attempts = 3
+
+(* [HEGEL_MAX_SIZE_DEFAULT]. *)
+let max_size_default = Unsigned.UInt64.(sub max_int one)
 
 (* Health-check bitmask values [HEGEL_HC_*]. *)
 let hc_filter_too_much = 1
@@ -1000,6 +1166,8 @@ let check_rc ctx rc =
   then raise Assume_rejected
   else if rc = e_invalid_arg
   then raise (Usage_error (c_last_error_message ctx))
+  else if rc = e_retry
+  then raise Retry
   else (
     let label =
       if rc = e_backend
@@ -1013,7 +1181,7 @@ let check_rc ctx rc =
       else if rc = e_internal
       then "internal error"
       else if rc = e_concurrent_use
-      then "concurrent use of a test-case or collection handle"
+      then "concurrent use of a test-case, collection or grammar draw handle"
       else Printf.sprintf "unknown error code %d" rc
     in
     let msg = c_last_error_message ctx in
@@ -1076,8 +1244,10 @@ let settings_nondeterminism_strictness ctx s n =
     (c_settings_nondeterminism_strictness ctx s (nondeterminism_strictness_to_int n))
 ;;
 
+let uint64_of_int = Unsigned.UInt64.of_int
+
 let settings_seed ctx s = function
-  | Some seed -> check_rc ctx (c_settings_seed ctx s (Unsigned.UInt64.of_int seed) true)
+  | Some seed -> check_rc ctx (c_settings_seed ctx s seed true)
   | None -> check_rc ctx (c_settings_seed ctx s Unsigned.UInt64.zero false)
 ;;
 
@@ -1092,6 +1262,10 @@ let settings_stop_on_first_failure ctx s b =
 ;;
 
 let settings_show_statistics ctx s b = check_rc ctx (c_settings_show_statistics ctx s b)
+
+let settings_unbounded_choices ctx s b =
+  check_rc ctx (c_settings_unbounded_choices ctx s b)
+;;
 let settings_database ctx s d = check_rc ctx (c_settings_database ctx s d)
 let settings_database_key ctx s k = check_rc ctx (c_settings_database_key ctx s k)
 
@@ -1116,6 +1290,10 @@ let settings_suppress_health_check ctx s mask =
 ;;
 
 let settings_print_blob ctx s b = check_rc ctx (c_settings_print_blob ctx s b)
+
+let settings_set_from_string ctx s ~key ~value =
+  check_rc ctx (c_settings_set_from_string ctx s key value)
+;;
 
 let settings_new_for_profile ctx name =
   let out = allocate handle_t null_handle in
@@ -1146,7 +1324,7 @@ let settings_get_seed ctx s =
   let seed = allocate uint64_t Unsigned.UInt64.zero in
   let has_seed = allocate bool false in
   check_rc ctx (c_settings_get_seed ctx s seed has_seed);
-  if !@has_seed then Some (Unsigned.UInt64.to_int !@seed) else None
+  if !@has_seed then Some !@seed else None
 ;;
 
 let get_bool getter ctx s =
@@ -1184,6 +1362,10 @@ let settings_get_stop_on_first_failure ctx s =
 ;;
 
 let settings_get_show_statistics ctx s = get_bool c_settings_get_show_statistics ctx s
+
+let settings_get_unbounded_choices ctx s =
+  get_bool c_settings_get_unbounded_choices ctx s
+;;
 let settings_get_print_blob ctx s = get_bool c_settings_get_print_blob ctx s
 
 let settings_get_backend ctx s =
@@ -1295,6 +1477,7 @@ let generate_integer ctx tc ~min_value ~max_value =
 let generate_float
       ctx
       tc
+      ~width
       ~min_value
       ~max_value
       ~allow_nan
@@ -1309,7 +1492,7 @@ let generate_float
     (c_generate_float
        ctx
        tc
-       (Unsigned.UInt32.of_int 64)
+       (Unsigned.UInt32.of_int width)
        min_value
        max_value
        allow_nan
@@ -1326,7 +1509,7 @@ let generate_bytes ctx tc ~min_size ~max_size =
   let max_u =
     match max_size with
     | Some m -> Unsigned.UInt64.of_int m
-    | None -> Unsigned.UInt64.max_int
+    | None -> max_size_default
   in
   check_rc
     ctx
@@ -1369,7 +1552,7 @@ let string_generator_text
   let max_u =
     match max_size with
     | Some m -> Unsigned.UInt64.of_int m
-    | None -> Unsigned.UInt64.max_int
+    | None -> max_size_default
   in
   let cats_ptr, cats_root, cats_len = optional_string_array categories in
   let excats_ptr, excats_root, excats_len = optional_string_array exclude_categories in
@@ -1396,11 +1579,16 @@ let string_generator_text
   !@out
 ;;
 
-let string_generator_regex ctx ~pattern ~fullmatch =
+let string_generator_regex ctx ~pattern ~fullmatch ~alphabet =
   let out = allocate handle_t null_handle in
   check_rc
     ctx
-    (c_string_generator_regex ctx pattern fullmatch null_handle out);
+    (c_string_generator_regex
+       ctx
+       pattern
+       fullmatch
+       (Option.value alphabet ~default:null_handle)
+       out);
   !@out
 ;;
 
@@ -1431,6 +1619,80 @@ let generate_string ctx tc sg =
   ignore (c_owned_string_free ctx (addr result) : int);
   s
 ;;
+
+let grammar_builder_new ctx text =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_grammar_builder_new ctx text out);
+  !@out
+;;
+
+let grammar_builder_file ctx builder index =
+  let out = allocate Str.t (make Str.t) in
+  let rc = c_grammar_builder_file ctx builder (Unsigned.Size_t.of_int index) out in
+  if rc = e_not_found
+  then None
+  else (
+    check_rc ctx rc;
+    Some (string_of_str !@out))
+;;
+
+let grammar_builder_provide ctx builder index text =
+  check_rc ctx (c_grammar_builder_provide ctx builder (Unsigned.Size_t.of_int index) text)
+;;
+
+let grammar_builder_free ctx builder = ignore (c_grammar_builder_free ctx builder : int)
+
+let grammar_new ctx builder ~start ~max_size ~max_depth ~alphabet ~explicit =
+  let names, root = to_string_array explicit in
+  let out = allocate handle_t null_handle in
+  let rc =
+    c_grammar_new
+      ctx
+      builder
+      start
+      (Unsigned.UInt64.of_int max_size)
+      (Unsigned.UInt32.of_int max_depth)
+      (Option.value alphabet ~default:null_handle)
+      names
+      (Unsigned.Size_t.of_int (List.length explicit))
+      out
+  in
+  Root.release root;
+  check_rc ctx rc;
+  !@out
+;;
+
+let grammar_free ctx grammar = ignore (c_grammar_free ctx grammar : int)
+
+let grammar_draw_new ctx grammar ~max_size =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_grammar_draw_new ctx grammar (Unsigned.UInt64.of_int max_size) out);
+  !@out
+;;
+
+let grammar_draw_next ctx tc draw =
+  let out = allocate size_t Unsigned.Size_t.zero in
+  let rc = c_grammar_draw_next ctx tc draw out in
+  if rc = e_not_found
+  then None
+  else (
+    check_rc ctx rc;
+    Some (Unsigned.Size_t.to_int !@out))
+;;
+
+let grammar_draw_provide ctx draw value =
+  check_rc ctx (c_grammar_draw_provide ctx draw value)
+;;
+
+let grammar_draw_result ctx draw =
+  let result = make Str.t in
+  check_rc ctx (c_grammar_draw_result ctx draw (addr result));
+  let s = string_of_str result in
+  ignore (c_owned_string_free ctx (addr result) : int);
+  s
+;;
+
+let grammar_draw_free ctx draw = ignore (c_grammar_draw_free ctx draw : int)
 
 type date =
   { year : int
@@ -1523,6 +1785,70 @@ let generate_ip_bytes ctx tc c_fn n =
 
 let generate_ipv4 ctx tc = generate_ip_bytes ctx tc c_generate_ipv4 4
 let generate_ipv6 ctx tc = generate_ip_bytes ctx tc c_generate_ipv6 16
+
+let generate_uuid ctx tc ~version =
+  let buf = CArray.make uint8_t 16 in
+  check_rc
+    ctx
+    (c_generate_uuid
+       ctx
+       tc
+       (Unsigned.UInt8.of_int (Option.value version ~default:0))
+       (Option.is_some version)
+       (CArray.start buf));
+  string_from_ptr (coerce (ptr uint8_t) (ptr char) (CArray.start buf)) ~length:16
+;;
+
+let bytes_array s =
+  CArray.of_list uint8_t (List.init (String.length s) (fun i -> Unsigned.UInt8.of_int (Char.code s.[i])))
+;;
+
+let generate_integer_big ctx tc ~min_value ~max_value =
+  let min_arr = bytes_array min_value in
+  let max_arr = bytes_array max_value in
+  let cap = max (String.length min_value) (String.length max_value) in
+  let out = CArray.make uint8_t cap in
+  let out_len = allocate size_t Unsigned.Size_t.zero in
+  check_rc
+    ctx
+    (c_generate_integer_big
+       ctx
+       tc
+       (CArray.start min_arr)
+       (Unsigned.Size_t.of_int (CArray.length min_arr))
+       (CArray.start max_arr)
+       (Unsigned.Size_t.of_int (CArray.length max_arr))
+       (CArray.start out)
+       (Unsigned.Size_t.of_int cap)
+       out_len);
+  string_from_ptr
+    (coerce (ptr uint8_t) (ptr char) (CArray.start out))
+    ~length:(Unsigned.Size_t.to_int !@out_len)
+;;
+
+let new_recursion ctx tc ~max_depth ~max_leaves =
+  let out = allocate handle_t null_handle in
+  check_rc
+    ctx
+    (c_new_recursion
+       ctx
+       tc
+       (Unsigned.UInt64.of_int max_depth)
+       (Unsigned.UInt64.of_int max_leaves)
+       out);
+  !@out
+;;
+
+let recursion_branch ctx tc recursion ~depth =
+  let out = allocate bool false in
+  check_rc ctx (c_recursion_branch ctx tc recursion (Unsigned.UInt64.of_int depth) out);
+  !@out
+;;
+
+let recursion_leaf ctx tc recursion = check_rc ctx (c_recursion_leaf ctx tc recursion)
+let recursion_retry ctx tc recursion = check_rc ctx (c_recursion_retry ctx tc recursion)
+let recursion_finish ctx tc recursion = check_rc ctx (c_recursion_finish ctx tc recursion)
+let recursion_free ctx recursion = check_rc ctx (c_recursion_free ctx recursion)
 
 let start_span ctx tc label =
   check_rc ctx (c_start_span ctx tc (Unsigned.UInt64.of_int64 label))
@@ -1725,6 +2051,7 @@ let printer_breakable ctx p sep = check_rc ctx (c_printer_breakable ctx p sep)
 
 let printer_if_break ctx p s = check_rc ctx (c_printer_if_break ctx p s)
 let printer_comment ctx p s = check_rc ctx (c_printer_comment ctx p s)
+let printer_reflow ctx p s = check_rc ctx (c_printer_reflow ctx p null_handle s)
 let printer_hard_break ctx p = check_rc ctx (c_printer_hard_break ctx p)
 
 let printer_begin_group ctx p ~indent open_ =
@@ -1799,6 +2126,25 @@ let result_error ctx r =
   !@out
 ;;
 
+(* [HEGEL_RUN_ERROR_*] values: flaky and nondeterministic runs are both
+   [Run_error_flaky]; usage, internal and any unknown future kind are
+   [Run_error_other]. *)
+let run_error_kinds =
+  [ 1, Run_error_health_check
+  ; 2, Run_error_flaky
+  ; 3, Run_error_flaky
+  ; 4, Run_error_unsatisfiable
+  ]
+;;
+
+let result_error_kind ctx r =
+  let kind = allocate int 0 in
+  let health_check = allocate uint32_t Unsigned.UInt32.zero in
+  check_rc ctx (c_result_error_kind ctx r kind health_check);
+  ( Option.value (List.assoc_opt !@kind run_error_kinds) ~default:Run_error_other
+  , Unsigned.UInt32.to_int !@health_check )
+;;
+
 let result_failure_count ctx r =
   let out = allocate size_t (Unsigned.Size_t.of_int 0) in
   check_rc ctx (c_result_failure_count ctx r out);
@@ -1848,15 +2194,18 @@ let settings_new_for_profile = Obj.magic_portable settings_new_for_profile
 let settings_register_profile = Obj.magic_portable settings_register_profile
 let set_default_profile = Obj.magic_portable set_default_profile
 let settings_free = Obj.magic_portable settings_free
+let settings_set_from_string = Obj.magic_portable settings_set_from_string
 let settings_backend = Obj.magic_portable settings_backend
 let settings_test_cases = Obj.magic_portable settings_test_cases
 let settings_verbosity = Obj.magic_portable settings_verbosity
 let settings_nondeterminism_strictness = Obj.magic_portable settings_nondeterminism_strictness
+let uint64_of_int = Obj.magic_portable uint64_of_int
 let settings_seed = Obj.magic_portable settings_seed
 let settings_derandomize = Obj.magic_portable settings_derandomize
 let settings_report_multiple_failures = Obj.magic_portable settings_report_multiple_failures
 let settings_stop_on_first_failure = Obj.magic_portable settings_stop_on_first_failure
 let settings_show_statistics = Obj.magic_portable settings_show_statistics
+let settings_unbounded_choices = Obj.magic_portable settings_unbounded_choices
 let settings_database = Obj.magic_portable settings_database
 let settings_database_key = Obj.magic_portable settings_database_key
 let settings_test_location = Obj.magic_portable settings_test_location
@@ -1873,6 +2222,7 @@ let settings_get_suppress_health_check = Obj.magic_portable settings_get_suppres
 let settings_get_report_multiple_failures = Obj.magic_portable settings_get_report_multiple_failures
 let settings_get_stop_on_first_failure = Obj.magic_portable settings_get_stop_on_first_failure
 let settings_get_show_statistics = Obj.magic_portable settings_get_show_statistics
+let settings_get_unbounded_choices = Obj.magic_portable settings_get_unbounded_choices
 let settings_get_print_blob = Obj.magic_portable settings_get_print_blob
 let settings_get_backend = Obj.magic_portable settings_get_backend
 
@@ -1903,11 +2253,30 @@ let string_generator_url = Obj.magic_portable string_generator_url
 let string_generator_domain = Obj.magic_portable string_generator_domain
 let string_generator_free = Obj.magic_portable string_generator_free
 let generate_string = Obj.magic_portable generate_string
+let grammar_builder_new = Obj.magic_portable grammar_builder_new
+let grammar_builder_file = Obj.magic_portable grammar_builder_file
+let grammar_builder_provide = Obj.magic_portable grammar_builder_provide
+let grammar_builder_free = Obj.magic_portable grammar_builder_free
+let grammar_new = Obj.magic_portable grammar_new
+let grammar_free = Obj.magic_portable grammar_free
+let grammar_draw_new = Obj.magic_portable grammar_draw_new
+let grammar_draw_next = Obj.magic_portable grammar_draw_next
+let grammar_draw_provide = Obj.magic_portable grammar_draw_provide
+let grammar_draw_result = Obj.magic_portable grammar_draw_result
+let grammar_draw_free = Obj.magic_portable grammar_draw_free
 let generate_date = Obj.magic_portable generate_date
 let generate_time = Obj.magic_portable generate_time
 let generate_datetime = Obj.magic_portable generate_datetime
 let generate_ipv4 = Obj.magic_portable generate_ipv4
 let generate_ipv6 = Obj.magic_portable generate_ipv6
+let generate_uuid = Obj.magic_portable generate_uuid
+let generate_integer_big = Obj.magic_portable generate_integer_big
+let new_recursion = Obj.magic_portable new_recursion
+let recursion_branch = Obj.magic_portable recursion_branch
+let recursion_leaf = Obj.magic_portable recursion_leaf
+let recursion_retry = Obj.magic_portable recursion_retry
+let recursion_finish = Obj.magic_portable recursion_finish
+let recursion_free = Obj.magic_portable recursion_free
 let start_span = Obj.magic_portable start_span
 let stop_span = Obj.magic_portable stop_span
 let label_from_name = Obj.magic_portable label_from_name
@@ -1940,6 +2309,7 @@ let printer_text = Obj.magic_portable printer_text
 let printer_breakable = Obj.magic_portable printer_breakable
 let printer_if_break = Obj.magic_portable printer_if_break
 let printer_comment = Obj.magic_portable printer_comment
+let printer_reflow = Obj.magic_portable printer_reflow
 let printer_hard_break = Obj.magic_portable printer_hard_break
 let printer_begin_group = Obj.magic_portable printer_begin_group
 let printer_end_group = Obj.magic_portable printer_end_group
@@ -1955,6 +2325,7 @@ let test_case_printer = Obj.magic_portable test_case_printer
 let note = Obj.magic_portable note
 let result_status = Obj.magic_portable result_status
 let result_error = Obj.magic_portable result_error
+let result_error_kind = Obj.magic_portable result_error_kind
 let result_failure_count = Obj.magic_portable result_failure_count
 let result_failure = Obj.magic_portable result_failure
 let result_failures = Obj.magic_portable result_failures

@@ -72,7 +72,7 @@ let%expect_test "a flaky failure is reported with a caveat" =
 ;;
 
 (* A fixed explicit position keeps wrapping identical across compilers.
-   Continuation lines align under the sexp, including the location prefix. *)
+   Continuation lines align under the value, including the location prefix. *)
 let%expect_test "a multiline drawn value aligns under its name" =
   (try
      Hegel.run_hegel_test
@@ -97,21 +97,21 @@ let%expect_test "a multiline drawn value aligns under its name" =
     {|
     --- Failure --------------------------------------------------------------------
 
-    l @ draw.ml:<LINE> = (00000
-     00000
-     00000
-     00000
-     00000
-     00000
-     00000
-     00000
-     00000
-     00000
-     00000
-     00000
-     00000
-     00000
-     00000)
+    l @ draw.ml:<LINE> = ["00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000"]
 
     Exception: File "ppx/test/expect_tests/test_failure_report.ml", line LINE, characters C1-C2: Assertion failed
     rerun with: ~failure_blobs:[ "<BLOB>" ]

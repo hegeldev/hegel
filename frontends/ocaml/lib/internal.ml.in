@@ -7,7 +7,6 @@
     - Helper functions (assume, note, target, the typed generate_* draws)
     - Origin extraction for error reporting *)
 
-module Sexp = Sexplib0.Sexp
 module Ffi = Hegel_ffi.Ffi
 
 #ifdef OXCAML
@@ -37,7 +36,59 @@ exception Assume_rejected = Ffi.Assume_rejected
     id the engine drew is unknown to the client). The case is marked invalid. *)
 exception Flaky_strategy
 
+(** Raised by [Hegel.repeat] once the engine ends the loop: the test case
+    completed normally. *)
+exception Repeat_done
+
 open Settings
+
+module Label = struct
+  type desc =
+    | Name of string
+    | Combined of t list
+    | Deferred of t option Atomic.t
+
+  and t =
+    { desc : desc
+    ; resolved : int64 option Atomic.t
+    }
+
+  let of_name name = { desc = Name name; resolved = Atomic.make None }
+  let combine labels = { desc = Combined labels; resolved = Atomic.make None }
+  let deferred () =
+    let cell = Atomic.make None in
+    { desc = Deferred cell; resolved = Atomic.make None }, fun inner -> Atomic.set cell (Some inner)
+  ;;
+
+  let deferred_name = of_name "hegel.deferred"
+
+  (* [visiting] holds the deferred labels being resolved further up. A deferred
+     label met again while it is being resolved stands for "hegel.deferred",
+     so a recursive generator's label is finite. Only values computed outside
+     every deferred label are cached: a value computed inside one depends on
+     where the resolution started. *)
+  let rec compute context visiting label =
+    match Atomic.get label.resolved with
+    | Some value -> value
+    | None ->
+      let cacheable, value =
+        match label.desc with
+        | Name name -> true, Ffi.label_from_name context name
+        | Combined labels ->
+          ( List.is_empty visiting
+          , Ffi.label_combine context (List.map (compute context visiting) labels) )
+        | Deferred cell ->
+          (match Atomic.get cell with
+           | Some inner when not (List.memq label visiting) ->
+             List.is_empty visiting, compute context (label :: visiting) inner
+           | Some _ | None -> false, compute context visiting deferred_name)
+      in
+      if cacheable then Atomic.set label.resolved (Some value);
+      value
+  ;;
+
+  let resolve context label = compute context [] label
+end
 
 (** A source location identifying a single test. See [Hegel.test_location]. *)
 type test_location =
@@ -61,6 +112,13 @@ type owned_state =
 
 type owned = owned_state Locked.t
 
+(** The state of an explicit example's test case: the names of the draws it
+    has given values for so far, and the lines it printed, newest first. *)
+type explicit =
+  { mutable drawn : string list
+  ; mutable lines : string list
+  }
+
 (** Per-test-case state passed explicitly to the test function. Holds the
     native test-case handle, the final-replay flag, whether verbose output is
     on, abort state, the current generation-span depth (used to print only the
@@ -75,6 +133,7 @@ type test_case KIND(value mod portable contended) =
   ; draw_depth : int Atomic.t
   ; draw_state : draw_state
   ; owned : owned
+  ; explicit : explicit Locked.t option
   }
 
 (* Accessors so other library modules can read the internal fields they need
@@ -118,6 +177,51 @@ let incr_draw_depth (tc : test_case) = Atomic.incr tc.draw_depth
 let decr_draw_depth (tc : test_case) = Atomic.decr tc.draw_depth
 let set_test_aborted (tc : test_case) v = Atomic.set tc.test_aborted v
 
+let explicit_unsupported =
+  "Explicit example: the test generated data. In an explicit example every draw must be \
+   a [let x = draw tc ...] binding the example gives a value for"
+;;
+
+(** [is_explicit tc] is [true] when [tc] is an explicit example's test case. *)
+let is_explicit (tc : test_case) = Option.is_some tc.explicit
+
+(** [require_engine tc] raises {!Usage_error} when [tc] is an explicit
+    example's test case, which has no engine behind it. *)
+let require_engine (tc : test_case) =
+  if Option.is_some tc.explicit then raise (Ffi.Usage_error explicit_unsupported)
+;;
+
+(** [check_drawable tc ~label] raises {!Usage_error} when [tc] is an explicit
+    example's test case: a draw there must be given its value by the example. *)
+let check_drawable (tc : test_case) ~label =
+  if Option.is_some tc.explicit
+  then
+    raise
+      (Ffi.Usage_error
+         (Printf.sprintf
+            "Explicit example: no value for the draw %s. Give the example a value for \
+             it, as [@@example { %s = ... }] on a [let %s = draw tc ...] binding"
+            label
+            label
+            label))
+;;
+
+(** [explicit_draw tc ~name ~source value] is [value], the value an explicit
+    example gives for the draw bound to [name], written [source]. *)
+let explicit_draw (tc : test_case) ~name ~source value =
+  match tc.explicit with
+  | None ->
+    raise
+      (Ffi.Usage_error
+         "Explicit example values can only be drawn in an explicit example's test case")
+  | Some explicit ->
+    let line = Printf.sprintf "%s = %s" name source in
+    Locked.protect explicit (fun e ->
+      e.drawn <- name :: e.drawn;
+      e.lines <- line :: e.lines);
+    value
+;;
+
 (** [clone tc] forks a fresh {!test_case} onto an independent choice stream of the
     same underlying native test case (see {!Ffi.test_case_clone}), paired with its
     own native context so it can be drawn from on another thread concurrently with
@@ -131,6 +235,7 @@ let set_test_aborted (tc : test_case) v = Atomic.set tc.test_aborted v
     {!type:owned}) and freed once it completes, so a clone may be captured and
     used freely within the case. *)
 let clone (tc : test_case) =
+  require_engine tc;
   let context = Ffi.context_new () in
   let handle = Ffi.test_case_clone tc.context tc.handle in
   own_clone tc context handle;
@@ -142,12 +247,14 @@ let clone (tc : test_case) =
   ; draw_depth = Atomic.make (Atomic.get tc.draw_depth)
   ; draw_state = tc.draw_state
   ; owned = tc.owned
+  ; explicit = None
   }
 ;;
 
 (** [with_block tc ~indent f] runs [f] on a {!test_case} for an indented
     section of [tc]'s output. *)
 let with_block (tc : test_case) ~indent LOCAL(f) =
+  require_engine tc;
   let context = Ffi.context_new () in
   let handle = Ffi.test_case_block tc.context tc.handle ~indent in
   let b =
@@ -159,6 +266,7 @@ let with_block (tc : test_case) ~indent LOCAL(f) =
     ; draw_depth = Atomic.make 0
     ; draw_state = Locked.create (fun () -> Hashtbl.create 16)
     ; owned = tc.owned
+    ; explicit = None
     }
   in
   let free () =
@@ -174,7 +282,8 @@ let with_block (tc : test_case) ~indent LOCAL(f) =
     raise exn
 ;;
 
-let set_worker_index tc worker_index =
+let set_worker_index (tc : test_case) worker_index =
+  require_engine tc;
   Ffi.test_case_set_worker tc.context tc.handle ~worker_index
 ;;
 
@@ -228,6 +337,7 @@ exception Internal_error = Ffi.Internal_error
 (** [with_stop_guard tc f] marks the test case aborted on engine control
     exceptions and propagates them unchanged. *)
 let with_stop_guard tc f =
+  require_engine tc;
   try f () with
   | (Stop_test | Assume_rejected | Usage_error _) as exn ->
     Atomic.set tc.test_aborted true;
@@ -257,6 +367,7 @@ let generate_integer tc ~min_value ~max_value =
     {!Stop_test} on StopTest. *)
 let generate_float
       tc
+      ~width
       ~min_value
       ~max_value
       ~allow_nan
@@ -269,6 +380,7 @@ let generate_float
     Ffi.generate_float
       tc.context
       tc.handle
+      ~width
       ~min_value
       ~max_value
       ~allow_nan
@@ -324,9 +436,154 @@ let generate_text
       ~exclude_characters)
 ;;
 
-(** [generate_regex tc ~pattern ~fullmatch] draws a string matching [pattern]. *)
-let generate_regex tc ~pattern ~fullmatch =
-  with_string_generator tc (fun ctx -> Ffi.string_generator_regex ctx ~pattern ~fullmatch)
+(** The character set of a text generator, as {!generate_text} takes it. *)
+type alphabet =
+  { codec : string option
+  ; min_codepoint : int
+  ; max_codepoint : int
+  ; categories : string list option
+  ; exclude_categories : string list option
+  ; include_characters : string option
+  ; exclude_characters : string option
+  }
+
+(** [with_alphabet ctx alphabet f] runs [f] on a single-character text
+    generator over [alphabet] ([None] when there is none), freed afterwards. *)
+let with_alphabet ctx alphabet f =
+  match alphabet with
+  | None -> f None
+  | Some (a : alphabet) ->
+    let handle =
+      Ffi.string_generator_text
+        ctx
+        ~min_size:1
+        ~max_size:(Some 1)
+        ~codec:a.codec
+        ~min_codepoint:a.min_codepoint
+        ~max_codepoint:a.max_codepoint
+        ~categories:a.categories
+        ~exclude_categories:a.exclude_categories
+        ~include_characters:a.include_characters
+        ~exclude_characters:a.exclude_characters
+    in
+    Fun.protect
+      ~finally:(fun () -> Ffi.string_generator_free ctx handle)
+      (fun () -> f (Some handle))
+;;
+
+(** [generate_regex tc ~pattern ~fullmatch ~alphabet] draws a string matching
+    [pattern], every character of it from [alphabet] when one is given. *)
+let generate_regex tc ~pattern ~fullmatch ~alphabet =
+  with_string_generator tc (fun ctx ->
+    with_alphabet ctx alphabet (fun alphabet ->
+      Ffi.string_generator_regex ctx ~pattern ~fullmatch ~alphabet))
+;;
+
+type grammar_spec KIND(value mod portable contended) =
+  { grammar_text : string
+  ; start : string option
+  ; grammar_max_size : int
+  ; max_depth : int
+  ; grammar_alphabet : alphabet option
+  ; explicit_terminals : string list
+  ; import_path : string option
+  }
+
+(** A grammar compiled on its first draw and kept for the next ones. The
+    compiled handle is freed by a finaliser on the record, so every draw
+    keeps the record alive until the engine is done with the handle. *)
+type grammar KIND(value mod portable contended) =
+  { spec : grammar_spec
+  ; compiling : unit Locked.t
+  ; compiled : Ffi.grammar option Atomic.t
+  }
+
+let free_compiled compiled =
+  Option.iter
+    (fun handle ->
+      let ctx = Ffi.context_new () in
+      Ffi.grammar_free ctx handle;
+      Ffi.context_free ctx)
+    (Atomic.get compiled)
+;;
+
+let grammar spec =
+  let g = { spec; compiling = Locked.create (fun () -> ()); compiled = Atomic.make None } in
+#ifdef OXCAML
+  Gc.Safe.finalise (fun g -> free_compiled g.compiled) g;
+#else
+  Gc.finalise (fun g -> free_compiled g.compiled) g;
+#endif
+  g
+;;
+
+(** [read_grammar_file dir path] is the text of the file [path] under [dir],
+    or [None] when there is no such file. *)
+let read_grammar_file dir path =
+  let file = Filename.concat dir path in
+  if Sys.file_exists file
+  then (
+    try Some (In_channel.with_open_bin file In_channel.input_all) with
+    | Sys_error message ->
+      raise (Usage_error (Printf.sprintf "Could not read grammar %S: %s" file message)))
+  else None
+;;
+
+let compile_grammar ctx spec =
+  let builder = Ffi.grammar_builder_new ctx spec.grammar_text in
+  Fun.protect
+    ~finally:(fun () -> Ffi.grammar_builder_free ctx builder)
+    (fun () ->
+      let rec provide index =
+        Option.iter
+          (fun path ->
+            Ffi.grammar_builder_provide
+              ctx
+              builder
+              index
+              (Option.bind spec.import_path (fun dir -> read_grammar_file dir path));
+            provide (index + 1))
+          (Ffi.grammar_builder_file ctx builder index)
+      in
+      provide 0;
+      with_alphabet ctx spec.grammar_alphabet (fun alphabet ->
+        Ffi.grammar_new
+          ctx
+          builder
+          ~start:spec.start
+          ~max_size:spec.grammar_max_size
+          ~max_depth:spec.max_depth
+          ~alphabet
+          ~explicit:spec.explicit_terminals))
+;;
+
+let compiled_grammar tc g =
+  Locked.protect g.compiling (fun () ->
+    match Atomic.get g.compiled with
+    | Some handle -> handle
+    | None ->
+      let handle = compile_grammar tc.context g.spec in
+      Atomic.set g.compiled (Some handle);
+      handle)
+;;
+
+let generate_grammar tc g ~provide =
+  with_stop_guard tc (fun () ->
+    let handle = compiled_grammar tc g in
+    let draw = Ffi.grammar_draw_new tc.context handle ~max_size:0 in
+    Fun.protect
+      ~finally:(fun () ->
+        Ffi.grammar_draw_free tc.context draw;
+        ignore (Sys.opaque_identity g : grammar))
+      (fun () ->
+        let rec next () =
+          match Ffi.grammar_draw_next tc.context tc.handle draw with
+          | Some terminal ->
+            Ffi.grammar_draw_provide tc.context draw (provide terminal);
+            next ()
+          | None -> Ffi.grammar_draw_result tc.context draw
+        in
+        next ()))
 ;;
 
 (** [generate_email tc] draws an RFC 5321/5322 email address. *)
@@ -386,6 +643,45 @@ let generate_ipv6 tc =
   with_stop_guard tc (fun () -> Ffi.generate_ipv6 tc.context tc.handle)
 ;;
 
+(** [generate_uuid tc ~version] draws a UUID as its 16 big-endian bytes. *)
+let generate_uuid tc ~version =
+  with_stop_guard tc (fun () -> Ffi.generate_uuid tc.context tc.handle ~version)
+;;
+
+(** [generate_integer_big tc ~min_value ~max_value] draws an integer in the
+    inclusive range, as two's-complement little-endian bytes. *)
+let generate_integer_big tc ~min_value ~max_value =
+  with_stop_guard tc (fun () ->
+    Ffi.generate_integer_big tc.context tc.handle ~min_value ~max_value)
+;;
+
+type recursion = Ffi.recursion
+
+exception Retry = Ffi.Retry
+
+let new_recursion tc ~max_depth ~max_leaves =
+  with_stop_guard tc (fun () ->
+    Ffi.new_recursion tc.context tc.handle ~max_depth ~max_leaves)
+;;
+
+let recursion_branch tc recursion ~depth =
+  with_stop_guard tc (fun () -> Ffi.recursion_branch tc.context tc.handle recursion ~depth)
+;;
+
+let recursion_leaf tc recursion =
+  with_stop_guard tc (fun () -> Ffi.recursion_leaf tc.context tc.handle recursion)
+;;
+
+let recursion_retry tc recursion =
+  with_stop_guard tc (fun () -> Ffi.recursion_retry tc.context tc.handle recursion)
+;;
+
+let recursion_finish tc recursion =
+  with_stop_guard tc (fun () -> Ffi.recursion_finish tc.context tc.handle recursion)
+;;
+
+let recursion_free tc recursion = Ffi.recursion_free tc.context recursion
+
 (* ------------------------------------------------------------------ *)
 (* ANSI colors                                                         *)
 (* ------------------------------------------------------------------ *)
@@ -437,32 +733,16 @@ let should_print tc =
 (** [note tc message] appends [message] to the test case's
     print region of the engine's family document, subject to {!should_print};
     the document is printed once the case completes (see [capture_document]). *)
-let note tc message = if should_print tc then Ffi.note tc.context tc.handle message
-
-(** [render_sexp ctx printer sexp] writes [sexp] to [printer] in s-expression
-    syntax. Lists are printed with breaks between elemnts when the line overflows. *)
-let rec render_sexp ctx printer (sexp : Sexp.t) =
-  match sexp with
-  | Sexp.Atom _ -> Ffi.printer_text ctx printer (Sexp.to_string sexp)
-  | Sexp.List children ->
-    Ffi.printer_begin_group ctx printer ~indent:1 "(";
-    List.iteri
-      (fun i child ->
-         if i > 0 then Ffi.printer_breakable ctx printer " ";
-         render_sexp ctx printer child)
-      children;
-    Ffi.printer_end_group ctx printer ")"
+let note tc message =
+  match tc.explicit with
+  | Some explicit -> Locked.protect explicit (fun e -> e.lines <- message :: e.lines)
+  | None -> if should_print tc then Ffi.note tc.context tc.handle message
 ;;
 
-(** One piece of a printed draw line: literal text, or a sexp laid out by the
-    engine (see {!render_sexp}). *)
-type draw_segment =
-  | Text of string
-  | Value of Sexp.t
-
-(** [print_line tc segments] appends one line assembled from [segments] to the
-    test case's print region. *)
-let print_line tc segments =
+(** [print_line tc doc] appends [doc] as one line to the test case's print
+    region, subject to {!should_print}. *)
+let print_line tc doc =
+  require_engine tc;
   if should_print tc
   then (
     let ctx = tc.context in
@@ -470,11 +750,7 @@ let print_line tc segments =
     Fun.protect
       ~finally:(fun () -> Ffi.printer_free ctx printer)
       (fun () ->
-         List.iter
-           (function
-             | Text s -> Ffi.printer_text ctx printer s
-             | Value sexp -> render_sexp ctx printer sexp)
-           segments;
+         Printer.render ctx printer doc;
          Ffi.printer_hard_break ctx printer))
 ;;
 
@@ -501,24 +777,31 @@ let draw_display_name tc ~label ~repeatable =
 (** [target tc ~label ~value] records a targeting observation to guide the search
     engine toward higher values. *)
 let target tc ~label ~value =
-  with_stop_guard tc (fun () -> Ffi.target tc.context tc.handle value label)
+  if Option.is_none tc.explicit
+  then with_stop_guard tc (fun () -> Ffi.target tc.context tc.handle value label)
 ;;
 
 (** [event tc ~label] records [label] as observed on this test case for the
     end-of-run statistics report. *)
-let event tc ~label = with_stop_guard tc (fun () -> Ffi.event tc.context tc.handle label)
+let event tc ~label =
+  if Option.is_none tc.explicit
+  then with_stop_guard tc (fun () -> Ffi.event tc.context tc.handle label)
+;;
 
 (** [event_value tc ~label ~value] records the finite observation [value] under
     [label] for the end-of-run statistics report. *)
 let event_value tc ~label ~value =
-  with_stop_guard tc (fun () -> Ffi.event_value tc.context tc.handle value label)
+  if Option.is_none tc.explicit
+  then with_stop_guard tc (fun () -> Ffi.event_value tc.context tc.handle value label)
 ;;
 
-(** [start_span ?label tc] starts a generation span for better shrinking. *)
-let start_span ?(label = 0L) tc =
+(** [start_span ~label tc] starts a generation span for better shrinking. *)
+let start_span ~label tc =
   if Atomic.get tc.test_aborted
   then ()
-  else with_stop_guard tc (fun () -> Ffi.start_span tc.context tc.handle label)
+  else
+    with_stop_guard tc (fun () ->
+      Ffi.start_span tc.context tc.handle (Label.resolve tc.context label))
 ;;
 
 (** [stop_span ?discard tc] ends the current generation span. *)
@@ -730,13 +1013,112 @@ let print_failure_body ~(settings : Settings.t) ~rerun_hint ~blob ~caveat ~exn ~
 
 let reraise failure = Printexc.raise_with_backtrace failure.exn failure.backtrace
 
+exception
+  Failed_health_check of
+    { check : Settings.health_check option
+    ; message : string
+    }
+
+exception Flaky of string
+exception Unsatisfiable of string
+exception Run_error of string
+exception Multiple_failures of exn list
+exception Did_not_reproduce of string
+
+let run_error_exn ((kind : Ffi.run_error_kind), health_check) message =
+  match kind with
+  | Run_error_health_check ->
+    Failed_health_check { check = Settings.health_check_of_bit health_check; message }
+  | Run_error_flaky -> Flaky message
+  | Run_error_unsatisfiable -> Unsatisfiable message
+  | Run_error_other -> Run_error message
+;;
+
+(** [run_example ~settings ~test_location index (names, body)] runs the
+    explicit example [body], which gives values for the draws bound to
+    [names], on a test case with no engine behind it. A failure is reported
+    and returned. *)
+let run_example ~(settings : Settings.t) ~test_location index (names, body) =
+  let explicit = Locked.create (fun () -> { drawn = []; lines = [] }) in
+  let (tc : test_case) =
+    { handle = Ffi.null_test_case
+    ; context = Ffi.null_context
+    ; should_capture = true
+    ; verbosity = settings.verbosity
+    ; test_aborted = Atomic.make false
+    ; draw_depth = Atomic.make 0
+    ; draw_state = Locked.create (fun () -> Hashtbl.create 16)
+    ; owned = Locked.create (fun () -> { pools = []; clones = [] })
+    ; explicit = Some explicit
+    }
+  in
+  let outcome =
+    DLS.set in_test_context true;
+    Fun.protect
+      ~finally:(fun () -> DLS.set in_test_context false)
+      (fun () ->
+         match body tc with
+         | () | (exception Repeat_done) -> `Passed
+         | exception Assume_rejected -> `Skipped
+         | exception ((Usage_error _ | Internal_error _) as error) -> raise error
+         | exception exn ->
+           let backtrace = Printexc.get_raw_backtrace () in
+           `Failed { origin = extract_origin exn; exn; backtrace })
+  in
+  match outcome with
+  | `Skipped -> None
+  | `Passed ->
+    (match
+       let drawn = Locked.protect explicit (fun e -> e.drawn) in
+       List.filter (fun name -> not (List.mem name drawn)) names
+     with
+     | [] -> None
+     | unused ->
+       raise
+         (Usage_error
+            (Printf.sprintf
+               "Explicit example %d gives values that were never drawn: %s"
+               index
+               (String.concat ", " unused))))
+  | `Failed failure ->
+    if settings.verbosity <> Quiet
+    then (
+      let title =
+        match test_location with
+        | None -> Printf.sprintf "Explicit example %d" index
+        | Some (loc : test_location) ->
+          Printf.sprintf
+            "Explicit example %d: %s (%s:%d)"
+            index
+            loc.function_name
+            loc.file
+            loc.begin_line
+      in
+      let prefix = Printf.sprintf "--- %s " title in
+      Printf.eprintf
+        "%s\n%!"
+        (stderr_color
+           ansi_red
+           (prefix ^ String.make (max 3 (frame_width - String.length prefix)) '-'));
+      (match List.rev (Locked.protect explicit (fun e -> e.lines)) with
+       | [] -> ()
+       | lines -> Printf.eprintf "\n%s\n%!" (String.concat "\n" lines));
+      Printf.eprintf "\nException: %s\n%!" (Stdlib.Printexc.to_string failure.exn));
+    Some failure
+;;
+
+let did_not_reproduce_message =
+  "The failure blob did not reproduce an error. The failure is fixed, or a \
+   nondeterministic failure did not occur again in the replays."
+;;
+
 (** [run_test ~settings ?test_location ?database_key ?failure_blobs test_fn] runs
     a property test using the given settings against the native engine.
 
-    With an empty [failure_blobs] (the default) it executes the database replay, 
-    generation, and shrinking phases. With a non-empty [failure_blobs]
-    the engine replays the first blob until a replay fails, and ignores the
-    other blobs.
+    With an empty [failure_blobs] (the default) it executes the database replay,
+    generation, and shrinking phases. With a non-empty [failure_blobs] the
+    engine replays each blob in turn, until a replay of it fails, and every
+    failure the blobs reproduced is reported.
 
     @param test_location
       source location of the test. Passed to libhegel, which inside Antithesis
@@ -758,10 +1140,11 @@ let reraise failure = Printexc.raise_with_backtrace failure.exn failure.backtrac
       key; pass an explicit key to override. When both are absent, the run has
       no database key, so failures are neither stored nor replayed.
     @param failure_blobs
-      a list of base64 encoded strings (blobs), where each string encodes the choices
-      made in a failing test run. Only the first blob is used. The blob is only guaranteed 
-      to reproduce a failure within
-      a specific version of Hegel *)
+      a list of base64 encoded strings (blobs), where each string encodes the
+      choices made in a failing test run. Every blob is replayed. A blob is only
+      guaranteed to reproduce a failure within a specific version of Hegel. A
+      run that replays blobs replays only them: the explicit examples do not
+      run. *)
 let run_test
       ~(settings : Settings.t)
       ?test_location
@@ -769,10 +1152,11 @@ let run_test
       ?(on_failure = ignore)
       ?database_key
       ?(failure_blobs = [])
+      ?(examples = [])
       test_fn
   =
   if DLS.get in_test_context
-  then failwith "Cannot nest test cases - already inside a test case";
+  then raise (Usage_error "Cannot nest test cases - already inside a test case");
   (* Default the database key to the test's identity so each [let%hegel_test]
      gets a stable, distinct key: this scopes its persisted corpus and, under
      [derandomize], its per-test seed. An explicit [database_key] wins. *)
@@ -798,11 +1182,12 @@ let run_test
       ; draw_depth = Atomic.make 0
       ; draw_state = Locked.create (fun () -> Hashtbl.create 16)
       ; owned = Locked.create (fun () -> { pools = []; clones = [] })
+      ; explicit = None
       }
     in
     let run_body () =
       match test_fn tc with
-      | () -> Valid
+      | () | (exception Repeat_done) -> Valid
       | exception Assume_rejected -> Invalid
       | exception Stop_test -> Overrun
       | exception Flaky_strategy -> Invalid
@@ -847,47 +1232,37 @@ let run_test
       ~output:outcome.output;
     failure_case
   in
-  let handle_result ~is_replay result =
+  let run_error result =
+    run_error_exn
+      (Ffi.result_error_kind ctx result)
+      (Option.value (Ffi.result_error ctx result) ~default:"hegel: run error (no message)")
+  in
+  let handle_result result =
     match Ffi.result_status ctx result with
-    | Run_passed ->
-      if is_replay
-      then
-        failwith
-          "The failure blob did not reproduce an error. The failure is fixed, or a \
-           nondeterministic failure did not occur again in the replays."
-    | Run_error ->
-      raise
-        (Failure
-           (Option.value
-              (Ffi.result_error ctx result)
-              ~default:"hegel: run error (no message)"))
-    | Run_failed ->
+    | Ffi.Run_passed -> []
+    | Ffi.Run_error -> raise (run_error result)
+    | Ffi.Run_failed ->
       let failures = Ffi.result_failures ctx result in
       Fun.protect
         ~finally:(fun () -> List.iter (fun f -> Ffi.failure_free ctx f) failures)
         (fun () ->
            print_failure_header test_location;
            match failures with
-           | [ failure ] ->
-             let failure_case = report_failure failure in
-             on_failure ();
-             reraise failure_case
+           | [ failure ] -> [ report_failure failure ]
            | failures ->
              let count = List.length failures in
-             List.iteri
+             List.mapi
                (fun i failure ->
                   Printf.eprintf
                     "\n%s%!"
                     (stderr_color
                        ansi_red
                        (Printf.sprintf "Failure %d of %d:" (i + 1) count));
-                  (* print failure messages but don't reraise exn *)
-                  ignore (report_failure failure : interesting_case))
-               failures;
-             on_failure ();
-             failwith (Printf.sprintf "%d failures found!" count))
+                  report_failure failure)
+               failures)
   in
-  let drive ~is_replay run =
+  let drive run =
+    Hashtbl.reset captured;
     Fun.protect
       ~finally:(fun () -> Ffi.run_free ctx run)
       (fun () ->
@@ -913,15 +1288,48 @@ let run_test
          let result = Ffi.run_result ctx run in
          Fun.protect
            ~finally:(fun () -> Ffi.run_result_free ctx result)
-           (fun () -> handle_result ~is_replay result))
+           (fun () -> handle_result result))
+  in
+  let raise_failures = function
+    | [] -> ()
+    | [ failure ] ->
+      on_failure ();
+      reraise failure
+    | failures ->
+      on_failure ();
+      raise (Multiple_failures (List.map (fun failure -> failure.exn) failures))
   in
   Fun.protect
     ~finally:(fun () ->
       Ffi.settings_free ctx ffi_settings;
       Ffi.context_free ctx)
-    (fun () -> match failure_blobs with
-    | [] -> drive ~is_replay:false (Ffi.run_start ctx ffi_settings)
-    | blob :: _ -> drive ~is_replay:true (Ffi.run_start_blob ctx ffi_settings blob))
+    (fun () ->
+       let rec run_examples index = function
+         | [] -> []
+         | example :: rest ->
+           (match run_example ~settings ~test_location index example with
+            | None -> run_examples (index + 1) rest
+            | Some failure when settings.report_multiple_failures ->
+              failure :: run_examples (index + 1) rest
+            | Some failure -> [ failure ])
+       in
+       match failure_blobs with
+       | [] ->
+         let explicit_failures =
+           if List.mem Explicit settings.phases then run_examples 1 examples else []
+         in
+         if (not (List.is_empty explicit_failures))
+            && not settings.report_multiple_failures
+         then raise_failures explicit_failures
+         else raise_failures (explicit_failures @ drive (Ffi.run_start ctx ffi_settings))
+       | blobs ->
+         (match
+            List.concat_map
+              (fun blob -> drive (Ffi.run_start_blob ctx ffi_settings blob))
+              blobs
+          with
+          | [] -> raise (Did_not_reproduce did_not_reproduce_message)
+          | failures -> raise_failures failures))
 ;;
 
 (** [run_hegel_test ?settings ?test_location ?database_key ?failure_blobs test_fn]
@@ -939,7 +1347,15 @@ let run_hegel_test
       ?rerun_hint
       ?database_key
       ?failure_blobs
+      ?examples
       test_fn
   =
-  run_test ~settings ?test_location ?rerun_hint ?database_key ?failure_blobs test_fn
+  run_test
+    ~settings
+    ?test_location
+    ?rerun_hint
+    ?database_key
+    ?failure_blobs
+    ?examples
+    test_fn
 ;;

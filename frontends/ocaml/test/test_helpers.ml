@@ -13,6 +13,12 @@ module Unix = Core_unix
     files inside it) on exit — including on exception. Intended for tests whose
     tempdirs only contain top-level files; subdirectories are not recursively
     removed. *)
+let uint64 =
+  Alcotest.testable
+    (fun f x -> Format.pp_print_string f (Unsigned.UInt64.to_string x))
+    Unsigned.UInt64.equal
+;;
+
 let with_tempdir ~prefix ~f =
   let dir =
     Core_unix.mkdtemp (Filename.concat (Stdlib.Filename.get_temp_dir_name ()) prefix)
@@ -49,7 +55,7 @@ let expect_usage_error gen substring =
 let expect_unsatisfiable run =
   match run () with
   | () -> Alcotest.fail "expected Unsatisfiable"
-  | exception Failure msg ->
+  | exception Hegel.Unsatisfiable msg ->
     Alcotest.(check bool)
       (Printf.sprintf "%S is Unsatisfiable" msg)
       true

@@ -82,6 +82,41 @@ type state_machine
   : value mod portable contended
 #endif
 
+(** A null context and test case, for a test case with no engine behind it
+    (an explicit example's). Never pass them to libhegel. *)
+val null_context : context
+
+val null_test_case : test_case
+
+(** Opaque recursion handle ([HegelRecursion]), one per recursive value drawn.
+    It can be used through any handle of the test case's family. *)
+type recursion
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+
+(** A compiled grammar ([hegel_grammar_t]): immutable, shareable across test
+    cases and threads, freed with {!grammar_free}. *)
+type grammar
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+
+(** A grammar and its imported files being gathered
+    ([hegel_grammar_builder_t]), freed with {!grammar_builder_free}. *)
+type grammar_builder
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+
+(** One draw of a grammar string whose explicit terminals take values the
+    caller supplies ([hegel_grammar_draw_t]), freed with
+    {!grammar_draw_free}. *)
+type grammar_draw
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+
 (** A proleptic Gregorian calendar date ([hegel_date_t]). *)
 type date =
   { year : int
@@ -149,6 +184,21 @@ type run_status =
   | Run_failed
   | Run_error
 
+(** Why a run ended in {!Run_error} ([hegel_run_error_kind_t]), read with
+    {!result_error_kind}.
+
+    - [Run_error_health_check]: a health check failed.
+    - [Run_error_flaky]: under the [error] nondeterminism strictness, the test
+      gave different outcomes, or generated different data, when replayed.
+    - [Run_error_unsatisfiable]: no valid test case was generated.
+    - [Run_error_other]: a usage error, a violated engine invariant, or a kind
+      this binding does not know. *)
+type run_error_kind =
+  | Run_error_health_check
+  | Run_error_flaky
+  | Run_error_unsatisfiable
+  | Run_error_other
+
 (** Raised when a primitive returns [HEGEL_E_STOP_TEST]. The engine has
     exhausted its choice budget for the current test case. *)
 exception Stop_test
@@ -170,6 +220,11 @@ exception Internal_error of string
     The payload is the engine's diagnostic. *)
 exception Usage_error of string
 
+(** Raised when a primitive returns [HEGEL_E_RETRY]: the current recursive
+    generation attempt must be discarded (see {!recursion_leaf} and
+    {!recursion_finish}). *)
+exception Retry
+
 (** {2 Phase bitmask values}
 
     The [HEGEL_PHASE_*] constants. *)
@@ -179,6 +234,10 @@ val phase_reuse : int
 val phase_generate : int
 val phase_target : int
 val phase_shrink : int
+
+(** [HEGEL_FILTER_ATTEMPTS]: how many times a filtered generator draws a
+    value before it rejects the test case. *)
+val filter_attempts : int
 
 (** {2 Health-check bitmask values}
 
@@ -246,9 +305,13 @@ val settings_nondeterminism_strictness
   -> nondeterminism_strictness
   -> unit
 
+(** [uint64_of_int n] is [Unsigned.UInt64.of_int n], callable from portable
+    code. *)
+val uint64_of_int : int -> Unsigned.UInt64.t
+
 (** [settings_seed ctx s seed] sets the RNG seed ([None] picks a fresh random
     seed at run start). *)
-val settings_seed : context -> settings -> int option -> unit
+val settings_seed : context -> settings -> Unsigned.UInt64.t option -> unit
 
 val settings_derandomize : context -> settings -> bool -> unit
 val settings_report_multiple_failures : context -> settings -> bool -> unit
@@ -260,6 +323,10 @@ val settings_stop_on_first_failure : context -> settings -> bool -> unit
 (** [settings_show_statistics ctx s b] makes the engine print an end-of-run
     statistics block aggregating {!event}/{!event_value} observations. *)
 val settings_show_statistics : context -> settings -> bool -> unit
+
+(** [settings_unbounded_choices ctx s b] lifts the per-test-case choice limit
+    when [b] is [true]. *)
+val settings_unbounded_choices : context -> settings -> bool -> unit
 
 (** [settings_database ctx s db] configures the on-disk example database: [None]
     leaves the default, [Some ""] disables it, [Some dir] uses [dir]. *)
@@ -297,6 +364,13 @@ val settings_suppress_health_check : context -> settings -> int -> unit
     should be printed. *)
 val settings_print_blob : context -> settings -> bool -> unit
 
+(** [settings_set_from_string ctx s ~key ~value] sets the setting named [key]
+    (its [hegel.toml] key, or [unbounded_choices] or [database_key]) from
+    [value] as text, parsed by the engine's [hegel.toml] parser
+    ([hegel_settings_set_from_string]). Raises {!Usage_error} for an unknown
+    key or a value outside its vocabulary, leaving [s] unchanged. *)
+val settings_set_from_string : context -> settings -> key:string -> value:string -> unit
+
 (** {3 Reading a handle back}
 
     The [settings_get_*] functions read a settings handle field by field, so a
@@ -304,7 +378,7 @@ val settings_print_blob : context -> settings -> bool -> unit
 
 val settings_get_test_cases : context -> settings -> int
 val settings_get_verbosity : context -> settings -> verbosity
-val settings_get_seed : context -> settings -> int option
+val settings_get_seed : context -> settings -> Unsigned.UInt64.t option
 val settings_get_derandomize : context -> settings -> bool
 val settings_get_database : context -> settings -> string option
 val settings_get_phases : context -> settings -> int
@@ -312,6 +386,7 @@ val settings_get_suppress_health_check : context -> settings -> int
 val settings_get_report_multiple_failures : context -> settings -> bool
 val settings_get_stop_on_first_failure : context -> settings -> bool
 val settings_get_show_statistics : context -> settings -> bool
+val settings_get_unbounded_choices : context -> settings -> bool
 val settings_get_print_blob : context -> settings -> bool
 val settings_get_backend : context -> settings -> backend
 val settings_get_nondeterminism_strictness
@@ -397,7 +472,8 @@ val generate_boolean : context -> test_case -> float -> bool option -> bool
     [[min_value, max_value]]. Raises {!Stop_test} on budget exhaustion. *)
 val generate_integer : context -> test_case -> min_value:int -> max_value:int -> int
 
-(** [generate_float ctx tc ...] draws a width-64 float in
+(** [generate_float ctx tc ~width ...] draws a float of [width] bits (32 or
+    64) in
     [[min_value, max_value]] under the given NaN / infinity / exclusion policy.
     Pass [neg_infinity] / [infinity] for unbounded ends and
     [smallest_nonzero_magnitude] (e.g. [5e-324]) for no magnitude restriction.
@@ -405,6 +481,7 @@ val generate_integer : context -> test_case -> min_value:int -> max_value:int ->
 val generate_float
   :  context
   -> test_case
+  -> width:int
   -> min_value:float
   -> max_value:float
   -> allow_nan:bool
@@ -415,12 +492,14 @@ val generate_float
   -> float
 
 (** [generate_bytes ctx tc ~min_size ~max_size] draws a byte string with length
-    in [[min_size, max_size]] ([max_size = None] means unbounded). Raises
+    in [[min_size, max_size]] ([max_size = None] takes the engine's default
+    maximum, [HEGEL_MAX_SIZE_DEFAULT]). Raises
     {!Stop_test} on budget exhaustion. *)
 val generate_bytes : context -> test_case -> min_size:int -> max_size:int option -> string
 
 (** [string_generator_text ctx ...] builds a text string generator over the
-    described alphabet. [max_size = None] means unbounded. Raises
+    described alphabet. [max_size = None] takes the engine's default maximum,
+    [HEGEL_MAX_SIZE_DEFAULT]. Raises
     {!Internal_error} on invalid parameters. The handle must be freed with
     {!string_generator_free}. *)
 val string_generator_text
@@ -436,13 +515,16 @@ val string_generator_text
   -> exclude_characters:string option
   -> string_generator
 
-(** [string_generator_regex ctx ~pattern ~fullmatch] builds a regex string
-    generator (Python-[re] syntax). Raises {!Usage_error} on an invalid
-    pattern. The handle must be freed with {!string_generator_free}. *)
+(** [string_generator_regex ctx ~pattern ~fullmatch ~alphabet] builds a regex
+    string generator (Python-[re] syntax) whose characters, padding included,
+    all come from the text generator [alphabet] when one is given. Raises
+    {!Usage_error} on an invalid pattern or alphabet. The handle must be freed
+    with {!string_generator_free}. *)
 val string_generator_regex
   :  context
   -> pattern:string
   -> fullmatch:bool
+  -> alphabet:string_generator option
   -> string_generator
 
 (** [string_generator_email ctx] builds an RFC 5321/5322 email generator. *)
@@ -463,6 +545,64 @@ val string_generator_free : context -> string_generator -> unit
     {!Stop_test} on budget exhaustion and {!Assume_rejected} when the draw
     rejects itself (e.g. an over-length email). *)
 val generate_string : context -> test_case -> string_generator -> string
+
+(** {3 Grammars} *)
+
+(** [grammar_builder_new ctx text] starts gathering the Lark grammar [text] and
+    the files it imports. Raises {!Usage_error} for a grammar that does not
+    parse. *)
+val grammar_builder_new : context -> string -> grammar_builder
+
+(** [grammar_builder_file ctx b i] is the path of the [i]th file the grammar
+    needs, or [None] past the end of the list, which grows as files are
+    provided. *)
+val grammar_builder_file : context -> grammar_builder -> int -> string option
+
+(** [grammar_builder_provide ctx b i text] supplies the [i]th file's text, or
+    [None] for a missing file. Raises {!Usage_error} for text that does not
+    parse or a missing file with no bundled grammar to stand in. *)
+val grammar_builder_provide : context -> grammar_builder -> int -> string option -> unit
+
+val grammar_builder_free : context -> grammar_builder -> unit
+
+(** [grammar_new ctx b ~start ~max_size ~max_depth ~alphabet ~explicit]
+    compiles the gathered grammar ([hegel_grammar_new]): [start] is the start
+    rule ([None] for [start]), [max_size] and [max_depth] of [0] take the
+    engine's defaults, [alphabet] is a text string generator every terminal's
+    characters come from, and [explicit] names the terminals whose values the
+    caller supplies. Raises {!Usage_error} with the engine's diagnostic. *)
+val grammar_new
+  :  context
+  -> grammar_builder
+  -> start:string option
+  -> max_size:int
+  -> max_depth:int
+  -> alphabet:string_generator option
+  -> explicit:string list
+  -> grammar
+
+val grammar_free : context -> grammar -> unit
+
+(** [grammar_draw_new ctx g ~max_size] starts a draw of a string of [g] of at
+    most [max_size] characters, explicit terminals' values included, or the
+    grammar's own cap for [0]. *)
+val grammar_draw_new : context -> grammar -> max_size:int -> grammar_draw
+
+(** [grammar_draw_next ctx tc d] is [Some i] when a value is due for the [i]th
+    explicit terminal, to be given with {!grammar_draw_provide}, and [None]
+    once the string is complete. Raises {!Assume_rejected} when the draw
+    rejects the test case and {!Stop_test} on budget exhaustion. *)
+val grammar_draw_next : context -> test_case -> grammar_draw -> int option
+
+(** [grammar_draw_provide ctx d value] supplies the value
+    {!grammar_draw_next} asked for. Raises {!Usage_error} for a value that is
+    not UTF-8. *)
+val grammar_draw_provide : context -> grammar_draw -> string -> unit
+
+(** [grammar_draw_result ctx d] is the completed string. *)
+val grammar_draw_result : context -> grammar_draw -> string
+
+val grammar_draw_free : context -> grammar_draw -> unit
 
 (** [generate_date ctx tc ~min_value ~max_value] draws a Gregorian date in the
     inclusive range. Raises {!Stop_test} on budget exhaustion. *)
@@ -487,6 +627,46 @@ val generate_ipv4 : context -> test_case -> string
 
 (** [generate_ipv6 ctx tc] draws an IPv6 address as its 16 network-order bytes. *)
 val generate_ipv6 : context -> test_case -> string
+
+(** [generate_uuid ctx tc ~version] draws a UUID as its 16 big-endian bytes.
+    With [Some v], the RFC 4122 version nibble is [v] and the variant is RFC
+    4122's; with [None] the bits are uniform, but never the nil UUID. *)
+val generate_uuid : context -> test_case -> version:int option -> string
+
+(** [generate_integer_big ctx tc ~min_value ~max_value] draws an integer in the
+    inclusive range, each bound and the result given as non-empty
+    two's-complement little-endian byte strings. *)
+val generate_integer_big
+  :  context
+  -> test_case
+  -> min_value:string
+  -> max_value:string
+  -> string
+
+(** [new_recursion ctx tc ~max_depth ~max_leaves] opens a recursive generation
+    scope; free it with {!recursion_free}. *)
+val new_recursion : context -> test_case -> max_depth:int -> max_leaves:int -> recursion
+
+(** [recursion_branch ctx tc recursion ~depth] decides whether the sub-value
+    at [depth] branches ([true]) or is a leaf. *)
+val recursion_branch : context -> test_case -> recursion -> depth:int -> bool
+
+(** [recursion_leaf ctx tc recursion] counts a leaf against the attempt's
+    budget. Raises {!Retry} when the attempt has outgrown it. *)
+val recursion_leaf : context -> test_case -> recursion -> unit
+
+(** [recursion_retry ctx tc recursion] discards an attempt that raised
+    {!Retry} from {!recursion_leaf}. Raises {!Assume_rejected} when attempts
+    are exhausted. *)
+val recursion_retry : context -> test_case -> recursion -> unit
+
+(** [recursion_finish ctx tc recursion] reports that the recursive value is
+    complete. Raises {!Retry} when the engine discarded the attempt as
+    mispriced. *)
+val recursion_finish : context -> test_case -> recursion -> unit
+
+(** [recursion_free ctx recursion] releases [recursion]. *)
+val recursion_free : context -> recursion -> unit
 
 (** [start_span ctx tc label] opens a span. [label] identifies the generator
     that opened it (the engine's [uint64_t], as an [int64]): two spans with the
@@ -682,6 +862,11 @@ val printer_if_break : context -> printer -> string -> unit
     line, forcing every group open at this position to break. *)
 val printer_comment : context -> printer -> string -> unit
 
+(** [printer_reflow ctx p s] re-emits the one-line representation [s] through
+    [p]'s groups and break points, recovering its bracket structure (see
+    [hegel_printer_reflow]). Newlines in [s] become hard breaks. *)
+val printer_reflow : context -> printer -> string -> unit
+
 (** [printer_hard_break ctx p] emits an unconditional newline plus the current
     indentation. *)
 val printer_hard_break : context -> printer -> unit
@@ -749,6 +934,12 @@ val result_status : context -> run_result -> run_status
     client mistake, or a violated internal engine invariant. [None] when the run
     completed normally. *)
 val result_error : context -> run_result -> string option
+
+(** [result_error_kind ctx r] is why the run errored, with the
+    [HEGEL_HC_*] bit of the failed health check for
+    {!Run_error_health_check} (0 otherwise). Only meaningful when the run's
+    status is {!Run_error}. *)
+val result_error_kind : context -> run_result -> run_error_kind * int
 
 val result_failure_count : context -> run_result -> int
 

@@ -157,18 +157,19 @@ let test_text_categories_and_exclude_categories () =
   | _ -> Alcotest.fail "expected Usage_error"
 ;;
 
-(** Test: text raises when categories include surrogate category Cs. *)
+(** Test: the surrogate category alone leaves no characters, which the engine
+    reports when the generator is drawn from. *)
 let test_text_categories_surrogate_cs () =
-  match text ~categories:[ "Cs" ] () with
-  | exception Hegel.Usage_error _ -> ()
-  | _ -> Alcotest.fail "expected Usage_error"
+  Test_helpers.expect_usage_error
+    (text ~categories:[ "Cs" ] ~min_size:1 ())
+    "No valid characters"
 ;;
 
-(** Test: text raises when categories include surrogate category C. *)
+(** Test: a category that contains the surrogates draws valid UTF-8. *)
 let test_text_categories_surrogate_c () =
-  match text ~categories:[ "C" ] () with
-  | exception Hegel.Usage_error _ -> ()
-  | _ -> Alcotest.fail "expected Usage_error"
+  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:10 ()) (fun tc ->
+    let v = Hegel.draw tc (text ~categories:[ "C" ] ~max_size:5 ()) in
+    assert (String.is_valid_utf_8 v))
 ;;
 
 (** The alphabet shortcut cannot be combined with any character filter. *)
@@ -203,18 +204,34 @@ let test_floats_default_e2e () =
     ())
 ;;
 
-(** Test: default text() E2E — the default form omits max_size *)
-let test_text_default_e2e () =
-  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:20 ()) (fun tc ->
-    let s = Hegel.draw tc (text ()) in
-    assert (String.is_valid_utf_8 s))
+let utf_8_length s =
+  let rec go i n =
+    if i >= String.length s
+    then n
+    else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1)
+  in
+  go 0 0
 ;;
 
-(** Smoke test: the engine accepts a binary generator without a size limit. *)
+(** Test: without max_size, text takes the engine's default maximum of 100
+    characters, or min_size + 100 above a min_size of 100. *)
+let test_text_default_e2e () =
+  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:50 ()) (fun tc ->
+    let s = Hegel.draw tc (text ()) in
+    assert (String.is_valid_utf_8 s);
+    assert (utf_8_length s <= 100);
+    let long = Hegel.draw tc (text ~min_size:150 ()) in
+    let n = utf_8_length long in
+    assert (n >= 150 && n <= 250))
+;;
+
+(** Test: without max_size, binary takes the engine's default maximum of 100
+    bytes, or min_size + 100 above a min_size of 100. *)
 let test_binary_default_e2e () =
-  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:20 ()) (fun tc ->
-    let (_ : string) = Hegel.draw tc (binary ()) in
-    ())
+  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:50 ()) (fun tc ->
+    assert (String.length (Hegel.draw tc (binary ())) <= 100);
+    let n = String.length (Hegel.draw tc (binary ~min_size:150 ())) in
+    assert (n >= 150 && n <= 250))
 ;;
 
 (** Test: just always returns the constant. *)

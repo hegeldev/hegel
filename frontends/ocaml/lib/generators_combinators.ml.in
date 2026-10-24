@@ -16,13 +16,13 @@ open Generators_primitives
     returns [options.(index)]. The engine's bounded-integer draw is deliberately
     non-uniform (boundary and "interesting" indices are over-weighted), so
     earlier elements — the first in particular — are drawn more often than the
-    middle ones. The output type is the caller's, so the result carries no
-    printer; use {!with_printer} to draw it with {!draw}.
+    middle ones. The output type is the caller's, so a drawn value shows as
+    [<abstr>] unless a printer is attached with {!with_printer}.
 
     We use a list instead of an array because arrays are contended inside a
     portable closure, but Array.* operations need uncontended arrays. *)
 let%template sampled_from ABSTRACT(a, value mod c) (options : a list MODE(m))
-  : (a, unprintable) generator MODE(m)
+  : a generator MODE(m)
   =
   let n = List.length options in
   if n = 0 then raise (Internal.Usage_error "sampled_from requires at least one element");
@@ -31,68 +31,39 @@ let%template sampled_from ABSTRACT(a, value mod c) (options : a list MODE(m))
 ;;
 
 (** [one_of generators] creates a generator that picks from one of the given
-    [generators], all of which must be printable. Requires at least one
-    generator.
+    [generators]. Requires at least one generator.
 
     An index is drawn inside a {!Labels.one_of} span and that branch is
-    generated compositionally. Each draw records the chosen branch's printer, so
-    the drawn value renders through the printer of the branch it actually came
-    from; before any draw, the printer defaults to the first branch's. The
-    record is per generator value: if one [one_of] generator is drawn several
-    times before printing (e.g. as the element generator of [lists]), every
-    value renders through the most recently drawn branch's printer. *)
-let%template one_of (generators : ('a, printable) generator list MODE(m))
-  : ('a, printable) generator MODE(m)
-  =
+    generated compositionally, so a drawn value displays as the branch it came
+    from displays it. *)
+let%template one_of (generators : 'a generator list MODE(m)) : 'a generator MODE(m) =
   match generators with
   | [] -> raise (Internal.Usage_error "one_of requires at least one generator")
   | _ :: _ ->
     let n = List.length generators in
-    (* the branch the last draw came from; 0 (the first branch) before any draw *)
-    let drawn = Atomic.make 0 in
-    let core =
-      Composite
-        { label = Labels.combine (Labels.one_of :: List.map label_of generators)
-        ; generate_fn =
-            (fun data ->
-              let idx = Internal.generate_integer data ~min_value:0 ~max_value:(n - 1) in
-              Atomic.set drawn idx;
-              do_draw (core_of (List.nth generators idx)) data)
-        }
-    in
-    Printable
-      { core; sexp_of = (fun v -> (printer (List.nth generators (Atomic.get drawn))) v) }
-[@@mode m = (nonportable, portable)]
-;;
-
-(** [optional_core element] is the generation structure behind {!optional}: a
-    {!Labels.optional}-spanned draw that yields [None] or [Some] of [element]
-    with equal probability. Shared with [Derive.generate_option] so derived
-    option fields go through the same machinery. *)
-let%template optional_core (element : 'a core MODE(m)) : 'a option core MODE(m) =
-  Composite
-    { label = Labels.combine [ Labels.optional; label_of_core element ]
-    ; generate_fn =
-        (fun data ->
-          if Internal.generate_boolean data 0.5 None
-          then Some (do_draw element data)
-          else None)
-    }
+    Composite
+      { label = Labels.combine (Labels.one_of :: List.map label_of generators)
+      ; generate_fn =
+          (fun data ->
+            let idx = Internal.generate_integer data ~min_value:0 ~max_value:(n - 1) in
+            do_draw (List.nth generators idx) data)
+      }
 [@@mode m = (nonportable, portable)]
 ;;
 
 (** [optional element] creates a generator that produces either [None] or
-    [Some value] from [element].
-
-    The [None]/[(Some v)] value renders through [Option.sexp_of_t] applied to
-    [element]'s printer (the round-trippable form: [()] for [None], [(v)] for
-    [Some v]). *)
-let%template optional (element : ('a, printable) generator MODE(m))
-  : ('a option, printable) generator MODE(m)
-  =
-  Printable
-    { core = (optional_core [@mode m]) ((core_of [@mode m]) element)
-    ; sexp_of = (fun v -> Sexplib0.Sexp_conv.sexp_of_option (printer element) v)
+    [Some value] from [element], with equal probability, inside a
+    {!Labels.optional} span. *)
+let%template optional (element : 'a generator MODE(m)) : 'a option generator MODE(m) =
+  Composite
+    { label = Labels.combine [ Labels.optional; label_of element ]
+    ; generate_fn =
+        (fun data ->
+          if Internal.generate_boolean data 0.5 None
+          then (
+            let value, show = do_draw element data in
+            Some value, fun () -> Printer.constructor "Some" [ show () ])
+          else None, fun () -> Printer.text "None")
     }
 [@@mode m = (nonportable, portable)]
 ;;
@@ -116,102 +87,334 @@ let ipaddr_v6_of_octets_exn = Ipaddr.V6.of_octets_exn
     - [version = None] (default): generates either version.
 
     The engine returns the address's raw network-order bytes, which [ipaddr]
-    parses into a typed value; render with [Ipaddr.to_string] (RFC 5952
-    canonical form for v6). *)
+    parses into a typed value. A drawn address shows as
+    [Ipaddr.of_string_exn "<address>"], with the address in [Ipaddr.to_string]
+    form (RFC 5952 canonical form for v6). *)
 let ip_addresses ?version () : _ MODE(portable) =
-  let sexp_of ip = Sexp.Atom (ipaddr_to_string ip) in
+  let print ip =
+    Printer.apply (Printer.text "Ipaddr.of_string_exn") [ Printer.string (ipaddr_to_string ip) ]
+  in
   let v4 tc = Ipaddr.V4 (ipaddr_v4_of_octets_exn (Internal.generate_ipv4 tc)) in
   let v6 tc = Ipaddr.V6 (ipaddr_v6_of_octets_exn (Internal.generate_ipv6 tc)) in
-  let v4 = (leaf [@mode portable]) ~name:"ipv4" ~draw:v4 ~sexp_of
-  and v6 = (leaf [@mode portable]) ~name:"ipv6" ~draw:v6 ~sexp_of in
+  let v4 = (leaf [@mode portable]) ~name:"ipv4" ~draw:v4 ~print
+  and v6 = (leaf [@mode portable]) ~name:"ipv6" ~draw:v6 ~print in
   match version with
   | Some `V4 -> v4
   | Some `V6 -> v6
   | None -> (one_of [@mode portable]) [ v4; v6 ]
 ;;
 
-(** [tuples2 g1 g2] creates a generator for 2-element tuples of printable
-    components: each element is drawn in sequence inside a {!Labels.tuple} span. *)
-let%template tuples2
-      (type a b)
-      (g1 : (a, printable) generator MODE(m))
-      (g2 : (b, printable) generator MODE(m))
-  : (a * b, printable) generator MODE(m)
+(** [tuples2 g1 g2] creates a generator for 2-element tuples: each element is
+    drawn in sequence inside a {!Labels.tuple} span. *)
+let%template tuples2 (type a b) (g1 : a generator MODE(m)) (g2 : b generator MODE(m))
+  : (a * b) generator MODE(m)
   =
-  let p1 = (printer [@mode m]) g1
-  and p2 = (printer [@mode m]) g2 in
-  let sexp_of (a, b) = Sexp.List [ p1 a; p2 b ] in
-  let core =
-    Composite
-      { label = Labels.combine [ Labels.tuple; label_of g1; label_of g2 ]
-      ; generate_fn =
-          (fun data ->
-            let a = do_draw (core_of g1) data in
-            let b = do_draw (core_of g2) data in
-            a, b)
-      }
-  in
-  Printable { core; sexp_of }
+  Composite
+    { label = Labels.combine [ Labels.tuple; label_of g1; label_of g2 ]
+    ; generate_fn =
+        (fun data ->
+          let a, s1 = do_draw g1 data in
+          let b, s2 = do_draw g2 data in
+          (a, b), fun () -> Printer.tuple [ s1 (); s2 () ])
+    }
 [@@mode m = (nonportable, portable)]
 ;;
 
-(** [tuples3 g1 g2 g3] creates a generator for 3-element tuples of printable
-    components. *)
+(** [tuples3 g1 g2 g3] creates a generator for 3-element tuples. *)
 let%template tuples3
       (type a b c)
-      (g1 : (a, printable) generator MODE(m))
-      (g2 : (b, printable) generator MODE(m))
-      (g3 : (c, printable) generator MODE(m))
-  : (a * b * c, printable) generator MODE(m)
+      (g1 : a generator MODE(m))
+      (g2 : b generator MODE(m))
+      (g3 : c generator MODE(m))
+  : (a * b * c) generator MODE(m)
   =
-  let p1 = (printer [@mode m]) g1
-  and p2 = (printer [@mode m]) g2
-  and p3 = (printer [@mode m]) g3 in
-  let sexp_of (a, b, c) = Sexp.List [ p1 a; p2 b; p3 c ] in
-  let core =
-    Composite
-      { label = Labels.combine [ Labels.tuple; label_of g1; label_of g2; label_of g3 ]
-      ; generate_fn =
-          (fun data ->
-            let a = do_draw (core_of g1) data in
-            let b = do_draw (core_of g2) data in
-            let c = do_draw (core_of g3) data in
-            a, b, c)
-      }
-  in
-  Printable { core; sexp_of }
+  Composite
+    { label = Labels.combine [ Labels.tuple; label_of g1; label_of g2; label_of g3 ]
+    ; generate_fn =
+        (fun data ->
+          let a, s1 = do_draw g1 data in
+          let b, s2 = do_draw g2 data in
+          let c, s3 = do_draw g3 data in
+          (a, b, c), fun () -> Printer.tuple [ s1 (); s2 (); s3 () ])
+    }
 [@@mode m = (nonportable, portable)]
 ;;
 
-(** [tuples4 g1 g2 g3 g4] creates a generator for 4-element tuples of printable
-    components. *)
+(** [tuples4 g1 g2 g3 g4] creates a generator for 4-element tuples. *)
 let%template tuples4
       (type a b c d)
-      (g1 : (a, printable) generator MODE(m))
-      (g2 : (b, printable) generator MODE(m))
-      (g3 : (c, printable) generator MODE(m))
-      (g4 : (d, printable) generator MODE(m))
-  : (a * b * c * d, printable) generator MODE(m)
+      (g1 : a generator MODE(m))
+      (g2 : b generator MODE(m))
+      (g3 : c generator MODE(m))
+      (g4 : d generator MODE(m))
+  : (a * b * c * d) generator MODE(m)
   =
-  let p1 = (printer [@mode m]) g1
-  and p2 = (printer [@mode m]) g2
-  and p3 = (printer [@mode m]) g3
-  and p4 = (printer [@mode m]) g4 in
-  let sexp_of (a, b, c, d) = Sexp.List [ p1 a; p2 b; p3 c; p4 d ] in
-  let core =
-    Composite
-      { label =
-          Labels.combine
-            [ Labels.tuple; label_of g1; label_of g2; label_of g3; label_of g4 ]
-      ; generate_fn =
-          (fun data ->
-            let a = do_draw (core_of g1) data in
-            let b = do_draw (core_of g2) data in
-            let c = do_draw (core_of g3) data in
-            let d = do_draw (core_of g4) data in
-            a, b, c, d)
+  Composite
+    { label =
+        Labels.combine [ Labels.tuple; label_of g1; label_of g2; label_of g3; label_of g4 ]
+    ; generate_fn =
+        (fun data ->
+          let a, s1 = do_draw g1 data in
+          let b, s2 = do_draw g2 data in
+          let c, s3 = do_draw g3 data in
+          let d, s4 = do_draw g4 data in
+          (a, b, c, d), fun () -> Printer.tuple [ s1 (); s2 (); s3 (); s4 () ])
+    }
+[@@mode m = (nonportable, portable)]
+;;
+
+(** [tuples5 g1 g2 g3 g4 g5] creates a generator for 5-element tuples. *)
+let%template tuples5
+      (type a b c d e)
+      (g1 : a generator MODE(m))
+      (g2 : b generator MODE(m))
+      (g3 : c generator MODE(m))
+      (g4 : d generator MODE(m))
+      (g5 : e generator MODE(m))
+  : (a * b * c * d * e) generator MODE(m)
+  =
+  Composite
+    { label =
+        Labels.combine
+          [ Labels.tuple
+          ; label_of g1
+          ; label_of g2
+          ; label_of g3
+          ; label_of g4
+          ; label_of g5
+          ]
+    ; generate_fn =
+        (fun data ->
+          let a, s1 = do_draw g1 data in
+          let b, s2 = do_draw g2 data in
+          let c, s3 = do_draw g3 data in
+          let d, s4 = do_draw g4 data in
+          let e, s5 = do_draw g5 data in
+          ( (a, b, c, d, e)
+          , fun () -> Printer.tuple [ s1 (); s2 (); s3 (); s4 (); s5 () ] ))
+    }
+[@@mode m = (nonportable, portable)]
+;;
+
+(** [tuples6 g1 g2 g3 g4 g5 g6] creates a generator for 6-element tuples. *)
+let%template tuples6
+      (type a b c d e f)
+      (g1 : a generator MODE(m))
+      (g2 : b generator MODE(m))
+      (g3 : c generator MODE(m))
+      (g4 : d generator MODE(m))
+      (g5 : e generator MODE(m))
+      (g6 : f generator MODE(m))
+  : (a * b * c * d * e * f) generator MODE(m)
+  =
+  Composite
+    { label =
+        Labels.combine
+          [ Labels.tuple
+          ; label_of g1
+          ; label_of g2
+          ; label_of g3
+          ; label_of g4
+          ; label_of g5
+          ; label_of g6
+          ]
+    ; generate_fn =
+        (fun data ->
+          let a, s1 = do_draw g1 data in
+          let b, s2 = do_draw g2 data in
+          let c, s3 = do_draw g3 data in
+          let d, s4 = do_draw g4 data in
+          let e, s5 = do_draw g5 data in
+          let f, s6 = do_draw g6 data in
+          ( (a, b, c, d, e, f)
+          , fun () -> Printer.tuple [ s1 (); s2 (); s3 (); s4 (); s5 (); s6 () ] ))
+    }
+[@@mode m = (nonportable, portable)]
+;;
+
+(** [tuples7 g1 g2 g3 g4 g5 g6 g7] creates a generator for 7-element tuples. *)
+let%template tuples7
+      (type a b c d e f g)
+      (g1 : a generator MODE(m))
+      (g2 : b generator MODE(m))
+      (g3 : c generator MODE(m))
+      (g4 : d generator MODE(m))
+      (g5 : e generator MODE(m))
+      (g6 : f generator MODE(m))
+      (g7 : g generator MODE(m))
+  : (a * b * c * d * e * f * g) generator MODE(m)
+  =
+  Composite
+    { label =
+        Labels.combine
+          [ Labels.tuple
+          ; label_of g1
+          ; label_of g2
+          ; label_of g3
+          ; label_of g4
+          ; label_of g5
+          ; label_of g6
+          ; label_of g7
+          ]
+    ; generate_fn =
+        (fun data ->
+          let a, s1 = do_draw g1 data in
+          let b, s2 = do_draw g2 data in
+          let c, s3 = do_draw g3 data in
+          let d, s4 = do_draw g4 data in
+          let e, s5 = do_draw g5 data in
+          let f, s6 = do_draw g6 data in
+          let g, s7 = do_draw g7 data in
+          ( (a, b, c, d, e, f, g)
+          , fun () -> Printer.tuple [ s1 (); s2 (); s3 (); s4 (); s5 (); s6 (); s7 () ] ))
+    }
+[@@mode m = (nonportable, portable)]
+;;
+
+(** [tuples8 g1 g2 g3 g4 g5 g6 g7 g8] creates a generator for 8-element tuples. *)
+let%template tuples8
+      (type a b c d e f g h)
+      (g1 : a generator MODE(m))
+      (g2 : b generator MODE(m))
+      (g3 : c generator MODE(m))
+      (g4 : d generator MODE(m))
+      (g5 : e generator MODE(m))
+      (g6 : f generator MODE(m))
+      (g7 : g generator MODE(m))
+      (g8 : h generator MODE(m))
+  : (a * b * c * d * e * f * g * h) generator MODE(m)
+  =
+  Composite
+    { label =
+        Labels.combine
+          [ Labels.tuple
+          ; label_of g1
+          ; label_of g2
+          ; label_of g3
+          ; label_of g4
+          ; label_of g5
+          ; label_of g6
+          ; label_of g7
+          ; label_of g8
+          ]
+    ; generate_fn =
+        (fun data ->
+          let a, s1 = do_draw g1 data in
+          let b, s2 = do_draw g2 data in
+          let c, s3 = do_draw g3 data in
+          let d, s4 = do_draw g4 data in
+          let e, s5 = do_draw g5 data in
+          let f, s6 = do_draw g6 data in
+          let g, s7 = do_draw g7 data in
+          let h, s8 = do_draw g8 data in
+          ( (a, b, c, d, e, f, g, h)
+          , fun () -> Printer.tuple [ s1 (); s2 (); s3 (); s4 (); s5 (); s6 (); s7 (); s8 () ] ))
+    }
+[@@mode m = (nonportable, portable)]
+;;
+
+(** [permutations values] creates a generator for permutations of [values]:
+    for each position in turn, it draws which of the remaining values goes
+    there, so it shrinks toward [values] in its original order. The values are
+    the caller's, so a drawn permutation shows as [<abstr>] unless a printer is
+    attached with {!with_printer}. *)
+let%template permutations ABSTRACT(a, value mod c) (values : a list MODE(m))
+  : a list generator MODE(m)
+  =
+  Composite
+    { label = Labels.permutation
+    ; generate_fn =
+        (fun data ->
+          let arr = Array.of_list values in
+          let n = Array.length arr in
+          for i = 0 to n - 2 do
+            let j = Internal.generate_integer data ~min_value:i ~max_value:(n - 1) in
+            let x = arr.(i) in
+            arr.(i) <- arr.(j);
+            arr.(j) <- x
+          done;
+          Array.to_list arr, opaque_show)
+    }
+[@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
+;;
+
+let rec first_duplicate = function
+  | [] -> None
+  | name :: rest -> if List.mem name rest then Some name else first_duplicate rest
+;;
+
+(** [from_lark grammar ?start ?explicit ?max_size ?max_depth ?import_path
+    ?codec ... ?alphabet ()] creates a generator for strings of a grammar
+    written in Lark's syntax. The engine compiles the grammar on the first
+    draw, draws each string, and asks for a value from the generator
+    [explicit] gives each explicit terminal wherever one occurs, splicing it
+    in. *)
+let%template from_lark
+      grammar
+      ?start
+      ?(explicit : (string * string generator) list MODE(m) = [])
+      ?(max_size : int option)
+      ?(max_depth : int option)
+      ?import_path
+      ?codec
+      ?min_codepoint
+      ?max_codepoint
+      ?categories
+      ?exclude_categories
+      ?include_characters
+      ?exclude_characters
+      ?alphabet
+      ()
+  : string generator MODE(m)
+  =
+  (match max_size with
+   | Some n when n < 1 -> raise (Internal.Usage_error "max_size must be at least 1")
+   | _ -> ());
+  (match max_depth with
+   | Some n when n < 1 -> raise (Internal.Usage_error "max_depth must be at least 1")
+   | _ -> ());
+  let names = List.map fst explicit in
+  (match first_duplicate names with
+   | Some name ->
+     raise
+       (Internal.Usage_error
+          (Printf.sprintf "explicit terminal '%s' is given more than one generator" name))
+   | None -> ());
+  let compiled =
+    Internal.grammar
+      { grammar_text = grammar
+      ; start
+      ; grammar_max_size = Option.value max_size ~default:0
+      ; max_depth = Option.value max_depth ~default:0
+      ; grammar_alphabet =
+          char_alphabet
+            ?codec
+            ?min_codepoint
+            ?max_codepoint
+            ?categories
+            ?exclude_categories
+            ?include_characters
+            ?exclude_characters
+            ?alphabet
+            ()
+      ; explicit_terminals = names
+      ; import_path
       }
   in
-  Printable { core; sexp_of }
+  Leaf
+    { draw =
+        (fun data ->
+          Internal.generate_grammar data compiled ~provide:(fun terminal ->
+            fst (do_draw (snd (List.nth explicit terminal)) data)))
+    ; print = Printer.string
+    ; label =
+        Labels.combine
+          (Labels.from_name "hegel.from_lark"
+           :: Labels.from_name grammar
+           :: Labels.from_name (Option.value start ~default:"start")
+           :: List.concat_map
+                (fun (name, generator) -> [ Labels.from_name name; label_of generator ])
+                explicit)
+    }
 [@@mode m = (nonportable, portable)]
 ;;

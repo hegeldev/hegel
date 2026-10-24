@@ -215,7 +215,7 @@ let run_machine
       ~step_count
       ~min_concurrency
       ~max_concurrency
-      ~sexp_of_state
+      ~print_state
       ~init
       run_steps
   =
@@ -231,10 +231,11 @@ let run_machine
       ~min_concurrency
       ~max_concurrency
   in
-  let print_state () =
+  let show_state () =
     Option.iter
-      (fun sexp_of -> Internal.print_line tc [ Text "state = "; Value (sexp_of init) ])
-      sexp_of_state
+      (fun print ->
+         Internal.print_line tc (Printer.concat [ Printer.text "state = "; print init ]))
+      print_state
   in
   let check_invariants ~where ~sample =
     iteri_local
@@ -263,9 +264,9 @@ let run_machine
   let run_test () =
     if num_workers > 1
     then Internal.note tc (Printf.sprintf "Concurrency level: %d" num_workers);
-    print_state ();
+    show_state ();
     check_invariants ~where:"in the initial state" ~sample:false;
-    run_steps ~state_machine ~num_workers ~print_state ~check_invariants;
+    run_steps ~state_machine ~num_workers ~show_state ~check_invariants;
     check_invariants ~where:"in the final state" ~sample:false
   in
   match run_test () with
@@ -275,8 +276,8 @@ let run_machine
     raise exn
 ;;
 
-let run_internal ~init ~rules ~invariants ?sexp_of_state ?(step_count = 50) tc =
-  let run_steps ~state_machine ~num_workers:_ ~print_state ~check_invariants:LOCAL(check_invariants) =
+let run_internal ~init ~rules ~invariants ?print_state ?(step_count = 50) tc =
+  let run_steps ~state_machine ~num_workers:_ ~show_state ~check_invariants:LOCAL(check_invariants) =
     let rec loop LOCAL(check_invariants) steps_attempted =
       Internal.start_span ~label:Generators.Private.Labels.stateful_rule tc;
       match Internal.state_machine_next_group tc ~state_machine with
@@ -301,7 +302,7 @@ let run_internal ~init ~rules ~invariants ?sexp_of_state ?(step_count = 50) tc =
             raise e
         in
         Internal.stop_span ~discard:rejected tc;
-        print_state ();
+        show_state ();
         check_invariants ~where:(Printf.sprintf "after step %d" step) ~sample:true;
         loop check_invariants step
     in
@@ -318,7 +319,7 @@ let run_internal ~init ~rules ~invariants ?sexp_of_state ?(step_count = 50) tc =
     ~step_count
     ~min_concurrency:1
     ~max_concurrency:1
-    ~sexp_of_state
+    ~print_state
     ~init
     run_steps
 ;;
@@ -333,12 +334,12 @@ end
 let run
       (type s)
       ?step_count
-      ?sexp_of_state
+      ?print_state
       tc
       (module M : State_machine with type state = s)
       ~(init : s)
   =
-  run_internal ~init ~rules:M.rules ~invariants:M.invariants ?sexp_of_state ?step_count tc
+  run_internal ~init ~rules:M.rules ~invariants:M.invariants ?print_state ?step_count tc
 ;;
 
 module type Concurrent_state_machine = sig
@@ -360,12 +361,12 @@ let run_concurrent_core
       ~run_round:LOCAL(run_round)
       ?(min_concurrency = 1)
       ?(max_concurrency = min_concurrency)
-      ?sexp_of_state
+      ?print_state
       ?(step_count = 50)
       tc
   =
   let group_names = unique_groups rule_groups in
-  let run_steps ~state_machine ~num_workers ~print_state ~check_invariants:LOCAL(check_invariants) =
+  let run_steps ~state_machine ~num_workers ~show_state ~check_invariants:LOCAL(check_invariants) =
     (* Local closures are passed down rather than captured. *)
     let rec loop LOCAL(run_round) LOCAL(check_invariants) round =
       match Internal.state_machine_next_group tc ~state_machine with
@@ -378,7 +379,7 @@ let run_concurrent_core
              round
              (List.nth group_names group));
         reraise_worker_failure (run_round ~state_machine ~num_workers);
-        print_state ();
+        show_state ();
         check_invariants ~where:(Printf.sprintf "after round %d" round) ~sample:true;
         loop run_round check_invariants (round + 1)
     in
@@ -395,7 +396,7 @@ let run_concurrent_core
     ~step_count
     ~min_concurrency
     ~max_concurrency
-    ~sexp_of_state
+    ~print_state
     ~init
     run_steps
   NONTAIL
@@ -408,7 +409,7 @@ let run_concurrent_internal
       CONCURRENCY_PARAM
       ?min_concurrency
       ?max_concurrency
-      ?sexp_of_state
+      ?print_state
       ?step_count
       tc
   =
@@ -429,7 +430,7 @@ let run_concurrent_internal
       (dispatch_round [@mode portable]) concurrency.spawn_join_n tc ~num_workers ~work)
     ?min_concurrency
     ?max_concurrency
-    ?sexp_of_state
+    ?print_state
     ?step_count
     tc
   NONTAIL
@@ -441,7 +442,7 @@ let run_concurrent
       ?min_concurrency
       ?max_concurrency
       ?step_count
-      ?sexp_of_state
+      ?print_state
       tc
       (module M : Concurrent_state_machine with type ctx = c and type state = s)
       ~(init : s)
@@ -453,7 +454,7 @@ let run_concurrent
     ~concurrency
     ?min_concurrency
     ?max_concurrency
-    ?sexp_of_state
+    ?print_state
     ?step_count
     tc
 ;;

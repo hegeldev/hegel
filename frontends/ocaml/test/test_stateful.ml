@@ -681,8 +681,7 @@ let filtered_consume_test
       ~(create : Hegel.Internal.test_case -> p)
       ~(add : p -> Hegel.Internal.test_case -> int -> unit)
       ~(size : p -> int)
-      ~(values_consumed :
-         p -> (int, Hegel.Generators.unprintable) Hegel.Generators.generator)
+      ~(values_consumed : p -> int Hegel.Generators.generator)
       ()
   =
   let filter = Hegel.Generators.filter in
@@ -1037,7 +1036,9 @@ let concurrent_worker_control_exceptions_test () =
             | Hegel.Internal.Assume_rejected ->
               (* exceeding the libhegel nesting limit invalidates the tc *)
               for _ = 1 to 1001 do
-                Hegel.Internal.start_span tc
+                Hegel.Internal.start_span
+                  ~label:(Hegel.Internal.Label.of_name "test.span")
+                  tc
               done;
               ignore (Hegel.draw tc (Hegel.booleans ()) : bool)
             | _ -> raise error)
@@ -1071,7 +1072,7 @@ let concurrent_worker_control_exceptions_test () =
          | Hegel.Internal.Internal_error expected ->
            Alcotest.(check string) "internal error propagated" expected message
          | _ -> Alcotest.fail "unexpected internal error")
-      | exception Failure message ->
+      | exception Hegel.Failed_health_check { message; _ } ->
         (match error with
          | Hegel.Internal.Flaky_strategy | Hegel.Internal.Assume_rejected ->
            Alcotest.(check bool)

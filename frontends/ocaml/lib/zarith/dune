@@ -1,0 +1,11 @@
+; The optional zarith companion library: arbitrary-precision integers.
+
+(library
+ (name hegel_zarith)
+ (public_name hegel.zarith)
+ (optional)
+ (libraries hegel zarith)
+ (preprocess
+  (pps ppx_js_style))
+ (instrumentation
+  (backend bisect_ppx)))
