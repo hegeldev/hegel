@@ -101,29 +101,52 @@ fn test_explicit_assume_passes() {
 }
 
 #[test]
-fn test_explicit_assume_false_skips_the_case() {
-    let etc = hegel::ExplicitTestCase::new().with_value("x", "1", 1i32);
-    etc.run(|tc: &hegel::ExplicitTestCase| {
-        tc.note("not printed");
-        tc.assume(false);
-        panic!("unreachable after a failed assumption");
-    });
+fn test_explicit_assume_false_before_any_draw_is_an_error() {
+    expect_panic(
+        || {
+            let etc = hegel::ExplicitTestCase::new().with_value("x", "1", 1i32);
+            etc.run(|tc: &hegel::ExplicitTestCase| {
+                tc.assume(false);
+                tc.__draw_named::<i32>(generators::integers(), "x", false);
+            });
+        },
+        "Explicit test cases must not be rejected",
+    );
 }
 
 #[test]
-fn test_explicit_reject_skips_the_case() {
-    let etc = hegel::ExplicitTestCase::new();
-    etc.run(|tc: &hegel::ExplicitTestCase| {
-        tc.reject();
-    });
+fn test_explicit_assume_false_after_a_draw_is_an_error() {
+    expect_panic(
+        || {
+            let etc = hegel::ExplicitTestCase::new().with_value("x", "1", 1i32);
+            etc.run(|tc: &hegel::ExplicitTestCase| {
+                let x: i32 = tc.__draw_named(generators::integers(), "x", false);
+                tc.assume(x < 0);
+            });
+        },
+        "Explicit test cases must not be rejected",
+    );
+}
+
+#[test]
+fn test_explicit_reject_is_an_error() {
+    expect_panic(
+        || {
+            let etc = hegel::ExplicitTestCase::new();
+            etc.run(|tc: &hegel::ExplicitTestCase| {
+                tc.reject();
+            });
+        },
+        "Explicit test cases must not be rejected",
+    );
 }
 
 #[hegel::test(test_cases = 1)]
 #[hegel::explicit_test_case(x = -1i32)]
-fn test_macro_explicit_case_assume_skips(tc: TestCase) {
+#[should_panic(expected = "Explicit test cases must not be rejected")]
+fn test_macro_explicit_case_assume_is_an_error(tc: TestCase) {
     let x: i32 = tc.draw(generators::integers().min_value(0));
     tc.assume(x >= 0);
-    assert!(x >= 0);
 }
 
 #[test]
@@ -159,25 +182,34 @@ fn test_explicit_repeat_runs_the_body_once() {
 }
 
 #[test]
-fn test_explicit_repeat_ends_the_case_after_a_rejected_iteration() {
-    let etc = hegel::ExplicitTestCase::new().with_value("x_1", "5", 5i32);
-    etc.run(|tc: &hegel::ExplicitTestCase| {
-        tc.repeat(|| {
-            let x: i32 = tc.draw_named("x", generators::integers());
-            tc.assume(x < 0);
-        });
-    });
+fn test_explicit_repeat_rejected_after_a_draw_is_an_error() {
+    expect_panic(
+        || {
+            let etc = hegel::ExplicitTestCase::new().with_value("x_1", "5", 5i32);
+            etc.run(|tc: &hegel::ExplicitTestCase| {
+                tc.repeat(|| {
+                    let x: i32 = tc.draw_named("x", generators::integers());
+                    tc.assume(x < 0);
+                });
+            });
+        },
+        "Explicit test cases must not be rejected",
+    );
 }
 
 #[test]
-fn test_explicit_repeat_skips_the_case_when_rejected_before_drawing() {
-    let etc = hegel::ExplicitTestCase::new().with_value("x_1", "5", 5i32);
-    etc.run(|tc: &hegel::ExplicitTestCase| {
-        tc.repeat(|| {
-            tc.assume(false);
-            tc.draw_named::<i32>("x", generators::integers());
-        });
-    });
+fn test_explicit_repeat_rejected_before_drawing_is_an_error() {
+    expect_panic(
+        || {
+            let etc = hegel::ExplicitTestCase::new().with_value("x_1", "5", 5i32);
+            etc.run(|tc: &hegel::ExplicitTestCase| {
+                tc.repeat(|| {
+                    tc.reject();
+                });
+            });
+        },
+        "Explicit test cases must not be rejected",
+    );
 }
 
 #[test]

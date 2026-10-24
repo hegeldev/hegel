@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 
-use crate::control::{AssumeFailed, LoopDone, raise_control};
+use crate::control::{LoopDone, raise_control};
 use crate::generators::Generator;
 
 struct ExplicitValue {
@@ -139,18 +139,19 @@ impl ExplicitTestCase {
         self.notes.borrow_mut().push(message.to_string());
     }
 
-    /// Skip this explicit test case if `condition` is false, like
-    /// [`TestCase::assume`](crate::TestCase::assume).
+    /// Panic if `condition` is false: an explicit test case must not be
+    /// rejected, so a failed assumption is a usage error rather than a
+    /// skipped test case.
     pub fn assume(&self, condition: bool) {
         if !condition {
             self.reject();
         }
     }
 
-    /// Skip this explicit test case: the rest of the test body does not run,
-    /// and the test case neither passes nor fails.
+    /// Panic: an explicit test case must not be rejected, so rejecting one
+    /// is a usage error rather than a skipped test case.
     pub fn reject(&self) -> ! {
-        raise_control(AssumeFailed);
+        panic!("Explicit test cases must not be rejected");
     }
 
     pub fn target(&self, _score: f64) {}
@@ -166,7 +167,7 @@ impl ExplicitTestCase {
     /// Run `body` once, then end this explicit test case, like one iteration
     /// of [`TestCase::repeat`](crate::TestCase::repeat). An explicit value
     /// can be drawn only once, so a second iteration would have nothing to
-    /// draw. A failed assumption in `body` skips the whole explicit test case.
+    /// draw.
     pub fn repeat<F: FnMut()>(&self, mut body: F) -> ! {
         self.note("// Repetition #1");
         body();
@@ -190,7 +191,6 @@ impl ExplicitTestCase {
         }));
 
         match result {
-            Err(payload) if payload.downcast_ref::<AssumeFailed>().is_some() => {}
             Err(payload) if payload.downcast_ref::<LoopDone>().is_none() => {
                 let notes = self.notes.borrow();
                 for note in notes.iter() {
