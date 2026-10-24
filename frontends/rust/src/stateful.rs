@@ -157,12 +157,12 @@ use crate::test_case::raise_for_rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
-use std::sync::{Mutex, mpsc};
+use std::sync::{LazyLock, Mutex, mpsc};
 
 /// The label of the span around each round of rule invocations, grouping
 /// every draw the round makes so the shrinker can delete a whole step at
 /// once.
-const RULE_LABEL: u64 = label_from_name("hegel.stateful.rule");
+static RULE_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.stateful.rule"));
 
 /// The concurrency group a `#[rule]` without a `group = "..."` argument is
 /// assigned to. All unannotated rules share this one group, so a machine
@@ -276,7 +276,7 @@ fn filtered_attempt<T>(
     predicate: &dyn Fn(&T) -> bool,
     values: &mut HashMap<i64, T>,
 ) -> Result<Attempt<T>, crate::ffi::sys::hegel_result_t> {
-    tc.start_span(FILTER_ATTEMPT_LABEL);
+    tc.start_span(*FILTER_ATTEMPT_LABEL);
     tc.start_span(label);
     let variable_id = tc.with_ctc(|ctc| ctc.pool_generate(pool, true))?;
     tc.stop_span(false);
@@ -382,12 +382,14 @@ pub struct ValuesReusable<'a, T> {
     values: &'a HashMap<i64, T>,
 }
 
-const VALUES_REUSABLE_LABEL: u64 = label_from_name("hegel.pool.values_reusable");
-const VALUES_CONSUMED_LABEL: u64 = label_from_name("hegel.pool.values_consumed");
+static VALUES_REUSABLE_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.pool.values_reusable"));
+static VALUES_CONSUMED_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.pool.values_consumed"));
 
 impl<'a, T> Generator<&'a T> for ValuesReusable<'a, T> {
     fn label(&self) -> u64 {
-        VALUES_REUSABLE_LABEL
+        *VALUES_REUSABLE_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> &'a T {
@@ -418,7 +420,7 @@ pub struct ValuesConsumed<'a, T> {
 
 impl<T> Generator<T> for ValuesConsumed<'_, T> {
     fn label(&self) -> u64 {
-        VALUES_CONSUMED_LABEL
+        *VALUES_CONSUMED_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> T {
@@ -1029,7 +1031,7 @@ fn run_sequential<M: StateMachine>(mut m: M, tc: TestCase, step_count: i64) {
     let mut steps_attempted: i64 = 0;
 
     loop {
-        tc.start_span(RULE_LABEL);
+        tc.start_span(*RULE_LABEL);
         if machine_next_group(&tc, &machine).is_none() {
             tc.stop_span(false);
             break;

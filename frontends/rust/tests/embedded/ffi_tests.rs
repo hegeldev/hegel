@@ -124,17 +124,6 @@ fn ffi_drives_a_passing_run_exercising_every_primitive() {
     assert!(result.error().is_none());
 }
 
-/// The run error kind and failed health check of `result`, read through
-/// the frontend's binding of `hegel_run_result_error_kind`.
-fn error_kind(result: &RunResult) -> (hegel_c::hegel_run_error_kind_t, u32) {
-    let mut kind = hegel_c::hegel_run_error_kind_t::HEGEL_RUN_ERROR_INTERNAL;
-    let mut health_check = u32::MAX;
-    require_ok(with_context(|ctx| unsafe {
-        hegel_c::hegel_run_result_error_kind(ctx, result.raw, &mut kind, &mut health_check)
-    }));
-    (kind, health_check)
-}
-
 #[test]
 fn ffi_reads_the_structured_kind_of_a_run_error() {
     let sh = SettingsHandle::build(&test_settings(3), None, None);
@@ -148,11 +137,8 @@ fn ffi_reads_the_structured_kind_of_a_run_error() {
     assert!(result.status() == hegel_c::hegel_run_status_t::HEGEL_RUN_STATUS_ERROR);
     assert!(result.error().unwrap().contains("FilterTooMuch"));
     assert_eq!(
-        error_kind(&result),
-        (
-            hegel_c::hegel_run_error_kind_t::HEGEL_RUN_ERROR_HEALTH_CHECK,
-            hegel_c::hegel_health_check_t::HEGEL_HC_FILTER_TOO_MUCH as u32,
-        )
+        result.error_kind(),
+        RunErrorKind::HealthCheck(HealthCheck::FilterTooMuch)
     );
 
     let sh = SettingsHandle::build(&test_settings(3), None, None);
@@ -160,10 +146,7 @@ fn ffi_reads_the_structured_kind_of_a_run_error() {
     drive_run(&run, |_| Ok(()));
     let result = run.result();
     assert!(result.error().is_none());
-    assert_eq!(
-        error_kind(&result),
-        (hegel_c::hegel_run_error_kind_t::HEGEL_RUN_ERROR_NONE, 0)
-    );
+    assert_eq!(result.error_kind(), RunErrorKind::Other);
 }
 
 /// The collection / pool / state-machine constructors surface libhegel's
@@ -212,15 +195,19 @@ fn ffi_grammar_construction_reports_engine_diagnostics() {
         Some(&alphabet),
         &["NUM".to_string()],
         None,
-    )
-    .unwrap();
-    let marker = grammar.placeholder("NUM").unwrap();
-    assert!(
-        marker.starts_with("<<EXPLICIT_NUM_") && marker.ends_with(">>"),
-        "{marker}"
     );
-    let err = grammar.placeholder("WORD").unwrap_err();
-    assert!(err.contains("not an explicit terminal"), "{err}");
+    assert!(grammar.is_ok());
+    let err = Grammar::new(
+        "start: NUM\n%declare NUM",
+        None,
+        0,
+        0,
+        None,
+        &["NUM".to_string(), "WORD".to_string()],
+        None,
+    )
+    .unwrap_err();
+    assert!(err.contains("WORD"), "{err}");
 }
 
 #[test]
@@ -456,6 +443,7 @@ fn ffi_settings_round_trip_every_field_through_registration() {
         .stop_on_first_failure(false)
         .show_statistics(true)
         .print_blob(true)
+        .unbounded_choices(true)
         .backend(Backend::Urandom)
         .nondeterminism_strictness(NondeterminismStrictness::Error);
     register_profile("ffi_tests_round_trip", &original).unwrap();
@@ -475,6 +463,7 @@ fn ffi_settings_round_trip_every_field_through_registration() {
     assert!(!restored.stop_on_first_failure);
     assert!(restored.show_statistics);
     assert!(restored.print_blob);
+    assert!(restored.unbounded_choices);
     assert_eq!(restored.backend, Backend::Urandom);
     assert_eq!(
         restored.nondeterminism_strictness,
@@ -505,13 +494,13 @@ fn ffi_settings_round_trip_the_remaining_enum_values() {
 fn ffi_settings_build_preserves_an_unset_database() {
     use crate::runner::Database;
     let unset = Settings::from_profile("base");
-    assert_eq!(unset.database, Database::Unset);
+    assert_eq!(unset.database, Database::Default);
     register_profile("ffi_tests_unset_database", &unset).unwrap();
     let restored = settings_from_profile(Some("ffi_tests_unset_database")).unwrap();
     assert_eq!(
         restored.database,
-        Database::Unset,
-        "build() must forward Unset rather than inheriting the ambient profile's database"
+        Database::Default,
+        "build() must forward Default rather than inheriting the ambient profile's database"
     );
 }
 
@@ -550,4 +539,41 @@ fn a_successful_call_clears_the_context_error() {
         require_ok(hegel_c::hegel_version(ctx, &mut version));
     });
     assert!(last_error_string().is_empty());
+}
+
+#[test]
+fn run_error_kind_classifies_each_kind() {
+    use hegel_c::hegel_run_error_kind_t as k;
+    assert_eq!(
+        run_error_kind(
+            k::HEGEL_RUN_ERROR_HEALTH_CHECK,
+            hegel_c::hegel_health_check_t::HEGEL_HC_TOO_SLOW as u32
+        ),
+        RunErrorKind::HealthCheck(HealthCheck::TooSlow)
+    );
+    assert_eq!(
+        run_error_kind(k::HEGEL_RUN_ERROR_FLAKY, 0),
+        RunErrorKind::Flaky
+    );
+    assert_eq!(
+        run_error_kind(k::HEGEL_RUN_ERROR_NONDETERMINISTIC, 0),
+        RunErrorKind::Flaky
+    );
+    assert_eq!(
+        run_error_kind(k::HEGEL_RUN_ERROR_UNSATISFIABLE, 0),
+        RunErrorKind::Unsatisfiable
+    );
+    assert_eq!(
+        run_error_kind(k::HEGEL_RUN_ERROR_NONE, 0),
+        RunErrorKind::Other
+    );
+}
+
+#[test]
+fn run_error_kind_reports_an_unknown_health_check_as_a_run_error() {
+    use hegel_c::hegel_run_error_kind_t as k;
+    assert_eq!(
+        run_error_kind(k::HEGEL_RUN_ERROR_HEALTH_CHECK, 1 << 31),
+        RunErrorKind::Other
+    );
 }

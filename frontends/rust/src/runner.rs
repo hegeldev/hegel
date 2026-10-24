@@ -21,7 +21,8 @@ pub enum HealthCheck {
 }
 
 impl HealthCheck {
-    /// Returns all health check variants.
+    /// Returns every health check, including any added in later versions of
+    /// Hegel.
     ///
     /// Useful for suppressing all health checks at once:
     ///
@@ -33,8 +34,8 @@ impl HealthCheck {
     ///     // ...
     /// }
     /// ```
-    pub const fn all() -> [HealthCheck; 4] {
-        [
+    pub fn all() -> Vec<HealthCheck> {
+        vec![
             HealthCheck::FilterTooMuch,
             HealthCheck::TooSlow,
             HealthCheck::TestCasesTooLarge,
@@ -159,6 +160,8 @@ pub struct Settings {
     pub(crate) seed: Option<u64>,
     pub(crate) derandomize: bool,
     pub(crate) database: Database,
+    pub(crate) database_key: Option<String>,
+    pub(crate) unbounded_choices: bool,
     pub(crate) suppress_health_check: Vec<HealthCheck>,
     pub(crate) phases: Vec<Phase>,
     pub(crate) report_multiple_failures: bool,
@@ -316,18 +319,77 @@ impl Settings {
         self
     }
 
-    /// Set the database path for storing failing examples, or `None` to disable.
+    /// Set where failing examples are stored: a [`Database`], or an
+    /// `Option<String>` that is the database path, or `None` to disable it.
+    /// [`Database::Default`] restores the default database after a profile
+    /// disabled it or set a path.
+    ///
+    /// ```no_run
+    /// use hegel::{Database, Settings};
+    ///
+    /// let off = Settings::new().database(None);
+    /// let here = Settings::new().database(Some("target/hegel-db".to_string()));
+    /// let default = Settings::from_profile("ci").database(Database::Default);
+    /// ```
     ///
     /// The `HEGEL_DATABASE` environment variable, when set and non-empty,
     /// changes the database a `Settings` starts from: the literal value
     /// `disabled` turns the database off (matching the `--database` CLI
     /// flag's keyword), and any other value is used as the database path.
     /// A value set here takes precedence over it.
-    pub fn database(mut self, database: Option<String>) -> Self {
-        self.database = match database {
-            None => Database::Disabled,
-            Some(path) => Database::Path(path),
-        };
+    pub fn database(mut self, database: impl Into<Database>) -> Self {
+        self.database = database.into();
+        self
+    }
+
+    /// Set the key the test's failing examples are stored under in the
+    /// database. `#[hegel::test]`, `#[hegel::main]` and
+    /// `#[hegel::standalone_function]` key each test by its module path and
+    /// name, so a failure found by one run is replayed by the next; set a
+    /// key here to keep a test's examples when it is renamed or moved, or
+    /// to share them between tests. A run with no key (a [`Hegel`] built
+    /// by hand without one) neither stores nor replays examples.
+    ///
+    /// The key is not part of a profile:
+    /// [`register_profile`](Self::register_profile) does not store it, and
+    /// a `Settings` resolved from a profile has none.
+    pub fn database_key(mut self, key: impl Into<String>) -> Self {
+        self.database_key = Some(key.into());
+        self
+    }
+
+    /// Remove the limit on the number of choices a single test case may
+    /// make (default: `false`). By default a test case may make 2^20
+    /// (1,048,576) choices: every draw counts as at least one, as does each
+    /// element of a collection, each step of a state machine, and each
+    /// cloned [`TestCase`](crate::TestCase). A test case that reaches the
+    /// limit is stopped and discarded, and enough such test cases fail the
+    /// [`HealthCheck::TestCasesTooLarge`] health check. Suppressing that
+    /// check removes the limit too.
+    ///
+    /// Lift the limit for a test case that is meant to run for a long time,
+    /// such as a concurrent state machine driven for hours. The engine
+    /// records every choice a test case makes, so an unlimited test case's
+    /// memory grows with its length.
+    ///
+    /// ```no_run
+    /// use hegel::TestCase;
+    /// use hegel::generators as gs;
+    ///
+    /// #[hegel::test(test_cases = 1, unbounded_choices = true)]
+    /// fn soak(tc: TestCase) {
+    ///     for _ in 0..5_000_000 {
+    ///         let _: u8 = tc.draw(gs::integers());
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// The `HEGEL_UNBOUNDED_CHOICES` environment variable, when set and
+    /// non-empty, changes the value a `Settings` starts from, with the same
+    /// vocabulary as `HEGEL_DERANDOMIZE`. A value set here takes precedence
+    /// over it.
+    pub fn unbounded_choices(mut self, unbounded_choices: bool) -> Self {
+        self.unbounded_choices = unbounded_choices;
         self
     }
 
@@ -375,28 +437,8 @@ impl Settings {
     /// Replaces any previously configured suppressions, like [`Settings::phases`].
     ///
     /// Suppressing [`HealthCheck::TestCasesTooLarge`] also removes the limit
-    /// on the number of choices a single test case may make, which is
-    /// otherwise 2^20 (1,048,576). Every draw counts as at least one choice,
-    /// as does each element of a collection, each step of a state machine,
-    /// and each cloned [`TestCase`](crate::TestCase); a test case that
-    /// reaches the limit is stopped and discarded. Suppress the check for a
-    /// test case that is meant to run for a long time, such as a concurrent
-    /// state machine driven for hours:
-    ///
-    /// ```no_run
-    /// use hegel::{HealthCheck, TestCase};
-    /// use hegel::generators as gs;
-    ///
-    /// #[hegel::test(test_cases = 1, suppress_health_check = [HealthCheck::TestCasesTooLarge])]
-    /// fn soak(tc: TestCase) {
-    ///     for _ in 0..5_000_000 {
-    ///         let _: u8 = tc.draw(gs::integers());
-    ///     }
-    /// }
-    /// ```
-    ///
-    /// The engine records every choice a test case makes, so an unlimited
-    /// test case's memory grows with its length.
+    /// on the number of choices a single test case may make, as
+    /// [`Settings::unbounded_choices`] does.
     ///
     /// # Example
     ///
@@ -501,11 +543,28 @@ impl Default for Settings {
     }
 }
 
+/// Where a run stores failing examples, for [`Settings::database`].
+///
+/// `Option<String>` converts into it: `None` is [`Database::Disabled`] and
+/// `Some(path)` is [`Database::Path`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Database {
-    Unset,
+#[non_exhaustive]
+pub enum Database {
+    /// The default database, `.hegel/examples` under the working directory.
+    Default,
+    /// No database: failing examples are neither stored nor replayed.
     Disabled,
+    /// A database rooted at this directory, created if it does not exist.
     Path(String),
+}
+
+impl From<Option<String>> for Database {
+    fn from(database: Option<String>) -> Self {
+        match database {
+            None => Database::Disabled,
+            Some(path) => Database::Path(path),
+        }
+    }
 }
 
 /// Why [`Settings::try_from_profile`] could not resolve a profile: the name
@@ -532,16 +591,6 @@ where
     Hegel::new(test_fn).run();
 }
 
-/// The boolean vocabulary of the `--derandomize` flag, shared with the
-/// engine's `HEGEL_DERANDOMIZE` and `HEGEL_PRINT_BLOB` variables.
-pub(crate) fn parse_bool(s: &str) -> Option<bool> {
-    match s {
-        "true" | "1" | "yes" => Some(true),
-        "false" | "0" | "no" => Some(false),
-        _ => None,
-    }
-}
-
 /// Where a test is defined, as the `#[hegel::test]` and `#[hegel::main]`
 /// macros record it: passed to the engine, which reports the test's verdict
 /// against it when running under [Antithesis](https://antithesis.com/).
@@ -560,6 +609,7 @@ pub struct Hegel<F> {
     test_location: Option<TestLocation>,
     settings: Settings,
     reproduce_failure: Option<String>,
+    reproduce_attribute: Option<&'static str>,
     single_test_case: bool,
 }
 
@@ -575,6 +625,7 @@ where
             settings: Settings::new(),
             test_location: None,
             reproduce_failure: None,
+            reproduce_attribute: None,
             single_test_case: false,
         }
     }
@@ -601,6 +652,17 @@ where
     #[doc(hidden)]
     pub fn __single_test_case(mut self) -> Self {
         self.single_test_case = true;
+        self
+    }
+
+    /// The attribute macro that built this run (`"#[hegel::test]"`,
+    /// `"#[hegel::main]"` or `"#[hegel::standalone_function]"`), which a
+    /// failure's reproducer line tells the user to put
+    /// `#[hegel::reproduce_failure]` below. Without it, the line points at
+    /// [`reproduce_failure`](Self::reproduce_failure) on this builder.
+    #[doc(hidden)]
+    pub fn __reproduce_attribute(mut self, attribute: &'static str) -> Self {
+        self.reproduce_attribute = Some(attribute);
         self
     }
 
@@ -636,7 +698,30 @@ where
 
     /// Run the property-based tests.
     ///
-    /// Panics if any test case fails.
+    /// # Panics
+    ///
+    /// When a test case fails, this panics with the failing test's own panic
+    /// payload, or, when [`report_multiple_failures`](Settings::report_multiple_failures)
+    /// finds several distinct failures, with a message counting them.
+    ///
+    /// When the run errors instead of finding a failure, it panics with a
+    /// `String` whose start names the kind of error, so a test (or
+    /// `#[should_panic(expected = ...)]`) can tell them apart:
+    ///
+    /// - `FailedHealthCheck: <check>`: a health check failed, naming the
+    ///   [`HealthCheck`] variant, for example
+    ///   `FailedHealthCheck: FilterTooMuch`. Suppress it with
+    ///   [`Settings::suppress_health_check`] if the behaviour is intended.
+    /// - `Flaky`: under [`NondeterminismStrictness::Error`], the test
+    ///   behaved nondeterministically: replaying the same input gave a
+    ///   different outcome or drew different data.
+    /// - `Unsatisfiable`: no valid test case could be generated, because
+    ///   every input was rejected by [`TestCase::assume`](crate::TestCase::assume)
+    ///   or a filter.
+    /// - `RunError`: any other error, such as misuse of Hegel or a bug in
+    ///   Hegel itself.
+    ///
+    /// The rest of the message is the engine's explanation.
     pub fn run(self) {
         let mut settings = self.settings;
         if self.single_test_case {
@@ -649,6 +734,7 @@ where
                 self.database_key.as_deref(),
                 &blob,
                 self.test_location.as_ref(),
+                self.reproduce_attribute,
             );
             return;
         }
@@ -658,6 +744,7 @@ where
             &settings,
             self.database_key.as_deref(),
             self.test_location.as_ref(),
+            self.reproduce_attribute,
         );
     }
 }

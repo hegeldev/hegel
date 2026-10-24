@@ -245,7 +245,7 @@ fn env_print_blob_compiled_in_fixture() {
     failing_property_with(hegel::Settings::new().print_blob(false));
 }
 
-const REPRODUCER_LINE: &str = r#"#\[hegel::reproduce_failure\("[A-Za-z0-9+/=_-]+"\)\]"#;
+const REPRODUCER_LINE: &str = r#"\.reproduce_failure\("[A-Za-z0-9+/=_-]+"\)"#;
 
 fn assert_no_reproducer_line(output: &common::exec::RunOutput) {
     assert!(
@@ -369,4 +369,9 @@ fn test_settings_verbosity_debug() {
     .run();
 
     assert_eq!(count, 1);
+}
+
+#[hegel::test(test_cases = 1, unbounded_choices = true)]
+fn test_macro_accepts_unbounded_choices(tc: hegel::TestCase) {
+    tc.draw(gs::booleans());
 }

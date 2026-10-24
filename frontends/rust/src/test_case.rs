@@ -787,7 +787,7 @@ impl TestCase {
     /// error. Roughly equivalent to a `loop` but with better interaction with
     /// the test runner: This loop will never exit until the test case completes.
     ///
-    /// At the start of each iteration a `// Loop iteration N` note is emitted
+    /// At the start of each iteration a `// Repetition #N` note is emitted
     /// into the failing-test replay output.
     ///
     /// # Example
@@ -1078,8 +1078,8 @@ impl TestCase {
     }
 
     /// Draw a byte string with length in `[min_size, max_size]`.
-    pub(crate) fn generate_bytes(&self, min_size: usize, max_size: usize) -> Vec<u8> {
-        self.draw_or_raise(|ctc| ctc.generate_bytes(min_size as u64, max_size as u64))
+    pub(crate) fn generate_bytes(&self, min_size: u64, max_size: u64) -> Vec<u8> {
+        self.draw_or_raise(|ctc| ctc.generate_bytes(min_size, max_size))
     }
 
     /// Draw a string described by a prebuilt libhegel string generator.
@@ -1090,6 +1090,12 @@ impl TestCase {
     /// Draw a string of the grammar described by a prebuilt libhegel grammar.
     pub(crate) fn generate_grammar(&self, grammar: &crate::ffi::Grammar, max_size: u64) -> String {
         self.draw_or_raise(|ctc| ctc.generate_grammar(grammar, max_size))
+    }
+
+    /// Advance a grammar draw to the explicit terminal whose value is due
+    /// next, or `None` once its string is complete.
+    pub(crate) fn grammar_draw_next(&self, draw: &crate::ffi::GrammarDraw<'_>) -> Option<usize> {
+        self.draw_or_raise(|ctc| ctc.grammar_draw_next(draw))
     }
 
     /// Draw a Gregorian calendar date in `[min, max]`.

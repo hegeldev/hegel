@@ -6,7 +6,7 @@ use syn::{FnArg, ItemFn};
 
 use crate::common::{
     SettingsAttrArgs, build_explicit_blocks, extract_explicit_test_cases, extract_ident_from_pat,
-    rewrite_draws_in_block,
+    extract_reproduce_failure, rewrite_draws_in_block,
 };
 
 pub fn expand_standalone_function(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -74,6 +74,12 @@ pub fn expand_standalone_function(attr: TokenStream, item: TokenStream) -> Token
         Err(err) => return err,
     };
 
+    let reproduce_call = match extract_reproduce_failure(&mut func.attrs) {
+        Ok(Some(blob)) => quote! { .reproduce_failure((#blob).to_string()) },
+        Ok(None) => quote! {},
+        Err(err) => return err,
+    };
+
     let body = {
         let mut body = (*func.block).clone();
         if let Some(test_case_name) = extract_ident_from_pat(&tc_pat) {
@@ -97,6 +103,8 @@ pub fn expand_standalone_function(attr: TokenStream, item: TokenStream) -> Token
 
             ::hegel::Hegel::new(move |#tc_pat: #tc_ty| #body)
             .settings(__hegel_settings)
+            #reproduce_call
+            .__reproduce_attribute("#[hegel::standalone_function]")
             .__database_key(format!("{}::{}", module_path!(), #fn_name))
             .test_location(::hegel::TestLocation {
                 function: #fn_name.to_string(),

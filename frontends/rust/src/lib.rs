@@ -533,7 +533,12 @@ pub use hegel_macros::explicit_test_case;
 /// ```
 ///
 /// Paste that attribute **below** `#[hegel::test]` and the next run will
-/// replay the blob instead of generating fresh test cases. A deterministic
+/// replay the blob instead of generating fresh test cases. The attribute
+/// works the same way below [`#[hegel::main]`](macro@main) and
+/// [`#[hegel::standalone_function]`](macro@standalone_function), and the
+/// reproducer line names whichever of the three the failing run came from.
+/// A run built with the [`Hegel`] builder directly is told to call
+/// [`Hegel::reproduce_failure`] instead. A deterministic
 /// blob decodes to one choice sequence, replayed up to four times, stopping
 /// at the first failure. A nondeterministic blob decodes to its stored
 /// failing timelines, replayed until one fails, under a replay budget.
@@ -689,6 +694,19 @@ pub use hegel_macros::concurrent_state_machine;
 /// cannot be combined with a positional settings expression, which is
 /// already a complete starting point.
 ///
+/// A failing test panics with the failure's own panic. A run that errors
+/// instead, such as one failing a health check, panics with a message
+/// starting `FailedHealthCheck: <check>`, `Flaky`, `Unsatisfiable` or
+/// `RunError`, which `#[should_panic(expected = "...")]` can match:
+///
+/// ```no_run
+/// #[hegel::test]
+/// #[should_panic(expected = "Unsatisfiable")]
+/// fn rejects_everything(tc: hegel::TestCase) {
+///     tc.assume(false);
+/// }
+/// ```
+///
 /// You can use other test attribute macros, like `tokio::test`, by putting them *before* `hegel::test`:
 ///
 /// ```no_run
@@ -757,9 +775,17 @@ pub use hegel_macros::test_helper;
 /// machine — so it is never stopped as an overrun. See
 /// [`Settings::suppress_health_check`].
 ///
-/// Supported CLI flags (with defaults taken from the attribute args):
-/// `--profile`, `--seed`, `--verbosity`, `--derandomize`, `--database`,
-/// `--suppress-health-check`, `--backend`, `-h` / `--help`. `--profile`
+/// Every setting but the test-case count is a CLI flag (with defaults
+/// taken from the attribute args), named after its `hegel.toml` key with
+/// `-` for `_`: `--seed`, `--verbosity`, `--derandomize`, `--database`,
+/// `--database-key`, `--phases`, `--suppress-health-check`,
+/// `--report-multiple-failures`, `--stop-on-first-failure`,
+/// `--show-statistics`, `--print-blob`, `--backend`,
+/// `--nondeterminism-strictness` and `--unbounded-choices`, each taking
+/// its value as `--flag VALUE` or `--flag=VALUE` in the vocabulary
+/// `hegel.toml` uses (see [`docs::settings`](crate::docs::settings));
+/// the engine parses them. `--profile` and `-h` / `--help` complete the
+/// list. `--profile`
 /// sets the process's default settings profile before the attribute args
 /// are evaluated, exactly like the `HEGEL_DEFAULT_PROFILE` environment
 /// variable, so compiled-in settings apply on top of the named profile.
@@ -808,5 +834,6 @@ pub use cli::apply_cli_args as __apply_cli_args;
 #[doc(hidden)]
 pub use runner::hegel;
 pub use runner::{
-    Backend, HealthCheck, Hegel, NondeterminismStrictness, Phase, ProfileError, Settings, Verbosity,
+    Backend, Database, HealthCheck, Hegel, NondeterminismStrictness, Phase, ProfileError, Settings,
+    Verbosity,
 };

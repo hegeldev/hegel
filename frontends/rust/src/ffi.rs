@@ -166,7 +166,8 @@ impl SettingsHandle {
     /// setter. The handle starts from the engine's immutable `base` profile
     /// rather than the default profile — every field is overwritten below,
     /// and `base` keeps a broken default-profile setting from failing runs
-    /// whose settings were already resolved.
+    /// whose settings were already resolved. `database_key` is the key the
+    /// test macros derive, used when the settings carry no key of their own.
     pub(crate) fn build(
         settings: &Settings,
         database_key: Option<&str>,
@@ -232,7 +233,7 @@ impl SettingsHandle {
                             &view(path.as_bytes()),
                         ));
                     }
-                    Database::Unset => {
+                    Database::Default => {
                         require_ok(hegel_c::hegel_settings_set_database(ctx, raw, ptr::null()));
                     }
                 }
@@ -241,7 +242,12 @@ impl SettingsHandle {
                     raw,
                     settings.print_blob,
                 ));
-                if let Some(key) = database_key {
+                require_ok(hegel_c::hegel_settings_set_unbounded_choices(
+                    ctx,
+                    raw,
+                    settings.unbounded_choices,
+                ));
+                if let Some(key) = settings.database_key.as_deref().or(database_key) {
                     require_ok(hegel_c::hegel_settings_set_database_key(
                         ctx,
                         raw,
@@ -290,6 +296,30 @@ impl Drop for SettingsHandle {
     }
 }
 
+/// The engine's span label for a generator identified by `name`
+/// (`hegel_label_from_name`). Called without a context: the call cannot
+/// fail for a valid string and out pointer, so there is no diagnostic to
+/// read back.
+pub(crate) fn label_from_name(name: &str) -> u64 {
+    let mut label = 0u64;
+    // SAFETY: the name view and the out pointer outlive the call.
+    require_ok(unsafe {
+        hegel_c::hegel_label_from_name(ptr::null_mut(), view(name.as_bytes()), &mut label)
+    });
+    label
+}
+
+/// The engine's combination of `labels`, in order (`hegel_label_combine`).
+pub(crate) fn combine_labels(labels: &[u64]) -> u64 {
+    let mut label = 0u64;
+    // SAFETY: the slice pointer is valid for `labels.len()` reads, and the
+    // out pointer outlives the call.
+    require_ok(unsafe {
+        hegel_c::hegel_label_combine(ptr::null_mut(), labels.as_ptr(), labels.len(), &mut label)
+    });
+    label
+}
+
 /// Materialize a frontend [`Settings`] from an engine-resolved profile: the
 /// one `name` names, or the `default` alias for `None`. The engine owns
 /// profile resolution (shipped profiles, `hegel.toml`, default-profile
@@ -333,6 +363,7 @@ fn read_settings(ctx: *mut hegel_c::HegelContext, raw: *const hegel_c::HegelSett
     let mut stop_on_first_failure = false;
     let mut show_statistics = false;
     let mut print_blob = false;
+    let mut unbounded_choices = false;
     let mut backend = hegel_c::hegel_backend_t::HEGEL_BACKEND_DEFAULT;
     let mut strictness = hegel_c::hegel_nondeterminism_strictness_t::HEGEL_NONDETERMINISM_QUIET;
     // SAFETY: ctx and raw are live handles, and every out pointer is a valid
@@ -390,6 +421,11 @@ fn read_settings(ctx: *mut hegel_c::HegelContext, raw: *const hegel_c::HegelSett
             raw,
             &mut print_blob,
         ));
+        require_ok(hegel_c::hegel_settings_get_unbounded_choices(
+            ctx,
+            raw,
+            &mut unbounded_choices,
+        ));
         require_ok(hegel_c::hegel_settings_get_backend(ctx, raw, &mut backend));
         require_ok(hegel_c::hegel_settings_get_nondeterminism_strictness(
             ctx,
@@ -398,7 +434,7 @@ fn read_settings(ctx: *mut hegel_c::HegelContext, raw: *const hegel_c::HegelSett
         ));
     }
     let database = match optional_string(database) {
-        None => Database::Unset,
+        None => Database::Default,
         Some(path) if path.is_empty() => Database::Disabled,
         Some(path) => Database::Path(path),
     };
@@ -408,6 +444,8 @@ fn read_settings(ctx: *mut hegel_c::HegelContext, raw: *const hegel_c::HegelSett
         seed: has_seed.then_some(seed),
         derandomize,
         database,
+        database_key: None,
+        unbounded_choices,
         suppress_health_check: health_checks_from_bitmask(suppress_health_check),
         phases: phases_from_bitmask(phases),
         report_multiple_failures,
@@ -417,6 +455,43 @@ fn read_settings(ctx: *mut hegel_c::HegelContext, raw: *const hegel_c::HegelSett
         backend: backend_from_c(backend),
         nondeterminism_strictness: nondeterminism_strictness_from_c(strictness),
     }
+}
+
+/// `settings` with each `(key, value)` of `values` applied over it in
+/// order, the engine parsing each value as `hegel_settings_set_from_string`
+/// does: `key` is a `hegel.toml` key, or `unbounded_choices` or
+/// `database_key`. The `Err` carries the index of the first pair the engine
+/// rejected and its diagnostic.
+pub(crate) fn settings_with_strings(
+    settings: &Settings,
+    values: &[(String, String)],
+) -> Result<Settings, (usize, String)> {
+    let handle = SettingsHandle::build(settings, None, None);
+    let mut database_key = settings.database_key.clone();
+    with_context(|ctx| {
+        for (index, (key, value)) in values.iter().enumerate() {
+            // SAFETY: ctx and the handle are live, and both views outlive
+            // the call.
+            let rc = unsafe {
+                hegel_c::hegel_settings_set_from_string(
+                    ctx,
+                    handle.raw,
+                    view(key.as_bytes()),
+                    view(value.as_bytes()),
+                )
+            };
+            if rc == hegel_result_t::HEGEL_E_INVALID_ARG {
+                return Err((index, last_error_string()));
+            }
+            require_ok(rc);
+            if key == "database_key" {
+                database_key = Some(value.clone());
+            }
+        }
+        let mut resolved = read_settings(ctx, handle.as_ptr());
+        resolved.database_key = database_key;
+        Ok(resolved)
+    })
 }
 
 /// Set (or with `None` clear) the process-wide default profile through the
@@ -803,8 +878,8 @@ impl CTestCase {
     }
 
     /// Draw a string of the grammar described by a prebuilt libhegel
-    /// grammar, of at most `max_size` characters (placeholder markers
-    /// counting as none), or up to the grammar's own cap for 0.
+    /// grammar without explicit terminals, of at most `max_size`
+    /// characters, or up to the grammar's own cap for 0.
     pub(crate) fn generate_grammar(
         &self,
         grammar: &Grammar,
@@ -818,6 +893,24 @@ impl CTestCase {
             hegel_c::hegel_generate_grammar(ctx, self.raw, grammar.raw, max_size, &mut result)
         });
         take_string_result(rc, result)
+    }
+
+    /// Advance `draw` to the explicit terminal whose value is due next,
+    /// drawing the grammar string from this test case when an attempt
+    /// starts: `Some` of the terminal's index in the grammar's explicit
+    /// terminals, or `None` once the string is complete.
+    pub(crate) fn grammar_draw_next(
+        &self,
+        draw: &GrammarDraw<'_>,
+    ) -> Result<Option<usize>, hegel_result_t> {
+        let mut terminal = 0usize;
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_grammar_draw_next(ctx, self.raw, draw.raw, &mut terminal)
+        });
+        if rc == hegel_result_t::HEGEL_E_NOT_FOUND {
+            return Ok(None);
+        }
+        rc_to_value(rc, Some(terminal))
     }
 
     /// Draw a Gregorian calendar date in `[min, max]`.
@@ -1599,8 +1692,8 @@ impl Grammar {
     /// rule `start` (`None` for Lark's default, `start`). `max_size` and
     /// `max_depth` of `0` take the engine's defaults. `alphabet` constrains
     /// the characters of every terminal drawn from its pattern, `explicit`
-    /// names the terminals whose values the caller splices in for their
-    /// [`placeholder`](Self::placeholder) markers, and `import_dir` is the
+    /// names the terminals whose values the caller supplies to a
+    /// [`start_draw`](Self::start_draw), and `import_dir` is the
     /// directory `%import`ed grammars are read from.
     pub(crate) fn new(
         text: &str,
@@ -1635,19 +1728,19 @@ impl Grammar {
         Ok(Grammar { raw })
     }
 
-    /// The marker standing for each value of the explicit terminal `name`
-    /// in the strings drawn from the grammar.
-    pub(crate) fn placeholder(&self, name: &str) -> Result<String, String> {
-        let mut marker = hegel_c::hegel_string_t::default();
-        let rc = with_context(|ctx| unsafe {
-            hegel_c::hegel_grammar_placeholder(ctx, self.raw, view(name.as_bytes()), &mut marker)
-        });
-        if rc != hegel_result_t::HEGEL_OK {
-            return Err(last_error_string());
+    /// Start a draw of a string of this grammar whose explicit terminals
+    /// take values the caller supplies (`hegel_grammar_draw_new`), of at
+    /// most `max_size` characters, values included, or up to the
+    /// grammar's own cap for 0.
+    pub(crate) fn start_draw(&self, max_size: u64) -> GrammarDraw<'_> {
+        let mut raw: *mut hegel_c::HegelGrammarDraw = ptr::null_mut();
+        require_ok(with_context(|ctx| unsafe {
+            hegel_c::hegel_grammar_draw_new(ctx, self.raw, max_size, &mut raw)
+        }));
+        GrammarDraw {
+            raw,
+            _grammar: std::marker::PhantomData,
         }
-        // SAFETY: on success the engine set `marker` to a borrowed view
-        // of bytes the grammar owns, alive for as long as `self` is.
-        Ok(string_opt(marker).unwrap_or_default())
     }
 }
 
@@ -1656,6 +1749,46 @@ impl Drop for Grammar {
         // SAFETY: `raw` came from `hegel_grammar_new` and is freed exactly
         // once.
         free_on_drop(|ctx| unsafe { hegel_c::hegel_grammar_free(ctx, self.raw) });
+    }
+}
+
+/// An owned grammar draw handle (`hegel_grammar_draw_t`), freed on drop:
+/// one string of a grammar with explicit terminals, which libhegel draws
+/// and splices while the caller supplies each terminal's value. It borrows
+/// the grammar, which must outlive it.
+pub(crate) struct GrammarDraw<'g> {
+    raw: *mut hegel_c::HegelGrammarDraw,
+    _grammar: std::marker::PhantomData<&'g Grammar>,
+}
+
+impl GrammarDraw<'_> {
+    /// Supply the value of the explicit terminal
+    /// [`CTestCase::grammar_draw_next`] asked for.
+    pub(crate) fn provide(&self, value: &str) {
+        require_ok(with_context(|ctx| unsafe {
+            hegel_c::hegel_grammar_draw_provide(ctx, self.raw, view(value.as_bytes()))
+        }));
+    }
+
+    /// The finished string, once [`CTestCase::grammar_draw_next`] has
+    /// reported that no terminal is left.
+    pub(crate) fn result(&self) -> String {
+        let mut result = hegel_c::hegel_owned_string_t {
+            data: ptr::null(),
+            len: 0,
+        };
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_grammar_draw_result(ctx, self.raw, &mut result)
+        });
+        take_string_result(rc, result).unwrap_or_else(|rc| crate::test_case::raise_for_rc(rc))
+    }
+}
+
+impl Drop for GrammarDraw<'_> {
+    fn drop(&mut self) {
+        // SAFETY: `raw` came from `hegel_grammar_draw_new` and is freed
+        // exactly once.
+        free_on_drop(|ctx| unsafe { hegel_c::hegel_grammar_draw_free(ctx, self.raw) });
     }
 }
 
@@ -1754,6 +1887,13 @@ impl PrinterHandle {
     pub(crate) fn breakable(&self, sep: &str) -> Result<(), PrinterCallError> {
         Self::check(with_context(|ctx| unsafe {
             hegel_c::hegel_printer_breakable(ctx, self.raw, view(sep.as_bytes()))
+        }))
+    }
+
+    /// Emit `text` only if the innermost open group renders broken.
+    pub(crate) fn if_break(&self, text: &str) -> Result<(), PrinterCallError> {
+        Self::check(with_context(|ctx| unsafe {
+            hegel_c::hegel_printer_if_break(ctx, self.raw, view(text.as_bytes()))
         }))
     }
 
@@ -1875,6 +2015,20 @@ impl Drop for PrinterHandle {
     }
 }
 
+/// Why a run errored, as read from `hegel_run_result_error_kind`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunErrorKind {
+    /// A health check failed.
+    HealthCheck(HealthCheck),
+    /// The test behaved nondeterministically under the `error` strictness
+    /// (both `HEGEL_RUN_ERROR_FLAKY` and `HEGEL_RUN_ERROR_NONDETERMINISTIC`).
+    Flaky,
+    /// No valid test case could be generated.
+    Unsatisfiable,
+    /// Any other run error: a usage error, or a bug in Hegel.
+    Other,
+}
+
 /// Owned snapshot of a finished run's aggregate result, independent of the
 /// [`RunHandle`] it was read from; released via `hegel_run_result_free` on
 /// drop.
@@ -1901,6 +2055,20 @@ impl RunResult {
             hegel_c::hegel_run_result_error(ctx, self.raw, &mut p)
         }));
         optional_string(p)
+    }
+
+    /// Why the run errored (`hegel_run_result_error_kind`), for a run whose
+    /// status is `HEGEL_RUN_STATUS_ERROR`.
+    pub(crate) fn error_kind(&self) -> RunErrorKind {
+        use hegel_c::hegel_run_error_kind_t as k;
+        let mut kind = k::HEGEL_RUN_ERROR_NONE;
+        let mut health_check = 0u32;
+        // SAFETY: self.raw is this snapshot's live pointer; both out
+        // pointers are valid.
+        require_ok(with_context(|ctx| unsafe {
+            hegel_c::hegel_run_result_error_kind(ctx, self.raw, &mut kind, &mut health_check)
+        }));
+        run_error_kind(kind, health_check)
     }
 
     pub(crate) fn failure_count(&self) -> usize {
@@ -2104,6 +2272,24 @@ fn phases_from_bitmask(mask: u32) -> Vec<Phase> {
     .filter(|(bit, _)| mask & (*bit as u32) != 0)
     .map(|(_, phase)| phase)
     .collect()
+}
+
+/// Classify a run error from `hegel_run_result_error_kind`'s outputs. A
+/// health-check error whose bit this crate does not know (it pins libhegel
+/// exactly, so this would be a bug) is reported as a plain run error
+/// rather than panicking.
+fn run_error_kind(kind: hegel_c::hegel_run_error_kind_t, health_check: u32) -> RunErrorKind {
+    use hegel_c::hegel_run_error_kind_t as k;
+    match kind {
+        k::HEGEL_RUN_ERROR_HEALTH_CHECK => health_checks_from_bitmask(health_check)
+            .first()
+            .map_or(RunErrorKind::Other, |check| {
+                RunErrorKind::HealthCheck(*check)
+            }),
+        k::HEGEL_RUN_ERROR_FLAKY | k::HEGEL_RUN_ERROR_NONDETERMINISTIC => RunErrorKind::Flaky,
+        k::HEGEL_RUN_ERROR_UNSATISFIABLE => RunErrorKind::Unsatisfiable,
+        _ => RunErrorKind::Other,
+    }
 }
 
 fn health_checks_from_bitmask(mask: u32) -> Vec<HealthCheck> {

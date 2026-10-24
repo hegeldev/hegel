@@ -86,8 +86,8 @@ fn test_suppress_health_check_multiple() {
     assert_eq!(
         parsed.suppress_health_check,
         vec![
-            crate::runner::HealthCheck::TooSlow,
-            crate::runner::HealthCheck::FilterTooMuch
+            crate::runner::HealthCheck::FilterTooMuch,
+            crate::runner::HealthCheck::TooSlow
         ]
     );
 }
@@ -115,9 +115,20 @@ fn test_multiple_flags() {
 
 #[test]
 fn test_unknown_arg_error() {
-    let err = try_apply_cli_args(Settings::new, s(&["--nope"])).unwrap_err();
+    for args in [&["--nope", "1"][..], &["--nope"][..], &["--nope=1"][..]] {
+        let err = try_apply_cli_args(Settings::new, s(args)).unwrap_err();
+        match err {
+            CliError::Parse(msg) => assert_eq!(msg, "Unknown argument: --nope"),
+            _ => panic!("wrong error kind"),
+        }
+    }
+}
+
+#[test]
+fn test_missing_value_for_a_flag_that_takes_an_empty_value() {
+    let err = try_apply_cli_args(Settings::new, s(&["--phases"])).unwrap_err();
     match err {
-        CliError::Parse(msg) => assert!(msg.contains("Unknown argument")),
+        CliError::Parse(msg) => assert_eq!(msg, "--phases requires a value"),
         _ => panic!("wrong error kind"),
     }
 }
@@ -203,7 +214,7 @@ fn test_bool_aliases() {
 fn test_invalid_seed_error() {
     let err = try_apply_cli_args(Settings::new, s(&["--seed", "abc"])).unwrap_err();
     match err {
-        CliError::Parse(msg) => assert!(msg.contains("integer or 'none'")),
+        CliError::Parse(msg) => assert!(msg.starts_with("--seed: "), "{msg}"),
         _ => panic!("wrong error kind"),
     }
 }
@@ -225,14 +236,107 @@ fn test_apply_cli_args_help() {
 }
 
 #[test]
-fn test_removed_flags_are_unknown_arguments() {
-    for args in [&["--single-test-case"][..], &["--test-cases", "3"][..]] {
+fn test_removed_flag_is_unknown_argument() {
+    let err = try_apply_cli_args(Settings::new, s(&["--single-test-case"])).unwrap_err();
+    match err {
+        CliError::Parse(msg) => assert_eq!(msg, "Unknown argument: --single-test-case"),
+        other => panic!("expected parse error, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_test_cases_flag_is_rejected() {
+    let err = try_apply_cli_args(Settings::new, s(&["--test-cases", "3"])).unwrap_err();
+    match err {
+        CliError::Parse(msg) => assert!(msg.contains("exactly one test case"), "{msg}"),
+        other => panic!("expected parse error, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_underscore_flag_is_unknown_argument() {
+    for (args, flag) in [
+        (&["--test_cases", "3"][..], "--test_cases"),
+        (&["--test_cases=3"][..], "--test_cases"),
+        (&["--seed_", "3"][..], "--seed_"),
+        (&["--database_key", "k"][..], "--database_key"),
+    ] {
         let err = try_apply_cli_args(Settings::new, s(args)).unwrap_err();
         match err {
-            CliError::Parse(msg) => assert!(msg.contains("Unknown argument"), "{msg}"),
-            other => panic!("expected parse error for {args:?}, got {other:?}"),
+            CliError::Parse(msg) => assert_eq!(msg, format!("Unknown argument: {flag}")),
+            other => panic!("expected parse error, got {other:?}"),
         }
     }
+}
+
+#[test]
+fn test_positional_argument_is_unknown() {
+    for arg in ["positional", "--"] {
+        let err = try_apply_cli_args(Settings::new, s(&[arg])).unwrap_err();
+        match err {
+            CliError::Parse(msg) => assert_eq!(msg, format!("Unknown argument: {arg}")),
+            other => panic!("expected parse error, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn test_equals_form() {
+    let parsed = apply(&["--seed=7", "--verbosity=debug"]);
+    assert_eq!(parsed.seed, Some(7));
+    assert_eq!(parsed.verbosity, Verbosity::Debug);
+}
+
+#[test]
+fn test_every_engine_setting_is_a_flag() {
+    let parsed = apply(&[
+        "--phases",
+        "generate,shrink",
+        "--report-multiple-failures",
+        "true",
+        "--stop-on-first-failure",
+        "false",
+        "--show-statistics",
+        "yes",
+        "--print-blob",
+        "no",
+        "--nondeterminism-strictness",
+        "error",
+        "--unbounded-choices",
+        "1",
+        "--database-key",
+        "my-key",
+    ]);
+    assert_eq!(
+        parsed.phases,
+        vec![crate::runner::Phase::Generate, crate::runner::Phase::Shrink]
+    );
+    assert!(parsed.report_multiple_failures);
+    assert!(!parsed.stop_on_first_failure);
+    assert!(parsed.show_statistics);
+    assert!(!parsed.print_blob);
+    assert_eq!(
+        parsed.nondeterminism_strictness,
+        crate::runner::NondeterminismStrictness::Error
+    );
+    assert!(parsed.unbounded_choices);
+    assert_eq!(parsed.database_key.as_deref(), Some("my-key"));
+}
+
+#[test]
+fn test_compiled_in_database_key_is_kept() {
+    let parsed = try_apply_cli_args(
+        || Settings::new().database_key("compiled"),
+        s(&["--seed", "1"]),
+    )
+    .unwrap();
+    assert_eq!(parsed.database_key.as_deref(), Some("compiled"));
+}
+
+#[test]
+fn test_empty_phases() {
+    let parsed = apply(&["--phases="]);
+    assert!(parsed.phases.is_empty());
 }
 
 #[test]
@@ -289,7 +393,7 @@ fn test_database_default() {
         s(&["--database", "default"]),
     )
     .unwrap();
-    assert_eq!(parsed.database, Database::Unset);
+    assert_eq!(parsed.database, Database::Default);
 }
 
 /// `--profile` values that parse set the default profile for the whole
@@ -310,6 +414,35 @@ fn test_profile_flag_repeated_error() {
     let err = try_apply_cli_args(
         Settings::new,
         s(&["--profile", "ci", "--profile", "development"]),
+    )
+    .unwrap_err();
+    match err {
+        CliError::Parse(msg) => assert_eq!(msg, "--profile may be given at most once"),
+        other => panic!("expected parse error, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_extract_profile_takes_both_forms() {
+    let flags = |strs: &[&str]| s(strs).split_off(1);
+    let mut args = flags(&["--seed", "1", "--profile=ci", "--derandomize", "true"]);
+    assert_eq!(extract_profile(&mut args).unwrap(), Some("ci".to_string()));
+    assert_eq!(args, flags(&["--seed", "1", "--derandomize", "true"]));
+
+    let mut args = flags(&["--profile", "ci", "--seed", "1"]);
+    assert_eq!(extract_profile(&mut args).unwrap(), Some("ci".to_string()));
+    assert_eq!(args, flags(&["--seed", "1"]));
+
+    let mut args = flags(&["--seed", "1"]);
+    assert_eq!(extract_profile(&mut args).unwrap(), None);
+    assert_eq!(args, flags(&["--seed", "1"]));
+}
+
+#[test]
+fn test_profile_flag_repeated_in_mixed_forms_error() {
+    let err = try_apply_cli_args(
+        Settings::new,
+        s(&["--profile=ci", "--profile", "development"]),
     )
     .unwrap_err();
     match err {

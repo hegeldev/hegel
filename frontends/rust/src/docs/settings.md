@@ -10,12 +10,13 @@ those places combine, and how the *profile* a run starts from is chosen.
 | `verbosity` | `quiet`, `normal`, `verbose`, `debug` | `normal` | How much Hegel prints ([`Verbosity`](crate::Verbosity)). |
 | `seed` | integer, or none | none | A fixed seed for reproducibility; none means a fresh random seed per run. |
 | `derandomize` | boolean | `false` | Use a fixed seed derived from the test name, so every run of a test is the same. A fixed `seed` takes precedence. |
-| `database` | a path, `disabled`, or `default` | `default` | Where failing examples are stored for replay; `default` is `.hegel/examples` under the working directory. |
+| `database` | a path, `disabled`, or `default` | `default` | Where failing examples are stored for replay; `default` is `.hegel/examples` under the working directory. In Rust, [`Database`](crate::Database) or an `Option<String>`. |
 | `suppress_health_check` | list of `filter_too_much`, `too_slow`, `test_cases_too_large`, `large_initial_test_case`, or `all` | none | Health checks that should not fail the run ([`HealthCheck`](crate::HealthCheck)). Suppressing `test_cases_too_large` also removes the limit of 2^20 choices per test case. |
 | `phases` | list of `explicit`, `reuse`, `generate`, `target`, `shrink` | all five | Which parts of the run happen ([`Phase`](crate::Phase)); leaving out `shrink`, say, reports the first counterexample found. |
 | `report_multiple_failures` | boolean | `false` | Report every distinct failure a run finds rather than collapsing to one. |
 | `stop_on_first_failure` | boolean | `true` | Stop generating once a failure is found. When `false`, the run uses its whole `test_cases` budget before reporting; every failure found is persisted, and with `report_multiple_failures` off only the smallest is shrunk and reported. |
 | `show_statistics` | boolean | `false` | Print the end-of-run statistics report for events recorded with [`TestCase::event`](crate::TestCase::event) and [`TestCase::event_value`](crate::TestCase::event_value). |
+| `unbounded_choices` | boolean | `false` | Remove the limit of 2^20 choices per test case, for a test case meant to run for a long time. |
 | `print_blob` | boolean | `true` | On failure, print a copy-pasteable `#[hegel::reproduce_failure("…")]` line. |
 | `backend` | `default`, `urandom` | `default` | The source of randomness ([`Backend`](crate::Backend)): a seeded PRNG, or fresh entropy on every draw for Antithesis's fuzzer to control — asked of the fuzzer directly inside Antithesis, read from `/dev/urandom` elsewhere. |
 | `nondeterminism_strictness` | `quiet`, `warn`, `error` | `quiet` | How a run reacts when it detects nondeterministic test behavior ([`NondeterminismStrictness`](crate::NondeterminismStrictness)): switch to nondeterministic handling silently, switch with a one-line notice, or abort the run with a flaky-test error. |
@@ -24,6 +25,11 @@ The "Values" column is the vocabulary `hegel.toml` and the command-line
 flags use. In Rust the same settings are the builder methods on
 [`Settings`](crate::Settings), and the `#[hegel::test]` attribute arguments
 are those methods by name.
+
+One more builder method, [`Settings::database_key`](crate::Settings::database_key),
+is not part of a profile: it names the key a test's failing examples are
+stored under. The test macros key each test by its module path and name
+unless it is set.
 
 # Where settings come from
 
@@ -52,6 +58,7 @@ layers below it set and leaves the rest alone:
    | `HEGEL_DERANDOMIZE` | Sets `derandomize`: `true`, `1` or `yes`, or `false`, `0` or `no`. |
    | `HEGEL_PRINT_BLOB` | Sets `print_blob`, with the same vocabulary. |
    | `HEGEL_STOP_ON_FIRST_FAILURE` | Sets `stop_on_first_failure`, with the same vocabulary. |
+   | `HEGEL_UNBOUNDED_CHOICES` | Sets `unbounded_choices`, with the same vocabulary. |
    | `HEGEL_NONDETERMINISM_STRICTNESS` | Sets `nondeterminism_strictness`: `quiet`, `warn` or `error`. |
 
    An empty variable is ignored; any other malformed value is an error,
@@ -84,10 +91,15 @@ layers below it set and leaves the rest alone:
    `profile`. These are the settings the author of the test chose, so they
    take precedence over the environment variables: a variable adjusts the
    suite, not a test that pins the setting.
-5. **Command-line flags**, for `#[hegel::main]` binaries only: `--seed`,
-   `--verbosity`, `--derandomize`, `--database`,
-   `--suppress-health-check`, and `--backend` apply on top of the
-   compiled-in settings. `--profile <name>` is different: it sets the
+5. **Command-line flags**, for `#[hegel::main]` binaries only: every
+   setting is a flag named after its `hegel.toml` key with `-` for `_`
+   (`--seed`, `--verbosity`, `--suppress-health-check`,
+   `--unbounded-choices`, `--database-key`, …), taking a value in that
+   key's vocabulary as `--flag VALUE` or `--flag=VALUE`, and applies on
+   top of the compiled-in settings. The engine parses the values, so they
+   are spelled as in `hegel.toml`, with booleans as the `HEGEL_*`
+   variables take them and lists comma-separated. `--test-cases` is
+   rejected. `--profile <name>` is different: it sets the
    process's default profile (see [Choosing the default
    profile](#choosing-the-default-profile)) before the compiled-in
    settings are evaluated, so they still apply on top of the named
@@ -332,6 +344,7 @@ run first.
 | `HEGEL_DERANDOMIZE` | profile resolution | Sets `derandomize` over the resolved profile. |
 | `HEGEL_PRINT_BLOB` | profile resolution | Sets `print_blob` over the resolved profile. |
 | `HEGEL_STOP_ON_FIRST_FAILURE` | profile resolution | Sets `stop_on_first_failure` over the resolved profile. |
+| `HEGEL_UNBOUNDED_CHOICES` | profile resolution | Sets `unbounded_choices` over the resolved profile. |
 | `HEGEL_NONDETERMINISM_STRICTNESS` | profile resolution | Sets `nondeterminism_strictness` over the resolved profile. |
 | `ANTITHESIS_OUTPUT_DIR` | environment detection | Selects the `workload` profile, and each test's verdict is reported to the `sdk.jsonl` inside it. Must name an existing directory. |
 | `CI`, `GITHUB_ACTIONS`, … | environment detection | Selects the `ci` profile. |

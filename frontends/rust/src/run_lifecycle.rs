@@ -22,7 +22,7 @@ use crate::control::{
     AssumeFailed, InternalError, InvalidArgument, LoopDone, StopTest, currently_in_test_context,
     hegel_internal_error, with_test_context,
 };
-use crate::ffi::{CTestCase, RunHandle, SettingsHandle};
+use crate::ffi::{CTestCase, RunErrorKind, RunHandle, SettingsHandle};
 use crate::runner::{Settings, TestLocation, Verbosity};
 use crate::test_case::{RunOutput, TestCase};
 
@@ -441,15 +441,30 @@ fn render_diagnostic(
 /// enabled *and* the failure carries a reproduce blob. A blobless failure —
 /// an unconfirmed nondeterministic failure reported caveat-only, a blob
 /// replay (the caller already holds the blob) — prints nothing.
-fn reproducer_line(settings: &Settings, reproduce_blob: Option<&str>) -> Option<String> {
+///
+/// `attribute` is the attribute macro the run came from, which the
+/// `#[hegel::reproduce_failure]` attribute goes below; a run built with the
+/// [`Hegel`](crate::Hegel) builder directly is told to call
+/// [`Hegel::reproduce_failure`](crate::Hegel::reproduce_failure) instead.
+fn reproducer_line(
+    settings: &Settings,
+    reproduce_blob: Option<&str>,
+    attribute: Option<&str>,
+) -> Option<String> {
     if !settings.print_blob {
         return None;
     }
     let blob = reproduce_blob?;
-    Some(format!(
-        "\nTo reproduce this failure, add the attribute below \
-         #[hegel::test]:\n    #[hegel::reproduce_failure(\"{blob}\")]"
-    ))
+    Some(match attribute {
+        Some(attribute) => format!(
+            "\nTo reproduce this failure, add the attribute below \
+             {attribute}:\n    #[hegel::reproduce_failure(\"{blob}\")]"
+        ),
+        None => format!(
+            "\nTo reproduce this failure, call this on the Hegel builder \
+             before run():\n    .reproduce_failure(\"{blob}\")"
+        ),
+    })
 }
 
 /// One origin's failure report material. Captures are ranked
@@ -535,6 +550,7 @@ pub(crate) fn drive<F>(
     settings: &Settings,
     database_key: Option<&str>,
     test_location: Option<&TestLocation>,
+    reproduce_attribute: Option<&str>,
 ) where
     F: FnMut(TestCase),
 {
@@ -545,10 +561,17 @@ pub(crate) fn drive<F>(
     let c_settings = SettingsHandle::build(settings, database_key, test_location);
     let run = match RunHandle::start(&c_settings, output.sink()) {
         Ok(run) => run,
-        Err(message) => panic!("{message}"), // nocov
+        Err(message) => panic!("RunError: {message}"), // nocov
     };
 
-    drive_run(run, &mut test_fn, settings, &output, None);
+    drive_run(
+        run,
+        &mut test_fn,
+        settings,
+        &output,
+        None,
+        reproduce_attribute,
+    );
 }
 
 /// The shared pump-and-report loop behind [`drive`] and
@@ -567,6 +590,7 @@ fn drive_run<F: FnMut(TestCase)>(
     settings: &Settings,
     output: &RunOutput,
     stale_message: Option<&str>,
+    reproduce_attribute: Option<&str>,
 ) {
     let verbosity = settings.verbosity;
     let quiet = verbosity == Verbosity::Quiet;
@@ -617,7 +641,7 @@ fn drive_run<F: FnMut(TestCase)>(
             let message = result
                 .error()
                 .unwrap_or_else(|| "the run failed with an unknown error".to_string());
-            panic!("{message}");
+            panic!("{}", run_error_message(result.error_kind(), message));
         }
         RunStatus::HEGEL_RUN_STATUS_FAILED => {
             let count = result.failure_count();
@@ -647,7 +671,11 @@ fn drive_run<F: FnMut(TestCase)>(
                         output.line(&format!("note: {caveat}"));
                     }
                 }
-                if let Some(line) = reproducer_line(settings, failure.reproduce_blob.as_deref()) {
+                if let Some(line) = reproducer_line(
+                    settings,
+                    failure.reproduce_blob.as_deref(),
+                    reproduce_attribute,
+                ) {
                     output.block(&format!("{line}\n"));
                 }
                 last_payload = Some(report.payload);
@@ -664,6 +692,26 @@ fn drive_run<F: FnMut(TestCase)>(
                 );
             }
         }
+    }
+}
+
+/// The panic message for a run that errored rather than passing or
+/// failing: the engine's diagnostic, guaranteed to start with the prefix
+/// [`Hegel::run`](crate::Hegel::run) documents for its kind —
+/// `FailedHealthCheck: <check>`, `Flaky`, `Unsatisfiable` or `RunError`.
+/// The engine's own wording usually starts that way already; when it does
+/// not, the prefix is added in front of it.
+fn run_error_message(kind: RunErrorKind, message: String) -> String {
+    let prefix = match kind {
+        RunErrorKind::HealthCheck(check) => format!("FailedHealthCheck: {check:?}"),
+        RunErrorKind::Flaky => "Flaky".to_string(),
+        RunErrorKind::Unsatisfiable => "Unsatisfiable".to_string(),
+        RunErrorKind::Other => "RunError".to_string(),
+    };
+    if message.starts_with(&prefix) {
+        message
+    } else {
+        format!("{prefix}: {message}")
     }
 }
 
@@ -684,6 +732,7 @@ pub(crate) fn drive_blob_replay<F>(
     database_key: Option<&str>,
     blob: &str,
     test_location: Option<&TestLocation>,
+    reproduce_attribute: Option<&str>,
 ) where
     F: FnMut(TestCase),
 {
@@ -704,6 +753,7 @@ pub(crate) fn drive_blob_replay<F>(
              10% of the time escapes it about 5% of the time). Re-run to retry, or \
              delete the attribute once the failure is fixed.",
         ),
+        reproduce_attribute,
     );
 }
 

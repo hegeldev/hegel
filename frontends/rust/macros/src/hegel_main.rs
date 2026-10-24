@@ -4,7 +4,7 @@ use syn::{FnArg, ItemFn};
 
 use crate::common::{
     SettingsAttrArgs, build_explicit_blocks, extract_explicit_test_cases, extract_ident_from_pat,
-    rewrite_draws_in_block,
+    extract_reproduce_failure, rewrite_draws_in_block,
 };
 
 pub fn expand_main(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -75,6 +75,12 @@ pub fn expand_main(attr: TokenStream, item: TokenStream) -> TokenStream {
         Err(err) => return err,
     };
 
+    let reproduce_call = match extract_reproduce_failure(&mut func.attrs) {
+        Ok(Some(blob)) => quote! { .reproduce_failure((#blob).to_string()) },
+        Ok(None) => quote! {},
+        Err(err) => return err,
+    };
+
     let body = {
         let mut body = (*func.block).clone();
         if let Some(test_case_name) = extract_ident_from_pat(param_pat) {
@@ -111,6 +117,8 @@ pub fn expand_main(attr: TokenStream, item: TokenStream) -> TokenStream {
             ::hegel::Hegel::new(|#param_pat: #param_ty| #body)
             .settings(__hegel_settings)
             .__single_test_case()
+            #reproduce_call
+            .__reproduce_attribute("#[hegel::main]")
             .__database_key(format!("{}::{}", module_path!(), #fn_name))
             .test_location(::hegel::TestLocation {
                 function: #fn_name.to_string(),

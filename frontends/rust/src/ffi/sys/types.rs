@@ -157,6 +157,10 @@ pub(crate) type hegel_output_callback_t =
 
 pub(crate) const HEGEL_STATE_MACHINE_DONE: i64 = i64::MIN;
 
+pub(crate) const HEGEL_FILTER_ATTEMPTS: u32 = 3;
+
+pub(crate) const HEGEL_MAX_SIZE_DEFAULT: u64 = u64::MAX - 1;
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct hegel_date_t {
