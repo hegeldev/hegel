@@ -112,6 +112,17 @@ pub(crate) fn hstrs(items: &[String]) -> Vec<c::hegel_string_t> {
     items.iter().map(|s| hstr(s)).collect()
 }
 
+/// A text or bytes `max_size` as the engine takes it: `None` (no maximum
+/// given) is `HEGEL_MAX_SIZE_DEFAULT`, for the engine's default, and a
+/// maximum at or above that sentinel is no upper bound.
+pub(crate) fn max_size_arg(max_size: Option<u64>) -> u64 {
+    match max_size {
+        None => c::HEGEL_MAX_SIZE_DEFAULT,
+        Some(n) if n >= c::HEGEL_MAX_SIZE_DEFAULT => u64::MAX,
+        Some(n) => n,
+    }
+}
+
 /// Copy a borrowed engine string out. A NULL `data` is the empty string.
 pub(crate) fn string_from(s: c::hegel_string_t) -> String {
     if s.data.is_null() {
@@ -292,6 +303,7 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(set_default_profile, m)?)?;
     m.add_function(wrap_pyfunction!(set_unicode_version, m)?)?;
     m.add_function(wrap_pyfunction!(register_profile, m)?)?;
+    m.add("FILTER_ATTEMPTS", c::HEGEL_FILTER_ATTEMPTS)?;
     m.add("STATUS_VALID", c::hegel_status_t::HEGEL_STATUS_VALID as u32)?;
     m.add(
         "STATUS_INVALID",

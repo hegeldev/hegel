@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
+from hegel import _native
 from hegel._labels import combine_labels, label_from_name
 from hegel.errors import InvalidArgument
 from hegel.pretty import PrettyPrinter, pretty_print
@@ -110,8 +111,8 @@ class Generator(Generic[T]):
     def filter(self, predicate: Callable[[T], bool]) -> Generator[T]:
         """Keep only values satisfying ``predicate``.
 
-        Each draw tries the source up to three times; if no attempt
-        satisfies ``predicate``, the test case is rejected as if by
+        Each draw tries the source up to three times, the number every
+        Hegel library's filter uses; if no attempt satisfies ``predicate``, the test case is rejected as if by
         :meth:`TestCase.assume <hegel.TestCase.assume>`. A filter that
         rejects most values therefore rejects many test cases, and may fail
         the ``filter_too_much`` health check: prefer generating the values
@@ -261,7 +262,7 @@ class Filtered(Generator[T]):
         return Filtered(self.source, both, (*self.names, _name(predicate)))
 
     def _draw(self, tc: TestCase, printer: PrettyPrinter, silent: bool) -> T:
-        for _ in range(3):
+        for _ in range(_native.FILTER_ATTEMPTS):
             tc.start_span(FILTER_ATTEMPT_LABEL)
             speculation = printer.speculate()
             try:

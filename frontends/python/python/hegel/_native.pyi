@@ -15,6 +15,7 @@ class RetrySignal(BaseException): ...
 
 # -- constants ----------------------------------------------------------------
 
+FILTER_ATTEMPTS: int
 STATUS_VALID: int
 STATUS_INVALID: int
 STATUS_OVERRUN: int
@@ -98,7 +99,7 @@ class StringGenerator:
     @staticmethod
     def text(
         min_size: int,
-        max_size: int,
+        max_size: int | None,
         codec: str | None,
         min_codepoint: int,
         max_codepoint: int | None,
@@ -173,7 +174,7 @@ class TestCase:
         exclude_max: bool,
         smallest_nonzero_magnitude: float,
     ) -> float: ...
-    def generate_bytes(self, min_size: int, max_size: int) -> bytes: ...
+    def generate_bytes(self, min_size: int, max_size: int | None) -> bytes: ...
     def generate_string(self, generator: StringGenerator) -> bytes: ...
     def generate_date(
         self, min_value: tuple[int, int, int], max_value: tuple[int, int, int]

@@ -1,7 +1,7 @@
 use crate::printer::{Printer, with_options};
 use crate::{
     InternalError, OutputBuffer, SendPtr, Settings, StringGenerator, big_from_le, big_to_le, check,
-    hstr, hstr_bytes, hstrs, opt_string_from, output_trampoline, output_user_data, string_from,
+    hstr, max_size_arg, hstr_bytes, hstrs, opt_string_from, output_trampoline, output_user_data, string_from,
     with_ctx,
 };
 use hegel_c as c;
@@ -414,7 +414,7 @@ impl TestCase {
         &self,
         py: Python<'py>,
         min_size: u64,
-        max_size: u64,
+        max_size: Option<u64>,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let mut result = c::hegel_generate_bytes_result_t {
             data: ptr::null_mut(),
@@ -422,7 +422,7 @@ impl TestCase {
         };
         let bytes = with_ctx(|ctx| {
             check(unsafe {
-                c::hegel_generate_bytes(ctx, self.tc(), min_size, max_size, &mut result)
+                c::hegel_generate_bytes(ctx, self.tc(), min_size, max_size_arg(max_size), &mut result)
             })?;
             // SAFETY: on success data points to len bytes owned by us until
             // released with the matching free.

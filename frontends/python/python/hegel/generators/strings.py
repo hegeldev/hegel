@@ -28,7 +28,6 @@ __all__ = [
     "uuids",
 ]
 
-DEFAULT_MAX_SIZE = 100
 SUPPORTED_CODECS = ("ascii", "latin-1", "iso-8859-1", "utf-8")
 
 TEXT_LABEL = label_from_name("hegel.text")
@@ -44,12 +43,21 @@ IPV6_LABEL = label_from_name("hegel.ip_addresses.v6")
 UUID_LABEL = label_from_name("hegel.uuids")
 
 
-def _default_max_size(min_size: int, max_size: int | None) -> int:
-    if max_size is not None:
-        if max_size < min_size:
-            raise InvalidArgument(f"Cannot have max_size={max_size!r} < min_size={min_size!r}")
-        return max_size
-    return min_size + DEFAULT_MAX_SIZE if min_size > DEFAULT_MAX_SIZE else DEFAULT_MAX_SIZE
+def _check_max_size(min_size: int, max_size: object) -> int | None:
+    """``max_size`` checked against ``min_size``; ``None`` (no maximum
+    given) stays ``None``, for the engine to apply its default."""
+    if max_size is None:
+        return None
+    max_size = _check_size("max_size", max_size)
+    if max_size < min_size:
+        raise InvalidArgument(f"Cannot have max_size={max_size!r} < min_size={min_size!r}")
+    return max_size
+
+
+def _sizes(min_size: int, max_size: int | None) -> str:
+    if max_size is None:
+        return f"min_size={min_size}"
+    return f"min_size={min_size}, max_size={max_size}"
 
 
 def _check_size(name: str, value: object) -> int:
@@ -151,7 +159,7 @@ class CharacterSpec:
         self.include_characters = _check_characters("include_characters", include_characters)
         self.exclude_characters = _check_characters("exclude_characters", exclude_characters)
 
-    def build(self, min_size: int, max_size: int) -> _native.StringGenerator:
+    def build(self, min_size: int, max_size: int | None) -> _native.StringGenerator:
         return _native.StringGenerator.text(
             min_size,
             max_size,
@@ -176,7 +184,9 @@ def _alphabet_spec(alphabet: Any) -> CharacterSpec | Generator[str]:
 
 
 class Text(Generator[str]):
-    def __init__(self, spec: CharacterSpec, min_size: int, max_size: int, args: str = "") -> None:
+    def __init__(
+        self, spec: CharacterSpec, min_size: int, max_size: int | None, args: str = ""
+    ) -> None:
         self.spec = spec
         self.min_size = min_size
         self.max_size = max_size
@@ -189,13 +199,13 @@ class Text(Generator[str]):
 
     def __repr__(self) -> str:
         prefix = f"{self._args}, " if self._args else ""
-        return f"text({prefix}min_size={self.min_size}, max_size={self.max_size})"
+        return f"text({prefix}{_sizes(self.min_size, self.max_size)})"
 
 
 class TextFromAlphabet(Generator[str]):
     """Text whose characters come from an arbitrary generator."""
 
-    def __init__(self, alphabet: Generator[str], min_size: int, max_size: int) -> None:
+    def __init__(self, alphabet: Generator[str], min_size: int, max_size: int | None) -> None:
         from hegel.generators.collections import lists
 
         self.alphabet = alphabet
@@ -205,9 +215,7 @@ class TextFromAlphabet(Generator[str]):
         self.label = TEXT_LABEL
 
     def __repr__(self) -> str:
-        return (
-            f"text(alphabet={self.alphabet!r}, min_size={self.min_size}, max_size={self.max_size})"
-        )
+        return f"text(alphabet={self.alphabet!r}, {_sizes(self.min_size, self.max_size)})"
 
     def do_draw(self, tc: TestCase) -> str:
         chars = tc.draw_silent(self._lists)
@@ -237,8 +245,11 @@ def text(
     characters, shrinking toward shorter strings of simpler characters
     (``""``, then ``"0"``).
 
-    ``max_size`` defaults to 100, or ``min_size + 100`` when ``min_size``
-    is larger than that. A negative size or ``max_size < min_size`` is an
+    Without ``max_size`` the engine applies its default maximum for text:
+    100 characters, or ``min_size + 100`` when ``min_size`` is larger than
+    that. (With an arbitrary generator as ``alphabet``, the string is a
+    list of its characters, and like :func:`~hegel.generators.lists` has
+    no fixed maximum.) A negative size or ``max_size < min_size`` is an
     :class:`~hegel.InvalidArgument`.
 
     ``alphabet`` restricts the characters: a string or sequence of
@@ -261,9 +272,7 @@ def text(
         ascii_text = tc.draw(gs.text(codec="ascii"))
     """
     min_size = _check_size("min_size", min_size)
-    max_size = _default_max_size(
-        min_size, None if max_size is None else _check_size("max_size", max_size)
-    )
+    max_size = _check_max_size(min_size, max_size)
     char_params = any(
         p is not None
         for p in (
@@ -488,7 +497,7 @@ def _inline_flags(flags: int) -> str:
 
 
 class Binary(Generator[bytes]):
-    def __init__(self, min_size: int, max_size: int) -> None:
+    def __init__(self, min_size: int, max_size: int | None) -> None:
         self.min_size = min_size
         self.max_size = max_size
         self.label = BINARY_LABEL
@@ -497,24 +506,20 @@ class Binary(Generator[bytes]):
         return tc._generate_bytes(self.min_size, self.max_size)
 
     def __repr__(self) -> str:
-        return f"binary(min_size={self.min_size}, max_size={self.max_size})"
+        return f"binary({_sizes(self.min_size, self.max_size)})"
 
 
 def binary(*, min_size: int = 0, max_size: int | None = None) -> Generator[bytes]:
     """Generate byte strings of between ``min_size`` and ``max_size``
     bytes, shrinking toward shorter strings of zero bytes.
 
-    ``max_size`` defaults to 100, or ``min_size + 100`` when ``min_size``
-    is larger than that. A negative size or ``max_size < min_size`` is an
+    Without ``max_size`` the engine applies its default maximum: 100
+    bytes, or ``min_size + 100`` when ``min_size`` is larger than that. A
+    negative size or ``max_size < min_size`` is an
     :class:`~hegel.InvalidArgument`.
     """
     min_size = _check_size("min_size", min_size)
-    return Binary(
-        min_size,
-        _default_max_size(
-            min_size, None if max_size is None else _check_size("max_size", max_size)
-        ),
-    )
+    return Binary(min_size, _check_max_size(min_size, max_size))
 
 
 class EngineString(Generator[str]):

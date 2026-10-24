@@ -625,7 +625,7 @@ class TestCase:
             smallest_nonzero_magnitude,
         )
 
-    def _generate_bytes(self, min_size: int, max_size: int) -> bytes:
+    def _generate_bytes(self, min_size: int, max_size: int | None) -> bytes:
         return self._handle.generate_bytes(min_size, max_size)
 
     def _generate_string(self, generator: _native.StringGenerator) -> str:

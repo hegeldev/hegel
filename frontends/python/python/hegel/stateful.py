@@ -11,6 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from hegel import _native
 from hegel._labels import combine_labels, label_from_name
 from hegel.errors import (
     AssumeFailed,
@@ -776,7 +777,7 @@ class _PoolValues(Generator[Any]):
         return f"{self.pool!r}.{'values_consumed' if self.consume else 'values_reusable'}()"
 
 
-FILTER_ATTEMPTS = 3
+FILTER_ATTEMPTS = _native.FILTER_ATTEMPTS
 
 
 class _FilteredPoolValues(Generator[Any]):
