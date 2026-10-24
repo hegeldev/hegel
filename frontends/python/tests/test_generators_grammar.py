@@ -183,6 +183,8 @@ def test_from_lark_import_under_a_file_is_missing(tmp_path: Path):
         (lambda: gs.from_lark('start: "a"', max_size=0), "must be a positive integer"),
         (lambda: gs.from_lark('start: "a"', max_depth=True), "must be a positive integer"),
         (lambda: gs.from_lark('start: "a"', max_depth="2"), "must be a positive integer"),
+        (lambda: gs.from_lark('start: "a"', max_depth=1 << 40), "must be less than 2**32"),
+        (lambda: gs.from_lark('start: "a"', max_size=1 << 70), "must be less than 2**64"),
         (lambda: gs.from_lark('start: "a"', alphabet=""), "must not be empty"),
         (lambda: gs.from_lark('start: "a"', alphabet=gs.just("a")), "string of characters"),
         (lambda: gs.from_lark("start: ("), None),

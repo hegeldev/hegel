@@ -52,13 +52,15 @@ def _compile(
     return _native.Grammar(builder, start, max_size, max_depth, alphabet, names)
 
 
-def _check_bound(name: str, value: object) -> int:
-    """A cap as the engine takes it: ``None`` (none given) is 0, for the
-    engine's default."""
+def _check_bound(name: str, value: object, bits: int) -> int:
+    """A cap as the engine takes it, an unsigned ``bits``-bit integer:
+    ``None`` (none given) is 0, for the engine's default."""
     if value is None:
         return 0
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise InvalidArgument(f"{name}={value!r} must be a positive integer")
+    if value >= 1 << bits:
+        raise InvalidArgument(f"{name}={value!r} must be less than 2**{bits}")
     return value
 
 
@@ -79,8 +81,8 @@ class Lark(Generator[str]):
         self._grammar = _compile(
             text,
             start,
-            _check_bound("max_size", max_size),
-            _check_bound("max_depth", max_depth),
+            _check_bound("max_size", max_size, 64),
+            _check_bound("max_depth", max_depth, 32),
             _pattern_alphabet("from_lark", alphabet),
             [name for name, _ in self._explicit],
             import_path,
