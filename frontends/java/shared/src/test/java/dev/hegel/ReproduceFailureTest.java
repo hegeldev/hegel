@@ -117,8 +117,8 @@ class ReproduceFailureTest {
     @Test
     void errorStrictnessAbortsOnANondeterministicTest() {
         AtomicInteger calls = new AtomicInteger();
-        HegelException e = assertThrows(
-                HegelException.class,
+        FlakyTestException e = assertThrows(
+                FlakyTestException.class,
                 () -> Hegel.test(
                         tc -> {
                             tc.draw(integers());

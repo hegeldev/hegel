@@ -1,6 +1,7 @@
 package dev.hegel.generators;
 
 import dev.hegel.Generator;
+import dev.hegel.Label;
 import dev.hegel.TestCase;
 
 /**
@@ -13,6 +14,12 @@ public final class ConstantGenerator<T> implements Generator<T> {
 
     public ConstantGenerator(T value) {
         this.value = value;
+    }
+
+    /** @hidden */
+    @Override
+    public long label() {
+        return Label.of("hegel.just");
     }
 
     /** @hidden */

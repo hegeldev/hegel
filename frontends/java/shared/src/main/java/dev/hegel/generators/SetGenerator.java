@@ -17,6 +17,7 @@ public final class SetGenerator<T> implements Generator<Set<T>> {
     private final Generator<T> element;
     private final long minSize;
     private final long maxSize;
+    private final CachedLabel label = new CachedLabel();
 
     public SetGenerator(Generator<T> element, long minSize, long maxSize) {
         Sizes.validate(minSize, maxSize, "sets");
@@ -43,18 +44,28 @@ public final class SetGenerator<T> implements Generator<Set<T>> {
 
     /** @hidden */
     @Override
+    public long label() {
+        return label.get(() -> Label.combine(Label.SET, element.label()));
+    }
+
+    /** @hidden */
+    @Override
     public Set<T> doDraw(TestCase tc) {
-        tc.startSpan(Label.SET);
+        tc.startSpan(label());
         try {
             long id = tc.newCollection(minSize, maxSize);
-            Set<T> out = new LinkedHashSet<>();
-            while (tc.collectionMore(id)) {
-                T value = element.doDraw(tc);
-                if (!out.add(value)) {
-                    tc.collectionReject(id, "duplicate element");
+            try {
+                Set<T> out = new LinkedHashSet<>();
+                while (tc.collectionMore(id)) {
+                    T value = element.doDraw(tc);
+                    if (!out.add(value)) {
+                        tc.collectionReject(id, "duplicate element");
+                    }
                 }
+                return out;
+            } finally {
+                tc.collectionFree(id);
             }
-            return out;
         } finally {
             tc.stopSpan(false);
         }

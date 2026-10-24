@@ -19,6 +19,7 @@ import java.lang.foreign.SymbolLookup;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
+import java.lang.ref.Cleaner;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.LocalDate;
@@ -27,6 +28,7 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
@@ -39,8 +41,9 @@ import java.util.function.Consumer;
  * <p>Every fallible call takes a {@code hegel_context_t*} as its first argument, on which libhegel
  * records the diagnostic of a failed call. A context must not be shared between threads, so each
  * thread lazily creates its own; {@link #lastErrorMessage()} reads the current thread's context,
- * which is what the failing call just wrote. Contexts are never freed — one small allocation per
- * thread that touches the engine, for the life of the process.
+ * which is what the failing call just wrote. A thread's context is freed when the thread releases
+ * it with {@link #releaseThreadContext()} or, failing that, once the thread has ended and been
+ * garbage-collected, so a thread that draws and exits never leaks it.
  */
 final class RealLibhegel implements Libhegel {
     private final Arena libArena;
@@ -51,7 +54,13 @@ final class RealLibhegel implements Libhegel {
     // runFree. Runs are started and freed on the same thread (the Runner's), matching confinement.
     private final Map<Long, Arena> runArenas = new ConcurrentHashMap<>();
 
-    private final ThreadLocal<MemorySegment> context;
+    private static final Cleaner CONTEXTS = Cleaner.create();
+
+    private final ThreadLocal<ThreadContext> context;
+    private final AtomicInteger liveContexts = new AtomicInteger();
+
+    /** A thread's error context, and the registration that frees it once the thread is gone. */
+    private record ThreadContext(MemorySegment ctx, Cleaner.Cleanable cleanable) {}
 
     // struct hegel_date_t { int32_t year; uint8_t month; uint8_t day; }
     private static final StructLayout DATE_LAYOUT = MemoryLayout.structLayout(
@@ -99,8 +108,20 @@ final class RealLibhegel implements Libhegel {
     }
 
     private final MethodHandle contextNew;
+    private final MethodHandle contextFree;
     private final MethodHandle contextLastError;
     private final MethodHandle settingsNew;
+    private final MethodHandle settingsNewForProfile;
+    private final MethodHandle settingsRegisterProfile;
+    private final MethodHandle settingsSetFromString;
+    private final MethodHandle setDefaultProfile;
+    private final MethodHandle settingsGetVerbosity;
+    private final MethodHandle settingsGetPhases;
+    private final MethodHandle settingsGetReportMultipleFailures;
+    private final MethodHandle settingsSetStopOnFirstFailure;
+    private final MethodHandle settingsSetShowStatistics;
+    private final MethodHandle settingsSetUnboundedChoices;
+    private final MethodHandle settingsSetTestLocation;
     private final MethodHandle settingsFree;
     private final MethodHandle settingsSetBackend;
     private final MethodHandle settingsSetTestCases;
@@ -128,8 +149,26 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle testCaseShouldCapture;
     private final MethodHandle testCaseClone;
     private final MethodHandle testCaseSetWorker;
+    private final MethodHandle testCaseBlock;
+    private final MethodHandle note;
+    private final MethodHandle testCasePrinter;
+    private final MethodHandle printerNew;
+    private final MethodHandle printerFree;
+    private final MethodHandle printerText;
+    private final MethodHandle printerBreakable;
+    private final MethodHandle printerHardBreak;
+    private final MethodHandle printerBeginGroup;
+    private final MethodHandle printerEndGroup;
+    private final MethodHandle printerReflow;
+    private final MethodHandle printerBeginSpeculative;
+    private final MethodHandle printerCommitSpeculative;
+    private final MethodHandle printerAbortSpeculative;
+    private final MethodHandle printerResolve;
+    private final MethodHandle printerValue;
+    private final MethodHandle printerValueResultFree;
     private final MethodHandle generateBoolean;
     private final MethodHandle generateInteger;
+    private final MethodHandle generateIntegerBig;
     private final MethodHandle generateFloat;
     private final MethodHandle generateBytes;
     private final MethodHandle generateBytesResultFree;
@@ -147,14 +186,34 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle stringGeneratorUrl;
     private final MethodHandle stringGeneratorDomain;
     private final MethodHandle stringGeneratorFree;
+    private final MethodHandle grammarBuilderNew;
+    private final MethodHandle grammarBuilderFile;
+    private final MethodHandle grammarBuilderProvide;
+    private final MethodHandle grammarBuilderFree;
+    private final MethodHandle grammarNew;
+    private final MethodHandle grammarFree;
+    private final MethodHandle grammarDrawNew;
+    private final MethodHandle grammarDrawNext;
+    private final MethodHandle grammarDrawProvide;
+    private final MethodHandle grammarDrawResult;
+    private final MethodHandle grammarDrawFree;
     private final MethodHandle startSpan;
     private final MethodHandle stopSpan;
     private final MethodHandle newCollection;
     private final MethodHandle collectionMore;
     private final MethodHandle collectionReject;
+    private final MethodHandle collectionFree;
     private final MethodHandle newPool;
     private final MethodHandle poolAdd;
     private final MethodHandle poolGenerate;
+    private final MethodHandle poolRestore;
+    private final MethodHandle poolFree;
+    private final MethodHandle newRecursion;
+    private final MethodHandle recursionBranch;
+    private final MethodHandle recursionLeaf;
+    private final MethodHandle recursionRetry;
+    private final MethodHandle recursionFinish;
+    private final MethodHandle recursionFree;
     private final MethodHandle newStateMachine;
     private final MethodHandle stateMachineNextGroup;
     private final MethodHandle stateMachineNextRule;
@@ -162,9 +221,14 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle stateMachineShouldCheckInvariant;
     private final MethodHandle stateMachineFree;
     private final MethodHandle target;
+    private final MethodHandle event;
+    private final MethodHandle eventValue;
     private final MethodHandle markComplete;
     private final MethodHandle runResultStatus;
     private final MethodHandle runResultError;
+    private final MethodHandle runResultErrorKind;
+    private final MethodHandle labelFromName;
+    private final MethodHandle labelCombine;
     private final MethodHandle runResultFailureCount;
     private final MethodHandle runResultFailure;
     private final MethodHandle failureFree;
@@ -186,11 +250,65 @@ final class RealLibhegel implements Libhegel {
 
         // rc(ctx, args...) descriptors; the leading JAVA_INT is the hegel_result_t return.
         this.contextNew = h(linker, lookup, "hegel_context_new", FunctionDescriptor.of(ADDRESS));
+        this.contextFree = h(linker, lookup, "hegel_context_free", FunctionDescriptor.of(JAVA_INT, ADDRESS));
         // Returns a hegel_string_t by value, so the downcall takes a SegmentAllocator first.
         this.contextLastError =
                 h(linker, lookup, "hegel_context_last_error", FunctionDescriptor.of(STRING_LAYOUT, ADDRESS));
         this.settingsNew = h(linker, lookup, "hegel_settings_new", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
         this.settingsFree = h(linker, lookup, "hegel_settings_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.settingsNewForProfile = h(
+                linker,
+                lookup,
+                "hegel_settings_new_for_profile",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, STRING_LAYOUT, ADDRESS));
+        this.settingsRegisterProfile = h(
+                linker,
+                lookup,
+                "hegel_settings_register_profile",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, STRING_LAYOUT, ADDRESS));
+        this.settingsSetFromString = h(
+                linker,
+                lookup,
+                "hegel_settings_set_from_string",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT, STRING_LAYOUT));
+        this.setDefaultProfile =
+                h(linker, lookup, "hegel_set_default_profile", FunctionDescriptor.of(JAVA_INT, ADDRESS, STRING_LAYOUT));
+        this.settingsGetVerbosity = h(
+                linker,
+                lookup,
+                "hegel_settings_get_verbosity",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.settingsGetPhases = h(
+                linker,
+                lookup,
+                "hegel_settings_get_phases",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.settingsGetReportMultipleFailures = h(
+                linker,
+                lookup,
+                "hegel_settings_get_report_multiple_failures",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.settingsSetStopOnFirstFailure = h(
+                linker,
+                lookup,
+                "hegel_settings_set_stop_on_first_failure",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_BOOLEAN));
+        this.settingsSetShowStatistics = h(
+                linker,
+                lookup,
+                "hegel_settings_set_show_statistics",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_BOOLEAN));
+        this.settingsSetUnboundedChoices = h(
+                linker,
+                lookup,
+                "hegel_settings_set_unbounded_choices",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_BOOLEAN));
+        this.settingsSetTestLocation = h(
+                linker,
+                lookup,
+                "hegel_settings_set_test_location",
+                FunctionDescriptor.of(
+                        JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT, JAVA_INT, STRING_LAYOUT, STRING_LAYOUT));
         this.settingsSetBackend = h(
                 linker,
                 lookup,
@@ -302,6 +420,56 @@ final class RealLibhegel implements Libhegel {
                 lookup,
                 "hegel_test_case_set_worker",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG));
+        this.testCaseBlock = h(
+                linker,
+                lookup,
+                "hegel_test_case_block",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS));
+        this.note = h(linker, lookup, "hegel_note", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT));
+        this.testCasePrinter = h(
+                linker,
+                lookup,
+                "hegel_test_case_printer",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+        this.printerNew =
+                h(linker, lookup, "hegel_printer_new", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.printerFree = h(linker, lookup, "hegel_printer_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.printerText = h(
+                linker, lookup, "hegel_printer_text", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT));
+        this.printerBreakable = h(
+                linker,
+                lookup,
+                "hegel_printer_breakable",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT));
+        this.printerHardBreak =
+                h(linker, lookup, "hegel_printer_hard_break", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.printerBeginGroup = h(
+                linker,
+                lookup,
+                "hegel_printer_begin_group",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, STRING_LAYOUT));
+        this.printerEndGroup = h(
+                linker,
+                lookup,
+                "hegel_printer_end_group",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT));
+        this.printerReflow = h(
+                linker,
+                lookup,
+                "hegel_printer_reflow",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, STRING_LAYOUT));
+        this.printerBeginSpeculative =
+                h(linker, lookup, "hegel_printer_begin_speculative", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.printerCommitSpeculative = h(
+                linker, lookup, "hegel_printer_commit_speculative", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.printerAbortSpeculative =
+                h(linker, lookup, "hegel_printer_abort_speculative", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.printerResolve =
+                h(linker, lookup, "hegel_printer_resolve", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.printerValue =
+                h(linker, lookup, "hegel_printer_value", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.printerValueResultFree =
+                h(linker, lookup, "hegel_printer_value_result_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
         this.generateBoolean = h(
                 linker,
                 lookup,
@@ -312,6 +480,13 @@ final class RealLibhegel implements Libhegel {
                 lookup,
                 "hegel_generate_integer",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, JAVA_LONG, ADDRESS));
+        this.generateIntegerBig = h(
+                linker,
+                lookup,
+                "hegel_generate_integer_big",
+                FunctionDescriptor.of(
+                        JAVA_INT, ADDRESS, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS, JAVA_LONG, ADDRESS, JAVA_LONG,
+                        ADDRESS));
         this.generateFloat = h(
                 linker,
                 lookup,
@@ -402,6 +577,53 @@ final class RealLibhegel implements Libhegel {
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG, ADDRESS));
         this.stringGeneratorFree =
                 h(linker, lookup, "hegel_string_generator_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.grammarBuilderNew = h(
+                linker,
+                lookup,
+                "hegel_grammar_builder_new",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, STRING_LAYOUT, ADDRESS));
+        this.grammarBuilderFile = h(
+                linker,
+                lookup,
+                "hegel_grammar_builder_file",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS));
+        this.grammarBuilderProvide = h(
+                linker,
+                lookup,
+                "hegel_grammar_builder_provide",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS));
+        this.grammarBuilderFree =
+                h(linker, lookup, "hegel_grammar_builder_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.grammarNew = h(
+                linker,
+                lookup,
+                "hegel_grammar_new",
+                FunctionDescriptor.of(
+                        JAVA_INT, ADDRESS, ADDRESS, ADDRESS, JAVA_LONG, JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG,
+                        ADDRESS));
+        this.grammarFree = h(linker, lookup, "hegel_grammar_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.grammarDrawNew = h(
+                linker,
+                lookup,
+                "hegel_grammar_draw_new",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS));
+        this.grammarDrawNext = h(
+                linker,
+                lookup,
+                "hegel_grammar_draw_next",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+        this.grammarDrawProvide = h(
+                linker,
+                lookup,
+                "hegel_grammar_draw_provide",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT));
+        this.grammarDrawResult = h(
+                linker,
+                lookup,
+                "hegel_grammar_draw_result",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.grammarDrawFree =
+                h(linker, lookup, "hegel_grammar_draw_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
         this.startSpan =
                 h(linker, lookup, "hegel_start_span", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG));
         this.stopSpan =
@@ -421,6 +643,8 @@ final class RealLibhegel implements Libhegel {
                 lookup,
                 "hegel_collection_reject",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS));
+        this.collectionFree =
+                h(linker, lookup, "hegel_collection_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG));
         this.newPool = h(linker, lookup, "hegel_new_pool", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
         this.poolAdd = h(
                 linker,
@@ -432,6 +656,30 @@ final class RealLibhegel implements Libhegel {
                 lookup,
                 "hegel_pool_generate",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, JAVA_BOOLEAN, ADDRESS));
+        this.poolRestore = h(
+                linker,
+                lookup,
+                "hegel_pool_restore",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, JAVA_LONG));
+        this.poolFree = h(linker, lookup, "hegel_pool_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG));
+        this.newRecursion = h(
+                linker,
+                lookup,
+                "hegel_new_recursion",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, JAVA_LONG, ADDRESS));
+        this.recursionBranch = h(
+                linker,
+                lookup,
+                "hegel_recursion_branch",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, JAVA_LONG, ADDRESS));
+        this.recursionLeaf =
+                h(linker, lookup, "hegel_recursion_leaf", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG));
+        this.recursionRetry = h(
+                linker, lookup, "hegel_recursion_retry", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG));
+        this.recursionFinish = h(
+                linker, lookup, "hegel_recursion_finish", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG));
+        this.recursionFree =
+                h(linker, lookup, "hegel_recursion_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG));
         // State-machine handles cross as raw addresses (JAVA_LONG), like every other opaque handle.
         this.newStateMachine = h(
                 linker,
@@ -467,6 +715,12 @@ final class RealLibhegel implements Libhegel {
                 lookup,
                 "hegel_target",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_DOUBLE, STRING_LAYOUT));
+        this.event = h(linker, lookup, "hegel_event", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT));
+        this.eventValue = h(
+                linker,
+                lookup,
+                "hegel_event_value",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_DOUBLE, STRING_LAYOUT));
         this.markComplete = h(
                 linker,
                 lookup,
@@ -476,6 +730,21 @@ final class RealLibhegel implements Libhegel {
                 linker, lookup, "hegel_run_result_status", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
         this.runResultError =
                 h(linker, lookup, "hegel_run_result_error", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.runResultErrorKind = h(
+                linker,
+                lookup,
+                "hegel_run_result_error_kind",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+        this.labelFromName = h(
+                linker,
+                lookup,
+                "hegel_label_from_name",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, STRING_LAYOUT, ADDRESS));
+        this.labelCombine = h(
+                linker,
+                lookup,
+                "hegel_label_combine",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS));
         this.runResultFailureCount = h(
                 linker,
                 lookup,
@@ -497,7 +766,7 @@ final class RealLibhegel implements Libhegel {
         this.failureCaveat =
                 h(linker, lookup, "hegel_failure_caveat", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
         this.version = h(linker, lookup, "hegel_version", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
-        this.context = ThreadLocal.withInitial(() -> (MemorySegment) invoke(contextNew));
+        this.context = new ThreadLocal<>();
     }
 
     private static MethodHandle h(Linker linker, SymbolLookup lookup, String symbol, FunctionDescriptor desc) {
@@ -523,7 +792,24 @@ final class RealLibhegel implements Libhegel {
     }
 
     private MemorySegment ctx() {
-        return context.get();
+        ThreadContext c = context.get();
+        if (c == null) {
+            MemorySegment ctx = (MemorySegment) invoke(contextNew);
+            liveContexts.incrementAndGet();
+            c = new ThreadContext(ctx, CONTEXTS.register(Thread.currentThread(), () -> freeContext(ctx)));
+            context.set(c);
+        }
+        return c.ctx();
+    }
+
+    private void freeContext(MemorySegment ctx) {
+        invoke(contextFree, ctx);
+        liveContexts.decrementAndGet();
+    }
+
+    /** How many threads' error contexts are currently allocated. */
+    int liveContexts() {
+        return liveContexts.get();
     }
 
     private static MemorySegment segment(long handle) {
@@ -619,6 +905,88 @@ final class RealLibhegel implements Libhegel {
         int code = rc(settingsNew, handle);
         out[0] = handle.get(ADDRESS, 0).address();
         return code;
+    }
+
+    @Override
+    public int settingsNewForProfile(String name, long[] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment handle = arena.allocate(ADDRESS);
+            int code = rc(settingsNewForProfile, str(arena, name), handle);
+            out[0] = handle.get(ADDRESS, 0).address();
+            return code;
+        }
+    }
+
+    @Override
+    public int settingsRegisterProfile(String name, long s) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(settingsRegisterProfile, str(arena, name), segment(s));
+        }
+    }
+
+    @Override
+    public int settingsSetFromString(long s, String key, String value) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(settingsSetFromString, segment(s), str(arena, key), str(arena, value));
+        }
+    }
+
+    @Override
+    public int setDefaultProfile(String name) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(setDefaultProfile, str(arena, name));
+        }
+    }
+
+    @Override
+    public int settingsGetVerbosity(long s) {
+        MemorySegment out = Arena.ofAuto().allocate(JAVA_INT);
+        check("hegel_settings_get_verbosity", rc(settingsGetVerbosity, segment(s), out));
+        return out.get(JAVA_INT, 0);
+    }
+
+    @Override
+    public int settingsGetPhases(long s) {
+        MemorySegment out = Arena.ofAuto().allocate(JAVA_INT);
+        check("hegel_settings_get_phases", rc(settingsGetPhases, segment(s), out));
+        return out.get(JAVA_INT, 0);
+    }
+
+    @Override
+    public boolean settingsGetReportMultipleFailures(long s) {
+        MemorySegment out = Arena.ofAuto().allocate(JAVA_BOOLEAN);
+        check("hegel_settings_get_report_multiple_failures", rc(settingsGetReportMultipleFailures, segment(s), out));
+        return out.get(JAVA_BOOLEAN, 0);
+    }
+
+    @Override
+    public void settingsStopOnFirstFailure(long s, boolean yes) {
+        check("hegel_settings_set_stop_on_first_failure", rc(settingsSetStopOnFirstFailure, segment(s), yes));
+    }
+
+    @Override
+    public void settingsShowStatistics(long s, boolean yes) {
+        check("hegel_settings_set_show_statistics", rc(settingsSetShowStatistics, segment(s), yes));
+    }
+
+    @Override
+    public void settingsUnboundedChoices(long s, boolean yes) {
+        check("hegel_settings_set_unbounded_choices", rc(settingsSetUnboundedChoices, segment(s), yes));
+    }
+
+    @Override
+    public void settingsTestLocation(long s, String file, int beginLine, String className, String function) {
+        try (Arena arena = Arena.ofConfined()) {
+            check(
+                    "hegel_settings_set_test_location",
+                    rc(
+                            settingsSetTestLocation,
+                            segment(s),
+                            str(arena, file),
+                            beginLine,
+                            str(arena, className),
+                            str(arena, function)));
+        }
     }
 
     @Override
@@ -818,6 +1186,120 @@ final class RealLibhegel implements Libhegel {
         check("hegel_test_case_set_worker", rc(testCaseSetWorker, segment(tc), workerIndex));
     }
 
+    @Override
+    public int testCaseBlock(long tc, long indent, long[] out) {
+        MemorySegment seg = Arena.ofAuto().allocate(ADDRESS);
+        int code = rc(testCaseBlock, segment(tc), indent, seg);
+        if (code == Abi.OK) {
+            out[0] = seg.get(ADDRESS, 0).address();
+        }
+        return code;
+    }
+
+    // --- output ---
+
+    @Override
+    public int note(long tc, String text) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(note, segment(tc), str(arena, text));
+        }
+    }
+
+    @Override
+    public int testCasePrinter(long tc, long[] out) {
+        MemorySegment seg = Arena.ofAuto().allocate(ADDRESS);
+        int code = rc(testCasePrinter, segment(tc), MemorySegment.NULL, seg);
+        if (code == Abi.OK) {
+            out[0] = seg.get(ADDRESS, 0).address();
+        }
+        return code;
+    }
+
+    @Override
+    public long printerNew() {
+        MemorySegment seg = Arena.ofAuto().allocate(ADDRESS);
+        check("hegel_printer_new", rc(printerNew, MemorySegment.NULL, seg));
+        return seg.get(ADDRESS, 0).address();
+    }
+
+    @Override
+    public void printerFree(long printer) {
+        check("hegel_printer_free", rc(printerFree, segment(printer)));
+    }
+
+    @Override
+    public int printerText(long printer, String text) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(printerText, segment(printer), str(arena, text));
+        }
+    }
+
+    @Override
+    public int printerBreakable(long printer, String sep) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(printerBreakable, segment(printer), str(arena, sep));
+        }
+    }
+
+    @Override
+    public int printerHardBreak(long printer) {
+        return rc(printerHardBreak, segment(printer));
+    }
+
+    @Override
+    public int printerBeginGroup(long printer, long indent, String open) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(printerBeginGroup, segment(printer), indent, str(arena, open));
+        }
+    }
+
+    @Override
+    public int printerEndGroup(long printer, String close) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(printerEndGroup, segment(printer), str(arena, close));
+        }
+    }
+
+    @Override
+    public int printerReflow(long printer, String text) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(printerReflow, segment(printer), MemorySegment.NULL, str(arena, text));
+        }
+    }
+
+    @Override
+    public int printerBeginSpeculative(long printer) {
+        return rc(printerBeginSpeculative, segment(printer));
+    }
+
+    @Override
+    public int printerCommitSpeculative(long printer) {
+        return rc(printerCommitSpeculative, segment(printer));
+    }
+
+    @Override
+    public int printerAbortSpeculative(long printer) {
+        return rc(printerAbortSpeculative, segment(printer));
+    }
+
+    @Override
+    public int printerResolve(long printer) {
+        return rc(printerResolve, segment(printer));
+    }
+
+    @Override
+    public int printerValue(long printer, String[] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment result = arena.allocate(STRING_LAYOUT);
+            int code = rc(printerValue, segment(printer), result);
+            if (code == Abi.OK) {
+                out[0] = new String(copyBuffer(result), StandardCharsets.UTF_8);
+                check("hegel_printer_value_result_free", rc(printerValueResultFree, result));
+            }
+            return code;
+        }
+    }
+
     // --- draws ---
 
     @Override
@@ -838,6 +1320,38 @@ final class RealLibhegel implements Libhegel {
             out[0] = seg.get(JAVA_LONG, 0);
         }
         return code;
+    }
+
+    @Override
+    public int generateIntegerBig(long tc, byte[] min, byte[] max, byte[][] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            int cap = Math.max(min.length, max.length);
+            MemorySegment minSeg = bytes(arena, min);
+            MemorySegment maxSeg = bytes(arena, max);
+            MemorySegment value = arena.allocate(Math.max(cap, 1));
+            MemorySegment len = arena.allocate(JAVA_LONG);
+            int code = rc(
+                    generateIntegerBig,
+                    segment(tc),
+                    minSeg,
+                    (long) min.length,
+                    maxSeg,
+                    (long) max.length,
+                    value,
+                    (long) cap,
+                    len);
+            if (code == Abi.OK) {
+                out[0] = value.asSlice(0, len.get(JAVA_LONG, 0)).toArray(JAVA_BYTE);
+            }
+            return code;
+        }
+    }
+
+    /** A copy of {@code data} in {@code a}, at least one byte long so it is never NULL. */
+    private static MemorySegment bytes(Arena a, byte[] data) {
+        MemorySegment seg = a.allocate(Math.max(data.length, 1));
+        MemorySegment.copy(data, 0, seg, JAVA_BYTE, 0, data.length);
+        return seg;
     }
 
     @Override
@@ -1099,6 +1613,115 @@ final class RealLibhegel implements Libhegel {
         check("hegel_string_generator_free", rc(stringGeneratorFree, segment(generator)));
     }
 
+    // --- grammars ---
+
+    @Override
+    public int grammarBuilderNew(String text, long[] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment outSeg = arena.allocate(ADDRESS);
+            int code = rc(grammarBuilderNew, str(arena, text), outSeg);
+            out[0] = outSeg.get(ADDRESS, 0).address();
+            return code;
+        }
+    }
+
+    @Override
+    public int grammarBuilderFile(long builder, long index, String[] outPath) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment path = arena.allocate(STRING_LAYOUT);
+            int code = rc(grammarBuilderFile, segment(builder), index, path);
+            outPath[0] = readString(path);
+            return code;
+        }
+    }
+
+    @Override
+    public int grammarBuilderProvide(long builder, long index, String text) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(grammarBuilderProvide, segment(builder), index, strPtr(arena, text));
+        }
+    }
+
+    @Override
+    public void grammarBuilderFree(long builder) {
+        check("hegel_grammar_builder_free", rc(grammarBuilderFree, segment(builder)));
+    }
+
+    @Override
+    public int grammarNew(
+            long builder,
+            String start,
+            long maxSize,
+            int maxDepth,
+            long alphabet,
+            List<String> explicitNames,
+            long[] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment outSeg = arena.allocate(ADDRESS);
+            int code = rc(
+                    grammarNew,
+                    segment(builder),
+                    strPtr(arena, start),
+                    maxSize,
+                    maxDepth,
+                    segment(alphabet),
+                    strArray(arena, explicitNames),
+                    (long) explicitNames.size(),
+                    outSeg);
+            out[0] = outSeg.get(ADDRESS, 0).address();
+            return code;
+        }
+    }
+
+    @Override
+    public void grammarFree(long grammar) {
+        check("hegel_grammar_free", rc(grammarFree, segment(grammar)));
+    }
+
+    @Override
+    public long grammarDrawNew(long grammar, long maxSize) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment outSeg = arena.allocate(ADDRESS);
+            check("hegel_grammar_draw_new", rc(grammarDrawNew, segment(grammar), maxSize, outSeg));
+            return outSeg.get(ADDRESS, 0).address();
+        }
+    }
+
+    @Override
+    public int grammarDrawNext(long tc, long draw, long[] outTerminal) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment outSeg = arena.allocate(JAVA_LONG);
+            int code = rc(grammarDrawNext, segment(tc), segment(draw), outSeg);
+            outTerminal[0] = outSeg.get(JAVA_LONG, 0);
+            return code;
+        }
+    }
+
+    @Override
+    public int grammarDrawProvide(long draw, String value) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(grammarDrawProvide, segment(draw), str(arena, value));
+        }
+    }
+
+    @Override
+    public int grammarDrawResult(long draw, String[] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment result = arena.allocate(STRING_LAYOUT);
+            int code = rc(grammarDrawResult, segment(draw), result);
+            if (code == Abi.OK) {
+                out[0] = new String(copyBuffer(result), StandardCharsets.UTF_8);
+                check("hegel_owned_string_free", rc(ownedStringFree, result));
+            }
+            return code;
+        }
+    }
+
+    @Override
+    public void grammarDrawFree(long draw) {
+        check("hegel_grammar_draw_free", rc(grammarDrawFree, segment(draw)));
+    }
+
     // --- structure ---
 
     @Override
@@ -1137,6 +1760,11 @@ final class RealLibhegel implements Libhegel {
     }
 
     @Override
+    public void collectionFree(long id) {
+        check("hegel_collection_free", rc(collectionFree, id));
+    }
+
+    @Override
     public int newPool(long tc, long[] outId) {
         MemorySegment seg = Arena.ofAuto().allocate(JAVA_LONG);
         int code = rc(newPool, segment(tc), seg);
@@ -1158,6 +1786,54 @@ final class RealLibhegel implements Libhegel {
         int code = rc(poolGenerate, segment(tc), poolId, consume, seg);
         outVariableId[0] = seg.get(JAVA_LONG, 0);
         return code;
+    }
+
+    @Override
+    public int poolRestore(long tc, long poolId, long variableId) {
+        return rc(poolRestore, segment(tc), poolId, variableId);
+    }
+
+    @Override
+    public void poolFree(long poolId) {
+        check("hegel_pool_free", rc(poolFree, poolId));
+    }
+
+    @Override
+    public int newRecursion(long tc, long maxDepth, long maxLeaves, long[] out) {
+        MemorySegment seg = Arena.ofAuto().allocate(JAVA_LONG);
+        int code = rc(newRecursion, segment(tc), maxDepth, maxLeaves, seg);
+        out[0] = seg.get(JAVA_LONG, 0);
+        return code;
+    }
+
+    @Override
+    public int recursionBranch(long tc, long recursion, long depth, boolean[] outBranch) {
+        MemorySegment seg = Arena.ofAuto().allocate(JAVA_BOOLEAN);
+        int code = rc(recursionBranch, segment(tc), recursion, depth, seg);
+        if (code == Abi.OK) {
+            outBranch[0] = seg.get(JAVA_BOOLEAN, 0);
+        }
+        return code;
+    }
+
+    @Override
+    public int recursionLeaf(long tc, long recursion) {
+        return rc(recursionLeaf, segment(tc), recursion);
+    }
+
+    @Override
+    public int recursionRetry(long tc, long recursion) {
+        return rc(recursionRetry, segment(tc), recursion);
+    }
+
+    @Override
+    public int recursionFinish(long tc, long recursion) {
+        return rc(recursionFinish, segment(tc), recursion);
+    }
+
+    @Override
+    public void recursionFree(long recursion) {
+        check("hegel_recursion_free", rc(recursionFree, recursion));
     }
 
     @Override
@@ -1266,6 +1942,20 @@ final class RealLibhegel implements Libhegel {
     }
 
     @Override
+    public int event(long tc, String label) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(event, segment(tc), str(arena, label));
+        }
+    }
+
+    @Override
+    public int eventValue(long tc, double value, String label) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(eventValue, segment(tc), value, str(arena, label));
+        }
+    }
+
+    @Override
     public int markComplete(long tc, int status, String origin) {
         try (Arena arena = Arena.ofConfined()) {
             return rc(markComplete, segment(tc), status, strPtr(arena, origin));
@@ -1286,6 +1976,37 @@ final class RealLibhegel implements Libhegel {
         MemorySegment seg = Arena.ofAuto().allocate(ADDRESS);
         check("hegel_run_result_error", rc(runResultError, segment(result), seg));
         return readStringPtr(seg);
+    }
+
+    @Override
+    public int runResultErrorKind(long result, int[] outHealthCheck) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment kind = arena.allocate(JAVA_INT);
+            MemorySegment check = arena.allocate(JAVA_INT);
+            check("hegel_run_result_error_kind", rc(runResultErrorKind, segment(result), kind, check));
+            outHealthCheck[0] = check.get(JAVA_INT, 0);
+            return kind.get(JAVA_INT, 0);
+        }
+    }
+
+    @Override
+    public long labelFromName(String name) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(JAVA_LONG);
+            check("hegel_label_from_name", rc(labelFromName, str(arena, name), out));
+            return out.get(JAVA_LONG, 0);
+        }
+    }
+
+    @Override
+    public long labelCombine(long[] labels) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment array = arena.allocate(JAVA_LONG, Math.max(labels.length, 1));
+            MemorySegment.copy(labels, 0, array, JAVA_LONG, 0, labels.length);
+            MemorySegment out = arena.allocate(JAVA_LONG);
+            check("hegel_label_combine", rc(labelCombine, array, (long) labels.length, out));
+            return out.get(JAVA_LONG, 0);
+        }
     }
 
     @Override
@@ -1335,6 +2056,15 @@ final class RealLibhegel implements Libhegel {
         // The string borrows the context's buffer; it is copied out before the arena closes.
         try (Arena arena = Arena.ofConfined()) {
             return readString((MemorySegment) invoke(contextLastError, arena, ctx()));
+        }
+    }
+
+    @Override
+    public void releaseThreadContext() {
+        ThreadContext c = context.get();
+        if (c != null) {
+            context.remove();
+            c.cleanable().clean();
         }
     }
 

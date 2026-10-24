@@ -14,12 +14,26 @@ public final class RunReport {
     private final RunStatus status;
     private final RunStatistics statistics;
     private final String error;
+    private final RunErrorKind errorKind;
+    private final HealthCheck healthCheck;
     private final List<Failure> failures;
 
-    RunReport(RunStatus status, RunStatistics statistics, String error, List<Failure> failures) {
+    RunReport(RunStatus status, RunStatistics statistics, List<Failure> failures) {
+        this(status, statistics, null, null, null, failures);
+    }
+
+    RunReport(
+            RunStatus status,
+            RunStatistics statistics,
+            String error,
+            RunErrorKind errorKind,
+            HealthCheck healthCheck,
+            List<Failure> failures) {
         this.status = status;
         this.statistics = statistics;
         this.error = error;
+        this.errorKind = errorKind;
+        this.healthCheck = healthCheck;
         this.failures = Collections.unmodifiableList(failures);
     }
 
@@ -54,10 +68,22 @@ public final class RunReport {
      * The engine's message for a run that produced no verdict (a failed health check, an engine
      * error).
      *
-     * @return the message, or empty unless {@link #status()} is {@link RunStatus#ERROR}
+     * @return the message, or empty unless {@link #status()} is {@link RunStatus#ERROR}, or the
+     *     run is {@link RunStatus#FAILED} because explicit {@link Example examples} failed and the
+     *     engine's own run then errored
      */
     public Optional<String> error() {
         return Optional.ofNullable(error);
+    }
+
+    /**
+     * Why the run produced no verdict, as the engine classified it.
+     *
+     * @return the kind, or empty unless {@link #error()} is present (or the engine reported a kind
+     *     this version of Hegel does not know)
+     */
+    public Optional<RunErrorKind> errorKind() {
+        return Optional.ofNullable(errorKind);
     }
 
     /**
@@ -65,10 +91,20 @@ public final class RunReport {
      * every input). Suppress it with {@link Settings#suppressHealthCheck(HealthCheck...)} if the
      * behaviour is intentional.
      *
-     * @return {@code true} if {@link #error()} is a health-check failure
+     * @return {@code true} if {@link #errorKind()} is {@link RunErrorKind#HEALTH_CHECK}
      */
     public boolean healthCheckFailed() {
-        return error != null && error.startsWith("FailedHealthCheck");
+        return errorKind == RunErrorKind.HEALTH_CHECK;
+    }
+
+    /**
+     * The health check that aborted the run.
+     *
+     * @return the check, or empty unless {@link #healthCheckFailed()} (or the engine named a check
+     *     this version of Hegel does not know)
+     */
+    public Optional<HealthCheck> failedHealthCheck() {
+        return Optional.ofNullable(healthCheck);
     }
 
     /**
@@ -84,20 +120,18 @@ public final class RunReport {
 
     /**
      * Turn a non-passing report into the exception {@link Hegel#test} throws: nothing for a passed
-     * run; {@link HealthCheckFailure} or {@link HegelException} (with the engine's message) for an
-     * errored run; for a failed run, the single failure's own exception rethrown as-is, or an
-     * {@link AssertionError} aggregating several distinct failures (carrying the originals as
-     * suppressed exceptions).
+     * run; for an errored run, a {@link HegelRunException} carrying the engine's message, of the
+     * subtype its {@link #errorKind()} names ({@link HealthCheckFailure}, {@link FlakyTestException},
+     * {@link UnsatisfiableException}); for a failed run, the single failure's own exception rethrown
+     * as-is, or an {@link AssertionError} aggregating several distinct failures (carrying the
+     * originals as suppressed exceptions).
      */
     public void throwIfFailed() {
         if (status == RunStatus.PASSED) {
             return;
         }
         if (status == RunStatus.ERROR) {
-            if (healthCheckFailed()) {
-                throw new HealthCheckFailure(error);
-            }
-            throw new HegelException(error);
+            throw runError();
         }
         if (failures.size() == 1) {
             throw unchecked(failures.get(0).exception());
@@ -112,6 +146,24 @@ public final class RunReport {
             aggregate.addSuppressed(failure.exception());
         }
         throw aggregate;
+    }
+
+    /** The exception for an errored run, typed by its {@link #errorKind()}. */
+    private HegelRunException runError() {
+        if (errorKind == null) {
+            return new HegelRunException(error);
+        }
+        switch (errorKind) {
+            case HEALTH_CHECK:
+                return new HealthCheckFailure(error, healthCheck);
+            case FLAKY:
+            case NONDETERMINISTIC:
+                return new FlakyTestException(error);
+            case UNSATISFIABLE:
+                return new UnsatisfiableException(error);
+            default:
+                return new HegelRunException(error);
+        }
     }
 
     /**

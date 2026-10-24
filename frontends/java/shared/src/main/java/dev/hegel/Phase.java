@@ -10,7 +10,7 @@ import dev.hegel.lowlevel.Abi;
  * shrinking (useful to see an unshrunk failure quickly), and {@code phases()} runs nothing.
  */
 public enum Phase {
-    /** Run hard-coded explicit examples (reserved for future use). */
+    /** Run the test's explicit {@link Example examples}. */
     EXPLICIT(Abi.PHASE_EXPLICIT),
     /** Replay counterexamples persisted from previous runs (requires a database + key). */
     REUSE(Abi.PHASE_REUSE),

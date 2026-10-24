@@ -1,6 +1,7 @@
 package dev.hegel.generators;
 
 import dev.hegel.Generator;
+import dev.hegel.Label;
 import dev.hegel.TestCase;
 
 /**
@@ -35,6 +36,12 @@ public final class LongGenerator implements Generator<Long> {
      */
     public LongGenerator max(long max) {
         return new LongGenerator(min, max);
+    }
+
+    /** @hidden */
+    @Override
+    public long label() {
+        return Label.of("hegel.integers");
     }
 
     /** @hidden */

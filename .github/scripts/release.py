@@ -36,6 +36,10 @@ class Component:
     libhegel itself has no such entry. A frontend that records the engine
     version it ships in a generated source file names it in `engine_pin`;
     its `LIBHEGEL_VERSION = "..."` follows the libhegel version.
+
+    `install_docs` are documents, such as a README, whose install snippets
+    name the component's own version: a release rewrites every occurrence of
+    the version it replaces to the new one.
     """
 
     path: str
@@ -44,6 +48,7 @@ class Component:
     source_dirs: tuple[str, ...]
     engine_bump_entry: str | None = None
     engine_pin: str | None = None
+    install_docs: tuple[str, ...] = ()
 
     @property
     def release_file(self) -> str:
@@ -139,6 +144,7 @@ JAVA = Component(
         "frontends/java/hegel-jna/pom.xml",
     ),
     engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
+    install_docs=("frontends/java/README.md",),
 )
 OCAML = Component(
     path="frontends/ocaml",
@@ -174,6 +180,7 @@ RELEASE_PATHS = [
     *(m for c in COMPONENTS for m in c.manifests),
     *(c.changelog for c in COMPONENTS),
     *(c.engine_pin for c in COMPONENTS if c.engine_pin is not None),
+    *(doc for c in COMPONENTS for doc in c.install_docs),
 ]
 
 
@@ -304,6 +311,20 @@ def set_engine_pin(pin: Path, version: str) -> None:
     pin.write_text(new_text)
 
 
+def set_install_doc_version(doc: Path, old_version: str, new_version: str) -> None:
+    """Rewrite every mention of `old_version` in an install document to
+    `new_version`. A document that no longer mentions it is an error, so a
+    snippet that drifted from the released version fails the release rather
+    than going stale."""
+    text = doc.read_text()
+    new_text, count = re.subn(
+        rf"(?<![\d.]){re.escape(old_version)}(?![\d.])", new_version, text
+    )
+    if count == 0:
+        raise ValueError(f"{doc} does not mention the version {old_version} it should pin")
+    doc.write_text(new_text)
+
+
 def bump_internal_path_deps(cargo_toml: Path, versions: dict[str, str]) -> None:
     """Bump each internal (path) dependency pinned with `=` to its new version.
 
@@ -345,8 +366,11 @@ def apply_version_bump(root: Path, versions: dict[Component, str]) -> None:
     can be tested without the publish/git/gh machinery.
     """
     for component, version in versions.items():
+        old_version = current_version(root / component.manifests[0])
         for rel in component.manifests:
             set_version(root / rel, version)
+        for rel in component.install_docs:
+            set_install_doc_version(root / rel, old_version, version)
 
     pins = {
         crate: versions.get(component) or current_version(root / component.manifests[0])

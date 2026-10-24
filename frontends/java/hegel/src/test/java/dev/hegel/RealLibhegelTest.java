@@ -104,6 +104,48 @@ class RealLibhegelTest {
     }
 
     @Test
+    void outputCallsReportNullHandles() {
+        RealLibhegel lib = real();
+        // Out-slots are seeded with sentinels: a failed call must not copy anything out.
+        long[] handle = {7};
+        assertEquals(Abi.E_INVALID_HANDLE, lib.testCaseBlock(0, 2, handle));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.testCasePrinter(0, handle));
+        assertEquals(7, handle[0]);
+        String[] text = {"unchanged"};
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerValue(0, text));
+        assertEquals("unchanged", text[0]);
+        assertEquals(Abi.E_INVALID_HANDLE, lib.note(0, "n"));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerText(0, "t"));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerBreakable(0, " "));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerHardBreak(0));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerBeginGroup(0, 1, "["));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerEndGroup(0, "]"));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerReflow(0, "x"));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerBeginSpeculative(0));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerCommitSpeculative(0));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerAbortSpeculative(0));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerResolve(0));
+        lib.printerFree(0);
+    }
+
+    @Test
+    void aStandaloneDocumentRoundTrips() {
+        RealLibhegel lib = real();
+        long printer = lib.printerNew();
+        assertEquals(Abi.OK, lib.printerBeginGroup(printer, 1, "["));
+        assertEquals(Abi.OK, lib.printerText(printer, "a"));
+        assertEquals(Abi.OK, lib.printerText(printer, ","));
+        assertEquals(Abi.OK, lib.printerBreakable(printer, " "));
+        assertEquals(Abi.OK, lib.printerReflow(printer, "Point(x=1, y=\"\u00e9\")"));
+        assertEquals(Abi.OK, lib.printerEndGroup(printer, "]"));
+        assertEquals(Abi.E_INVALID_ARG, lib.printerResolve(printer));
+        String[] text = new String[1];
+        assertEquals(Abi.OK, lib.printerValue(printer, text));
+        assertEquals("[a, Point(x=1, y=\"\u00e9\")]", text[0]);
+        lib.printerFree(printer);
+    }
+
+    @Test
     void structuredDrawsReportNullHandles() {
         RealLibhegel lib = real();
         java.time.LocalDate d = java.time.LocalDate.of(2000, 1, 1);
@@ -205,6 +247,93 @@ class RealLibhegelTest {
     }
 
     @Test
+    void profilesAndTheNewerSettingsCrossTheBoundary() {
+        RealLibhegel lib = real();
+        long[] out = {7};
+        assertEquals(Abi.E_INVALID_ARG, lib.settingsNewForProfile("no-such-profile", out));
+        assertEquals(0, out[0]);
+        assertFalse(lib.lastErrorMessage().isEmpty());
+        assertEquals(Abi.OK, lib.settingsNewForProfile("base", out));
+        long s = out[0];
+        lib.settingsVerbosity(s, Abi.VERBOSITY_DEBUG);
+        assertEquals(Abi.VERBOSITY_DEBUG, lib.settingsGetVerbosity(s));
+        lib.settingsStopOnFirstFailure(s, false);
+        lib.settingsShowStatistics(s, true);
+        lib.settingsUnboundedChoices(s, true);
+        lib.settingsTestLocation(s, "a/B.java", 3, "a.B", "f");
+        assertEquals(Abi.E_INVALID_ARG, lib.settingsRegisterProfile("base", s));
+        assertEquals(Abi.OK, lib.settingsRegisterProfile("reallibhegel-binding-test", s));
+        lib.settingsFree(s);
+        assertEquals(Abi.E_INVALID_ARG, lib.setDefaultProfile("default"));
+        assertEquals(Abi.OK, lib.setDefaultProfile(""));
+    }
+
+    @Test
+    void labelsAndErrorKindsCrossTheBoundary() {
+        RealLibhegel lib = real();
+        long list = lib.labelFromName("dev.hegel.list");
+        assertEquals(0x588C222984E69C23L, list);
+        assertEquals(-0x6BA08FBF26A1271AL, lib.labelCombine(new long[] {list, -0x57664BBC5FB7D3A5L}));
+        assertEquals(-0x340D631B7BDDDCDBL, lib.labelCombine(new long[0]));
+        assertThrows(HegelException.class, () -> lib.runResultErrorKind(0, new int[1]));
+    }
+
+    @Test
+    void collectionAndPoolFreesAcceptNull() {
+        RealLibhegel lib = real();
+        lib.collectionFree(0);
+        lib.poolFree(0);
+    }
+
+    @Test
+    void releasedThreadContextIsRecreatedOnNextUse() {
+        RealLibhegel lib = real();
+        lib.releaseThreadContext();
+        assertEquals(Abi.E_INVALID_HANDLE, lib.stopSpan(0, false));
+        assertFalse(lib.lastErrorMessage().isEmpty());
+        lib.releaseThreadContext();
+        assertEquals("", lib.lastErrorMessage());
+        lib.releaseThreadContext();
+    }
+
+    @Test
+    void anEndedThreadsContextIsFreedWithoutBeingReleased() throws InterruptedException {
+        RealLibhegel lib = real();
+        Thread thread = new Thread(() -> lib.version());
+        thread.start();
+        thread.join();
+        assertEquals(1, lib.liveContexts());
+        thread = null;
+        long deadline = System.nanoTime() + 60_000_000_000L;
+        while (lib.liveContexts() > 0 && System.nanoTime() < deadline) {
+            System.gc();
+            Thread.sleep(10);
+        }
+        assertEquals(0, lib.liveContexts());
+    }
+
+    @Test
+    void releasingAThreadsContextFreesIt() {
+        RealLibhegel lib = real();
+        lib.version();
+        assertEquals(1, lib.liveContexts());
+        lib.releaseThreadContext();
+        assertEquals(0, lib.liveContexts());
+    }
+
+    @Test
+    void settingsAreSetFromStrings() {
+        RealLibhegel lib = real();
+        long s = newSettings(lib);
+        assertEquals(Abi.OK, lib.settingsSetFromString(s, "test_cases", "11"));
+        assertEquals(11, lib.settingsGetTestCases(s));
+        assertEquals(Abi.E_INVALID_ARG, lib.settingsSetFromString(s, "test_cases", "many"));
+        assertTrue(lib.lastErrorMessage().contains("test_cases"), lib.lastErrorMessage());
+        assertEquals(11, lib.settingsGetTestCases(s));
+        lib.settingsFree(s);
+    }
+
+    @Test
     void settingsGettersReadTheHandleBack() {
         RealLibhegel lib = real();
         long s = newSettings(lib);
@@ -275,6 +404,30 @@ class RealLibhegelTest {
         HegelException e = assertThrows(HegelException.class, () -> lib.runStartBlob(s, "not-a-blob!!!", null));
         assertTrue(e.getMessage().contains("could not be decoded"), e.getMessage());
         lib.settingsFree(s);
+    }
+
+    @Test
+    void aGrammarDrawIsReadOnlyOnceComplete() {
+        RealLibhegel lib = real();
+        long[] builder = new long[1];
+        assertEquals(Abi.OK, lib.grammarBuilderNew("start: \"a\"", builder));
+        String[] path = new String[1];
+        assertEquals(Abi.E_NOT_FOUND, lib.grammarBuilderFile(builder[0], 0, path));
+        assertNull(path[0]);
+        long[] grammar = new long[1];
+        assertEquals(Abi.OK, lib.grammarNew(builder[0], null, 0, 0, 0, List.of(), grammar));
+        lib.grammarBuilderFree(builder[0]);
+        long draw = lib.grammarDrawNew(grammar[0], 0);
+        String[] out = new String[1];
+        assertEquals(Abi.E_NOT_COMPLETE, lib.grammarDrawResult(draw, out));
+        assertNull(out[0]);
+        assertEquals(Abi.E_INVALID_ARG, lib.grammarDrawProvide(draw, "x"));
+        lib.grammarDrawFree(draw);
+        lib.grammarFree(grammar[0]);
+        assertThrows(HegelException.class, () -> lib.grammarDrawNew(0, 0));
+        lib.grammarDrawFree(0);
+        lib.grammarFree(0);
+        lib.grammarBuilderFree(0);
     }
 
     @Test

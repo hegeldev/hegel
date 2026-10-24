@@ -20,6 +20,7 @@ public final class Abi {
     public static final int E_INTERNAL = -8;
     public static final int E_CONCURRENT_USE = -9;
     public static final int E_RETRY = -10;
+    public static final int E_NOT_FOUND = -11;
 
     // Aggregate run outcome (hegel_run_status_t). Value 3 (FAILED_NONDETERMINISTIC, retired in the
     // 0.44 ABI) is never reported and must not be reused: a failing nondeterministic run reports
@@ -27,6 +28,15 @@ public final class Abi {
     public static final int RUN_STATUS_PASSED = 0;
     public static final int RUN_STATUS_FAILED = 1;
     public static final int RUN_STATUS_ERROR = 2;
+
+    // hegel_run_error_kind_t: why a run ended in RUN_STATUS_ERROR.
+    public static final int RUN_ERROR_NONE = 0;
+    public static final int RUN_ERROR_HEALTH_CHECK = 1;
+    public static final int RUN_ERROR_FLAKY = 2;
+    public static final int RUN_ERROR_NONDETERMINISTIC = 3;
+    public static final int RUN_ERROR_UNSATISFIABLE = 4;
+    public static final int RUN_ERROR_USAGE = 5;
+    public static final int RUN_ERROR_INTERNAL = 6;
 
     // hegel_nondeterminism_strictness_t: how a run reacts on detecting a nondeterministic test.
     public static final int NONDETERMINISM_QUIET = 0;
@@ -68,5 +78,18 @@ public final class Abi {
     // Sentinel written by hegel_state_machine_next_group / hegel_state_machine_next_rule (INT64_MIN).
     public static final long STATE_MACHINE_DONE = Long.MIN_VALUE;
     public static final long UNBOUNDED = -1L; // 0xFFFFFFFFFFFFFFFF as a Java long
+
+    /**
+     * {@code HEGEL_MAX_SIZE_DEFAULT} ({@code UINT64_MAX - 1} as a Java long): the {@code max_size}
+     * of a text or bytes draw whose user gave no maximum, for the engine to apply its default.
+     */
+    public static final long MAX_SIZE_DEFAULT = -2L;
+
+    /**
+     * {@code HEGEL_FILTER_ATTEMPTS}: how many values a filtered draw tries before rejecting the
+     * test case.
+     */
+    public static final int FILTER_ATTEMPTS = 3;
+
     public static final long NO_MAX_CODEPOINT = 0xFFFFFFFFL;
 }

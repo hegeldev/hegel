@@ -19,6 +19,12 @@ public final class CompositeGenerator<T> implements Generator<T> {
         this.body = body;
     }
 
+    /** @hidden */
+    @Override
+    public long label() {
+        return Label.COMPOSITE;
+    }
+
     @Override
     public T doDraw(TestCase tc) {
         tc.startSpan(Label.COMPOSITE);

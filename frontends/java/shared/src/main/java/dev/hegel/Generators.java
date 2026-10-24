@@ -1,5 +1,7 @@
 package dev.hegel;
 
+import dev.hegel.generators.ArrayGenerator;
+import dev.hegel.generators.BigIntegerGenerator;
 import dev.hegel.generators.BinaryGenerator;
 import dev.hegel.generators.BooleanGenerator;
 import dev.hegel.generators.CompositeGenerator;
@@ -15,11 +17,15 @@ import dev.hegel.generators.EmailGenerator;
 import dev.hegel.generators.FloatGenerator;
 import dev.hegel.generators.IntegerGenerator;
 import dev.hegel.generators.IpAddressGenerator;
+import dev.hegel.generators.LarkGenerator;
 import dev.hegel.generators.ListGenerator;
 import dev.hegel.generators.LongGenerator;
 import dev.hegel.generators.MapGenerator;
 import dev.hegel.generators.OneOfGenerator;
+import dev.hegel.generators.OptionalGenerator;
+import dev.hegel.generators.PermutationGenerator;
 import dev.hegel.generators.RecordGenerator;
+import dev.hegel.generators.RecursiveGenerator;
 import dev.hegel.generators.RegexGenerator;
 import dev.hegel.generators.SampledFromGenerator;
 import dev.hegel.generators.SetGenerator;
@@ -30,6 +36,7 @@ import dev.hegel.generators.UrlGenerator;
 import dev.hegel.generators.UuidGenerator;
 import dev.hegel.generators.ZoneOffsetGenerator;
 import dev.hegel.lowlevel.Abi;
+import java.math.BigInteger;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -43,6 +50,7 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.function.IntFunction;
 
 /**
  * Factory methods for all built-in generators.
@@ -70,6 +78,17 @@ public final class Generators {
      */
     public static LongGenerator longs() {
         return new LongGenerator(Long.MIN_VALUE, Long.MAX_VALUE);
+    }
+
+    /**
+     * Generates {@link BigInteger} values of any magnitude. Narrow the range with the fluent
+     * methods on {@link BigIntegerGenerator}; an unset bound reaches {@code 2^127} values beyond
+     * the other bound, or beyond zero.
+     *
+     * @return a big-integer generator
+     */
+    public static BigIntegerGenerator bigIntegers() {
+        return new BigIntegerGenerator(null, null);
     }
 
     // --- floats & doubles ---
@@ -148,6 +167,16 @@ public final class Generators {
     }
 
     /**
+     * Always generates {@code null}, for example as one alternative of a {@link #oneOf}.
+     *
+     * @param <T> the value type
+     * @return a generator of {@code null}
+     */
+    public static <T> Generator<T> nulls() {
+        return new ConstantGenerator<>(null);
+    }
+
+    /**
      * Picks one of the given values (the first is the simplest for shrinking).
      *
      * @param values the candidate values
@@ -198,7 +227,7 @@ public final class Generators {
      * @return an optional generator
      */
     public static <T> Generator<Optional<T>> optional(Generator<T> generator) {
-        return oneOf(just(Optional.<T>empty()), generator.map(Optional::of));
+        return new OptionalGenerator<>(generator, Optional::of, Optional.empty());
     }
 
     /**
@@ -208,7 +237,7 @@ public final class Generators {
      * @return an optional-int generator
      */
     public static Generator<OptionalInt> optionalInts(Generator<Integer> generator) {
-        return oneOf(just(OptionalInt.empty()), generator.map(OptionalInt::of));
+        return new OptionalGenerator<>(generator, OptionalInt::of, OptionalInt.empty());
     }
 
     /**
@@ -218,7 +247,7 @@ public final class Generators {
      * @return an optional-long generator
      */
     public static Generator<OptionalLong> optionalLongs(Generator<Long> generator) {
-        return oneOf(just(OptionalLong.empty()), generator.map(OptionalLong::of));
+        return new OptionalGenerator<>(generator, OptionalLong::of, OptionalLong.empty());
     }
 
     /**
@@ -228,7 +257,7 @@ public final class Generators {
      * @return an optional-double generator
      */
     public static Generator<OptionalDouble> optionalDoubles(Generator<Double> generator) {
-        return oneOf(just(OptionalDouble.empty()), generator.map(OptionalDouble::of));
+        return new OptionalGenerator<>(generator, OptionalDouble::of, OptionalDouble.empty());
     }
 
     // --- collections ---
@@ -242,6 +271,45 @@ public final class Generators {
      */
     public static <T> ListGenerator<T> lists(Generator<T> element) {
         return new ListGenerator<>(element, 0, Abi.UNBOUNDED);
+    }
+
+    /**
+     * Generates permutations of {@code elements}: each list holds every element, in an order the
+     * engine chooses, shrinking toward the original order.
+     *
+     * @param elements the elements to permute
+     * @param <T> the element type
+     * @return a permutation generator
+     */
+    public static <T> Generator<List<T>> permutations(List<T> elements) {
+        return new PermutationGenerator<>(elements);
+    }
+
+    /**
+     * Generates permutations of {@code elements}: each list holds every element, in an order the
+     * engine chooses, shrinking toward the original order.
+     *
+     * @param elements the elements to permute
+     * @param <T> the element type
+     * @return a permutation generator
+     */
+    @SafeVarargs
+    public static <T> Generator<List<T>> permutations(T... elements) {
+        return permutations(List.of(elements));
+    }
+
+    /**
+     * Generates arrays of exactly {@code length} elements drawn from {@code element}, such as
+     * {@code arrays(integers(), 3, Integer[]::new)}.
+     *
+     * @param element the element generator
+     * @param length the array length
+     * @param newArray creates an array of the given length
+     * @param <T> the element type
+     * @return an array generator
+     */
+    public static <T> Generator<T[]> arrays(Generator<T> element, int length, IntFunction<T[]> newArray) {
+        return new ArrayGenerator<>(element, length, newArray);
     }
 
     /**
@@ -492,6 +560,33 @@ public final class Generators {
         return new Deferred<>();
     }
 
+    /**
+     * Generates recursively defined data, such as trees or JSON documents. {@code base} generates
+     * the leaves; {@code extend} builds one level of structure: given a generator of sub-values of
+     * the same type, it returns a generator that combines some number of them into a compound
+     * value. It is called afresh for each branch.
+     *
+     * <pre>{@code
+     * Generator<Tree> trees = recursive(
+     *         integers().map(Leaf::new),
+     *         subtrees -> lists(subtrees).maxSize(3).map(Node::new));
+     * }</pre>
+     *
+     * <p>Sizes range from a single leaf up to the limits set by {@link RecursiveGenerator#maxDepth}
+     * and {@link RecursiveGenerator#maxLeaves}. For mutually recursive generators, use {@link
+     * #deferred()}.
+     *
+     * @param base the leaf generator
+     * @param extend builds a branch from a generator of sub-values
+     * @param <T> the value type
+     * @return a recursive generator
+     */
+    public static <T> RecursiveGenerator<T> recursive(
+            Generator<T> base, Function<Generator<T>, ? extends Generator<T>> extend) {
+        return new RecursiveGenerator<>(
+                base, extend, RecursiveGenerator.DEFAULT_MAX_DEPTH, RecursiveGenerator.DEFAULT_MAX_LEAVES);
+    }
+
     // --- type-directed derivation ---
 
     /**
@@ -643,5 +738,42 @@ public final class Generators {
      */
     public static RegexGenerator fromRegex(String pattern) {
         return new RegexGenerator(pattern, true);
+    }
+
+    /**
+     * Generates strings matching a grammar written in the syntax of the <a
+     * href="https://lark-parser.readthedocs.io/en/stable/grammar.html">Lark</a> parsing library,
+     * starting from its {@code start} rule.
+     *
+     * <p>The whole grammar language is supported: rules, terminals with string and regex patterns
+     * and priorities, {@code %import} (including Lark's bundled {@code common}, {@code python},
+     * {@code unicode} and {@code lark} grammars), {@code %ignore}, {@code %declare}, {@code
+     * %override}, {@code %extend} and templates. Generated strings are ones Lark's Earley parser
+     * accepts for the grammar, with {@code %ignore}d terminals such as whitespace and comments
+     * inserted wherever a lexer would skip them. A draw that cannot produce such a string after
+     * several attempts rejects the test case, as a failed {@link TestCase#assume(boolean) assume}
+     * does.
+     *
+     * <p>Strings range up to 8192 characters by default, biased toward the larger end; use {@link
+     * LarkGenerator#maxSize(int)} and {@link LarkGenerator#maxDepth(int)} to keep them smaller.
+     *
+     * <pre>{@code
+     * String grammar = """
+     *     ?start: sum
+     *     ?sum: product | sum "+" product
+     *     ?product: atom | product "*" atom
+     *     ?atom: NUMBER | "(" sum ")"
+     *     %import common.NUMBER
+     *     %import common.WS
+     *     %ignore WS
+     *     """;
+     * String expression = tc.draw(fromLark(grammar).maxSize(200));
+     * }</pre>
+     *
+     * @param grammar the grammar, in Lark's syntax
+     * @return a grammar generator
+     */
+    public static LarkGenerator fromLark(String grammar) {
+        return new LarkGenerator(grammar);
     }
 }

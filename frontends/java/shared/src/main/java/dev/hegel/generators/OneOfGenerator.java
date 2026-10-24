@@ -11,6 +11,7 @@ import java.util.List;
  */
 public final class OneOfGenerator<T> implements Generator<T> {
     private final List<Generator<T>> options;
+    private final CachedLabel label = new CachedLabel();
 
     public OneOfGenerator(List<Generator<T>> options) {
         if (options.isEmpty()) {
@@ -21,8 +22,14 @@ public final class OneOfGenerator<T> implements Generator<T> {
 
     /** @hidden */
     @Override
+    public long label() {
+        return label.get(() -> CachedLabel.combine(Label.ONE_OF, options));
+    }
+
+    /** @hidden */
+    @Override
     public T doDraw(TestCase tc) {
-        tc.startSpan(Label.ONE_OF);
+        tc.startSpan(label());
         try {
             int index = (int) tc.generateInteger(0, options.size() - 1);
             return options.get(index).doDraw(tc);

@@ -2,6 +2,7 @@ package dev.hegel.generators;
 
 import dev.hegel.Generator;
 import dev.hegel.Generators;
+import dev.hegel.Label;
 import dev.hegel.TestCase;
 
 /**
@@ -106,6 +107,12 @@ public final class FloatGenerator implements Generator<Float> {
      */
     public FloatGenerator excludeMax(boolean exclude) {
         return new FloatGenerator(min, max, allowNan, allowInfinity, allowSubnormal, excludeMin, exclude);
+    }
+
+    /** @hidden */
+    @Override
+    public long label() {
+        return Label.of("hegel.floats");
     }
 
     /** @hidden */

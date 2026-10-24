@@ -74,6 +74,9 @@
  * n = 50;
  * }</pre>
  *
+ * <p>Long values are laid out over several lines, one element per line, and notes from {@link
+ * dev.hegel.TestCase#note(String)} appear in order among the draws.
+ *
  * <p>This report is produced by the run's {@link dev.hegel.Reporter}; the default prints to
  * {@code System.err}. Pass your own to {@link dev.hegel.Hegel#test(java.util.function.Consumer,
  * dev.hegel.Settings, dev.hegel.Reporter)} to route it elsewhere, or {@link
@@ -82,13 +85,15 @@
  * <h2>Generators</h2>
  *
  * <p>{@link dev.hegel.Generators} provides a rich set of generators. Primitives include
- * {@code integers}, {@code longs}, {@code floats} (32-bit) and {@code doubles} (64-bit),
- * {@code booleans}, {@code text}, and {@code binary}; collections include {@code lists},
- * {@code sets}, and {@code maps}; and there are {@code tuples}, {@code oneOf}, {@code optional},
- * {@code sampledFrom}, {@code just}, {@code durations} ({@code java.time.Duration}), and the temporal
+ * {@code integers}, {@code longs}, {@code bigIntegers}, {@code floats} (32-bit) and {@code doubles}
+ * (64-bit), {@code booleans}, {@code text} (with an {@code alphabet} or a {@code codec}), and
+ * {@code binary}; collections include {@code lists} (optionally {@code unique}), {@code sets},
+ * {@code maps}, fixed-length {@code arrays} and {@code permutations}; and there are {@code tuples},
+ * {@code oneOf}, {@code optional}, {@code nulls}, {@code sampledFrom}, {@code just}, {@code durations} ({@code java.time.Duration}), and the temporal
  * generators {@code dates}, {@code times}, and {@code datetimes} (which produce
  * {@code java.time.LocalDate}/{@code LocalTime}/{@code LocalDateTime}), plus format generators
- * ({@code emails}, {@code urls}, {@code ipAddresses}, {@code uuids}, {@code fromRegex}, …).
+ * ({@code emails}, {@code urls}, {@code ipAddresses}, {@code uuids}, {@code fromRegex}, …) and
+ * {@code fromLark}, which generates strings of a grammar written in Lark's syntax.
  *
  * <p>For zone-aware datetimes, attach a timezone to a {@code datetimes()} generator:
  *
@@ -143,8 +148,19 @@
  *
  * <h2>Recursive generators</h2>
  *
- * <p>{@link dev.hegel.Generators#deferred() deferred} creates a forward reference so a generator can
- * refer to itself, enabling self-recursive (and mutually recursive) data such as trees:
+ * <p>{@link dev.hegel.Generators#recursive(dev.hegel.Generator, java.util.function.Function)
+ * recursive} builds recursive data such as trees from a generator of leaves and a function that
+ * builds a branch from a generator of sub-values. The engine decides where the value branches,
+ * within {@code maxDepth} and {@code maxLeaves}, and shrinks a tree toward its subtrees:
+ *
+ * <pre>{@code
+ * Generator<Object> trees = Generators.recursive(
+ *     integers().map(n -> (Object) n),
+ *     children -> lists(children).maxSize(3).map(xs -> (Object) xs));
+ * }</pre>
+ *
+ * <p>For mutually recursive types, {@link dev.hegel.Generators#deferred() deferred} creates a
+ * forward reference so a generator can refer to itself or to one defined later:
  *
  * <pre>{@code
  * record Tree(Integer leaf, Tree left, Tree right) {} // leaf != null XOR children != null
@@ -157,7 +173,8 @@
  * Tree t = tc.draw(tree);
  * }</pre>
  *
- * <p>The engine's size control keeps generated structures finite. Drawing before
+ * <p>With {@code deferred} the engine's size control keeps generated structures finite. Drawing
+ * before
  * {@link dev.hegel.generators.Deferred#set set} is called fails.
  *
  * <h2>Control functions</h2>
@@ -166,11 +183,21 @@
  *
  * <ul>
  *   <li>{@link dev.hegel.TestCase#assume(boolean) assume} discards the current input if a
- *       precondition does not hold.
+ *       precondition does not hold, and {@link dev.hegel.TestCase#reject() reject} discards it
+ *       unconditionally.
  *   <li>{@link dev.hegel.TestCase#note(String) note} records a message shown only on the final
  *       replay of a failing case.
  *   <li>{@link dev.hegel.TestCase#target(double, String) target} reports a score so the search can
  *       hill-climb toward interesting inputs.
+ *   <li>{@link dev.hegel.TestCase#event(String) event} and {@link
+ *       dev.hegel.TestCase#eventValue(String, double) eventValue} record what a run saw, for the
+ *       statistics report {@code showStatistics} prints.
+ *   <li>{@link dev.hegel.TestCase#drawSilent(dev.hegel.Generator) drawSilent} draws a value without
+ *       printing it in the counterexample.
+ *   <li>{@link dev.hegel.TestCase#repeat(Runnable) repeat} runs a block until the engine decides the
+ *       test case is long enough, for tests that are logically infinite loops.
+ *   <li>{@link dev.hegel.TestCase#fork(int) fork} gives another thread its own handle on the test
+ *       case to draw from.
  *   <li>{@link dev.hegel.TestCase#isFinal() isFinal} tells whether this run of the body is the
  *       final replay of a minimal counterexample, where expensive diagnostics are worth doing.
  * </ul>
@@ -210,12 +237,18 @@
  *
  * <p>Other settings include {@code derandomize},
  * {@link dev.hegel.Settings#database(dev.hegel.Database) database}, {@code suppressHealthCheck},
- * {@code verbosity}, {@code mode}, and {@link dev.hegel.Settings#phases(dev.hegel.Phase...) phases}.
- * Whatever a test leaves unset is resolved by the engine from its settings profile — a {@code
- * hegel.toml} in the working directory or an ancestor, or the shipped {@code ci} profile, which
- * makes runs deterministic and disables the example database when a CI server is detected — and from
- * the {@code HEGEL_TEST_CASES}, {@code HEGEL_SEED}, {@code HEGEL_DERANDOMIZE}, {@code HEGEL_DATABASE}
- * and {@code HEGEL_PRINT_BLOB} environment variables, which win over the profile.
+ * {@code verbosity}, {@code reportMultipleFailures}, {@code stopOnFirstFailure}, {@code
+ * showStatistics}, {@code unboundedChoices} and {@link dev.hegel.Settings#phases(dev.hegel.Phase...)
+ * phases}, {@link dev.hegel.Settings#examples(dev.hegel.Example...) examples} (explicit {@link
+ * dev.hegel.Example}s that run before any generated input; {@code @HegelTest(examples = ...)} names
+ * methods that supply them), and a test can start from a named settings profile ({@link
+ * dev.hegel.Settings#fromProfile(String)}, or {@code @HegelTest(profile = "...")}). Whatever a test
+ * leaves unset is resolved by the engine from its settings profile — a {@code hegel.toml} in the
+ * working directory or an ancestor, a profile registered with {@link
+ * dev.hegel.Settings#registerProfile(String, dev.hegel.Settings)}, or the shipped {@code ci} profile,
+ * which makes runs deterministic and disables the example database when a CI server is detected —
+ * and from the {@code HEGEL_*} settings environment variables ({@code HEGEL_TEST_CASES}, {@code
+ * HEGEL_SEED}, {@code HEGEL_DATABASE} and so on), which win over the profile.
  * If a health check fires — for example, your generators reject almost every input — Hegel aborts
  * the run and throws {@link dev.hegel.HealthCheckFailure} (distinct from a property's own failure);
  * pass the relevant {@link dev.hegel.HealthCheck} to {@code suppressHealthCheck} if the behaviour is
@@ -229,7 +262,8 @@
  * {@link dev.hegel.RunReport} with the verdict ({@link dev.hegel.RunStatus}), the
  * {@link dev.hegel.RunStatistics case counts}, the engine's message for an errored run, and one
  * {@link dev.hegel.Failure} per distinct counterexample carrying the exception the body threw, the
- * labelled top-level draws of the minimal example as Java values, the notes, and the reproduce blob.
+ * labelled top-level draws of the minimal example as Java values, its printed report line by line,
+ * and the reproduce blob.
  * A {@link dev.hegel.Reporter} receives the same information as callbacks while the run proceeds,
  * which is how a frontend owns its output instead of sharing {@code System.err}:
  *

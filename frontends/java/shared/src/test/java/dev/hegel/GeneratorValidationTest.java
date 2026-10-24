@@ -18,7 +18,9 @@ import static dev.hegel.Generators.text;
 import static dev.hegel.Generators.times;
 import static dev.hegel.Generators.zoneOffsets;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.hegel.generators.TextGenerator;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -115,8 +117,15 @@ class GeneratorValidationTest {
         assertThrows(IllegalArgumentException.class, () -> text().minSize(-1));
         assertThrows(IllegalArgumentException.class, () -> text().minSize(5).maxSize(2));
         assertThrows(IllegalArgumentException.class, () -> text().codepoints(10, 1));
-        assertThrows(IllegalArgumentException.class, () -> text().categories("Cs"));
-        assertThrows(IllegalArgumentException.class, () -> text().categories("C"));
+        TextGenerator surrogates = text().categories("Cs").minSize(1);
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> Hegel.test(
+                        tc -> tc.draw(surrogates), new Settings().testCases(1).database(Database.disabled())));
+        Hegel.test(
+                tc -> assertTrue(
+                        tc.draw(text().categories("C")).codePoints().noneMatch(cp -> cp >= 0xD800 && cp <= 0xDFFF)),
+                new Settings().testCases(20).database(Database.disabled()));
     }
 
     @Test

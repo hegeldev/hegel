@@ -52,6 +52,18 @@ class GeneratorSmokeTest {
     }
 
     @HegelTest
+    void textAndBinaryTakeTheEngineDefaultMaximum(TestCase tc) {
+        String s = tc.draw(text());
+        assertTrue(s.codePointCount(0, s.length()) <= 100);
+        String longer = tc.draw(text().minSize(150));
+        int length = longer.codePointCount(0, longer.length());
+        assertTrue(length >= 150 && length <= 250);
+        assertTrue(tc.draw(binary()).length <= 100);
+        byte[] b = tc.draw(binary().minSize(150));
+        assertTrue(b.length >= 150 && b.length <= 250);
+    }
+
+    @HegelTest
     void binaryRespectsLength(TestCase tc) {
         byte[] b = tc.draw(binary().minSize(1).maxSize(4));
         assertTrue(b.length >= 1 && b.length <= 4);

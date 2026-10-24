@@ -1,6 +1,7 @@
 package dev.hegel.generators;
 
 import dev.hegel.Generator;
+import dev.hegel.Label;
 import dev.hegel.TestCase;
 
 /**
@@ -8,6 +9,12 @@ import dev.hegel.TestCase;
  */
 public final class EmailGenerator implements Generator<String> {
     private final HandleCache cache = new HandleCache();
+
+    /** @hidden */
+    @Override
+    public long label() {
+        return Label.of("hegel.emails");
+    }
 
     /** @hidden */
     @Override

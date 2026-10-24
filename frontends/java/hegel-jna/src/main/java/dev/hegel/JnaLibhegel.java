@@ -13,6 +13,7 @@ import com.sun.jna.ptr.LongByReference;
 import com.sun.jna.ptr.PointerByReference;
 import dev.hegel.lowlevel.Abi;
 import dev.hegel.lowlevel.Libhegel;
+import java.lang.ref.Cleaner;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.LocalDate;
@@ -21,6 +22,7 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
@@ -30,8 +32,9 @@ import java.util.function.Consumer;
  * <p>Every fallible call takes a {@code hegel_context_t*} as its first argument, on which libhegel
  * records the diagnostic of a failed call. A context must not be shared between threads, so each
  * thread lazily creates its own; {@link #lastErrorMessage()} reads the current thread's context,
- * which is what the failing call just wrote. Contexts are never freed — one small allocation per
- * thread that touches the engine, for the life of the process.
+ * which is what the failing call just wrote. A thread's context is freed when the thread releases
+ * it with {@link #releaseThreadContext()} or, failing that, once the thread has ended and been
+ * garbage-collected, so a thread that draws and exits never leaks it.
  */
 final class JnaLibhegel implements Libhegel {
     // hegel_run_start registers the output callback with the engine until hegel_run_free, so a
@@ -39,7 +42,13 @@ final class JnaLibhegel implements Libhegel {
     private final Map<Long, LineCallback> runCallbacks = new ConcurrentHashMap<>();
 
     private final HegelNative lib;
-    private final ThreadLocal<Pointer> context;
+    private static final Cleaner CONTEXTS = Cleaner.create();
+
+    private final ThreadLocal<ThreadContext> context;
+    private final AtomicInteger liveContexts = new AtomicInteger();
+
+    /** A thread's error context, and the registration that frees it once the thread is gone. */
+    private record ThreadContext(Pointer ctx, Cleaner.Cleanable cleanable) {}
 
     JnaLibhegel(Path libraryPath) {
         try {
@@ -49,17 +58,47 @@ final class JnaLibhegel implements Libhegel {
         } catch (UnsatisfiedLinkError e) {
             throw new HegelException("Failed to open libhegel at " + libraryPath + ": " + e.getMessage());
         }
-        this.context = ThreadLocal.withInitial(lib::hegel_context_new);
+        this.context = new ThreadLocal<>();
     }
 
     interface HegelNative extends Library {
         Pointer hegel_context_new();
+
+        int hegel_context_free(Pointer ctx);
 
         HegelString.ByValue hegel_context_last_error(Pointer ctx);
 
         int hegel_settings_new(Pointer ctx, PointerByReference out);
 
         int hegel_settings_free(Pointer ctx, Pointer s);
+
+        int hegel_settings_new_for_profile(Pointer ctx, HegelString.ByValue name, PointerByReference out);
+
+        int hegel_settings_register_profile(Pointer ctx, HegelString.ByValue name, Pointer s);
+
+        int hegel_set_default_profile(Pointer ctx, HegelString.ByValue name);
+
+        int hegel_settings_set_from_string(Pointer ctx, Pointer s, HegelString.ByValue key, HegelString.ByValue value);
+
+        int hegel_settings_get_verbosity(Pointer ctx, Pointer s, IntByReference out);
+
+        int hegel_settings_get_phases(Pointer ctx, Pointer s, IntByReference out);
+
+        int hegel_settings_get_report_multiple_failures(Pointer ctx, Pointer s, ByteByReference out);
+
+        int hegel_settings_set_stop_on_first_failure(Pointer ctx, Pointer s, byte yes);
+
+        int hegel_settings_set_show_statistics(Pointer ctx, Pointer s, byte yes);
+
+        int hegel_settings_set_unbounded_choices(Pointer ctx, Pointer s, byte yes);
+
+        int hegel_settings_set_test_location(
+                Pointer ctx,
+                Pointer s,
+                HegelString.ByValue file,
+                int beginLine,
+                HegelString.ByValue className,
+                HegelString.ByValue function);
 
         int hegel_settings_set_backend(Pointer ctx, Pointer s, int backend);
 
@@ -127,9 +166,54 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_test_case_set_worker(Pointer ctx, Pointer tc, long workerIndex);
 
+        int hegel_test_case_block(Pointer ctx, Pointer tc, long indent, PointerByReference out);
+
+        int hegel_note(Pointer ctx, Pointer tc, HegelString.ByValue text);
+
+        int hegel_test_case_printer(Pointer ctx, Pointer tc, Pointer options, PointerByReference out);
+
+        int hegel_printer_new(Pointer ctx, Pointer options, PointerByReference out);
+
+        int hegel_printer_free(Pointer ctx, Pointer printer);
+
+        int hegel_printer_text(Pointer ctx, Pointer printer, HegelString.ByValue text);
+
+        int hegel_printer_breakable(Pointer ctx, Pointer printer, HegelString.ByValue sep);
+
+        int hegel_printer_hard_break(Pointer ctx, Pointer printer);
+
+        int hegel_printer_begin_group(Pointer ctx, Pointer printer, long indent, HegelString.ByValue open);
+
+        int hegel_printer_end_group(Pointer ctx, Pointer printer, HegelString.ByValue close);
+
+        int hegel_printer_reflow(Pointer ctx, Pointer printer, Pointer options, HegelString.ByValue text);
+
+        int hegel_printer_begin_speculative(Pointer ctx, Pointer printer);
+
+        int hegel_printer_commit_speculative(Pointer ctx, Pointer printer);
+
+        int hegel_printer_abort_speculative(Pointer ctx, Pointer printer);
+
+        int hegel_printer_resolve(Pointer ctx, Pointer printer);
+
+        int hegel_printer_value(Pointer ctx, Pointer printer, HegelString out);
+
+        int hegel_printer_value_result_free(Pointer ctx, HegelString result);
+
         int hegel_generate_boolean(Pointer ctx, Pointer tc, double p, byte hasForced, byte forced, ByteByReference out);
 
         int hegel_generate_integer(Pointer ctx, Pointer tc, long min, long max, LongByReference out);
+
+        int hegel_generate_integer_big(
+                Pointer ctx,
+                Pointer tc,
+                Pointer min,
+                long minLen,
+                Pointer max,
+                long maxLen,
+                Pointer out,
+                long outCap,
+                LongByReference outLen);
 
         int hegel_generate_float(
                 Pointer ctx,
@@ -191,6 +275,37 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_string_generator_free(Pointer ctx, Pointer generator);
 
+        int hegel_grammar_builder_new(Pointer ctx, HegelString.ByValue text, PointerByReference out);
+
+        int hegel_grammar_builder_file(Pointer ctx, Pointer builder, long index, HegelString outPath);
+
+        int hegel_grammar_builder_provide(Pointer ctx, Pointer builder, long index, HegelString text);
+
+        int hegel_grammar_builder_free(Pointer ctx, Pointer builder);
+
+        int hegel_grammar_new(
+                Pointer ctx,
+                Pointer builder,
+                HegelString start,
+                long maxSize,
+                int maxDepth,
+                Pointer alphabet,
+                Pointer explicitNames,
+                long explicitLen,
+                PointerByReference out);
+
+        int hegel_grammar_free(Pointer ctx, Pointer grammar);
+
+        int hegel_grammar_draw_new(Pointer ctx, Pointer grammar, long maxSize, PointerByReference out);
+
+        int hegel_grammar_draw_next(Pointer ctx, Pointer tc, Pointer draw, LongByReference outTerminal);
+
+        int hegel_grammar_draw_provide(Pointer ctx, Pointer draw, HegelString.ByValue value);
+
+        int hegel_grammar_draw_result(Pointer ctx, Pointer draw, HegelString out);
+
+        int hegel_grammar_draw_free(Pointer ctx, Pointer draw);
+
         int hegel_start_span(Pointer ctx, Pointer tc, long label);
 
         int hegel_stop_span(Pointer ctx, Pointer tc, byte discard);
@@ -201,11 +316,29 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_collection_reject(Pointer ctx, Pointer tc, long id, HegelString why);
 
+        int hegel_collection_free(Pointer ctx, long id);
+
         int hegel_new_pool(Pointer ctx, Pointer tc, LongByReference out);
 
         int hegel_pool_add(Pointer ctx, Pointer tc, long poolId, LongByReference out);
 
         int hegel_pool_generate(Pointer ctx, Pointer tc, long poolId, byte consume, LongByReference out);
+
+        int hegel_pool_restore(Pointer ctx, Pointer tc, long poolId, long variableId);
+
+        int hegel_pool_free(Pointer ctx, long poolId);
+
+        int hegel_new_recursion(Pointer ctx, Pointer tc, long maxDepth, long maxLeaves, LongByReference out);
+
+        int hegel_recursion_branch(Pointer ctx, Pointer tc, long recursion, long depth, ByteByReference out);
+
+        int hegel_recursion_leaf(Pointer ctx, Pointer tc, long recursion);
+
+        int hegel_recursion_retry(Pointer ctx, Pointer tc, long recursion);
+
+        int hegel_recursion_finish(Pointer ctx, Pointer tc, long recursion);
+
+        int hegel_recursion_free(Pointer ctx, long recursion);
 
         // State-machine handles cross as raw addresses (long), like every other opaque handle; the
         // name lists are contiguous hegel_string_t arrays (see strArray).
@@ -239,11 +372,22 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_target(Pointer ctx, Pointer tc, double value, HegelString.ByValue label);
 
+        int hegel_event(Pointer ctx, Pointer tc, HegelString.ByValue label);
+
+        int hegel_event_value(Pointer ctx, Pointer tc, double value, HegelString.ByValue label);
+
         int hegel_mark_complete(Pointer ctx, Pointer tc, int status, HegelString origin);
 
         int hegel_run_result_status(Pointer ctx, Pointer result, IntByReference out);
 
         int hegel_run_result_error(Pointer ctx, Pointer result, PointerByReference out);
+
+        int hegel_run_result_error_kind(
+                Pointer ctx, Pointer result, IntByReference outKind, IntByReference outHealthCheck);
+
+        int hegel_label_from_name(Pointer ctx, HegelString.ByValue name, LongByReference out);
+
+        int hegel_label_combine(Pointer ctx, long[] labels, long len, LongByReference out);
 
         int hegel_run_result_failure_count(Pointer ctx, Pointer result, LongByReference out);
 
@@ -351,7 +495,24 @@ final class JnaLibhegel implements Libhegel {
     }
 
     private Pointer ctx() {
-        return context.get();
+        ThreadContext c = context.get();
+        if (c == null) {
+            Pointer ctx = lib.hegel_context_new();
+            liveContexts.incrementAndGet();
+            c = new ThreadContext(ctx, CONTEXTS.register(Thread.currentThread(), () -> freeContext(ctx)));
+            context.set(c);
+        }
+        return c.ctx();
+    }
+
+    private void freeContext(Pointer ctx) {
+        lib.hegel_context_free(ctx);
+        liveContexts.decrementAndGet();
+    }
+
+    /** How many threads' error contexts are currently allocated. */
+    int liveContexts() {
+        return liveContexts.get();
     }
 
     private static Pointer pointer(long handle) {
@@ -522,6 +683,81 @@ final class JnaLibhegel implements Libhegel {
     }
 
     @Override
+    public int settingsNewForProfile(String name, long[] out) {
+        PointerByReference handle = new PointerByReference();
+        int code = lib.hegel_settings_new_for_profile(ctx(), str(name), handle);
+        out[0] = address(handle.getValue());
+        return code;
+    }
+
+    @Override
+    public int settingsRegisterProfile(String name, long s) {
+        return lib.hegel_settings_register_profile(ctx(), str(name), pointer(s));
+    }
+
+    @Override
+    public int settingsSetFromString(long s, String key, String value) {
+        return lib.hegel_settings_set_from_string(ctx(), pointer(s), str(key), str(value));
+    }
+
+    @Override
+    public int setDefaultProfile(String name) {
+        return lib.hegel_set_default_profile(ctx(), str(name));
+    }
+
+    @Override
+    public int settingsGetVerbosity(long s) {
+        IntByReference out = new IntByReference();
+        check("hegel_settings_get_verbosity", lib.hegel_settings_get_verbosity(ctx(), pointer(s), out));
+        return out.getValue();
+    }
+
+    @Override
+    public int settingsGetPhases(long s) {
+        IntByReference out = new IntByReference();
+        check("hegel_settings_get_phases", lib.hegel_settings_get_phases(ctx(), pointer(s), out));
+        return out.getValue();
+    }
+
+    @Override
+    public boolean settingsGetReportMultipleFailures(long s) {
+        ByteByReference out = new ByteByReference();
+        check(
+                "hegel_settings_get_report_multiple_failures",
+                lib.hegel_settings_get_report_multiple_failures(ctx(), pointer(s), out));
+        return out.getValue() != 0;
+    }
+
+    @Override
+    public void settingsStopOnFirstFailure(long s, boolean yes) {
+        check(
+                "hegel_settings_set_stop_on_first_failure",
+                lib.hegel_settings_set_stop_on_first_failure(ctx(), pointer(s), cbool(yes)));
+    }
+
+    @Override
+    public void settingsShowStatistics(long s, boolean yes) {
+        check(
+                "hegel_settings_set_show_statistics",
+                lib.hegel_settings_set_show_statistics(ctx(), pointer(s), cbool(yes)));
+    }
+
+    @Override
+    public void settingsUnboundedChoices(long s, boolean yes) {
+        check(
+                "hegel_settings_set_unbounded_choices",
+                lib.hegel_settings_set_unbounded_choices(ctx(), pointer(s), cbool(yes)));
+    }
+
+    @Override
+    public void settingsTestLocation(long s, String file, int beginLine, String className, String function) {
+        check(
+                "hegel_settings_set_test_location",
+                lib.hegel_settings_set_test_location(
+                        ctx(), pointer(s), str(file), beginLine, str(className), str(function)));
+    }
+
+    @Override
     public boolean settingsGetPrintBlob(long s) {
         ByteByReference out = new ByteByReference();
         check("hegel_settings_get_print_blob", lib.hegel_settings_get_print_blob(ctx(), pointer(s), out));
@@ -645,6 +881,106 @@ final class JnaLibhegel implements Libhegel {
         check("hegel_test_case_set_worker", lib.hegel_test_case_set_worker(ctx(), pointer(tc), workerIndex));
     }
 
+    @Override
+    public int testCaseBlock(long tc, long indent, long[] out) {
+        PointerByReference ref = new PointerByReference();
+        int code = lib.hegel_test_case_block(ctx(), pointer(tc), indent, ref);
+        if (code == Abi.OK) {
+            out[0] = address(ref.getValue());
+        }
+        return code;
+    }
+
+    // --- output ---
+
+    @Override
+    public int note(long tc, String text) {
+        return lib.hegel_note(ctx(), pointer(tc), str(text));
+    }
+
+    @Override
+    public int testCasePrinter(long tc, long[] out) {
+        PointerByReference ref = new PointerByReference();
+        int code = lib.hegel_test_case_printer(ctx(), pointer(tc), null, ref);
+        if (code == Abi.OK) {
+            out[0] = address(ref.getValue());
+        }
+        return code;
+    }
+
+    @Override
+    public long printerNew() {
+        PointerByReference ref = new PointerByReference();
+        check("hegel_printer_new", lib.hegel_printer_new(ctx(), null, ref));
+        return address(ref.getValue());
+    }
+
+    @Override
+    public void printerFree(long printer) {
+        check("hegel_printer_free", lib.hegel_printer_free(ctx(), pointer(printer)));
+    }
+
+    @Override
+    public int printerText(long printer, String text) {
+        return lib.hegel_printer_text(ctx(), pointer(printer), str(text));
+    }
+
+    @Override
+    public int printerBreakable(long printer, String sep) {
+        return lib.hegel_printer_breakable(ctx(), pointer(printer), str(sep));
+    }
+
+    @Override
+    public int printerHardBreak(long printer) {
+        return lib.hegel_printer_hard_break(ctx(), pointer(printer));
+    }
+
+    @Override
+    public int printerBeginGroup(long printer, long indent, String open) {
+        return lib.hegel_printer_begin_group(ctx(), pointer(printer), indent, str(open));
+    }
+
+    @Override
+    public int printerEndGroup(long printer, String close) {
+        return lib.hegel_printer_end_group(ctx(), pointer(printer), str(close));
+    }
+
+    @Override
+    public int printerReflow(long printer, String text) {
+        return lib.hegel_printer_reflow(ctx(), pointer(printer), null, str(text));
+    }
+
+    @Override
+    public int printerBeginSpeculative(long printer) {
+        return lib.hegel_printer_begin_speculative(ctx(), pointer(printer));
+    }
+
+    @Override
+    public int printerCommitSpeculative(long printer) {
+        return lib.hegel_printer_commit_speculative(ctx(), pointer(printer));
+    }
+
+    @Override
+    public int printerAbortSpeculative(long printer) {
+        return lib.hegel_printer_abort_speculative(ctx(), pointer(printer));
+    }
+
+    @Override
+    public int printerResolve(long printer) {
+        return lib.hegel_printer_resolve(ctx(), pointer(printer));
+    }
+
+    @Override
+    public int printerValue(long printer, String[] out) {
+        HegelString result = new HegelString();
+        int code = lib.hegel_printer_value(ctx(), pointer(printer), result);
+        if (code == Abi.OK) {
+            out[0] = new String(copyBuffer(result), StandardCharsets.UTF_8);
+            check("hegel_printer_value_result_free", lib.hegel_printer_value_result_free(ctx(), result));
+        }
+        return code;
+    }
+
     // --- draws ---
 
     @Override
@@ -665,6 +1001,26 @@ final class JnaLibhegel implements Libhegel {
             out[0] = ref.getValue();
         }
         return code;
+    }
+
+    @Override
+    public int generateIntegerBig(long tc, byte[] min, byte[] max, byte[][] out) {
+        int cap = Math.max(min.length, max.length);
+        Memory value = new Memory(Math.max(cap, 1));
+        LongByReference len = new LongByReference();
+        int code = lib.hegel_generate_integer_big(
+                ctx(), pointer(tc), bytes(min), min.length, bytes(max), max.length, value, cap, len);
+        if (code == Abi.OK) {
+            out[0] = value.getByteArray(0, (int) len.getValue());
+        }
+        return code;
+    }
+
+    /** A native copy of {@code data}, at least one byte long so it is never NULL. */
+    private static Memory bytes(byte[] data) {
+        Memory m = new Memory(Math.max(data.length, 1));
+        m.write(0, data, 0, data.length);
+        return m;
     }
 
     @Override
@@ -904,6 +1260,99 @@ final class JnaLibhegel implements Libhegel {
         check("hegel_string_generator_free", lib.hegel_string_generator_free(ctx(), pointer(generator)));
     }
 
+    // --- grammars ---
+
+    @Override
+    public int grammarBuilderNew(String text, long[] out) {
+        PointerByReference outRef = new PointerByReference();
+        int code = lib.hegel_grammar_builder_new(ctx(), str(text), outRef);
+        out[0] = address(outRef.getValue());
+        return code;
+    }
+
+    @Override
+    public int grammarBuilderFile(long builder, long index, String[] outPath) {
+        HegelString path = new HegelString();
+        int code = lib.hegel_grammar_builder_file(ctx(), pointer(builder), index, path);
+        outPath[0] = readString(path);
+        return code;
+    }
+
+    @Override
+    public int grammarBuilderProvide(long builder, long index, String text) {
+        return lib.hegel_grammar_builder_provide(ctx(), pointer(builder), index, strPtr(text));
+    }
+
+    @Override
+    public void grammarBuilderFree(long builder) {
+        check("hegel_grammar_builder_free", lib.hegel_grammar_builder_free(ctx(), pointer(builder)));
+    }
+
+    @Override
+    public int grammarNew(
+            long builder,
+            String start,
+            long maxSize,
+            int maxDepth,
+            long alphabet,
+            List<String> explicitNames,
+            long[] out) {
+        PointerByReference outRef = new PointerByReference();
+        int code = lib.hegel_grammar_new(
+                ctx(),
+                pointer(builder),
+                strPtr(start),
+                maxSize,
+                maxDepth,
+                pointer(alphabet),
+                strArray(explicitNames),
+                explicitNames.size(),
+                outRef);
+        out[0] = address(outRef.getValue());
+        return code;
+    }
+
+    @Override
+    public void grammarFree(long grammar) {
+        check("hegel_grammar_free", lib.hegel_grammar_free(ctx(), pointer(grammar)));
+    }
+
+    @Override
+    public long grammarDrawNew(long grammar, long maxSize) {
+        PointerByReference outRef = new PointerByReference();
+        check("hegel_grammar_draw_new", lib.hegel_grammar_draw_new(ctx(), pointer(grammar), maxSize, outRef));
+        return address(outRef.getValue());
+    }
+
+    @Override
+    public int grammarDrawNext(long tc, long draw, long[] outTerminal) {
+        LongByReference ref = new LongByReference();
+        int code = lib.hegel_grammar_draw_next(ctx(), pointer(tc), pointer(draw), ref);
+        outTerminal[0] = ref.getValue();
+        return code;
+    }
+
+    @Override
+    public int grammarDrawProvide(long draw, String value) {
+        return lib.hegel_grammar_draw_provide(ctx(), pointer(draw), str(value));
+    }
+
+    @Override
+    public int grammarDrawResult(long draw, String[] out) {
+        HegelString result = new HegelString();
+        int code = lib.hegel_grammar_draw_result(ctx(), pointer(draw), result);
+        if (code == Abi.OK) {
+            out[0] = new String(copyBuffer(result), StandardCharsets.UTF_8);
+            check("hegel_owned_string_free", lib.hegel_owned_string_free(ctx(), result));
+        }
+        return code;
+    }
+
+    @Override
+    public void grammarDrawFree(long draw) {
+        check("hegel_grammar_draw_free", lib.hegel_grammar_draw_free(ctx(), pointer(draw)));
+    }
+
     // --- structure ---
 
     @Override
@@ -940,6 +1389,11 @@ final class JnaLibhegel implements Libhegel {
     }
 
     @Override
+    public void collectionFree(long id) {
+        check("hegel_collection_free", lib.hegel_collection_free(ctx(), id));
+    }
+
+    @Override
     public int newPool(long tc, long[] outId) {
         LongByReference ref = new LongByReference();
         int code = lib.hegel_new_pool(ctx(), pointer(tc), ref);
@@ -961,6 +1415,54 @@ final class JnaLibhegel implements Libhegel {
         int code = lib.hegel_pool_generate(ctx(), pointer(tc), poolId, cbool(consume), ref);
         outVariableId[0] = ref.getValue();
         return code;
+    }
+
+    @Override
+    public int poolRestore(long tc, long poolId, long variableId) {
+        return lib.hegel_pool_restore(ctx(), pointer(tc), poolId, variableId);
+    }
+
+    @Override
+    public void poolFree(long poolId) {
+        check("hegel_pool_free", lib.hegel_pool_free(ctx(), poolId));
+    }
+
+    @Override
+    public int newRecursion(long tc, long maxDepth, long maxLeaves, long[] out) {
+        LongByReference ref = new LongByReference();
+        int code = lib.hegel_new_recursion(ctx(), pointer(tc), maxDepth, maxLeaves, ref);
+        out[0] = ref.getValue();
+        return code;
+    }
+
+    @Override
+    public int recursionBranch(long tc, long recursion, long depth, boolean[] outBranch) {
+        ByteByReference ref = new ByteByReference();
+        int code = lib.hegel_recursion_branch(ctx(), pointer(tc), recursion, depth, ref);
+        if (code == Abi.OK) {
+            outBranch[0] = ref.getValue() != 0;
+        }
+        return code;
+    }
+
+    @Override
+    public int recursionLeaf(long tc, long recursion) {
+        return lib.hegel_recursion_leaf(ctx(), pointer(tc), recursion);
+    }
+
+    @Override
+    public int recursionRetry(long tc, long recursion) {
+        return lib.hegel_recursion_retry(ctx(), pointer(tc), recursion);
+    }
+
+    @Override
+    public int recursionFinish(long tc, long recursion) {
+        return lib.hegel_recursion_finish(ctx(), pointer(tc), recursion);
+    }
+
+    @Override
+    public void recursionFree(long recursion) {
+        check("hegel_recursion_free", lib.hegel_recursion_free(ctx(), recursion));
     }
 
     @Override
@@ -1063,6 +1565,16 @@ final class JnaLibhegel implements Libhegel {
     }
 
     @Override
+    public int event(long tc, String label) {
+        return lib.hegel_event(ctx(), pointer(tc), str(label));
+    }
+
+    @Override
+    public int eventValue(long tc, double value, String label) {
+        return lib.hegel_event_value(ctx(), pointer(tc), value, str(label));
+    }
+
+    @Override
     public int markComplete(long tc, int status, String origin) {
         return lib.hegel_mark_complete(ctx(), pointer(tc), status, strPtr(origin));
     }
@@ -1081,6 +1593,29 @@ final class JnaLibhegel implements Libhegel {
         PointerByReference ref = new PointerByReference();
         check("hegel_run_result_error", lib.hegel_run_result_error(ctx(), pointer(result), ref));
         return readStringAt(ref.getValue());
+    }
+
+    @Override
+    public int runResultErrorKind(long result, int[] outHealthCheck) {
+        IntByReference kind = new IntByReference();
+        IntByReference check = new IntByReference();
+        check("hegel_run_result_error_kind", lib.hegel_run_result_error_kind(ctx(), pointer(result), kind, check));
+        outHealthCheck[0] = check.getValue();
+        return kind.getValue();
+    }
+
+    @Override
+    public long labelFromName(String name) {
+        LongByReference out = new LongByReference();
+        check("hegel_label_from_name", lib.hegel_label_from_name(ctx(), str(name), out));
+        return out.getValue();
+    }
+
+    @Override
+    public long labelCombine(long[] labels) {
+        LongByReference out = new LongByReference();
+        check("hegel_label_combine", lib.hegel_label_combine(ctx(), labels, labels.length, out));
+        return out.getValue();
     }
 
     @Override
@@ -1132,6 +1667,15 @@ final class JnaLibhegel implements Libhegel {
     public String lastErrorMessage() {
         // Returned by value; the bytes borrow the context's buffer and are copied out here.
         return readString(lib.hegel_context_last_error(ctx()));
+    }
+
+    @Override
+    public void releaseThreadContext() {
+        ThreadContext c = context.get();
+        if (c != null) {
+            context.remove();
+            c.cleanable().clean();
+        }
     }
 
     @Override

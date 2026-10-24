@@ -2,6 +2,7 @@ package dev.hegel;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Predicate;
 
 /**
  * A pool of previously generated values the engine can draw from and shrink over. Mostly used in
@@ -65,31 +66,62 @@ public final class Pool<T> {
      * @return the reusing generator
      */
     public Generator<T> reusable() {
-        return new PoolGenerator(false);
+        return new ReusableGenerator();
     }
 
     /**
      * A generator that consumes values from the pool: it removes the value it yields, so once
      * consumed a value is never drawn again.
      *
+     * <p>A {@link Generator#filter filter} on this generator consumes only the value it yields:
+     * each attempt consumes a value, so no attempt draws the same value twice, and once the
+     * attempts are over every rejected value is back in the pool. Nothing else puts a value back:
+     * one that reaches a rule which then fails an {@link TestCase#assume assumption} stays
+     * consumed, and so does one drawn through another combinator, such as a {@link Generator#map
+     * map}, that a filter around the combinator rejects.
+     *
      * @return the consuming generator
      */
     public Generator<T> consuming() {
-        return new PoolGenerator(true);
+        return new ConsumingGenerator();
     }
 
-    private final class PoolGenerator implements Generator<T> {
-        private final boolean consume;
-
-        PoolGenerator(boolean consume) {
-            this.consume = consume;
+    private final class ReusableGenerator implements Generator<T> {
+        @Override
+        public long label() {
+            return Label.POOL_VALUES_REUSABLE;
         }
 
         @Override
         public T doDraw(TestCase tc) {
-            tc.assume(!values.isEmpty());
-            long variableId = tc.poolGenerate(poolId, consume);
-            return consume ? values.remove(variableId) : values.get(variableId);
+            return PoolDraws.draw(tc, poolId, values, false);
+        }
+    }
+
+    private final class ConsumingGenerator implements Generator<T> {
+        @Override
+        public long label() {
+            return Label.POOL_VALUES_CONSUMED;
+        }
+
+        @Override
+        public T doDraw(TestCase tc) {
+            return PoolDraws.draw(tc, poolId, values, true);
+        }
+
+        @Override
+        public Generator<T> filter(Predicate<? super T> predicate) {
+            return new Generator<T>() {
+                @Override
+                public long label() {
+                    return Label.combine(Label.FILTER, Label.POOL_VALUES_CONSUMED);
+                }
+
+                @Override
+                public T doDraw(TestCase tc) {
+                    return PoolDraws.drawFiltered(tc, poolId, values, predicate);
+                }
+            };
         }
     }
 }

@@ -1,13 +1,14 @@
 package dev.hegel.generators;
 
 import dev.hegel.Generator;
+import dev.hegel.Label;
 import dev.hegel.TestCase;
 
 /**
  * Generates {@code byte[]} values with length in an inclusive {@code [minSize, maxSize]} range.
  *
- * <p>Lengths default to {@code [0, 100]} (or {@code [minSize, minSize + 100]} for a larger
- * minimum); set an explicit {@link #maxSize(int)} for longer arrays.
+ * <p>Without an explicit {@link #maxSize(int)}, the engine picks the maximum length: 100, or
+ * {@code minSize + 100} for a minimum above 100. Set one for longer arrays.
  */
 public final class BinaryGenerator implements Generator<byte[]> {
     private final long minSize;
@@ -37,7 +38,13 @@ public final class BinaryGenerator implements Generator<byte[]> {
 
     /** @hidden */
     @Override
+    public long label() {
+        return Label.of("hegel.binary");
+    }
+
+    /** @hidden */
+    @Override
     public byte[] doDraw(TestCase tc) {
-        return tc.generateBytes(minSize, Sizes.resolveMax(minSize, maxSize, TextGenerator.DEFAULT_MAX_SIZE));
+        return tc.generateBytes(minSize, Sizes.engineMax(maxSize));
     }
 }

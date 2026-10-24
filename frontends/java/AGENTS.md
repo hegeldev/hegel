@@ -81,8 +81,8 @@ Multi-module Maven build (`dev.hegel:hegel-parent`, not itself useful to
 consumers):
 
 - `hegel-lowlevel/` — a normal Maven module, package `dev.hegel.lowlevel`: the
-  public `Libhegel` interface (one method per `hegel_*` function; raw `long`
-  handles and return codes), `Abi` constants, `LibhegelException`, the
+  public `Libhegel` interface (one method per bound `hegel_*` function; raw
+  `long` handles and return codes), `Abi` constants, `LibhegelException`, the
   `LibhegelBackend` SPI and `LibraryLoader`. Tests are fake-only
   (`LibraryLoaderTest`, `LibhegelLoadTest` with a `StubBackend` service
   provider on the test classpath); surefire sets `HEGEL_LIBHEGEL_PATH` to a
@@ -113,7 +113,8 @@ unsupported); the Maven CLI is authoritative.
 Data crosses the FFI boundary through libhegel's **typed draw functions**
 (`hegel_generate_integer`, `hegel_generate_float`, `hegel_generate_string`
 through opaque `hegel_string_generator_t` handles, structured
-date/time/datetime/uuid/ip draws, …). Every fallible call takes a per-thread
+date/time/datetime/uuid/ip draws, `hegel_generate_integer_big` for
+`BigInteger`s past `long`, …). Every fallible call takes a per-thread
 `hegel_context_t*` first argument and returns a `hegel_result_t`; results come
 back through out-parameters, and every handle is caller-owned and explicitly
 freed.
@@ -136,7 +137,10 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   process-wide lazy holder of the loaded shared object (with a test hook) — it
   caches only the immutable, thread-safe library, never per-test state. Both
   bindings keep one libhegel error context per thread (read back by
-  `lastErrorMessage()`), pass date/time/datetime structs by value, pass every
+  `lastErrorMessage()`, created on the thread's first call and freed by
+  `releaseThreadContext()`, which each concurrent stateful worker calls before
+  it exits, or otherwise by a `Cleaner` once the thread has been collected, so
+  a user thread drawing through `TestCase.fork` never leaks one), pass date/time/datetime structs by value, pass every
   string as the engine's `hegel_string_t` (`{const char *data; size_t len}`:
   by value for a required string, by nullable pointer where absent is
   meaningful, as a contiguous struct array for name lists; a Java `null`
@@ -152,30 +156,69 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   `bool` crosses as `byte` (JNA's default boolean mapping is a 32-bit int) and
   `size_t` as `long` (the bundled natives are all 64-bit). `Abi` (lowlevel)
   holds the C constants; `Label` (shared) holds the frontend's span labels —
-  opaque `u64`s derived from `dev.hegel.<kind>` names with the same FNV-1a hash
-  as the engine's `hegel_label_from_name` (`Label.of`) and
-  `hegel_label_combine` (`Label.combine`); the engine has no predefined label
-  enum. The engine's `hegel_set_unicode_version`, `stop_on_first_failure`
-  setting and `hegel_run_result_error_kind` have no Java surface yet.
+  opaque `u64`s the engine computes (`Label.of` is `hegel_label_from_name`,
+  `Label.combine` is `hegel_label_combine`, both through `Engine.real()` so a
+  test's fake binding never changes them). Every generator has a `label()`:
+  leaves use the other frontends' `hegel.<kind>` names (`hegel.integers`,
+  `hegel.text`, ...), and a composite combines its kind (`hegel.lists`,
+  `hegel.optional`, ...) with its components' labels, computed once per
+  instance (`CachedLabel`) and used for the span it draws in. Filter attempts
+  open `hegel.filter.attempt` spans and pool draws
+  `hegel.pool.values_reusable`/`values_consumed` spans, as in Rust and
+  Python. `hegel_settings_set_from_string` backs `Settings.set(key, value)`,
+  Java's way to every setting by its `hegel.toml` key (Java has no CLI to pass
+  flags through). The engine's
+  `hegel_set_unicode_version` has no Java surface (Java reports no Unicode
+  version), and the printer's `if_break`, `comment`, `shift_indent` and
+  `deferred` are unbound because Java's value rendering does not use them. The grammar functions are bound except `hegel_grammar_placeholder`
+  and `hegel_generate_grammar`: the frontend draws every grammar string through
+  a `hegel_grammar_draw_t`, which splices in explicit terminals' values engine-side.
 - **Per-case primitives** — `DataSource` is the abstraction generators draw
   against; `LiveDataSource` wraps the engine, translating return codes
   (`StopTest` → OVERRUN, `AssumeRejected` → INVALID, `INVALID_ARG` →
   `IllegalArgumentException` with the engine's diagnostic, other negatives →
-  `HegelException`) and short-circuiting once a case is aborted.
+  `HegelException`) and short-circuiting once a case is aborted. `TestCase`
+  also carries `event`/`eventValue`, `reject`, `drawSilent` (a draw that is
+  neither printed nor recorded), `fork(worker)` (a `hegel_test_case_clone` +
+  `hegel_test_case_set_worker` handle sharing the case's name counter and
+  blocks, freed with them) and `repeat(body)` (a `hegel.collection` of silent
+  draws; each repetition is a block noted `// Repetition #N`; an `assume`
+  failure skips the repetition, and any other failure draws a silent boolean
+  before propagating, so the shrinker can tell repetitions apart).
+- **Output** — all of a case's output goes through the engine's per-case
+  document: `TestCase.note` is `hegel_note`, and a top-level `draw` prints
+  `name = value;` through the handle's `hegel_test_case_printer` inside a
+  speculative region (committed once the value is drawn, aborted if the draw
+  throws; the engine holds back notes made mid-draw until the region closes).
+  `Printer.value` renders Java syntax — quoted, escaped strings and chars,
+  arrays and collections as `[a, b]`, maps as `{k: v}`, each a group with
+  breakables so the engine can lay it out — and hands anything else's
+  `toString()` to `hegel_printer_reflow`. Draw names (`x`, `x_2`, `draw_N`)
+  are numbered Java-side; the engine has no naming. Indented sections use
+  `hegel_test_case_block` (`TestCase.block`, kept alive until the case ends,
+  since a `Pool` made inside a rule keeps drawing through its handle, then
+  freed by `TestCase.releaseBlocks`), worker attribution is
+  `hegel_test_case_set_worker`, and after the body the runner reads the
+  document (`hegel_printer_resolve` + `hegel_printer_value`) into lines for
+  the `Reporter` (`caseOutput`) and `Failure.output()`. Nothing is buffered
+  Java-side.
 - **Run loop** — `Runner` builds the settings handle and drives
   `hegel_run_start` → `hegel_next_test_case` → `hegel_mark_complete`. The
   engine owns the *whole* run — generation, shrinking, the replays that confirm
   a failure, and the final replay of every failure it is about to report — so
   the runner never replays anything itself. It reads
   `hegel_test_case_should_capture` once per case: a *stamped* case's `TestCase`
-  records its top-level draws and notes (`isFinal()` exposes the stamp), and
+  (or any case of a verbose run) prints its top-level draws and notes into the
+  engine's per-case document (see **Output**; `isFinal()` exposes the
+  stamp), a stamped case also records its draws as Java values, and
   every interesting case's exception is kept per origin in a capture map (a
   stamped capture outranks an unstamped one, newest wins at equal rank — the
   unstamped discovery of a failure that never fails again is all there is for
   an *unconfirmed* nondeterministic failure). After the loop drains,
   `hegel_run_result` yields PASSED, FAILED, or ERROR. On FAILED each distinct
-  failure is built from its origin's capture: the recorded draws/notes are
-  replayed to the reporter (`caseStarted(true)` … `caseFinished(true)`), and
+  failure is built from its origin's capture: the rendered lines go to the
+  reporter (`caseStarted(true)`, `caseOutput(line, true)` …
+  `caseFinished(true)`) and become `Failure.output()`, and
   the `Failure` carries the body's own exception, the reproduce blob
   (`hegel_failure_reproduction_blob`, null for an unconfirmed failure and for a
   blob replay) and the **caveat** (`hegel_failure_caveat`, non-null for a
@@ -189,8 +232,8 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   `HegelException` with the engine's "could not be decoded" message. There is
   no Java-side flaky detection: the engine handles nondeterminism per
   `nondeterminismStrictness` (`NondeterminismStrictness.QUIET`/`WARN`
-  confirm-by-replay and report with a caveat; `ERROR` aborts the run,
-  surfacing as the engine's own `Flaky test detected` message). The runner
+  confirm-by-replay and report with a caveat; `ERROR` aborts the run with a
+  `FlakyTestException`). The runner
   returns a `RunReport` (status, client-side `RunStatistics` counted per
   `mark_complete` — the C ABI has no counter accessor — engine error,
   failures) and never prints: everything goes through the run's `Reporter`
@@ -198,47 +241,93 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   output; `Reporter.silent()` for library use). `Hegel.run` returns the
   report; `Hegel.test` = `run` + `RunReport.throwIfFailed()`, which rethrows a
   single failure as-is (checked exceptions included), aggregates several into
-  an `AssertionError`, and maps ERROR to `HealthCheckFailure`/`HegelException`.
+  an `AssertionError`, and maps ERROR by `hegel_run_result_error_kind`
+  (`RunReport.errorKind()`) to a `HegelRunException`: `HealthCheckFailure`
+  (carrying the failed `HealthCheck`), `FlakyTestException`,
+  `UnsatisfiableException`, or the base type for usage and internal errors.
   `HegelException` (binding/engine errors) is always thrown, never reported.
   `Settings` is the immutable config; its closed-state setting types live
   alongside it — `Backend` (auto = leave it to the engine's profile, which
   picks urandom inside Antithesis / default / urandom), `Database`,
-  `OptBoolean`, `NondeterminismStrictness` (`DEFAULT` = leave it to the
-  engine) — plus `printBlob` (print a copy-pasteable reproducer per failure)
-  and `reproduceFailure` (replay a stored blob instead of running the
-  property). `testCases`, `printBlob`, `derandomize`, `seed`,
-  `nondeterminismStrictness` and `database` are nullable ("unset"):
-  `Runner.applySettings` sends only what the user set, so the engine's
-  resolution — its profile (`hegel.toml`, the shipped
-  `development`/`ci`/`workload` profiles) with the
-  `HEGEL_TEST_CASES`/`HEGEL_DATABASE`/`HEGEL_SEED`/`HEGEL_DERANDOMIZE`/
-  `HEGEL_PRINT_BLOB`/`HEGEL_NONDETERMINISM_STRICTNESS` variables applied over
-  it in `hegel_settings_new` — stands for the rest, and explicit Java settings
-  win over both. There is no Java-side CI detection (the engine's `ci` profile
+  `OptBoolean`, `NondeterminismStrictness` and `Verbosity` (`DEFAULT` = leave
+  it to the engine), `TestLocation` — plus `printBlob` (print a
+  copy-pasteable reproducer per failure) and `reproduceFailure` (replay a
+  stored blob instead of running the property). Every engine setting is
+  unset unless the user sets it: `Runner.applySettings` sends only what the
+  user set, so the engine's resolution — its profile (`hegel.toml`, a
+  registered profile, the shipped `development`/`ci`/`workload` profiles, or
+  the one `Settings.fromProfile` names, resolved by
+  `hegel_settings_new_for_profile`) with the `HEGEL_*` settings variables
+  applied over it — stands for the rest, and explicit Java settings win over
+  both. `Settings.registerProfile` snapshots a resolved handle with
+  `hegel_settings_register_profile`; `Settings.setDefaultProfile` calls
+  `hegel_set_default_profile`. `@HegelTest` names a test (its database key)
+  `<fully.qualified.Class>.<method>` and locates it at the method;
+  `Hegel.test`/`Hegel.run` locate a test at their caller's frame
+  (`Runner.callerLocation`) and send it with `hegel_settings_set_test_location`. There is no Java-side CI detection (the engine's `ci` profile
   covers it). `Libhegel.settingsNew` returns a raw result code because a
   malformed variable or `hegel.toml` fails it with `E_INVALID_ARG` (→
   `IllegalArgumentException`); after applying, the runner reads
-  `settingsGetTestCases`/`settingsGetPrintBlob`/`settingsGetNondeterminismStrictness`
-  back and hands the *effective* `Settings` to the reporter and the run.
-  Verbosity and `reportMultipleFailures` keep Java-side defaults and are always
-  sent. `EnvironmentTest` covers the variables and `hegel.toml` through a child
+  `settingsGetTestCases`/`settingsGetPrintBlob`/`settingsGetNondeterminismStrictness`/
+  `settingsGetVerbosity` back and hands the *effective* `Settings` to the
+  reporter and the run. `EnvironmentTest` covers the variables and `hegel.toml` through a child
   JVM (`EnvironmentFixture`), since the engine reads its own process
   environment. There is no single-test-case mode; `testCases(1)` is the
   one-case configuration.
 - **Generators** — `Generator<T>` (public) with `map`/`filter`/`flatMap`. Leaf
   generators call the typed draw bridges on `TestCase` (`generateInteger`,
   `generateFloat`, `generateString`, …); composite generators (collections via
-  the engine's `new_collection`/`collection_more` protocol, `oneOf`, tuples,
+  the engine's `new_collection`/`collection_more` protocol, each collection
+  freed with `collectionFree` when its draw ends, `oneOf`, tuples,
   `map`/`filter`/`flatMap`) compose other generators' `doDraw` inside labeled
   spans, mirroring the Rust frontend. String-shaped generators
   (`text`/`characters`/regex/email/url/domain) build a validated
   `hegel_string_generator_t` handle once per configuration and cache it
   (`HandleCache`, rebuilt if a test swaps the `Engine` binding);
   `StringGeneratorHandle` frees the engine allocation via a `Cleaner` when
-  unreachable. `Generators` is the factory facade.
+  unreachable. `Generators.fromLark` (`LarkGenerator`) compiles its grammar once per
+  configuration (`TestCase.grammar`: `hegel_grammar_builder_*`, reading each
+  `%import`ed file from its `importPath`, then `hegel_grammar_new`; a
+  `GrammarHandle` frees it via a `Cleaner`) and draws each string through a
+  `hegel_grammar_draw_t` (`LiveDataSource.generateGrammar`): the engine asks for
+  each explicit terminal's value in turn, the generator draws it silently from
+  the user's generator, and the engine splices the values in, keeps the string
+  under the size cap and retries or rejects; nothing about the splicing lives in
+  Java. Text and binary generators with no `maxSize` send
+  `Abi.MAX_SIZE_DEFAULT` for the engine to apply its default, and `filter` tries
+  `Abi.FILTER_ATTEMPTS` (`HEGEL_FILTER_ATTEMPTS`) values. `Generators.recursive` (`RecursiveGenerator`) drives
+  `hegel_new_recursion`: the engine decides each node's `recursionBranch`,
+  and a leaf over budget (`recursionLeaf` → `E_RETRY`) unwinds the attempt
+  with `OverBudget` and retries it. The engine closes a retried attempt's
+  open spans itself, so `LiveDataSource` suppresses `stopSpan` while
+  unwinding; `recursionFinish` → `E_RETRY` redraws a mispriced value, and
+  `recursionRetry` → `E_ASSUME` rejects the case. A filtered consuming pool
+  draw (`PoolDraws.drawFiltered`) consumes one value per attempt and gives
+  every rejected one back with `hegel_pool_restore`. `Generators` is the
+  factory facade.
+- **Explicit examples** — `Settings.examples(Example...)` (or
+  `@HegelTest(examples = {"method"})`, naming methods that return an
+  `Example` or an `Iterable` of them) runs the body once per example before
+  the engine's run, when the resolved phases (`settingsGetPhases`) include
+  `EXPLICIT` and no blob is being replayed. The engine is not involved: the
+  `TestCase` draws from `ExplicitDraws` (a draw takes the value named for it,
+  else the next positional one; a silent draw takes the next positional one)
+  over an `ExplicitDraws.noEngine()` data source that ignores `target`/events
+  and rejects the engine primitives (spans, pools, state machines) as a usage
+  error, and prints into a standalone `hegel_printer_new` document. `fork`
+  shares the example's values and `repeat` runs its body once, as Rust's
+  `ExplicitTestCase` does. An example that fails an assumption is skipped,
+  neither passing nor failing. Misfitting examples (a missing value, an
+  unused one) are `IllegalArgumentException`s. Without `reportMultipleFailures`
+  (`settingsGetReportMultipleFailures`) the first failing example ends the
+  run; with it, every example runs, failures are deduplicated by origin, the
+  engine runs too, and its failures with an explicit failure's origin are
+  dropped. An explicit failure makes an otherwise PASSED or ERROR run FAILED
+  (an ERROR's message and kind stay on the report).
 - **Public API** — `Hegel.test`/`Hegel.run`, `TestCase`
-  (`draw`/`assume`/`note`/`target`/`isFinal`/`span`), `Label` (span labels;
-  `Label.of(name)` mints FNV-1a labels), `Reporter`, `RunReport`,
+  (`draw`/`drawSilent`/`assume`/`reject`/`note`/`target`/`event`/`eventValue`/`fork`/`repeat`/`isFinal`/`span`),
+  `Example`, `Label` (span labels;
+  `Label.of(name)` mints labels through the engine), `Reporter`, `RunReport`,
   `Settings.infrastructurePackages` (extra class-name prefixes skipped by
   `Runner.originOf`), the `@HegelTest` annotation + `HegelTestExtension` (a
   JUnit 5 `TestTemplateInvocationContextProvider` that drives the engine loop
@@ -267,7 +356,8 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   checks run every invariant unconditionally:
   - `maxConcurrency == 1` → the **sequential** driver: everything on the
     calling thread and the root handle as worker 0, one `STATEFUL_RULE` span
-    per round (discarded on rejection), `Step N: rule` notes.
+    per round (discarded on rejection), each rule's body under a `Step N: rule {`
+    note in a `hegel_test_case_block` (indent 2) and closed by a `}` note.
   - `maxConcurrency > 1` → the **concurrent** driver, modelled on the Rust
     frontend's `run_concurrent_machine` (even when the drawn level is 1, so a
     run's output format is uniform). Persistent daemon worker threads
@@ -276,13 +366,13 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
     makes a **fresh clone per worker** (`hegel_test_case_clone` +
     `hegel_test_case_set_worker`; cloning is a draw and can return
     `E_STOP_TEST` on a replay, hence the raw-rc convention for
-    `Libhegel.testCaseClone`), hands each worker its clone through a queue,
-    waits for one event per worker (the join point), absorbs the workers'
-    buffered draws/notes into the root in worker order (each line stamped
-    `[worker N +X.XXXms]` client-side — Java notes never go through
-    `hegel_note`, so the engine's own attribution is invisible here; draw
-    names stay unique family-wide through the root's synchronized name counter
-    and are recorded plain), frees the clones, and resolves the round in the
+    `Libhegel.testCaseClone`), hands each worker its clone through a queue
+    (a worker notes `Rule: name {` on it, runs the rule in a block and notes
+    `}`), waits for one event per worker (the join point), frees the clones (their
+    output stays in the document, anchored where each clone was made and
+    stamped `[worker N +X.XXXms]` by the engine; draw names stay unique
+    family-wide through the case's shared, synchronized name counter and are
+    recorded plain), and resolves the round in the
     Rust frontend's precedence: a control error
     (`LibhegelException`/`IllegalArgumentException`, or a worker that exited
     without reporting) is rethrown first; then an overrun or an engine-level
@@ -294,9 +384,12 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
     theirs (an overrun aborts the family engine-side anyway). No spans are
     opened in the concurrent path (none of the bindings do; the engine owns
     rule structure). The `Reporter` is only ever called from the driving
-    thread: verbose output of worker lines is delivered at the join. Workers
+    thread: a case's output, worker lines included, is read once its body has
+    finished. Workers
     are stopped and joined in a `finally` before any leftover clone is freed.
-  The machine handle is freed in a `finally`. `Pool<T>` (sequential; bound to
+  The machine handle is freed in a `finally`. Pools are family-wide: every pool
+  created on a test case or its clones is freed by the runner when the case
+  ends (`DataSource.releasePools`). `Pool<T>` (sequential; bound to
   its creating handle, unsynchronised) and `ConcurrentPool<T>` (one monitor
   across the engine call and the map update; `add(tc, value)` draws through
   the calling rule's handle) track previously generated values over the
@@ -337,8 +430,9 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   the root `CONTRIBUTING.md` for the format and the semver rules (on 0.x,
   breaking changes are `minor`, everything else `patch`). CI checks this
   (`.github/scripts/release.py check`); on merge to main the release job bumps
-  the version in the parent `pom.xml` and each module pom's `<parent>`, moves
-  the text into `CHANGELOG.md`, tags `frontends/java/<version>`, and the
+  the version in the parent `pom.xml` and each module pom's `<parent>` and the
+  README's install snippet (which must name the current version, or the
+  release fails), moves the text into `CHANGELOG.md`, tags `frontends/java/<version>`, and the
   `release-java` job publishes the three artifacts to Maven Central
   (`.github/scripts/publish_java.py`: `mvn -P release deploy`, signed with
   the Hegel release key, bundling the libhegel GitHub release's binaries). A

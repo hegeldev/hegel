@@ -17,6 +17,7 @@ import java.util.function.Function;
 public final class TupleGenerator<T> implements Generator<T> {
     private final List<Generator<?>> elements;
     private final Function<List<Object>, T> assembler;
+    private final CachedLabel label = new CachedLabel();
 
     public TupleGenerator(List<Generator<?>> elements, Function<List<Object>, T> assembler) {
         this.elements = List.copyOf(elements);
@@ -25,8 +26,14 @@ public final class TupleGenerator<T> implements Generator<T> {
 
     /** @hidden */
     @Override
+    public long label() {
+        return label.get(() -> CachedLabel.combine(Label.TUPLE, elements));
+    }
+
+    /** @hidden */
+    @Override
     public T doDraw(TestCase tc) {
-        tc.startSpan(Label.TUPLE);
+        tc.startSpan(label());
         try {
             List<Object> out = new ArrayList<>(elements.size());
             for (Generator<?> g : elements) {

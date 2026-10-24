@@ -186,7 +186,7 @@ class RunnerTest {
                 Reporter.printing(capture(buf)));
         assertSame(err, report.failures().get(0).exception());
         assertTrue(report.failures().get(0).draws().isEmpty());
-        assertTrue(report.failures().get(0).notes().isEmpty());
+        assertTrue(report.failures().get(0).output().isEmpty());
         assertEquals("", buf.toString(StandardCharsets.UTF_8));
     }
 
@@ -264,6 +264,8 @@ class RunnerTest {
         FakeLibhegel fake = new FakeLibhegel();
         fake.runStatus = Abi.RUN_STATUS_ERROR;
         fake.runError = "FailedHealthCheck: FilterTooMuch — too many rejected";
+        fake.runErrorKind = Abi.RUN_ERROR_HEALTH_CHECK;
+        fake.runErrorHealthCheck = Abi.HC_FILTER_TOO_MUCH;
         HealthCheckFailure e = assertThrows(
                 HealthCheckFailure.class,
                 () -> run(fake, new Settings().database(Database.disabled()), tc -> tc.assume(false)));
@@ -394,6 +396,17 @@ class RunnerTest {
         assertEquals(Abi.BACKEND_URANDOM, fake.backendCode);
         assertEquals("/tmp/hegel-db", fake.databasePath);
         assertEquals("myTest", fake.databaseKey);
+    }
+
+    @Test
+    void suppressingNoHealthChecksIsSentAndReplacesEarlierSuppressions() {
+        FakeLibhegel unset = new FakeLibhegel();
+        run(unset, new Settings(), tc -> {});
+        assertEquals(-1, unset.suppressMask);
+
+        FakeLibhegel none = new FakeLibhegel();
+        run(none, new Settings().suppressHealthCheck(HealthCheck.TOO_SLOW).suppressHealthCheck(), tc -> {});
+        assertEquals(0, none.suppressMask);
     }
 
     @Test

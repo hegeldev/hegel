@@ -31,7 +31,7 @@ Add the dependency with Maven:
 <dependency>
   <groupId>dev.hegel</groupId>
   <artifactId>hegel</artifactId> <!-- or "hegel-jna" for Java 17-21 -->
-  <version>0.1.0</version>
+  <version>0.10.3</version>
   <scope>test</scope>
 </dependency>
 ```
@@ -39,7 +39,7 @@ Add the dependency with Maven:
 or with Gradle:
 
 ```kotlin
-testImplementation("dev.hegel:hegel:0.1.0") // or "dev.hegel:hegel-jna:0.1.0"
+testImplementation("dev.hegel:hegel:0.10.3") // or "dev.hegel:hegel-jna:0.10.3"
 ```
 
 Depend on exactly one of the two — they contain the same classes and differ only in how they call
@@ -136,6 +136,7 @@ report.status();                        // PASSED, FAILED, or ERROR
 report.statistics();                    // valid / invalid / overrun / interesting case counts
 for (Failure f : report.failures()) {   // one per distinct counterexample
   f.draws();                            // labelled draws of the minimal example, as Java values
+  f.output();                           // the printed report of the minimal example, line by line
   f.exception();                        // the body's own throwable
   f.reproduceBlob();                    // Optional: replay it later with Settings.reproduceFailure
   f.caveat();                           // Optional: how reliably a nondeterministic failure reproduced
@@ -153,7 +154,7 @@ frontend's own stack frames out of failure origins.
 audiences that do not want the Java frontend:
 
 - **Writing a binding** — implement `dev.hegel.lowlevel.Libhegel` (one method per `hegel_*`
-  function in `hegel.h`, with raw handles and return codes) over your FFI mechanism, and register
+  function in `hegel.h` that the Java frontend uses, with raw handles and return codes) over your FFI mechanism, and register
   it as a `dev.hegel.lowlevel.LibhegelBackend` service provider. The two bundled bindings are
   registered the same way.
 - **Building a frontend from scratch** — depend on `hegel-lowlevel` plus one binding, call

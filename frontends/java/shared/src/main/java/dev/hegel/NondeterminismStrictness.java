@@ -23,7 +23,7 @@ public enum NondeterminismStrictness {
     QUIET(Abi.NONDETERMINISM_QUIET),
     /** Switch to nondeterministic handling, printing a one-line notice once per run. */
     WARN(Abi.NONDETERMINISM_WARN),
-    /** Abort the run with a flaky-test error ({@link HegelException}). */
+    /** Abort the run with a flaky-test error ({@link FlakyTestException}). */
     ERROR(Abi.NONDETERMINISM_ERROR);
 
     /** The {@code hegel_nondeterminism_strictness_t} value to send, or {@code null} to leave the profile's choice. */

@@ -1,6 +1,7 @@
 package dev.hegel.generators;
 
 import dev.hegel.Generator;
+import dev.hegel.Label;
 import dev.hegel.TestCase;
 
 /**
@@ -29,6 +30,12 @@ public final class DomainGenerator implements Generator<String> {
      */
     public DomainGenerator maxLength(int maxLength) {
         return new DomainGenerator(maxLength);
+    }
+
+    /** @hidden */
+    @Override
+    public long label() {
+        return Label.of("hegel.domains");
     }
 
     /** @hidden */

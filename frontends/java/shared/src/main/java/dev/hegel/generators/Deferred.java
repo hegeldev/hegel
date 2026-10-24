@@ -2,6 +2,7 @@ package dev.hegel.generators;
 
 import dev.hegel.Generator;
 import dev.hegel.Generators;
+import dev.hegel.Label;
 import dev.hegel.TestCase;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -41,6 +42,12 @@ public final class Deferred<T> implements Generator<T> {
         if (!delegate.compareAndSet(null, generator)) {
             throw new IllegalStateException("deferred generator has already been set");
         }
+    }
+
+    /** @hidden */
+    @Override
+    public long label() {
+        return Label.DEFERRED;
     }
 
     @Override

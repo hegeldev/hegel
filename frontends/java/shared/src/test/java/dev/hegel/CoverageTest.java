@@ -19,7 +19,7 @@ class CoverageTest {
     void fnv1aMatchesKnownVector() {
         // FNV-1a 64-bit of the empty string is the offset basis.
         assertEquals(0xcbf29ce484222325L, Label.of(""));
-        assertTrue(Label.COMPOSITE == Label.of("dev.hegel.composite"));
+        assertTrue(Label.COMPOSITE == Label.of("hegel.composite"));
     }
 
     // --- StringGeneratorHandle cleanup ---
@@ -64,7 +64,12 @@ class CoverageTest {
                 suppressHealthCheck = {HealthCheck.TOO_SLOW},
                 backend = Backend.URANDOM,
                 nondeterminismStrictness = NondeterminismStrictness.ERROR,
-                reportMultipleFailures = true,
+                reportMultipleFailures = OptBoolean.TRUE,
+                stopOnFirstFailure = OptBoolean.TRUE,
+                showStatistics = OptBoolean.TRUE,
+                unboundedChoices = OptBoolean.TRUE,
+                verbosity = Verbosity.VERBOSE,
+                profile = "ci",
                 printBlob = OptBoolean.TRUE,
                 reproduceFailure = "blob-xyz",
                 name = "custom")
@@ -73,12 +78,19 @@ class CoverageTest {
         @HegelTest(
                 derandomize = OptBoolean.FALSE,
                 printBlob = OptBoolean.FALSE,
+                reportMultipleFailures = OptBoolean.FALSE,
+                stopOnFirstFailure = OptBoolean.FALSE,
+                showStatistics = OptBoolean.FALSE,
+                unboundedChoices = OptBoolean.FALSE,
                 phases = {},
                 database = Database.DISABLED)
         void derandomFalseEmptyPhases(TestCase tc) {}
 
         @HegelTest(database = "/tmp/hdb")
         void customDb(TestCase tc) {}
+
+        @HegelTest(suppressHealthCheck = HealthCheck.NONE)
+        void suppressNone(TestCase tc) {}
     }
 
     @Test
@@ -94,36 +106,50 @@ class CoverageTest {
         assertTrue(HegelTestExtension.isTestCaseParam(TestCase.class));
         assertFalse(HegelTestExtension.isTestCaseParam(String.class));
 
-        Settings withSeed = HegelTestExtension.settingsFrom(seeded.getAnnotation(HegelTest.class), "s");
+        Settings withSeed = HegelTestExtension.settingsFrom(seeded.getAnnotation(HegelTest.class), seeded);
         assertEquals(5L, withSeed.seed);
         assertTrue(withSeed.hasSeed);
 
         // Defaults: no seed, no derandomize override, engine-default phases, default database, no
-        // blob replay, method name as the property name.
-        Settings noSeed = HegelTestExtension.settingsFrom(unseeded.getAnnotation(HegelTest.class), "u");
+        // blob replay, the class-qualified method name as the property name, and the method as
+        // the test location.
+        Settings noSeed = HegelTestExtension.settingsFrom(unseeded.getAnnotation(HegelTest.class), unseeded);
         assertFalse(noSeed.hasSeed);
         assertNull(noSeed.derandomize);
         assertNull(noSeed.phasesMask);
         assertEquals(Database.Kind.UNSET, noSeed.database.kind);
-        assertEquals(0, noSeed.suppressMask);
+        assertNull(noSeed.suppressMask);
         assertEquals(Backend.AUTO, noSeed.backend);
         assertEquals(NondeterminismStrictness.DEFAULT, noSeed.nondeterminismStrictness);
-        assertFalse(noSeed.reportMultipleFailures);
+        assertNull(noSeed.reportMultipleFailures);
+        assertNull(noSeed.stopOnFirstFailure);
+        assertNull(noSeed.showStatistics);
+        assertNull(noSeed.unboundedChoices);
+        assertEquals(Verbosity.DEFAULT, noSeed.verbosity);
+        assertNull(noSeed.profile);
         assertNull(noSeed.printBlob);
         assertNull(noSeed.testCases);
         assertNull(noSeed.reproduceFailure);
-        assertEquals("u", noSeed.name);
+        assertEquals("dev.hegel.CoverageTest$Holder.unseeded", noSeed.name);
+        assertEquals(
+                new TestLocation("dev/hegel/CoverageTest.java", 57, "dev.hegel.CoverageTest$Holder", "unseeded"),
+                noSeed.testLocation);
 
         // Fully-configured: derandomize forced on, a single explicit phase, a suppressed check,
         // explicit backend, multi-failure and blob options, and a name override.
         Method configured = Holder.class.getDeclaredMethod("configured", TestCase.class);
-        Settings c = HegelTestExtension.settingsFrom(configured.getAnnotation(HegelTest.class), "ignored");
+        Settings c = HegelTestExtension.settingsFrom(configured.getAnnotation(HegelTest.class), configured);
         assertEquals(Boolean.TRUE, c.derandomize);
         assertEquals(Integer.valueOf(Phase.GENERATE.bit), c.phasesMask);
-        assertEquals(HealthCheck.TOO_SLOW.bit, c.suppressMask);
+        assertEquals(Integer.valueOf(HealthCheck.TOO_SLOW.bit), c.suppressMask);
         assertEquals(Backend.URANDOM, c.backend);
         assertEquals(NondeterminismStrictness.ERROR, c.nondeterminismStrictness);
-        assertTrue(c.reportMultipleFailures);
+        assertEquals(Boolean.TRUE, c.reportMultipleFailures);
+        assertEquals(Boolean.TRUE, c.stopOnFirstFailure);
+        assertEquals(Boolean.TRUE, c.showStatistics);
+        assertEquals(Boolean.TRUE, c.unboundedChoices);
+        assertEquals(Verbosity.VERBOSE, c.verbosity);
+        assertEquals("ci", c.profile);
         assertEquals(Boolean.TRUE, c.printBlob);
         assertEquals("blob-xyz", c.reproduceFailure);
         assertEquals("custom", c.name);
@@ -131,17 +157,26 @@ class CoverageTest {
         // derandomize forced off, an explicitly empty phase set (runs nothing — distinct from the
         // all-phases default), and the database disabled.
         Method emptyPhases = Holder.class.getDeclaredMethod("derandomFalseEmptyPhases", TestCase.class);
-        Settings e = HegelTestExtension.settingsFrom(emptyPhases.getAnnotation(HegelTest.class), "e");
+        Settings e = HegelTestExtension.settingsFrom(emptyPhases.getAnnotation(HegelTest.class), emptyPhases);
         assertEquals(Boolean.FALSE, e.derandomize);
         assertEquals(Boolean.FALSE, e.printBlob);
+        assertEquals(Boolean.FALSE, e.reportMultipleFailures);
+        assertEquals(Boolean.FALSE, e.stopOnFirstFailure);
+        assertEquals(Boolean.FALSE, e.showStatistics);
+        assertEquals(Boolean.FALSE, e.unboundedChoices);
         assertEquals(Integer.valueOf(0), e.phasesMask);
         assertEquals(Database.Kind.DISABLED, e.database.kind);
 
         // A custom (compile-time) database path.
         Method customDb = Holder.class.getDeclaredMethod("customDb", TestCase.class);
-        Settings d = HegelTestExtension.settingsFrom(customDb.getAnnotation(HegelTest.class), "d");
+        Settings d = HegelTestExtension.settingsFrom(customDb.getAnnotation(HegelTest.class), customDb);
         assertEquals(Database.Kind.PATH, d.database.kind);
         assertEquals("/tmp/hdb", d.database.path);
+
+        // HealthCheck.NONE suppresses nothing, overriding a profile's suppressions.
+        Method suppressNone = Holder.class.getDeclaredMethod("suppressNone", TestCase.class);
+        Settings n = HegelTestExtension.settingsFrom(suppressNone.getAnnotation(HegelTest.class), suppressNone);
+        assertEquals(Integer.valueOf(0), n.suppressMask);
     }
 
     // --- generators: stale-handle rebuild and IPv6 formatting ---
@@ -159,7 +194,7 @@ class CoverageTest {
     }
 
     private static <T> T drawWith(FakeLibhegel fake, Generator<T> gen) {
-        TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false, Reporter.silent());
+        TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false);
         return tc.draw(gen);
     }
 
@@ -195,7 +230,7 @@ class CoverageTest {
     @Test
     void poolTracksValuesByVariableId() {
         FakeLibhegel fake = new FakeLibhegel();
-        TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false, Reporter.silent());
+        TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false);
         Pool<String> pool = new Pool<>(tc);
         assertTrue(pool.isEmpty());
         pool.add("first");
@@ -368,7 +403,7 @@ class CoverageTest {
     }
 
     private static TestCase fakeTestCase(FakeLibhegel fake) {
-        return new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false, Reporter.silent());
+        return new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false);
     }
 
     @Test
@@ -381,7 +416,7 @@ class CoverageTest {
                 throw new AssertionError("rule failed");
             }
         }
-        TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false, Reporter.silent());
+        TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false);
         AssertionError e = assertThrows(AssertionError.class, () -> Stateful.run(new Failing(), tc));
         assertEquals("rule failed", e.getMessage());
 
@@ -395,7 +430,7 @@ class CoverageTest {
             }
         }
         FakeLibhegel fake2 = new FakeLibhegel();
-        TestCase tc2 = new TestCase(new LiveDataSource(fake2, FakeLibhegel.TC), false, Reporter.silent());
+        TestCase tc2 = new TestCase(new LiveDataSource(fake2, FakeLibhegel.TC), false);
         assertThrows(AssertionError.class, () -> Stateful.run(new FailingInvariant(), tc2));
     }
 

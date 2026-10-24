@@ -1,6 +1,7 @@
 package dev.hegel;
 
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
@@ -74,21 +75,22 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
             invocation.skip();
             Method method = invocationContext.getExecutable();
             HegelTest ann = method.getAnnotation(HegelTest.class);
-            Settings settings = settingsFrom(ann, method.getName());
             Object target = invocationContext.getTarget().orElse(null);
+            Settings settings =
+                    settingsFrom(ann, method).examples(examplesFrom(ann, method.getDeclaringClass(), target));
             Hegel.test(tc -> ReflectionSupport.invokeMethod(method, target, tc), settings);
         }
     }
 
-    static Settings settingsFrom(HegelTest ann, String methodName) {
-        String name = ann.name().isEmpty() ? methodName : ann.name();
-        Settings s = new Settings()
-                .verbosity(ann.verbosity())
+    static Settings settingsFrom(HegelTest ann, Method method) {
+        String className = method.getDeclaringClass().getName();
+        String name = ann.name().isEmpty() ? className + "." + method.getName() : ann.name();
+        Settings s = ann.profile().isEmpty() ? new Settings() : Settings.fromProfile(ann.profile());
+        s = s.verbosity(ann.verbosity())
                 .backend(ann.backend())
                 .nondeterminismStrictness(ann.nondeterminismStrictness())
-                .reportMultipleFailures(ann.reportMultipleFailures())
-                .suppressHealthCheck(ann.suppressHealthCheck())
-                .name(name);
+                .name(name)
+                .testLocation(MethodLocation.of(method));
         // The annotation cannot express "unset" for a primitive: 0 test cases (its default) leaves
         // the engine's profile / HEGEL_TEST_CASES value in place.
         if (ann.testCases() != 0) {
@@ -96,6 +98,21 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
         }
         if (ann.printBlob() != OptBoolean.DEFAULT) {
             s = s.printBlob(ann.printBlob() == OptBoolean.TRUE);
+        }
+        if (ann.reportMultipleFailures() != OptBoolean.DEFAULT) {
+            s = s.reportMultipleFailures(ann.reportMultipleFailures() == OptBoolean.TRUE);
+        }
+        if (ann.stopOnFirstFailure() != OptBoolean.DEFAULT) {
+            s = s.stopOnFirstFailure(ann.stopOnFirstFailure() == OptBoolean.TRUE);
+        }
+        if (ann.showStatistics() != OptBoolean.DEFAULT) {
+            s = s.showStatistics(ann.showStatistics() == OptBoolean.TRUE);
+        }
+        if (ann.unboundedChoices() != OptBoolean.DEFAULT) {
+            s = s.unboundedChoices(ann.unboundedChoices() == OptBoolean.TRUE);
+        }
+        if (ann.suppressHealthCheck().length > 0) {
+            s = s.suppressHealthCheck(ann.suppressHealthCheck());
         }
         if (ann.seed() != HegelTest.NO_SEED) {
             s = s.seed(ann.seed());
@@ -117,6 +134,31 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
             s = s.database(Database.path(ann.database()));
         }
         return s;
+    }
+
+    /**
+     * The examples the methods {@code ann} names supply, invoked on {@code target} (ignored by a
+     * static method).
+     */
+    static Example[] examplesFrom(HegelTest ann, Class<?> testClass, Object target) {
+        List<Example> examples = new ArrayList<>();
+        for (String name : ann.examples()) {
+            Method source = ReflectionSupport.findMethod(testClass, name)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "@HegelTest(examples): " + testClass.getName() + " has no method " + name + "()"));
+            Object supplied = ReflectionSupport.invokeMethod(source, target);
+            if (supplied instanceof Example example) {
+                examples.add(example);
+            } else if (supplied instanceof Iterable<?> iterable) {
+                for (Object item : iterable) {
+                    examples.add((Example) item);
+                }
+            } else {
+                throw new IllegalArgumentException("@HegelTest(examples): " + testClass.getName() + "." + name
+                        + "() must return an Example or an Iterable of them");
+            }
+        }
+        return examples.toArray(new Example[0]);
     }
 
     /**
