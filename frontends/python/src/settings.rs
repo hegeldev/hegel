@@ -156,6 +156,16 @@ impl Settings {
         })
     }
 
+    /// Set the setting named by its `hegel.toml` key from its value as
+    /// text, parsed by the engine's own parser.
+    fn set_from_string(&self, key: &str, value: &str) -> PyResult<()> {
+        with_ctx(|ctx| {
+            check(unsafe {
+                c::hegel_settings_set_from_string(ctx, self.raw.0, hstr(key), hstr(value))
+            })
+        })
+    }
+
     fn get_test_cases(&self) -> PyResult<u64> {
         let mut out: u64 = 0;
         with_ctx(|ctx| {

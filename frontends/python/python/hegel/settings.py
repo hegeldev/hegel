@@ -366,6 +366,22 @@ class Settings:
         """A copy of these settings with ``overrides`` applied."""
         return Settings(self, **overrides)
 
+    def _with_strings(self, values: Iterable[tuple[str, str]]) -> Settings:
+        """These settings with each ``(key, value)`` applied as the engine
+        reads a ``hegel.toml`` profile: the key is the setting's name and
+        the value is text in the engine's vocabulary for it (``"10"``,
+        ``"verbose"``, ``"too_slow,filter_too_much"``). A command line
+        passes its options through this, so the engine, not this package,
+        knows each setting's spellings."""
+        native = self._build()
+        for key, value in values:
+            native.set_from_string(key, value)
+            if key not in _FIELDS:
+                raise InvalidArgument(
+                    f"{key} is set for each test, not for a whole run, so it cannot be set here"
+                )
+        return _from_native(native)
+
     def _build(
         self,
         database_key: str | None = None,

@@ -88,8 +88,9 @@ does, with a note per file of what was dropped.
   giving `[]`, `lists(nothing(), min_size=1)` is not an error when built,
   and an empty registration for `from_type` is not detected.
 - The pytest plugin's `--hypothesis-*` options and statistics in the terminal
-  summary; Hegel's plugin has `--hegel-profile`, `--hegel-seed`,
-  `--hegel-verbosity`, `--hegel-derandomize` and `--hegel-database`.
+  summary; Hegel's plugin has `--hegel-profile`, `--hegel-setting`,
+  `--hegel-seed`, `--hegel-verbosity`, `--hegel-derandomize` and
+  `--hegel-database`.
 
 ## Different because the engine behaves differently
 
