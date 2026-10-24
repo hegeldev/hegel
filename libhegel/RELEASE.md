@@ -5,3 +5,23 @@ This patch adds `HEGEL_MAX_SIZE_DEFAULT`, which a frontend passes as the `max_si
 It also adds `HEGEL_FILTER_ATTEMPTS`, the number of times a filtered generator draws a value before it rejects the test case (3), so that every frontend's `filter` uses the engine's number.
 
 It also adds `hegel_settings_set_from_string`, which sets one setting from its `hegel.toml` key and a value given as text, parsed by the same parser `hegel.toml` uses: integers in decimal, booleans as the `HEGEL_*` environment variables take them, and lists such as `phases` and `suppress_health_check` as comma-separated names. A frontend's command-line interface can pass each flag through it, so every setting is settable from the command line without the frontend knowing each setting's vocabulary. `unbounded_choices` is settable this way too.
+
+It also moves the splicing of explicit grammar terminals into libhegel. A frontend drawing a grammar string whose explicit terminals take values from the user's own generators now starts a draw with `hegel_grammar_draw_new`, calls `hegel_grammar_draw_next` to learn which terminal needs a value next, draws that value and hands it over with `hegel_grammar_draw_provide`, and reads the finished string with `hegel_grammar_draw_result` once `hegel_grammar_draw_next` returns `HEGEL_E_NOT_FOUND`:
+
+```c
+hegel_grammar_draw_t *draw;
+hegel_grammar_draw_new(ctx, grammar, 0, &draw);
+size_t terminal;
+hegel_result_t rc;
+while ((rc = hegel_grammar_draw_next(ctx, tc, draw, &terminal)) == HEGEL_OK) {
+    /* draw a value for explicit_names[terminal] */
+    hegel_grammar_draw_provide(ctx, draw, value);
+}
+if (rc == HEGEL_E_NOT_FOUND)
+    hegel_grammar_draw_result(ctx, draw, &string);
+hegel_grammar_draw_free(ctx, draw);
+```
+
+libhegel replaces each placeholder marker with its value, keeps the whole string, values included, under the size cap by drawing it again with less room for the grammar's own text when the values overflow it, and rejects the test case after `HEGEL_FILTER_ATTEMPTS` attempts that do not fit, so a frontend no longer reimplements any of this. `hegel_generate_grammar` and `hegel_grammar_placeholder` still work as before.
+
+The header's list of constructors and their matching frees now includes `hegel_settings_new_for_profile`, `hegel_new_recursion` and the new grammar draw functions, and the documentation of `hegel_stop_span` no longer claims that libhegel retries a discarded span itself: the caller draws again.

@@ -71,6 +71,7 @@
  *
  *     hegel_context_new          ->  hegel_context_free
  *     hegel_settings_new         ->  hegel_settings_free
+ *     hegel_settings_new_for_profile  ->  hegel_settings_free
  *     hegel_run_start            ->  hegel_run_free
  *     hegel_run_start_blob       ->  hegel_run_free
  *     hegel_test_case_from_blob  ->  hegel_test_case_free
@@ -81,12 +82,15 @@
  *     hegel_string_generator_*   ->  hegel_string_generator_free
  *     hegel_grammar_builder_new  ->  hegel_grammar_builder_free
  *     hegel_grammar_new          ->  hegel_grammar_free
+ *     hegel_grammar_draw_new     ->  hegel_grammar_draw_free
  *     hegel_new_collection       ->  hegel_collection_free
  *     hegel_new_pool             ->  hegel_pool_free
+ *     hegel_new_recursion        ->  hegel_recursion_free
  *     hegel_new_state_machine    ->  hegel_state_machine_free
  *     hegel_generate_bytes       ->  hegel_generate_bytes_result_free
  *     hegel_generate_string      ->  hegel_owned_string_free
  *     hegel_generate_grammar     ->  hegel_owned_string_free
+ *     hegel_grammar_draw_result  ->  hegel_owned_string_free
  *     hegel_printer_options_new  ->  hegel_printer_options_free
  *     hegel_reflow_options_new   ->  hegel_reflow_options_free
  *     hegel_printer_new          ->  hegel_printer_free
@@ -188,8 +192,9 @@ typedef enum {
     HEGEL_E_ALREADY_COMPLETE = -6,
     /*
      Something was read before it was ready: `hegel_next_test_case`
-     without first completing the previous test case, or
-     `hegel_run_result` before the run finished.
+     without first completing the previous test case,
+     `hegel_run_result` before the run finished, or
+     `hegel_grammar_draw_result` before the string was complete.
      */
     HEGEL_E_NOT_COMPLETE = -7,
     /*
@@ -214,8 +219,10 @@ typedef enum {
      */
     HEGEL_E_RETRY = -10,
     /*
-     There is nothing at the index asked for:
-     `hegel_grammar_builder_file` past the end of the list of files.
+     There is nothing at the index asked for, or nothing left:
+     `hegel_grammar_builder_file` past the end of the list of files, or
+     `hegel_grammar_draw_next` once no explicit terminal is left to
+     supply.
      */
     HEGEL_E_NOT_FOUND = -11,
 } hegel_result_t;
@@ -531,6 +538,41 @@ typedef struct hegel_grammar_t hegel_grammar_t;
  it are absolute. Relative imports require a frontend file.
  */
 typedef struct hegel_grammar_builder_t hegel_grammar_builder_t;
+
+/*
+ Opaque handle to one draw of a grammar string whose explicit terminals
+ take values the caller draws: libhegel draws the string, and the
+ caller supplies a value for each occurrence of an explicit terminal,
+ which libhegel splices in where the terminal's placeholder marker
+ stood.
+
+ Create one with `hegel_grammar_draw_new` for each string to draw, then
+ loop:
+
+     size_t terminal;
+     hegel_result_t rc;
+     while ((rc = hegel_grammar_draw_next(ctx, tc, draw, &terminal)) == HEGEL_OK) {
+         /* draw a value for explicit_names[terminal] from tc */
+         hegel_grammar_draw_provide(ctx, draw, value);
+     }
+     if (rc == HEGEL_E_NOT_FOUND)
+         hegel_grammar_draw_result(ctx, draw, &string);
+     hegel_grammar_draw_free(ctx, draw);
+
+ The values count toward the draw's size cap like the grammar's own
+ characters. When they push the string over it, libhegel discards the
+ attempt and draws the string again, with less of the cap for the
+ grammar's own text, and `hegel_grammar_draw_next` asks for values for
+ the new string's terminals from the start. After `HEGEL_FILTER_ATTEMPTS`
+ attempts that do not fit, it rejects the test case. The values are
+ beyond the lexing checks libhegel makes on the rest of the string: it
+ is the caller's part to draw values that read as the terminal where
+ they land.
+
+ The handle borrows the grammar, which must outlive it. Free it with
+ `hegel_grammar_draw_free` exactly once.
+ */
+typedef struct hegel_grammar_draw_t hegel_grammar_draw_t;
 
 /*
  Opaque handle to an engine-managed *variable pool* for stateful testing.
@@ -2568,9 +2610,11 @@ hegel_result_t hegel_grammar_builder_free(hegel_context_t *ctx, hegel_grammar_bu
    character class, wildcard or literal outside it is never drawn.
  `explicit_names`, `explicit_len`: `explicit_len` terminals whose values
    the caller supplies. Every terminal the grammar `%declare`s must be
-   named; a terminal with a pattern may be named to override it. Each
-   occurrence of such a terminal in a drawn string is a placeholder
-   marker (see `hegel_grammar_placeholder`) for the caller to replace.
+   named; a terminal with a pattern may be named to override it. Draw
+   strings with these terminals' values filled in through
+   `hegel_grammar_draw_t`; in a string from `hegel_generate_grammar`,
+   each occurrence of such a terminal is a placeholder marker (see
+   `hegel_grammar_placeholder`).
  `out_grammar`: Receives the grammar handle.
 
  The terminals' patterns follow the Unicode version set with
@@ -2630,7 +2674,9 @@ hegel_result_t hegel_grammar_placeholder(hegel_context_t *ctx,
  Draw a string of a grammar: a string the grammar's start rule accepts,
  aiming at a length drawn up to the size cap, as many as 8192
  characters by default, with each explicit terminal standing as its
- placeholder marker (see `hegel_grammar_placeholder`). The string is
+ placeholder marker (see `hegel_grammar_placeholder`). To have the
+ markers replaced by values the caller draws, use
+ `hegel_grammar_draw_t` instead. The string is
  one choice of the test case, holding the string itself: a replay
  checks a stored string by parsing it (one the grammar does not derive
  is replaced by the grammar's simplest string), and the shrinker edits
@@ -2640,10 +2686,7 @@ hegel_result_t hegel_grammar_placeholder(hegel_context_t *ctx,
  `grammar`: A grammar built by `hegel_grammar_new`.
  `max_size`: A cap on this draw's characters, placeholder markers
    counting as none, or 0 for the grammar's own cap. One below the
-   grammar's smallest string, or above its cap, is read as that. A
-   caller replacing markers with values of its own uses it to draw
-   again, under a smaller cap, when the values pushed the string past
-   the cap it has in mind.
+   grammar's smallest string, or above its cap, is read as that.
  `out_result`: Receives a libhegel-allocated UTF-8 buffer with a trailing
    NUL outside its reported length. Release with
    `hegel_owned_string_free`.
@@ -2663,6 +2706,91 @@ hegel_result_t hegel_generate_grammar(hegel_context_t *ctx,
                                       const hegel_grammar_t *grammar,
                                       uint64_t max_size,
                                       hegel_owned_string_t *out_result);
+
+/*
+ Start a draw of a string of `grammar` whose explicit terminals take
+ values the caller supplies. See `hegel_grammar_draw_t`. Nothing is
+ drawn until `hegel_grammar_draw_next`.
+
+ Parameters:
+ `grammar`: A grammar built by `hegel_grammar_new`. It must outlive the
+   draw handle.
+ `max_size`: The most characters the string may have, the values the
+   caller supplies included, or 0 for the grammar's own cap.
+ `out_draw`: Receives a caller-owned handle. Release it with
+   `hegel_grammar_draw_free`.
+
+ Returns `HEGEL_OK`.
+ */
+hegel_result_t hegel_grammar_draw_new(hegel_context_t *ctx,
+                                      const hegel_grammar_t *grammar,
+                                      uint64_t max_size,
+                                      hegel_grammar_draw_t **out_draw);
+
+/*
+ Advance a grammar draw to the next explicit terminal that needs a
+ value, drawing the string from `tc` when an attempt starts.
+
+ Parameters:
+ `out_terminal`: Receives, on `HEGEL_OK`, the index in the
+   `explicit_names` given to `hegel_grammar_new` of the terminal whose
+   value is due. Supply it with `hegel_grammar_draw_provide` before
+   calling this again.
+
+ Returns `HEGEL_OK` when a value is due; `HEGEL_E_NOT_FOUND` when no
+ terminal is left and the string is complete (read it with
+ `hegel_grammar_draw_result`); `HEGEL_E_ASSUME` when the values
+ overflowed the size cap `HEGEL_FILTER_ATTEMPTS` times in a row, or the
+ grammar draw itself rejected the test case (see
+ `hegel_generate_grammar`), and the test case has been concluded
+ invalid; `HEGEL_E_STOP_TEST`; or `HEGEL_E_INVALID_ARG` when a value is
+ still due.
+ */
+hegel_result_t hegel_grammar_draw_next(hegel_context_t *ctx,
+                                       hegel_test_case_t *tc,
+                                       hegel_grammar_draw_t *draw,
+                                       size_t *out_terminal);
+
+/*
+ Supply the value of the explicit terminal `hegel_grammar_draw_next`
+ asked for. The value is copied.
+
+ Parameters:
+ `value`: The terminal's value, as UTF-8.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for a value that is not
+ valid UTF-8 or when no value is due.
+ */
+hegel_result_t hegel_grammar_draw_provide(hegel_context_t *ctx,
+                                          hegel_grammar_draw_t *draw,
+                                          hegel_string_t value);
+
+/*
+ The string a grammar draw produced, once `hegel_grammar_draw_next` has
+ returned `HEGEL_E_NOT_FOUND`: the grammar's string with each explicit
+ terminal's placeholder marker replaced by the value supplied for it.
+
+ Parameters:
+ `out_result`: Receives a libhegel-allocated UTF-8 buffer with a
+   trailing NUL outside its reported length. Release with
+   `hegel_owned_string_free`.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_NOT_COMPLETE` when the string is not
+ complete yet.
+ */
+hegel_result_t hegel_grammar_draw_result(hegel_context_t *ctx,
+                                         const hegel_grammar_draw_t *draw,
+                                         hegel_owned_string_t *out_result);
+
+/*
+ Parameters:
+ `draw`: The grammar draw to release. Safe to call with NULL.
+
+ Returns `HEGEL_OK`.
+
+ Each draw handle must be freed exactly once.
+ */
+hegel_result_t hegel_grammar_draw_free(hegel_context_t *ctx, hegel_grammar_draw_t *draw);
 
 /*
  Parameters:

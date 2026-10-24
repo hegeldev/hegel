@@ -78,6 +78,31 @@ absorbed inside `bindLibrary`'s wrapper, but the absorption must be documented
 in the `Bindings` interface docs so a reader can tell a deliberate default from
 an oversight.
 
+### Constants and multi-call protocols
+
+`hegel.h` also publishes `#define` constants a frontend must use rather than
+hard-code: `HEGEL_MAX_SIZE_DEFAULT` (`UINT64_MAX - 1`, the `max_size` that
+asks libhegel for its default text and binary maximum; a `bigint` in
+TypeScript), `HEGEL_FILTER_ATTEMPTS` (how many times `filter` draws before
+rejecting) and `HEGEL_STATE_MACHINE_DONE`. Neither koffi nor the Wasm module
+exports them: copy each into `src/engine.ts` next to the enums, and check the
+header diff for changed values like any other constant.
+
+Some operations are a loop of calls over a caller-owned handle rather than one
+call: the grammar builder (`hegel_grammar_builder_file` /
+`hegel_grammar_builder_provide` until `HEGEL_E_NOT_FOUND`), recursion
+(`hegel_recursion_*`, with `HEGEL_E_RETRY`), and explicit grammar terminals
+(`hegel_grammar_draw_next` / `hegel_grammar_draw_provide` until
+`HEGEL_E_NOT_FOUND`, then `hegel_grammar_draw_result`). There are no
+callbacks: the frontend runs its own code (reading a file, drawing a value)
+between the calls, and frees the handle (`hegel_grammar_builder_free`,
+`hegel_recursion_free`, `hegel_grammar_draw_free`) when the loop ends, on error
+paths too. `HEGEL_E_NOT_FOUND` and `HEGEL_E_RETRY` are steps of these
+loops, not errors, so the wrapper returns them to the caller instead of
+throwing through `check`. `hegel_settings_set_from_string` takes a setting's
+`hegel.toml` key and a string value, which is how a command line reaches every
+setting without the frontend parsing values itself.
+
 ### Ownership
 
 Neither adapter frees anything implicitly. Every handle the ABI writes back is

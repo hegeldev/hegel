@@ -292,8 +292,9 @@ pub enum hegel_result_t {
     HEGEL_E_ALREADY_COMPLETE = -6,
 
     /// Something was read before it was ready: `hegel_next_test_case`
-    /// without first completing the previous test case, or
-    /// `hegel_run_result` before the run finished.
+    /// without first completing the previous test case,
+    /// `hegel_run_result` before the run finished, or
+    /// `hegel_grammar_draw_result` before the string was complete.
     HEGEL_E_NOT_COMPLETE = -7,
 
     /// An internal invariant failed inside libhegel. Should not happen in
@@ -314,8 +315,10 @@ pub enum hegel_result_t {
     /// start again from the root directly.
     HEGEL_E_RETRY = -10,
 
-    /// There is nothing at the index asked for:
-    /// `hegel_grammar_builder_file` past the end of the list of files.
+    /// There is nothing at the index asked for, or nothing left:
+    /// `hegel_grammar_builder_file` past the end of the list of files, or
+    /// `hegel_grammar_draw_next` once no explicit terminal is left to
+    /// supply.
     HEGEL_E_NOT_FOUND = -11,
 }
 
@@ -5410,7 +5413,7 @@ pub unsafe extern "C" fn hegel_grammar_builder_free(
 /// threads. Free it with `hegel_grammar_free` once no draws will use it
 /// again.
 pub struct HegelGrammar {
-    spec: crate::native::lark::generate::GrammarSpec,
+    spec: Arc<crate::native::lark::generate::GrammarSpec>,
     /// The explicit terminals' markers, borrowed by
     /// `hegel_grammar_placeholder`.
     placeholders: Vec<(String, StoredString)>,
@@ -5437,9 +5440,11 @@ pub struct HegelGrammar {
 ///   character class, wildcard or literal outside it is never drawn.
 /// `explicit_names`, `explicit_len`: `explicit_len` terminals whose values
 ///   the caller supplies. Every terminal the grammar `%declare`s must be
-///   named; a terminal with a pattern may be named to override it. Each
-///   occurrence of such a terminal in a drawn string is a placeholder
-///   marker (see `hegel_grammar_placeholder`) for the caller to replace.
+///   named; a terminal with a pattern may be named to override it. Draw
+///   strings with these terminals' values filled in through
+///   `hegel_grammar_draw_t`; in a string from `hegel_generate_grammar`,
+///   each occurrence of such a terminal is a placeholder marker (see
+///   `hegel_grammar_placeholder`).
 /// `out_grammar`: Receives the grammar handle.
 ///
 /// The terminals' patterns follow the Unicode version set with
@@ -5508,7 +5513,12 @@ pub unsafe extern "C" fn hegel_grammar_new(
                 .iter()
                 .map(|(name, marker)| (name.clone(), marker.to_string().into()))
                 .collect();
-            unsafe { *out_grammar = into_raw_send_sync(HegelGrammar { spec, placeholders }) };
+            unsafe {
+                *out_grammar = into_raw_send_sync(HegelGrammar {
+                    spec: Arc::new(spec),
+                    placeholders,
+                })
+            };
             HEGEL_OK
         }
         Err(e) => {
@@ -5592,7 +5602,9 @@ pub unsafe extern "C" fn hegel_grammar_placeholder(
 /// Draw a string of a grammar: a string the grammar's start rule accepts,
 /// aiming at a length drawn up to the size cap, as many as 8192
 /// characters by default, with each explicit terminal standing as its
-/// placeholder marker (see `hegel_grammar_placeholder`). The string is
+/// placeholder marker (see `hegel_grammar_placeholder`). To have the
+/// markers replaced by values the caller draws, use
+/// `hegel_grammar_draw_t` instead. The string is
 /// one choice of the test case, holding the string itself: a replay
 /// checks a stored string by parsing it (one the grammar does not derive
 /// is replaced by the grammar's simplest string), and the shrinker edits
@@ -5602,10 +5614,7 @@ pub unsafe extern "C" fn hegel_grammar_placeholder(
 /// `grammar`: A grammar built by `hegel_grammar_new`.
 /// `max_size`: A cap on this draw's characters, placeholder markers
 ///   counting as none, or 0 for the grammar's own cap. One below the
-///   grammar's smallest string, or above its cap, is read as that. A
-///   caller replacing markers with values of its own uses it to draw
-///   again, under a smaller cap, when the values pushed the string past
-///   the cap it has in mind.
+///   grammar's smallest string, or above its cap, is read as that.
 /// `out_result`: Receives a libhegel-allocated UTF-8 buffer with a trailing
 ///   NUL outside its reported length. Release with
 ///   `hegel_owned_string_free`.
@@ -5647,6 +5656,237 @@ pub unsafe extern "C" fn hegel_generate_grammar(
         Ok(s) => unsafe { write_string_result(out_result, s) },
         Err(e) => translate_ds_error(ctx, e),
     }
+}
+
+/// Opaque handle to one draw of a grammar string whose explicit terminals
+/// take values the caller draws: libhegel draws the string, and the
+/// caller supplies a value for each occurrence of an explicit terminal,
+/// which libhegel splices in where the terminal's placeholder marker
+/// stood.
+///
+/// Create one with `hegel_grammar_draw_new` for each string to draw, then
+/// loop:
+///
+///     size_t terminal;
+///     hegel_result_t rc;
+///     while ((rc = hegel_grammar_draw_next(ctx, tc, draw, &terminal)) == HEGEL_OK) {
+///         /* draw a value for explicit_names[terminal] from tc */
+///         hegel_grammar_draw_provide(ctx, draw, value);
+///     }
+///     if (rc == HEGEL_E_NOT_FOUND)
+///         hegel_grammar_draw_result(ctx, draw, &string);
+///     hegel_grammar_draw_free(ctx, draw);
+///
+/// The values count toward the draw's size cap like the grammar's own
+/// characters. When they push the string over it, libhegel discards the
+/// attempt and draws the string again, with less of the cap for the
+/// grammar's own text, and `hegel_grammar_draw_next` asks for values for
+/// the new string's terminals from the start. After `HEGEL_FILTER_ATTEMPTS`
+/// attempts that do not fit, it rejects the test case. The values are
+/// beyond the lexing checks libhegel makes on the rest of the string: it
+/// is the caller's part to draw values that read as the terminal where
+/// they land.
+///
+/// The handle borrows the grammar, which must outlive it. Free it with
+/// `hegel_grammar_draw_free` exactly once.
+pub struct HegelGrammarDraw {
+    state: Mutex<crate::native::lark::explicit::ExplicitDraw>,
+}
+
+unsafe fn grammar_draw_ref<'a>(
+    ctx: *mut HegelContext,
+    fn_name: &str,
+    draw: *const HegelGrammarDraw,
+) -> Result<&'a HegelGrammarDraw, hegel_result_t> {
+    match unsafe { draw.as_ref() } {
+        Some(d) => Ok(d),
+        None => {
+            set_last_error(ctx, &format!("{fn_name}: grammar draw handle is null"));
+            Err(HEGEL_E_INVALID_HANDLE)
+        }
+    }
+}
+
+/// Start a draw of a string of `grammar` whose explicit terminals take
+/// values the caller supplies. See `hegel_grammar_draw_t`. Nothing is
+/// drawn until `hegel_grammar_draw_next`.
+///
+/// Parameters:
+/// `grammar`: A grammar built by `hegel_grammar_new`. It must outlive the
+///   draw handle.
+/// `max_size`: The most characters the string may have, the values the
+///   caller supplies included, or 0 for the grammar's own cap.
+/// `out_draw`: Receives a caller-owned handle. Release it with
+///   `hegel_grammar_draw_free`.
+///
+/// Returns `HEGEL_OK`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_grammar_draw_new(
+    ctx: *mut HegelContext,
+    grammar: *const HegelGrammar,
+    max_size: u64,
+    out_draw: *mut *mut HegelGrammarDraw,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    let Some(grammar) = (unsafe { grammar.as_ref() }) else {
+        set_last_error(ctx, "hegel_grammar_draw_new: grammar handle is null");
+        return HEGEL_E_INVALID_HANDLE;
+    };
+    if out_draw.is_null() {
+        set_last_error(ctx, "hegel_grammar_draw_new: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    let state =
+        crate::native::lark::explicit::ExplicitDraw::new(Arc::clone(&grammar.spec), max_size);
+    unsafe {
+        *out_draw = into_raw_send_sync(HegelGrammarDraw {
+            state: Mutex::new(state),
+        })
+    };
+    HEGEL_OK
+}
+
+/// Advance a grammar draw to the next explicit terminal that needs a
+/// value, drawing the string from `tc` when an attempt starts.
+///
+/// Parameters:
+/// `out_terminal`: Receives, on `HEGEL_OK`, the index in the
+///   `explicit_names` given to `hegel_grammar_new` of the terminal whose
+///   value is due. Supply it with `hegel_grammar_draw_provide` before
+///   calling this again.
+///
+/// Returns `HEGEL_OK` when a value is due; `HEGEL_E_NOT_FOUND` when no
+/// terminal is left and the string is complete (read it with
+/// `hegel_grammar_draw_result`); `HEGEL_E_ASSUME` when the values
+/// overflowed the size cap `HEGEL_FILTER_ATTEMPTS` times in a row, or the
+/// grammar draw itself rejected the test case (see
+/// `hegel_generate_grammar`), and the test case has been concluded
+/// invalid; `HEGEL_E_STOP_TEST`; or `HEGEL_E_INVALID_ARG` when a value is
+/// still due.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_grammar_draw_next(
+    ctx: *mut HegelContext,
+    tc: *mut HegelTestCase,
+    draw: *mut HegelGrammarDraw,
+    out_terminal: *mut usize,
+) -> hegel_result_t {
+    const FN: &str = "hegel_grammar_draw_next";
+    clear_last_error(ctx);
+    let (tc, _guard) = match unsafe { tc_guard(ctx, FN, tc) } {
+        Ok(t) => t,
+        Err(rc) => return rc,
+    };
+    let draw = match unsafe { grammar_draw_ref(ctx, FN, draw) } {
+        Ok(d) => d,
+        Err(rc) => return rc,
+    };
+    if out_terminal.is_null() {
+        set_last_error(ctx, "hegel_grammar_draw_next: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    let mut state = draw.state.lock();
+    match tc.stream.grammar_draw_next(&mut state) {
+        Ok(Some(terminal)) => {
+            unsafe { *out_terminal = terminal };
+            HEGEL_OK
+        }
+        Ok(None) => HEGEL_E_NOT_FOUND,
+        Err(e) => translate_ds_error(ctx, e),
+    }
+}
+
+/// Supply the value of the explicit terminal `hegel_grammar_draw_next`
+/// asked for. The value is copied.
+///
+/// Parameters:
+/// `value`: The terminal's value, as UTF-8.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for a value that is not
+/// valid UTF-8 or when no value is due.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_grammar_draw_provide(
+    ctx: *mut HegelContext,
+    draw: *mut HegelGrammarDraw,
+    value: hegel_string_t,
+) -> hegel_result_t {
+    const FN: &str = "hegel_grammar_draw_provide";
+    clear_last_error(ctx);
+    let draw = match unsafe { grammar_draw_ref(ctx, FN, draw) } {
+        Ok(d) => d,
+        Err(rc) => return rc,
+    };
+    let value = match unsafe { required_utf8_arg(ctx, FN, "value", value) } {
+        Ok(v) => v,
+        Err(rc) => return rc,
+    };
+    match draw.state.lock().provide(&value) {
+        Ok(()) => HEGEL_OK,
+        Err(message) => {
+            set_last_error(ctx, &format!("{FN}: {message}"));
+            HEGEL_E_INVALID_ARG
+        }
+    }
+}
+
+/// The string a grammar draw produced, once `hegel_grammar_draw_next` has
+/// returned `HEGEL_E_NOT_FOUND`: the grammar's string with each explicit
+/// terminal's placeholder marker replaced by the value supplied for it.
+///
+/// Parameters:
+/// `out_result`: Receives a libhegel-allocated UTF-8 buffer with a
+///   trailing NUL outside its reported length. Release with
+///   `hegel_owned_string_free`.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_NOT_COMPLETE` when the string is not
+/// complete yet.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_grammar_draw_result(
+    ctx: *mut HegelContext,
+    draw: *const HegelGrammarDraw,
+    out_result: *mut hegel_owned_string_t,
+) -> hegel_result_t {
+    const FN: &str = "hegel_grammar_draw_result";
+    clear_last_error(ctx);
+    let draw = match unsafe { grammar_draw_ref(ctx, FN, draw) } {
+        Ok(d) => d,
+        Err(rc) => return rc,
+    };
+    if out_result.is_null() {
+        set_last_error(ctx, "hegel_grammar_draw_result: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    match draw.state.lock().result() {
+        Some(text) => unsafe { write_string_result(out_result, text.to_string()) },
+        None => {
+            set_last_error(
+                ctx,
+                "hegel_grammar_draw_result: the string is not complete: call \
+                 hegel_grammar_draw_next until it returns HEGEL_E_NOT_FOUND",
+            );
+            HEGEL_E_NOT_COMPLETE
+        }
+    }
+}
+
+/// Parameters:
+/// `draw`: The grammar draw to release. Safe to call with NULL.
+///
+/// Returns `HEGEL_OK`.
+///
+/// Each draw handle must be freed exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_grammar_draw_free(
+    ctx: *mut HegelContext,
+    draw: *mut HegelGrammarDraw,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    if !draw.is_null() {
+        // SAFETY: `draw` came from `hegel_grammar_draw_new`'s
+        // `into_raw_send_sync` and, per the documented contract, is freed
+        // exactly once.
+        drop(unsafe { Box::from_raw(draw) });
+    }
+    HEGEL_OK
 }
 
 /// A drawn proleptic Gregorian calendar date: `year` in
