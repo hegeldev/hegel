@@ -55,6 +55,8 @@ export const Labels = {
   ENUM_VARIANT: 15,
   /** One round of a stateful test: the rule selection plus the rule's draws. */
   STATEFUL_RULE: 16,
+  /** A zoned datetime whose zone a user generator drew: the zone plus the wall-clock time. */
+  ZONED_DATETIME: 17,
 } as const;
 
 /** The registration for a state machine, see {@link DataSource.newStateMachine}. */

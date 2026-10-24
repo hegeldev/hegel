@@ -89,6 +89,8 @@ add_library(hegel
   STATIC
     src/hegel.cpp
     src/generators.cpp
+    src/generators_datetime.cpp
+    src/datetime.cpp
     src/test_case.cpp
     src/engine.cpp
 )

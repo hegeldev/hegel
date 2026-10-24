@@ -117,3 +117,19 @@ impl DefaultGenerator for DateTime<FixedOffset> {
         datetimes()
     }
 }
+
+#[cfg(feature = "chrono-tz")]
+impl DefaultGenerator for chrono_tz::Tz {
+    type Generator = super::TimeZoneGenerator;
+    fn default_generator() -> Self::Generator {
+        super::timezones()
+    }
+}
+
+#[cfg(feature = "chrono-tz")]
+impl DefaultGenerator for DateTime<chrono_tz::Tz> {
+    type Generator = DateTimeGenerator<super::TimeZoneGenerator, chrono_tz::Tz>;
+    fn default_generator() -> Self::Generator {
+        datetimes().timezones(super::timezones())
+    }
+}

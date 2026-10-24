@@ -2,17 +2,23 @@ use crate::generators::binary;
 
 use super::{
     BTreeMapGenerator, BTreeSetGenerator, BoolGenerator, BoxedGenerator, CharactersGenerator,
-    DurationGenerator, FloatGenerator, Generator, HashMapGenerator, HashSetGenerator,
-    IntegerGenerator, IpAddressGenerator, Ipv4AddressGenerator, Ipv6AddressGenerator,
-    OptionalGenerator, TextGenerator, VecGenerator, booleans, btree_maps, btree_sets, characters,
-    collections::ArrayGenerator, durations, floats, hashmaps, hashsets, integers, ip_addresses,
-    optional, text, vecs,
+    DateGenerator, DateTimeGenerator, DurationGenerator, FloatGenerator, Generator,
+    HashMapGenerator, HashSetGenerator, IntegerGenerator, IpAddressGenerator, Ipv4AddressGenerator,
+    Ipv6AddressGenerator, OptionalGenerator, SignedDurationGenerator, SpanGenerator,
+    SystemTimeGenerator, TextGenerator, TimeGenerator, TimeZoneGenerator, TimestampGenerator,
+    UtcOffsetGenerator, VecGenerator, ZonedDateTimeGenerator, booleans, btree_maps, btree_sets,
+    characters, collections::ArrayGenerator, dates, datetimes, durations, floats, hashmaps,
+    hashsets, integers, ip_addresses, optional, signed_durations, spans, system_times, text, times,
+    timestamps, timezones, utc_offsets, vecs, zoned_datetimes,
+};
+use crate::datetime::{
+    Date, DateTime, SignedDuration, Span, Time, TimeZone, Timestamp, UtcOffset, ZonedDateTime,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 /// Trait for types that have a default generator.
 ///
@@ -206,6 +212,76 @@ impl DefaultGenerator for Duration {
     type Generator = DurationGenerator;
     fn default_generator() -> Self::Generator {
         durations()
+    }
+}
+
+impl DefaultGenerator for SystemTime {
+    type Generator = SystemTimeGenerator;
+    fn default_generator() -> Self::Generator {
+        system_times()
+    }
+}
+
+impl DefaultGenerator for Date {
+    type Generator = DateGenerator;
+    fn default_generator() -> Self::Generator {
+        dates()
+    }
+}
+
+impl DefaultGenerator for Time {
+    type Generator = TimeGenerator;
+    fn default_generator() -> Self::Generator {
+        times()
+    }
+}
+
+impl DefaultGenerator for DateTime {
+    type Generator = DateTimeGenerator;
+    fn default_generator() -> Self::Generator {
+        datetimes()
+    }
+}
+
+impl DefaultGenerator for Timestamp {
+    type Generator = TimestampGenerator;
+    fn default_generator() -> Self::Generator {
+        timestamps()
+    }
+}
+
+impl DefaultGenerator for UtcOffset {
+    type Generator = UtcOffsetGenerator;
+    fn default_generator() -> Self::Generator {
+        utc_offsets()
+    }
+}
+
+impl DefaultGenerator for TimeZone {
+    type Generator = TimeZoneGenerator;
+    fn default_generator() -> Self::Generator {
+        timezones()
+    }
+}
+
+impl DefaultGenerator for ZonedDateTime {
+    type Generator = ZonedDateTimeGenerator;
+    fn default_generator() -> Self::Generator {
+        zoned_datetimes()
+    }
+}
+
+impl DefaultGenerator for SignedDuration {
+    type Generator = SignedDurationGenerator;
+    fn default_generator() -> Self::Generator {
+        signed_durations()
+    }
+}
+
+impl DefaultGenerator for Span {
+    type Generator = SpanGenerator;
+    fn default_generator() -> Self::Generator {
+        spans()
     }
 }
 

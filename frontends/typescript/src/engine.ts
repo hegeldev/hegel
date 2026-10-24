@@ -29,6 +29,18 @@ export type PoolHandle = { readonly [poolBrand]: never };
 declare const stateMachineBrand: unique symbol;
 export type StateMachineHandle = { readonly [stateMachineBrand]: never };
 
+declare const dateOptionsBrand: unique symbol;
+export type DateOptionsHandle = { readonly [dateOptionsBrand]: never };
+
+declare const timeZoneSpecBrand: unique symbol;
+export type TimeZoneSpecHandle = { readonly [timeZoneSpecBrand]: never };
+
+declare const zonedSpecBrand: unique symbol;
+export type ZonedSpecHandle = { readonly [zonedSpecBrand]: never };
+
+declare const spanSpecBrand: unique symbol;
+export type SpanSpecHandle = { readonly [spanSpecBrand]: never };
+
 /** `hegel_status_t` — outcome of a single test case. */
 export const Status = {
   VALID: 0,
@@ -78,6 +90,102 @@ export interface NativeDatetime {
   date: NativeDate;
   time: NativeTime;
 }
+
+/** A `hegel_timestamp_t`: seconds since the Unix epoch plus a nanosecond in `[0, 999999999]`. */
+export interface NativeTimestamp {
+  second: bigint;
+  nanosecond: number;
+}
+
+/** A `hegel_offset_t`: seconds east of UTC, 0 when not `known`. */
+export interface NativeOffset {
+  seconds: number;
+  known: boolean;
+}
+
+/** A `hegel_span_t`: one `int64_t` per calendar unit. */
+export interface NativeSpan {
+  years: bigint;
+  months: bigint;
+  weeks: bigint;
+  days: bigint;
+  hours: bigint;
+  minutes: bigint;
+  seconds: bigint;
+  milliseconds: bigint;
+  microseconds: bigint;
+  nanoseconds: bigint;
+}
+
+/** A `hegel_zoned_datetime_t`: a wall-clock time resolved in the drawn zone. */
+export interface NativeZonedDatetime {
+  civil: NativeDatetime;
+  offsetSeconds: number;
+  offsetKnown: boolean;
+  fold: boolean;
+  /** A {@link NativeTimeZoneKind} value. */
+  kind: number;
+  offsetBefore: number;
+  offsetAfter: number;
+  timestamp: NativeTimestamp;
+}
+
+/** A `hegel_timezone_info_t`: what the bundled database knows about a name. */
+export interface NativeTimeZoneInfo {
+  known: boolean;
+  primaryName: string;
+  isLink: boolean;
+  rank: number;
+  /** A bitwise OR of the `HEGEL_TIMEZONE_TAG_*` bits; see {@link NativeTimeZoneTag}. */
+  tags: number;
+}
+
+/** `hegel_precision_t`. */
+export const NativePrecision = {
+  NANOSECONDS: 0,
+  MICROSECONDS: 1,
+  MILLISECONDS: 2,
+  SECONDS: 3,
+  MINUTES: 4,
+  HOURS: 5,
+} as const;
+
+/** `hegel_offset_granularity_t`. */
+export const NativeGranularity = {
+  HOURS: 0,
+  QUARTER_HOURS: 1,
+  MINUTES: 2,
+  SECONDS: 3,
+} as const;
+
+/** `hegel_imaginary_t`. */
+export const NativeImaginary = { ALLOW: 0, AVOID: 1 } as const;
+
+/** `hegel_ambiguous_t`. */
+export const NativeAmbiguous = { BOTH: 0, EARLIER: 1, LATER: 2 } as const;
+
+/** `hegel_span_unit_t`. */
+export const NativeSpanUnit = {
+  YEARS: 0,
+  MONTHS: 1,
+  WEEKS: 2,
+  DAYS: 3,
+  HOURS: 4,
+  MINUTES: 5,
+  SECONDS: 6,
+  MILLISECONDS: 7,
+  MICROSECONDS: 8,
+  NANOSECONDS: 9,
+} as const;
+
+/** `hegel_span_sign_t`. */
+export const NativeSpanSign = { UNIFORM: 0, MIXED: 1, NONNEGATIVE: 2 } as const;
+
+/** `hegel_timezone_kind_t`. */
+export const NativeTimeZoneKind = { UNIQUE: 0, GAP: 1, FOLD: 2 } as const;
+
+/** The `HEGEL_TIMEZONE_TAG_*` bits this client reads. */
+export const NativeTimeZoneTag = { LINK: 1 << 13, LEGACY: 1 << 14 } as const;
 
 /** RFC 4122 UUID versions supported by the public generator. */
 export type UuidVersion = 1 | 2 | 3 | 4 | 5;
@@ -193,24 +301,111 @@ export interface Engine {
   stringGeneratorUrl(ctx: ContextHandle): StringGeneratorHandle;
   stringGeneratorDomain(ctx: ContextHandle, maxLength: number): StringGeneratorHandle;
   generateString(ctx: ContextHandle, tc: TestCaseHandle, generator: StringGeneratorHandle): string;
+  /** Create date options allowing every weekday and month; released with {@link freeDateOptions}. */
+  dateOptionsNew(ctx: ContextHandle): DateOptionsHandle;
+  /** Restrict `options` to the weekdays in `mask` (bit 0 Monday to bit 6 Sunday). */
+  dateOptionsSetWeekdays(ctx: ContextHandle, options: DateOptionsHandle, mask: number): void;
+  /** Restrict `options` to the months in `mask` (bit 0 January to bit 11 December). */
+  dateOptionsSetMonths(ctx: ContextHandle, options: DateOptionsHandle, mask: number): void;
+  freeDateOptions(options: DateOptionsHandle): void;
+  /** Draw a date in `[min, max]`, within `options` when not `null`. */
   generateDate(
     ctx: ContextHandle,
     tc: TestCaseHandle,
     min: NativeDate,
     max: NativeDate,
+    options: DateOptionsHandle | null,
   ): NativeDate;
+  /** Draw a time of day in `[min, max]` that is a whole number of `precision` units. */
   generateTime(
     ctx: ContextHandle,
     tc: TestCaseHandle,
     min: NativeTime,
     max: NativeTime,
+    precision: number,
   ): NativeTime;
+  /** Draw a naive datetime in `[min, max]` whose time is a whole number of `precision` units. */
   generateDatetime(
     ctx: ContextHandle,
     tc: TestCaseHandle,
     min: NativeDatetime,
     max: NativeDatetime,
+    precision: number,
   ): NativeDatetime;
+  /** Draw an instant in `[min, max]` that is a whole number of `precision` units since the epoch. */
+  generateTimestamp(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    min: NativeTimestamp,
+    max: NativeTimestamp,
+    precision: number,
+  ): NativeTimestamp;
+  /**
+   * Draw a UTC offset in `[min, max]` seconds that is a whole number of
+   * `granularity` units; with `allowUnknown` the draw may yield the unknown
+   * offset, reported with `known` false.
+   */
+  generateOffset(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    min: number,
+    max: number,
+    granularity: number,
+    allowUnknown: boolean,
+  ): NativeOffset;
+  /** What the bundled time zone database knows about `name`; never fails. */
+  timezoneInfo(ctx: ContextHandle, name: string): NativeTimeZoneInfo;
+  /** Create a time zone spec allowing every bundled name; released with {@link freeTimezoneSpec}. */
+  timezoneSpecNew(ctx: ContextHandle): TimeZoneSpecHandle;
+  /** Restrict `spec` to `names`; a name the database lacks is an error that leaves `spec` unchanged. */
+  timezoneSpecSetNames(
+    ctx: ContextHandle,
+    spec: TimeZoneSpecHandle,
+    names: readonly string[],
+  ): void;
+  freeTimezoneSpec(spec: TimeZoneSpecHandle): void;
+  /** Draw a time zone name allowed by `spec`. */
+  generateTimezone(ctx: ContextHandle, tc: TestCaseHandle, spec: TimeZoneSpecHandle): string;
+  /** Create a zoned datetime spec with every option at its default; released with {@link freeZonedSpec}. */
+  zonedSpecNew(ctx: ContextHandle): ZonedSpecHandle;
+  zonedSpecSetCivilBounds(
+    ctx: ContextHandle,
+    spec: ZonedSpecHandle,
+    min: NativeDatetime,
+    max: NativeDatetime,
+  ): void;
+  zonedSpecSetInstantBounds(
+    ctx: ContextHandle,
+    spec: ZonedSpecHandle,
+    min: NativeTimestamp,
+    max: NativeTimestamp,
+  ): void;
+  zonedSpecSetPrecision(ctx: ContextHandle, spec: ZonedSpecHandle, precision: number): void;
+  zonedSpecSetImaginary(ctx: ContextHandle, spec: ZonedSpecHandle, imaginary: number): void;
+  zonedSpecSetAmbiguous(ctx: ContextHandle, spec: ZonedSpecHandle, ambiguous: number): void;
+  freeZonedSpec(spec: ZonedSpecHandle): void;
+  /** Draw a zone allowed by `tzSpec` and a wall-clock time in it within `zonedSpec`'s bounds. */
+  generateZonedDatetime(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    tzSpec: TimeZoneSpecHandle,
+    zonedSpec: ZonedSpecHandle,
+  ): { value: NativeZonedDatetime; zone: string };
+  /** Create a span spec with no unit enabled; released with {@link freeSpanSpec}. */
+  spanSpecNew(ctx: ContextHandle): SpanSpecHandle;
+  /** Enable `unit` (a {@link NativeSpanUnit}) with the inclusive bounds `[min, max]`. */
+  spanSpecSetUnitBounds(
+    ctx: ContextHandle,
+    spec: SpanSpecHandle,
+    unit: number,
+    min: bigint,
+    max: bigint,
+  ): void;
+  /** Set how the units' signs are drawn (a {@link NativeSpanSign}). */
+  spanSpecSetSign(ctx: ContextHandle, spec: SpanSpecHandle, sign: number): void;
+  freeSpanSpec(spec: SpanSpecHandle): void;
+  /** Draw a calendar span within `spec`'s bounds. */
+  generateSpan(ctx: ContextHandle, tc: TestCaseHandle, spec: SpanSpecHandle): NativeSpan;
   generateUuid(ctx: ContextHandle, tc: TestCaseHandle, version?: UuidVersion): Uint8Array;
   generateIpv4(ctx: ContextHandle, tc: TestCaseHandle): Uint8Array;
   generateIpv6(ctx: ContextHandle, tc: TestCaseHandle): Uint8Array;

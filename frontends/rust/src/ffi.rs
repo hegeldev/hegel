@@ -30,6 +30,10 @@ use std::os::raw::c_char;
 use std::path::Path;
 use std::ptr;
 
+/// The precision of a draw at whole nanoseconds, the finest the engine
+/// offers.
+pub(crate) const NANOSECONDS: u32 = hegel_c::hegel_precision_t::HEGEL_PRECISION_NANOSECONDS as u32;
+
 /// Owns a `*mut HegelContext` — libhegel's explicit per-call error channel —
 /// and frees it on drop.
 struct Context {
@@ -820,43 +824,182 @@ impl CTestCase {
         take_string_result(rc, result)
     }
 
-    /// Draw a Gregorian calendar date in `[min, max]`.
+    /// Draw a Gregorian calendar date in `[min, max]` on the weekdays and
+    /// in the months `options` allows (every one for `None`).
     pub(crate) fn generate_date(
         &self,
         min: hegel_c::hegel_date_t,
         max: hegel_c::hegel_date_t,
+        options: Option<&DateOptions>,
     ) -> Result<hegel_c::hegel_date_t, hegel_result_t> {
         let mut out = min;
+        let options = options.map_or(ptr::null(), |o| o.raw.cast_const());
         let rc = with_context(|ctx| unsafe {
-            hegel_c::hegel_generate_date(ctx, self.raw, min, max, &mut out)
+            hegel_c::hegel_generate_date(ctx, self.raw, min, max, options, &mut out)
         });
         rc_to_value(rc, out)
     }
 
-    /// Draw a time of day in `[min, max]`.
+    /// Draw a time of day in `[min, max]` as a whole number of the
+    /// `hegel_precision_t` units `precision` names.
     pub(crate) fn generate_time(
         &self,
         min: hegel_c::hegel_time_t,
         max: hegel_c::hegel_time_t,
+        precision: u32,
     ) -> Result<hegel_c::hegel_time_t, hegel_result_t> {
         let mut out = min;
         let rc = with_context(|ctx| unsafe {
-            hegel_c::hegel_generate_time(ctx, self.raw, min, max, &mut out)
+            hegel_c::hegel_generate_time(ctx, self.raw, min, max, precision, &mut out)
         });
         rc_to_value(rc, out)
     }
 
-    /// Draw a naive datetime in `[min, max]`.
+    /// Draw a naive datetime in `[min, max]` whose time is a whole number
+    /// of the `hegel_precision_t` units `precision` names.
     pub(crate) fn generate_datetime(
         &self,
         min: hegel_c::hegel_datetime_t,
         max: hegel_c::hegel_datetime_t,
+        precision: u32,
     ) -> Result<hegel_c::hegel_datetime_t, hegel_result_t> {
         let mut out = min;
         let rc = with_context(|ctx| unsafe {
-            hegel_c::hegel_generate_datetime(ctx, self.raw, min, max, &mut out)
+            hegel_c::hegel_generate_datetime(ctx, self.raw, min, max, precision, &mut out)
         });
         rc_to_value(rc, out)
+    }
+
+    /// Draw an instant in `[min, max]` as a whole number of the
+    /// `hegel_precision_t` units `precision` names.
+    pub(crate) fn generate_timestamp(
+        &self,
+        min: hegel_c::hegel_timestamp_t,
+        max: hegel_c::hegel_timestamp_t,
+        precision: u32,
+    ) -> Result<hegel_c::hegel_timestamp_t, hegel_result_t> {
+        let mut out = min;
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_generate_timestamp(ctx, self.raw, min, max, precision, &mut out)
+        });
+        rc_to_value(rc, out)
+    }
+
+    /// Draw a UTC offset in `[min_seconds, max_seconds]` at the
+    /// `hegel_offset_granularity_t` unit `granularity` names, or the
+    /// unknown offset when `allow_unknown`.
+    pub(crate) fn generate_offset(
+        &self,
+        min_seconds: i32,
+        max_seconds: i32,
+        granularity: u32,
+        allow_unknown: bool,
+    ) -> Result<hegel_c::hegel_offset_t, hegel_result_t> {
+        let mut out = hegel_c::hegel_offset_t {
+            seconds: 0,
+            known: true,
+        };
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_generate_offset(
+                ctx,
+                self.raw,
+                min_seconds,
+                max_seconds,
+                granularity,
+                allow_unknown,
+                &mut out,
+            )
+        });
+        rc_to_value(rc, out)
+    }
+
+    /// Draw a duration in `[min, max]` as a whole number of the
+    /// `hegel_precision_t` units `precision` names.
+    pub(crate) fn generate_duration(
+        &self,
+        min: hegel_c::hegel_duration_t,
+        max: hegel_c::hegel_duration_t,
+        precision: u32,
+    ) -> Result<hegel_c::hegel_duration_t, hegel_result_t> {
+        let mut out = min;
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_generate_duration(ctx, self.raw, min, max, precision, &mut out)
+        });
+        rc_to_value(rc, out)
+    }
+
+    /// Draw a calendar span within `spec`'s bounds.
+    pub(crate) fn generate_span(
+        &self,
+        spec: &SpanSpec,
+    ) -> Result<hegel_c::hegel_span_t, hegel_result_t> {
+        let mut out = hegel_c::hegel_span_t {
+            years: 0,
+            months: 0,
+            weeks: 0,
+            days: 0,
+            hours: 0,
+            minutes: 0,
+            seconds: 0,
+            milliseconds: 0,
+            microseconds: 0,
+            nanoseconds: 0,
+        };
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_generate_span(ctx, self.raw, spec.raw, &mut out)
+        });
+        rc_to_value(rc, out)
+    }
+
+    /// Draw a time zone name `spec` allows, copying the engine-allocated
+    /// buffer into an owned `String` and freeing it.
+    pub(crate) fn generate_timezone(&self, spec: &TimeZoneSpec) -> Result<String, hegel_result_t> {
+        let mut result = hegel_c::hegel_owned_string_t {
+            data: ptr::null(),
+            len: 0,
+        };
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_generate_timezone(ctx, self.raw, spec.raw, &mut result)
+        });
+        take_string_result(rc, result)
+    }
+
+    /// Draw a zoned datetime in a zone `tz_spec` allows within
+    /// `zoned_spec`'s bounds, returning the value and the zone's name.
+    pub(crate) fn generate_zoned_datetime(
+        &self,
+        tz_spec: &TimeZoneSpec,
+        zoned_spec: &ZonedSpec,
+    ) -> Result<(hegel_c::hegel_zoned_datetime_t, String), hegel_result_t> {
+        let mut result = hegel_c::hegel_owned_string_t {
+            data: ptr::null(),
+            len: 0,
+        };
+        let mut out = hegel_c::hegel_zoned_datetime_t {
+            civil: crate::test_case::full_ranges::MIN_DATETIME,
+            offset_seconds: 0,
+            offset_known: false,
+            fold: false,
+            kind: hegel_c::hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_UNIQUE,
+            offset_before: 0,
+            offset_after: 0,
+            timestamp: hegel_c::hegel_timestamp_t {
+                second: 0,
+                nanosecond: 0,
+            },
+        };
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_generate_zoned_datetime(
+                ctx,
+                self.raw,
+                tz_spec.raw,
+                zoned_spec.raw,
+                &mut out,
+                &mut result,
+            )
+        });
+        let zone = take_string_result(rc, result)?;
+        Ok((out, zone))
     }
 
     /// Draw a UUID's 16 big-endian bytes, optionally forcing the RFC 4122
@@ -1958,6 +2101,402 @@ pub(crate) struct Failure {
     pub(crate) origin: String,
     pub(crate) reproduce_blob: Option<String>,
     pub(crate) caveat: Option<String>,
+}
+
+/// Translate the code of a configuring or querying call into the engine's
+/// diagnostic for the caller to report as a usage error.
+fn rc_to_diagnostic(rc: hegel_result_t) -> Result<(), String> {
+    rc_to_unit(rc).map_err(|_| last_error_string())
+}
+
+/// The engine's bundled time zone database release (`hegel_tzdb_version`).
+pub(crate) fn tzdb_version() -> String {
+    let mut p = hegel_c::hegel_string_t::default();
+    // SAFETY: &mut p is a valid out-parameter; the engine sets it to a
+    // static string.
+    require_ok(with_context(|ctx| unsafe {
+        hegel_c::hegel_tzdb_version(ctx, &mut p)
+    }));
+    static_string(p)
+}
+
+/// Copy a static string the engine returned.
+fn static_string(p: hegel_c::hegel_string_t) -> String {
+    if p.len == 0 {
+        return String::new();
+    }
+    // SAFETY: the engine's static strings are valid for `len` bytes for
+    // the program's lifetime.
+    let bytes = unsafe { std::slice::from_raw_parts(p.data.cast::<u8>(), p.len) }.to_vec();
+    string_from_engine_bytes(bytes)
+}
+
+/// Classify the wall time `civil` in the zone `name`
+/// (`hegel_timezone_resolve`); `Err` carries the engine's diagnostic for
+/// an unknown name or an invalid datetime.
+pub(crate) fn timezone_resolve(
+    name: &str,
+    civil: hegel_c::hegel_datetime_t,
+) -> Result<hegel_c::hegel_timezone_resolution_t, String> {
+    let mut out = hegel_c::hegel_timezone_resolution_t {
+        kind: hegel_c::hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_UNIQUE,
+        offset_before: 0,
+        offset_after: 0,
+        offset_seconds: 0,
+        offset_known: false,
+        timestamp: hegel_c::hegel_timestamp_t {
+            second: 0,
+            nanosecond: 0,
+        },
+    };
+    // SAFETY: the name outlives the call and &mut out is a valid
+    // out-parameter.
+    let rc = with_context(|ctx| unsafe {
+        hegel_c::hegel_timezone_resolve(ctx, view(name.as_bytes()), civil, &mut out)
+    });
+    rc_to_diagnostic(rc).map(|()| out)
+}
+
+/// The offset of a zone at an instant, with the abbreviation copied out
+/// of the engine's static string.
+pub(crate) struct ZoneOffsetRaw {
+    pub(crate) seconds: i32,
+    pub(crate) known: bool,
+    pub(crate) is_dst: bool,
+    pub(crate) abbreviation: String,
+}
+
+/// The offset the zone `name` has in force at `timestamp`
+/// (`hegel_timezone_offset_at`); `Err` carries the engine's diagnostic for
+/// an unknown name or an out-of-range timestamp.
+pub(crate) fn timezone_offset_at(
+    name: &str,
+    timestamp: hegel_c::hegel_timestamp_t,
+) -> Result<ZoneOffsetRaw, String> {
+    let mut out = hegel_c::hegel_timezone_offset_t {
+        offset_seconds: 0,
+        offset_known: false,
+        is_dst: false,
+        abbreviation: hegel_c::hegel_string_t::default(),
+    };
+    // SAFETY: the name outlives the call and &mut out is a valid
+    // out-parameter; on success the abbreviation is a static string.
+    let rc = with_context(|ctx| unsafe {
+        hegel_c::hegel_timezone_offset_at(ctx, view(name.as_bytes()), timestamp, &mut out)
+    });
+    rc_to_diagnostic(rc)?;
+    Ok(ZoneOffsetRaw {
+        seconds: out.offset_seconds,
+        known: out.offset_known,
+        is_dst: out.is_dst,
+        abbreviation: static_string(out.abbreviation),
+    })
+}
+
+/// What the engine knows about a time zone name, with the primary name
+/// copied out of the engine's static string.
+pub(crate) struct ZoneInfoRaw {
+    pub(crate) primary_name: String,
+    pub(crate) is_link: bool,
+    pub(crate) rank: u16,
+    pub(crate) tags: u32,
+}
+
+/// What the engine knows about the zone `name` (`hegel_timezone_info`),
+/// or `None` for a name its database lacks.
+pub(crate) fn timezone_info(name: &str) -> Option<ZoneInfoRaw> {
+    let mut out = hegel_c::hegel_timezone_info_t {
+        known: false,
+        primary_name: hegel_c::hegel_string_t::default(),
+        is_link: false,
+        rank: 0,
+        tags: 0,
+    };
+    // SAFETY: the name outlives the call and &mut out is a valid
+    // out-parameter; a known name's primary name is a static string.
+    require_ok(with_context(|ctx| unsafe {
+        hegel_c::hegel_timezone_info(ctx, view(name.as_bytes()), &mut out)
+    }));
+    if !out.known {
+        return None;
+    }
+    Some(ZoneInfoRaw {
+        primary_name: static_string(out.primary_name),
+        is_link: out.is_link,
+        rank: out.rank,
+        tags: out.tags,
+    })
+}
+
+/// An owned libhegel date-options handle (`hegel_date_options_t`), freed
+/// on drop: the weekday and month masks of a date draw. Each setter
+/// returns `Err` with the engine's diagnostic for a mask it rejects. The
+/// handle is only read once configured, so it may be shared across test
+/// cases and threads.
+pub(crate) struct DateOptions {
+    raw: *mut hegel_c::HegelDateOptions,
+}
+
+// SAFETY: the engine only reads the options during a draw, so sharing the
+// configured handle across threads is sound.
+unsafe impl Send for DateOptions {}
+unsafe impl Sync for DateOptions {}
+
+impl std::fmt::Debug for DateOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DateOptions").finish_non_exhaustive()
+    }
+}
+
+impl DateOptions {
+    /// Options allowing every weekday and month.
+    pub(crate) fn new() -> Self {
+        let mut raw: *mut hegel_c::HegelDateOptions = ptr::null_mut();
+        // SAFETY: &mut raw is a valid out-parameter.
+        require_ok(with_context(|ctx| unsafe {
+            hegel_c::hegel_date_options_new(ctx, &mut raw)
+        }));
+        DateOptions { raw }
+    }
+
+    /// Allow only the weekdays in `mask` (bit 0 Monday to bit 6 Sunday).
+    pub(crate) fn set_weekdays(&mut self, mask: u32) -> Result<(), String> {
+        rc_to_diagnostic(with_context(|ctx| unsafe {
+            hegel_c::hegel_date_options_set_weekdays(ctx, self.raw, mask)
+        }))
+    }
+
+    /// Allow only the months in `mask` (bit 0 January to bit 11 December).
+    pub(crate) fn set_months(&mut self, mask: u32) -> Result<(), String> {
+        rc_to_diagnostic(with_context(|ctx| unsafe {
+            hegel_c::hegel_date_options_set_months(ctx, self.raw, mask)
+        }))
+    }
+}
+
+impl Drop for DateOptions {
+    fn drop(&mut self) {
+        // SAFETY: `raw` came from hegel_date_options_new and is freed
+        // exactly once.
+        free_on_drop(|ctx| unsafe { hegel_c::hegel_date_options_free(ctx, self.raw) });
+    }
+}
+
+/// An owned libhegel span-spec handle (`hegel_span_spec_t`), freed on
+/// drop: the per-unit bounds and sign policy of a calendar span draw. Each
+/// setter returns `Err` with the engine's diagnostic for a configuration
+/// it rejects. The handle is only read once configured, so it may be
+/// shared across test cases and threads.
+pub(crate) struct SpanSpec {
+    raw: *mut hegel_c::HegelSpanSpec,
+}
+
+// SAFETY: the engine only reads the spec during a draw, so sharing the
+// configured handle across threads is sound.
+unsafe impl Send for SpanSpec {}
+unsafe impl Sync for SpanSpec {}
+
+impl std::fmt::Debug for SpanSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SpanSpec").finish_non_exhaustive()
+    }
+}
+
+impl SpanSpec {
+    /// A spec with no unit enabled and the uniform sign policy.
+    pub(crate) fn new() -> Self {
+        let mut raw: *mut hegel_c::HegelSpanSpec = ptr::null_mut();
+        // SAFETY: &mut raw is a valid out-parameter.
+        require_ok(with_context(|ctx| unsafe {
+            hegel_c::hegel_span_spec_new(ctx, &mut raw)
+        }));
+        SpanSpec { raw }
+    }
+
+    /// Enable the `hegel_span_unit_t` unit `unit` with the inclusive
+    /// bounds `[min, max]`.
+    pub(crate) fn set_unit_bounds(&mut self, unit: u32, min: i64, max: i64) -> Result<(), String> {
+        rc_to_diagnostic(with_context(|ctx| unsafe {
+            hegel_c::hegel_span_spec_set_unit_bounds(ctx, self.raw, unit, min, max)
+        }))
+    }
+
+    /// Set the `hegel_span_sign_t` policy `sign`.
+    pub(crate) fn set_sign(&mut self, sign: u32) -> Result<(), String> {
+        rc_to_diagnostic(with_context(|ctx| unsafe {
+            hegel_c::hegel_span_spec_set_sign(ctx, self.raw, sign)
+        }))
+    }
+}
+
+impl Drop for SpanSpec {
+    fn drop(&mut self) {
+        // SAFETY: `raw` came from hegel_span_spec_new and is freed exactly
+        // once.
+        free_on_drop(|ctx| unsafe { hegel_c::hegel_span_spec_free(ctx, self.raw) });
+    }
+}
+
+/// An owned libhegel time-zone-spec handle (`hegel_timezone_spec_t`),
+/// freed on drop: the names a time zone draw may yield. Each setter
+/// returns `Err` with the engine's diagnostic for a configuration it
+/// rejects. The handle is only read once configured, so it may be shared
+/// across test cases and threads.
+pub(crate) struct TimeZoneSpec {
+    raw: *mut hegel_c::HegelTimezoneSpec,
+}
+
+// SAFETY: the engine only reads the spec during a draw, so sharing the
+// configured handle across threads is sound.
+unsafe impl Send for TimeZoneSpec {}
+unsafe impl Sync for TimeZoneSpec {}
+
+impl std::fmt::Debug for TimeZoneSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TimeZoneSpec").finish_non_exhaustive()
+    }
+}
+
+impl TimeZoneSpec {
+    /// A spec allowing every bundled name, links in, legacy names and
+    /// `Etc/Unknown` out.
+    pub(crate) fn new() -> Self {
+        let mut raw: *mut hegel_c::HegelTimezoneSpec = ptr::null_mut();
+        // SAFETY: &mut raw is a valid out-parameter.
+        require_ok(with_context(|ctx| unsafe {
+            hegel_c::hegel_timezone_spec_new(ctx, &mut raw)
+        }));
+        TimeZoneSpec { raw }
+    }
+
+    /// Restrict the draw to `names`.
+    pub(crate) fn set_names(&mut self, names: &[String]) -> Result<(), String> {
+        let views: Vec<hegel_c::hegel_string_t> =
+            names.iter().map(|n| view(n.as_bytes())).collect();
+        rc_to_diagnostic(with_context(|ctx| unsafe {
+            hegel_c::hegel_timezone_spec_set_names(ctx, self.raw, views.as_ptr(), views.len())
+        }))
+    }
+
+    /// Whether the default set includes link names.
+    pub(crate) fn set_links(&mut self, links: bool) -> Result<(), String> {
+        rc_to_diagnostic(with_context(|ctx| unsafe {
+            hegel_c::hegel_timezone_spec_set_links(ctx, self.raw, links)
+        }))
+    }
+
+    /// Whether the default set includes legacy names.
+    pub(crate) fn set_legacy(&mut self, legacy: bool) -> Result<(), String> {
+        rc_to_diagnostic(with_context(|ctx| unsafe {
+            hegel_c::hegel_timezone_spec_set_legacy(ctx, self.raw, legacy)
+        }))
+    }
+
+    /// Whether `Etc/Unknown` is drawn.
+    pub(crate) fn set_unknown(&mut self, unknown: bool) -> Result<(), String> {
+        rc_to_diagnostic(with_context(|ctx| unsafe {
+            hegel_c::hegel_timezone_spec_set_unknown(ctx, self.raw, unknown)
+        }))
+    }
+
+    /// Whether an explicit name the engine's database lacks is accepted
+    /// as an opaque zone.
+    pub(crate) fn set_opaque(&mut self, opaque: bool) -> Result<(), String> {
+        rc_to_diagnostic(with_context(|ctx| unsafe {
+            hegel_c::hegel_timezone_spec_set_opaque(ctx, self.raw, opaque)
+        }))
+    }
+}
+
+impl Drop for TimeZoneSpec {
+    fn drop(&mut self) {
+        // SAFETY: `raw` came from hegel_timezone_spec_new and is freed
+        // exactly once.
+        free_on_drop(|ctx| unsafe { hegel_c::hegel_timezone_spec_free(ctx, self.raw) });
+    }
+}
+
+/// An owned libhegel zoned-spec handle (`hegel_zoned_spec_t`), freed on
+/// drop: the bounds, precision and policies of a zoned datetime draw.
+/// Each setter returns `Err` with the engine's diagnostic for a
+/// configuration it rejects. The handle is only read once configured, so
+/// it may be shared across test cases and threads.
+pub(crate) struct ZonedSpec {
+    raw: *mut hegel_c::HegelZonedSpec,
+}
+
+// SAFETY: the engine only reads the spec during a draw, so sharing the
+// configured handle across threads is sound.
+unsafe impl Send for ZonedSpec {}
+unsafe impl Sync for ZonedSpec {}
+
+impl std::fmt::Debug for ZonedSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ZonedSpec").finish_non_exhaustive()
+    }
+}
+
+impl ZonedSpec {
+    /// A spec with every option at the engine's default.
+    pub(crate) fn new() -> Self {
+        let mut raw: *mut hegel_c::HegelZonedSpec = ptr::null_mut();
+        // SAFETY: &mut raw is a valid out-parameter.
+        require_ok(with_context(|ctx| unsafe {
+            hegel_c::hegel_zoned_spec_new(ctx, &mut raw)
+        }));
+        ZonedSpec { raw }
+    }
+
+    /// Bound the draw on the wall clock of the drawn zone.
+    pub(crate) fn set_civil_bounds(
+        &mut self,
+        min: hegel_c::hegel_datetime_t,
+        max: hegel_c::hegel_datetime_t,
+    ) -> Result<(), String> {
+        rc_to_diagnostic(with_context(|ctx| unsafe {
+            hegel_c::hegel_zoned_spec_set_civil_bounds(ctx, self.raw, min, max)
+        }))
+    }
+
+    /// Bound the draw on the instant.
+    pub(crate) fn set_instant_bounds(
+        &mut self,
+        min: hegel_c::hegel_timestamp_t,
+        max: hegel_c::hegel_timestamp_t,
+    ) -> Result<(), String> {
+        rc_to_diagnostic(with_context(|ctx| unsafe {
+            hegel_c::hegel_zoned_spec_set_instant_bounds(ctx, self.raw, min, max)
+        }))
+    }
+
+    /// Set the `hegel_precision_t` unit of the time part.
+    pub(crate) fn set_precision(&mut self, precision: u32) -> Result<(), String> {
+        rc_to_diagnostic(with_context(|ctx| unsafe {
+            hegel_c::hegel_zoned_spec_set_precision(ctx, self.raw, precision)
+        }))
+    }
+
+    /// Set the `hegel_imaginary_t` policy for skipped wall times.
+    pub(crate) fn set_imaginary(&mut self, imaginary: u32) -> Result<(), String> {
+        rc_to_diagnostic(with_context(|ctx| unsafe {
+            hegel_c::hegel_zoned_spec_set_imaginary(ctx, self.raw, imaginary)
+        }))
+    }
+
+    /// Set the `hegel_ambiguous_t` policy for repeated wall times.
+    pub(crate) fn set_ambiguous(&mut self, ambiguous: u32) -> Result<(), String> {
+        rc_to_diagnostic(with_context(|ctx| unsafe {
+            hegel_c::hegel_zoned_spec_set_ambiguous(ctx, self.raw, ambiguous)
+        }))
+    }
+}
+
+impl Drop for ZonedSpec {
+    fn drop(&mut self) {
+        // SAFETY: `raw` came from hegel_zoned_spec_new and is freed exactly
+        // once.
+        free_on_drop(|ctx| unsafe { hegel_c::hegel_zoned_spec_free(ctx, self.raw) });
+    }
 }
 
 fn rc_to_unit(rc: hegel_result_t) -> Result<(), hegel_result_t> {

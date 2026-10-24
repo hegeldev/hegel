@@ -68,13 +68,81 @@ describe("WasmEngine pinned raw ABI", () => {
     const draw = (engine: Engine) =>
       active(engine, (ctx, tc) => {
         const date = { year: -12345, month: 6, day: 17 };
-        const values: unknown[] = [engine.generateDate(ctx, tc, date, date)];
+        const values: unknown[] = [engine.generateDate(ctx, tc, date, date, null)];
         for (const nanosecond of [0, 1, 123456789, 999999999]) {
           const time = { hour: 12, minute: 34, second: 56, nanosecond };
-          values.push(engine.generateTime(ctx, tc, time, time));
-          values.push(engine.generateDatetime(ctx, tc, { date, time }, { date, time }));
+          values.push(engine.generateTime(ctx, tc, time, time, 0));
+          values.push(engine.generateDatetime(ctx, tc, { date, time }, { date, time }, 0));
           expect(values.at(-2)).toEqual(time);
           expect(values.at(-1)).toEqual({ date, time });
+          const timestamp = { second: -4_000_000_000_000n, nanosecond };
+          values.push(engine.generateTimestamp(ctx, tc, timestamp, timestamp, 0));
+          expect(values.at(-1)).toEqual(timestamp);
+        }
+        values.push(engine.generateOffset(ctx, tc, -19_800, -19_800, 3, false));
+        expect(values.at(-1)).toEqual({ seconds: -19_800, known: true });
+        values.push(engine.generateOffset(ctx, tc, 0, 0, 0, true));
+        expect(values.at(-1)).toMatchObject({ seconds: 0 });
+        values.push(engine.timezoneInfo(ctx, "Asia/Calcutta"), engine.timezoneInfo(ctx, "Nowhere"));
+        expect(values.at(-2)).toMatchObject({
+          known: true,
+          primaryName: "Asia/Kolkata",
+          isLink: true,
+        });
+        expect(values.at(-1)).toMatchObject({ known: false, primaryName: "" });
+        const zones = engine.timezoneSpecNew(ctx);
+        const zoned = engine.zonedSpecNew(ctx);
+        const span = engine.spanSpecNew(ctx);
+        const options = engine.dateOptionsNew(ctx);
+        try {
+          engine.timezoneSpecSetNames(ctx, zones, ["America/New_York"]);
+          values.push(engine.generateTimezone(ctx, tc, zones));
+          expect(values.at(-1)).toBe("America/New_York");
+          const gap = {
+            date: { year: 2024, month: 3, day: 10 },
+            time: { hour: 2, minute: 30, second: 0, nanosecond: 0 },
+          };
+          engine.zonedSpecSetCivilBounds(ctx, zoned, gap, gap);
+          engine.zonedSpecSetPrecision(ctx, zoned, 0);
+          engine.zonedSpecSetImaginary(ctx, zoned, 0);
+          engine.zonedSpecSetAmbiguous(ctx, zoned, 0);
+          values.push(engine.generateZonedDatetime(ctx, tc, zones, zoned));
+          expect(values.at(-1)).toEqual({
+            value: {
+              civil: gap,
+              offsetSeconds: -14_400,
+              offsetKnown: true,
+              fold: false,
+              kind: 1,
+              offsetBefore: -18_000,
+              offsetAfter: -14_400,
+              timestamp: { second: 1_710_055_800n, nanosecond: 0 },
+            },
+            zone: "America/New_York",
+          });
+          engine.zonedSpecSetInstantBounds(
+            ctx,
+            zoned,
+            { second: 0n, nanosecond: 0 },
+            { second: 0n, nanosecond: 0 },
+          );
+          values.push(engine.generateZonedDatetime(ctx, tc, zones, zoned).value.timestamp);
+          expect(values.at(-1)).toEqual({ second: 0n, nanosecond: 0 });
+          engine.spanSpecSetUnitBounds(ctx, span, 0, -3n, -3n);
+          engine.spanSpecSetUnitBounds(ctx, span, 9, -(1n << 62n), -(1n << 62n));
+          engine.spanSpecSetSign(ctx, span, 0);
+          values.push(engine.generateSpan(ctx, tc, span));
+          expect(values.at(-1)).toMatchObject({ years: -3n, nanoseconds: -(1n << 62n), days: 0n });
+          engine.dateOptionsSetWeekdays(ctx, options, 1 << 6);
+          engine.dateOptionsSetMonths(ctx, options, 1 << 11);
+          const sunday = { year: 2024, month: 12, day: 29 };
+          values.push(engine.generateDate(ctx, tc, sunday, sunday, options));
+          expect(values.at(-1)).toEqual(sunday);
+        } finally {
+          engine.freeDateOptions(options);
+          engine.freeSpanSpec(span);
+          engine.freeZonedSpec(zoned);
+          engine.freeTimezoneSpec(zones);
         }
         for (const value of [-1n << 127n, 1n << 127n, -129n, 0n, 128n]) {
           expect(engine.generateIntegerBig(ctx, tc, value, value)).toBe(value);
@@ -284,9 +352,15 @@ describe("WasmEngine pinned raw ABI", () => {
         tc.draw(gs.emails());
         tc.draw(gs.urls());
         tc.draw(gs.domains());
-        tc.draw(gs.dates());
-        tc.draw(gs.times());
+        tc.draw(gs.dates({ weekdays: [1, 2], months: [3] }));
+        tc.draw(gs.times({ precision: "minutes" }));
         tc.draw(gs.datetimes());
+        tc.draw(gs.instants());
+        tc.draw(gs.utcOffsets());
+        tc.draw(gs.timeZones());
+        tc.draw(gs.zonedDateTimes());
+        tc.draw(gs.durations());
+        tc.draw(gs.jsDates());
         tc.draw(gs.uuids());
         tc.draw(gs.uuids({ version: 4 }));
         tc.draw(gs.ipAddresses({ version: 4 }));

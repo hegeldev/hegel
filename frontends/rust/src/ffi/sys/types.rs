@@ -42,6 +42,10 @@ opaque_handles!(
     HegelStateMachine,
     HegelStringGenerator,
     HegelTestCase,
+    HegelDateOptions,
+    HegelSpanSpec,
+    HegelTimezoneSpec,
+    HegelZonedSpec,
 );
 
 #[repr(C)]
@@ -178,6 +182,168 @@ pub(crate) struct hegel_time_t {
 pub(crate) struct hegel_datetime_t {
     pub date: hegel_date_t,
     pub time: hegel_time_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct hegel_timestamp_t {
+    pub second: i64,
+    pub nanosecond: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum hegel_timezone_kind_t {
+    HEGEL_TIMEZONE_KIND_UNIQUE = 0,
+    HEGEL_TIMEZONE_KIND_GAP = 1,
+    HEGEL_TIMEZONE_KIND_FOLD = 2,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct hegel_timezone_resolution_t {
+    pub kind: hegel_timezone_kind_t,
+    pub offset_before: i32,
+    pub offset_after: i32,
+    pub offset_seconds: i32,
+    pub offset_known: bool,
+    pub timestamp: hegel_timestamp_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct hegel_timezone_offset_t {
+    pub offset_seconds: i32,
+    pub offset_known: bool,
+    pub is_dst: bool,
+    pub abbreviation: hegel_string_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct hegel_timezone_info_t {
+    pub known: bool,
+    pub primary_name: hegel_string_t,
+    pub is_link: bool,
+    pub rank: u16,
+    pub tags: u32,
+}
+
+pub(crate) const HEGEL_TIMEZONE_TAG_FIXED: u32 = 1 << 0;
+pub(crate) const HEGEL_TIMEZONE_TAG_WHOLE_HOUR: u32 = 1 << 1;
+pub(crate) const HEGEL_TIMEZONE_TAG_FRACTIONAL: u32 = 1 << 2;
+pub(crate) const HEGEL_TIMEZONE_TAG_SECONDS: u32 = 1 << 3;
+pub(crate) const HEGEL_TIMEZONE_TAG_DST: u32 = 1 << 4;
+pub(crate) const HEGEL_TIMEZONE_TAG_DST_OTHER: u32 = 1 << 5;
+pub(crate) const HEGEL_TIMEZONE_TAG_MULTI: u32 = 1 << 6;
+pub(crate) const HEGEL_TIMEZONE_TAG_BASE_CHANGE: u32 = 1 << 7;
+pub(crate) const HEGEL_TIMEZONE_TAG_MIDNIGHT: u32 = 1 << 8;
+pub(crate) const HEGEL_TIMEZONE_TAG_SPANS_MIDNIGHT: u32 = 1 << 9;
+pub(crate) const HEGEL_TIMEZONE_TAG_WHOLE_DAY: u32 = 1 << 10;
+pub(crate) const HEGEL_TIMEZONE_TAG_SAME_OFFSET: u32 = 1 << 11;
+pub(crate) const HEGEL_TIMEZONE_TAG_UNDEFINED: u32 = 1 << 12;
+pub(crate) const HEGEL_TIMEZONE_TAG_LINK: u32 = 1 << 13;
+pub(crate) const HEGEL_TIMEZONE_TAG_LEGACY: u32 = 1 << 14;
+pub(crate) const HEGEL_TIMEZONE_TAG_INVERTED_SIGN: u32 = 1 << 15;
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub(crate) enum hegel_precision_t {
+    HEGEL_PRECISION_NANOSECONDS = 0,
+    HEGEL_PRECISION_MICROSECONDS = 1,
+    HEGEL_PRECISION_MILLISECONDS = 2,
+    HEGEL_PRECISION_SECONDS = 3,
+    HEGEL_PRECISION_MINUTES = 4,
+    HEGEL_PRECISION_HOURS = 5,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub(crate) enum hegel_imaginary_t {
+    HEGEL_IMAGINARY_ALLOW = 0,
+    HEGEL_IMAGINARY_AVOID = 1,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub(crate) enum hegel_ambiguous_t {
+    HEGEL_AMBIGUOUS_BOTH = 0,
+    HEGEL_AMBIGUOUS_EARLIER = 1,
+    HEGEL_AMBIGUOUS_LATER = 2,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct hegel_zoned_datetime_t {
+    pub civil: hegel_datetime_t,
+    pub offset_seconds: i32,
+    pub offset_known: bool,
+    pub fold: bool,
+    pub kind: hegel_timezone_kind_t,
+    pub offset_before: i32,
+    pub offset_after: i32,
+    pub timestamp: hegel_timestamp_t,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub(crate) enum hegel_offset_granularity_t {
+    HEGEL_OFFSET_GRANULARITY_HOURS = 0,
+    HEGEL_OFFSET_GRANULARITY_QUARTER_HOURS = 1,
+    HEGEL_OFFSET_GRANULARITY_MINUTES = 2,
+    HEGEL_OFFSET_GRANULARITY_SECONDS = 3,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct hegel_offset_t {
+    pub seconds: i32,
+    pub known: bool,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct hegel_duration_t {
+    pub seconds: i64,
+    pub nanoseconds: i32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub(crate) enum hegel_span_unit_t {
+    HEGEL_SPAN_UNIT_YEARS = 0,
+    HEGEL_SPAN_UNIT_MONTHS = 1,
+    HEGEL_SPAN_UNIT_WEEKS = 2,
+    HEGEL_SPAN_UNIT_DAYS = 3,
+    HEGEL_SPAN_UNIT_HOURS = 4,
+    HEGEL_SPAN_UNIT_MINUTES = 5,
+    HEGEL_SPAN_UNIT_SECONDS = 6,
+    HEGEL_SPAN_UNIT_MILLISECONDS = 7,
+    HEGEL_SPAN_UNIT_MICROSECONDS = 8,
+    HEGEL_SPAN_UNIT_NANOSECONDS = 9,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub(crate) enum hegel_span_sign_t {
+    HEGEL_SPAN_SIGN_UNIFORM = 0,
+    HEGEL_SPAN_SIGN_MIXED = 1,
+    HEGEL_SPAN_SIGN_NONNEGATIVE = 2,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct hegel_span_t {
+    pub years: i64,
+    pub months: i64,
+    pub weeks: i64,
+    pub days: i64,
+    pub hours: i64,
+    pub minutes: i64,
+    pub seconds: i64,
+    pub milliseconds: i64,
+    pub microseconds: i64,
+    pub nanoseconds: i64,
 }
 
 #[repr(C)]

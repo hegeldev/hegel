@@ -26,3 +26,4 @@ pub mod shrinker;
 pub mod statistics;
 pub mod targeting;
 pub mod test_runner;
+pub mod timezone;

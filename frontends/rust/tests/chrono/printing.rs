@@ -13,6 +13,13 @@ fn every_chrono_generator_prints_its_drawn_value() {
     printed_draw_lines(chrono_gs::datetimes());
 }
 
+#[cfg(feature = "chrono-tz")]
+#[test]
+fn every_chrono_tz_generator_prints_its_drawn_value() {
+    printed_draw_lines(chrono_gs::timezones());
+    printed_draw_lines(chrono_gs::datetimes().timezones(chrono_gs::timezones()));
+}
+
 #[test]
 fn every_chrono_default_generator_is_drawable() {
     use chrono::{Days, IsoWeek, Month, Months, Weekday};

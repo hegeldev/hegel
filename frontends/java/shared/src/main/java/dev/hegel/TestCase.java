@@ -1,5 +1,8 @@
 package dev.hegel;
 
+import dev.hegel.lowlevel.Libhegel;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -354,18 +357,85 @@ public final class TestCase {
     }
 
     /** @hidden */
-    public LocalDate generateDate(LocalDate min, LocalDate max) {
-        return source.generateDate(min, max);
+    public LocalDate generateDate(LocalDate min, LocalDate max, SpecHandle options) {
+        return source.generateDate(min, max, options);
     }
 
     /** @hidden */
-    public LocalTime generateTime(LocalTime min, LocalTime max) {
-        return source.generateTime(min, max);
+    public LocalTime generateTime(LocalTime min, LocalTime max, int precision) {
+        return source.generateTime(min, max, precision);
     }
 
     /** @hidden */
-    public LocalDateTime generateDatetime(LocalDateTime min, LocalDateTime max) {
-        return source.generateDatetime(min, max);
+    public LocalDateTime generateDatetime(LocalDateTime min, LocalDateTime max, int precision) {
+        return source.generateDatetime(min, max, precision);
+    }
+
+    /** @hidden */
+    public Instant generateTimestamp(Instant min, Instant max, int precision) {
+        return source.generateTimestamp(min, max, precision);
+    }
+
+    /** @hidden */
+    public int generateOffset(int minSeconds, int maxSeconds, int granularity) {
+        return source.generateOffset(minSeconds, maxSeconds, granularity);
+    }
+
+    /** @hidden */
+    public Duration generateDuration(Duration min, Duration max, int precision) {
+        return source.generateDuration(min, max, precision);
+    }
+
+    /** @hidden */
+    public String generateTimezone(SpecHandle spec) {
+        return source.generateTimezone(spec);
+    }
+
+    /** @hidden */
+    public Libhegel.ZonedDatetime generateZonedDatetime(SpecHandle tzSpec, SpecHandle zonedSpec) {
+        return source.generateZonedDatetime(tzSpec, zonedSpec);
+    }
+
+    /** @hidden */
+    public long[] generateSpan(SpecHandle spec) {
+        return source.generateSpan(spec);
+    }
+
+    /** @hidden */
+    public SpecHandle dateOptions(int weekdayMask, int monthMask) {
+        return source.dateOptions(weekdayMask, monthMask);
+    }
+
+    /** @hidden */
+    public SpecHandle timezoneSpec(List<String> names, boolean links, boolean legacy) {
+        return source.timezoneSpec(names, links, legacy);
+    }
+
+    /** @hidden */
+    public SpecHandle zonedSpec(
+            LocalDateTime civilMin,
+            LocalDateTime civilMax,
+            Instant instantMin,
+            Instant instantMax,
+            int precision,
+            int imaginary,
+            int ambiguous) {
+        return source.zonedSpec(civilMin, civilMax, instantMin, instantMax, precision, imaginary, ambiguous);
+    }
+
+    /** @hidden */
+    public SpecHandle spanSpec(int[] units, long[] mins, long[] maxs, int sign) {
+        return source.spanSpec(units, mins, maxs, sign);
+    }
+
+    /** @hidden */
+    public boolean ownsSpec(SpecHandle spec) {
+        return source.ownsSpec(spec);
+    }
+
+    /** @hidden */
+    public Libhegel.TimezoneInfo timezoneInfo(String name) {
+        return source.timezoneInfo(name);
     }
 
     /** @hidden */

@@ -1,6 +1,8 @@
 package dev.hegel;
 
 import dev.hegel.lowlevel.Libhegel;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -35,11 +37,61 @@ interface DataSource {
 
     String generateString(StringGeneratorHandle generator);
 
-    LocalDate generateDate(LocalDate min, LocalDate max);
+    /** {@code options} is a handle from {@link #dateOptions}, or {@code null} for every weekday and month. */
+    LocalDate generateDate(LocalDate min, LocalDate max, SpecHandle options);
 
-    LocalTime generateTime(LocalTime min, LocalTime max);
+    /** {@code precision} is one of the {@code Abi.PRECISION_*} constants. */
+    LocalTime generateTime(LocalTime min, LocalTime max, int precision);
 
-    LocalDateTime generateDatetime(LocalDateTime min, LocalDateTime max);
+    LocalDateTime generateDatetime(LocalDateTime min, LocalDateTime max, int precision);
+
+    Instant generateTimestamp(Instant min, Instant max, int precision);
+
+    /** A known offset in seconds east of UTC; {@code granularity} is an {@code Abi.OFFSET_GRANULARITY_*} constant. */
+    int generateOffset(int minSeconds, int maxSeconds, int granularity);
+
+    Duration generateDuration(Duration min, Duration max, int precision);
+
+    /** The drawn IANA name, from a spec built by {@link #timezoneSpec}. */
+    String generateTimezone(SpecHandle spec);
+
+    Libhegel.ZonedDatetime generateZonedDatetime(SpecHandle tzSpec, SpecHandle zonedSpec);
+
+    /** The ten unit values of the span, years first ({@code Abi.SPAN_UNIT_*} order). */
+    long[] generateSpan(SpecHandle spec);
+
+    // Engine configuration handles. Parameters are validated eagerly: a rejected configuration
+    // throws IllegalArgumentException with the engine's diagnostic, and the handle is released.
+
+    /** A weekday or month mask of 0 leaves that restriction unset. */
+    SpecHandle dateOptions(int weekdayMask, int monthMask);
+
+    SpecHandle timezoneSpec(List<String> names, boolean links, boolean legacy);
+
+    /**
+     * Exactly one pair of bounds is non-null: civil (wall-clock) or instant. {@code imaginary} is an
+     * {@code Abi.IMAGINARY_*} constant and {@code ambiguous} an {@code Abi.AMBIGUOUS_*} one.
+     */
+    SpecHandle zonedSpec(
+            LocalDateTime civilMin,
+            LocalDateTime civilMax,
+            Instant instantMin,
+            Instant instantMax,
+            int precision,
+            int imaginary,
+            int ambiguous);
+
+    /**
+     * {@code units} are {@code Abi.SPAN_UNIT_*} constants with {@code mins} and {@code maxs}
+     * parallel to them; {@code sign} is an {@code Abi.SPAN_SIGN_*} constant.
+     */
+    SpecHandle spanSpec(int[] units, long[] mins, long[] maxs, int sign);
+
+    /** Whether {@code spec} was built by the binding behind this source; see {@link #ownsStringGenerator}. */
+    boolean ownsSpec(SpecHandle spec);
+
+    /** {@code hegel_timezone_info}: a query of the bundled database, not a draw. */
+    Libhegel.TimezoneInfo timezoneInfo(String name);
 
     UUID generateUuid(Integer version);
 

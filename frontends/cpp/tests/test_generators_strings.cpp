@@ -1,6 +1,5 @@
 // String and format generators: text, characters, from_regex, emails, urls,
-// domains, dates/times/datetimes, ip_addresses, uuids, binary — drawing and
-// parameter validation.
+// domains, ip_addresses, uuids, binary — drawing and parameter validation.
 
 #include <gtest/gtest.h>
 
@@ -24,9 +23,6 @@ TEST(Formats, DrawAll) {
             (void)tc.draw(gs::emails());
             (void)tc.draw(gs::urls());
             (void)tc.draw(gs::domains());
-            (void)tc.draw(gs::dates());
-            (void)tc.draw(gs::times());
-            (void)tc.draw(gs::datetimes());
             (void)tc.draw(gs::from_regex("[a-z]{1,5}"));
             (void)tc.draw(gs::from_regex("[A-Z]{2}", false));
             // ip_addresses: v4, v6, and the default (either) factory branches.
