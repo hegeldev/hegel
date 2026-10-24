@@ -130,6 +130,44 @@ namespace hegel {
         void target(double score, std::string_view label = "") const;
 
         /**
+         * @brief Record an event for the end-of-run statistics report.
+         *
+         * With Settings::show_statistics on, the end of the run reports, for
+         * each label, the fraction of generated test cases that recorded it
+         * at least once. Without it, events report nothing.
+         *
+         * @param label The event to record.
+         *
+         * @code{.cpp}
+         * auto xs = tc.draw(gs::vectors(gs::integers<int>()));
+         * if (xs.empty()) {
+         *     tc.event("empty");
+         * }
+         * @endcode
+         */
+        void event(std::string_view label) const;
+
+        /**
+         * @brief Record a numeric observation for the end-of-run statistics
+         *        report.
+         *
+         * With Settings::show_statistics on, the end of the run reports, for
+         * each label, a summary of the observed values (count, min, median,
+         * mean, p90, max) over the generated test cases. Unlike target(), a
+         * label can be observed any number of times per test case, and the
+         * observations do not steer generation.
+         *
+         * @param label Names the observed quantity.
+         * @param value The observation. Must be finite.
+         *
+         * @code{.cpp}
+         * auto xs = tc.draw(gs::vectors(gs::integers<int>()));
+         * tc.event_value("size", static_cast<double>(xs.size()));
+         * @endcode
+         */
+        void event_value(std::string_view label, double value) const;
+
+        /**
          * @brief Run @p body in an engine-managed loop.
          *
          * The engine decides how many iterations to run, exploring and

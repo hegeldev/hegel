@@ -33,3 +33,13 @@ Notes and drawn values now print through libhegel's printer instead of Hegel for
 `hegel::generators::compose()` now groups the draws its function makes into one span, as `map()`, `flat_map()` and `filter()` do, so the engine shrinks them as a unit.
 
 The 0.13.2 changelog entry says the Nix flake was removed. That is not correct: `nix/flake.nix` is still available and still exports `lib.mkHegelCppProject`. It now builds the in-tree libhegel instead of downloading one.
+
+This release adds:
+
+- `TestCase::event()` and `TestCase::event_value()`, which record events and numeric observations for the end-of-run statistics report that `Settings::show_statistics` turns on.
+- `hegel::generators::none()`, which generates `std::monostate{}`.
+- `hegel::generators::permutations()`, which generates reorderings of a list of values.
+- A `vectors()` overload that takes a key function, `vectors(elements, params, unique_by)`: no two elements of a generated vector have equal keys.
+- Support for integer types wider than 64 bits in `integers()`, such as `__int128` and `unsigned __int128`. Before, their bounds were truncated to 64 bits.
+
+`floats<long double>()` now draws a `double`. Before, it failed with an engine error where `long double` is wider than 64 bits.

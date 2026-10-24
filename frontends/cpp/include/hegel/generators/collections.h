@@ -4,10 +4,13 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <initializer_list>
 #include <map>
 #include <optional>
 #include <set>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -76,18 +79,32 @@ namespace hegel::generators {
     template <typename T>
     class VectorsGenerator : public IGenerator<std::vector<T>> {
       public:
-        VectorsGenerator(Generator<T> elements, VectorsParams params = {})
+        // Two elements are duplicates when `same` returns true for them.
+        // An empty `same` allows duplicates.
+        using Same = std::function<bool(const T&, const T&)>;
+
+        VectorsGenerator(Generator<T> elements, VectorsParams params = {},
+                         Same same = nullptr)
             : elements_(std::move(elements)), params_(params),
+              same_(std::move(same)),
               label_(hegel::internal::combine_labels(
                   {hegel::internal::label(hegel::internal::LabelName::Lists),
                    elements_.label()})) {
             if (params_.max_size && params_.min_size > *params_.max_size) {
                 throw std::invalid_argument("Cannot have max_size < min_size");
             }
-            if (params_.unique && !detail::is_equality_comparable<T>::value) {
+            if (params_.unique && same_) {
                 throw std::invalid_argument(
-                    "vectors(..., {.unique = true}) requires an "
-                    "equality-comparable element type");
+                    "Cannot have both unique = true and unique_by");
+            }
+            if (params_.unique) {
+                if constexpr (detail::is_equality_comparable<T>::value) {
+                    same_ = [](const T& a, const T& b) { return a == b; };
+                } else {
+                    throw std::invalid_argument(
+                        "vectors(..., {.unique = true}) requires an "
+                        "equality-comparable element type");
+                }
             }
         }
 
@@ -100,13 +117,12 @@ namespace hegel::generators {
             std::vector<T> result;
             while (collection.more(tc)) {
                 T element = elements_.do_draw(tc);
-                if constexpr (detail::is_equality_comparable<T>::value) {
-                    if (params_.unique &&
-                        std::find(result.begin(), result.end(), element) !=
-                            result.end()) {
-                        collection.reject(tc, "duplicate element");
-                        continue;
-                    }
+                if (same_ && std::any_of(result.begin(), result.end(),
+                                         [this, &element](const T& existing) {
+                                             return same_(existing, element);
+                                         })) {
+                    collection.reject(tc, "duplicate element");
+                    continue;
                 }
                 result.push_back(std::move(element));
             }
@@ -119,6 +135,7 @@ namespace hegel::generators {
       private:
         Generator<T> elements_;
         VectorsParams params_;
+        Same same_;
         uint64_t label_;
     };
 
@@ -229,6 +246,39 @@ namespace hegel::generators {
                                       VectorsParams params = {}) {
         return Generator<std::vector<T>>(
             new VectorsGenerator<T>(std::move(elements), params));
+    }
+
+    /**
+     * @brief Generate vectors whose elements have distinct keys.
+     *
+     * Like vectors(), but no two elements of a generated vector have equal
+     * keys. @p unique_by computes the key of an element, and the keys are
+     * compared with `==`. Do not also set VectorsParams::unique.
+     *
+     * @code{.cpp}
+     * struct User { int id; std::string name; };
+     * auto users = vectors(
+     *     builds<User>(integers<int>(), text()), {.max_size = 10},
+     *     [](const User& user) { return user.id; });
+     * // No two users have the same id.
+     * @endcode
+     *
+     * @tparam T Element type
+     * @tparam F Callable taking `const T&` and returning the element's key
+     * @param elements Generator for vector elements
+     * @param params Size constraints
+     * @param unique_by Function from an element to its key
+     * @return Generator producing vectors with distinct keys
+     */
+    template <typename T, typename F,
+              typename = std::enable_if_t<std::is_invocable_v<F, const T&>>>
+    Generator<std::vector<T>> vectors(Generator<T> elements,
+                                      VectorsParams params, F unique_by) {
+        return Generator<std::vector<T>>(new VectorsGenerator<T>(
+            std::move(elements), params,
+            [key = std::move(unique_by)](const T& a, const T& b) {
+                return key(a) == key(b);
+            }));
     }
 
     /**
@@ -408,6 +458,80 @@ namespace hegel::generators {
     Generator<std::array<T, N>> arrays(Generator<T> element) {
         return Generator<std::array<T, N>>(
             new ArrayGenerator<T, N>(std::move(element)));
+    }
+
+    /// @cond INTERNAL
+    // Concrete IGenerator for permutations(). Draws, for each position, the
+    // index of one of the values not yet placed, inside an engine-managed
+    // collection of exactly that many elements.
+    template <typename T>
+    class PermutationsGenerator : public IGenerator<std::vector<T>> {
+      public:
+        explicit PermutationsGenerator(std::vector<T> values)
+            : values_(std::move(values)) {}
+
+        std::vector<T> do_draw(const TestCase& tc) const override {
+            namespace hi = hegel::internal;
+            hi::start_span(tc, label());
+            std::vector<size_t> remaining(values_.size());
+            for (size_t i = 0; i < remaining.size(); ++i) {
+                remaining[i] = i;
+            }
+            hi::CollectionHandle collection(tc, values_.size(), values_.size());
+            std::vector<T> result;
+            result.reserve(values_.size());
+            while (!remaining.empty() && collection.more(tc)) {
+                auto index = static_cast<size_t>(hi::draw_integer(
+                    tc, 0, static_cast<int64_t>(remaining.size() - 1)));
+                result.push_back(values_[remaining[index]]);
+                remaining.erase(remaining.begin() +
+                                static_cast<std::ptrdiff_t>(index));
+            }
+            hi::stop_span(tc);
+            return result;
+        }
+
+        uint64_t label() const override {
+            return hegel::internal::label(
+                hegel::internal::LabelName::Permutation);
+        }
+
+      private:
+        std::vector<T> values_;
+    };
+    /// @endcond
+
+    /**
+     * @brief Generate permutations of a fixed list of values.
+     *
+     * Each generated vector holds all of @p values in some order. It shrinks
+     * toward the original order.
+     *
+     * @code{.cpp}
+     * auto order = permutations(std::vector<int>{1, 2, 3, 4, 5});
+     * @endcode
+     *
+     * @tparam T Element type
+     * @param values The values to reorder
+     * @return Generator producing reorderings of @p values
+     */
+    template <typename T>
+    Generator<std::vector<T>> permutations(std::vector<T> values) {
+        return Generator<std::vector<T>>(
+            new PermutationsGenerator<T>(std::move(values)));
+    }
+
+    /**
+     * @brief Generate permutations of a fixed list of values (initializer
+     * list).
+     *
+     * @tparam T Element type
+     * @param values The values to reorder
+     * @return Generator producing reorderings of @p values
+     */
+    template <typename T>
+    Generator<std::vector<T>> permutations(std::initializer_list<T> values) {
+        return permutations(std::vector<T>(values));
     }
 
     /// @}

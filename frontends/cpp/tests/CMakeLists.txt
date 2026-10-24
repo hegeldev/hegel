@@ -114,11 +114,13 @@ hegel_add_test(NAME test_run_errors SOURCE test_run_errors.cpp INTERNAL)
 
 # Generators, split by family.
 hegel_add_test(NAME test_generators_numeric
-    SOURCE test_generators_numeric.cpp)
+    SOURCE test_generators_numeric.cpp
+    USE_UTILS)
 hegel_add_test(NAME test_generators_strings
     SOURCE test_generators_strings.cpp)
 hegel_add_test(NAME test_generators_collections
-    SOURCE test_generators_collections.cpp)
+    SOURCE test_generators_collections.cpp
+    USE_UTILS)
 hegel_add_test(NAME test_generators_combinators
     SOURCE test_generators_combinators.cpp)
 hegel_add_test(NAME test_generators_random

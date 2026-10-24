@@ -4,9 +4,13 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstdint>
+#include <limits>
 #include <stdexcept>
 
 #include <hegel/hegel.h>
+
+#include "common/utils.h"
 
 namespace gs = hegel::generators;
 
@@ -67,4 +71,69 @@ TEST(Floats, NanAndInfinitySurviveGeneration) {
     EXPECT_TRUE(saw_nan) << "NaN never generated";
     EXPECT_TRUE(saw_pos_inf) << "+infinity never generated";
     EXPECT_TRUE(saw_neg_inf) << "-infinity never generated";
+}
+
+#ifdef __SIZEOF_INT128__
+// Integer types wider than 64 bits draw across their whole range through the
+// engine's big-integer draw.
+TEST(WideIntegers, SignedDrawsOutsideTheInt64Range) {
+    auto wide = hegel::tests::common::find_any<__int128>(
+        gs::integers<__int128>(), [](const __int128& x) {
+            return x > static_cast<__int128>(INT64_MAX) ||
+                   x < static_cast<__int128>(INT64_MIN);
+        });
+    EXPECT_TRUE(wide > static_cast<__int128>(INT64_MAX) ||
+                wide < static_cast<__int128>(INT64_MIN));
+}
+
+TEST(WideIntegers, SignedRespectsBounds) {
+    __int128 low = -(static_cast<__int128>(1) << 100);
+    __int128 high = -(static_cast<__int128>(1) << 99);
+    hegel::tests::common::assert_all_examples<__int128>(
+        gs::integers<__int128>({.min_value = low, .max_value = high}),
+        [low, high](const __int128& x) { return x >= low && x <= high; });
+}
+
+TEST(WideIntegers, SignedShrinksTowardZero) {
+    __int128 bound = -(static_cast<__int128>(1) << 70);
+    __int128 found = hegel::tests::common::minimal<__int128>(
+        gs::integers<__int128>(),
+        [bound](const __int128& x) { return x < bound; });
+    EXPECT_TRUE(found < bound && found > 4 * bound);
+}
+
+TEST(WideIntegers, UnsignedReachesTheTopOfTheRange) {
+    unsigned __int128 top = ~static_cast<unsigned __int128>(0);
+    unsigned __int128 found = hegel::tests::common::minimal<unsigned __int128>(
+        gs::integers<unsigned __int128>(),
+        [top](const unsigned __int128& x) { return x > top - 10; });
+    EXPECT_TRUE(found == top - 9);
+}
+
+TEST(WideIntegers, PrintAsDecimal) {
+    EXPECT_EQ(hegel::internal::repr(static_cast<__int128>(1) << 100),
+              "static_cast<__int128>(1267650600228229401496703205376)");
+    EXPECT_EQ(hegel::internal::repr(-(static_cast<__int128>(1) << 100)),
+              "static_cast<__int128>(-1267650600228229401496703205376)");
+}
+#endif
+
+// A float is drawn at 32 bits, so a lower bound excluded from the range is
+// never reached by rounding a smaller double to a float.
+TEST(Floats, SinglePrecisionDrawsAtFloatWidth) {
+    hegel::tests::common::assert_all_examples<float>(
+        gs::floats<float>({.min_value = 0.0f, .exclude_min = true}),
+        [](const float& x) { return x > 0.0f; }, 500);
+    hegel::tests::common::assert_all_examples<float>(
+        gs::floats<float>({.min_value = -1.0f, .max_value = 1.0f}),
+        [](const float& x) { return x >= -1.0f && x <= 1.0f; });
+}
+
+// A long double is drawn as a double, whatever its size on the platform.
+TEST(Floats, LongDoubleDrawsAsDouble) {
+    hegel::tests::common::assert_all_examples<long double>(
+        gs::floats<long double>(), [](const long double& x) {
+            return std::isnan(x) || std::isinf(x) ||
+                   std::fabs(x) <= std::numeric_limits<double>::max();
+        });
 }

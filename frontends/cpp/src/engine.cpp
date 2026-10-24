@@ -733,6 +733,19 @@ namespace hegel::impl {
             "hegel_target");
     }
 
+    void event(const TestCase& tc, std::string_view label) {
+        DrawScope scope(tc);
+        scope.raise_for_rc(hegel_event(scope.ctx, scope.tc, borrow(label)),
+                           "hegel_event");
+    }
+
+    void event_value(const TestCase& tc, std::string_view label, double value) {
+        DrawScope scope(tc);
+        scope.raise_for_rc(
+            hegel_event_value(scope.ctx, scope.tc, value, borrow(label)),
+            "hegel_event_value");
+    }
+
 } // namespace hegel::impl
 
 namespace hegel::internal {
@@ -773,6 +786,8 @@ namespace hegel::internal {
             "hegel.dicts",
             "hegel.tuples",
             "hegel.array",
+            "hegel.permutation",
+            "hegel.recursive",
             "hegel.stateful.rule",
             "hegel.pool.values_reusable",
             "hegel.pool.values_consumed",
@@ -916,20 +931,24 @@ namespace hegel::internal {
                 draw_integer(tc, static_cast<int64_t>(min_value),
                              static_cast<int64_t>(max_value)));
         }
-        impl::DrawScope scope(tc);
         uint8_t min_bytes[big_u64_len];
         uint8_t max_bytes[big_u64_len];
         uint8_t out_bytes[big_u64_len];
         encode_u64_le(min_value, min_bytes);
         encode_u64_le(max_value, max_bytes);
+        draw_integer_bytes(tc, min_bytes, max_bytes, big_u64_len, out_bytes);
+        return decode_u64_le(out_bytes);
+    }
+
+    void draw_integer_bytes(const TestCase& tc, const uint8_t* min_value,
+                            const uint8_t* max_value, size_t len,
+                            uint8_t* out) {
+        impl::DrawScope scope(tc);
         size_t out_len = 0;
-        scope.raise_for_rc(
-            hegel_generate_integer_big(scope.ctx, scope.tc, min_bytes,
-                                       big_u64_len, max_bytes, big_u64_len,
-                                       out_bytes, big_u64_len, &out_len),
-            "hegel_generate_integer_big");
-        uint64_t value = decode_u64_le(out_bytes);
-        return value;
+        scope.raise_for_rc(hegel_generate_integer_big(scope.ctx, scope.tc,
+                                                      min_value, len, max_value,
+                                                      len, out, len, &out_len),
+                           "hegel_generate_integer_big");
     }
 
     bool draw_boolean(const TestCase& tc, double p,

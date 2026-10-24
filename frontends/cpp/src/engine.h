@@ -202,6 +202,8 @@ namespace hegel::impl {
     // hegel::internal — see include/hegel/internal.h.)
 
     void target(const TestCase& tc, double score, std::string_view label);
+    void event(const TestCase& tc, std::string_view label);
+    void event_value(const TestCase& tc, std::string_view label, double value);
 
     std::string draw_string(const TestCase& tc,
                             const hegel_string_generator_t* generator);

@@ -68,6 +68,8 @@ namespace hegel::internal {
         Dicts,
         Tuples,
         Array,
+        Permutation,
+        Recursive,
         StatefulRule,
         PoolValuesReusable,
         PoolValuesConsumed,
@@ -94,6 +96,12 @@ namespace hegel::internal {
     // Uses the engine's big-integer draw when the range exceeds int64_t.
     uint64_t draw_integer_unsigned(const TestCase& tc, uint64_t min_value,
                                    uint64_t max_value);
+    // Draws an integer between `min_value` and `max_value` inclusive. All
+    // three buffers hold `len` bytes of two's-complement little-endian
+    // integer, and the drawn value is sign-filled to `len` bytes.
+    void draw_integer_bytes(const TestCase& tc, const uint8_t* min_value,
+                            const uint8_t* max_value, std::size_t len,
+                            uint8_t* out);
     bool draw_boolean(const TestCase& tc, double p,
                       std::optional<bool> forced = std::nullopt);
     double draw_float(const TestCase& tc, uint32_t width, double min_value,

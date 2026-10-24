@@ -75,6 +75,14 @@ namespace hegel {
         impl::target(*this, score, label);
     }
 
+    void TestCase::event(std::string_view label) const {
+        impl::event(*this, label);
+    }
+
+    void TestCase::event_value(std::string_view label, double value) const {
+        impl::event_value(*this, label, value);
+    }
+
     void TestCase::repeat(const std::function<void()>& body) const {
         // Seed the loop's minimum length, then let the engine decide each
         // iteration: the count is drawn like any collection, so it shrinks.

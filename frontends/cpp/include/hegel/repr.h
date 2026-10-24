@@ -343,6 +343,28 @@ namespace hegel::internal {
                         });
         }
 
+        // Decimal digits of an integer of any width.
+        template <typename T> std::string integer_digits(T value) {
+            using U = std::make_unsigned_t<T>;
+            auto magnitude = static_cast<U>(value);
+            bool negative = false;
+            if constexpr (std::is_signed_v<T>) {
+                negative = value < 0;
+                if (negative) {
+                    magnitude = static_cast<U>(U{0} - magnitude);
+                }
+            }
+            std::string reversed;
+            do {
+                reversed.push_back(static_cast<char>('0' + magnitude % 10));
+                magnitude /= 10;
+            } while (magnitude != 0);
+            if (negative) {
+                reversed.push_back('-');
+            }
+            return std::string(reversed.rbegin(), reversed.rend());
+        }
+
         // The text of a value with no inner structure.
         template <typename T> std::string scalar_text(const T& value) {
             if constexpr (std::is_same_v<T, bool>) {
@@ -372,7 +394,7 @@ namespace hegel::internal {
             } else if constexpr (std::is_integral_v<T>) {
                 // Integral types with no literal suffix of their own.
                 return "static_cast<" + cpp_type_name<T>() + ">(" +
-                       std::to_string(value) + ")";
+                       integer_digits(value) + ")";
             } else if constexpr (std::is_enum_v<T>) {
                 using underlying = std::underlying_type_t<T>;
                 return "static_cast<" + cpp_type_name<T>() + ">(" +
