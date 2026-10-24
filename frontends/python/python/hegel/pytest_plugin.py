@@ -5,6 +5,9 @@ settings profile for the run:
 
 ``--hegel-profile NAME``
     Start from the named settings profile.
+``--hegel-setting KEY=VALUE``
+    Set any setting, by its ``hegel.toml`` key, with the value spelled as
+    in ``hegel.toml``. Repeatable.
 ``--hegel-seed SEED``
     Fix the seed.
 ``--hegel-verbosity {quiet,normal,verbose,debug}``
@@ -29,14 +32,20 @@ def pytest_addoption(parser: Any) -> None:
         "--hegel-profile", action="store", default=None, help="Hegel settings profile to use"
     )
     group.addoption(
+        "--hegel-setting",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Set a Hegel setting by its hegel.toml key, e.g. test_cases=1000 (repeatable)",
+    )
+    group.addoption(
         "--hegel-seed", action="store", default=None, help="Seed for Hegel's generation"
     )
     group.addoption(
         "--hegel-verbosity",
         action="store",
         default=None,
-        choices=["quiet", "normal", "verbose", "debug"],
-        help="Hegel output verbosity",
+        help="Hegel output verbosity: quiet, normal, verbose or debug",
     )
     group.addoption(
         "--hegel-derandomize",
@@ -52,32 +61,45 @@ def pytest_addoption(parser: Any) -> None:
     )
 
 
-_OPTIONS = {
-    "seed": ("--hegel-seed", int),
-    "verbosity": ("--hegel-verbosity", str),
-    "derandomize": ("--hegel-derandomize", bool),
-    "database": ("--hegel-database", str),
-}
+def _settings_from_options(config: Any) -> list[tuple[str, str, str]]:
+    """Each setting the options give, as ``(option, key, value)`` with the
+    key and value as the engine reads them from ``hegel.toml``."""
+    values = []
+    for option in config.getoption("--hegel-setting"):
+        key, equals, value = option.partition("=")
+        if not equals:
+            raise pytest.UsageError(f"--hegel-setting={option!r} must be KEY=VALUE")
+        values.append(("--hegel-setting", key.strip(), value.strip()))
+    seed = config.getoption("--hegel-seed")
+    if seed is not None:
+        values.append(("--hegel-seed", "seed", seed))
+    verbosity = config.getoption("--hegel-verbosity")
+    if verbosity is not None:
+        values.append(("--hegel-verbosity", "verbosity", verbosity))
+    if config.getoption("--hegel-derandomize"):
+        values.append(("--hegel-derandomize", "derandomize", "true"))
+    database = config.getoption("--hegel-database")
+    if database is not None:
+        values.append(("--hegel-database", "database", database or "disabled"))
+    return values
 
 
 def pytest_configure(config: Any) -> None:
     config.addinivalue_line("markers", "hegel: a Hegel property-based test")
     profile = config.getoption("--hegel-profile")
-    overrides = {}
-    for field, (option, convert) in _OPTIONS.items():
-        value = config.getoption(option)
-        if value is None:
-            continue
-        try:
-            overrides[field] = convert(value)
-        except ValueError:
-            raise pytest.UsageError(f"{option}={value!r} must be an integer") from None
-    if profile is None and not overrides:
+    values = _settings_from_options(config)
+    if profile is None and not values:
         return
+    from hegel.errors import InvalidArgument
     from hegel.settings import Settings
 
-    base = Settings() if profile is None else Settings.from_profile(profile)
-    Settings.register_profile("pytest", base, **overrides)
+    settings = Settings() if profile is None else Settings.from_profile(profile)
+    for option, key, value in values:
+        try:
+            settings = settings._with_strings([(key, value)])
+        except InvalidArgument as e:
+            raise pytest.UsageError(f"{option}: {e}") from None
+    Settings.register_profile("pytest", settings)
     Settings.set_default_profile("pytest")
 
 

@@ -73,4 +73,62 @@ def test_plugin_rejects_a_non_integer_seed(pytester: pytest.Pytester):
     pytester.makepyfile(TEST_FILE)
     result = pytester.runpytest("--hegel-seed=abc")
     assert result.ret == pytest.ExitCode.USAGE_ERROR
-    result.stderr.fnmatch_lines(["*--hegel-seed='abc' must be an integer*"])
+    result.stderr.fnmatch_lines(["*--hegel-seed:*`seed` expects an integer*abc*"])
+
+
+SETTINGS_FILE = """
+import hegel
+
+def test_settings():
+    settings = hegel.Settings()
+    print("CASES", settings.test_cases, "UNBOUNDED", settings.unbounded_choices)
+    print("SUPPRESSED", ",".join(sorted(h.name for h in settings.suppress_health_check)))
+    print("BACKEND", settings.backend.name, "DATABASE", repr(settings.database))
+"""
+
+
+def test_plugin_sets_any_setting_from_its_hegel_toml_key(pytester: pytest.Pytester):
+    pytester.makepyfile(SETTINGS_FILE)
+    result = pytester.runpytest(
+        "-s",
+        "--hegel-setting=test_cases=17",
+        "--hegel-setting",
+        " unbounded_choices = yes ",
+        "--hegel-setting=suppress_health_check=too_slow,filter_too_much",
+        "--hegel-setting=backend=urandom",
+        "--hegel-setting=database=disabled",
+    )
+    result.assert_outcomes(passed=1)
+    result.stdout.fnmatch_lines(
+        [
+            "*CASES 17 UNBOUNDED True*",
+            "*SUPPRESSED filter_too_much,too_slow*",
+            "*BACKEND urandom DATABASE ''*",
+        ]
+    )
+
+
+def test_plugin_options_apply_in_order(pytester: pytest.Pytester):
+    pytester.makepyfile(TEST_FILE)
+    result = pytester.runpytest(
+        "-s", "-k", "profile_seed", "--hegel-setting=seed=5", "--hegel-seed=6"
+    )
+    result.assert_outcomes(passed=1)
+    result.stdout.fnmatch_lines(["*SEED 6 VERBOSITY*"])
+
+
+@pytest.mark.parametrize(
+    ("option", "message"),
+    [
+        ("--hegel-setting=test_cases", "*--hegel-setting='test_cases' must be KEY=VALUE*"),
+        ("--hegel-setting=nope=1", "*--hegel-setting:*unknown setting `nope`*"),
+        ("--hegel-setting=verbosity=loud", "*`verbosity` expects one of*loud*"),
+        ("--hegel-verbosity=loud", "*--hegel-verbosity:*`verbosity` expects one of*"),
+        ("--hegel-setting=database_key=k", "*database_key is set for each test*"),
+    ],
+)
+def test_plugin_rejects_bad_settings(pytester: pytest.Pytester, option: str, message: str):
+    pytester.makepyfile(SETTINGS_FILE)
+    result = pytester.runpytest(option)
+    assert result.ret == pytest.ExitCode.USAGE_ERROR
+    result.stderr.fnmatch_lines([message])

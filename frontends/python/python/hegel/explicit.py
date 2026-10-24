@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING, Any
 
 from hegel.errors import InvalidArgument
@@ -52,9 +53,14 @@ class ExplicitTestCase:
         self.consumed = 0
         self.used: set[str] = set()
         self.lines: list[str] = []
+        self.lock = threading.Lock()
 
     def draw(self, tc: TestCase, generator: Generator[Any], draw_name: DrawName) -> Any:
         key = tc._allocate_display_name(draw_name)
+        with self.lock:
+            return self._take(key)
+
+    def _take(self, key: str | None) -> Any:
         if key is not None and key in self.named and key not in self.used:
             self.used.add(key)
             value = self.named[key]

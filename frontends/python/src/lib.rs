@@ -15,11 +15,13 @@ use pyo3::types::PyModule;
 use std::ffi::{c_char, c_void};
 use std::sync::{Arc, Mutex};
 
+mod grammar;
 mod printer;
 mod settings;
 mod strings;
 mod test_case;
 
+pub(crate) use grammar::{Grammar, GrammarBuilder, GrammarDraw};
 pub(crate) use printer::Printer;
 pub(crate) use settings::Settings;
 pub(crate) use strings::StringGenerator;
@@ -110,6 +112,17 @@ pub(crate) fn hstr_bytes(bytes: &[u8]) -> c::hegel_string_t {
 
 pub(crate) fn hstrs(items: &[String]) -> Vec<c::hegel_string_t> {
     items.iter().map(|s| hstr(s)).collect()
+}
+
+/// A text or bytes `max_size` (or a collection's, for its text default) as the engine takes it: `None` (no maximum
+/// given) is `HEGEL_MAX_SIZE_DEFAULT`, for the engine's default, and a
+/// maximum at or above that sentinel is no upper bound.
+pub(crate) fn max_size_arg(max_size: Option<u64>) -> u64 {
+    match max_size {
+        None => c::HEGEL_MAX_SIZE_DEFAULT,
+        Some(n) if n >= c::HEGEL_MAX_SIZE_DEFAULT => u64::MAX,
+        Some(n) => n,
+    }
 }
 
 /// Copy a borrowed engine string out. A NULL `data` is the empty string.
@@ -286,12 +299,16 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<StateMachine>()?;
     m.add_class::<StringGenerator>()?;
     m.add_class::<Printer>()?;
+    m.add_class::<GrammarBuilder>()?;
+    m.add_class::<Grammar>()?;
+    m.add_class::<GrammarDraw>()?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
     m.add_function(wrap_pyfunction!(label_from_name, m)?)?;
     m.add_function(wrap_pyfunction!(label_combine, m)?)?;
     m.add_function(wrap_pyfunction!(set_default_profile, m)?)?;
     m.add_function(wrap_pyfunction!(set_unicode_version, m)?)?;
     m.add_function(wrap_pyfunction!(register_profile, m)?)?;
+    m.add("FILTER_ATTEMPTS", c::HEGEL_FILTER_ATTEMPTS)?;
     m.add("STATUS_VALID", c::hegel_status_t::HEGEL_STATUS_VALID as u32)?;
     m.add(
         "STATUS_INVALID",

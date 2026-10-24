@@ -11,6 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from hegel import _native
 from hegel._labels import combine_labels, label_from_name
 from hegel.errors import (
     AssumeFailed,
@@ -491,8 +492,8 @@ def _run_concurrent(
             name = group_names[group]
             tc.note(f"---------------- Round {round_number}: group {name!r} ----------------")
             for worker, rounds in enumerate(round_queues):
-                worker_tc = tc._clone()
-                worker_tc._set_worker(worker)
+                worker_tc = tc.clone()
+                worker_tc.set_worker(worker)
                 rounds.put(worker_tc)
             events: list[_Event] = []
             for worker, event_queue in enumerate(event_queues):
@@ -776,7 +777,7 @@ class _PoolValues(Generator[Any]):
         return f"{self.pool!r}.{'values_consumed' if self.consume else 'values_reusable'}()"
 
 
-FILTER_ATTEMPTS = 3
+FILTER_ATTEMPTS = _native.FILTER_ATTEMPTS
 
 
 class _FilteredPoolValues(Generator[Any]):

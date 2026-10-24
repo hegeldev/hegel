@@ -86,7 +86,7 @@ class HealthCheck(enum.Enum):
       its generators.
     - ``test_cases_too_large``: test cases routinely reach the limit on the
       number of choices one may make. Suppressing it also removes that
-      limit.
+      limit, as the ``unbounded_choices`` setting does.
     - ``large_initial_test_case``: the smallest possible test case is
       already very large.
 
@@ -255,6 +255,14 @@ class Settings:
         Print the end-of-run statistics of the events recorded with
         :meth:`~hegel.TestCase.event` and
         :meth:`~hegel.TestCase.event_value` (default ``False``).
+    ``unbounded_choices``
+        Let a test case make any number of choices (default ``False``).
+        Otherwise a test case that makes more than 2**20 choices (draws,
+        and the steps of collections and stateful runs) is stopped and
+        discarded. A long-running test case, such as a concurrent state
+        machine driven for hours, needs the limit removed; the cost is
+        the memory to record every choice. Suppressing
+        ``HealthCheck.test_cases_too_large`` removes the limit too.
     ``print_blob``
         On failure, say how to replay it with
         :func:`~hegel.reproduce_failure` (default ``True``).
@@ -291,6 +299,7 @@ class Settings:
     report_multiple_failures: bool
     stop_on_first_failure: bool
     show_statistics: bool
+    unbounded_choices: bool
     print_blob: bool
     backend: Backend
     nondeterminism_strictness: NondeterminismStrictness
@@ -357,13 +366,33 @@ class Settings:
         """A copy of these settings with ``overrides`` applied."""
         return Settings(self, **overrides)
 
+    def _with_strings(self, values: Iterable[tuple[str, str]]) -> Settings:
+        """These settings with each ``(key, value)`` applied as the engine
+        reads a ``hegel.toml`` profile: the key is the setting's name and
+        the value is text in the engine's vocabulary for it (``"10"``,
+        ``"verbose"``, ``"too_slow,filter_too_much"``). A command line
+        passes its options through this, so the engine, not this package,
+        knows each setting's spellings."""
+        native = self._build()
+        for key, value in values:
+            native.set_from_string(key, value)
+            if key not in _FIELDS:
+                raise InvalidArgument(
+                    f"{key} is set for each test, not for a whole run, so it cannot be set here"
+                )
+        return _from_native(native)
+
     def _build(
         self,
         database_key: str | None = None,
         test_location: TestLocation | None = None,
     ) -> _native.Settings:
         """A native settings handle: every field set explicitly on top of
-        the immutable ``base`` profile."""
+        the immutable ``base`` profile. The fields are every engine setting
+        (``tests/test_settings.py`` checks them against the getters and
+        setters in ``hegel.h``), read
+        back from the engine when these settings were resolved, so nothing
+        the engine resolved is reset to a default."""
         native = _native.Settings.for_profile("base")
         native.set_test_cases(self.test_cases)
         native.set_verbosity(self.verbosity.value)
@@ -372,6 +401,7 @@ class Settings:
         native.set_report_multiple_failures(self.report_multiple_failures)
         native.set_stop_on_first_failure(self.stop_on_first_failure)
         native.set_show_statistics(self.show_statistics)
+        native.set_unbounded_choices(self.unbounded_choices)
         native.set_database(self.database)
         native.set_print_blob(self.print_blob)
         if database_key is not None:
@@ -426,6 +456,7 @@ def _assign(settings: Settings, values: dict[str, Any]) -> None:
             "stop_on_first_failure", values["stop_on_first_failure"]
         ),
         "show_statistics": _check_bool("show_statistics", values["show_statistics"]),
+        "unbounded_choices": _check_bool("unbounded_choices", values["unbounded_choices"]),
         "print_blob": _check_bool("print_blob", values["print_blob"]),
         "backend": _coerce_member(Backend, "backend", values["backend"]),
         "nondeterminism_strictness": _coerce_member(
@@ -453,6 +484,7 @@ def _from_native(native: _native.Settings) -> Settings:
             "report_multiple_failures": native.get_report_multiple_failures(),
             "stop_on_first_failure": native.get_stop_on_first_failure(),
             "show_statistics": native.get_show_statistics(),
+            "unbounded_choices": native.get_unbounded_choices(),
             "print_blob": native.get_print_blob(),
             "backend": Backend(native.get_backend()),
             "nondeterminism_strictness": NondeterminismStrictness(

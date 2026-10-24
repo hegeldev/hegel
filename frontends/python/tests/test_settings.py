@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import dataclasses
+import re
+from pathlib import Path
 
 import pytest
 
@@ -9,6 +11,7 @@ from hegel import _native
 from hegel.settings import (
     Backend,
     HealthCheck,
+    NondeterminismStrictness,
     Phase,
     Settings,
     TestLocation,
@@ -141,8 +144,10 @@ def test_build_round_trips_every_field():
         report_multiple_failures=True,
         stop_on_first_failure=False,
         show_statistics=True,
+        unbounded_choices=True,
         print_blob=True,
         backend=Backend.urandom,
+        nondeterminism_strictness=NondeterminismStrictness.error,
     )
     native = settings._build("key", TestLocation("f.py", 3, "Cls", "fn"))
     assert native.get_test_cases() == 5
@@ -155,8 +160,10 @@ def test_build_round_trips_every_field():
     assert native.get_report_multiple_failures()
     assert not native.get_stop_on_first_failure()
     assert native.get_show_statistics()
+    assert native.get_unbounded_choices()
     assert native.get_print_blob()
     assert native.get_backend() == _native.BACKEND_URANDOM
+    assert native.get_nondeterminism_strictness() == _native.NONDETERMINISM_ERROR
 
 
 def test_enum_helpers_and_fields():
@@ -173,6 +180,7 @@ def test_enum_helpers_and_fields():
         "report_multiple_failures",
         "stop_on_first_failure",
         "show_statistics",
+        "unbounded_choices",
         "print_blob",
         "backend",
         "nondeterminism_strictness",
@@ -205,3 +213,39 @@ def test_parent_and_profile_arguments_are_validated():
     ):
         Settings(test_cases=1 << 64)
     assert Settings(test_cases=(1 << 64) - 1)._build().get_test_cases() == (1 << 64) - 1
+
+
+HEGEL_H = Path(__file__).parents[3] / "libhegel" / "include" / "hegel.h"
+
+
+PER_TEST_SETTERS = {"database_key", "test_location", "from_string"}
+
+
+def test_every_engine_setting_is_a_settings_field():
+    header = HEGEL_H.read_text()
+    getters = set(re.findall(r"hegel_settings_get_(\w+)\(", header))
+    setters = set(re.findall(r"hegel_settings_set_(\w+)\(", header)) - PER_TEST_SETTERS
+    fields = {field.name for field in dataclasses.fields(Settings)}
+    assert fields
+    assert getters == fields
+    assert setters == fields
+
+
+def test_engine_profile_settings_reach_the_run():
+    native = _native.Settings.for_profile("base")
+    native.set_unbounded_choices(True)
+    native.set_show_statistics(True)
+    native.set_nondeterminism_strictness(_native.NONDETERMINISM_ERROR)
+    _native.register_profile("engine-made", native)
+    settings = Settings.from_profile("engine-made")
+    assert settings.unbounded_choices
+    built = settings._build()
+    assert built.get_unbounded_choices()
+    assert built.get_show_statistics()
+    assert built.get_nondeterminism_strictness() == _native.NONDETERMINISM_ERROR
+    assert not Settings(settings, unbounded_choices=False)._build().get_unbounded_choices()
+
+
+def test_unbounded_choices_is_validated():
+    with pytest.raises(hegel.InvalidArgument, match="unbounded_choices=1 must be True or False"):
+        Settings(unbounded_choices=1)

@@ -27,6 +27,7 @@ from hegel.generators.combinators import (
 )
 from hegel.generators.composite import builds, composite
 from hegel.generators.from_type import from_type, register_type_generator
+from hegel.generators.grammar import from_lark
 from hegel.generators.numeric import booleans, floats, integers, weighted_booleans
 from hegel.generators.recursive import deferred, recursive
 from hegel.generators.strings import (
@@ -57,6 +58,7 @@ __all__ = [
     "emails",
     "fixed_dicts",
     "floats",
+    "from_lark",
     "from_regex",
     "from_type",
     "frozensets",
