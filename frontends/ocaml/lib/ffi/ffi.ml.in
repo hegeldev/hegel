@@ -750,6 +750,12 @@ let c_printer_breakable = foreign "hegel_printer_breakable" text_typ
 let c_printer_if_break = foreign "hegel_printer_if_break" text_typ
 let c_printer_comment = foreign "hegel_printer_comment" text_typ
 
+let c_printer_reflow =
+  foreign
+    "hegel_printer_reflow"
+    (handle_t @-> handle_t @-> handle_t @-> str @-> returning int)
+;;
+
 let c_printer_hard_break =
   foreign "hegel_printer_hard_break" (handle_t @-> handle_t @-> returning int)
 ;;
@@ -1725,6 +1731,7 @@ let printer_breakable ctx p sep = check_rc ctx (c_printer_breakable ctx p sep)
 
 let printer_if_break ctx p s = check_rc ctx (c_printer_if_break ctx p s)
 let printer_comment ctx p s = check_rc ctx (c_printer_comment ctx p s)
+let printer_reflow ctx p s = check_rc ctx (c_printer_reflow ctx p null_handle s)
 let printer_hard_break ctx p = check_rc ctx (c_printer_hard_break ctx p)
 
 let printer_begin_group ctx p ~indent open_ =
@@ -1940,6 +1947,7 @@ let printer_text = Obj.magic_portable printer_text
 let printer_breakable = Obj.magic_portable printer_breakable
 let printer_if_break = Obj.magic_portable printer_if_break
 let printer_comment = Obj.magic_portable printer_comment
+let printer_reflow = Obj.magic_portable printer_reflow
 let printer_hard_break = Obj.magic_portable printer_hard_break
 let printer_begin_group = Obj.magic_portable printer_begin_group
 let printer_end_group = Obj.magic_portable printer_end_group

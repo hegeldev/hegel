@@ -13,7 +13,11 @@
     - Records: generates all fields, then constructs the record
     - Variants: picks a constructor via [sampled_from] then generates args
     - Type aliases: delegates to the generator for the aliased type
-    - Tuples inside any of the above *)
+    - Tuples inside any of the above
+
+    A derived generator prints what it draws as OCaml syntax: it pairs each
+    drawn part with that part's display ([Ppx_internal.draw]) and assembles
+    the record, constructor or tuple display from them. *)
 
 open Ppxlib
 
@@ -61,6 +65,23 @@ let with_mode ~portable (e : expression) : expression =
   else e
 ;;
 
+let internal ~loc name =
+  Ast_builder.Default.evar ~loc ("Hegel.Generators.Ppx_internal." ^ name)
+;;
+
+let printer ~loc name = Ast_builder.Default.evar ~loc ("Hegel.Printer." ^ name)
+
+(** [composite ~portable ~loc ~label make_body] is a derived generator drawing
+    with [fun tc -> make_body tc], whose body returns the value with its
+    display, inside a span tagged [label]. *)
+let composite ~portable ~loc ~label make_body =
+  let tc = gen_symbol ~prefix:"_hegel_tc" () in
+  [%expr
+    [%e with_mode ~portable (internal ~loc "composite_with_label")]
+      ~label:[%e label]
+      (fun [%p Ast_builder.Default.pvar ~loc tc] -> [%e make_body tc])]
+;;
+
 let rec generator_expr_of_core_type ~portable (ct : core_type) : expression =
   let loc = ct.ptyp_loc in
   match Attribute.get generator_override_attribute ct with
@@ -83,85 +104,85 @@ let rec generator_expr_of_core_type ~portable (ct : core_type) : expression =
      | _ ->
        (match Ppx_compat.extract_tuple_types ct with
         | Some components ->
-          [%expr
-            [%e with_mode ~portable [%expr Hegel.Generators.composite]]
-              [%e tuple_thunk ~portable ~loc components]]
+          composite
+            ~portable
+            ~loc
+            ~label:[%expr Hegel.Generators.Ppx_internal.Labels.fixed_dict]
+            (fun tc ->
+               draw_all ~portable ~loc ~tc components (fun values shows ->
+                 [%expr
+                   [%e Ast_builder.Default.pexp_tuple ~loc values]
+                 , fun () ->
+                     [%e printer ~loc "tuple"] [%e Ast_builder.Default.elist ~loc shows]]))
         | None ->
           Location.raise_errorf
             ~loc
             "ppx_hegel_generator: unsupported type in [@@deriving hegel_generator]"))
 
-and make_draw_expr ~portable ~tc (ct : core_type) : expression =
-  let loc = ct.ptyp_loc in
-  [%expr
-    Hegel.draw_silent
-      [%e Ast_builder.Default.evar ~loc tc]
-      [%e generator_expr_of_core_type ~portable ct]]
-
-and tuple_thunk ~portable ~loc components =
-  let tc = gen_symbol ~prefix:"_hegel_tc" () in
+(** [draw_all ~portable ~loc ~tc types k] draws one value of each type in
+    order, binding each value and its display, and continues with
+    [k values shows]: the bound values, and their forced displays. *)
+and draw_all ~portable ~loc ~tc (types : core_type list) k =
   let named =
     List.map
-      (fun ct -> gen_symbol ~prefix:"_tup" (), make_draw_expr ~portable ~tc ct)
-      components
+      (fun ct ->
+         gen_symbol ~prefix:"_hegel_value" (), gen_symbol ~prefix:"_hegel_show" (), ct)
+      types
   in
-  let tuple_expr =
-    Ast_builder.Default.pexp_tuple
-      ~loc
-      (List.map (fun (vname, _) -> Ast_builder.Default.evar ~loc vname) named)
-  in
-  let body =
-    List.fold_right
-      (fun (vname, drawn) acc ->
-         [%expr
-           let [%p Ast_builder.Default.pvar ~loc vname] = [%e drawn] in
-           [%e acc]])
-      named
-      tuple_expr
-  in
-  [%expr fun [%p Ast_builder.Default.pvar ~loc tc] -> [%e body]]
-;;
-
-(** [drawn_record ~loc ~wrap labels] returns an expression that draws the fields
-    in declaration order and applies [wrap] to the record literal. [wrap] lets
-    an inline-record constructor enclose the literal directly *)
-let drawn_record ~portable ~loc ~tc ~wrap (labels : label_declaration list) : expression =
-  if List.is_empty labels
-  then Location.raise_errorf ~loc "ppx_hegel_generator: empty record types not supported";
-  let named =
-    List.map
-      (fun (ld : label_declaration) ->
-         ( ld.pld_name.txt
-         , gen_symbol ~prefix:"_gen" ()
-         , make_draw_expr ~portable ~tc ld.pld_type ))
-      labels
-  in
-  let record_expr =
-    Ast_builder.Default.pexp_record
-      ~loc
-      (List.map
-         (fun (field, vname, _) ->
-            ( Ast_builder.Default.Located.lident ~loc field
-            , Ast_builder.Default.evar ~loc vname ))
-         named)
-      None
+  let values = List.map (fun (v, _, _) -> Ast_builder.Default.evar ~loc v) named in
+  let shows =
+    List.map (fun (_, s, _) -> [%expr [%e Ast_builder.Default.evar ~loc s] ()]) named
   in
   List.fold_right
-    (fun (_, vname, drawn) acc ->
+    (fun (v, s, ct) acc ->
        [%expr
-         let [%p Ast_builder.Default.pvar ~loc vname] = [%e drawn] in
+         let [%p Ast_builder.Default.pvar ~loc v], [%p Ast_builder.Default.pvar ~loc s] =
+           [%e internal ~loc "draw"]
+             [%e Ast_builder.Default.evar ~loc tc]
+             [%e generator_expr_of_core_type ~portable ct]
+         in
          [%e acc]])
     named
-    (wrap record_expr)
+    (k values shows)
 ;;
 
-(** [generator_of_record ~loc labels] returns a [test_case -> record] function
-    that draws the fields in declaration order. *)
-let generator_of_record ~portable ~loc (labels : label_declaration list) : expression =
-  let tc = gen_symbol ~prefix:"_hegel_tc" () in
-  [%expr
-    fun [%p Ast_builder.Default.pvar ~loc tc] ->
-      [%e drawn_record ~portable ~loc ~tc ~wrap:Fun.id labels]]
+(** [drawn_record ~portable ~loc ~tc ~wrap ~wrap_show labels] draws the fields
+    in declaration order, and pairs [wrap] of the record literal with
+    [wrap_show] of the record's display. [wrap] and [wrap_show] let an
+    inline-record constructor enclose the literal and its display. *)
+let drawn_record ~portable ~loc ~tc ~wrap ~wrap_show (labels : label_declaration list)
+  : expression
+  =
+  if List.is_empty labels
+  then Location.raise_errorf ~loc "ppx_hegel_generator: empty record types not supported";
+  let names = List.map (fun (ld : label_declaration) -> ld.pld_name.txt) labels in
+  draw_all
+    ~portable
+    ~loc
+    ~tc
+    (List.map (fun (ld : label_declaration) -> ld.pld_type) labels)
+    (fun values shows ->
+       let record_expr =
+         Ast_builder.Default.pexp_record
+           ~loc
+           (List.map2
+              (fun field value -> Ast_builder.Default.Located.lident ~loc field, value)
+              names
+              values)
+           None
+       in
+       let fields =
+         Ast_builder.Default.elist
+           ~loc
+           (List.map2
+              (fun field show ->
+                 [%expr [%e Ast_builder.Default.estring ~loc field], [%e show]])
+              names
+              shows)
+       in
+       [%expr
+         [%e wrap record_expr]
+       , fun () -> [%e wrap_show [%expr [%e printer ~loc "record"] [%e fields]]]])
 ;;
 
 (** [type_label ~loc ~type_name kind] is the label expression for the derived
@@ -179,6 +200,15 @@ let type_label ~loc ~type_name kind =
       ]]
 ;;
 
+(** [constructor_show ~loc name args] is the display of the constructor
+    [name] applied to the displays [args]. *)
+let constructor_show ~loc name args =
+  [%expr
+    [%e printer ~loc "constructor"]
+      [%e Ast_builder.Default.estring ~loc name]
+      [%e Ast_builder.Default.elist ~loc args]]
+;;
+
 let generator_of_data_variant
       ~portable
       ~loc
@@ -186,84 +216,63 @@ let generator_of_data_variant
       (constrs : constructor_declaration list)
   : expression
   =
-  let tc = gen_symbol ~prefix:"_hegel_tc" () in
-  let variant_idx = gen_symbol ~prefix:"_variant_idx" () in
-  let n = List.length constrs in
-  let index_options = List.init n (fun i -> Ast_builder.Default.eint ~loc i) in
-  let match_arms =
-    List.mapi
-      (fun i (cd : constructor_declaration) ->
-         let constr_lid = Ast_builder.Default.Located.lident ~loc cd.pcd_name.txt in
-         let case rhs =
+  composite ~portable ~loc ~label:(type_label ~loc ~type_name "enum_variant") (fun tc ->
+    let variant_idx = gen_symbol ~prefix:"_variant_idx" () in
+    let n = List.length constrs in
+    let index_options = List.init n (fun i -> Ast_builder.Default.eint ~loc i) in
+    let match_arms =
+      List.mapi
+        (fun i (cd : constructor_declaration) ->
+           let name = cd.pcd_name.txt in
+           let constr_lid = Ast_builder.Default.Located.lident ~loc name in
+           let construct arg = Ast_builder.Default.pexp_construct ~loc constr_lid arg in
+           let rhs =
+             match Ppx_compat.extract_constr_args cd.pcd_args with
+             | Tuple [] ->
+               [%expr [%e construct None], fun () -> [%e constructor_show ~loc name []]]
+             | Tuple cts ->
+               draw_all ~portable ~loc ~tc cts (fun values shows ->
+                 let arg =
+                   match values with
+                   | [ value ] -> value
+                   | values -> Ast_builder.Default.pexp_tuple ~loc values
+                 in
+                 [%expr
+                   [%e construct (Some arg)]
+                 , fun () -> [%e constructor_show ~loc name shows]])
+             | Record labels ->
+               drawn_record
+                 ~portable
+                 ~loc
+                 ~tc
+                 ~wrap:(fun record -> construct (Some record))
+                 ~wrap_show:(fun record -> constructor_show ~loc name [ record ])
+                 labels
+           in
            Ast_builder.Default.case
              ~lhs:(Ast_builder.Default.pint ~loc i)
              ~guard:None
-             ~rhs
-         in
-         match Ppx_compat.extract_constr_args cd.pcd_args with
-         | Tuple [] -> case (Ast_builder.Default.pexp_construct ~loc constr_lid None)
-         | Tuple [ ct ] ->
-           case
-             (Ast_builder.Default.pexp_construct
-                ~loc
-                constr_lid
-                (Some (make_draw_expr ~portable ~tc ct)))
-         | Tuple cts ->
-           let named =
-             List.map
-               (fun ct -> gen_symbol ~prefix:"_arg" (), make_draw_expr ~portable ~tc ct)
-               cts
-           in
-           let tuple_expr =
-             Ast_builder.Default.pexp_tuple
-               ~loc
-               (List.map (fun (vname, _) -> Ast_builder.Default.evar ~loc vname) named)
-           in
-           let inner_body =
-             List.fold_right
-               (fun (vname, drawn) acc ->
-                  [%expr
-                    let [%p Ast_builder.Default.pvar ~loc vname] = [%e drawn] in
-                    [%e acc]])
-               named
-               (Ast_builder.Default.pexp_construct ~loc constr_lid (Some tuple_expr))
-           in
-           case inner_body
-         | Record labels ->
-           case
-             (drawn_record
-                ~portable
-                ~loc
-                ~tc
-                ~wrap:(fun record ->
-                  Ast_builder.Default.pexp_construct ~loc constr_lid (Some record))
-                labels))
-      constrs
-  in
-  let catch_all =
-    Ast_builder.Default.case
-      ~lhs:[%pat? _]
-      ~guard:None
-      ~rhs:[%expr failwith "ppx_hegel_generator: unreachable variant index"]
-  in
-  let all_arms = match_arms @ [ catch_all ] in
-  let match_expr =
-    Ast_builder.Default.pexp_match
-      ~loc
-      (Ast_builder.Default.evar ~loc variant_idx)
-      all_arms
-  in
-  [%expr
-    [%e with_mode ~portable [%expr Hegel.Generators.Ppx_internal.composite_with_label]]
-      ~label:[%e type_label ~loc ~type_name "enum_variant"]
-      (fun [%p Ast_builder.Default.pvar ~loc tc] ->
-         let [%p Ast_builder.Default.pvar ~loc variant_idx] =
-           Hegel.draw_silent
-             [%e Ast_builder.Default.evar ~loc tc]
-             ([%e with_mode ~portable [%expr Hegel.Generators.sampled_from]]
-                [%e Ast_builder.Default.elist ~loc index_options])
-         in
-         [%e match_expr])]
+             ~rhs)
+        constrs
+    in
+    let catch_all =
+      Ast_builder.Default.case
+        ~lhs:[%pat? _]
+        ~guard:None
+        ~rhs:[%expr failwith "ppx_hegel_generator: unreachable variant index"]
+    in
+    [%expr
+      let [%p Ast_builder.Default.pvar ~loc variant_idx] =
+        Hegel.draw_silent
+          [%e Ast_builder.Default.evar ~loc tc]
+          ([%e with_mode ~portable [%expr Hegel.Generators.sampled_from]]
+             [%e Ast_builder.Default.elist ~loc index_options])
+      in
+      [%e
+        Ast_builder.Default.pexp_match
+          ~loc
+          (Ast_builder.Default.evar ~loc variant_idx)
+          (match_arms @ [ catch_all ])]])
 ;;
 
 let generator_of_variant
@@ -275,12 +284,12 @@ let generator_of_variant
   =
   if List.is_empty constrs
   then Location.raise_errorf ~loc "ppx_hegel_generator: empty variant types not supported";
-  let constrs =
+  let generated =
     List.filter
       (fun cd -> Option.is_none (Attribute.get do_not_generate_attribute cd))
       constrs
   in
-  if List.is_empty constrs
+  if List.is_empty generated
   then
     Location.raise_errorf
       ~loc
@@ -290,49 +299,43 @@ let generator_of_variant
     | Tuple [] -> true
     | _ -> false
   in
-  if List.for_all is_nullary constrs
+  if List.for_all is_nullary generated
   then (
-    let constr_values =
-      List.map
-        (fun (cd : constructor_declaration) ->
-           Ast_builder.Default.pexp_construct
+    let construct (cd : constructor_declaration) =
+      Ast_builder.Default.pexp_construct
+        ~loc
+        (Ast_builder.Default.Located.lident ~loc cd.pcd_name.txt)
+        None
+    in
+    let print_case (cd : constructor_declaration) =
+      Ast_builder.Default.case
+        ~lhs:
+          (Ast_builder.Default.ppat_construct
              ~loc
              (Ast_builder.Default.Located.lident ~loc cd.pcd_name.txt)
              None)
-        constrs
+        ~guard:None
+        ~rhs:(constructor_show ~loc cd.pcd_name.txt [])
+    in
+    let excluded_case =
+      if List.length generated = List.length constrs
+      then []
+      else
+        [ Ast_builder.Default.case
+            ~lhs:[%pat? _]
+            ~guard:None
+            ~rhs:[%expr Hegel.Printer.opaque]
+        ]
     in
     [%expr
-      [%e with_mode ~portable [%expr Hegel.Generators.sampled_from]]
-        [%e Ast_builder.Default.elist ~loc constr_values]])
-  else generator_of_data_variant ~portable ~loc ~type_name constrs
-;;
-
-(** [opaque_excluded_args td] adds [[@sexp.opaque]] to the argument types of
-    [[@hegel.do_not_generate]] constructors. *)
-let opaque_excluded_args (td : type_declaration) : type_declaration =
-  match td.ptype_kind with
-  | Ptype_variant constrs ->
-    let opaque ct =
-      let loc = ct.ptyp_loc in
-      let attr =
-        Ast_builder.Default.attribute
-          ~loc
-          ~name:(Ast_builder.Default.Located.mk ~loc "sexp.opaque")
-          ~payload:(PStr [])
-      in
-      { ct with ptyp_attributes = ct.ptyp_attributes @ [ attr ] }
-    in
-    let constrs =
-      List.map
-        (fun (cd : constructor_declaration) ->
-           match Attribute.get do_not_generate_attribute cd with
-           | Some () ->
-             { cd with pcd_args = Ppx_compat.map_constr_arg_types opaque cd.pcd_args }
-           | None -> cd)
-        constrs
-    in
-    { td with ptype_kind = Ptype_variant constrs }
-  | _ -> td
+      [%e with_mode ~portable [%expr Hegel.with_printer]]
+        [%e
+          Ast_builder.Default.pexp_function
+            ~loc
+            (List.map print_case generated @ excluded_case)]
+        ([%e with_mode ~portable [%expr Hegel.Generators.sampled_from]]
+           [%e Ast_builder.Default.elist ~loc (List.map construct generated)])])
+  else generator_of_data_variant ~portable ~loc ~type_name generated
 ;;
 
 (** [excluded_constructor_uses ~loc td] returns one [let _ = ...] item per
@@ -392,44 +395,87 @@ let excluded_constructor_uses ~loc (td : type_declaration) : structure =
   | _ -> []
 ;;
 
-(** The main deriver. Emits the [sexp_of_<t>] definitions first (via
-    ppx_sexp_conv's expander), then one printable generator per type:
-    [with_printer sexp_of_<t>] around the derived generator. *)
+(** [field_reads ~loc td] returns an item that reads every record field of
+    [td] (its own fields, or those of its inline-record constructors) in a
+    pattern. A derived generator only builds records, so without it the
+    compiler would report the fields as never read. *)
+let field_reads ~loc (td : type_declaration) : structure =
+  let record_pattern labels =
+    Ast_builder.Default.ppat_record
+      ~loc
+      (List.map
+         (fun (ld : label_declaration) ->
+            Ast_builder.Default.Located.lident ~loc ld.pld_name.txt, [%pat? _])
+         labels)
+      Closed
+  in
+  let type_ =
+    Ast_builder.Default.ptyp_constr
+      ~loc
+      (Ast_builder.Default.Located.lident ~loc td.ptype_name.txt)
+      (List.map (fun _ -> [%type: _]) td.ptype_params)
+  in
+  match td.ptype_kind with
+  | Ptype_record labels ->
+    [ [%stri let _ = fun ([%p record_pattern labels] : [%t type_]) -> ()] ]
+  | Ptype_variant constrs
+    when List.exists
+           (fun (cd : constructor_declaration) ->
+              match Ppx_compat.extract_constr_args cd.pcd_args with
+              | Record _ -> true
+              | Tuple _ -> false)
+           constrs ->
+    let case (cd : constructor_declaration) =
+      let constr = Ast_builder.Default.Located.lident ~loc cd.pcd_name.txt in
+      let arg =
+        match Ppx_compat.extract_constr_args cd.pcd_args with
+        | Tuple [] -> None
+        | Tuple _ -> Some [%pat? _]
+        | Record labels -> Some (record_pattern labels)
+      in
+      Ast_builder.Default.case
+        ~lhs:(Ast_builder.Default.ppat_construct ~loc constr arg)
+        ~guard:None
+        ~rhs:[%expr ()]
+    in
+    [ [%stri
+        let _ =
+          fun (_hegel_value : [%t type_]) ->
+          [%e
+            Ast_builder.Default.pexp_match
+              ~loc
+              [%expr _hegel_value]
+              (List.map case constrs)]
+        ;;]
+    ]
+  | _ -> []
+;;
+
+(** The main deriver: one generator per type, which prints what it draws as
+    OCaml syntax. *)
 let generate_impl
       ~ctxt
-      ((rec_flag, type_decls) : rec_flag * type_declaration list)
+      ((_rec_flag, type_decls) : rec_flag * type_declaration list)
       portable
   : structure
   =
   let loc = Expansion_context.Deriver.derived_item_loc ctxt in
-  let path = Code_path.to_string_path (Expansion_context.Deriver.code_path ctxt) in
-  let sexp_items =
-    Ppx_compat.sexp_of_str_type_decl
-      ~loc
-      ~path
-      (rec_flag, List.map opaque_excluded_args type_decls)
-  in
   let generator_items =
     List.map
       (fun (td : type_declaration) ->
          let gen_name = generator_name td.ptype_name.txt in
-         let sexp_of = Ast_builder.Default.evar ~loc ("sexp_of_" ^ td.ptype_name.txt) in
-         (* A record yields a [test_case -> t] thunk that [composite] wraps into
-            a generator. A variant or an alias yields a complete generator
-            expression. *)
+         let type_name = td.ptype_name.txt in
          let generator_expr =
            match td.ptype_kind, td.ptype_manifest with
            | Ptype_record labels, _ ->
-             let type_name = td.ptype_name.txt in
-             [%expr
-               [%e
-                 with_mode
-                   ~portable
-                   [%expr Hegel.Generators.Ppx_internal.composite_with_label]]
-                 ~label:[%e type_label ~loc ~type_name "fixed_dict"]
-                 [%e generator_of_record ~portable ~loc labels]]
+             composite
+               ~portable
+               ~loc
+               ~label:(type_label ~loc ~type_name "fixed_dict")
+               (fun tc ->
+                  drawn_record ~portable ~loc ~tc ~wrap:Fun.id ~wrap_show:Fun.id labels)
            | Ptype_variant constrs, _ ->
-             generator_of_variant ~portable ~loc ~type_name:td.ptype_name.txt constrs
+             generator_of_variant ~portable ~loc ~type_name constrs
            | Ptype_abstract, Some ct -> generator_expr_of_core_type ~portable ct
            | Ptype_abstract, None ->
              Location.raise_errorf
@@ -441,16 +487,11 @@ let generate_impl
                "ppx_hegel_generator: unsupported type kind in [@@deriving \
                 hegel_generator]"
          in
-         [%stri
-           let [%p Ast_builder.Default.pvar ~loc gen_name] =
-             [%e with_mode ~portable [%expr Hegel.with_printer]]
-               [%e sexp_of]
-               [%e generator_expr]
-           ;;])
+         [%stri let [%p Ast_builder.Default.pvar ~loc gen_name] = [%e generator_expr]])
       type_decls
   in
-  sexp_items
-  @ List.concat_map (excluded_constructor_uses ~loc) type_decls
+  List.concat_map (excluded_constructor_uses ~loc) type_decls
+  @ List.concat_map (field_reads ~loc) type_decls
   @ generator_items
 ;;
 
@@ -473,10 +514,7 @@ let generate_intf
        let type_constr =
          Ast_builder.Default.(ptyp_constr ~loc (Located.lident ~loc td.ptype_name.txt) [])
        in
-       let gen_type =
-         [%type:
-           ([%t type_constr], Hegel.Generators.printable) Hegel.Generators.generator]
-       in
+       let gen_type = [%type: [%t type_constr] Hegel.Generators.generator] in
        let vd =
          Ast_builder.Default.value_description
            ~loc

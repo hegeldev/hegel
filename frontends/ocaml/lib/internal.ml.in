@@ -7,7 +7,6 @@
     - Helper functions (assume, note, target, the typed generate_* draws)
     - Origin extraction for error reporting *)
 
-module Sexp = Sexplib0.Sexp
 module Ffi = Hegel_ffi.Ffi
 
 #ifdef OXCAML
@@ -439,30 +438,9 @@ let should_print tc =
     the document is printed once the case completes (see [capture_document]). *)
 let note tc message = if should_print tc then Ffi.note tc.context tc.handle message
 
-(** [render_sexp ctx printer sexp] writes [sexp] to [printer] in s-expression
-    syntax. Lists are printed with breaks between elemnts when the line overflows. *)
-let rec render_sexp ctx printer (sexp : Sexp.t) =
-  match sexp with
-  | Sexp.Atom _ -> Ffi.printer_text ctx printer (Sexp.to_string sexp)
-  | Sexp.List children ->
-    Ffi.printer_begin_group ctx printer ~indent:1 "(";
-    List.iteri
-      (fun i child ->
-         if i > 0 then Ffi.printer_breakable ctx printer " ";
-         render_sexp ctx printer child)
-      children;
-    Ffi.printer_end_group ctx printer ")"
-;;
-
-(** One piece of a printed draw line: literal text, or a sexp laid out by the
-    engine (see {!render_sexp}). *)
-type draw_segment =
-  | Text of string
-  | Value of Sexp.t
-
-(** [print_line tc segments] appends one line assembled from [segments] to the
-    test case's print region. *)
-let print_line tc segments =
+(** [print_line tc doc] appends [doc] as one line to the test case's print
+    region, subject to {!should_print}. *)
+let print_line tc doc =
   if should_print tc
   then (
     let ctx = tc.context in
@@ -470,11 +448,7 @@ let print_line tc segments =
     Fun.protect
       ~finally:(fun () -> Ffi.printer_free ctx printer)
       (fun () ->
-         List.iter
-           (function
-             | Text s -> Ffi.printer_text ctx printer s
-             | Value sexp -> render_sexp ctx printer sexp)
-           segments;
+         Printer.render ctx printer doc;
          Ffi.printer_hard_break ctx printer))
 ;;
 

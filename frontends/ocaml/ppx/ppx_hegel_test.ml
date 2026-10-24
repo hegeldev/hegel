@@ -30,7 +30,7 @@
     module%hegel_state_machine Counter = struct
       type state = int ref
 
-      let sexp_of_state n = sexp_of_int !n
+      let print_state n = Hegel.Printer.int !n
       let add tc n = n := !n + draw tc (integers ~min_value:1 ~max_value:10 ()) [@@rule]
       let small _tc n = assert (!n < 100) [@@invariant]
       let positive _tc n = assert (!n >= 0) [@@invariant { always_check = true }]
@@ -50,8 +50,8 @@
       ]
     ;;
 
-    let run ?step_count ?(sexp_of_state = sexp_of_state) tc ~init =
-      Hegel.Stateful.run_internal ~init ~rules ~invariants ~sexp_of_state ?step_count tc
+    let run ?step_count ?(print_state = print_state) tc ~init =
+      Hegel.Stateful.run_internal ~init ~rules ~invariants ~print_state ?step_count tc
     ;;
     ]}
 
@@ -540,20 +540,7 @@ let expand_machine_item ~concurrent (item : structure_item)
   | _ -> item, []
 ;;
 
-let has_sexp_of_state (items : structure_item list) : bool =
-  let mentions_sexp (e : expression) =
-    let finder =
-      object
-        inherit [bool] Ast_traverse.fold as super
-
-        method! expression e found =
-          match e.pexp_desc with
-          | Pexp_ident { txt = Lident ("sexp_of" | "sexp"); _ } -> true
-          | _ -> super#expression e found
-      end
-    in
-    finder#expression e false
-  in
+let has_print_state (items : structure_item list) : bool =
   List.exists
     (fun (item : structure_item) ->
        match item.pstr_desc with
@@ -561,22 +548,9 @@ let has_sexp_of_state (items : structure_item list) : bool =
          List.exists
            (fun (vb : value_binding) ->
               match vb.pvb_pat.ppat_desc with
-              | Ppat_var { txt = "sexp_of_state"; _ } -> true
+              | Ppat_var { txt = "print_state"; _ } -> true
               | _ -> false)
            vbs
-       | Pstr_type (_, decls) ->
-         List.exists
-           (fun (decl : type_declaration) ->
-              String.equal decl.ptype_name.txt "state"
-              && List.exists
-                   (fun (attr : attribute) ->
-                      String.equal attr.attr_name.txt "deriving"
-                      &&
-                      match attr.attr_payload with
-                      | PStr [ { pstr_desc = Pstr_eval (e, _); _ } ] -> mentions_sexp e
-                      | _ -> false)
-                   decl.ptype_attributes)
-           decls
        | _ -> false)
     items
 ;;
@@ -670,8 +644,8 @@ let expand_state_machine ~concurrent ~loc (mb : module_binding) : structure_item
              ()])
       invariants
   in
-  let default_sexp_of_state =
-    if has_sexp_of_state items then [%expr Some sexp_of_state] else [%expr None]
+  let default_print_state =
+    if has_print_state items then [%expr Some print_state] else [%expr None]
   in
   let declares_ctx = concurrent && declares_type "ctx" items in
   let run =
@@ -687,7 +661,7 @@ let expand_state_machine ~concurrent ~loc (mb : module_binding) : structure_item
           fun ?min_concurrency
             ?max_concurrency
             ?step_count
-            ?sexp_of_state:override
+            ?print_state:override
             tc
             ~init ->
             [%e run_concurrent]
@@ -696,10 +670,10 @@ let expand_state_machine ~concurrent ~loc (mb : module_binding) : structure_item
               ~invariants
               ?min_concurrency
               ?max_concurrency
-              ?sexp_of_state:
+              ?print_state:
                 (match override with
                  | Some _ as s -> s
-                 | None -> [%e default_sexp_of_state])
+                 | None -> [%e default_print_state])
               ?step_count
               tc]
       in
@@ -710,15 +684,15 @@ let expand_state_machine ~concurrent ~loc (mb : module_binding) : structure_item
       else [%stri let run ?(concurrency = Hegel.Concurrency.threads) = [%e body]])
     else
       [%stri
-        let run ?step_count ?sexp_of_state:override tc ~init =
+        let run ?step_count ?print_state:override tc ~init =
           [%e stateful "run_internal"]
             ~init
             ~rules
             ~invariants
-            ?sexp_of_state:
+            ?print_state:
               (match override with
                | Some _ as s -> s
-               | None -> [%e default_sexp_of_state])
+               | None -> [%e default_print_state])
             ?step_count
             tc
         ;;]

@@ -30,7 +30,7 @@ let%hegel_test test_list_min_size tc =
 let%hegel_test test_map_combinator tc =
   let abs_gen =
     with_printer
-      (fun i -> Sexplib0.Sexp.Atom (string_of_int i))
+      Printer.int
       (map (fun v -> abs v) (integers ~min_value:(-100) ~max_value:100 ()))
   in
   let lst = draw tc (lists abs_gen ~min_size:1 ~max_size:10 ()) in
@@ -50,7 +50,7 @@ let%hegel_test test_flat_map_combinator tc =
            (lists (integers ~min_value:0 ~max_value:99 ()) ~min_size:n ~max_size:n ()))
       (integers ~min_value:1 ~max_value:5 ())
   in
-  let n, lst = draw_silent tc pair_gen in
+  let n, lst = draw tc pair_gen in
   assert (List.length lst = n)
 [@@settings Settings.create ~test_cases:50 ()]
 ;;
@@ -58,15 +58,9 @@ let%hegel_test test_flat_map_combinator tc =
 (** Property: [sampled_from] always returns one of the specified values. *)
 let%hegel_test test_sampled_from tc =
   let options = [ 10; 20; 30; 40 ] in
-  (* [sampled_from] is unprintable; [with_printer] makes it drawable with the
-     printing [draw]. *)
-  let v =
-    draw
-      tc
-      (with_printer
-         (fun i -> Sexplib0.Sexp.Atom (string_of_int i))
-         (sampled_from options))
-  in
+  (* [sampled_from] shows its values as [<abstr>]; [with_printer] makes a
+     failing replay print them. *)
+  let v = draw tc (with_printer Printer.int (sampled_from options)) in
   assert (v = 10 || v = 20 || v = 30 || v = 40)
 [@@settings Settings.create ~test_cases:100 ()]
 ;;

@@ -130,7 +130,7 @@ let run_counter ~buggify () =
     >>= fun counter ->
     H.Stateful.run
       ~step_count:10
-      ~sexp_of_state:(fun (s : Counter_machine.state) -> Int.sexp_of_t s.model)
+      ~print_state:(fun (s : Counter_machine.state) -> Hegel.Printer.int s.model)
       tc
       (module Counter_machine)
       ~init:{ counter; model = 0 })

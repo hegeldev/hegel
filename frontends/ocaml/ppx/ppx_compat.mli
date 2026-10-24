@@ -20,22 +20,6 @@ type constr_args =
     [constructor_argument] records. *)
 val extract_constr_args : constructor_arguments -> constr_args
 
-(** [map_constr_arg_types f args] applies [f] to each argument core type of
-    [args], in both the tuple and the inline-record form. *)
-val map_constr_arg_types
-  :  (core_type -> core_type)
-  -> constructor_arguments
-  -> constructor_arguments
-
-(** [sexp_of_str_type_decl ~loc ~path decls] emits [sexp_of_<t>] definitions for
-    [decls] through ppx_sexp_conv's expander. On OxCaml, fills the extra mode
-    arguments ([unboxed]/[stackify]/[portable]/[localize]) with [false]. *)
-val sexp_of_str_type_decl
-  :  loc:Location.t
-  -> path:string
-  -> rec_flag * type_declaration list
-  -> structure
-
 (** [unwrap_pattern_constraint pat] returns [Some inner] if [pat] is a
     type-constraint pattern ([(p : ty)]), [None] otherwise. On OxCaml,
     [Ppat_constraint] carries an extra modes argument. *)

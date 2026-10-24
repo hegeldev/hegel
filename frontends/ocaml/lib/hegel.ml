@@ -11,6 +11,7 @@ module Stateful = Stateful
 module Concurrency = Concurrency
 
 module Settings = Settings
+module Printer = Printer
 
 (** Auxiliary submodule for [@@deriving hegel_generator]. Included
     below so [open Hegel] alone makes derived code resolve. *)
@@ -30,9 +31,7 @@ module type Io = Io.S
 
 module Make = Io.Make
 
-type ('a, 'p) generator = ('a, 'p) Generators.generator
-type printable = Generators.printable
-type unprintable = Generators.unprintable
+type 'a generator = 'a Generators.generator
 
 include Generators.Public
 
@@ -104,8 +103,8 @@ let event = Internal.event
     [label] for the end-of-run statistics report. *)
 let event_value = Internal.event_value
 
-(** [draw ?label tc gen] produces a typed value from the printable generator
-    [gen]. On the final replay of a failing test, an outermost draw prints its
+(** [draw ?label tc gen] produces a typed value from the generator [gen]. On
+    the final replay of a failing test, an outermost draw prints its
     value. See {!Generators.draw}. *)
 let draw = Generators.draw
 
@@ -115,7 +114,7 @@ let draw = Generators.draw
 let draw_named = Generators.draw_named
 
 (** [draw_silent tc gen] is {!draw} without printing the value on the final
-    replay, and accepts a generator with no printer. *)
+    replay. *)
 let draw_silent = Generators.draw_silent
 
 (** [draw_silent_named ~name tc gen] is the naming-aware {!draw_silent} the
@@ -128,8 +127,8 @@ let draw_silent_named = Generators.draw_silent_named
     once the case completes. See {!Internal.clone}. *)
 let clone = Internal.clone
 
-(** [with_printer sexp_of gen] attaches [sexp_of] so [gen] can be drawn with
-    {!draw}. See {!Generators.with_printer}. *)
+(** [with_printer print gen] displays [gen]'s drawn values with [print]. See
+    {!Generators.with_printer}. *)
 let%template with_printer = Generators.with_printer [@mode m]
 [@@mode m = (nonportable, portable)]
 ;;

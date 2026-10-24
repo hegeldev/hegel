@@ -288,23 +288,10 @@ let test_extract_origin_skips_stdlib_internal_frames () =
     (Test_helpers.contains_substring origin "test_client.ml")
 ;;
 
-(* ==== Sexp renderer tests ==== *)
+(* ==== Printer.of_sexp tests ==== *)
 
 let render_to_string ~max_width sexp =
-  let module Ffi = Hegel_ffi.Ffi in
-  let ctx = Ffi.context_new () in
-  Exn.protect
-    ~finally:(fun () -> Ffi.context_free ctx)
-    ~f:(fun () ->
-      let options = Ffi.printer_options_new ctx in
-      Ffi.printer_options_set_max_width ctx options max_width;
-      let p = Ffi.printer_new ctx (Some options) in
-      Ffi.printer_options_free ctx options;
-      Exn.protect
-        ~finally:(fun () -> Ffi.printer_free ctx p)
-        ~f:(fun () ->
-          Internal.render_sexp ctx p sexp;
-          Ffi.printer_value ctx p))
+  Printer.to_string ~max_width (Printer.of_sexp Fn.id sexp)
 ;;
 
 let test_render_sexp_atoms () =

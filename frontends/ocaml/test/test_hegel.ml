@@ -29,6 +29,7 @@ let () =
     ; "generators_collections", Test_generators_collections.tests
     ; "generators_combinators", Test_generators_combinators.tests
     ; "generators_functions", Test_generators_functions.tests
+    ; "printer", Test_printer.tests
     ; "stateful", Test_stateful.tests
     ]
 ;;

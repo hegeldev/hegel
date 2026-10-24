@@ -179,9 +179,7 @@ let test_lists_unique_under_map_e2e () =
       (fun tc ->
          let gen =
            lists
-             (with_printer
-                Core.Int.sexp_of_t
-                (map (fun _ -> 0) (integers ~min_value:0 ~max_value:1 ())))
+             (map (fun _ -> 0) (integers ~min_value:0 ~max_value:1 ()))
              ~min_size:2
              ~max_size:2
              ~unique:true

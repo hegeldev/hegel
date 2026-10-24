@@ -9,9 +9,7 @@ let test_one_of_empty () =
 ;;
 
 (** Test: one_of with a single generator is accepted. *)
-let test_one_of_single_accepted () =
-  ignore (one_of [ booleans () ] : (bool, printable) generator)
-;;
+let test_one_of_single_accepted () = ignore (one_of [ booleans () ] : bool generator)
 
 (** Test: sampled_from raises when given an empty list. *)
 let test_sampled_from_empty () =
@@ -27,9 +25,7 @@ let test_one_of_e2e () =
   Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:50 ()) (fun tc ->
     let gen =
       one_of
-        [ integers ~min_value:0 ~max_value:10 ()
-        ; with_printer Core.Int.sexp_of_t (just 99)
-        ]
+        [ integers ~min_value:0 ~max_value:10 (); with_printer Printer.int (just 99) ]
     in
     let v = Hegel.draw tc gen in
     assert ((v >= 0 && v <= 10) || v = 99))
@@ -42,35 +38,6 @@ let test_one_of_filtered_e2e () =
     let gen = one_of [ filtered; integers ~min_value:100 ~max_value:200 () ] in
     let v = Hegel.draw tc gen in
     assert ((v > 5 && v <= 10) || (v >= 100 && v <= 200)))
-;;
-
-(** Regression test: a value drawn from [one_of] prints through the printer of
-    the branch it was actually drawn from, not the first branch's printer. *)
-let test_one_of_branch_printer () =
-  let saw_one = ref false in
-  let saw_two = ref false in
-  Hegel.run_hegel_test
-    ~settings:(Hegel.Settings.create ~test_cases:50 ~seed:0 ())
-    (fun tc ->
-       let g1 =
-         with_printer (fun i -> Core.Sexp.Atom ("one:" ^ string_of_int i)) (just 1)
-       in
-       let g2 =
-         with_printer (fun i -> Core.Sexp.Atom ("two:" ^ string_of_int i)) (just 2)
-       in
-       let gen = one_of [ g1; g2 ] in
-       let v = Hegel.draw tc gen in
-       let rendered = Core.Sexp.to_string ((printer gen) v) in
-       match v with
-       | 1 ->
-         saw_one := true;
-         Alcotest.(check string) "branch 1 printer" "one:1" rendered
-       | 2 ->
-         saw_two := true;
-         Alcotest.(check string) "branch 2 printer" "two:2" rendered
-       | _ -> Alcotest.fail "unexpected value");
-  Alcotest.(check bool) "saw branch 1" true !saw_one;
-  Alcotest.(check bool) "saw branch 2" true !saw_two
 ;;
 
 (** Test: optional produces None or Some e2e. *)
@@ -199,7 +166,6 @@ let tests =
   ; Alcotest.test_case "one_of single accepted" `Quick test_one_of_single_accepted
   ; Alcotest.test_case "one_of e2e" `Quick test_one_of_e2e
   ; Alcotest.test_case "one_of filtered e2e" `Quick test_one_of_filtered_e2e
-  ; Alcotest.test_case "one_of branch printer" `Quick test_one_of_branch_printer
   ; Alcotest.test_case "optional e2e" `Quick test_optional_e2e
   ; Alcotest.test_case "ip_addresses e2e" `Quick test_ip_addresses_e2e
   ; Alcotest.test_case "ip_addresses both e2e" `Quick test_ip_both_e2e

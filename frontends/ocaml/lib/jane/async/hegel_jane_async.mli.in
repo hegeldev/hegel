@@ -64,7 +64,7 @@ module Stateful : sig
     :  ?min_concurrency:int
     -> ?max_concurrency:int
     -> ?step_count:int
-    -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
+    -> ?print_state:('state -> Hegel.Printer.doc)
     -> Hegel.test_case
     -> (module Concurrent_state_machine with type state = 'state)
     -> init:'state
@@ -79,7 +79,7 @@ module Stateful : sig
     -> invariants:'state Invariant.t list
     -> ?min_concurrency:int
     -> ?max_concurrency:int
-    -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
+    -> ?print_state:('state -> Hegel.Printer.doc)
     -> ?step_count:int
     -> Hegel.test_case
     -> unit Async.Deferred.t
@@ -92,8 +92,8 @@ module Stateful : sig
     val create : ?clone:('a -> 'a) -> Hegel.test_case -> 'a t
     val add : 'a t -> Hegel.test_case -> 'a -> unit
     val size : _ t -> int
-    val values_reusable : 'a t -> ('a, Hegel.unprintable) Hegel.generator
-    val values_consumed : 'a t -> ('a, Hegel.unprintable) Hegel.generator
+    val values_reusable : 'a t -> 'a Hegel.generator
+    val values_consumed : 'a t -> 'a Hegel.generator
   end
 #endif
 end

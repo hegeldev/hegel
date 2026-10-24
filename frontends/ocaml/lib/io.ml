@@ -63,7 +63,7 @@ module Make (B : S) = struct
       val invariants : state Invariant.t list
     end
 
-    let run_internal ~init ~rules ~invariants ?sexp_of_state ?step_count tc =
+    let run_internal ~init ~rules ~invariants ?print_state ?step_count tc =
       B.run_loop (fun wait ->
         let rules =
           List.map
@@ -85,13 +85,13 @@ module Make (B : S) = struct
                  ())
             invariants
         in
-        Base_stateful.run_internal ~init ~rules ~invariants ?sexp_of_state ?step_count tc)
+        Base_stateful.run_internal ~init ~rules ~invariants ?print_state ?step_count tc)
     ;;
 
     let run
           (type s)
           ?step_count
-          ?sexp_of_state
+          ?print_state
           tc
           (module M : State_machine with type state = s)
           ~(init : s)
@@ -100,7 +100,7 @@ module Make (B : S) = struct
         ~init
         ~rules:M.rules
         ~invariants:M.invariants
-        ?sexp_of_state
+        ?print_state
         ?step_count
         tc
     ;;

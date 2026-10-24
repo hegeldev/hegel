@@ -1,0 +1,165 @@
+#ifdef OXCAML
+@@ portable
+#endif
+(** Printing drawn values as OCaml syntax.
+
+    When a test fails, Hegel replays the minimal failing example and prints
+    each drawn value as OCaml source: lists as [\[1; 2; 3\]], tuples as
+    [(1, "a")], options as [Some 3], records as [{ x = 1; y = 2 }], and strings
+    always quoted. A value too long for one line wraps one element or field per
+    line, laid out by libhegel's pretty-printer.
+
+    Every generator can print what it draws. Primitive and structural
+    generators ({!Hegel.lists}, {!Hegel.tuples2}, {!Hegel.optional},
+    {!Hegel.one_of}, {!Hegel.filter}, {!Hegel.flat_map}, and the generators
+    [\[@@deriving hegel_generator\]] produces) print structurally as they draw.
+    A generator whose output type is the caller's ({!Hegel.map},
+    {!Hegel.just}, {!Hegel.sampled_from}, {!Hegel.composite}) has no way to
+    show its values and prints them as [<abstr>], the way the OCaml toplevel
+    shows an abstract value, until you give it a printer with
+    {!Hegel.with_printer}:
+
+    {[
+      let%hegel_test doubled tc =
+        let n =
+          draw tc (with_printer Printer.int (map (fun x -> x * 2) (integers ())))
+        in
+        assert (n mod 2 = 0)
+      ;;
+    ]}
+
+    A printer is an ['a -> doc] function. Build documents from the value
+    printers here ({!int}, {!string}, {!list}, …), from the structural
+    builders ({!constructor}, {!record}, {!tuple}, {!apply}), or, for a type
+    that only has a [to_string], with {!of_to_string}. *)
+
+(** A document: a value rendered as OCaml syntax, with the groups and break
+    points that let the engine's layout wrap it. *)
+#ifdef OXCAML
+type doc : immutable_data
+#else
+type doc
+#endif
+
+(** A printer for values of type ['a]. *)
+type 'a t = 'a -> doc
+
+(** {2 Value printers} *)
+
+(** [int n] is [n] as a decimal literal. *)
+val int : int t
+
+(** [int32 n] is [n] as an [int32] literal, as in [3l]. *)
+val int32 : int32 t
+
+(** [int64 n] is [n] as an [int64] literal, as in [3L]. *)
+val int64 : int64 t
+
+(** [nativeint n] is [n] as a [nativeint] literal, as in [3n]. *)
+val nativeint : nativeint t
+
+(** [float f] is the shortest float literal that reads back as [f], or [nan],
+    [infinity] or [neg_infinity]. *)
+val float : float t
+
+(** [bool b] is [true] or [false]. *)
+val bool : bool t
+
+(** [unit ()] is [()]. *)
+val unit : unit t
+
+(** [char c] is [c] as a character literal, as [%C] prints it. *)
+val char : char t
+
+(** [string s] is [s] as a string literal. Quotes, backslashes and control
+    characters are escaped, and so is every byte that is not part of valid
+    UTF-8; well-formed UTF-8 is kept as it is, so text stays readable. *)
+val string : string t
+
+(** [bytes s] is the binary string [s] as a string literal, with every
+    non-ASCII byte escaped as [\ddd]. *)
+val bytes : string t
+
+(** [list print xs] is [\[x1; x2; …\]]. *)
+val list : 'a t -> 'a list t
+
+(** [array print xs] is [\[|x1; x2; …|\]]. *)
+val array : 'a t -> 'a array t
+
+(** [option print o] is [None] or [Some x]. *)
+val option : 'a t -> 'a option t
+
+(** [result print_ok print_error r] is [Ok x] or [Error e]. *)
+val result : 'a t -> 'b t -> ('a, 'b) result t
+
+(** [pair p1 p2 (a, b)] is [(a, b)]. *)
+val pair : 'a t -> 'b t -> ('a * 'b) t
+
+(** [triple p1 p2 p3 (a, b, c)] is [(a, b, c)]. *)
+val triple : 'a t -> 'b t -> 'c t -> ('a * 'b * 'c) t
+
+(** [of_to_string to_string] prints a value as [to_string] shows it. The
+    engine recovers the bracket structure of the text (see {!reflow}), so a
+    long representation still wraps. *)
+val of_to_string : ('a -> string) -> 'a t
+
+(** [of_sexp sexp_of] prints a value as the s-expression [sexp_of] gives,
+    wrapping lists at their spaces. Use it for types that only have a
+    [sexp_of_t]. *)
+val of_sexp : ('a -> Sexplib0.Sexp.t) -> 'a t
+
+(** {2 Building documents} *)
+
+(** [text s] is the literal text [s]. A newline in [s] is an unconditional
+    line break. *)
+val text : string -> doc
+
+(** [opaque] is [<abstr>], the placeholder for a value with no printer. *)
+val opaque : doc
+
+(** [breakable sep] is a point where a group may break: [sep] when the
+    enclosing group fits on one line, a newline plus indentation when it does
+    not. *)
+val breakable : string -> doc
+
+(** [group ?indent open_ docs close] is [open_], then [docs], then [close], as
+    one group: either every {!breakable} directly inside it renders as its
+    separator, or each one breaks. Lines broken inside the group are indented
+    by [indent], which defaults to the length of [open_]. *)
+val group : ?indent:int -> string -> doc list -> string -> doc
+
+(** [concat docs] is [docs] one after another. *)
+val concat : doc list -> doc
+
+(** [reflow s] is the flat representation [s], laid out by the engine, which
+    recovers its [(…)], [\[…\]] and [{…}] groups and breaks them at [, ] and
+    [; ] when it does not fit on a line. *)
+val reflow : string -> doc
+
+(** [tuple docs] is [(d1, d2, …)]. A single document is itself, and no
+    documents is [()]. *)
+val tuple : doc list -> doc
+
+(** [record fields] is [{ name1 = d1; name2 = d2; … }]. *)
+val record : (string * doc) list -> doc
+
+(** [constructor name args] is a constructor application: [name] alone, or
+    [name arg], or [name (arg1, arg2, …)]. An argument that is not atomic
+    ([Some (-1)], [Some (Some 1)]) is parenthesized. *)
+val constructor : string -> doc list -> doc
+
+(** [apply f args] is the function application [f arg1 arg2 …], each argument
+    parenthesized when it is not atomic. *)
+val apply : doc -> doc list -> doc
+
+(** [to_string ?max_width doc] lays [doc] out to lines of at most [max_width]
+    columns (by default the engine's width) and returns the text. *)
+val to_string : ?max_width:int -> doc -> string
+
+(**/**)
+
+(** [render ctx printer doc] writes [doc] through the engine printer
+    [printer]. Not part of the public API. *)
+val render : Hegel_ffi.Ffi.context -> Hegel_ffi.Ffi.printer -> doc -> unit
+
+(**/**)

@@ -13,6 +13,7 @@
   test_generators_collections
   test_generators_combinators
   test_generators_functions
+  test_printer
   test_stateful
   test_loader)
  (libraries

@@ -682,6 +682,11 @@ val printer_if_break : context -> printer -> string -> unit
     line, forcing every group open at this position to break. *)
 val printer_comment : context -> printer -> string -> unit
 
+(** [printer_reflow ctx p s] re-emits the one-line representation [s] through
+    [p]'s groups and break points, recovering its bracket structure (see
+    [hegel_printer_reflow]). Newlines in [s] become hard breaks. *)
+val printer_reflow : context -> printer -> string -> unit
+
 (** [printer_hard_break ctx p] emits an unconditional newline plus the current
     indentation. *)
 val printer_hard_break : context -> printer -> unit
