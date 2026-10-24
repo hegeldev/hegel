@@ -83,7 +83,7 @@ class ExplicitTestCase:
         self.lines.extend(str(message).split("\n"))
 
     def reject(self) -> None:
-        raise InvalidArgument("Explicit test case: assumption violated (tc.assume / tc.reject)")
+        raise InvalidArgument("Explicit test cases must not be rejected")
 
     def check_consumed(self) -> None:
         unused = [k for k in self.named if k not in self.used]

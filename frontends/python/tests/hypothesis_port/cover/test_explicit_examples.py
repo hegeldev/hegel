@@ -217,7 +217,7 @@ def test_unsatisfied_assumption_during_explicit_example(threshold):
     if threshold > 0.56789:
         test()
     else:
-        with pytest.raises(hegel.InvalidArgument, match="assumption violated"):
+        with pytest.raises(hegel.InvalidArgument, match="Explicit test cases must not be rejected"):
             test()
 
 

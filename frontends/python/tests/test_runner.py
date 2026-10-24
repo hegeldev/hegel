@@ -221,8 +221,25 @@ def test_explicit_test_case_errors():
         x = tc.draw(gs.integers())
         tc.assume(x > 5)
 
-    with pytest.raises(hegel.InvalidArgument, match="assumption violated"):
+    with pytest.raises(hegel.InvalidArgument, match="Explicit test cases must not be rejected"):
         rejects()
+
+    @hegel.explicit_test_case(1)
+    @hegel.test
+    def rejects_before_drawing(tc):
+        tc.reject()
+        tc.draw(gs.integers())
+
+    with pytest.raises(hegel.InvalidArgument, match="Explicit test cases must not be rejected"):
+        rejects_before_drawing()
+
+    @hegel.explicit_test_case(1)
+    @hegel.test
+    def rejects_in_repeat(tc):
+        tc.repeat(lambda: tc.assume(tc.draw(gs.integers(), name="x") > 5))
+
+    with pytest.raises(hegel.InvalidArgument, match="draw_silent is not supported"):
+        rejects_in_repeat()
 
     @hegel.explicit_test_case(1)
     @hegel.test
