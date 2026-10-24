@@ -1092,6 +1092,12 @@ impl TestCase {
         self.draw_or_raise(|ctc| ctc.generate_grammar(grammar, max_size))
     }
 
+    /// Advance a grammar draw to the explicit terminal whose value is due
+    /// next, or `None` once its string is complete.
+    pub(crate) fn grammar_draw_next(&self, draw: &crate::ffi::GrammarDraw<'_>) -> Option<usize> {
+        self.draw_or_raise(|ctc| ctc.grammar_draw_next(draw))
+    }
+
     /// Draw a Gregorian calendar date in `[min, max]`.
     pub(crate) fn generate_date(
         &self,

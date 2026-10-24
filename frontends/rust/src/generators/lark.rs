@@ -10,9 +10,6 @@ use crate::pretty::PrettyPrinter;
 use crate::test_case::invalid_argument;
 
 static LARK_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.from_lark"));
-static ATTEMPT_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.from_lark.attempt"));
-const DEFAULT_MAX_SIZE: usize = 8192;
-const ATTEMPTS: usize = 3;
 
 type ExplicitTerminal = dyn Generator<String> + Send + Sync + UnwindSafe + RefUnwindSafe;
 
@@ -21,13 +18,6 @@ type ExplicitTerminal = dyn Generator<String> + Send + Sync + UnwindSafe + RefUn
 struct Explicit {
     name: String,
     generator: Box<ExplicitTerminal>,
-}
-
-/// The compiled grammar, with the marker that stands for each explicit
-/// terminal in the strings drawn from it, in the order of `explicit`.
-struct Compiled {
-    grammar: ffi::Grammar,
-    markers: Vec<String>,
 }
 
 /// One explicit terminal's generator as the test case draws it: a
@@ -60,7 +50,7 @@ pub struct LarkGenerator {
     max_depth: Option<u32>,
     import_dir: Option<PathBuf>,
     label: u64,
-    handle: OnceLock<Compiled>,
+    handle: OnceLock<ffi::Grammar>,
 }
 
 impl LarkGenerator {
@@ -153,50 +143,7 @@ impl LarkGenerator {
         self
     }
 
-    /// Draw a grammar string of at most `budget` characters outside its
-    /// markers and a value for each marker, spliced in: the string, how
-    /// many of its characters the grammar drew and how many markers, and
-    /// how many characters it has.
-    fn splice(
-        &self,
-        tc: &TestCase,
-        compiled: &Compiled,
-        budget: usize,
-    ) -> (String, usize, usize, usize) {
-        let drawn = tc.generate_grammar(&compiled.grammar, budget as u64);
-        let mut out = String::with_capacity(drawn.len());
-        let mut own = 0;
-        let mut markers = 0;
-        let mut size = 0;
-        let mut rest = drawn.as_str();
-        let mut from = 0;
-        while let Some(at) = rest[from..]
-            .find(|c| compiled.markers.iter().any(|m| m.starts_with(c)))
-            .map(|at| from + at)
-        {
-            let Some(i) = compiled
-                .markers
-                .iter()
-                .position(|marker| rest[at..].starts_with(marker.as_str()))
-            else {
-                from = at + rest[at..].chars().next().unwrap().len_utf8();
-                continue;
-            };
-            own += rest[..at].chars().count();
-            out.push_str(&rest[..at]);
-            let value = tc.draw_silent(Terminal(&*self.explicit[i].generator));
-            size += value.chars().count();
-            markers += 1;
-            out.push_str(&value);
-            rest = &rest[at + compiled.markers[i].len()..];
-            from = 0;
-        }
-        own += rest.chars().count();
-        out.push_str(rest);
-        (out, own, markers, size + own)
-    }
-
-    fn handle(&self) -> &Compiled {
+    fn handle(&self) -> &ffi::Grammar {
         self.handle.get_or_init(|| {
             if self.max_size == Some(0) {
                 invalid_argument!("max_size must be at least 1");
@@ -215,19 +162,12 @@ impl LarkGenerator {
             ffi::Grammar::new(
                 &self.text,
                 self.start.as_deref(),
-                self.max_size.unwrap_or(DEFAULT_MAX_SIZE) as u64,
+                self.max_size.map_or(0, |max_size| max_size as u64),
                 self.max_depth.unwrap_or(0),
                 alphabet.as_ref(),
                 &names,
                 self.import_dir.as_deref(),
             )
-            .and_then(|grammar| {
-                let markers = names
-                    .iter()
-                    .map(|name| grammar.placeholder(name))
-                    .collect::<Result<_, _>>()?;
-                Ok(Compiled { grammar, markers })
-            })
             .unwrap_or_else(|msg| invalid_argument!("{msg}"))
         })
     }
@@ -239,25 +179,16 @@ impl Generator<String> for LarkGenerator {
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
-        let compiled = self.handle();
-        if compiled.markers.is_empty() {
-            return tc.generate_grammar(&compiled.grammar, 0);
+        let grammar = self.handle();
+        if self.explicit.is_empty() {
+            return tc.generate_grammar(grammar, 0);
         }
-        let max_size = self.max_size.unwrap_or(DEFAULT_MAX_SIZE);
-        let mut budget = max_size;
-        for _ in 0..ATTEMPTS {
-            tc.start_span(*ATTEMPT_LABEL);
-            let (out, own, markers, size) = self.splice(tc, compiled, budget);
-            if size <= max_size {
-                tc.stop_span(false);
-                return out;
-            }
-            tc.stop_span(true);
-            budget = ((max_size as u128 * (own + markers) as u128 / size as u128) as usize)
-                .min(budget.saturating_sub(1))
-                .max(1);
+        let draw = grammar.start_draw(0);
+        while let Some(terminal) = tc.grammar_draw_next(&draw) {
+            let value = tc.draw_silent(Terminal(&*self.explicit[terminal].generator));
+            draw.provide(&value);
         }
-        tc.reject()
+        draw.result()
     }
 }
 

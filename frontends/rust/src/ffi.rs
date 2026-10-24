@@ -878,8 +878,8 @@ impl CTestCase {
     }
 
     /// Draw a string of the grammar described by a prebuilt libhegel
-    /// grammar, of at most `max_size` characters (placeholder markers
-    /// counting as none), or up to the grammar's own cap for 0.
+    /// grammar without explicit terminals, of at most `max_size`
+    /// characters, or up to the grammar's own cap for 0.
     pub(crate) fn generate_grammar(
         &self,
         grammar: &Grammar,
@@ -893,6 +893,24 @@ impl CTestCase {
             hegel_c::hegel_generate_grammar(ctx, self.raw, grammar.raw, max_size, &mut result)
         });
         take_string_result(rc, result)
+    }
+
+    /// Advance `draw` to the explicit terminal whose value is due next,
+    /// drawing the grammar string from this test case when an attempt
+    /// starts: `Some` of the terminal's index in the grammar's explicit
+    /// terminals, or `None` once the string is complete.
+    pub(crate) fn grammar_draw_next(
+        &self,
+        draw: &GrammarDraw<'_>,
+    ) -> Result<Option<usize>, hegel_result_t> {
+        let mut terminal = 0usize;
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_grammar_draw_next(ctx, self.raw, draw.raw, &mut terminal)
+        });
+        if rc == hegel_result_t::HEGEL_E_NOT_FOUND {
+            return Ok(None);
+        }
+        rc_to_value(rc, Some(terminal))
     }
 
     /// Draw a Gregorian calendar date in `[min, max]`.
@@ -1674,8 +1692,8 @@ impl Grammar {
     /// rule `start` (`None` for Lark's default, `start`). `max_size` and
     /// `max_depth` of `0` take the engine's defaults. `alphabet` constrains
     /// the characters of every terminal drawn from its pattern, `explicit`
-    /// names the terminals whose values the caller splices in for their
-    /// [`placeholder`](Self::placeholder) markers, and `import_dir` is the
+    /// names the terminals whose values the caller supplies to a
+    /// [`start_draw`](Self::start_draw), and `import_dir` is the
     /// directory `%import`ed grammars are read from.
     pub(crate) fn new(
         text: &str,
@@ -1710,19 +1728,19 @@ impl Grammar {
         Ok(Grammar { raw })
     }
 
-    /// The marker standing for each value of the explicit terminal `name`
-    /// in the strings drawn from the grammar.
-    pub(crate) fn placeholder(&self, name: &str) -> Result<String, String> {
-        let mut marker = hegel_c::hegel_string_t::default();
-        let rc = with_context(|ctx| unsafe {
-            hegel_c::hegel_grammar_placeholder(ctx, self.raw, view(name.as_bytes()), &mut marker)
-        });
-        if rc != hegel_result_t::HEGEL_OK {
-            return Err(last_error_string());
+    /// Start a draw of a string of this grammar whose explicit terminals
+    /// take values the caller supplies (`hegel_grammar_draw_new`), of at
+    /// most `max_size` characters, values included, or up to the
+    /// grammar's own cap for 0.
+    pub(crate) fn start_draw(&self, max_size: u64) -> GrammarDraw<'_> {
+        let mut raw: *mut hegel_c::HegelGrammarDraw = ptr::null_mut();
+        require_ok(with_context(|ctx| unsafe {
+            hegel_c::hegel_grammar_draw_new(ctx, self.raw, max_size, &mut raw)
+        }));
+        GrammarDraw {
+            raw,
+            _grammar: std::marker::PhantomData,
         }
-        // SAFETY: on success the engine set `marker` to a borrowed view
-        // of bytes the grammar owns, alive for as long as `self` is.
-        Ok(string_opt(marker).unwrap_or_default())
     }
 }
 
@@ -1731,6 +1749,46 @@ impl Drop for Grammar {
         // SAFETY: `raw` came from `hegel_grammar_new` and is freed exactly
         // once.
         free_on_drop(|ctx| unsafe { hegel_c::hegel_grammar_free(ctx, self.raw) });
+    }
+}
+
+/// An owned grammar draw handle (`hegel_grammar_draw_t`), freed on drop:
+/// one string of a grammar with explicit terminals, which libhegel draws
+/// and splices while the caller supplies each terminal's value. It borrows
+/// the grammar, which must outlive it.
+pub(crate) struct GrammarDraw<'g> {
+    raw: *mut hegel_c::HegelGrammarDraw,
+    _grammar: std::marker::PhantomData<&'g Grammar>,
+}
+
+impl GrammarDraw<'_> {
+    /// Supply the value of the explicit terminal
+    /// [`CTestCase::grammar_draw_next`] asked for.
+    pub(crate) fn provide(&self, value: &str) {
+        require_ok(with_context(|ctx| unsafe {
+            hegel_c::hegel_grammar_draw_provide(ctx, self.raw, view(value.as_bytes()))
+        }));
+    }
+
+    /// The finished string, once [`CTestCase::grammar_draw_next`] has
+    /// reported that no terminal is left.
+    pub(crate) fn result(&self) -> String {
+        let mut result = hegel_c::hegel_owned_string_t {
+            data: ptr::null(),
+            len: 0,
+        };
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_grammar_draw_result(ctx, self.raw, &mut result)
+        });
+        take_string_result(rc, result).unwrap_or_else(|rc| crate::test_case::raise_for_rc(rc))
+    }
+}
+
+impl Drop for GrammarDraw<'_> {
+    fn drop(&mut self) {
+        // SAFETY: `raw` came from `hegel_grammar_draw_new` and is freed
+        // exactly once.
+        free_on_drop(|ctx| unsafe { hegel_c::hegel_grammar_draw_free(ctx, self.raw) });
     }
 }
 

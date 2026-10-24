@@ -195,15 +195,19 @@ fn ffi_grammar_construction_reports_engine_diagnostics() {
         Some(&alphabet),
         &["NUM".to_string()],
         None,
-    )
-    .unwrap();
-    let marker = grammar.placeholder("NUM").unwrap();
-    assert!(
-        marker.starts_with("<<EXPLICIT_NUM_") && marker.ends_with(">>"),
-        "{marker}"
     );
-    let err = grammar.placeholder("WORD").unwrap_err();
-    assert!(err.contains("not an explicit terminal"), "{err}");
+    assert!(grammar.is_ok());
+    let err = Grammar::new(
+        "start: NUM\n%declare NUM",
+        None,
+        0,
+        0,
+        None,
+        &["NUM".to_string(), "WORD".to_string()],
+        None,
+    )
+    .unwrap_err();
+    assert!(err.contains("WORD"), "{err}");
 }
 
 #[test]
