@@ -454,7 +454,7 @@ fn parse_phases(items: &[&str]) -> Result<Vec<Phase>, String> {
 }
 
 /// The keys [`parse_setting`] accepts: every `hegel.toml` profile setting,
-/// plus `unbounded_choices` and `database_key`.
+/// plus `database_key`.
 const SETTING_KEYS: &str = "test_cases, seed, derandomize, database, verbosity, \
      phases, suppress_health_check, report_multiple_failures, stop_on_first_failure, \
      show_statistics, print_blob, backend, nondeterminism_strictness, unbounded_choices, \
@@ -475,9 +475,8 @@ pub(crate) enum ParsedSetting {
 /// spellings for the values that are not strings there: an integer in
 /// decimal; a boolean as `true`, `1`, `yes`, `false`, `0` or `no`, as the
 /// `HEGEL_*` variables take it; and a list as its elements separated by
-/// commas, with the empty string for the empty list. Of the keys
-/// `hegel.toml` has none for, `unbounded_choices` takes a boolean and
-/// `database_key` takes the key itself.
+/// commas, with the empty string for the empty list. `database_key`, which
+/// `hegel.toml` has no key for, takes the key itself.
 pub(crate) fn parse_setting(key: &str, value: &str) -> Result<ParsedSetting, String> {
     let integer = |min: u64| match value.parse::<u64>() {
         Ok(n) if n >= min => Ok(n),

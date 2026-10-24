@@ -85,10 +85,11 @@ pub trait Generator<T> {
     /// should return the wrapped generator's label.
     ///
     /// This is called on every draw, so compute the label once — at
-    /// construction, stored in a field, or as a `const` from
+    /// construction, stored in a field, or in a `static`
+    /// [`LazyLock<u64>`](std::sync::LazyLock) initialised from
     /// [`label_from_name`](super::label_from_name) for a generator with no
-    /// components — rather than in this method. The default hashes the type
-    /// name each time it is called.
+    /// components — rather than in this method. The default asks the engine
+    /// to hash the type name each time it is called.
     fn label(&self) -> u64 {
         label_from_name(std::any::type_name::<Self>())
     }

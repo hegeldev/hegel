@@ -1251,8 +1251,8 @@ hegel_result_t hegel_settings_set_print_blob(hegel_context_t *ctx, hegel_setting
    `derandomize`, `database`, `verbosity`, `phases`,
    `suppress_health_check`, `report_multiple_failures`,
    `stop_on_first_failure`, `show_statistics`, `print_blob`, `backend`,
-   `nondeterminism_strictness`; or, though `hegel.toml` has no key for
-   them, `unbounded_choices` or `database_key` (what
+   `nondeterminism_strictness`, `unbounded_choices`; or, though
+   `hegel.toml` has no key for it, `database_key` (what
    `hegel_settings_set_database_key` sets). The test location is the one
    setting this does not reach: it has four parts, so set it with
    `hegel_settings_set_test_location`.
