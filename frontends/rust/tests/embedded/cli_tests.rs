@@ -309,9 +309,11 @@ fn test_every_engine_setting_is_a_flag() {
 
 #[test]
 fn test_compiled_in_database_key_is_kept() {
-    let parsed =
-        try_apply_cli_args(|| Settings::new().database_key("compiled"), s(&["--seed", "1"]))
-            .unwrap();
+    let parsed = try_apply_cli_args(
+        || Settings::new().database_key("compiled"),
+        s(&["--seed", "1"]),
+    )
+    .unwrap();
     assert_eq!(parsed.database_key.as_deref(), Some("compiled"));
 }
 

@@ -562,7 +562,7 @@ typedef struct hegel_grammar_builder_t hegel_grammar_builder_t;
  size_t terminal;
  hegel_result_t rc;
  while ((rc = hegel_grammar_draw_next(ctx, tc, draw, &terminal)) == HEGEL_OK) {
-     /* draw a value for explicit_names[terminal] from tc */
+     // draw a value for explicit_names[terminal] from tc
      hegel_grammar_draw_provide(ctx, draw, value);
  }
  if (rc == HEGEL_E_NOT_FOUND)
