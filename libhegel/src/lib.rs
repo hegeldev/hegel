@@ -292,8 +292,9 @@ pub enum hegel_result_t {
     HEGEL_E_ALREADY_COMPLETE = -6,
 
     /// Something was read before it was ready: `hegel_next_test_case`
-    /// without first completing the previous test case, or
-    /// `hegel_run_result` before the run finished.
+    /// without first completing the previous test case,
+    /// `hegel_run_result` before the run finished, or
+    /// `hegel_grammar_draw_result` before the string was complete.
     HEGEL_E_NOT_COMPLETE = -7,
 
     /// An internal invariant failed inside libhegel. Should not happen in
@@ -301,8 +302,8 @@ pub enum hegel_result_t {
     /// <https://github.com/hegeldev/hegel/issues>.
     HEGEL_E_INTERNAL = -8,
 
-    /// A single test-case handle was used from two threads at once. Clone
-    /// the handle instead.
+    /// A single test-case or grammar draw handle was used from two threads
+    /// at once. Clone a test-case handle instead; start a draw per thread.
     HEGEL_E_CONCURRENT_USE = -9,
 
     /// A recursive generation attempt must be regenerated from the root.
@@ -314,8 +315,10 @@ pub enum hegel_result_t {
     /// start again from the root directly.
     HEGEL_E_RETRY = -10,
 
-    /// There is nothing at the index asked for:
-    /// `hegel_grammar_builder_file` past the end of the list of files.
+    /// There is nothing at the index asked for, or nothing left:
+    /// `hegel_grammar_builder_file` past the end of the list of files, or
+    /// `hegel_grammar_draw_next` once no explicit terminal is left to
+    /// supply.
     HEGEL_E_NOT_FOUND = -11,
 }
 
@@ -765,17 +768,23 @@ pub struct HegelSettings {
 
 impl HegelSettings {
     fn from_settings(inner: Settings) -> Self {
-        let database_c = match &inner.database {
+        let mut settings = HegelSettings {
+            inner,
+            database_key: None,
+            database_c: None,
+            test_location: None,
+        };
+        settings.sync_database_c();
+        settings
+    }
+
+    /// Bring `database_c` in step with `inner.database`.
+    fn sync_database_c(&mut self) {
+        self.database_c = match &self.inner.database {
             Database::Unset => None,
             Database::Disabled => Some(String::new().into()),
             Database::Path(path) => Some(path.clone().into()),
         };
-        HegelSettings {
-            inner,
-            database_key: None,
-            database_c,
-            test_location: None,
-        }
     }
 
     /// The reporter for a run or blob replay under these settings, writing
@@ -1787,6 +1796,78 @@ pub unsafe extern "C" fn hegel_settings_set_print_blob(
     HEGEL_OK
 }
 
+/// Set one setting from text, as a command line gives it: what the
+/// settings' other setters do, under the names and with the values a
+/// `hegel.toml` profile uses, parsed by the same parser. A frontend's
+/// command-line interface passes each flag through, so every setting is
+/// settable from it without the frontend knowing the vocabulary.
+///
+/// Parameters:
+/// `key`: The setting's `hegel.toml` key: `test_cases`, `seed`,
+///   `derandomize`, `database`, `verbosity`, `phases`,
+///   `suppress_health_check`, `report_multiple_failures`,
+///   `stop_on_first_failure`, `show_statistics`, `print_blob`, `backend`,
+///   `nondeterminism_strictness`; or, though `hegel.toml` has no key for
+///   them, `unbounded_choices` or `database_key` (what
+///   `hegel_settings_set_database_key` sets). The test location is the one
+///   setting this does not reach: it has four parts, so set it with
+///   `hegel_settings_set_test_location`.
+/// `value`: The value, in that key's `hegel.toml` vocabulary (`database`
+///   takes a path, `disabled`, or `default` for the default location;
+///   `database_key` takes the key itself, and only
+///   `hegel_settings_set_database_key` clears it), with these spellings
+///   for values that are not strings there:
+///   - an integer (`test_cases`, `seed`) in decimal; `seed` also takes
+///     `none`, which unsets it;
+///   - a boolean as `true`, `1`, `yes`, `false`, `0` or `no`, as the
+///     `HEGEL_*` environment variables take it;
+///   - a list (`phases`, `suppress_health_check`) as its names separated
+///     by commas, with the empty string for none; `suppress_health_check`
+///     also takes `all`.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown key or a
+/// value outside its vocabulary, with a message naming the key and what
+/// it accepts. On error the settings are unchanged.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_settings_set_from_string(
+    ctx: *mut HegelContext,
+    s: *mut HegelSettings,
+    key: hegel_string_t,
+    value: hegel_string_t,
+) -> hegel_result_t {
+    const FN: &str = "hegel_settings_set_from_string";
+    clear_last_error(ctx);
+    let handle = match unsafe { settings_mut(ctx, s, FN) } {
+        Ok(h) => h,
+        Err(rc) => return rc,
+    };
+    let key = match unsafe { required_utf8_arg(ctx, FN, "key", key) } {
+        Ok(k) => k,
+        Err(rc) => return rc,
+    };
+    let value = match unsafe { required_utf8_arg(ctx, FN, "value", value) } {
+        Ok(v) => v,
+        Err(rc) => return rc,
+    };
+    match crate::config::parse_setting(&key, &value) {
+        Ok(crate::config::ParsedSetting::Profile(delta)) => {
+            delta.apply(&mut handle.inner);
+            if delta.database.is_some() {
+                handle.sync_database_c();
+            }
+            HEGEL_OK
+        }
+        Ok(crate::config::ParsedSetting::DatabaseKey(database_key)) => {
+            handle.database_key = Some(database_key);
+            HEGEL_OK
+        }
+        Err(message) => {
+            set_last_error(ctx, &format!("{FN}: {message}"));
+            HEGEL_E_INVALID_ARG
+        }
+    }
+}
+
 /// Parameters:
 /// `name`: The profile name to register: ASCII letters, digits, `-` and
 ///   `_` only. The reserved names `base` and `default` are rejected.
@@ -2025,7 +2106,8 @@ pub unsafe extern "C" fn hegel_settings_get_derandomize(
 /// `out_database`: Receives NULL for the default database, a pointer to an
 ///   empty string for disabled, or a pointer to the root directory string.
 ///   The string borrows the handle and stays valid until
-///   the next `hegel_settings_set_database` call on it or
+///   the next `hegel_settings_set_database` call on it, the next
+///   `hegel_settings_set_from_string` call on it that sets `database`, or
 ///   `hegel_settings_free`.
 ///
 /// Returns `HEGEL_OK`.
@@ -3072,6 +3154,13 @@ unsafe fn typed_draw<T>(
     }
 }
 
+/// How many times a filtered generator draws a value and tests it before
+/// rejecting the test case: draw inside a span, close the span discarded
+/// when the predicate fails, and after this many failures in a row reject
+/// the test case as a failed assumption does. Every frontend's `filter`
+/// uses this number, so a filter rejects equally often in every language.
+pub const HEGEL_FILTER_ATTEMPTS: u32 = 3;
+
 /// A span groups a set of draws so the shrinker can treat them as a unit.
 /// Libraries should wrap each compound generator in a span.
 ///
@@ -3110,8 +3199,9 @@ pub unsafe extern "C" fn hegel_start_span(
 
 /// Parameters:
 /// `discard`: Pass `true` to mark the span rejected (e.g. a `filter`
-///   predicate didn't hold) so libhegel retries from before the span
-///   opened.
+///   predicate didn't hold, and the caller is about to draw again), so
+///   the shrinker knows its draws did not contribute to the value and can
+///   delete them.
 ///
 /// Returns `HEGEL_OK`.
 ///
@@ -4640,7 +4730,9 @@ pub struct hegel_generate_bytes_result_t {
 }
 
 /// Parameters:
-/// `min_size` / `max_size`: Inclusive length bounds.
+/// `min_size` / `max_size`: Inclusive length bounds. Pass
+///   `HEGEL_MAX_SIZE_DEFAULT` as `max_size` for the default maximum, or
+///   `UINT64_MAX` for no upper bound.
 /// `out_result`: Receives a libhegel-allocated
 ///   `{uint8_t *data; size_t len;}` the caller owns. `data` is never NULL
 ///   after a successful draw. Release with
@@ -4662,8 +4754,8 @@ pub unsafe extern "C" fn hegel_generate_bytes(
             "hegel_generate_bytes",
             out_result.is_null(),
             |tc| {
-                tc.stream
-                    .generate_bytes(size_arg(min_size), size_arg(max_size))
+                let (min_size, max_size) = sized_bounds(min_size, max_size);
+                tc.stream.generate_bytes(min_size, max_size)
             },
             |v| {
                 let boxed = v.into_boxed_slice();
@@ -4736,6 +4828,29 @@ fn size_arg(v: u64) -> usize {
     usize::try_from(v).unwrap_or(usize::MAX)
 }
 
+/// Pass as the `max_size` of `hegel_string_generator_text` or
+/// `hegel_generate_bytes` when the user gave no maximum, for libhegel to
+/// apply its default: 100, or `min_size + 100` when `min_size` is above
+/// 100. Distinct from `UINT64_MAX`, which means no upper bound.
+///
+/// The value is reserved: it is never read as an explicit maximum. A
+/// frontend passing a maximum the user gave must pass `UINT64_MAX` for
+/// any maximum at or above this one, which no allocation could reach
+/// anyway, so that the user's size is not taken for "no maximum given".
+pub const HEGEL_MAX_SIZE_DEFAULT: u64 = u64::MAX - 1;
+
+/// The `[min_size, max_size]` bounds of a text or bytes draw, with
+/// [`HEGEL_MAX_SIZE_DEFAULT`] resolved to the default maximum.
+fn sized_bounds(min_size: u64, max_size: u64) -> (usize, usize) {
+    let min_size = size_arg(min_size);
+    let max_size = if max_size == HEGEL_MAX_SIZE_DEFAULT {
+        crate::native::draws::default_max_size(min_size)
+    } else {
+        size_arg(max_size)
+    };
+    (min_size, max_size)
+}
+
 unsafe fn optional_utf8_arg(
     ctx: *mut HegelContext,
     fn_name: &str,
@@ -4796,7 +4911,9 @@ unsafe fn write_string_generator(
 }
 
 /// Parameters:
-/// `min_size` / `max_size`: Inclusive length bounds, in characters.
+/// `min_size` / `max_size`: Inclusive length bounds, in characters. Pass
+///   `HEGEL_MAX_SIZE_DEFAULT` as `max_size` for the default maximum, or
+///   `UINT64_MAX` for no upper bound.
 /// `codec`: The alphabet's starting range: `"ascii"`, `"latin-1"` /
 ///   `"iso-8859-1"`, or `"utf-8"` / NULL for Unicode.
 /// `min_codepoint` / `max_codepoint`: Intersected with the codec's range.
@@ -4881,8 +4998,8 @@ pub unsafe extern "C" fn hegel_string_generator_text(
         exclude_characters: Some(exclude_characters),
         unicode_version: UnicodeVersion::host(),
     };
-    match crate::native::draws::StringSpec::text(&alphabet, size_arg(min_size), size_arg(max_size))
-    {
+    let (min_size, max_size) = sized_bounds(min_size, max_size);
+    match crate::native::draws::StringSpec::text(&alphabet, min_size, max_size) {
         Ok(spec) => unsafe { write_string_generator(out_generator, spec) },
         Err(e) => translate_construct_error(ctx, e),
     }
@@ -5309,7 +5426,7 @@ pub unsafe extern "C" fn hegel_grammar_builder_free(
 /// threads. Free it with `hegel_grammar_free` once no draws will use it
 /// again.
 pub struct HegelGrammar {
-    spec: crate::native::lark::generate::GrammarSpec,
+    spec: Arc<crate::native::lark::generate::GrammarSpec>,
     /// The explicit terminals' markers, borrowed by
     /// `hegel_grammar_placeholder`.
     placeholders: Vec<(String, StoredString)>,
@@ -5336,9 +5453,11 @@ pub struct HegelGrammar {
 ///   character class, wildcard or literal outside it is never drawn.
 /// `explicit_names`, `explicit_len`: `explicit_len` terminals whose values
 ///   the caller supplies. Every terminal the grammar `%declare`s must be
-///   named; a terminal with a pattern may be named to override it. Each
-///   occurrence of such a terminal in a drawn string is a placeholder
-///   marker (see `hegel_grammar_placeholder`) for the caller to replace.
+///   named; a terminal with a pattern may be named to override it. Draw
+///   strings with these terminals' values filled in through
+///   `hegel_grammar_draw_t`; in a string from `hegel_generate_grammar`,
+///   each occurrence of such a terminal is a placeholder marker (see
+///   `hegel_grammar_placeholder`).
 /// `out_grammar`: Receives the grammar handle.
 ///
 /// The terminals' patterns follow the Unicode version set with
@@ -5407,7 +5526,12 @@ pub unsafe extern "C" fn hegel_grammar_new(
                 .iter()
                 .map(|(name, marker)| (name.clone(), marker.to_string().into()))
                 .collect();
-            unsafe { *out_grammar = into_raw_send_sync(HegelGrammar { spec, placeholders }) };
+            unsafe {
+                *out_grammar = into_raw_send_sync(HegelGrammar {
+                    spec: Arc::new(spec),
+                    placeholders,
+                })
+            };
             HEGEL_OK
         }
         Err(e) => {
@@ -5491,7 +5615,9 @@ pub unsafe extern "C" fn hegel_grammar_placeholder(
 /// Draw a string of a grammar: a string the grammar's start rule accepts,
 /// aiming at a length drawn up to the size cap, as many as 8192
 /// characters by default, with each explicit terminal standing as its
-/// placeholder marker (see `hegel_grammar_placeholder`). The string is
+/// placeholder marker (see `hegel_grammar_placeholder`). To have the
+/// markers replaced by values the caller draws, use
+/// `hegel_grammar_draw_t` instead. The string is
 /// one choice of the test case, holding the string itself: a replay
 /// checks a stored string by parsing it (one the grammar does not derive
 /// is replaced by the grammar's simplest string), and the shrinker edits
@@ -5501,10 +5627,7 @@ pub unsafe extern "C" fn hegel_grammar_placeholder(
 /// `grammar`: A grammar built by `hegel_grammar_new`.
 /// `max_size`: A cap on this draw's characters, placeholder markers
 ///   counting as none, or 0 for the grammar's own cap. One below the
-///   grammar's smallest string, or above its cap, is read as that. A
-///   caller replacing markers with values of its own uses it to draw
-///   again, under a smaller cap, when the values pushed the string past
-///   the cap it has in mind.
+///   grammar's smallest string, or above its cap, is read as that.
 /// `out_result`: Receives a libhegel-allocated UTF-8 buffer with a trailing
 ///   NUL outside its reported length. Release with
 ///   `hegel_owned_string_free`.
@@ -5546,6 +5669,304 @@ pub unsafe extern "C" fn hegel_generate_grammar(
         Ok(s) => unsafe { write_string_result(out_result, s) },
         Err(e) => translate_ds_error(ctx, e),
     }
+}
+
+/// Opaque handle to one draw of a grammar string whose explicit terminals
+/// take values the caller draws: libhegel draws the string, and the
+/// caller supplies a value for each occurrence of an explicit terminal,
+/// which libhegel splices in where the terminal's placeholder marker
+/// stood.
+///
+/// Create one with `hegel_grammar_draw_new` for each string to draw, then
+/// loop:
+///
+/// ```c
+/// size_t terminal;
+/// hegel_result_t rc;
+/// while ((rc = hegel_grammar_draw_next(ctx, tc, draw, &terminal)) == HEGEL_OK) {
+///     /* draw a value for explicit_names[terminal] from tc */
+///     hegel_grammar_draw_provide(ctx, draw, value);
+/// }
+/// if (rc == HEGEL_E_NOT_FOUND)
+///     hegel_grammar_draw_result(ctx, draw, &string);
+/// hegel_grammar_draw_free(ctx, draw);
+/// ```
+///
+/// The values count toward the draw's size cap like the grammar's own
+/// characters. When they push the string over it, libhegel discards the
+/// attempt and draws the string again, with less of the cap for the
+/// grammar's own text, and `hegel_grammar_draw_next` asks for values for
+/// the new string's terminals from the start. After `HEGEL_FILTER_ATTEMPTS`
+/// attempts that do not fit, it rejects the test case. The values are
+/// beyond the lexing checks libhegel makes on the rest of the string: it
+/// is the caller's part to draw values that read as the terminal where
+/// they land.
+///
+/// A draw belongs to the test-case handle it is first advanced with:
+/// `hegel_grammar_draw_next` returns `HEGEL_E_INVALID_ARG` when given any
+/// other handle, including one for a later test case, so start a new draw
+/// for each test case. Draw each value it asks for from that same test
+/// case too.
+///
+/// A draw handle may be used by at most one thread at a time. Concurrent
+/// calls on it return `HEGEL_E_CONCURRENT_USE`.
+///
+/// The handle borrows the grammar, which must outlive it. Free it with
+/// `hegel_grammar_draw_free` exactly once.
+pub struct HegelGrammarDraw {
+    state: Mutex<GrammarDrawState>,
+}
+
+struct GrammarDrawState {
+    draw: crate::native::lark::explicit::ExplicitDraw,
+    /// The stream of the test-case handle the draw was first advanced
+    /// with. Held weakly so that its address stays unique while the draw
+    /// lives, without keeping the stream itself alive.
+    stream: Option<alloc::sync::Weak<dyn DataSource + Send + Sync>>,
+}
+
+impl HegelGrammarDraw {
+    fn lock(
+        &self,
+        ctx: *mut HegelContext,
+        fn_name: &str,
+    ) -> Result<MutexGuard<'_, GrammarDrawState>, hegel_result_t> {
+        self.state.try_lock().ok_or_else(|| {
+            set_last_error(
+                ctx,
+                &format!("{fn_name}: grammar draw handle is in use on another thread"),
+            );
+            HEGEL_E_CONCURRENT_USE
+        })
+    }
+}
+
+unsafe fn grammar_draw_ref<'a>(
+    ctx: *mut HegelContext,
+    fn_name: &str,
+    draw: *const HegelGrammarDraw,
+) -> Result<&'a HegelGrammarDraw, hegel_result_t> {
+    match unsafe { draw.as_ref() } {
+        Some(d) => Ok(d),
+        None => {
+            set_last_error(ctx, &format!("{fn_name}: grammar draw handle is null"));
+            Err(HEGEL_E_INVALID_HANDLE)
+        }
+    }
+}
+
+/// Start a draw of a string of `grammar` whose explicit terminals take
+/// values the caller supplies. See `hegel_grammar_draw_t`. Nothing is
+/// drawn until `hegel_grammar_draw_next`.
+///
+/// Parameters:
+/// `grammar`: A grammar built by `hegel_grammar_new`. It must outlive the
+///   draw handle.
+/// `max_size`: The most characters the string may have, the values the
+///   caller supplies included, or 0 for the grammar's own cap.
+/// `out_draw`: Receives a caller-owned handle. Release it with
+///   `hegel_grammar_draw_free`.
+///
+/// Returns `HEGEL_OK`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_grammar_draw_new(
+    ctx: *mut HegelContext,
+    grammar: *const HegelGrammar,
+    max_size: u64,
+    out_draw: *mut *mut HegelGrammarDraw,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    let Some(grammar) = (unsafe { grammar.as_ref() }) else {
+        set_last_error(ctx, "hegel_grammar_draw_new: grammar handle is null");
+        return HEGEL_E_INVALID_HANDLE;
+    };
+    if out_draw.is_null() {
+        set_last_error(ctx, "hegel_grammar_draw_new: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    let state =
+        crate::native::lark::explicit::ExplicitDraw::new(Arc::clone(&grammar.spec), max_size);
+    unsafe {
+        *out_draw = into_raw_send_sync(HegelGrammarDraw {
+            state: Mutex::new(GrammarDrawState {
+                draw: state,
+                stream: None,
+            }),
+        })
+    };
+    HEGEL_OK
+}
+
+/// Advance a grammar draw to the next explicit terminal that needs a
+/// value, drawing the string from `tc` when an attempt starts. `tc` must
+/// be the test case every earlier call on this draw was given.
+///
+/// Parameters:
+/// `out_terminal`: Receives, on `HEGEL_OK`, the index in the
+///   `explicit_names` given to `hegel_grammar_new` of the terminal whose
+///   value is due. Supply it with `hegel_grammar_draw_provide` before
+///   calling this again.
+///
+/// Returns `HEGEL_OK` when a value is due; `HEGEL_E_NOT_FOUND` when no
+/// terminal is left and the string is complete (read it with
+/// `hegel_grammar_draw_result`); `HEGEL_E_ASSUME` when the values
+/// overflowed the size cap `HEGEL_FILTER_ATTEMPTS` times in a row, or the
+/// grammar draw itself rejected the test case (see
+/// `hegel_generate_grammar`), and the test case has been concluded
+/// invalid; `HEGEL_E_STOP_TEST`; `HEGEL_E_INVALID_ARG` when a value is
+/// still due or `tc` is not the handle the draw was first advanced with;
+/// or `HEGEL_E_CONCURRENT_USE` when `tc` or `draw` is in use on another
+/// thread.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_grammar_draw_next(
+    ctx: *mut HegelContext,
+    tc: *mut HegelTestCase,
+    draw: *mut HegelGrammarDraw,
+    out_terminal: *mut usize,
+) -> hegel_result_t {
+    const FN: &str = "hegel_grammar_draw_next";
+    clear_last_error(ctx);
+    let (tc, _guard) = match unsafe { tc_guard(ctx, FN, tc) } {
+        Ok(t) => t,
+        Err(rc) => return rc,
+    };
+    let draw = match unsafe { grammar_draw_ref(ctx, FN, draw) } {
+        Ok(d) => d,
+        Err(rc) => return rc,
+    };
+    if out_terminal.is_null() {
+        set_last_error(ctx, "hegel_grammar_draw_next: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    let mut state = match draw.lock(ctx, FN) {
+        Ok(s) => s,
+        Err(rc) => return rc,
+    };
+    let stream = Arc::downgrade(&tc.stream);
+    match &state.stream {
+        None => state.stream = Some(stream),
+        Some(bound) if bound.ptr_eq(&stream) => {}
+        Some(_) => {
+            set_last_error(
+                ctx,
+                "hegel_grammar_draw_next: the draw belongs to another test-case \
+                 handle: start a new draw for each test case",
+            );
+            return HEGEL_E_INVALID_ARG;
+        }
+    }
+    match tc.stream.grammar_draw_next(&mut state.draw) {
+        Ok(Some(terminal)) => {
+            unsafe { *out_terminal = terminal };
+            HEGEL_OK
+        }
+        Ok(None) => HEGEL_E_NOT_FOUND,
+        Err(e) => translate_ds_error(ctx, e),
+    }
+}
+
+/// Supply the value of the explicit terminal `hegel_grammar_draw_next`
+/// asked for. The value is copied.
+///
+/// Parameters:
+/// `value`: The terminal's value, as UTF-8.
+///
+/// Returns `HEGEL_OK`; `HEGEL_E_INVALID_ARG` for a value that is not
+/// valid UTF-8 or when no value is due; or `HEGEL_E_CONCURRENT_USE` when
+/// `draw` is in use on another thread.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_grammar_draw_provide(
+    ctx: *mut HegelContext,
+    draw: *mut HegelGrammarDraw,
+    value: hegel_string_t,
+) -> hegel_result_t {
+    const FN: &str = "hegel_grammar_draw_provide";
+    clear_last_error(ctx);
+    let draw = match unsafe { grammar_draw_ref(ctx, FN, draw) } {
+        Ok(d) => d,
+        Err(rc) => return rc,
+    };
+    let value = match unsafe { required_utf8_arg(ctx, FN, "value", value) } {
+        Ok(v) => v,
+        Err(rc) => return rc,
+    };
+    let mut state = match draw.lock(ctx, FN) {
+        Ok(s) => s,
+        Err(rc) => return rc,
+    };
+    match state.draw.provide(&value) {
+        Ok(()) => HEGEL_OK,
+        Err(message) => {
+            set_last_error(ctx, &format!("{FN}: {message}"));
+            HEGEL_E_INVALID_ARG
+        }
+    }
+}
+
+/// The string a grammar draw produced, once `hegel_grammar_draw_next` has
+/// returned `HEGEL_E_NOT_FOUND`: the grammar's string with each explicit
+/// terminal's placeholder marker replaced by the value supplied for it.
+///
+/// Parameters:
+/// `out_result`: Receives a libhegel-allocated UTF-8 buffer with a
+///   trailing NUL outside its reported length. Release with
+///   `hegel_owned_string_free`.
+///
+/// Returns `HEGEL_OK`; `HEGEL_E_NOT_COMPLETE` when the string is not
+/// complete yet; or `HEGEL_E_CONCURRENT_USE` when `draw` is in use on
+/// another thread.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_grammar_draw_result(
+    ctx: *mut HegelContext,
+    draw: *const HegelGrammarDraw,
+    out_result: *mut hegel_owned_string_t,
+) -> hegel_result_t {
+    const FN: &str = "hegel_grammar_draw_result";
+    clear_last_error(ctx);
+    let draw = match unsafe { grammar_draw_ref(ctx, FN, draw) } {
+        Ok(d) => d,
+        Err(rc) => return rc,
+    };
+    if out_result.is_null() {
+        set_last_error(ctx, "hegel_grammar_draw_result: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    let state = match draw.lock(ctx, FN) {
+        Ok(s) => s,
+        Err(rc) => return rc,
+    };
+    match state.draw.result() {
+        Some(text) => unsafe { write_string_result(out_result, text.to_string()) },
+        None => {
+            set_last_error(
+                ctx,
+                "hegel_grammar_draw_result: the string is not complete: call \
+                 hegel_grammar_draw_next until it returns HEGEL_E_NOT_FOUND",
+            );
+            HEGEL_E_NOT_COMPLETE
+        }
+    }
+}
+
+/// Parameters:
+/// `draw`: The grammar draw to release. Safe to call with NULL.
+///
+/// Returns `HEGEL_OK`.
+///
+/// Each draw handle must be freed exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_grammar_draw_free(
+    ctx: *mut HegelContext,
+    draw: *mut HegelGrammarDraw,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    if !draw.is_null() {
+        // SAFETY: `draw` came from `hegel_grammar_draw_new`'s
+        // `into_raw_send_sync` and, per the documented contract, is freed
+        // exactly once.
+        drop(unsafe { Box::from_raw(draw) });
+    }
+    HEGEL_OK
 }
 
 /// A drawn proleptic Gregorian calendar date: `year` in

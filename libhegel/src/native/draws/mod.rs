@@ -209,6 +209,17 @@ pub(crate) fn choose_from(ntc: &mut NativeTestCase, members: &[i64]) -> Result<i
     spanned(ntc, LABEL_SET_CHOICE, |ntc| ntc.draw_from_set(members))
 }
 
+/// The maximum length of a text or bytes draw whose caller gave none: 100,
+/// or `min_size + 100` when `min_size` is above 100.
+pub(crate) fn default_max_size(min_size: usize) -> usize {
+    const DEFAULT_MAX_SIZE: usize = 100;
+    if min_size > DEFAULT_MAX_SIZE {
+        min_size.saturating_add(DEFAULT_MAX_SIZE)
+    } else {
+        DEFAULT_MAX_SIZE
+    }
+}
+
 /// Draw a byte string with length in `[min_size, max_size]`, validating the
 /// sizes.
 pub fn generate_bytes(
