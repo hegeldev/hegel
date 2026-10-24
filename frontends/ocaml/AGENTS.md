@@ -1063,9 +1063,8 @@ guards the syntax upstream cannot parse (`@ m`, kind annotations).
   optional parameters `?(max_size : int option)`). Bookkeeping in rule bodies
   is `Atomic`, never `ref`. `Thread.yield`/`Thread.delay` are nonportable;
   use `Domain.cpu_relax`/`Caml_unix.sleepf`. Under `open Core`, `Atomic` is
-  Core's and a different type: `module Atomic = Stdlib.Atomic`. A printer
-  application is `(printer gen) v`. `Alcotest.fail` inside a rule body is
-  nonportable; use `failwith`.
+  Core's and a different type: `module Atomic = Stdlib.Atomic`.
+  `Alcotest.fail` inside a rule body is nonportable; use `failwith`.
 - **Building locally.** `dune build --build-dir _build_ox …` in the
   `5.2.0+ox` switch (delete `_build_ox` afterwards). The ox CI job installs
   `capsule0`, `concurrent`, and `parallel` from `../../.github/ocaml/oxcaml-ci.opam`, in
