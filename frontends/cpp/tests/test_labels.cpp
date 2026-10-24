@@ -94,6 +94,13 @@ TEST(Labels, CompoundGeneratorsCombineTheirComponents) {
     EXPECT_EQ(
         gs::integers<int>().flat_map([](int) { return gs::text(); }).label(),
         combined(hi::LabelName::FlatMap, {ints}));
+    EXPECT_EQ(
+        gs::recursive(gs::integers<int>(),
+                      [](gs::Generator<int> subtrees) { return subtrees; })
+            .label(),
+        combined(hi::LabelName::Recursive, {ints}));
+    EXPECT_EQ(gs::permutations({1, 2}).label(),
+              hi::label(hi::LabelName::Permutation));
 }
 
 TEST(Labels, SameShapeDifferentComponentsDiffer) {

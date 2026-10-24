@@ -16,6 +16,7 @@
 struct hegel_collection_t;
 struct hegel_pool_t;
 struct hegel_state_machine_t;
+struct HegelRecursion;
 /// @endcond
 
 /**
@@ -146,6 +147,52 @@ namespace hegel::internal {
 
       private:
         hegel_pool_t* handle_ = nullptr;
+    };
+
+    // The engine's scope for one recursive value (hegel_new_recursion):
+    // it decides where the value branches and when an attempt has grown too
+    // large and must start again from the root.
+    class RecursionHandle {
+      public:
+        RecursionHandle(const TestCase& tc, uint64_t max_depth,
+                        uint64_t max_leaves);
+        ~RecursionHandle();
+        RecursionHandle(const RecursionHandle&) = delete;
+        RecursionHandle& operator=(const RecursionHandle&) = delete;
+
+        // Whether the sub-value at `depth` branches (true) or is a leaf.
+        bool branch(const TestCase& tc, uint64_t depth);
+        // Counts one leaf against the attempt's budget. Throws
+        // LeafBudgetExceeded when the attempt is over the budget.
+        void leaf(const TestCase& tc);
+        // Discards an attempt that threw LeafBudgetExceeded. Throws
+        // HegelReject when the engine gives up on the test case.
+        void retry(const TestCase& tc);
+        // Reports that the value is complete. Throws AttemptMispriced when
+        // the engine discards the attempt.
+        void finish(const TestCase& tc);
+
+      private:
+        HegelRecursion* handle_ = nullptr;
+    };
+
+    // Thrown out of the generators of a recursive value when its attempt
+    // has more leaves than its budget. The recursive generator catches it,
+    // discards the attempt and starts again.
+    class LeafBudgetExceeded : public std::exception {
+      public:
+        const char* what() const noexcept override {
+            return "recursive value exceeded its leaf budget";
+        }
+    };
+
+    // Thrown when the engine discards a completed recursive value. The
+    // recursive generator catches it and starts again.
+    class AttemptMispriced : public std::exception {
+      public:
+        const char* what() const noexcept override {
+            return "recursive value discarded by the engine";
+        }
     };
 
     inline constexpr int64_t state_machine_done = INT64_MIN;

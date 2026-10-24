@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <initializer_list>
 #include <memory>
 #include <optional>
@@ -390,6 +391,177 @@ namespace hegel::generators {
      */
     template <typename T> DeferredGeneratorDefinition<T> deferred() {
         return DeferredGeneratorDefinition<T>();
+    }
+
+    /**
+     * @brief Parameters for recursive() generator.
+     */
+    struct RecursiveParams {
+        /// Branches nest at most this deep. Sub-values at this depth are
+        /// always leaves, so 0 generates only leaves.
+        uint64_t max_depth = 32;
+        /// The most leaves one generated value can have. Each value steers
+        /// toward a size drawn from this range. An attempt that draws more
+        /// leaves is discarded and tried again, and the test case is
+        /// rejected when several attempts in a row do not fit.
+        uint64_t max_leaves = 100;
+    };
+
+    /// @cond INTERNAL
+    namespace detail {
+
+        // What the generators of one recursive() share: its leaf generator,
+        // its branch function and its label.
+        template <typename T> struct RecursiveDefinition {
+            Generator<T> leaf;
+            std::function<Generator<T>(Generator<T>)> branch;
+            uint64_t label;
+        };
+
+    } // namespace detail
+
+    // The generator a recursive() branch function receives. Each value it
+    // draws is a sub-value of the value under construction, one level
+    // deeper: a leaf, or a further branch.
+    template <typename T> class SubtreeGenerator : public IGenerator<T> {
+      public:
+        SubtreeGenerator(
+            std::shared_ptr<const detail::RecursiveDefinition<T>> definition,
+            std::shared_ptr<hegel::internal::RecursionHandle> recursion,
+            uint64_t depth)
+            : definition_(std::move(definition)),
+              recursion_(std::move(recursion)), depth_(depth) {}
+
+        T do_draw(const TestCase& tc) const override {
+            hegel::internal::start_span(tc, definition_->label);
+            T result = draw_subtree(tc);
+            hegel::internal::stop_span(tc);
+            return result;
+        }
+
+        // Every sub-value has the label of the whole value, so the engine
+        // can replace a value with one of its own sub-values when it
+        // shrinks.
+        uint64_t label() const override { return definition_->label; }
+
+        // Draws the sub-value without a span of its own. The root draws
+        // this way, inside the span of the recursive generator.
+        T draw_subtree(const TestCase& tc) const {
+            T result = recursion_->branch(tc, depth_)
+                           ? definition_
+                                 ->branch(Generator<T>(new SubtreeGenerator<T>(
+                                     definition_, recursion_, depth_ + 1)))
+                                 .do_draw(tc)
+                           : draw_leaf(tc);
+            if (depth_ == 0) {
+                recursion_->finish(tc);
+            }
+            return result;
+        }
+
+      private:
+        T draw_leaf(const TestCase& tc) const {
+            recursion_->leaf(tc);
+            return definition_->leaf.do_draw(tc);
+        }
+
+        std::shared_ptr<const detail::RecursiveDefinition<T>> definition_;
+        std::shared_ptr<hegel::internal::RecursionHandle> recursion_;
+        uint64_t depth_;
+    };
+
+    // Concrete IGenerator for recursive(). Draws attempts at the whole value
+    // until the engine accepts one.
+    template <typename T> class RecursiveGenerator : public IGenerator<T> {
+      public:
+        RecursiveGenerator(Generator<T> leaf,
+                           std::function<Generator<T>(Generator<T>)> branch,
+                           RecursiveParams params)
+            : params_(params) {
+            namespace hi = hegel::internal;
+            uint64_t label = hi::combine_labels(
+                {hi::label(hi::LabelName::Recursive), leaf.label()});
+            definition_ =
+                std::make_shared<const detail::RecursiveDefinition<T>>(
+                    detail::RecursiveDefinition<T>{std::move(leaf),
+                                                   std::move(branch), label});
+        }
+
+        T do_draw(const TestCase& tc) const override {
+            namespace hi = hegel::internal;
+            hi::start_span(tc, definition_->label);
+            auto recursion = std::make_shared<hi::RecursionHandle>(
+                tc, params_.max_depth, params_.max_leaves);
+            SubtreeGenerator<T> root(definition_, recursion, 0);
+            while (true) {
+                try {
+                    T result = root.draw_subtree(tc);
+                    hi::stop_span(tc);
+                    return result;
+                } catch (const hi::LeafBudgetExceeded&) {
+                    recursion->retry(tc);
+                } catch (
+                    const hi::
+                        AttemptMispriced&) { // NOLINT(bugprone-empty-catch)
+                    // The engine discarded the attempt already.
+                }
+            }
+        }
+
+        uint64_t label() const override { return definition_->label; }
+
+      private:
+        std::shared_ptr<const detail::RecursiveDefinition<T>> definition_;
+        RecursiveParams params_;
+    };
+    /// @endcond
+
+    /**
+     * @brief Generate recursively defined values, such as trees.
+     *
+     * @p leaf generates the values that do not recurse. @p branch builds one
+     * level of recursive structure: it receives a generator of sub-values
+     * of the same type, and returns a generator that combines some number
+     * of them into one value. Hegel calls it again for each branch it
+     * generates.
+     *
+     * The engine decides where a value branches, so values range in size
+     * from one leaf up to the limits in @p params, and recursive values
+     * are distributed the same way in every Hegel library. Where the
+     * structure is not a tree of one type, for example for mutually
+     * recursive types, use deferred().
+     *
+     * @code{.cpp}
+     * struct Tree {
+     *     int value;
+     *     std::vector<Tree> children;
+     * };
+     * auto trees = gs::recursive(
+     *     gs::integers<int>().map([](int v) { return Tree{v, {}}; }),
+     *     [](gs::Generator<Tree> subtrees) {
+     *         return gs::vectors(subtrees, {.max_size = 3})
+     *             .map([](std::vector<Tree> children) {
+     *                 return Tree{0, std::move(children)};
+     *             });
+     *     });
+     * @endcode
+     *
+     * @tparam T Value type
+     * @tparam F Callable taking a `Generator<T>` of sub-values and returning
+     *   a `Generator<T>`
+     * @param leaf Generator for the values that do not recurse
+     * @param branch Function that builds a branch from a generator of
+     *   sub-values
+     * @param params Limits on the depth and the number of leaves
+     * @return Generator producing recursive values
+     */
+    template <typename T, typename F>
+    Generator<T> recursive(Generator<T> leaf, F branch,
+                           RecursiveParams params = {}) {
+        return Generator<T>(new RecursiveGenerator<T>(
+            std::move(leaf),
+            std::function<Generator<T>(Generator<T>)>(std::move(branch)),
+            params));
     }
 
 } // namespace hegel::generators

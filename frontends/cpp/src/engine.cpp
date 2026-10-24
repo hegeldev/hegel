@@ -1042,6 +1042,52 @@ namespace hegel::internal {
             "hegel_pool_restore");
     }
 
+    RecursionHandle::RecursionHandle(const TestCase& tc, uint64_t max_depth,
+                                     uint64_t max_leaves) {
+        impl::DrawScope scope(tc);
+        scope.raise_for_rc(hegel_new_recursion(scope.ctx, scope.tc, max_depth,
+                                               max_leaves, &handle_),
+                           "hegel_new_recursion");
+    }
+
+    RecursionHandle::~RecursionHandle() {
+        hegel_recursion_free(impl::thread_context(), handle_);
+    }
+
+    bool RecursionHandle::branch(const TestCase& tc, uint64_t depth) {
+        impl::DrawScope scope(tc);
+        bool branch = false;
+        scope.raise_for_rc(hegel_recursion_branch(scope.ctx, scope.tc, handle_,
+                                                  depth, &branch),
+                           "hegel_recursion_branch");
+        return branch;
+    }
+
+    void RecursionHandle::leaf(const TestCase& tc) {
+        impl::DrawScope scope(tc);
+        hegel_result_t rc = hegel_recursion_leaf(scope.ctx, scope.tc, handle_);
+        if (rc == HEGEL_E_RETRY) {
+            throw LeafBudgetExceeded();
+        }
+        scope.raise_for_rc(rc, "hegel_recursion_leaf");
+    }
+
+    void RecursionHandle::retry(const TestCase& tc) {
+        impl::DrawScope scope(tc);
+        scope.raise_for_rc(hegel_recursion_retry(scope.ctx, scope.tc, handle_),
+                           "hegel_recursion_retry");
+    }
+
+    void RecursionHandle::finish(const TestCase& tc) {
+        impl::DrawScope scope(tc);
+        hegel_result_t rc =
+            hegel_recursion_finish(scope.ctx, scope.tc, handle_);
+        if (rc == HEGEL_E_RETRY) {
+            throw AttemptMispriced();
+        }
+        scope.raise_for_rc(rc, "hegel_recursion_finish");
+    }
+
     StateMachineHandle::StateMachineHandle(
         const TestCase& tc, const std::vector<std::string>& rule_names,
         const std::vector<int64_t>& rule_groups,

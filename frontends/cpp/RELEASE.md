@@ -45,3 +45,5 @@ This release adds:
 `floats<long double>()` now draws a `double`. Before, it failed with an engine error where `long double` is wider than 64 bits.
 
 A `filter()` on `hegel::stateful::values_consumed()` now removes only the value it returns from the pool. Before, every value its predicate rejected was also removed, so later draws could not use it.
+
+`hegel::generators::recursive()` generates recursively defined values, such as trees, through libhegel's recursion support: the engine decides where a value branches and how large it grows, within `RecursiveParams::max_depth` and `RecursiveParams::max_leaves`.

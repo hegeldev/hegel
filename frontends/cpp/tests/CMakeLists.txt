@@ -122,7 +122,8 @@ hegel_add_test(NAME test_generators_collections
     SOURCE test_generators_collections.cpp
     USE_UTILS)
 hegel_add_test(NAME test_generators_combinators
-    SOURCE test_generators_combinators.cpp)
+    SOURCE test_generators_combinators.cpp
+    USE_UTILS)
 hegel_add_test(NAME test_generators_random
     SOURCE test_generators_random.cpp)
 # Span labels derived from generator names and their components.
