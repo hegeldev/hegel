@@ -197,6 +197,13 @@ impl DataSource for NativeDataSource {
         self.with_ntc(|ntc| crate::native::lark::generate::generate_grammar(ntc, spec, max_size))
     }
 
+    fn grammar_draw_next(
+        &self,
+        draw: &mut crate::native::lark::explicit::ExplicitDraw,
+    ) -> Result<Option<usize>, DataSourceError> {
+        self.with_ntc(|ntc| draw.next(ntc))
+    }
+
     fn generate_date(
         &self,
         min: crate::native::draws::special::Date,

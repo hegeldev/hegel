@@ -333,104 +333,84 @@ fn assign(
         "print_blob" => delta.print_blob = Some(expect_bool(src, value, key)?),
         "verbosity" => {
             let s = expect_string(src, value, key)?;
-            delta.verbosity = Some(match s {
-                "quiet" => Verbosity::Quiet,
-                "normal" => Verbosity::Normal,
-                "verbose" => Verbosity::Verbose,
-                "debug" => Verbosity::Debug,
-                other => {
-                    return Err(err(
-                        line_no,
-                        format!(
-                            "`verbosity` expects one of quiet|normal|verbose|debug, got {other:?}"
-                        ),
-                    ));
-                }
-            });
+            delta.verbosity = Some(parse_verbosity(s).map_err(|m| err(line_no, m))?);
         }
         "backend" => {
             let s = expect_string(src, value, key)?;
-            delta.backend = Some(match s {
-                "default" => Backend::Default,
-                "urandom" => Backend::Urandom,
-                other => {
-                    return Err(err(
-                        line_no,
-                        format!("`backend` expects one of default|urandom, got {other:?}"),
-                    ));
-                }
-            });
+            delta.backend = Some(parse_backend(s).map_err(|m| err(line_no, m))?);
         }
         "nondeterminism_strictness" => {
             let s = expect_string(src, value, key)?;
-            delta.nondeterminism_strictness = Some(match NondeterminismStrictness::parse(s) {
-                Some(strictness) => strictness,
-                None => {
-                    return Err(err(
-                        line_no,
-                        format!(
-                            "`nondeterminism_strictness` expects one of quiet|warn|error, got {s:?}"
-                        ),
-                    ));
-                }
-            });
+            delta.nondeterminism_strictness =
+                Some(parse_strictness(s).map_err(|m| err(line_no, m))?);
         }
         "database" => {
             let s = expect_string(src, value, key)?;
-            if s.is_empty() {
-                return Err(err(
-                    line_no,
-                    "`database` expects a path, \"disabled\", or \"default\", got \"\"",
-                ));
-            }
-            delta.database = Some(match s {
-                "disabled" => Database::Disabled,
-                "default" => Database::Unset,
-                _ => Database::Path(s.to_string()),
-            });
+            delta.database = Some(parse_database(s).map_err(|m| err(line_no, m))?);
         }
         "suppress_health_check" => {
             let items = expect_array(src, value, key)?;
-            delta.suppress_health_check = Some(parse_health_checks(&items, line_no)?);
+            delta.suppress_health_check =
+                Some(parse_health_checks(&items).map_err(|m| err(line_no, m))?);
         }
         "phases" => {
             let items = expect_array(src, value, key)?;
-            let mut phases = Vec::with_capacity(items.len());
-            for item in items {
-                phases.push(match item {
-                    "explicit" => Phase::Explicit,
-                    "reuse" => Phase::Reuse,
-                    "generate" => Phase::Generate,
-                    "target" => Phase::Target,
-                    "shrink" => Phase::Shrink,
-                    other => {
-                        return Err(err(
-                            line_no,
-                            format!(
-                                "`phases` does not recognise {other:?}. \
-                                 Known names: explicit, reuse, generate, target, shrink"
-                            ),
-                        ));
-                    }
-                });
-            }
-            delta.phases = Some(phases);
+            delta.phases = Some(parse_phases(&items).map_err(|m| err(line_no, m))?);
         }
         other => return Err(err(line_no, format!("unknown key `{other}`"))),
     }
     Ok(())
 }
 
-/// The health-check name vocabulary, shared with the frontend's
-/// `--suppress-health-check` flag: the four snake_case check names, or
-/// `"all"` as the only element.
-fn parse_health_checks(items: &[&str], line_no: usize) -> Result<Vec<HealthCheck>, ParseError> {
+/// The `verbosity` vocabulary: `quiet`, `normal`, `verbose` or `debug`.
+fn parse_verbosity(s: &str) -> Result<Verbosity, String> {
+    match s {
+        "quiet" => Ok(Verbosity::Quiet),
+        "normal" => Ok(Verbosity::Normal),
+        "verbose" => Ok(Verbosity::Verbose),
+        "debug" => Ok(Verbosity::Debug),
+        other => Err(format!(
+            "`verbosity` expects one of quiet|normal|verbose|debug, got {other:?}"
+        )),
+    }
+}
+
+/// The `backend` vocabulary: `default` or `urandom`.
+fn parse_backend(s: &str) -> Result<Backend, String> {
+    match s {
+        "default" => Ok(Backend::Default),
+        "urandom" => Ok(Backend::Urandom),
+        other => Err(format!(
+            "`backend` expects one of default|urandom, got {other:?}"
+        )),
+    }
+}
+
+/// The `nondeterminism_strictness` vocabulary: `quiet`, `warn` or `error`.
+fn parse_strictness(s: &str) -> Result<NondeterminismStrictness, String> {
+    NondeterminismStrictness::parse(s).ok_or_else(|| {
+        format!("`nondeterminism_strictness` expects one of quiet|warn|error, got {s:?}")
+    })
+}
+
+/// The `database` vocabulary: `disabled`, `default` (the engine's default
+/// location), or any other non-empty string as the database's path.
+fn parse_database(s: &str) -> Result<Database, String> {
+    match s {
+        "" => Err("`database` expects a path, \"disabled\", or \"default\", got \"\"".to_string()),
+        "disabled" => Ok(Database::Disabled),
+        "default" => Ok(Database::Unset),
+        path => Ok(Database::Path(path.to_string())),
+    }
+}
+
+/// The health-check name vocabulary, shared with the frontends'
+/// command-line flags: the four snake_case check names, or `"all"` as the
+/// only element.
+fn parse_health_checks(items: &[&str]) -> Result<Vec<HealthCheck>, String> {
     if items.contains(&"all") {
         if items.len() != 1 {
-            return Err(err(
-                line_no,
-                "\"all\" must be the only element of `suppress_health_check`",
-            ));
+            return Err("\"all\" must be the only element of `suppress_health_check`".to_string());
         }
         return Ok(alloc::vec![
             HealthCheck::FilterTooMuch,
@@ -439,26 +419,121 @@ fn parse_health_checks(items: &[&str], line_no: usize) -> Result<Vec<HealthCheck
             HealthCheck::LargeInitialTestCase,
         ]);
     }
-    let mut checks = Vec::with_capacity(items.len());
-    for item in items {
-        checks.push(match *item {
-            "filter_too_much" => HealthCheck::FilterTooMuch,
-            "too_slow" => HealthCheck::TooSlow,
-            "test_cases_too_large" => HealthCheck::TestCasesTooLarge,
-            "large_initial_test_case" => HealthCheck::LargeInitialTestCase,
-            other => {
-                return Err(err(
-                    line_no,
-                    format!(
-                        "`suppress_health_check` does not recognise {other:?}. \
-                         Known names: all, filter_too_much, too_slow, \
-                         test_cases_too_large, large_initial_test_case"
-                    ),
-                ));
-            }
-        });
+    items
+        .iter()
+        .map(|item| match *item {
+            "filter_too_much" => Ok(HealthCheck::FilterTooMuch),
+            "too_slow" => Ok(HealthCheck::TooSlow),
+            "test_cases_too_large" => Ok(HealthCheck::TestCasesTooLarge),
+            "large_initial_test_case" => Ok(HealthCheck::LargeInitialTestCase),
+            other => Err(format!(
+                "`suppress_health_check` does not recognise {other:?}. \
+                 Known names: all, filter_too_much, too_slow, \
+                 test_cases_too_large, large_initial_test_case"
+            )),
+        })
+        .collect()
+}
+
+/// The phase name vocabulary.
+fn parse_phases(items: &[&str]) -> Result<Vec<Phase>, String> {
+    items
+        .iter()
+        .map(|item| match *item {
+            "explicit" => Ok(Phase::Explicit),
+            "reuse" => Ok(Phase::Reuse),
+            "generate" => Ok(Phase::Generate),
+            "target" => Ok(Phase::Target),
+            "shrink" => Ok(Phase::Shrink),
+            other => Err(format!(
+                "`phases` does not recognise {other:?}. \
+                 Known names: explicit, reuse, generate, target, shrink"
+            )),
+        })
+        .collect()
+}
+
+/// The keys [`parse_setting`] accepts: every `hegel.toml` profile setting,
+/// plus `unbounded_choices` and `database_key`.
+const SETTING_KEYS: &str = "test_cases, seed, derandomize, database, verbosity, \
+     phases, suppress_health_check, report_multiple_failures, stop_on_first_failure, \
+     show_statistics, print_blob, backend, nondeterminism_strictness, unbounded_choices, \
+     database_key";
+
+/// One setting parsed by [`parse_setting`].
+pub(crate) enum ParsedSetting {
+    /// A setting a `hegel.toml` profile can hold.
+    Profile(ProfileDelta),
+    /// The database key, which scopes the examples a run stores and
+    /// replays. It is per-test identity, so no profile holds it.
+    DatabaseKey(String),
+}
+
+/// Parse one setting given as text, as a command line passes it, into a
+/// delta that sets just that setting. `key` is the setting's `hegel.toml`
+/// name, and `value` uses that key's vocabulary in `hegel.toml`, with these
+/// spellings for the values that are not strings there: an integer in
+/// decimal; a boolean as `true`, `1`, `yes`, `false`, `0` or `no`, as the
+/// `HEGEL_*` variables take it; and a list as its elements separated by
+/// commas, with the empty string for the empty list. Of the keys
+/// `hegel.toml` has none for, `unbounded_choices` takes a boolean and
+/// `database_key` takes the key itself.
+pub(crate) fn parse_setting(key: &str, value: &str) -> Result<ParsedSetting, String> {
+    let integer = |min: u64| match value.parse::<u64>() {
+        Ok(n) if n >= min => Ok(n),
+        _ => Err(format!(
+            "`{key}` expects an integer between {min} and {}, got {value:?}",
+            u64::MAX
+        )),
+    };
+    let boolean = || {
+        crate::settings::parse_bool(value)
+            .ok_or_else(|| format!("`{key}` expects one of true|false|1|0|yes|no, got {value:?}"))
+    };
+    let list = || -> Vec<&str> {
+        if value.is_empty() {
+            Vec::new()
+        } else {
+            value.split(',').map(str::trim).collect()
+        }
+    };
+    let mut delta = ProfileDelta::default();
+    match key {
+        "test_cases" => delta.test_cases = Some(integer(1)?),
+        "seed" => {
+            delta.seed =
+                Some(if value == "none" {
+                    None
+                } else {
+                    Some(value.parse::<u64>().map_err(|_| {
+                        format!("`seed` expects an integer or \"none\", got {value:?}")
+                    })?)
+                });
+        }
+        "derandomize" => delta.derandomize = Some(boolean()?),
+        "report_multiple_failures" => delta.report_multiple_failures = Some(boolean()?),
+        "stop_on_first_failure" => delta.stop_on_first_failure = Some(boolean()?),
+        "show_statistics" => delta.show_statistics = Some(boolean()?),
+        "print_blob" => delta.print_blob = Some(boolean()?),
+        "unbounded_choices" => delta.unbounded_choices = Some(boolean()?),
+        "verbosity" => delta.verbosity = Some(parse_verbosity(value)?),
+        "backend" => delta.backend = Some(parse_backend(value)?),
+        "nondeterminism_strictness" => {
+            delta.nondeterminism_strictness = Some(parse_strictness(value)?);
+        }
+        "database" => delta.database = Some(parse_database(value)?),
+        "suppress_health_check" => {
+            delta.suppress_health_check = Some(parse_health_checks(&list())?);
+        }
+        "phases" => delta.phases = Some(parse_phases(&list())?),
+        "database_key" => return Ok(ParsedSetting::DatabaseKey(value.to_string())),
+        other => {
+            return Err(format!(
+                "unknown setting `{other}`. Known settings: {SETTING_KEYS}"
+            ));
+        }
     }
-    Ok(checks)
+    Ok(ParsedSetting::Profile(delta))
 }
 
 fn is_separator(byte: u8) -> bool {

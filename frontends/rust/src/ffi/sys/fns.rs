@@ -37,6 +37,11 @@ macro_rules! for_each_hegel_fn {
             fn hegel_grammar_builder_free(ctx: *mut HegelContext, builder: *mut HegelGrammarBuilder) -> hegel_result_t;
             fn hegel_grammar_builder_new(ctx: *mut HegelContext, text: hegel_string_t, out_builder: *mut *mut HegelGrammarBuilder) -> hegel_result_t;
             fn hegel_grammar_builder_provide(ctx: *mut HegelContext, builder: *mut HegelGrammarBuilder, index: usize, text: *const hegel_string_t) -> hegel_result_t;
+            fn hegel_grammar_draw_free(ctx: *mut HegelContext, draw: *mut HegelGrammarDraw) -> hegel_result_t;
+            fn hegel_grammar_draw_new(ctx: *mut HegelContext, grammar: *const HegelGrammar, max_size: u64, out_draw: *mut *mut HegelGrammarDraw) -> hegel_result_t;
+            fn hegel_grammar_draw_next(ctx: *mut HegelContext, tc: *mut HegelTestCase, draw: *mut HegelGrammarDraw, out_terminal: *mut usize) -> hegel_result_t;
+            fn hegel_grammar_draw_provide(ctx: *mut HegelContext, draw: *mut HegelGrammarDraw, value: hegel_string_t) -> hegel_result_t;
+            fn hegel_grammar_draw_result(ctx: *mut HegelContext, draw: *const HegelGrammarDraw, out_result: *mut hegel_owned_string_t) -> hegel_result_t;
             fn hegel_grammar_free(ctx: *mut HegelContext, grammar: *mut HegelGrammar) -> hegel_result_t;
             fn hegel_grammar_new(ctx: *mut HegelContext, builder: *const HegelGrammarBuilder, start: *const hegel_string_t, max_size: u64, max_depth: u32, alphabet: *const HegelStringGenerator, explicit_names: *const hegel_string_t, explicit_len: usize, out_grammar: *mut *mut HegelGrammar) -> hegel_result_t;
             fn hegel_grammar_placeholder(ctx: *mut HegelContext, grammar: *const HegelGrammar, name: hegel_string_t, out_marker: *mut hegel_string_t) -> hegel_result_t;
@@ -117,6 +122,7 @@ macro_rules! for_each_hegel_fn {
             fn hegel_settings_set_database(ctx: *mut HegelContext, s: *mut HegelSettings, database: *const hegel_string_t) -> hegel_result_t;
             fn hegel_settings_set_database_key(ctx: *mut HegelContext, s: *mut HegelSettings, key: *const hegel_string_t) -> hegel_result_t;
             fn hegel_settings_set_derandomize(ctx: *mut HegelContext, s: *mut HegelSettings, derandomize: bool) -> hegel_result_t;
+            fn hegel_settings_set_from_string(ctx: *mut HegelContext, s: *mut HegelSettings, key: hegel_string_t, value: hegel_string_t) -> hegel_result_t;
             fn hegel_settings_set_nondeterminism_strictness(ctx: *mut HegelContext, s: *mut HegelSettings, strictness: u32) -> hegel_result_t;
             fn hegel_settings_set_phases(ctx: *mut HegelContext, s: *mut HegelSettings, phases: u32) -> hegel_result_t;
             fn hegel_settings_set_print_blob(ctx: *mut HegelContext, s: *mut HegelSettings, yes: bool) -> hegel_result_t;
