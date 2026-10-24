@@ -107,3 +107,5 @@ New generators:
 `text` and `binary` without `~max_size` now take libhegel's default maximum, 100 characters or bytes (or `min_size + 100` when `~min_size` is above 100), as every other Hegel frontend does. They used to have no maximum at all. Pass `~max_size` for longer strings.
 
 `filter` now takes its number of attempts before rejecting the test case (3) from libhegel, so it rejects as often as a filter in any other frontend.
+
+`Hegel.main` binaries now have a flag for every setting: `--phases`, `--report-multiple-failures`, `--stop-on-first-failure`, `--show-statistics`, `--print-blob`, `--nondeterminism-strictness` and `--database-key` join the existing ones. Each flag is named after its `hegel.toml` key and takes the values `hegel.toml` takes, which libhegel parses, so the flags and `hegel.toml` always agree. `--seed` no longer accepts a negative number, as libhegel's seeds are unsigned, and `--suppress-health-check ""` now suppresses none.

@@ -97,7 +97,10 @@ lib/                         # Library source
                              #   checkout's in-tree target/ build (libhegel_c.<ext>))
   cli.ml / cli.mli           # Hegel.main: cmdliner flags (--profile applied
                              #   first, through set_default_profile, before the
-                             #   caller's settings thunk runs), single_test_case
+                             #   caller's settings thunk runs; one flag per
+                             #   setting in settings_flags, each value parsed by
+                             #   the engine through Settings.set_from_strings /
+                             #   hegel_settings_set_from_string), single_test_case
                              #   (test_cases = 1, Too_slow suppressed,
                              #   unbounded_choices set), and
                              #   main (Cmd.eval ~catch:false, then exit).
@@ -433,7 +436,13 @@ that runs exactly one test case per invocation (hegel-rust's
 failures print that form: `Internal.rerun_hint = Command_line`) and `[@async]`.
 `Cli.single_test_case` sets `test_cases = 1`, suppresses `Too_slow` and sets
 `unbounded_choices`, so a long-running test case is not cut off at the
-engine's choice limit. There are no
+engine's choice limit. Every other setting has a flag (`Cli.settings_flags`,
+named after its `hegel.toml` key), and the CLI knows none of their
+vocabularies: `Settings.set_from_strings` writes the settings record to a
+handle, applies each flag through `hegel_settings_set_from_string`, and reads
+the handle back, so a bad value is the engine's `Usage_error`, reported as a
+cmdliner error. `--database-key` goes through the engine too, for validation,
+and then replaces `main`'s `?database_key`. There are no
 user-defined flags: an unknown argument is a cmdliner error (exit 124), as in
 Rust. `Hegel.main` exits, so `test_cli.ml` and `test_ppx_hegel_test.ml`
 re-execute their own binary with `HEGEL_TEST_MAIN_CHILD` set to test it.

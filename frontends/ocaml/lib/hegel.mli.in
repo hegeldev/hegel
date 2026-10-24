@@ -556,9 +556,18 @@ val run_hegel_test_ppx
     If you run a stateful test this way, you probably want a very 
     large [step_count].
 
-    The supported flags are [--profile], [--seed], [--verbosity], [--derandomize],
-    [--database], [--suppress-health-check], [--backend], [--failure-blob],
-    and [--help]. [--failure-blob] may be repeated to replay several blobs. *)
+    Every other setting has a flag, named after its [hegel.toml] key with
+    dashes for underscores and taking the values [hegel.toml] takes:
+    [--seed], [--verbosity], [--derandomize], [--database], [--database-key],
+    [--phases], [--suppress-health-check], [--report-multiple-failures],
+    [--stop-on-first-failure], [--show-statistics], [--print-blob],
+    [--backend] and [--nondeterminism-strictness]. Lists such as [--phases]
+    are comma-separated, and booleans are [true]/[false], [1]/[0] or
+    [yes]/[no]. The engine reads each value, as it reads [hegel.toml], so a
+    value it does not accept is reported as a usage error. [--profile]
+    selects the settings profile the flags apply on top of,
+    [--failure-blob] (which may be repeated) replays failures from their
+    blobs, and [--help] lists the flags. *)
 val main
   :  ?settings:(unit -> Settings.t)
   -> ?test_location:test_location

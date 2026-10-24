@@ -28,23 +28,49 @@ let expect_error args substring =
       (String.is_substring message ~substring)
 ;;
 
+type parsed = Settings.t * string option * string list
+
 (* Each flag draws its argument and the change it should make to the parsed
-   settings and failure blobs. *)
-let flags
-  : (test_case -> string * (Settings.t * string list -> Settings.t * string list)) list
-  =
+   settings, database key and failure blobs. *)
+let flags : (test_case -> string * (parsed -> parsed)) list =
   let choose tc values = draw_silent tc (sampled_from values) in
+  let setting (f : Settings.t -> Settings.t) ((s, key, blobs) : parsed) : parsed =
+    f s, key, blobs
+  in
+  let boolean name (set : Settings.t -> bool -> Settings.t) tc =
+    let value, b =
+      choose
+        tc
+        [ "true", true; "1", true; "yes", true; "false", false; "0", false; "no", false ]
+    in
+    sprintf "--%s=%s" name value, setting (fun s -> set s b)
+  in
+  let subset tc all =
+    let picked = draw_silent tc (lists (sampled_from all) ()) in
+    String.concat ~sep:"," (List.map picked ~f:fst), List.map picked ~f:snd
+  in
   let health_checks =
-    [| "filter_too_much", Settings.Filter_too_much
-     ; "too_slow", Too_slow
-     ; "test_cases_too_large", Test_cases_too_large
-     ; "large_initial_test_case", Large_initial_test_case
-    |]
+    [ "filter_too_much", Settings.Filter_too_much
+    ; "too_slow", Too_slow
+    ; "test_cases_too_large", Test_cases_too_large
+    ; "large_initial_test_case", Large_initial_test_case
+    ]
+  in
+  let phases =
+    [ "explicit", Settings.Explicit
+    ; "reuse", Reuse
+    ; "generate", Generate
+    ; "target", Target
+    ; "shrink", Shrink
+    ]
+  in
+  let in_order all picked =
+    List.filter (List.map all ~f:snd) ~f:(fun x -> List.mem picked x ~equal:Poly.equal)
   in
   [ (fun tc ->
-      match draw_silent tc (optional (integers ())) with
-      | None -> "--seed=none", fun (s, blob) -> { s with seed = None }, blob
-      | Some n -> sprintf "--seed=%d" n, fun (s, blob) -> { s with seed = Some n }, blob)
+      match draw_silent tc (optional (integers ~min_value:0 ())) with
+      | None -> "--seed=none", setting (fun s -> { s with seed = None })
+      | Some n -> sprintf "--seed=%d" n, setting (fun s -> { s with seed = Some n }))
   ; (fun tc ->
       let name, verbosity =
         choose
@@ -55,20 +81,8 @@ let flags
           ; "debug", Debug
           ]
       in
-      "--verbosity=" ^ name, fun (s, blob) -> { s with verbosity }, blob)
-  ; (fun tc ->
-      let name, derandomize =
-        choose
-          tc
-          [ "true", true
-          ; "1", true
-          ; "yes", true
-          ; "false", false
-          ; "0", false
-          ; "no", false
-          ]
-      in
-      "--derandomize=" ^ name, fun (s, blob) -> { s with derandomize }, blob)
+      "--verbosity=" ^ name, setting (fun s -> { s with verbosity }))
+  ; boolean "derandomize" (fun s derandomize -> { s with derandomize })
   ; (fun tc ->
       let name, database =
         match draw_silent tc (integers ~min_value:0 ~max_value:2 ()) with
@@ -85,26 +99,46 @@ let flags
           in
           path, Path path
       in
-      "--database=" ^ name, fun (s, blob) -> { s with database }, blob)
+      "--database=" ^ name, setting (fun s -> { s with database }))
+  ; (fun tc ->
+      let key = draw_silent tc (text ~min_size:1 ()) in
+      "--database-key=" ^ key, fun (s, _, blobs) -> s, Some key, blobs)
+  ; (fun tc ->
+      let value, picked = subset tc phases in
+      "--phases=" ^ value, setting (fun s -> { s with phases = in_order phases picked }))
   ; (fun tc ->
       let value, checks =
         if draw_silent tc (booleans ())
-        then "all", Array.to_list (Array.map health_checks ~f:snd)
+        then "all", List.map health_checks ~f:snd
         else (
-          let picked =
-            draw_silent tc (lists (integers ~min_value:0 ~max_value:3 ()) ~min_size:1 ())
-            |> List.map ~f:(Array.get health_checks)
-          in
-          String.concat ~sep:"," (List.map picked ~f:fst), List.map picked ~f:snd)
+          let value, picked = subset tc health_checks in
+          value, in_order health_checks picked)
       in
       ( "--suppress-health-check=" ^ value
-      , fun (s, blob) -> { s with suppress_health_check = checks }, blob ))
+      , setting (fun s -> { s with suppress_health_check = checks }) ))
+  ; boolean "report-multiple-failures" (fun s report_multiple_failures ->
+      { s with report_multiple_failures })
+  ; boolean "stop-on-first-failure" (fun s stop_on_first_failure ->
+      { s with stop_on_first_failure })
+  ; boolean "show-statistics" (fun s show_statistics -> { s with show_statistics })
+  ; boolean "print-blob" (fun s print_blob -> { s with print_blob })
   ; (fun tc ->
       let name, backend = choose tc [ "default", Settings.Default; "urandom", Urandom ] in
-      "--backend=" ^ name, fun (s, blob) -> { s with backend }, blob)
+      "--backend=" ^ name, setting (fun s -> { s with backend }))
+  ; (fun tc ->
+      let name, nondeterminism_strictness =
+        choose
+          tc
+          [ "quiet", Settings.Nondeterminism_strictness.Quiet
+          ; "warn", Warn
+          ; "error", Error
+          ]
+      in
+      ( "--nondeterminism-strictness=" ^ name
+      , setting (fun s -> { s with nondeterminism_strictness }) ))
   ; (fun tc ->
       let blob = draw_silent tc (text ~min_size:1 ()) in
-      "--failure-blob=" ^ blob, fun (s, blobs) -> s, blobs @ [ blob ])
+      "--failure-blob=" ^ blob, fun (s, key, blobs) -> s, key, blobs @ [ blob ])
   ]
 ;;
 
@@ -125,7 +159,7 @@ let test_flags_select_settings () =
     let expected =
       List.fold
         present
-        ~init:(Settings.create ~seed:3 (), [])
+        ~init:(Settings.create ~seed:3 (), None, [])
         ~f:(fun acc (_, apply) -> apply acc)
     in
     match parse args with
@@ -133,10 +167,37 @@ let test_flags_select_settings () =
     | Error message -> failwith message)
 ;;
 
+(* Every setting a run of one test case leaves the user has a flag: all of
+   them but [test_cases] and [unbounded_choices], which [single_test_case]
+   fixes. *)
+let test_every_setting_has_a_flag () =
+  Alcotest.(check (list string))
+    "flags"
+    (List.sort
+       ~compare:String.compare
+       [ "seed"
+       ; "derandomize"
+       ; "database"
+       ; "database_key"
+       ; "verbosity"
+       ; "phases"
+       ; "suppress_health_check"
+       ; "report_multiple_failures"
+       ; "stop_on_first_failure"
+       ; "show_statistics"
+       ; "print_blob"
+       ; "backend"
+       ; "nondeterminism_strictness"
+       ])
+    (List.sort ~compare:String.compare (List.map Cli.settings_flags ~f:(fun (key, _, _) -> key)))
+;;
+
 let test_bad_values () =
-  expect_error [ "--seed"; "x" ] "--seed expects an integer or 'none'";
-  expect_error [ "--verbosity"; "loud" ] "--verbosity";
-  expect_error [ "--suppress-health-check"; "too_fast" ] "got \"too_fast\"";
+  expect_error [ "--seed"; "x" ] "seed";
+  expect_error [ "--verbosity"; "loud" ] "verbosity";
+  expect_error [ "--derandomize"; "maybe" ] "derandomize";
+  expect_error [ "--phases"; "explore" ] "explore";
+  expect_error [ "--suppress-health-check"; "too_fast" ] "too_fast";
   expect_error [ "--bogus" ] "unknown option"
 ;;
 
@@ -144,7 +205,7 @@ let test_profile () =
   Exn.protect
     ~finally:(fun () -> Settings.set_default_profile None)
     ~f:(fun () ->
-      let settings, _ =
+      let settings, _, _ =
         parse_with ~default_settings:Settings.default [ "--profile"; "ci" ]
         |> Result.ok_or_failwith
       in
@@ -279,6 +340,7 @@ let test_main_failure_replays_from_blob () =
 
 let tests =
   [ Alcotest.test_case "flags select settings" `Quick test_flags_select_settings
+  ; Alcotest.test_case "every setting has a flag" `Quick test_every_setting_has_a_flag
   ; Alcotest.test_case "bad values" `Quick test_bad_values
   ; Alcotest.test_case "--profile" `Quick test_profile
   ; Alcotest.test_case "single_test_case" `Quick test_single_test_case

@@ -228,3 +228,15 @@ let register_profile name t =
 ;;
 
 let set_default_profile name = with_context (fun ctx -> Ffi.set_default_profile ctx name)
+
+let set_from_strings t pairs =
+  with_context (fun ctx ->
+    let s = to_ffi ctx t ~database_key:None in
+    Fun.protect
+      ~finally:(fun () -> Ffi.settings_free ctx s)
+      (fun () ->
+         List.iter
+           (fun (key, value) -> Ffi.settings_set_from_string ctx s ~key ~value)
+           pairs;
+         of_ffi ctx s))
+;;

@@ -338,6 +338,13 @@ val settings_suppress_health_check : context -> settings -> int -> unit
     should be printed. *)
 val settings_print_blob : context -> settings -> bool -> unit
 
+(** [settings_set_from_string ctx s ~key ~value] sets the setting named [key]
+    (its [hegel.toml] key, or [unbounded_choices] or [database_key]) from
+    [value] as text, parsed by the engine's [hegel.toml] parser
+    ([hegel_settings_set_from_string]). Raises {!Usage_error} for an unknown
+    key or a value outside its vocabulary, leaving [s] unchanged. *)
+val settings_set_from_string : context -> settings -> key:string -> value:string -> unit
+
 (** {3 Reading a handle back}
 
     The [settings_get_*] functions read a settings handle field by field, so a

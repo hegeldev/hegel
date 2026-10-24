@@ -288,6 +288,12 @@ let c_settings_print_blob =
     (handle_t @-> handle_t @-> bool @-> returning int)
 ;;
 
+let c_settings_set_from_string =
+  foreign
+    "hegel_settings_set_from_string"
+    (handle_t @-> handle_t @-> str @-> str @-> returning int)
+;;
+
 let c_settings_register_profile =
   foreign
     "hegel_settings_register_profile"
@@ -1214,6 +1220,10 @@ let settings_suppress_health_check ctx s mask =
 
 let settings_print_blob ctx s b = check_rc ctx (c_settings_print_blob ctx s b)
 
+let settings_set_from_string ctx s ~key ~value =
+  check_rc ctx (c_settings_set_from_string ctx s key value)
+;;
+
 let settings_new_for_profile ctx name =
   let out = allocate handle_t null_handle in
   check_rc ctx (c_settings_new_for_profile ctx name out);
@@ -2039,6 +2049,7 @@ let settings_new_for_profile = Obj.magic_portable settings_new_for_profile
 let settings_register_profile = Obj.magic_portable settings_register_profile
 let set_default_profile = Obj.magic_portable set_default_profile
 let settings_free = Obj.magic_portable settings_free
+let settings_set_from_string = Obj.magic_portable settings_set_from_string
 let settings_backend = Obj.magic_portable settings_backend
 let settings_test_cases = Obj.magic_portable settings_test_cases
 let settings_verbosity = Obj.magic_portable settings_verbosity

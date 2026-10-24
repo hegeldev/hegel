@@ -386,4 +386,10 @@ val to_ffi
 (** [of_ffi ctx s] reads an libhegel settings handle into a record. *)
 val of_ffi : Hegel_ffi.Ffi.context -> Hegel_ffi.Ffi.settings -> t
 
+(** [set_from_strings t pairs] is [t] with each [(key, value)] of [pairs]
+    applied in order by the engine, which parses [value] as [hegel.toml] does
+    for the setting [key] ([hegel_settings_set_from_string]). Raises
+    [Usage_error] for an unknown key or a value outside its vocabulary. *)
+val set_from_strings : t -> (string * string) list -> t
+
 (**/**)
