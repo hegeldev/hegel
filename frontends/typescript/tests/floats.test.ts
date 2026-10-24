@@ -51,14 +51,28 @@ describe("gs.floats({ width: 32 })", () => {
       { testCases: 100 },
     ));
 
-  test("rejects bounds a 32-bit float cannot hold, and other widths", () => {
-    expect(() => gs.floats({ width: 32, minValue: 0.1 })).toThrow(
-      "minValue 0.1 is not exactly representable as a 32-bit float",
-    );
-    expect(() => gs.floats({ width: 32, maxValue: 1e300 })).toThrow(
-      "maxValue 1e+300 is not exactly representable as a 32-bit float",
-    );
-    expect(() => gs.floats({ width: 16 as 32 })).toThrow("width must be 32 or 64, got 16");
+  test.each([
+    [
+      { width: 32, minValue: 0.1 },
+      "min_value (0.1) cannot be exactly represented as a float of width 32",
+    ],
+    [
+      { width: 32, maxValue: 1.1 },
+      "max_value (1.1) cannot be exactly represented as a float of width 32",
+    ],
+    [{ width: 16 as 32 }, "unsupported float width: 16"],
+  ] as const)("the engine rejects %o", (options, message) => {
+    expect(() =>
+      hegel.test(
+        (tc) => {
+          tc.draw(gs.floats(options));
+        },
+        { testCases: 1, database: hegel.Database.disabled },
+      ),
+    ).toThrow(message);
+  });
+
+  test("defaults to width 64", () => {
     expect(gs.floats({ minValue: 0.1 }).asBasic().schema["width"]).toBe(64);
   });
 });

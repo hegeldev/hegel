@@ -137,19 +137,6 @@ class FloatsGenerator extends Generator<number> {
     const hasMin = options?.minValue !== undefined;
     const hasMax = options?.maxValue !== undefined;
     const width = options?.width ?? 64;
-    if (width !== 32 && width !== 64) {
-      throw new Error(`width must be 32 or 64, got ${String(width)}`);
-    }
-    if (width === 32) {
-      for (const [name, bound] of [
-        ["minValue", options?.minValue],
-        ["maxValue", options?.maxValue],
-      ] as const) {
-        if (bound !== undefined && Math.fround(bound) !== bound) {
-          throw new Error(`${name} ${bound} is not exactly representable as a 32-bit float`);
-        }
-      }
-    }
     // NaN only when completely unbounded; infinity when at least one side is open
     const allowNan = options?.allowNan ?? (!hasMin && !hasMax);
     const allowInfinity = options?.allowInfinity ?? (!hasMin || !hasMax);
