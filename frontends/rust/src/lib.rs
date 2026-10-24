@@ -689,6 +689,19 @@ pub use hegel_macros::concurrent_state_machine;
 /// cannot be combined with a positional settings expression, which is
 /// already a complete starting point.
 ///
+/// A failing test panics with the failure's own panic. A run that errors
+/// instead, such as one failing a health check, panics with a message
+/// starting `FailedHealthCheck: <check>`, `Flaky`, `Unsatisfiable` or
+/// `RunError`, which `#[should_panic(expected = "...")]` can match:
+///
+/// ```no_run
+/// #[hegel::test]
+/// #[should_panic(expected = "Unsatisfiable")]
+/// fn rejects_everything(tc: hegel::TestCase) {
+///     tc.assume(false);
+/// }
+/// ```
+///
 /// You can use other test attribute macros, like `tokio::test`, by putting them *before* `hegel::test`:
 ///
 /// ```no_run
