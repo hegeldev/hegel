@@ -209,7 +209,11 @@ interface DataSource {
     /** Free the handle behind a source from {@link #cloneForWorker} or {@link #block}. Safe once the case is aborted. */
     void release();
 
-    /** Append {@code message} to this source's print region ({@code hegel_note}). */
+    /**
+     * Append {@code message} to this source's print region ({@code hegel_note}). A note to a region
+     * that is already dead (the document was read while a straggling thread was still printing) is
+     * a harmless no-op; any other error the engine reports is raised.
+     */
     void note(String message);
 
     /** A caller-owned printer onto this source's print region ({@code hegel_test_case_printer}). */

@@ -1,6 +1,10 @@
 package dev.hegel;
 
 import static dev.hegel.Generators.integers;
+import static dev.hegel.Generators.just;
+import static dev.hegel.Generators.optional;
+import static dev.hegel.Generators.text;
+import static dev.hegel.Generators.tuples;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -49,6 +53,23 @@ class LibraryApiTest {
         assertTrue(finals.get() >= 1, "stamped cases: " + finals.get());
         assertTrue(report.statistics().interesting() >= 2, report.statistics().toString());
         assertTrue(report.statistics().total() > report.statistics().interesting());
+    }
+
+    @Test
+    void stringsInsideRecordsAndOptionalsPrintAsLiterals() {
+        RunReport report = Hegel.run(
+                tc -> {
+                    tc.draw(tuples(text(), text()), "pair");
+                    tc.draw(tuples(just("a b\nc"), optional(just("d e"))), "nested");
+                    throw new AssertionError("always");
+                },
+                QUIET,
+                Reporter.silent());
+        assertEquals(
+                List.of(
+                        "pair = Tuple2[value1=\"\", value2=\"\"];",
+                        "nested = Tuple2[value1=\"a b\\nc\", value2=Optional.empty];"),
+                report.failures().get(0).output());
     }
 
     @Test

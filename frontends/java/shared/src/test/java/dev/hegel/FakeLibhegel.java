@@ -135,6 +135,7 @@ final class FakeLibhegel implements Libhegel {
     int testCaseBlockRc = Abi.OK;
     int testCasePrinterRc = Abi.OK;
     int printerValueRc = Abi.OK;
+    int noteRc = Abi.OK;
 
     // Test-case clones (concurrent stateful workers).
     int cloneRc = Abi.OK;
@@ -594,6 +595,9 @@ final class FakeLibhegel implements Libhegel {
 
     @Override
     public int note(long tc, String text) {
+        if (noteRc != Abi.OK) {
+            return noteRc;
+        }
         notes.add(text);
         region(tc).note(text);
         return Abi.OK;

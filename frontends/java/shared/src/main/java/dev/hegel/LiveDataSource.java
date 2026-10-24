@@ -584,7 +584,10 @@ final class LiveDataSource implements DataSource {
 
     @Override
     public void note(String message) {
-        lib.note(tc, message);
+        int rc = lib.note(tc, message);
+        if (rc != Abi.E_INVALID_HANDLE) {
+            translate(rc, "note");
+        }
     }
 
     @Override

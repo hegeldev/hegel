@@ -71,6 +71,24 @@ class BindingErrorPathsTest {
     }
 
     @Test
+    void aNoteToADeadRegionIsIgnoredAndOtherNoteErrorsAreRaised() {
+        FakeLibhegel fake = new FakeLibhegel();
+        LiveDataSource ds = source(fake);
+        fake.noteRc = Abi.E_INVALID_HANDLE;
+        ds.note("late");
+        fake.noteRc = Abi.E_INVALID_ARG;
+        fake.lastError = "hegel_note: bad text";
+        assertEquals(
+                "hegel_note: bad text",
+                assertThrows(IllegalArgumentException.class, () -> ds.note("x")).getMessage());
+        fake.noteRc = Abi.E_INTERNAL;
+        assertTrue(assertThrows(HegelException.class, () -> ds.note("x"))
+                .getMessage()
+                .startsWith("hegel_note failed (rc=-8)"));
+        assertTrue(fake.notes.isEmpty());
+    }
+
+    @Test
     void clonesDrawThroughTheirOwnHandleAndAreReleased() {
         FakeLibhegel fake = new FakeLibhegel();
         fake.integerValue = 4L;
