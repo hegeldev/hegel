@@ -102,13 +102,15 @@ TEST(Pools, FilteredConsumeRestoresRejectedValues) {
     EXPECT_GT(completed_after_rejection, 0);
 }
 
-// A filtered consuming draw whose predicate rejects every value rejects the
+// A filtered consuming draw whose predicate rejects every attempt rejects the
 // test case.
 TEST(Pools, FilteredConsumeWithNoAcceptableValueRejects) {
     hegel::test(
         [](hegel::TestCase& tc) {
             hegel::stateful::Pool<int> pool(tc);
             pool.add(1);
+            pool.add(2);
+            pool.add(3);
             if (tc.draw(gs::booleans())) {
                 (void)tc.draw(hegel::stateful::values_consumed(pool).filter(
                     [](const int&) { return false; }));
