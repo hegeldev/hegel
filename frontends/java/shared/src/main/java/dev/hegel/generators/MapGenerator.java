@@ -18,6 +18,7 @@ public final class MapGenerator<K, V> implements Generator<Map<K, V>> {
     private final Generator<V> values;
     private final long minSize;
     private final long maxSize;
+    private final CachedLabel label = new CachedLabel();
 
     public MapGenerator(Generator<K> keys, Generator<V> values, long minSize, long maxSize) {
         Sizes.validate(minSize, maxSize, "maps");
@@ -45,8 +46,14 @@ public final class MapGenerator<K, V> implements Generator<Map<K, V>> {
 
     /** @hidden */
     @Override
+    public long label() {
+        return label.get(() -> Label.combine(Label.MAP, keys.label(), values.label()));
+    }
+
+    /** @hidden */
+    @Override
     public Map<K, V> doDraw(TestCase tc) {
-        tc.startSpan(Label.MAP);
+        tc.startSpan(label());
         try {
             long id = tc.newCollection(minSize, maxSize);
             try {

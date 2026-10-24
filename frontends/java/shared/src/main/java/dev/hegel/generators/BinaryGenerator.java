@@ -1,6 +1,7 @@
 package dev.hegel.generators;
 
 import dev.hegel.Generator;
+import dev.hegel.Label;
 import dev.hegel.TestCase;
 
 /**
@@ -33,6 +34,12 @@ public final class BinaryGenerator implements Generator<byte[]> {
      */
     public BinaryGenerator maxSize(int maxSize) {
         return new BinaryGenerator(minSize, maxSize);
+    }
+
+    /** @hidden */
+    @Override
+    public long label() {
+        return Label.of("hegel.binary");
     }
 
     /** @hidden */

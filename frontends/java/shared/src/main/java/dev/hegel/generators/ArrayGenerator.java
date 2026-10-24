@@ -14,6 +14,7 @@ public final class ArrayGenerator<T> implements Generator<T[]> {
     private final Generator<T> element;
     private final int length;
     private final IntFunction<T[]> newArray;
+    private final CachedLabel label = new CachedLabel();
 
     /**
      * @param element the element generator
@@ -31,8 +32,14 @@ public final class ArrayGenerator<T> implements Generator<T[]> {
 
     /** @hidden */
     @Override
+    public long label() {
+        return label.get(() -> Label.combine(Label.ARRAY, element.label()));
+    }
+
+    /** @hidden */
+    @Override
     public T[] doDraw(TestCase tc) {
-        tc.startSpan(Label.ARRAY);
+        tc.startSpan(label());
         try {
             T[] out = newArray.apply(length);
             for (int i = 0; i < length; i++) {

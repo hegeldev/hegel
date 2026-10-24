@@ -17,6 +17,7 @@ import java.util.Map;
 public final class RecordGenerator<T> implements Generator<T> {
     private final Class<T> type;
     private final Map<String, Generator<?>> overrides;
+    private final CachedLabel label = new CachedLabel();
 
     public RecordGenerator(Class<T> type, Map<String, Generator<?>> overrides) {
         if (!type.isRecord()) {
@@ -49,12 +50,18 @@ public final class RecordGenerator<T> implements Generator<T> {
         return new RecordGenerator<>(type, next);
     }
 
+    /** @hidden */
+    @Override
+    public long label() {
+        return label.get(() -> Label.combine(Label.FIXED_DICT, Label.of(type.getName())));
+    }
+
     @Override
     public T doDraw(TestCase tc) {
         RecordComponent[] components = type.getRecordComponents();
         Object[] values = new Object[components.length];
         Class<?>[] paramTypes = new Class<?>[components.length];
-        tc.startSpan(Label.FIXED_DICT);
+        tc.startSpan(label());
         try {
             for (int i = 0; i < components.length; i++) {
                 RecordComponent rc = components[i];

@@ -31,6 +31,12 @@ public final class IpAddressGenerator implements Generator<String> {
 
     /** @hidden */
     @Override
+    public long label() {
+        return Label.of("hegel.ip_addresses");
+    }
+
+    /** @hidden */
+    @Override
     public String doDraw(TestCase tc) {
         if (version != null) {
             return version == 4 ? formatV4(tc.generateIpv4()) : formatV6(tc.generateIpv6());

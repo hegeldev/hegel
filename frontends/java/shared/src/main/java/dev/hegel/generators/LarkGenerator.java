@@ -2,6 +2,7 @@ package dev.hegel.generators;
 
 import dev.hegel.Generator;
 import dev.hegel.GrammarHandle;
+import dev.hegel.Label;
 import dev.hegel.TestCase;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -147,6 +148,12 @@ public final class LarkGenerator implements Generator<String> {
      */
     public LarkGenerator importPath(Path dir) {
         return new LarkGenerator(grammar, start, explicit, alphabet, maxSize, maxDepth, dir);
+    }
+
+    /** @hidden */
+    @Override
+    public long label() {
+        return Label.FROM_LARK;
     }
 
     /** @hidden */

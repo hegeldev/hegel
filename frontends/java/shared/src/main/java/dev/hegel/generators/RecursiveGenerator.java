@@ -29,6 +29,7 @@ public final class RecursiveGenerator<T> implements Generator<T> {
     private final Function<Generator<T>, ? extends Generator<T>> extend;
     private final int maxDepth;
     private final int maxLeaves;
+    private final CachedLabel label = new CachedLabel();
 
     public RecursiveGenerator(
             Generator<T> base, Function<Generator<T>, ? extends Generator<T>> extend, int maxDepth, int maxLeaves) {
@@ -76,8 +77,14 @@ public final class RecursiveGenerator<T> implements Generator<T> {
 
     /** @hidden */
     @Override
+    public long label() {
+        return label.get(() -> Label.combine(Label.RECURSIVE, base.label()));
+    }
+
+    /** @hidden */
+    @Override
     public T doDraw(TestCase tc) {
-        tc.startSpan(Label.RECURSIVE);
+        tc.startSpan(label());
         try {
             long recursion = tc.newRecursion(maxDepth, maxLeaves);
             try {
@@ -104,7 +111,7 @@ public final class RecursiveGenerator<T> implements Generator<T> {
     private T drawSubtree(TestCase tc, long recursion, long depth) {
         if (tc.recursionBranch(recursion, depth)) {
             Generator<T> subtrees = inner -> {
-                inner.startSpan(Label.RECURSIVE);
+                inner.startSpan(label());
                 try {
                     return drawSubtree(inner, recursion, depth + 1);
                 } finally {

@@ -182,7 +182,7 @@ class GeneratorParityTest {
         FakeLibhegel fake = new FakeLibhegel();
         TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false);
         assertEquals(Optional.empty(), tc.draw(optional(integers())));
-        assertEquals(List.of(Label.OPTIONAL), fake.startedSpans);
+        assertEquals(List.of(Label.combine(Label.OPTIONAL, integers().label())), fake.startedSpans);
     }
 
     @Test

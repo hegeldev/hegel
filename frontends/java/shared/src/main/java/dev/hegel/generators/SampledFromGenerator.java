@@ -1,6 +1,7 @@
 package dev.hegel.generators;
 
 import dev.hegel.Generator;
+import dev.hegel.Label;
 import dev.hegel.TestCase;
 import java.util.List;
 
@@ -18,6 +19,12 @@ public final class SampledFromGenerator<T> implements Generator<T> {
      */
     public SampledFromGenerator(List<T> values) {
         this.values = List.copyOf(values);
+    }
+
+    /** @hidden */
+    @Override
+    public long label() {
+        return Label.SAMPLED_FROM;
     }
 
     /** @hidden */

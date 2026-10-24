@@ -88,6 +88,11 @@ public final class Pool<T> {
 
     private final class ReusableGenerator implements Generator<T> {
         @Override
+        public long label() {
+            return Label.POOL_VALUES_REUSABLE;
+        }
+
+        @Override
         public T doDraw(TestCase tc) {
             return PoolDraws.draw(tc, poolId, values, false);
         }
@@ -95,13 +100,28 @@ public final class Pool<T> {
 
     private final class ConsumingGenerator implements Generator<T> {
         @Override
+        public long label() {
+            return Label.POOL_VALUES_CONSUMED;
+        }
+
+        @Override
         public T doDraw(TestCase tc) {
             return PoolDraws.draw(tc, poolId, values, true);
         }
 
         @Override
         public Generator<T> filter(Predicate<? super T> predicate) {
-            return tc -> PoolDraws.drawFiltered(tc, poolId, values, predicate);
+            return new Generator<T>() {
+                @Override
+                public long label() {
+                    return Label.combine(Label.FILTER, Label.POOL_VALUES_CONSUMED);
+                }
+
+                @Override
+                public T doDraw(TestCase tc) {
+                    return PoolDraws.drawFiltered(tc, poolId, values, predicate);
+                }
+            };
         }
     }
 }

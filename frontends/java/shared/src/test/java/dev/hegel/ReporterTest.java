@@ -79,20 +79,20 @@ class ReporterTest {
     @Test
     void labelsMatchTheEngineConstants() {
         assertEquals(Label.of("hegel.lists"), Label.LIST);
-        assertEquals(Label.of("dev.hegel.list_element"), Label.LIST_ELEMENT);
         assertEquals(Label.of("hegel.sets"), Label.SET);
-        assertEquals(Label.of("dev.hegel.set_element"), Label.SET_ELEMENT);
         assertEquals(Label.of("hegel.dicts"), Label.MAP);
-        assertEquals(Label.of("dev.hegel.map_entry"), Label.MAP_ENTRY);
         assertEquals(Label.of("hegel.tuple"), Label.TUPLE);
         assertEquals(Label.of("hegel.one_of"), Label.ONE_OF);
         assertEquals(Label.of("hegel.optional"), Label.OPTIONAL);
         assertEquals(Label.of("hegel.fixed_dicts"), Label.FIXED_DICT);
         assertEquals(Label.of("hegel.flat_map"), Label.FLAT_MAP);
         assertEquals(Label.of("hegel.filter"), Label.FILTER);
+        assertEquals(Label.of("hegel.filter.attempt"), Label.FILTER_ATTEMPT);
+        assertEquals(Label.of("hegel.deferred"), Label.DEFERRED);
+        assertEquals(Label.of("hegel.from_lark"), Label.FROM_LARK);
+        assertEquals(Label.of("hegel.generator"), Label.GENERATOR);
         assertEquals(Label.of("hegel.map"), Label.MAPPED);
         assertEquals(Label.of("hegel.sampled_from"), Label.SAMPLED_FROM);
-        assertEquals(Label.of("dev.hegel.enum_variant"), Label.ENUM_VARIANT);
         assertEquals(Label.of("hegel.stateful.rule"), Label.STATEFUL_RULE);
         // Minted labels are stable and match the hash the composite generator already uses.
         assertEquals(Label.COMPOSITE, Label.of("hegel.composite"));

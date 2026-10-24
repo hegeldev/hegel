@@ -9,7 +9,7 @@ import java.util.function.Predicate;
 
 /**
  * Result of {@link Generator#filter}. Always uses the composite draw path: it retries the source up
- * to {@link #ATTEMPTS} times, bracketing each attempt in a {@code filter} span, and rejects the
+ * to {@link #ATTEMPTS} times, bracketing each attempt in a {@link Label#FILTER_ATTEMPT} span, and rejects the
  * whole case if none satisfy the predicate.
  *
  * @param <T> the value type
@@ -23,16 +23,23 @@ public final class FilteredGenerator<T> implements Generator<T> {
 
     private final Generator<T> source;
     private final Predicate<? super T> predicate;
+    private final CachedLabel label = new CachedLabel();
 
     public FilteredGenerator(Generator<T> source, Predicate<? super T> predicate) {
         this.source = source;
         this.predicate = predicate;
     }
 
+    /** @hidden */
+    @Override
+    public long label() {
+        return label.get(() -> Label.combine(Label.FILTER, source.label()));
+    }
+
     @Override
     public T doDraw(TestCase tc) {
         for (int attempt = 0; attempt < ATTEMPTS; attempt++) {
-            tc.startSpan(Label.FILTER);
+            tc.startSpan(Label.FILTER_ATTEMPT);
             boolean discard = true;
             try {
                 T value = source.doDraw(tc);

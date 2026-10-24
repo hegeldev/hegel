@@ -27,7 +27,10 @@ class LabelTest {
         assertEquals(Label.of("hegel.one_of"), Label.ONE_OF);
         assertEquals(Label.of("hegel.optional"), Label.OPTIONAL);
         assertEquals(Label.of("hegel.filter"), Label.FILTER);
+        assertEquals(Label.of("hegel.filter.attempt"), Label.FILTER_ATTEMPT);
         assertEquals(Label.of("hegel.stateful.rule"), Label.STATEFUL_RULE);
+        assertEquals(Label.of("hegel.pool.values_reusable"), Label.POOL_VALUES_REUSABLE);
+        assertEquals(Label.of("hegel.pool.values_consumed"), Label.POOL_VALUES_CONSUMED);
     }
 
     @Test
@@ -43,9 +46,28 @@ class LabelTest {
     @Test
     void frontendConstantsAreDistinct() {
         long[] all = {
-            Label.LIST, Label.LIST_ELEMENT, Label.SET, Label.SET_ELEMENT, Label.MAP, Label.MAP_ENTRY,
-            Label.TUPLE, Label.ONE_OF, Label.OPTIONAL, Label.FIXED_DICT, Label.FLAT_MAP, Label.FILTER,
-            Label.MAPPED, Label.SAMPLED_FROM, Label.ENUM_VARIANT, Label.STATEFUL_RULE, Label.COMPOSITE,
+            Label.LIST,
+            Label.SET,
+            Label.MAP,
+            Label.TUPLE,
+            Label.ONE_OF,
+            Label.OPTIONAL,
+            Label.FIXED_DICT,
+            Label.FLAT_MAP,
+            Label.FILTER,
+            Label.FILTER_ATTEMPT,
+            Label.MAPPED,
+            Label.SAMPLED_FROM,
+            Label.STATEFUL_RULE,
+            Label.RECURSIVE,
+            Label.PERMUTATION,
+            Label.ARRAY,
+            Label.COMPOSITE,
+            Label.DEFERRED,
+            Label.FROM_LARK,
+            Label.POOL_VALUES_REUSABLE,
+            Label.POOL_VALUES_CONSUMED,
+            Label.GENERATOR,
         };
         for (int i = 0; i < all.length; i++) {
             for (int j = i + 1; j < all.length; j++) {

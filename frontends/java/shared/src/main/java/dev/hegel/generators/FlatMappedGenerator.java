@@ -16,15 +16,22 @@ import java.util.function.Function;
 public final class FlatMappedGenerator<T, U> implements Generator<U> {
     private final Generator<T> source;
     private final Function<? super T, ? extends Generator<U>> f;
+    private final CachedLabel label = new CachedLabel();
 
     public FlatMappedGenerator(Generator<T> source, Function<? super T, ? extends Generator<U>> f) {
         this.source = source;
         this.f = f;
     }
 
+    /** @hidden */
+    @Override
+    public long label() {
+        return label.get(() -> Label.combine(Label.FLAT_MAP, source.label()));
+    }
+
     @Override
     public U doDraw(TestCase tc) {
-        tc.startSpan(Label.FLAT_MAP);
+        tc.startSpan(label());
         try {
             T value = source.doDraw(tc);
             Generator<U> next = f.apply(value);

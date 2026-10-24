@@ -13,13 +13,29 @@ final class PoolDraws {
     /** Draw a value from the pool, removing it when {@code consume}; an empty pool rejects the case. */
     static <T> T draw(TestCase tc, long poolId, Map<Long, T> values, boolean consume) {
         tc.assume(!values.isEmpty());
-        long variableId = tc.poolGenerate(poolId, consume);
+        tc.startSpan(consume ? Label.POOL_VALUES_CONSUMED : Label.POOL_VALUES_REUSABLE);
+        long variableId;
+        try {
+            variableId = tc.poolGenerate(poolId, consume);
+        } finally {
+            tc.stopSpan(false);
+        }
         return consume ? values.remove(variableId) : values.get(variableId);
+    }
+
+    /** Consume an engine-chosen value of the pool, inside a {@link Label#POOL_VALUES_CONSUMED} span. */
+    private static long draw(TestCase tc, long poolId) {
+        tc.startSpan(Label.POOL_VALUES_CONSUMED);
+        try {
+            return tc.poolGenerate(poolId, true);
+        } finally {
+            tc.stopSpan(false);
+        }
     }
 
     /**
      * A consuming draw of a value {@code predicate} accepts. Each attempt consumes an engine-chosen
-     * value inside a {@link Label#FILTER} span, closed as discarded on rejection, so no attempt
+     * value inside a {@link Label#FILTER_ATTEMPT} span, closed as discarded on rejection, so no attempt
      * draws a value an earlier one rejected; the attempts stop early once every value in the pool
      * has been rejected. Once they are over every rejected value is put back, so the draw consumes
      * only the value it yields. The case is rejected when no attempt is accepted.
@@ -28,10 +44,10 @@ final class PoolDraws {
         List<Long> rejected = new ArrayList<>();
         try {
             for (int attempt = 0; attempt < FilteredGenerator.ATTEMPTS && rejected.size() < values.size(); attempt++) {
-                tc.startSpan(Label.FILTER);
+                tc.startSpan(Label.FILTER_ATTEMPT);
                 boolean discard = true;
                 try {
-                    long variableId = tc.poolGenerate(poolId, true);
+                    long variableId = draw(tc, poolId);
                     if (predicate.test(values.get(variableId))) {
                         discard = false;
                         return values.remove(variableId);

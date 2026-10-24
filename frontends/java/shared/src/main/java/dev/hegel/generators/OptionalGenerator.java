@@ -16,6 +16,7 @@ public final class OptionalGenerator<T, R> implements Generator<R> {
     private final Generator<T> inner;
     private final Function<? super T, ? extends R> present;
     private final R empty;
+    private final CachedLabel label = new CachedLabel();
 
     /**
      * @param inner the generator of present values
@@ -30,8 +31,14 @@ public final class OptionalGenerator<T, R> implements Generator<R> {
 
     /** @hidden */
     @Override
+    public long label() {
+        return label.get(() -> Label.combine(Label.OPTIONAL, inner.label()));
+    }
+
+    /** @hidden */
+    @Override
     public R doDraw(TestCase tc) {
-        tc.startSpan(Label.OPTIONAL);
+        tc.startSpan(label());
         try {
             if (tc.generateBoolean(0.5)) {
                 return present.apply(inner.doDraw(tc));

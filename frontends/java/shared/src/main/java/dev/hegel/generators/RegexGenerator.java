@@ -1,6 +1,7 @@
 package dev.hegel.generators;
 
 import dev.hegel.Generator;
+import dev.hegel.Label;
 import dev.hegel.TestCase;
 
 /**
@@ -44,6 +45,12 @@ public final class RegexGenerator implements Generator<String> {
      */
     public RegexGenerator alphabet(TextGenerator characters) {
         return new RegexGenerator(pattern, fullmatch, characters);
+    }
+
+    /** @hidden */
+    @Override
+    public long label() {
+        return Label.of("hegel.from_regex");
     }
 
     /** @hidden */

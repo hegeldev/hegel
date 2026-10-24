@@ -1,6 +1,7 @@
 package dev.hegel.generators;
 
 import dev.hegel.Generator;
+import dev.hegel.Label;
 import dev.hegel.StringGeneratorHandle;
 import dev.hegel.TestCase;
 import dev.hegel.lowlevel.Abi;
@@ -300,6 +301,12 @@ public final class TextGenerator implements Generator<String> {
                 includeChars,
                 chars,
                 alphabet);
+    }
+
+    /** @hidden */
+    @Override
+    public long label() {
+        return Label.of("hegel.text");
     }
 
     /** @hidden */

@@ -158,9 +158,14 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   holds the C constants; `Label` (shared) holds the frontend's span labels —
   opaque `u64`s the engine computes (`Label.of` is `hegel_label_from_name`,
   `Label.combine` is `hegel_label_combine`, both through `Engine.real()` so a
-  test's fake binding never changes them). The standard generators use the
-  same `hegel.<kind>` names as the other frontends (`hegel.lists`,
-  `hegel.one_of`, ...); Java-only spans are `dev.hegel.<kind>`. The engine's
+  test's fake binding never changes them). Every generator has a `label()`:
+  leaves use the other frontends' `hegel.<kind>` names (`hegel.integers`,
+  `hegel.text`, ...), and a composite combines its kind (`hegel.lists`,
+  `hegel.optional`, ...) with its components' labels, computed once per
+  instance (`CachedLabel`) and used for the span it draws in. Filter attempts
+  open `hegel.filter.attempt` spans and pool draws
+  `hegel.pool.values_reusable`/`values_consumed` spans, as in Rust and
+  Python. The engine's
   `hegel_set_unicode_version` has no Java surface (Java reports no Unicode
   version). The grammar functions are bound except `hegel_grammar_placeholder`
   and `hegel_generate_grammar`: the frontend draws every grammar string through

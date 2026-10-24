@@ -70,7 +70,7 @@ class PoolFilterTest {
         pool.add(1);
         assertThrows(AssumeRejected.class, () -> tc.draw(pool.consuming().filter(x -> x == 0)));
         assertEquals(List.of(0L), fake.restoredVariables);
-        assertEquals(1, fake.startedSpans.size());
+        assertEquals(List.of(Label.FILTER_ATTEMPT, Label.POOL_VALUES_CONSUMED), fake.startedSpans);
         assertEquals(1, pool.size());
     }
 

@@ -23,6 +23,7 @@ public final class ListGenerator<T> implements Generator<List<T>> {
     private final long minSize;
     private final long maxSize;
     private final Function<? super T, ?> uniqueKey;
+    private final CachedLabel label = new CachedLabel();
 
     public ListGenerator(Generator<T> element, long minSize, long maxSize) {
         this(element, minSize, maxSize, null);
@@ -73,8 +74,14 @@ public final class ListGenerator<T> implements Generator<List<T>> {
 
     /** @hidden */
     @Override
+    public long label() {
+        return label.get(() -> Label.combine(Label.LIST, element.label()));
+    }
+
+    /** @hidden */
+    @Override
     public List<T> doDraw(TestCase tc) {
-        tc.startSpan(Label.LIST);
+        tc.startSpan(label());
         try {
             long id = tc.newCollection(minSize, maxSize);
             try {

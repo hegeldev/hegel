@@ -85,6 +85,11 @@ public final class ConcurrentPool<T> {
 
     private final class ReusableGenerator implements Generator<T> {
         @Override
+        public long label() {
+            return Label.POOL_VALUES_REUSABLE;
+        }
+
+        @Override
         public T doDraw(TestCase tc) {
             synchronized (ConcurrentPool.this) {
                 return PoolDraws.draw(tc, poolId, values, false);
@@ -94,6 +99,11 @@ public final class ConcurrentPool<T> {
 
     private final class ConsumingGenerator implements Generator<T> {
         @Override
+        public long label() {
+            return Label.POOL_VALUES_CONSUMED;
+        }
+
+        @Override
         public T doDraw(TestCase tc) {
             synchronized (ConcurrentPool.this) {
                 return PoolDraws.draw(tc, poolId, values, true);
@@ -102,9 +112,17 @@ public final class ConcurrentPool<T> {
 
         @Override
         public Generator<T> filter(Predicate<? super T> predicate) {
-            return tc -> {
-                synchronized (ConcurrentPool.this) {
-                    return PoolDraws.drawFiltered(tc, poolId, values, predicate);
+            return new Generator<T>() {
+                @Override
+                public long label() {
+                    return Label.combine(Label.FILTER, Label.POOL_VALUES_CONSUMED);
+                }
+
+                @Override
+                public T doDraw(TestCase tc) {
+                    synchronized (ConcurrentPool.this) {
+                        return PoolDraws.drawFiltered(tc, poolId, values, predicate);
+                    }
                 }
             };
         }

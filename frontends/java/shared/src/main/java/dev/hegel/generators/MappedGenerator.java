@@ -15,15 +15,22 @@ import java.util.function.Function;
 public final class MappedGenerator<T, U> implements Generator<U> {
     private final Generator<T> source;
     private final Function<? super T, ? extends U> f;
+    private final CachedLabel label = new CachedLabel();
 
     public MappedGenerator(Generator<T> source, Function<? super T, ? extends U> f) {
         this.source = source;
         this.f = f;
     }
 
+    /** @hidden */
+    @Override
+    public long label() {
+        return label.get(() -> Label.combine(Label.MAPPED, source.label()));
+    }
+
     @Override
     public U doDraw(TestCase tc) {
-        tc.startSpan(Label.MAPPED);
+        tc.startSpan(label());
         try {
             return f.apply(source.doDraw(tc));
         } finally {

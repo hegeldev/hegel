@@ -1,6 +1,7 @@
 package dev.hegel.generators;
 
 import dev.hegel.Generator;
+import dev.hegel.Label;
 import dev.hegel.TestCase;
 import java.util.UUID;
 
@@ -34,6 +35,12 @@ public final class UuidGenerator implements Generator<UUID> {
             throw new IllegalArgumentException("uuids: version must be in [1, 5]");
         }
         return version;
+    }
+
+    /** @hidden */
+    @Override
+    public long label() {
+        return Label.of("hegel.uuids");
     }
 
     /** @hidden */

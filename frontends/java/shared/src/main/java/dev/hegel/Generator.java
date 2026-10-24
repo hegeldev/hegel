@@ -28,6 +28,19 @@ public interface Generator<T> {
     T doDraw(TestCase tc);
 
     /**
+     * The label identifying this generator to the engine. A composite generator labels the span it
+     * draws in with its own kind combined with its components' labels ({@link Label#combine}), so
+     * that a list of integers and a list of strings get different labels while every list of
+     * integers gets the same one, as in every Hegel frontend. A generator that does not override
+     * this is labelled {@link Label#GENERATOR}.
+     *
+     * @return the label
+     */
+    default long label() {
+        return Label.GENERATOR;
+    }
+
+    /**
      * Transform each generated value with {@code f}.
      *
      * @param f the mapping function

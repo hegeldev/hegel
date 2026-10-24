@@ -1,6 +1,7 @@
 package dev.hegel.generators;
 
 import dev.hegel.Generator;
+import dev.hegel.Label;
 import dev.hegel.TestCase;
 import java.math.BigInteger;
 
@@ -53,6 +54,12 @@ public final class BigIntegerGenerator implements Generator<BigInteger> {
      */
     public BigIntegerGenerator max(BigInteger max) {
         return new BigIntegerGenerator(min, max);
+    }
+
+    /** @hidden */
+    @Override
+    public long label() {
+        return Label.of("hegel.integers");
     }
 
     /** @hidden */

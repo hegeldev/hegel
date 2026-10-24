@@ -24,6 +24,12 @@ public final class PermutationGenerator<T> implements Generator<List<T>> {
 
     /** @hidden */
     @Override
+    public long label() {
+        return Label.PERMUTATION;
+    }
+
+    /** @hidden */
+    @Override
     public List<T> doDraw(TestCase tc) {
         tc.startSpan(Label.PERMUTATION);
         try {
