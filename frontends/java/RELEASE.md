@@ -74,6 +74,8 @@ New generators, matching the other Hegel frontends:
 - `text().alphabet(chars)` draws only from the given characters, and `text().codec(name)` restricts to the characters `"ascii"`, `"latin-1"` (or `"iso-8859-1"`) or `"utf-8"` can encode. An alphabet cannot be combined with the other character restrictions.
 - `fromRegex(pattern).alphabet(characters)` restricts every character of a generated string, padding included, to those `characters` can generate, such as `characters().codec("ascii")`.
 
+`text()` now leaves character validation to the engine. `text().categories("Cs")` and `text().categories("C")` were rejected when the generator was built because they name surrogates; the engine never generates surrogates, so `categories("C")` now generates the other control, format, private-use and unassigned characters, and a set of categories that leaves no characters fails when drawn from with an `IllegalArgumentException`, as an unknown codec does.
+
 `optional`, `optionalInts`, `optionalLongs` and `optionalDoubles` now draw under the engine's standard `hegel.optional` label, as the other frontends' optional generators do, rather than as a `oneOf`. Values still shrink toward empty, but stored failures involving optional values may no longer replay.
 
 Explicit examples are now supported, so `Phase.EXPLICIT` is no longer reserved. `Settings.examples(Example...)`, or `@HegelTest(examples = {"methodName", ...})` naming methods that return an `Example` or an `Iterable` of them, gives values a test runs with before any are generated:

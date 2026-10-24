@@ -67,8 +67,7 @@ class FluentBuilderTest {
         testCase().draw(text().minSize(3));
         assertEquals(3, fake.textMinSize);
         assertEquals(Abi.MAX_SIZE_DEFAULT, fake.textMaxSize);
-        // Surrogates are excluded by default.
-        assertEquals(java.util.List.of("Cs"), fake.textExcludeCategories);
+        assertEquals(null, fake.textExcludeCategories);
         assertEquals(null, fake.textCategories);
 
         testCase()
@@ -83,11 +82,8 @@ class FluentBuilderTest {
         assertEquals("x", fake.textIncludeCharacters);
         assertEquals("y", fake.textExcludeCharacters);
 
-        // An explicit exclusion keeps Cs appended exactly once.
         testCase().draw(text().excludeCategories("Cc"));
-        assertEquals(java.util.List.of("Cc", "Cs"), fake.textExcludeCategories);
-        testCase().draw(text().excludeCategories("Cs"));
-        assertEquals(java.util.List.of("Cs"), fake.textExcludeCategories);
+        assertEquals(java.util.List.of("Cc"), fake.textExcludeCategories);
     }
 
     @Test

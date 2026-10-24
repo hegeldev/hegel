@@ -5,15 +5,13 @@ import dev.hegel.Label;
 import dev.hegel.StringGeneratorHandle;
 import dev.hegel.TestCase;
 import dev.hegel.lowlevel.Abi;
-import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Generates strings with fine-grained control over length and character selection.
  *
- * <p>Surrogate codepoints (Unicode category {@code Cs}) are excluded by default so generated
- * strings round-trip cleanly through Java; request specific categories to override the default
- * exclusion.
+ * <p>The engine never generates surrogate codepoints (Unicode category {@code Cs}), so generated
+ * strings round-trip cleanly through Java.
  *
  * <p>Without an explicit {@link #maxSize(int)}, the engine picks the maximum length: 100
  * characters, or {@code minSize + 100} for a minimum above 100. Set one for longer strings.
@@ -23,9 +21,6 @@ import java.util.List;
  * codepoints}, {@link #categories(String...) categories} and so on); the two cannot be combined.
  */
 public final class TextGenerator implements Generator<String> {
-    /** The codecs {@link #codec(String)} accepts, as the engine names them. */
-    private static final List<String> CODECS = List.of("ascii", "latin-1", "iso-8859-1", "utf-8");
-
     private final long minSize;
     private final long maxSize;
     private final String codec;
@@ -87,23 +82,11 @@ public final class TextGenerator implements Generator<String> {
         this.codec = codec;
         this.minCodepoint = minCodepoint;
         this.maxCodepoint = maxCodepoint;
-        this.categories = validateCategories(categories);
+        this.categories = categories;
         this.excludeCategories = excludeCategories;
         this.includeChars = includeChars;
         this.excludeChars = excludeChars;
         this.alphabet = alphabet;
-    }
-
-    private static List<String> validateCategories(List<String> categories) {
-        if (categories != null) {
-            for (String c : categories) {
-                if (c.equals("Cs") || c.equals("C")) {
-                    throw new IllegalArgumentException(
-                            "text: category \"" + c + "\" includes surrogate codepoints, unsupported");
-                }
-            }
-        }
-        return categories;
     }
 
     private TextGenerator with(
@@ -193,14 +176,13 @@ public final class TextGenerator implements Generator<String> {
      * {@code "utf-8"} (no restriction). The codec's range intersects with any {@link
      * #codepoints(int, int) codepoint range}.
      *
+     * <p>The engine checks the name: drawing from a generator with any other codec throws an {@link
+     * IllegalArgumentException}.
+     *
      * @param codec the codec's name
      * @return a copy with the codec set
-     * @throws IllegalArgumentException for any other codec name
      */
     public TextGenerator codec(String codec) {
-        if (!CODECS.contains(codec)) {
-            throw new IllegalArgumentException("text: unsupported codec \"" + codec + "\"; expected one of " + CODECS);
-        }
         return with(
                 minSize,
                 maxSize,
@@ -324,16 +306,6 @@ public final class TextGenerator implements Generator<String> {
         if (alphabet != null) {
             return tc.textGenerator(min, max, null, 0, Abi.NO_MAX_CODEPOINT, List.of(), null, alphabet, null);
         }
-        List<String> exclude;
-        if (categories != null) {
-            exclude = null;
-        } else {
-            // Surrogates are excluded by default so drawn strings are valid Java strings.
-            exclude = new ArrayList<>(excludeCategories == null ? List.of() : excludeCategories);
-            if (!exclude.contains("Cs")) {
-                exclude.add("Cs");
-            }
-        }
         return tc.textGenerator(
                 min,
                 max,
@@ -341,7 +313,7 @@ public final class TextGenerator implements Generator<String> {
                 minCodepoint == null ? 0 : minCodepoint,
                 maxCodepoint == null ? Abi.NO_MAX_CODEPOINT : maxCodepoint,
                 categories,
-                exclude,
+                excludeCategories,
                 includeChars,
                 excludeChars);
     }
