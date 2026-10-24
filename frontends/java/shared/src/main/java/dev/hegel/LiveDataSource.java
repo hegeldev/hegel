@@ -348,9 +348,7 @@ final class LiveDataSource implements DataSource {
                 String value = terminal.apply((int) index[0]);
                 translate(lib.grammarDrawProvide(draw, value), "grammar_draw_provide");
             }
-            if (rc != Abi.E_NOT_FOUND) {
-                translate(rc, "grammar_draw_next");
-            }
+            translate(rc == Abi.E_NOT_FOUND ? Abi.OK : rc, "grammar_draw_next");
             String[] out = new String[1];
             translate(lib.grammarDrawResult(draw, out), "grammar_draw_result");
             return out[0];

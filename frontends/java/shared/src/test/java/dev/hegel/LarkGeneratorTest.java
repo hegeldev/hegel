@@ -141,6 +141,7 @@ class LarkGeneratorTest {
         LarkGenerator named = g.explicit("A", text());
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> named.explicit("A", text()));
         assertTrue(e.getMessage().contains("more than one generator"), e.getMessage());
+        named.explicit("B", text());
     }
 
     @Test

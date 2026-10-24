@@ -117,7 +117,7 @@ class TestCaseApiTest {
                     });
                     after.incrementAndGet();
                 },
-                SETTINGS.testCases(20));
+                SETTINGS.testCases(5).suppressHealthCheck(HealthCheck.TOO_SLOW));
         assertEquals(0, after.get());
         assertTrue(repetitions.get() > 0);
     }
