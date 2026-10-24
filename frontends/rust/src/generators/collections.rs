@@ -5,7 +5,7 @@ use crate::test_case::invalid_argument;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 static VEC_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.vec"));
 static HASH_SET_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.hash_set"));
@@ -19,9 +19,24 @@ pub struct VecGenerator<G, T> {
     pub(crate) elements: G,
     pub(crate) min_size: usize,
     pub(crate) max_size: Option<usize>,
-    pub(crate) unique_by: Option<fn(&T, &T) -> bool>,
+    pub(crate) unique: Option<Uniqueness<T>>,
     pub(crate) label: u64,
     pub(crate) _phantom: PhantomData<fn(T)>,
+}
+
+/// How a [`VecGenerator`] decides that two elements are duplicates.
+pub(crate) enum Uniqueness<T> {
+    Equal(fn(&T, &T) -> bool),
+    SameKey(Arc<dyn Fn(&T, &T) -> bool + Send + Sync>),
+}
+
+impl<T> Uniqueness<T> {
+    fn duplicates(&self, a: &T, b: &T) -> bool {
+        match self {
+            Uniqueness::Equal(eq) => eq(a, b),
+            Uniqueness::SameKey(same_key) => same_key(a, b),
+        }
+    }
 }
 
 impl<G, T> VecGenerator<G, T> {
@@ -39,13 +54,45 @@ impl<G, T> VecGenerator<G, T> {
 }
 
 impl<G, T: PartialEq> VecGenerator<G, T> {
-    /// Require all elements to be unique.
+    /// Require all elements to be unique. Replaces any
+    /// [`unique_by`](Self::unique_by).
     pub fn unique(mut self, unique: bool) -> Self {
-        self.unique_by = if unique {
-            Some(<T as PartialEq>::eq)
+        self.unique = if unique {
+            Some(Uniqueness::Equal(<T as PartialEq>::eq))
         } else {
             None
         };
+        self
+    }
+}
+
+impl<G, T: 'static> VecGenerator<G, T> {
+    /// Require all elements to have distinct keys, as computed by `key`.
+    /// Replaces any [`unique`](Self::unique).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use hegel::generators as gs;
+    ///
+    /// #[hegel::test]
+    /// fn my_test(tc: hegel::TestCase) {
+    ///     let pairs: Vec<(u8, bool)> = tc.draw(
+    ///         gs::vecs(hegel::tuples!(gs::integers::<u8>(), gs::booleans()))
+    ///             .unique_by(|pair: &(u8, bool)| pair.0),
+    ///     );
+    ///     for (i, a) in pairs.iter().enumerate() {
+    ///         assert!(pairs[i + 1..].iter().all(|b| a.0 != b.0));
+    ///     }
+    /// }
+    /// ```
+    pub fn unique_by<K: PartialEq>(
+        mut self,
+        key: impl Fn(&T) -> K + Send + Sync + 'static,
+    ) -> Self {
+        self.unique = Some(Uniqueness::SameKey(Arc::new(move |a: &T, b: &T| {
+            key(a) == key(b)
+        })));
         self
     }
 }
@@ -76,8 +123,11 @@ impl<G, T> VecGenerator<G, T> {
                 speculation.printer().breakable(" ");
             }
             let element = draw(&self.elements, tc, speculation.printer());
-            if let Some(eq_fn) = &self.unique_by {
-                if result.iter().any(|existing| eq_fn(existing, &element)) {
+            if let Some(unique) = &self.unique {
+                if result
+                    .iter()
+                    .any(|existing| unique.duplicates(existing, &element))
+                {
                     speculation.abort();
                     collection.reject(Some("duplicate element"));
                     continue;
@@ -140,7 +190,7 @@ pub fn vecs<T, G: Generator<T>>(elements: G) -> VecGenerator<G, T> {
         elements,
         min_size: 0,
         max_size: None,
-        unique_by: None,
+        unique: None,
         _phantom: PhantomData,
     }
 }

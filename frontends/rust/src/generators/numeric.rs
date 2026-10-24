@@ -187,6 +187,10 @@ impl<T: Integer + Debug> PrintableGenerator<T> for IntegerGenerator<T> {
 /// Bounds default to the full range of `T`. Use the builder methods `min_value`
 /// and `max_value` to constrain the range. See [`IntegerGenerator`] for more
 /// details.
+///
+/// `T` is any of Rust's primitive integer types, up to `i128` and `u128`.
+/// The engine can generate integers of any width, but the standard library
+/// has no wider integer type, so there is no generator for wider integers.
 pub fn integers<T: Integer>() -> IntegerGenerator<T> {
     IntegerGenerator {
         min: None,
