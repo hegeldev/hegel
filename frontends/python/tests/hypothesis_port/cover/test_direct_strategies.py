@@ -49,20 +49,12 @@ def pretty(value):
     return pretty_repr(value)
 
 
-def _values(entry):
-    # Entries may be pytest.param(...) objects carrying xfail marks.
-    return getattr(entry, "values", entry)
-
-
 def fn_test(*fnkwargs):
     fnkwargs = list(fnkwargs)
     return pytest.mark.parametrize(
         ("fn", "args"),
         fnkwargs,
-        ids=[
-            "{}({})".format(fn.__name__, ", ".join(map(pretty, args)))
-            for fn, args in map(_values, fnkwargs)
-        ],
+        ids=["{}({})".format(fn.__name__, ", ".join(map(pretty, args))) for fn, args in fnkwargs],
     )
 
 
@@ -71,13 +63,8 @@ def fn_ktest(*fnkwargs):
     return pytest.mark.parametrize(
         ("fn", "kwargs"),
         fnkwargs,
-        ids=[f"{fn.__name__}(**{pretty(kwargs)})" for fn, kwargs in map(_values, fnkwargs)],
+        ids=[f"{fn.__name__}(**{pretty(kwargs)})" for fn, kwargs in fnkwargs],
     )
-
-
-def accepted(reason):
-    """Arguments Hypothesis rejects but Hegel accepts."""
-    return pytest.mark.xfail(strict=True, reason=f"Hegel accepts this: {reason}")
 
 
 @fn_ktest(
@@ -118,11 +105,6 @@ def accepted(reason):
     (gs.lists, {"elements": gs.integers(), "max_size": -9}),
     (gs.lists, {"elements": gs.integers(), "min_size": -10}),
     (gs.lists, {"elements": gs.integers(), "min_size": math.nan}),
-    pytest.param(
-        gs.lists,
-        {"elements": gs.nothing(), "max_size": 1},
-        marks=accepted("lists(nothing(), max_size=1) generates empty lists"),
-    ),
     (gs.lists, {"elements": "hi"}),
     (gs.lists, {"elements": gs.integers(), "unique_by": 1}),
     (gs.lists, {"elements": gs.integers(), "unique_by": ()}),

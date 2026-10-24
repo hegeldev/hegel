@@ -500,16 +500,11 @@ def test_notes_high_filter_rates_in_unsatisfiable_error():
         f()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="engine: a run whose every case is rejected fails the FilterTooMuch "
-    "health check rather than raising Unsatisfiable",
-)
-def test_rejecting_every_input_is_unsatisfiable():
+def test_rejecting_every_input_fails_health_check():
     @hegel.test
     def f(tc):
         tc.draw(gs.booleans())
         tc.assume(False)
 
-    with pytest.raises(hegel.Unsatisfiable):
+    with pytest.raises(hegel.FailedHealthCheck):
         f()

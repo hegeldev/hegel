@@ -1,12 +1,11 @@
 # Hegel for Python compared with Hypothesis
 
-This page records what Hegel for Python has, what it does differently, and
-what it lacks, relative to Hypothesis 6.168. The engine bugs found along the
-way are [issues on the repository](https://github.com/hegeldev/hegel/issues),
-and [`tests/hypothesis_port`](https://github.com/hegeldev/hegel/tree/main/frontends/python/tests/hypothesis_port)
-is Hypothesis's own test suite ported to the Hegel API, with the tests of
-behaviour Hegel does differently marked `xfail` and a note per file of what
-was dropped.
+This page records how Hegel for Python differs from Hypothesis 6.168, as a
+reference for porting tests. Hegel's API is modelled on Hypothesis's, but
+matching Hypothesis is not a goal: the differences below are not a to-do list.
+[`tests/hypothesis_port`](https://github.com/hegeldev/hegel/tree/main/frontends/python/tests/hypothesis_port)
+is Hypothesis's own test suite ported to the Hegel API, asserting what Hegel
+does, with a note per file of what was dropped.
 
 ## Same job, different shape
 
@@ -44,7 +43,7 @@ was dropped.
 - An engine shared with the Rust, Go, TypeScript and other bindings, so the
   example database and reproduce blobs behave the same everywhere.
 
-## Hypothesis has, Hegel for Python lacks
+## Hypothesis has, Hegel for Python does not
 
 - `deadline`: Hegel has no per-test-case time limit. `HealthCheck.too_slow`
   only fails a run whose first ten valid test cases take more than 30
