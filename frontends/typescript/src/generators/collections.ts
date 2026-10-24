@@ -7,6 +7,7 @@
 import { TestCase, Collection, generateRaw } from "../testCase.js";
 import { LabelNames, labelSpec, type LabelSpec } from "../labels.js";
 import { Generator, BasicGenerator } from "./core.js";
+import { StructuralKeys } from "./structuralKey.js";
 
 export interface CollectionOptions {
   minSize?: number;
@@ -14,13 +15,21 @@ export interface CollectionOptions {
 }
 
 export interface ArrayOptions<T = unknown> extends CollectionOptions {
-  /** Require the elements to be distinct. Cannot be combined with `uniqueBy`. */
+  /**
+   * Require the elements to be distinct. Cannot be combined with `uniqueBy`.
+   *
+   * Elements are compared structurally: primitives as by `Set` (so `0` and
+   * `-0` are equal and `NaN` equals itself), and arrays, plain objects,
+   * `Map`s, `Set`s, `Date`s and typed arrays by their contents. Other
+   * objects, such as class instances, are compared by identity, so every
+   * freshly built one is distinct: give `uniqueBy` a key function for those.
+   */
   unique?: boolean;
   /**
    * A key function, or an array of them: for each, the keys of the elements
-   * must be distinct (compared as by `Set`, so `0` and `-0` are the same key
-   * and `NaN` equals itself). A duplicate element is discarded and another
-   * drawn in its place.
+   * must be distinct, compared structurally as `unique` compares elements
+   * (so a key may be an array or an object). A duplicate element is
+   * discarded and another drawn in its place.
    */
   uniqueBy?: ((value: T) => unknown) | readonly ((value: T) => unknown)[];
 }
@@ -85,23 +94,17 @@ class ArraysGenerator<T> extends Generator<T[]> {
     tc.startSpan(this.label);
     const collection = new Collection(tc, this.minSize, this.maxSize ?? undefined);
     const result: T[] = [];
-    const seen = this.keys?.map(() => new Set<unknown>()) ?? [];
+    const structural = new StructuralKeys();
+    const keyFunctions = this.keys ?? (this.unique ? [(element: T) => element] : []);
+    const seen = keyFunctions.map(() => new Set<string>());
     while (collection.more()) {
       const element = this.elements.doDraw(tc);
-      if (this.unique) {
-        if (result.some((existing) => JSON.stringify(existing) === JSON.stringify(element))) {
-          collection.reject("duplicate element");
-          continue;
-        }
+      const keys = keyFunctions.map((key) => structural.key(key(element)));
+      if (keys.some((key, i) => seen[i].has(key))) {
+        collection.reject("duplicate element");
+        continue;
       }
-      if (this.keys !== null) {
-        const keys = this.keys.map((key) => key(element));
-        if (keys.some((key, i) => seen[i].has(key))) {
-          collection.reject("duplicate element");
-          continue;
-        }
-        keys.forEach((key, i) => seen[i].add(key));
-      }
+      keys.forEach((key, i) => seen[i].add(key));
       result.push(element);
     }
     tc.stopSpan();

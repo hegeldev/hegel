@@ -55,7 +55,7 @@ Shrinking labels are now derived by the engine from each generator's kind and it
 - `gs.deferred(() => generator)` defines a generator in terms of generators defined after it, including itself, for mutually recursive definitions.
 - `gs.permutations(elements)` generates reorderings of a list, shrinking toward the original order.
 - `gs.none()` always generates `null`.
-- `gs.arrays` takes `uniqueBy`, a key function or an array of them whose keys must be distinct across the array.
+- `gs.arrays` takes `uniqueBy`, a key function or an array of them whose keys must be distinct across the array. Keys are compared structurally, as `unique` compares elements, so a key may be an array or an object.
 - `gs.floats({ width: 32 })` generates only values a 32-bit float holds exactly.
 - `gs.fromRegex` takes `alphabet`, a string of characters or a `gs.characters()` generator, restricting every character of the string, padding included.
 
@@ -68,6 +68,8 @@ const json = gs.recursive<Json>(
 ```
 
 `gs.bigIntegers` with only one bound no longer caps the other side at ±2^127: a missing bound now lies 2^127 beyond the given one (or beyond zero, when that is further), so `gs.bigIntegers({ minValue: 2n ** 200n })` generates values instead of failing.
+
+`gs.arrays(..., { unique: true })` over elements without a schema (mapped or filtered ones, say) now compares elements structurally: primitives as by `Set`, and arrays, plain objects, `Map`s, `Set`s, `Date`s and typed arrays by their contents; other objects, such as class instances, by identity. Previously it compared their `JSON.stringify` output, which threw on bigint elements, treated every `Map` and `Set` as equal to every other, and took time quadratic in the array's length.
 
 A filter on `Pool.valuesConsumed()` now consumes only the value it yields: values its attempts reject go back into the pool. Previously each rejected attempt removed its value from the pool as well.
 
