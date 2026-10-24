@@ -457,6 +457,43 @@ fn read_settings(ctx: *mut hegel_c::HegelContext, raw: *const hegel_c::HegelSett
     }
 }
 
+/// `settings` with each `(key, value)` of `values` applied over it in
+/// order, the engine parsing each value as `hegel_settings_set_from_string`
+/// does: `key` is a `hegel.toml` key, or `unbounded_choices` or
+/// `database_key`. The `Err` carries the index of the first pair the engine
+/// rejected and its diagnostic.
+pub(crate) fn settings_with_strings(
+    settings: &Settings,
+    values: &[(String, String)],
+) -> Result<Settings, (usize, String)> {
+    let handle = SettingsHandle::build(settings, None, None);
+    let mut database_key = settings.database_key.clone();
+    with_context(|ctx| {
+        for (index, (key, value)) in values.iter().enumerate() {
+            // SAFETY: ctx and the handle are live, and both views outlive
+            // the call.
+            let rc = unsafe {
+                hegel_c::hegel_settings_set_from_string(
+                    ctx,
+                    handle.raw,
+                    view(key.as_bytes()),
+                    view(value.as_bytes()),
+                )
+            };
+            if rc == hegel_result_t::HEGEL_E_INVALID_ARG {
+                return Err((index, last_error_string()));
+            }
+            require_ok(rc);
+            if key == "database_key" {
+                database_key = Some(value.clone());
+            }
+        }
+        let mut resolved = read_settings(ctx, handle.as_ptr());
+        resolved.database_key = database_key;
+        Ok(resolved)
+    })
+}
+
 /// Set (or with `None` clear) the process-wide default profile through the
 /// engine. The `Err` carries the engine's diagnostic (an invalid or
 /// reserved name).

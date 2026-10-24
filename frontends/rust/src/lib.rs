@@ -775,9 +775,17 @@ pub use hegel_macros::test_helper;
 /// machine — so it is never stopped as an overrun. See
 /// [`Settings::suppress_health_check`].
 ///
-/// Supported CLI flags (with defaults taken from the attribute args):
-/// `--profile`, `--seed`, `--verbosity`, `--derandomize`, `--database`,
-/// `--suppress-health-check`, `--backend`, `-h` / `--help`. `--profile`
+/// Every setting but the test-case count is a CLI flag (with defaults
+/// taken from the attribute args), named after its `hegel.toml` key with
+/// `-` for `_`: `--seed`, `--verbosity`, `--derandomize`, `--database`,
+/// `--database-key`, `--phases`, `--suppress-health-check`,
+/// `--report-multiple-failures`, `--stop-on-first-failure`,
+/// `--show-statistics`, `--print-blob`, `--backend`,
+/// `--nondeterminism-strictness` and `--unbounded-choices`, each taking
+/// its value as `--flag VALUE` or `--flag=VALUE` in the vocabulary
+/// `hegel.toml` uses (see [`docs::settings`](crate::docs::settings));
+/// the engine parses them. `--profile` and `-h` / `--help` complete the
+/// list. `--profile`
 /// sets the process's default settings profile before the attribute args
 /// are evaluated, exactly like the `HEGEL_DEFAULT_PROFILE` environment
 /// variable, so compiled-in settings apply on top of the named profile.

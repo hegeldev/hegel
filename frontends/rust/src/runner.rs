@@ -591,16 +591,6 @@ where
     Hegel::new(test_fn).run();
 }
 
-/// The boolean vocabulary of the `--derandomize` flag, shared with the
-/// engine's `HEGEL_DERANDOMIZE` and `HEGEL_PRINT_BLOB` variables.
-pub(crate) fn parse_bool(s: &str) -> Option<bool> {
-    match s {
-        "true" | "1" | "yes" => Some(true),
-        "false" | "0" | "no" => Some(false),
-        _ => None,
-    }
-}
-
 /// Where a test is defined, as the `#[hegel::test]` and `#[hegel::main]`
 /// macros record it: passed to the engine, which reports the test's verdict
 /// against it when running under [Antithesis](https://antithesis.com/).

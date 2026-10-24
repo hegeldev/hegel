@@ -91,10 +91,15 @@ layers below it set and leaves the rest alone:
    `profile`. These are the settings the author of the test chose, so they
    take precedence over the environment variables: a variable adjusts the
    suite, not a test that pins the setting.
-5. **Command-line flags**, for `#[hegel::main]` binaries only: `--seed`,
-   `--verbosity`, `--derandomize`, `--database`,
-   `--suppress-health-check`, and `--backend` apply on top of the
-   compiled-in settings. `--profile <name>` is different: it sets the
+5. **Command-line flags**, for `#[hegel::main]` binaries only: every
+   setting is a flag named after its `hegel.toml` key with `-` for `_`
+   (`--seed`, `--verbosity`, `--suppress-health-check`,
+   `--unbounded-choices`, `--database-key`, …), taking a value in that
+   key's vocabulary as `--flag VALUE` or `--flag=VALUE`, and applies on
+   top of the compiled-in settings. The engine parses the values, so they
+   are spelled as in `hegel.toml`, with booleans as the `HEGEL_*`
+   variables take them and lists comma-separated. `--test-cases` is
+   rejected. `--profile <name>` is different: it sets the
    process's default profile (see [Choosing the default
    profile](#choosing-the-default-profile)) before the compiled-in
    settings are evaluated, so they still apply on top of the named
