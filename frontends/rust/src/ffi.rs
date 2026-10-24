@@ -18,7 +18,7 @@ pub(crate) mod sys;
 
 use self::sys as hegel_c;
 
-use crate::control::{hegel_internal_assert, hegel_internal_error};
+use crate::control::hegel_internal_error;
 use crate::runner::{
     Backend, Database, HealthCheck, NondeterminismStrictness, Phase, Settings, TestLocation,
     Verbosity,
