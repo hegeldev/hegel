@@ -834,8 +834,7 @@ namespace hegel {
                     continue;
                 }
                 unused += unused.empty() ? "" : ", ";
-                unused +=
-                    values[i].name ? *values[i].name : "a positional value";
+                unused += values[i].name.value_or("a positional value");
             }
             if (!unused.empty()) {
                 throw std::invalid_argument(

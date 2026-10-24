@@ -500,10 +500,9 @@ namespace hegel::generators {
                     return result;
                 } catch (const hi::LeafBudgetExceeded&) {
                     recursion->retry(tc);
-                } catch (
-                    const hi::
-                        AttemptMispriced&) { // NOLINT(bugprone-empty-catch)
+                } catch (const hi::AttemptMispriced&) {
                     // The engine discarded the attempt already.
+                    continue;
                 }
             }
         }
