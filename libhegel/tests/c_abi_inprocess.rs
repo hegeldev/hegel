@@ -3848,6 +3848,160 @@ fn settings_getters_read_back_every_setter() {
     }
 }
 
+unsafe fn set_from_string(
+    ctx: *mut HegelContext,
+    s: *mut hegel_c::HegelSettings,
+    key: &str,
+    value: &str,
+) -> hegel_c::hegel_result_t {
+    unsafe { hegel_c::hegel_settings_set_from_string(ctx, s, test_string(key), test_string(value)) }
+}
+
+#[test]
+fn settings_set_from_string_reaches_every_setting() {
+    let ctx = hegel_context_new();
+    unsafe {
+        let s = settings_for_profile(ctx, "base");
+        for (key, value) in [
+            ("test_cases", "7"),
+            ("verbosity", "debug"),
+            ("seed", "11"),
+            ("derandomize", "yes"),
+            ("database", "some/db"),
+            ("phases", "reuse, shrink"),
+            ("suppress_health_check", "too_slow"),
+            ("report_multiple_failures", "true"),
+            ("stop_on_first_failure", "0"),
+            ("show_statistics", "1"),
+            ("print_blob", "true"),
+            ("backend", "urandom"),
+            ("nondeterminism_strictness", "warn"),
+            ("unbounded_choices", "true"),
+        ] {
+            ok(set_from_string(ctx, s, key, value));
+        }
+        let view = read_settings(ctx, s);
+        assert_eq!(view.test_cases, 7);
+        assert_eq!(
+            view.verbosity,
+            hegel_c::hegel_verbosity_t::HEGEL_VERBOSITY_DEBUG as u32
+        );
+        assert_eq!(view.seed, (11, true));
+        assert!(view.derandomize);
+        assert_eq!(view.database.as_deref(), Some("some/db"));
+        assert_eq!(
+            view.phases,
+            hegel_c::hegel_phase_t::HEGEL_PHASE_REUSE as u32
+                | hegel_c::hegel_phase_t::HEGEL_PHASE_SHRINK as u32
+        );
+        assert_eq!(
+            view.suppress_health_check,
+            hegel_c::hegel_health_check_t::HEGEL_HC_TOO_SLOW as u32
+        );
+        assert!(view.report_multiple_failures);
+        assert!(!view.stop_on_first_failure);
+        assert!(view.show_statistics);
+        assert!(view.print_blob);
+        assert_eq!(view.backend, hegel_backend_t::HEGEL_BACKEND_URANDOM as u32);
+        assert_eq!(
+            view.nondeterminism_strictness,
+            hegel_c::hegel_nondeterminism_strictness_t::HEGEL_NONDETERMINISM_WARN as u32
+        );
+        assert!(view.unbounded_choices);
+
+        ok(set_from_string(ctx, s, "seed", "none"));
+        ok(set_from_string(ctx, s, "database", "disabled"));
+        ok(set_from_string(ctx, s, "phases", ""));
+        ok(set_from_string(ctx, s, "suppress_health_check", "all"));
+        let view = read_settings(ctx, s);
+        assert!(!view.seed.1);
+        assert_eq!(view.database.as_deref(), Some(""));
+        assert_eq!(view.phases, 0);
+        assert_eq!(
+            view.suppress_health_check,
+            hegel_c::hegel_health_check_t::HEGEL_HC_FILTER_TOO_MUCH as u32
+                | hegel_c::hegel_health_check_t::HEGEL_HC_TOO_SLOW as u32
+                | hegel_c::hegel_health_check_t::HEGEL_HC_TEST_CASES_TOO_LARGE as u32
+                | hegel_c::hegel_health_check_t::HEGEL_HC_LARGE_INITIAL_TEST_CASE as u32
+        );
+        ok(set_from_string(ctx, s, "database", "default"));
+        assert_eq!(read_settings(ctx, s).database, None);
+
+        ok(hegel_settings_free(ctx, s));
+        ok(hegel_context_free(ctx));
+    }
+}
+
+#[test]
+fn settings_set_from_string_rejects_bad_keys_and_values() {
+    let ctx = hegel_context_new();
+    unsafe {
+        let s = settings_for_profile(ctx, "base");
+        ok(set_from_string(ctx, s, "test_cases", "7"));
+        for (key, value, message) in [
+            ("tests", "7", "unknown setting `tests`"),
+            ("extends", "ci", "unknown setting `extends`"),
+            ("test_cases", "0", "`test_cases` expects an integer"),
+            ("test_cases", "many", "`test_cases` expects an integer"),
+            ("seed", "-1", "`seed` expects an integer or \"none\""),
+            ("derandomize", "maybe", "`derandomize` expects one of"),
+            ("verbosity", "loud", "`verbosity` expects one of"),
+            ("backend", "fast", "`backend` expects one of"),
+            (
+                "nondeterminism_strictness",
+                "strict",
+                "expects one of quiet|warn|error",
+            ),
+            ("database", "", "`database` expects a path"),
+            (
+                "phases",
+                "generate,,shrink",
+                "`phases` does not recognise \"\"",
+            ),
+            (
+                "suppress_health_check",
+                "all,too_slow",
+                "\"all\" must be the only element",
+            ),
+            (
+                "suppress_health_check",
+                "slow",
+                "does not recognise \"slow\"",
+            ),
+        ] {
+            assert_eq!(set_from_string(ctx, s, key, value), HEGEL_E_INVALID_ARG);
+            let error = last_error(ctx);
+            assert!(error.starts_with("hegel_settings_set_from_string: "));
+            assert!(error.contains(message), "{error}");
+        }
+        assert_eq!(read_settings(ctx, s).test_cases, 7);
+
+        let bad = [0xffu8];
+        assert_eq!(
+            hegel_c::hegel_settings_set_from_string(ctx, s, test_string(&bad), "1".into()),
+            HEGEL_E_INVALID_ARG
+        );
+        assert!(last_error(ctx).contains("key is not valid UTF-8"));
+        assert_eq!(
+            hegel_c::hegel_settings_set_from_string(ctx, s, "seed".into(), test_string(&bad)),
+            HEGEL_E_INVALID_ARG
+        );
+        assert!(last_error(ctx).contains("value is not valid UTF-8"));
+        assert_eq!(
+            hegel_c::hegel_settings_set_from_string(
+                ctx,
+                ptr::null_mut(),
+                "seed".into(),
+                "1".into()
+            ),
+            HEGEL_E_INVALID_HANDLE
+        );
+
+        ok(hegel_settings_free(ctx, s));
+        ok(hegel_context_free(ctx));
+    }
+}
+
 /// Pull every remaining case off `run`, completing each as valid after one
 /// draw, so the run can be freed cleanly.
 unsafe fn drain_run_valid(ctx: *mut HegelContext, run: *mut HegelRun) {

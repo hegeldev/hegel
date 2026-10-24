@@ -19,6 +19,7 @@ pub mod builder;
 pub mod compile;
 pub mod constraint;
 pub mod escape;
+pub mod explicit;
 pub mod generate;
 pub mod layout;
 pub mod lexer;

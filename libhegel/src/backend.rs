@@ -7,6 +7,7 @@ use crate::native::bignum::BigInt;
 use crate::native::core::{ManyState, NativeStateMachine, NativeVariables, RecursionState};
 use crate::native::draws::special::{Date, DateTime, Time};
 use crate::native::draws::{FloatSpec, StringSpec};
+use crate::native::lark::explicit::ExplicitDraw;
 use crate::native::lark::generate::GrammarSpec;
 use crate::settings::HealthCheck;
 
@@ -96,6 +97,12 @@ pub trait DataSource: Send + Sync {
         spec: &GrammarSpec,
         max_size: Option<u64>,
     ) -> Result<String, DataSourceError>;
+
+    /// Advance a draw of a grammar string with caller-supplied explicit
+    /// terminals (see [`ExplicitDraw::next`]), drawing from this stream:
+    /// `Some(i)` when a value is due for explicit terminal `i`, `None` when
+    /// the string is complete.
+    fn grammar_draw_next(&self, draw: &mut ExplicitDraw) -> Result<Option<usize>, DataSourceError>;
 
     /// Draw a Gregorian calendar [`Date`] in `[min, max]`, shrinking toward
     /// 2000-01-01 (clamped into range). Errors with `InvalidArgument` for
