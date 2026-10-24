@@ -1809,8 +1809,9 @@ pub unsafe extern "C" fn hegel_settings_set_print_blob(
 ///   `stop_on_first_failure`, `show_statistics`, `print_blob`, `backend`,
 ///   `nondeterminism_strictness`, or `unbounded_choices` (which
 ///   `hegel.toml` has no key for).
-/// `value`: The value, in that key's `hegel.toml` vocabulary, with these
-///   spellings for values that are not strings there:
+/// `value`: The value, in that key's `hegel.toml` vocabulary (`database`
+///   takes a path, `disabled`, or `default` for the default location),
+///   with these spellings for values that are not strings there:
 ///   - an integer (`test_cases`, `seed`) in decimal; `seed` also takes
 ///     `none`, which unsets it;
 ///   - a boolean as `true`, `1`, `yes`, `false`, `0` or `no`, as the
@@ -1818,8 +1819,6 @@ pub unsafe extern "C" fn hegel_settings_set_print_blob(
 ///   - a list (`phases`, `suppress_health_check`) as its names separated
 ///     by commas, with the empty string for none; `suppress_health_check`
 ///     also takes `all`.
-///   `database` takes a path, `disabled`, or `default` for the default
-///   location.
 ///
 /// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown key or a
 /// value outside its vocabulary, with a message naming the key and what
@@ -5667,15 +5666,17 @@ pub unsafe extern "C" fn hegel_generate_grammar(
 /// Create one with `hegel_grammar_draw_new` for each string to draw, then
 /// loop:
 ///
-///     size_t terminal;
-///     hegel_result_t rc;
-///     while ((rc = hegel_grammar_draw_next(ctx, tc, draw, &terminal)) == HEGEL_OK) {
-///         /* draw a value for explicit_names[terminal] from tc */
-///         hegel_grammar_draw_provide(ctx, draw, value);
-///     }
-///     if (rc == HEGEL_E_NOT_FOUND)
-///         hegel_grammar_draw_result(ctx, draw, &string);
-///     hegel_grammar_draw_free(ctx, draw);
+/// ```c
+/// size_t terminal;
+/// hegel_result_t rc;
+/// while ((rc = hegel_grammar_draw_next(ctx, tc, draw, &terminal)) == HEGEL_OK) {
+///     /* draw a value for explicit_names[terminal] from tc */
+///     hegel_grammar_draw_provide(ctx, draw, value);
+/// }
+/// if (rc == HEGEL_E_NOT_FOUND)
+///     hegel_grammar_draw_result(ctx, draw, &string);
+/// hegel_grammar_draw_free(ctx, draw);
+/// ```
 ///
 /// The values count toward the draw's size cap like the grammar's own
 /// characters. When they push the string over it, libhegel discards the
