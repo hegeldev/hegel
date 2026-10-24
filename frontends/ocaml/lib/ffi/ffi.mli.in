@@ -82,6 +82,13 @@ type state_machine
   : value mod portable contended
 #endif
 
+(** Opaque recursion handle ([HegelRecursion]), one per recursive value drawn.
+    It can be used through any handle of the test case's family. *)
+type recursion
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+
 (** A proleptic Gregorian calendar date ([hegel_date_t]). *)
 type date =
   { year : int
@@ -184,6 +191,11 @@ exception Internal_error of string
     argument (typically a generator bound or a setting) is semantically invalid.
     The payload is the engine's diagnostic. *)
 exception Usage_error of string
+
+(** Raised when a primitive returns [HEGEL_E_RETRY]: the current recursive
+    generation attempt must be discarded (see {!recursion_leaf} and
+    {!recursion_finish}). *)
+exception Retry
 
 (** {2 Phase bitmask values}
 
@@ -417,7 +429,8 @@ val generate_boolean : context -> test_case -> float -> bool option -> bool
     [[min_value, max_value]]. Raises {!Stop_test} on budget exhaustion. *)
 val generate_integer : context -> test_case -> min_value:int -> max_value:int -> int
 
-(** [generate_float ctx tc ...] draws a width-64 float in
+(** [generate_float ctx tc ~width ...] draws a float of [width] bits (32 or
+    64) in
     [[min_value, max_value]] under the given NaN / infinity / exclusion policy.
     Pass [neg_infinity] / [infinity] for unbounded ends and
     [smallest_nonzero_magnitude] (e.g. [5e-324]) for no magnitude restriction.
@@ -425,6 +438,7 @@ val generate_integer : context -> test_case -> min_value:int -> max_value:int ->
 val generate_float
   :  context
   -> test_case
+  -> width:int
   -> min_value:float
   -> max_value:float
   -> allow_nan:bool
@@ -456,13 +470,16 @@ val string_generator_text
   -> exclude_characters:string option
   -> string_generator
 
-(** [string_generator_regex ctx ~pattern ~fullmatch] builds a regex string
-    generator (Python-[re] syntax). Raises {!Usage_error} on an invalid
-    pattern. The handle must be freed with {!string_generator_free}. *)
+(** [string_generator_regex ctx ~pattern ~fullmatch ~alphabet] builds a regex
+    string generator (Python-[re] syntax) whose characters, padding included,
+    all come from the text generator [alphabet] when one is given. Raises
+    {!Usage_error} on an invalid pattern or alphabet. The handle must be freed
+    with {!string_generator_free}. *)
 val string_generator_regex
   :  context
   -> pattern:string
   -> fullmatch:bool
+  -> alphabet:string_generator option
   -> string_generator
 
 (** [string_generator_email ctx] builds an RFC 5321/5322 email generator. *)
@@ -507,6 +524,46 @@ val generate_ipv4 : context -> test_case -> string
 
 (** [generate_ipv6 ctx tc] draws an IPv6 address as its 16 network-order bytes. *)
 val generate_ipv6 : context -> test_case -> string
+
+(** [generate_uuid ctx tc ~version] draws a UUID as its 16 big-endian bytes.
+    With [Some v], the RFC 4122 version nibble is [v] and the variant is RFC
+    4122's; with [None] the bits are uniform, but never the nil UUID. *)
+val generate_uuid : context -> test_case -> version:int option -> string
+
+(** [generate_integer_big ctx tc ~min_value ~max_value] draws an integer in the
+    inclusive range, each bound and the result given as non-empty
+    two's-complement little-endian byte strings. *)
+val generate_integer_big
+  :  context
+  -> test_case
+  -> min_value:string
+  -> max_value:string
+  -> string
+
+(** [new_recursion ctx tc ~max_depth ~max_leaves] opens a recursive generation
+    scope; free it with {!recursion_free}. *)
+val new_recursion : context -> test_case -> max_depth:int -> max_leaves:int -> recursion
+
+(** [recursion_branch ctx tc recursion ~depth] decides whether the sub-value
+    at [depth] branches ([true]) or is a leaf. *)
+val recursion_branch : context -> test_case -> recursion -> depth:int -> bool
+
+(** [recursion_leaf ctx tc recursion] counts a leaf against the attempt's
+    budget. Raises {!Retry} when the attempt has outgrown it. *)
+val recursion_leaf : context -> test_case -> recursion -> unit
+
+(** [recursion_retry ctx tc recursion] discards an attempt that raised
+    {!Retry} from {!recursion_leaf}. Raises {!Assume_rejected} when attempts
+    are exhausted. *)
+val recursion_retry : context -> test_case -> recursion -> unit
+
+(** [recursion_finish ctx tc recursion] reports that the recursive value is
+    complete. Raises {!Retry} when the engine discarded the attempt as
+    mispriced. *)
+val recursion_finish : context -> test_case -> recursion -> unit
+
+(** [recursion_free ctx recursion] releases [recursion]. *)
+val recursion_free : context -> recursion -> unit
 
 (** [start_span ctx tc label] opens a span. [label] identifies the generator
     that opened it (the engine's [uint64_t], as an [int64]): two spans with the

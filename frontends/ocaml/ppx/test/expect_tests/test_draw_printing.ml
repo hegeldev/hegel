@@ -649,3 +649,43 @@ let%expect_test "verbose prints draws on a passing run" =
     Ending phase: Generate
     |}]
 ;;
+
+type tree =
+  | Leaf of int
+  | Node of tree list
+
+let print_tree =
+  let rec print = function
+    | Leaf n -> Printer.constructor "Leaf" [ Printer.int n ]
+    | Node children -> Printer.constructor "Node" [ Printer.list print children ]
+  in
+  print
+;;
+
+let%expect_test "a recursive value prints as its leaves and branches print" =
+  run_failing ~settings:(Settings.create ~test_cases:200 ~seed:0 ()) (fun tc ->
+    let t =
+      draw
+        ~label:"t"
+        tc
+        (recursive
+           (map (fun n -> Leaf n) (integers ~min_value:0 ~max_value:9 ())
+            |> with_printer print_tree)
+           (fun subtrees ->
+              map (fun children -> Node children) (lists subtrees ~min_size:2 ())
+              |> with_printer print_tree))
+    in
+    match t with
+    | Node _ -> assert false
+    | Leaf _ -> ());
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    t = Node [Leaf 0; Leaf 0]
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;

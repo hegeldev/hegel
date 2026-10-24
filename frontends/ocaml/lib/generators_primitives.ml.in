@@ -69,6 +69,7 @@ let floats
     ~draw:(fun tc ->
       Internal.generate_float
         tc
+        ~width:64
         ~min_value
         ~max_value
         ~allow_nan:eff_allow_nan
@@ -277,7 +278,7 @@ let%template just ABSTRACT(a, value mod c) (value : a MODE(m))
 let from_regex pattern ?(fullmatch = true) (): _ MODE(portable) =
   (leaf [@mode portable])
     ~name:"from_regex"
-    ~draw:(fun tc -> Internal.generate_regex tc ~pattern ~fullmatch)
+    ~draw:(fun tc -> Internal.generate_regex tc ~pattern ~fullmatch ~alphabet:None)
     ~print:Printer.string
 ;;
 

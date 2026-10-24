@@ -67,3 +67,15 @@ New test-case operations:
 - `reject tc` discards the current test case, like `assume tc false`, and has any result type, so it can end a branch of a `match`.
 - `repeat tc body` runs `body` for as many iterations as the engine wants and then ends the test case, printing each iteration's output under a `// Repetition #n` note.
 - `set_worker tc i` attributes a test case's output to concurrent worker `i`, so a test that draws from several threads through `clone` can label each thread's lines in the failure report.
+
+New generators for recursive data:
+
+- `recursive ?max_depth ?max_leaves leaf branch` generates trees and other recursive values. `branch` receives the generator of sub-values and builds one level of structure from it; the engine decides where the value branches, bounds its depth and size, and shrinks it toward a single leaf.
+- `deferred ()` returns a generator together with the function that defines it later, so generators can refer to each other, or to themselves, before they exist.
+
+```ocaml
+let trees =
+  recursive
+    (map (fun n -> Leaf n) (integers ()))
+    (fun subtrees -> map (fun children -> Node children) (lists subtrees ()))
+```

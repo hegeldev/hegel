@@ -868,6 +868,69 @@ val%template filter
   -> 'a generator MODE(m)
   -> 'a generator MODE(m)
 [@@mode m = (nonportable, portable)]
+
+(** {2 Recursive generators} *)
+
+(** [recursive ?max_depth ?max_leaves leaf branch] generates recursively
+    structured values, such as trees or JSON documents. [leaf] generates the
+    base cases. [branch] builds one level of structure: it receives the
+    generator of sub-values, each itself a leaf or a further branch, and
+    returns a generator combining some number of them into one value.
+
+    The engine decides where a value branches and where it bottoms out in a
+    leaf. Branches nest at most [max_depth] deep (default 32; sub-values at
+    that depth are always leaves, so [~max_depth:0] generates only leaves),
+    and a value holds at most [max_leaves] leaves (default 100): an attempt
+    that draws more is discarded and retried smaller. Values shrink toward a
+    single leaf. A drawn value prints as its leaves and branches print.
+
+    {[
+      type tree =
+        | Leaf of int
+        | Node of tree list
+
+      let trees =
+        recursive
+          (map (fun n -> Leaf n) (integers ()))
+          (fun subtrees -> map (fun children -> Node children) (lists subtrees ()))
+      ;;
+    ]}
+
+    A negative [max_depth], or a [max_leaves] below 1, raises
+    {!Hegel.Usage_error}. For mutually recursive definitions, use
+    {!deferred}. *)
+val%template recursive
+  :  ?max_depth:int
+  -> ?max_leaves:int
+  -> 'a generator MODE(m)
+  -> ('a generator -> 'a generator) MODE(m)
+  -> 'a generator MODE(m)
+[@@mode m = (nonportable, portable)]
+
+(** [deferred ()] is a generator that is defined later, and the function that
+    defines it: a forward reference, so generators can refer to each other, or
+    to themselves, before they exist.
+
+    {[
+      type expr =
+        | Num of int
+        | Neg of expr
+        | Sum of expr list
+
+      let exprs =
+        let exprs, define_exprs = deferred () in
+        let terms = one_of [ map (fun n -> Num n) (integers ()); map (fun e -> Neg e) exprs ] in
+        define_exprs (one_of [ terms; map (fun es -> Sum es) (lists terms ~max_size:3 ()) ]);
+        exprs
+      ;;
+    ]}
+
+    Drawing from the generator before it is defined raises
+    {!Hegel.Usage_error}, as does defining it twice or defining it as itself.
+    A draw from it nested more than 64 deep rejects the test case, so a
+    definition that always recurses still stops; prefer {!recursive}, which
+    lets the engine bound the size of the value, where it fits. *)
+val deferred : unit -> 'a generator * ('a generator -> unit)
 end
 
 (**/**)

@@ -140,6 +140,20 @@ let clone = Internal.clone
     worker. See {!Internal.set_worker_index}. *)
 let set_worker = Internal.set_worker_index
 
+(** [run_iteration tc body] runs one iteration of {!repeat}: [body] on a
+    block of [tc]. A rejected iteration is skipped. *)
+let run_iteration tc body =
+  match Internal.with_block tc ~indent:2 body with
+  | () | (exception Assume_rejected) -> ()
+  | exception
+      ((Internal.Stop_test | Usage_error _ | Internal.Internal_error _) as control) ->
+    raise control
+  | exception exn ->
+    let backtrace = Printexc.get_raw_backtrace () in
+    ignore (Generators.draw_silent tc (Generators.booleans ()) : bool);
+    Printexc.raise_with_backtrace exn backtrace
+;;
+
 (** [repeat tc body] runs [body] on a block of [tc] until the engine ends the
     loop, then ends the test case. *)
 let repeat tc body =
@@ -151,15 +165,7 @@ let repeat tc body =
       if Generators.Private.collection_more coll tc
       then (
         note tc (Printf.sprintf "// Repetition #%d" iteration);
-        (match Internal.with_block tc ~indent:2 body with
-         | () | (exception Assume_rejected) -> ()
-         | exception
-             ((Internal.Stop_test | Usage_error _ | Internal.Internal_error _) as control)
-           -> raise control
-         | exception exn ->
-           let backtrace = Printexc.get_raw_backtrace () in
-           ignore (Generators.draw_silent tc (Generators.booleans ()) : bool);
-           Printexc.raise_with_backtrace exn backtrace);
+        run_iteration tc body;
         loop (iteration + 1))
     in
     loop 1);

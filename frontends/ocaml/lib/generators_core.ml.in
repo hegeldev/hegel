@@ -38,6 +38,7 @@ module Labels = struct
   let function_ = from_name "hegel.functions"
   let function_result = from_name "hegel.functions.result"
   let stateful_rule = from_name "hegel.stateful.rule"
+  let recursive = from_name "hegel.recursive"
 end
 
 (** A drawn value's display: a thunk producing the value's {!Printer.doc},
@@ -73,6 +74,8 @@ let function_show : show MODE(portable) = fun () -> Printer.text "<fun>"
     - [Values] draws from an engine pool; its values show as [<abstr>].
     - [Function] builds a generated function, which shows as [<fun>].
     - [Printed] replaces a source's display with a printer of its values.
+    - [Deferred] draws from the generator [get] returns, which is defined
+      after the [Deferred] is built, so a definition can refer to itself.
 
     Every generator carries its span [label] (see {!Labels}), fixed at
     construction from its own kind and its components' labels. *)
@@ -129,6 +132,11 @@ type 'a generator CROSSING =
       ; print : ('a -> Printer.doc)
       }
       -> 'a generator
+  | Deferred :
+      { get : (unit -> 'a generator option)
+      ; label : Internal.Label.t
+      }
+      -> 'a generator
 
 (** [label_of gen] is the span label of [gen]. *)
 let rec label_of : type a. a generator -> Internal.Label.t = function
@@ -141,6 +149,7 @@ let rec label_of : type a. a generator -> Internal.Label.t = function
   | Values _ -> Labels.pool
   | Function { label; _ } -> label
   | Printed { source; _ } -> label_of source
+  | Deferred { label; _ } -> label
 ;;
 
 (** [leaf_label name] is the label of the primitive named [name]. *)
@@ -204,26 +213,20 @@ let%template composite
 (** Maximum number of filter attempts before calling [assume false]. *)
 let max_filter_attempts = 3
 
-(** [group label data f] runs [f ()] inside a span with the given [label]. The
-    span is stopped with [discard:false] regardless of whether [f] raises.
+(** Raised out of an attempt at a recursive value that outgrew its leaf
+    budget, up to the {!recursive} draw that owns [recursion]. The spans the
+    attempt opened stay open: the engine closes them when it discards the
+    attempt. *)
+exception Leaf_budget_exceeded of Internal.recursion
 
-    A group also increments [draw_depth] for the duration of [f], marking [f]'s
+(** [in_span ~discard label data f] runs [f ()] inside a span with the given
+    [label], stopping it with [discard] of whether [f] raised, except on
+    {!Leaf_budget_exceeded}.
+
+    It also increments [draw_depth] for the duration of [f], marking [f]'s
     draws as nested so only the outermost value prints on the final replay. (A
-    counter, not a flag, so nested groups compose.) *)
-let group label data f =
-  Internal.start_span ~label data;
-  Internal.incr_draw_depth data;
-  Fun.protect
-    ~finally:(fun () ->
-      Internal.decr_draw_depth data;
-      Internal.stop_span data)
-    f
-;;
-
-(** [discardable_group label data f] runs [f ()] inside a span with [label],
-    incrementing [draw_depth] like {!group}. If [f] raises, the span is stopped
-    with [discard:true]; otherwise [discard:false]. *)
-let discardable_group label data f =
+    counter, not a flag, so nested spans compose.) *)
+let in_span ~discard label data f =
   Internal.start_span ~label data;
   Internal.incr_draw_depth data;
   match f () with
@@ -231,11 +234,24 @@ let discardable_group label data f =
     Internal.decr_draw_depth data;
     Internal.stop_span data;
     v
-  | exception e ->
+  | exception (Leaf_budget_exceeded _ as e) ->
+    let backtrace = Printexc.get_raw_backtrace () in
     Internal.decr_draw_depth data;
-    Internal.stop_span ~discard:true data;
-    raise e
+    Printexc.raise_with_backtrace e backtrace
+  | exception e ->
+    let backtrace = Printexc.get_raw_backtrace () in
+    Internal.decr_draw_depth data;
+    Internal.stop_span ~discard data;
+    Printexc.raise_with_backtrace e backtrace
 ;;
+
+(** [group label data f] runs [f ()] inside a span with the given [label]. The
+    span is stopped with [discard:false] whether or not [f] raises. *)
+let group label data f = in_span ~discard:false label data f
+
+(** [discardable_group label data f] runs [f ()] inside a span with [label],
+    like {!group}. If [f] raises, the span is stopped with [discard:true]. *)
+let discardable_group label data f = in_span ~discard:true label data f
 
 (** A collection handle for generating variable-length sequences.
 
@@ -505,6 +521,10 @@ let rec flatten_filter (gen : 'a generator) (predicate : 'a -> bool) =
   | _ -> gen, predicate
 ;;
 
+(** Deeper than this, a draw from a {!deferred} generator rejects the test
+    case, so a definition that always refers back to itself stops. *)
+let max_deferred_depth = 64
+
 (** [show_list shows] displays a list from its elements' displays. *)
 let show_list shows () = Printer.list (fun show -> show ()) shows
 
@@ -561,6 +581,12 @@ let rec do_draw : type a. a generator -> Internal.test_case -> a * show =
   | Printed { source; print } ->
     let value, _ = do_draw source data in
     value, fun () -> print value
+  | Deferred { get; _ } ->
+    (match get () with
+     | None -> raise (Internal.Usage_error "deferred generator drawn from before it is defined")
+     | Some gen ->
+       if Internal.draw_depth data > max_deferred_depth then raise Internal.Assume_rejected;
+       do_draw gen data)
 ;;
 
 (** [draw_named ~label ~repeatable tc gen] is the naming-aware draw the
@@ -697,4 +723,94 @@ let%template filter
   | Printed { source; print } -> Printed { source = filtered source; print }
   | source -> filtered source
 [@@mode m = (nonportable, portable)]
+;;
+
+(** Raised when the engine discards a recursive value as mispriced, up to the
+    {!recursive} draw that owns [recursion], which starts again. *)
+exception Attempt_mispriced of Internal.recursion
+
+(** [recursive ?max_depth ?max_leaves leaf branch] generates recursive values:
+    each sub-value is a leaf drawn from [leaf], or a branch drawn from the
+    generator [branch] builds from the generator of sub-values. The engine
+    decides where to branch and how big the value grows. *)
+let%template recursive
+      ?(max_depth = 32)
+      ?(max_leaves = 100)
+      (leaf : 'a generator MODE(m))
+      (branch : ('a generator -> 'a generator) MODE(m))
+  : 'a generator MODE(m)
+  =
+  if max_depth < 0
+  then
+    raise
+      (Internal.Usage_error
+         (Printf.sprintf "max_depth=%d must be non-negative" max_depth));
+  if max_leaves < 1
+  then
+    raise
+      (Internal.Usage_error (Printf.sprintf "max_leaves=%d must be positive" max_leaves));
+  let label = Labels.combine [ Labels.recursive; label_of leaf ] in
+  let rec subtree recursion depth =
+    Composite { label; generate_fn = (fun tc -> draw_subtree recursion depth tc) }
+  and draw_subtree recursion depth tc =
+    let drawn =
+      if Internal.recursion_branch tc recursion ~depth
+      then do_draw (branch (subtree recursion (depth + 1))) tc
+      else (
+        (try Internal.recursion_leaf tc recursion with
+         | Internal.Retry -> raise (Leaf_budget_exceeded recursion));
+        do_draw leaf tc)
+    in
+    if depth = 0
+    then (
+      try Internal.recursion_finish tc recursion with
+      | Internal.Retry -> raise (Attempt_mispriced recursion));
+    drawn
+  in
+  Composite
+    { label
+    ; generate_fn =
+        (fun tc ->
+          let recursion = Internal.new_recursion tc ~max_depth ~max_leaves in
+          Fun.protect
+            ~finally:(fun () -> Internal.recursion_free tc recursion)
+            (fun () ->
+               let rec attempt () =
+                 match draw_subtree recursion 0 tc with
+                 | drawn -> drawn
+                 | exception Leaf_budget_exceeded r when r == recursion ->
+                   Internal.recursion_retry tc recursion;
+                   attempt ()
+                 | exception Attempt_mispriced r when r == recursion -> attempt ()
+               in
+               attempt ()))
+    }
+[@@mode m = (nonportable, portable)]
+;;
+
+(** [deferred ()] is a generator to be defined later, and the function that
+    defines it. *)
+let deferred () =
+  let cell = Atomic.make None in
+  let label, define_label = Internal.Label.deferred () in
+  let self = Deferred { get = (fun () -> Atomic.get cell); label } in
+  let rec leads_to_self gen =
+    gen == self
+    ||
+    match gen with
+    | Deferred { get; _ } ->
+      (match get () with
+       | Some next -> leads_to_self next
+       | None -> false)
+    | Printed { source; _ } | Filtered { source; _ } -> leads_to_self source
+    | _ -> false
+  in
+  let define gen =
+    if leads_to_self gen
+    then raise (Internal.Usage_error "Cannot define a deferred generator as itself");
+    if not (Atomic.compare_and_set cell None (Some gen))
+    then raise (Internal.Usage_error "deferred generator is already defined");
+    define_label (label_of gen)
+  in
+  self, define
 ;;

@@ -46,6 +46,7 @@ module Label = struct
   type desc =
     | Name of string
     | Combined of t list
+    | Deferred of t option Atomic.t
 
   and t =
     { desc : desc
@@ -54,19 +55,39 @@ module Label = struct
 
   let of_name name = { desc = Name name; resolved = Atomic.make None }
   let combine labels = { desc = Combined labels; resolved = Atomic.make None }
+  let deferred () =
+    let cell = Atomic.make None in
+    { desc = Deferred cell; resolved = Atomic.make None }, fun inner -> Atomic.set cell (Some inner)
+  ;;
 
-  let rec resolve context label =
+  let deferred_name = of_name "hegel.deferred"
+
+  (* [visiting] holds the deferred labels being resolved further up. A deferred
+     label met again while it is being resolved stands for "hegel.deferred",
+     so a recursive generator's label is finite. Only values computed outside
+     every deferred label are cached: a value computed inside one depends on
+     where the resolution started. *)
+  let rec compute context visiting label =
     match Atomic.get label.resolved with
     | Some value -> value
     | None ->
-      let value =
+      let cacheable, value =
         match label.desc with
-        | Name name -> Ffi.label_from_name context name
-        | Combined labels -> Ffi.label_combine context (List.map (resolve context) labels)
+        | Name name -> true, Ffi.label_from_name context name
+        | Combined labels ->
+          ( List.is_empty visiting
+          , Ffi.label_combine context (List.map (compute context visiting) labels) )
+        | Deferred cell ->
+          (match Atomic.get cell with
+           | Some inner when not (List.memq label visiting) ->
+             List.is_empty visiting, compute context (label :: visiting) inner
+           | Some _ | None -> false, compute context visiting deferred_name)
       in
-      Atomic.set label.resolved (Some value);
+      if cacheable then Atomic.set label.resolved (Some value);
       value
   ;;
+
+  let resolve context label = compute context [] label
 end
 
 (** A source location identifying a single test. See [Hegel.test_location]. *)
@@ -204,7 +225,7 @@ let with_block (tc : test_case) ~indent LOCAL(f) =
     raise exn
 ;;
 
-let set_worker_index tc worker_index =
+let set_worker_index (tc : test_case) worker_index =
   Ffi.test_case_set_worker tc.context tc.handle ~worker_index
 ;;
 
@@ -287,6 +308,7 @@ let generate_integer tc ~min_value ~max_value =
     {!Stop_test} on StopTest. *)
 let generate_float
       tc
+      ~width
       ~min_value
       ~max_value
       ~allow_nan
@@ -299,6 +321,7 @@ let generate_float
     Ffi.generate_float
       tc.context
       tc.handle
+      ~width
       ~min_value
       ~max_value
       ~allow_nan
@@ -354,9 +377,40 @@ let generate_text
       ~exclude_characters)
 ;;
 
-(** [generate_regex tc ~pattern ~fullmatch] draws a string matching [pattern]. *)
-let generate_regex tc ~pattern ~fullmatch =
-  with_string_generator tc (fun ctx -> Ffi.string_generator_regex ctx ~pattern ~fullmatch)
+(** The character set of a text generator, as {!generate_text} takes it. *)
+type alphabet =
+  { codec : string option
+  ; min_codepoint : int
+  ; max_codepoint : int
+  ; categories : string list option
+  ; exclude_categories : string list option
+  ; include_characters : string option
+  ; exclude_characters : string option
+  }
+
+(** [generate_regex tc ~pattern ~fullmatch ~alphabet] draws a string matching
+    [pattern], every character of it from [alphabet] when one is given. *)
+let generate_regex tc ~pattern ~fullmatch ~alphabet =
+  with_string_generator tc (fun ctx ->
+    match alphabet with
+    | None -> Ffi.string_generator_regex ctx ~pattern ~fullmatch ~alphabet:None
+    | Some (a : alphabet) ->
+      let alphabet =
+        Ffi.string_generator_text
+          ctx
+          ~min_size:1
+          ~max_size:(Some 1)
+          ~codec:a.codec
+          ~min_codepoint:a.min_codepoint
+          ~max_codepoint:a.max_codepoint
+          ~categories:a.categories
+          ~exclude_categories:a.exclude_categories
+          ~include_characters:a.include_characters
+          ~exclude_characters:a.exclude_characters
+      in
+      Fun.protect
+        ~finally:(fun () -> Ffi.string_generator_free ctx alphabet)
+        (fun () -> Ffi.string_generator_regex ctx ~pattern ~fullmatch ~alphabet:(Some alphabet)))
 ;;
 
 (** [generate_email tc] draws an RFC 5321/5322 email address. *)
@@ -415,6 +469,45 @@ let generate_ipv4 tc =
 let generate_ipv6 tc =
   with_stop_guard tc (fun () -> Ffi.generate_ipv6 tc.context tc.handle)
 ;;
+
+(** [generate_uuid tc ~version] draws a UUID as its 16 big-endian bytes. *)
+let generate_uuid tc ~version =
+  with_stop_guard tc (fun () -> Ffi.generate_uuid tc.context tc.handle ~version)
+;;
+
+(** [generate_integer_big tc ~min_value ~max_value] draws an integer in the
+    inclusive range, as two's-complement little-endian bytes. *)
+let generate_integer_big tc ~min_value ~max_value =
+  with_stop_guard tc (fun () ->
+    Ffi.generate_integer_big tc.context tc.handle ~min_value ~max_value)
+;;
+
+type recursion = Ffi.recursion
+
+exception Retry = Ffi.Retry
+
+let new_recursion tc ~max_depth ~max_leaves =
+  with_stop_guard tc (fun () ->
+    Ffi.new_recursion tc.context tc.handle ~max_depth ~max_leaves)
+;;
+
+let recursion_branch tc recursion ~depth =
+  with_stop_guard tc (fun () -> Ffi.recursion_branch tc.context tc.handle recursion ~depth)
+;;
+
+let recursion_leaf tc recursion =
+  with_stop_guard tc (fun () -> Ffi.recursion_leaf tc.context tc.handle recursion)
+;;
+
+let recursion_retry tc recursion =
+  with_stop_guard tc (fun () -> Ffi.recursion_retry tc.context tc.handle recursion)
+;;
+
+let recursion_finish tc recursion =
+  with_stop_guard tc (fun () -> Ffi.recursion_finish tc.context tc.handle recursion)
+;;
+
+let recursion_free tc recursion = Ffi.recursion_free tc.context recursion
 
 (* ------------------------------------------------------------------ *)
 (* ANSI colors                                                         *)

@@ -60,6 +60,13 @@ module Label : sig
       label first, then its components'. *)
   val combine : t list -> t
 
+  (** [deferred ()] is a label to be defined later, for a generator whose
+      definition can refer to itself, and the function that defines it as
+      standing for another label. Until it is defined, and wherever it is met
+      again while it is being resolved, it stands for the label of
+      ["hegel.deferred"]. *)
+  val deferred : unit -> t * (t -> unit)
+
   (** [resolve context label] is the engine's value for [label]. *)
   val resolve : Hegel_ffi.Ffi.context -> t -> int64
 end
@@ -110,10 +117,12 @@ val generate_boolean : test_case -> float -> bool option -> bool
     inclusive range. Raises {!Stop_test} on StopTest. *)
 val generate_integer : test_case -> min_value:int -> max_value:int -> int
 
-(** [generate_float tc ...] draws a width-64 float under the given NaN /
-    infinity / exclusion policy. Raises {!Stop_test} on StopTest. *)
+(** [generate_float tc ~width ...] draws a float of [width] bits (32 or 64)
+    under the given NaN / infinity / exclusion policy. Raises {!Stop_test} on
+    StopTest. *)
 val generate_float
   :  test_case
+  -> width:int
   -> min_value:float
   -> max_value:float
   -> allow_nan:bool
@@ -142,9 +151,26 @@ val generate_text
   -> exclude_characters:string option
   -> string
 
-(** [generate_regex tc ~pattern ~fullmatch] draws a string matching [pattern]
-    (Python-[re] syntax). Raises {!Stop_test} on StopTest. *)
-val generate_regex : test_case -> pattern:string -> fullmatch:bool -> string
+(** The character set of a text generator, as {!generate_text} takes it. *)
+type alphabet =
+  { codec : string option
+  ; min_codepoint : int
+  ; max_codepoint : int
+  ; categories : string list option
+  ; exclude_categories : string list option
+  ; include_characters : string option
+  ; exclude_characters : string option
+  }
+
+(** [generate_regex tc ~pattern ~fullmatch ~alphabet] draws a string matching
+    [pattern] (Python-[re] syntax), every character of it, padding included,
+    from [alphabet] when one is given. Raises {!Stop_test} on StopTest. *)
+val generate_regex
+  :  test_case
+  -> pattern:string
+  -> fullmatch:bool
+  -> alphabet:alphabet option
+  -> string
 
 (** [generate_email tc] draws an RFC 5321/5322 email address. Raises
     {!Assume_rejected} when the draw rejects itself. *)
@@ -192,6 +218,45 @@ val generate_ipv4 : test_case -> string
 
 (** [generate_ipv6 tc] draws an IPv6 address as its 16 network-order bytes. *)
 val generate_ipv6 : test_case -> string
+
+(** [generate_uuid tc ~version] draws a UUID as its 16 big-endian bytes: of
+    RFC 4122 version [v] for [Some v], and any but the nil UUID for [None]. *)
+val generate_uuid : test_case -> version:int option -> string
+
+(** [generate_integer_big tc ~min_value ~max_value] draws an integer in the
+    inclusive range. The bounds and the result are non-empty two's-complement
+    little-endian byte strings. *)
+val generate_integer_big : test_case -> min_value:string -> max_value:string -> string
+
+(** A recursive generation scope (see {!new_recursion}). *)
+type recursion = Hegel_ffi.Ffi.recursion
+
+(** Raised by {!recursion_leaf} and {!recursion_finish} when the engine
+    discards the current attempt at a recursive value. *)
+exception Retry
+
+(** [new_recursion tc ~max_depth ~max_leaves] opens a recursive generation
+    scope at this point of [tc]'s draws. Free it with {!recursion_free}. *)
+val new_recursion : test_case -> max_depth:int -> max_leaves:int -> recursion
+
+(** [recursion_branch tc recursion ~depth] decides whether the sub-value at
+    [depth] branches. *)
+val recursion_branch : test_case -> recursion -> depth:int -> bool
+
+(** [recursion_leaf tc recursion] counts a leaf against the attempt's budget;
+    raises {!Retry} when the attempt has outgrown it. *)
+val recursion_leaf : test_case -> recursion -> unit
+
+(** [recursion_retry tc recursion] discards an attempt that outgrew its
+    budget; raises {!Assume_rejected} when the attempts are exhausted. *)
+val recursion_retry : test_case -> recursion -> unit
+
+(** [recursion_finish tc recursion] reports the recursive value complete;
+    raises {!Retry} when the engine discarded the attempt as mispriced. *)
+val recursion_finish : test_case -> recursion -> unit
+
+(** [recursion_free tc recursion] releases [recursion]. *)
+val recursion_free : test_case -> recursion -> unit
 
 (**/**)
 

@@ -612,6 +612,55 @@ let c_generate_ipv6 =
   foreign "hegel_generate_ipv6" (handle_t @-> handle_t @-> ptr uint8_t @-> returning int)
 ;;
 
+let c_generate_uuid =
+  foreign
+    "hegel_generate_uuid"
+    (handle_t @-> handle_t @-> uint8_t @-> bool @-> ptr uint8_t @-> returning int)
+;;
+
+let c_generate_integer_big =
+  foreign
+    "hegel_generate_integer_big"
+    (handle_t
+     @-> handle_t
+     @-> ptr uint8_t
+     @-> size_t
+     @-> ptr uint8_t
+     @-> size_t
+     @-> ptr uint8_t
+     @-> size_t
+     @-> ptr size_t
+     @-> returning int)
+;;
+
+let c_new_recursion =
+  foreign
+    "hegel_new_recursion"
+    (handle_t @-> handle_t @-> uint64_t @-> uint64_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_recursion_branch =
+  foreign
+    "hegel_recursion_branch"
+    (handle_t @-> handle_t @-> handle_t @-> uint64_t @-> ptr bool @-> returning int)
+;;
+
+let c_recursion_leaf =
+  foreign "hegel_recursion_leaf" (handle_t @-> handle_t @-> handle_t @-> returning int)
+;;
+
+let c_recursion_retry =
+  foreign "hegel_recursion_retry" (handle_t @-> handle_t @-> handle_t @-> returning int)
+;;
+
+let c_recursion_finish =
+  foreign "hegel_recursion_finish" (handle_t @-> handle_t @-> handle_t @-> returning int)
+;;
+
+let c_recursion_free =
+  foreign "hegel_recursion_free" (handle_t @-> handle_t @-> returning int)
+;;
+
 let c_start_span =
   foreign "hegel_start_span" (handle_t @-> handle_t @-> uint64_t @-> returning int)
 ;;
@@ -904,6 +953,7 @@ type string_generator = handle
 type collection = handle
 type pool = handle
 type state_machine = handle
+type recursion = handle
 type printer = handle
 type printer_options = handle
 
@@ -943,6 +993,7 @@ exception Stop_test
 exception Assume_rejected
 exception Internal_error of string
 exception Usage_error of string
+exception Retry
 
 (* Status codes returned by the C primitives [HEGEL_OK] / [HEGEL_E_*]. *)
 let ok = 0
@@ -955,6 +1006,7 @@ let e_already_complete = -6
 let e_not_complete = -7
 let e_internal = -8
 let e_concurrent_use = -9
+let e_retry = -10
 
 (* Phase bitmask values [HEGEL_PHASE_*]. *)
 let phase_explicit = 1
@@ -1030,6 +1082,8 @@ let check_rc ctx rc =
   then raise Assume_rejected
   else if rc = e_invalid_arg
   then raise (Usage_error (c_last_error_message ctx))
+  else if rc = e_retry
+  then raise Retry
   else (
     let label =
       if rc = e_backend
@@ -1333,6 +1387,7 @@ let generate_integer ctx tc ~min_value ~max_value =
 let generate_float
       ctx
       tc
+      ~width
       ~min_value
       ~max_value
       ~allow_nan
@@ -1347,7 +1402,7 @@ let generate_float
     (c_generate_float
        ctx
        tc
-       (Unsigned.UInt32.of_int 64)
+       (Unsigned.UInt32.of_int width)
        min_value
        max_value
        allow_nan
@@ -1434,11 +1489,16 @@ let string_generator_text
   !@out
 ;;
 
-let string_generator_regex ctx ~pattern ~fullmatch =
+let string_generator_regex ctx ~pattern ~fullmatch ~alphabet =
   let out = allocate handle_t null_handle in
   check_rc
     ctx
-    (c_string_generator_regex ctx pattern fullmatch null_handle out);
+    (c_string_generator_regex
+       ctx
+       pattern
+       fullmatch
+       (Option.value alphabet ~default:null_handle)
+       out);
   !@out
 ;;
 
@@ -1561,6 +1621,70 @@ let generate_ip_bytes ctx tc c_fn n =
 
 let generate_ipv4 ctx tc = generate_ip_bytes ctx tc c_generate_ipv4 4
 let generate_ipv6 ctx tc = generate_ip_bytes ctx tc c_generate_ipv6 16
+
+let generate_uuid ctx tc ~version =
+  let buf = CArray.make uint8_t 16 in
+  check_rc
+    ctx
+    (c_generate_uuid
+       ctx
+       tc
+       (Unsigned.UInt8.of_int (Option.value version ~default:0))
+       (Option.is_some version)
+       (CArray.start buf));
+  string_from_ptr (coerce (ptr uint8_t) (ptr char) (CArray.start buf)) ~length:16
+;;
+
+let bytes_array s =
+  CArray.of_list uint8_t (List.init (String.length s) (fun i -> Unsigned.UInt8.of_int (Char.code s.[i])))
+;;
+
+let generate_integer_big ctx tc ~min_value ~max_value =
+  let min_arr = bytes_array min_value in
+  let max_arr = bytes_array max_value in
+  let cap = max (String.length min_value) (String.length max_value) in
+  let out = CArray.make uint8_t cap in
+  let out_len = allocate size_t Unsigned.Size_t.zero in
+  check_rc
+    ctx
+    (c_generate_integer_big
+       ctx
+       tc
+       (CArray.start min_arr)
+       (Unsigned.Size_t.of_int (CArray.length min_arr))
+       (CArray.start max_arr)
+       (Unsigned.Size_t.of_int (CArray.length max_arr))
+       (CArray.start out)
+       (Unsigned.Size_t.of_int cap)
+       out_len);
+  string_from_ptr
+    (coerce (ptr uint8_t) (ptr char) (CArray.start out))
+    ~length:(Unsigned.Size_t.to_int !@out_len)
+;;
+
+let new_recursion ctx tc ~max_depth ~max_leaves =
+  let out = allocate handle_t null_handle in
+  check_rc
+    ctx
+    (c_new_recursion
+       ctx
+       tc
+       (Unsigned.UInt64.of_int max_depth)
+       (Unsigned.UInt64.of_int max_leaves)
+       out);
+  !@out
+;;
+
+let recursion_branch ctx tc recursion ~depth =
+  let out = allocate bool false in
+  check_rc ctx (c_recursion_branch ctx tc recursion (Unsigned.UInt64.of_int depth) out);
+  !@out
+;;
+
+let recursion_leaf ctx tc recursion = check_rc ctx (c_recursion_leaf ctx tc recursion)
+let recursion_retry ctx tc recursion = check_rc ctx (c_recursion_retry ctx tc recursion)
+let recursion_finish ctx tc recursion = check_rc ctx (c_recursion_finish ctx tc recursion)
+let recursion_free ctx recursion = check_rc ctx (c_recursion_free ctx recursion)
 
 let start_span ctx tc label =
   check_rc ctx (c_start_span ctx tc (Unsigned.UInt64.of_int64 label))
@@ -1968,6 +2092,14 @@ let generate_time = Obj.magic_portable generate_time
 let generate_datetime = Obj.magic_portable generate_datetime
 let generate_ipv4 = Obj.magic_portable generate_ipv4
 let generate_ipv6 = Obj.magic_portable generate_ipv6
+let generate_uuid = Obj.magic_portable generate_uuid
+let generate_integer_big = Obj.magic_portable generate_integer_big
+let new_recursion = Obj.magic_portable new_recursion
+let recursion_branch = Obj.magic_portable recursion_branch
+let recursion_leaf = Obj.magic_portable recursion_leaf
+let recursion_retry = Obj.magic_portable recursion_retry
+let recursion_finish = Obj.magic_portable recursion_finish
+let recursion_free = Obj.magic_portable recursion_free
 let start_span = Obj.magic_portable start_span
 let stop_span = Obj.magic_portable stop_span
 let label_from_name = Obj.magic_portable label_from_name

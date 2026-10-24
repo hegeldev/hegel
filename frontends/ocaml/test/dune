@@ -8,6 +8,7 @@
   test_cli
   test_clone
   test_repeat
+  test_recursive
   test_concurrency
   test_generators_core
   test_generators_primitives
