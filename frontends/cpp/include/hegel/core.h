@@ -43,6 +43,29 @@ namespace hegel::generators {
         virtual uint64_t label() const {
             return internal::label(internal::LabelName::Generator);
         }
+
+        // Draws a value that satisfies `predicate`, as filter() does: up to
+        // internal::filter_attempts attempts, each in a span of its own that
+        // is discarded when the predicate rejects its value, then the test
+        // case is rejected. A generator whose draws change state outside
+        // the choice sequence (a consuming pool draw) overrides this to undo
+        // what its rejected attempts did.
+        virtual T
+        do_draw_filtered(const TestCase& tc,
+                         const std::function<bool(const T&)>& predicate) const {
+            uint64_t attempt =
+                internal::label(internal::LabelName::FilterAttempt);
+            for (int i = 0; i < internal::filter_attempts; ++i) {
+                internal::start_span(tc, attempt);
+                T value = do_draw(tc);
+                if (predicate(value)) {
+                    internal::stop_span(tc);
+                    return value;
+                }
+                internal::stop_span(tc, true);
+            }
+            tc.reject();
+        }
         /// @endcond
     };
 
@@ -163,13 +186,10 @@ namespace hegel::generators {
          * Creates a Generator that only produces values satisfying the
          * predicate. The new Generator has the same type as this Generator.
          *
-         * So for example, if you want sorted lists of length N, you should
-         * generate sorted lists of length N, not generate random lists and
-         * filter by a predicate of 'length == N && is_sorted'. (Although the
-         * latter is logically correct, it would be a performance nightmare, so
-         * Hegel doesn't let you do it that way.)
-         *
-         * For example, if you want sorted lists of length N, you should
+         * Each draw tries a few values. If none satisfies the predicate, the
+         * test case is rejected, as by TestCase::reject(). So a predicate that
+         * few values satisfy makes most test cases fail to generate. For
+         * example, if you want sorted lists of length N, you should
          * generate lists of length N and sort them, not generate random lists
          * and filter by a predicate of 'length == N && is_sorted'.
          *
@@ -187,22 +207,7 @@ namespace hegel::generators {
             uint64_t label = internal::combine_labels(
                 {internal::label(internal::LabelName::Filter), inner->label()});
             auto draw = [inner, pred](const TestCase& tc) -> T {
-                uint64_t attempt =
-                    internal::label(internal::LabelName::FilterAttempt);
-                for (int i = 0; i < 3; ++i) {
-                    internal::start_span(tc, attempt);
-                    T value = inner->do_draw(tc);
-                    if (pred(value)) {
-                        internal::stop_span(tc);
-                        return value;
-                    }
-                    // Discard the rejected span so the engine retries from
-                    // before it opened.
-                    internal::stop_span(tc, true);
-                }
-                tc.assume(false);
-                // unreachable: assume(false) throws
-                throw internal::HegelReject();
+                return inner->do_draw_filtered(tc, pred);
             };
             return Generator<T>(new CompositeGenerator<T>(draw, label));
         }

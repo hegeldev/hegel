@@ -72,6 +72,51 @@ TEST(Pools, DrawFromEmptyPool) {
     });
 }
 
+// A filtered consuming draw puts back the values its predicate rejected, so
+// they can be drawn again; only the value it returns leaves the pool.
+TEST(Pools, FilteredConsumeRestoresRejectedValues) {
+    int completed_after_rejection = 0;
+    hegel::test(
+        [&](hegel::TestCase& tc) {
+            hegel::stateful::Pool<int> pool(tc);
+            pool.add(1);
+            pool.add(2);
+            pool.add(3);
+            int calls = 0;
+            int even = tc.draw(hegel::stateful::values_consumed(pool).filter(
+                [&calls](const int& x) {
+                    calls++;
+                    return x % 2 == 0;
+                }));
+            EXPECT_EQ(even, 2);
+            EXPECT_EQ(pool.size(), 2u);
+            int a = tc.draw(hegel::stateful::values_consumed(pool));
+            int b = tc.draw(hegel::stateful::values_consumed(pool));
+            EXPECT_EQ(a + b, 4);
+            if (calls > 1) {
+                completed_after_rejection++;
+            }
+        },
+        hegel::Settings{.test_cases = 100,
+                        .database = hegel::Database::disabled()});
+    EXPECT_GT(completed_after_rejection, 0);
+}
+
+TEST(Pools, FilteredReuseKeepsEveryValue) {
+    hegel::test(
+        [](hegel::TestCase& tc) {
+            hegel::stateful::Pool<int> pool(tc);
+            pool.add(1);
+            pool.add(2);
+            int even = tc.draw(hegel::stateful::values_reusable(pool).filter(
+                [](const int& x) { return x % 2 == 0; }));
+            EXPECT_EQ(even, 2);
+            EXPECT_EQ(pool.size(), 2u);
+        },
+        hegel::Settings{.test_cases = 50,
+                        .database = hegel::Database::disabled()});
+}
+
 namespace {
     struct Stack : hegel::stateful::StateMachine<Stack, std::vector<int>> {
         Stack() : StateMachine({.initial_state = {}}) {}
@@ -636,6 +681,29 @@ TEST(ConcurrentPools, AddReuseAndConsume) {
         EXPECT_EQ(first + second, 30);
         EXPECT_TRUE(pool.empty());
     });
+}
+
+TEST(ConcurrentPools, FilteredConsumeRestoresRejectedValues) {
+    hegel::test(
+        [](hegel::TestCase& tc) {
+            hs::ConcurrentPool<int> pool(tc);
+            pool.add(tc, 1);
+            pool.add(tc, 2);
+            pool.add(tc, 3);
+            int even = tc.draw(hs::values_consumed(pool).filter(
+                [](const int& x) { return x % 2 == 0; }));
+            EXPECT_EQ(even, 2);
+            EXPECT_EQ(pool.size(), 2u);
+            int a = tc.draw(hs::values_consumed(pool));
+            int b = tc.draw(hs::values_consumed(pool));
+            EXPECT_EQ(a + b, 4);
+            pool.add(tc, 4);
+            int reused = tc.draw(hs::values_reusable(pool).filter(
+                [](const int& x) { return x == 4; }));
+            EXPECT_EQ(reused, 4);
+        },
+        hegel::Settings{.test_cases = 100,
+                        .database = hegel::Database::disabled()});
 }
 
 TEST(ConcurrentPools, SharedAcrossWorkers) {

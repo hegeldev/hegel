@@ -384,6 +384,52 @@ namespace hegel::stateful {
     };
 
     /// @cond INTERNAL
+    namespace detail {
+
+        // A filtered consuming draw from a pool whose values `values` holds
+        // by variable id. Each attempt consumes a variable the engine
+        // chooses, in a span that is discarded when `predicate` rejects its
+        // value. A rejected variable stays consumed until the attempts are
+        // over, so no later attempt draws it again, and is then put back.
+        // Only the accepted value leaves the pool.
+        template <typename T>
+        T
+        draw_filtered_consumed(const TestCase& tc,
+                               hegel::internal::PoolHandle& pool,
+                               std::map<int64_t, T>& values, uint64_t label,
+                               const std::function<bool(const T&)>& predicate) {
+            namespace hi = hegel::internal;
+            uint64_t attempt = hi::label(hi::LabelName::FilterAttempt);
+            std::vector<int64_t> rejected;
+            std::optional<T> accepted;
+            for (int i = 0; i < hi::filter_attempts && !accepted; ++i) {
+                hi::start_span(tc, attempt);
+                hi::start_span(tc, label);
+                int64_t variable = pool.draw_variable(tc, true);
+                hi::stop_span(tc);
+                T& value = values.at(variable);
+                if (predicate(value)) {
+                    hi::stop_span(tc);
+                    accepted = std::move(value);
+                    values.erase(variable);
+                } else {
+                    hi::stop_span(tc, true);
+                    rejected.push_back(variable);
+                }
+            }
+            for (int64_t variable : rejected) {
+                pool.restore(tc, variable);
+            }
+            if (!accepted) {
+                tc.reject();
+            }
+            return std::move(*accepted);
+        }
+
+    } // namespace detail
+    /// @endcond
+
+    /// @cond INTERNAL
     // Concrete IGenerator for variables.
     template <typename T> class VariablesGenerator : public IGenerator<T> {
       public:
@@ -415,6 +461,16 @@ namespace hegel::stateful {
                          : hegel::internal::LabelName::PoolValuesReusable);
         }
 
+        T do_draw_filtered(
+            const TestCase& tc,
+            const std::function<bool(const T&)>& predicate) const override {
+            if (!consume_) {
+                return IGenerator<T>::do_draw_filtered(tc, predicate);
+            }
+            return detail::draw_filtered_consumed(tc, p_.pool_handle_, p_.pool_,
+                                                  label(), predicate);
+        }
+
       private:
         Pool<T>& p_;
         bool consume_;
@@ -426,6 +482,9 @@ namespace hegel::stateful {
 
     /**
      * @brief Returns a value from the pool and removes it.
+     *
+     * A filter() on the returned generator removes only the value it
+     * returns: it puts back every value its predicate rejected.
      *
      * @code{.cpp}
         HEGEL_TEST(pool_round_trip)(hegel::TestCase& tc) {
@@ -584,6 +643,17 @@ namespace hegel::stateful {
                          : hegel::internal::LabelName::PoolValuesReusable);
         }
 
+        T do_draw_filtered(
+            const TestCase& tc,
+            const std::function<bool(const T&)>& predicate) const override {
+            if (!consume_) {
+                return IGenerator<T>::do_draw_filtered(tc, predicate);
+            }
+            std::lock_guard<std::mutex> lock(pool_.mutex_);
+            return detail::draw_filtered_consumed(
+                tc, pool_.pool_handle_, pool_.values_, label(), predicate);
+        }
+
       private:
         ConcurrentPool<T>& pool_;
         bool consume_;
@@ -593,7 +663,9 @@ namespace hegel::stateful {
     /**
      * @brief Returns a value from a concurrent pool and removes it.
      *
-     * The draw rejects the test case if the pool is empty.
+     * The draw rejects the test case if the pool is empty. A filter() on
+     * the returned generator removes only the value it returns: it puts
+     * back every value its predicate rejected.
      *
      * @tparam T The type of the values in the pool
      * @param pool The pool to draw from

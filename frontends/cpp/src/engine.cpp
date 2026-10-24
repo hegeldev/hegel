@@ -1035,6 +1035,13 @@ namespace hegel::internal {
         return var_id;
     }
 
+    void PoolHandle::restore(const TestCase& tc, int64_t variable) {
+        impl::DrawScope scope(tc);
+        scope.raise_for_rc(
+            hegel_pool_restore(scope.ctx, scope.tc, handle_, variable),
+            "hegel_pool_restore");
+    }
+
     StateMachineHandle::StateMachineHandle(
         const TestCase& tc, const std::vector<std::string>& rule_names,
         const std::vector<int64_t>& rule_groups,

@@ -109,6 +109,9 @@ namespace hegel::internal {
                       bool exclude_min, bool exclude_max,
                       double smallest_nonzero_magnitude);
 
+    // How many values a filter() draws before it rejects the test case.
+    inline constexpr int filter_attempts = 3;
+
     inline constexpr uint64_t no_max_size = ~uint64_t{0};
     class CollectionHandle {
       public:
@@ -138,6 +141,8 @@ namespace hegel::internal {
         // Returns the variable id the engine picked, removing it from the
         // pool when consume is true.
         int64_t draw_variable(const TestCase& tc, bool consume);
+        // Puts back a variable that a consuming draw_variable removed.
+        void restore(const TestCase& tc, int64_t variable);
 
       private:
         hegel_pool_t* handle_ = nullptr;

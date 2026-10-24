@@ -43,3 +43,5 @@ This release adds:
 - Support for integer types wider than 64 bits in `integers()`, such as `__int128` and `unsigned __int128`. Before, their bounds were truncated to 64 bits.
 
 `floats<long double>()` now draws a `double`. Before, it failed with an engine error where `long double` is wider than 64 bits.
+
+A `filter()` on `hegel::stateful::values_consumed()` now removes only the value it returns from the pool. Before, every value its predicate rejected was also removed, so later draws could not use it.
