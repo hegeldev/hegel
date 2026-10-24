@@ -82,3 +82,23 @@ Hegel.test(tc -> {
 ```
 
 A draw takes the value `Example.with` gives for its name, or otherwise the example's next positional value. A failing example is reported before any generated failure; with `reportMultipleFailures` off it ends the run, and with it on it is reported alongside the engine's failures, merged by origin. An example that lacks a value for a draw, has values no draw takes, or fails an assumption is a usage error. When an explicit example fails and the engine's run then errors (a health check, say), the run is `FAILED` and `RunReport.error()` and `errorKind()` also describe the error.
+
+`Generators.fromLark(grammar)` generates strings matching a grammar written in the syntax of the [Lark](https://lark-parser.readthedocs.io/en/stable/grammar.html) parsing library, as the other Hegel frontends' grammar generators do:
+
+```java
+String expression = tc.draw(fromLark("""
+        ?start: sum
+        ?sum: product | sum "+" product
+        ?product: atom | product "*" atom
+        ?atom: NUMBER | "(" sum ")"
+        %import common.NUMBER
+        %import common.WS
+        %ignore WS
+        """).maxSize(200));
+```
+
+`LarkGenerator` configures it: `start(rule)` picks the start rule, `explicit(name, generator)` draws a terminal's values from a generator of yours (required for a terminal the grammar `%declare`s), `alphabet(characters)` constrains the characters terminals draw from their patterns, `maxSize` and `maxDepth` bound the strings, and `importPath(dir)` sets the directory `%import`ed grammars are read from. The engine splices explicit terminals' values in, keeps the whole string under `maxSize`, and rejects the test case when the values cannot be made to fit.
+
+Text and binary generators with no `maxSize` now leave the maximum length to the engine, which applies the same default as before (100, or `minSize + 100` for a larger minimum), and `filter` takes its number of attempts from the engine, so both stay in step with the other Hegel frontends. `Abi` gains `MAX_SIZE_DEFAULT`, `FILTER_ATTEMPTS` and `E_NOT_FOUND`.
+
+`dev.hegel.lowlevel.Libhegel` gains `grammarBuilderNew`, `grammarBuilderFile`, `grammarBuilderProvide`, `grammarBuilderFree`, `grammarNew`, `grammarFree`, `grammarDrawNew`, `grammarDrawNext`, `grammarDrawProvide`, `grammarDrawResult` and `grammarDrawFree`. A third-party binding needs to implement them.
