@@ -21,3 +21,15 @@ This release brings the Rust frontend further into line with the other Hegel fro
 - `Settings::database` now takes the new `hegel::Database` enum, or an `Option<String>` as before, so `Settings::database(Database::Default)` can restore the default database after a profile disabled it or set a path.
 
 - `Settings::database_key` sets the key a test's failing examples are stored under, which `#[hegel::test]` otherwise derives from the test's module path and name. Setting it keeps a test's stored failures when it is renamed or moved, or shares them between tests.
+
+- A failed `tc.assume` or `tc.reject()` in an explicit test case (`#[hegel::explicit_test_case]`) now skips that case, as it skips a generated one, instead of failing the test. `ExplicitTestCase` gains `draw_named`, `event`, `event_value` (which do nothing, as statistics only count generated test cases) and `repeat` (which runs its body once, since an explicit value can only be drawn once).
+
+- An explicit test case now looks up a draw that can run more than once by its numbered name, `x_1`, `x_2`, ..., as the `#[hegel::explicit_test_case]` documentation already said, and as a failing test case prints it. Before, such a draw looked up the bare name `x`, so the documented example failed. An unnamed `tc.draw` is likewise `draw_1`, `draw_2`, ....
+
+- The reproducer line a failure prints now names the attribute the test was defined with: `#[hegel::test]`, `#[hegel::main]` or `#[hegel::standalone_function]`, and `#[hegel::reproduce_failure]` now works below `#[hegel::main]` and `#[hegel::standalone_function]` as well as `#[hegel::test]`. A run built with the `Hegel` builder directly is told to call `.reproduce_failure("…")` on the builder.
+
+- `HealthCheck::all()` now returns a `Vec<HealthCheck>` rather than a `[HealthCheck; 4]`, so that adding a health check does not change its type. It is no longer a `const fn`.
+
+- The `exclude_min` and `exclude_max` methods of `gs::floats()`, deprecated since 0.42.0 and panicking whenever called, are removed. Use `min_value_exclusive` and `max_value_exclusive`.
+
+- The documentation of `TestCase::repeat` now gives the note it prints at the start of each iteration correctly, as `// Repetition #N`.

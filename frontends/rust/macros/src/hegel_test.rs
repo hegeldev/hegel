@@ -129,6 +129,7 @@ pub fn expand_test(attr: TokenStream, item: TokenStream) -> TokenStream {
             ::hegel::Hegel::new(|#param_pat: #param_ty| #body)
             .settings(__hegel_settings)
             #reproduce_call
+            .__reproduce_attribute("#[hegel::test]")
             .__database_key(format!("{}::{}", module_path!(), #test_name))
             .test_location(::hegel::TestLocation {
                 function: #test_name.to_string(),

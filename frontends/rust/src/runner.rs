@@ -21,7 +21,8 @@ pub enum HealthCheck {
 }
 
 impl HealthCheck {
-    /// Returns all health check variants.
+    /// Returns every health check, including any added in later versions of
+    /// Hegel.
     ///
     /// Useful for suppressing all health checks at once:
     ///
@@ -33,8 +34,8 @@ impl HealthCheck {
     ///     // ...
     /// }
     /// ```
-    pub const fn all() -> [HealthCheck; 4] {
-        [
+    pub fn all() -> Vec<HealthCheck> {
+        vec![
             HealthCheck::FilterTooMuch,
             HealthCheck::TooSlow,
             HealthCheck::TestCasesTooLarge,
@@ -618,6 +619,7 @@ pub struct Hegel<F> {
     test_location: Option<TestLocation>,
     settings: Settings,
     reproduce_failure: Option<String>,
+    reproduce_attribute: Option<&'static str>,
     single_test_case: bool,
 }
 
@@ -633,6 +635,7 @@ where
             settings: Settings::new(),
             test_location: None,
             reproduce_failure: None,
+            reproduce_attribute: None,
             single_test_case: false,
         }
     }
@@ -659,6 +662,17 @@ where
     #[doc(hidden)]
     pub fn __single_test_case(mut self) -> Self {
         self.single_test_case = true;
+        self
+    }
+
+    /// The attribute macro that built this run (`"#[hegel::test]"`,
+    /// `"#[hegel::main]"` or `"#[hegel::standalone_function]"`), which a
+    /// failure's reproducer line tells the user to put
+    /// `#[hegel::reproduce_failure]` below. Without it, the line points at
+    /// [`reproduce_failure`](Self::reproduce_failure) on this builder.
+    #[doc(hidden)]
+    pub fn __reproduce_attribute(mut self, attribute: &'static str) -> Self {
+        self.reproduce_attribute = Some(attribute);
         self
     }
 
@@ -730,6 +744,7 @@ where
                 self.database_key.as_deref(),
                 &blob,
                 self.test_location.as_ref(),
+                self.reproduce_attribute,
             );
             return;
         }
@@ -739,6 +754,7 @@ where
             &settings,
             self.database_key.as_deref(),
             self.test_location.as_ref(),
+            self.reproduce_attribute,
         );
     }
 }

@@ -9,7 +9,7 @@
 
 mod common;
 
-use common::exec::self_test;
+use common::exec::{fixture, self_test};
 use hegel::TestCase;
 use hegel::generators as gs;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -36,6 +36,52 @@ const BLOB: &str = "!!! not a blob !!!";
 fn test_reproduce_failure_accepts_a_const_blob(tc: TestCase) {
     let x: i32 = tc.draw(gs::integers());
     let _ = x;
+}
+
+/// `#[hegel::standalone_function]` takes the attribute too.
+#[test]
+#[should_panic(expected = "could not be decoded")]
+fn test_reproduce_failure_below_standalone_function() {
+    #[hegel::standalone_function]
+    #[hegel::reproduce_failure(BLOB)]
+    fn replayed(tc: TestCase) {
+        let x: i32 = tc.draw(gs::integers());
+        let _ = x;
+    }
+    replayed();
+}
+
+/// So does `#[hegel::main]`: a `#[hegel::main]` failure prints the blob
+/// under that attribute's name, and the attribute below `#[hegel::main]`
+/// replays it.
+#[test]
+fn test_reproduce_failure_below_hegel_main_replays_its_failure() {
+    let out = fixture(env!("CARGO_BIN_EXE_fixture_main_failing"))
+        .env("HEGEL_DEFAULT_PROFILE", "base")
+        .args(&["--database", "disabled"])
+        .expect_failure("got nonneg")
+        .run();
+    assert!(
+        out.stderr
+            .contains("To reproduce this failure, add the attribute below #[hegel::main]:"),
+        "stderr:\n{}",
+        out.stderr
+    );
+    let re = regex::Regex::new(r#"reproduce_failure\("([^"]+)"\)"#).unwrap();
+    let blob = re
+        .captures(&out.stderr)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_else(|| panic!("no reproduce_failure line in output:\n{}", out.stderr));
+
+    fixture(env!("CARGO_BIN_EXE_fixture_main_reproduce"))
+        .env("HEGEL_TEST_REPRO_BLOB", &blob)
+        .expect_failure("got nonneg")
+        .run();
+    fixture(env!("CARGO_BIN_EXE_fixture_main_reproduce"))
+        .env("HEGEL_TEST_REPRO_BLOB", "!!! not a blob !!!")
+        .expect_failure("could not be decoded")
+        .run();
 }
 
 /// Stage 1 fixture: a failing test with `print_blob = true`, whose output the

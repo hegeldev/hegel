@@ -63,7 +63,7 @@ fn test_explicit_case_with_method_chain(tc: TestCase) {
 
 #[test]
 fn test_explicit_draw_unnamed() {
-    let etc = hegel::ExplicitTestCase::new().with_value("draw", "42", 42i32);
+    let etc = hegel::ExplicitTestCase::new().with_value("draw_1", "42", 42i32);
     etc.run(|tc: &hegel::ExplicitTestCase| {
         let x: i32 = tc.draw(generators::integers());
         assert_eq!(x, 42);
@@ -101,25 +101,97 @@ fn test_explicit_assume_passes() {
 }
 
 #[test]
-fn test_explicit_assume_panics() {
+fn test_explicit_assume_false_skips_the_case() {
+    let etc = hegel::ExplicitTestCase::new().with_value("x", "1", 1i32);
+    etc.run(|tc: &hegel::ExplicitTestCase| {
+        tc.note("not printed");
+        tc.assume(false);
+        panic!("unreachable after a failed assumption");
+    });
+}
+
+#[test]
+fn test_explicit_reject_skips_the_case() {
+    let etc = hegel::ExplicitTestCase::new();
+    etc.run(|tc: &hegel::ExplicitTestCase| {
+        tc.reject();
+    });
+}
+
+#[hegel::test(test_cases = 1)]
+#[hegel::explicit_test_case(x = -1i32)]
+fn test_macro_explicit_case_assume_skips(tc: TestCase) {
+    let x: i32 = tc.draw(generators::integers().min_value(0));
+    tc.assume(x >= 0);
+    assert!(x >= 0);
+}
+
+#[test]
+fn test_explicit_draw_named() {
+    let etc = hegel::ExplicitTestCase::new().with_value("index_1", "3", 3usize);
+    etc.run(|tc: &hegel::ExplicitTestCase| {
+        let index: usize = tc.draw_named("index", generators::integers());
+        assert_eq!(index, 3);
+    });
+}
+
+#[test]
+fn test_explicit_events_are_noops() {
+    let etc = hegel::ExplicitTestCase::new();
+    etc.run(|tc: &hegel::ExplicitTestCase| {
+        tc.event("label");
+        tc.event_value("label", 1.0);
+    });
+}
+
+#[test]
+fn test_explicit_repeat_runs_the_body_once() {
+    let etc = hegel::ExplicitTestCase::new().with_value("x_1", "5", 5i32);
+    let mut runs = 0;
+    etc.run(|tc: &hegel::ExplicitTestCase| {
+        tc.repeat(|| {
+            runs += 1;
+            let x: i32 = tc.draw_named("x", generators::integers());
+            assert_eq!(x, 5);
+        });
+    });
+    assert_eq!(runs, 1);
+}
+
+#[test]
+fn test_explicit_repeat_ends_the_case_after_a_rejected_iteration() {
+    let etc = hegel::ExplicitTestCase::new().with_value("x_1", "5", 5i32);
+    etc.run(|tc: &hegel::ExplicitTestCase| {
+        tc.repeat(|| {
+            let x: i32 = tc.draw_named("x", generators::integers());
+            tc.assume(x < 0);
+        });
+    });
+}
+
+#[test]
+fn test_explicit_repeat_checks_unused_values() {
     expect_panic(
         || {
-            let etc = hegel::ExplicitTestCase::new();
-            etc.assume(false);
+            let etc = hegel::ExplicitTestCase::new().with_value("x_1", "5", 5i32);
+            etc.run(|tc: &hegel::ExplicitTestCase| {
+                tc.repeat(|| {});
+            });
         },
-        "Explicit test case: assumption violated",
+        "never drawn",
     );
 }
 
 #[test]
-fn test_explicit_reject_panics() {
-    expect_panic(
-        || {
-            let etc = hegel::ExplicitTestCase::new();
-            etc.reject();
-        },
-        "Explicit test case: assumption violated",
-    );
+fn test_explicit_repeat_propagates_failures() {
+    let (lines, result) = capture_hegel_output(|| {
+        let etc = hegel::ExplicitTestCase::new();
+        etc.run(|tc: &hegel::ExplicitTestCase| {
+            tc.repeat(|| panic!("failed in repeat"));
+        });
+    });
+    assert!(result.is_err());
+    assert_eq!(lines, vec!["// Repetition #1".to_string()]);
 }
 
 #[test]
@@ -325,4 +397,27 @@ fn test_explicit_output_goes_to_the_output_override() {
         lines.iter().any(|l| l == "a captured note"),
         "expected the note in the sink, got {lines:?}"
     );
+}
+
+#[hegel::test(test_cases = 1)]
+#[hegel::explicit_test_case(x_1 = 1, x_2 = 2, x_3 = 4)]
+fn test_macro_explicit_case_numbers_repeated_draws(tc: TestCase) {
+    let mut seen = Vec::new();
+    for _ in 0..3 {
+        let x: i32 = tc.draw(generators::integers().min_value(1));
+        seen.push(x);
+    }
+    assert!(seen.iter().all(|&x| x >= 1));
+}
+
+#[test]
+fn test_explicit_repeated_draws_are_numbered() {
+    let etc = hegel::ExplicitTestCase::new()
+        .with_value("draw_1", "1", 1i32)
+        .with_value("draw_2", "2", 2i32);
+    etc.run(|tc: &hegel::ExplicitTestCase| {
+        let first: i32 = tc.draw(generators::integers());
+        let second: i32 = tc.draw(generators::integers());
+        assert_eq!((first, second), (1, 2));
+    });
 }

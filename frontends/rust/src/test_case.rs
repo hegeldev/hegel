@@ -787,7 +787,7 @@ impl TestCase {
     /// error. Roughly equivalent to a `loop` but with better interaction with
     /// the test runner: This loop will never exit until the test case completes.
     ///
-    /// At the start of each iteration a `// Loop iteration N` note is emitted
+    /// At the start of each iteration a `// Repetition #N` note is emitted
     /// into the failing-test replay output.
     ///
     /// # Example

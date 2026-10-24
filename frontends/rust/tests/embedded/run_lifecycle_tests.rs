@@ -129,22 +129,42 @@ fn format_backtrace_short_strips_through_filter() {
 fn reproducer_line_none_when_print_blob_disabled() {
     let settings = Settings::from_profile("base").print_blob(false);
     assert!(!settings.print_blob);
-    assert!(reproducer_line(&settings, Some("AAEC")).is_none());
+    assert!(reproducer_line(&settings, Some("AAEC"), Some("#[hegel::test]")).is_none());
 }
 
 #[test]
 fn reproducer_line_none_when_no_blob_attached() {
     let settings = Settings::new().print_blob(true);
-    assert!(reproducer_line(&settings, None).is_none());
+    assert!(reproducer_line(&settings, None, Some("#[hegel::test]")).is_none());
 }
 
 #[test]
-fn reproducer_line_emits_attribute_when_enabled_and_present() {
+fn reproducer_line_names_the_attribute_the_run_came_from() {
     let settings = Settings::new().print_blob(true);
-    let line = reproducer_line(&settings, Some("AAEC")).unwrap();
-    assert!(
-        line.contains("#[hegel::reproduce_failure(\"AAEC\")]"),
-        "expected the reproducer attribute, got: {line}"
+    for attribute in [
+        "#[hegel::test]",
+        "#[hegel::main]",
+        "#[hegel::standalone_function]",
+    ] {
+        let line = reproducer_line(&settings, Some("AAEC"), Some(attribute)).unwrap();
+        assert_eq!(
+            line,
+            format!(
+                "\nTo reproduce this failure, add the attribute below {attribute}:\n    \
+                 #[hegel::reproduce_failure(\"AAEC\")]"
+            )
+        );
+    }
+}
+
+#[test]
+fn reproducer_line_points_a_builder_run_at_the_builder() {
+    let settings = Settings::new().print_blob(true);
+    let line = reproducer_line(&settings, Some("AAEC"), None).unwrap();
+    assert_eq!(
+        line,
+        "\nTo reproduce this failure, call this on the Hegel builder before run():\n    \
+         .reproduce_failure(\"AAEC\")"
     );
 }
 
@@ -232,7 +252,7 @@ fn run_case_capturing(
 /// Drive a real run of `body` and return the message it panics with.
 fn drive_panic_message(body: impl FnMut(TestCase), settings: &Settings) -> String {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        drive(body, settings, None, None)
+        drive(body, settings, None, None, None)
     }));
     let payload = result.expect_err("drive should panic on a failing run");
     payload
@@ -302,6 +322,7 @@ fn drive_passing_run_does_not_panic() {
             let _: i32 = tc.draw(gs::integers());
         },
         &test_settings(),
+        None,
         None,
         None,
     );

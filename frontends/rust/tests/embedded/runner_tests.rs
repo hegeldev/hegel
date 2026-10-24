@@ -18,6 +18,20 @@ fn test_settings_suppress_health_check_replaces() {
 }
 
 #[test]
+fn test_health_check_all_lists_every_check_once() {
+    let all = HealthCheck::all();
+    let listed = |check: HealthCheck| match check {
+        HealthCheck::FilterTooMuch => 0,
+        HealthCheck::TooSlow => 1,
+        HealthCheck::TestCasesTooLarge => 2,
+        HealthCheck::LargeInitialTestCase => 3,
+    };
+    let mut indices: Vec<usize> = all.iter().map(|&check| listed(check)).collect();
+    indices.sort();
+    assert_eq!(indices, vec![0, 1, 2, 3]);
+}
+
+#[test]
 fn test_settings_report_multiple_failures_default_false() {
     let s = Settings::new();
     assert!(!s.report_multiple_failures);

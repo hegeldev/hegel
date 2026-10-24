@@ -245,24 +245,6 @@ impl<T> FloatGenerator<T> {
         self
     }
 
-    /// Set whether to exclude the minimum value from the range.
-    #[deprecated(since = "0.42.0", note = "use `min_value_exclusive(bound)` instead")]
-    pub fn exclude_min(self, exclude_min: bool) -> Self {
-        unreachable!(
-            "`exclude_min({exclude_min})` has been removed from `gs::floats()`; \
-             pass the bound to `min_value_exclusive` instead"
-        );
-    }
-
-    /// Set whether to exclude the maximum value from the range.
-    #[deprecated(since = "0.42.0", note = "use `max_value_exclusive(bound)` instead")]
-    pub fn exclude_max(self, exclude_max: bool) -> Self {
-        unreachable!(
-            "`exclude_max({exclude_max})` has been removed from `gs::floats()`; \
-             pass the bound to `max_value_exclusive` instead"
-        );
-    }
-
     /// Whether NaN values are allowed. Cannot be used with bounds.
     pub fn allow_nan(mut self, allow: bool) -> Self {
         self.allow_nan = Some(allow);

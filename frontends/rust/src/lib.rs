@@ -533,7 +533,12 @@ pub use hegel_macros::explicit_test_case;
 /// ```
 ///
 /// Paste that attribute **below** `#[hegel::test]` and the next run will
-/// replay the blob instead of generating fresh test cases. A deterministic
+/// replay the blob instead of generating fresh test cases. The attribute
+/// works the same way below [`#[hegel::main]`](macro@main) and
+/// [`#[hegel::standalone_function]`](macro@standalone_function), and the
+/// reproducer line names whichever of the three the failing run came from.
+/// A run built with the [`Hegel`] builder directly is told to call
+/// [`Hegel::reproduce_failure`] instead. A deterministic
 /// blob decodes to one choice sequence, replayed up to four times, stopping
 /// at the first failure. A nondeterministic blob decodes to its stored
 /// failing timelines, replayed until one fails, under a replay budget.
