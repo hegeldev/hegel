@@ -40,6 +40,7 @@ export const LabelNames = {
   FILTER: "hegel.filter",
   FILTER_ATTEMPT: "hegel.filter.attempt",
   RECURSIVE: "hegel.recursive",
+  FROM_LARK: "hegel.from_lark",
   DEFERRED: "hegel.deferred",
   PERMUTATION: "hegel.permutation",
   POOL_VALUES_REUSABLE: "hegel.pool.values_reusable",

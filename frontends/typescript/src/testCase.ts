@@ -13,6 +13,7 @@ import { repr, type Printer } from "./pretty.js";
 import type { LabelSpec } from "./labels.js";
 // Type-only import to avoid a runtime cycle: Generator depends on TestCase.
 import type { Generator } from "./generators/core.js";
+import type { GrammarSpec } from "./generate.js";
 
 export class StopTestError extends Error {
   constructor() {
@@ -102,6 +103,13 @@ export interface DataSource {
   recursionRetry(recursionId: number): void;
   /** Finish the value; `false` when the engine discarded it and it must be drawn again. */
   recursionFinish(recursionId: number): boolean;
+
+  /**
+   * Draw a string of the grammar `spec` describes (see `generators.fromLark`),
+   * calling `terminal` for the value of each occurrence of an explicit
+   * terminal, by its index in `spec.explicitNames`.
+   */
+  drawGrammar(spec: GrammarSpec, terminal: (index: number) => string): string;
 
   /** Register a sequential state machine (single group, concurrency 1). */
   newStateMachine(spec: StateMachineSpec): number;

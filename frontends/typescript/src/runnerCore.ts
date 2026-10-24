@@ -5,7 +5,7 @@
  * @packageDocumentation
  */
 
-import { generateValue, StringGeneratorCache } from "./generate.js";
+import { generateValue, StringGeneratorCache, withCleanup, type GrammarSpec } from "./generate.js";
 import {
   TestCase,
   StopTestError,
@@ -200,6 +200,23 @@ export class EngineDataSource implements DataSource {
   recursionFinish(recursionId: number): boolean {
     return this.call(() =>
       this.lib.recursionFinish(this.ctx, this.tc, this.family.recursions[recursionId]),
+    );
+  }
+
+  drawGrammar(spec: GrammarSpec, terminal: (index: number) => string): string {
+    const { lib, ctx, tc } = this;
+    const grammar = this.call(() => this.family.cache.grammar(ctx, spec));
+    const draw = this.call(() => lib.grammarDrawNew(ctx, grammar, 0));
+    return withCleanup(
+      () => {
+        for (;;) {
+          const index = this.call(() => lib.grammarDrawNext(ctx, tc, draw));
+          if (index === null) return this.call(() => lib.grammarDrawResult(ctx, draw));
+          const value = terminal(index);
+          this.call(() => lib.grammarDrawProvide(ctx, draw, value));
+        }
+      },
+      () => this.call(() => lib.freeGrammarDraw(draw)),
     );
   }
 
@@ -724,7 +741,7 @@ export class Hegel {
     const contextErrors: unknown[] = [];
     try {
       const settings = resolveSettings(lib, ctx, this._settings);
-      const cache = new StringGeneratorCache(lib);
+      const cache = new StringGeneratorCache(lib, this.runtime.readGrammarFile);
       const settingsErrors: unknown[] = [];
       try {
         applySettings(lib, ctx, settings, this._settings);

@@ -14,6 +14,9 @@ import {
   type RecursionHandle,
   type StateMachineHandle,
   type PrinterHandle,
+  type GrammarBuilderHandle,
+  type GrammarHandle,
+  type GrammarDrawHandle,
 } from "../src/engine.js";
 import type { RuntimeServices } from "../src/runtime.js";
 
@@ -29,6 +32,9 @@ export const pool = {} as PoolHandle;
 export const recursion = {} as RecursionHandle;
 export const stateMachine = {} as StateMachineHandle;
 export const derivedCase = {} as TestCaseHandle;
+export const grammarBuilder = {} as GrammarBuilderHandle;
+export const grammar = {} as GrammarHandle;
+export const grammarDraw = {} as GrammarDrawHandle;
 
 /** A test case's document double: its text, with speculative regions kept or dropped. */
 export class FakePrinter {
@@ -193,6 +199,17 @@ export function fakeEngine() {
     reproductionBlob: vi.fn<Engine["reproductionBlob"]>(() => "blob"),
     failureCaveat: vi.fn<Engine["failureCaveat"]>(() => null),
     freeStringGenerator: vi.fn<Engine["freeStringGenerator"]>(),
+    grammarBuilderNew: vi.fn<Engine["grammarBuilderNew"]>(() => grammarBuilder),
+    grammarBuilderFile: vi.fn<Engine["grammarBuilderFile"]>(() => null),
+    grammarBuilderProvide: vi.fn<Engine["grammarBuilderProvide"]>(),
+    freeGrammarBuilder: vi.fn<Engine["freeGrammarBuilder"]>(),
+    newGrammar: vi.fn<Engine["newGrammar"]>(() => grammar),
+    freeGrammar: vi.fn<Engine["freeGrammar"]>(),
+    grammarDrawNew: vi.fn<Engine["grammarDrawNew"]>(() => grammarDraw),
+    grammarDrawNext: vi.fn<Engine["grammarDrawNext"]>(() => null),
+    grammarDrawProvide: vi.fn<Engine["grammarDrawProvide"]>(),
+    grammarDrawResult: vi.fn<Engine["grammarDrawResult"]>(() => ""),
+    freeGrammarDraw: vi.fn<Engine["freeGrammarDraw"]>(),
   } satisfies Engine;
 }
 

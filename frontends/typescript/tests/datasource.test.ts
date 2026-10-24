@@ -149,6 +149,10 @@ class FakeDataSource implements DataSource {
     throw new Error("not supported by FakeDataSource");
   }
 
+  drawGrammar(): string {
+    throw new Error("not supported by FakeDataSource");
+  }
+
   note(message: string): void {
     this.output.note(message);
   }

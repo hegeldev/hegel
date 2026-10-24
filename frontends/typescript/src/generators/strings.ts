@@ -139,7 +139,8 @@ export function text(options?: TextOptions): Generator<string> {
 
 export type CharacterOptions = CharacterFilterOptions;
 
-class CharactersGenerator extends SchemaStringGenerator {
+/** @internal */
+export class CharactersGenerator extends SchemaStringGenerator {
   constructor(options?: CharacterOptions) {
     const schema: Record<string, unknown> = {
       type: "string",

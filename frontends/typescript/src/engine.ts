@@ -35,6 +35,15 @@ export type StateMachineHandle = { readonly [stateMachineBrand]: never };
 declare const printerBrand: unique symbol;
 export type PrinterHandle = { readonly [printerBrand]: never };
 
+declare const grammarBuilderBrand: unique symbol;
+export type GrammarBuilderHandle = { readonly [grammarBuilderBrand]: never };
+
+declare const grammarBrand: unique symbol;
+export type GrammarHandle = { readonly [grammarBrand]: never };
+
+declare const grammarDrawBrand: unique symbol;
+export type GrammarDrawHandle = { readonly [grammarDrawBrand]: never };
+
 /** `hegel_status_t` — outcome of a single test case. */
 export const Status = {
   VALID: 0,
@@ -154,6 +163,20 @@ export interface TextGeneratorOptions {
   excludeCategories: readonly string[] | null;
   includeCharacters: Uint8Array | null;
   excludeCharacters: Uint8Array | null;
+}
+
+/** Options for `hegel_grammar_new`. */
+export interface GrammarOptions {
+  /** The rule to generate strings of, or `null` for `start`. */
+  start: string | null;
+  /** The most characters a string may have, or 0 for the engine's default. */
+  maxSize: number;
+  /** How deeply rules may nest, or 0 for the engine's default. */
+  maxDepth: number;
+  /** A text generator every character a terminal's pattern draws must come from. */
+  alphabet: StringGeneratorHandle | null;
+  /** The terminals whose values the caller supplies, in index order. */
+  explicitNames: readonly string[];
 }
 
 /** Options for `hegel_generate_float`. */
@@ -353,6 +376,54 @@ export interface Engine {
   stringGeneratorUrl(ctx: ContextHandle): StringGeneratorHandle;
   stringGeneratorDomain(ctx: ContextHandle, maxLength: number): StringGeneratorHandle;
   generateString(ctx: ContextHandle, tc: TestCaseHandle, generator: StringGeneratorHandle): string;
+  /**
+   * Start gathering a grammar in Lark's syntax and the files it imports;
+   * released with {@link freeGrammarBuilder}. Throws for text that does not parse.
+   */
+  grammarBuilderNew(ctx: ContextHandle, text: string): GrammarBuilderHandle;
+  /**
+   * The path of the `index`th file the grammar needs, or `null` past the end
+   * of the list (`HEGEL_E_NOT_FOUND`), which grows as files are provided.
+   */
+  grammarBuilderFile(
+    ctx: ContextHandle,
+    builder: GrammarBuilderHandle,
+    index: number,
+  ): string | null;
+  /** Supply the `index`th file the grammar needs: its text, or `null` for a missing file. */
+  grammarBuilderProvide(
+    ctx: ContextHandle,
+    builder: GrammarBuilderHandle,
+    index: number,
+    text: string | null,
+  ): void;
+  freeGrammarBuilder(builder: GrammarBuilderHandle): void;
+  /**
+   * Compile a gathered grammar; released with {@link freeGrammar}. Throws with
+   * the engine's diagnostic for a bad grammar or option.
+   */
+  newGrammar(
+    ctx: ContextHandle,
+    builder: GrammarBuilderHandle,
+    opts: GrammarOptions,
+  ): GrammarHandle;
+  freeGrammar(grammar: GrammarHandle): void;
+  /**
+   * Start one draw of a string of `grammar`, of at most `maxSize` characters
+   * (0 for the grammar's own cap); released with {@link freeGrammarDraw}.
+   */
+  grammarDrawNew(ctx: ContextHandle, grammar: GrammarHandle, maxSize: number): GrammarDrawHandle;
+  /**
+   * Advance a grammar draw: the index of the explicit terminal whose value is
+   * due, or `null` once the string is complete (`HEGEL_E_NOT_FOUND`). Throws
+   * `AssumeError` when the engine rejects the test case.
+   */
+  grammarDrawNext(ctx: ContextHandle, tc: TestCaseHandle, draw: GrammarDrawHandle): number | null;
+  /** Supply the value of the explicit terminal {@link grammarDrawNext} asked for. */
+  grammarDrawProvide(ctx: ContextHandle, draw: GrammarDrawHandle, value: string): void;
+  /** The finished string, once {@link grammarDrawNext} has returned `null`. */
+  grammarDrawResult(ctx: ContextHandle, draw: GrammarDrawHandle): string;
+  freeGrammarDraw(draw: GrammarDrawHandle): void;
   generateDate(
     ctx: ContextHandle,
     tc: TestCaseHandle,

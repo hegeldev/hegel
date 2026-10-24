@@ -119,9 +119,12 @@ result and each failure; `EngineDataSource` frees the collections, pools,
 recursions, state machines, printers and cloned or block test cases of its
 test case;
 engine-owned buffers (`hegel_generate_bytes`, `hegel_generate_string`,
-`hegel_printer_value`) are copied out immediately and then freed. The
-exception: `hegel_string_generator_t` handles are cached per schema object
-(`StringGeneratorCache`) and freed with the runner.
+`hegel_printer_value`, `hegel_grammar_draw_result`) are copied out
+immediately and then freed. A grammar builder is freed as soon as its grammar
+is compiled, and a grammar draw when the draw ends. The exceptions:
+`hegel_string_generator_t` handles are cached per schema object and
+`hegel_grammar_t` handles per `fromLark` generator (`StringGeneratorCache`),
+and freed with the runner.
 
 ## Making a change
 
@@ -141,7 +144,7 @@ exception: `hegel_string_generator_t` handles are cached per schema object
      `_Out_ void**` that yields a `const hegel_string_t *` is decoded with
      `koffi.decode(ptr, stringType)`. A struct returned by value
      (`hegel_context_last_error`) is declared with `lib.func(name, stringType,
-     [...])`.
+[...])`.
    - New symbol → bind it **only if the frontend needs it**: the coverage gate
      forbids dead bindings.
    - Changed enum or constant values → the exported `const` objects in

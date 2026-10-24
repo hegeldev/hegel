@@ -86,6 +86,9 @@ export class ExplicitDataSource implements DataSource {
   stateMachineShouldCheckInvariant(): boolean {
     return unsupported("A state machine");
   }
+  drawGrammar(): string {
+    return unsupported("A grammar");
+  }
   note(message: string): void {
     this.output.note(message);
   }

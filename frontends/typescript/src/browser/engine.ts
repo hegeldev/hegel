@@ -15,6 +15,10 @@ import {
   type RecursionHandle,
   type StateMachineHandle,
   type PrinterHandle,
+  type GrammarBuilderHandle,
+  type GrammarHandle,
+  type GrammarDrawHandle,
+  type GrammarOptions,
   type StateMachineOptions,
   type NativeDate,
   type NativeTime,
@@ -36,6 +40,7 @@ const BUFFER_FREE = {
   generate_bytes: "generate_bytes_result_free",
   generate_string: "owned_string_free",
   printer_value: "printer_value_result_free",
+  grammar_draw_result: "owned_string_free",
 } as const;
 
 export class WasmEngine implements Engine {
@@ -72,6 +77,26 @@ export class WasmEngine implements Engine {
     // Copy before the arena or an owned handle can be released.
     const message = ctx === 0 ? "" : this.readLastError(ctx);
     throw new EngineError(`hegel_${op} failed (${code})${message ? `: ${message}` : ""}`);
+  }
+
+  /**
+   * Call an operation that writes an output of `size` bytes, as {@link output}
+   * does, but return `null` for `HEGEL_E_NOT_FOUND`.
+   */
+  private found<T>(
+    ctx: number,
+    op: Operation,
+    args: Argument[],
+    size: number,
+    read: (arena: WasmArena, ptr: number) => T,
+  ): T | null {
+    return WasmArena.scoped(this.abi, (arena) => {
+      const out = arena.alloc(size, 4);
+      const code = this.abi.call(op, ...args, out);
+      if (code === -11) return null;
+      if (code !== 0) this.raise(ctx, op, code, true);
+      return read(arena, out);
+    });
   }
 
   /** `false` for `HEGEL_E_RETRY`, otherwise as {@link check} with control codes. */
@@ -568,6 +593,81 @@ export class WasmEngine implements Engine {
       const c = this.ptr(ctx);
       return this.handle(c, "string_generator_regex", [c, a.text(pattern), +fullmatch, 0]);
     });
+  }
+  grammarBuilderNew(ctx: ContextHandle, text: string): GrammarBuilderHandle {
+    return WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      return this.handle(c, "grammar_builder_new", [c, a.text(text)]);
+    });
+  }
+  grammarBuilderFile(
+    ctx: ContextHandle,
+    builder: GrammarBuilderHandle,
+    index: number,
+  ): string | null {
+    const c = this.ptr(ctx);
+    return this.found(c, "grammar_builder_file", [c, this.ptr(builder), u32(index)], 8, (a, p) =>
+      a.string(p),
+    );
+  }
+  grammarBuilderProvide(
+    ctx: ContextHandle,
+    builder: GrammarBuilderHandle,
+    index: number,
+    text: string | null,
+  ): void {
+    WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      this.check(c, "grammar_builder_provide", [c, this.ptr(builder), u32(index), a.text(text)]);
+    });
+  }
+  freeGrammarBuilder(builder: GrammarBuilderHandle): void {
+    this.free("grammar_builder_free", builder);
+  }
+  newGrammar(
+    ctx: ContextHandle,
+    builder: GrammarBuilderHandle,
+    opts: GrammarOptions,
+  ): GrammarHandle {
+    return WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      return this.handle(c, "grammar_new", [
+        c,
+        this.ptr(builder),
+        a.text(opts.start),
+        u64(opts.maxSize),
+        u32(opts.maxDepth),
+        opts.alphabet === null ? 0 : this.ptr(opts.alphabet),
+        a.stringList(opts.explicitNames),
+        opts.explicitNames.length,
+      ]);
+    });
+  }
+  freeGrammar(grammar: GrammarHandle): void {
+    this.free("grammar_free", grammar);
+  }
+  grammarDrawNew(ctx: ContextHandle, grammar: GrammarHandle, maxSize: number): GrammarDrawHandle {
+    const c = this.ptr(ctx);
+    return this.handle(c, "grammar_draw_new", [c, this.ptr(grammar), u64(maxSize)]);
+  }
+  grammarDrawNext(ctx: ContextHandle, tc: TestCaseHandle, draw: GrammarDrawHandle): number | null {
+    const c = this.ptr(ctx);
+    return this.found(c, "grammar_draw_next", [c, this.ptr(tc), this.ptr(draw)], 4, (a, p) =>
+      a.pointer(p),
+    );
+  }
+  grammarDrawProvide(ctx: ContextHandle, draw: GrammarDrawHandle, value: string): void {
+    WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      this.check(c, "grammar_draw_provide", [c, this.ptr(draw), a.text(value)]);
+    });
+  }
+  grammarDrawResult(ctx: ContextHandle, draw: GrammarDrawHandle): string {
+    const c = this.ptr(ctx);
+    return this.buffer(c, "grammar_draw_result", [c, this.ptr(draw)], wtf8ToString);
+  }
+  freeGrammarDraw(draw: GrammarDrawHandle): void {
+    this.free("grammar_draw_free", draw);
   }
   stringGeneratorEmail(ctx: ContextHandle): StringGeneratorHandle {
     const c = this.ptr(ctx);

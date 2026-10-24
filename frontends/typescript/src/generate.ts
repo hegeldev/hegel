@@ -16,7 +16,9 @@
  * built from the schema. Construction is comparatively expensive (regex
  * compilation, Unicode table lookups), so generators are cached per schema
  * object within each run, with at most 256 entries. Eviction and run teardown
- * free the handles; no cache entry can cross engine instances.
+ * free the handles; no cache entry can cross engine instances. Grammars
+ * (`hegel_grammar_t`, for `fromLark`) are compiled once per run for each
+ * generator in the same cache and freed when the run ends.
  *
  * @packageDocumentation
  */
@@ -29,6 +31,7 @@ import {
   type ContextHandle,
   type TestCaseHandle,
   type StringGeneratorHandle,
+  type GrammarHandle,
   type NativeDate,
   type NativeTime,
   type NativeDatetime,
@@ -215,12 +218,83 @@ function drawFloat(
   });
 }
 
+/**
+ * What a grammar is compiled from: a `fromLark` generator's grammar and
+ * options, one object per generator.
+ */
+export interface GrammarSpec {
+  readonly text: string;
+  readonly start: string | null;
+  /** The most characters, or 0 for the engine's default. */
+  readonly maxSize: number;
+  /** How deeply rules may nest, or 0 for the engine's default. */
+  readonly maxDepth: number;
+  /** The schema of the text generator terminals' characters come from. */
+  readonly alphabet: Record<string, unknown> | null;
+  readonly explicitNames: readonly string[];
+  /** The directory imported grammar files are read from. */
+  readonly importPath: string | null;
+}
+
+/**
+ * Reads the grammar file at `path` (slash-separated, relative) under `dir`:
+ * its text, or `null` when there is no such file.
+ */
+export type GrammarFileReader = (dir: string, path: string) => string | null;
+
+function noGrammarFiles(): never {
+  throw new EngineError("Reading grammar files (importPath) is not supported on this host");
+}
+
 /** Run-owned cache. Handles never cross engines and are freed before the context.
  * The cap also bounds runs whose user code creates a fresh schema for every draw.
+ * Grammars are not evicted: a draw in progress borrows its grammar, and a
+ * grammar compiled during it (for an explicit terminal) must not free it.
  */
 export class StringGeneratorCache {
   private readonly generators = new Map<Record<string, unknown>, StringGeneratorHandle>();
-  constructor(private readonly engine: Engine) {}
+  private readonly grammars = new Map<GrammarSpec, GrammarHandle>();
+  constructor(
+    private readonly engine: Engine,
+    private readonly readGrammarFile: GrammarFileReader = noGrammarFiles,
+  ) {}
+
+  /** The compiled grammar for `spec`, gathering its imported files on first use. */
+  grammar(ctx: ContextHandle, spec: GrammarSpec): GrammarHandle {
+    const cached = this.grammars.get(spec);
+    if (cached !== undefined) return cached;
+    const lib = this.engine;
+    const builder = lib.grammarBuilderNew(ctx, spec.text);
+    const grammar = withCleanup(
+      () => {
+        for (let index = 0; ; index++) {
+          const path = lib.grammarBuilderFile(ctx, builder, index);
+          if (path === null) break;
+          const text =
+            spec.importPath === null ? null : this.readGrammarFile(spec.importPath, path);
+          lib.grammarBuilderProvide(ctx, builder, index, text);
+        }
+        const alphabet =
+          spec.alphabet === null ? null : buildStringGenerator(lib, ctx, spec.alphabet);
+        return withCleanup(
+          () =>
+            lib.newGrammar(ctx, builder, {
+              start: spec.start,
+              maxSize: spec.maxSize,
+              maxDepth: spec.maxDepth,
+              alphabet,
+              explicitNames: spec.explicitNames,
+            }),
+          () => {
+            if (alphabet !== null) lib.freeStringGenerator(alphabet);
+          },
+        );
+      },
+      () => lib.freeGrammarBuilder(builder),
+    );
+    this.grammars.set(spec, grammar);
+    return grammar;
+  }
 
   get(lib: Engine, ctx: ContextHandle, schema: Record<string, unknown>): StringGeneratorHandle {
     if (lib !== this.engine) throw new Error("String generator cache belongs to another engine");
@@ -239,10 +313,19 @@ export class StringGeneratorCache {
   dispose(): void {
     const generators = [...this.generators.values()];
     this.generators.clear();
+    const grammars = [...this.grammars.values()];
+    this.grammars.clear();
     const errors: unknown[] = [];
     for (const generator of generators) {
       try {
         this.engine.freeStringGenerator(generator);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    for (const grammar of grammars) {
+      try {
+        this.engine.freeGrammar(grammar);
       } catch (error) {
         errors.push(error);
       }
@@ -291,8 +374,8 @@ function buildStringGenerator(
   }
 }
 
-// Cleanup must not replace an engine fault with ordinary draw control flow.
-function withCleanup<T>(operation: () => T, cleanup: () => void): T {
+/** Run `operation`, then `cleanup`; cleanup must not replace an engine fault with ordinary draw control flow. */
+export function withCleanup<T>(operation: () => T, cleanup: () => void): T {
   let failed = false;
   let failure: unknown;
   let value!: T;

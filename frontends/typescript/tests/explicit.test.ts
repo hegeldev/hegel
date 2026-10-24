@@ -25,6 +25,7 @@ it("ExplicitDataSource refuses every engine operation and records only notes", (
     ["A state machine", () => ds.stateMachineNextRule()],
     ["A state machine", () => ds.stateMachineRuleRejected()],
     ["A state machine", () => ds.stateMachineShouldCheckInvariant()],
+    ["A grammar", () => ds.drawGrammar()],
   ];
   for (const [operation, call] of refused) {
     expect(call).toThrow(`${operation} is not supported in explicit examples`);

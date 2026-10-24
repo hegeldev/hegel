@@ -116,12 +116,22 @@ so a Node import creeping into a shared module fails `check-lint`.
    (`one_of`, `tuple`, `list`, `dict`, `constant`) client-side with the
    matching shrinker spans and the collection protocol. String-shaped draws go
    through a per-engine `StringGeneratorCache` of `hegel_string_generator_t`
-   handles, bounded and freed with the runner.
+   handles, bounded and freed with the runner. The same run-owned cache
+   compiles each `fromLark` generator's grammar once (the builder loop, with
+   imported files read through `RuntimeServices.readGrammarFile`) and frees
+   the `hegel_grammar_t` handles when the run ends; grammars are never evicted,
+   because a draw in progress borrows its grammar. A grammar draw
+   (`EngineDataSource.drawGrammar`) is one `hegel_grammar_draw_t` loop per
+   value, the frontend drawing each explicit terminal's value between
+   `hegel_grammar_draw_next` and `hegel_grammar_draw_provide`. Text and binary
+   draws without a `maxSize` pass `HEGEL_MAX_SIZE_DEFAULT`, and `filter` tries
+   `HEGEL_FILTER_ATTEMPTS` values: both constants live in `src/engine.ts`.
 5. **Runtime services** (`src/runtime.ts`, `src/nodeRuntime.ts`,
    `src/browser/runtime.ts`) — `RuntimeServices` is the small set of
    host-specific things the shared loop needs: how to get the `Engine`,
    settings validation (the browser rejects `Database.fromPath`), whether the
-   host can keep a database (the browser cannot, so its runs disable it), and
+   host can keep a database (the browser cannot, so its runs disable it), how
+   to read a grammar file a `fromLark` grammar imports (Node only), and
    where report lines go (`output`: `console.error` on every host, so Node and
    browsers print the same report). Settings defaults, CI detection and Antithesis
    reporting all belong to the engine: a run starts from
@@ -162,7 +172,7 @@ is caller-owned: the runner frees `Context`/`Settings`/`Run` handles, each test
 case from `next_test_case`, the run result and each failure explicitly in
 `finally` blocks, in ownership order, and `EngineDataSource.dispose` frees
 each test case's collections, pools, recursions, state machines, printers and
-derived test cases. `src/session.ts` passes `process.versions.unicode` to
+derived test cases; each grammar draw frees its `hegel_grammar_draw_t` when it ends. `src/session.ts` passes `process.versions.unicode` to
 `hegel_set_unicode_version` when the native library loads; the browser reports
 no Unicode version, so the Wasm engine keeps its own tables. Generated strings decode
 through `wtf8.ts` (UTF-8 exactly; safe if the engine ever hands back a lone
@@ -179,7 +189,7 @@ thread (the main thread unless the user runs tests in a worker themselves).
 ### Browser non-goals (for now)
 
 No persistence (`Database.fromPath` throws; every run's database is
-disabled), no worker offloading, no Antithesis output (the location is passed,
+disabled), no grammar files (`fromLark`'s `importPath` fails the test), no worker offloading, no Antithesis output (the location is passed,
 but the Wasm engine has no output directory), no raw engine-output callbacks. Web
 Crypto in a secure context is required, and the Wasm asset must be servable
 under the page's CORS/CSP.

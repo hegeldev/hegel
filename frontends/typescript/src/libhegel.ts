@@ -45,6 +45,10 @@ import {
   type RecursionHandle,
   type StateMachineHandle,
   type PrinterHandle,
+  type GrammarBuilderHandle,
+  type GrammarHandle,
+  type GrammarDrawHandle,
+  type GrammarOptions,
   type StateMachineOptions,
   type NativeDate,
   type NativeTime,
@@ -83,6 +87,7 @@ const RESULT_OK = 0;
 const RESULT_STOP_TEST = -1;
 const RESULT_ASSUME = -2;
 const RESULT_RETRY = -10;
+const RESULT_NOT_FOUND = -11;
 
 /** An error returned by a fallible libhegel call. */
 export class LibhegelError extends EngineError {
@@ -248,6 +253,18 @@ export interface Bindings {
   stringGeneratorDomain: (ctx: Ptr, maxLength: number, out: Ptr[]) => number;
   generateString: (ctx: Ptr, tc: Ptr, generator: Ptr, out: NativeBuffer[]) => number;
   ownedStringFree: (result: NativeBuffer) => void;
+
+  grammarBuilderNew: (ctx: Ptr, text: string, out: Ptr[]) => number;
+  grammarBuilderFile: (ctx: Ptr, builder: Ptr, index: number, out: NativeBuffer[]) => number;
+  grammarBuilderProvide: (ctx: Ptr, builder: Ptr, index: number, text: string | null) => number;
+  grammarBuilderFree: (builder: Ptr) => void;
+  grammarNew: (ctx: Ptr, builder: Ptr, opts: GrammarOptions, out: Ptr[]) => number;
+  grammarFree: (grammar: Ptr) => void;
+  grammarDrawNew: (ctx: Ptr, grammar: Ptr, maxSize: bigint, out: Ptr[]) => number;
+  grammarDrawNext: (ctx: Ptr, tc: Ptr, draw: Ptr, out: (number | bigint)[]) => number;
+  grammarDrawProvide: (ctx: Ptr, draw: Ptr, value: string) => number;
+  grammarDrawResult: (ctx: Ptr, draw: Ptr, out: NativeBuffer[]) => number;
+  grammarDrawFree: (draw: Ptr) => void;
 
   generateDate: (ctx: Ptr, tc: Ptr, min: NativeDate, max: NativeDate, out: NativeDate[]) => number;
   generateTime: (ctx: Ptr, tc: Ptr, min: NativeTime, max: NativeTime, out: NativeTime[]) => number;
@@ -563,6 +580,50 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   ]);
   const ownedStringFree = fs("hegel_owned_string_free", ["void*", koffi.pointer(stringType)]);
 
+  const grammarBuilderNew = fs("hegel_grammar_builder_new", [
+    "void*",
+    stringType,
+    koffi.out(koffi.pointer("void*")),
+  ]);
+  const grammarBuilderFile = fs("hegel_grammar_builder_file", [
+    "void*",
+    "void*",
+    "size_t",
+    koffi.out(koffi.pointer(stringType)),
+  ]);
+  const grammarBuilderProvide = fs("hegel_grammar_builder_provide", [
+    "void*",
+    "void*",
+    "size_t",
+    koffi.pointer(stringType),
+  ]);
+  const grammarBuilderFree = f("int hegel_grammar_builder_free(void* ctx, void* builder)");
+  const grammarNew = fs("hegel_grammar_new", [
+    "void*",
+    "void*",
+    koffi.pointer(stringType),
+    "uint64_t",
+    "uint32_t",
+    "void*",
+    koffi.pointer(stringType),
+    "size_t",
+    koffi.out(koffi.pointer("void*")),
+  ]);
+  const grammarFree = f("int hegel_grammar_free(void* ctx, void* grammar)");
+  const grammarDrawNew = f(
+    "int hegel_grammar_draw_new(void* ctx, void* grammar, uint64_t max_size, _Out_ void** out_draw)",
+  );
+  const grammarDrawNext = f(
+    "int hegel_grammar_draw_next(void* ctx, void* tc, void* draw, _Out_ size_t* out_terminal)",
+  );
+  const grammarDrawProvide = fs("hegel_grammar_draw_provide", ["void*", "void*", stringType]);
+  const grammarDrawResult = fs("hegel_grammar_draw_result", [
+    "void*",
+    "void*",
+    koffi.out(koffi.pointer(stringType)),
+  ]);
+  const grammarDrawFree = f("int hegel_grammar_draw_free(void* ctx, void* draw)");
+
   const generateDate = fs("hegel_generate_date", [
     "void*",
     "void*",
@@ -866,6 +927,30 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     stringGeneratorDomain: (ctx, maxLength, out) => stringGeneratorDomain(ctx, maxLength, out),
     generateString: (ctx, tc, generator, out) => generateString(ctx, tc, generator, out),
     ownedStringFree: (result) => checked(ownedStringFree(null, result), "ownedStringFree"),
+    grammarBuilderNew: (ctx, text, out) => grammarBuilderNew(ctx, nativeString(text), out),
+    grammarBuilderFile: (ctx, builder, index, out) => grammarBuilderFile(ctx, builder, index, out),
+    grammarBuilderProvide: (ctx, builder, index, text) =>
+      grammarBuilderProvide(ctx, builder, index, optionalString(text)),
+    grammarBuilderFree: (builder) =>
+      checked(grammarBuilderFree(null, builder), "hegel_grammar_builder_free"),
+    grammarNew: (ctx, builder, opts, out) =>
+      grammarNew(
+        ctx,
+        builder,
+        optionalString(opts.start),
+        BigInt(opts.maxSize),
+        opts.maxDepth,
+        opts.alphabet,
+        opts.explicitNames.map(nativeString),
+        opts.explicitNames.length,
+        out,
+      ),
+    grammarFree: (grammar) => checked(grammarFree(null, grammar), "hegel_grammar_free"),
+    grammarDrawNew: (ctx, grammar, maxSize, out) => grammarDrawNew(ctx, grammar, maxSize, out),
+    grammarDrawNext: (ctx, tc, draw, out) => grammarDrawNext(ctx, tc, draw, out),
+    grammarDrawProvide: (ctx, draw, value) => grammarDrawProvide(ctx, draw, nativeString(value)),
+    grammarDrawResult: (ctx, draw, out) => grammarDrawResult(ctx, draw, out),
+    grammarDrawFree: (draw) => checked(grammarDrawFree(null, draw), "hegel_grammar_draw_free"),
     generateDate: (ctx, tc, min, max, out) => generateDate(ctx, tc, min, max, out),
     generateTime: (ctx, tc, min, max, out) => generateTime(ctx, tc, min, max, out),
     generateDatetime: (ctx, tc, min, max, out) => generateDatetime(ctx, tc, min, max, out),
@@ -1424,6 +1509,82 @@ export class Libhegel implements Engine {
     } finally {
       this.fns.ownedStringFree(out[0]);
     }
+  }
+
+  /** Start gathering a grammar. Throws {@link LibhegelError} for text that does not parse. */
+  grammarBuilderNew(ctx: Ptr, text: string): GrammarBuilderHandle {
+    const out: Ptr[] = [null];
+    this.check(ctx, this.fns.grammarBuilderNew(ctx, text, out), "hegel_grammar_builder_new");
+    return this.requireHandle<GrammarBuilderHandle>(out[0], "grammarBuilderNew");
+  }
+
+  /** The `index`th file the grammar needs, or `null` past the end of the list. */
+  grammarBuilderFile(ctx: Ptr, builder: Ptr, index: number): string | null {
+    const out: NativeBuffer[] = [{ data: null, len: 0 }];
+    const code = this.fns.grammarBuilderFile(ctx, builder, index, out);
+    if (code === RESULT_NOT_FOUND) return null;
+    this.check(ctx, code, "hegel_grammar_builder_file");
+    return wtf8ToString(copyNativeBuffer(out[0]));
+  }
+
+  grammarBuilderProvide(ctx: Ptr, builder: Ptr, index: number, text: string | null): void {
+    this.check(
+      ctx,
+      this.fns.grammarBuilderProvide(ctx, builder, index, text),
+      "hegel_grammar_builder_provide",
+    );
+  }
+
+  freeGrammarBuilder(builder: Ptr): void {
+    this.fns.grammarBuilderFree(builder);
+  }
+
+  /** Compile a gathered grammar. Throws {@link LibhegelError} with the engine's diagnostic. */
+  newGrammar(ctx: Ptr, builder: Ptr, opts: GrammarOptions): GrammarHandle {
+    const out: Ptr[] = [null];
+    this.check(ctx, this.fns.grammarNew(ctx, builder, opts, out), "hegel_grammar_new");
+    return this.requireHandle<GrammarHandle>(out[0], "newGrammar");
+  }
+
+  freeGrammar(grammar: Ptr): void {
+    this.fns.grammarFree(grammar);
+  }
+
+  grammarDrawNew(ctx: Ptr, grammar: Ptr, maxSize: number): GrammarDrawHandle {
+    const out: Ptr[] = [null];
+    this.check(
+      ctx,
+      this.fns.grammarDrawNew(ctx, grammar, BigInt(maxSize), out),
+      "hegel_grammar_draw_new",
+    );
+    return this.requireHandle<GrammarDrawHandle>(out[0], "grammarDrawNew");
+  }
+
+  /** The explicit terminal whose value is due, or `null` once the string is complete. */
+  grammarDrawNext(ctx: Ptr, tc: Ptr, draw: Ptr): number | null {
+    const out: (number | bigint)[] = [0];
+    const code = this.fns.grammarDrawNext(ctx, tc, draw, out);
+    if (code === RESULT_NOT_FOUND) return null;
+    this.check(ctx, code, "hegel_grammar_draw_next");
+    return Number(out[0]);
+  }
+
+  grammarDrawProvide(ctx: Ptr, draw: Ptr, value: string): void {
+    this.check(ctx, this.fns.grammarDrawProvide(ctx, draw, value), "hegel_grammar_draw_provide");
+  }
+
+  grammarDrawResult(ctx: Ptr, draw: Ptr): string {
+    const out: NativeBuffer[] = [{ data: null, len: 0 }];
+    this.check(ctx, this.fns.grammarDrawResult(ctx, draw, out), "hegel_grammar_draw_result");
+    try {
+      return wtf8ToString(copyNativeBuffer(out[0]));
+    } finally {
+      this.fns.ownedStringFree(out[0]);
+    }
+  }
+
+  freeGrammarDraw(draw: Ptr): void {
+    this.fns.grammarDrawFree(draw);
   }
 
   /** Draw a date in `[min, max]`. */

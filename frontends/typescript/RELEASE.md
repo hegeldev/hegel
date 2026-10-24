@@ -73,3 +73,15 @@ A filter on `Pool.valuesConsumed()` now consumes only the value it yields: value
 On Node, text and regex generators follow the Unicode version of Node's own tables (`process.versions.unicode`), so a character category means the same to the generators as to JavaScript's regular expressions.
 
 `gs.text()` and `gs.binary()` without a `maxSize` now take the engine's default maximum, as every Hegel frontend does: 100 characters or bytes, or `minSize + 100` when `minSize` is above 100. Previously they had no upper bound. Pass a `maxSize` for longer values. A filter now tries as many values as the engine says before rejecting the test case, the same number in every frontend.
+
+New `gs.fromLark(grammar, options)` generates strings of a grammar written in [Lark](https://lark-parser.readthedocs.io/en/stable/grammar.html)'s syntax, as the other Hegel frontends do, on Node and in browsers. The options are `start` (the rule to generate), `explicit` (generators for terminals whose values the test supplies, such as `%declare`d ones), `alphabet` (the characters terminals may contain, as a string or a `gs.characters()` generator), `maxSize`, `maxDepth` and, on Node, `importPath` (the directory `%import`ed grammar files are read from; Lark's bundled `common`, `python`, `unicode` and `lark` grammars are always available).
+
+```ts
+const expressions = gs.fromLark(`
+  ?start: sum
+  ?sum: product | sum "+" product
+  ?product: atom | product "*" atom
+  ?atom: NUMBER | "(" sum ")"
+  %import common.NUMBER
+`);
+```

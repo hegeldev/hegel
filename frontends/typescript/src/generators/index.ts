@@ -28,4 +28,6 @@ export { just, none, sampledFrom, oneOf, optional } from "./combinators.js";
 export { recursive, deferred } from "./recursive.js";
 export type { RecursiveOptions } from "./recursive.js";
 export { tuples } from "./tuples.js";
+export { fromLark } from "./lark.js";
+export type { LarkOptions } from "./lark.js";
 export { composite, record } from "./compose.js";
