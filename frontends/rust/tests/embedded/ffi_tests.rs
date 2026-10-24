@@ -439,6 +439,7 @@ fn ffi_settings_round_trip_every_field_through_registration() {
         .stop_on_first_failure(false)
         .show_statistics(true)
         .print_blob(true)
+        .unbounded_choices(true)
         .backend(Backend::Urandom)
         .nondeterminism_strictness(NondeterminismStrictness::Error);
     register_profile("ffi_tests_round_trip", &original).unwrap();
@@ -458,6 +459,7 @@ fn ffi_settings_round_trip_every_field_through_registration() {
     assert!(!restored.stop_on_first_failure);
     assert!(restored.show_statistics);
     assert!(restored.print_blob);
+    assert!(restored.unbounded_choices);
     assert_eq!(restored.backend, Backend::Urandom);
     assert_eq!(
         restored.nondeterminism_strictness,
@@ -488,13 +490,13 @@ fn ffi_settings_round_trip_the_remaining_enum_values() {
 fn ffi_settings_build_preserves_an_unset_database() {
     use crate::runner::Database;
     let unset = Settings::from_profile("base");
-    assert_eq!(unset.database, Database::Unset);
+    assert_eq!(unset.database, Database::Default);
     register_profile("ffi_tests_unset_database", &unset).unwrap();
     let restored = settings_from_profile(Some("ffi_tests_unset_database")).unwrap();
     assert_eq!(
         restored.database,
-        Database::Unset,
-        "build() must forward Unset rather than inheriting the ambient profile's database"
+        Database::Default,
+        "build() must forward Default rather than inheriting the ambient profile's database"
     );
 }
 

@@ -370,3 +370,8 @@ fn test_settings_verbosity_debug() {
 
     assert_eq!(count, 1);
 }
+
+#[hegel::test(test_cases = 1, unbounded_choices = true)]
+fn test_macro_accepts_unbounded_choices(tc: hegel::TestCase) {
+    tc.draw(gs::booleans());
+}

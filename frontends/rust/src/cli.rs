@@ -101,7 +101,7 @@ where
                 let value = next_value(&args, &mut i, "--database")?;
                 match value.as_str() {
                     "disabled" => settings = settings.database(None),
-                    "default" => settings.database = Database::Unset,
+                    "default" => settings.database = Database::Default,
                     _ => settings = settings.database(Some(value)),
                 }
             }

@@ -808,5 +808,6 @@ pub use cli::apply_cli_args as __apply_cli_args;
 #[doc(hidden)]
 pub use runner::hegel;
 pub use runner::{
-    Backend, HealthCheck, Hegel, NondeterminismStrictness, Phase, ProfileError, Settings, Verbosity,
+    Backend, Database, HealthCheck, Hegel, NondeterminismStrictness, Phase, ProfileError, Settings,
+    Verbosity,
 };

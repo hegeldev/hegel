@@ -442,8 +442,8 @@ impl Settings {
     /// Apply the settings environment variables, read through `env`, over
     /// these settings: `HEGEL_TEST_CASES`, `HEGEL_DATABASE`,
     /// `HEGEL_STATISTICS`, `HEGEL_SEED`, `HEGEL_DERANDOMIZE`,
-    /// `HEGEL_PRINT_BLOB`, `HEGEL_STOP_ON_FIRST_FAILURE` and
-    /// `HEGEL_NONDETERMINISM_STRICTNESS`. Profile
+    /// `HEGEL_PRINT_BLOB`, `HEGEL_STOP_ON_FIRST_FAILURE`,
+    /// `HEGEL_UNBOUNDED_CHOICES` and `HEGEL_NONDETERMINISM_STRICTNESS`. Profile
     /// resolution calls this last, so the
     /// variables win over every profile and `hegel.toml`, while a setter
     /// called on the resulting handle still wins over them. An unset or
@@ -497,6 +497,9 @@ impl Settings {
         }
         if let Some(b) = env_bool(&env, "HEGEL_STOP_ON_FIRST_FAILURE")? {
             self.stop_on_first_failure = b;
+        }
+        if let Some(b) = env_bool(&env, "HEGEL_UNBOUNDED_CHOICES")? {
+            self.unbounded_choices = b;
         }
         if let Some(value) = env_value(&env, "HEGEL_NONDETERMINISM_STRICTNESS") {
             self.nondeterminism_strictness = match NondeterminismStrictness::parse(&value) {

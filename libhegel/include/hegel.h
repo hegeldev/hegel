@@ -893,9 +893,9 @@ hegel_string_t hegel_context_last_error(const hegel_context_t *ctx);
    is its path.
  - `HEGEL_STATISTICS`: anything but `0` turns `show_statistics` on.
  - `HEGEL_SEED`: an integer fixes the seed; `none` clears one.
- - `HEGEL_DERANDOMIZE`, `HEGEL_PRINT_BLOB` and
-   `HEGEL_STOP_ON_FIRST_FAILURE`: `true`, `1` or `yes`, or `false`, `0`
-   or `no`.
+ - `HEGEL_DERANDOMIZE`, `HEGEL_PRINT_BLOB`,
+   `HEGEL_STOP_ON_FIRST_FAILURE` and `HEGEL_UNBOUNDED_CHOICES`: `true`,
+   `1` or `yes`, or `false`, `0` or `no`.
  - `HEGEL_NONDETERMINISM_STRICTNESS`: `quiet`, `warn` or `error`, the
    `nondeterminism_strictness` value.
 

@@ -289,7 +289,7 @@ fn test_database_default() {
         s(&["--database", "default"]),
     )
     .unwrap();
-    assert_eq!(parsed.database, Database::Unset);
+    assert_eq!(parsed.database, Database::Default);
 }
 
 /// `--profile` values that parse set the default profile for the whole

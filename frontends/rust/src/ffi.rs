@@ -166,7 +166,8 @@ impl SettingsHandle {
     /// setter. The handle starts from the engine's immutable `base` profile
     /// rather than the default profile — every field is overwritten below,
     /// and `base` keeps a broken default-profile setting from failing runs
-    /// whose settings were already resolved.
+    /// whose settings were already resolved. `database_key` is the key the
+    /// test macros derive, used when the settings carry no key of their own.
     pub(crate) fn build(
         settings: &Settings,
         database_key: Option<&str>,
@@ -232,7 +233,7 @@ impl SettingsHandle {
                             &view(path.as_bytes()),
                         ));
                     }
-                    Database::Unset => {
+                    Database::Default => {
                         require_ok(hegel_c::hegel_settings_set_database(ctx, raw, ptr::null()));
                     }
                 }
@@ -241,7 +242,12 @@ impl SettingsHandle {
                     raw,
                     settings.print_blob,
                 ));
-                if let Some(key) = database_key {
+                require_ok(hegel_c::hegel_settings_set_unbounded_choices(
+                    ctx,
+                    raw,
+                    settings.unbounded_choices,
+                ));
+                if let Some(key) = settings.database_key.as_deref().or(database_key) {
                     require_ok(hegel_c::hegel_settings_set_database_key(
                         ctx,
                         raw,
@@ -357,6 +363,7 @@ fn read_settings(ctx: *mut hegel_c::HegelContext, raw: *const hegel_c::HegelSett
     let mut stop_on_first_failure = false;
     let mut show_statistics = false;
     let mut print_blob = false;
+    let mut unbounded_choices = false;
     let mut backend = hegel_c::hegel_backend_t::HEGEL_BACKEND_DEFAULT;
     let mut strictness = hegel_c::hegel_nondeterminism_strictness_t::HEGEL_NONDETERMINISM_QUIET;
     // SAFETY: ctx and raw are live handles, and every out pointer is a valid
@@ -414,6 +421,11 @@ fn read_settings(ctx: *mut hegel_c::HegelContext, raw: *const hegel_c::HegelSett
             raw,
             &mut print_blob,
         ));
+        require_ok(hegel_c::hegel_settings_get_unbounded_choices(
+            ctx,
+            raw,
+            &mut unbounded_choices,
+        ));
         require_ok(hegel_c::hegel_settings_get_backend(ctx, raw, &mut backend));
         require_ok(hegel_c::hegel_settings_get_nondeterminism_strictness(
             ctx,
@@ -422,7 +434,7 @@ fn read_settings(ctx: *mut hegel_c::HegelContext, raw: *const hegel_c::HegelSett
         ));
     }
     let database = match optional_string(database) {
-        None => Database::Unset,
+        None => Database::Default,
         Some(path) if path.is_empty() => Database::Disabled,
         Some(path) => Database::Path(path),
     };
@@ -432,6 +444,8 @@ fn read_settings(ctx: *mut hegel_c::HegelContext, raw: *const hegel_c::HegelSett
         seed: has_seed.then_some(seed),
         derandomize,
         database,
+        database_key: None,
+        unbounded_choices,
         suppress_health_check: health_checks_from_bitmask(suppress_health_check),
         phases: phases_from_bitmask(phases),
         report_multiple_failures,

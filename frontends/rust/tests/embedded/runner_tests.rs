@@ -45,6 +45,75 @@ fn test_settings_stop_on_first_failure_setter() {
 }
 
 #[test]
+fn test_settings_unbounded_choices_default_false() {
+    assert!(!Settings::from_profile("base").unbounded_choices);
+}
+
+#[test]
+fn test_settings_unbounded_choices_setter() {
+    let s = Settings::new().unbounded_choices(true);
+    assert!(s.unbounded_choices);
+    let s = s.unbounded_choices(false);
+    assert!(!s.unbounded_choices);
+}
+
+#[test]
+fn test_settings_database_key_setter() {
+    assert_eq!(Settings::new().database_key, None);
+    let s = Settings::new().database_key("my::key");
+    assert_eq!(s.database_key.as_deref(), Some("my::key"));
+}
+
+#[test]
+fn test_settings_database_accepts_every_form() {
+    use crate::runner::Database;
+    let s = Settings::new().database(None);
+    assert_eq!(s.database, Database::Disabled);
+    let s = s.database(Some("some/db".to_string()));
+    assert_eq!(s.database, Database::Path("some/db".to_string()));
+    let s = s.database(Database::Default);
+    assert_eq!(s.database, Database::Default);
+}
+
+#[test]
+fn test_unbounded_choices_comes_from_hegel_toml_and_the_environment() {
+    if std::env::var_os("HEGEL_UNBOUNDED_CHOICES_TEST_CHILD").is_some() {
+        assert!(Settings::from_profile("unbounded").unbounded_choices);
+        assert!(
+            Settings::from_profile("base").unbounded_choices
+                == (std::env::var("HEGEL_UNBOUNDED_CHOICES").as_deref() == Ok("yes"))
+        );
+        return;
+    }
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("hegel.toml"),
+        "[profiles.unbounded]\nunbounded_choices = true\n",
+    )
+    .unwrap();
+    for env_value in ["yes", ""] {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "runner::tests::test_unbounded_choices_comes_from_hegel_toml_and_the_environment",
+            ])
+            .current_dir(tmp.path())
+            .env("HEGEL_UNBOUNDED_CHOICES_TEST_CHILD", "1")
+            .env("HEGEL_UNBOUNDED_CHOICES", env_value)
+            .env_remove("HEGEL_DEFAULT_PROFILE")
+            .env_remove("HEGEL_CONFIG")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "child test failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
 fn test_settings_backend_defaults_to_the_prng() {
     let s = Settings::new();
     assert_eq!(s.backend, Backend::Default);
@@ -75,7 +144,7 @@ fn test_native_engine_creates_default_dot_hegel_when_database_unset() {
 
     if std::env::var_os("HEGEL_DOT_HEGEL_TEST_CHILD").is_some() {
         let settings = Settings::new();
-        assert_eq!(settings.database, Database::Unset);
+        assert_eq!(settings.database, Database::Default);
         let result = std::panic::catch_unwind(|| {
             Hegel::new(|tc| {
                 let _ = tc.draw(gs::booleans());
@@ -140,7 +209,7 @@ fn test_from_profile_ci_disables_database_derandomizes_and_prints_blobs() {
 fn test_from_profile_base_is_environment_independent() {
     use crate::runner::Database;
     let settings = Settings::from_profile("base");
-    assert_eq!(settings.database, Database::Unset);
+    assert_eq!(settings.database, Database::Default);
     assert!(!settings.derandomize);
     assert!(settings.print_blob);
     assert_eq!(settings.test_cases, 100);

@@ -329,6 +329,7 @@ fn assign(
             delta.stop_on_first_failure = Some(expect_bool(src, value, key)?);
         }
         "show_statistics" => delta.show_statistics = Some(expect_bool(src, value, key)?),
+        "unbounded_choices" => delta.unbounded_choices = Some(expect_bool(src, value, key)?),
         "print_blob" => delta.print_blob = Some(expect_bool(src, value, key)?),
         "verbosity" => {
             let s = expect_string(src, value, key)?;
