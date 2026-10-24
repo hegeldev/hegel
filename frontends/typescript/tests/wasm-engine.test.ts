@@ -527,6 +527,7 @@ describe("WasmEngine real run lifecycle", () => {
       }
     }
     const body = (tc: import("../src/testCase.js").TestCase) => {
+      tc.draw(gs.just(new RangeError("bad")), "error");
       tc.draw(gs.just(new Interval(1, 2)), "interval");
       tc.draw(gs.just(new Interval(10 ** 20, -(10 ** 20)).hi), "plain");
       tc.draw(gs.just(Array.from({ length: 20 }, (_, i) => i * 1000)), "long");
@@ -550,6 +551,7 @@ describe("WasmEngine real run lifecycle", () => {
     }
     expect(reports[0]).toEqual(reports[1]);
     expect(reports[0]).toEqual([
+      'const error = new RangeError("bad");',
       "const interval = Interval(1, 2);  // half-open",
       "const plain = -100000000000000000000;",
       "const long = [",
