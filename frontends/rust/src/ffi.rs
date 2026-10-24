@@ -1795,6 +1795,13 @@ impl PrinterHandle {
         }))
     }
 
+    /// Emit `text` only if the innermost open group renders broken.
+    pub(crate) fn if_break(&self, text: &str) -> Result<(), PrinterCallError> {
+        Self::check(with_context(|ctx| unsafe {
+            hegel_c::hegel_printer_if_break(ctx, self.raw, view(text.as_bytes()))
+        }))
+    }
+
     /// Emit an unconditional newline plus the current indentation.
     pub(crate) fn hard_break(&self) -> Result<(), PrinterCallError> {
         Self::check(with_context(|ctx| unsafe {

@@ -33,3 +33,5 @@ This release brings the Rust frontend further into line with the other Hegel fro
 - The `exclude_min` and `exclude_max` methods of `gs::floats()`, deprecated since 0.42.0 and panicking whenever called, are removed. Use `min_value_exclusive` and `max_value_exclusive`.
 
 - The documentation of `TestCase::repeat` now gives the note it prints at the start of each iteration correctly, as `// Repetition #N`.
+
+- `PrettyPrinter::if_break` emits text only when the enclosing group breaks across lines, through the engine's `hegel_printer_if_break`: for example a trailing comma that only a value's multi-line form needs.
