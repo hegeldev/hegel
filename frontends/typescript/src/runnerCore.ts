@@ -442,7 +442,6 @@ function finishTestCase(dataSource: DataSource, outcome: () => TestCaseResult): 
   try {
     result = outcome();
   } catch (fault) {
-    // Abort the active case, but never mark it interesting or retry completion.
     try {
       dataSource.markComplete(Status.INVALID, null);
     } catch (completionError) {

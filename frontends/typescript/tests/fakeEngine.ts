@@ -36,7 +36,6 @@ export const grammarBuilder = {} as GrammarBuilderHandle;
 export const grammar = {} as GrammarHandle;
 export const grammarDraw = {} as GrammarDrawHandle;
 
-/** A test case's document double: its text, with speculative regions kept or dropped. */
 export class FakePrinter {
   regions: string[] = [""];
   get handle(): PrinterHandle {

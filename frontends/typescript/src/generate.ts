@@ -213,7 +213,6 @@ function drawFloat(
     allowInfinity: schema["allow_infinity"] as boolean,
     excludeMin: (schema["exclude_min"] as boolean | undefined) ?? false,
     excludeMax: (schema["exclude_max"] as boolean | undefined) ?? false,
-    // The smallest subnormal of the width: the ABI's "no restriction".
     smallestNonzeroMagnitude: schema["width"] === 32 ? 2 ** -149 : Number.MIN_VALUE,
   });
 }

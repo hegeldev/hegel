@@ -64,9 +64,6 @@ function parseBigInt(raw: unknown): bigint {
   return BigInt(raw as number);
 }
 
-// How far an unbounded bigIntegers() side reaches: wide enough for any value a
-// test is likely to care about, while the engine still favours small
-// magnitudes.
 const UNBOUNDED_MAGNITUDE = 2n ** 127n;
 
 class BigIntegersGenerator extends Generator<bigint> {
@@ -79,9 +76,6 @@ class BigIntegersGenerator extends Generator<bigint> {
     if (min !== undefined && max !== undefined && min > max) {
       throw new Error("Cannot have maxValue < minValue");
     }
-    // The engine draws from a finite range, so a missing bound is replaced by
-    // one UNBOUNDED_MAGNITUDE values beyond the other bound, or beyond zero
-    // when that is further.
     let lo = min ?? -UNBOUNDED_MAGNITUDE;
     if (min === undefined && max !== undefined && max - UNBOUNDED_MAGNITUDE + 1n < lo) {
       lo = max - UNBOUNDED_MAGNITUDE + 1n;

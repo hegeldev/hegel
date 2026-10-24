@@ -22,7 +22,6 @@ const trees = (options?: gs.RecursiveOptions): Generator<Tree> =>
     options,
   );
 
-/** The value the last test case drew, once `failing` has made the test fail. */
 function minimal<T>(generator: Generator<T>, failing: (value: T) => boolean): T {
   let last: T | undefined;
   expect(() =>
