@@ -22,12 +22,6 @@ T = TypeVar("T")
 
 OutputSink = Callable[[str], None]
 
-# Stack frames kept free below the interpreter's recursion limit: a span
-# that would open with less room than this ends the test case as too large,
-# rather than letting deeply nested draws fail the test with a
-# RecursionError. Measuring the stack costs time, so it is only measured
-# once spans nest SHALLOW_SPANS deep, which a test with no recursive
-# generators rarely reaches.
 RECURSION_HEADROOM = 200
 SHALLOW_SPANS = 32
 
@@ -60,15 +54,6 @@ def _generator_class() -> type:
     from hegel.generators.base import Generator
 
     return Generator
-
-
-def _stack_depth() -> int:
-    frame: Any = sys._getframe()
-    depth = 0
-    while frame is not None:
-        depth += 1
-        frame = frame.f_back
-    return depth
 
 
 def _discard(_line: str) -> None:
@@ -130,6 +115,7 @@ class TestCase:
         "_printer",
         "_printing_depth",
         "_span_depth",
+        "_span_frames",
     )
 
     def __init__(
@@ -142,6 +128,7 @@ class TestCase:
         self._handle = handle
         self._global = _Global(emit, sink, explicit)
         self._span_depth = 0
+        self._span_frames: list[tuple[Any, int]] = []
         self._printing_depth = 0
         self._printer: PrettyPrinter | None = None
         self._draw_state = _DrawState()
@@ -155,6 +142,7 @@ class TestCase:
         tc._handle = handle
         tc._global = parent._global
         tc._span_depth = 0
+        tc._span_frames = []
         tc._printing_depth = 0
         tc._printer = None
         tc._draw_state = _DrawState() if draw_state is None else draw_state
@@ -562,17 +550,32 @@ class TestCase:
         so deep that Python's recursion limit (``sys.getrecursionlimit()``)
         is in sight abandons the test case as too large, rather than
         failing it with a ``RecursionError``."""
-        if (
-            self._span_depth >= SHALLOW_SPANS
-            and _stack_depth() > sys.getrecursionlimit() - RECURSION_HEADROOM
-        ):
-            raise StopTest("draws nested too deeply for Python's recursion limit")
+        if self._span_depth >= SHALLOW_SPANS:
+            self._check_stack_headroom(sys._getframe(1))
         self._span_depth += 1
         try:
             self._handle.start_span(label)
         except BaseException:
             self._span_depth -= 1
+            self._drop_span_frames()
             raise
+
+    def _check_stack_headroom(self, caller: Any) -> None:
+        anchor, depth = self._span_frames[-1] if self._span_frames else (None, 0)
+        frame = caller
+        frames = 0
+        while frame is not None and frame is not anchor:
+            frames += 1
+            frame = frame.f_back
+        if frame is None:
+            depth = 0
+        depth += frames
+        if depth >= sys.getrecursionlimit() - RECURSION_HEADROOM:
+            raise StopTest("draws nested too deeply for Python's recursion limit")
+        self._span_frames.append((caller, depth))
+
+    def _drop_span_frames(self) -> None:
+        del self._span_frames[max(0, self._span_depth - SHALLOW_SPANS) :]
 
     def stop_span(self, discard: bool = False) -> None:
         """Close the span opened by the matching :meth:`start_span`. With
@@ -581,6 +584,7 @@ class TestCase:
         if self._span_depth <= 0:
             raise InternalError("stop_span called with no open span")
         self._span_depth -= 1
+        self._drop_span_frames()
         self._handle.stop_span(discard)
 
     @property
@@ -591,6 +595,7 @@ class TestCase:
         if self._span_depth < depth:
             raise InternalError("open span depth decreased unexpectedly")
         self._span_depth = depth
+        self._drop_span_frames()
 
     # -- primitive draws -------------------------------------------------
     # The engine's primitive choices, which the built-in generators are made

@@ -318,6 +318,34 @@ def test_draws_nested_near_the_recursion_limit_abandon_the_case():
         run_test(nest, test_cases=10)
 
 
+def test_spans_opened_from_returned_frames_still_measure_the_stack():
+    def open_span(tc):
+        tc.start_span(1)
+
+    def nest(tc):
+        open_span(tc)
+        nest(tc)
+
+    with pytest.raises(hegel.errors.FailedHealthCheck):
+        run_test(nest, test_cases=10)
+
+
+def test_closing_deep_spans_then_nesting_still_measures_the_stack():
+    def nest(tc):
+        tc.start_span(1)
+        nest(tc)
+
+    def body(tc):
+        for _ in range(100):
+            tc.start_span(1)
+        for _ in range(100):
+            tc.stop_span()
+        nest(tc)
+
+    with pytest.raises(hegel.errors.FailedHealthCheck):
+        run_test(body, test_cases=10)
+
+
 def test_deep_spans_without_deep_recursion_are_allowed():
     def body(tc):
         for _ in range(1000):
