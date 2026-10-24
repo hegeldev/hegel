@@ -367,10 +367,12 @@ export interface Engine {
     maxSize: bigint,
   ): Uint8Array;
   stringGeneratorText(ctx: ContextHandle, opts: TextGeneratorOptions): StringGeneratorHandle;
+  /** `alphabet` is borrowed: the caller still frees it. */
   stringGeneratorRegex(
     ctx: ContextHandle,
     pattern: string,
     fullmatch: boolean,
+    alphabet: StringGeneratorHandle | null,
   ): StringGeneratorHandle;
   stringGeneratorEmail(ctx: ContextHandle): StringGeneratorHandle;
   stringGeneratorUrl(ctx: ContextHandle): StringGeneratorHandle;

@@ -358,12 +358,23 @@ function buildStringGenerator(
         excludeCharacters: utf8OrNull(schema["exclude_characters"] as string | undefined),
       });
     }
-    case "regex":
-      return lib.stringGeneratorRegex(
-        ctx,
-        schema["pattern"] as string,
-        schema["fullmatch"] as boolean,
+    case "regex": {
+      const alphabetSpec = schema["alphabet"] as Record<string, unknown> | undefined;
+      const alphabet =
+        alphabetSpec === undefined ? null : buildStringGenerator(lib, ctx, alphabetSpec);
+      return withCleanup(
+        () =>
+          lib.stringGeneratorRegex(
+            ctx,
+            schema["pattern"] as string,
+            schema["fullmatch"] as boolean,
+            alphabet,
+          ),
+        () => {
+          if (alphabet !== null) lib.freeStringGenerator(alphabet);
+        },
       );
+    }
     case "email":
       return lib.stringGeneratorEmail(ctx);
     case "url":

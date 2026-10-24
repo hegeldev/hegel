@@ -588,10 +588,16 @@ export class WasmEngine implements Engine {
     ctx: ContextHandle,
     pattern: string,
     fullmatch: boolean,
+    alphabet: StringGeneratorHandle | null,
   ): StringGeneratorHandle {
     return WasmArena.scoped(this.abi, (a) => {
       const c = this.ptr(ctx);
-      return this.handle(c, "string_generator_regex", [c, a.text(pattern), +fullmatch, 0]);
+      return this.handle(c, "string_generator_regex", [
+        c,
+        a.text(pattern),
+        +fullmatch,
+        alphabet === null ? 0 : this.ptr(alphabet),
+      ]);
     });
   }
   grammarBuilderNew(ctx: ContextHandle, text: string): GrammarBuilderHandle {

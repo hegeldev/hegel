@@ -8,7 +8,7 @@ import type { TestCase } from "../testCase.js";
 import type { GrammarSpec } from "../generate.js";
 import { LabelNames, labelSpec, type LabelSpec } from "../labels.js";
 import { Generator } from "./core.js";
-import { CharactersGenerator, characters } from "./strings.js";
+import { alphabetSchema } from "./strings.js";
 
 /** Options for {@link fromLark}. */
 export interface LarkOptions {
@@ -57,14 +57,6 @@ function positiveInteger(value: number | undefined, name: string): number {
     throw new RangeError(`${name} must be an integer of at least 1, got ${String(value)}`);
   }
   return value;
-}
-
-function alphabetSchema(alphabet: string | Generator<string>): Record<string, unknown> {
-  const generator = typeof alphabet === "string" ? characters({ alphabet }) : alphabet;
-  if (!(generator instanceof CharactersGenerator)) {
-    throw new TypeError("alphabet must be a string or a generator made by characters()");
-  }
-  return { ...generator.asBasic().schema, min_size: 0, max_size: 0 };
 }
 
 class LarkGenerator extends Generator<string> {

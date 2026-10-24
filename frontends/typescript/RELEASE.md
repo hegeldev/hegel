@@ -57,6 +57,7 @@ Shrinking labels are now derived by the engine from each generator's kind and it
 - `gs.none()` always generates `null`.
 - `gs.arrays` takes `uniqueBy`, a key function or an array of them whose keys must be distinct across the array.
 - `gs.floats({ width: 32 })` generates only values a 32-bit float holds exactly.
+- `gs.fromRegex` takes `alphabet`, a string of characters or a `gs.characters()` generator, restricting every character of the string, padding included.
 
 ```ts
 type Json = null | boolean | number | string | Json[];

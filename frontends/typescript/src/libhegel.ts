@@ -243,11 +243,13 @@ export interface Bindings {
 
   stringGeneratorFree: (generator: Ptr) => void;
   stringGeneratorText: (ctx: Ptr, opts: TextGeneratorOptions, out: Ptr[]) => number;
-  /**
-   * The optional `alphabet` generator is absorbed as NULL (this client never
-   * constrains the regex alphabet).
-   */
-  stringGeneratorRegex: (ctx: Ptr, pattern: string, fullmatch: boolean, out: Ptr[]) => number;
+  stringGeneratorRegex: (
+    ctx: Ptr,
+    pattern: string,
+    fullmatch: boolean,
+    alphabet: Ptr | null,
+    out: Ptr[],
+  ) => number;
   stringGeneratorEmail: (ctx: Ptr, out: Ptr[]) => number;
   stringGeneratorUrl: (ctx: Ptr, out: Ptr[]) => number;
   stringGeneratorDomain: (ctx: Ptr, maxLength: number, out: Ptr[]) => number;
@@ -920,8 +922,8 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
         nativeBytes(opts.excludeCharacters),
         out,
       ),
-    stringGeneratorRegex: (ctx, pattern, fullmatch, out) =>
-      stringGeneratorRegex(ctx, nativeString(pattern), fullmatch, null, out),
+    stringGeneratorRegex: (ctx, pattern, fullmatch, alphabet, out) =>
+      stringGeneratorRegex(ctx, nativeString(pattern), fullmatch, alphabet, out),
     stringGeneratorEmail: (ctx, out) => stringGeneratorEmail(ctx, out),
     stringGeneratorUrl: (ctx, out) => stringGeneratorUrl(ctx, out),
     stringGeneratorDomain: (ctx, maxLength, out) => stringGeneratorDomain(ctx, maxLength, out),
@@ -1465,11 +1467,16 @@ export class Libhegel implements Engine {
   }
 
   /** Build a regex string generator. Throws {@link LibhegelError} on a bad pattern. */
-  stringGeneratorRegex(ctx: Ptr, pattern: string, fullmatch: boolean): StringGeneratorHandle {
+  stringGeneratorRegex(
+    ctx: Ptr,
+    pattern: string,
+    fullmatch: boolean,
+    alphabet: StringGeneratorHandle | null,
+  ): StringGeneratorHandle {
     const out: Ptr[] = [null];
     this.check(
       ctx,
-      this.fns.stringGeneratorRegex(ctx, pattern, fullmatch, out),
+      this.fns.stringGeneratorRegex(ctx, pattern, fullmatch, alphabet, out),
       "hegel_string_generator_regex",
     );
     return this.requireHandle<StringGeneratorHandle>(out[0], "stringGeneratorRegex");
