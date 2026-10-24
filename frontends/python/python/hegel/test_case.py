@@ -93,7 +93,8 @@ class TestCase:
     its first argument, once per test case; tests never construct one.
     An instance belongs to the test case it was passed for and must not be
     kept and used after the test returns. It may be driven by one thread
-    at a time.
+    at a time: to draw from several threads, give each thread its own
+    :meth:`clone`.
 
     ::
 
@@ -133,14 +134,16 @@ class TestCase:
         self._nested_draws: list[tuple[str, Any]] | None = None
 
     @classmethod
-    def _derive(cls, parent: TestCase, handle: _native.TestCase) -> TestCase:
+    def _derive(
+        cls, parent: TestCase, handle: _native.TestCase, draw_state: _DrawState | None = None
+    ) -> TestCase:
         tc = cls.__new__(cls)
         tc._handle = handle
         tc._global = parent._global
         tc._span_depth = 0
         tc._printing_depth = 0
         tc._printer = None
-        tc._draw_state = _DrawState()
+        tc._draw_state = _DrawState() if draw_state is None else draw_state
         tc._nested_draws = None
         return tc
 
@@ -444,11 +447,62 @@ class TestCase:
         every line it prints is nested ``extra_indent`` columns further in."""
         return TestCase._derive(self, self._handle.block(extra_indent))
 
-    def _clone(self) -> TestCase:
-        """A handle with an independent choice stream, for another thread."""
-        return TestCase._derive(self, self._handle.clone())
+    def clone(self) -> TestCase:
+        """Another ``TestCase`` for the same test case, to draw from on
+        another thread.
 
-    def _set_worker(self, index: int) -> None:
+        A ``TestCase`` may be driven by one thread at a time, so a test
+        that draws from several threads gives each its own clone. A clone
+        draws from a choice stream of its own, so the threads' draws do not
+        perturb each other and the whole test case still shrinks and
+        replays. Its drawn values and notes appear in the failure report
+        in a section of their own, placed where the clone was made, and
+        it shares draw names with this one (a draw named ``x`` on each
+        prints as ``x_1`` and ``x_2``).
+        Everything else, such as the test case's outcome, is shared.
+
+        A draw on a clone can end the test case by raising, like any
+        other draw, so a thread should hand its exception back to the test
+        to re-raise rather than let it escape the thread::
+
+            @hegel.test
+            def test_list_append_is_thread_safe(tc):
+                shared = []
+                clones = [tc.clone() for _ in range(4)]
+                errors = []
+
+                def worker(i):
+                    try:
+                        clones[i].set_worker(i)
+                        for _ in range(clones[i].draw(gs.integers(0, 100), name="n")):
+                            shared.append(i)
+                    except BaseException as error:
+                        errors.append(error)
+
+                threads = [threading.Thread(target=worker, args=(i,)) for i in range(4)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join()
+                if errors:
+                    raise errors[0]
+                assert len(shared) == sum(shared.count(i) for i in range(4))
+        """
+        handle = self._handle if self._global.explicit is not None else self._handle.clone()
+        return TestCase._derive(self, handle, self._draw_state)
+
+    def set_worker(self, index: int) -> None:
+        """Attribute this ``TestCase``'s output to worker ``index``: every
+        line it prints from now on, drawn values and notes alike, is
+        prefixed with ``[worker N +X.XXXms]``, the time since the test case
+        started, so a report from several threads shows how their lines
+        interleaved. Clones made from it afterwards inherit the
+        attribution. ``index`` is a non-negative integer, or it is an
+        :class:`~hegel.InvalidArgument`."""
+        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < 1 << 63:
+            raise InvalidArgument(f"index={index!r} must be a non-negative integer")
+        if self._global.explicit is not None:
+            return
         self._handle.set_worker(index)
 
     def _enter_block(self, indent: int) -> _native.TestCase:

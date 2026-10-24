@@ -491,8 +491,8 @@ def _run_concurrent(
             name = group_names[group]
             tc.note(f"---------------- Round {round_number}: group {name!r} ----------------")
             for worker, rounds in enumerate(round_queues):
-                worker_tc = tc._clone()
-                worker_tc._set_worker(worker)
+                worker_tc = tc.clone()
+                worker_tc.set_worker(worker)
                 rounds.put(worker_tc)
             events: list[_Event] = []
             for worker, event_queue in enumerate(event_queues):

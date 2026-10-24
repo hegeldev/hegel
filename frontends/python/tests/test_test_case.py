@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import threading
 import uuid
 
 import pytest
@@ -174,8 +175,8 @@ def test_child_and_clone_handles():
         child = tc._child(4)
         a = child.draw(gs.just("a"))
         child.note("inside")
-        clone = tc._clone()
-        clone._set_worker(0)
+        clone = tc.clone()
+        clone.set_worker(0)
         b = clone.draw(gs.just("b"))
         assert repr(tc) == "TestCase()"
         raise ValueError(a + b)
@@ -381,5 +382,57 @@ def test_target_rejects_a_non_string_label(label):
         tc.draw(gs.none())
         with pytest.raises(hegel.InvalidArgument, match="must be a string"):
             tc.target(0.0, label=label)
+
+    run_test(body, test_cases=1)
+
+
+def test_clones_draw_from_threads():
+    def body(tc):
+        clones = [tc.clone() for _ in range(3)]
+        for i, clone in enumerate(clones):
+            clone.set_worker(i)
+        results = [0] * len(clones)
+        errors = []
+
+        def work(i):
+            try:
+                results[i] = clones[i].draw(gs.integers(0, 10), name="n")
+            except BaseException as error:
+                errors.append(error)
+
+        threads = [threading.Thread(target=work, args=(i,)) for i in range(len(clones))]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        if errors:
+            raise errors[0]
+        assert sum(results) < 5
+
+    lines = notes(failing(body))[0].splitlines()
+    worker_lines = [line for line in lines if line.startswith("[worker ")]
+    assert len(worker_lines) == 3
+    values = sorted(int(line.rsplit(" = ", 1)[1]) for line in worker_lines)
+    assert values == [0, 0, 5]
+    names = sorted(line.split("] ", 1)[1].split(" = ")[0] for line in worker_lines)
+    assert names == ["n_1", "n_2", "n_3"]
+
+
+def test_clone_shares_draw_names():
+    def body(tc):
+        tc.draw(gs.just(1), name="x")
+        tc.clone().draw(gs.just(2), name="x")
+        raise ValueError
+
+    text = notes(failing(body, ValueError))[0]
+    assert "x_1 = 1" in text
+    assert "x_2 = 2" in text
+
+
+@pytest.mark.parametrize("index", [-1, 1 << 63, True, 1.0])
+def test_set_worker_validates_its_index(index):
+    def body(tc):
+        with pytest.raises(hegel.InvalidArgument, match="must be a non-negative integer"):
+            tc.set_worker(index)
 
     run_test(body, test_cases=1)
