@@ -29,6 +29,7 @@ import {
   type FailureHandle,
   type CollectionHandle,
   type PoolHandle,
+  type RecursionHandle,
   type StateMachineHandle,
   type PrinterHandle,
 } from "./engine.js";
@@ -65,6 +66,7 @@ interface Family {
   readonly ownsCache: boolean;
   readonly collections: CollectionHandle[];
   readonly pools: PoolHandle[];
+  readonly recursions: RecursionHandle[];
   readonly machines: StateMachineHandle[];
   readonly derived: TestCaseHandle[];
   readonly printers: PrinterHandle[];
@@ -75,7 +77,7 @@ interface Family {
  * {@link DataSource} backed by an opaque engine test case. Schema draws are
  * interpreted by {@link generateValue}; adapters own all ABI marshalling.
  *
- * The engine's collection, pool, state-machine, printer and derived test-case
+ * The engine's collection, pool, recursion, state-machine, printer and derived test-case
  * handles behind this data source and those derived from it by
  * {@link clone} / {@link block} are owned by the root one: the runner calls
  * {@link dispose} on it once the test case is over to release them.
@@ -97,6 +99,7 @@ export class EngineDataSource implements DataSource {
       ownsCache,
       collections: [],
       pools: [],
+      recursions: [],
       machines: [],
       derived: [],
       printers: [],
@@ -162,6 +165,41 @@ export class EngineDataSource implements DataSource {
   poolGenerate(poolId: number, consume: boolean): bigint {
     return this.call(() =>
       this.lib.poolGenerate(this.ctx, this.tc, this.family.pools[poolId], consume),
+    );
+  }
+
+  poolRestore(poolId: number, variableId: bigint): void {
+    this.call(() => this.lib.poolRestore(this.ctx, this.tc, this.family.pools[poolId], variableId));
+  }
+
+  newRecursion(maxDepth: number, maxLeaves: number): number {
+    this.family.recursions.push(
+      this.call(() => this.lib.newRecursion(this.ctx, this.tc, maxDepth, maxLeaves)),
+    );
+    return this.family.recursions.length - 1;
+  }
+
+  recursionBranch(recursionId: number, depth: number): boolean {
+    return this.call(() =>
+      this.lib.recursionBranch(this.ctx, this.tc, this.family.recursions[recursionId], depth),
+    );
+  }
+
+  recursionLeaf(recursionId: number): boolean {
+    return this.call(() =>
+      this.lib.recursionLeaf(this.ctx, this.tc, this.family.recursions[recursionId]),
+    );
+  }
+
+  recursionRetry(recursionId: number): void {
+    this.call(() =>
+      this.lib.recursionRetry(this.ctx, this.tc, this.family.recursions[recursionId]),
+    );
+  }
+
+  recursionFinish(recursionId: number): boolean {
+    return this.call(() =>
+      this.lib.recursionFinish(this.ctx, this.tc, this.family.recursions[recursionId]),
     );
   }
 
@@ -319,6 +357,7 @@ export class EngineDataSource implements DataSource {
     release(family.derived, (tc) => this.lib.freeTestCase(tc));
     release(family.collections, (collection) => this.lib.freeCollection(collection));
     release(family.pools, (pool) => this.lib.freePool(pool));
+    release(family.recursions, (recursion) => this.lib.freeRecursion(recursion));
     release(family.machines, (machine) => this.lib.freeStateMachine(machine));
     try {
       if (family.ownsCache) family.cache.dispose();

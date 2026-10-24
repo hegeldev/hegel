@@ -19,8 +19,9 @@
  * `hegel_next_test_case`, `hegel_test_case_clone` and `hegel_test_case_block`,
  * every printer from `hegel_test_case_printer`, the run result from
  * `hegel_run_result`, each failure
- * from `hegel_run_result_failure`, and each collection, pool and state machine
- * from `hegel_new_collection` / `hegel_new_pool` / `hegel_new_state_machine`
+ * from `hegel_run_result_failure`, and each collection, pool, recursion and
+ * state machine from `hegel_new_collection` / `hegel_new_pool` /
+ * `hegel_new_recursion` / `hegel_new_state_machine`
  * (the runner releases them all in `finally` blocks).
  * String generators are cached within a run and freed when that run ends.
  *
@@ -40,6 +41,7 @@ import {
   type CollectionHandle,
   type StringGeneratorHandle,
   type PoolHandle,
+  type RecursionHandle,
   type StateMachineHandle,
   type PrinterHandle,
   type StateMachineOptions,
@@ -79,6 +81,7 @@ export type Ptr = unknown;
 const RESULT_OK = 0;
 const RESULT_STOP_TEST = -1;
 const RESULT_ASSUME = -2;
+const RESULT_RETRY = -10;
 
 /** An error returned by a fallible libhegel call. */
 export class LibhegelError extends EngineError {
@@ -149,6 +152,7 @@ export interface Bindings {
   contextNew: () => Ptr;
   contextFree: (ctx: Ptr) => void;
   contextLastError: (ctx: Ptr) => string;
+  setUnicodeVersion: (ctx: Ptr, version: string) => void;
 
   settingsNew: (ctx: Ptr, out: Ptr[]) => number;
   settingsFree: (s: Ptr) => void;
@@ -280,7 +284,15 @@ export interface Bindings {
     consume: boolean,
     out: (number | bigint)[],
   ) => number;
+  poolRestore: (ctx: Ptr, tc: Ptr, pool: Ptr, variableId: bigint) => number;
   poolFree: (pool: Ptr) => void;
+
+  newRecursion: (ctx: Ptr, tc: Ptr, maxDepth: bigint, maxLeaves: bigint, out: Ptr[]) => number;
+  recursionBranch: (ctx: Ptr, tc: Ptr, recursion: Ptr, depth: bigint, out: boolean[]) => number;
+  recursionLeaf: (ctx: Ptr, tc: Ptr, recursion: Ptr) => number;
+  recursionRetry: (ctx: Ptr, tc: Ptr, recursion: Ptr) => number;
+  recursionFinish: (ctx: Ptr, tc: Ptr, recursion: Ptr) => number;
+  recursionFree: (recursion: Ptr) => void;
 
   /**
    * The `rule_weights` array of `hegel_new_state_machine` is absorbed as NULL
@@ -349,6 +361,7 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   const contextNew = f("void* hegel_context_new()");
   const contextFree = f("int hegel_context_free(void* ctx)");
   const contextLastError = lib.func("hegel_context_last_error", stringType, ["void*"]);
+  const setUnicodeVersion = fs("hegel_set_unicode_version", ["void*", stringType]);
 
   const settingsNew = f("int hegel_settings_new(void* ctx, _Out_ void** out)");
   const settingsFree = f("int hegel_settings_free(void* ctx, void* s)");
@@ -605,7 +618,21 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   const poolGenerate = f(
     "int hegel_pool_generate(void* ctx, void* tc, void* pool, bool consume, _Out_ int64_t* out_variable_id)",
   );
+  const poolRestore = f(
+    "int hegel_pool_restore(void* ctx, void* tc, void* pool, int64_t variable_id)",
+  );
   const poolFree = f("int hegel_pool_free(void* ctx, void* pool)");
+
+  const newRecursion = f(
+    "int hegel_new_recursion(void* ctx, void* tc, uint64_t max_depth, uint64_t max_leaves, _Out_ void** out_recursion)",
+  );
+  const recursionBranch = f(
+    "int hegel_recursion_branch(void* ctx, void* tc, void* recursion, uint64_t depth, _Out_ bool* out_branch)",
+  );
+  const recursionLeaf = f("int hegel_recursion_leaf(void* ctx, void* tc, void* recursion)");
+  const recursionRetry = f("int hegel_recursion_retry(void* ctx, void* tc, void* recursion)");
+  const recursionFinish = f("int hegel_recursion_finish(void* ctx, void* tc, void* recursion)");
+  const recursionFree = f("int hegel_recursion_free(void* ctx, void* recursion)");
 
   const newStateMachine = fs("hegel_new_state_machine", [
     "void*",
@@ -683,6 +710,8 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     contextNew: () => contextNew(),
     contextFree: (ctx) => checked(contextFree(ctx), "hegel_context_free"),
     contextLastError: (ctx) => readString(contextLastError(ctx)),
+    setUnicodeVersion: (ctx, version) =>
+      checked(setUnicodeVersion(ctx, nativeString(version)), "setUnicodeVersion", ctx),
     settingsNew: (ctx, out) => settingsNew(ctx, out),
     settingsFree: (s) => checked(settingsFree(null, s), "hegel_settings_free"),
     settingsTestCases: (s, n) => checked(settingsTestCases(null, s, n), "settingsTestCases"),
@@ -855,7 +884,16 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     newPool: (ctx, tc, out) => newPool(ctx, tc, out),
     poolAdd: (ctx, tc, pool, out) => poolAdd(ctx, tc, pool, out),
     poolGenerate: (ctx, tc, pool, consume, out) => poolGenerate(ctx, tc, pool, consume, out),
+    poolRestore: (ctx, tc, pool, variableId) => poolRestore(ctx, tc, pool, variableId),
     poolFree: (pool) => checked(poolFree(null, pool), "poolFree"),
+    newRecursion: (ctx, tc, maxDepth, maxLeaves, out) =>
+      newRecursion(ctx, tc, maxDepth, maxLeaves, out),
+    recursionBranch: (ctx, tc, recursion, depth, out) =>
+      recursionBranch(ctx, tc, recursion, depth, out),
+    recursionLeaf: (ctx, tc, recursion) => recursionLeaf(ctx, tc, recursion),
+    recursionRetry: (ctx, tc, recursion) => recursionRetry(ctx, tc, recursion),
+    recursionFinish: (ctx, tc, recursion) => recursionFinish(ctx, tc, recursion),
+    recursionFree: (recursion) => checked(recursionFree(null, recursion), "recursionFree"),
     newStateMachine: (ctx, tc, opts, outMachine, outConcurrency) =>
       newStateMachine(
         ctx,
@@ -976,6 +1014,10 @@ export class Libhegel implements Engine {
 
   newContext(): ContextHandle {
     return this.requireHandle<ContextHandle>(this.fns.contextNew(), "hegel_context_new");
+  }
+
+  setUnicodeVersion(ctx: Ptr, version: string): void {
+    this.fns.setUnicodeVersion(ctx, version);
   }
 
   freeContext(ctx: Ptr): void {
@@ -1501,8 +1543,65 @@ export class Libhegel implements Engine {
     return BigInt(out[0]);
   }
 
+  /** Put back a variable a consuming {@link poolGenerate} removed from `pool`. */
+  poolRestore(ctx: Ptr, tc: Ptr, pool: Ptr, variableId: bigint): void {
+    this.check(ctx, this.fns.poolRestore(ctx, tc, pool, variableId), "hegel_pool_restore");
+  }
+
   freePool(pool: Ptr): void {
     this.fns.poolFree(pool);
+  }
+
+  /**
+   * Open a recursive generation scope. The returned handle is owned by the
+   * caller — release it with {@link freeRecursion}.
+   */
+  newRecursion(ctx: Ptr, tc: Ptr, maxDepth: number, maxLeaves: number): RecursionHandle {
+    const out: Ptr[] = [null];
+    this.check(
+      ctx,
+      this.fns.newRecursion(ctx, tc, BigInt(maxDepth), BigInt(maxLeaves), out),
+      "hegel_new_recursion",
+    );
+    return this.requireHandle<RecursionHandle>(out[0], "newRecursion");
+  }
+
+  recursionBranch(ctx: Ptr, tc: Ptr, recursion: Ptr, depth: number): boolean {
+    const out: boolean[] = [false];
+    this.check(
+      ctx,
+      this.fns.recursionBranch(ctx, tc, recursion, BigInt(depth), out),
+      "hegel_recursion_branch",
+    );
+    return out[0];
+  }
+
+  /** `false` when the attempt outgrew its leaf budget (`HEGEL_E_RETRY`). */
+  recursionLeaf(ctx: Ptr, tc: Ptr, recursion: Ptr): boolean {
+    return this.retryable(ctx, this.fns.recursionLeaf(ctx, tc, recursion), "hegel_recursion_leaf");
+  }
+
+  recursionRetry(ctx: Ptr, tc: Ptr, recursion: Ptr): void {
+    this.check(ctx, this.fns.recursionRetry(ctx, tc, recursion), "hegel_recursion_retry");
+  }
+
+  /** `false` when the engine discarded the attempt as mispriced (`HEGEL_E_RETRY`). */
+  recursionFinish(ctx: Ptr, tc: Ptr, recursion: Ptr): boolean {
+    return this.retryable(
+      ctx,
+      this.fns.recursionFinish(ctx, tc, recursion),
+      "hegel_recursion_finish",
+    );
+  }
+
+  freeRecursion(recursion: Ptr): void {
+    this.fns.recursionFree(recursion);
+  }
+
+  private retryable(ctx: Ptr, code: number, op: string): boolean {
+    if (code === RESULT_RETRY) return false;
+    this.check(ctx, code, op);
+    return true;
   }
 
   /**

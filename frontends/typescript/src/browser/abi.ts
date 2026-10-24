@@ -90,7 +90,14 @@ export const signatures = {
   new_pool: "III",
   pool_add: "IIII",
   pool_generate: "IIIII",
+  pool_restore: "IIIL",
   pool_free: "II",
+  new_recursion: "IILLI",
+  recursion_branch: "IIILI",
+  recursion_leaf: "III",
+  recursion_retry: "III",
+  recursion_finish: "III",
+  recursion_free: "II",
   new_state_machine: "IIIIIIIIILLLII",
   state_machine_next_group: "IIII",
   state_machine_next_rule: "IIILI",
@@ -107,6 +114,7 @@ export const signatures = {
   failure_reproduction_blob: "III",
   failure_caveat: "III",
   version: "II",
+  set_unicode_version: "II",
 } as const;
 
 export type Operation = keyof typeof signatures;

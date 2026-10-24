@@ -1,10 +1,10 @@
 /**
- * Collection generators: arrays, sets, and maps.
+ * Collection generators: arrays, sets, maps and permutations.
  *
  * @packageDocumentation
  */
 
-import { TestCase, Collection } from "../testCase.js";
+import { TestCase, Collection, generateRaw } from "../testCase.js";
 import { LabelNames, labelSpec, type LabelSpec } from "../labels.js";
 import { Generator, BasicGenerator } from "./core.js";
 
@@ -13,8 +13,16 @@ export interface CollectionOptions {
   maxSize?: number;
 }
 
-export interface ArrayOptions extends CollectionOptions {
+export interface ArrayOptions<T = unknown> extends CollectionOptions {
+  /** Require the elements to be distinct. Cannot be combined with `uniqueBy`. */
   unique?: boolean;
+  /**
+   * A key function, or an array of them: for each, the keys of the elements
+   * must be distinct (compared as by `Set`, so `0` and `-0` are the same key
+   * and `NaN` equals itself). A duplicate element is discarded and another
+   * drawn in its place.
+   */
+  uniqueBy?: ((value: T) => unknown) | readonly ((value: T) => unknown)[];
 }
 
 // ---------------------------------------------------------------------------
@@ -26,25 +34,35 @@ class ArraysGenerator<T> extends Generator<T[]> {
   private readonly minSize: number;
   private readonly maxSize: number | null;
   private readonly unique: boolean;
+  private readonly keys: readonly ((value: T) => unknown)[] | null;
   private readonly basic: BasicGenerator<T[]> | null;
 
-  constructor(elements: Generator<T>, options?: ArrayOptions) {
+  constructor(elements: Generator<T>, options?: ArrayOptions<T>) {
     super();
     const minSize = options?.minSize ?? 0;
     const maxSize = options?.maxSize ?? null;
     const unique = options?.unique ?? false;
+    const uniqueBy = options?.uniqueBy;
 
     if (maxSize !== null && minSize > maxSize) {
       throw new Error("Cannot have maxSize < minSize");
+    }
+    if (unique && uniqueBy !== undefined) {
+      throw new Error("Cannot pass both unique and uniqueBy");
+    }
+    const keys = typeof uniqueBy === "function" ? [uniqueBy] : (uniqueBy ?? null);
+    if (keys !== null && keys.length === 0) {
+      throw new Error("uniqueBy must be a function or a non-empty array of functions");
     }
 
     this.elements = elements;
     this.minSize = minSize;
     this.maxSize = maxSize;
     this.unique = unique;
+    this.keys = keys;
 
     const elementBasic = elements.asBasic();
-    if (elementBasic) {
+    if (elementBasic && keys === null) {
       const schema: Record<string, unknown> = {
         type: "list",
         unique,
@@ -67,6 +85,7 @@ class ArraysGenerator<T> extends Generator<T[]> {
     tc.startSpan(this.label);
     const collection = new Collection(tc, this.minSize, this.maxSize ?? undefined);
     const result: T[] = [];
+    const seen = this.keys?.map(() => new Set<unknown>()) ?? [];
     while (collection.more()) {
       const element = this.elements.doDraw(tc);
       if (this.unique) {
@@ -74,6 +93,14 @@ class ArraysGenerator<T> extends Generator<T[]> {
           collection.reject("duplicate element");
           continue;
         }
+      }
+      if (this.keys !== null) {
+        const keys = this.keys.map((key) => key(element));
+        if (keys.some((key, i) => seen[i].has(key))) {
+          collection.reject("duplicate element");
+          continue;
+        }
+        keys.forEach((key, i) => seen[i].add(key));
       }
       result.push(element);
     }
@@ -91,8 +118,18 @@ class ArraysGenerator<T> extends Generator<T[]> {
   }
 }
 
-/** Generate arrays with elements from the given generator. */
-export function arrays<T>(elements: Generator<T>, options?: ArrayOptions): Generator<T[]> {
+/**
+ * Generate arrays with elements from the given generator, with between
+ * `minSize` (default 0) and `maxSize` elements (by default the engine decides
+ * when to stop). Arrays shrink toward fewer elements. See
+ * {@link ArrayOptions} for `unique` and `uniqueBy`.
+ *
+ * @example
+ * ```ts
+ * const pairs = arrays(tuples(text(), integers()), { uniqueBy: (pair) => pair[0] });
+ * ```
+ */
+export function arrays<T>(elements: Generator<T>, options?: ArrayOptions<T>): Generator<T[]> {
   return new ArraysGenerator(elements, options);
 }
 
@@ -258,4 +295,43 @@ export function maps<K, V>(
   options?: CollectionOptions,
 ): Generator<Map<K, V>> {
   return new MapsGenerator(keys, values, options);
+}
+
+class PermutationsGenerator<T> extends Generator<T[]> {
+  private readonly elements: readonly T[];
+
+  constructor(elements: readonly T[]) {
+    super();
+    this.elements = [...elements];
+  }
+
+  doDraw(tc: TestCase): T[] {
+    tc.startSpan(this.label);
+    const remaining = [...this.elements];
+    const result: T[] = [];
+    const collection = new Collection(tc, remaining.length, remaining.length);
+    while (remaining.length > 0 && collection.more()) {
+      const index = generateRaw(tc, {
+        type: "integer",
+        min_value: 0,
+        max_value: remaining.length - 1,
+      }) as number;
+      result.push(remaining.splice(index, 1)[0]);
+    }
+    tc.stopSpan();
+    return result;
+  }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.PERMUTATION);
+  }
+}
+
+/**
+ * Generate reorderings of `elements`: arrays holding every element exactly
+ * once, shrinking toward the original order.
+ */
+export function permutations<T>(elements: readonly T[]): Generator<T[]> {
+  return new PermutationsGenerator(elements);
 }

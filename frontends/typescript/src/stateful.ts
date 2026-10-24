@@ -82,7 +82,7 @@
  */
 
 import { TestCase, AssumeError, StopTestError, type DataSource } from "./testCase.js";
-import { STATEFUL_RULE } from "./labels.js";
+import { FILTER_ATTEMPT, LabelNames, STATEFUL_RULE, labelSpec, type LabelSpec } from "./labels.js";
 import { Generator as HegelGenerator } from "./generators/core.js";
 
 /**
@@ -157,7 +157,9 @@ export const DEFAULT_STEP_COUNT = 50;
  * the pool, pass the generators it hands out to {@link TestCase.draw}:
  *
  * - {@link valuesReusable} yields a value in the pool without removing it.
- * - {@link valuesConsumed} removes the value it yields from the pool.
+ * - {@link valuesConsumed} removes the value it yields from the pool. Its
+ *   `filter` consumes only the value it yields: each value a filter attempt
+ *   rejects is put back once the attempts are over.
  *
  * Drawing from an empty pool rejects the current step, as if by
  * `tc.assume(false)`.
@@ -223,14 +225,19 @@ export class Pool<T> {
     return new PoolValues(this, true);
   }
 
-  /** @internal */
-  take(tc: TestCase, consume: boolean): T {
-    if (tc.dataSource().family !== this.dataSource.family) {
+  private sourceFor(tc: TestCase): DataSource {
+    const dataSource = tc.dataSource();
+    if (dataSource.family !== this.dataSource.family) {
       throw new Error(
         "this Pool belongs to a different test case; create a new Pool in each test case",
       );
     }
-    const id = this.dataSource.poolGenerate(this.poolId, consume);
+    return dataSource;
+  }
+
+  /** @internal */
+  take(tc: TestCase, consume: boolean): T {
+    const id = this.sourceFor(tc).poolGenerate(this.poolId, consume);
     // The engine only ever hands back ids it issued through `add`.
     const value = this.values.get(id) as T;
     if (consume) {
@@ -238,7 +245,44 @@ export class Pool<T> {
     }
     return value;
   }
+
+  /**
+   * A consuming draw of a value `accepts` accepts. Each attempt consumes an
+   * engine-chosen value; a rejected one stays consumed until the attempts are
+   * over, so no attempt draws it again, and is then put back. The attempts stop
+   * early once every value left has been rejected, and the draw then rejects
+   * the test case, as a filter whose attempts run out does.
+   *
+   * @internal
+   */
+  takeFiltered(tc: TestCase, accepts: (value: T) => boolean): T {
+    const dataSource = this.sourceFor(tc);
+    const rejected: bigint[] = [];
+    try {
+      for (let i = 0; i < 3 && rejected.length < this.values.size; i++) {
+        tc.startSpan(FILTER_ATTEMPT);
+        tc.startSpan(VALUES_CONSUMED);
+        const id = dataSource.poolGenerate(this.poolId, true);
+        tc.stopSpan();
+        rejected.push(id);
+        const value = this.values.get(id) as T;
+        if (accepts(value)) {
+          rejected.pop();
+          tc.stopSpan();
+          this.values.delete(id);
+          return value;
+        }
+        tc.stopSpan(true);
+      }
+    } finally {
+      for (const id of rejected) dataSource.poolRestore(this.poolId, id);
+    }
+    return tc.reject();
+  }
 }
+
+const VALUES_REUSABLE = labelSpec(LabelNames.POOL_VALUES_REUSABLE);
+const VALUES_CONSUMED = labelSpec(LabelNames.POOL_VALUES_CONSUMED);
 
 class PoolValues<T> extends HegelGenerator<T> {
   constructor(
@@ -250,6 +294,37 @@ class PoolValues<T> extends HegelGenerator<T> {
 
   doDraw(tc: TestCase): T {
     return this.pool.take(tc, this.consume);
+  }
+
+  override filter(predicate: (value: T) => boolean): HegelGenerator<T> {
+    return this.consume ? new FilteredPoolValues(this.pool, [predicate]) : super.filter(predicate);
+  }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return this.consume ? VALUES_CONSUMED : VALUES_REUSABLE;
+  }
+}
+
+class FilteredPoolValues<T> extends HegelGenerator<T> {
+  constructor(
+    private readonly pool: Pool<T>,
+    private readonly predicates: readonly ((value: T) => boolean)[],
+  ) {
+    super();
+  }
+
+  doDraw(tc: TestCase): T {
+    return this.pool.takeFiltered(tc, (value) => this.predicates.every((p) => p(value)));
+  }
+
+  override filter(predicate: (value: T) => boolean): HegelGenerator<T> {
+    return new FilteredPoolValues(this.pool, [...this.predicates, predicate]);
+  }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.FILTER, VALUES_CONSUMED);
   }
 }
 

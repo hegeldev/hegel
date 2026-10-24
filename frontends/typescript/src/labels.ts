@@ -38,10 +38,19 @@ export const LabelNames = {
   MAP: "hegel.map",
   FLAT_MAP: "hegel.flat_map",
   FILTER: "hegel.filter",
+  FILTER_ATTEMPT: "hegel.filter.attempt",
+  RECURSIVE: "hegel.recursive",
+  DEFERRED: "hegel.deferred",
+  PERMUTATION: "hegel.permutation",
+  POOL_VALUES_REUSABLE: "hegel.pool.values_reusable",
+  POOL_VALUES_CONSUMED: "hegel.pool.values_consumed",
   COMPOSITE: "hegel.composite",
   GENERATOR: "hegel.generator",
   STATEFUL_RULE: "hegel.stateful.rule",
 } as const;
+
+/** The spec of one attempt of a filter: the source's draw, discarded when rejected. */
+export const FILTER_ATTEMPT = labelSpec(LabelNames.FILTER_ATTEMPT);
 
 /** The spec of one round of a stateful test: the rule selection plus the rule's draws. */
 export const STATEFUL_RULE = labelSpec(LabelNames.STATEFUL_RULE);

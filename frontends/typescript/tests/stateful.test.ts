@@ -702,6 +702,71 @@ describe("stateful.Pool", () => {
     expect(stepLines).toHaveLength(5);
   });
 
+  test("a filtered consuming draw consumes only the value it yields", () => {
+    let rejectedSome = false;
+    hegel.test(
+      (tc) => {
+        const pool = new Pool<number>(tc);
+        for (let i = 0; i < 6; i++) pool.add(i);
+        const even = tc.draw(pool.valuesConsumed().filter((x) => x % 2 === 0));
+        if (even !== 0) rejectedSome = true;
+        expect(even % 2).toBe(0);
+        expect(pool.size).toBe(5);
+        const rest = [0, 1, 2, 3, 4].map(() => tc.draw(pool.valuesConsumed()));
+        expect(new Set([even, ...rest]).size).toBe(6);
+      },
+      { testCases: 100, ...deterministic },
+    );
+    expect(rejectedSome).toBe(true);
+  });
+
+  test("filters on a consuming draw chain, and stop once every value is rejected", () => {
+    let accepted = 0;
+    hegel.test(
+      (tc) => {
+        const pool = new Pool<number>(tc);
+        const n = tc.draw(gs.integers({ minValue: 1, maxValue: 10 }));
+        for (let i = 0; i < n; i++) pool.add(i);
+        const value = tc.draw(
+          pool
+            .valuesConsumed()
+            .filter((x) => x >= 1)
+            .filter((x) => x % 2 === 1),
+        );
+        expect(value % 2).toBe(1);
+        expect(pool.size).toBe(n - 1);
+        accepted++;
+      },
+      { testCases: 100, ...deterministic },
+    );
+    expect(accepted).toBeGreaterThan(0);
+  });
+
+  test("a filtered reusable draw leaves the pool alone", () =>
+    hegel.test(
+      (tc) => {
+        const pool = new Pool<number>(tc);
+        for (let i = 0; i < 4; i++) pool.add(i);
+        expect(tc.draw(pool.valuesReusable().filter((x) => x > 0))).toBeGreaterThan(0);
+        expect(pool.size).toBe(4);
+      },
+      { testCases: 30, ...deterministic },
+    ));
+
+  test("pool draws are labelled by how they draw", () => {
+    hegel.test(
+      (tc) => {
+        const pool = new Pool<number>(tc);
+        expect(pool.valuesReusable().label.name).toBe("hegel.pool.values_reusable");
+        expect(pool.valuesConsumed().label.name).toBe("hegel.pool.values_consumed");
+        const filtered = pool.valuesConsumed().filter(() => true).label;
+        expect(filtered.name).toBe("hegel.filter");
+        expect(filtered.parts[0].name).toBe("hegel.pool.values_consumed");
+      },
+      { testCases: 1, ...deterministic },
+    );
+  });
+
   test("using a pool with another test case is an error", () => {
     let stale: Pool<number> | null = null;
     hegel.test(

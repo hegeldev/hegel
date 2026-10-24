@@ -105,6 +105,30 @@ class FakeDataSource implements DataSource {
     throw new Error("not supported by FakeDataSource");
   }
 
+  poolRestore(_poolId: number, _variableId: bigint): void {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  newRecursion(_maxDepth: number, _maxLeaves: number): number {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  recursionBranch(_recursionId: number, _depth: number): boolean {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  recursionLeaf(_recursionId: number): boolean {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  recursionRetry(_recursionId: number): void {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  recursionFinish(_recursionId: number): boolean {
+    throw new Error("not supported by FakeDataSource");
+  }
+
   newStateMachine(): number {
     throw new Error("not supported by FakeDataSource");
   }

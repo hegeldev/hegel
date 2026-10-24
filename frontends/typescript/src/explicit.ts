@@ -53,6 +53,24 @@ export class ExplicitDataSource implements DataSource {
   poolGenerate(): bigint {
     return unsupported("A stateful.Pool");
   }
+  poolRestore(): void {
+    unsupported("A stateful.Pool");
+  }
+  newRecursion(): number {
+    return unsupported("A recursive generator");
+  }
+  recursionBranch(): boolean {
+    return unsupported("A recursive generator");
+  }
+  recursionLeaf(): boolean {
+    return unsupported("A recursive generator");
+  }
+  recursionRetry(): void {
+    unsupported("A recursive generator");
+  }
+  recursionFinish(): boolean {
+    return unsupported("A recursive generator");
+  }
   newStateMachine(): number {
     return unsupported("A state machine");
   }

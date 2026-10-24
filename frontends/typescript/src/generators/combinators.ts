@@ -1,5 +1,5 @@
 /**
- * Value combinators: just, sampledFrom, oneOf, optional.
+ * Value combinators: just, none, sampledFrom, oneOf, optional.
  *
  * @packageDocumentation
  */
@@ -28,6 +28,11 @@ export function just<T>(value: T): Generator<T> {
   return new JustGenerator(value);
 }
 
+/** Always generate `null`; the same as `just(null)`. */
+export function none(): Generator<null> {
+  return new JustGenerator(null);
+}
+
 class SampledFromGenerator<T> extends Generator<T> {
   private readonly elements: T[];
   private readonly schema: Record<string, unknown>;
@@ -51,7 +56,10 @@ class SampledFromGenerator<T> extends Generator<T> {
   }
 }
 
-/** Pick from a fixed list of values. Panics if empty. */
+/**
+ * Pick from a fixed list of values, shrinking toward the first. Throws if
+ * `elements` is empty.
+ */
 export function sampledFrom<T>(elements: readonly T[]): Generator<T> {
   return new SampledFromGenerator(elements);
 }

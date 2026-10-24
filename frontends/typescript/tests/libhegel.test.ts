@@ -178,7 +178,17 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     },
     poolAdd: () => 0,
     poolGenerate: () => 0,
+    poolRestore: () => 0,
     poolFree: noop,
+    newRecursion: (_ctx, _tc, _maxDepth, _maxLeaves, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    recursionBranch: () => 0,
+    recursionLeaf: () => 0,
+    recursionRetry: () => 0,
+    recursionFinish: () => 0,
+    recursionFree: noop,
     newStateMachine: (_ctx, _tc, _opts, out) => {
       out[0] = {} as Ptr;
       return 0;
@@ -294,6 +304,12 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
     // deterministically instead.
     const lib = new Libhegel(fakeBindings({ generateString: () => -2 }));
     expect(() => lib.generateString(null, null, null)).toThrow(AssumeError);
+  });
+
+  it("maps RETRY from the recursion protocol to false and checks other codes", () => {
+    const lib = new Libhegel(fakeBindings({ recursionLeaf: () => -10, recursionFinish: () => -1 }));
+    expect(lib.recursionLeaf(null, null, null)).toBe(false);
+    expect(() => lib.recursionFinish(null, null, null)).toThrow(StopTestError);
   });
 
   it("maps other non-OK codes to LibhegelError with the diagnostic", () => {

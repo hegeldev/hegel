@@ -52,6 +52,9 @@ around it:
 - The **first argument** is a `hegel_context_t*` (an error-reporting context).
 - The **return value** is a `hegel_result_t` code (`HEGEL_OK` is 0; failures
   are negative — `-1` is `HEGEL_E_STOP_TEST`, `-2` is `HEGEL_E_ASSUME`).
+  `HEGEL_E_RETRY` (`-10`) is protocol rather than failure:
+  `hegel_recursion_leaf` and `hegel_recursion_finish` surface it as a `false`
+  return, and the recursive generator unwinds and draws the value again.
 - Any **value the call produces** (a handle, a count, a bool, a buffer) is
   written through a **trailing out-parameter**, never returned.
 - On a non-OK return, the message is read back from the context via
@@ -85,7 +88,8 @@ Neither adapter frees anything implicitly. Every handle the ABI writes back is
 released with its matching free, in `finally` blocks so error paths release
 too: the runner frees `Context`, `Settings` and `Run`, each test case, the run
 result and each failure; `EngineDataSource` frees the collections, pools,
-state machines, printers and cloned or block test cases of its test case;
+recursions, state machines, printers and cloned or block test cases of its
+test case;
 engine-owned buffers (`hegel_generate_bytes`, `hegel_generate_string`,
 `hegel_printer_value`) are copied out immediately and then freed. The
 exception: `hegel_string_generator_t` handles are cached per schema object

@@ -26,6 +26,9 @@ export type StringGeneratorHandle = { readonly [stringGeneratorBrand]: never };
 declare const poolBrand: unique symbol;
 export type PoolHandle = { readonly [poolBrand]: never };
 
+declare const recursionBrand: unique symbol;
+export type RecursionHandle = { readonly [recursionBrand]: never };
+
 declare const stateMachineBrand: unique symbol;
 export type StateMachineHandle = { readonly [stateMachineBrand]: never };
 
@@ -207,6 +210,11 @@ export class EngineError extends Error {
 export interface Engine {
   version(): string;
   newContext(): ContextHandle;
+  /**
+   * Make the string generators follow the host's Unicode version, process-wide.
+   * Throws for a version the engine has no tables for.
+   */
+  setUnicodeVersion(ctx: ContextHandle, version: string): void;
   freeContext(ctx: ContextHandle): void;
   lastError(ctx: ContextHandle): string;
   /**
@@ -359,7 +367,42 @@ export interface Engine {
    * Throws `AssumeError` when the pool is empty.
    */
   poolGenerate(ctx: ContextHandle, tc: TestCaseHandle, pool: PoolHandle, consume: boolean): bigint;
+  /** Put back a variable a consuming {@link poolGenerate} removed from `pool`. */
+  poolRestore(ctx: ContextHandle, tc: TestCaseHandle, pool: PoolHandle, variableId: bigint): void;
   freePool(pool: PoolHandle): void;
+  /**
+   * Open a recursive generation scope for one recursive value; released with
+   * {@link freeRecursion}.
+   */
+  newRecursion(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    maxDepth: number,
+    maxLeaves: number,
+  ): RecursionHandle;
+  /** Whether the sub-value at `depth` is a branch (`true`) or a leaf. */
+  recursionBranch(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    recursion: RecursionHandle,
+    depth: number,
+  ): boolean;
+  /**
+   * Count one leaf against the attempt's budget: `false` (`HEGEL_E_RETRY`) when
+   * the attempt has outgrown it and must be unwound and retried.
+   */
+  recursionLeaf(ctx: ContextHandle, tc: TestCaseHandle, recursion: RecursionHandle): boolean;
+  /**
+   * Discard an attempt that outgrew its leaf budget. Throws `AssumeError` once
+   * the engine gives up on the test case.
+   */
+  recursionRetry(ctx: ContextHandle, tc: TestCaseHandle, recursion: RecursionHandle): void;
+  /**
+   * Report the recursive value finished: `false` (`HEGEL_E_RETRY`) when the
+   * engine discarded the attempt and the value must be drawn again.
+   */
+  recursionFinish(ctx: ContextHandle, tc: TestCaseHandle, recursion: RecursionHandle): boolean;
+  freeRecursion(recursion: RecursionHandle): void;
   /**
    * Register a state machine on `tc`; released with {@link freeStateMachine}.
    * The engine's drawn concurrency level is discarded: this client fixes the

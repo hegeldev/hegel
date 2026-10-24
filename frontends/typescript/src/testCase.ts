@@ -89,6 +89,19 @@ export interface DataSource {
    * Throws {@link AssumeError} when the pool is empty.
    */
   poolGenerate(poolId: number, consume: boolean): bigint;
+  /** Put back a variable that a consuming {@link poolGenerate} removed. */
+  poolRestore(poolId: number, variableId: bigint): void;
+
+  /** Open a recursive generation scope (see `generators.recursive`). */
+  newRecursion(maxDepth: number, maxLeaves: number): number;
+  /** Whether the sub-value at `depth` is a branch (`true`) or a leaf. */
+  recursionBranch(recursionId: number, depth: number): boolean;
+  /** Count a leaf; `false` when the attempt outgrew its budget and must be retried. */
+  recursionLeaf(recursionId: number): boolean;
+  /** Discard an attempt that outgrew its budget; throws {@link AssumeError} when out of attempts. */
+  recursionRetry(recursionId: number): void;
+  /** Finish the value; `false` when the engine discarded it and it must be drawn again. */
+  recursionFinish(recursionId: number): boolean;
 
   /** Register a sequential state machine (single group, concurrency 1). */
   newStateMachine(spec: StateMachineSpec): number;
@@ -486,6 +499,25 @@ export class TestCase {
       this.spanDepth--;
       throw e;
     }
+  }
+
+  /**
+   * The number of spans this handle has open.
+   *
+   * @internal
+   */
+  get openSpanDepth(): number {
+    return this.spanDepth;
+  }
+
+  /**
+   * Forget the spans opened above `depth`, which the engine has already
+   * closed (as a discarded recursive attempt's are).
+   *
+   * @internal
+   */
+  resetOpenSpansTo(depth: number): void {
+    this.spanDepth = depth;
   }
 
   /**

@@ -224,6 +224,88 @@ describe("WasmEngine pinned raw ABI", () => {
     expect(drive(wasm)).toEqual(drive(native));
   });
 
+  it("drives recursions, pool restores and the Unicode version like the native adapter", () => {
+    const wasm = wasmFixture().engine;
+    const native = Libhegel.load(testLibPath());
+    const drive = (engine: Engine) =>
+      active(engine, (ctx, tc) => {
+        const trace: unknown[] = [];
+        engine.setUnicodeVersion(ctx, "16.0");
+        expect(() => engine.setUnicodeVersion(ctx, "not a version")).toThrow(/version/);
+        engine.setUnicodeVersion(ctx, process.versions["unicode"] ?? "");
+        const recursion = engine.newRecursion(ctx, tc, 5, 3);
+        const pool = engine.newPool(ctx, tc);
+        try {
+          const subtree = (depth: number): boolean => {
+            const branch = engine.recursionBranch(ctx, tc, recursion, depth);
+            trace.push(branch);
+            if (!branch) return engine.recursionLeaf(ctx, tc, recursion);
+            for (let i = 0; i < 3; i++) if (!subtree(depth + 1)) return false;
+            return true;
+          };
+          for (let attempt = 0; attempt < 3; attempt++) {
+            if (!subtree(0)) {
+              trace.push("retry");
+              engine.recursionRetry(ctx, tc, recursion);
+              continue;
+            }
+            const finished = engine.recursionFinish(ctx, tc, recursion);
+            trace.push(finished);
+            if (finished) break;
+          }
+          engine.poolAdd(ctx, tc, pool);
+          const id = engine.poolGenerate(ctx, tc, pool, true);
+          expect(() => engine.poolGenerate(ctx, tc, pool, true)).toThrow(AssumeError);
+          engine.poolRestore(ctx, tc, pool, id);
+          expect(engine.poolGenerate(ctx, tc, pool, true)).toBe(id);
+          expect(() => engine.poolRestore(ctx, tc, pool, id + 1n)).toThrow(EngineError);
+          return trace;
+        } finally {
+          engine.freePool(pool);
+          engine.freeRecursion(recursion);
+        }
+      });
+    expect(drive(wasm)).toEqual(drive(native));
+  });
+
+  it("maps RETRY from the Wasm recursion protocol to false and checks other codes", () => {
+    const { engine, abi } = wasmFixture();
+    active(engine, (ctx, tc) => {
+      const recursion = engine.newRecursion(ctx, tc, 5, 3);
+      const call = abi.call.bind(abi);
+      const spy = vi.spyOn(abi, "call").mockImplementation((op, ...args) => {
+        if (op === "recursion_leaf") return -10;
+        if (op === "recursion_finish") return -1;
+        return call(op, ...args);
+      });
+      try {
+        expect(engine.recursionLeaf(ctx, tc, recursion)).toBe(false);
+        expect(() => engine.recursionFinish(ctx, tc, recursion)).toThrow(StopTestError);
+      } finally {
+        spy.mockRestore();
+        engine.freeRecursion(recursion);
+      }
+    });
+  });
+
+  it("draws recursive values and filtered pool values in the browser runner", () => {
+    const runner = createRunner(browserRuntime(wasmFixture().engine));
+    type Tree = number | Tree[];
+    const trees = gs.recursive<Tree>(gs.integers({ minValue: 0, maxValue: 3 }), (children) =>
+      gs.arrays(children, { minSize: 1, maxSize: 3 }),
+    );
+    runner.test(
+      (tc) => {
+        tc.draw(trees);
+        const pool = new stateful.Pool<number>(tc);
+        for (let i = 0; i < 4; i++) pool.add(i);
+        expect(tc.draw(pool.valuesConsumed().filter((x) => x > 0))).toBeGreaterThan(0);
+        expect(pool.size).toBe(3);
+      },
+      { testCases: 50, database: Database.disabled },
+    );
+  });
+
   it("runs a stateful test with a pool in the browser runner", () => {
     const runner = createRunner(browserRuntime(wasmFixture().engine));
     let steps = 0;

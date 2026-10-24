@@ -36,3 +36,29 @@ describe("gs.floats()", () => {
       { testCases: 10 },
     ));
 });
+
+describe("gs.floats({ width: 32 })", () => {
+  test("generates values exactly representable as 32-bit floats", () =>
+    hegel.test(
+      (tc) => {
+        const v = tc.draw(gs.floats({ width: 32 }));
+        expect(Object.is(Math.fround(v), v)).toBe(true);
+        const bounded = tc.draw(gs.floats({ width: 32, minValue: 0.5, maxValue: 1.5 }));
+        expect(Math.fround(bounded)).toBe(bounded);
+        expect(bounded).toBeGreaterThanOrEqual(0.5);
+        expect(bounded).toBeLessThanOrEqual(1.5);
+      },
+      { testCases: 100 },
+    ));
+
+  test("rejects bounds a 32-bit float cannot hold, and other widths", () => {
+    expect(() => gs.floats({ width: 32, minValue: 0.1 })).toThrow(
+      "minValue 0.1 is not exactly representable as a 32-bit float",
+    );
+    expect(() => gs.floats({ width: 32, maxValue: 1e300 })).toThrow(
+      "maxValue 1e+300 is not exactly representable as a 32-bit float",
+    );
+    expect(() => gs.floats({ width: 16 as 32 })).toThrow("width must be 32 or 64, got 16");
+    expect(gs.floats({ minValue: 0.1 }).asBasic().schema["width"]).toBe(64);
+  });
+});

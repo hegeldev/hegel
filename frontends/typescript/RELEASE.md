@@ -48,3 +48,26 @@ To reproduce this failure, replay it with the Hegel builder:
 - `tc.clone()` returns a handle drawing from an independent choice stream of the same test case, for concurrent tasks, and `tc.setWorker(index)` attributes its output to a worker (`[worker 1 +0.116ms] …`).
 
 Shrinking labels are now derived by the engine from each generator's kind and its components, replacing a fixed table of sixteen numbers that gave every generator of a kind the same label.
+
+**New generators and options.**
+
+- `gs.recursive(base, extend, { maxDepth, maxLeaves })` generates recursively structured data, such as trees or JSON documents. The engine decides where a value branches and keeps it within the limits, so recursive values are distributed the same way as in the other Hegel frontends, and they shrink toward a single leaf.
+- `gs.deferred(() => generator)` defines a generator in terms of generators defined after it, including itself, for mutually recursive definitions.
+- `gs.permutations(elements)` generates reorderings of a list, shrinking toward the original order.
+- `gs.none()` always generates `null`.
+- `gs.arrays` takes `uniqueBy`, a key function or an array of them whose keys must be distinct across the array.
+- `gs.floats({ width: 32 })` generates only values a 32-bit float holds exactly.
+
+```ts
+type Json = null | boolean | number | string | Json[];
+const json = gs.recursive<Json>(
+  gs.oneOf<Json>(gs.none(), gs.booleans(), gs.floats(), gs.text()),
+  (children) => gs.arrays(children, { maxSize: 5 }),
+);
+```
+
+`gs.bigIntegers` with only one bound no longer caps the other side at ±2^127: a missing bound now lies 2^127 beyond the given one (or beyond zero, when that is further), so `gs.bigIntegers({ minValue: 2n ** 200n })` generates values instead of failing.
+
+A filter on `Pool.valuesConsumed()` now consumes only the value it yields: values its attempts reject go back into the pool. Previously each rejected attempt removed its value from the pool as well.
+
+On Node, text and regex generators follow the Unicode version of Node's own tables (`process.versions.unicode`), so a character category means the same to the generators as to JavaScript's regular expressions.

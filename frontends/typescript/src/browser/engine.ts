@@ -11,6 +11,7 @@ import {
   type CollectionHandle,
   type StringGeneratorHandle,
   type PoolHandle,
+  type RecursionHandle,
   type StateMachineHandle,
   type PrinterHandle,
   type StateMachineOptions,
@@ -63,12 +64,23 @@ export class WasmEngine implements Engine {
 
   private check(ctx: number, op: Operation, args: Argument[], control = false): void {
     const code = this.abi.call(op, ...args);
-    if (code === 0) return;
+    if (code !== 0) this.raise(ctx, op, code, control);
+  }
+
+  private raise(ctx: number, op: Operation, code: number, control: boolean): never {
     if (control && code === -1) throw new StopTestError();
     if (control && code === -2) throw new AssumeError();
     // Copy before the arena or an owned handle can be released.
     const message = ctx === 0 ? "" : this.readLastError(ctx);
     throw new EngineError(`hegel_${op} failed (${code})${message ? `: ${message}` : ""}`);
+  }
+
+  /** `false` for `HEGEL_E_RETRY`, otherwise as {@link check} with control codes. */
+  private retryable(ctx: number, op: Operation, args: Argument[]): boolean {
+    const code = this.abi.call(op, ...args);
+    if (code === -10) return false;
+    if (code !== 0) this.raise(ctx, op, code, true);
+    return true;
   }
 
   private readLastError(ctx: number): string {
@@ -121,6 +133,12 @@ export class WasmEngine implements Engine {
   }
   newContext(): ContextHandle {
     return this.owned(this.abi.call("context_new") >>> 0);
+  }
+  setUnicodeVersion(ctx: ContextHandle, version: string): void {
+    WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      this.check(c, "set_unicode_version", [c, a.text(version)]);
+    });
   }
   freeContext(ctx: ContextHandle): void {
     this.check(0, "context_free", [this.ptr(ctx)]);
@@ -742,8 +760,53 @@ export class WasmEngine implements Engine {
     const c = this.ptr(ctx);
     return this.variableId(c, "pool_generate", [c, this.ptr(tc), this.ptr(pool), +consume]);
   }
+  poolRestore(ctx: ContextHandle, tc: TestCaseHandle, pool: PoolHandle, variableId: bigint): void {
+    const c = this.ptr(ctx);
+    this.check(c, "pool_restore", [c, this.ptr(tc), this.ptr(pool), variableId], true);
+  }
   freePool(pool: PoolHandle): void {
     this.free("pool_free", pool);
+  }
+  newRecursion(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    maxDepth: number,
+    maxLeaves: number,
+  ): RecursionHandle {
+    const c = this.ptr(ctx);
+    return this.handle(c, "new_recursion", [c, this.ptr(tc), u64(maxDepth), u64(maxLeaves)], true);
+  }
+  recursionBranch(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    recursion: RecursionHandle,
+    depth: number,
+  ): boolean {
+    const c = this.ptr(ctx);
+    return this.output(
+      c,
+      "recursion_branch",
+      [c, this.ptr(tc), this.ptr(recursion), u64(depth)],
+      1,
+      1,
+      (a, p) => a.boolean(p),
+      true,
+    );
+  }
+  recursionLeaf(ctx: ContextHandle, tc: TestCaseHandle, recursion: RecursionHandle): boolean {
+    const c = this.ptr(ctx);
+    return this.retryable(c, "recursion_leaf", [c, this.ptr(tc), this.ptr(recursion)]);
+  }
+  recursionRetry(ctx: ContextHandle, tc: TestCaseHandle, recursion: RecursionHandle): void {
+    const c = this.ptr(ctx);
+    this.check(c, "recursion_retry", [c, this.ptr(tc), this.ptr(recursion)], true);
+  }
+  recursionFinish(ctx: ContextHandle, tc: TestCaseHandle, recursion: RecursionHandle): boolean {
+    const c = this.ptr(ctx);
+    return this.retryable(c, "recursion_finish", [c, this.ptr(tc), this.ptr(recursion)]);
+  }
+  freeRecursion(recursion: RecursionHandle): void {
+    this.free("recursion_free", recursion);
   }
   newStateMachine(
     ctx: ContextHandle,

@@ -5,11 +5,18 @@
  */
 
 import { TestCase, generateRaw } from "../testCase.js";
-import { LabelNames, labelSpec, schemaLabelSpec, type LabelSpec } from "../labels.js";
+import {
+  FILTER_ATTEMPT,
+  LabelNames,
+  labelSpec,
+  schemaLabelSpec,
+  type LabelSpec,
+} from "../labels.js";
 
 /**
- * Base class for all generators. Generators produce values of type T
- * synchronously by communicating with the hegel server.
+ * Base class for all generators: an immutable description of how to draw a
+ * value of type T from a {@link TestCase}. The same generator can be drawn
+ * from any number of times, in any number of tests.
  */
 export abstract class Generator<T> {
   private _label: LabelSpec | undefined;
@@ -146,7 +153,7 @@ class FilteredGenerator<T> extends Generator<T> {
 
   doDraw(tc: TestCase): T {
     for (let i = 0; i < 3; i++) {
-      tc.startSpan(this.label);
+      tc.startSpan(FILTER_ATTEMPT);
       const value = this.source.doDraw(tc);
       if (this.predicate(value)) {
         tc.stopSpan();

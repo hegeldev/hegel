@@ -159,8 +159,12 @@ so a Node import creeping into a shared module fails `check-lint`.
 
 Neither adapter frees anything implicitly — every handle the ABI writes back
 is caller-owned: the runner frees `Context`/`Settings`/`Run` handles, each test
-case from `next_test_case`, the run result, each failure, and each collection
-explicitly in `finally` blocks, in ownership order. Generated strings decode
+case from `next_test_case`, the run result and each failure explicitly in
+`finally` blocks, in ownership order, and `EngineDataSource.dispose` frees
+each test case's collections, pools, recursions, state machines, printers and
+derived test cases. `src/session.ts` passes `process.versions.unicode` to
+`hegel_set_unicode_version` when the native library loads; the browser reports
+no Unicode version, so the Wasm engine keeps its own tables. Generated strings decode
 through `wtf8.ts` (UTF-8 exactly; safe if the engine ever hands back a lone
 surrogate again). The `typescript-ffi` skill (`.claude/skills/typescript-ffi/`)
 is the guide to changing the binding layers when `hegel.h` changes.

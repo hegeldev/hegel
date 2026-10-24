@@ -202,8 +202,6 @@ function drawFloat(
   schema: Record<string, unknown>,
 ): number {
   return lib.generateFloat(ctx, tc, {
-    // The float generator always emits width 64; smallest_nonzero_magnitude
-    // is the ABI's "no restriction" sentinel for that width.
     width: schema["width"] as number,
     minValue: (schema["min_value"] as number | undefined) ?? -Infinity,
     maxValue: (schema["max_value"] as number | undefined) ?? Infinity,
@@ -211,7 +209,8 @@ function drawFloat(
     allowInfinity: schema["allow_infinity"] as boolean,
     excludeMin: (schema["exclude_min"] as boolean | undefined) ?? false,
     excludeMax: (schema["exclude_max"] as boolean | undefined) ?? false,
-    smallestNonzeroMagnitude: Number.MIN_VALUE,
+    // The smallest subnormal of the width: the ABI's "no restriction".
+    smallestNonzeroMagnitude: schema["width"] === 32 ? 2 ** -149 : Number.MIN_VALUE,
   });
 }
 

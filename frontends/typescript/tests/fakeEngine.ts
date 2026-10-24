@@ -11,6 +11,7 @@ import {
   type CollectionHandle,
   type StringGeneratorHandle,
   type PoolHandle,
+  type RecursionHandle,
   type StateMachineHandle,
   type PrinterHandle,
 } from "../src/engine.js";
@@ -25,6 +26,7 @@ export const failure = {} as FailureHandle;
 export const collection = {} as CollectionHandle;
 export const stringGenerator = {} as StringGeneratorHandle;
 export const pool = {} as PoolHandle;
+export const recursion = {} as RecursionHandle;
 export const stateMachine = {} as StateMachineHandle;
 export const derivedCase = {} as TestCaseHandle;
 
@@ -51,6 +53,7 @@ export function fakeEngine() {
     newContext: vi.fn<Engine["newContext"]>(() => context),
     freeContext: vi.fn<Engine["freeContext"]>(),
     lastError: vi.fn<Engine["lastError"]>(() => "diagnostic"),
+    setUnicodeVersion: vi.fn<Engine["setUnicodeVersion"]>(),
     newSettings: vi.fn<Engine["newSettings"]>(() => settings),
     freeSettings: vi.fn<Engine["freeSettings"]>(),
     setTestCases: vi.fn<Engine["setTestCases"]>(),
@@ -160,7 +163,14 @@ export function fakeEngine() {
     newPool: vi.fn<Engine["newPool"]>(() => pool),
     poolAdd: vi.fn<Engine["poolAdd"]>(() => 0n),
     poolGenerate: vi.fn<Engine["poolGenerate"]>(() => 0n),
+    poolRestore: vi.fn<Engine["poolRestore"]>(),
     freePool: vi.fn<Engine["freePool"]>(),
+    newRecursion: vi.fn<Engine["newRecursion"]>(() => recursion),
+    recursionBranch: vi.fn<Engine["recursionBranch"]>(() => false),
+    recursionLeaf: vi.fn<Engine["recursionLeaf"]>(() => true),
+    recursionRetry: vi.fn<Engine["recursionRetry"]>(),
+    recursionFinish: vi.fn<Engine["recursionFinish"]>(() => true),
+    freeRecursion: vi.fn<Engine["freeRecursion"]>(),
     newStateMachine: vi.fn<Engine["newStateMachine"]>(() => stateMachine),
     stateMachineNextGroup: vi
       .fn<Engine["stateMachineNextGroup"]>()
