@@ -32,7 +32,7 @@ public final class Label {
     public static final long MAP = of("hegel.dicts");
 
     /** A fixed-arity tuple. */
-    public static final long TUPLE = of("hegel.tuple");
+    public static final long TUPLE = of("hegel.tuples");
 
     /** A choice between alternative generators. */
     public static final long ONE_OF = of("hegel.one_of");

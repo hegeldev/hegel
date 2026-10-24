@@ -81,7 +81,7 @@ class ReporterTest {
         assertEquals(Label.of("hegel.lists"), Label.LIST);
         assertEquals(Label.of("hegel.sets"), Label.SET);
         assertEquals(Label.of("hegel.dicts"), Label.MAP);
-        assertEquals(Label.of("hegel.tuple"), Label.TUPLE);
+        assertEquals(Label.of("hegel.tuples"), Label.TUPLE);
         assertEquals(Label.of("hegel.one_of"), Label.ONE_OF);
         assertEquals(Label.of("hegel.optional"), Label.OPTIONAL);
         assertEquals(Label.of("hegel.fixed_dicts"), Label.FIXED_DICT);
