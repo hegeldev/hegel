@@ -123,6 +123,15 @@ public interface Libhegel {
     int settingsRegisterProfile(String name, long s);
 
     /**
+     * {@code hegel_settings_set_from_string}: set the setting {@code key} (its {@code hegel.toml}
+     * key, or {@code unbounded_choices} or {@code database_key}) on handle {@code s} from {@code
+     * value}, spelled as {@code hegel.toml} and the {@code HEGEL_*} variables spell it. Returns the
+     * raw code: {@link Abi#E_INVALID_ARG} (with the message in {@link #lastErrorMessage()}) for an
+     * unknown key or a value outside its vocabulary, leaving the handle unchanged.
+     */
+    int settingsSetFromString(long s, String key, String value);
+
+    /**
      * {@code hegel_set_default_profile}: the profile {@link #settingsNew} resolves from now on, or
      * {@code ""} to clear an earlier call. Returns the raw code: {@link Abi#E_INVALID_ARG} for an
      * invalid name.

@@ -322,6 +322,18 @@ class RealLibhegelTest {
     }
 
     @Test
+    void settingsAreSetFromStrings() {
+        RealLibhegel lib = real();
+        long s = newSettings(lib);
+        assertEquals(Abi.OK, lib.settingsSetFromString(s, "test_cases", "11"));
+        assertEquals(11, lib.settingsGetTestCases(s));
+        assertEquals(Abi.E_INVALID_ARG, lib.settingsSetFromString(s, "test_cases", "many"));
+        assertTrue(lib.lastErrorMessage().contains("test_cases"), lib.lastErrorMessage());
+        assertEquals(11, lib.settingsGetTestCases(s));
+        lib.settingsFree(s);
+    }
+
+    @Test
     void settingsGettersReadTheHandleBack() {
         RealLibhegel lib = real();
         long s = newSettings(lib);

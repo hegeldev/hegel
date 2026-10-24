@@ -165,9 +165,12 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   instance (`CachedLabel`) and used for the span it draws in. Filter attempts
   open `hegel.filter.attempt` spans and pool draws
   `hegel.pool.values_reusable`/`values_consumed` spans, as in Rust and
-  Python. The engine's
+  Python. `hegel_settings_set_from_string` backs `Settings.set(key, value)`,
+  Java's way to every setting by its `hegel.toml` key (Java has no CLI to pass
+  flags through). The engine's
   `hegel_set_unicode_version` has no Java surface (Java reports no Unicode
-  version). The grammar functions are bound except `hegel_grammar_placeholder`
+  version), and the printer's `if_break`, `comment`, `shift_indent` and
+  `deferred` are unbound because Java's value rendering does not use them. The grammar functions are bound except `hegel_grammar_placeholder`
   and `hegel_generate_grammar`: the frontend draws every grammar string through
   a `hegel_grammar_draw_t`, which splices in explicit terminals' values engine-side.
 - **Per-case primitives** — `DataSource` is the abstraction generators draw

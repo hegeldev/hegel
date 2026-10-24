@@ -18,6 +18,8 @@ New settings, each also an `@HegelTest` attribute:
 
 `Settings.suppressHealthCheck(...)` now replaces any earlier suppressions instead of adding to them, and only sends a suppression set when it is called, so a `hegel.toml` profile or `HEGEL_*` variable that suppresses health checks applies unless the test says otherwise. Calling it with no checks runs every health check even where the profile suppresses some.
 
+`Settings.set(key, value)` sets any engine setting from its string form, as `hegel.toml` and the `HEGEL_*` environment variables spell it, such as `set("test_cases", "500")` or `set("suppress_health_check", "too_slow")`. The engine parses the value, so this reaches every setting it has, which suits settings read from a command line or a configuration file. String settings apply after the typed ones, in the order given. `dev.hegel.lowlevel.Libhegel` gains `settingsSetFromString` for it, which a third-party binding needs to implement.
+
 Settings profiles are now reachable from Java:
 
 ```java

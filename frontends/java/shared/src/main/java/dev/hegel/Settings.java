@@ -1,6 +1,8 @@
 package dev.hegel;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 /**
@@ -46,6 +48,7 @@ public final class Settings {
     final TestLocation testLocation; // null = locate the test where it is run from
     final List<String> infrastructurePackages;
     final List<Example> examples;
+    final List<Map.Entry<String, String>> stringSettings;
 
     /**
      * Create settings that leave everything to the engine's default profile and the environment
@@ -77,6 +80,7 @@ public final class Settings {
         this.testLocation = b.testLocation;
         this.infrastructurePackages = b.infrastructurePackages;
         this.examples = b.examples;
+        this.stringSettings = b.stringSettings;
     }
 
     /** Return a copy of these settings with {@code mutator} applied to the changed fields. */
@@ -103,6 +107,7 @@ public final class Settings {
         b.testLocation = testLocation;
         b.infrastructurePackages = infrastructurePackages;
         b.examples = examples;
+        b.stringSettings = stringSettings;
         mutator.accept(b);
         return new Settings(b);
     }
@@ -130,6 +135,7 @@ public final class Settings {
         TestLocation testLocation = null;
         List<String> infrastructurePackages = List.of();
         List<Example> examples = List.of();
+        List<Map.Entry<String, String>> stringSettings = List.of();
     }
 
     /**
@@ -428,6 +434,32 @@ public final class Settings {
     public Settings infrastructurePackages(String... prefixes) {
         List<String> copy = List.of(prefixes);
         return with(b -> b.infrastructurePackages = copy);
+    }
+
+    /**
+     * Set a setting from its string form, as {@code hegel.toml} and the {@code HEGEL_*} environment
+     * variables spell it: {@code key} is the setting's {@code hegel.toml} key ({@code test_cases},
+     * {@code seed}, {@code phases}, {@code suppress_health_check}, ...) or {@code unbounded_choices}
+     * or {@code database_key}, and {@code value} is in that key's vocabulary ({@code "500"}, {@code
+     * "true"}, {@code "generate,shrink"}, ...). The engine parses it, so every engine setting is
+     * reachable this way, which suits settings read from a command line or a configuration file.
+     * String settings apply after the typed ones, in the order given, so a later one wins.
+     *
+     * <pre>{@code
+     * new Settings().set("test_cases", "500").set("suppress_health_check", "too_slow")
+     * }</pre>
+     *
+     * @param key the setting's key
+     * @param value its value
+     * @return a new settings instance
+     * @throws IllegalArgumentException for an unknown key or a value outside its vocabulary
+     */
+    public Settings set(String key, String value) {
+        Runner.checkStringSetting(Engine.get(), key, value);
+        List<Map.Entry<String, String>> copy = new ArrayList<>(stringSettings);
+        copy.add(Map.entry(key, value));
+        List<Map.Entry<String, String>> settings = List.copyOf(copy);
+        return with(b -> b.stringSettings = settings);
     }
 
     /**

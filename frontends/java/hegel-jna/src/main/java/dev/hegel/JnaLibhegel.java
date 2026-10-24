@@ -78,6 +78,8 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_set_default_profile(Pointer ctx, HegelString.ByValue name);
 
+        int hegel_settings_set_from_string(Pointer ctx, Pointer s, HegelString.ByValue key, HegelString.ByValue value);
+
         int hegel_settings_get_verbosity(Pointer ctx, Pointer s, IntByReference out);
 
         int hegel_settings_get_phases(Pointer ctx, Pointer s, IntByReference out);
@@ -691,6 +693,11 @@ final class JnaLibhegel implements Libhegel {
     @Override
     public int settingsRegisterProfile(String name, long s) {
         return lib.hegel_settings_register_profile(ctx(), str(name), pointer(s));
+    }
+
+    @Override
+    public int settingsSetFromString(long s, String key, String value) {
+        return lib.hegel_settings_set_from_string(ctx(), pointer(s), str(key), str(value));
     }
 
     @Override

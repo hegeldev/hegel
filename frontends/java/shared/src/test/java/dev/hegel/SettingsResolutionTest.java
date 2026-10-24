@@ -38,6 +38,30 @@ class SettingsResolutionTest {
     }
 
     @Test
+    void stringSettingsAreSentAfterTheTypedOnesInOrder() {
+        assertEquals(List.of(), run(new Settings()).stringSettings);
+        FakeLibhegel fake = run(new Settings().set("test_cases", "7").set("phases", "generate"));
+        assertEquals(List.of("test_cases=7", "phases=generate"), fake.stringSettings);
+    }
+
+    @Test
+    void stringSettingsAreParsedByTheEngine() {
+        Settings[] effective = new Settings[1];
+        Reporter capture = new Reporter() {
+            @Override
+            public void runStarted(Settings settings) {
+                effective[0] = settings;
+            }
+        };
+        Hegel.run(tc -> {}, new Settings().testCases(3).set("test_cases", "7").database(Database.disabled()), capture);
+        assertEquals(7L, effective[0].testCases);
+        IllegalArgumentException unknown =
+                assertThrows(IllegalArgumentException.class, () -> new Settings().set("no_such_setting", "1"));
+        assertTrue(unknown.getMessage().contains("no_such_setting"), unknown.getMessage());
+        assertThrows(IllegalArgumentException.class, () -> new Settings().set("verbosity", "loud"));
+    }
+
+    @Test
     void explicitSettingsAreSent() {
         TestLocation location = new TestLocation("a/B.java", 12, "a.B", "prop");
         FakeLibhegel fake = run(new Settings()

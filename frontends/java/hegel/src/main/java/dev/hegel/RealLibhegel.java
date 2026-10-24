@@ -113,6 +113,7 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle settingsNew;
     private final MethodHandle settingsNewForProfile;
     private final MethodHandle settingsRegisterProfile;
+    private final MethodHandle settingsSetFromString;
     private final MethodHandle setDefaultProfile;
     private final MethodHandle settingsGetVerbosity;
     private final MethodHandle settingsGetPhases;
@@ -265,6 +266,11 @@ final class RealLibhegel implements Libhegel {
                 lookup,
                 "hegel_settings_register_profile",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, STRING_LAYOUT, ADDRESS));
+        this.settingsSetFromString = h(
+                linker,
+                lookup,
+                "hegel_settings_set_from_string",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT, STRING_LAYOUT));
         this.setDefaultProfile =
                 h(linker, lookup, "hegel_set_default_profile", FunctionDescriptor.of(JAVA_INT, ADDRESS, STRING_LAYOUT));
         this.settingsGetVerbosity = h(
@@ -915,6 +921,13 @@ final class RealLibhegel implements Libhegel {
     public int settingsRegisterProfile(String name, long s) {
         try (Arena arena = Arena.ofConfined()) {
             return rc(settingsRegisterProfile, str(arena, name), segment(s));
+        }
+    }
+
+    @Override
+    public int settingsSetFromString(long s, String key, String value) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(settingsSetFromString, segment(s), str(arena, key), str(arena, value));
         }
     }
 

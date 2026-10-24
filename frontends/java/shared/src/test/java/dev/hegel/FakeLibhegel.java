@@ -200,6 +200,7 @@ final class FakeLibhegel implements Libhegel {
     String profileRequested; // the name settingsNewForProfile was last called with
     int settingsNewForProfileRc = Abi.OK;
     int registerProfileRc = Abi.OK;
+    final List<String> stringSettings = new ArrayList<>();
     final List<String> registeredProfiles = new ArrayList<>();
     int setDefaultProfileRc = Abi.OK;
     String defaultProfile;
@@ -414,6 +415,12 @@ final class FakeLibhegel implements Libhegel {
             registeredProfiles.add(name);
         }
         return registerProfileRc;
+    }
+
+    @Override
+    public int settingsSetFromString(long s, String key, String value) {
+        stringSettings.add(key + "=" + value);
+        return Abi.OK;
     }
 
     @Override

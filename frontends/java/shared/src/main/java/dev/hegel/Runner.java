@@ -213,6 +213,20 @@ final class Runner {
         return out[0];
     }
 
+    /** Fail with the engine's diagnostic unless the engine accepts {@code value} for {@code key}. */
+    static void checkStringSetting(Libhegel lib, String key, String value) {
+        long s = newSettings(lib, null);
+        try {
+            setFromString(lib, s, key, value);
+        } finally {
+            lib.settingsFree(s);
+        }
+    }
+
+    private static void setFromString(Libhegel lib, long s, String key, String value) {
+        checkUserCall(lib, lib.settingsSetFromString(s, key, value), "hegel_settings_set_from_string");
+    }
+
     /** Fail with the engine's diagnostic unless {@code profile} resolves. */
     static void checkProfile(Libhegel lib, String profile) {
         lib.settingsFree(newSettings(lib, profile));
@@ -537,6 +551,9 @@ final class Runner {
         if (st.testLocation != null) {
             TestLocation l = st.testLocation;
             lib.settingsTestLocation(s, l.file(), l.beginLine(), l.className(), l.function());
+        }
+        for (Map.Entry<String, String> setting : st.stringSettings) {
+            setFromString(lib, s, setting.getKey(), setting.getValue());
         }
     }
 
