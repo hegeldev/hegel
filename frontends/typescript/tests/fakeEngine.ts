@@ -218,6 +218,7 @@ export function fakeRuntime(engine: Engine): RuntimeServices {
     getEngine: () => engine,
     validateSettings: vi.fn(),
     persistence: true,
+    projectRoot: "",
     output: vi.fn(),
   };
 }

@@ -652,7 +652,10 @@ export class Hegel {
 
   /**
    * Set the key the test's failures are stored under in the database, in
-   * place of the one derived from its location (its file plus its name).
+   * place of the one derived from its location: its file, relative to the
+   * working directory, plus its name. A test function's name is its own, or
+   * for an anonymous one the name Vitest or Jest gives the running test,
+   * else the enclosing function's, else its line.
    */
   databaseKey(key: string): this {
     this._databaseKey = key;
@@ -757,7 +760,9 @@ export class Hegel {
         }
         const key =
           this._databaseKey ??
-          (location !== null ? databaseKeyOf(location) : this.testFn.name || null);
+          (location !== null
+            ? databaseKeyOf(location, this.runtime.projectRoot)
+            : this.testFn.name || null);
         if (key !== null) lib.setDatabaseKey(ctx, settings, key);
         yield* this.runAll(lib, ctx, settings, cache);
       } catch (error) {

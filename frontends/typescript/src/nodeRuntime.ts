@@ -17,6 +17,7 @@ export const nodeRuntime: RuntimeServices = {
   getEngine: getLibhegel,
   validateSettings(_settings) {},
   persistence: true,
+  projectRoot: process.cwd(),
   readGrammarFile,
   output: consoleOutput,
 };

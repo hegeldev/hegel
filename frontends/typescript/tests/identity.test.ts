@@ -1,10 +1,22 @@
 import { describe, it, expect, vi } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import { createRunner } from "../src/runnerCore.js";
-import { callSite, parseFrame } from "../src/callSite.js";
+import { callSite, parseFrame, projectPath, runnerTestName } from "../src/callSite.js";
 import { fakeEngine, fakeRuntime, context, settings } from "./fakeEngine.js";
 
 const THIS_FILE = new URL(import.meta.url).pathname;
+
+const MATCHERS = Symbol.for("$$jest-matchers-object");
+
+function withMatcherState<T>(matchers: unknown, body: () => T): T {
+  const original = Object.getOwnPropertyDescriptor(globalThis, MATCHERS)!;
+  Object.defineProperty(globalThis, MATCHERS, { configurable: true, value: matchers });
+  try {
+    return body();
+  } finally {
+    Object.defineProperty(globalThis, MATCHERS, original);
+  }
+}
 
 function withoutCaptureStackTrace(body: () => void): void {
   const original = Error.captureStackTrace;
@@ -61,6 +73,32 @@ describe("stack frame parsing", () => {
   });
 });
 
+describe("runner test names", () => {
+  it.each([
+    ["a", { state: { currentTestName: "suite > case" } }, "suite > case"],
+    ["no", undefined, null],
+    ["a stateless", {}, null],
+    ["an empty", { state: { currentTestName: "" } }, null],
+    ["a non-string", { state: { currentTestName: 7 } }, null],
+  ])("reads %s test name", (_kind, matchers, name) => {
+    expect(withMatcherState(matchers, runnerTestName)).toBe(name);
+  });
+});
+
+describe("project paths", () => {
+  it.each([
+    ["/proj/tests/a.test.ts", "/proj", "tests/a.test.ts"],
+    ["/proj/tests/a.test.ts", "/proj/", "tests/a.test.ts"],
+    ["/project/a.test.ts", "/proj", "/project/a.test.ts"],
+    ["/proj/a.test.ts", "", "/proj/a.test.ts"],
+    ["/C:/proj/tests/a.test.ts", "C:\\proj", "tests/a.test.ts"],
+    ["C:\\proj\\tests\\a.test.ts", "C:\\proj", "tests/a.test.ts"],
+    ["http://localhost:5173/src/a.test.ts?t=1", "", "/src/a.test.ts"],
+  ])("takes %s relative to %s", (file, root, path) => {
+    expect(projectPath(file, root)).toBe(path);
+  });
+});
+
 describe("test identity", () => {
   it("derives the location and database key from where hegel.test is called", () => {
     const engine = fakeEngine();
@@ -81,13 +119,36 @@ describe("test identity", () => {
     );
   });
 
-  it("names an anonymous test by its line", async () => {
+  it("names an anonymous test after the runner's running test", async () => {
     const engine = fakeEngine();
     const runner = createRunner(fakeRuntime(engine));
     await runner.testAsync(() => {});
+    const name = "test identity > names an anonymous test after the runner's running test";
+    expect(engine.setTestLocation.mock.calls[0][2].function).toBe(name);
+    expect(engine.setDatabaseKey).toHaveBeenCalledWith(context, settings, `${THIS_FILE}::${name}`);
+  });
+
+  it("names an anonymous test by its line outside a known test runner", () => {
+    const engine = fakeEngine();
+    const runner = createRunner(fakeRuntime(engine));
+    withMatcherState(undefined, () => runner.test(() => {}));
     const location = engine.setTestLocation.mock.calls[0][2];
     expect(location.function).toBe(`<anonymous at line ${location.beginLine}>`);
     expect(location.file).toBe(THIS_FILE);
+  });
+
+  it("keys a test by its path relative to the project root", () => {
+    const engine = fakeEngine();
+    const runtime = {
+      ...fakeRuntime(engine),
+      projectRoot: THIS_FILE.replace(/\/tests\/[^/]*$/, ""),
+    };
+    createRunner(runtime).test(function relative() {});
+    expect(engine.setDatabaseKey).toHaveBeenCalledWith(
+      context,
+      settings,
+      "tests/identity.test.ts::relative",
+    );
   });
 
   it("derives the call site of a Hegel built directly", () => {

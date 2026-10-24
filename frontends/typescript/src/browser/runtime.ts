@@ -11,6 +11,7 @@ export function browserRuntime(engine: Engine): RuntimeServices {
       }
     },
     persistence: false,
+    projectRoot: "",
     output: consoleOutput,
   };
 }

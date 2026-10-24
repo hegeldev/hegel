@@ -138,7 +138,11 @@ so a Node import creeping into a shared module fails `check-lint`.
    `hegel_settings_new` (or `_for_profile`) and `src/settings.ts` sets only
    the fields the user gave; the test's location and database key come from
    its call site (`src/callSite.ts`) through `hegel_settings_set_test_location`
-   and `hegel_settings_set_database_key`.
+   and `hegel_settings_set_database_key`. The key is the file relative to the
+   runtime's `projectRoot` (Node's working directory; a browser keys on the
+   URL's path) plus the test's name, which for an anonymous test function is
+   Vitest's or Jest's name for the running test, so it does not depend on
+   where the project is checked out.
 6. **Shared runner** (`src/runnerCore.ts`) — the sync and async run loops:
    explicit examples (`src/explicit.ts`), then `run_start` (or
    `run_start_blob` for each `reproduceFailure` blob) → `next_test_case` →

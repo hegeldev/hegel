@@ -13,6 +13,11 @@ export interface RuntimeServices {
    */
   persistence: boolean;
   /**
+   * The directory test files' paths are taken relative to in their database
+   * keys, so that a key does not depend on where the project is checked out.
+   */
+  projectRoot: string;
+  /**
    * Read a grammar file a `fromLark` grammar imports from its `importPath`.
    * Absent where the host has no filesystem.
    */
