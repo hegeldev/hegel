@@ -14,7 +14,13 @@ public enum HealthCheck {
     /** Generated values are too large to retain for shrinking. */
     TEST_CASES_TOO_LARGE(Abi.HC_TEST_CASES_TOO_LARGE),
     /** The first generated test case is already disproportionately large (a warning). */
-    LARGE_INITIAL_TEST_CASE(Abi.HC_LARGE_INITIAL_TEST_CASE);
+    LARGE_INITIAL_TEST_CASE(Abi.HC_LARGE_INITIAL_TEST_CASE),
+    /**
+     * No check: suppressing only this runs every health check, even where the settings profile
+     * suppresses some. It is how {@link HegelTest#suppressHealthCheck()} says "suppress nothing",
+     * which an empty array, the annotation's default, cannot.
+     */
+    NONE(0);
 
     final int bit;
 
@@ -25,7 +31,7 @@ public enum HealthCheck {
     /** The check whose bit is {@code bit}, or {@code null} for one this version does not know. */
     static HealthCheck fromBit(int bit) {
         for (HealthCheck check : values()) {
-            if (check.bit == bit) {
+            if (check != NONE && check.bit == bit) {
                 return check;
             }
         }

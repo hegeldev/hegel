@@ -88,6 +88,9 @@ class CoverageTest {
 
         @HegelTest(database = "/tmp/hdb")
         void customDb(TestCase tc) {}
+
+        @HegelTest(suppressHealthCheck = HealthCheck.NONE)
+        void suppressNone(TestCase tc) {}
     }
 
     @Test
@@ -169,6 +172,11 @@ class CoverageTest {
         Settings d = HegelTestExtension.settingsFrom(customDb.getAnnotation(HegelTest.class), customDb);
         assertEquals(Database.Kind.PATH, d.database.kind);
         assertEquals("/tmp/hdb", d.database.path);
+
+        // HealthCheck.NONE suppresses nothing, overriding a profile's suppressions.
+        Method suppressNone = Holder.class.getDeclaredMethod("suppressNone", TestCase.class);
+        Settings n = HegelTestExtension.settingsFrom(suppressNone.getAnnotation(HegelTest.class), suppressNone);
+        assertEquals(Integer.valueOf(0), n.suppressMask);
     }
 
     // --- generators: stale-handle rebuild and IPv6 formatting ---

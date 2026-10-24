@@ -100,9 +100,8 @@ public @interface HegelTest {
     /**
      * Health checks to suppress (because the flagged behaviour is intentional). Empty (the
      * default) leaves the suppressions to the engine's settings profile and the {@code HEGEL_*}
-     * environment variables; to run every check where the profile suppresses some, use {@link
-     * Settings#suppressHealthCheck(HealthCheck...)} with no checks, or a profile that suppresses
-     * none.
+     * environment variables. To run every check where the profile suppresses some, give {@code
+     * suppressHealthCheck = HealthCheck.NONE}.
      *
      * @return the checks to disable
      */
