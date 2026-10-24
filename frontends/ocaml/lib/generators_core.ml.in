@@ -24,16 +24,17 @@ module Labels = struct
   let combine = Internal.Label.combine
   let list = from_name "hegel.lists"
   let set = from_name "hegel.sets"
-  let array = from_name "hegel.arrays"
-  let permutation = from_name "hegel.permutations"
+  let array = from_name "hegel.array"
+  let permutation = from_name "hegel.permutation"
   let assoc_list = from_name "hegel.assoc_lists"
   let hash_table = from_name "hegel.hash_tables"
-  let tuple = from_name "hegel.tuples"
+  let tuple = from_name "hegel.tuple"
   let one_of = from_name "hegel.one_of"
   let optional = from_name "hegel.optional"
   let fixed_dict = from_name "hegel.fixed_dicts"
   let flat_map = from_name "hegel.flat_map"
   let filter = from_name "hegel.filter"
+  let filter_attempt = from_name "hegel.filter.attempt"
   let mapped = from_name "hegel.map"
   let enum_variant = from_name "hegel.enum_variant"
   let pool = from_name "hegel.pool"
@@ -524,10 +525,6 @@ let rec flatten_filter (gen : 'a generator) (predicate : 'a -> bool) =
   | _ -> gen, predicate
 ;;
 
-(** Deeper than this, a draw from a {!deferred} generator rejects the test
-    case, so a definition that always refers back to itself stops. *)
-let max_deferred_depth = 64
-
 (** [show_list shows] displays a list from its elements' displays. *)
 let show_list shows () = Printer.list (fun show -> show ()) shows
 
@@ -548,25 +545,27 @@ let rec do_draw : type a. a generator -> Internal.test_case -> a * show =
       let first, _ = do_draw source data in
       do_draw (f first) data)
   | Filtered { source; predicate; label } ->
-    (match flatten_filter source predicate with
-     | Values { consume = true; select; _ }, predicate ->
-       select data ~filter:(Some (label, predicate)), opaque_show (* consuming pools *)
-     | source, predicate -> (* any other generator *)
-       let rec attempt i =
-         if i > max_filter_attempts
-         then raise Internal.Assume_rejected
-         else (
-           Internal.start_span ~label data;
-           let ((value, _) as drawn) = do_draw source data in
-           if predicate value
-           then (
-             Internal.stop_span data;
-             drawn)
-           else (
-             Internal.stop_span ~discard:true data;
-             attempt (i + 1)))
-       in
-       attempt 1)
+    group label data (fun () ->
+      match flatten_filter source predicate with
+      | Values { consume = true; select; _ }, predicate ->
+        (* consuming pools *)
+        select data ~filter:(Some (Labels.filter_attempt, predicate)), opaque_show
+      | source, predicate -> (* any other generator *)
+        let rec attempt i =
+          if i > max_filter_attempts
+          then raise Internal.Assume_rejected
+          else (
+            Internal.start_span ~label:Labels.filter_attempt data;
+            let ((value, _) as drawn) = do_draw source data in
+            if predicate value
+            then (
+              Internal.stop_span data;
+              drawn)
+            else (
+              Internal.stop_span ~discard:true data;
+              attempt (i + 1)))
+        in
+        attempt 1)
   | CompositeList { elements; min_size; max_size; label } ->
     group label data (fun () ->
       with_collection ~min_size ?max_size data (fun coll ->
@@ -587,9 +586,7 @@ let rec do_draw : type a. a generator -> Internal.test_case -> a * show =
   | Deferred { get; _ } ->
     (match get () with
      | None -> raise (Internal.Usage_error "deferred generator drawn from before it is defined")
-     | Some gen ->
-       if Internal.draw_depth data > max_deferred_depth then raise Internal.Assume_rejected;
-       do_draw gen data)
+     | Some gen -> do_draw gen data)
 ;;
 
 (** [draw_named ~label ~repeatable tc gen] is the naming-aware draw the
@@ -801,15 +798,15 @@ let deferred () =
   let cell = Atomic.make None in
   let label, define_label = Internal.Label.deferred () in
   let self = Deferred { get = (fun () -> Atomic.get cell); label } in
-  let rec leads_to_self gen =
-    gen == self
-    ||
-    match gen with
-    | Deferred { get; _ } ->
+  let rec leads_to_self : type b. b generator -> bool = function
+    | Deferred { get; label = other } ->
+      other == label
+      ||
       (match get () with
        | Some next -> leads_to_self next
        | None -> false)
     | Printed { source; _ } | Filtered { source; _ } -> leads_to_self source
+    | Mapped { source; _ } -> leads_to_self source
     | _ -> false
   in
   let define gen =

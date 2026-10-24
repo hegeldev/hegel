@@ -108,6 +108,8 @@ New generators:
 
 `filter` now takes its number of attempts before rejecting the test case (3) from libhegel, so it rejects as often as a filter in any other frontend.
 
+Tuples, arrays, permutations and `filter` attempts now mark their draws for libhegel with the same labels as in the other frontends, so the engine shrinks and mutates them the same way.
+
 `Hegel.main` binaries now have a flag for every setting: `--phases`, `--report-multiple-failures`, `--stop-on-first-failure`, `--show-statistics`, `--print-blob`, `--nondeterminism-strictness` and `--database-key` join the existing ones. Each flag is named after its `hegel.toml` key and takes the values `hegel.toml` takes, which libhegel parses, so the flags and `hegel.toml` always agree. `--seed` no longer accepts a negative number, as libhegel's seeds are unsigned, and `--suppress-health-check ""` now suppresses none.
 
 New generator `from_lark grammar ()` generates strings of a grammar written in the syntax of the [Lark](https://lark-parser.readthedocs.io/en/stable/grammar.html) parsing library, as hegel-rust's `from_lark` does. `?start` picks the start rule, `?max_size` and `?max_depth` bound the strings, `?import_path` is the directory `%import`ed grammars are read from (Lark's bundled `common`, `python`, `unicode` and `lark` grammars are always available), the character filtering options of `text` restrict the characters the terminals draw, and `?explicit` draws a terminal's values from a generator of your own:

@@ -1164,10 +1164,10 @@ val%template recursive
     ]}
 
     Drawing from the generator before it is defined raises
-    {!Hegel.Usage_error}, as does defining it twice or defining it as itself.
-    A draw from it nested more than 64 deep rejects the test case, so a
-    definition that always recurses still stops; prefer {!recursive}, which
-    lets the engine bound the size of the value, where it fits. *)
+    {!Hegel.Usage_error}, as does defining it twice, or defining it as itself
+    (possibly through {!map}, {!filter} or {!with_printer}, which would recurse
+    without drawing anything). Prefer {!recursive} where it fits: it lets the
+    engine bound the size of the value. *)
 val deferred : unit -> 'a generator * ('a generator -> unit)
 end
 
@@ -1247,6 +1247,8 @@ module Private : sig
 
     val list : Internal.Label.t
     val set : Internal.Label.t
+    val array : Internal.Label.t
+    val permutation : Internal.Label.t
     val assoc_list : Internal.Label.t
     val hash_table : Internal.Label.t
     val tuple : Internal.Label.t
@@ -1255,6 +1257,7 @@ module Private : sig
     val fixed_dict : Internal.Label.t
     val flat_map : Internal.Label.t
     val filter : Internal.Label.t
+    val filter_attempt : Internal.Label.t
     val mapped : Internal.Label.t
     val enum_variant : Internal.Label.t
     val pool : Internal.Label.t

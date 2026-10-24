@@ -77,6 +77,18 @@ let test_labels_structural () =
     "just"
     (value (Labels.from_name "hegel.just"))
     (value (label_of (just 1)));
+  List.iter
+    (fun (name, label) ->
+       Alcotest.(check int64) name (value (Labels.from_name name)) (value label))
+    [ "hegel.lists", Labels.list
+    ; "hegel.tuple", Labels.tuple
+    ; "hegel.array", Labels.array
+    ; "hegel.permutation", Labels.permutation
+    ; "hegel.filter", Labels.filter
+    ; "hegel.filter.attempt", Labels.filter_attempt
+    ; "hegel.one_of", Labels.one_of
+    ; "hegel.optional", Labels.optional
+    ];
   with_tc (fun tc ->
     let pool = Stateful.Pool.create tc in
     Alcotest.(check int64)

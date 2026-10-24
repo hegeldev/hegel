@@ -139,12 +139,21 @@ let test_deferred_defined_as_itself () =
   expect_error (fun () -> define_c (with_printer Printer.int (filter (fun _ -> true) b)))
 ;;
 
-let test_deferred_endless_definition_rejects () =
+let test_deferred_defined_as_a_map_of_itself () =
   let gen, define = deferred () in
-  define (map Fun.id gen);
-  Test_helpers.expect_unsatisfiable (fun () ->
-    Hegel.run_hegel_test ~settings:(settings ~test_cases:5 ()) (fun tc ->
-      ignore (draw tc gen : int)))
+  match define (map Fun.id gen) with
+  | () -> Alcotest.fail "expected Usage_error"
+  | exception Hegel.Usage_error _ -> ignore (gen : int generator)
+;;
+
+let test_deferred_drawn_deep_inside_spans () =
+  let ints, define = deferred () in
+  define (integers ~min_value:0 ~max_value:9 ());
+  let rec nest n gen =
+    if n = 0 then gen else nest (n - 1) (map snd (tuples2 (just ()) gen))
+  in
+  Hegel.run_hegel_test ~settings:(settings ~test_cases:5 ()) (fun tc ->
+    assert (draw tc (nest 100 ints) < 10))
 ;;
 
 let tests =
@@ -162,8 +171,12 @@ let tests =
   ; Alcotest.test_case "deferred defined twice" `Quick test_deferred_defined_twice
   ; Alcotest.test_case "deferred defined as itself" `Quick test_deferred_defined_as_itself
   ; Alcotest.test_case
-      "deferred endless definition rejects"
+      "deferred defined as a map of itself"
       `Quick
-      test_deferred_endless_definition_rejects
+      test_deferred_defined_as_a_map_of_itself
+  ; Alcotest.test_case
+      "deferred drawn deep inside spans"
+      `Quick
+      test_deferred_drawn_deep_inside_spans
   ]
 ;;
