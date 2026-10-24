@@ -55,3 +55,7 @@ A filtered consuming pool draw, `pool.consuming().filter(...)` on a `Pool` or `C
 - `drawSilent(generator)` draws a value without printing it in the counterexample.
 - `fork(worker)` returns a handle with its own independent stream of choices, for drawing from another thread. The engine attributes its output to worker `worker`.
 - `repeat(body)` runs `body` until the engine decides the test case is long enough, so a test that is logically an infinite loop shrinks repetition by repetition.
+
+`Generators.recursive(base, extend)` generates recursively defined data, such as trees or JSON documents, through the engine's recursion support: `base` generates the leaves and `extend` builds a branch from a generator of sub-values. The engine decides where the value branches, steers each value toward a size drawn from across its leaf budget, and lets the shrinker replace a tree with one of its subtrees. Limit the shape with `maxDepth` (default 32) and `maxLeaves` (default 100). `Generators.deferred()` remains for mutually recursive generators.
+
+`dev.hegel.lowlevel.Libhegel` gains `poolRestore`, `newRecursion`, `recursionBranch`, `recursionLeaf`, `recursionRetry`, `recursionFinish`, `recursionFree`, `event`, `eventValue`, `generateIntegerBig`, `settingsGetPhases` and `settingsGetReportMultipleFailures`. A third-party binding needs to implement them.

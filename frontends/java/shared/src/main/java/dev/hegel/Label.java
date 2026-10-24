@@ -70,6 +70,9 @@ public final class Label {
     /** One rule invocation of a stateful test. */
     public static final long STATEFUL_RULE = of("hegel.stateful.rule");
 
+    /** A recursive value or one of its subtrees ({@link Generators#recursive}). */
+    public static final long RECURSIVE = of("hegel.recursive");
+
     /** A value built imperatively from several draws ({@link Generators#composite}). */
     public static final long COMPOSITE = of("hegel.composite");
 

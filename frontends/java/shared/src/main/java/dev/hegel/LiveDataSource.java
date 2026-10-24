@@ -27,16 +27,23 @@ final class LiveDataSource implements DataSource {
      * it (they draw from the same stream); a clone draws from its own stream and has its own.
      */
     private final boolean[] aborted;
+    /**
+     * Whether a recursive generator's attempt outgrew its leaf budget and is unwinding back to the
+     * generator, shared like {@link #aborted}. Spans are left open meanwhile: {@code
+     * hegel_recursion_retry} closes the attempt's spans itself, as discarded.
+     */
+    private final boolean[] unwinding;
 
     LiveDataSource(Libhegel lib, long tc) {
-        this(lib, tc, new ArrayList<>(), new boolean[1]);
+        this(lib, tc, new ArrayList<>(), new boolean[1], new boolean[1]);
     }
 
-    private LiveDataSource(Libhegel lib, long tc, List<Long> pools, boolean[] aborted) {
+    private LiveDataSource(Libhegel lib, long tc, List<Long> pools, boolean[] aborted, boolean[] unwinding) {
         this.lib = lib;
         this.tc = tc;
         this.pools = pools;
         this.aborted = aborted;
+        this.unwinding = unwinding;
     }
 
     @Override
@@ -267,7 +274,7 @@ final class LiveDataSource implements DataSource {
 
     @Override
     public void stopSpan(boolean discard) {
-        if (aborted[0]) {
+        if (aborted[0] || unwinding[0]) {
             return;
         }
         translate(lib.stopSpan(tc, discard), "stop_span");
@@ -352,6 +359,58 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
+    public long newRecursion(long maxDepth, long maxLeaves) {
+        checkLive();
+        long[] recursion = new long[1];
+        translate(lib.newRecursion(tc, maxDepth, maxLeaves, recursion), "new_recursion");
+        return recursion[0];
+    }
+
+    @Override
+    public boolean recursionBranch(long recursion, long depth) {
+        checkLive();
+        boolean[] branch = new boolean[1];
+        translate(lib.recursionBranch(tc, recursion, depth, branch), "recursion_branch");
+        return branch[0];
+    }
+
+    @Override
+    public boolean recursionLeaf(long recursion) {
+        checkLive();
+        int rc = lib.recursionLeaf(tc, recursion);
+        if (rc == Abi.E_RETRY) {
+            unwinding[0] = true;
+            return false;
+        }
+        translate(rc, "recursion_leaf");
+        return true;
+    }
+
+    @Override
+    public void recursionRetry(long recursion) {
+        unwinding[0] = false;
+        checkLive();
+        translate(lib.recursionRetry(tc, recursion), "recursion_retry");
+    }
+
+    @Override
+    public boolean recursionFinish(long recursion) {
+        checkLive();
+        int rc = lib.recursionFinish(tc, recursion);
+        if (rc == Abi.E_RETRY) {
+            return false;
+        }
+        translate(rc, "recursion_finish");
+        return true;
+    }
+
+    @Override
+    public void recursionFree(long recursion) {
+        // Not gated on `aborted`: the handle is caller-owned and must be released exactly once.
+        lib.recursionFree(recursion);
+    }
+
+    @Override
     public StateMachine newStateMachine(
             List<String> ruleNames,
             long[] ruleGroups,
@@ -416,14 +475,14 @@ final class LiveDataSource implements DataSource {
             lib.testCaseFree(clone[0]);
             throw e;
         }
-        return new LiveDataSource(lib, clone[0], pools, new boolean[1]);
+        return new LiveDataSource(lib, clone[0], pools, new boolean[1], new boolean[1]);
     }
 
     @Override
     public DataSource block(long indent) {
         long[] block = new long[1];
         translate(lib.testCaseBlock(tc, indent, block), "test_case_block");
-        return new LiveDataSource(lib, block[0], pools, aborted);
+        return new LiveDataSource(lib, block[0], pools, aborted, unwinding);
     }
 
     @Override

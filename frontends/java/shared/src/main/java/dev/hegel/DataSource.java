@@ -104,6 +104,29 @@ interface DataSource {
      */
     void poolRestore(long poolId, long variableId);
 
+    // Recursion (hegel_recursion_t). A recursive value is drawn in attempts; see RecursiveGenerator.
+
+    long newRecursion(long maxDepth, long maxLeaves);
+
+    /** Whether the sub-value at {@code depth} is a branch (else a leaf). */
+    boolean recursionBranch(long recursion, long depth);
+
+    /**
+     * Count a leaf against the attempt's budget: {@code false} when the attempt has outgrown it and
+     * must unwind to {@link #recursionRetry}. Until then, spans are left open for the engine to
+     * close.
+     */
+    boolean recursionLeaf(long recursion);
+
+    /** Discard an attempt that outgrew its budget; rejects the case when the attempts are exhausted. */
+    void recursionRetry(long recursion);
+
+    /** Report the value complete: {@code false} when the engine discarded the attempt as mispriced. */
+    boolean recursionFinish(long recursion);
+
+    /** Release the recursion handle. Safe once the case is aborted. */
+    void recursionFree(long recursion);
+
     // Stateful testing. The root source registers the machine, advances rounds and samples
     // invariants; at concurrency > 1 each worker pulls its rules through its own clone.
 

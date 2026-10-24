@@ -622,6 +622,36 @@ public final class TestCase {
         source.collectionFree(id);
     }
 
+    /** @hidden */
+    public long newRecursion(long maxDepth, long maxLeaves) {
+        return source.newRecursion(maxDepth, maxLeaves);
+    }
+
+    /** @hidden */
+    public boolean recursionBranch(long recursion, long depth) {
+        return source.recursionBranch(recursion, depth);
+    }
+
+    /** @hidden */
+    public boolean recursionLeaf(long recursion) {
+        return source.recursionLeaf(recursion);
+    }
+
+    /** @hidden */
+    public void recursionRetry(long recursion) {
+        source.recursionRetry(recursion);
+    }
+
+    /** @hidden */
+    public boolean recursionFinish(long recursion) {
+        return source.recursionFinish(recursion);
+    }
+
+    /** @hidden */
+    public void recursionFree(long recursion) {
+        source.recursionFree(recursion);
+    }
+
     // --- stateful-testing primitives, used by Stateful and Pool in this package ---
 
     long newPool() {

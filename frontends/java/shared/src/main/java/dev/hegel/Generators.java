@@ -20,6 +20,7 @@ import dev.hegel.generators.LongGenerator;
 import dev.hegel.generators.MapGenerator;
 import dev.hegel.generators.OneOfGenerator;
 import dev.hegel.generators.RecordGenerator;
+import dev.hegel.generators.RecursiveGenerator;
 import dev.hegel.generators.RegexGenerator;
 import dev.hegel.generators.SampledFromGenerator;
 import dev.hegel.generators.SetGenerator;
@@ -490,6 +491,33 @@ public final class Generators {
      */
     public static <T> Deferred<T> deferred() {
         return new Deferred<>();
+    }
+
+    /**
+     * Generates recursively defined data, such as trees or JSON documents. {@code base} generates
+     * the leaves; {@code extend} builds one level of structure: given a generator of sub-values of
+     * the same type, it returns a generator that combines some number of them into a compound
+     * value. It is called afresh for each branch.
+     *
+     * <pre>{@code
+     * Generator<Tree> trees = recursive(
+     *         integers().map(Leaf::new),
+     *         subtrees -> lists(subtrees).maxSize(3).map(Node::new));
+     * }</pre>
+     *
+     * <p>Sizes range from a single leaf up to the limits set by {@link RecursiveGenerator#maxDepth}
+     * and {@link RecursiveGenerator#maxLeaves}. For mutually recursive generators, use {@link
+     * #deferred()}.
+     *
+     * @param base the leaf generator
+     * @param extend builds a branch from a generator of sub-values
+     * @param <T> the value type
+     * @return a recursive generator
+     */
+    public static <T> RecursiveGenerator<T> recursive(
+            Generator<T> base, Function<Generator<T>, ? extends Generator<T>> extend) {
+        return new RecursiveGenerator<>(
+                base, extend, RecursiveGenerator.DEFAULT_MAX_DEPTH, RecursiveGenerator.DEFAULT_MAX_LEAVES);
     }
 
     // --- type-directed derivation ---

@@ -33,6 +33,8 @@ class HandleLeakTest {
         final Set<Long> livePools = new HashSet<>();
         final Set<Long> liveTestCases = new HashSet<>();
         final Set<Long> livePrinters = new HashSet<>();
+        final Set<Long> liveRecursions = new HashSet<>();
+        int recursionsCreated;
         int blocksCreated;
         int printersCreated;
         int collectionsCreated;
@@ -72,6 +74,13 @@ class HandleLeakTest {
                     }
                 }
                 case "poolFree" -> assertTrue(livePools.remove((Long) args[0]));
+                case "newRecursion" -> {
+                    if (ok) {
+                        recursionsCreated++;
+                        liveRecursions.add(((long[]) args[3])[0]);
+                    }
+                }
+                case "recursionFree" -> assertTrue(liveRecursions.remove((Long) args[0]));
                 case "nextTestCase" -> {
                     if ((Long) result != 0) {
                         liveTestCases.add((Long) result);
@@ -113,6 +122,7 @@ class HandleLeakTest {
             assertEquals(Set.of(), livePools);
             assertEquals(Set.of(), liveTestCases);
             assertEquals(Set.of(), livePrinters);
+            assertEquals(Set.of(), liveRecursions);
         }
 
         List<Thread> workerThreads() {
@@ -155,6 +165,19 @@ class HandleLeakTest {
                 })
                 .passed());
         assertTrue(tracker.blocksCreated > 0);
+        tracker.assertNothingLeaked();
+    }
+
+    @Test
+    void recursionsAreFreed() {
+        Tracker tracker = new Tracker(Engine.get());
+        RunReport report = tracker.run(tc -> {
+            Object tree = tc.draw(Generators.recursive(
+                    integers().map(x -> (Object) x), subtrees -> lists(subtrees).map(xs -> (Object) xs)));
+            assertTrue(tree instanceof Integer);
+        });
+        assertFalse(report.passed());
+        assertTrue(tracker.recursionsCreated > 0);
         tracker.assertNothingLeaked();
     }
 
