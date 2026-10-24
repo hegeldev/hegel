@@ -218,10 +218,17 @@ def test_parent_and_profile_arguments_are_validated():
 HEGEL_H = Path(__file__).parents[3] / "libhegel" / "include" / "hegel.h"
 
 
+PER_TEST_SETTERS = {"database_key", "test_location", "from_string"}
+
+
 def test_every_engine_setting_is_a_settings_field():
-    engine = set(re.findall(r"hegel_settings_get_(\w+)\(", HEGEL_H.read_text()))
-    assert engine
-    assert engine == {field.name for field in dataclasses.fields(Settings)}
+    header = HEGEL_H.read_text()
+    getters = set(re.findall(r"hegel_settings_get_(\w+)\(", header))
+    setters = set(re.findall(r"hegel_settings_set_(\w+)\(", header)) - PER_TEST_SETTERS
+    fields = {field.name for field in dataclasses.fields(Settings)}
+    assert fields
+    assert getters == fields
+    assert setters == fields
 
 
 def test_engine_profile_settings_reach_the_run():

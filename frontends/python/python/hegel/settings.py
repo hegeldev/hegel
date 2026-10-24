@@ -389,7 +389,8 @@ class Settings:
     ) -> _native.Settings:
         """A native settings handle: every field set explicitly on top of
         the immutable ``base`` profile. The fields are every engine setting
-        (``tests/test_settings.py`` checks them against ``hegel.h``), read
+        (``tests/test_settings.py`` checks them against the getters and
+        setters in ``hegel.h``), read
         back from the engine when these settings were resolved, so nothing
         the engine resolved is reset to a default."""
         native = _native.Settings.for_profile("base")
