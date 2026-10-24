@@ -270,6 +270,9 @@ namespace hegel::generators {
      * The element type is deduced from @p fn's return type. To force a specific
      * type, give the lambda an explicit trailing return type.
      *
+     * The draws @p fn makes form one span, so the engine shrinks them as a
+     * unit, as it does for map(), flat_map() and filter().
+     *
      * @code{.cpp}
      * auto generate_person() {
      *     return gs::compose([](const hegel::TestCase& tc) {
@@ -286,8 +289,15 @@ namespace hegel::generators {
      */
     template <typename F> auto compose(F&& fn) {
         using T = std::invoke_result_t<F, const TestCase&>;
+        uint64_t label = internal::label(internal::LabelName::Composite);
         return Generator<T>(new CompositeGenerator<T>(
-            std::function<T(const TestCase&)>(std::forward<F>(fn))));
+            [label, fn = std::forward<F>(fn)](const TestCase& tc) mutable -> T {
+                internal::start_span(tc, label);
+                T result = fn(tc);
+                internal::stop_span(tc);
+                return result;
+            },
+            label));
     }
 
 } // namespace hegel::generators

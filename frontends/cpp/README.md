@@ -10,7 +10,7 @@
 * [Documentation](https://hegel.dev/cpp)
 * [Website](https://hegel.dev)
 
-Hegel is a property-based testing library for C++. Hegel is based on [Hypothesis](https://github.com/hypothesisworks/hypothesis), using the [Hegel protocol](https://hegel.dev/).
+Hegel is a property-based testing library for C++. Hegel is based on [Hypothesis](https://github.com/hypothesisworks/hypothesis), using [libhegel](https://github.com/hegeldev/hegel/tree/main/libhegel), Hegel's native engine.
 
 ## Installation
 
@@ -23,7 +23,7 @@ include(FetchContent)
 FetchContent_Declare(
     hegel
     GIT_REPOSITORY https://github.com/hegeldev/hegel.git
-    GIT_TAG frontends/cpp/0.13.1
+    GIT_TAG frontends/cpp/0.13.2
     SOURCE_SUBDIR frontends/cpp
 )
 FetchContent_MakeAvailable(hegel)

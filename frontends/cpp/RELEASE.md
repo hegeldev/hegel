@@ -29,3 +29,7 @@ Notes and drawn values now print through libhegel's printer instead of Hegel for
 - A drawn value too wide for one line is broken across lines, one element per line, instead of printing as one long line.
 - A clone's output appears where the clone was made (`tc.clone()` or `tc.spawn()`), not interleaved with the parent's in the order the lines were written.
 - In a failure report of `hegel::stateful::run_concurrent()`, the `[worker N +T ms]` prefix comes after the report's indentation instead of before it, and each worker's lines appear under the header of the round they ran in.
+
+`hegel::generators::compose()` now groups the draws its function makes into one span, as `map()`, `flat_map()` and `filter()` do, so the engine shrinks them as a unit.
+
+The 0.13.2 changelog entry says the Nix flake was removed. That is not correct: `nix/flake.nix` is still available and still exports `lib.mkHegelCppProject`. It now builds the in-tree libhegel instead of downloading one.

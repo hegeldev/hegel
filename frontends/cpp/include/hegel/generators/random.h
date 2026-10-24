@@ -14,15 +14,15 @@ namespace hegel::generators {
      */
     struct RandomsParams {
         bool use_true_random =
-            false; ///< If true, use a local PRNG seed by Hegel instead of
-                   ///< per-value Hypothesis requests. Use this mode when the
-                   ///< cost of routing every draw through Hypothesis would be
-                   ///< too expensive. Values produced in true-random mode
-                   ///< cannot be shrunk.
+            false; ///< If true, use a local PRNG that Hegel seeds once,
+                   ///< instead of drawing every value from the engine. Use
+                   ///< this mode when the cost of a draw for every value is
+                   ///< too high. Values produced in true-random mode cannot
+                   ///< be shrunk.
     };
 
     /**
-     * @brief A random engine that integrates with Hypothesis via Hegel.
+     * @brief A random engine whose values Hegel generates.
      *
      * Satisfies the C++ UniformRandomBitGenerator named requirement, so it
      * can be used with any `<random>` distribution.
@@ -46,10 +46,10 @@ namespace hegel::generators {
         /**
          * @brief Construct in artificial (Hegel-backed) mode.
          *
-         * Each call to `operator()` draws entropy from Hegel via the
-         * given test-case data, so the resulting values can be shrunken.
+         * Each call to `operator()` draws a value from the engine through
+         * the given test case, so the resulting values can be shrunk.
          *
-         * @param data The active test case's data stream (non-owning).
+         * @param tc The active test case (non-owning).
          */
         explicit HegelRandom(const TestCase& tc);
 
