@@ -737,7 +737,7 @@ let%template recursive
       ?(max_depth = 32)
       ?(max_leaves = 100)
       (leaf : 'a generator MODE(m))
-      (branch : ('a generator -> 'a generator) MODE(m))
+      (branch : ('a generator MODE(m) -> 'a generator MODE(m)) MODE(m))
   : 'a generator MODE(m)
   =
   if max_depth < 0

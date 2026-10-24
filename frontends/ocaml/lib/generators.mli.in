@@ -903,7 +903,7 @@ val%template recursive
   :  ?max_depth:int
   -> ?max_leaves:int
   -> 'a generator MODE(m)
-  -> ('a generator -> 'a generator) MODE(m)
+  -> ('a generator MODE(m) -> 'a generator MODE(m)) MODE(m)
   -> 'a generator MODE(m)
 [@@mode m = (nonportable, portable)]
 
