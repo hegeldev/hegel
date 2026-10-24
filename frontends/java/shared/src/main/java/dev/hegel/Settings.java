@@ -15,14 +15,16 @@ import java.util.function.Consumer;
  *
  * <p>Whatever is not set here is resolved by the engine: from its settings profile — a {@code
  * hegel.toml} in the working directory or one of its parents (or the file named by {@code
- * HEGEL_CONFIG}), with {@code HEGEL_DEFAULT_PROFILE} selecting the profile in effect — and from the
- * {@code HEGEL_TEST_CASES}, {@code HEGEL_DATABASE}, {@code HEGEL_SEED}, {@code HEGEL_DERANDOMIZE},
- * {@code HEGEL_PRINT_BLOB} and {@code HEGEL_NONDETERMINISM_STRICTNESS} environment variables, which
- * win over the profile. Settings given here win over both. The shipped profiles run 100 test cases, and in CI (detected via {@code CI}/{@code
- * GITHUB_ACTIONS}/... environment variables) the {@code ci} profile applies: runs are deterministic
- * ({@code derandomize}) and the example database is disabled.
+ * HEGEL_CONFIG}), with {@link #setDefaultProfile(String)}, {@code HEGEL_DEFAULT_PROFILE} or {@code
+ * hegel.toml} selecting the profile in effect, or the profile named by {@link #fromProfile(String)}
+ * — and from the {@code HEGEL_*} settings environment variables, which win over the profile.
+ * Settings given here win over both. The shipped profiles run 100 test cases, and in CI (which the
+ * engine detects from {@code CI}, {@code GITHUB_ACTIONS} and similar variables) the {@code ci}
+ * profile applies: runs are deterministic ({@code derandomize}) and the example database is
+ * disabled.
  */
 public final class Settings {
+    final String profile; // null = the engine's default profile
     final Long testCases; // null = leave the engine's profile / HEGEL_TEST_CASES value
     final boolean hasSeed;
     final long seed;
@@ -32,25 +34,28 @@ public final class Settings {
     final Integer phasesMask; // null = leave the engine default (all phases)
     final Verbosity verbosity;
     final Backend backend;
-    // Default false: a single, directly-rethrown failure is far friendlier to debuggers and stack
-    // traces than an aggregated report — and that matters more in Java than elsewhere.
-    final boolean reportMultipleFailures;
-    final Boolean printBlob; // null = leave the engine's profile / HEGEL_PRINT_BLOB value
+    // Each null Boolean leaves the engine's profile / environment value in place.
+    final Boolean reportMultipleFailures;
+    final Boolean stopOnFirstFailure;
+    final Boolean showStatistics;
+    final Boolean unboundedChoices;
+    final Boolean printBlob;
     final NondeterminismStrictness nondeterminismStrictness;
     final String reproduceFailure; // null = run normally instead of replaying a blob
     final String name;
+    final TestLocation testLocation; // null = locate the test where it is run from
     final List<String> infrastructurePackages;
 
     /**
-     * Create settings that leave everything to the engine's profile and environment (100 test
-     * cases and all phases in the shipped profiles) except normal verbosity and single-failure
-     * reporting.
+     * Create settings that leave everything to the engine's default profile and the environment
+     * (100 test cases, all phases and a single reported failure in the shipped profiles).
      */
     public Settings() {
         this(new Builder());
     }
 
     private Settings(Builder b) {
+        this.profile = b.profile;
         this.testCases = b.testCases;
         this.hasSeed = b.hasSeed;
         this.seed = b.seed;
@@ -61,16 +66,21 @@ public final class Settings {
         this.verbosity = b.verbosity;
         this.backend = b.backend;
         this.reportMultipleFailures = b.reportMultipleFailures;
+        this.stopOnFirstFailure = b.stopOnFirstFailure;
+        this.showStatistics = b.showStatistics;
+        this.unboundedChoices = b.unboundedChoices;
         this.printBlob = b.printBlob;
         this.nondeterminismStrictness = b.nondeterminismStrictness;
         this.reproduceFailure = b.reproduceFailure;
         this.name = b.name;
+        this.testLocation = b.testLocation;
         this.infrastructurePackages = b.infrastructurePackages;
     }
 
     /** Return a copy of these settings with {@code mutator} applied to the changed fields. */
     private Settings with(Consumer<Builder> mutator) {
         Builder b = new Builder();
+        b.profile = profile;
         b.testCases = testCases;
         b.hasSeed = hasSeed;
         b.seed = seed;
@@ -81,10 +91,14 @@ public final class Settings {
         b.verbosity = verbosity;
         b.backend = backend;
         b.reportMultipleFailures = reportMultipleFailures;
+        b.stopOnFirstFailure = stopOnFirstFailure;
+        b.showStatistics = showStatistics;
+        b.unboundedChoices = unboundedChoices;
         b.printBlob = printBlob;
         b.nondeterminismStrictness = nondeterminismStrictness;
         b.reproduceFailure = reproduceFailure;
         b.name = name;
+        b.testLocation = testLocation;
         b.infrastructurePackages = infrastructurePackages;
         mutator.accept(b);
         return new Settings(b);
@@ -92,6 +106,7 @@ public final class Settings {
 
     /** Mutable field holder used only to construct and copy {@link Settings}; holds the defaults. */
     private static final class Builder {
+        String profile = null;
         Long testCases = null;
         boolean hasSeed = false;
         long seed = 0L;
@@ -99,14 +114,74 @@ public final class Settings {
         Database database = Database.unset();
         int suppressMask = 0;
         Integer phasesMask = null;
-        Verbosity verbosity = Verbosity.NORMAL;
+        Verbosity verbosity = Verbosity.DEFAULT;
         Backend backend = Backend.AUTO;
-        boolean reportMultipleFailures = false;
+        Boolean reportMultipleFailures = null;
+        Boolean stopOnFirstFailure = null;
+        Boolean showStatistics = null;
+        Boolean unboundedChoices = null;
         Boolean printBlob = null;
         NondeterminismStrictness nondeterminismStrictness = NondeterminismStrictness.DEFAULT;
         String reproduceFailure = null;
         String name = null;
+        TestLocation testLocation = null;
         List<String> infrastructurePackages = List.of();
+    }
+
+    /**
+     * Create settings that start from the named profile instead of the default one: a reserved
+     * ({@code base}, {@code default}), shipped ({@code development}, {@code ci}, {@code workload}),
+     * {@code hegel.toml}-defined or {@link #registerProfile registered} profile. The settings
+     * environment variables still apply over it, and settings given on the result win over both.
+     *
+     * @param name the profile to start from
+     * @return settings that resolve from that profile
+     * @throws IllegalArgumentException if the profile is unknown, or a {@code hegel.toml} or settings
+     *     environment variable is malformed
+     */
+    public static Settings fromProfile(String name) {
+        Runner.checkProfile(Engine.get(), name);
+        return new Settings().with(b -> b.profile = name);
+    }
+
+    /**
+     * Register {@code settings} as the profile {@code name}, process-wide, replacing any earlier
+     * registration of the same name. The profile is a complete snapshot of {@code settings} as the
+     * engine resolves them now (its profile and the environment, then what {@code settings} sets);
+     * registering a shipped profile's name replaces that profile, and a {@code hegel.toml} section
+     * for {@code name} still merges over the snapshot. The settings that identify one test ({@link
+     * #name(String)}, {@link #testLocation(TestLocation)}, {@link #reproduceFailure(String)}) are
+     * not part of a profile.
+     *
+     * <p>Registration is not retroactive: register profiles before the tests that use them run,
+     * for example from a JUnit {@code @BeforeAll} or a {@code static} initializer. A {@code
+     * hegel.toml} is the more robust place for a suite-wide profile.
+     *
+     * <pre>{@code
+     * Settings.registerProfile("nightly", Settings.fromProfile("ci").testCases(10_000));
+     * }</pre>
+     *
+     * @param name the profile name: ASCII letters, digits, {@code -} and {@code _}, and not one of
+     *     the reserved {@code base} and {@code default}
+     * @param settings the settings to snapshot
+     * @throws IllegalArgumentException if the name is invalid or reserved
+     */
+    public static void registerProfile(String name, Settings settings) {
+        Runner.registerProfile(Engine.get(), name, settings);
+    }
+
+    /**
+     * Set the default profile for the whole process: the profile {@code new Settings()} resolves,
+     * and that profiles without an explicit {@code extends} layer over. It takes precedence over
+     * {@code HEGEL_DEFAULT_PROFILE}, the {@code default} entry in {@code hegel.toml} and the
+     * engine's environment detection. The name need not exist yet; an empty name clears an earlier
+     * call. Like {@link #registerProfile} it is not retroactive.
+     *
+     * @param name the profile, or {@code ""} to clear
+     * @throws IllegalArgumentException if the name is invalid
+     */
+    public static void setDefaultProfile(String name) {
+        Runner.setDefaultProfile(Engine.get(), name);
     }
 
     /**
@@ -190,7 +265,8 @@ public final class Settings {
     }
 
     /**
-     * Set engine output verbosity.
+     * Set engine output verbosity. Unset ({@link Verbosity#DEFAULT}), the engine's profile decides
+     * ({@link Verbosity#NORMAL} in the shipped profiles).
      *
      * @param verbosity the verbosity level
      * @return a new settings instance
@@ -211,8 +287,8 @@ public final class Settings {
     }
 
     /**
-     * Control whether the run keeps searching for additional distinct failures after the first.
-     * Defaults to {@code false}: the run stops at the first failing example. When enabled, several
+     * Control whether the run reports every distinct failure it finds or only the smallest. Unset,
+     * the engine's profile decides ({@code false} in the shipped profiles). When enabled, several
      * distinct bugs aggregate into one report (carrying the originals as suppressed exceptions); a
      * run that finds a single bug still rethrows it directly, preserving its type and stack trace.
      *
@@ -221,6 +297,46 @@ public final class Settings {
      */
     public Settings reportMultipleFailures(boolean yes) {
         return with(b -> b.reportMultipleFailures = yes);
+    }
+
+    /**
+     * Control whether the run stops generating as soon as it finds a failure. Turned off, a run
+     * spends its whole test-case budget before shrinking and reporting, and replays every stored
+     * failure rather than stopping at the first that still fails. Unset, the engine's profile or
+     * the {@code HEGEL_STOP_ON_FIRST_FAILURE} environment variable decides (on in the shipped
+     * profiles).
+     *
+     * @param yes whether to stop at the first failure
+     * @return a new settings instance
+     */
+    public Settings stopOnFirstFailure(boolean yes) {
+        return with(b -> b.stopOnFirstFailure = yes);
+    }
+
+    /**
+     * Print a statistics block at the end of the run: for each label recorded with an event, the
+     * fraction of generated test cases it occurred in, and for each numeric observation a summary
+     * of its distribution. Unset, the engine's profile or the {@code HEGEL_STATISTICS} environment
+     * variable decides (off in the shipped profiles).
+     *
+     * @param yes whether to print run statistics
+     * @return a new settings instance
+     */
+    public Settings showStatistics(boolean yes) {
+        return with(b -> b.showStatistics = yes);
+    }
+
+    /**
+     * Let a test case make any number of choices. By default the engine concludes a test case as an
+     * overrun once it has made 2<sup>20</sup> choices; a long-running test case, such as a
+     * concurrent state machine driven for hours, needs the limit removed, at the cost of the memory
+     * to record every choice. Unset, the engine's profile decides (off in the shipped profiles).
+     *
+     * @param yes whether to remove the per-test-case choice limit
+     * @return a new settings instance
+     */
+    public Settings unboundedChoices(boolean yes) {
+        return with(b -> b.unboundedChoices = yes);
     }
 
     /**
@@ -266,13 +382,28 @@ public final class Settings {
     }
 
     /**
-     * Name this property (used to derive a stable database key).
+     * Name this property: the key its failures are stored under in the example database, and the
+     * seed of a derandomized run. {@link HegelTest} names a test after its class and method
+     * ({@code com.example.CartTest.totalsAddUp}); a property run through {@link Hegel#test} has no
+     * name, and so no database entry, unless given one here.
      *
      * @param name the test name
      * @return a new settings instance
      */
     public Settings name(String name) {
         return with(b -> b.name = name);
+    }
+
+    /**
+     * Say where this property lives, for the engine to report its verdict under inside Antithesis.
+     * By default {@link Hegel#test} and {@link Hegel#run} use their call site, and {@link HegelTest}
+     * the annotated method.
+     *
+     * @param location the test's location
+     * @return a new settings instance
+     */
+    public Settings testLocation(TestLocation location) {
+        return with(b -> b.testLocation = location);
     }
 
     /**
@@ -294,9 +425,10 @@ public final class Settings {
      * These settings with the values the engine resolved for what was left unset, so a run and its
      * reporters see the effective configuration.
      */
-    Settings resolved(long testCases, boolean printBlob, NondeterminismStrictness strictness) {
+    Settings resolved(long testCases, boolean printBlob, NondeterminismStrictness strictness, Verbosity verbosity) {
         return with(b -> {
             b.testCases = testCases;
+            b.verbosity = verbosity;
             b.printBlob = printBlob;
             b.nondeterminismStrictness = strictness;
         });

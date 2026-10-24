@@ -63,6 +63,28 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_settings_free(Pointer ctx, Pointer s);
 
+        int hegel_settings_new_for_profile(Pointer ctx, HegelString.ByValue name, PointerByReference out);
+
+        int hegel_settings_register_profile(Pointer ctx, HegelString.ByValue name, Pointer s);
+
+        int hegel_set_default_profile(Pointer ctx, HegelString.ByValue name);
+
+        int hegel_settings_get_verbosity(Pointer ctx, Pointer s, IntByReference out);
+
+        int hegel_settings_set_stop_on_first_failure(Pointer ctx, Pointer s, byte yes);
+
+        int hegel_settings_set_show_statistics(Pointer ctx, Pointer s, byte yes);
+
+        int hegel_settings_set_unbounded_choices(Pointer ctx, Pointer s, byte yes);
+
+        int hegel_settings_set_test_location(
+                Pointer ctx,
+                Pointer s,
+                HegelString.ByValue file,
+                int beginLine,
+                HegelString.ByValue className,
+                HegelString.ByValue function);
+
         int hegel_settings_set_backend(Pointer ctx, Pointer s, int backend);
 
         int hegel_settings_set_test_cases(Pointer ctx, Pointer s, long n);
@@ -530,6 +552,60 @@ final class JnaLibhegel implements Libhegel {
         LongByReference out = new LongByReference();
         check("hegel_settings_get_test_cases", lib.hegel_settings_get_test_cases(ctx(), pointer(s), out));
         return out.getValue();
+    }
+
+    @Override
+    public int settingsNewForProfile(String name, long[] out) {
+        PointerByReference handle = new PointerByReference();
+        int code = lib.hegel_settings_new_for_profile(ctx(), str(name), handle);
+        out[0] = address(handle.getValue());
+        return code;
+    }
+
+    @Override
+    public int settingsRegisterProfile(String name, long s) {
+        return lib.hegel_settings_register_profile(ctx(), str(name), pointer(s));
+    }
+
+    @Override
+    public int setDefaultProfile(String name) {
+        return lib.hegel_set_default_profile(ctx(), str(name));
+    }
+
+    @Override
+    public int settingsGetVerbosity(long s) {
+        IntByReference out = new IntByReference();
+        check("hegel_settings_get_verbosity", lib.hegel_settings_get_verbosity(ctx(), pointer(s), out));
+        return out.getValue();
+    }
+
+    @Override
+    public void settingsStopOnFirstFailure(long s, boolean yes) {
+        check(
+                "hegel_settings_set_stop_on_first_failure",
+                lib.hegel_settings_set_stop_on_first_failure(ctx(), pointer(s), cbool(yes)));
+    }
+
+    @Override
+    public void settingsShowStatistics(long s, boolean yes) {
+        check(
+                "hegel_settings_set_show_statistics",
+                lib.hegel_settings_set_show_statistics(ctx(), pointer(s), cbool(yes)));
+    }
+
+    @Override
+    public void settingsUnboundedChoices(long s, boolean yes) {
+        check(
+                "hegel_settings_set_unbounded_choices",
+                lib.hegel_settings_set_unbounded_choices(ctx(), pointer(s), cbool(yes)));
+    }
+
+    @Override
+    public void settingsTestLocation(long s, String file, int beginLine, String className, String function) {
+        check(
+                "hegel_settings_set_test_location",
+                lib.hegel_settings_set_test_location(
+                        ctx(), pointer(s), str(file), beginLine, str(className), str(function)));
     }
 
     @Override

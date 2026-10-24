@@ -74,21 +74,22 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
             invocation.skip();
             Method method = invocationContext.getExecutable();
             HegelTest ann = method.getAnnotation(HegelTest.class);
-            Settings settings = settingsFrom(ann, method.getName());
+            Settings settings = settingsFrom(ann, method);
             Object target = invocationContext.getTarget().orElse(null);
             Hegel.test(tc -> ReflectionSupport.invokeMethod(method, target, tc), settings);
         }
     }
 
-    static Settings settingsFrom(HegelTest ann, String methodName) {
-        String name = ann.name().isEmpty() ? methodName : ann.name();
-        Settings s = new Settings()
-                .verbosity(ann.verbosity())
+    static Settings settingsFrom(HegelTest ann, Method method) {
+        String className = method.getDeclaringClass().getName();
+        String name = ann.name().isEmpty() ? className + "." + method.getName() : ann.name();
+        Settings s = ann.profile().isEmpty() ? new Settings() : Settings.fromProfile(ann.profile());
+        s = s.verbosity(ann.verbosity())
                 .backend(ann.backend())
                 .nondeterminismStrictness(ann.nondeterminismStrictness())
-                .reportMultipleFailures(ann.reportMultipleFailures())
                 .suppressHealthCheck(ann.suppressHealthCheck())
-                .name(name);
+                .name(name)
+                .testLocation(TestLocation.of(className, null, 0, method.getName()));
         // The annotation cannot express "unset" for a primitive: 0 test cases (its default) leaves
         // the engine's profile / HEGEL_TEST_CASES value in place.
         if (ann.testCases() != 0) {
@@ -96,6 +97,18 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
         }
         if (ann.printBlob() != OptBoolean.DEFAULT) {
             s = s.printBlob(ann.printBlob() == OptBoolean.TRUE);
+        }
+        if (ann.reportMultipleFailures() != OptBoolean.DEFAULT) {
+            s = s.reportMultipleFailures(ann.reportMultipleFailures() == OptBoolean.TRUE);
+        }
+        if (ann.stopOnFirstFailure() != OptBoolean.DEFAULT) {
+            s = s.stopOnFirstFailure(ann.stopOnFirstFailure() == OptBoolean.TRUE);
+        }
+        if (ann.showStatistics() != OptBoolean.DEFAULT) {
+            s = s.showStatistics(ann.showStatistics() == OptBoolean.TRUE);
+        }
+        if (ann.unboundedChoices() != OptBoolean.DEFAULT) {
+            s = s.unboundedChoices(ann.unboundedChoices() == OptBoolean.TRUE);
         }
         if (ann.seed() != HegelTest.NO_SEED) {
             s = s.seed(ann.seed());

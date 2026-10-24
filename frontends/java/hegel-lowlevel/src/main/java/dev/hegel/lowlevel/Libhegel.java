@@ -105,6 +105,30 @@ public interface Libhegel {
      */
     int settingsNew(long[] out);
 
+    /**
+     * {@code hegel_settings_new_for_profile}: a handle initialized from the named profile
+     * (reserved, shipped, defined in {@code hegel.toml}, or registered with {@link
+     * #settingsRegisterProfile}), with the settings environment variables applied over it. Returns
+     * the raw code: {@link Abi#E_INVALID_ARG} (with the message in {@link #lastErrorMessage()}) for
+     * an unknown profile or a malformed {@code hegel.toml} or variable; {@code out[0]} receives the
+     * handle on {@link Abi#OK} and {@code 0} otherwise.
+     */
+    int settingsNewForProfile(String name, long[] out);
+
+    /**
+     * {@code hegel_settings_register_profile}: register a snapshot of handle {@code s} as the
+     * profile {@code name}, process-wide. Returns the raw code: {@link Abi#E_INVALID_ARG} for an
+     * invalid or reserved name.
+     */
+    int settingsRegisterProfile(String name, long s);
+
+    /**
+     * {@code hegel_set_default_profile}: the profile {@link #settingsNew} resolves from now on, or
+     * {@code ""} to clear an earlier call. Returns the raw code: {@link Abi#E_INVALID_ARG} for an
+     * invalid name.
+     */
+    int setDefaultProfile(String name);
+
     void settingsFree(long s);
 
     /** {@code hegel_settings_get_test_cases}: the resolved test-case budget. */
@@ -120,6 +144,9 @@ public interface Libhegel {
      */
     int settingsGetNondeterminismStrictness(long s);
 
+    /** {@code hegel_settings_get_verbosity}: the resolved verbosity (an {@code Abi.VERBOSITY_*} value). */
+    int settingsGetVerbosity(long s);
+
     void settingsBackend(long s, int backend);
 
     void settingsTestCases(long s, long n);
@@ -131,6 +158,21 @@ public interface Libhegel {
     void settingsDerandomize(long s, boolean derandomize);
 
     void settingsReportMultipleFailures(long s, boolean yes);
+
+    /** {@code hegel_settings_set_stop_on_first_failure}. */
+    void settingsStopOnFirstFailure(long s, boolean yes);
+
+    /** {@code hegel_settings_set_show_statistics}. */
+    void settingsShowStatistics(long s, boolean yes);
+
+    /** {@code hegel_settings_set_unbounded_choices}. */
+    void settingsUnboundedChoices(long s, boolean yes);
+
+    /**
+     * {@code hegel_settings_set_test_location}: where the test under these settings lives, which
+     * the engine reports its verdict under inside Antithesis.
+     */
+    void settingsTestLocation(long s, String file, int beginLine, String className, String function);
 
     /**
      * {@code path == null} leaves the engine default; {@code ""} disables; otherwise sets the dir.

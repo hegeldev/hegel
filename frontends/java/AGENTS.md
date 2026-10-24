@@ -157,8 +157,7 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   opaque `u64`s derived from `dev.hegel.<kind>` names with the same FNV-1a hash
   as the engine's `hegel_label_from_name` (`Label.of`) and
   `hegel_label_combine` (`Label.combine`); the engine has no predefined label
-  enum. The engine's `hegel_set_unicode_version`, `stop_on_first_failure`
-  setting and `hegel_run_result_error_kind` have no Java surface yet.
+  enum. The engine's `hegel_set_unicode_version` has no Java surface yet.
 - **Per-case primitives** — `DataSource` is the abstraction generators draw
   against; `LiveDataSource` wraps the engine, translating return codes
   (`StopTest` → OVERRUN, `AssumeRejected` → INVALID, `INVALID_ARG` →
@@ -205,25 +204,28 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   `Settings` is the immutable config; its closed-state setting types live
   alongside it — `Backend` (auto = leave it to the engine's profile, which
   picks urandom inside Antithesis / default / urandom), `Database`,
-  `OptBoolean`, `NondeterminismStrictness` (`DEFAULT` = leave it to the
-  engine) — plus `printBlob` (print a copy-pasteable reproducer per failure)
-  and `reproduceFailure` (replay a stored blob instead of running the
-  property). `testCases`, `printBlob`, `derandomize`, `seed`,
-  `nondeterminismStrictness` and `database` are nullable ("unset"):
-  `Runner.applySettings` sends only what the user set, so the engine's
-  resolution — its profile (`hegel.toml`, the shipped
-  `development`/`ci`/`workload` profiles) with the
-  `HEGEL_TEST_CASES`/`HEGEL_DATABASE`/`HEGEL_SEED`/`HEGEL_DERANDOMIZE`/
-  `HEGEL_PRINT_BLOB`/`HEGEL_NONDETERMINISM_STRICTNESS` variables applied over
-  it in `hegel_settings_new` — stands for the rest, and explicit Java settings
-  win over both. There is no Java-side CI detection (the engine's `ci` profile
+  `OptBoolean`, `NondeterminismStrictness` and `Verbosity` (`DEFAULT` = leave
+  it to the engine), `TestLocation` — plus `printBlob` (print a
+  copy-pasteable reproducer per failure) and `reproduceFailure` (replay a
+  stored blob instead of running the property). Every engine setting is
+  unset unless the user sets it: `Runner.applySettings` sends only what the
+  user set, so the engine's resolution — its profile (`hegel.toml`, a
+  registered profile, the shipped `development`/`ci`/`workload` profiles, or
+  the one `Settings.fromProfile` names, resolved by
+  `hegel_settings_new_for_profile`) with the `HEGEL_*` settings variables
+  applied over it — stands for the rest, and explicit Java settings win over
+  both. `Settings.registerProfile` snapshots a resolved handle with
+  `hegel_settings_register_profile`; `Settings.setDefaultProfile` calls
+  `hegel_set_default_profile`. `@HegelTest` names a test (its database key)
+  `<fully.qualified.Class>.<method>` and locates it at the method;
+  `Hegel.test`/`Hegel.run` locate a test at their caller's frame
+  (`Runner.callerLocation`) and send it with `hegel_settings_set_test_location`. There is no Java-side CI detection (the engine's `ci` profile
   covers it). `Libhegel.settingsNew` returns a raw result code because a
   malformed variable or `hegel.toml` fails it with `E_INVALID_ARG` (→
   `IllegalArgumentException`); after applying, the runner reads
-  `settingsGetTestCases`/`settingsGetPrintBlob`/`settingsGetNondeterminismStrictness`
-  back and hands the *effective* `Settings` to the reporter and the run.
-  Verbosity and `reportMultipleFailures` keep Java-side defaults and are always
-  sent. `EnvironmentTest` covers the variables and `hegel.toml` through a child
+  `settingsGetTestCases`/`settingsGetPrintBlob`/`settingsGetNondeterminismStrictness`/
+  `settingsGetVerbosity` back and hands the *effective* `Settings` to the
+  reporter and the run. `EnvironmentTest` covers the variables and `hegel.toml` through a child
   JVM (`EnvironmentFixture`), since the engine reads its own process
   environment. There is no single-test-case mode; `testCases(1)` is the
   one-case configuration.

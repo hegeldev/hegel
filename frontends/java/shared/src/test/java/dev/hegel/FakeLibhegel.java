@@ -79,6 +79,19 @@ final class FakeLibhegel implements Libhegel {
     String databasePath = "unset";
     String databaseKey;
     Boolean derandomize;
+    Integer verbosity;
+    Boolean reportMultipleFailures;
+    Boolean stopOnFirstFailure;
+    Boolean showStatistics;
+    Boolean unboundedChoices;
+    TestLocation testLocation;
+    // Profiles.
+    String profileRequested; // the name settingsNewForProfile was last called with
+    int settingsNewForProfileRc = Abi.OK;
+    int registerProfileRc = Abi.OK;
+    final List<String> registeredProfiles = new ArrayList<>();
+    int setDefaultProfileRc = Abi.OK;
+    String defaultProfile;
 
     // Per-primitive return codes and canned values.
     int generateBooleanRc = Abi.OK;
@@ -230,6 +243,56 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
+    public int settingsGetVerbosity(long s) {
+        return verbosity == null ? Abi.VERBOSITY_NORMAL : verbosity;
+    }
+
+    @Override
+    public int settingsNewForProfile(String name, long[] out) {
+        profileRequested = name;
+        if (settingsNewForProfileRc == Abi.OK) {
+            out[0] = SETTINGS;
+        }
+        return settingsNewForProfileRc;
+    }
+
+    @Override
+    public int settingsRegisterProfile(String name, long s) {
+        if (registerProfileRc == Abi.OK) {
+            registeredProfiles.add(name);
+        }
+        return registerProfileRc;
+    }
+
+    @Override
+    public int setDefaultProfile(String name) {
+        if (setDefaultProfileRc == Abi.OK) {
+            defaultProfile = name;
+        }
+        return setDefaultProfileRc;
+    }
+
+    @Override
+    public void settingsStopOnFirstFailure(long s, boolean yes) {
+        stopOnFirstFailure = yes;
+    }
+
+    @Override
+    public void settingsShowStatistics(long s, boolean yes) {
+        showStatistics = yes;
+    }
+
+    @Override
+    public void settingsUnboundedChoices(long s, boolean yes) {
+        unboundedChoices = yes;
+    }
+
+    @Override
+    public void settingsTestLocation(long s, String file, int beginLine, String className, String function) {
+        testLocation = new TestLocation(file, beginLine, className, function);
+    }
+
+    @Override
     public void settingsFree(long s) {
         settingsFreed = true;
     }
@@ -245,7 +308,9 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
-    public void settingsVerbosity(long s, int v) {}
+    public void settingsVerbosity(long s, int v) {
+        verbosity = v;
+    }
 
     @Override
     public void settingsSeed(long s, long seed, boolean hasSeed) {}
@@ -256,7 +321,9 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
-    public void settingsReportMultipleFailures(long s, boolean yes) {}
+    public void settingsReportMultipleFailures(long s, boolean yes) {
+        reportMultipleFailures = yes;
+    }
 
     @Override
     public void settingsDatabase(long s, String path) {

@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.function.LongFunction;
 
 /**
  * Drives a single property test: builds the settings handle, pumps the engine's run loop, and turns
@@ -70,50 +71,89 @@ final class Runner {
     }
 
     static RunReport run(Libhegel lib, Settings settings, Consumer<TestCase> body, Reporter reporter) {
-        RunStatistics.Counter counts = new RunStatistics.Counter();
-        RunReport report;
-        long s = newSettings(lib);
-        try {
-            applySettings(lib, s, settings);
+        RunReport report = withSettings(lib, settings, s -> {
             // The engine resolved whatever the caller left unset (its profile, hegel.toml, the
             // HEGEL_* variables); the run and its reporters see the effective configuration.
             Settings effective = settings.resolved(
                     lib.settingsGetTestCases(s),
                     lib.settingsGetPrintBlob(s),
-                    NondeterminismStrictness.fromCode(lib.settingsGetNondeterminismStrictness(s)));
+                    NondeterminismStrictness.fromCode(lib.settingsGetNondeterminismStrictness(s)),
+                    Verbosity.fromCode(lib.settingsGetVerbosity(s)));
             reporter.runStarted(effective);
             long run = effective.reproduceFailure == null
                     ? lib.runStart(s, reporter::engineOutput)
                     : lib.runStartBlob(s, effective.reproduceFailure, reporter::engineOutput);
             try {
-                report = drive(lib, run, effective, body, reporter, counts);
+                return drive(lib, run, effective, body, reporter, new RunStatistics.Counter());
             } finally {
                 lib.runFree(run);
             }
-        } finally {
-            lib.settingsFree(s);
-        }
+        });
         reporter.runFinished(report);
         return report;
     }
 
     /**
-     * Construct the engine's settings handle. The engine resolves its settings profile and the
-     * {@code HEGEL_*} environment variables here, so this is the one infrastructure call that can
-     * fail on user input: a malformed {@code hegel.toml} or variable surfaces as an {@link
-     * IllegalArgumentException} carrying the engine's diagnostic.
+     * Run {@code body} on the engine's settings handle for {@code settings}: resolved from its
+     * profile (the default one unless {@link Settings#fromProfile} named another), with the
+     * caller's explicit settings applied over it. The handle is freed when {@code body} returns.
      */
-    private static long newSettings(Libhegel lib) {
+    private static <T> T withSettings(Libhegel lib, Settings settings, LongFunction<T> body) {
+        long s = newSettings(lib, settings.profile);
+        try {
+            applySettings(lib, s, settings);
+            return body.apply(s);
+        } finally {
+            lib.settingsFree(s);
+        }
+    }
+
+    /**
+     * Construct a settings handle from {@code profile} ({@code null} for the default one). The
+     * engine resolves the profile and the {@code HEGEL_*} environment variables here, so this can
+     * fail on user input: an unknown profile or a malformed {@code hegel.toml} or variable surfaces
+     * as an {@link IllegalArgumentException} carrying the engine's diagnostic.
+     */
+    private static long newSettings(Libhegel lib, String profile) {
         long[] out = new long[1];
-        int rc = lib.settingsNew(out);
+        if (profile == null) {
+            checkUserCall(lib, lib.settingsNew(out), "hegel_settings_new");
+        } else {
+            checkUserCall(lib, lib.settingsNewForProfile(profile, out), "hegel_settings_new_for_profile");
+        }
+        return out[0];
+    }
+
+    /** Fail with the engine's diagnostic unless {@code profile} resolves. */
+    static void checkProfile(Libhegel lib, String profile) {
+        lib.settingsFree(newSettings(lib, profile));
+    }
+
+    /** Register {@code settings}, as the engine resolves them now, as the profile {@code name}. */
+    static void registerProfile(Libhegel lib, String name, Settings settings) {
+        withSettings(lib, settings, s -> {
+            checkUserCall(lib, lib.settingsRegisterProfile(name, s), "hegel_settings_register_profile");
+            return null;
+        });
+    }
+
+    /** Make {@code name} the process's default profile ({@code ""} clears it). */
+    static void setDefaultProfile(Libhegel lib, String name) {
+        checkUserCall(lib, lib.setDefaultProfile(name), "hegel_set_default_profile");
+    }
+
+    /**
+     * Translate the code of a call that takes user input: {@code E_INVALID_ARG} is the caller's
+     * mistake, an {@link IllegalArgumentException} with the engine's diagnostic; anything else
+     * non-OK is a {@link HegelException}.
+     */
+    private static void checkUserCall(Libhegel lib, int rc, String op) {
         if (rc == Abi.E_INVALID_ARG) {
             throw new IllegalArgumentException(nullToEmpty(lib.lastErrorMessage()));
         }
         if (rc != Abi.OK) {
-            throw new HegelException(
-                    "hegel_settings_new failed (rc=" + rc + "): " + nullToEmpty(lib.lastErrorMessage()));
+            throw new HegelException(op + " failed (rc=" + rc + "): " + nullToEmpty(lib.lastErrorMessage()));
         }
-        return out[0];
     }
 
     /**
@@ -272,14 +312,27 @@ final class Runner {
         if (st.testCases != null) {
             lib.settingsTestCases(s, st.testCases);
         }
-        lib.settingsVerbosity(s, st.verbosity.code);
+        if (st.verbosity.code != null) {
+            lib.settingsVerbosity(s, st.verbosity.code);
+        }
         if (st.hasSeed) {
             lib.settingsSeed(s, st.seed, true);
         }
         if (st.derandomize != null) {
             lib.settingsDerandomize(s, st.derandomize);
         }
-        lib.settingsReportMultipleFailures(s, st.reportMultipleFailures);
+        if (st.reportMultipleFailures != null) {
+            lib.settingsReportMultipleFailures(s, st.reportMultipleFailures);
+        }
+        if (st.stopOnFirstFailure != null) {
+            lib.settingsStopOnFirstFailure(s, st.stopOnFirstFailure);
+        }
+        if (st.showStatistics != null) {
+            lib.settingsShowStatistics(s, st.showStatistics);
+        }
+        if (st.unboundedChoices != null) {
+            lib.settingsUnboundedChoices(s, st.unboundedChoices);
+        }
         if (st.printBlob != null) {
             lib.settingsPrintBlob(s, st.printBlob);
         }
@@ -313,6 +366,44 @@ final class Runner {
         if (st.name != null) {
             lib.settingsDatabaseKey(s, st.name);
         }
+        if (st.testLocation != null) {
+            TestLocation l = st.testLocation;
+            lib.settingsTestLocation(s, l.file(), l.beginLine(), l.className(), l.function());
+        }
+    }
+
+    /**
+     * Frames {@link #callerLocation} looks past to find the code that called into Hegel: Hegel's
+     * entry points and the JDK (the stack walk itself, reflection).
+     */
+    private static final String[] ENTRY_PREFIXES = {"dev.hegel.Hegel", "dev.hegel.Runner", "java.", "jdk."};
+
+    /**
+     * The location of the code that called into Hegel: the innermost frame on the calling thread
+     * outside Hegel's entry points, the JDK and {@code infrastructurePackages}, or {@code null} when
+     * there is none.
+     */
+    static TestLocation callerLocation(List<String> infrastructurePackages) {
+        return StackWalker.getInstance()
+                .walk(frames -> frames.filter(f -> isCallerFrame(f.getClassName(), infrastructurePackages))
+                        .findFirst()
+                        .map(f -> TestLocation.of(
+                                f.getClassName(), f.getFileName(), f.getLineNumber(), f.getMethodName()))
+                        .orElse(null));
+    }
+
+    private static boolean isCallerFrame(String className, List<String> infrastructurePackages) {
+        for (String prefix : ENTRY_PREFIXES) {
+            if (className.startsWith(prefix)) {
+                return false;
+            }
+        }
+        for (String prefix : infrastructurePackages) {
+            if (className.startsWith(prefix)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

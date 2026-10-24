@@ -205,6 +205,28 @@ class RealLibhegelTest {
     }
 
     @Test
+    void profilesAndTheNewerSettingsCrossTheBoundary() {
+        RealLibhegel lib = real();
+        long[] out = {7};
+        assertEquals(Abi.E_INVALID_ARG, lib.settingsNewForProfile("no-such-profile", out));
+        assertEquals(0, out[0]);
+        assertFalse(lib.lastErrorMessage().isEmpty());
+        assertEquals(Abi.OK, lib.settingsNewForProfile("base", out));
+        long s = out[0];
+        lib.settingsVerbosity(s, Abi.VERBOSITY_DEBUG);
+        assertEquals(Abi.VERBOSITY_DEBUG, lib.settingsGetVerbosity(s));
+        lib.settingsStopOnFirstFailure(s, false);
+        lib.settingsShowStatistics(s, true);
+        lib.settingsUnboundedChoices(s, true);
+        lib.settingsTestLocation(s, "a/B.java", 3, "a.B", "f");
+        assertEquals(Abi.E_INVALID_ARG, lib.settingsRegisterProfile("base", s));
+        assertEquals(Abi.OK, lib.settingsRegisterProfile("reallibhegel-binding-test", s));
+        lib.settingsFree(s);
+        assertEquals(Abi.E_INVALID_ARG, lib.setDefaultProfile("default"));
+        assertEquals(Abi.OK, lib.setDefaultProfile(""));
+    }
+
+    @Test
     void collectionAndPoolFreesAcceptNull() {
         RealLibhegel lib = real();
         lib.collectionFree(0);

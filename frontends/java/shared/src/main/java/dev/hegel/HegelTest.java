@@ -62,11 +62,20 @@ public @interface HegelTest {
     long seed() default NO_SEED;
 
     /**
-     * Engine output verbosity.
+     * The settings profile to start from instead of the default one (see {@link
+     * Settings#fromProfile(String)}). Empty (the default) uses the default profile.
+     *
+     * @return the profile name, or {@code ""} for the default profile
+     */
+    String profile() default "";
+
+    /**
+     * Engine output verbosity. The default leaves it to the engine's settings profile ({@link
+     * Verbosity#NORMAL} unless configured otherwise).
      *
      * @return the verbosity level
      */
-    Verbosity verbosity() default Verbosity.NORMAL;
+    Verbosity verbosity() default Verbosity.DEFAULT;
 
     /**
      * Force deterministic ({@link OptBoolean#TRUE}) or random ({@link OptBoolean#FALSE}) input
@@ -117,12 +126,40 @@ public @interface HegelTest {
     Backend backend() default Backend.AUTO;
 
     /**
-     * Keep searching for additional distinct failures after the first. Several distinct bugs
-     * aggregate into one report; a run that finds a single bug still rethrows it directly.
+     * Report every distinct failure the run finds rather than only the smallest. Several distinct
+     * bugs aggregate into one report; a run that finds a single bug still rethrows it directly. The
+     * default leaves it to the engine's settings profile (off unless configured otherwise).
      *
      * @return whether to report multiple failures
      */
-    boolean reportMultipleFailures() default false;
+    OptBoolean reportMultipleFailures() default OptBoolean.DEFAULT;
+
+    /**
+     * Stop generating at the first failure (see {@link Settings#stopOnFirstFailure(boolean)}). The
+     * default leaves it to the engine's settings profile and the {@code HEGEL_STOP_ON_FIRST_FAILURE}
+     * environment variable (on unless configured otherwise).
+     *
+     * @return whether to stop at the first failure
+     */
+    OptBoolean stopOnFirstFailure() default OptBoolean.DEFAULT;
+
+    /**
+     * Print run statistics at the end of the run (see {@link Settings#showStatistics(boolean)}).
+     * The default leaves it to the engine's settings profile and the {@code HEGEL_STATISTICS}
+     * environment variable (off unless configured otherwise).
+     *
+     * @return whether to print run statistics
+     */
+    OptBoolean showStatistics() default OptBoolean.DEFAULT;
+
+    /**
+     * Remove the per-test-case choice limit (see {@link Settings#unboundedChoices(boolean)}). The
+     * default leaves it to the engine's settings profile (the limit applies unless configured
+     * otherwise).
+     *
+     * @return whether to remove the choice limit
+     */
+    OptBoolean unboundedChoices() default OptBoolean.DEFAULT;
 
     /**
      * Print a copy-pasteable {@code reproduceFailure} line for each reported failure. The default
@@ -152,10 +189,11 @@ public @interface HegelTest {
     String reproduceFailure() default "";
 
     /**
-     * Name for this property, used to derive a stable example-database key. Defaults to the test
-     * method name.
+     * Name for this property: the key its failures are stored under in the example database.
+     * Defaults to the test's fully-qualified class name and method name ({@code
+     * com.example.CartTest.totalsAddUp}).
      *
-     * @return the property name, or {@code ""} to use the method name
+     * @return the property name, or {@code ""} for the class and method name
      */
     String name() default "";
 }

@@ -102,6 +102,14 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle contextFree;
     private final MethodHandle contextLastError;
     private final MethodHandle settingsNew;
+    private final MethodHandle settingsNewForProfile;
+    private final MethodHandle settingsRegisterProfile;
+    private final MethodHandle setDefaultProfile;
+    private final MethodHandle settingsGetVerbosity;
+    private final MethodHandle settingsSetStopOnFirstFailure;
+    private final MethodHandle settingsSetShowStatistics;
+    private final MethodHandle settingsSetUnboundedChoices;
+    private final MethodHandle settingsSetTestLocation;
     private final MethodHandle settingsFree;
     private final MethodHandle settingsSetBackend;
     private final MethodHandle settingsSetTestCases;
@@ -195,6 +203,44 @@ final class RealLibhegel implements Libhegel {
                 h(linker, lookup, "hegel_context_last_error", FunctionDescriptor.of(STRING_LAYOUT, ADDRESS));
         this.settingsNew = h(linker, lookup, "hegel_settings_new", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
         this.settingsFree = h(linker, lookup, "hegel_settings_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.settingsNewForProfile = h(
+                linker,
+                lookup,
+                "hegel_settings_new_for_profile",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, STRING_LAYOUT, ADDRESS));
+        this.settingsRegisterProfile = h(
+                linker,
+                lookup,
+                "hegel_settings_register_profile",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, STRING_LAYOUT, ADDRESS));
+        this.setDefaultProfile =
+                h(linker, lookup, "hegel_set_default_profile", FunctionDescriptor.of(JAVA_INT, ADDRESS, STRING_LAYOUT));
+        this.settingsGetVerbosity = h(
+                linker,
+                lookup,
+                "hegel_settings_get_verbosity",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.settingsSetStopOnFirstFailure = h(
+                linker,
+                lookup,
+                "hegel_settings_set_stop_on_first_failure",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_BOOLEAN));
+        this.settingsSetShowStatistics = h(
+                linker,
+                lookup,
+                "hegel_settings_set_show_statistics",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_BOOLEAN));
+        this.settingsSetUnboundedChoices = h(
+                linker,
+                lookup,
+                "hegel_settings_set_unbounded_choices",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_BOOLEAN));
+        this.settingsSetTestLocation = h(
+                linker,
+                lookup,
+                "hegel_settings_set_test_location",
+                FunctionDescriptor.of(
+                        JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT, JAVA_INT, STRING_LAYOUT, STRING_LAYOUT));
         this.settingsSetBackend = h(
                 linker,
                 lookup,
@@ -631,6 +677,67 @@ final class RealLibhegel implements Libhegel {
         int code = rc(settingsNew, handle);
         out[0] = handle.get(ADDRESS, 0).address();
         return code;
+    }
+
+    @Override
+    public int settingsNewForProfile(String name, long[] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment handle = arena.allocate(ADDRESS);
+            int code = rc(settingsNewForProfile, str(arena, name), handle);
+            out[0] = handle.get(ADDRESS, 0).address();
+            return code;
+        }
+    }
+
+    @Override
+    public int settingsRegisterProfile(String name, long s) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(settingsRegisterProfile, str(arena, name), segment(s));
+        }
+    }
+
+    @Override
+    public int setDefaultProfile(String name) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(setDefaultProfile, str(arena, name));
+        }
+    }
+
+    @Override
+    public int settingsGetVerbosity(long s) {
+        MemorySegment out = Arena.ofAuto().allocate(JAVA_INT);
+        check("hegel_settings_get_verbosity", rc(settingsGetVerbosity, segment(s), out));
+        return out.get(JAVA_INT, 0);
+    }
+
+    @Override
+    public void settingsStopOnFirstFailure(long s, boolean yes) {
+        check("hegel_settings_set_stop_on_first_failure", rc(settingsSetStopOnFirstFailure, segment(s), yes));
+    }
+
+    @Override
+    public void settingsShowStatistics(long s, boolean yes) {
+        check("hegel_settings_set_show_statistics", rc(settingsSetShowStatistics, segment(s), yes));
+    }
+
+    @Override
+    public void settingsUnboundedChoices(long s, boolean yes) {
+        check("hegel_settings_set_unbounded_choices", rc(settingsSetUnboundedChoices, segment(s), yes));
+    }
+
+    @Override
+    public void settingsTestLocation(long s, String file, int beginLine, String className, String function) {
+        try (Arena arena = Arena.ofConfined()) {
+            check(
+                    "hegel_settings_set_test_location",
+                    rc(
+                            settingsSetTestLocation,
+                            segment(s),
+                            str(arena, file),
+                            beginLine,
+                            str(arena, className),
+                            str(arena, function)));
+        }
     }
 
     @Override

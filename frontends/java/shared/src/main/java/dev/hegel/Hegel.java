@@ -138,6 +138,12 @@ public final class Hegel {
      * @return the run's report
      */
     public static RunReport run(Consumer<TestCase> body, Settings settings, Reporter reporter) {
+        if (settings.testLocation == null) {
+            TestLocation caller = Runner.callerLocation(settings.infrastructurePackages);
+            if (caller != null) {
+                settings = settings.testLocation(caller);
+            }
+        }
         return Runner.run(Engine.get(), settings, body, reporter);
     }
 

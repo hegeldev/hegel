@@ -210,12 +210,16 @@
  *
  * <p>Other settings include {@code derandomize},
  * {@link dev.hegel.Settings#database(dev.hegel.Database) database}, {@code suppressHealthCheck},
- * {@code verbosity}, {@code mode}, and {@link dev.hegel.Settings#phases(dev.hegel.Phase...) phases}.
- * Whatever a test leaves unset is resolved by the engine from its settings profile — a {@code
- * hegel.toml} in the working directory or an ancestor, or the shipped {@code ci} profile, which
- * makes runs deterministic and disables the example database when a CI server is detected — and from
- * the {@code HEGEL_TEST_CASES}, {@code HEGEL_SEED}, {@code HEGEL_DERANDOMIZE}, {@code HEGEL_DATABASE}
- * and {@code HEGEL_PRINT_BLOB} environment variables, which win over the profile.
+ * {@code verbosity}, {@code reportMultipleFailures}, {@code stopOnFirstFailure}, {@code
+ * showStatistics}, {@code unboundedChoices} and {@link dev.hegel.Settings#phases(dev.hegel.Phase...)
+ * phases}, and a test can start from a named settings profile ({@link
+ * dev.hegel.Settings#fromProfile(String)}, or {@code @HegelTest(profile = "...")}). Whatever a test
+ * leaves unset is resolved by the engine from its settings profile — a {@code hegel.toml} in the
+ * working directory or an ancestor, a profile registered with {@link
+ * dev.hegel.Settings#registerProfile(String, dev.hegel.Settings)}, or the shipped {@code ci} profile,
+ * which makes runs deterministic and disables the example database when a CI server is detected —
+ * and from the {@code HEGEL_*} settings environment variables ({@code HEGEL_TEST_CASES}, {@code
+ * HEGEL_SEED}, {@code HEGEL_DATABASE} and so on), which win over the profile.
  * If a health check fires — for example, your generators reject almost every input — Hegel aborts
  * the run and throws {@link dev.hegel.HealthCheckFailure} (distinct from a property's own failure);
  * pass the relevant {@link dev.hegel.HealthCheck} to {@code suppressHealthCheck} if the behaviour is

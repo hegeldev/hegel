@@ -33,7 +33,7 @@ class SettingsHealthDatabaseTest {
         tc.draw(integers());
     }
 
-    @HegelTest(reportMultipleFailures = true, database = Database.DISABLED)
+    @HegelTest(reportMultipleFailures = OptBoolean.TRUE, database = Database.DISABLED)
     void reportMultipleFailuresSettingApplies(TestCase tc) {
         tc.draw(integers());
     }
