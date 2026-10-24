@@ -115,9 +115,20 @@ fn test_multiple_flags() {
 
 #[test]
 fn test_unknown_arg_error() {
-    let err = try_apply_cli_args(Settings::new, s(&["--nope", "1"])).unwrap_err();
+    for args in [&["--nope", "1"][..], &["--nope"][..], &["--nope=1"][..]] {
+        let err = try_apply_cli_args(Settings::new, s(args)).unwrap_err();
+        match err {
+            CliError::Parse(msg) => assert_eq!(msg, "Unknown argument: --nope"),
+            _ => panic!("wrong error kind"),
+        }
+    }
+}
+
+#[test]
+fn test_missing_value_for_a_flag_that_takes_an_empty_value() {
+    let err = try_apply_cli_args(Settings::new, s(&["--phases"])).unwrap_err();
     match err {
-        CliError::Parse(msg) => assert_eq!(msg, "Unknown argument: --nope"),
+        CliError::Parse(msg) => assert_eq!(msg, "--phases requires a value"),
         _ => panic!("wrong error kind"),
     }
 }
@@ -226,7 +237,7 @@ fn test_apply_cli_args_help() {
 
 #[test]
 fn test_removed_flag_is_unknown_argument() {
-    let err = try_apply_cli_args(Settings::new, s(&["--single-test-case", "true"])).unwrap_err();
+    let err = try_apply_cli_args(Settings::new, s(&["--single-test-case"])).unwrap_err();
     match err {
         CliError::Parse(msg) => assert_eq!(msg, "Unknown argument: --single-test-case"),
         other => panic!("expected parse error, got {other:?}"),
@@ -348,7 +359,7 @@ fn test_backend_missing_value_error() {
 
 #[test]
 fn test_apply_cli_args_parse_error() {
-    match apply_cli_args(Settings::new, s(&["--not-a-flag", "x"])) {
+    match apply_cli_args(Settings::new, s(&["--not-a-flag"])) {
         CliOutcome::ParseError(msg) => {
             assert!(msg.contains("Unknown argument"));
             assert!(msg.contains("Usage:"));

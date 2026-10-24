@@ -83,8 +83,11 @@ where
             return Err(CliError::Parse(format!("Unknown argument: {arg}")));
         };
         let (name, value) = match flag.split_once('=') {
-            Some((name, value)) => (name, value.to_string()),
-            None => (flag, next_value(&args, &mut i, arg)?),
+            Some((name, value)) => (name, Some(value.to_string())),
+            None => {
+                i += 1;
+                (flag, args.get(i).cloned())
+            }
         };
         if name == "test-cases" {
             return Err(CliError::Parse(
@@ -92,27 +95,39 @@ where
                     .to_string(),
             ));
         }
-        overrides.push((name.replace('-', "_"), value));
+        let key = name.replace('-', "_");
+        let Some(value) = value else {
+            let probe = [(key, String::new())];
+            return Err(match crate::ffi::settings_with_strings(&settings, &probe) {
+                Err((_, message)) if is_unknown_setting(&message) => {
+                    CliError::Parse(format!("Unknown argument: {arg}"))
+                }
+                _ => CliError::Parse(format!("{arg} requires a value")),
+            });
+        };
+        overrides.push((key, value));
         i += 1;
     }
     crate::ffi::settings_with_strings(&settings, &overrides).map_err(|(index, message)| {
-        let message = message
-            .strip_prefix("hegel_settings_set_from_string: ")
-            .unwrap_or(&message);
         let flag = format!("--{}", overrides[index].0.replace('_', "-"));
-        if message.starts_with("unknown setting") {
+        if is_unknown_setting(&message) {
             CliError::Parse(format!("Unknown argument: {flag}"))
         } else {
-            CliError::Parse(format!("{flag}: {message}"))
+            CliError::Parse(format!("{flag}: {}", without_function_name(&message)))
         }
     })
 }
 
-fn next_value(args: &[String], i: &mut usize, name: &str) -> Result<String, CliError> {
-    *i += 1;
-    args.get(*i)
-        .cloned()
-        .ok_or_else(|| CliError::Parse(format!("{name} requires a value")))
+/// The engine's diagnostic without the name of the ABI function it
+/// came from.
+fn without_function_name(message: &str) -> &str {
+    message
+        .strip_prefix("hegel_settings_set_from_string: ")
+        .unwrap_or(message)
+}
+
+fn is_unknown_setting(message: &str) -> bool {
+    without_function_name(message).starts_with("unknown setting")
 }
 
 /// Extract `--profile <NAME>` from `args` before the flag loop runs, so
