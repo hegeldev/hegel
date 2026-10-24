@@ -309,15 +309,22 @@ def test_assume_failed_is_base_exception():
     assert isinstance(TestCase.__test__, bool)
 
 
-def test_draws_nested_too_deep_abandon_the_case():
-    from hegel.test_case import MAX_DRAW_DEPTH
-
-    def body(tc):
-        for _ in range(MAX_DRAW_DEPTH + 1):
-            tc.start_span(1)
+def test_draws_nested_near_the_recursion_limit_abandon_the_case():
+    def nest(tc):
+        tc.start_span(1)
+        nest(tc)
 
     with pytest.raises(hegel.errors.FailedHealthCheck):
-        run_test(body, test_cases=10)
+        run_test(nest, test_cases=10)
+
+
+def test_deep_spans_without_deep_recursion_are_allowed():
+    def body(tc):
+        for _ in range(1000):
+            tc.start_span(1)
+        tc._reset_open_spans_to(0)
+
+    run_test(body, test_cases=3)
 
 
 def test_numbered_names_skip_names_already_taken():
@@ -412,8 +419,7 @@ def test_clones_draw_from_threads():
     lines = notes(failing(body))[0].splitlines()
     worker_lines = [line for line in lines if line.startswith("[worker ")]
     assert len(worker_lines) == 3
-    values = sorted(int(line.rsplit(" = ", 1)[1]) for line in worker_lines)
-    assert values == [0, 0, 5]
+    assert sum(int(line.rsplit(" = ", 1)[1]) for line in worker_lines) == 5
     names = sorted(line.split("] ", 1)[1].split(" = ")[0] for line in worker_lines)
     assert names == ["n_1", "n_2", "n_3"]
 

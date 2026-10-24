@@ -169,13 +169,13 @@ def test_recursive_branches_can_draw_subtrees_silently():
     check_all(wrapped, lambda v: isinstance(v, (int, list)), test_cases=100)
 
 
-def test_deferred_self_reference_without_a_way_out_is_rejected():
+def test_deferred_self_reference_without_a_way_out_is_too_large():
     hidden = Deferred(lambda: gs.none().flat_map(lambda _: hidden))
 
     def body(tc):
         tc.draw(hidden)
 
-    with pytest.raises(hegel.errors.Unsatisfiable):
+    with pytest.raises(hegel.errors.FailedHealthCheck):
         run_test(body, test_cases=20)
 
 

@@ -124,9 +124,10 @@ does, with a note per file of what was dropped.
   `re`. A pattern
   that can match nothing over its alphabet is rejected when the generator is
   built, as in Hypothesis, but with Hegel's wording.
-- A `deferred` definition that only refers back to itself rejects the test
-  case once its draws nest 64 deep (so a test drawing nothing else is
-  `Unsatisfiable`), where Hypothesis detects the empty strategy up front.
+- A `deferred` definition that only refers back to itself abandons the test
+  case as too large once its draws nest close to Python's recursion limit (so
+  a test drawing nothing else fails a health check), where Hypothesis detects
+  the empty strategy up front.
 - A test whose every input is rejected fails the `filter_too_much` health
   check, where Hypothesis raises `Unsatisfiable` once it detects that a
   finite space is exhausted; with that check suppressed, Hegel raises

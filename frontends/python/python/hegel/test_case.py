@@ -22,9 +22,14 @@ T = TypeVar("T")
 
 OutputSink = Callable[[str], None]
 
-# Deeper nesting than this ends the test case as too large, well before
-# Python's own recursion limit would turn it into a RecursionError.
-MAX_DRAW_DEPTH = 100
+# Stack frames kept free below the interpreter's recursion limit: a span
+# that would open with less room than this ends the test case as too large,
+# rather than letting deeply nested draws fail the test with a
+# RecursionError. Measuring the stack costs time, so it is only measured
+# once spans nest SHALLOW_SPANS deep, which a test with no recursive
+# generators rarely reaches.
+RECURSION_HEADROOM = 200
+SHALLOW_SPANS = 32
 
 MIN_DATE = (1, 1, 1)
 MAX_DATE = (9999, 12, 31)
@@ -55,6 +60,15 @@ def _generator_class() -> type:
     from hegel.generators.base import Generator
 
     return Generator
+
+
+def _stack_depth() -> int:
+    frame: Any = sys._getframe()
+    depth = 0
+    while frame is not None:
+        depth += 1
+        frame = frame.f_back
+    return depth
 
 
 def _discard(_line: str) -> None:
@@ -545,10 +559,14 @@ class TestCase:
         matching :meth:`stop_span`. Spans tell the shrinker which choices
         belong together; :meth:`draw` and :meth:`draw_silent` open one per
         draw, so only a low-level custom generator needs this. Nesting
-        deeper than ``MAX_DRAW_DEPTH`` abandons the test case as too
-        large."""
-        if self._span_depth >= MAX_DRAW_DEPTH:
-            raise StopTest(f"draws nested more than {MAX_DRAW_DEPTH} deep")
+        so deep that Python's recursion limit (``sys.getrecursionlimit()``)
+        is in sight abandons the test case as too large, rather than
+        failing it with a ``RecursionError``."""
+        if (
+            self._span_depth >= SHALLOW_SPANS
+            and _stack_depth() > sys.getrecursionlimit() - RECURSION_HEADROOM
+        ):
+            raise StopTest("draws nested too deeply for Python's recursion limit")
         self._span_depth += 1
         try:
             self._handle.start_span(label)
