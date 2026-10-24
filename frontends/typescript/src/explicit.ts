@@ -19,8 +19,10 @@ function unsupported(operation: string): never {
  * lines for the report.
  */
 export class ExplicitDataSource implements DataSource {
-  readonly family = {};
-  private readonly output = new TextPrinter();
+  constructor(
+    private readonly output: TextPrinter = new TextPrinter(),
+    readonly family: object = {},
+  ) {}
 
   generate(): unknown {
     return unsupported("Drawing from a generator's engine primitives");
@@ -98,8 +100,8 @@ export class ExplicitDataSource implements DataSource {
   clone(): DataSource {
     return this;
   }
-  block(): DataSource {
-    return this;
+  block(indent: number): DataSource {
+    return new ExplicitDataSource(this.output.indented(indent), this.family);
   }
   setWorker(): void {}
   printer(): TextPrinter {

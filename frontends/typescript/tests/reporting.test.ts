@@ -404,7 +404,36 @@ describe("explicit examples", () => {
         .settings(quiet)
         .example()
         .run(),
-    ).rejects.toThrow("is not supported in explicit examples");
+    ).rejects.toThrow("TestCase.repeat is not supported in explicit examples");
+    expect(() =>
+      new runner.Hegel((tc) => tc.repeat(() => {})).settings(quiet).example().runSync(),
+    ).toThrow("TestCase.repeat is not supported in explicit examples");
+  });
+
+  it("indents a block's draws and notes in an explicit example's report", () => {
+    const { lines, runner } = capturing();
+    const error = thrownBy(() =>
+      new runner.Hegel((tc) => {
+        tc.note("Step 1");
+        const step = tc.child(2);
+        const n = step.draw(gs.integers(), "n");
+        step.note(`saw ${n}\nand more`);
+        tc.draw(gs.integers(), "after");
+        throw new Error("explicit");
+      })
+        .settings(deterministic)
+        .example(1, 2)
+        .runSync(),
+    );
+    expect((error as Error).message).toBe("explicit");
+    expect(lines).toEqual([
+      "Explicit example(1, 2) failed:",
+      "Step 1",
+      "  const n = 1;",
+      "  saw 1",
+      "  and more",
+      "const after = 2;",
+    ]);
   });
 });
 

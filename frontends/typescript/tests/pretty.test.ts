@@ -100,6 +100,22 @@ describe("TextPrinter", () => {
     printer.note("after");
     expect(printer.lines()).toEqual(["x", "y", "inner", "note", "after"]);
   });
+
+  it("indents an indented view's lines, starting afresh after an aborted region", () => {
+    const printer = new TextPrinter();
+    const inner = printer.indented(2);
+    const innermost = inner.indented(2);
+    inner.beginSpeculative();
+    inner.text("dropped ");
+    inner.abortSpeculative();
+    inner.text("a = ");
+    inner.reflow("1");
+    inner.hardBreak();
+    innermost.note("deep");
+    printer.text("top");
+    printer.hardBreak();
+    expect(printer.lines()).toEqual(["  a = 1", "    deep", "top"]);
+  });
 });
 
 describe("splitLines", () => {

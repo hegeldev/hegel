@@ -36,9 +36,14 @@ it("ExplicitDataSource refuses every engine operation and records only notes", (
   ds.eventValue();
   ds.setWorker();
   expect(ds.clone()).toBe(ds);
-  expect(ds.block()).toBe(ds);
+  const block = ds.block(2);
+  expect(block.family).toBe(ds.family);
   ds.note("a note");
   ds.printer().text("text");
   ds.printer().hardBreak();
-  expect(ds.lines()).toEqual(["a note", "text"]);
+  block.note("indented\nnote");
+  block.printer().text("indented ");
+  block.printer().reflow("text");
+  block.printer().hardBreak();
+  expect(ds.lines()).toEqual(["a note", "text", "  indented", "  note", "  indented text"]);
 });

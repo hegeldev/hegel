@@ -668,7 +668,9 @@ export class Hegel {
    * draws in place of a generated value. An explicit example fails the test
    * like a generated failing example does (it is reported, but not shrunk);
    * one that rejects itself with `tc.assume` is skipped. Every value must be
-   * drawn. Explicit examples run in the `Phase.Explicit` phase.
+   * drawn. Explicit examples run in the `Phase.Explicit` phase. With no
+   * engine behind it, an explicit example throws on `tc.drawSilent` and
+   * `tc.repeat`.
    *
    * @example
    * ```ts

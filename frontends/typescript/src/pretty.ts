@@ -30,63 +30,85 @@ export interface Printer {
   abortSpeculative(): void;
 }
 
-/**
- * A {@link Printer} that lays nothing out: each value stays on one line. Notes
- * made while a speculative region is open are held until it closes, as the
- * engine's printer does.
- */
-export class TextPrinter implements Printer {
-  private readonly regions: string[][] = [[]];
-  private held: string[] = [];
+class TextDocument {
+  readonly regions: string[][] = [[]];
+  held: string[] = [];
 
-  private get current(): string[] {
+  get current(): string[] {
     return this.regions[this.regions.length - 1];
   }
 
-  text(text: string): void {
-    this.current.push(text);
-  }
-
-  hardBreak(): void {
-    this.current.push("\n");
-  }
-
-  reflow(text: string): void {
-    this.current.push(text);
-  }
-
-  beginSpeculative(): void {
-    this.regions.push([]);
-  }
-
-  commitSpeculative(): void {
-    const region = this.regions.pop()!;
-    this.current.push(...region);
-    this.release();
-  }
-
-  abortSpeculative(): void {
-    this.regions.pop();
-    this.release();
-  }
-
-  /** Append a note: each line of `message` becomes its own output line. */
-  note(message: string): void {
-    const lines = message.split("\n").map((line) => `${line}\n`);
-    if (this.regions.length > 1) this.held.push(...lines);
-    else this.current.push(...lines);
-  }
-
-  private release(): void {
+  release(): void {
     if (this.regions.length === 1) {
       this.current.push(...this.held);
       this.held = [];
     }
   }
+}
 
-  /** Everything printed, one line per element. */
+/**
+ * A {@link Printer} that lays nothing out: each value stays on one line. Notes
+ * made while a speculative region is open are held until it closes, as the
+ * engine's printer does. {@link indented} gives a view of the same document
+ * whose lines are indented further, as the engine's `hegel_test_case_block`
+ * does.
+ */
+export class TextPrinter implements Printer {
+  private atLineStart = true;
+
+  constructor(
+    private readonly document: TextDocument = new TextDocument(),
+    private readonly indent: string = "",
+  ) {}
+
+  /** A view of this document whose lines are indented `by` columns further. */
+  indented(by: number): TextPrinter {
+    return new TextPrinter(this.document, this.indent + " ".repeat(by));
+  }
+
+  text(text: string): void {
+    if (this.atLineStart) {
+      this.document.current.push(this.indent);
+      this.atLineStart = false;
+    }
+    this.document.current.push(text);
+  }
+
+  hardBreak(): void {
+    this.document.current.push("\n");
+    this.atLineStart = true;
+  }
+
+  reflow(text: string): void {
+    this.text(text);
+  }
+
+  beginSpeculative(): void {
+    this.document.regions.push([]);
+  }
+
+  commitSpeculative(): void {
+    const region = this.document.regions.pop()!;
+    this.document.current.push(...region);
+    this.document.release();
+  }
+
+  abortSpeculative(): void {
+    this.document.regions.pop();
+    this.atLineStart = true;
+    this.document.release();
+  }
+
+  /** Append a note: each line of `message` becomes its own output line. */
+  note(message: string): void {
+    const lines = message.split("\n").map((line) => `${this.indent}${line}\n`);
+    if (this.document.regions.length > 1) this.document.held.push(...lines);
+    else this.document.current.push(...lines);
+  }
+
+  /** Everything printed to the document, one line per element. */
   lines(): string[] {
-    return splitLines(this.regions[0].join(""));
+    return splitLines(this.document.regions[0].join(""));
   }
 }
 

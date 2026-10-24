@@ -379,6 +379,9 @@ export class TestCase {
   }
 
   private beginRepeat(): Collection {
+    if (this.shared.explicit !== null) {
+      throw new Error("TestCase.repeat is not supported in explicit examples");
+    }
     const minSize = this._dataSource.generate({
       type: "integer",
       min_value: 0,
@@ -416,7 +419,8 @@ export class TestCase {
    * heading, its draws and notes indented beneath it.
    *
    * `repeat` never returns: code after it does not run. For an asynchronous
-   * body, use {@link repeatAsync}.
+   * body, use {@link repeatAsync}. It cannot be used in an explicit example,
+   * which has no engine to choose the number of repetitions.
    */
   repeat(body: () => void): never {
     const collection = this.beginRepeat();
