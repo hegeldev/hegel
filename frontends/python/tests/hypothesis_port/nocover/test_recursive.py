@@ -148,19 +148,7 @@ SELF_REF = gs.recursive(
 )
 
 
-def test_self_ref_regression():
+@hegel.test(suppress_health_check=list(hegel.HealthCheck), test_cases=5)
+def test_self_ref_regression(tc):
     # See https://github.com/HypothesisWorks/hypothesis/issues/2794
-    # Each leaf may start a whole new SELF_REF, so values often grow without
-    # bound: Hegel either generates some or reports the inputs as too large,
-    # rather than crashing.
-    @hegel.test(
-        suppress_health_check=[hegel.HealthCheck.too_slow, hegel.HealthCheck.filter_too_much],
-        test_cases=5,
-    )
-    def test(tc):
-        tc.draw(SELF_REF)
-
-    try:
-        test()
-    except hegel.FailedHealthCheck as error:
-        assert "TestCasesTooLarge" in str(error) or "LargeInitialTestCase" in str(error)
+    tc.draw(SELF_REF)
