@@ -150,8 +150,9 @@
 #define HEGEL_STATE_MACHINE_DONE INT64_MIN
 
 /*
- Pass as the `max_size` of `hegel_string_generator_text` or
- `hegel_generate_bytes` when the user gave no maximum, for libhegel to
+ Pass as the `max_size` of `hegel_string_generator_text`,
+ `hegel_generate_bytes` or `hegel_new_collection` when the user gave no
+ maximum for text or bytes, for libhegel to
  apply its default: 100, or `min_size + 100` when `min_size` is above
  100. Distinct from `UINT64_MAX`, which means no upper bound.
 
@@ -1844,7 +1845,9 @@ hegel_result_t hegel_label_combine(hegel_context_t *ctx,
 
  Parameters:
  `min_size` / `max_size`: Inclusive size bounds. Pass `UINT64_MAX` as
-   `max_size` for no upper bound.
+   `max_size` for no upper bound, or `HEGEL_MAX_SIZE_DEFAULT` for the
+   default maximum of text and bytes, for a collection that builds one
+   (such as text over an arbitrary alphabet).
  `out_collection`: Receives a caller-owned handle to pass to the calls
    below (through any handle of the same test-case family). Release it
    with `hegel_collection_free` exactly once.
