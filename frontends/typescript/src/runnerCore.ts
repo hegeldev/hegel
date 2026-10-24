@@ -661,7 +661,9 @@ export class Hegel {
    * place of the one derived from its location: its file, relative to the
    * working directory, plus its name. A test function's name is its own, or
    * for an anonymous one the name Vitest or Jest gives the running test,
-   * else the enclosing function's, else its line.
+   * else the enclosing function's, else its line. A borrowed name shared by
+   * calls on several lines gets the call's position among them appended
+   * from the second on (`"describe > test (2)"`).
    */
   databaseKey(key: string): this {
     this._databaseKey = key;

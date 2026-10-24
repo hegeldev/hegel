@@ -63,14 +63,32 @@ export function runnerTestName(): string | null {
   return typeof name === "string" && name !== "" ? name : null;
 }
 
+const sharedNameLines = new Map<string, number[]>();
+
 /**
  * The test location of a test function defined at `site`: the function's own
  * name, else the name the test runner gives the running test, else the
  * enclosing function's, else its line, so that two anonymous tests in one
- * file stay distinct.
+ * file stay distinct. A name borrowed from the runner or the enclosing
+ * function can cover several `hegel.test` calls, so every call line after
+ * the first that borrows the same name in the same file gets its position
+ * among them appended (`"suite > case (2)"`).
  */
 export function locationOf(site: CallSite, testFn: AnyFunction): TestLocation {
-  const name = testFn.name || runnerTestName() || site.name || `<anonymous at line ${site.line}>`;
+  let name = testFn.name;
+  if (!name) {
+    const borrowed = runnerTestName() ?? site.name;
+    if (borrowed === null) {
+      name = `<anonymous at line ${site.line}>`;
+    } else {
+      const key = `${site.file}\0${borrowed}`;
+      const lines = sharedNameLines.get(key) ?? [];
+      sharedNameLines.set(key, lines);
+      if (!lines.includes(site.line)) lines.push(site.line);
+      const position = lines.indexOf(site.line) + 1;
+      name = position === 1 ? borrowed : `${borrowed} (${position})`;
+    }
+  }
   const module = site.file.replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, "");
   return { file: site.file, beginLine: site.line, class: module, function: name };
 }

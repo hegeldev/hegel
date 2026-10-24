@@ -128,6 +128,36 @@ describe("test identity", () => {
     expect(engine.setDatabaseKey).toHaveBeenCalledWith(context, settings, `${THIS_FILE}::${name}`);
   });
 
+  it("tells apart anonymous tests at different lines of one runner test", () => {
+    const engine = fakeEngine();
+    const runner = createRunner(fakeRuntime(engine));
+    for (let i = 0; i < 2; i++) {
+      runner.test(() => {});
+      runner.test(() => {});
+    }
+    const name =
+      "test identity > tells apart anonymous tests at different lines of one runner test";
+    const keys = engine.setDatabaseKey.mock.calls.map((call) => call[2]);
+    expect(keys).toEqual([
+      `${THIS_FILE}::${name}`,
+      `${THIS_FILE}::${name} (2)`,
+      `${THIS_FILE}::${name}`,
+      `${THIS_FILE}::${name} (2)`,
+    ]);
+  });
+
+  it("tells apart anonymous tests in one enclosing function", () => {
+    const engine = fakeEngine();
+    const runner = createRunner(fakeRuntime(engine));
+    function helper(): void {
+      runner.test(() => {});
+      runner.test(() => {});
+    }
+    withMatcherState(undefined, helper);
+    const names = engine.setTestLocation.mock.calls.map((call) => call[2].function);
+    expect(names).toEqual(["helper", "helper (2)"]);
+  });
+
   it("names an anonymous test by its line outside a known test runner", () => {
     const engine = fakeEngine();
     const runner = createRunner(fakeRuntime(engine));
