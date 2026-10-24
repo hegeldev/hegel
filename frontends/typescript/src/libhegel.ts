@@ -45,6 +45,8 @@ import {
   type NativeDatetime,
   type TextGeneratorOptions,
   type NativeFloatOptions,
+  type NativeTestLocation,
+  type NativeRunErrorKind,
   type UuidVersion,
 } from "./engine.js";
 export {
@@ -125,9 +127,10 @@ const stringType: TypeObject = koffi.struct({ data: "uint8_t*", len: "size_t" })
  * accessors (constructors other than `hegel_settings_new`, frees, setters,
  * result getters) are presented here as value-returning wrappers, with
  * out-parameter marshalling and checked result codes handled by
- * {@link bindLibrary}. `hegel_settings_new` stays fallible: it resolves the
- * default settings profile, which fails when `HEGEL_DEFAULT_PROFILE` names an
- * unknown profile or a `hegel.toml` is malformed. The output callback taken by
+ * {@link bindLibrary}. `hegel_settings_new` and
+ * `hegel_settings_new_for_profile` stay fallible: they resolve a settings
+ * profile, which fails when the profile is unknown or a `hegel.toml` is
+ * malformed. The output callback taken by
  * `hegel_run_start` / `hegel_test_case_from_blob` is likewise absorbed as NULL
  * (engine output stays on stderr).
  *
@@ -152,6 +155,17 @@ export interface Bindings {
   settingsDatabaseKey: (ctx: Ptr, s: Ptr, key: string | null) => void;
   settingsSuppressHealthCheck: (s: Ptr, checks: number) => void;
   settingsReportMultipleFailures: (s: Ptr, yes: boolean) => void;
+  settingsNewForProfile: (ctx: Ptr, name: string, out: Ptr[]) => number;
+  settingsStopOnFirstFailure: (s: Ptr, yes: boolean) => void;
+  settingsShowStatistics: (s: Ptr, yes: boolean) => void;
+  settingsUnboundedChoices: (s: Ptr, yes: boolean) => void;
+  settingsPrintBlob: (s: Ptr, yes: boolean) => void;
+  settingsPhases: (s: Ptr, phases: number) => void;
+  settingsBackend: (s: Ptr, backend: number) => void;
+  settingsNondeterminismStrictness: (s: Ptr, strictness: number) => void;
+  settingsTestLocation: (ctx: Ptr, s: Ptr, location: NativeTestLocation) => void;
+  settingsRegisterProfile: (ctx: Ptr, name: string, s: Ptr) => void;
+  setDefaultProfile: (ctx: Ptr, name: string) => void;
 
   runStart: (ctx: Ptr, settings: Ptr, out: Ptr[]) => number;
   nextTestCase: (ctx: Ptr, run: Ptr, out: Ptr[]) => number;
@@ -268,11 +282,13 @@ export interface Bindings {
 
   runResultStatus: (r: Ptr) => number;
   runResultError: (r: Ptr) => string | null;
+  runResultErrorKind: (r: Ptr) => NativeRunErrorKind;
   runResultFailureCount: (r: Ptr) => number;
   runResultFailure: (r: Ptr, index: number) => Ptr;
   failureFree: (f: Ptr) => void;
   failureOrigin: (f: Ptr) => string;
   failureReproductionBlob: (f: Ptr) => string | null;
+  failureCaveat: (f: Ptr) => string | null;
 
   version: () => string;
 }
@@ -327,6 +343,40 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   const settingsReportMultipleFailures = f(
     "int hegel_settings_set_report_multiple_failures(void* ctx, void* s, bool yes)",
   );
+  const settingsNewForProfile = fs("hegel_settings_new_for_profile", [
+    "void*",
+    stringType,
+    koffi.out(koffi.pointer("void*")),
+  ]);
+  const settingsStopOnFirstFailure = f(
+    "int hegel_settings_set_stop_on_first_failure(void* ctx, void* s, bool yes)",
+  );
+  const settingsShowStatistics = f(
+    "int hegel_settings_set_show_statistics(void* ctx, void* s, bool yes)",
+  );
+  const settingsUnboundedChoices = f(
+    "int hegel_settings_set_unbounded_choices(void* ctx, void* s, bool yes)",
+  );
+  const settingsPrintBlob = f("int hegel_settings_set_print_blob(void* ctx, void* s, bool yes)");
+  const settingsPhases = f("int hegel_settings_set_phases(void* ctx, void* s, uint32_t phases)");
+  const settingsBackend = f("int hegel_settings_set_backend(void* ctx, void* s, uint32_t backend)");
+  const settingsNondeterminismStrictness = f(
+    "int hegel_settings_set_nondeterminism_strictness(void* ctx, void* s, uint32_t strictness)",
+  );
+  const settingsTestLocation = fs("hegel_settings_set_test_location", [
+    "void*",
+    "void*",
+    stringType,
+    "uint32_t",
+    stringType,
+    stringType,
+  ]);
+  const settingsRegisterProfile = fs("hegel_settings_register_profile", [
+    "void*",
+    stringType,
+    "void*",
+  ]);
+  const setDefaultProfile = fs("hegel_set_default_profile", ["void*", stringType]);
 
   const runStart = f(
     "int hegel_run_start(void* ctx, void* settings, void* callback, void* user_data, _Out_ void** out_run)",
@@ -496,6 +546,9 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
 
   const runResultStatus = f("int hegel_run_result_status(void* ctx, void* r, _Out_ int* out)");
   const runResultError = f("int hegel_run_result_error(void* ctx, void* r, _Out_ void** out)");
+  const runResultErrorKind = f(
+    "int hegel_run_result_error_kind(void* ctx, void* r, _Out_ uint32_t* kind, _Out_ uint32_t* health_check)",
+  );
   const runResultFailureCount = f(
     "int hegel_run_result_failure_count(void* ctx, void* r, _Out_ size_t* out)",
   );
@@ -511,6 +564,7 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   const failureReproductionBlob = f(
     "int hegel_failure_reproduction_blob(void* ctx, void* f, _Out_ void** out)",
   );
+  const failureCaveat = f("int hegel_failure_caveat(void* ctx, void* f, _Out_ void** out)");
   const version = fs("hegel_version", ["void*", koffi.out(koffi.pointer(stringType))]);
 
   const readString = (result: NativeBuffer): string => wtf8ToString(copyNativeBuffer(result));
@@ -552,6 +606,38 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
       checked(settingsSuppressHealthCheck(null, s, checks), "settingsSuppressHealthCheck"),
     settingsReportMultipleFailures: (s, yes) =>
       checked(settingsReportMultipleFailures(null, s, yes), "settingsReportMultipleFailures"),
+    settingsNewForProfile: (ctx, name, out) => settingsNewForProfile(ctx, nativeString(name), out),
+    settingsStopOnFirstFailure: (s, yes) =>
+      checked(settingsStopOnFirstFailure(null, s, yes), "settingsStopOnFirstFailure"),
+    settingsShowStatistics: (s, yes) =>
+      checked(settingsShowStatistics(null, s, yes), "settingsShowStatistics"),
+    settingsUnboundedChoices: (s, yes) =>
+      checked(settingsUnboundedChoices(null, s, yes), "settingsUnboundedChoices"),
+    settingsPrintBlob: (s, yes) => checked(settingsPrintBlob(null, s, yes), "settingsPrintBlob"),
+    settingsPhases: (s, phases) => checked(settingsPhases(null, s, phases), "settingsPhases"),
+    settingsBackend: (s, backend) => checked(settingsBackend(null, s, backend), "settingsBackend"),
+    settingsNondeterminismStrictness: (s, strictness) =>
+      checked(
+        settingsNondeterminismStrictness(null, s, strictness),
+        "settingsNondeterminismStrictness",
+      ),
+    settingsTestLocation: (ctx, s, location) =>
+      checked(
+        settingsTestLocation(
+          ctx,
+          s,
+          nativeString(location.file),
+          location.beginLine,
+          nativeString(location.className),
+          nativeString(location.function),
+        ),
+        "settingsTestLocation",
+        ctx,
+      ),
+    settingsRegisterProfile: (ctx, name, s) =>
+      checked(settingsRegisterProfile(ctx, nativeString(name), s), "settingsRegisterProfile", ctx),
+    setDefaultProfile: (ctx, name) =>
+      checked(setDefaultProfile(ctx, nativeString(name)), "setDefaultProfile", ctx),
     runStart: (ctx, s, out) => runStart(ctx, s, null, null, out),
     nextTestCase: (ctx, run, out) => nextTestCase(ctx, run, out),
     runResult: (ctx, run, out) => runResult(ctx, run, out),
@@ -671,6 +757,12 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
       checked(runResultError(null, r, out), "runResultError");
       return readOptionalString(out[0]);
     },
+    runResultErrorKind: (r) => {
+      const kind: number[] = [0];
+      const healthCheck: number[] = [0];
+      checked(runResultErrorKind(null, r, kind, healthCheck), "runResultErrorKind");
+      return { kind: kind[0], healthCheck: healthCheck[0] };
+    },
     runResultFailureCount: (r) => {
       const out: (number | bigint)[] = [0];
       checked(runResultFailureCount(null, r, out), "runResultFailureCount");
@@ -690,6 +782,11 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     failureReproductionBlob: (fp) => {
       const out: Ptr[] = [null];
       checked(failureReproductionBlob(null, fp, out), "failureReproductionBlob");
+      return readOptionalString(out[0]);
+    },
+    failureCaveat: (fp) => {
+      const out: Ptr[] = [null];
+      checked(failureCaveat(null, fp, out), "failureCaveat");
       return readOptionalString(out[0]);
     },
     version: () => {
@@ -778,8 +875,22 @@ export class Libhegel implements Engine {
     this.fns.settingsVerbosity(s, v);
   }
 
-  setSeed(s: Ptr, seed: bigint): void {
-    this.fns.settingsSeed(s, seed, true);
+  /**
+   * Create a settings handle initialized from the named profile. Throws
+   * {@link LibhegelError} when the profile cannot be resolved.
+   */
+  newSettingsForProfile(ctx: Ptr, name: string): SettingsHandle {
+    const out: Ptr[] = [null];
+    this.check(
+      ctx,
+      this.fns.settingsNewForProfile(ctx, name, out),
+      "hegel_settings_new_for_profile",
+    );
+    return this.requireHandle<SettingsHandle>(out[0], "hegel_settings_new_for_profile");
+  }
+
+  setSeed(s: Ptr, seed: bigint | null): void {
+    this.fns.settingsSeed(s, seed ?? 0n, seed !== null);
   }
 
   setDerandomize(s: Ptr, on: boolean): void {
@@ -800,6 +911,46 @@ export class Libhegel implements Engine {
 
   setReportMultipleFailures(s: Ptr, yes: boolean): void {
     this.fns.settingsReportMultipleFailures(s, yes);
+  }
+
+  setStopOnFirstFailure(s: Ptr, yes: boolean): void {
+    this.fns.settingsStopOnFirstFailure(s, yes);
+  }
+
+  setShowStatistics(s: Ptr, yes: boolean): void {
+    this.fns.settingsShowStatistics(s, yes);
+  }
+
+  setUnboundedChoices(s: Ptr, yes: boolean): void {
+    this.fns.settingsUnboundedChoices(s, yes);
+  }
+
+  setPrintBlob(s: Ptr, yes: boolean): void {
+    this.fns.settingsPrintBlob(s, yes);
+  }
+
+  setPhases(s: Ptr, phases: number): void {
+    this.fns.settingsPhases(s, phases);
+  }
+
+  setBackend(s: Ptr, backend: number): void {
+    this.fns.settingsBackend(s, backend);
+  }
+
+  setNondeterminismStrictness(s: Ptr, strictness: number): void {
+    this.fns.settingsNondeterminismStrictness(s, strictness);
+  }
+
+  setTestLocation(ctx: Ptr, s: Ptr, location: NativeTestLocation): void {
+    this.fns.settingsTestLocation(ctx, s, location);
+  }
+
+  registerProfile(ctx: Ptr, name: string, s: Ptr): void {
+    this.fns.settingsRegisterProfile(ctx, name, s);
+  }
+
+  setDefaultProfile(ctx: Ptr, name: string): void {
+    this.fns.setDefaultProfile(ctx, name);
   }
 
   /** Start a run. Throws {@link LibhegelError} on failure. */
@@ -1191,6 +1342,10 @@ export class Libhegel implements Engine {
     return this.fns.runResultError(r);
   }
 
+  runErrorKind(r: Ptr): NativeRunErrorKind {
+    return this.fns.runResultErrorKind(r);
+  }
+
   failureCount(r: Ptr): number {
     return this.fns.runResultFailureCount(r);
   }
@@ -1220,5 +1375,9 @@ export class Libhegel implements Engine {
    */
   reproductionBlob(fp: Ptr): string | null {
     return this.fns.failureReproductionBlob(fp);
+  }
+
+  failureCaveat(fp: Ptr): string | null {
+    return this.fns.failureCaveat(fp);
   }
 }

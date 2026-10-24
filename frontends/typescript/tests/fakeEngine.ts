@@ -13,7 +13,6 @@ import {
   type PoolHandle,
   type StateMachineHandle,
 } from "../src/engine.js";
-import { Database, Verbosity } from "../src/runnerCore.js";
 import type { RuntimeServices } from "../src/runtime.js";
 
 export const context = {} as ContextHandle;
@@ -45,6 +44,17 @@ export function fakeEngine() {
     setDatabaseKey: vi.fn<Engine["setDatabaseKey"]>(),
     setSuppressHealthCheck: vi.fn<Engine["setSuppressHealthCheck"]>(),
     setReportMultipleFailures: vi.fn<Engine["setReportMultipleFailures"]>(),
+    newSettingsForProfile: vi.fn<Engine["newSettingsForProfile"]>(() => settings),
+    setStopOnFirstFailure: vi.fn<Engine["setStopOnFirstFailure"]>(),
+    setShowStatistics: vi.fn<Engine["setShowStatistics"]>(),
+    setUnboundedChoices: vi.fn<Engine["setUnboundedChoices"]>(),
+    setPrintBlob: vi.fn<Engine["setPrintBlob"]>(),
+    setPhases: vi.fn<Engine["setPhases"]>(),
+    setBackend: vi.fn<Engine["setBackend"]>(),
+    setNondeterminismStrictness: vi.fn<Engine["setNondeterminismStrictness"]>(),
+    setTestLocation: vi.fn<Engine["setTestLocation"]>(),
+    registerProfile: vi.fn<Engine["registerProfile"]>(),
+    setDefaultProfile: vi.fn<Engine["setDefaultProfile"]>(),
     runStart: vi.fn<Engine["runStart"]>(() => run),
     nextTestCase: vi
       .fn<Engine["nextTestCase"]>()
@@ -113,11 +123,13 @@ export function fakeEngine() {
     freeStateMachine: vi.fn<Engine["freeStateMachine"]>(),
     runStatus: vi.fn<Engine["runStatus"]>(() => RunStatus.PASSED),
     runError: vi.fn<Engine["runError"]>(() => "backend error"),
+    runErrorKind: vi.fn<Engine["runErrorKind"]>(() => ({ kind: 6, healthCheck: 0 })),
     failureCount: vi.fn<Engine["failureCount"]>(() => 1),
     failure: vi.fn<Engine["failure"]>(() => failure),
     freeFailure: vi.fn<Engine["freeFailure"]>(),
     failureOrigin: vi.fn<Engine["failureOrigin"]>(() => "property.ts:1"),
     reproductionBlob: vi.fn<Engine["reproductionBlob"]>(() => "blob"),
+    failureCaveat: vi.fn<Engine["failureCaveat"]>(() => null),
     freeStringGenerator: vi.fn<Engine["freeStringGenerator"]>(),
   } satisfies Engine;
 }
@@ -125,19 +137,10 @@ export function fakeEngine() {
 export function fakeRuntime(engine: Engine): RuntimeServices {
   return {
     getEngine: () => engine,
-    defaultSettings: () => ({
-      testCases: 100,
-      seed: null,
-      verbosity: Verbosity.Normal,
-      derandomize: true,
-      database: Database.disabled,
-      suppressHealthCheck: [],
-      reportMultipleFailures: false,
-    }),
     validateSettings: vi.fn(),
+    persistence: true,
     reportFinalValue: vi.fn(),
     reportFinalError: vi.fn(),
     note: vi.fn(),
-    emitAntithesisAssertion: vi.fn(),
   };
 }

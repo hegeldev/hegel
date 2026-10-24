@@ -120,15 +120,22 @@ so a Node import creeping into a shared module fails `check-lint`.
 5. **Runtime services** (`src/runtime.ts`, `src/nodeRuntime.ts`,
    `src/browser/runtime.ts`) — `RuntimeServices` is the small set of
    host-specific things the shared loop needs: how to get the `Engine`,
-   default settings (CI detection is Node-only), settings validation (the
-   browser rejects `Database.fromPath`), diagnostics output, and Antithesis
-   assertion emission (Node-only).
+   settings validation (the browser rejects `Database.fromPath`), whether the
+   host can keep a database (the browser cannot, so its runs disable it), and
+   diagnostics output. Settings defaults, CI detection and Antithesis
+   reporting all belong to the engine: a run starts from
+   `hegel_settings_new` (or `_for_profile`) and `src/settings.ts` sets only
+   the fields the user gave; the test's location and database key come from
+   its call site (`src/callSite.ts`) through `hegel_settings_set_test_location`
+   and `hegel_settings_set_database_key`.
 6. **Shared runner** (`src/runnerCore.ts`) — the sync and async run loops:
    `run_start` → `next_test_case` → `mark_complete` → `run_result`. The engine
    only explores (generate/shrink); the client owns the final replay: on
    `FAILED`, the runner replays each failure's `hegel_failure_reproduction_blob`
-   via `hegel_test_case_from_blob` to surface the test's own error as the
-   thrown message. `EngineDataSource` implements `DataSource` against an
+   via `hegel_test_case_from_blob` and rethrows the test's own error (an
+   `AggregateError` of them for several distinct failures). An errored run
+   throws a `RunError` subclass chosen by `hegel_run_result_error_kind`
+   (`src/errors.ts`). `EngineDataSource` implements `DataSource` against an
    engine test case. `createRunner(runtime)` produces `test`/`testAsync`.
 7. **Composition roots** (`src/runner.ts` + `src/index.ts` for Node,
    `src/browser/index.ts` for browsers) — each builds one runner from its
@@ -157,8 +164,9 @@ thread (the main thread unless the user runs tests in a worker themselves).
 
 ### Browser non-goals (for now)
 
-No persistence (`Database.fromPath` throws; `unset` becomes `disabled`), no
-worker offloading, no Antithesis output, no raw engine-output callbacks. Web
+No persistence (`Database.fromPath` throws; every run's database is
+disabled), no worker offloading, no Antithesis output (the location is passed,
+but the Wasm engine has no output directory), no raw engine-output callbacks. Web
 Crypto in a secure context is required, and the Wasm asset must be servable
 under the page's CORS/CSP.
 

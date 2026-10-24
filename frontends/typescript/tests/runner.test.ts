@@ -189,13 +189,17 @@ describe("async test bodies", () => {
   });
 });
 
-test("handles throwing weird types", () => {
-  expect(() =>
+test("rethrows a thrown non-Error value as it is", () => {
+  let thrown: unknown;
+  try {
     hegel.test((tc) => {
       const n = tc.draw(gs.integers());
       if (n >= 12345) {
         throw n;
       }
-    }),
-  ).toThrow("12345");
+    });
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBe(12345);
 });

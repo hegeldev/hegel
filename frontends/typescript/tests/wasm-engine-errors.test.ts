@@ -144,14 +144,10 @@ describe("WasmEngine malformed outputs and cleanup", () => {
     engine.freeContext(ctx);
   });
 
-  it("rejects corrupt failure origins without replay and exercises browser no-op host services", () => {
+  it("rejects corrupt failure origins without replay", () => {
     const { engine, abi } = wasmFixture(),
       call = abi.call.bind(abi);
     const runtime = browserRuntime(engine);
-    runtime.emitAntithesisAssertion(
-      { class: "test", function: "test", file: "test.ts", beginLine: 1 },
-      true,
-    );
     vi.spyOn(abi, "call").mockImplementation((op, ...args) => {
       if (op !== "failure_origin") return call(op, ...args);
       const out = Number(args.at(-1));

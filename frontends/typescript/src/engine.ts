@@ -58,6 +58,61 @@ export const NativeVerbosity = {
   DEBUG: 3,
 } as const;
 
+/** `hegel_run_error_kind_t` — why a run ended in `RunStatus.ERROR`. */
+export const RunErrorKind = {
+  NONE: 0,
+  HEALTH_CHECK: 1,
+  FLAKY: 2,
+  NONDETERMINISTIC: 3,
+  UNSATISFIABLE: 4,
+  USAGE: 5,
+  INTERNAL: 6,
+} as const;
+
+/** `hegel_phase_t` bit flags. */
+export const NativePhase = {
+  EXPLICIT: 1 << 0,
+  REUSE: 1 << 1,
+  GENERATE: 1 << 2,
+  TARGET: 1 << 3,
+  SHRINK: 1 << 4,
+} as const;
+
+/** `hegel_health_check_t` bit flags. */
+export const NativeHealthCheck = {
+  FILTER_TOO_MUCH: 1 << 0,
+  TOO_SLOW: 1 << 1,
+  TEST_CASES_TOO_LARGE: 1 << 2,
+  LARGE_INITIAL_TEST_CASE: 1 << 3,
+} as const;
+
+/** `hegel_backend_t`. */
+export const NativeBackend = {
+  DEFAULT: 1,
+  URANDOM: 2,
+} as const;
+
+/** `hegel_nondeterminism_strictness_t`. */
+export const NativeNondeterminismStrictness = {
+  QUIET: 0,
+  WARN: 1,
+  ERROR: 2,
+} as const;
+
+/** The arguments of `hegel_settings_set_test_location`. */
+export interface NativeTestLocation {
+  file: string;
+  beginLine: number;
+  className: string;
+  function: string;
+}
+
+/** `hegel_run_result_error_kind`'s two outputs. */
+export interface NativeRunErrorKind {
+  kind: number;
+  healthCheck: number;
+}
+
 /** A `hegel_date_t`: a proleptic Gregorian calendar date. */
 export interface NativeDate {
   year: number;
@@ -157,15 +212,33 @@ export interface Engine {
    * malformed `hegel.toml` through `ctx`.
    */
   newSettings(ctx: ContextHandle): SettingsHandle;
+  /**
+   * Create a settings handle initialized from the named profile. Fallible: an
+   * unknown profile or a malformed `hegel.toml` is reported through `ctx`.
+   */
+  newSettingsForProfile(ctx: ContextHandle, name: string): SettingsHandle;
   freeSettings(s: SettingsHandle): void;
   setTestCases(s: SettingsHandle, n: number): void;
   setVerbosity(s: SettingsHandle, v: number): void;
-  setSeed(s: SettingsHandle, seed: bigint): void;
+  /** Fix the seed, or clear it (`null`) so the engine picks one per run. */
+  setSeed(s: SettingsHandle, seed: bigint | null): void;
   setDerandomize(s: SettingsHandle, on: boolean): void;
   setDatabase(ctx: ContextHandle, s: SettingsHandle, db: string | null): void;
   setDatabaseKey(ctx: ContextHandle, s: SettingsHandle, key: string): void;
   setSuppressHealthCheck(s: SettingsHandle, checks: number): void;
   setReportMultipleFailures(s: SettingsHandle, yes: boolean): void;
+  setStopOnFirstFailure(s: SettingsHandle, yes: boolean): void;
+  setShowStatistics(s: SettingsHandle, yes: boolean): void;
+  setUnboundedChoices(s: SettingsHandle, yes: boolean): void;
+  setPrintBlob(s: SettingsHandle, yes: boolean): void;
+  setPhases(s: SettingsHandle, phases: number): void;
+  setBackend(s: SettingsHandle, backend: number): void;
+  setNondeterminismStrictness(s: SettingsHandle, strictness: number): void;
+  setTestLocation(ctx: ContextHandle, s: SettingsHandle, location: NativeTestLocation): void;
+  /** Register a snapshot of `s` as the profile `name`, process-wide. */
+  registerProfile(ctx: ContextHandle, name: string, s: SettingsHandle): void;
+  /** Make `name` the default profile process-wide; `""` clears it. */
+  setDefaultProfile(ctx: ContextHandle, name: string): void;
   runStart(ctx: ContextHandle, settings: SettingsHandle): RunHandle;
   nextTestCase(ctx: ContextHandle, run: RunHandle): TestCaseHandle | null;
   runResult(ctx: ContextHandle, run: RunHandle): RunResultHandle;
@@ -287,10 +360,13 @@ export interface Engine {
   freeStateMachine(machine: StateMachineHandle): void;
   runStatus(r: RunResultHandle): number;
   runError(r: RunResultHandle): string | null;
+  runErrorKind(r: RunResultHandle): NativeRunErrorKind;
   failureCount(r: RunResultHandle): number;
   failure(r: RunResultHandle, index: number): FailureHandle;
   freeFailure(f: FailureHandle): void;
   failureOrigin(fp: FailureHandle): string;
   reproductionBlob(fp: FailureHandle): string | null;
+  /** The failure's confirmation caveat, or `null` for a deterministic failure. */
+  failureCaveat(fp: FailureHandle): string | null;
   freeStringGenerator(generator: StringGeneratorHandle): void;
 }

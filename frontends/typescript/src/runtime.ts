@@ -1,5 +1,5 @@
 import type { Engine } from "./engine.js";
-import type { Settings, TestLocation } from "./runnerCore.js";
+import type { Settings } from "./settings.js";
 
 export interface Diagnostics {
   reportFinalValue(value: unknown, drawNumber: number): void;
@@ -10,9 +10,13 @@ export interface Diagnostics {
 /** Only host services used by the shared run loop. */
 export interface RuntimeServices extends Diagnostics {
   getEngine(): Engine;
-  defaultSettings(): Settings;
+  /** Throw for settings the host cannot honour. */
   validateSettings(settings: Settings): void;
-  emitAntithesisAssertion(location: TestLocation, passed: boolean): void;
+  /**
+   * Whether the host can keep a database. Without one, every run's database
+   * is disabled, whatever the profile says.
+   */
+  persistence: boolean;
 }
 
 export const portableDiagnostics: Diagnostics = {

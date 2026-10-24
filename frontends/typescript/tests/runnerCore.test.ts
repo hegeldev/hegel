@@ -8,7 +8,8 @@ import {
 } from "../src/runnerCore.js";
 import { AssumeError, StopTestError } from "../src/testCase.js";
 import * as gs from "../src/generators/index.js";
-import { fakeEngine, fakeRuntime, context, testCase, replayCase } from "./fakeEngine.js";
+import { RunError } from "../src/errors.js";
+import { fakeEngine, fakeRuntime, context, settings, testCase, replayCase } from "./fakeEngine.js";
 
 describe("runnerCore engine fault classification and cleanup", () => {
   for (const async of [false, true]) {
@@ -265,11 +266,17 @@ describe("runnerCore run results and replay", () => {
     expect(engine.freeRunResult).toHaveBeenCalledTimes(1);
   });
 
-  it("passes locations to the runtime for Antithesis reporting", () => {
-    const runtime = fakeRuntime(fakeEngine());
+  it("passes an explicit test location to the engine and keys the database by it", () => {
+    const engine = fakeEngine();
     const location = { function: "property", file: "test.ts", class: "tests", beginLine: 1 };
-    new (createRunner(runtime).Hegel)(() => {}).testLocation(location).runSync();
-    expect(runtime.emitAntithesisAssertion).toHaveBeenCalledWith(location, true);
+    new (createRunner(fakeRuntime(engine)).Hegel)(() => {}).testLocation(location).runSync();
+    expect(engine.setTestLocation).toHaveBeenCalledWith(context, settings, {
+      file: "test.ts",
+      beginLine: 1,
+      className: "tests",
+      function: "property",
+    });
+    expect(engine.setDatabaseKey).toHaveBeenCalledWith(context, settings, "test.ts::property");
   });
 });
 
@@ -381,7 +388,7 @@ it("retains a run error through multiple failing outer destructors", () => {
   const flatten = (error: unknown): unknown[] =>
     error instanceof AggregateError ? error.errors.flatMap(flatten) : [error];
   const errors = flatten(error);
-  expect(errors[0]).toBeInstanceOf(EngineError);
+  expect(errors[0]).toBeInstanceOf(RunError);
   expect((errors[0] as Error).message).toBe("backend error");
   expect(errors.slice(1)).toEqual([resultFault, runFault, cacheFault, settingsFault, contextFault]);
   for (const free of [

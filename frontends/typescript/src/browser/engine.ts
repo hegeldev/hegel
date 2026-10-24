@@ -17,6 +17,8 @@ import {
   type NativeTime,
   type NativeDatetime,
   type NativeFloatOptions,
+  type NativeTestLocation,
+  type NativeRunErrorKind,
   type TextGeneratorOptions,
   type UuidVersion,
 } from "../engine.js";
@@ -123,6 +125,12 @@ export class WasmEngine implements Engine {
     const ptr = this.ptr(ctx);
     return this.handle(ptr, "settings_new", [ptr]);
   }
+  newSettingsForProfile(ctx: ContextHandle, name: string): SettingsHandle {
+    return WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      return this.handle(c, "settings_new_for_profile", [c, a.text(name)]);
+    });
+  }
   freeSettings(s: SettingsHandle): void {
     this.free("settings_free", s);
   }
@@ -132,8 +140,8 @@ export class WasmEngine implements Engine {
   setVerbosity(s: SettingsHandle, v: number): void {
     this.check(0, "settings_set_verbosity", [0, this.ptr(s), u32(v)]);
   }
-  setSeed(s: SettingsHandle, seed: bigint): void {
-    this.check(0, "settings_set_seed", [0, this.ptr(s), u64(seed), 1]);
+  setSeed(s: SettingsHandle, seed: bigint | null): void {
+    this.check(0, "settings_set_seed", [0, this.ptr(s), u64(seed ?? 0n), +(seed !== null)]);
   }
   setDerandomize(s: SettingsHandle, on: boolean): void {
     this.check(0, "settings_set_derandomize", [0, this.ptr(s), +on]);
@@ -157,6 +165,52 @@ export class WasmEngine implements Engine {
   }
   setReportMultipleFailures(s: SettingsHandle, yes: boolean): void {
     this.check(0, "settings_set_report_multiple_failures", [0, this.ptr(s), +yes]);
+  }
+  setStopOnFirstFailure(s: SettingsHandle, yes: boolean): void {
+    this.check(0, "settings_set_stop_on_first_failure", [0, this.ptr(s), +yes]);
+  }
+  setShowStatistics(s: SettingsHandle, yes: boolean): void {
+    this.check(0, "settings_set_show_statistics", [0, this.ptr(s), +yes]);
+  }
+  setUnboundedChoices(s: SettingsHandle, yes: boolean): void {
+    this.check(0, "settings_set_unbounded_choices", [0, this.ptr(s), +yes]);
+  }
+  setPrintBlob(s: SettingsHandle, yes: boolean): void {
+    this.check(0, "settings_set_print_blob", [0, this.ptr(s), +yes]);
+  }
+  setPhases(s: SettingsHandle, phases: number): void {
+    this.check(0, "settings_set_phases", [0, this.ptr(s), u32(phases)]);
+  }
+  setBackend(s: SettingsHandle, backend: number): void {
+    this.check(0, "settings_set_backend", [0, this.ptr(s), u32(backend)]);
+  }
+  setNondeterminismStrictness(s: SettingsHandle, strictness: number): void {
+    this.check(0, "settings_set_nondeterminism_strictness", [0, this.ptr(s), u32(strictness)]);
+  }
+  setTestLocation(ctx: ContextHandle, s: SettingsHandle, location: NativeTestLocation): void {
+    WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      this.check(c, "settings_set_test_location", [
+        c,
+        this.ptr(s),
+        a.text(location.file),
+        u32(location.beginLine),
+        a.text(location.className),
+        a.text(location.function),
+      ]);
+    });
+  }
+  registerProfile(ctx: ContextHandle, name: string, s: SettingsHandle): void {
+    WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      this.check(c, "settings_register_profile", [c, a.text(name), this.ptr(s)]);
+    });
+  }
+  setDefaultProfile(ctx: ContextHandle, name: string): void {
+    WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      this.check(c, "set_default_profile", [c, a.text(name)]);
+    });
   }
   runStart(ctx: ContextHandle, settings: SettingsHandle): RunHandle {
     const c = this.ptr(ctx);
@@ -660,6 +714,14 @@ export class WasmEngine implements Engine {
   runError(r: RunResultHandle): string | null {
     return this.optionalString("run_result_error", [0, this.ptr(r)]);
   }
+  runErrorKind(r: RunResultHandle): NativeRunErrorKind {
+    return WasmArena.scoped(this.abi, (a) => {
+      const kind = a.alloc(4, 4),
+        healthCheck = a.alloc(4, 4);
+      this.check(0, "run_result_error_kind", [0, this.ptr(r), kind, healthCheck]);
+      return { kind: a.pointer(kind), healthCheck: a.pointer(healthCheck) };
+    });
+  }
   failureCount(r: RunResultHandle): number {
     return this.output(0, "run_result_failure_count", [0, this.ptr(r)], 4, 4, (a, p) =>
       a.pointer(p),
@@ -676,6 +738,9 @@ export class WasmEngine implements Engine {
   }
   reproductionBlob(fp: FailureHandle): string | null {
     return this.optionalString("failure_reproduction_blob", [0, this.ptr(fp)]);
+  }
+  failureCaveat(fp: FailureHandle): string | null {
+    return this.optionalString("failure_caveat", [0, this.ptr(fp)]);
   }
 }
 

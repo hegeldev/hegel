@@ -198,6 +198,31 @@
  *   ));
  * ```
  *
+ * Settings you leave out keep the values the engine resolves from the
+ * settings profile: `development` locally, `ci` on a CI server (derandomized,
+ * with the database off) and `workload` inside Antithesis, with `hegel.toml`
+ * and the `HEGEL_*` environment variables applied over it. Register your own
+ * profiles with {@link registerProfile} and select one with the `profile`
+ * setting or {@link setDefaultProfile}:
+ *
+ * ```ts
+ * hegel.registerProfile("nightly", { testCases: 10_000 });
+ * hegel.setDefaultProfile(process.env.NIGHTLY ? "nightly" : null);
+ * ```
+ *
+ * {@link Hegel} configures a test with builder methods instead, including the
+ * key its failures are saved under (by default its file and name) and its
+ * location for Antithesis (by default where it was defined).
+ *
+ * ## Understand what a run throws
+ *
+ * A failing test throws its own error, from replaying the smallest failing
+ * example, so assertion libraries show their usual diff; with
+ * `reportMultipleFailures`, several distinct failures are thrown together as
+ * an `AggregateError`. A run the engine aborts throws a {@link RunError}: a
+ * {@link FailedHealthCheckError}, {@link FlakyError} or
+ * {@link UnsatisfiableError}, or a plain `RunError` for anything else.
+ *
  * ## Test stateful systems
  *
  * Some bugs only show up after a particular *sequence* of operations. For
@@ -243,17 +268,32 @@
 export * as generators from "./generators/index.js";
 export * as stateful from "./stateful.js";
 export { TestCase } from "./testCase.js";
-export { Verbosity, HealthCheck, Database } from "./runnerCore.js";
-export type { Settings } from "./runnerCore.js";
+export {
+  Verbosity,
+  HealthCheck,
+  Phase,
+  Backend,
+  NondeterminismStrictness,
+  Database,
+} from "./settings.js";
+export type { Settings, TestLocation } from "./settings.js";
+export { RunError, FailedHealthCheckError, FlakyError, UnsatisfiableError } from "./errors.js";
+export { Hegel } from "./runnerCore.js";
 
-import { test as nodeTest, testAsync as nodeTestAsync } from "./runner.js";
+import {
+  test as nodeTest,
+  testAsync as nodeTestAsync,
+  registerProfile as nodeRegisterProfile,
+  setDefaultProfile as nodeSetDefaultProfile,
+} from "./runner.js";
 import type { TestCase } from "./testCase.js";
-import type { Settings } from "./runnerCore.js";
+import type { Settings } from "./settings.js";
 
 // Explicit public types keep the shared declaration graph independent of Node services.
-export const test: (testFn: (tc: TestCase) => void, settings?: Partial<Settings>) => void =
-  nodeTest;
+export const test: (testFn: (tc: TestCase) => void, settings?: Settings) => void = nodeTest;
 export const testAsync: (
   testFn: (tc: TestCase) => void | Promise<void>,
-  settings?: Partial<Settings>,
+  settings?: Settings,
 ) => Promise<void> = nodeTestAsync;
+export const registerProfile: (name: string, settings?: Settings) => void = nodeRegisterProfile;
+export const setDefaultProfile: (name: string | null) => void = nodeSetDefaultProfile;

@@ -17,63 +17,27 @@ import {
   EngineError,
   Status,
   RunStatus,
-  NativeVerbosity,
   type Engine,
   type ContextHandle,
   type TestCaseHandle,
-  type SettingsHandle,
   type CollectionHandle,
   type PoolHandle,
   type StateMachineHandle,
 } from "./engine.js";
 import { portableDiagnostics, type Diagnostics, type RuntimeServices } from "./runtime.js";
+import { applySettings, resolveSettings, type Settings, type TestLocation } from "./settings.js";
+import { runError } from "./errors.js";
+import { callSite, databaseKeyOf, locationOf, type CallSite } from "./callSite.js";
 
-export enum Verbosity {
-  Quiet = "quiet",
-  Normal = "normal",
-  Verbose = "verbose",
-  Debug = "debug",
-}
-
-export enum HealthCheck {
-  FilterTooMuch = "filter_too_much",
-  TooSlow = "too_slow",
-  TestCasesTooLarge = "test_cases_too_large",
-  LargeInitialTestCase = "large_initial_test_case",
-}
-
-const VERBOSITY_TO_NATIVE: Record<Verbosity, number> = {
-  [Verbosity.Quiet]: NativeVerbosity.QUIET,
-  [Verbosity.Normal]: NativeVerbosity.NORMAL,
-  [Verbosity.Verbose]: NativeVerbosity.VERBOSE,
-  [Verbosity.Debug]: NativeVerbosity.DEBUG,
-};
-
-// `hegel_health_check_t` bit flags.
-const HEALTH_CHECK_TO_BIT: Record<HealthCheck, number> = {
-  [HealthCheck.FilterTooMuch]: 1 << 0,
-  [HealthCheck.TooSlow]: 1 << 1,
-  [HealthCheck.TestCasesTooLarge]: 1 << 2,
-  [HealthCheck.LargeInitialTestCase]: 1 << 3,
-};
-
-export type Database = { kind: "unset" } | { kind: "disabled" } | { kind: "path"; path: string };
-
-export const Database = {
-  unset: { kind: "unset" } as Database,
-  disabled: { kind: "disabled" } as Database,
-  fromPath: (path: string): Database => ({ kind: "path", path }),
-};
-
-export interface Settings {
-  testCases: number;
-  seed: number | null;
-  verbosity: Verbosity;
-  derandomize: boolean;
-  database: Database;
-  suppressHealthCheck: HealthCheck[];
-  reportMultipleFailures: boolean;
-}
+export {
+  Verbosity,
+  HealthCheck,
+  Phase,
+  Backend,
+  NondeterminismStrictness,
+  Database,
+} from "./settings.js";
+export type { Settings, TestLocation } from "./settings.js";
 
 // ---------------------------------------------------------------------------
 // EngineDataSource
@@ -258,7 +222,7 @@ export type TestCaseResult =
   | { status: "valid" }
   | { status: "invalid" }
   | { status: "overrun" }
-  | { status: "interesting"; error: unknown };
+  | { status: "interesting"; error: unknown; origin: string };
 
 const RESULT_TO_STATUS: Record<TestCaseResult["status"], number> = {
   valid: Status.VALID,
@@ -297,7 +261,8 @@ function classifyResult(
 
   if (e instanceof EngineError) throw e;
   if (isFinal) diagnostics.reportFinalError(e);
-  return { result: { status: "interesting", error: e }, origin: extractOrigin(e) };
+  const origin = extractOrigin(e);
+  return { result: { status: "interesting", error: e, origin }, origin };
 }
 
 function finalizeTestCase(
@@ -390,50 +355,6 @@ export function runTestCase(
   return result;
 }
 
-export interface TestLocation {
-  function: string;
-  file: string;
-  class: string;
-  beginLine: number;
-}
-
-function databaseKey(testFn: (tc: TestCase) => unknown): string {
-  return testFn.toString();
-}
-
-function configureSettings(
-  lib: Engine,
-  ctx: ContextHandle,
-  settings: SettingsHandle,
-  s: Settings,
-  testFn: (tc: TestCase) => unknown,
-): void {
-  lib.setTestCases(settings, s.testCases);
-  lib.setVerbosity(settings, VERBOSITY_TO_NATIVE[s.verbosity]);
-  lib.setDerandomize(settings, s.derandomize);
-  lib.setReportMultipleFailures(settings, s.reportMultipleFailures);
-  if (s.seed !== null) {
-    lib.setSeed(settings, BigInt(s.seed));
-  }
-
-  if (s.database.kind === "disabled") {
-    lib.setDatabase(ctx, settings, "");
-  } else if (s.database.kind === "path") {
-    lib.setDatabase(ctx, settings, s.database.path);
-    lib.setDatabaseKey(ctx, settings, databaseKey(testFn));
-  } else {
-    lib.setDatabaseKey(ctx, settings, databaseKey(testFn));
-  }
-
-  if (s.suppressHealthCheck.length > 0) {
-    let mask = 0;
-    for (const hc of s.suppressHealthCheck) {
-      mask |= HEALTH_CHECK_TO_BIT[hc];
-    }
-    lib.setSuppressHealthCheck(settings, mask);
-  }
-}
-
 /** Preserve the pending failure while attempting every destructor in ownership order. */
 function finishCleanup(errors: unknown[], ...operations: (() => void)[]): void {
   for (const operation of operations) {
@@ -447,29 +368,98 @@ function finishCleanup(errors: unknown[], ...operations: (() => void)[]): void {
   if (errors.length > 1) throw new AggregateError(errors, "Hegel run cleanup failed");
 }
 
-export class Hegel {
-  private testFn: (tc: TestCase) => void | Promise<void>;
-  private _settings: Settings;
-  private _testLocation: TestLocation | null = null;
+/**
+ * Throw the errors of a failed run: the test's own error when there is one,
+ * else an `AggregateError` of every distinct failure.
+ */
+function throwFailures(errors: unknown[]): never {
+  if (errors.length === 1) throw errors[0];
+  throw new AggregateError(errors, `Hegel found ${errors.length} distinct failures`);
+}
 
+let installedRuntime: RuntimeServices | null = null;
+
+/**
+ * Set the runtime a {@link Hegel} built without one runs on: what the Node and
+ * browser entry points do when loaded.
+ *
+ * @internal
+ */
+export function installRuntime(runtime: RuntimeServices): void {
+  installedRuntime = runtime;
+}
+
+/**
+ * A property-based test, configured with builder methods and then run with
+ * {@link Hegel.run | run} (for an asynchronous test body) or
+ * {@link Hegel.runSync | runSync}. `hegel.test` and `hegel.testAsync` are
+ * shorthands for a test that needs no more than settings.
+ *
+ * @example
+ * ```ts
+ * new hegel.Hegel((tc) => {
+ *   tc.draw(gs.integers());
+ * })
+ *   .settings({ testCases: 500 })
+ *   .databaseKey("integers")
+ *   .runSync();
+ * ```
+ */
+export class Hegel {
+  private readonly testFn: (tc: TestCase) => void | Promise<void>;
+  private readonly runtime: RuntimeServices;
+  private readonly site: CallSite | null;
+  private _settings: Settings = {};
+  private _testLocation: TestLocation | null = null;
+  private _databaseKey: string | null = null;
+
+  constructor(testFn: (tc: TestCase) => void | Promise<void>);
+  /** @internal */
   constructor(
     testFn: (tc: TestCase) => void | Promise<void>,
-    private readonly runtime: RuntimeServices,
+    runtime: RuntimeServices,
+    site: CallSite | null,
+  );
+  constructor(
+    testFn: (tc: TestCase) => void | Promise<void>,
+    runtime?: RuntimeServices,
+    site?: CallSite | null,
   ) {
+    const resolved = runtime ?? installedRuntime;
+    if (resolved === null) throw new Error("Hegel has no runtime: import @hegeldev/hegel first");
     this.testFn = testFn;
-    this._settings = runtime.defaultSettings();
+    this.runtime = resolved;
+    this.site = site === undefined ? callSite(new.target) : site;
   }
 
-  /** Override default settings. Returns this for chaining. */
-  settings(s: Partial<Settings>): this {
+  /** Set settings over the engine's resolved ones. Returns this for chaining. */
+  settings(s: Settings): this {
     Object.assign(this._settings, s);
     return this;
   }
 
-  /** Set the test location for Antithesis integration. */
+  /**
+   * Set where the test is defined, in place of the location derived from the
+   * call site. Inside Antithesis, the engine reports the run's verdict as an
+   * `always` assertion at this location.
+   */
   testLocation(location: TestLocation): this {
     this._testLocation = location;
     return this;
+  }
+
+  /**
+   * Set the key the test's failures are stored under in the database, in
+   * place of the one derived from its location (its file plus its name).
+   */
+  databaseKey(key: string): this {
+    this._databaseKey = key;
+    return this;
+  }
+
+  private location(): TestLocation | null {
+    if (this._testLocation !== null) return this._testLocation;
+    return this.site === null ? null : locationOf(this.site, this.testFn);
   }
 
   /**
@@ -483,8 +473,8 @@ export class Hegel {
    * The engine only *explores* (generate / shrink), so every pumped case is
    * non-final. The client owns the final replays: once the loop drains and the
    * run has failed, each discovered counterexample's reproduce blob is replayed
-   * (via `hegel_test_case_from_blob`) as a final case to surface the test's own
-   * error for the thrown message.
+   * (via `hegel_test_case_from_blob`) as a final case, so that the test's own
+   * error is what the run throws.
    */
   private *runSteps(): Generator<{ ds: EngineDataSource; isFinal: boolean }, void, TestCaseResult> {
     this.runtime.validateSettings(this._settings);
@@ -492,20 +482,36 @@ export class Hegel {
     const ctx = lib.newContext();
     const contextErrors: unknown[] = [];
     try {
-      const settings = lib.newSettings(ctx);
+      const settings = resolveSettings(lib, ctx, this._settings);
       const cache = new StringGeneratorCache(lib);
       const settingsErrors: unknown[] = [];
       try {
-        configureSettings(lib, ctx, settings, this._settings, this.testFn);
+        applySettings(lib, ctx, settings, this._settings);
+        if (!this.runtime.persistence) lib.setDatabase(ctx, settings, "");
+        const location = this.location();
+        if (location !== null) {
+          lib.setTestLocation(ctx, settings, {
+            file: location.file,
+            beginLine: location.beginLine,
+            className: location.class,
+            function: location.function,
+          });
+        }
+        const key =
+          this._databaseKey ??
+          (location !== null ? databaseKeyOf(location) : this.testFn.name || null);
+        if (key !== null) lib.setDatabaseKey(ctx, settings, key);
         const run = lib.runStart(ctx, settings);
         const runErrors: unknown[] = [];
+        const explored = new Map<string, unknown>();
         try {
           for (;;) {
             const tc = lib.nextTestCase(ctx, run);
             if (tc === null) break;
             const ds = new EngineDataSource(lib, ctx, tc, cache, this.runtime, false);
             try {
-              yield { ds, isFinal: false };
+              const outcome = yield { ds, isFinal: false };
+              if (outcome.status === "interesting") explored.set(outcome.origin, outcome.error);
             } finally {
               finishCleanup(
                 [],
@@ -519,53 +525,59 @@ export class Hegel {
           const resultErrors: unknown[] = [];
           try {
             const status = lib.runStatus(result);
-
-            if (this._testLocation) {
-              this.runtime.emitAntithesisAssertion(this._testLocation, status === RunStatus.PASSED);
-            }
-
             if (status === RunStatus.PASSED) {
               return;
             }
             if (status === RunStatus.ERROR) {
-              throw new EngineError(String(lib.runError(result)));
+              throw runError(lib.runError(result), lib.runErrorKind(result));
             }
             if (status !== RunStatus.FAILED) {
               throw new EngineError(`Unknown Hegel run status: ${status}`);
             }
             // RunStatus.FAILED: replay each distinct counterexample's blob as a
             // final, client-owned case. A genuine counterexample re-fails on replay,
-            // so the body throws its own error again — captured here for the message.
+            // so the body throws its own error again, which is what the run throws.
             const count = lib.failureCount(result);
-            const origins: string[] = [];
-            let finalError: unknown = null;
+            const errors: unknown[] = [];
             for (let i = 0; i < count; i++) {
               const failure = lib.failure(result, i);
               let blob: string | null = null;
+              let origin = "";
+              let caveat: string | null = null;
               const failureErrors: unknown[] = [];
               try {
-                origins.push(lib.failureOrigin(failure));
+                origin = lib.failureOrigin(failure);
                 blob = lib.reproductionBlob(failure);
+                caveat = lib.failureCaveat(failure);
               } catch (error) {
                 failureErrors.push(error);
               } finally {
                 finishCleanup(failureErrors, () => lib.freeFailure(failure));
               }
-              if (blob === null)
+              if (caveat !== null) this.runtime.note(caveat);
+              if (blob === null) {
+                if (caveat !== null && explored.has(origin)) {
+                  errors.push(explored.get(origin));
+                  continue;
+                }
                 throw new EngineError(
                   "Hegel failure has no reproduction blob; deterministic replay is unavailable",
                 );
+              }
               const replayTc = lib.testCaseFromBlob(ctx, settings, blob);
               const ds = new EngineDataSource(lib, ctx, replayTc, cache, this.runtime, false);
               const replayErrors: unknown[] = [];
               try {
                 const replay = yield { ds, isFinal: true };
-                if (replay.status !== "interesting") {
+                if (replay.status === "interesting") {
+                  errors.push(replay.error);
+                } else if (caveat !== null && explored.has(origin)) {
+                  errors.push(explored.get(origin));
+                } else {
                   throw new Error(
                     `Hegel failure did not reproduce during final replay (status: ${replay.status})`,
                   );
                 }
-                finalError = replay.error;
               } catch (error) {
                 replayErrors.push(error);
               } finally {
@@ -576,8 +588,7 @@ export class Hegel {
                 );
               }
             }
-            const detail = finalError instanceof Error ? finalError.message : String(finalError);
-            throw new Error(`${detail} [${origins.join("; ")}]`);
+            throwFailures(errors);
           } catch (error) {
             resultErrors.push(error);
           } finally {
@@ -604,6 +615,7 @@ export class Hegel {
     }
   }
 
+  /** Run the test, awaiting an asynchronous test body. */
   async run(): Promise<void> {
     const gen = this.runSteps();
     const errors: unknown[] = [];
@@ -623,6 +635,7 @@ export class Hegel {
     }
   }
 
+  /** Run the test synchronously. The test body must not be asynchronous. */
   runSync(): void {
     const gen = this.runSteps();
     const errors: unknown[] = [];
@@ -645,20 +658,36 @@ export class Hegel {
 
 /** Compose the same synchronous and asynchronous drivers with a runtime. */
 export interface Runner {
-  test(testFn: (tc: TestCase) => void, settings?: Partial<Settings>): void;
-  testAsync(
-    testFn: (tc: TestCase) => void | Promise<void>,
-    settings?: Partial<Settings>,
-  ): Promise<void>;
+  test(testFn: (tc: TestCase) => void, settings?: Settings): void;
+  testAsync(testFn: (tc: TestCase) => void | Promise<void>, settings?: Settings): Promise<void>;
+  registerProfile(name: string, settings?: Settings): void;
+  setDefaultProfile(name: string | null): void;
   Hegel: new (testFn: (tc: TestCase) => void | Promise<void>) => Hegel;
 }
 
 export function createRunner(runtime: RuntimeServices): Runner {
   class RuntimeHegel extends Hegel {
-    constructor(testFn: (tc: TestCase) => void | Promise<void>) {
-      super(testFn, runtime);
+    constructor(
+      testFn: (tc: TestCase) => void | Promise<void>,
+      site: CallSite | null = callSite(new.target),
+    ) {
+      super(testFn, runtime, site);
     }
   }
+
+  function withContext(body: (lib: Engine, ctx: ContextHandle) => void): void {
+    const lib = runtime.getEngine();
+    const ctx = lib.newContext();
+    const errors: unknown[] = [];
+    try {
+      body(lib, ctx);
+    } catch (error) {
+      errors.push(error);
+    } finally {
+      finishCleanup(errors, () => lib.freeContext(ctx));
+    }
+  }
+
   /**
    * Run a property-based test.
    *
@@ -679,11 +708,11 @@ export function createRunner(runtime: RuntimeServices): Runner {
    * );
    * ```
    */
-  function test(testFn: (tc: TestCase) => void, settings?: Partial<Settings>): void {
+  function test(testFn: (tc: TestCase) => void, settings?: Settings): void {
     if (testFn.constructor.name === "AsyncFunction") {
       throw new TypeError("hegel.test received an async test body. Use hegel.testAsync instead.");
     }
-    const h = new RuntimeHegel(testFn);
+    const h = new RuntimeHegel(testFn, callSite(test));
     if (settings) h.settings(settings);
     h.runSync();
   }
@@ -711,12 +740,44 @@ export function createRunner(runtime: RuntimeServices): Runner {
    */
   async function testAsync(
     testFn: (tc: TestCase) => void | Promise<void>,
-    settings?: Partial<Settings>,
+    settings?: Settings,
   ): Promise<void> {
-    const h = new RuntimeHegel(testFn);
+    const h = new RuntimeHegel(testFn, callSite(testAsync));
     if (settings) h.settings(settings);
     await h.run();
   }
 
-  return { test, testAsync, Hegel: RuntimeHegel };
+  /**
+   * Register `settings` as the profile `name`, process-wide, replacing any
+   * earlier registration. The profile snapshots the settings the engine
+   * resolves for `settings` (its `profile`, else the default one) with the
+   * given fields set over them. Select it with the `profile` setting, or make
+   * it the default with {@link setDefaultProfile}; a `hegel.toml` section for
+   * `name` still applies over it.
+   */
+  function registerProfile(name: string, settings: Settings = {}): void {
+    withContext((lib, ctx) => {
+      const handle = resolveSettings(lib, ctx, settings);
+      const errors: unknown[] = [];
+      try {
+        applySettings(lib, ctx, handle, settings);
+        lib.registerProfile(ctx, name, handle);
+      } catch (error) {
+        errors.push(error);
+      } finally {
+        finishCleanup(errors, () => lib.freeSettings(handle));
+      }
+    });
+  }
+
+  /**
+   * Make `name` the default profile for the whole process, over
+   * `HEGEL_DEFAULT_PROFILE`, `hegel.toml` and environment detection; `null`
+   * clears an earlier call.
+   */
+  function setDefaultProfile(name: string | null): void {
+    withContext((lib, ctx) => lib.setDefaultProfile(ctx, name ?? ""));
+  }
+
+  return { test, testAsync, registerProfile, setDefaultProfile, Hegel: RuntimeHegel };
 }

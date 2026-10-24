@@ -78,6 +78,20 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     settingsDatabaseKey: noop,
     settingsSuppressHealthCheck: noop,
     settingsReportMultipleFailures: noop,
+    settingsNewForProfile: (_ctx, _name, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    settingsStopOnFirstFailure: noop,
+    settingsShowStatistics: noop,
+    settingsUnboundedChoices: noop,
+    settingsPrintBlob: noop,
+    settingsPhases: noop,
+    settingsBackend: noop,
+    settingsNondeterminismStrictness: noop,
+    settingsTestLocation: noop,
+    settingsRegisterProfile: noop,
+    setDefaultProfile: noop,
     runStart: (_ctx, _settings, out) => {
       out[0] = {} as Ptr;
       return 0;
@@ -142,11 +156,13 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     stateMachineFree: noop,
     runResultStatus: () => RunStatus.PASSED,
     runResultError: () => null,
+    runResultErrorKind: () => ({ kind: 0, healthCheck: 0 }),
     runResultFailureCount: () => 0,
     runResultFailure: () => ({}),
     failureFree: noop,
     failureOrigin: () => "",
     failureReproductionBlob: () => null,
+    failureCaveat: () => null,
     version: () => "0.0.0",
     ...overrides,
   };

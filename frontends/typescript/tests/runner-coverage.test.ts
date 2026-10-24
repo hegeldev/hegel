@@ -10,104 +10,10 @@
 import { describe, test, expect } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
-import { defaultSettings, NativeDataSource } from "../src/runner.js";
+import { NativeDataSource } from "../src/runner.js";
 import { Libhegel, Status, NativeVerbosity } from "../src/libhegel.js";
 import { Labels } from "../src/testCase.js";
 import { testLibPath } from "./libPath.js";
-
-describe("defaultSettings CI detection", () => {
-  test("defaultSettings returns database='disabled' when CI env var is set", () => {
-    const original = process.env["CI"];
-    try {
-      process.env["CI"] = "true";
-      const settings = defaultSettings();
-      expect(settings.database).toEqual(hegel.Database.disabled);
-      expect(settings.derandomize).toBe(true);
-    } finally {
-      if (original === undefined) {
-        delete process.env["CI"];
-      } else {
-        process.env["CI"] = original;
-      }
-    }
-  });
-
-  test("defaultSettings detects CI via value-matched env vars (e.g. GITHUB_ACTIONS=true)", () => {
-    // This test covers the `value !== null` branch in isInCI() (runner.ts line 64)
-    // where CI vars with specific expected values are checked.
-    const savedVars: Record<string, string | undefined> = {};
-    // Save and clear ALL CI detection vars so only our target triggers
-    const nullVars = [
-      "CI",
-      "BITBUCKET_COMMIT",
-      "CODEBUILD_BUILD_ID",
-      "GITLAB_CI",
-      "HEROKU_TEST_RUN_ID",
-      "TEAMCITY_VERSION",
-      "bamboo.buildKey",
-    ];
-    const valueVars = ["BUILDKITE", "CIRCLECI", "CIRRUS_CI", "GITHUB_ACTIONS", "TF_BUILD"];
-    const allVars = [...nullVars, ...valueVars];
-    for (const key of allVars) {
-      savedVars[key] = process.env[key];
-      delete process.env[key];
-    }
-    try {
-      // Set GITHUB_ACTIONS which expects value "true"
-      process.env["GITHUB_ACTIONS"] = "true";
-      const settings = defaultSettings();
-      expect(settings.database).toEqual(hegel.Database.disabled);
-      expect(settings.derandomize).toBe(true);
-    } finally {
-      for (const key of allVars) {
-        if (savedVars[key] === undefined) {
-          delete process.env[key];
-        } else {
-          process.env[key] = savedVars[key];
-        }
-      }
-    }
-  });
-
-  test("defaultSettings returns non-CI defaults when no CI env vars are set", () => {
-    // This test covers the branch where isInCI() returns false,
-    // ensuring the `.some()` callback returns false for value-matched vars
-    // when the value doesn't match.
-    const savedVars: Record<string, string | undefined> = {};
-    const allVars = [
-      "CI",
-      "BITBUCKET_COMMIT",
-      "CODEBUILD_BUILD_ID",
-      "GITLAB_CI",
-      "HEROKU_TEST_RUN_ID",
-      "TEAMCITY_VERSION",
-      "bamboo.buildKey",
-      "BUILDKITE",
-      "CIRCLECI",
-      "CIRRUS_CI",
-      "GITHUB_ACTIONS",
-      "TF_BUILD",
-    ];
-    for (const key of allVars) {
-      savedVars[key] = process.env[key];
-      delete process.env[key];
-    }
-    try {
-      const settings = defaultSettings();
-      expect(settings.database).toEqual(hegel.Database.unset);
-      expect(settings.derandomize).toBe(false);
-      expect(settings.reportMultipleFailures).toBe(false);
-    } finally {
-      for (const key of allVars) {
-        if (savedVars[key] === undefined) {
-          delete process.env[key];
-        } else {
-          process.env[key] = savedVars[key];
-        }
-      }
-    }
-  });
-});
 
 describe("settings branches", () => {
   test("database: 'disabled' sets database to null", () =>
@@ -118,12 +24,12 @@ describe("settings branches", () => {
       { testCases: 5, database: hegel.Database.disabled },
     ));
 
-  test("database: 'unset' omits database from run_test message", () =>
+  test("database: 'default' resets the database to the engine's default location", () =>
     hegel.test(
       (tc) => {
         tc.draw(gs.booleans());
       },
-      { testCases: 5, database: hegel.Database.unset },
+      { testCases: 5, database: hegel.Database.default },
     ));
 
   test("database: custom path sets database to string", () =>

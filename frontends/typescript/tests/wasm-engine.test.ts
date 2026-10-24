@@ -1,6 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
 import { wasmFixture } from "./wasmFixture.js";
-import { createRunner, Database, HealthCheck } from "../src/runnerCore.js";
+import {
+  createRunner,
+  Database,
+  HealthCheck,
+  Verbosity,
+  Phase,
+  Backend,
+  NondeterminismStrictness,
+} from "../src/runnerCore.js";
+import { FailedHealthCheckError } from "../src/errors.js";
 import { browserRuntime } from "../src/browser/runtime.js";
 import { WasmArena } from "../src/browser/arena.js";
 import {
@@ -299,7 +308,7 @@ describe("WasmEngine pinned raw ABI", () => {
       {
         testCases: 15,
         seed: 42,
-        database: Database.unset,
+        database: Database.default,
         suppressHealthCheck: [HealthCheck.TooSlow],
       },
     );
@@ -381,7 +390,7 @@ describe("WasmEngine real run lifecycle", () => {
   });
 
   it.each([false, true])(
-    "reports a real flaky run as a blobless failure without frontend replay, async=%s",
+    "reports a real flaky run's own error and caveat without frontend replay, async=%s",
     async (async) => {
       const { engine } = wasmFixture();
       const status = vi.spyOn(engine, "runStatus");
@@ -389,21 +398,27 @@ describe("WasmEngine real run lifecycle", () => {
       const failure = vi.spyOn(engine, "failure");
       const replay = vi.spyOn(engine, "testCaseFromBlob");
       const free = vi.spyOn(engine, "freeContext");
-      const runner = createRunner(browserRuntime(engine));
+      const runtime = browserRuntime(engine);
+      runtime.note = vi.fn();
+      const runner = createRunner(runtime);
+      const flaky = new Error("flaky failure");
       let seen = false;
       const body = (tc: import("../src/testCase.js").TestCase) => {
         const n = tc.draw(gs.integers({ minValue: 0, maxValue: 100 }));
         if (n > 0 && !seen) {
           seen = true;
-          throw new Error("flaky failure");
+          throw flaky;
         }
       };
-      // A flaky run is now reported as a plain FAILED whose nondeterministic
-      // handling could not confirm it: the failure carries no reproduction blob,
-      // so there is no frontend replay and the runner reports the missing blob.
-      const message = /no reproduction blob/;
-      if (async) await expect(runner.testAsync(body, { seed: 42 })).rejects.toThrow(message);
-      else expect(() => runner.test(body, { seed: 42 })).toThrow(message);
+      let thrown: unknown;
+      try {
+        if (async) await runner.testAsync(body, { seed: 42 });
+        else runner.test(body, { seed: 42 });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBe(flaky);
+      expect(runtime.note).toHaveBeenCalledTimes(1);
       expect(seen).toBe(true);
       expect(status).toHaveReturnedWith(RunStatus.FAILED);
       expect(failureCount).toHaveBeenCalledTimes(1);
@@ -419,7 +434,8 @@ describe("WasmEngine real run lifecycle", () => {
     runtime.reportFinalError = vi.fn();
     runtime.reportFinalValue = vi.fn();
     const replay = vi.spyOn(engine, "testCaseFromBlob");
-    expect(() =>
+    let thrown: unknown;
+    try {
       createRunner(runtime).test(
         (tc) => {
           const n = tc.draw(gs.integers({ minValue: 0, maxValue: 10 }));
@@ -427,8 +443,16 @@ describe("WasmEngine real run lifecycle", () => {
           if (n > 7) throw new Error("high");
         },
         { seed: 42, reportMultipleFailures: true },
-      ),
-    ).toThrow(/low|high/);
+      );
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect((thrown as AggregateError).message).toBe("Hegel found 2 distinct failures");
+    expect((thrown as AggregateError).errors.map((e: Error) => e.message).sort()).toEqual([
+      "high",
+      "low",
+    ]);
     expect(replay).toHaveBeenCalledTimes(2);
   });
 
@@ -596,5 +620,73 @@ describe("WasmEngine error and ownership boundaries", () => {
       }),
     ).toThrow("body");
     expect(free).toHaveBeenCalledExactlyOnceWith(pointer, 16, 8);
+  });
+});
+
+describe("WasmEngine settings, profiles and run errors", () => {
+  it("applies every setting, resolves profiles and classifies run errors like Node", () => {
+    const { engine } = wasmFixture();
+    const runner = createRunner(browserRuntime(engine));
+    let count = 0;
+    const body = (tc: import("../src/testCase.js").TestCase) => {
+      tc.draw(gs.integers());
+      count++;
+    };
+    runner.test(body, {
+      testCases: 3,
+      seed: 2n ** 64n - 1n,
+      derandomize: true,
+      verbosity: Verbosity.Quiet,
+      suppressHealthCheck: [],
+      reportMultipleFailures: true,
+      stopOnFirstFailure: false,
+      phases: [Phase.Generate, Phase.Shrink],
+      printBlob: false,
+      showStatistics: false,
+      unboundedChoices: true,
+      nondeterminismStrictness: NondeterminismStrictness.Warn,
+      backend: Backend.Default,
+    });
+    expect(count).toBe(3);
+    runner.registerProfile("wasm-tiny", { testCases: 2, seed: null });
+    count = 0;
+    runner.test(body, { profile: "wasm-tiny" });
+    expect(count).toBe(2);
+    runner.setDefaultProfile("wasm-tiny");
+    count = 0;
+    try {
+      runner.test(body);
+    } finally {
+      runner.setDefaultProfile(null);
+    }
+    expect(count).toBe(2);
+    expect(() => runner.test(body, { profile: "no-such-wasm-profile" })).toThrow(
+      /no-such-wasm-profile/,
+    );
+    expect(() => runner.registerProfile("base")).toThrow(/base/);
+    expect(() => runner.setDefaultProfile("default")).toThrow(/default/);
+    let error: unknown;
+    try {
+      runner.test((tc) => tc.assume(tc.draw(gs.integers({ minValue: 0, maxValue: 1000 })) === 5));
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(FailedHealthCheckError);
+    expect((error as FailedHealthCheckError).healthCheck).toBe(HealthCheck.FilterTooMuch);
+  });
+
+  it("passes the test location and reads failure caveats", () => {
+    const { engine } = wasmFixture();
+    const setTestLocation = vi.spyOn(engine, "setTestLocation");
+    const caveat = vi.spyOn(engine, "failureCaveat");
+    const runtime = browserRuntime(engine);
+    runtime.reportFinalError = vi.fn();
+    expect(() =>
+      createRunner(runtime).test(function located(tc) {
+        if (tc.draw(gs.integers({ minValue: 0, maxValue: 10 })) > 3) throw new Error("big");
+      }),
+    ).toThrow("big");
+    expect(setTestLocation.mock.calls[0][2].function).toBe("located");
+    expect(caveat).toHaveReturnedWith(null);
   });
 });
