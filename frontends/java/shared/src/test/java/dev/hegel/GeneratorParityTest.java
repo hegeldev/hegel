@@ -38,7 +38,9 @@ class GeneratorParityTest {
     @Test
     void bigIntegersReachBeyondLong() {
         RunReport report = Hegel.run(
-                tc -> assertTrue(tc.draw(bigIntegers(), "x").compareTo(LONG_MAX) <= 0), SETTINGS, Reporter.silent());
+                tc -> assertTrue(tc.draw(bigIntegers(), "x").compareTo(LONG_MAX) <= 0),
+                SETTINGS.testCases(1000),
+                Reporter.silent());
         assertEquals(
                 LONG_MAX.add(BigInteger.ONE), report.failures().get(0).draws().get("x"));
     }
@@ -47,7 +49,9 @@ class GeneratorParityTest {
     void bigIntegersReachBelowLong() {
         BigInteger longMin = BigInteger.valueOf(Long.MIN_VALUE);
         RunReport report = Hegel.run(
-                tc -> assertTrue(tc.draw(bigIntegers(), "x").compareTo(longMin) >= 0), SETTINGS, Reporter.silent());
+                tc -> assertTrue(tc.draw(bigIntegers(), "x").compareTo(longMin) >= 0),
+                SETTINGS.testCases(1000),
+                Reporter.silent());
         assertEquals(
                 longMin.subtract(BigInteger.ONE),
                 report.failures().get(0).draws().get("x"));
