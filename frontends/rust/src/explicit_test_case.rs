@@ -166,14 +166,10 @@ impl ExplicitTestCase {
     /// Run `body` once, then end this explicit test case, like one iteration
     /// of [`TestCase::repeat`](crate::TestCase::repeat). An explicit value
     /// can be drawn only once, so a second iteration would have nothing to
-    /// draw.
+    /// draw. A failed assumption in `body` skips the whole explicit test case.
     pub fn repeat<F: FnMut()>(&self, mut body: F) -> ! {
         self.note("// Repetition #1");
-        if let Err(e) = catch_unwind(AssertUnwindSafe(&mut body)) {
-            if e.downcast_ref::<AssumeFailed>().is_none() {
-                resume_unwind(e);
-            }
-        }
+        body();
         raise_control(LoopDone);
     }
 

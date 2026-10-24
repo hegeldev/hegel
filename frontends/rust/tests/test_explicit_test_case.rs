@@ -170,6 +170,17 @@ fn test_explicit_repeat_ends_the_case_after_a_rejected_iteration() {
 }
 
 #[test]
+fn test_explicit_repeat_skips_the_case_when_rejected_before_drawing() {
+    let etc = hegel::ExplicitTestCase::new().with_value("x_1", "5", 5i32);
+    etc.run(|tc: &hegel::ExplicitTestCase| {
+        tc.repeat(|| {
+            tc.assume(false);
+            tc.draw_named::<i32>("x", generators::integers());
+        });
+    });
+}
+
+#[test]
 fn test_explicit_repeat_checks_unused_values() {
     expect_panic(
         || {
