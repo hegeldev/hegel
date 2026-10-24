@@ -306,7 +306,8 @@ class ExplicitExampleTest {
                 SETTINGS.testCases(1).examples(Example.of(9)),
                 Reporter.silent());
         assertFalse(failing.passed());
-        assertEquals(List.of("// Repetition #1", "x = 9;"), failing.failures().get(0).output());
+        assertEquals(
+                List.of("// Repetition #1", "x = 9;"), failing.failures().get(0).output());
 
         IllegalArgumentException unused = assertThrows(
                 IllegalArgumentException.class,

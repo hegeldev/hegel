@@ -167,9 +167,7 @@ final class Runner {
                     reporter.caseOutput(line, false);
                 }
                 reporter.caseFinished(
-                        rejected
-                                ? CaseOutcome.INVALID
-                                : failure == null ? CaseOutcome.VALID : CaseOutcome.INTERESTING,
+                        rejected ? CaseOutcome.INVALID : failure == null ? CaseOutcome.VALID : CaseOutcome.INTERESTING,
                         false);
             }
             if (rejected) {
