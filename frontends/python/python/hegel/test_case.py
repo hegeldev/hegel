@@ -631,6 +631,16 @@ class TestCase:
     def _generate_string(self, generator: _native.StringGenerator) -> str:
         return self._handle.generate_string(generator).decode("utf-8", "surrogatepass")
 
+    def _generate_grammar(self, grammar: _native.Grammar, value: Callable[[int], str]) -> str:
+        """A string of ``grammar`` with the value of each explicit terminal
+        occurrence, by its index among the grammar's explicit terminals,
+        from ``value``. The engine splices the values in and redraws when
+        they overflow the grammar's size cap."""
+        draw = _native.GrammarDraw(grammar, 0)
+        while (terminal := draw.next(self._handle)) is not None:
+            draw.provide(value(terminal))
+        return draw.result()
+
     def _generate_date(self, min_value: _dt.date, max_value: _dt.date) -> _dt.date:
         year, month, day = self._handle.generate_date(
             (min_value.year, min_value.month, min_value.day),

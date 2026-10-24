@@ -15,11 +15,13 @@ use pyo3::types::PyModule;
 use std::ffi::{c_char, c_void};
 use std::sync::{Arc, Mutex};
 
+mod grammar;
 mod printer;
 mod settings;
 mod strings;
 mod test_case;
 
+pub(crate) use grammar::{Grammar, GrammarBuilder, GrammarDraw};
 pub(crate) use printer::Printer;
 pub(crate) use settings::Settings;
 pub(crate) use strings::StringGenerator;
@@ -297,6 +299,9 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<StateMachine>()?;
     m.add_class::<StringGenerator>()?;
     m.add_class::<Printer>()?;
+    m.add_class::<GrammarBuilder>()?;
+    m.add_class::<Grammar>()?;
+    m.add_class::<GrammarDraw>()?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
     m.add_function(wrap_pyfunction!(label_from_name, m)?)?;
     m.add_function(wrap_pyfunction!(label_combine, m)?)?;

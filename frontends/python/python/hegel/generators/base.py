@@ -112,7 +112,8 @@ class Generator(Generic[T]):
         """Keep only values satisfying ``predicate``.
 
         Each draw tries the source up to three times, the number every
-        Hegel library's filter uses; if no attempt satisfies ``predicate``, the test case is rejected as if by
+        Hegel library's filter uses; if no attempt satisfies ``predicate``,
+        the test case is rejected as if by
         :meth:`TestCase.assume <hegel.TestCase.assume>`. A filter that
         rejects most values therefore rejects many test cases, and may fail
         the ``filter_too_much`` health check: prefer generating the values

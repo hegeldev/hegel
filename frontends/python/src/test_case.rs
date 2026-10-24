@@ -1,8 +1,8 @@
 use crate::printer::{Printer, with_options};
 use crate::{
     InternalError, OutputBuffer, SendPtr, Settings, StringGenerator, big_from_le, big_to_le, check,
-    hstr, max_size_arg, hstr_bytes, hstrs, opt_string_from, output_trampoline, output_user_data, string_from,
-    with_ctx,
+    hstr, hstr_bytes, hstrs, max_size_arg, opt_string_from, output_trampoline, output_user_data,
+    string_from, with_ctx,
 };
 use hegel_c as c;
 use hegel_c::hegel_result_t as Rc;
@@ -215,7 +215,7 @@ impl Drop for TestCase {
 }
 
 impl TestCase {
-    fn tc(&self) -> *mut c::HegelTestCase {
+    pub(crate) fn tc(&self) -> *mut c::HegelTestCase {
         self.raw.0
     }
 }
@@ -422,7 +422,13 @@ impl TestCase {
         };
         let bytes = with_ctx(|ctx| {
             check(unsafe {
-                c::hegel_generate_bytes(ctx, self.tc(), min_size, max_size_arg(max_size), &mut result)
+                c::hegel_generate_bytes(
+                    ctx,
+                    self.tc(),
+                    min_size,
+                    max_size_arg(max_size),
+                    &mut result,
+                )
             })?;
             // SAFETY: on success data points to len bytes owned by us until
             // released with the matching free.

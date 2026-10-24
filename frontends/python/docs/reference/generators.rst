@@ -32,6 +32,8 @@ Text and bytes
 
 .. autofunction:: from_regex
 
+.. autofunction:: from_lark
+
 .. autofunction:: binary
 
 Collections

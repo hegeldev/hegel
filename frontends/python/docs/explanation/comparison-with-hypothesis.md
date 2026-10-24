@@ -23,6 +23,7 @@ does, with a note per file of what was dropped.
 | `find(strategy, condition)` | none; write a test | A test whose failure is finding the value gets it shrunk. |
 | `dictionaries`, `fixed_dictionaries` | `dicts`, `fixed_dicts` | |
 | `from_regex(pattern)` matches anywhere | `gs.from_regex(pattern)` matches the whole string | Hegel defaults to `fullmatch=True`, as the Rust library does. |
+| `hypothesis.extra.lark.from_lark(Lark(grammar))` | `gs.from_lark(grammar)` | Takes the grammar's text, not a `lark.Lark` object, and does not need Lark installed. `explicit` and `alphabet` are as in Hypothesis; `max_size`, `max_depth` and `import_path` are Hegel's. |
 | `is_hypothesis_test(f)`, `f.hypothesis.inner_test` | `f.is_hegel_test`, `f.hegel_inner_test` | |
 | `InvalidArgument`, `Unsatisfiable`, `FailedHealthCheck`, `DidNotReproduce`, `StopTest` | the same names in `hegel` | `InvalidArgument` is not a `TypeError` subclass. |
 | `Flaky` and its subclasses | `hegel.Flaky` | Only under `nondeterminism_strictness="error"`; see below. |
@@ -69,7 +70,7 @@ does, with a note per file of what was dropped.
   (`crosshair`, ...), `fuzz_one_input`, observability callbacks and the
   `HYPOTHESIS_EXPERIMENTAL_OBSERVABILITY` output.
 - The `hypothesis.extra` packages (numpy, pandas, django, pytz, dateutil,
-  lark, redis, ...), the ghostwriter, the CLI and `hypothesis.statistics`.
+  redis, ...) other than lark, which `gs.from_lark` covers, the ghostwriter, the CLI and `hypothesis.statistics`.
 - `from_type` of most of what Hypothesis's type lookup covers beyond value
   types, generics, enums, dataclasses, TypedDicts, protocols' registered
   implementations and annotated constructors: builtins without annotations

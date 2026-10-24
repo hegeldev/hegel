@@ -95,10 +95,7 @@ def test_empty_alphabet_spells_only_the_empty_string():
 
 def test_text_and_characters_repr_their_arguments():
     assert repr(gs.text("abc", min_size=2)) == "text(alphabet='abc', min_size=2)"
-    assert (
-        repr(gs.text(gs.sampled_from("ab")))
-        == "text(alphabet=sampled_from('ab'), min_size=0)"
-    )
+    assert repr(gs.text(gs.sampled_from("ab"))) == "text(alphabet=sampled_from('ab'), min_size=0)"
     assert (
         repr(gs.text(gs.characters(codec="ascii"), max_size=3))
         == "text(alphabet=characters(max_codepoint=127), min_size=0, max_size=3)"

@@ -183,6 +183,20 @@ def _alphabet_spec(alphabet: Any) -> CharacterSpec | Generator[str]:
     return CharacterSpec(categories=[], include_characters=_check_characters("alphabet", alphabet))
 
 
+def _pattern_alphabet(who: str, alphabet: Any) -> _native.StringGenerator | None:
+    """The engine alphabet constraining the characters a pattern draws:
+    ``None`` for no constraint, else a string of characters or a
+    :func:`characters` generator, which must not be empty."""
+    if alphabet is None:
+        return None
+    spec = _alphabet_spec(alphabet)
+    if isinstance(spec, Generator):
+        raise InvalidArgument(f"{who} alphabet must be a string of characters or characters()")
+    if not isinstance(alphabet, Characters) and not spec.include_characters:
+        raise InvalidArgument(f"{who} alphabet must not be empty")
+    return spec.build(0, 0)
+
+
 class Text(Generator[str]):
     def __init__(
         self, spec: CharacterSpec, min_size: int, max_size: int | None, args: str = ""
@@ -422,16 +436,7 @@ class Regex(Generator[str]):
     def __init__(self, pattern: str, fullmatch: bool, alphabet: Any) -> None:
         self.pattern = pattern
         self.fullmatch = fullmatch
-        alphabet_handle = None
-        if alphabet is not None:
-            spec = _alphabet_spec(alphabet)
-            if isinstance(spec, Generator):
-                raise InvalidArgument(
-                    "from_regex alphabet must be a string of characters or characters()"
-                )
-            if not isinstance(alphabet, Characters) and not spec.include_characters:
-                raise InvalidArgument("from_regex alphabet must not be empty")
-            alphabet_handle = spec.build(0, 0)
+        alphabet_handle = _pattern_alphabet("from_regex", alphabet)
         self._handle = _native.StringGenerator.regex(pattern, fullmatch, alphabet_handle)
         self.label = REGEX_LABEL
 
