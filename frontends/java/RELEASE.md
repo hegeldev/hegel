@@ -47,3 +47,11 @@ The `Reporter` and `Failure` APIs change to match:
 `dev.hegel.lowlevel.Libhegel` gains `testCaseBlock`, `note`, `testCasePrinter`, `printerNew`, `printerFree`, `printerText`, `printerBreakable`, `printerHardBreak`, `printerBeginGroup`, `printerEndGroup`, `printerReflow`, `printerBeginSpeculative`, `printerCommitSpeculative`, `printerAbortSpeculative`, `printerResolve` and `printerValue`, for the engine's printer. A third-party binding needs to implement them.
 
 A filtered consuming pool draw, `pool.consuming().filter(...)` on a `Pool` or `ConcurrentPool`, now consumes only the value it yields. Before, every value an attempt drew and the filter rejected was consumed too, and lost from the pool. Each attempt still consumes its value, so no attempt draws a value an earlier one rejected, and once the attempts are over the engine puts every rejected value back (`hegel_pool_restore`). Sets and maps now also free their engine-side collection after each draw, as lists already did.
+
+`TestCase` gains the rest of the test-case API the other Hegel frontends have:
+
+- `event(label)` and `eventValue(label, value)` record events and numeric observations for the engine's end-of-run statistics report, printed when `showStatistics` is on.
+- `reject()` rejects the test case unconditionally, like `assume(false)`.
+- `drawSilent(generator)` draws a value without printing it in the counterexample.
+- `fork(worker)` returns a handle with its own independent stream of choices, for drawing from another thread. The engine attributes its output to worker `worker`.
+- `repeat(body)` runs `body` until the engine decides the test case is long enough, so a test that is logically an infinite loop shrinks repetition by repetition.

@@ -1,5 +1,7 @@
 package dev.hegel;
 
+import dev.hegel.lowlevel.Abi;
+import dev.hegel.lowlevel.LibhegelException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -32,7 +34,8 @@ import java.util.function.Supplier;
  * {@link #span(long, Supplier) span} so the engine can shrink the structure they build.
  */
 public final class TestCase {
-    private final DataSource source;
+    /** The handle this instance draws through; {@link #repeat} swaps in a block for each repetition. */
+    private DataSource source;
     /** What every handle of one test case shares: the capture decision, draw names and draws. */
     private final Shared shared;
     /** This handle's printer onto its own print region, fetched on its first printed draw. */
@@ -50,7 +53,7 @@ public final class TestCase {
         private final Map<String, Integer> nameUses = new HashMap<>();
 
         private final Map<String, Object> draws = new LinkedHashMap<>();
-        /** Every block handle opened in the case, kept alive until the case is over. */
+        /** Every block and fork handle opened in the case, kept alive until the case is over. */
         private final List<TestCase> blocks = new ArrayList<>();
 
         Shared(boolean captured, boolean verbose) {
@@ -139,7 +142,7 @@ public final class TestCase {
         }
     }
 
-    /** Free every block handle opened in the case, and their printers. Called once the case is over. */
+    /** Free every block and fork handle opened in the case, and their printers. Called once the case is over. */
     void releaseBlocks() {
         for (TestCase block : shared.takeBlocks()) {
             block.release();
@@ -233,6 +236,18 @@ public final class TestCase {
         }
     }
 
+    /**
+     * Draw a value from {@code generator} without printing it: it is neither shown in the
+     * counterexample output nor recorded in {@link Failure#draws()}.
+     *
+     * @param generator the generator to draw from
+     * @param <T> the value type
+     * @return the generated value
+     */
+    public <T> T drawSilent(Generator<T> generator) {
+        return drawNested(generator);
+    }
+
     private <T> T drawNested(Generator<T> generator) {
         drawDepth++;
         try {
@@ -259,6 +274,14 @@ public final class TestCase {
         if (!condition) {
             throw new AssumeRejected();
         }
+    }
+
+    /**
+     * Reject the current test case unconditionally, as {@code assume(false)} does: this never
+     * returns.
+     */
+    public void reject() {
+        throw new AssumeRejected();
     }
 
     /**
@@ -292,6 +315,133 @@ public final class TestCase {
      */
     public void target(double value, String label) {
         source.target(value, label);
+    }
+
+    /**
+     * Record an event for the end-of-run statistics report. With statistics on ({@link
+     * Settings#showStatistics(boolean)}, or the {@code HEGEL_STATISTICS} environment variable), the
+     * report shows, per label, the fraction of test cases in which the label was recorded at least
+     * once: a quick check that the interesting situations in a test actually occur. With
+     * statistics off, events cost almost nothing and report nothing.
+     *
+     * @param label the event's label
+     */
+    public void event(String label) {
+        source.event(label);
+    }
+
+    /**
+     * Record a numeric observation under {@code label} for the end-of-run statistics report. With
+     * statistics on, the report shows, per label, a summary of the observed distribution (count,
+     * min, median, mean, p90, max). Unlike {@link #target(double, String)}, a label may be observed
+     * any number of times per test case, and observations do not steer generation.
+     *
+     * @param label the observation's label
+     * @param value the observation; must be finite
+     */
+    public void eventValue(String label, double value) {
+        source.eventValue(label, value);
+    }
+
+    /**
+     * A handle for drawing from another thread: an independent stream of choices of this same test
+     * case, whose output the engine attributes to worker {@code worker} ({@code [worker N
+     * +X.XXXms]}). Draws on one handle never perturb the values another produces, so several threads
+     * can generate concurrently and the test stays deterministic: the same seed replays the same
+     * values on every stream, and failures shrink and replay normally. A single handle must only be
+     * driven by one thread at a time, so fork one per thread.
+     *
+     * <p>The forks share the test case's outcome: an exception on a fork's thread is a failure only
+     * once the test body rethrows it, typically by joining the thread. Forks are released when the
+     * test case ends. Forking is itself a draw.
+     *
+     * @param worker the worker index the engine attributes this handle's output to
+     * @return the forked handle
+     */
+    public TestCase fork(int worker) {
+        TestCase fork = forWorker(worker);
+        shared.addBlock(fork);
+        return fork;
+    }
+
+    /**
+     * Run {@code body} over and over until the engine decides the test case is long enough, then end
+     * the test case: it never returns normally. Use it for tests that are logically infinite loops,
+     * such as driving a system with a stream of random operations, with better shrinking than a
+     * hand-written loop: the engine can delete individual repetitions. Each repetition is introduced
+     * in the output by a {@code // Repetition #N} note, with its own output indented under it. A
+     * repetition that fails an {@link #assume assumption} is skipped; any other exception ends the
+     * test case.
+     *
+     * @param body one repetition, drawing through this test case
+     */
+    public void repeat(Runnable body) {
+        long minSize = drawSilent(Generators.longs().min(0).max(1L << 40));
+        long id = newCollection(minSize, Abi.UNBOUNDED);
+        try {
+            long repetition = 0;
+            while (collectionMore(id)) {
+                repetition++;
+                note("// Repetition #" + repetition);
+                repeatOnce(body);
+            }
+        } finally {
+            collectionFree(id);
+        }
+        throw new LoopDone();
+    }
+
+    private void repeatOnce(Runnable body) {
+        Throwable failure;
+        DataSource outer = enterBlock(2);
+        try {
+            body.run();
+            return;
+        } catch (Throwable e) {
+            failure = e;
+        } finally {
+            swapSource(outer);
+        }
+        if (failure instanceof AssumeRejected && !isAborted()) {
+            return;
+        }
+        if (!isControl(failure)) {
+            // Mark the failing repetition in the choice sequence, as the other frontends do.
+            drawSilent(Generators.booleans());
+        }
+        throw rethrow(failure);
+    }
+
+    private static boolean isControl(Throwable e) {
+        return e instanceof StopTest
+                || e instanceof AssumeRejected
+                || e instanceof LoopDone
+                || e instanceof IllegalArgumentException
+                || e instanceof LibhegelException;
+    }
+
+    /** Rethrow {@code t} as-is: an unchecked exception is returned for the caller to throw. */
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> RuntimeException rethrow(Throwable t) throws T {
+        if (t instanceof RuntimeException) {
+            return (RuntimeException) t;
+        }
+        throw (T) t;
+    }
+
+    /** Switch this instance onto a block {@code indent} columns in, returning the handle it replaces. */
+    private DataSource enterBlock(long indent) {
+        DataSource block = source.block(indent);
+        shared.addBlock(new TestCase(block, shared));
+        return swapSource(block);
+    }
+
+    /** Make {@code next} this instance's handle, returning the one it replaces. */
+    private DataSource swapSource(DataSource next) {
+        closePrinter();
+        DataSource previous = source;
+        source = next;
+        return previous;
     }
 
     // --- engine primitives used by generators in dev.hegel.generators (public for cross-package

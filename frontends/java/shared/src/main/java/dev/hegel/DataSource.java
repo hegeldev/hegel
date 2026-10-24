@@ -183,4 +183,10 @@ interface DataSource {
     boolean isAborted();
 
     void target(double value, String label);
+
+    /** Record an event for the statistics report ({@code hegel_event}). */
+    void event(String label);
+
+    /** Record a numeric observation for the statistics report ({@code hegel_event_value}). */
+    void eventValue(String label, double value);
 }

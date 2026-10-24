@@ -261,6 +261,9 @@ final class FakeLibhegel implements Libhegel {
     final List<Long> freedCollections = new ArrayList<>();
 
     int targetRc = Abi.OK;
+    /** Whether generate_boolean was ever called. */
+    boolean booleanDrawn;
+
     int eventRc = Abi.OK;
     /** Every event and event value, as {@code label} or {@code label=value}. */
     final List<String> events = new ArrayList<>();
@@ -704,6 +707,7 @@ final class FakeLibhegel implements Libhegel {
 
     @Override
     public int generateBoolean(long tc, double p, boolean[] out) {
+        booleanDrawn = true;
         if (generateBooleanRc == Abi.OK) {
             out[0] = booleanValue;
         }

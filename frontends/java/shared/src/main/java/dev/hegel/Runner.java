@@ -316,6 +316,8 @@ final class Runner {
         try {
             body.accept(testCase);
             outcome = CaseOutcome.VALID;
+        } catch (LoopDone e) {
+            outcome = CaseOutcome.VALID;
         } catch (AssumeRejected e) {
             outcome = CaseOutcome.INVALID;
         } catch (StopTest e) {

@@ -465,4 +465,16 @@ final class LiveDataSource implements DataSource {
         checkLive();
         translate(lib.target(tc, value, label), "target");
     }
+
+    @Override
+    public void event(String label) {
+        checkLive();
+        translate(lib.event(tc, label), "event");
+    }
+
+    @Override
+    public void eventValue(String label, double value) {
+        checkLive();
+        translate(lib.eventValue(tc, value, label), "event_value");
+    }
 }
