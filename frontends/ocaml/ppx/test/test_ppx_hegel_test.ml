@@ -398,7 +398,7 @@ let%hegel_test silent_draw_in_example tc =
 
 let%hegel_test function_in_example tc =
   let n = Hegel.draw tc (Hegel.integers ()) in
-  let f = Hegel.draw tc (Hegel.functions ~returns:(Hegel.integers ()) ()) in
+  let f = Hegel.draw_silent tc (Hegel.functions ~returns:(Hegel.integers ()) ()) in
   ignore (f n : int)
 [@@example { n = 0 }]
 ;;

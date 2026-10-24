@@ -123,7 +123,7 @@ let%hegel_test [@async] counter tc =
 ]}
 
 The generated [run] takes [?min_concurrency], [?max_concurrency],
-[?step_count], and [?print_state].
+[?step_count], and [?sexp_of_state].
 
 Without the PPX, create rules with
 [Hegel_jane_async.Stateful.Concurrent_rule.create] and the invariants with
@@ -194,7 +194,7 @@ module Stateful : sig
 
   val run
     :  ?step_count:int
-    -> ?print_state:('state -> Hegel.Printer.doc)
+    -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
     -> Hegel.test_case
     -> (module State_machine with type state = 'state)
     -> init:'state
@@ -236,7 +236,7 @@ val run_concurrent
   :  ?min_concurrency:int
   -> ?max_concurrency:int
   -> ?step_count:int
-  -> ?print_state:('state -> Hegel.Printer.doc)
+  -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
   -> Hegel.test_case
   -> (module Concurrent_state_machine with type state = 'state)
   -> init:'state
@@ -248,8 +248,8 @@ module Concurrent_pool : sig
   val create : ?clone:('a -> 'a) -> Hegel.test_case -> 'a t
   val add : 'a t -> Hegel.test_case -> 'a -> unit
   val size : _ t -> int
-  val values_reusable : 'a t -> 'a Hegel.generator
-  val values_consumed : 'a t -> 'a Hegel.generator
+  val values_reusable : 'a t -> ('a, Hegel.unprintable) Hegel.generator
+  val values_consumed : 'a t -> ('a, Hegel.unprintable) Hegel.generator
 end
 ]}
 

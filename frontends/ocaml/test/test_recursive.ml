@@ -10,6 +10,13 @@ let rec depth = function
   | Node children -> 1 + List.fold_left (fun acc t -> max acc (depth t)) 0 children
 ;;
 
+let rec sexp_of_tree : tree -> Sexplib0.Sexp.t = function
+  | Leaf n -> List [ Atom "Leaf"; Atom (string_of_int n) ]
+  | Node children -> List [ Atom "Node"; List (List.map sexp_of_tree children) ]
+;;
+
+let tree_printer f gen = with_printer sexp_of_tree (map f gen)
+
 let rec leaves = function
   | Leaf _ -> 1
   | Node children -> List.fold_left (fun acc t -> acc + leaves t) 0 children
@@ -19,8 +26,8 @@ let trees ?max_depth ?max_leaves () =
   recursive
     ?max_depth
     ?max_leaves
-    (map (fun n -> Leaf n) (integers ~min_value:0 ~max_value:9 ()))
-    (fun subtrees -> map (fun children -> Node children) (lists subtrees ()))
+    (tree_printer (fun n -> Leaf n) (integers ~min_value:0 ~max_value:9 ()))
+    (fun subtrees -> tree_printer (fun children -> Node children) (lists subtrees ()))
 ;;
 
 let settings ?(test_cases = 100) () = Settings.create ~test_cases ~seed:0 ()
@@ -51,9 +58,9 @@ let test_recursive_tiny_leaf_budget () =
         tc
         (recursive
            ~max_leaves:1
-           (map (fun n -> Leaf n) (integers ()))
+           (tree_printer (fun n -> Leaf n) (integers ()))
            (fun subtrees ->
-              map (fun children -> Node children) (lists subtrees ~min_size:2 ())))
+              tree_printer (fun children -> Node children) (lists subtrees ~min_size:2 ())))
     in
     assert (leaves t <= 1))
 ;;
@@ -72,7 +79,7 @@ let test_recursive_invalid_arguments () =
   let check name f =
     match f () with
     | exception Hegel.Usage_error _ -> ()
-    | (_ : tree generator) -> Alcotest.fail (name ^ ": expected Usage_error")
+    | (_ : (tree, printable) generator) -> Alcotest.fail (name ^ ": expected Usage_error")
   in
   check "negative max_depth" (fun () -> trees ~max_depth:(-1) ());
   check "zero max_leaves" (fun () -> trees ~max_leaves:0 ())
@@ -82,8 +89,8 @@ let deferred_trees () =
   let trees, define = deferred () in
   define
     (one_of
-       [ map (fun n -> Leaf n) (integers ~min_value:0 ~max_value:9 ())
-       ; map (fun children -> Node children) (lists trees ~max_size:2 ())
+       [ tree_printer (fun n -> Leaf n) (integers ~min_value:0 ~max_value:9 ())
+       ; tree_printer (fun children -> Node children) (lists trees ~max_size:2 ())
        ]);
   trees
 ;;
@@ -100,11 +107,22 @@ let test_deferred_draws () =
 let test_deferred_mutual_recursion () =
   let evens, define_evens = deferred () in
   let odds, define_odds = deferred () in
-  define_evens (one_of [ just 0; map (fun n -> n + 1) odds ]);
-  define_odds (map (fun n -> n + 1) evens);
+  let succ gen = with_printer Sexplib0.Sexp_conv.sexp_of_int (map (fun n -> n + 1) gen) in
+  define_evens
+    (one_of [ with_printer Sexplib0.Sexp_conv.sexp_of_int (just 0); succ odds ]);
+  define_odds (succ evens);
   Hegel.run_hegel_test ~settings:(settings ()) (fun tc ->
     assert (draw tc evens mod 2 = 0);
     assert (draw tc odds mod 2 = 1))
+;;
+
+let test_deferred_printer () =
+  let gen, define = deferred () in
+  (match printer gen 3 with
+   | (_ : Sexplib0.Sexp.t) -> Alcotest.fail "expected Usage_error"
+   | exception Hegel.Usage_error _ -> ());
+  define (integers ());
+  Alcotest.(check string) "printer" "3" (Sexplib0.Sexp.to_string (printer gen 3))
 ;;
 
 let test_deferred_undefined () =
@@ -122,7 +140,7 @@ let test_deferred_defined_twice () =
   define (integers ());
   match define (integers ()) with
   | () -> Alcotest.fail "expected Usage_error"
-  | exception Hegel.Usage_error _ -> ignore (gen : int generator)
+  | exception Hegel.Usage_error _ -> ignore (gen : (int, printable) generator)
 ;;
 
 let test_deferred_defined_as_itself () =
@@ -136,21 +154,31 @@ let test_deferred_defined_as_itself () =
   let b, define_b = deferred () in
   let c, define_c = deferred () in
   define_b c;
-  expect_error (fun () -> define_c (with_printer Printer.int (filter (fun _ -> true) b)))
+  expect_error (fun () ->
+    define_c (with_printer Sexplib0.Sexp_conv.sexp_of_int (filter (fun _ -> true) b)))
 ;;
 
 let test_deferred_defined_as_a_map_of_itself () =
   let gen, define = deferred () in
-  match define (map Fun.id gen) with
+  match define (with_printer Sexplib0.Sexp_conv.sexp_of_int (map Fun.id gen)) with
   | () -> Alcotest.fail "expected Usage_error"
-  | exception Hegel.Usage_error _ -> ignore (gen : int generator)
+  | exception Hegel.Usage_error _ -> ignore (gen : (int, printable) generator)
 ;;
 
 let test_deferred_drawn_deep_inside_spans () =
   let ints, define = deferred () in
   define (integers ~min_value:0 ~max_value:9 ());
   let rec nest n gen =
-    if n = 0 then gen else nest (n - 1) (map snd (tuples2 (just ()) gen))
+    if n = 0
+    then gen
+    else
+      nest
+        (n - 1)
+        (with_printer
+           Sexplib0.Sexp_conv.sexp_of_int
+           (map
+              snd
+              (tuples2 (with_printer Sexplib0.Sexp_conv.sexp_of_unit (just ())) gen)))
   in
   Hegel.run_hegel_test ~settings:(settings ~test_cases:5 ()) (fun tc ->
     assert (draw tc (nest 100 ints) < 10))
@@ -167,6 +195,7 @@ let tests =
       test_recursive_invalid_arguments
   ; Alcotest.test_case "deferred draws" `Quick test_deferred_draws
   ; Alcotest.test_case "deferred mutual recursion" `Quick test_deferred_mutual_recursion
+  ; Alcotest.test_case "deferred printer" `Quick test_deferred_printer
   ; Alcotest.test_case "deferred undefined" `Quick test_deferred_undefined
   ; Alcotest.test_case "deferred defined twice" `Quick test_deferred_defined_twice
   ; Alcotest.test_case "deferred defined as itself" `Quick test_deferred_defined_as_itself

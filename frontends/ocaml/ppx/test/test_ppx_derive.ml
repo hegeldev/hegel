@@ -13,6 +13,10 @@
     - [char] fields (resolved from [Hegel.Derive], like every primitive)
     - [@hegel.generator] overrides on any type occurrence
     - [@hegel.do_not_generate] on variant constructors
+    - always-printable derived generators: the deriver also derives
+      [sexp_of_<t>] (via ppx_sexp_conv's expander) and makes it the
+      generator's printer; [[@sexp.opaque]] is the escape hatch for un-sexpable
+      fields
     - printing: a derived generator prints what it draws as OCaml syntax,
       each part as that part's generator prints it
     - [~portable], which draws the same values as the plain derivation *)
@@ -110,9 +114,11 @@ end = struct
   type named = Named of string [@@deriving hegel_generator]
 end
 
-let (_ : Signature_deriving.t Hegel.generator) = Signature_deriving.hegel_generator
+let (_ : (Signature_deriving.t, Hegel.printable) Hegel.generator) =
+  Signature_deriving.hegel_generator
+;;
 
-let (_ : Signature_deriving.named Hegel.generator) =
+let (_ : (Signature_deriving.named, Hegel.printable) Hegel.generator) =
   Signature_deriving.hegel_generator_named
 ;;
 
@@ -157,7 +163,9 @@ type compass =
 [@@deriving hegel_generator]
 
 (** A data-carrying variant with an excluded constructor whose argument type has
-    no generator. *)
+    no generator. [[@hegel.do_not_generate]] implies opaque printing for the
+    excluded arguments (the deriver wraps them in [[@sexp.opaque]] before
+    invoking ppx_sexp_conv's expander). *)
 type task_result =
   | Finished of int
   | Blocked of ungeneratable [@hegel.do_not_generate]
@@ -172,7 +180,9 @@ type printed_point =
 
 type with_opaque =
   { id : int
-  ; handle : (ungeneratable[@hegel.generator composite (fun _ -> { thunk = Fun.id })])
+  ; handle :
+      (ungeneratable
+      [@sexp.opaque] [@hegel.generator composite (fun _ -> { thunk = Fun.id })])
   }
 [@@deriving hegel_generator]
 
@@ -422,7 +432,9 @@ let test_do_not_generate_data_e2e () =
        | Blocked _ -> failwith "Blocked is marked [@hegel.do_not_generate]"
        | Cancelled -> saw_cancelled := true);
   assert !saw_finished;
-  assert !saw_cancelled
+  assert !saw_cancelled;
+  let blocked_sexp = Sexp.to_string (sexp_of_task_result (Blocked { thunk = Fun.id })) in
+  assert (String.is_substring blocked_sexp ~substring:"opaque")
 ;;
 
 (* The same types derived twice. The type names are the same, so the labels are
@@ -486,6 +498,11 @@ module Plain_nat = struct
     | S of nat
   [@@deriving hegel_generator]
 end
+
+(** An alias whose generator has no printer: it prints through [sexp_of_<t>]. *)
+type mapped_alias =
+  (int[@hegel.generator Hegel.map succ (Hegel.integers ~min_value:0 ~max_value:0 ())])
+[@@deriving hegel_generator]
 
 (** A recursive variant: [Leaf] is the leaf, [Node] the branch. *)
 type tree =
@@ -573,8 +590,17 @@ let test_portable_matches_plain_e2e () =
     Hegel.run_hegel_test
       ~settings:(Hegel.Settings.create ~test_cases:30 ~seed:0 ())
       (fun tc ->
-         let _, show = Hegel.Generators.Ppx_internal.draw tc gen in
-         seen := Hegel.Printer.to_string (show ()) :: !seen);
+         let value, show =
+           Hegel.Generators.Ppx_internal.draw
+             tc
+             gen
+             ~sexp_of:(Hegel.Generators.printer gen)
+         in
+         seen
+         := (Hegel.Printer.to_string (show ())
+             ^ " "
+             ^ Sexp.to_string ((Hegel.Generators.printer gen) value))
+            :: !seen);
     List.rev !seen
   in
   let same name plain portable =
@@ -600,7 +626,9 @@ let shown ?(n = 30) gen =
   Hegel.run_hegel_test
     ~settings:(Hegel.Settings.create ~test_cases:n ~seed:0 ())
     (fun tc ->
-       let value, show = Hegel.Generators.Ppx_internal.draw tc gen in
+       let value, show =
+         Hegel.Generators.Ppx_internal.draw tc gen ~sexp_of:(Hegel.Generators.printer gen)
+       in
        seen := (value, Hegel.Printer.to_string (show ())) :: !seen);
   List.rev !seen
 ;;
@@ -610,6 +638,17 @@ let shown ?(n = 30) gen =
 let check_shown ?n name gen expected =
   List.iter (shown ?n gen) ~f:(fun (value, rendered) ->
     Alcotest.(check string) name (Hegel.Printer.to_string (expected value)) rendered)
+;;
+
+(** Test: bare deriving yields a printable generator *)
+let%hegel_test test_sexp_printer_e2e tc =
+  let p = Hegel.draw tc hegel_generator_printed_point in
+  ignore ((p.px, p.py) : int * int);
+  Alcotest.(check string)
+    "derived printer matches the derived sexp converter"
+    (Sexp.to_string (sexp_of_printed_point p))
+    (Sexp.to_string ((Hegel.Generators.printer hegel_generator_printed_point) p))
+[@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
 ;;
 
 (** Test: a derived generator prints what it draws as OCaml syntax. *)
@@ -646,6 +685,8 @@ let test_printer_e2e () =
   check_shown "alias of a tuple" Plain_derived.hegel_generator_alias (fun (n, b) ->
     tuple [ int n; bool b ]);
   check_shown "alias" hegel_generator_label string;
+  check_shown "alias of an unprintable generator" hegel_generator_mapped_alias (fun _ ->
+    text "1");
   let rec print_tree = function
     | Leaf n -> constructor "Leaf" [ int n ]
     | Node (l, r) -> constructor "Node" [ print_tree l; print_tree r ]
@@ -665,14 +706,24 @@ let test_printer_e2e () =
   check_shown "recursive record" hegel_generator_chain print_chain
 ;;
 
-(** Test: a field whose generator has no printer shows as [<abstr>] while
+(** Test: an [[@sexp.opaque]] field prints as the opaque placeholder while
     [[@hegel.generator]] supplies its values. *)
 let%hegel_test test_opaque_field_e2e tc =
   let w = Hegel.draw tc hegel_generator_with_opaque in
+  ignore (w.id : int);
   w.handle.thunk ();
-  let _, show = Hegel.Generators.Ppx_internal.draw tc hegel_generator_with_opaque in
+  let rendered =
+    Sexp.to_string ((Hegel.Generators.printer hegel_generator_with_opaque) w)
+  in
+  assert (String.is_substring rendered ~substring:"opaque");
+  let _, show =
+    Hegel.Generators.Ppx_internal.draw
+      tc
+      hegel_generator_with_opaque
+      ~sexp_of:sexp_of_with_opaque
+  in
   let rendered = Hegel.Printer.to_string (show ()) in
-  assert (String.is_substring rendered ~substring:"handle = <abstr>")
+  assert (String.is_substring rendered ~substring:"handle = <opaque>")
 [@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
 ;;
 
@@ -721,8 +772,9 @@ let () =
             test_do_not_generate_nullary_e2e
         ; Alcotest.test_case "do_not_generate (data)" `Quick test_do_not_generate_data_e2e
         ; Alcotest.test_case "recursive types" `Quick test_recursive_types_e2e
-        ; Alcotest.test_case "default printer" `Quick test_printer_e2e
-        ; Alcotest.test_case "field without a printer" `Quick test_opaque_field_e2e
+        ; Alcotest.test_case "default printer" `Quick test_sexp_printer_e2e
+        ; Alcotest.test_case "display" `Quick test_printer_e2e
+        ; Alcotest.test_case "opaque field escape hatch" `Quick test_opaque_field_e2e
         ; Alcotest.test_case
             "portable matches plain"
             `Quick

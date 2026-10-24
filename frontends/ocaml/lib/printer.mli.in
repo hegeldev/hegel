@@ -9,29 +9,17 @@
     always quoted. A value too long for one line wraps one element or field per
     line, laid out by libhegel's pretty-printer.
 
-    Every generator can print what it draws. Primitive and structural
-    generators ({!Hegel.lists}, {!Hegel.tuples2}, {!Hegel.optional},
-    {!Hegel.one_of}, {!Hegel.filter}, {!Hegel.flat_map}, and the generators
-    [\[@@deriving hegel_generator\]] produces) print structurally as they draw.
-    A generator whose output type is the caller's ({!Hegel.map},
-    {!Hegel.just}, {!Hegel.sampled_from}, {!Hegel.composite}) has no way to
-    show its values and prints them as [<abstr>], the way the OCaml toplevel
-    shows an abstract value, until you give it a printer with
-    {!Hegel.with_printer}:
+    Printable generators print what they draw this way: the primitives, the
+    structural generators ({!Hegel.lists}, {!Hegel.tuples2},
+    {!Hegel.optional}, {!Hegel.one_of}, {!Hegel.filter}, ...), and the
+    generators [\[@@deriving hegel_generator\]] produces, which print as
+    they draw. A generator given a printer with {!Hegel.with_printer} prints
+    the s-expressions that printer returns instead ({!of_sexp}).
 
-    {[
-      let%hegel_test doubled tc =
-        let n =
-          draw tc (with_printer Printer.int (map (fun x -> x * 2) (integers ())))
-        in
-        assert (n mod 2 = 0)
-      ;;
-    ]}
-
-    A printer is an ['a -> doc] function. Build documents from the value
-    printers here ({!int}, {!string}, {!list}, …), from the structural
-    builders ({!constructor}, {!record}, {!tuple}, {!apply}), or, for a type
-    that only has a [to_string], with {!of_to_string}. *)
+    This module holds the documents those values print as. A document is
+    built from the value printers here ({!int}, {!string}, {!list}, …), the
+    structural builders ({!constructor}, {!record}, {!tuple}, {!apply}), or
+    {!of_to_string} and {!of_sexp}, and {!to_string} lays one out. *)
 
 (** A document: a value rendered as OCaml syntax, with the groups and break
     points that let the engine's layout wrap it. *)

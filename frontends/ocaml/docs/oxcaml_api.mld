@@ -49,26 +49,26 @@ type test_case : value mod portable contended
 {!Hegel.Generators.generator}
 
 {[
-type 'a generator : value mod contended
+type ('a, 'p) generator : value mod contended
 ]}
 
 {1 Combinators}
 {[
 val%template map
   :  ('a -> 'b) @ m
-  -> 'a generator @ m
-  -> 'b generator @ m
+  -> ('a, 'p) generator @ m
+  -> ('b, unprintable) generator @ m
 [@@mode m = (nonportable, portable)]
 
-val%template just : ('a : value mod c). 'a @ m -> 'a generator @ m
+val%template just : ('a : value mod c). 'a @ m -> ('a, unprintable) generator @ m
 [@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
 
 val%template sampled_from
-  : ('a : value mod c). 'a list @ m -> 'a generator @ m
+  : ('a : value mod c). 'a list @ m -> ('a, unprintable) generator @ m
 [@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
 ]}
 
-[with_printer], [composite], [flat_map], [filter], [one_of], [optional],
+[with_printer], [printer], [composite], [flat_map], [filter], [one_of], [optional],
 [tuples2] to [tuples8], [lists] (including [~unique_by]), [arrays],
 [assoc_lists], [hash_tables], [make_hash_tables], [make_characters],
 [make_dates], [make_times], [make_datetimes],
@@ -126,7 +126,7 @@ val run_concurrent
   -> ?min_concurrency:int
   -> ?max_concurrency:int
   -> ?step_count:int
-  -> ?print_state:('state -> Printer.doc)
+  -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
   -> test_case
   -> (module Concurrent_state_machine with type ctx = 'ctx and type state = 'state)
   -> init:'state @ portable

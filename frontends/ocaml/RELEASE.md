@@ -1,6 +1,6 @@
 RELEASE_TYPE: minor
 
-This release changes how failing test cases print drawn values: they now print as OCaml syntax instead of s-expressions, and every generator can be drawn with `draw`, whether or not it has a printer.
+This release changes how failing test cases print drawn values: a value drawn from a printable generator now prints as OCaml syntax instead of as an s-expression.
 
 ```
 (* before *)
@@ -14,26 +14,18 @@ pair = (7, "hello")
 p = { x = 1; y = 2 }
 ```
 
-Strings are always quoted, options print as `Some x`, derived records and variants print as `{ x = 1 }` and `Node (Leaf, 3)`, and a value too long for one line wraps one element per line. Structural generators (`lists`, `tuples2`, `optional`, `one_of`, `filter`, `flat_map`, derived generators, ...) print what they drew. Generators whose output type is yours (`map`, `just`, `sampled_from`, `composite`) have no way to show it, so their values print as `<abstr>`, as in the OCaml toplevel, until you give them a printer.
+Strings are always quoted, options print as `Some x`, derived records and variants print as `{ x = 1 }` and `Node (Leaf 1, Leaf 2)`, and a value too long for one line wraps one element per line. Structural generators (`lists`, `tuples2`, `optional`, `one_of`, `filter`, derived generators, ...) print what they drew, each part as its own generator prints it.
 
-A printer is now an `'a -> Printer.doc`, built with the new `Hegel.Printer` module rather than returning a `Sexplib0.Sexp.t`. `Printer` has printers for the standard types (`Printer.int`, `Printer.(list string)`, ...), builders for your own types (`Printer.constructor`, `Printer.record`, `Printer.tuple`), `Printer.of_to_string` for a type that has a `to_string`, and `Printer.of_sexp` for one that has a `sexp_of_t`:
+An application of a generated function prints its arguments as before, through `~sexp_of_arg`, and its result as `returns` prints it: `f 3 = [1; 2]`, or `f 3 = <fun>` when the result is itself a function.
+
+A printer you give with `with_printer`, or with `~sexp_of_arg` or `~sexp_of_state`, prints the s-expressions it returns, as before:
 
 ```ocaml
-(* before *)
-draw tc (with_printer [%sexp_of: int] (map succ (integers ())))
-
-(* after *)
-draw tc (with_printer Printer.int (map succ (integers ())))
-draw tc (with_printer (Printer.of_sexp Core.Date.sexp_of_t) my_dates)
+draw tc (with_printer [%sexp_of: int list] (map (fun n -> [ n ]) (integers ())))
+(* prints: draw_1 = (3) *)
 ```
 
-The other changes you may need to make:
-
-- The generator type is now `'a generator`. The `printable` / `unprintable` phantom parameter is gone, so `(int, printable) generator` becomes `int generator`, and `Generators.printer` is removed.
-- `functions`, `functions2` and `functions3` take `?print_arg` / `?print_arg1` / `?print_arg2` / `?print_arg3` (each an `'a -> Printer.doc`) instead of `?sexp_of_arg*`. Their applications print as `f 1 "a" = 3`.
-- `Stateful.run`, `Stateful.run_concurrent`, the runners `module%hegel_state_machine` generates, and the `Hegel_jane_async` runners take `?print_state` instead of `?sexp_of_state`, and a state machine module defines `print_state` instead of `sexp_of_state`.
-- `make_characters`, `make_dates`, `make_times` and `make_datetimes` take `~print` instead of `~sexp_of`, and `make_hash_tables` takes `~print_of_pairs` (turning the printed association list into the printed table) instead of `~sexp_of_t`.
-- `[@@deriving hegel_generator]` no longer defines `sexp_of_<t>`, needs no sexp converter for its field types, and no longer needs `[@sexp.opaque]` on a field. If you used the derived `sexp_of_<t>`, derive it with `ppx_sexp_conv` instead. `Hegel.Derive` no longer re-exports the `Sexplib0.Sexp_conv` converters.
+The printing API is unchanged: generators keep their `printable` / `unprintable` parameter, `Generators.printer` still returns a generator's s-expression printer, and `[@@deriving hegel_generator]` still defines `sexp_of_<t>`. A field of a derived type whose generator has no printer (an `[@hegel.generator]` override built with `map`, say) prints as that s-expression, inside the OCaml syntax of the rest of the value. The new `Hegel.Printer` module has the documents these values print as, and `Printer.to_string` to lay one out.
 
 `text` and `characters` now leave character-set validation to the engine. `~categories` may name a category that contains the surrogates, such as `"C"`, and the engine drops the surrogates from it; constraints that leave no characters at all (`~categories:["Cs"]`) raise `Usage_error` when the generator is drawn from rather than when it is built.
 
@@ -81,13 +73,19 @@ New test-case operations:
 New generators for recursive data:
 
 - `recursive ?max_depth ?max_leaves leaf branch` generates trees and other recursive values. `branch` receives the generator of sub-values and builds one level of structure from it; the engine decides where the value branches, bounds its depth and size, and shrinks it toward a single leaf.
-- `deferred ()` returns a generator together with the function that defines it later, so generators can refer to each other, or to themselves, before they exist.
+- `deferred ()` returns a printable generator together with the function that defines it later, so generators can refer to each other, or to themselves, before they exist.
 
 ```ocaml
+type tree =
+  | Leaf of int
+  | Node of tree list
+[@@deriving sexp_of]
+
 let trees =
   recursive
-    (map (fun n -> Leaf n) (integers ()))
-    (fun subtrees -> map (fun children -> Node children) (lists subtrees ()))
+    (with_printer sexp_of_tree (map (fun n -> Leaf n) (integers ())))
+    (fun subtrees ->
+      with_printer sexp_of_tree (map (fun children -> Node children) (lists subtrees ())))
 ```
 
 `[@@deriving hegel_generator]` now supports recursive and mutually recursive types. A variant whose constructors refer to the type itself, such as `type tree = Leaf of int | Node of tree * tree`, is generated with `recursive`, its non-recursive constructors as the leaves; other recursive types are generated through `deferred`.

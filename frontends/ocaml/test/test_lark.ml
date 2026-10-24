@@ -139,7 +139,7 @@ let test_bad_grammar () =
 let test_invalid_options () =
   let raises f substring =
     match f () with
-    | (_ : string generator) -> Alcotest.fail "expected Usage_error"
+    | (_ : (string, printable) generator) -> Alcotest.fail "expected Usage_error"
     | exception Usage_error message ->
       if not (Test_helpers.contains_substring message substring)
       then Alcotest.failf "%S does not contain %S" message substring
@@ -156,7 +156,8 @@ let test_invalid_options () =
 let test_prints_as_a_string () =
   let shown = ref "" in
   run_hegel_test ~settings:(settings ~test_cases:1 ()) (fun tc ->
-    let _, show = Generators.Ppx_internal.draw tc (from_lark {|start: "hi"|} ()) in
+    let gen = from_lark {|start: "hi"|} () in
+    let _, show = Generators.Ppx_internal.draw tc gen ~sexp_of:(Generators.printer gen) in
     shown := Printer.to_string (show ()));
   Alcotest.(check string) "quoted" {|"hi"|} !shown
 ;;
@@ -168,7 +169,7 @@ let test_collected () =
       Alcotest.(check string) "drawn" "x" s)
   in
   draw_once ();
-  ignore (from_lark {|start: "y"|} () : string generator);
+  ignore (from_lark {|start: "y"|} () : (string, printable) generator);
   Gc.full_major ();
   Gc.full_major ()
 ;;

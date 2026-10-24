@@ -12,7 +12,7 @@ let test_functions_independent_e2e () =
       draw_silent
         tc
         (functions
-           ~print_arg:Printer.int
+           ~sexp_of_arg:Core.sexp_of_int
            ~returns:(integers ~min_value:0 ~max_value:5 ())
            ())
     in
@@ -26,7 +26,7 @@ let test_functions_independent_e2e () =
   Alcotest.(check bool) "distinct args can differ" true !saw_differ
 ;;
 
-let test_functions_no_print_arg_e2e () =
+let test_functions_no_sexp_of_arg_e2e () =
   let saw_differ = ref false in
   run_hegel_test ~settings:(Settings.create ~test_cases:100 ~seed:0 ()) (fun tc ->
     let f =
@@ -39,7 +39,7 @@ let test_functions_no_print_arg_e2e () =
     assert (f 0 = a0);
     assert (a0 >= 0 && a0 <= 5);
     assert (a1 >= 0 && a1 <= 5));
-  Alcotest.(check bool) "distinct args differ without print_arg" true !saw_differ
+  Alcotest.(check bool) "distinct args differ without sexp_of_arg" true !saw_differ
 ;;
 
 (** Test: [functions2] produces a curried two-argument function. Same arguments
@@ -53,8 +53,8 @@ let test_functions2_e2e () =
       draw_silent
         tc
         (functions2
-           ~print_arg1:Printer.int
-           ~print_arg2:Printer.bool
+           ~sexp_of_arg1:Core.sexp_of_int
+           ~sexp_of_arg2:Core.sexp_of_bool
            ~returns:(integers ~min_value:0 ~max_value:9 ())
            ())
     in
@@ -79,9 +79,9 @@ let test_functions3_e2e () =
       draw_silent
         tc
         (functions3
-           ~print_arg1:Printer.int
-           ~print_arg2:Printer.bool
-           ~print_arg3:Printer.int
+           ~sexp_of_arg1:Core.sexp_of_int
+           ~sexp_of_arg2:Core.sexp_of_bool
+           ~sexp_of_arg3:Core.sexp_of_int
            ~returns:(integers ~min_value:0 ~max_value:9 ())
            ())
     in
@@ -102,7 +102,7 @@ let test_draw_silent_named_with_printer () =
         ~name:"f"
         tc
         (with_printer
-           (fun _ -> Printer.text "<custom>")
+           (fun _ -> Core.Sexp.Atom "<custom>")
            (functions ~returns:(integers ~min_value:0 ~max_value:5 ()) ()))
     in
     assert (f 0 = f 0))
@@ -117,7 +117,10 @@ let tests =
       "functions memoize per argument and draw independent results"
       `Quick
       test_functions_independent_e2e
-  ; Alcotest.test_case "functions no print_arg e2e" `Quick test_functions_no_print_arg_e2e
+  ; Alcotest.test_case
+      "functions no sexp_of_arg e2e"
+      `Quick
+      test_functions_no_sexp_of_arg_e2e
   ; Alcotest.test_case "functions2 curry e2e" `Quick test_functions2_e2e
   ; Alcotest.test_case "functions3 curry e2e" `Quick test_functions3_e2e
   ]

@@ -89,12 +89,15 @@ let test_invalid_bounds () =
 
 let test_prints_decimal () =
   Hegel.run_hegel_test ~settings:(settings ~test_cases:10 ()) (fun tc ->
+    let gen = Hegel_zarith.integers ~min_value:(pow2 70) ~max_value:(pow2 70) () in
     let n, show =
-      Hegel.Generators.Ppx_internal.draw
-        tc
-        (Hegel_zarith.integers ~min_value:(pow2 70) ~max_value:(pow2 70) ())
+      Hegel.Generators.Ppx_internal.draw tc gen ~sexp_of:(Hegel.Generators.printer gen)
     in
-    Alcotest.(check string) "shown" (Z.to_string n) (Hegel.Printer.to_string (show ())))
+    Alcotest.(check string) "shown" (Z.to_string n) (Hegel.Printer.to_string (show ()));
+    Alcotest.(check string)
+      "printer"
+      (Z.to_string n)
+      (Sexplib0.Sexp.to_string (Hegel.Generators.printer gen n)))
 ;;
 
 let () =

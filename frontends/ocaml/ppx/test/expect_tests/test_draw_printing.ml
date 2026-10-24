@@ -2,9 +2,10 @@
     [draw] prints its value through the [note] channel (stderr, captured here by
     ppx_expect). [draw_silent] never prints, and draws nested inside a span
     (depth > 0) are suppressed so only the outermost value shows. The printer is
-    carried on primitive generators; combinators that hand the output type to
-    user code ([map], [sampled_from]) print their values as [<abstr>], and
-    [with_printer] attaches a printer to any generator. *)
+    carried on primitive generators and prints values as OCaml syntax;
+    combinators that hand the output type to user code ([map], [sampled_from])
+    carry none, and [with_printer] attaches one (and is what [draw] requires),
+    printing as the s-expressions it returns. *)
 
 open! Core
 open Hegel
@@ -129,7 +130,7 @@ let%expect_test "with_printer supplies the printer draw renders with" =
         ~label:"h"
         tc
         (with_printer
-           (fun n -> Printer.text (sprintf "0x%x" n))
+           (fun n -> Sexp.Atom (sprintf "0x%x" n))
            (integers ~min_value:255 ~max_value:255 ()))
     in
     assert false);
@@ -145,9 +146,9 @@ let%expect_test "with_printer supplies the printer draw renders with" =
     |}]
 ;;
 
-let%expect_test "with_printer gives a sampled_from value a printer" =
+let%expect_test "with_printer makes an unprintable sampled_from drawable" =
   run_failing (fun tc ->
-    let _ = Hegel.draw ~label:"c" tc (with_printer Printer.int (sampled_from [ 9 ])) in
+    let _ = Hegel.draw ~label:"c" tc (with_printer Int.sexp_of_t (sampled_from [ 9 ])) in
     assert false);
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
@@ -234,7 +235,7 @@ let%expect_test "strings are always quoted" =
         ~label:"words"
         tc
         (map (fun s -> s ^ " " ^ s) (text ~alphabet:"h" ~min_size:5 ~max_size:5 ())
-         |> with_printer Printer.string)
+         |> with_printer String.sexp_of_t)
     in
     assert false);
   print_string (Expect_scrub.scrub_report [%expect.output]);
@@ -250,14 +251,23 @@ let%expect_test "strings are always quoted" =
     |}]
 ;;
 
-let%expect_test "a value with no printer shows as <abstr>" =
+let%expect_test "a with_printer printer prints its s-expressions" =
   run_failing (fun tc ->
-    let _ = Hegel.draw ~label:"m" tc (map succ (integers ~min_value:7 ~max_value:7 ())) in
+    let _ =
+      Hegel.draw
+        ~label:"m"
+        tc
+        (with_printer
+           [%sexp_of: int list * string]
+           (map (fun n -> [ n; n ], "a b") (integers ~min_value:7 ~max_value:7 ())))
+    in
     let _ =
       Hegel.draw
         ~label:"pair"
         tc
-        (tuples2 (sampled_from [ `A ]) (integers ~min_value:7 ~max_value:7 ()))
+        (tuples2
+           (with_printer [%sexp_of: [ `A ]] (sampled_from [ `A ]))
+           (integers ~min_value:7 ~max_value:7 ()))
     in
     assert false);
   print_string (Expect_scrub.scrub_report [%expect.output]);
@@ -265,15 +275,15 @@ let%expect_test "a value with no printer shows as <abstr>" =
     {|
     --- Failure --------------------------------------------------------------------
 
-    m = <abstr>
-    pair = (<abstr>, 7)
+    m = ((7 7) "a b")
+    pair = (A, 7)
 
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
     rerun with: ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
-let%expect_test "options, one_of and flat_map print what they drew" =
+let%expect_test "options and one_of print what they drew" =
   run_failing (fun tc ->
     let _ =
       Hegel.draw
@@ -291,10 +301,12 @@ let%expect_test "options, one_of and flat_map print what they drew" =
       Hegel.draw
         ~label:"dependent"
         tc
-        (flat_map
-           (fun n ->
-              lists (integers ~min_value:n ~max_value:n ()) ~min_size:2 ~max_size:2 ())
-           (integers ~min_value:3 ~max_value:3 ()))
+        (with_printer
+           [%sexp_of: int list]
+           (flat_map
+              (fun n ->
+                 lists (integers ~min_value:n ~max_value:n ()) ~min_size:2 ~max_size:2 ())
+              (integers ~min_value:3 ~max_value:3 ())))
     in
     assert false);
   print_string (Expect_scrub.scrub_report [%expect.output]);
@@ -304,7 +316,7 @@ let%expect_test "options, one_of and flat_map print what they drew" =
 
     o = Some (-7)
     either = "a"
-    dependent = [3; 3]
+    dependent = (3 3)
 
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
     rerun with: ~failure_blobs:[ "<BLOB>" ]
@@ -384,7 +396,7 @@ end
 let%hegel_test stateful_print tc =
   let vars = Stateful.Pool.create tc in
   Stateful.Pool.add vars tc 42;
-  let val_gen = with_printer Printer.int (Stateful.Pool.values_reusable vars) in
+  let val_gen = with_printer sexp_of_int (Stateful.Pool.values_reusable vars) in
   let _x = Hegel.draw tc val_gen in
   Pusher.run tc ~init:() ~step_count:3
 [@@settings
@@ -442,6 +454,22 @@ let%expect_test "a nested derived record prints as an OCaml record" =
     --- Failure --------------------------------------------------------------------
 
     draw_1 = { tag = Only }
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "a derived value prints as one sexp via with_printer" =
+  run_failing (fun tc ->
+    let _ = Hegel.draw tc (with_printer sexp_of_wrap hegel_generator_wrap) in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    draw_1 = ((tag Only))
 
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
     rerun with: ~failure_blobs:[ "<BLOB>" ]
@@ -653,14 +681,7 @@ let%expect_test "verbose prints draws on a passing run" =
 type tree =
   | Leaf of int
   | Node of tree list
-
-let print_tree =
-  let rec print = function
-    | Leaf n -> Printer.constructor "Leaf" [ Printer.int n ]
-    | Node children -> Printer.constructor "Node" [ Printer.list print children ]
-  in
-  print
-;;
+[@@deriving sexp_of]
 
 let%expect_test "a recursive value prints as its leaves and branches print" =
   run_failing ~settings:(Settings.create ~test_cases:200 ~seed:0 ()) (fun tc ->
@@ -670,10 +691,10 @@ let%expect_test "a recursive value prints as its leaves and branches print" =
         tc
         (recursive
            (map (fun n -> Leaf n) (integers ~min_value:0 ~max_value:9 ())
-            |> with_printer print_tree)
+            |> with_printer sexp_of_tree)
            (fun subtrees ->
               map (fun children -> Node children) (lists subtrees ~min_size:2 ())
-              |> with_printer print_tree))
+              |> with_printer sexp_of_tree))
     in
     match t with
     | Node _ -> assert false
@@ -683,7 +704,7 @@ let%expect_test "a recursive value prints as its leaves and branches print" =
     {|
     --- Failure --------------------------------------------------------------------
 
-    t = Node [Leaf 0; Leaf 0]
+    t = (Node ((Leaf 0) (Leaf 0)))
 
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
     rerun with: ~failure_blobs:[ "<BLOB>" ]

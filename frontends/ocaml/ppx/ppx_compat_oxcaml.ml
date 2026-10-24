@@ -15,6 +15,26 @@ let extract_constr_args = function
   | Pcstr_record labels -> Record labels
 ;;
 
+let map_constr_arg_types f = function
+  | Pcstr_tuple args ->
+    Pcstr_tuple (List.map (fun arg -> { arg with pca_type = f arg.pca_type }) args)
+  | Pcstr_record labels ->
+    Pcstr_record (List.map (fun ld -> { ld with pld_type = f ld.pld_type }) labels)
+;;
+
+let sexp_of_str_type_decl ~loc ~path decls =
+  Ppx_sexp_conv_expander.Sexp_of.str_type_decl
+    ~loc
+    ~path
+    ~unboxed:false
+    decls
+    ~stackify:false
+    ~portable:false
+    ~localize:false
+;;
+
+let sexp_of_core_type ct = Ppx_sexp_conv_expander.Sexp_of.core_type ct ~stackify:false
+
 let unwrap_pattern_constraint pat =
   match pat.ppat_desc with
   | Ppat_constraint (inner, _, _) -> Some inner

@@ -9,7 +9,9 @@ let test_one_of_empty () =
 ;;
 
 (** Test: one_of with a single generator is accepted. *)
-let test_one_of_single_accepted () = ignore (one_of [ booleans () ] : bool generator)
+let test_one_of_single_accepted () =
+  ignore (one_of [ booleans () ] : (bool, printable) generator)
+;;
 
 (** Test: sampled_from raises when given an empty list. *)
 let test_sampled_from_empty () =
@@ -25,7 +27,9 @@ let test_one_of_e2e () =
   Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:50 ()) (fun tc ->
     let gen =
       one_of
-        [ integers ~min_value:0 ~max_value:10 (); with_printer Printer.int (just 99) ]
+        [ integers ~min_value:0 ~max_value:10 ()
+        ; with_printer Core.sexp_of_int (just 99)
+        ]
     in
     let v = Hegel.draw tc gen in
     assert ((v >= 0 && v <= 10) || v = 99))
@@ -81,7 +85,11 @@ let test_ip_both_e2e () =
        | Ipaddr.V4 _ -> saw_v4 := true
        | Ipaddr.V6 _ -> saw_v6 := true);
   Alcotest.(check bool) "saw v4" true !saw_v4;
-  Alcotest.(check bool) "saw v6" true !saw_v6
+  Alcotest.(check bool) "saw v6" true !saw_v6;
+  Alcotest.(check string)
+    "printer"
+    "1.2.3.4"
+    (Sexplib0.Sexp.to_string (printer (ip_addresses ()) (Ipaddr.of_string_exn "1.2.3.4")))
 ;;
 
 (** Test: tuples2 primitive e2e. *)

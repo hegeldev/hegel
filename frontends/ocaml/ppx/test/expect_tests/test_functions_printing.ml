@@ -17,7 +17,7 @@ let run_failing body =
 let%hegel_test binding_name tc =
   let f_gen =
     functions
-      ~print_arg:Printer.int
+      ~sexp_of_arg:sexp_of_int
       ~returns:(integers ~min_value:0 ~max_value:1000 ())
       ()
   in
@@ -42,15 +42,13 @@ let%expect_test "a function is named from its binding" =
     |}]
 ;;
 
-(* Drawn with [draw], a function prints no line of its own; its applications
-   print, with arguments and results as OCaml syntax. *)
 let%hegel_test drawn_function_prints_applications tc =
   let f =
-    draw
+    draw_silent
       tc
       (functions2
-         ~print_arg1:Printer.int
-         ~print_arg2:Printer.string
+         ~sexp_of_arg1:sexp_of_int
+         ~sexp_of_arg2:sexp_of_string
          ~returns:
            (lists (integers ~min_value:3 ~max_value:3 ()) ~min_size:2 ~max_size:2 ())
          ())
@@ -60,7 +58,9 @@ let%hegel_test drawn_function_prints_applications tc =
   { (Settings.create ~test_cases:100 ~seed:0 ()) with verbosity = Settings.Normal }]
 ;;
 
-let%expect_test "a drawn function prints its applications as OCaml syntax" =
+let%expect_test
+    "an application prints its arguments as sexps and its result as OCaml syntax"
+  =
   (try drawn_function_prints_applications () with
    | _ -> ());
   print_string (Expect_scrub.scrub_report [%expect.output]);
@@ -68,7 +68,7 @@ let%expect_test "a drawn function prints its applications as OCaml syntax" =
     {|
     --- Failure: drawn_function_prints_applications (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
 
-    f (-1) "a b" = [3; 3]
+    f (-1 "a b") = [3; 3]
 
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
     rerun with: [@@failure_blobs [ "<BLOB>" ]]
@@ -80,7 +80,7 @@ let%hegel_test binding_name_inline tc =
     draw_silent
       tc
       (functions
-         ~print_arg:Printer.int
+         ~sexp_of_arg:sexp_of_int
          ~returns:(integers ~min_value:0 ~max_value:1000 ())
          ())
   in
@@ -110,7 +110,7 @@ let%hegel_test explicit_name_beats_binding tc =
       tc
       (functions
          ~name:"chosen"
-         ~print_arg:Printer.int
+         ~sexp_of_arg:sexp_of_int
          ~returns:(integers ~min_value:0 ~max_value:1000 ())
          ())
   in
@@ -140,7 +140,7 @@ let%expect_test "without a binding the function falls back to its default name" 
       draw_silent
         tc
         (functions
-           ~print_arg:Printer.int
+           ~sexp_of_arg:sexp_of_int
            ~returns:(integers ~min_value:0 ~max_value:1000 ())
            ())
     in
@@ -164,7 +164,7 @@ let%expect_test "an explicit ~name is used when there is no binding name" =
         tc
         (functions
            ~name:"myfun"
-           ~print_arg:Printer.int
+           ~sexp_of_arg:sexp_of_int
            ~returns:(integers ~min_value:0 ~max_value:1000 ())
            ())
     in
@@ -186,8 +186,8 @@ let%hegel_test functions2_binding tc =
     draw_silent
       tc
       (functions2
-         ~print_arg1:Printer.int
-         ~print_arg2:Printer.bool
+         ~sexp_of_arg1:sexp_of_int
+         ~sexp_of_arg2:sexp_of_bool
          ~returns:(integers ~min_value:0 ~max_value:1000 ())
          ())
   in
@@ -204,7 +204,7 @@ let%expect_test "functions2 shows its table uncurried, named from its binding" =
     {|
     --- Failure: functions2_binding (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
 
-    g 3 true = 10
+    g (3 true) = 10
 
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
     rerun with: [@@failure_blobs [ "<BLOB>" ]]
@@ -216,9 +216,9 @@ let%hegel_test functions3_binding tc =
     draw_silent
       tc
       (functions3
-         ~print_arg1:Printer.int
-         ~print_arg2:Printer.bool
-         ~print_arg3:Printer.int
+         ~sexp_of_arg1:sexp_of_int
+         ~sexp_of_arg2:sexp_of_bool
+         ~sexp_of_arg3:sexp_of_int
          ~returns:(integers ~min_value:0 ~max_value:1000 ())
          ())
   in
@@ -235,7 +235,7 @@ let%expect_test "functions3 shows its table uncurried, named from its binding" =
     {|
     --- Failure: functions3_binding (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
 
-    h 1 true 2 = 10
+    h (1 true 2) = 10
 
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
     rerun with: [@@failure_blobs [ "<BLOB>" ]]
@@ -276,7 +276,7 @@ let func_call_loop verbosity =
          draw_silent
            tc
            (functions
-              ~print_arg:Printer.int
+              ~sexp_of_arg:sexp_of_int
               ~returns:(integers ~min_value:0 ~max_value:1000 ())
               ())
        in
@@ -381,14 +381,14 @@ let%expect_test "function call prints every time in verbose/debug verbosity" =
     |}]
 ;;
 
-let%hegel_test function_with_printer_draw tc =
+let%hegel_test printable_function_draw tc =
   let f =
     draw
       tc
       (with_printer
-         (fun _ -> Printer.text "<fun>")
+         (fun _ -> Sexp.Atom "<fun>")
          (functions
-            ~print_arg:Printer.int
+            ~sexp_of_arg:sexp_of_int
             ~returns:(integers ~min_value:0 ~max_value:1000 ())
             ()))
   in
@@ -397,13 +397,13 @@ let%hegel_test function_with_printer_draw tc =
   { (Settings.create ~test_cases:100 ~seed:0 ()) with verbosity = Settings.Normal }]
 ;;
 
-let%expect_test "a function generator with a printer prints its value line" =
-  (try function_with_printer_draw () with
+let%expect_test "a printable function generator prints with its sexp_of" =
+  (try printable_function_draw () with
    | _ -> ());
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: function_with_printer_draw (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
+    --- Failure: printable_function_draw (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
 
     f = <fun>
     f 42 = 10
@@ -417,16 +417,16 @@ let%expect_test "a function generator with a printer prints its value line" =
    threaded into its pairs — here the explicit name [f] — but its [<fun>]
    value line is suppressed like any nested draw. It is
    applied at the top level, so its pair still shows. *)
-let%hegel_test function_with_printer_drawn_nested tc =
+let%hegel_test printable_function_drawn_nested tc =
   let f =
     Private.group Private.Labels.list tc (fun () ->
       draw
         tc
         (with_printer
-           (fun _ -> Printer.text "<fun>")
+           (fun _ -> Sexp.Atom "<fun>")
            (functions
               ~name:"f"
-              ~print_arg:Printer.int
+              ~sexp_of_arg:sexp_of_int
               ~returns:(integers ~min_value:0 ~max_value:1000 ())
               ())))
   in
@@ -436,12 +436,12 @@ let%hegel_test function_with_printer_drawn_nested tc =
 ;;
 
 let%expect_test "a function drawn nested keeps its label but suppresses its value line" =
-  (try function_with_printer_drawn_nested () with
+  (try printable_function_drawn_nested () with
    | _ -> ());
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: function_with_printer_drawn_nested (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
+    --- Failure: printable_function_drawn_nested (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
 
     f 42 = 10
 
@@ -458,7 +458,7 @@ let%hegel_test application_inside_span_is_suppressed tc =
     draw_silent
       tc
       (functions
-         ~print_arg:Printer.int
+         ~sexp_of_arg:sexp_of_int
          ~returns:(integers ~min_value:0 ~max_value:1000 ())
          ())
   in
@@ -480,50 +480,82 @@ let%expect_test "a function applied inside a span prints nothing" =
     |}]
 ;;
 
-let%hegel_test partially_printed_args_and_ret tc =
+let%hegel_test partially_printable_args_and_ret tc =
   let f =
     draw_silent
       tc
-      (functions ~print_arg:Printer.int ~returns:(functions ~returns:(integers ()) ()) ())
+      (functions
+         ~sexp_of_arg:sexp_of_int
+         ~returns:(functions ~returns:(integers ()) ())
+         ())
   in
   let n = f 1 () in
   assert (n = 0)
 [@@settings Settings.create ~test_cases:100 ~seed:0 ()]
 ;;
 
-let%expect_test "applications with some printers missing" =
-  (try partially_printed_args_and_ret () with
+let%expect_test "partially printable applications" =
+  (try partially_printable_args_and_ret () with
    | _ -> ());
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: partially_printed_args_and_ret (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
+    --- Failure: partially_printable_args_and_ret (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
 
     f 1 = <fun>
-    function <abstr> = 1
+    function <opaque> = 1
 
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
     rerun with: [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;
 
-let%hegel_test unprinted_args_and_ret tc =
+let%hegel_test unprintable_args_and_ret tc =
   let f = draw_silent tc (functions ~returns:(functions ~returns:(integers ()) ()) ()) in
   let n = f () () in
   assert (n = 0)
 [@@settings Settings.create ~test_cases:100 ~seed:0 ()]
 ;;
 
-let%expect_test "applications with no printers" =
-  (try unprinted_args_and_ret () with
+let%expect_test "unprintable applications" =
+  (try unprintable_args_and_ret () with
    | _ -> ());
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: unprinted_args_and_ret (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
+    --- Failure: unprintable_args_and_ret (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
 
-    f <abstr> = <fun>
-    function <abstr> = 1
+    f <opaque> = <fun>
+    function <opaque> = 1
+
+    Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+    |}]
+;;
+
+let%hegel_test results_with_no_printer tc =
+  let f = draw_silent tc (functions ~returns:(just 3) ()) in
+  let g =
+    draw_silent
+      tc
+      (functions ~returns:(map succ (integers ~min_value:0 ~max_value:0 ())) ())
+  in
+  let h = draw_silent tc (functions ~returns:(composite (fun _ -> 5)) ()) in
+  assert (f () + g () + h () = 0)
+[@@settings Settings.create ~test_cases:100 ~seed:0 ()]
+;;
+
+let%expect_test "a result with no printer shows as <abstr>" =
+  (try results_with_no_printer () with
+   | _ -> ());
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure: results_with_no_printer (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
+
+    h <opaque> = <abstr>
+    g <opaque> = <abstr>
+    f <opaque> = <abstr>
 
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
     rerun with: [@@failure_blobs [ "<BLOB>" ]]
