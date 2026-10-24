@@ -27,7 +27,6 @@ describe("gs.integers()", () => {
     hegel.test(
       (tc) => {
         const v = tc.draw(gs.integers());
-        // Large integers may come back as bigint from CBOR
         expect(typeof v === "number" || typeof v === "bigint").toBe(true);
       },
       { testCases: 10 },
@@ -119,5 +118,40 @@ describe("gs.bigIntegers() wide ranges", () => {
         expect(v).toBeLessThanOrEqual(2n ** 70n);
       },
       { testCases: 10 },
+    ));
+});
+
+describe("gs.bigIntegers() with one bound", () => {
+  const schemaBounds = (gen: ReturnType<typeof gs.bigIntegers>) => {
+    const schema = gen.asBasic().schema;
+    return [schema["min_value"], schema["max_value"]];
+  };
+
+  test("an unbounded side reaches 2n ** 127n beyond zero or the other bound", () => {
+    const m = 2n ** 127n;
+    expect(schemaBounds(gs.bigIntegers())).toEqual([-m, m - 1n]);
+    expect(schemaBounds(gs.bigIntegers({ minValue: -5n }))).toEqual([-5n, m - 1n]);
+    expect(schemaBounds(gs.bigIntegers({ maxValue: 5n }))).toEqual([-m, 5n]);
+    expect(schemaBounds(gs.bigIntegers({ minValue: 2n ** 200n }))).toEqual([
+      2n ** 200n,
+      2n ** 200n + m - 1n,
+    ]);
+    expect(schemaBounds(gs.bigIntegers({ maxValue: -(2n ** 200n) }))).toEqual([
+      -(2n ** 200n) - m + 1n,
+      -(2n ** 200n),
+    ]);
+  });
+
+  test("draws values beyond 2n ** 127n when the bound is there", () =>
+    hegel.test(
+      (tc) => {
+        expect(tc.draw(gs.bigIntegers({ minValue: 2n ** 200n }))).toBeGreaterThanOrEqual(
+          2n ** 200n,
+        );
+        expect(tc.draw(gs.bigIntegers({ maxValue: -(2n ** 200n) }))).toBeLessThanOrEqual(
+          -(2n ** 200n),
+        );
+      },
+      { testCases: 20 },
     ));
 });

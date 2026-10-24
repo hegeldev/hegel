@@ -4,7 +4,8 @@
  * @packageDocumentation
  */
 
-import { TestCase, Labels } from "../testCase.js";
+import { TestCase } from "../testCase.js";
+import { LabelNames, labelSpec, type LabelSpec } from "../labels.js";
 import { Generator, BasicGenerator } from "./core.js";
 
 class TuplesGenerator extends Generator<unknown[]> {
@@ -32,7 +33,7 @@ class TuplesGenerator extends Generator<unknown[]> {
 
   doDraw(tc: TestCase): unknown[] {
     if (this.basic) return this.basic.doDraw(tc);
-    tc.startSpan(Labels.TUPLE);
+    tc.startSpan(this.label);
     const result = this.generators.map((g) => g.doDraw(tc));
     tc.stopSpan();
     return result;
@@ -40,6 +41,11 @@ class TuplesGenerator extends Generator<unknown[]> {
 
   override asBasic(): BasicGenerator<unknown[]> | null {
     return this.basic;
+  }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.TUPLES, ...this.generators.map((g) => g.label));
   }
 }
 

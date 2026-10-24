@@ -35,7 +35,12 @@ export interface CharacterFilterOptions {
 }
 
 export interface TextOptions extends CharacterFilterOptions {
+  /** The fewest characters (default 0). */
   minSize?: number;
+  /**
+   * The most characters. By default the engine's maximum applies: 100, or
+   * `minSize + 100` when `minSize` is above 100.
+   */
   maxSize?: number;
 }
 
@@ -134,7 +139,8 @@ export function text(options?: TextOptions): Generator<string> {
 
 export type CharacterOptions = CharacterFilterOptions;
 
-class CharactersGenerator extends SchemaStringGenerator {
+/** @internal */
+export class CharactersGenerator extends SchemaStringGenerator {
   constructor(options?: CharacterOptions) {
     const schema: Record<string, unknown> = {
       type: "string",
@@ -154,7 +160,12 @@ export function characters(options?: CharacterOptions): Generator<string> {
 }
 
 export interface BinaryOptions {
+  /** The fewest bytes (default 0). */
   minSize?: number;
+  /**
+   * The most bytes. By default the engine's maximum applies: 100, or
+   * `minSize + 100` when `minSize` is above 100.
+   */
   maxSize?: number;
 }
 
@@ -187,25 +198,47 @@ export function binary(options?: BinaryOptions): Generator<Uint8Array> {
   return new BinaryGenerator(options);
 }
 
+/**
+ * The schema of the text generator an `alphabet` option describes: a string
+ * of its characters, or a {@link characters} generator.
+ *
+ * @internal
+ */
+export function alphabetSchema(alphabet: string | Generator<string>): Record<string, unknown> {
+  const generator = typeof alphabet === "string" ? characters({ alphabet }) : alphabet;
+  if (!(generator instanceof CharactersGenerator)) {
+    throw new TypeError("alphabet must be a string or a generator made by characters()");
+  }
+  return { ...generator.asBasic().schema, min_size: 0, max_size: 0 };
+}
+
 export interface RegexOptions {
   /** Whether the entire string must match the pattern (default `true`). */
   fullmatch?: boolean;
+  /**
+   * The characters the string may contain, padding included: a string of
+   * them, or a {@link characters} generator. The pattern's character classes
+   * draw only from it.
+   */
+  alphabet?: string | Generator<string>;
 }
 
 class FromRegexGenerator extends SchemaStringGenerator {
   constructor(pattern: string, options?: RegexOptions) {
-    super({
+    const schema: Record<string, unknown> = {
       type: "regex",
       pattern,
       fullmatch: options?.fullmatch ?? true,
-    });
+    };
+    if (options?.alphabet !== undefined) schema["alphabet"] = alphabetSchema(options.alphabet);
+    super(schema);
   }
 }
 
 /**
  * Generate strings matching a regex pattern. Defaults to full match (the
  * entire string matches the pattern); pass `{ fullmatch: false }` for
- * substring/contains behavior.
+ * substring/contains behavior, and `alphabet` to restrict the characters.
  */
 export function fromRegex(pattern: string, options?: RegexOptions): Generator<string> {
   return new FromRegexGenerator(pattern, options);

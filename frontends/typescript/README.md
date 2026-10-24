@@ -10,7 +10,7 @@
 - [Documentation](https://hegel.dev/typescript)
 - [Website](https://hegel.dev)
 
-Hegel is a property-based testing library for TypeScript. Hegel is based on [Hypothesis](https://github.com/hypothesisworks/hypothesis), using the [Hegel protocol](https://hegel.dev/).
+Hegel is a property-based testing library for TypeScript, built on libhegel, the [Hegel](https://hegel.dev/) engine. It runs in-process: as a native library on Node, Bun and Deno, and as the same engine compiled to WebAssembly in browsers.
 
 ## Installation
 
@@ -20,9 +20,7 @@ Hegel requires Node 20.11+, Bun 1.2.5+, or Deno 2+. (Note that Deno requires `--
 
 Linux amd64/arm64, macOS arm64, and Windows amd64/arm64 are supported.
 
-Browser support uses the same package imports and initializes the Rust Wasm engine during ESM module loading. It requires top-level await and secure-context Web Crypto. Tests and shrinking run on the main thread; browser persistence is unsupported.
-
-The upstream Wasm support is merged and published in libhegel 0.42.4. See [the browser guide](./BROWSER.md) for bundler configuration and how the Wasm module is packaged. Node, Bun and Deno continue to use Koffi.
+Browser support uses the same package imports and initializes the Wasm engine during ESM module loading. It requires top-level await and secure-context Web Crypto. Tests and shrinking run on the main thread; browser persistence is unsupported. See [the browser guide](./BROWSER.md) for bundler configuration and how the Wasm module is packaged.
 
 ## Quickstart
 
@@ -49,10 +47,13 @@ test("my_sort matches builtin", () =>
   }));
 ```
 
-This test will fail when run with `vitest`! Hegel will produce a minimal failing test case for us:
+This test will fail when run with `vitest`! Hegel will produce a minimal failing test case for us, printing each value the test drew and how to replay the failure, and then throw the test's own error:
 
 ```
-Draw 1: [0, 0]
+const draw_1 = [0, 0];
+
+To reproduce this failure, replay it with the Hegel builder:
+    .reproduceFailure("AXicY2VgYGBkZOBiZEBhMAAAAd8AIQ==")
 Error: sort mismatch: [0,0] != [0]
 ```
 
@@ -109,4 +110,28 @@ test("stack", () =>
   }));
 ```
 
-Hegel picks the rules to run at each step, shrinks a failing sequence down to a minimal one, and reports it step by step (`Step 1: push`, `Step 2: pop`, …). See the `stateful` module in the documentation for invariants, step counts, asynchronous rules and `Pool`, which lets rules act on values that earlier rules produced.
+Hegel picks the rules to run at each step, shrinks a failing sequence down to a minimal one, and reports it step by step (`Step 1: push {`, with the step's draws indented beneath it, then `}`). See the `stateful` module in the documentation for invariants, step counts, asynchronous rules and `Pool`, which lets rules act on values that earlier rules produced.
+
+## Printing your own classes
+
+A failing example prints each drawn value as JavaScript, laid out to fit the line: arrays, objects, `Map`s and `Set`s break one item per line when they are too long. Instances of your own classes print as their class name and properties; to print one differently, give the class a `hegel.prettyPrint` method, which writes through a `hegel.PrettyPrinter`:
+
+```typescript
+class Interval {
+  constructor(
+    readonly lo: number,
+    readonly hi: number,
+  ) {}
+
+  [hegel.prettyPrint](p: hegel.PrettyPrinter): void {
+    p.group(4, "Interval(", ")", () => {
+      p.value(this.lo);
+      p.text(",");
+      p.breakable(" ");
+      p.value(this.hi);
+    });
+  }
+}
+```
+
+A group prints on one line when it fits, each `breakable` as its separator, and otherwise breaks at every `breakable`, indenting the next line by the group's indentation.

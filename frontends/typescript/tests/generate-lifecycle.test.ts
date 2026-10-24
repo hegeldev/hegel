@@ -26,17 +26,20 @@ describe("generateValue compound cleanup", () => {
     });
   }
 
-  it.each(["list", "dict"])("closes %s span when collection allocation fails", (type) => {
-    const engine = fakeEngine();
-    engine.newCollection.mockImplementation(() => {
-      throw new EngineError("collection allocation");
-    });
-    expect(() => generateValue(engine, context, testCase, { type, min_size: 0 })).toThrow(
-      "collection allocation",
-    );
-    expect(engine.stopSpan).toHaveBeenCalledTimes(1);
-    expect(engine.freeCollection).not.toHaveBeenCalled();
-  });
+  it.each([compoundSchemas[2], compoundSchemas[3]])(
+    "closes $type span when collection allocation fails",
+    (schema) => {
+      const engine = fakeEngine();
+      engine.newCollection.mockImplementation(() => {
+        throw new EngineError("collection allocation");
+      });
+      expect(() => generateValue(engine, context, testCase, schema)).toThrow(
+        "collection allocation",
+      );
+      expect(engine.stopSpan).toHaveBeenCalledTimes(1);
+      expect(engine.freeCollection).not.toHaveBeenCalled();
+    },
+  );
 
   it("never lets cleanup control flow mask an engine fault", () => {
     const engine = fakeEngine();
@@ -153,7 +156,7 @@ describe("StringGeneratorCache ownership", () => {
     expect(engine.stringGeneratorText.mock.calls[0][1]).toMatchObject({
       categories: [],
       excludeCategories: null,
-      maxSize: 18446744073709551615n,
+      maxSize: 18446744073709551614n,
       includeCharacters: new Uint8Array([97, 0, 240, 159, 152, 128]),
       excludeCharacters: new Uint8Array(0),
     });
@@ -172,4 +175,29 @@ it("StringGeneratorCache reports multiple failed destructors without retrying ha
   expect(engine.freeStringGenerator).toHaveBeenCalledTimes(2);
   cache.dispose();
   expect(engine.freeStringGenerator).toHaveBeenCalledTimes(2);
+});
+
+it("StringGeneratorCache compiles a grammar once and frees it on dispose, even after a failed free", () => {
+  const engine = fakeEngine();
+  const cache = new StringGeneratorCache(engine);
+  const spec = {
+    text: "start: B",
+    start: null,
+    maxSize: 0,
+    maxDepth: 0,
+    alphabet: null,
+    explicitNames: [],
+    importPath: null,
+  };
+  expect(cache.grammar(context, spec)).toBe(cache.grammar(context, spec));
+  expect(engine.newGrammar).toHaveBeenCalledTimes(1);
+  expect(engine.freeGrammarBuilder).toHaveBeenCalledTimes(1);
+  cache.get(engine, context, { type: "email" });
+  engine.freeGrammar.mockImplementation(() => {
+    throw new EngineError("grammar free failed");
+  });
+  expect(() => cache.dispose()).toThrow("grammar free failed");
+  expect(engine.freeStringGenerator).toHaveBeenCalledTimes(1);
+  cache.dispose();
+  expect(engine.freeGrammar).toHaveBeenCalledTimes(1);
 });

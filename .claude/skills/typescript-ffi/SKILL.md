@@ -36,8 +36,9 @@ The layers, and what an ABI change usually touches:
   per-primitive draw entry points. Touch it when a draw entry point changes
   shape or a new one replaces schema-level behaviour.
 - **`src/runnerCore.ts` / `src/session.ts`** — the run lifecycle
-  (`run_start` → `next_test_case` → `mark_complete` → `run_result`, plus
-  failure replay via `hegel_test_case_from_blob`) and the process-global
+  (`run_start` or `run_start_blob` → `next_test_case` → `mark_complete` →
+  `run_result`, with each stamped test case's report read from its printer
+  document) and the process-global
   library handle with its `major.minor` version check. Touch only if the
   lifecycle protocol itself changes.
 - **`src/wtf8.ts`** — decodes engine-returned string bytes. Touch only if
@@ -51,6 +52,9 @@ around it:
 - The **first argument** is a `hegel_context_t*` (an error-reporting context).
 - The **return value** is a `hegel_result_t` code (`HEGEL_OK` is 0; failures
   are negative — `-1` is `HEGEL_E_STOP_TEST`, `-2` is `HEGEL_E_ASSUME`).
+  `HEGEL_E_RETRY` (`-10`) is protocol rather than failure:
+  `hegel_recursion_leaf` and `hegel_recursion_finish` surface it as a `false`
+  return, and the recursive generator unwinds and draws the value again.
 - Any **value the call produces** (a handle, a count, a bool, a buffer) is
   written through a **trailing out-parameter**, never returned.
 - On a non-OK return, the message is read back from the context via
@@ -111,11 +115,16 @@ setting without the frontend parsing values itself.
 Neither adapter frees anything implicitly. Every handle the ABI writes back is
 released with its matching free, in `finally` blocks so error paths release
 too: the runner frees `Context`, `Settings` and `Run`, each test case, the run
-result, each failure and each replay test case; the interpreter frees each
-collection; engine-owned buffers (`hegel_generate_bytes`,
-`hegel_generate_string`) are copied out immediately and then freed. The
-exception: `hegel_string_generator_t` handles are cached per schema object
-(`StringGeneratorCache`) and freed with the runner.
+result and each failure; `EngineDataSource` frees the collections, pools,
+recursions, state machines, printers and cloned or block test cases of its
+test case;
+engine-owned buffers (`hegel_generate_bytes`, `hegel_generate_string`,
+`hegel_printer_value`, `hegel_grammar_draw_result`) are copied out
+immediately and then freed. A grammar builder is freed as soon as its grammar
+is compiled, and a grammar draw when the draw ends. The exceptions:
+`hegel_string_generator_t` handles are cached per schema object and
+`hegel_grammar_t` handles per `fromLark` generator (`StringGeneratorCache`),
+and freed with the runner.
 
 ## Making a change
 
@@ -135,7 +144,7 @@ exception: `hegel_string_generator_t` handles are cached per schema object
      `_Out_ void**` that yields a `const hegel_string_t *` is decoded with
      `koffi.decode(ptr, stringType)`. A struct returned by value
      (`hegel_context_last_error`) is declared with `lib.func(name, stringType,
-     [...])`.
+[...])`.
    - New symbol → bind it **only if the frontend needs it**: the coverage gate
      forbids dead bindings.
    - Changed enum or constant values → the exported `const` objects in

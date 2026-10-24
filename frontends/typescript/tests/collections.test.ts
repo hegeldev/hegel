@@ -2,9 +2,9 @@
  * Tests for the collection protocol path (non-basic element generators).
  *
  * When a generator doesn't have asBasic() (e.g. after .filter()), the
- * collection generators (arrays, sets, maps) must use the server's
+ * collection generators (arrays, sets, maps) must use the engine's
  * collection protocol (new_collection / collection_more / collection_reject)
- * instead of sending a schema.
+ * instead of drawing from a schema.
  *
  * Ported from hegel-rust tests/test_collections.rs and the old
  * tests/generators/collections.test.ts.
@@ -15,7 +15,7 @@ import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
 
 // Collection protocol tests use fewer test cases because each test case
-// involves many server round-trips (one per collection element).
+// involves many engine calls (several per collection element).
 const FEW = { testCases: 20 };
 
 // .filter(() => true) is a no-op filter that strips asBasic(),
@@ -153,4 +153,68 @@ describe("maps with non-basic elements (collection protocol)", () => {
       );
       expect(m).toBeInstanceOf(Map);
     }, FEW));
+});
+
+describe("arrays with uniqueBy", () => {
+  test("keys from a function are distinct", () =>
+    hegel.test((tc) => {
+      const pairs = tc.draw(
+        gs.arrays(gs.tuples(gs.integers({ minValue: 0, maxValue: 5 }), gs.booleans()), {
+          uniqueBy: (pair) => pair[0],
+          maxSize: 10,
+        }),
+      );
+      expect(new Set(pairs.map((pair) => pair[0])).size).toBe(pairs.length);
+    }, FEW));
+
+  test("every key function's keys are distinct", () =>
+    hegel.test((tc) => {
+      const xs = tc.draw(
+        gs.arrays(gs.integers({ minValue: 0, maxValue: 20 }), {
+          uniqueBy: [(x) => x % 3, (x) => x % 5],
+          minSize: 2,
+        }),
+      );
+      expect(new Set(xs.map((x) => x % 3)).size).toBe(xs.length);
+      expect(new Set(xs.map((x) => x % 5)).size).toBe(xs.length);
+    }, FEW));
+
+  test("invalid combinations throw", () => {
+    expect(() => gs.arrays(gs.integers(), { unique: true, uniqueBy: (x) => x })).toThrow(
+      "Cannot pass both unique and uniqueBy",
+    );
+    expect(() => gs.arrays(gs.integers(), { uniqueBy: [] })).toThrow(
+      "uniqueBy must be a function or a non-empty array of functions",
+    );
+    expect(gs.arrays(gs.integers(), { uniqueBy: (x) => x }).asBasic()).toBeNull();
+  });
+});
+
+describe("gs.permutations()", () => {
+  test("generates reorderings of every element", () =>
+    hegel.test((tc) => {
+      const perm = tc.draw(gs.permutations(["a", "b", "c", "d"]));
+      expect([...perm].sort()).toEqual(["a", "b", "c", "d"]);
+      expect(tc.draw(gs.permutations([]))).toEqual([]);
+    }, FEW));
+
+  test("reorders, and shrinks toward the original order", () => {
+    let reordered = false;
+    let last: number[] = [];
+    expect(() =>
+      hegel.test(
+        (tc) => {
+          const perm = tc.draw(gs.permutations([1, 2, 3, 4, 5]));
+          if (perm.join() !== "1,2,3,4,5") reordered = true;
+          if (perm[4] !== 5) {
+            last = perm;
+            throw new Error("moved");
+          }
+        },
+        { testCases: 200, database: hegel.Database.disabled },
+      ),
+    ).toThrow("moved");
+    expect(reordered).toBe(true);
+    expect(last).toEqual([1, 2, 3, 5, 4]);
+  });
 });

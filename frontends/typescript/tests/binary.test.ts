@@ -36,4 +36,23 @@ describe("gs.binary()", () => {
       },
       { testCases: 10 },
     ));
+
+  test("without maxSize the engine's default maximum applies", () =>
+    hegel.test(
+      (tc) => {
+        expect(tc.draw(gs.binary()).length).toBeLessThanOrEqual(100);
+        const long = tc.draw(gs.binary({ minSize: 120 }));
+        expect(long.length).toBeGreaterThanOrEqual(120);
+        expect(long.length).toBeLessThanOrEqual(220);
+      },
+      { testCases: 50 },
+    ));
+
+  test("a maxSize at or above the engine's reserved default means no bound", () =>
+    hegel.test(
+      (tc) => {
+        expect(tc.draw(gs.binary({ maxSize: 2 ** 64 }))).toBeInstanceOf(Uint8Array);
+      },
+      { testCases: 10 },
+    ));
 });

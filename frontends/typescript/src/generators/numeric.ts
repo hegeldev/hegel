@@ -33,9 +33,6 @@ class IntegersGenerator extends Generator<number> {
         "integers() bounds must be within Number.MIN_SAFE_INTEGER..Number.MAX_SAFE_INTEGER. Use bigIntegers() for larger ranges.",
       );
     }
-    // Encode bounds as BigInt so they always serialize as CBOR integers: the
-    // native engine strictly rejects float-encoded integer bounds, and cbor-x
-    // encodes plain JS numbers above 2**32 as CBOR floats.
     this.schema = { type: "integer", min_value: BigInt(min), max_value: BigInt(max) };
   }
 
@@ -67,9 +64,7 @@ function parseBigInt(raw: unknown): bigint {
   return BigInt(raw as number);
 }
 
-// Default bounds for an unbounded bigIntegers() side (signed 128-bit range).
-const DEFAULT_BIGINT_MIN = -(2n ** 127n);
-const DEFAULT_BIGINT_MAX = 2n ** 127n - 1n;
+const UNBOUNDED_MAGNITUDE = 2n ** 127n;
 
 class BigIntegersGenerator extends Generator<bigint> {
   private readonly schema: Record<string, unknown>;
@@ -81,15 +76,15 @@ class BigIntegersGenerator extends Generator<bigint> {
     if (min !== undefined && max !== undefined && min > max) {
       throw new Error("Cannot have maxValue < minValue");
     }
-    // The native engine requires explicit integer bounds. For an unbounded
-    // side, default to the signed 128-bit range: the engine's draw is
-    // bit-width-weighted (favoring small magnitudes), so a wide finite range
-    // reproduces Hypothesis's unbounded-integer distribution closely.
-    this.schema = {
-      type: "integer",
-      min_value: min ?? DEFAULT_BIGINT_MIN,
-      max_value: max ?? DEFAULT_BIGINT_MAX,
-    };
+    let lo = min ?? -UNBOUNDED_MAGNITUDE;
+    if (min === undefined && max !== undefined && max - UNBOUNDED_MAGNITUDE + 1n < lo) {
+      lo = max - UNBOUNDED_MAGNITUDE + 1n;
+    }
+    let hi = max ?? UNBOUNDED_MAGNITUDE - 1n;
+    if (max === undefined && min !== undefined && min + UNBOUNDED_MAGNITUDE - 1n > hi) {
+      hi = min + UNBOUNDED_MAGNITUDE - 1n;
+    }
+    this.schema = { type: "integer", min_value: lo, max_value: hi };
   }
 
   doDraw(tc: TestCase): bigint {
@@ -101,12 +96,25 @@ class BigIntegersGenerator extends Generator<bigint> {
   }
 }
 
-/** Generate arbitrary-precision integers as BigInt. */
+/**
+ * Generate arbitrary-precision integers as BigInt, in `[minValue, maxValue]`.
+ *
+ * Either bound may be omitted. A missing bound is taken to be `2n ** 127n`
+ * values beyond the other bound, or beyond zero when that is further, so
+ * `bigIntegers({ minValue: 2n ** 200n })` draws values from `2n ** 200n`
+ * upward. Values shrink toward zero, or toward the bound nearest zero.
+ */
 export function bigIntegers(options?: BigIntegerOptions): Generator<bigint> {
   return new BigIntegersGenerator(options);
 }
 
 export interface FloatOptions {
+  /**
+   * The precision of the values: 64 (the default) for any double, 32 for
+   * values exactly representable as a 32-bit float (`Math.fround(x) === x`).
+   * With width 32, the bounds must be exactly representable too.
+   */
+  width?: 32 | 64;
   minValue?: number;
   maxValue?: number;
   excludeMin?: boolean;
@@ -122,13 +130,14 @@ class FloatsGenerator extends Generator<number> {
     super();
     const hasMin = options?.minValue !== undefined;
     const hasMax = options?.maxValue !== undefined;
+    const width = options?.width ?? 64;
     // NaN only when completely unbounded; infinity when at least one side is open
     const allowNan = options?.allowNan ?? (!hasMin && !hasMax);
     const allowInfinity = options?.allowInfinity ?? (!hasMin || !hasMax);
 
     const schema: Record<string, unknown> = {
       type: "float",
-      width: 64,
+      width,
       allow_nan: allowNan,
       allow_infinity: allowInfinity,
     };
@@ -157,7 +166,8 @@ class FloatsGenerator extends Generator<number> {
  * Generate floating-point numbers.
  *
  * By default, NaN is allowed only when no bounds are set, and infinity
- * is allowed when at least one bound is missing.
+ * is allowed when at least one bound is missing. Pass `width: 32` for values
+ * a `Float32Array` holds exactly.
  */
 export function floats(options?: FloatOptions): Generator<number> {
   return new FloatsGenerator(options);

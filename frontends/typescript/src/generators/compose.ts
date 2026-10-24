@@ -4,7 +4,8 @@
  * @packageDocumentation
  */
 
-import { TestCase, Labels } from "../testCase.js";
+import { TestCase } from "../testCase.js";
+import { LabelNames, labelSpec, type LabelSpec } from "../labels.js";
 import { Generator, BasicGenerator } from "./core.js";
 
 class ComposedGenerator<T> extends Generator<T> {
@@ -14,6 +15,11 @@ class ComposedGenerator<T> extends Generator<T> {
 
   doDraw(tc: TestCase): T {
     return this.fn(tc);
+  }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.COMPOSITE);
   }
 }
 
@@ -39,9 +45,7 @@ class RecordGenerator<T extends Record<string, unknown>> extends Generator<T> {
       this.basic = new BasicGenerator(
         { type: "tuple", elements: validBasics.map((b) => b.schema) },
         (raw) => {
-          /* v8 ignore start: server always returns array for tuple schema */
           if (!Array.isArray(raw)) throw new Error(`Expected array, got ${typeof raw}`);
-          /* v8 ignore stop */
           const obj: Record<string, unknown> = {};
           for (let i = 0; i < keys.length; i++) {
             obj[keys[i]] = validBasics[i].parseRaw(raw[i]);
@@ -56,7 +60,7 @@ class RecordGenerator<T extends Record<string, unknown>> extends Generator<T> {
 
   doDraw(tc: TestCase): T {
     if (this.basic) return this.basic.doDraw(tc);
-    tc.startSpan(Labels.FIXED_DICT);
+    tc.startSpan(this.label);
     const obj: Record<string, unknown> = {};
     for (let i = 0; i < this.keys.length; i++) {
       obj[this.keys[i]] = this.generators[i].doDraw(tc);
@@ -67,6 +71,11 @@ class RecordGenerator<T extends Record<string, unknown>> extends Generator<T> {
 
   override asBasic(): BasicGenerator<T> | null {
     return this.basic;
+  }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.FIXED_DICTS, ...this.generators.map((g) => g.label));
   }
 }
 

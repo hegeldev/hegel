@@ -42,6 +42,5 @@ it("auto-initializes the browser composition root and preserves the public expor
       { seed: 42 },
     ),
   ).toThrow("browser failure");
-  expect(error).toHaveBeenCalledWith("browser note");
-  expect(error).toHaveBeenCalledWith("var draw_1 =", 1);
+  expect(error.mock.calls.slice(0, 2)).toEqual([["const draw_1 = 1;"], ["browser note"]]);
 });

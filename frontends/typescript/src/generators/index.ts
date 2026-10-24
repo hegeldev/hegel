@@ -22,8 +22,12 @@ export type {
 } from "./strings.js";
 export type { UuidVersion } from "../engine.js";
 
-export { arrays, sets, maps } from "./collections.js";
+export { arrays, sets, maps, permutations } from "./collections.js";
 export type { CollectionOptions, ArrayOptions } from "./collections.js";
-export { just, sampledFrom, oneOf, optional } from "./combinators.js";
+export { just, none, sampledFrom, oneOf, optional } from "./combinators.js";
+export { recursive, deferred } from "./recursive.js";
+export type { RecursiveOptions } from "./recursive.js";
 export { tuples } from "./tuples.js";
+export { fromLark } from "./lark.js";
+export type { LarkOptions } from "./lark.js";
 export { composite, record } from "./compose.js";

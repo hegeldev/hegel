@@ -1,26 +1,29 @@
 /**
  * Tests using fake DataSource implementations to exercise code paths in
  * testCase.ts, generators.ts, and runner.ts that are unreachable through
- * the real hegel server.
+ * the real engine.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import * as gs from "@hegeldev/hegel/generators";
 import {
   AssumeError,
   Collection,
-  Labels,
   StopTestError,
   TestCase,
   type DataSource,
 } from "../src/testCase.js";
 import { runTestCase } from "../src/runner.js";
+import { labelSpec } from "../src/labels.js";
+import { TextPrinter } from "../src/pretty.js";
 
 // ---------------------------------------------------------------------------
 // FakeDataSource
 // ---------------------------------------------------------------------------
 
 class FakeDataSource implements DataSource {
+  readonly family = {};
+  readonly output = new TextPrinter();
   private generates: unknown[];
   private generateIndex = 0;
   private _throwOnStartSpan: boolean;
@@ -54,7 +57,11 @@ class FakeDataSource implements DataSource {
     return this.generates[this.generateIndex++];
   }
 
-  startSpan(label: number): void {
+  label(): bigint {
+    return 1n;
+  }
+
+  startSpan(label: bigint): void {
     void label;
     if (this._throwOnStartSpan) {
       throw new Error("startSpan error");
@@ -98,6 +105,30 @@ class FakeDataSource implements DataSource {
     throw new Error("not supported by FakeDataSource");
   }
 
+  poolRestore(_poolId: number, _variableId: bigint): void {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  newRecursion(_maxDepth: number, _maxLeaves: number): number {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  recursionBranch(_recursionId: number, _depth: number): boolean {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  recursionLeaf(_recursionId: number): boolean {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  recursionRetry(_recursionId: number): void {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  recursionFinish(_recursionId: number): boolean {
+    throw new Error("not supported by FakeDataSource");
+  }
+
   newStateMachine(): number {
     throw new Error("not supported by FakeDataSource");
   }
@@ -118,6 +149,34 @@ class FakeDataSource implements DataSource {
     throw new Error("not supported by FakeDataSource");
   }
 
+  drawGrammar(): string {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  note(message: string): void {
+    this.output.note(message);
+  }
+
+  target(): void {}
+
+  event(): void {}
+
+  eventValue(): void {}
+
+  clone(): DataSource {
+    return this;
+  }
+
+  block(): DataSource {
+    return this;
+  }
+
+  setWorker(): void {}
+
+  printer(): TextPrinter {
+    return this.output;
+  }
+
   get markCompleteCalls() {
     return this._markCompleteCalls;
   }
@@ -128,22 +187,10 @@ class FakeDataSource implements DataSource {
 // ---------------------------------------------------------------------------
 
 describe("TestCase with fake DataSource", () => {
-  it("isLastRun getter returns true when constructed with isLastRun=true", () => {
-    const ds = new FakeDataSource({ generates: [42] });
-    const tc = new TestCase(ds, true);
-    expect(tc.isLastRun).toBe(true);
-  });
-
-  it("isLastRun getter returns false when constructed with isLastRun=false", () => {
-    const ds = new FakeDataSource({ generates: [42] });
-    const tc = new TestCase(ds, false);
-    expect(tc.isLastRun).toBe(false);
-  });
-
   it("stopSpan catches errors from dataSource.stopSpan", () => {
     const ds = new FakeDataSource({ generates: [42], throwOnStopSpan: true });
     const tc = new TestCase(ds, false);
-    tc.startSpan(Labels.LIST);
+    tc.startSpan(labelSpec("span"));
     // stopSpan should NOT throw even though dataSource.stopSpan throws
     expect(() => tc.stopSpan()).not.toThrow();
   });
@@ -151,34 +198,28 @@ describe("TestCase with fake DataSource", () => {
   it("startSpan catches and re-throws errors from dataSource.startSpan", () => {
     const ds = new FakeDataSource({ generates: [42], throwOnStartSpan: true });
     const tc = new TestCase(ds, false);
-    expect(() => tc.startSpan(Labels.LIST)).toThrow("startSpan error");
+    expect(() => tc.startSpan(labelSpec("span"))).toThrow("startSpan error");
   });
 
-  it("draw logs to stderr on isLastRun=true at spanDepth=0", () => {
+  it("draw prints the value when the test case is emitted", () => {
     const ds = new FakeDataSource({ generates: [42] });
     const tc = new TestCase(ds, true);
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     tc.draw(gs.integers());
-    expect(spy).toHaveBeenCalledWith(expect.stringContaining("draw_1"), 42);
-    spy.mockRestore();
+    expect(ds.output.lines()).toEqual(["const draw_1 = 42;"]);
   });
 
-  it("note writes to stderr on isLastRun=true", () => {
+  it("note appends to the output when the test case is emitted", () => {
     const ds = new FakeDataSource({ generates: [] });
     const tc = new TestCase(ds, true);
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     tc.note("hello");
-    expect(spy).toHaveBeenCalledWith("hello");
-    spy.mockRestore();
+    expect(ds.output.lines()).toEqual(["hello"]);
   });
 
-  it("note does nothing on isLastRun=false", () => {
+  it("note does nothing when the test case is not emitted", () => {
     const ds = new FakeDataSource({ generates: [] });
     const tc = new TestCase(ds, false);
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     tc.note("hello");
-    expect(spy).not.toHaveBeenCalled();
-    spy.mockRestore();
+    expect(ds.output.lines()).toEqual([]);
   });
 
   it("assume(false) throws AssumeError", () => {
@@ -315,6 +356,12 @@ describe("Generator parse error paths", () => {
     const tc = new TestCase(ds, false);
     expect(() => tc.draw(gs.tuples(gs.integers(), gs.integers()))).toThrow("Expected array");
   });
+
+  it("record parse throws on non-array", () => {
+    const ds = new FakeDataSource({ generates: ["not array"] });
+    const tc = new TestCase(ds, false);
+    expect(() => tc.draw(gs.record({ a: gs.integers() }))).toThrow("Expected array");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -393,19 +440,18 @@ describe("runTestCase with non-Error throws", () => {
     expect(ds.markCompleteCalls[0].origin).toBe("<unknown>");
   });
 
-  it("classifyResult uses String(e) when a non-Error is thrown in final replay", () => {
+  it("an emitted non-Error failure prints only the draws", () => {
     const ds = new FakeDataSource({ generates: [42] });
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const result = runTestCase(
       ds,
-      () => {
+      (tc) => {
+        tc.draw(gs.integers());
         throw "string thrown";
       },
       true,
     );
     expect(result.status).toBe("interesting");
-    expect(spy).toHaveBeenCalledWith(expect.stringContaining("string thrown"));
-    spy.mockRestore();
+    expect(ds.output.lines()).toEqual(["const draw_1 = 42;"]);
   });
 });
 
