@@ -89,7 +89,7 @@ lib/                         # Library source
                              #   locked.capsule.ml is OxCaml syntax and listed in
                              #   .ocamlformat-ignore
   ffi/                       # ctypes bindings to native libhegel (NOT instrumented)
-    ffi.ml                   # dlopen + 1:1 C-ABI wrappers; settings/run/test_case
+    ffi.ml.in/.mli.in        # dlopen + 1:1 C-ABI wrappers; settings/run/test_case
                              #   handles; typed draws + string-generator handles;
                              #   events; the pretty-printer document (printer_*,
                              #   test_case_printer, note)
@@ -102,11 +102,11 @@ lib/                         # Library source
                              #   unbounded_choices set), and
                              #   main (Cmd.eval ~catch:false, then exit).
                              #   Doc-hidden re-export Hegel.Cli for tests
-  settings.ml / settings.mli # Hegel.Settings: the settings record (type t), its
+  settings.ml/.mli.in       # Hegel.Settings: the settings record (type t), its
                              #   verbosity/database/phase/health_check/backend enums,
                              #   default ()/from_profile/create materialized from
                              #   the engine's settings profiles (to_ffi/of_ffi)
-  internal.ml.in             # Test runner + run lifecycle + typed-draw wrappers on
+  internal.ml.in/.mli.in     # Test runner + run lifecycle + typed-draw wrappers on
                              #   top of Hegel_ffi.Ffi; note/print_line +
                              #   capture_document (engine-side output, see Pretty
                              #   printing); events (cppo → internal.ml)
@@ -114,21 +114,21 @@ lib/                         # Library source
                              #   (doc), value printers (int, string, list, …),
                              #   structural builders (record, constructor, tuple,
                              #   apply), render (doc → engine printer) and to_string
-  generators.ml.in           # Re-export shim: include the four generators_* modules
+  generators.ml.in           # Re-export shim: include the five generators_* modules
                              #   (cppo → generators.ml; generators.mli.in likewise)
-  generators_core.ml         # generator type; draw/draw_silent, map/flat_map/filter,
+  generators_core.ml.in      # generator type; draw/draw_silent, map/flat_map/filter,
                              #   composite, span labels — the discriminated union
-  generators_primitives.ml   # integers, booleans, floats, text, binary, just, formats
-  generators_collections.ml  # lists, assoc_lists, hash_tables (+ the table-agnostic
+  generators_primitives.ml.in # integers, booleans, floats, text, binary, just, formats
+  generators_collections.ml.in # lists, assoc_lists, hash_tables (+ the table-agnostic
                              #   make_hash_tables), and the collection protocol
-  generators_combinators.ml  # sampled_from, one_of, tuples2/3/4
-  generators_functions.ml    # functions/functions2/functions3: memoized
+  generators_combinators.ml.in # sampled_from, one_of, tuples2/3/4
+  generators_functions.ml.in # functions/functions2/functions3: memoized
                              #   function generators (Claessen's show/shrink,
                              #   but no trie — the engine shrinks results)
-  derive.ml                  # Hegel.Derive: scope-resolved names derived code
+  derive.ml/.mli.in          # Hegel.Derive: scope-resolved names derived code
                              #   refers to (hegel_generator_int/…/char/list/
                              #   option)
-  stateful.ml.in             # Stateful testing: Pool (shared by both machine kinds),
+  stateful.ml.in/.mli.in     # Stateful testing: Pool (shared by both machine kinds),
                              #   Rule (sequential, plain mutating step), Concurrent_rule
                              #   (?group, portable step taking the worker's ctx),
                              #   Invariant, State_machine + run tc (module M) ~init,
@@ -237,8 +237,6 @@ examples/                    # Example programs demonstrating the library
   real_world.ml              # Real-world scenario: sorted-merge property test
   derived_types.ml           # Derived generators via [@@deriving hegel_generator]
   higher_order.ml            # Function generators: functions/functions2/functions3
-  workload.ml                # let%hegel_main binary: a buggy account state machine
-                             #   to try the Hegel.main command line on
 
 scripts/
   check-coverage.py          # Parses bisect-ppx-report, enforces 100%
@@ -515,8 +513,12 @@ the base_quickcheck conventions:
    `Core.Date.hegel_generator` does not exist. One
    `open Hegel_jane.Derive` replaces `open Hegel.Derive`.
 
-See `GAPS.md` for the deriver's remaining gaps versus base_quickcheck
-(recursion, type parameters, polymorphic variants, …). Note `lib/derive.ml`
+The deriver's remaining gaps versus base_quickcheck: recursive types (there
+is no `recursive`/`deferred` combinator yet), parameterized type
+declarations ("parameterized types not supported"), and type expressions
+other than constructors and tuples, such as polymorphic variants, type
+variables, arrows and objects ("unsupported type in [@@deriving
+hegel_generator]"). Note `lib/derive.ml`
 previously held qualified runtime helpers (`generate_option`/`generate_list`);
 that module was deleted and the filename now hosts `Hegel.Derive`, the
 scope-resolution module described above.
@@ -883,8 +885,7 @@ contended array cannot be read. Once any domain has been spawned `Unix.fork`
 fails for the rest of the process, so `test_hegel.ml` runs the forking
 `loader` suite first. Jane Street's `Concurrent` library is OxCaml-only and
 depends on `core`, which is why its adapter is the optional
-`hegel.jane.concurrent` sublibrary. See `plan.md` for the OxCaml portability
-phase.
+`hegel.jane.concurrent` sublibrary.
 
 ### OxCaml portability (cppo, modes, the trust boundary)
 
