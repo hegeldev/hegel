@@ -1,11 +1,11 @@
 /**
- * Tests for the test runner, error classes, Labels, and test lifecycle.
+ * Tests for the test runner, error classes, and test lifecycle.
  */
 
 import { describe, test, it, expect } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
-import { AssumeError, Labels, StopTestError, TestCase } from "../src/testCase.js";
+import { AssumeError, StopTestError, TestCase } from "../src/testCase.js";
 
 describe("StopTestError", () => {
   it("has correct name and message", () => {
@@ -22,30 +22,6 @@ describe("AssumeError", () => {
     expect(e.name).toBe("AssumeError");
     expect(e).toBeInstanceOf(Error);
     expect(e.message).toBe("Assumption rejected");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Labels constants
-// ---------------------------------------------------------------------------
-
-describe("Labels", () => {
-  it("has correct values", () => {
-    expect(Labels.LIST).toBe(1);
-    expect(Labels.LIST_ELEMENT).toBe(2);
-    expect(Labels.SET).toBe(3);
-    expect(Labels.SET_ELEMENT).toBe(4);
-    expect(Labels.MAP).toBe(5);
-    expect(Labels.MAP_ENTRY).toBe(6);
-    expect(Labels.TUPLE).toBe(7);
-    expect(Labels.ONE_OF).toBe(8);
-    expect(Labels.OPTIONAL).toBe(9);
-    expect(Labels.FIXED_DICT).toBe(10);
-    expect(Labels.FLAT_MAP).toBe(11);
-    expect(Labels.FILTER).toBe(12);
-    expect(Labels.MAPPED).toBe(13);
-    expect(Labels.SAMPLED_FROM).toBe(14);
-    expect(Labels.ENUM_VARIANT).toBe(15);
   });
 });
 

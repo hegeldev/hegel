@@ -25,6 +25,7 @@ import * as gs from "../src/generators/index.js";
 import * as stateful from "../src/stateful.js";
 import { Libhegel } from "../src/libhegel.js";
 import { testLibPath } from "./libPath.js";
+import { fakeRuntime } from "./fakeEngine.js";
 
 function active<T>(
   engine: Engine,
@@ -334,7 +335,7 @@ describe("WasmEngine real run lifecycle", () => {
     const { engine } = wasmFixture();
     const runtime = browserRuntime(engine),
       runner = createRunner(runtime);
-    const note = vi.spyOn(runtime, "note");
+    const output = vi.spyOn(runtime, "output");
     runner.test(
       (tc) => {
         tc.assume(tc.draw(gs.integers({ minValue: 0, maxValue: 10 })) > 0);
@@ -349,44 +350,77 @@ describe("WasmEngine real run lifecycle", () => {
       },
       { testCases: 5, seed: 42 },
     );
-    expect(note).not.toHaveBeenCalled();
+    expect(output).not.toHaveBeenCalled();
   });
 
-  it("shrinks and reports a replayed failure with notes in both drivers", async () => {
+  it("shrinks and reports a failure with notes and a blob native replays, in both drivers", async () => {
     for (const async of [false, true]) {
       const { engine } = wasmFixture();
       const runtime = browserRuntime(engine);
-      const values: unknown[] = [];
-      runtime.reportFinalValue = (value) => values.push(value);
-      runtime.reportFinalError = vi.fn();
-      runtime.note = vi.fn();
+      const lines: string[] = [];
+      runtime.output = (line) => lines.push(line);
       const runner = createRunner(runtime);
-      const replay = vi.spyOn(engine, "testCaseFromBlob");
       const body = (tc: import("../src/testCase.js").TestCase) => {
         const n = tc.draw(gs.integers({ minValue: 0, maxValue: 1000 }));
         tc.note("replay note");
         if (n >= 50) throw new Error(`bad ${n}`);
       };
-      if (async) await expect(runner.testAsync(body, { seed: 42 })).rejects.toThrow("bad 50");
-      else expect(() => runner.test(body, { seed: 42 })).toThrow("bad 50");
-      expect(values).toEqual([50]);
-      expect(replay).toHaveBeenCalledTimes(1);
-      expect(runtime.note).toHaveBeenCalledWith("replay note");
-      const native = Libhegel.load(testLibPath());
-      const ctx = native.newContext(),
-        settings = native.newSettings(ctx);
-      try {
-        const tc = native.testCaseFromBlob(ctx, settings, replay.mock.calls[0][2]);
-        try {
-          expect(native.generateInteger(ctx, tc, 0n, 1000n)).toBe(50n);
-        } finally {
-          native.freeTestCase(tc);
-        }
-      } finally {
-        native.freeSettings(settings);
-        native.freeContext(ctx);
-      }
+      const settings = { seed: 42, printBlob: true };
+      if (async) await expect(runner.testAsync(body, settings)).rejects.toThrow("bad 50");
+      else expect(() => runner.test(body, settings)).toThrow("bad 50");
+      expect(lines.slice(0, 4)).toEqual([
+        "const draw_1 = 50;",
+        "replay note",
+        "",
+        "To reproduce this failure, replay it with the Hegel builder:",
+      ]);
+      const blob = JSON.parse(lines[4].trim().replace(/^\.reproduceFailure\((.*)\)$/, "$1"));
+      const native = createRunner(fakeRuntime(Libhegel.load(testLibPath())));
+      expect(() => new native.Hegel(body).reproduceFailure(blob).runSync()).toThrow("bad 50");
     }
+  });
+
+  it("prints the same report as the native engine for every kind of output", () => {
+    const body = (tc: import("../src/testCase.js").TestCase) => {
+      const worker = tc.clone();
+      worker.setWorker(2);
+      tc.note("first line\nsecond line");
+      tc.target(1, "t");
+      tc.event("e");
+      tc.eventValue("v", 1);
+      const values = tc.draw(gs.arrays(gs.text({ maxSize: 3 }), { minSize: 1 }), "values");
+      worker.draw(gs.booleans());
+      tc.repeat(() => {
+        if (tc.draw(gs.integers({ minValue: 0, maxValue: 10 })) > 2 && values.length > 0) {
+          throw new Error("failed");
+        }
+      });
+    };
+    const reports: string[][] = [];
+    for (const runtime of [
+      browserRuntime(wasmFixture().engine),
+      fakeRuntime(Libhegel.load(testLibPath())),
+    ]) {
+      const lines: string[] = [];
+      runtime.output = (line) => lines.push(line);
+      expect(() =>
+        createRunner(runtime).test(body, {
+          database: Database.disabled,
+          derandomize: true,
+          showStatistics: true,
+        }),
+      ).toThrow("failed");
+      reports.push(lines.map((line) => line.replace(/\+\d+\.\d+ms/, "+TIME")));
+    }
+    expect(reports[0]).toEqual(reports[1]);
+    expect(reports[0].slice(0, 6)).toEqual([
+      "[worker 2 +TIME] const draw_1 = false;",
+      "first line",
+      "second line",
+      'const values = [""];',
+      "// Repetition #1",
+      "  const draw_2 = 3;",
+    ]);
   });
 
   it.each([false, true])(
@@ -396,10 +430,9 @@ describe("WasmEngine real run lifecycle", () => {
       const status = vi.spyOn(engine, "runStatus");
       const failureCount = vi.spyOn(engine, "failureCount");
       const failure = vi.spyOn(engine, "failure");
-      const replay = vi.spyOn(engine, "testCaseFromBlob");
       const free = vi.spyOn(engine, "freeContext");
       const runtime = browserRuntime(engine);
-      runtime.note = vi.fn();
+      runtime.output = vi.fn();
       const runner = createRunner(runtime);
       const flaky = new Error("flaky failure");
       let seen = false;
@@ -418,12 +451,11 @@ describe("WasmEngine real run lifecycle", () => {
         thrown = error;
       }
       expect(thrown).toBe(flaky);
-      expect(runtime.note).toHaveBeenCalledTimes(1);
+      expect(runtime.output).toHaveBeenCalledTimes(1);
       expect(seen).toBe(true);
       expect(status).toHaveReturnedWith(RunStatus.FAILED);
       expect(failureCount).toHaveBeenCalledTimes(1);
       expect(failure).toHaveBeenCalledTimes(1);
-      expect(replay).not.toHaveBeenCalled();
       expect(free).toHaveBeenCalledTimes(1);
     },
   );
@@ -431,9 +463,8 @@ describe("WasmEngine real run lifecycle", () => {
   it("reports multiple independent origins", () => {
     const { engine } = wasmFixture();
     const runtime = browserRuntime(engine);
-    runtime.reportFinalError = vi.fn();
-    runtime.reportFinalValue = vi.fn();
-    const replay = vi.spyOn(engine, "testCaseFromBlob");
+    const lines: string[] = [];
+    runtime.output = (line) => lines.push(line);
     let thrown: unknown;
     try {
       createRunner(runtime).test(
@@ -453,15 +484,14 @@ describe("WasmEngine real run lifecycle", () => {
       "high",
       "low",
     ]);
-    expect(replay).toHaveBeenCalledTimes(2);
+    expect(lines[0]).toBe("Property-based test failed with 2 distinct failures.");
+    expect(lines.filter((line) => line.startsWith("const draw_1 = ")).length).toBe(2);
   });
 
   it("reports real health errors without replay and rejects filesystem settings", () => {
     const { engine } = wasmFixture();
     const runner = createRunner(browserRuntime(engine));
-    const replay = vi.spyOn(engine, "testCaseFromBlob");
     expect(() => runner.test((tc) => tc.assume(false), { seed: 42 })).toThrow(/Unsatisfiable/i);
-    expect(replay).not.toHaveBeenCalled();
     expect(() => runner.test(() => {}, { database: Database.fromPath("") })).toThrow(/Filesystem/);
   });
 
@@ -507,12 +537,21 @@ describe("WasmEngine real run lifecycle", () => {
     const blob = engine.reproductionBlob(failure)!;
     expect(engine.failureOrigin(failure)).toBe("origin");
     engine.freeFailure(failure);
-    const replay = engine.testCaseFromBlob(ctx, settings, blob);
-    expect(engine.generateInteger(ctx, replay, 42n, 42n)).toBe(42n);
-    engine.markComplete(ctx, replay, Status.INTERESTING, "origin");
-    engine.freeTestCase(replay);
     engine.freeRunResult(result);
     engine.freeRun(run);
+    const replay = engine.runStartBlob(ctx, settings, blob);
+    let replayed = 0;
+    while ((tc = engine.nextTestCase(ctx, replay)) !== null) {
+      expect(engine.generateInteger(ctx, tc, 42n, 42n)).toBe(42n);
+      engine.markComplete(ctx, tc, Status.INTERESTING, "origin");
+      engine.freeTestCase(tc);
+      replayed++;
+    }
+    expect(replayed).toBeGreaterThan(0);
+    const replayResult = engine.runResult(ctx, replay);
+    expect(engine.runStatus(replayResult)).toBe(RunStatus.FAILED);
+    engine.freeRunResult(replayResult);
+    engine.freeRun(replay);
     engine.freeSettings(settings);
     engine.freeContext(ctx);
   });
@@ -526,7 +565,7 @@ describe("WasmEngine error and ownership boundaries", () => {
     expect(engine.lastError(ctx)).toBe("");
     engine.setDatabaseKey(ctx, s, "key\0with NUL");
     expect(() => engine.setDatabase(ctx, s, "path")).toThrow(/Filesystem/);
-    expect(() => engine.testCaseFromBlob(ctx, s, "bad blob")).toThrow(/failed/);
+    expect(() => engine.runStartBlob(ctx, s, "bad blob")).toThrow(/failed/);
     expect(() => engine.setVerbosity(s, 99)).toThrow(/failed/);
     expect(() => wasmFixture().engine.freeSettings(s)).toThrow(/Foreign/);
     engine.freeSettings(s);
@@ -680,7 +719,7 @@ describe("WasmEngine settings, profiles and run errors", () => {
     const setTestLocation = vi.spyOn(engine, "setTestLocation");
     const caveat = vi.spyOn(engine, "failureCaveat");
     const runtime = browserRuntime(engine);
-    runtime.reportFinalError = vi.fn();
+    runtime.output = vi.fn();
     expect(() =>
       createRunner(runtime).test(function located(tc) {
         if (tc.draw(gs.integers({ minValue: 0, maxValue: 10 })) > 3) throw new Error("big");

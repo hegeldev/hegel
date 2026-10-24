@@ -23,5 +23,11 @@ export {
   Database,
 } from "../settings.js";
 export type { Settings, TestLocation } from "../settings.js";
-export { RunError, FailedHealthCheckError, FlakyError, UnsatisfiableError } from "../errors.js";
+export {
+  RunError,
+  FailedHealthCheckError,
+  FlakyError,
+  UnsatisfiableError,
+  DidNotReproduceError,
+} from "../errors.js";
 export { Hegel } from "../runnerCore.js";

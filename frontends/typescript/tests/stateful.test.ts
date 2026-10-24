@@ -4,9 +4,9 @@ import * as gs from "@hegeldev/hegel/generators";
 import { Pool, run, runAsync, DEFAULT_STEP_COUNT, type StateMachine } from "../src/stateful.js";
 
 /**
- * Run `body` as a Hegel test with deterministic settings, swallowing its
- * failure, and return everything written to stderr — where the final replay
- * of a failing case prints its notes and draws.
+ * Run `body` as a Hegel test with deterministic settings and return the
+ * report of its failing example (written to stderr), followed by a line
+ * holding the message of the error the test threw.
  */
 function captureReplay(body: (tc: hegel.TestCase) => void, testCases = 200): string {
   const lines: string[] = [];
@@ -14,9 +14,15 @@ function captureReplay(body: (tc: hegel.TestCase) => void, testCases = 200): str
     lines.push(args.map(String).join(" "));
   });
   try {
-    hegel.test(body, { testCases, database: hegel.Database.disabled, derandomize: true });
-  } catch {
-    // The failure itself is what the caller is inspecting the replay of.
+    hegel.test(body, {
+      testCases,
+      database: hegel.Database.disabled,
+      derandomize: true,
+      printBlob: false,
+    });
+    lines.push("Passed");
+  } catch (error) {
+    lines.push(`Thrown: ${(error as Error).message}`);
   } finally {
     spy.mockRestore();
   }
@@ -138,11 +144,19 @@ describe("stateful.run", () => {
     const output = captureReplay((tc) => {
       run(tc, bump, { count: 0 });
     });
-    const stepLines = output.split("\n").filter((line) => line.startsWith("Step "));
-    expect(stepLines).toEqual(["Step 1: bump", "Step 2: bump", "Step 3: bump"]);
-    expect(output).not.toContain("noop");
-    expect(output).toContain("Invariant belowThree failed after step 3:");
-    expect(output).toContain("count is 3");
+    expect(output).toBe(
+      [
+        "Checking invariants on the initial state.",
+        "Step 1: bump {",
+        "}",
+        "Step 2: bump {",
+        "}",
+        "Step 3: bump {",
+        "}",
+        "Invariant belowThree failed:",
+        "Thrown: count is 3",
+      ].join("\n"),
+    );
   });
 
   test("the replay shows a rule's draws and names a failing rule", () => {
@@ -160,10 +174,15 @@ describe("stateful.run", () => {
         {},
       );
     });
-    expect(output).toContain("Step 1: tooBig");
-    expect(output).toContain("var draw_1 = 10;");
-    expect(output).toContain("Rule tooBig failed:");
-    expect(output).not.toContain("violated assumption");
+    expect(output).toBe(
+      [
+        "Step 1: tooBig {",
+        "  const draw_1 = 10;",
+        "}",
+        "Rule tooBig failed:",
+        "Thrown: 10 is too big",
+      ].join("\n"),
+    );
   });
 
   test("a rejected step is reported as a violated assumption in the replay", () => {
@@ -192,8 +211,16 @@ describe("stateful.run", () => {
         { marked: false },
       );
     });
-    expect(output).toContain("Step 1: mark");
-    expect(output).toContain("Rule stopped early due to violated assumption.");
+    expect(output).toBe(
+      [
+        "Checking invariants on the initial state.",
+        "Step 1: mark {",
+        "  Rule stopped early due to violated assumption.",
+        "}",
+        "Invariant unmarked failed:",
+        "Thrown: marked",
+      ].join("\n"),
+    );
   });
 
   test("invariants are checked on the initial state", () => {
@@ -215,8 +242,13 @@ describe("stateful.run", () => {
         { num: 0 },
       );
     });
-    expect(output).toContain("Invariant nonZero failed in the initial state:");
-    expect(output).toContain("num is 0");
+    expect(output).toBe(
+      [
+        "Checking invariants on the initial state.",
+        "Invariant nonZero failed:",
+        "Thrown: num is 0",
+      ].join("\n"),
+    );
   });
 
   test("every invariant runs at each guaranteed check", () => {

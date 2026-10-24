@@ -9,7 +9,8 @@ import {
 import { AssumeError, StopTestError } from "../src/testCase.js";
 import * as gs from "../src/generators/index.js";
 import { RunError } from "../src/errors.js";
-import { fakeEngine, fakeRuntime, context, settings, testCase, replayCase } from "./fakeEngine.js";
+import { fakeEngine, fakeRuntime, context, settings, testCase, failure } from "./fakeEngine.js";
+import { labelSpec } from "../src/labels.js";
 
 describe("runnerCore engine fault classification and cleanup", () => {
   for (const async of [false, true]) {
@@ -148,6 +149,17 @@ describe("runnerCore engine fault classification and cleanup", () => {
     },
   );
 
+  it("does not treat an engine fault thrown by the test itself as a failure", () => {
+    const engine = fakeEngine();
+    const fault = new EngineError("thrown by the test");
+    expect(() =>
+      createRunner(fakeRuntime(engine)).test(() => {
+        throw fault;
+      }),
+    ).toThrow(fault);
+    expect(engine.markComplete).toHaveBeenCalledWith(context, testCase, Status.INVALID, null);
+  });
+
   it("rejects duplicate completion attempts before calling the engine", () => {
     const engine = fakeEngine();
     const ds = new EngineDataSource(engine, context, testCase);
@@ -204,7 +216,7 @@ describe("runnerCore engine fault classification and cleanup", () => {
     });
     expect(() =>
       createRunner(fakeRuntime(engine)).test((tc) => {
-        tc.startSpan(1);
+        tc.startSpan(labelSpec("span"));
         tc.stopSpan();
       }),
     ).toThrow("stop span");
@@ -212,58 +224,49 @@ describe("runnerCore engine fault classification and cleanup", () => {
   });
 });
 
-describe("runnerCore run results and replay", () => {
+describe("runnerCore run results", () => {
   // 3 is the retired FAILED_NONDETERMINISTIC value: like any other unknown
   // status it is now rejected rather than special-cased.
-  it.each([3, 99, RunStatus.ERROR])("never replays status %s", (status) => {
+  it.each([3, 99, RunStatus.ERROR])("reports status %s without reading failures", (status) => {
     const engine = fakeEngine();
     engine.runStatus.mockReturnValue(status);
     expect(() => createRunner(fakeRuntime(engine)).test(() => {})).toThrow(
       status === RunStatus.ERROR ? /backend error/ : /Unknown Hegel/,
     );
     expect(engine.failureCount).not.toHaveBeenCalled();
-    expect(engine.testCaseFromBlob).not.toHaveBeenCalled();
     expect(engine.freeRunResult).toHaveBeenCalledTimes(1);
     expect(engine.freeRun).toHaveBeenCalledTimes(1);
   });
 
-  it("does not interpret a missing failure blob as a fresh test case", () => {
+  it("rejects a failure the test never reported", () => {
     const engine = fakeEngine();
     engine.runStatus.mockReturnValue(RunStatus.FAILED);
-    engine.reproductionBlob.mockReturnValue(null);
-    expect(() => createRunner(fakeRuntime(engine)).test(() => {})).toThrow("no reproduction blob");
-    expect(engine.testCaseFromBlob).not.toHaveBeenCalled();
-    expect(engine.freeFailure).toHaveBeenCalledTimes(1);
+    expect(() => createRunner(fakeRuntime(engine)).test(() => {})).toThrow(
+      "Hegel failure property.ts:1 was never seen by the test",
+    );
+    expect(engine.freeFailure).toHaveBeenCalledWith(failure);
     expect(engine.freeRunResult).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["valid", "invalid", "overrun"])(
-    "reports a non-reproducing %s final replay explicitly",
-    (status) => {
-      const engine = fakeEngine();
-      engine.runStatus.mockReturnValue(RunStatus.FAILED);
-      expect(() =>
-        createRunner(fakeRuntime(engine)).test((tc) => {
-          if (tc.isLastRun && status === "invalid") throw new AssumeError();
-          if (tc.isLastRun && status === "overrun") throw new StopTestError();
-        }),
-      ).toThrow(`did not reproduce during final replay (status: ${status})`);
-      expect(engine.freeTestCase).toHaveBeenCalledWith(replayCase);
-      expect(engine.markComplete).toHaveBeenCalledTimes(2);
-    },
-  );
-
-  it("frees replay handles on an engine fault instead of reporting a counterexample", () => {
+  it("throws the captured error of the reported failure without replaying it", () => {
     const engine = fakeEngine();
     engine.runStatus.mockReturnValue(RunStatus.FAILED);
-    expect(() =>
-      createRunner(fakeRuntime(engine)).test((tc) => {
-        if (tc.isLastRun) throw new EngineError("replay engine fault");
-      }),
-    ).toThrow("replay engine fault");
-    expect(engine.freeTestCase).toHaveBeenCalledWith(replayCase);
-    expect(engine.markComplete).toHaveBeenLastCalledWith(context, replayCase, Status.INVALID, null);
-    expect(engine.freeRunResult).toHaveBeenCalledTimes(1);
+    engine.failureOrigin.mockReturnValue("<unknown>");
+    engine.shouldCapture.mockReturnValue(true);
+    const runtime = fakeRuntime(engine);
+    const thrown = "not an error";
+    let caught: unknown;
+    try {
+      createRunner(runtime).test((tc) => {
+        tc.draw(gs.booleans());
+        throw thrown;
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBe(thrown);
+    expect(engine.nextTestCase).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(runtime.output).mock.calls).toEqual([["const draw_1 = true;"]]);
   });
 
   it("passes an explicit test location to the engine and keys the database by it", () => {
@@ -327,33 +330,20 @@ it("EngineDataSource disposes its own cache after collection cleanup fails", () 
   ds.dispose();
 });
 
-it("runTestCaseAsync uses portable diagnostics for custom data sources", async () => {
+it("runTestCaseAsync reports an interesting case with its origin", async () => {
   const engine = fakeEngine();
   const ds = new EngineDataSource(engine, context, testCase);
-  const source = {
-    generate: ds.generate.bind(ds),
-    startSpan: ds.startSpan.bind(ds),
-    stopSpan: ds.stopSpan.bind(ds),
-    newCollection: ds.newCollection.bind(ds),
-    collectionMore: ds.collectionMore.bind(ds),
-    collectionReject: ds.collectionReject.bind(ds),
-    markComplete: ds.markComplete.bind(ds),
-  };
-  const log = vi.spyOn(console, "error").mockImplementation(() => {});
-  try {
-    const result = await runTestCaseAsync(
-      source,
-      () => {
-        throw new Error("user failure");
-      },
-      true,
-    );
-    expect(result.status).toBe("interesting");
-    expect(log).toHaveBeenCalledWith("\nuser failure");
-  } finally {
-    log.mockRestore();
-    ds.dispose();
-  }
+  const result = await runTestCaseAsync(ds, () => {
+    throw new Error("user failure");
+  });
+  expect(result.status).toBe("interesting");
+  expect(engine.markComplete).toHaveBeenCalledWith(
+    context,
+    testCase,
+    Status.INTERESTING,
+    expect.any(String),
+  );
+  ds.dispose();
 });
 
 it("retains a run error through multiple failing outer destructors", () => {
@@ -420,7 +410,6 @@ it("retains a failure-snapshot read error if its destructor also fails", () => {
   }
   expect(error).toBeInstanceOf(AggregateError);
   expect((error as AggregateError).errors).toEqual([readFault, freeFault]);
-  expect(engine.testCaseFromBlob).not.toHaveBeenCalled();
   expect(engine.freeRunResult).toHaveBeenCalledTimes(1);
   expect(engine.freeContext).toHaveBeenCalledTimes(1);
 });

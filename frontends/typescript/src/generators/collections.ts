@@ -4,7 +4,8 @@
  * @packageDocumentation
  */
 
-import { TestCase, Collection, Labels } from "../testCase.js";
+import { TestCase, Collection } from "../testCase.js";
+import { LabelNames, labelSpec, type LabelSpec } from "../labels.js";
 import { Generator, BasicGenerator } from "./core.js";
 
 export interface CollectionOptions {
@@ -63,7 +64,7 @@ class ArraysGenerator<T> extends Generator<T[]> {
 
   doDraw(tc: TestCase): T[] {
     if (this.basic) return this.basic.doDraw(tc);
-    tc.startSpan(Labels.LIST);
+    tc.startSpan(this.label);
     const collection = new Collection(tc, this.minSize, this.maxSize ?? undefined);
     const result: T[] = [];
     while (collection.more()) {
@@ -82,6 +83,11 @@ class ArraysGenerator<T> extends Generator<T[]> {
 
   override asBasic(): BasicGenerator<T[]> | null {
     return this.basic;
+  }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.LISTS, this.elements.label);
   }
 }
 
@@ -130,7 +136,7 @@ class SetsGenerator<T> extends Generator<Set<T>> {
 
   doDraw(tc: TestCase): Set<T> {
     if (this.basic) return this.basic.doDraw(tc);
-    tc.startSpan(Labels.SET);
+    tc.startSpan(this.label);
     const collection = new Collection(tc, this.minSize, this.maxSize ?? undefined);
     const result = new Set<T>();
     while (collection.more()) {
@@ -148,6 +154,11 @@ class SetsGenerator<T> extends Generator<Set<T>> {
   override asBasic(): BasicGenerator<Set<T>> | null {
     return this.basic;
   }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.SETS, this.elements.label);
+  }
 }
 
 /** Generate Sets with elements from the given generator. */
@@ -156,6 +167,7 @@ export function sets<T>(elements: Generator<T>, options?: CollectionOptions): Ge
 }
 
 class MapsGenerator<K, V> extends Generator<Map<K, V>> {
+  private _entryLabel: LabelSpec | undefined;
   private readonly keys: Generator<K>;
   private readonly values: Generator<V>;
   private readonly minSize: number;
@@ -204,13 +216,18 @@ class MapsGenerator<K, V> extends Generator<Map<K, V>> {
     }
   }
 
+  private get entryLabel(): LabelSpec {
+    this._entryLabel ??= labelSpec(LabelNames.DICT_ENTRY, this.keys.label, this.values.label);
+    return this._entryLabel;
+  }
+
   doDraw(tc: TestCase): Map<K, V> {
     if (this.basic) return this.basic.doDraw(tc);
-    tc.startSpan(Labels.MAP);
+    tc.startSpan(this.label);
     const collection = new Collection(tc, this.minSize, this.maxSize ?? undefined);
     const result = new Map<K, V>();
     while (collection.more()) {
-      tc.startSpan(Labels.MAP_ENTRY);
+      tc.startSpan(this.entryLabel);
       const key = this.keys.doDraw(tc);
       const value = this.values.doDraw(tc);
       tc.stopSpan();
@@ -226,6 +243,11 @@ class MapsGenerator<K, V> extends Generator<Map<K, V>> {
 
   override asBasic(): BasicGenerator<Map<K, V>> | null {
     return this.basic;
+  }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.DICTS, this.keys.label, this.values.label);
   }
 }
 

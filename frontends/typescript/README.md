@@ -49,10 +49,13 @@ test("my_sort matches builtin", () =>
   }));
 ```
 
-This test will fail when run with `vitest`! Hegel will produce a minimal failing test case for us:
+This test will fail when run with `vitest`! Hegel will produce a minimal failing test case for us, printing each value the test drew and how to replay the failure, and then throw the test's own error:
 
 ```
-Draw 1: [0, 0]
+const draw_1 = [0, 0];
+
+To reproduce this failure, replay it with the Hegel builder:
+    .reproduceFailure("AXicY2VgYGBkZOBiZEBhMAAAAd8AIQ==")
 Error: sort mismatch: [0,0] != [0]
 ```
 
@@ -109,4 +112,4 @@ test("stack", () =>
   }));
 ```
 
-Hegel picks the rules to run at each step, shrinks a failing sequence down to a minimal one, and reports it step by step (`Step 1: push`, `Step 2: pop`, …). See the `stateful` module in the documentation for invariants, step counts, asynchronous rules and `Pool`, which lets rules act on values that earlier rules produced.
+Hegel picks the rules to run at each step, shrinks a failing sequence down to a minimal one, and reports it step by step (`Step 1: push {`, with the step's draws indented beneath it, then `}`). See the `stateful` module in the documentation for invariants, step counts, asynchronous rules and `Pool`, which lets rules act on values that earlier rules produced.

@@ -1,8 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
 import { createRunner } from "../src/runnerCore.js";
-import { RunErrorKind, RunStatus } from "../src/engine.js";
+import { NativeVerbosity, RunErrorKind, RunStatus } from "../src/engine.js";
 import { runError } from "../src/errors.js";
 import { fakeEngine, fakeRuntime } from "./fakeEngine.js";
 
@@ -125,6 +125,7 @@ describe("failures", () => {
     const engine = fakeEngine();
     engine.runStatus.mockReturnValue(RunStatus.FAILED);
     engine.failureCaveat.mockReturnValue("confirmed 3 times out of 4");
+    engine.failureOrigin.mockImplementation(() => engine.markComplete.mock.calls[0][3]!);
     const runtime = fakeRuntime(engine);
     const failure = new Error("failure");
     expect(() =>
@@ -132,41 +133,39 @@ describe("failures", () => {
         throw failure;
       }),
     ).toThrow(failure);
-    expect(runtime.note).toHaveBeenCalledWith("confirmed 3 times out of 4");
+    expect(runtime.output).toHaveBeenCalledWith("confirmed 3 times out of 4");
   });
 
-  it("reports a caveated failure seen while exploring when it does not recur on replay", () => {
+  it("leaves a caveat out of a quiet report", () => {
     const engine = fakeEngine();
     engine.runStatus.mockReturnValue(RunStatus.FAILED);
+    engine.getVerbosity.mockReturnValue(NativeVerbosity.QUIET);
     engine.failureCaveat.mockReturnValue("caveat");
     engine.failureOrigin.mockImplementation(() => engine.markComplete.mock.calls[0][3]!);
     const runtime = fakeRuntime(engine);
     const failure = new Error("failure");
-    let thrown: unknown;
-    try {
-      createRunner(runtime).test((tc) => {
-        if (!tc.isLastRun) throw failure;
-      });
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBe(failure);
+    expect(() =>
+      createRunner(runtime).test(() => {
+        throw failure;
+      }),
+    ).toThrow(failure);
+    expect(runtime.output).not.toHaveBeenCalled();
   });
 
-  it("reports a caveated failure without a blob that exploration never saw", () => {
+  it("reports a caveated failure the engine never stamped with its own error", () => {
     const engine = fakeEngine();
     engine.runStatus.mockReturnValue(RunStatus.FAILED);
     engine.failureCaveat.mockReturnValue("caveat");
     engine.reproductionBlob.mockReturnValue(null);
-    expect(() => createRunner(fakeRuntime(engine)).test(() => {})).toThrow("no reproduction blob");
-  });
-
-  it("reports a caveated failure that neither recurs nor was seen as not reproducing", () => {
-    const engine = fakeEngine();
-    engine.runStatus.mockReturnValue(RunStatus.FAILED);
-    engine.failureCaveat.mockReturnValue("caveat");
-    expect(() => createRunner(fakeRuntime(engine)).test(() => {})).toThrow(
-      "did not reproduce during final replay",
-    );
+    engine.getPrintBlob.mockReturnValue(true);
+    engine.failureOrigin.mockImplementation(() => engine.markComplete.mock.calls[0][3]!);
+    const runtime = fakeRuntime(engine);
+    const failure = new Error("failure");
+    expect(() =>
+      createRunner(runtime).test(() => {
+        throw failure;
+      }),
+    ).toThrow(failure);
+    expect(vi.mocked(runtime.output).mock.calls).toEqual([["caveat"]]);
   });
 });

@@ -4,7 +4,8 @@
  * @packageDocumentation
  */
 
-import { TestCase, Labels, generateRaw } from "../testCase.js";
+import { TestCase, generateRaw } from "../testCase.js";
+import { LabelNames, labelSpec, type LabelSpec } from "../labels.js";
 import { Generator, BasicGenerator } from "./core.js";
 
 class JustGenerator<T> extends Generator<T> {
@@ -82,7 +83,7 @@ class OneOfGenerator<T> extends Generator<T> {
 
   doDraw(tc: TestCase): T {
     if (this.basic) return this.basic.doDraw(tc);
-    tc.startSpan(Labels.ONE_OF);
+    tc.startSpan(this.label);
     const index = generateRaw(tc, {
       type: "integer",
       min_value: 0,
@@ -95,6 +96,11 @@ class OneOfGenerator<T> extends Generator<T> {
 
   override asBasic(): BasicGenerator<T> | null {
     return this.basic;
+  }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.ONE_OF, ...this.sources.map((source) => source.label));
   }
 }
 
@@ -132,7 +138,7 @@ class OptionalGenerator<T> extends Generator<T | null> {
 
   doDraw(tc: TestCase): T | null {
     if (this.basic) return this.basic.doDraw(tc);
-    tc.startSpan(Labels.OPTIONAL);
+    tc.startSpan(this.label);
     const isSome = generateRaw(tc, { type: "boolean" }) as boolean;
     const result = isSome ? this.inner.doDraw(tc) : null;
     tc.stopSpan();
@@ -141,6 +147,11 @@ class OptionalGenerator<T> extends Generator<T | null> {
 
   override asBasic(): BasicGenerator<T | null> | null {
     return this.basic;
+  }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.OPTIONAL, this.inner.label);
   }
 }
 

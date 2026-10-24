@@ -29,6 +29,9 @@ export type PoolHandle = { readonly [poolBrand]: never };
 declare const stateMachineBrand: unique symbol;
 export type StateMachineHandle = { readonly [stateMachineBrand]: never };
 
+declare const printerBrand: unique symbol;
+export type PrinterHandle = { readonly [printerBrand]: never };
+
 /** `hegel_status_t` — outcome of a single test case. */
 export const Status = {
   VALID: 0,
@@ -239,13 +242,56 @@ export interface Engine {
   registerProfile(ctx: ContextHandle, name: string, s: SettingsHandle): void;
   /** Make `name` the default profile process-wide; `""` clears it. */
   setDefaultProfile(ctx: ContextHandle, name: string): void;
+  /** The resolved `hegel_verbosity_t`. */
+  getVerbosity(s: SettingsHandle): number;
+  /** The resolved `hegel_phase_t` bit set. */
+  getPhases(s: SettingsHandle): number;
+  getPrintBlob(s: SettingsHandle): boolean;
+  getReportMultipleFailures(s: SettingsHandle): boolean;
   runStart(ctx: ContextHandle, settings: SettingsHandle): RunHandle;
+  /**
+   * Start a run that replays a reproduce blob instead of exploring. Throws on
+   * a blob that is not valid.
+   */
+  runStartBlob(ctx: ContextHandle, settings: SettingsHandle, blob: string): RunHandle;
   nextTestCase(ctx: ContextHandle, run: RunHandle): TestCaseHandle | null;
   runResult(ctx: ContextHandle, run: RunHandle): RunResultHandle;
   freeRunResult(r: RunResultHandle): void;
   freeRun(run: RunHandle): void;
-  testCaseFromBlob(ctx: ContextHandle, settings: SettingsHandle, blob: string): TestCaseHandle;
   freeTestCase(tc: TestCaseHandle): void;
+  /** Whether the engine stamped `tc` for capture: its output may be reported. */
+  shouldCapture(ctx: ContextHandle, tc: TestCaseHandle): boolean;
+  /** A new handle onto an independent choice stream of the same test case. */
+  cloneTestCase(ctx: ContextHandle, tc: TestCaseHandle): TestCaseHandle;
+  /** A new handle onto `tc`'s choice stream, printing `indent` columns further in. */
+  blockTestCase(ctx: ContextHandle, tc: TestCaseHandle, indent: number): TestCaseHandle;
+  /** Attribute `tc`'s output lines to concurrent worker `index`. */
+  setWorker(ctx: ContextHandle, tc: TestCaseHandle, index: number): void;
+  note(ctx: ContextHandle, tc: TestCaseHandle, text: string): void;
+  target(ctx: ContextHandle, tc: TestCaseHandle, value: number, label: string): void;
+  event(ctx: ContextHandle, tc: TestCaseHandle, label: string): void;
+  eventValue(ctx: ContextHandle, tc: TestCaseHandle, value: number, label: string): void;
+  /** The span label for a generator identified by `name`. */
+  labelFromName(ctx: ContextHandle, name: string): bigint;
+  /** The span label for a generator built from others: `labels` hashed in order. */
+  labelCombine(ctx: ContextHandle, labels: readonly bigint[]): bigint;
+  /** A printer onto `tc`'s region of its family's document, at the default width. */
+  testCasePrinter(ctx: ContextHandle, tc: TestCaseHandle): PrinterHandle;
+  freePrinter(p: PrinterHandle): void;
+  printerText(ctx: ContextHandle, p: PrinterHandle, text: string): void;
+  printerHardBreak(ctx: ContextHandle, p: PrinterHandle): void;
+  /**
+   * Emit a one-line representation, letting the engine recover its bracket
+   * structure so that it wraps like a value printed structurally.
+   */
+  printerReflow(ctx: ContextHandle, p: PrinterHandle, text: string): void;
+  printerBeginSpeculative(ctx: ContextHandle, p: PrinterHandle): void;
+  printerCommitSpeculative(ctx: ContextHandle, p: PrinterHandle): void;
+  printerAbortSpeculative(ctx: ContextHandle, p: PrinterHandle): void;
+  /** Splice every deferred region (clones, blocks) into the document. */
+  printerResolve(ctx: ContextHandle, p: PrinterHandle): void;
+  /** Read (and seal) the document of a root printer. */
+  printerValue(ctx: ContextHandle, p: PrinterHandle): string;
   generateBoolean(ctx: ContextHandle, tc: TestCaseHandle, p: number): boolean;
   generateInteger(ctx: ContextHandle, tc: TestCaseHandle, min: bigint, max: bigint): bigint;
   generateIntegerBig(ctx: ContextHandle, tc: TestCaseHandle, min: bigint, max: bigint): bigint;
@@ -287,7 +333,7 @@ export interface Engine {
   generateUuid(ctx: ContextHandle, tc: TestCaseHandle, version?: UuidVersion): Uint8Array;
   generateIpv4(ctx: ContextHandle, tc: TestCaseHandle): Uint8Array;
   generateIpv6(ctx: ContextHandle, tc: TestCaseHandle): Uint8Array;
-  startSpan(ctx: ContextHandle, tc: TestCaseHandle, label: number): void;
+  startSpan(ctx: ContextHandle, tc: TestCaseHandle, label: bigint): void;
   stopSpan(ctx: ContextHandle, tc: TestCaseHandle, discard: boolean): void;
   newCollection(
     ctx: ContextHandle,

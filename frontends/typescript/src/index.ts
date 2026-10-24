@@ -178,7 +178,51 @@
  *   }));
  * ```
  *
- * Notes only appear when Hegel replays the minimal failing example.
+ * When a test fails, Hegel prints the smallest failing example it found:
+ * each drawn value as a line of JavaScript, in the order drawn, with the
+ * notes between them, then the line to replay it with. For a test like the
+ * one above, that looks like:
+ *
+ * ```text
+ * const draw_1 = 0;
+ * const draw_2 = -1;
+ * x + y = -1, y + x = -1
+ *
+ * To reproduce this failure, replay it with the Hegel builder:
+ *     .reproduceFailure("AXicY2BgYGQAAAAJAAI")
+ * ```
+ *
+ * Pass a name to `draw` to print a value under it (`tc.draw(gs.integers(),
+ * "x")` prints `const x = ...;`), and use {@link TestCase.drawSilent |
+ * drawSilent} for a value not worth printing. Notes and drawn values are
+ * only printed for the failing example (and for every test case of a
+ * verbose run), so they cost nothing while Hegel searches.
+ *
+ * To replay a failure, pass the blob to {@link Hegel.reproduceFailure |
+ * reproduceFailure}; to always run some inputs first, give them as
+ * {@link Hegel.example | explicit examples}:
+ *
+ * ```ts
+ * new hegel.Hegel((tc) => {
+ *   const x = tc.draw(gs.integers());
+ *   const y = tc.draw(gs.integers());
+ *   // ...
+ * })
+ *   .example(0, -1)
+ *   .reproduceFailure("AXicY2BgYGQAAAAJAAI") // the blob printed by the failure
+ *   .runSync();
+ * ```
+ *
+ * ## Guide the search
+ *
+ * {@link TestCase.target | target} steers generation toward test cases that
+ * maximise a score, {@link TestCase.event | event} and
+ * {@link TestCase.eventValue | eventValue} record what happened (reported with
+ * the `showStatistics` setting), and {@link TestCase.repeat | repeat} runs a
+ * workload an engine-chosen number of times, shrinking the number of
+ * repetitions along with what each drew. For concurrent code, give each task
+ * its own {@link TestCase.clone | clone} of the test case, so that what one
+ * draws does not depend on how the tasks interleave.
  *
  * ## Change the number of test cases
  *
@@ -216,12 +260,14 @@
  *
  * ## Understand what a run throws
  *
- * A failing test throws its own error, from replaying the smallest failing
- * example, so assertion libraries show their usual diff; with
+ * A failing test throws its own error, from the smallest failing example, so
+ * assertion libraries show their usual diff; with
  * `reportMultipleFailures`, several distinct failures are thrown together as
  * an `AggregateError`. A run the engine aborts throws a {@link RunError}: a
  * {@link FailedHealthCheckError}, {@link FlakyError} or
- * {@link UnsatisfiableError}, or a plain `RunError` for anything else.
+ * {@link UnsatisfiableError}, or a plain `RunError` for anything else. A run
+ * replaying failure blobs none of which fails any more throws a
+ * {@link DidNotReproduceError}.
  *
  * ## Test stateful systems
  *
@@ -277,7 +323,13 @@ export {
   Database,
 } from "./settings.js";
 export type { Settings, TestLocation } from "./settings.js";
-export { RunError, FailedHealthCheckError, FlakyError, UnsatisfiableError } from "./errors.js";
+export {
+  RunError,
+  FailedHealthCheckError,
+  FlakyError,
+  UnsatisfiableError,
+  DidNotReproduceError,
+} from "./errors.js";
 export { Hegel } from "./runnerCore.js";
 
 import {

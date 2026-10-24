@@ -4,15 +4,39 @@
  * @packageDocumentation
  */
 
-import { TestCase, Labels, generateRaw } from "../testCase.js";
+import { TestCase, generateRaw } from "../testCase.js";
+import { LabelNames, labelSpec, schemaLabelSpec, type LabelSpec } from "../labels.js";
 
 /**
  * Base class for all generators. Generators produce values of type T
  * synchronously by communicating with the hegel server.
  */
 export abstract class Generator<T> {
+  private _label: LabelSpec | undefined;
+
   /** @internal */
   abstract doDraw(tc: TestCase): T;
+
+  /**
+   * What identifies this generator to the shrinker: the label of the spans
+   * it opens, derived by the engine from the generator's kind and its
+   * components'. A generator with a schema form is labelled by its schema, so
+   * that it has the same label however it is drawn.
+   *
+   * @internal
+   */
+  get label(): LabelSpec {
+    if (this._label === undefined) {
+      const basic = this.asBasic();
+      this._label = basic === null ? this.makeLabel() : schemaLabelSpec(basic.schema);
+    }
+    return this._label;
+  }
+
+  /** @internal */
+  protected makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.GENERATOR);
+  }
 
   /**
    * Return a BasicGenerator descriptor (schema + parse) if this generator can
@@ -93,10 +117,15 @@ class MappedGenerator<T, U> extends Generator<U> {
     if (sourceBasic) {
       return this.f(sourceBasic.doDraw(tc));
     }
-    tc.startSpan(Labels.MAPPED);
+    tc.startSpan(this.label);
     const result = this.f(this.source.doDraw(tc));
     tc.stopSpan();
     return result;
+  }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.MAP, this.source.label);
   }
 
   override asBasic(): BasicGenerator<U> | null {
@@ -117,7 +146,7 @@ class FilteredGenerator<T> extends Generator<T> {
 
   doDraw(tc: TestCase): T {
     for (let i = 0; i < 3; i++) {
-      tc.startSpan(Labels.FILTER);
+      tc.startSpan(this.label);
       const value = this.source.doDraw(tc);
       if (this.predicate(value)) {
         tc.stopSpan();
@@ -125,8 +154,12 @@ class FilteredGenerator<T> extends Generator<T> {
       }
       tc.stopSpan(true);
     }
-    tc.assume(false);
-    throw new Error("unreachable");
+    return tc.reject();
+  }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.FILTER, this.source.label);
   }
 }
 
@@ -139,11 +172,16 @@ class FlatMappedGenerator<T, U> extends Generator<U> {
   }
 
   doDraw(tc: TestCase): U {
-    tc.startSpan(Labels.FLAT_MAP);
+    tc.startSpan(this.label);
     const intermediate = this.source.doDraw(tc);
     const nextGen = this.f(intermediate);
     const result = nextGen.doDraw(tc);
     tc.stopSpan();
     return result;
+  }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.FLAT_MAP, this.source.label);
   }
 }

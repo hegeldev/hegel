@@ -12,7 +12,7 @@ import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
 import { NativeDataSource } from "../src/runner.js";
 import { Libhegel, Status, NativeVerbosity } from "../src/libhegel.js";
-import { Labels } from "../src/testCase.js";
+import { labelSpec } from "../src/labels.js";
 import { testLibPath } from "./libPath.js";
 
 describe("settings branches", () => {
@@ -122,12 +122,12 @@ describe("NativeDataSource collection rejection", () => {
       const tc = lib.nextTestCase(ctx, run);
       expect(tc).not.toBeNull();
       const ds = new NativeDataSource(lib, ctx, tc);
-      ds.startSpan(Labels.SET);
+      ds.startSpan(ds.label(labelSpec("hegel.sets")));
       const id = ds.newCollection(2, 5);
       const intSchema = { type: "integer", min_value: 0n, max_value: 100n };
       let rejects = 0;
       while (ds.collectionMore(id)) {
-        ds.startSpan(Labels.SET_ELEMENT);
+        ds.startSpan(ds.label(labelSpec("hegel.sets.element")));
         ds.generate(intSchema);
         ds.stopSpan(false);
         if (rejects < 2) {

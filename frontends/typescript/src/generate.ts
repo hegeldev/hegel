@@ -21,7 +21,8 @@
  * @packageDocumentation
  */
 
-import { Labels, AssumeError, StopTestError } from "./testCase.js";
+import { AssumeError, StopTestError } from "./testCase.js";
+import { dictEntryLabelSpec, resolveLabel, schemaLabelSpec, type LabelSpec } from "./labels.js";
 import {
   EngineError,
   type Engine,
@@ -323,10 +324,10 @@ function withSpan<T>(
   lib: Engine,
   ctx: ContextHandle,
   tc: TestCaseHandle,
-  label: number,
+  spec: LabelSpec,
   operation: () => T,
 ): T {
-  lib.startSpan(ctx, tc, label);
+  lib.startSpan(ctx, tc, resolveLabel(lib, ctx, spec));
   return withCleanup(operation, () => lib.stopSpan(ctx, tc, false));
 }
 
@@ -339,7 +340,7 @@ function drawList(
 ): unknown[] {
   const elementSchema = schema["elements"] as Record<string, unknown>;
   const unique = schema["unique"] as boolean;
-  return withSpan(lib, ctx, tc, Labels.LIST, () => {
+  return withSpan(lib, ctx, tc, schemaLabelSpec(schema), () => {
     const collection = lib.newCollection(
       ctx,
       tc,
@@ -351,7 +352,7 @@ function drawList(
         const values: unknown[] = [];
         const seen = new Set<string>();
         while (lib.collectionMore(ctx, tc, collection)) {
-          const value = withSpan(lib, ctx, tc, Labels.LIST_ELEMENT, () =>
+          const value = withSpan(lib, ctx, tc, schemaLabelSpec(elementSchema), () =>
             generateValue(lib, ctx, tc, elementSchema, cache),
           );
           if (unique) {
@@ -380,7 +381,7 @@ function drawDict(
 ): unknown[] {
   const keySchema = schema["keys"] as Record<string, unknown>;
   const valueSchema = schema["values"] as Record<string, unknown>;
-  return withSpan(lib, ctx, tc, Labels.MAP, () => {
+  return withSpan(lib, ctx, tc, schemaLabelSpec(schema), () => {
     const collection = lib.newCollection(
       ctx,
       tc,
@@ -392,7 +393,7 @@ function drawDict(
         const entries: unknown[] = [];
         const seen = new Set<string>();
         while (lib.collectionMore(ctx, tc, collection)) {
-          const [key, value] = withSpan(lib, ctx, tc, Labels.MAP_ENTRY, () => [
+          const [key, value] = withSpan(lib, ctx, tc, dictEntryLabelSpec(schema), () => [
             generateValue(lib, ctx, tc, keySchema, cache),
             generateValue(lib, ctx, tc, valueSchema, cache),
           ]);
@@ -474,7 +475,7 @@ export function generateValue(
       return schema["value"];
     case "one_of": {
       const options = schema["generators"] as Record<string, unknown>[];
-      return withSpan(lib, ctx, tc, Labels.ONE_OF, () => {
+      return withSpan(lib, ctx, tc, schemaLabelSpec(schema), () => {
         const index = Number(lib.generateInteger(ctx, tc, 0n, BigInt(options.length - 1)));
         const value = generateValue(lib, ctx, tc, options[index], cache);
         return [index, value];
@@ -482,7 +483,7 @@ export function generateValue(
     }
     case "tuple": {
       const elements = schema["elements"] as Record<string, unknown>[];
-      return withSpan(lib, ctx, tc, Labels.TUPLE, () =>
+      return withSpan(lib, ctx, tc, schemaLabelSpec(schema), () =>
         elements.map((element) => generateValue(lib, ctx, tc, element, cache)),
       );
     }

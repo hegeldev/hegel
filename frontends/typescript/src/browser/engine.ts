@@ -12,6 +12,7 @@ import {
   type StringGeneratorHandle,
   type PoolHandle,
   type StateMachineHandle,
+  type PrinterHandle,
   type StateMachineOptions,
   type NativeDate,
   type NativeTime,
@@ -29,6 +30,13 @@ import { WasmAbi, u32, u64, type Operation, type Argument } from "./abi.js";
 import { WasmArena, WasmMemory } from "./arena.js";
 
 const UINT64_MAX = 0xffffffffffffffffn;
+
+/** The engine-allocated buffer results, each with the destructor that releases it. */
+const BUFFER_FREE = {
+  generate_bytes: "generate_bytes_result_free",
+  generate_string: "owned_string_free",
+  printer_value: "printer_value_result_free",
+} as const;
 
 export class WasmEngine implements Engine {
   private readonly handles = new WeakMap<object, number>();
@@ -212,9 +220,41 @@ export class WasmEngine implements Engine {
       this.check(c, "set_default_profile", [c, a.text(name)]);
     });
   }
+  private settingsValue<T>(
+    op:
+      | "settings_get_verbosity"
+      | "settings_get_phases"
+      | "settings_get_print_blob"
+      | "settings_get_report_multiple_failures",
+    s: SettingsHandle,
+    size: number,
+    read: (arena: WasmArena, ptr: number) => T,
+  ): T {
+    return this.output(0, op, [0, this.ptr(s)], size, size, read);
+  }
+  getVerbosity(s: SettingsHandle): number {
+    return this.settingsValue("settings_get_verbosity", s, 4, (a, p) => a.pointer(p));
+  }
+  getPhases(s: SettingsHandle): number {
+    return this.settingsValue("settings_get_phases", s, 4, (a, p) => a.pointer(p));
+  }
+  getPrintBlob(s: SettingsHandle): boolean {
+    return this.settingsValue("settings_get_print_blob", s, 1, (a, p) => a.boolean(p));
+  }
+  getReportMultipleFailures(s: SettingsHandle): boolean {
+    return this.settingsValue("settings_get_report_multiple_failures", s, 1, (a, p) =>
+      a.boolean(p),
+    );
+  }
   runStart(ctx: ContextHandle, settings: SettingsHandle): RunHandle {
     const c = this.ptr(ctx);
     return this.handle(c, "run_start", [c, this.ptr(settings), 0, 0]);
+  }
+  runStartBlob(ctx: ContextHandle, settings: SettingsHandle, blob: string): RunHandle {
+    return WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      return this.handle(c, "run_start_blob", [c, this.ptr(settings), a.text(blob), 0, 0]);
+    });
   }
   nextTestCase(ctx: ContextHandle, run: RunHandle): TestCaseHandle | null {
     const c = this.ptr(ctx);
@@ -233,14 +273,129 @@ export class WasmEngine implements Engine {
   freeRun(run: RunHandle): void {
     this.free("run_free", run);
   }
-  testCaseFromBlob(ctx: ContextHandle, settings: SettingsHandle, blob: string): TestCaseHandle {
-    return WasmArena.scoped(this.abi, (a) => {
-      const c = this.ptr(ctx);
-      return this.handle(c, "test_case_from_blob", [c, this.ptr(settings), a.text(blob), 0, 0]);
-    });
-  }
   freeTestCase(tc: TestCaseHandle): void {
     this.free("test_case_free", tc);
+  }
+  shouldCapture(ctx: ContextHandle, tc: TestCaseHandle): boolean {
+    const c = this.ptr(ctx);
+    return this.output(c, "test_case_should_capture", [c, this.ptr(tc)], 1, 1, (a, p) =>
+      a.boolean(p),
+    );
+  }
+  cloneTestCase(ctx: ContextHandle, tc: TestCaseHandle): TestCaseHandle {
+    const c = this.ptr(ctx);
+    return this.handle(c, "test_case_clone", [c, this.ptr(tc)], true);
+  }
+  blockTestCase(ctx: ContextHandle, tc: TestCaseHandle, indent: number): TestCaseHandle {
+    const c = this.ptr(ctx);
+    return this.handle(c, "test_case_block", [c, this.ptr(tc), u64(indent)], true);
+  }
+  setWorker(ctx: ContextHandle, tc: TestCaseHandle, index: number): void {
+    const c = this.ptr(ctx);
+    this.check(c, "test_case_set_worker", [c, this.ptr(tc), BigInt(index)], true);
+  }
+  private withText(
+    ctx: ContextHandle,
+    op: "note" | "event" | "printer_text",
+    target: object,
+    text: string,
+  ): void {
+    WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      this.check(c, op, [c, this.ptr(target), a.text(text)], true);
+    });
+  }
+  private withValue(
+    ctx: ContextHandle,
+    op: "target" | "event_value",
+    tc: TestCaseHandle,
+    value: number,
+    label: string,
+  ): void {
+    WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      this.check(c, op, [c, this.ptr(tc), value, a.text(label)], true);
+    });
+  }
+  note(ctx: ContextHandle, tc: TestCaseHandle, text: string): void {
+    this.withText(ctx, "note", tc, text);
+  }
+  target(ctx: ContextHandle, tc: TestCaseHandle, value: number, label: string): void {
+    this.withValue(ctx, "target", tc, value, label);
+  }
+  event(ctx: ContextHandle, tc: TestCaseHandle, label: string): void {
+    this.withText(ctx, "event", tc, label);
+  }
+  eventValue(ctx: ContextHandle, tc: TestCaseHandle, value: number, label: string): void {
+    this.withValue(ctx, "event_value", tc, value, label);
+  }
+  labelFromName(ctx: ContextHandle, name: string): bigint {
+    return WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      const out = a.alloc(8, 8);
+      this.check(c, "label_from_name", [c, a.text(name), out]);
+      return a.view(out, 8).getBigUint64(0, true);
+    });
+  }
+  labelCombine(ctx: ContextHandle, labels: readonly bigint[]): bigint {
+    return WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      const input = a.alloc(Math.max(8, labels.length * 8), 8);
+      labels.forEach((label, index) => {
+        a.view(input + index * 8, 8).setBigUint64(0, label, true);
+      });
+      const out = a.alloc(8, 8);
+      this.check(c, "label_combine", [c, input, u32(labels.length), out]);
+      return a.view(out, 8).getBigUint64(0, true);
+    });
+  }
+  testCasePrinter(ctx: ContextHandle, tc: TestCaseHandle): PrinterHandle {
+    const c = this.ptr(ctx);
+    return this.handle(c, "test_case_printer", [c, this.ptr(tc), 0]);
+  }
+  freePrinter(p: PrinterHandle): void {
+    this.free("printer_free", p);
+  }
+  printerText(ctx: ContextHandle, p: PrinterHandle, text: string): void {
+    this.withText(ctx, "printer_text", p, text);
+  }
+  printerReflow(ctx: ContextHandle, p: PrinterHandle, text: string): void {
+    WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      this.check(c, "printer_reflow", [c, this.ptr(p), 0, a.text(text)]);
+    });
+  }
+  private printerOp(
+    ctx: ContextHandle,
+    op:
+      | "printer_hard_break"
+      | "printer_begin_speculative"
+      | "printer_commit_speculative"
+      | "printer_abort_speculative"
+      | "printer_resolve",
+    p: PrinterHandle,
+  ): void {
+    const c = this.ptr(ctx);
+    this.check(c, op, [c, this.ptr(p)]);
+  }
+  printerHardBreak(ctx: ContextHandle, p: PrinterHandle): void {
+    this.printerOp(ctx, "printer_hard_break", p);
+  }
+  printerBeginSpeculative(ctx: ContextHandle, p: PrinterHandle): void {
+    this.printerOp(ctx, "printer_begin_speculative", p);
+  }
+  printerCommitSpeculative(ctx: ContextHandle, p: PrinterHandle): void {
+    this.printerOp(ctx, "printer_commit_speculative", p);
+  }
+  printerAbortSpeculative(ctx: ContextHandle, p: PrinterHandle): void {
+    this.printerOp(ctx, "printer_abort_speculative", p);
+  }
+  printerResolve(ctx: ContextHandle, p: PrinterHandle): void {
+    this.printerOp(ctx, "printer_resolve", p);
+  }
+  printerValue(ctx: ContextHandle, p: PrinterHandle): string {
+    const c = this.ptr(ctx);
+    return this.buffer(c, "printer_value", [c, this.ptr(p)], wtf8ToString);
   }
 
   generateBoolean(ctx: ContextHandle, tc: TestCaseHandle, p: number): boolean {
@@ -316,7 +471,7 @@ export class WasmEngine implements Engine {
 
   private buffer<T>(
     ctx: number,
-    op: "generate_bytes" | "generate_string",
+    op: keyof typeof BUFFER_FREE,
     args: Argument[],
     decode: (bytes: Uint8Array) => T,
   ): T {
@@ -336,11 +491,7 @@ export class WasmEngine implements Engine {
         failure = error;
       } finally {
         try {
-          this.check(
-            0,
-            op === "generate_bytes" ? "generate_bytes_result_free" : "owned_string_free",
-            [0, out],
-          );
+          this.check(0, BUFFER_FREE[op], [0, out]);
         } catch (cleanup) {
           failure = failed
             ? new EngineError("Wasm buffer copy and release failed", {
@@ -512,7 +663,7 @@ export class WasmEngine implements Engine {
       true,
     );
   }
-  startSpan(ctx: ContextHandle, tc: TestCaseHandle, label: number): void {
+  startSpan(ctx: ContextHandle, tc: TestCaseHandle, label: bigint): void {
     const c = this.ptr(ctx);
     this.check(c, "start_span", [c, this.ptr(tc), u64(label)], true);
   }

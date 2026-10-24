@@ -60,6 +60,18 @@ export class UnsatisfiableError extends RunError {
   }
 }
 
+/**
+ * None of the failure blobs a test was told to replay with
+ * `Hegel.reproduceFailure` failed: the failure may have been fixed, or, for a
+ * nondeterministic one, not recurred within the replay budget.
+ */
+export class DidNotReproduceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DidNotReproduceError";
+  }
+}
+
 function healthCheckFromNative(bit: number): HealthCheck | null {
   for (const [check, value] of Object.entries(HEALTH_CHECK_TO_NATIVE)) {
     if (value === bit) return check as HealthCheck;

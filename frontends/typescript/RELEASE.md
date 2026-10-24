@@ -1,6 +1,6 @@
 RELEASE_TYPE: minor
 
-This release makes the engine the source of every setting a TypeScript test does not set itself, adds the settings that were missing, and changes what a failing or aborted run throws.
+This release makes the engine the source of every setting a TypeScript test does not set itself, adds the settings that were missing, changes what a failing or aborted run throws and how a failure is reported, and adds the test-case features the other Hegel frontends have.
 
 **Settings.** A run now starts from the settings the engine resolves (the default profile, `hegel.toml` and the `HEGEL_*` environment variables) and sets only the fields you give. Previously every run overwrote the test count, verbosity, derandomization and multiple-failure reporting with the frontend's own defaults, so `HEGEL_TEST_CASES` or a `hegel.toml` profile had no effect on them, and the frontend detected CI itself. CI and Antithesis detection is now the engine's: on a CI server the shipped `ci` profile applies (derandomized, database off, `too_slow` suppressed).
 
@@ -23,3 +23,28 @@ new hegel.Hegel((tc) => {
 ```
 
 **Errors.** A failing test now throws its own error, with its class, `cause` and an assertion library's expected and actual values intact, instead of a new `Error` whose message was the original message followed by the failure's origin. With `reportMultipleFailures`, several distinct failures are thrown together as an `AggregateError` rather than only the last one. A failure the engine could only confirm as nondeterministic prints its caveat, and reports the error seen while searching if replaying it does not fail again. A run the engine aborts throws a `RunError`: `FailedHealthCheckError` (with the failed `healthCheck`), `FlakyError`, `UnsatisfiableError`, or a plain `RunError`.
+
+**Failure reports.** A failing example is now printed the same way on Node and in browsers, laid out by the engine: each drawn value as a line of JavaScript (`const draw_1 = [0, 0];`), numbered in draw order, with the notes between them, and with the `printBlob` setting (on by default) the line that replays the failure. Values print as JavaScript expressions (`-0`, `1n`, `new Map([[1, "a"]])`, `new Date("…")`, `Point { x: 1 }`), and long values wrap. Previously Node printed values with `util.inspect` and browsers with `console.error`'s own formatting. The test body now runs once per test case: the frontend no longer replays the failing example a final time to print it, and `TestCase.isLastRun` is removed. A stateful test reports each step as `Step N: <rule> {`, with the step's draws and notes indented beneath it, and names a failing rule or invariant (`Rule pop failed:`, `Invariant nonNegative failed:`).
+
+```text
+const draw_1 = [0, 0];
+
+To reproduce this failure, replay it with the Hegel builder:
+    .reproduceFailure("AXicY2VgYGBkZOBiZEBhMAAAAd8AIQ==")
+```
+
+**Replaying and explicit examples.** New builder methods on `Hegel`:
+
+- `.reproduceFailure(blob)` replays the failure a printed blob encodes instead of generating test cases. Call it once per blob to replay several. A run none of whose blobs fails any more throws the new `DidNotReproduceError`.
+- `.example(...values)` and `.namedExample({ name: value })` run the test with the given values before generating any: positional values go to the test's draws in order, named ones to the draw printed under that name. A failing example is reported as `Explicit example(...) failed:` and fails the test; one that calls `tc.assume(false)` is skipped; every value must be drawn.
+
+**New `TestCase` methods.**
+
+- `tc.draw(generator, name)` prints the value as `const name = …;` (`name_2`, `name_3`, … when drawn again), and `tc.drawSilent(generator)` draws a value without printing it.
+- `tc.reject()` rejects the test case, like `tc.assume(false)`.
+- `tc.target(score, label?)` guides generation toward test cases that maximise `score`.
+- `tc.event(label)` and `tc.eventValue(label, value)` record what happened in a test case; the `showStatistics` setting reports them at the end of the run.
+- `tc.repeat(body)` (and `tc.repeatAsync(body)`) runs `body` an engine-chosen number of times and then ends the test case, each repetition reported under `// Repetition #N`.
+- `tc.clone()` returns a handle drawing from an independent choice stream of the same test case, for concurrent tasks, and `tc.setWorker(index)` attributes its output to a worker (`[worker 1 +0.116ms] …`).
+
+Shrinking labels are now derived by the engine from each generator's kind and its components, replacing a fixed table of sixteen numbers that gave every generator of a kind the same label.

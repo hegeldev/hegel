@@ -1,10 +1,9 @@
 import type { Engine } from "../engine.js";
 import { EngineError } from "../engine.js";
-import { portableDiagnostics, type RuntimeServices } from "../runtime.js";
+import { consoleOutput, type RuntimeServices } from "../runtime.js";
 
 export function browserRuntime(engine: Engine): RuntimeServices {
   return {
-    ...portableDiagnostics,
     getEngine: () => engine,
     validateSettings(settings) {
       if (settings.database?.kind === "path") {
@@ -12,5 +11,6 @@ export function browserRuntime(engine: Engine): RuntimeServices {
       }
     },
     persistence: false,
+    output: consoleOutput,
   };
 }

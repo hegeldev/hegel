@@ -49,8 +49,8 @@
  * — applying *swarm testing*, where each test case enables a random subset of
  * the rules — and which sampled invariants to check after which steps. On
  * failure it shrinks the sequence of steps like any other input, and the
- * final replay reports each step as `Step N: <rule>` together with the draws
- * the rule made.
+ * failure report shows each step as `Step N: <rule> {`, with the draws the
+ * rule made indented beneath it.
  *
  * Every invariant is checked on the initial state and on the final state. In
  * between, invariants are *sampled*: each is checked after any given step
@@ -81,7 +81,8 @@
  * @packageDocumentation
  */
 
-import { TestCase, AssumeError, Labels, type DataSource } from "./testCase.js";
+import { TestCase, AssumeError, StopTestError, type DataSource } from "./testCase.js";
+import { STATEFUL_RULE } from "./labels.js";
 import { Generator as HegelGenerator } from "./generators/core.js";
 
 /**
@@ -118,8 +119,8 @@ export type Invariant<S> = InvariantCheck<S> | InvariantOptions<S>;
 
 /**
  * A state machine over states of type `S`: named rules and (optionally) named
- * invariants. The names appear in the failure report (`Step 3: pop`,
- * `Invariant nonNegativeLength failed after step 3:`).
+ * invariants. The names appear in the failure report (`Step 3: pop {`,
+ * `Invariant nonNegativeLength failed:`).
  *
  * A machine object holds no state of its own, so one machine can be run
  * against a fresh initial state in every test case.
@@ -224,7 +225,7 @@ export class Pool<T> {
 
   /** @internal */
   take(tc: TestCase, consume: boolean): T {
-    if (tc.dataSource() !== this.dataSource) {
+    if (tc.dataSource().family !== this.dataSource.family) {
       throw new Error(
         "this Pool belongs to a different test case; create a new Pool in each test case",
       );
@@ -312,24 +313,27 @@ function* machineSteps<S>(
 
   // Run the invariants at a join point: all of them for the guaranteed checks
   // of the initial and final state, otherwise the ones the engine samples.
-  function* checkInvariants(
-    where: string,
-    sample: boolean,
-  ): IterableIterator<Action, void, Outcome> {
+  function* checkInvariants(sample: boolean): IterableIterator<Action, void, Outcome> {
     for (let i = 0; i < invariants.length; i++) {
       if (sample && !dataSource.stateMachineShouldCheckInvariant(machineId, i)) {
         continue;
       }
       const { name, check } = invariants[i];
-      const outcome = yield () => check(tc, state);
+      const invariantTc = tc.child(2);
+      const outcome = yield () => check(invariantTc, state);
       if (!outcome.ok) {
-        tc.note(`Invariant ${name} failed ${where}:`);
+        noteFailure(outcome.error, `Invariant ${name} failed:`);
         throw outcome.error;
       }
     }
   }
 
-  yield* checkInvariants("in the initial state", false);
+  function noteFailure(error: unknown, trailer: string): void {
+    if (!(error instanceof AssumeError || error instanceof StopTestError)) tc.note(trailer);
+  }
+
+  if (invariants.length > 0) tc.note("Checking invariants on the initial state.");
+  yield* checkInvariants(false);
 
   let step = 0;
   for (;;) {
@@ -337,8 +341,8 @@ function* machineSteps<S>(
     // once. The span is opened on the data source rather than through
     // `tc.startSpan` on purpose: the latter also suppresses the printing of
     // draws made inside it (they belong to some enclosing generator), whereas
-    // a rule's draws are the test's own and should show in the replay.
-    dataSource.startSpan(Labels.STATEFUL_RULE);
+    // a rule's draws are the test's own and should show in the report.
+    dataSource.startSpan(dataSource.label(STATEFUL_RULE));
     if (!dataSource.stateMachineNextRound(machineId)) {
       dataSource.stopSpan(false);
       break;
@@ -353,28 +357,33 @@ function* machineSteps<S>(
       }
       const name = ruleNames[ruleIndex];
       step++;
-      tc.note(`Step ${step}: ${name}`);
-      const outcome = yield () => rules[ruleIndex](tc, state);
+      tc.note(`Step ${step}: ${name} {`);
+      const ruleTc = tc.child(2);
+      const outcome = yield () => rules[ruleIndex](ruleTc, state);
       if (outcome.ok) {
+        tc.note("}");
         continue;
       }
       if (outcome.error instanceof AssumeError) {
         dataSource.stateMachineRuleRejected(machineId);
         rejected = true;
-        tc.note("Rule stopped early due to violated assumption.");
+        tc.child(2).note("Rule stopped early due to violated assumption.");
+        tc.note("}");
         continue;
       }
-      tc.note(`Rule ${name} failed:`);
+      tc.note("}");
+      noteFailure(outcome.error, `Rule ${name} failed:`);
       dataSource.stopSpan(false);
       throw outcome.error;
     }
     // A round whose rule was rejected contributed nothing: discard its span.
     dataSource.stopSpan(rejected);
 
-    yield* checkInvariants(`after step ${step}`, true);
+    yield* checkInvariants(true);
   }
 
-  yield* checkInvariants("in the final state", false);
+  if (invariants.length > 0) tc.note("Checking invariants on the final state.");
+  yield* checkInvariants(false);
 }
 
 /**

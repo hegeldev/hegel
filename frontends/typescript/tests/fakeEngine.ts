@@ -12,6 +12,7 @@ import {
   type StringGeneratorHandle,
   type PoolHandle,
   type StateMachineHandle,
+  type PrinterHandle,
 } from "../src/engine.js";
 import type { RuntimeServices } from "../src/runtime.js";
 
@@ -20,15 +21,31 @@ export const settings = {} as SettingsHandle;
 export const run = {} as RunHandle;
 export const result = {} as RunResultHandle;
 export const testCase = {} as TestCaseHandle;
-export const replayCase = {} as TestCaseHandle;
 export const failure = {} as FailureHandle;
 export const collection = {} as CollectionHandle;
 export const stringGenerator = {} as StringGeneratorHandle;
 export const pool = {} as PoolHandle;
 export const stateMachine = {} as StateMachineHandle;
+export const derivedCase = {} as TestCaseHandle;
+
+/** A test case's document double: its text, with speculative regions kept or dropped. */
+export class FakePrinter {
+  regions: string[] = [""];
+  get handle(): PrinterHandle {
+    return this as unknown as PrinterHandle;
+  }
+  push(text: string): void {
+    this.regions[this.regions.length - 1] += text;
+  }
+}
+
+function printerOf(p: PrinterHandle): FakePrinter {
+  return p as unknown as FakePrinter;
+}
 
 /** Deterministic Engine double; no ABI pointers or generated engine logic. */
 export function fakeEngine() {
+  const printers = new WeakMap<TestCaseHandle, FakePrinter>();
   return {
     version: vi.fn<Engine["version"]>(() => "0.42.4"),
     newContext: vi.fn<Engine["newContext"]>(() => context),
@@ -63,7 +80,42 @@ export function fakeEngine() {
     runResult: vi.fn<Engine["runResult"]>(() => result),
     freeRunResult: vi.fn<Engine["freeRunResult"]>(),
     freeRun: vi.fn<Engine["freeRun"]>(),
-    testCaseFromBlob: vi.fn<Engine["testCaseFromBlob"]>(() => replayCase),
+    runStartBlob: vi.fn<Engine["runStartBlob"]>(() => run),
+    getVerbosity: vi.fn<Engine["getVerbosity"]>(() => 0),
+    getPhases: vi.fn<Engine["getPhases"]>(() => 0b11111),
+    getPrintBlob: vi.fn<Engine["getPrintBlob"]>(() => false),
+    getReportMultipleFailures: vi.fn<Engine["getReportMultipleFailures"]>(() => true),
+    shouldCapture: vi.fn<Engine["shouldCapture"]>(() => false),
+    cloneTestCase: vi.fn<Engine["cloneTestCase"]>(() => derivedCase),
+    blockTestCase: vi.fn<Engine["blockTestCase"]>(() => derivedCase),
+    setWorker: vi.fn<Engine["setWorker"]>(),
+    note: vi.fn<Engine["note"]>(),
+    target: vi.fn<Engine["target"]>(),
+    event: vi.fn<Engine["event"]>(),
+    eventValue: vi.fn<Engine["eventValue"]>(),
+    labelFromName: vi.fn<Engine["labelFromName"]>((_ctx, name) => BigInt(name.length)),
+    labelCombine: vi.fn<Engine["labelCombine"]>((_ctx, labels) =>
+      labels.reduce((a, b) => a * 31n + b, 0n),
+    ),
+    testCasePrinter: vi.fn<Engine["testCasePrinter"]>((_ctx, tc) => {
+      if (!printers.has(tc)) printers.set(tc, new FakePrinter());
+      return printers.get(tc)!.handle;
+    }),
+    freePrinter: vi.fn<Engine["freePrinter"]>(),
+    printerText: vi.fn<Engine["printerText"]>((_ctx, p, text) => printerOf(p).push(text)),
+    printerHardBreak: vi.fn<Engine["printerHardBreak"]>((_ctx, p) => printerOf(p).push("\n")),
+    printerReflow: vi.fn<Engine["printerReflow"]>((_ctx, p, text) => printerOf(p).push(text)),
+    printerBeginSpeculative: vi.fn<Engine["printerBeginSpeculative"]>((_ctx, p) => {
+      printerOf(p).regions.push("");
+    }),
+    printerCommitSpeculative: vi.fn<Engine["printerCommitSpeculative"]>((_ctx, p) => {
+      printerOf(p).push(printerOf(p).regions.pop()!);
+    }),
+    printerAbortSpeculative: vi.fn<Engine["printerAbortSpeculative"]>((_ctx, p) => {
+      printerOf(p).regions.pop();
+    }),
+    printerResolve: vi.fn<Engine["printerResolve"]>(),
+    printerValue: vi.fn<Engine["printerValue"]>((_ctx, p) => printerOf(p).regions[0]),
     freeTestCase: vi.fn<Engine["freeTestCase"]>(),
     generateBoolean: vi.fn<Engine["generateBoolean"]>(() => true),
     generateInteger: vi.fn<Engine["generateInteger"]>(() => 0n),
@@ -139,8 +191,6 @@ export function fakeRuntime(engine: Engine): RuntimeServices {
     getEngine: () => engine,
     validateSettings: vi.fn(),
     persistence: true,
-    reportFinalValue: vi.fn(),
-    reportFinalError: vi.fn(),
-    note: vi.fn(),
+    output: vi.fn(),
   };
 }

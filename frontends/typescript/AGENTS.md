@@ -122,21 +122,31 @@ so a Node import creeping into a shared module fails `check-lint`.
    host-specific things the shared loop needs: how to get the `Engine`,
    settings validation (the browser rejects `Database.fromPath`), whether the
    host can keep a database (the browser cannot, so its runs disable it), and
-   diagnostics output. Settings defaults, CI detection and Antithesis
+   where report lines go (`output`: `console.error` on every host, so Node and
+   browsers print the same report). Settings defaults, CI detection and Antithesis
    reporting all belong to the engine: a run starts from
    `hegel_settings_new` (or `_for_profile`) and `src/settings.ts` sets only
    the fields the user gave; the test's location and database key come from
    its call site (`src/callSite.ts`) through `hegel_settings_set_test_location`
    and `hegel_settings_set_database_key`.
 6. **Shared runner** (`src/runnerCore.ts`) — the sync and async run loops:
-   `run_start` → `next_test_case` → `mark_complete` → `run_result`. The engine
-   only explores (generate/shrink); the client owns the final replay: on
-   `FAILED`, the runner replays each failure's `hegel_failure_reproduction_blob`
-   via `hegel_test_case_from_blob` and rethrows the test's own error (an
+   explicit examples (`src/explicit.ts`), then `run_start` (or
+   `run_start_blob` for each `reproduceFailure` blob) → `next_test_case` →
+   `mark_complete` → `run_result`. The engine owns the whole run, the final
+   replay of each failure included; the runner never replays. A test case
+   the engine stamps (`hegel_test_case_should_capture`), or every one in a
+   verbose run, prints its draws and notes into the engine's printer
+   document (`src/pretty.ts` renders values as one-line JavaScript that
+   `hegel_printer_reflow` lays out); the runner keeps each failure origin's
+   best capture and, on `FAILED`, prints it with the caveat and the
+   `.reproduceFailure(...)` line, then rethrows the test's own error (an
    `AggregateError` of them for several distinct failures). An errored run
    throws a `RunError` subclass chosen by `hegel_run_result_error_kind`
    (`src/errors.ts`). `EngineDataSource` implements `DataSource` against an
-   engine test case. `createRunner(runtime)` produces `test`/`testAsync`.
+   engine test case, owning the clones, blocks and printers derived from it.
+   Span labels come from the engine (`hegel_label_from_name` /
+   `hegel_label_combine`, `src/labels.ts`), never hard-coded numbers.
+   `createRunner(runtime)` produces `test`/`testAsync`.
 7. **Composition roots** (`src/runner.ts` + `src/index.ts` for Node,
    `src/browser/index.ts` for browsers) — each builds one runner from its
    `RuntimeServices` and re-exports the same public surface. The browser entry

@@ -36,8 +36,9 @@ The layers, and what an ABI change usually touches:
   per-primitive draw entry points. Touch it when a draw entry point changes
   shape or a new one replaces schema-level behaviour.
 - **`src/runnerCore.ts` / `src/session.ts`** — the run lifecycle
-  (`run_start` → `next_test_case` → `mark_complete` → `run_result`, plus
-  failure replay via `hegel_test_case_from_blob`) and the process-global
+  (`run_start` or `run_start_blob` → `next_test_case` → `mark_complete` →
+  `run_result`, with each stamped test case's report read from its printer
+  document) and the process-global
   library handle with its `major.minor` version check. Touch only if the
   lifecycle protocol itself changes.
 - **`src/wtf8.ts`** — decodes engine-returned string bytes. Touch only if
@@ -83,9 +84,10 @@ an oversight.
 Neither adapter frees anything implicitly. Every handle the ABI writes back is
 released with its matching free, in `finally` blocks so error paths release
 too: the runner frees `Context`, `Settings` and `Run`, each test case, the run
-result, each failure and each replay test case; the interpreter frees each
-collection; engine-owned buffers (`hegel_generate_bytes`,
-`hegel_generate_string`) are copied out immediately and then freed. The
+result and each failure; `EngineDataSource` frees the collections, pools,
+state machines, printers and cloned or block test cases of its test case;
+engine-owned buffers (`hegel_generate_bytes`, `hegel_generate_string`,
+`hegel_printer_value`) are copied out immediately and then freed. The
 exception: `hegel_string_generator_t` handles are cached per schema object
 (`StringGeneratorCache`) and freed with the runner.
 

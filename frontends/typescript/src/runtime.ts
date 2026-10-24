@@ -1,14 +1,8 @@
 import type { Engine } from "./engine.js";
 import type { Settings } from "./settings.js";
 
-export interface Diagnostics {
-  reportFinalValue(value: unknown, drawNumber: number): void;
-  reportFinalError(error: unknown): void;
-  note(message: string): void;
-}
-
 /** Only host services used by the shared run loop. */
-export interface RuntimeServices extends Diagnostics {
+export interface RuntimeServices {
   getEngine(): Engine;
   /** Throw for settings the host cannot honour. */
   validateSettings(settings: Settings): void;
@@ -17,17 +11,11 @@ export interface RuntimeServices extends Diagnostics {
    * is disabled, whatever the profile says.
    */
   persistence: boolean;
+  /** Print one line of a run's report. */
+  output(line: string): void;
 }
 
-export const portableDiagnostics: Diagnostics = {
-  reportFinalValue(value, drawNumber) {
-    console.error(`var draw_${drawNumber} =`, value);
-  },
-  reportFinalError(error) {
-    console.error(`\n${error instanceof Error ? error.message : String(error)}`);
-    if (error instanceof Error && error.stack) console.error(error.stack);
-  },
-  note(message) {
-    console.error(message);
-  },
-};
+/** Where a run's report goes on every host: the console's error stream. */
+export function consoleOutput(line: string): void {
+  console.error(line);
+}

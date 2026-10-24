@@ -26,17 +26,20 @@ describe("generateValue compound cleanup", () => {
     });
   }
 
-  it.each(["list", "dict"])("closes %s span when collection allocation fails", (type) => {
-    const engine = fakeEngine();
-    engine.newCollection.mockImplementation(() => {
-      throw new EngineError("collection allocation");
-    });
-    expect(() => generateValue(engine, context, testCase, { type, min_size: 0 })).toThrow(
-      "collection allocation",
-    );
-    expect(engine.stopSpan).toHaveBeenCalledTimes(1);
-    expect(engine.freeCollection).not.toHaveBeenCalled();
-  });
+  it.each([compoundSchemas[2], compoundSchemas[3]])(
+    "closes $type span when collection allocation fails",
+    (schema) => {
+      const engine = fakeEngine();
+      engine.newCollection.mockImplementation(() => {
+        throw new EngineError("collection allocation");
+      });
+      expect(() => generateValue(engine, context, testCase, schema)).toThrow(
+        "collection allocation",
+      );
+      expect(engine.stopSpan).toHaveBeenCalledTimes(1);
+      expect(engine.freeCollection).not.toHaveBeenCalled();
+    },
+  );
 
   it("never lets cleanup control flow mask an engine fault", () => {
     const engine = fakeEngine();

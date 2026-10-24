@@ -13,7 +13,7 @@ import {
   type Bindings,
   type Ptr,
 } from "../src/libhegel.js";
-import { AssumeError, StopTestError, Labels } from "../src/testCase.js";
+import { AssumeError, StopTestError } from "../src/testCase.js";
 import { LIBHEGEL_VERSION } from "../src/libhegel-version.js";
 import { testLibPath } from "./libPath.js";
 
@@ -92,7 +92,15 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     settingsTestLocation: noop,
     settingsRegisterProfile: noop,
     setDefaultProfile: noop,
+    settingsGetVerbosity: () => 0,
+    settingsGetPhases: () => 0,
+    settingsGetPrintBlob: () => false,
+    settingsGetReportMultipleFailures: () => false,
     runStart: (_ctx, _settings, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    runStartBlob: (_ctx, _settings, _blob, out) => {
       out[0] = {} as Ptr;
       return 0;
     },
@@ -106,11 +114,37 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     },
     runResultFree: noop,
     runFree: noop,
-    testCaseFromBlob: (_ctx, _s, _blob, out) => {
+    testCaseFree: noop,
+    testCaseShouldCapture: () => 0,
+    testCaseClone: (_ctx, _tc, out) => {
       out[0] = {} as Ptr;
       return 0;
     },
-    testCaseFree: noop,
+    testCaseBlock: (_ctx, _tc, _indent, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    testCaseSetWorker: () => 0,
+    note: () => 0,
+    target: () => 0,
+    event: () => 0,
+    eventValue: () => 0,
+    labelFromName: () => 0,
+    labelCombine: () => 0,
+    testCasePrinter: (_ctx, _tc, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    printerFree: noop,
+    printerText: () => 0,
+    printerReflow: () => 0,
+    printerHardBreak: () => 0,
+    printerBeginSpeculative: () => 0,
+    printerCommitSpeculative: () => 0,
+    printerAbortSpeculative: () => 0,
+    printerResolve: () => 0,
+    printerValue: () => 0,
+    printerValueResultFree: noop,
     generateBoolean: () => 0,
     generateInteger: () => 0,
     generateIntegerBig: () => 0,
@@ -234,24 +268,24 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
     expect(() => lib.runResult(null, null)).toThrow(/hegel_run_result failed: nope/);
   });
 
-  it("throws when test_case_from_blob returns an error code", () => {
+  it("throws when run_start_blob returns an error code", () => {
     const lib = new Libhegel(
       fakeBindings({
-        testCaseFromBlob: (_ctx, _s, _blob, out) => {
+        runStartBlob: (_ctx, _s, _blob, out) => {
           out[0] = null;
           return -5;
         },
         contextLastError: () => "bad blob",
       }),
     );
-    expect(() => lib.testCaseFromBlob(null, null, "x")).toThrow(
-      /hegel_test_case_from_blob failed: bad blob/,
+    expect(() => lib.runStartBlob(null, null, "x")).toThrow(
+      /hegel_run_start_blob failed: bad blob/,
     );
   });
 
   it("maps STOP_TEST to StopTestError", () => {
     const lib = new Libhegel(fakeBindings({ startSpan: () => -1 }));
-    expect(() => lib.startSpan(null, null, Labels.LIST)).toThrow(StopTestError);
+    expect(() => lib.startSpan(null, null, 1n)).toThrow(StopTestError);
   });
 
   it("maps ASSUME to AssumeError", () => {
@@ -418,7 +452,31 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
     lib.freeRunResult(lib.runResult(null, null));
     lib.freeFailure(lib.failure(null, 0));
     lib.freeRun(lib.runStart(null, null));
-    lib.freeTestCase(lib.testCaseFromBlob(null, null, "blob"));
+    lib.freeRun(lib.runStartBlob(null, null, "blob"));
+    expect(lib.getVerbosity(null)).toBe(0);
+    expect(lib.getPhases(null)).toBe(0);
+    expect(lib.getPrintBlob(null)).toBe(false);
+    expect(lib.getReportMultipleFailures(null)).toBe(false);
+    expect(lib.shouldCapture(null, null)).toBe(false);
+    lib.freeTestCase(lib.cloneTestCase(null, null));
+    lib.freeTestCase(lib.blockTestCase(null, null, 2));
+    lib.setWorker(null, null, 1);
+    lib.note(null, null, "note");
+    lib.target(null, null, 1, "t");
+    lib.event(null, null, "e");
+    lib.eventValue(null, null, 1, "v");
+    expect(lib.labelFromName(null, "x")).toBe(0n);
+    expect(lib.labelCombine(null, [1n, 2n])).toBe(0n);
+    const printer = lib.testCasePrinter(null, null);
+    lib.printerText(null, printer, "a");
+    lib.printerReflow(null, printer, "b");
+    lib.printerHardBreak(null, printer);
+    lib.printerBeginSpeculative(null, printer);
+    lib.printerCommitSpeculative(null, printer);
+    lib.printerAbortSpeculative(null, printer);
+    lib.printerResolve(null, printer);
+    expect(lib.printerValue(null, printer)).toBe("");
+    lib.freePrinter(printer);
     expect(lib.reproductionBlob(null)).toBeNull();
     expect(lib.runStatus(null)).toBe(RunStatus.PASSED);
     expect(lib.failureCount(null)).toBe(0);
@@ -606,11 +664,11 @@ describe("Libhegel against the real library", () => {
         const tc = lib.nextTestCase(ctx, run);
         if (tc === null) break;
         try {
-          lib.startSpan(ctx, tc, Labels.LIST);
+          lib.startSpan(ctx, tc, 1n);
           const collection = lib.newCollection(ctx, tc, 0, 5);
           try {
             while (lib.collectionMore(ctx, tc, collection)) {
-              lib.startSpan(ctx, tc, Labels.LIST_ELEMENT);
+              lib.startSpan(ctx, tc, 2n);
               lib.generateInteger(ctx, tc, -100n, 100n);
               lib.stopSpan(ctx, tc, false);
               if (!rejectedOnce) {
@@ -643,6 +701,23 @@ describe("Libhegel against the real library", () => {
     } finally {
       lib.freeRun(run);
       lib.freeSettings(settings);
+      lib.freeContext(ctx);
+    }
+  });
+
+  it("computes labels as unsigned 64-bit hashes of names", () => {
+    const ctx = lib.newContext();
+    try {
+      const a = lib.labelFromName(ctx, "hegel.lists");
+      const b = lib.labelFromName(ctx, "hegel.integer");
+      expect(a).toBe(lib.labelFromName(ctx, "hegel.lists"));
+      expect(a).not.toBe(b);
+      for (const label of [a, b, lib.labelCombine(ctx, [a, b])]) {
+        expect(label).toBeGreaterThanOrEqual(0n);
+        expect(label).toBeLessThan(2n ** 64n);
+      }
+      expect(lib.labelCombine(ctx, [a, b])).not.toBe(lib.labelCombine(ctx, [b, a]));
+    } finally {
       lib.freeContext(ctx);
     }
   });
