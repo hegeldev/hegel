@@ -114,7 +114,7 @@ pub(crate) fn hstrs(items: &[String]) -> Vec<c::hegel_string_t> {
     items.iter().map(|s| hstr(s)).collect()
 }
 
-/// A text or bytes `max_size` as the engine takes it: `None` (no maximum
+/// A text or bytes `max_size` (or a collection's, for its text default) as the engine takes it: `None` (no maximum
 /// given) is `HEGEL_MAX_SIZE_DEFAULT`, for the engine's default, and a
 /// maximum at or above that sentinel is no upper bound.
 pub(crate) fn max_size_arg(max_size: Option<u64>) -> u64 {

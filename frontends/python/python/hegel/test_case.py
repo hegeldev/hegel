@@ -715,8 +715,11 @@ class Collection:
 
     def _ensure(self) -> _native.Collection:
         if self._handle is None:
-            self._handle = self._tc._handle.new_collection(self._min_size, self._max_size)
+            self._handle = self._new_handle()
         return self._handle
+
+    def _new_handle(self) -> _native.Collection:
+        return self._tc._handle.new_collection(self._min_size, self._max_size)
 
     def more(self) -> bool:
         """Whether to draw another element."""
@@ -738,3 +741,13 @@ class Collection:
         if self._finished:
             return
         self._ensure().reject(self._tc._handle, why)
+
+
+class TextCollection(Collection):
+    """A :class:`Collection` building text, whose ``max_size=None`` is the
+    engine's default maximum for text rather than no fixed limit."""
+
+    __slots__ = ()
+
+    def _new_handle(self) -> _native.Collection:
+        return self._tc._handle.new_collection(self._min_size, self._max_size, text_default=True)

@@ -111,8 +111,9 @@ class Generator(Generic[T]):
     def filter(self, predicate: Callable[[T], bool]) -> Generator[T]:
         """Keep only values satisfying ``predicate``.
 
-        Each draw tries the source up to three times, the number every
-        Hegel library's filter uses; if no attempt satisfies ``predicate``,
+        Each draw tries the source as many times as the engine's
+        ``HEGEL_FILTER_ATTEMPTS``, which every Hegel library's filter
+        shares; if no attempt satisfies ``predicate``,
         the test case is rejected as if by
         :meth:`TestCase.assume <hegel.TestCase.assume>`. A filter that
         rejects most values therefore rejects many test cases, and may fail

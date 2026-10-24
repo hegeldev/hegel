@@ -12,6 +12,7 @@ from hegel import _native
 from hegel._labels import label_from_name
 from hegel.errors import InvalidArgument
 from hegel.generators.base import Generator
+from hegel.test_case import TextCollection
 
 if TYPE_CHECKING:
     from hegel.test_case import TestCase
@@ -216,40 +217,29 @@ class Text(Generator[str]):
         return f"text({prefix}{_sizes(self.min_size, self.max_size)})"
 
 
-def _collection_text_max_size(min_size: int) -> int:
-    """The engine's default maximum for text, which the engine applies to
-    its own text draws but not to the collection that a text over an
-    arbitrary generator alphabet draws its characters with."""
-    return min_size + 100 if min_size > 100 else 100
-
-
 class TextFromAlphabet(Generator[str]):
     """Text whose characters come from an arbitrary generator."""
 
     def __init__(self, alphabet: Generator[str], min_size: int, max_size: int | None) -> None:
-        from hegel.generators.collections import lists
-
         self.alphabet = alphabet
         self.min_size = min_size
         self.max_size = max_size
-        self._lists = lists(
-            alphabet,
-            min_size=min_size,
-            max_size=_collection_text_max_size(min_size) if max_size is None else max_size,
-        )
         self.label = TEXT_LABEL
 
     def __repr__(self) -> str:
         return f"text(alphabet={self.alphabet!r}, {_sizes(self.min_size, self.max_size)})"
 
     def do_draw(self, tc: TestCase) -> str:
-        chars = tc.draw_silent(self._lists)
-        for char in chars:
+        collection = TextCollection(tc, self.min_size, self.max_size)
+        chars = []
+        while collection.more():
+            char = tc.draw_silent(self.alphabet)
             if not isinstance(char, str) or len(char) != 1:
                 raise InvalidArgument(
                     "The alphabet generator for text() must produce single characters, "
                     f"got {char!r}"
                 )
+            chars.append(char)
         return "".join(chars)
 
 
