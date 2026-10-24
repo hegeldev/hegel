@@ -1244,8 +1244,10 @@ let settings_nondeterminism_strictness ctx s n =
     (c_settings_nondeterminism_strictness ctx s (nondeterminism_strictness_to_int n))
 ;;
 
+let uint64_of_int = Unsigned.UInt64.of_int
+
 let settings_seed ctx s = function
-  | Some seed -> check_rc ctx (c_settings_seed ctx s (Unsigned.UInt64.of_int seed) true)
+  | Some seed -> check_rc ctx (c_settings_seed ctx s seed true)
   | None -> check_rc ctx (c_settings_seed ctx s Unsigned.UInt64.zero false)
 ;;
 
@@ -1322,7 +1324,7 @@ let settings_get_seed ctx s =
   let seed = allocate uint64_t Unsigned.UInt64.zero in
   let has_seed = allocate bool false in
   check_rc ctx (c_settings_get_seed ctx s seed has_seed);
-  if !@has_seed then Some (Unsigned.UInt64.to_int !@seed) else None
+  if !@has_seed then Some !@seed else None
 ;;
 
 let get_bool getter ctx s =
@@ -2197,6 +2199,7 @@ let settings_backend = Obj.magic_portable settings_backend
 let settings_test_cases = Obj.magic_portable settings_test_cases
 let settings_verbosity = Obj.magic_portable settings_verbosity
 let settings_nondeterminism_strictness = Obj.magic_portable settings_nondeterminism_strictness
+let uint64_of_int = Obj.magic_portable uint64_of_int
 let settings_seed = Obj.magic_portable settings_seed
 let settings_derandomize = Obj.magic_portable settings_derandomize
 let settings_report_multiple_failures = Obj.magic_portable settings_report_multiple_failures

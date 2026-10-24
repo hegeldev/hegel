@@ -68,9 +68,13 @@ let flags : (test_case -> string * (parsed -> parsed)) list =
     List.filter (List.map all ~f:snd) ~f:(fun x -> List.mem picked x ~equal:Poly.equal)
   in
   [ (fun tc ->
-      match draw_silent tc (optional (integers ~min_value:0 ())) with
+      let half = integers ~min_value:0 ~max_value:0xFFFF_FFFF () in
+      match draw_silent tc (optional (tuples2 half half)) with
       | None -> "--seed=none", setting (fun s -> { s with seed = None })
-      | Some n -> sprintf "--seed=%d" n, setting (fun s -> { s with seed = Some n }))
+      | Some (hi, lo) ->
+        let n = Unsigned.UInt64.(logor (shift_left (of_int hi) 32) (of_int lo)) in
+        ( sprintf "--seed=%s" (Unsigned.UInt64.to_string n)
+        , setting (fun s -> { s with seed = Some n }) ))
   ; (fun tc ->
       let name, verbosity =
         choose
@@ -192,6 +196,16 @@ let test_every_setting_has_a_flag () =
     (List.sort
        ~compare:String.compare
        (List.map Cli.settings_flags ~f:(fun (key, _, _) -> key)))
+;;
+
+let test_large_seed () =
+  match parse [ "--seed"; "9223372036854775813" ] with
+  | Ok (settings, _, _) ->
+    Alcotest.(check (option Test_helpers.uint64))
+      "seed"
+      (Some (Unsigned.UInt64.of_string "9223372036854775813"))
+      settings.seed
+  | Error message -> Alcotest.fail message
 ;;
 
 let test_bad_values () =
@@ -343,6 +357,7 @@ let test_main_failure_replays_from_blob () =
 let tests =
   [ Alcotest.test_case "flags select settings" `Quick test_flags_select_settings
   ; Alcotest.test_case "every setting has a flag" `Quick test_every_setting_has_a_flag
+  ; Alcotest.test_case "large seed" `Quick test_large_seed
   ; Alcotest.test_case "bad values" `Quick test_bad_values
   ; Alcotest.test_case "--profile" `Quick test_profile
   ; Alcotest.test_case "single_test_case" `Quick test_single_test_case

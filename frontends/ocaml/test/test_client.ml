@@ -38,7 +38,7 @@ let test_default_settings_not_ci () =
     let s = Settings.default () in
     Alcotest.(check int) "test_cases" 100 s.test_cases;
     Alcotest.(check bool) "verbosity normal" true (Poly.equal s.verbosity Settings.Normal);
-    Alcotest.(check (option int)) "no seed" None s.seed;
+    Alcotest.(check (option Test_helpers.uint64)) "no seed" None s.seed;
     Alcotest.(check bool) "derandomize off" false s.derandomize;
     Alcotest.(check bool) "database unset" true (Poly.equal s.database Settings.Unset);
     Alcotest.(check bool)
@@ -108,7 +108,7 @@ let test_register_profile_round_trip () =
       let s =
         { Settings.test_cases = 7 + i
         ; verbosity
-        ; seed = Some (40 + i)
+        ; seed = Some (Unsigned.UInt64.of_int (40 + i))
         ; derandomize = true
         ; database = Settings.Path "/tmp/hegel-ocaml-profile-db"
         ; suppress_health_check =
@@ -164,7 +164,11 @@ let config_child () =
       (Poly.equal
          (Settings.from_profile "noblob").nondeterminism_strictness
          Settings.Nondeterminism_strictness.Warn)
-  then failwith "noblob: expected nondeterminism_strictness warn from hegel.toml"
+  then failwith "noblob: expected nondeterminism_strictness warn from hegel.toml";
+  match (Settings.from_profile "bigseed").seed with
+  | Some seed when Unsigned.UInt64.equal seed (Unsigned.UInt64.of_int64 Int64.max_value)
+    -> ()
+  | _ -> failwith "bigseed: expected seed 2^63-1 from hegel.toml"
 ;;
 
 let test_hegel_toml_config () =
@@ -178,7 +182,9 @@ let test_hegel_toml_config () =
          test_cases = 7\n\n\
          [profiles.noblob]\n\
          print_blob = false\n\
-         nondeterminism_strictness = \"warn\"\n";
+         nondeterminism_strictness = \"warn\"\n\n\
+         [profiles.bigseed]\n\
+         seed = 9223372036854775807\n";
     let pid =
       Unix.create_process_env
         ~prog:Stdlib.Sys.executable_name
@@ -197,10 +203,42 @@ let test_hegel_toml_config () =
 let test_settings_create () =
   let s = Settings.create ~test_cases:42 ~seed:7 () in
   Alcotest.(check int) "test_cases" 42 s.test_cases;
-  Alcotest.(check (option int)) "seed" (Some 7) s.seed;
+  Alcotest.(check (option Test_helpers.uint64))
+    "seed"
+    (Some (Unsigned.UInt64.of_int 7))
+    s.seed;
   let d = Settings.create () in
   Alcotest.(check int) "default test_cases" 100 d.test_cases;
-  Alcotest.(check (option int)) "no seed" None d.seed
+  Alcotest.(check (option Test_helpers.uint64)) "no seed" None d.seed;
+  Alcotest.check_raises
+    "negative seed"
+    (Usage_error "Settings.create: negative seed -1")
+    (fun () -> ignore (Settings.create ~seed:(-1) () : Settings.t))
+;;
+
+let max_seed = Unsigned.UInt64.max_int
+
+let test_large_seed_round_trip () =
+  let s = { (Settings.create ()) with seed = Some max_seed } in
+  Alcotest.(check (option Test_helpers.uint64))
+    "round trip"
+    (Some max_seed)
+    (Settings.set_from_strings s []).seed
+;;
+
+let test_large_seed_from_env () =
+  let saved = Sys.getenv "HEGEL_SEED" in
+  Unix.putenv ~key:"HEGEL_SEED" ~data:(Unsigned.UInt64.to_string max_seed);
+  Exn.protect
+    ~finally:(fun () ->
+      match saved with
+      | Some v -> Unix.putenv ~key:"HEGEL_SEED" ~data:v
+      | None -> Test_helpers.unsetenv "HEGEL_SEED")
+    ~f:(fun () ->
+      Alcotest.(check (option Test_helpers.uint64))
+        "HEGEL_SEED"
+        (Some max_seed)
+        (Settings.default ()).seed)
 ;;
 
 let test_health_check_to_string () =
@@ -777,6 +815,8 @@ let tests =
   ; Alcotest.test_case "set_default_profile" `Quick test_set_default_profile
   ; Alcotest.test_case "hegel.toml via HEGEL_CONFIG" `Quick test_hegel_toml_config
   ; Alcotest.test_case "Settings.create" `Quick test_settings_create
+  ; Alcotest.test_case "large seed round trip" `Quick test_large_seed_round_trip
+  ; Alcotest.test_case "large seed from HEGEL_SEED" `Quick test_large_seed_from_env
   ; Alcotest.test_case "health_check_to_string" `Quick test_health_check_to_string
   ; Alcotest.test_case "phase_to_string" `Quick test_phase_to_string
   ; Alcotest.test_case

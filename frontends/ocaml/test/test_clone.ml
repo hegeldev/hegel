@@ -43,7 +43,7 @@ let test_clone_reproducible () =
   let run () =
     let pair = ref (0, 0) in
     Hegel.run_hegel_test
-      ~settings:{ (one_case_settings ()) with seed = Some 42 }
+      ~settings:{ (one_case_settings ()) with seed = Some (Unsigned.UInt64.of_int 42) }
       (fun tc ->
          let p = Hegel.draw_silent tc small_int in
          let c = Hegel.draw_silent (Hegel.clone tc) small_int in

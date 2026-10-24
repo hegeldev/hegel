@@ -60,6 +60,16 @@ match run_hegel_test test with
 
 `~failure_blobs` now replays every blob in the list, in turn, and reports every failure they reproduce; it used to replay only the first. `Hegel.main` binaries accept `--failure-blob` more than once.
 
+`Settings.t`'s `seed` field is now an `Unsigned.UInt64.t option` instead of an `int option`, so it holds any seed libhegel accepts, up to 2^64 - 1. A seed of 2^62 or more from `--seed`, `HEGEL_SEED` or `hegel.toml` used to wrap around (2^63 + 5 became 5). `Settings.create ~seed` still takes an `int`, and raises `Usage_error` for a negative one. Code that builds or reads the field needs to convert:
+
+```ocaml
+(* before *)
+{ s with seed = Some 42 }
+
+(* after *)
+{ s with seed = Some (Unsigned.UInt64.of_int 42) }
+```
+
 `Settings.t` has a new `unbounded_choices` field. Setting it lets a test case make any number of choices, rather than stopping it as an overrun once it has made 2^20. `Hegel.main` now sets it instead of suppressing the `Test_cases_too_large` health check.
 
 New test-case operations:

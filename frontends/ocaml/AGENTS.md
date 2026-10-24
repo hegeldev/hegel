@@ -756,7 +756,9 @@ unlike `hegel.toml`). Invalid UTF-8 in any string is `HEGEL_E_INVALID_ARG` →
 `Hegel.Settings` is a plain record (`Settings.t`) in the base_quickcheck
 `Test.Config.t` style: `Settings.default ()` is the engine's resolved
 `default` settings profile, `Settings.create ?test_cases ?seed ()` layers the
-two most common overrides (taking `seed` as an `int`), and every other field
+two most common overrides (taking `seed` as a non-negative `int`; the field is an
+`Unsigned.UInt64.t option`, so a seed of libhegel's full `u64` range survives
+`of_ffi`/`to_ffi`), and every other field
 is set with OCaml's record update syntax —
 `{ (Settings.create ~seed:0 ()) with verbosity = Settings.Verbose }`.
 There are deliberately no `with_*` builder functions. The enums (`verbosity`,

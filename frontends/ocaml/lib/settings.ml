@@ -53,7 +53,7 @@ let phase_to_string = function
 type t =
   { test_cases : int
   ; verbosity : verbosity
-  ; seed : int option
+  ; seed : Unsigned.UInt64.t option
   ; derandomize : bool
   ; database : database
   ; suppress_health_check : health_check list
@@ -216,7 +216,13 @@ let create ?test_cases ?seed () =
   let s =
     Option.fold ~none:s ~some:(fun test_cases -> { s with test_cases }) test_cases
   in
-  Option.fold ~none:s ~some:(fun v -> { s with seed = Some v }) seed
+  Option.fold
+    ~none:s
+    ~some:(fun v ->
+      if v < 0
+      then raise (Ffi.Usage_error (Printf.sprintf "Settings.create: negative seed %d" v));
+      { s with seed = Some (Ffi.uint64_of_int v) })
+    seed
 ;;
 
 let register_profile name t =

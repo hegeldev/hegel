@@ -183,7 +183,7 @@
       | [HEGEL_TEST_CASES]                | settings              | [test_cases]: a positive integer.                                              |
       | [HEGEL_DATABASE]                  | settings              | [database]: [disabled], or a path.                                             |
       | [HEGEL_STATISTICS]                | settings              | [show_statistics]: any value except [0] enables it.                            |
-      | [HEGEL_SEED]                      | settings              | [seed]: an integer, or [none].                                                 |
+      | [HEGEL_SEED]                      | settings              | [seed]: an integer from 0 to 2{^64}-1, or [none].                              |
       | [HEGEL_DERANDOMIZE]               | settings              | [derandomize]: [true], [1], [yes], [false], [0], or [no].                      |
       | [HEGEL_PRINT_BLOB]                | settings              | [print_blob]: the same values as [HEGEL_DERANDOMIZE].                          |
       | [HEGEL_NONDETERMINISM_STRICTNESS] | settings              | [nondeterminism_strictness]: [quiet], [warn], or [error].                      |
@@ -282,9 +282,10 @@ type t =
     (** Maximum number of valid test cases to generate. Cases rejected by
         [assume] or a filter do not count. 100 in the [base] profile. *)
   ; verbosity : verbosity (** How much Hegel prints. [Normal] in the [base] profile. *)
-  ; seed : int option
-    (** A fixed seed for reproducibility; [None]/[seed = "none"] in [hegel.toml]
-        draws a new random seed per run. *)
+  ; seed : Unsigned.UInt64.t option
+    (** A fixed seed for reproducibility, any unsigned 64-bit integer;
+        [None]/[seed = "none"] in [hegel.toml] draws a new random seed per
+        run. *)
   ; derandomize : bool
     (** Make the run reproducible by deriving its seed from the test's identity
         instead of fresh randomness. [true] in the [ci] profile. *)
@@ -350,12 +351,14 @@ val default : unit -> t
 val from_profile : string -> t
 
 (** [create ?test_cases ?seed ()] is {!default} with the two most commonly
-    overridden fields applied. [seed] is an [int] here (the field is an
-    [int option]). Use record update syntax for any other field:
+    overridden fields applied. [seed] is a non-negative [int] here, and
+    [create] raises [Usage_error] for a negative one. Use record update
+    syntax for a seed above [max_int], and for any other field:
 
     {[
       let s = Settings.create ~test_cases:500 ~seed:42 () in
-      let s = { s with verbosity = Settings.Verbose }
+      let s = { s with verbosity = Settings.Verbose } in
+      { s with seed = Some (Unsigned.UInt64.of_string "18446744073709551615") }
     ]} *)
 val create : ?test_cases:int -> ?seed:int -> unit -> t
 

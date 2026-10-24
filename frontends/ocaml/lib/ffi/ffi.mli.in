@@ -305,9 +305,13 @@ val settings_nondeterminism_strictness
   -> nondeterminism_strictness
   -> unit
 
+(** [uint64_of_int n] is [Unsigned.UInt64.of_int n], callable from portable
+    code. *)
+val uint64_of_int : int -> Unsigned.UInt64.t
+
 (** [settings_seed ctx s seed] sets the RNG seed ([None] picks a fresh random
     seed at run start). *)
-val settings_seed : context -> settings -> int option -> unit
+val settings_seed : context -> settings -> Unsigned.UInt64.t option -> unit
 
 val settings_derandomize : context -> settings -> bool -> unit
 val settings_report_multiple_failures : context -> settings -> bool -> unit
@@ -374,7 +378,7 @@ val settings_set_from_string : context -> settings -> key:string -> value:string
 
 val settings_get_test_cases : context -> settings -> int
 val settings_get_verbosity : context -> settings -> verbosity
-val settings_get_seed : context -> settings -> int option
+val settings_get_seed : context -> settings -> Unsigned.UInt64.t option
 val settings_get_derandomize : context -> settings -> bool
 val settings_get_database : context -> settings -> string option
 val settings_get_phases : context -> settings -> int
