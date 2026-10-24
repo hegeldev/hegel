@@ -641,7 +641,8 @@ TEST(Profiles, ProfileVerbosityAndPrintBlobAreKept) {
 TEST(Profiles, ProfileHealthChecksCanBeCleared) {
     hegel::register_profile(
         "cpp_suppress_all",
-        {.database = Database::disabled(),
+        {.seed = 1,
+         .database = Database::disabled(),
          .suppress_health_check = hegel::all_health_checks()});
     auto filtering = [](hegel::TestCase& tc) {
         int n = tc.draw(gs::integers<int>({.min_value = 0, .max_value = 100}));
