@@ -17,7 +17,7 @@
     [module%hegel_state_machine M = struct … end]. Mark rules with [[@@rule]]
     and invariants with [[@@invariant]]. See {!Rule} and {!Invariant}
     for valid options. The PPX generates the [run] function for the state
-    machine. If the module defines [print_state], [run] uses it to print the
+    machine. If the module defines [sexp_of_state], [run] uses it to print the
     state after each step.
 
     Without the PPX, create rules with {!Rule.create} and the invariants
@@ -35,7 +35,7 @@
     module%hegel_state_machine Stack = struct
       type state = int list ref
 
-      let print_state stack = Printer.(list int) !stack
+      let sexp_of_state stack = sexp_of_list sexp_of_int !stack
 
       let push tc stack =
         let n = draw tc (integers ~min_value:0 ~max_value:100 ()) in
@@ -84,7 +84,7 @@
     [module%hegel_concurrent_state_machine M = struct … end]. Mark rules with [[@@rule]]
     and invariants with [[@@invariant]]. See {!Concurrent_rule} and {!Invariant} for
     valid options. The PPX generates the [run] function for the state machine. If the
-    module defines [print_state], [run] uses it to print the state after each step.
+    module defines [sexp_of_state], [run] uses it to print the state after each step.
 
     The example store below has a bug. The store locks individual reads and writes,
     but releases the lock between reading a counter and writing its incremented value.
@@ -315,7 +315,7 @@ module Pool : sig
       {[
       let existing = draw_silent tc (Stateful.Pool.values_reusable pool)
       ]} *)
-  val values_reusable : 'a t -> 'a Generators.generator
+  val values_reusable : 'a t -> ('a, Generators.unprintable) Generators.generator
 
   (** Draws and removes a value. A draw from an empty pool rejects the current
       rule, or the test case when drawn outside a rule. Filtering this
@@ -324,7 +324,7 @@ module Pool : sig
       {[
       let taken = draw_silent tc (Stateful.Pool.values_consumed pool)
       ]} *)
-  val values_consumed : 'a t -> 'a Generators.generator
+  val values_consumed : 'a t -> ('a, Generators.unprintable) Generators.generator
 end
 
 module Concurrent_pool : sig PORTABLE
@@ -346,12 +346,12 @@ module Concurrent_pool : sig PORTABLE
 
   (** Draws a value without removing it. A draw from an empty pool rejects the
       current rule, or the test case when drawn outside a rule. *)
-  val values_reusable : 'a t -> 'a Generators.generator
+  val values_reusable : 'a t -> ('a, Generators.unprintable) Generators.generator
 
   (** Draws and removes a value. A draw from an empty pool rejects the current
       rule, or the test case when drawn outside a rule. Filtering this
       generator removes only the value it returns. *)
-  val values_consumed : 'a t -> 'a Generators.generator
+  val values_consumed : 'a t -> ('a, Generators.unprintable) Generators.generator
 end
 
 module Rule : sig PORTABLE
@@ -526,7 +526,7 @@ end
     calls this function on [M].
 
     On a failing replay, each applied rule prints as [Step N: <name>], with the
-    printed draws and notes nested under it. When [print_state] is supplied,
+    printed draws and notes nested under it. When [sexp_of_state] is supplied,
     the state is also printed after the initial state and after every step.
 
     {v
@@ -541,7 +541,7 @@ end
     v} *)
 val run
   :  ?step_count:int
-  -> ?print_state:('state -> Printer.doc)
+  -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
   -> Internal.test_case
   -> (module State_machine with type state = 'state)
   -> init:'state
@@ -556,7 +556,7 @@ val run_internal
   :  init:'state
   -> rules:'state Rule.t list
   -> invariants:'state Invariant.t list
-  -> ?print_state:('state -> Printer.doc)
+  -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
   -> ?step_count:int
   -> Internal.test_case
   -> unit
@@ -581,7 +581,7 @@ end
     See {!Concurrency}. A [module%hegel_concurrent_state_machine] that does not
     declare [type ctx] defaults to using threads.
 
-    If [print_state] is provided, the state is printed before the first round
+    If [sexp_of_state] is provided, the state is printed before the first round
     and after each completed round.
 
     [step_count] defaults to 50 and bounds the number of rounds per test case.
@@ -597,7 +597,7 @@ val run_concurrent
   -> ?min_concurrency:int
   -> ?max_concurrency:int
   -> ?step_count:int
-  -> ?print_state:('state -> Printer.doc)
+  -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
   -> Internal.test_case
   -> (module Concurrent_state_machine with type ctx = 'ctx and type state = 'state)
   -> init:'state MODE(portable)
@@ -615,7 +615,7 @@ val run_concurrent_internal
   -> concurrency:'ctx Concurrency.t MODE(local)
   -> ?min_concurrency:int
   -> ?max_concurrency:int
-  -> ?print_state:('state -> Printer.doc)
+  -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
   -> ?step_count:int
   -> Internal.test_case
   -> unit
@@ -637,7 +637,7 @@ val run_concurrent_core
        MODE(local)
   -> ?min_concurrency:int
   -> ?max_concurrency:int
-  -> ?print_state:('state -> Printer.doc)
+  -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
   -> ?step_count:int
   -> Internal.test_case
   -> unit

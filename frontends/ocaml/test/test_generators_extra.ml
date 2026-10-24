@@ -11,13 +11,20 @@ let check_all ?test_cases gen check =
   run_hegel_test ~settings:(settings ?test_cases ()) (fun tc -> check (draw tc gen))
 ;;
 
+let check_all_silent ?test_cases gen check =
+  run_hegel_test ~settings:(settings ?test_cases ()) (fun tc ->
+    check (draw_silent tc gen))
+;;
+
 let shown gen =
   let result = ref "" in
   run_hegel_test ~settings:(settings ~test_cases:1 ()) (fun tc ->
-    let _, show = Ppx_internal.draw tc gen in
+    let _, show = Ppx_internal.draw tc gen ~sexp_of:(printer gen) in
     result := Printer.to_string (show ()));
   !result
 ;;
+
+let printed gen value = Sexplib0.Sexp.to_string (printer gen value)
 
 let minimal ?(test_cases = 1000) gen condition =
   let found = ref None in
@@ -177,6 +184,7 @@ let test_arrays () =
       (fun a -> Array.length a >= 2)
   in
   Alcotest.(check (array int)) "minimal" [| 0; 0 |] a;
+  Alcotest.(check string) "printer" "(1 2)" (printed (arrays (integers ()) ()) [| 1; 2 |]);
   expect_usage_error (fun () -> ignore (arrays (integers ()) ~min_size:(-1) ()))
 ;;
 
@@ -202,6 +210,10 @@ let test_sets () =
   in
   Alcotest.(check (list int)) "minimal" [ 0; 1 ] (Int_set.elements s);
   Alcotest.(check string)
+    "printer"
+    "(1 2)"
+    (printed (sets (module Int_set) (integers ()) ()) (Int_set.of_list [ 2; 1 ]));
+  Alcotest.(check string)
     "shown"
     "Set.of_list [5]"
     (shown
@@ -217,13 +229,13 @@ let test_sets () =
 
 let test_permutations () =
   let values = [ 1; 2; 3; 4; 5 ] in
-  check_all (permutations values) (fun xs ->
+  check_all_silent (permutations values) (fun xs ->
     Alcotest.(check (list int)) "a permutation" values (List.sort compare xs));
-  check_all (permutations []) (fun xs -> Alcotest.(check (list int)) "empty" [] xs);
-  check_all (permutations [ 7 ]) (fun xs -> Alcotest.(check (list int)) "single" [ 7 ] xs);
+  check_all_silent (permutations []) (fun xs -> Alcotest.(check (list int)) "empty" [] xs);
+  check_all_silent (permutations [ 7 ]) (fun xs ->
+    Alcotest.(check (list int)) "single" [ 7 ] xs);
   let shuffled = minimal (permutations values) (fun xs -> xs <> values) in
-  Alcotest.(check (list int)) "one swap" [ 1; 2; 3; 5; 4 ] shuffled;
-  Alcotest.(check string) "shown" "<abstr>" (shown (permutations values))
+  Alcotest.(check (list int)) "one swap" [ 1; 2; 3; 5; 4 ] shuffled
 ;;
 
 let test_tuples () =
@@ -255,7 +267,24 @@ let test_tuples () =
   Alcotest.(check string)
     "shown"
     "(1, 2, 3, 4, 5, 6, 7)"
-    (shown (tuples7 (i 1) (i 2) (i 3) (i 4) (i 5) (i 6) (i 7)))
+    (shown (tuples7 (i 1) (i 2) (i 3) (i 4) (i 5) (i 6) (i 7)));
+  let n = integers () in
+  Alcotest.(check string)
+    "printer 5"
+    "(1 2 3 4 5)"
+    (printed (tuples5 n n n n n) (1, 2, 3, 4, 5));
+  Alcotest.(check string)
+    "printer 6"
+    "(1 2 3 4 5 6)"
+    (printed (tuples6 n n n n n n) (1, 2, 3, 4, 5, 6));
+  Alcotest.(check string)
+    "printer 7"
+    "(1 2 3 4 5 6 7)"
+    (printed (tuples7 n n n n n n n) (1, 2, 3, 4, 5, 6, 7));
+  Alcotest.(check string)
+    "printer 8"
+    "(1 2 3 4 5 6 7 8)"
+    (printed (tuples8 n n n n n n n n) (1, 2, 3, 4, 5, 6, 7, 8))
 ;;
 
 let tests =

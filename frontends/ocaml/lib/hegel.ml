@@ -31,7 +31,9 @@ module type Io = Io.S
 
 module Make = Io.Make
 
-type 'a generator = 'a Generators.generator
+type ('a, 'p) generator = ('a, 'p) Generators.generator
+type printable = Generators.printable
+type unprintable = Generators.unprintable
 
 include Generators.Public
 
@@ -120,8 +122,8 @@ let event = Internal.event
     [label] for the end-of-run statistics report. *)
 let event_value = Internal.event_value
 
-(** [draw ?label tc gen] produces a typed value from the generator [gen]. On
-    the final replay of a failing test, an outermost draw prints its
+(** [draw ?label tc gen] produces a typed value from the printable generator
+    [gen]. On the final replay of a failing test, an outermost draw prints its
     value. See {!Generators.draw}. *)
 let draw = Generators.draw
 
@@ -131,7 +133,7 @@ let draw = Generators.draw
 let draw_named = Generators.draw_named
 
 (** [draw_silent tc gen] is {!draw} without printing the value on the final
-    replay. *)
+    replay, and accepts a generator with no printer. *)
 let draw_silent = Generators.draw_silent
 
 (** [draw_silent_named ~name tc gen] is the naming-aware {!draw_silent} the
@@ -195,8 +197,8 @@ let repeat tc body =
   if Internal.is_explicit tc then repeat_explicit tc body else repeat_generated tc body
 ;;
 
-(** [with_printer print gen] displays [gen]'s drawn values with [print]. See
-    {!Generators.with_printer}. *)
+(** [with_printer sexp_of gen] attaches [sexp_of] so [gen] can be drawn with
+    {!draw}. See {!Generators.with_printer}. *)
 let%template with_printer = Generators.with_printer [@mode m]
 [@@mode m = (nonportable, portable)]
 ;;

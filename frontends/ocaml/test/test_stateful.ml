@@ -681,7 +681,8 @@ let filtered_consume_test
       ~(create : Hegel.Internal.test_case -> p)
       ~(add : p -> Hegel.Internal.test_case -> int -> unit)
       ~(size : p -> int)
-      ~(values_consumed : p -> int Hegel.Generators.generator)
+      ~(values_consumed :
+         p -> (int, Hegel.Generators.unprintable) Hegel.Generators.generator)
       ()
   =
   let filter = Hegel.Generators.filter in

@@ -18,7 +18,11 @@
       assert (Z.numbits n >= 101)
     ;;
     ]} *)
-val integers : ?min_value:Z.t -> ?max_value:Z.t -> unit -> Z.t Hegel.generator
+val integers
+  :  ?min_value:Z.t
+  -> ?max_value:Z.t
+  -> unit
+  -> (Z.t, Hegel.printable) Hegel.generator
 
 (**/**)
 

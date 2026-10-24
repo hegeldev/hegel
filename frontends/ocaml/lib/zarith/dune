@@ -4,7 +4,7 @@
  (name hegel_zarith)
  (public_name hegel.zarith)
  (optional)
- (libraries hegel zarith)
+ (libraries hegel sexplib0 zarith)
  (preprocess
   (pps ppx_js_style))
  (instrumentation

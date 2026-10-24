@@ -46,7 +46,11 @@ let flags : (test_case -> string * (parsed -> parsed)) list =
     sprintf "--%s=%s" name value, setting (fun s -> set s b)
   in
   let subset tc all =
-    let picked = draw_silent tc (lists (sampled_from all) ()) in
+    let picked =
+      draw_silent
+        tc
+        (lists (with_printer (fun (name, _) -> Sexp.Atom name) (sampled_from all)) ())
+    in
     String.concat ~sep:"," (List.map picked ~f:fst), List.map picked ~f:snd
   in
   let health_checks =

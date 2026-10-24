@@ -34,7 +34,7 @@ let to_ofday ({ hour; minute; second; nanosecond } : G.time) =
 let dates ?(min_date = first_date) ?(max_date = last_date) () =
   (G.make_dates [@mode portable])
     ~of_date:to_core_date
-    ~print:(fun v -> Hegel.Printer.of_sexp Date.sexp_of_t v)
+    ~sexp_of:Date.sexp_of_t
     ~min_date:(to_hegel_date min_date)
     ~max_date:(to_hegel_date max_date)
     ()
@@ -44,7 +44,7 @@ let ofdays ?(min_ofday = first_ofday) ?(max_ofday = last_ofday) () =
   let ofdays_gen ~max_ofday =
     (G.make_times [@mode portable])
       ~of_time:to_ofday
-      ~print:(fun v -> Hegel.Printer.of_sexp Time_ns.Ofday.sexp_of_t v)
+      ~sexp_of:Time_ns.Ofday.sexp_of_t
       ~min_time:(to_hegel_time min_ofday)
       ~max_time:(to_hegel_time max_ofday)
       ()
@@ -54,11 +54,11 @@ let ofdays ?(min_ofday = first_ofday) ?(max_ofday = last_ofday) () =
   else if Time_ns.Ofday.equal min_ofday Time_ns.Ofday.start_of_next_day
   then
     (G.with_printer [@mode portable])
-      (fun v -> Hegel.Printer.of_sexp Time_ns.Ofday.sexp_of_t v)
+      Time_ns.Ofday.sexp_of_t
       ((G.just [@mode portable]) Time_ns.Ofday.start_of_next_day)
   else
     (G.with_printer [@mode portable])
-      (fun v -> Hegel.Printer.of_sexp Time_ns.Ofday.sexp_of_t v)
+      Time_ns.Ofday.sexp_of_t
       ((G.composite [@mode portable]) (fun tc ->
          if Hegel.draw_silent tc (G.booleans ~p:0.01 ())
          then Time_ns.Ofday.start_of_next_day
@@ -68,9 +68,7 @@ let ofdays ?(min_ofday = first_ofday) ?(max_ofday = last_ofday) () =
              (ofdays_gen ~max_ofday:Time_ns.Ofday.approximate_end_of_day)))
 ;;
 
-let chars () =
-  (G.make_characters [@mode portable]) ~of_char:Fun.id ~print:Hegel.Printer.char ()
-;;
+let chars () = G.chars ()
 
 let time_spans
       ?(min_span = Time_ns.Span.min_value_representable)
@@ -84,7 +82,7 @@ let time_spans
       ()
   in
   (G.with_printer [@mode portable])
-    (fun v -> Hegel.Printer.of_sexp Time_ns.Span.sexp_of_t v)
+    Time_ns.Span.sexp_of_t
     ((G.composite [@mode portable]) (fun tc ->
        Time_ns.Span.of_int_ns (Hegel.draw_silent tc ns_span_gen)))
 ;;
@@ -102,16 +100,17 @@ let times
   (G.make_datetimes [@mode portable])
     ~of_datetime:(fun (date, time) ->
       Time_ns.of_date_ofday ~zone:utc (to_core_date date) (to_ofday time))
-    ~print:(fun v -> Hegel.Printer.of_sexp Time_ns.Alternate_sexp.sexp_of_t v)
+    ~sexp_of:Time_ns.Alternate_sexp.sexp_of_t
     ~min_datetime:(to_hegel_datetime min_time)
     ~max_datetime:(to_hegel_datetime max_time)
     ()
 ;;
 
 let%template hash_tables keys values ?min_size ?max_size () =
-  (G.make_hash_tables [@mode m])
+  (G.make_hash_tables_printed [@mode m])
     ~of_pairs:Hashtbl.Poly.of_alist_exn
-    ~print_of_pairs:(fun pairs ->
+    ~sexp_of_t:Hashtbl.Poly.sexp_of_t
+    ~print_of_pairs:(fun _ pairs ->
       Hegel.Printer.apply (Hegel.Printer.text "Hashtbl.Poly.of_alist_exn") [ pairs ])
     keys
     values
@@ -125,6 +124,7 @@ module Derive = struct
   include Hegel.Derive
 
   let hegel_generator_char = chars ()
+  let sexp_of_char = Char.sexp_of_t
 
   module Date = struct
     include Date

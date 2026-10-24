@@ -46,13 +46,26 @@ module Ppx_internal = struct
 
   type show = Generators_core.show
 
-  let draw tc gen = Generators_core.do_draw gen tc
+  let draw (type a p) tc (gen : (a, p) Generators_core.generator) ~sexp_of =
+    let value, show = Generators_core.do_draw (Generators_core.core_of gen) tc in
+    match gen with
+    | Generators_core.Printable _ -> value, show
+    | Generators_core.Unprintable _ -> value, fun () -> Printer.of_sexp sexp_of value
+  ;;
 
   let explicit_draw tc ~name ~source value (_ : _ Generators_core.generator) =
     Internal.explicit_draw tc ~name ~source value
   ;;
 
   let%template composite_with_label = (Generators_core.composite_with_label [@mode m])
+  [@@mode m = (nonportable, portable)]
+  ;;
+
+  let%template with_printers = (Generators_core.with_printers [@mode m])
+  [@@mode m = (nonportable, portable)]
+  ;;
+
+  let%template with_sexp_of = (Generators_core.with_sexp_of [@mode m])
   [@@mode m = (nonportable, portable)]
   ;;
 end

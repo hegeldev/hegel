@@ -22,7 +22,8 @@
 
     A derived generator prints what it draws as OCaml syntax, built from the
     printing of the generators of its parts: a record as [{ x = 1; y = 2 }], a
-    variant as [Leaf] or [Node (l, r)], a tuple as [(1, "a")].
+    variant as [Leaf] or [Node (l, r)], a tuple as [(1, "a")]. A part whose
+    generator has no printer prints as the s-expression its [sexp_of] gives.
 
     On OxCaml, [[@@deriving hegel_generator ~portable]] makes the generator
     portable, so a concurrent rule body can capture it. On upstream OCaml,
@@ -35,9 +36,8 @@
     {2 Extend the defaults}
 
     Use [@@deriving hegel_generator] for types defined in your project. For
-    external types and modules, define a module including the type and a
-    [hegel_generator]. Give the generator a printer, so the derived
-    generators that use it print its values instead of [<abstr>]:
+    external types and modules, define a module including the type, a
+    [hegel_generator], and a [sexp_of_t].
 
     {[
     module M_Wrapper = struct
@@ -45,8 +45,10 @@
 
       let hegel_generator =
         map External_M.f (integers ~min_value:0 ~max_value:1_000_000 ())
-        |> with_printer (Printer.of_to_string External_M.to_string)
+        |> with_printer (fun m -> Sexplib0.Sexp.Atom (External_M.to_string m))
       ;;
+
+      let sexp_of_t t = Sexplib0.Sexp.Atom (External_M.to_string t)
     end
 
     type my_type =
@@ -58,20 +60,28 @@
 
 (**/**)
 
-val hegel_generator_int : int Generators.generator
-val hegel_generator_bool : bool Generators.generator
-val hegel_generator_float : float Generators.generator
-val hegel_generator_string : string Generators.generator
-val hegel_generator_char : char Generators.generator
+val hegel_generator_int : (int, Generators.printable) Generators.generator
+val hegel_generator_bool : (bool, Generators.printable) Generators.generator
+val hegel_generator_float : (float, Generators.printable) Generators.generator
+val hegel_generator_string : (string, Generators.printable) Generators.generator
+val hegel_generator_char : (char, Generators.printable) Generators.generator
 
 val%template hegel_generator_list
-  :  'a Generators.generator MODE(m)
-  -> 'a list Generators.generator MODE(m)
+  :  ('a, Generators.printable) Generators.generator MODE(m)
+  -> ('a list, Generators.printable) Generators.generator MODE(m)
 [@@mode m = (nonportable, portable)]
 
 val%template hegel_generator_option
-  :  'a Generators.generator MODE(m)
-  -> 'a option Generators.generator MODE(m)
+  :  ('a, Generators.printable) Generators.generator MODE(m)
+  -> ('a option, Generators.printable) Generators.generator MODE(m)
 [@@mode m = (nonportable, portable)]
+
+val sexp_of_int : int -> Sexplib0.Sexp.t
+val sexp_of_bool : bool -> Sexplib0.Sexp.t
+val sexp_of_float : float -> Sexplib0.Sexp.t
+val sexp_of_string : string -> Sexplib0.Sexp.t
+val sexp_of_char : char -> Sexplib0.Sexp.t
+val sexp_of_list : ('a -> Sexplib0.Sexp.t) -> 'a list -> Sexplib0.Sexp.t
+val sexp_of_option : ('a -> Sexplib0.Sexp.t) -> 'a option -> Sexplib0.Sexp.t
 
 (**/**)

@@ -45,5 +45,6 @@ let integers ?min_value ?max_value () =
     ~name:"integers"
     ~draw:(fun tc ->
       of_bytes (Hegel.Internal.generate_integer_big tc ~min_value ~max_value))
+    ~sexp_of:(fun n -> Sexplib0.Sexp.Atom (Z.to_string n))
     ~print:(Hegel.Printer.of_to_string Z.to_string)
 ;;

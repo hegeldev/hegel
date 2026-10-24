@@ -1,10 +1,19 @@
 open Hegel
 
+let check_printer name gen value expected =
+  Alcotest.(check string)
+    name
+    expected
+    (Core.Sexp.to_string ((Generators.printer gen) value))
+;;
+
 (** [check_shown name gen expected] draws from [gen] and checks that each drawn
     value displays as [expected value] renders. *)
 let check_shown name gen expected =
   run_hegel_test ~settings:(Settings.create ~test_cases:10 ~seed:0 ()) (fun tc ->
-    let value, show = Generators.Ppx_internal.draw tc gen in
+    let value, show =
+      Generators.Ppx_internal.draw tc gen ~sexp_of:(Generators.printer gen)
+    in
     Alcotest.(check string)
       name
       (Printer.to_string (expected value))
@@ -13,13 +22,14 @@ let check_shown name gen expected =
 
 (** Test: chars draws [Core.Char.t] values across the full Latin-1 range
     (codepoints 0-255) — not just the ASCII subset — printed via
-    [Printer.char]. *)
+    [Core.Char.sexp_of_t] and displayed as character literals. *)
 let test_chars_e2e () =
   let saw_above_ascii = ref false in
   run_hegel_test ~settings:(Settings.create ~test_cases:100 ~seed:0 ()) (fun tc ->
     let c = draw tc (Hegel_jane.chars ()) in
     if Core.Char.to_int c > 127 then saw_above_ascii := true);
   assert !saw_above_ascii;
+  check_printer "chars" (Hegel_jane.chars ()) 'a' "a";
   check_shown "chars" (Hegel_jane.chars ()) Printer.char
 ;;
 
@@ -32,7 +42,12 @@ let expect_usage_error gen =
   | () -> Alcotest.fail "expected Usage_error"
 ;;
 
-let bounds_tests name ~gen ~(bounded : ?lo:'a -> ?hi:'a -> unit -> 'a generator) ~compare =
+let bounds_tests
+      name
+      ~gen
+      ~(bounded : ?lo:'a -> ?hi:'a -> unit -> ('a, printable) generator)
+      ~compare
+  =
   let leq a b = compare a b <= 0 in
   [ Alcotest.test_case (name ^ " explicit bounds") `Quick (fun () ->
       run_hegel_test ~settings:(Settings.create ~test_cases:100 ~seed:0 ()) (fun tc ->
@@ -153,6 +168,16 @@ let time_bounds_tests =
 
 (** Time values render through their Core sexp converters. *)
 let test_printer_times () =
+  check_printer
+    "time_spans"
+    (Hegel_jane.time_spans ())
+    (Core.Time_ns.Span.of_int63_ns (Core.Int63.of_int 12345))
+    "12.345us";
+  check_printer
+    "times"
+    (Hegel_jane.times ())
+    (Core.Time_ns.of_int63_ns_since_epoch (Core.Int63.of_int 12345))
+    {|"1970-01-01 00:00:00.000012345Z"|};
   check_shown
     "time_spans"
     (Hegel_jane.time_spans ())
@@ -192,9 +217,15 @@ let test_hash_tables_min_greater_than_max () =
     (Hegel_jane.hash_tables (integers ()) (booleans ()) ~min_size:5 ~max_size:3 ())
 ;;
 
-(* A drawn hash table shows as the [Hashtbl.Poly.of_alist_exn] call that
-   builds it. *)
+(* Hash tables render through [Hashtbl.Poly.sexp_of_t]; a single entry keeps the
+   iteration order deterministic. A drawn hash table shows as the
+   [Hashtbl.Poly.of_alist_exn] call that builds it. *)
 let test_printer_hash_table () =
+  check_printer
+    "hash table"
+    (Hegel_jane.hash_tables (integers ()) (integers ()) ())
+    (Core.Hashtbl.Poly.of_alist_exn [ 1, 2 ])
+    "((1 2))";
   check_shown
     "hash table"
     (Hegel_jane.hash_tables

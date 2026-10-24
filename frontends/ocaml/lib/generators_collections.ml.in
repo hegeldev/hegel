@@ -25,8 +25,8 @@ let validate_size_bounds ~min_size ~max_size =
    are rejected client-side, compared structurally. *)
 let draw_association_pairs
   : type a b.
-    a generator
-    -> b generator
+    a core
+    -> b core
     -> min_size:int
     -> max_size:int option
     -> Internal.test_case
@@ -51,70 +51,120 @@ let draw_association_pairs
 ;;
 
 (** [assoc_lists keys values ?min_size ?max_size ()] creates a generator for
-    association lists over [keys] and [values]: [(key, value)] pairs, in
-    generation order, whose keys are unique.
+    association lists over printable [keys] and [values]: [(key, value)] pairs,
+    in generation order, whose keys are unique.
 
     Key-value pairs are generated one at a time via the collection protocol,
     with duplicate keys rejected client-side. *)
 let%template assoc_lists
-      (keys : 'a generator MODE(m))
-      (values : 'b generator MODE(m))
+      (keys : ('a, printable) generator MODE(m))
+      (values : ('b, printable) generator MODE(m))
       ?(min_size = 0)
       ?(max_size : int option)
       ()
-  : ('a * 'b) list generator MODE(m)
+  : (('a * 'b) list, printable) generator MODE(m)
   =
   validate_size_bounds ~min_size ~max_size;
-  Composite
-    { label = Labels.combine [ Labels.dict; label_of keys; label_of values ]
-    ; generate_fn =
-        (fun data -> draw_association_pairs keys values ~min_size ~max_size data)
+  let pk = (printer [@mode m]) keys
+  and pv = (printer [@mode m]) values in
+  let keys = (core_of [@mode m]) keys
+  and values = (core_of [@mode m]) values in
+  Printable
+    { core =
+        Composite
+          { label = Labels.combine [ Labels.dict; label_of_core keys; label_of_core values ]
+          ; generate_fn =
+              (fun data -> draw_association_pairs keys values ~min_size ~max_size data)
+          }
+    ; sexp_of = (fun kvs -> Sexp.List (List.map (fun (k, v) -> Sexp.List [ pk k; pv v ]) kvs))
     }
 [@@mode m = (nonportable, portable)]
 ;;
 
-(** [make_hash_tables ~of_pairs ~print_of_pairs keys values ?min_size ?max_size ()]
-    builds a hash-table generator over any table type ['t]. [print_of_pairs]
-    turns the display of the drawn association list into the display of the
-    table built from it. *)
-let%template make_hash_tables
+(** [make_hash_tables_printed ~of_pairs ~sexp_of_t ~print_of_pairs keys values
+    ?min_size ?max_size ()] builds a hash-table generator over any table type
+    ['t]. [print_of_pairs table pairs] turns [pairs], the display of the drawn
+    association list, into the display of [table], the table built from it. *)
+let%template make_hash_tables_printed
       ~(of_pairs : (('a * 'b) list -> 't) MODE(m))
-      ~(print_of_pairs : (Printer.doc -> Printer.doc) MODE(m))
-      (keys : 'a generator MODE(m))
-      (values : 'b generator MODE(m))
+      ~(sexp_of_t : (('a -> Sexp.t) -> ('b -> Sexp.t) -> 't -> Sexp.t) MODE(m))
+      ~(print_of_pairs : ('t -> Printer.doc -> Printer.doc) MODE(m))
+      (keys : ('a, printable) generator MODE(m))
+      (values : ('b, printable) generator MODE(m))
       ?(min_size = 0)
       ?(max_size : int option)
       ()
-  : 't generator MODE(m)
+  : ('t, printable) generator MODE(m)
   =
   validate_size_bounds ~min_size ~max_size;
-  Composite
-    { label = Labels.combine [ Labels.dict; label_of keys; label_of values ]
-    ; generate_fn =
-        (fun data ->
-          let pairs, show = draw_association_pairs keys values ~min_size ~max_size data in
-          of_pairs pairs, fun () -> print_of_pairs (show ()))
+  let pk = (printer [@mode m]) keys
+  and pv = (printer [@mode m]) values in
+  let keys = (core_of [@mode m]) keys
+  and values = (core_of [@mode m]) values in
+  Printable
+    { core =
+        Composite
+          { label = Labels.combine [ Labels.dict; label_of_core keys; label_of_core values ]
+          ; generate_fn =
+              (fun data ->
+                let pairs, show =
+                  draw_association_pairs keys values ~min_size ~max_size data
+                in
+                let table = of_pairs pairs in
+                table, fun () -> print_of_pairs table (show ()))
+          }
+    ; sexp_of = (fun table -> sexp_of_t pk pv table)
     }
+[@@mode m = (nonportable, portable)]
+;;
+
+(** [make_hash_tables ~of_pairs ~sexp_of_t keys values ?min_size ?max_size ()]
+    builds a hash-table generator over any table type ['t]. A drawn table
+    prints as the s-expression [sexp_of_t] gives. *)
+let%template make_hash_tables
+      ~(of_pairs : (('a * 'b) list -> 't) MODE(m))
+      ~(sexp_of_t : (('a -> Sexp.t) -> ('b -> Sexp.t) -> 't -> Sexp.t) MODE(m))
+      (keys : ('a, printable) generator MODE(m))
+      (values : ('b, printable) generator MODE(m))
+      ?min_size
+      ?max_size
+      ()
+  : ('t, printable) generator MODE(m)
+  =
+  let pk = (printer [@mode m]) keys
+  and pv = (printer [@mode m]) values in
+  (make_hash_tables_printed [@mode m])
+    ~of_pairs
+    ~sexp_of_t
+    ~print_of_pairs:(fun table _ -> Printer.of_sexp (sexp_of_t pk pv) table)
+    keys
+    values
+    ?min_size
+    ?max_size
+    ()
 [@@mode m = (nonportable, portable)]
 ;;
 
 (** [hash_tables keys values ?min_size ?max_size ()] creates a generator for
-    polymorphic [Stdlib.Hashtbl.t] tables over [keys] and [values]. A drawn
-    table shows as [Hashtbl.of_seq (List.to_seq \[(k, v); …\])]. *)
+    polymorphic [Stdlib.Hashtbl.t] tables over printable [keys] and [values]. A
+    drawn table shows as [Hashtbl.of_seq (List.to_seq \[(k, v); …\])]. *)
 let%template hash_tables
-      (keys : 'a generator MODE(m))
-      (values : 'b generator MODE(m))
+      (keys : ('a, printable) generator MODE(m))
+      (values : ('b, printable) generator MODE(m))
       ?min_size
       ?max_size
       ()
-  : ('a, 'b) Stdlib.Hashtbl.t generator MODE(m)
+  : (('a, 'b) Stdlib.Hashtbl.t, printable) generator MODE(m)
   =
-  (make_hash_tables [@mode m])
+  (make_hash_tables_printed [@mode m])
     ~of_pairs:(fun pairs ->
       let table = Stdlib.Hashtbl.create (List.length pairs) in
       List.iter (fun (k, v) -> Stdlib.Hashtbl.replace table k v) pairs;
       table)
-    ~print_of_pairs:(fun pairs ->
+    ~sexp_of_t:(fun pk pv table ->
+      Sexp.List
+        (Stdlib.Hashtbl.fold (fun k v acc -> Sexp.List [ pk k; pv v ] :: acc) table []))
+    ~print_of_pairs:(fun _ pairs ->
       Printer.apply
         (Printer.text "Hashtbl.of_seq")
         [ Printer.apply (Printer.text "List.to_seq") [ pairs ] ])
@@ -149,109 +199,123 @@ let draw_unique ~key elements ~min_size ~max_size data =
 ;;
 
 (** [lists elements ?min_size ?max_size ?unique ?unique_by ()] creates a
-    generator for lists of [elements].
+    generator for lists of printable [elements].
 
     Elements are generated one at a time via the collection protocol inside a
     {!Labels.list} span. When [unique] is [true], or [unique_by] is given,
     elements (or their [unique_by] keys) that duplicate an earlier one are
     rejected client-side. *)
 let%template lists
-      (elements : 'a generator MODE(m))
+      (elements : ('a, printable) generator MODE(m))
       ?(min_size = 0)
       ?(max_size : int option)
       ?(unique = false)
       ?(unique_by : ('a -> 'k) option MODE(m))
       ()
-  : 'a list generator MODE(m)
+  : ('a list, printable) generator MODE(m)
   =
   validate_size_bounds ~min_size ~max_size;
+  let elt = (printer [@mode m]) elements in
+  let elements = (core_of [@mode m]) elements in
+  let label = Labels.combine [ Labels.list; label_of_core elements ] in
   let generate (type k) (key : ('a -> k) MODE(m)) =
     Composite
-      { label = Labels.combine [ Labels.list; label_of elements ]
+      { label
       ; generate_fn =
           (fun data ->
             let values, shows = draw_unique ~key elements ~min_size ~max_size data in
             values, show_list shows)
       }
   in
-  match unique, unique_by with
-  | true, Some _ -> raise (Internal.Usage_error "unique and unique_by are mutually exclusive")
-  | false, Some key -> generate key
-  | true, None -> generate Fun.id
-  | false, None ->
-    CompositeList
-      { elements
-      ; min_size
-      ; max_size
-      ; label = Labels.combine [ Labels.list; label_of elements ]
-      }
+  let core =
+    match unique, unique_by with
+    | true, Some _ ->
+      raise (Internal.Usage_error "unique and unique_by are mutually exclusive")
+    | false, Some key -> generate key
+    | true, None -> generate Fun.id
+    | false, None -> CompositeList { elements; min_size; max_size; label }
+  in
+  Printable { core; sexp_of = (fun xs -> Sexp.List (List.map elt xs)) }
 [@@mode m = (nonportable, portable)]
 ;;
 
 (** [arrays elements ?min_size ?max_size ()] creates a generator for arrays of
-    [elements], drawn like {!lists}. A drawn array shows as [\[|1; 2|\]]. *)
+    printable [elements], drawn like {!lists}. A drawn array shows as
+    [\[|1; 2|\]]. *)
 let%template arrays
-      (elements : 'a generator MODE(m))
+      (elements : ('a, printable) generator MODE(m))
       ?(min_size = 0)
       ?(max_size : int option)
       ()
-  : 'a array generator MODE(m)
+  : ('a array, printable) generator MODE(m)
   =
   validate_size_bounds ~min_size ~max_size;
-  Composite
-    { label = Labels.combine [ Labels.array; label_of elements ]
-    ; generate_fn =
-        (fun data ->
-          with_collection ~min_size ?max_size data (fun coll ->
-            let rec collect acc shows =
-              if collection_more coll data
-              then (
-                let elem, show = do_draw elements data in
-                collect (elem :: acc) (show :: shows))
-              else
-                ( Array.of_list (List.rev acc)
-                , fun () ->
-                    Printer.array (fun show -> show ()) (Array.of_list (List.rev shows)) )
-            in
-            collect [] []))
+  let elt = (printer [@mode m]) elements in
+  let elements = (core_of [@mode m]) elements in
+  Printable
+    { sexp_of = (fun xs -> Sexp.List (List.map elt (Array.to_list xs)))
+    ; core =
+        Composite
+          { label = Labels.combine [ Labels.array; label_of_core elements ]
+          ; generate_fn =
+              (fun data ->
+                with_collection ~min_size ?max_size data (fun coll ->
+                  let rec collect acc shows =
+                    if collection_more coll data
+                    then (
+                      let elem, show = do_draw elements data in
+                      collect (elem :: acc) (show :: shows))
+                    else
+                      ( Array.of_list (List.rev acc)
+                      , fun () ->
+                          Printer.array (fun show -> show ()) (Array.of_list (List.rev shows)) )
+                  in
+                  collect [] []))
+          }
     }
 [@@mode m = (nonportable, portable)]
 ;;
 
 (** [sets (module S) elements ?min_size ?max_size ()] creates a generator for
-    sets of [elements], built with [S.of_list]. Elements already in the set
-    (by [S.mem]) are rejected client-side. *)
+    sets of printable [elements], built with [S.of_list]. Elements already in
+    the set (by [S.mem]) are rejected client-side. *)
 let sets
       (type elt t)
       (module S : Set.S with type elt = elt and type t = t)
-      (elements : elt generator)
+      (elements : (elt, printable) generator)
       ?(min_size = 0)
       ?(max_size : int option)
       ()
-  : t generator
+  : (t, printable) generator
   =
   validate_size_bounds ~min_size ~max_size;
-  Composite
-    { label = Labels.combine [ Labels.set; label_of elements ]
-    ; generate_fn =
-        (fun data ->
-          with_collection ~min_size ?max_size data (fun coll ->
-            let rec collect set shows =
-              if collection_more coll data
-              then (
-                let elem, show = do_draw elements data in
-                if S.mem elem set
-                then (
-                  collection_reject coll data;
-                  collect set shows)
-                else collect (S.add elem set) (show :: shows))
-              else
-                ( set
-                , fun () ->
-                    Printer.apply
-                      (Printer.text "Set.of_list")
-                      [ show_list (List.rev shows) () ] )
-            in
-            collect S.empty []))
+  let elt = printer elements in
+  let elements = core_of elements in
+  Printable
+    { sexp_of = (fun set -> Sexp.List (List.map elt (S.elements set)))
+    ; core =
+        Composite
+          { label = Labels.combine [ Labels.set; label_of_core elements ]
+          ; generate_fn =
+              (fun data ->
+                with_collection ~min_size ?max_size data (fun coll ->
+                  let rec collect set shows =
+                    if collection_more coll data
+                    then (
+                      let elem, show = do_draw elements data in
+                      if S.mem elem set
+                      then (
+                        collection_reject coll data;
+                        collect set shows)
+                      else collect (S.add elem set) (show :: shows))
+                    else
+                      ( set
+                      , fun () ->
+                          Printer.apply
+                            (Printer.text "Set.of_list")
+                            [ show_list (List.rev shows) () ] )
+                  in
+                  collect S.empty []))
+          }
     }
 ;;
