@@ -5688,6 +5688,11 @@ pub unsafe extern "C" fn hegel_generate_grammar(
 /// is the caller's part to draw values that read as the terminal where
 /// they land.
 ///
+/// A draw belongs to the test case it is first advanced with: pass the
+/// same `tc` to every `hegel_grammar_draw_next` call on it, and do not
+/// keep a handle across test cases. Draw each value it asks for from that
+/// same test case too.
+///
 /// The handle borrows the grammar, which must outlive it. Free it with
 /// `hegel_grammar_draw_free` exactly once.
 pub struct HegelGrammarDraw {
@@ -5748,7 +5753,8 @@ pub unsafe extern "C" fn hegel_grammar_draw_new(
 }
 
 /// Advance a grammar draw to the next explicit terminal that needs a
-/// value, drawing the string from `tc` when an attempt starts.
+/// value, drawing the string from `tc` when an attempt starts. `tc` must
+/// be the test case every earlier call on this draw was given.
 ///
 /// Parameters:
 /// `out_terminal`: Receives, on `HEGEL_OK`, the index in the
