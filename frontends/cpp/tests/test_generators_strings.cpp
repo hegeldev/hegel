@@ -62,6 +62,22 @@ TEST(Formats, DrawAll) {
                         .database = hegel::Database::disabled()});
 }
 
+// alphabet draws only its own characters, and an empty categories list
+// allows no category.
+TEST(Formats, AlphabetRestrictsCharacters) {
+    hegel::test(
+        [](hegel::TestCase& tc) {
+            std::string s = tc.draw(gs::text({.alphabet = "ab"}));
+            EXPECT_EQ(s.find_first_not_of("ab"), std::string::npos) << s;
+            std::string c = tc.draw(
+                gs::characters({.categories = std::vector<std::string>{},
+                                .include_characters = "xy"}));
+            EXPECT_TRUE(c == "x" || c == "y") << c;
+        },
+        hegel::Settings{.test_cases = 50,
+                        .database = hegel::Database::disabled()});
+}
+
 // alphabet cannot be combined with individual character-filtering options.
 TEST(Formats, AlphabetWithCharFilteringThrows) {
     EXPECT_THROW(gs::text({.codec = "ascii", .alphabet = "abc"}),

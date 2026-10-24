@@ -118,6 +118,8 @@ hegel_add_test(NAME test_generators_numeric
     USE_UTILS)
 hegel_add_test(NAME test_generators_strings
     SOURCE test_generators_strings.cpp)
+hegel_add_test(NAME test_generators_grammar
+    SOURCE test_generators_grammar.cpp)
 hegel_add_test(NAME test_generators_collections
     SOURCE test_generators_collections.cpp
     USE_UTILS)

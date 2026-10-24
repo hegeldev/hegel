@@ -13,11 +13,17 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <ios>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 #include <arpa/inet.h>
@@ -577,16 +583,24 @@ namespace hegel::impl {
         if (params.codec != nullptr) {
             codec = borrow(params.codec);
         }
+        // A given list, even an empty one, needs a non-NULL pointer: NULL
+        // means no list.
+        static const hegel_string_t no_names{nullptr, 0};
+        auto list = [](const std::vector<std::string>* given,
+                       const std::vector<hegel_string_t>& strings) {
+            if (given == nullptr) {
+                return static_cast<const hegel_string_t*>(nullptr);
+            }
+            return strings.empty() ? &no_names : strings.data();
+        };
         return make_string_generator(
             "text", [&](hegel_context_t* ctx, hegel_string_generator_t** out) {
                 return hegel_string_generator_text(
                     ctx, params.min_size, params.max_size,
                     params.codec != nullptr ? &codec : nullptr,
                     params.min_codepoint, params.max_codepoint,
-                    params.categories ? categories.data() : nullptr,
-                    categories.size(),
-                    params.exclude_categories ? exclude_categories.data()
-                                              : nullptr,
+                    list(params.categories, categories), categories.size(),
+                    list(params.exclude_categories, exclude_categories),
                     exclude_categories.size(),
                     borrow_chars(params.include_characters),
                     borrow_chars(params.exclude_characters), out);
@@ -759,6 +773,108 @@ namespace hegel::impl {
             "hegel_event_value");
     }
 
+    namespace {
+
+        struct GrammarBuilderGuard {
+            hegel_context_t* ctx;
+            hegel_grammar_builder_t* builder = nullptr;
+            ~GrammarBuilderGuard() { hegel_grammar_builder_free(ctx, builder); }
+        };
+
+        struct GrammarDrawGuard {
+            hegel_context_t* ctx;
+            hegel_grammar_draw_t* draw = nullptr;
+            ~GrammarDrawGuard() { hegel_grammar_draw_free(ctx, draw); }
+        };
+
+        // The text of the grammar file `path` under `dir`, or nullopt when
+        // there is no directory or no such file.
+        std::optional<std::string>
+        read_grammar_file(const std::optional<std::string>& dir,
+                          std::string_view path) {
+            if (!dir) {
+                return std::nullopt;
+            }
+            std::filesystem::path file =
+                std::filesystem::path(*dir) / std::filesystem::path(path);
+            std::error_code ec;
+            std::filesystem::file_type type =
+                std::filesystem::status(file, ec).type();
+            if (type == std::filesystem::file_type::not_found) {
+                return std::nullopt;
+            }
+            std::ifstream in(file, std::ios::binary);
+            if (type != std::filesystem::file_type::regular || !in) {
+                throw std::invalid_argument("Could not read grammar '" +
+                                            file.string() + "'");
+            }
+            return std::string(std::istreambuf_iterator<char>(in),
+                               std::istreambuf_iterator<char>());
+        }
+
+    } // namespace
+
+    hegel_grammar_t* grammar_new(const GrammarParams& params) {
+        hegel_context_t* ctx = thread_context();
+        GrammarBuilderGuard guard{ctx};
+        check_arg(ctx, hegel_grammar_builder_new(ctx, borrow(params.text),
+                                                 &guard.builder));
+        for (size_t index = 0;; ++index) {
+            hegel_string_t path{nullptr, 0};
+            if (hegel_grammar_builder_file(ctx, guard.builder, index, &path) ==
+                HEGEL_E_NOT_FOUND) {
+                break;
+            }
+            std::optional<std::string> text = read_grammar_file(
+                params.import_dir, std::string_view(path.data, path.len));
+            hegel_string_t contents =
+                text ? borrow(*text) : hegel_string_t{nullptr, 0};
+            check_arg(
+                ctx, hegel_grammar_builder_provide(ctx, guard.builder, index,
+                                                   text ? &contents : nullptr));
+        }
+        hegel_string_t start =
+            params.start ? borrow(*params.start) : hegel_string_t{nullptr, 0};
+        std::vector<hegel_string_t> names;
+        names.reserve(params.explicit_names.size());
+        for (const std::string& name : params.explicit_names) {
+            names.push_back(borrow(name));
+        }
+        hegel_grammar_t* grammar = nullptr;
+        check_arg(ctx, hegel_grammar_new(
+                           ctx, guard.builder, params.start ? &start : nullptr,
+                           params.max_size, params.max_depth, params.alphabet,
+                           names.data(), names.size(), &grammar));
+        return grammar;
+    }
+
+    void grammar_free(hegel_grammar_t* grammar) {
+        hegel_grammar_free(thread_context(), grammar);
+    }
+
+    std::string draw_grammar(const TestCase& tc, const hegel_grammar_t* grammar,
+                             const std::function<std::string(size_t)>& value) {
+        DrawScope scope(tc);
+        GrammarDrawGuard guard{scope.ctx};
+        check_rc(scope.ctx,
+                 hegel_grammar_draw_new(scope.ctx, grammar, 0, &guard.draw));
+        size_t terminal = 0;
+        hegel_result_t rc = HEGEL_OK;
+        while ((rc = hegel_grammar_draw_next(scope.ctx, scope.tc, guard.draw,
+                                             &terminal)) == HEGEL_OK) {
+            std::string drawn = value(terminal);
+            check_arg(scope.ctx, hegel_grammar_draw_provide(
+                                     scope.ctx, guard.draw, borrow(drawn)));
+        }
+        if (rc != HEGEL_E_NOT_FOUND) {
+            scope.raise_for_rc(rc, "hegel_grammar_draw_next");
+        }
+        StringResultGuard result{scope.ctx};
+        check_rc(scope.ctx, hegel_grammar_draw_result(scope.ctx, guard.draw,
+                                                      &result.result));
+        return std::string(result.result.data, result.result.len);
+    }
+
 } // namespace hegel::impl
 
 namespace hegel::internal {
@@ -788,6 +904,7 @@ namespace hegel::internal {
             "hegel.text",
             "hegel.characters",
             "hegel.from_regex",
+            "hegel.from_lark",
             "hegel.binary",
             "hegel.emails",
             "hegel.urls",

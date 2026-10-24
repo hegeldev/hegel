@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <hegel.h>
 #include <hegel/settings.h>
 #include <optional>
@@ -222,6 +223,32 @@ namespace hegel::impl {
     /// Dotted-quad (v4) / RFC 5952 colon-hex (v6) text form.
     std::string draw_ipv4(const TestCase& tc);
     std::string draw_ipv6(const TestCase& tc);
+
+    // Grammar construction and drawing.
+
+    struct GrammarParams {
+        std::string_view text;
+        std::optional<std::string> start;
+        uint64_t max_size = 0;  // 0 = the engine's default
+        uint32_t max_depth = 0; // 0 = the engine's default
+        const hegel_string_generator_t* alphabet = nullptr;
+        std::vector<std::string> explicit_names;
+        // The directory %import-ed grammar files are read from; with none,
+        // every imported file is missing.
+        std::optional<std::string> import_dir;
+    };
+
+    /// Compiles a grammar. A grammar the engine rejects, or an imported file
+    /// that exists but cannot be read, throws std::invalid_argument. The
+    /// returned handle is immutable and shareable across test cases; release
+    /// it with grammar_free.
+    hegel_grammar_t* grammar_new(const GrammarParams& params);
+    void grammar_free(hegel_grammar_t* grammar);
+    /// Draws a string of `grammar`, with the value of each occurrence of an
+    /// explicit terminal from `value`, called with the terminal's index in
+    /// GrammarParams::explicit_names.
+    std::string draw_grammar(const TestCase& tc, const hegel_grammar_t* grammar,
+                             const std::function<std::string(size_t)>& value);
 
 } // namespace hegel::impl
 

@@ -59,6 +59,7 @@ namespace hegel::internal {
         Text,
         Characters,
         FromRegex,
+        FromLark,
         Binary,
         Emails,
         Urls,
