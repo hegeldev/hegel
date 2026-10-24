@@ -22,7 +22,7 @@ use crate::control::{
     AssumeFailed, InternalError, InvalidArgument, LoopDone, StopTest, currently_in_test_context,
     hegel_internal_error, with_test_context,
 };
-use crate::ffi::{CTestCase, RunHandle, SettingsHandle};
+use crate::ffi::{CTestCase, RunErrorKind, RunHandle, SettingsHandle};
 use crate::runner::{Settings, TestLocation, Verbosity};
 use crate::test_case::{RunOutput, TestCase};
 
@@ -545,7 +545,7 @@ pub(crate) fn drive<F>(
     let c_settings = SettingsHandle::build(settings, database_key, test_location);
     let run = match RunHandle::start(&c_settings, output.sink()) {
         Ok(run) => run,
-        Err(message) => panic!("{message}"), // nocov
+        Err(message) => panic!("RunError: {message}"), // nocov
     };
 
     drive_run(run, &mut test_fn, settings, &output, None);
@@ -617,7 +617,7 @@ fn drive_run<F: FnMut(TestCase)>(
             let message = result
                 .error()
                 .unwrap_or_else(|| "the run failed with an unknown error".to_string());
-            panic!("{message}");
+            panic!("{}", run_error_message(result.error_kind(), message));
         }
         RunStatus::HEGEL_RUN_STATUS_FAILED => {
             let count = result.failure_count();
@@ -664,6 +664,26 @@ fn drive_run<F: FnMut(TestCase)>(
                 );
             }
         }
+    }
+}
+
+/// The panic message for a run that errored rather than passing or
+/// failing: the engine's diagnostic, guaranteed to start with the prefix
+/// [`Hegel::run`](crate::Hegel::run) documents for its kind —
+/// `FailedHealthCheck: <check>`, `Flaky`, `Unsatisfiable` or `RunError`.
+/// The engine's own wording usually starts that way already; when it does
+/// not, the prefix is added in front of it.
+fn run_error_message(kind: RunErrorKind, message: String) -> String {
+    let prefix = match kind {
+        RunErrorKind::HealthCheck(check) => format!("FailedHealthCheck: {check:?}"),
+        RunErrorKind::Flaky => "Flaky".to_string(),
+        RunErrorKind::Unsatisfiable => "Unsatisfiable".to_string(),
+        RunErrorKind::Other => "RunError".to_string(),
+    };
+    if message.starts_with(&prefix) {
+        message
+    } else {
+        format!("{prefix}: {message}")
     }
 }
 

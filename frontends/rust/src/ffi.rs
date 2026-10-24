@@ -18,7 +18,7 @@ pub(crate) mod sys;
 
 use self::sys as hegel_c;
 
-use crate::control::hegel_internal_error;
+use crate::control::{hegel_internal_assert, hegel_internal_error};
 use crate::runner::{
     Backend, Database, HealthCheck, NondeterminismStrictness, Phase, Settings, TestLocation,
     Verbosity,
@@ -1899,6 +1899,20 @@ impl Drop for PrinterHandle {
     }
 }
 
+/// Why a run errored, as read from `hegel_run_result_error_kind`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunErrorKind {
+    /// A health check failed.
+    HealthCheck(HealthCheck),
+    /// The test behaved nondeterministically under the `error` strictness
+    /// (both `HEGEL_RUN_ERROR_FLAKY` and `HEGEL_RUN_ERROR_NONDETERMINISTIC`).
+    Flaky,
+    /// No valid test case could be generated.
+    Unsatisfiable,
+    /// Any other run error: a usage error, or a bug in Hegel.
+    Other,
+}
+
 /// Owned snapshot of a finished run's aggregate result, independent of the
 /// [`RunHandle`] it was read from; released via `hegel_run_result_free` on
 /// drop.
@@ -1925,6 +1939,29 @@ impl RunResult {
             hegel_c::hegel_run_result_error(ctx, self.raw, &mut p)
         }));
         optional_string(p)
+    }
+
+    /// Why the run errored (`hegel_run_result_error_kind`), for a run whose
+    /// status is `HEGEL_RUN_STATUS_ERROR`.
+    pub(crate) fn error_kind(&self) -> RunErrorKind {
+        use hegel_c::hegel_run_error_kind_t as k;
+        let mut kind = k::HEGEL_RUN_ERROR_NONE;
+        let mut health_check = 0u32;
+        // SAFETY: self.raw is this snapshot's live pointer; both out
+        // pointers are valid.
+        require_ok(with_context(|ctx| unsafe {
+            hegel_c::hegel_run_result_error_kind(ctx, self.raw, &mut kind, &mut health_check)
+        }));
+        match kind {
+            k::HEGEL_RUN_ERROR_HEALTH_CHECK => {
+                let checks = health_checks_from_bitmask(health_check);
+                hegel_internal_assert!(checks.len() == 1);
+                RunErrorKind::HealthCheck(checks[0])
+            }
+            k::HEGEL_RUN_ERROR_FLAKY | k::HEGEL_RUN_ERROR_NONDETERMINISTIC => RunErrorKind::Flaky,
+            k::HEGEL_RUN_ERROR_UNSATISFIABLE => RunErrorKind::Unsatisfiable,
+            _ => RunErrorKind::Other,
+        }
     }
 
     pub(crate) fn failure_count(&self) -> usize {

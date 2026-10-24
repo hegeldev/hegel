@@ -95,3 +95,15 @@ fn trivial_passing_test_is_not_unsatisfiable() {
         .settings(Settings::new().database(None))
         .run();
 }
+
+#[test]
+fn unsatisfiable_panic_message_starts_with_its_kind() {
+    let panic = std::panic::catch_unwind(|| {
+        Hegel::new(|tc: TestCase| tc.reject())
+            .settings(Settings::new().database(None))
+            .run();
+    })
+    .unwrap_err();
+    let msg = panic.downcast_ref::<String>().unwrap();
+    assert!(msg.starts_with("Unsatisfiable: "), "{msg:?}");
+}

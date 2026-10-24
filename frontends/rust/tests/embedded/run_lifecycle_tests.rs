@@ -509,3 +509,45 @@ fn quiet_final_replay_emits_no_draw_or_note_output() {
         lines.lock().unwrap()
     );
 }
+
+#[test]
+fn run_error_message_keeps_an_engine_message_that_already_names_its_kind() {
+    let message = "FailedHealthCheck: TooSlow — input generation is slow".to_string();
+    assert_eq!(
+        run_error_message(
+            RunErrorKind::HealthCheck(crate::HealthCheck::TooSlow),
+            message.clone()
+        ),
+        message
+    );
+    assert_eq!(
+        run_error_message(RunErrorKind::Unsatisfiable, "Unsatisfiable: no".to_string()),
+        "Unsatisfiable: no"
+    );
+}
+
+#[test]
+fn run_error_message_prefixes_an_engine_message_with_its_kind() {
+    assert_eq!(
+        run_error_message(
+            RunErrorKind::HealthCheck(crate::HealthCheck::FilterTooMuch),
+            "too many rejections".to_string()
+        ),
+        "FailedHealthCheck: FilterTooMuch: too many rejections"
+    );
+    assert_eq!(
+        run_error_message(
+            RunErrorKind::Flaky,
+            "Your test is non-deterministic".to_string()
+        ),
+        "Flaky: Your test is non-deterministic"
+    );
+    assert_eq!(
+        run_error_message(RunErrorKind::Unsatisfiable, "no valid input".to_string()),
+        "Unsatisfiable: no valid input"
+    );
+    assert_eq!(
+        run_error_message(RunErrorKind::Other, "misuse".to_string()),
+        "RunError: misuse"
+    );
+}

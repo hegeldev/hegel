@@ -13,3 +13,5 @@ This release brings the Rust frontend further into line with the other Hegel fro
   ```
 
   The labels themselves are unchanged.
+
+- A run that errors instead of passing or failing now panics with a message whose start names the kind of error, read from the engine's error kind rather than its wording: `FailedHealthCheck: <check>` (for example `FailedHealthCheck: FilterTooMuch`), `Flaky` (nondeterminism under `NondeterminismStrictness::Error`), `Unsatisfiable`, or `RunError` for anything else, such as misuse of Hegel or a bug in Hegel. The engine's explanation follows. `Hegel::run` documents the forms, and `#[should_panic(expected = "...")]` can match on them. Messages for nondeterministic data generation and for other run errors gain a `Flaky: ` or `RunError: ` prefix that they did not have before.

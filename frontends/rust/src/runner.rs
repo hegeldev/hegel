@@ -636,7 +636,30 @@ where
 
     /// Run the property-based tests.
     ///
-    /// Panics if any test case fails.
+    /// # Panics
+    ///
+    /// When a test case fails, this panics with the failing test's own panic
+    /// payload, or, when [`report_multiple_failures`](Settings::report_multiple_failures)
+    /// finds several distinct failures, with a message counting them.
+    ///
+    /// When the run errors instead of finding a failure, it panics with a
+    /// `String` whose start names the kind of error, so a test (or
+    /// `#[should_panic(expected = ...)]`) can tell them apart:
+    ///
+    /// - `FailedHealthCheck: <check>`: a health check failed, naming the
+    ///   [`HealthCheck`] variant, for example
+    ///   `FailedHealthCheck: FilterTooMuch`. Suppress it with
+    ///   [`Settings::suppress_health_check`] if the behaviour is intended.
+    /// - `Flaky`: under [`NondeterminismStrictness::Error`], the test
+    ///   behaved nondeterministically: replaying the same input gave a
+    ///   different outcome or drew different data.
+    /// - `Unsatisfiable`: no valid test case could be generated, because
+    ///   every input was rejected by [`TestCase::assume`](crate::TestCase::assume)
+    ///   or a filter.
+    /// - `RunError`: any other error, such as misuse of Hegel or a bug in
+    ///   Hegel itself.
+    ///
+    /// The rest of the message is the engine's explanation.
     pub fn run(self) {
         let mut settings = self.settings;
         if self.single_test_case {
