@@ -632,6 +632,18 @@ exception Assume_rejected
     primitives; the rejection itself is client-side and does not consult [tc]. *)
 val assume : test_case -> bool -> unit
 
+(** [reject tc] discards the current test case, like [assume tc false]. Its
+    result type is any type, so it can end a branch of a [match]:
+
+    {[
+      let%hegel_test parse_roundtrip tc =
+        let s = draw tc (text ()) in
+        match parse s with
+        | None -> reject tc
+        | Some v -> assert (parse (print v) = Some v)
+    ]} *)
+val reject : test_case -> 'a
+
 (** [target tc ~label ~value] records [value] as a targeting score under
     [label]. Hegel steers generation toward higher scores.
 
@@ -731,9 +743,61 @@ val%template with_printer
   -> 'a generator MODE(m)
 [@@mode m = (nonportable, portable)]
 
+(** {3 Repeating a body} *)
+
+(** [repeat tc body] runs [body] again and again, as long as the engine wants
+    more iterations, and then ends the test case: it never returns. Use it for
+    a test that should run "forever", such as a workload driving a system
+    under test, so that Hegel decides how many iterations to run and can
+    shrink a failure to the fewest.
+
+    Each iteration runs [body] on a test case whose output is indented under a
+    [// Repetition #n] note. An iteration that rejects itself (with {!assume}
+    or {!reject}) is skipped, and the loop continues; any other exception
+    fails the test case.
+
+    {[
+      let%hegel_test counter_stays_non_negative tc =
+        let total = ref 0 in
+        repeat tc (fun tc ->
+          let n = draw tc (integers ~min_value:0 ~max_value:10 ()) in
+          total := !total + n;
+          assert (!total >= 0))
+    ]} *)
+val repeat : test_case -> (test_case -> unit) -> 'a
+
 (** {3 Cloning a test case} *)
 
 (** [clone tc] creates an independent clone of [tc]. It has its own choice stream
     forked from the parent test case. When the parent test case is freed, its
-    clones are freed with it. Each concurrent task must have its own clone. *)
+    clones are freed with it. Each concurrent task must have its own clone.
+
+    A clone lets your test draw from several threads at once: give each thread
+    its own clone, and name the thread with {!set_worker} so the failure report
+    says which worker printed each line.
+
+    {[
+      let%hegel_test concurrent_pushes tc =
+        let queue = Queue.create () in
+        let mutex = Mutex.create () in
+        let workers =
+          List.init 2 (fun i ->
+            let worker = clone tc in
+            set_worker worker i;
+            Thread.create
+              (fun () ->
+                 let n = draw worker (integers ()) in
+                 Mutex.protect mutex (fun () -> Queue.push n queue))
+              ())
+        in
+        List.iter Thread.join workers;
+        assert (Queue.length queue = 2)
+    ]} *)
 val clone : test_case -> test_case
+
+(** [set_worker tc worker_index] attributes everything [tc] prints from now on
+    (its drawn values and notes) to concurrent worker [worker_index], so the
+    failure report prefixes those lines with [\[worker N +X.XXXms\]]. Clones
+    taken from [tc] afterwards inherit the attribution. [worker_index] must be
+    non-negative. *)
+val set_worker : test_case -> int -> unit

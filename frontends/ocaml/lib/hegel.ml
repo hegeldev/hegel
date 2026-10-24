@@ -88,6 +88,9 @@ let main ?settings ?test_location ?database_key test_fn =
     [false]. *)
 let assume = Internal.assume
 
+(** [reject tc] rejects the current test case unconditionally. *)
+let reject _tc = raise Internal.Assume_rejected
+
 (** [note tc message] prints [message] to stderr subject to the run's verbosity:
     never under [Quiet], only on the final (failing) replay under [Normal], and
     on every test case under [Verbose] or [Debug]. *)
@@ -132,6 +135,36 @@ let draw_silent_named = Generators.draw_silent_named
     concurrently. Its native resources are owned by the test case and freed
     once the case completes. See {!Internal.clone}. *)
 let clone = Internal.clone
+
+(** [set_worker tc worker_index] attributes [tc]'s output to a concurrent
+    worker. See {!Internal.set_worker_index}. *)
+let set_worker = Internal.set_worker_index
+
+(** [repeat tc body] runs [body] on a block of [tc] until the engine ends the
+    loop, then ends the test case. *)
+let repeat tc body =
+  let min_size =
+    Generators.draw_silent tc (Generators.integers ~min_value:0 ~max_value:(1 lsl 40) ())
+  in
+  Generators.Private.with_collection ~min_size tc (fun coll ->
+    let rec loop iteration =
+      if Generators.Private.collection_more coll tc
+      then (
+        note tc (Printf.sprintf "// Repetition #%d" iteration);
+        (match Internal.with_block tc ~indent:2 body with
+         | () | (exception Assume_rejected) -> ()
+         | exception
+             ((Internal.Stop_test | Usage_error _ | Internal.Internal_error _) as control)
+           -> raise control
+         | exception exn ->
+           let backtrace = Printexc.get_raw_backtrace () in
+           ignore (Generators.draw_silent tc (Generators.booleans ()) : bool);
+           Printexc.raise_with_backtrace exn backtrace);
+        loop (iteration + 1))
+    in
+    loop 1);
+  raise Internal.Repeat_done
+;;
 
 (** [with_printer print gen] displays [gen]'s drawn values with [print]. See
     {!Generators.with_printer}. *)

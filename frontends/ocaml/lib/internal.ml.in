@@ -36,6 +36,10 @@ exception Assume_rejected = Ffi.Assume_rejected
     id the engine drew is unknown to the client). The case is marked invalid. *)
 exception Flaky_strategy
 
+(** Raised by [Hegel.repeat] once the engine ends the loop: the test case
+    completed normally. *)
+exception Repeat_done
+
 open Settings
 
 module Label = struct
@@ -830,7 +834,7 @@ let run_test
     in
     let run_body () =
       match test_fn tc with
-      | () -> Valid
+      | () | (exception Repeat_done) -> Valid
       | exception Assume_rejected -> Invalid
       | exception Stop_test -> Overrun
       | exception Flaky_strategy -> Invalid

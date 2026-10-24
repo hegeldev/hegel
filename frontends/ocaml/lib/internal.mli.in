@@ -19,6 +19,10 @@ exception Assume_rejected
     id the engine drew is unknown to the client). The case is marked invalid. *)
 exception Flaky_strategy
 
+(** Raised by [Hegel.repeat] once the engine ends the loop: the test case
+    completed normally. *)
+exception Repeat_done
+
 (** An opaque per-test-case handle, threaded to the test function and to the
     drawing primitives. Created and owned by the run loop.
 
