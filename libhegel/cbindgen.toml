@@ -120,6 +120,10 @@ header = """
  *   Concurrent operations on it return HEGEL_E_CONCURRENT_USE. To generate
  *   from several threads, hegel_test_case_clone the handle and give each
  *   thread its own clone.
+ * - A grammar draw handle may be used by at most one thread at a time.
+ *   Concurrent calls on it return HEGEL_E_CONCURRENT_USE. It belongs to the
+ *   test-case handle it is first advanced with: start a new draw for each
+ *   test case.
  */"""
 include_guard = "HEGEL_H"
 pragma_once = false

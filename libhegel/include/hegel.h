@@ -118,6 +118,10 @@
  *   Concurrent operations on it return HEGEL_E_CONCURRENT_USE. To generate
  *   from several threads, hegel_test_case_clone the handle and give each
  *   thread its own clone.
+ * - A grammar draw handle may be used by at most one thread at a time.
+ *   Concurrent calls on it return HEGEL_E_CONCURRENT_USE. It belongs to the
+ *   test-case handle it is first advanced with: start a new draw for each
+ *   test case.
  */
 
 #ifndef HEGEL_H
@@ -204,8 +208,8 @@ typedef enum {
      */
     HEGEL_E_INTERNAL = -8,
     /*
-     A single test-case handle was used from two threads at once. Clone
-     the handle instead.
+     A single test-case or grammar draw handle was used from two threads
+     at once. Clone a test-case handle instead; start a draw per thread.
      */
     HEGEL_E_CONCURRENT_USE = -9,
     /*
@@ -571,10 +575,14 @@ typedef struct hegel_grammar_builder_t hegel_grammar_builder_t;
  is the caller's part to draw values that read as the terminal where
  they land.
 
- A draw belongs to the test case it is first advanced with: pass the
- same `tc` to every `hegel_grammar_draw_next` call on it, and do not
- keep a handle across test cases. Draw each value it asks for from that
- same test case too.
+ A draw belongs to the test-case handle it is first advanced with:
+ `hegel_grammar_draw_next` returns `HEGEL_E_INVALID_ARG` when given any
+ other handle, including one for a later test case, so start a new draw
+ for each test case. Draw each value it asks for from that same test
+ case too.
+
+ A draw handle may be used by at most one thread at a time. Concurrent
+ calls on it return `HEGEL_E_CONCURRENT_USE`.
 
  The handle borrows the grammar, which must outlive it. Free it with
  `hegel_grammar_draw_free` exactly once.
@@ -2750,8 +2758,10 @@ hegel_result_t hegel_grammar_draw_new(hegel_context_t *ctx,
  overflowed the size cap `HEGEL_FILTER_ATTEMPTS` times in a row, or the
  grammar draw itself rejected the test case (see
  `hegel_generate_grammar`), and the test case has been concluded
- invalid; `HEGEL_E_STOP_TEST`; or `HEGEL_E_INVALID_ARG` when a value is
- still due.
+ invalid; `HEGEL_E_STOP_TEST`; `HEGEL_E_INVALID_ARG` when a value is
+ still due or `tc` is not the handle the draw was first advanced with;
+ or `HEGEL_E_CONCURRENT_USE` when `tc` or `draw` is in use on another
+ thread.
  */
 hegel_result_t hegel_grammar_draw_next(hegel_context_t *ctx,
                                        hegel_test_case_t *tc,
@@ -2765,8 +2775,9 @@ hegel_result_t hegel_grammar_draw_next(hegel_context_t *ctx,
  Parameters:
  `value`: The terminal's value, as UTF-8.
 
- Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for a value that is not
- valid UTF-8 or when no value is due.
+ Returns `HEGEL_OK`; `HEGEL_E_INVALID_ARG` for a value that is not
+ valid UTF-8 or when no value is due; or `HEGEL_E_CONCURRENT_USE` when
+ `draw` is in use on another thread.
  */
 hegel_result_t hegel_grammar_draw_provide(hegel_context_t *ctx,
                                           hegel_grammar_draw_t *draw,
@@ -2782,8 +2793,9 @@ hegel_result_t hegel_grammar_draw_provide(hegel_context_t *ctx,
    trailing NUL outside its reported length. Release with
    `hegel_owned_string_free`.
 
- Returns `HEGEL_OK`, or `HEGEL_E_NOT_COMPLETE` when the string is not
- complete yet.
+ Returns `HEGEL_OK`; `HEGEL_E_NOT_COMPLETE` when the string is not
+ complete yet; or `HEGEL_E_CONCURRENT_USE` when `draw` is in use on
+ another thread.
  */
 hegel_result_t hegel_grammar_draw_result(hegel_context_t *ctx,
                                          const hegel_grammar_draw_t *draw,

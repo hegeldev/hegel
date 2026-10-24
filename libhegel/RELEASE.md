@@ -22,6 +22,6 @@ if (rc == HEGEL_E_NOT_FOUND)
 hegel_grammar_draw_free(ctx, draw);
 ```
 
-libhegel replaces each placeholder marker with its value, keeps the whole string, values included, under the size cap by drawing it again with less room for the grammar's own text when the values overflow it, and rejects the test case after `HEGEL_FILTER_ATTEMPTS` attempts that do not fit, so a frontend no longer reimplements any of this. `hegel_generate_grammar` and `hegel_grammar_placeholder` still work as before.
+libhegel replaces each placeholder marker with its value, keeps the whole string, values included, under the size cap by drawing it again with less room for the grammar's own text when the values overflow it, and rejects the test case after `HEGEL_FILTER_ATTEMPTS` attempts that do not fit, so a frontend no longer reimplements any of this. A draw belongs to the test case it is first advanced with: `hegel_grammar_draw_next` returns `HEGEL_E_INVALID_ARG` when given any other test-case handle, and a draw handle used from two threads at once returns `HEGEL_E_CONCURRENT_USE`. `hegel_generate_grammar` and `hegel_grammar_placeholder` still work as before.
 
 The header's list of constructors and their matching frees now includes `hegel_settings_new_for_profile`, `hegel_new_recursion` and the new grammar draw functions, and the documentation of `hegel_stop_span` no longer claims that libhegel retries a discarded span itself: the caller draws again.

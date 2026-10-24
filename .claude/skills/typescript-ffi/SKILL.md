@@ -97,7 +97,9 @@ call: the grammar builder (`hegel_grammar_builder_file` /
 callbacks: the frontend runs its own code (reading a file, drawing a value)
 between the calls, and frees the handle (`hegel_grammar_builder_free`,
 `hegel_recursion_free`, `hegel_grammar_draw_free`) when the loop ends, on error
-paths too. `HEGEL_E_NOT_FOUND` and `HEGEL_E_RETRY` are steps of these
+paths too. A grammar draw belongs to the test case it was first advanced
+with, so start one per draw, never cache it on the generator.
+`HEGEL_E_NOT_FOUND` and `HEGEL_E_RETRY` are steps of these
 loops, not errors, so the wrapper returns them to the caller instead of
 throwing through `check`. `hegel_settings_set_from_string` takes a setting's
 `hegel.toml` key and a string value, which is how a command line reaches every

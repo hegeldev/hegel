@@ -2355,6 +2355,53 @@ fn grammar_draws_validate_handles_and_the_protocol() {
 }
 
 #[test]
+fn grammar_draws_belong_to_the_test_case_they_were_first_advanced_with() {
+    let ctx = hegel_context_new();
+    unsafe {
+        let g = grammar(ctx, "start: X\n%declare X\n", None, &["X"]).unwrap();
+        let s = make_settings_no_db(ctx);
+        ok(hegel_settings_set_test_cases(ctx, s, 2));
+        let run = start(ctx, s);
+        let tc = next_case(ctx, run);
+        let draw = new_grammar_draw(ctx, g, 0);
+        let mut terminal = usize::MAX;
+        ok(hegel_grammar_draw_next(ctx, tc, draw, &mut terminal));
+
+        let mut clone: *mut HegelTestCase = ptr::null_mut();
+        ok(hegel_c::hegel_test_case_clone(ctx, tc, &mut clone));
+        assert_eq!(
+            hegel_grammar_draw_next(ctx, clone, draw, &mut terminal),
+            HEGEL_E_INVALID_ARG
+        );
+        assert!(last_error(ctx).contains("belongs to another test-case handle"));
+        ok(hegel_c::hegel_test_case_free(ctx, clone));
+
+        ok(hegel_grammar_draw_provide(ctx, draw, "v".into()));
+        assert_eq!(
+            hegel_grammar_draw_next(ctx, tc, draw, &mut terminal),
+            HEGEL_E_NOT_FOUND
+        );
+        complete_valid(ctx, tc);
+
+        let later = next_case(ctx, run);
+        assert!(!later.is_null());
+        assert_eq!(
+            hegel_grammar_draw_next(ctx, later, draw, &mut terminal),
+            HEGEL_E_INVALID_ARG
+        );
+        assert!(last_error(ctx).contains("start a new draw for each test case"));
+        ok(hegel_grammar_draw_free(ctx, draw));
+        complete_valid(ctx, later);
+
+        drain(ctx, run);
+        ok(hegel_run_free(ctx, run));
+        ok(hegel_settings_free(ctx, s));
+        ok(hegel_grammar_free(ctx, g));
+    }
+    unsafe { ok(hegel_context_free(ctx)) };
+}
+
+#[test]
 fn grammar_placeholders_stand_for_explicit_terminals() {
     let ctx = hegel_context_new();
     unsafe {

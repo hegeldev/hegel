@@ -302,8 +302,8 @@ pub enum hegel_result_t {
     /// <https://github.com/hegeldev/hegel/issues>.
     HEGEL_E_INTERNAL = -8,
 
-    /// A single test-case handle was used from two threads at once. Clone
-    /// the handle instead.
+    /// A single test-case or grammar draw handle was used from two threads
+    /// at once. Clone a test-case handle instead; start a draw per thread.
     HEGEL_E_CONCURRENT_USE = -9,
 
     /// A recursive generation attempt must be regenerated from the root.
@@ -5688,15 +5688,43 @@ pub unsafe extern "C" fn hegel_generate_grammar(
 /// is the caller's part to draw values that read as the terminal where
 /// they land.
 ///
-/// A draw belongs to the test case it is first advanced with: pass the
-/// same `tc` to every `hegel_grammar_draw_next` call on it, and do not
-/// keep a handle across test cases. Draw each value it asks for from that
-/// same test case too.
+/// A draw belongs to the test-case handle it is first advanced with:
+/// `hegel_grammar_draw_next` returns `HEGEL_E_INVALID_ARG` when given any
+/// other handle, including one for a later test case, so start a new draw
+/// for each test case. Draw each value it asks for from that same test
+/// case too.
+///
+/// A draw handle may be used by at most one thread at a time. Concurrent
+/// calls on it return `HEGEL_E_CONCURRENT_USE`.
 ///
 /// The handle borrows the grammar, which must outlive it. Free it with
 /// `hegel_grammar_draw_free` exactly once.
 pub struct HegelGrammarDraw {
-    state: Mutex<crate::native::lark::explicit::ExplicitDraw>,
+    state: Mutex<GrammarDrawState>,
+}
+
+struct GrammarDrawState {
+    draw: crate::native::lark::explicit::ExplicitDraw,
+    /// The stream of the test-case handle the draw was first advanced
+    /// with. Held weakly so that its address stays unique while the draw
+    /// lives, without keeping the stream itself alive.
+    stream: Option<alloc::sync::Weak<dyn DataSource + Send + Sync>>,
+}
+
+impl HegelGrammarDraw {
+    fn lock(
+        &self,
+        ctx: *mut HegelContext,
+        fn_name: &str,
+    ) -> Result<MutexGuard<'_, GrammarDrawState>, hegel_result_t> {
+        self.state.try_lock().ok_or_else(|| {
+            set_last_error(
+                ctx,
+                &format!("{fn_name}: grammar draw handle is in use on another thread"),
+            );
+            HEGEL_E_CONCURRENT_USE
+        })
+    }
 }
 
 unsafe fn grammar_draw_ref<'a>(
@@ -5746,7 +5774,10 @@ pub unsafe extern "C" fn hegel_grammar_draw_new(
         crate::native::lark::explicit::ExplicitDraw::new(Arc::clone(&grammar.spec), max_size);
     unsafe {
         *out_draw = into_raw_send_sync(HegelGrammarDraw {
-            state: Mutex::new(state),
+            state: Mutex::new(GrammarDrawState {
+                draw: state,
+                stream: None,
+            }),
         })
     };
     HEGEL_OK
@@ -5768,8 +5799,10 @@ pub unsafe extern "C" fn hegel_grammar_draw_new(
 /// overflowed the size cap `HEGEL_FILTER_ATTEMPTS` times in a row, or the
 /// grammar draw itself rejected the test case (see
 /// `hegel_generate_grammar`), and the test case has been concluded
-/// invalid; `HEGEL_E_STOP_TEST`; or `HEGEL_E_INVALID_ARG` when a value is
-/// still due.
+/// invalid; `HEGEL_E_STOP_TEST`; `HEGEL_E_INVALID_ARG` when a value is
+/// still due or `tc` is not the handle the draw was first advanced with;
+/// or `HEGEL_E_CONCURRENT_USE` when `tc` or `draw` is in use on another
+/// thread.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_grammar_draw_next(
     ctx: *mut HegelContext,
@@ -5791,8 +5824,24 @@ pub unsafe extern "C" fn hegel_grammar_draw_next(
         set_last_error(ctx, "hegel_grammar_draw_next: out parameter is null");
         return HEGEL_E_INVALID_ARG;
     }
-    let mut state = draw.state.lock();
-    match tc.stream.grammar_draw_next(&mut state) {
+    let mut state = match draw.lock(ctx, FN) {
+        Ok(s) => s,
+        Err(rc) => return rc,
+    };
+    let stream = Arc::downgrade(&tc.stream);
+    match &state.stream {
+        None => state.stream = Some(stream),
+        Some(bound) if bound.ptr_eq(&stream) => {}
+        Some(_) => {
+            set_last_error(
+                ctx,
+                "hegel_grammar_draw_next: the draw belongs to another test-case \
+                 handle: start a new draw for each test case",
+            );
+            return HEGEL_E_INVALID_ARG;
+        }
+    }
+    match tc.stream.grammar_draw_next(&mut state.draw) {
         Ok(Some(terminal)) => {
             unsafe { *out_terminal = terminal };
             HEGEL_OK
@@ -5808,8 +5857,9 @@ pub unsafe extern "C" fn hegel_grammar_draw_next(
 /// Parameters:
 /// `value`: The terminal's value, as UTF-8.
 ///
-/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for a value that is not
-/// valid UTF-8 or when no value is due.
+/// Returns `HEGEL_OK`; `HEGEL_E_INVALID_ARG` for a value that is not
+/// valid UTF-8 or when no value is due; or `HEGEL_E_CONCURRENT_USE` when
+/// `draw` is in use on another thread.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_grammar_draw_provide(
     ctx: *mut HegelContext,
@@ -5826,7 +5876,11 @@ pub unsafe extern "C" fn hegel_grammar_draw_provide(
         Ok(v) => v,
         Err(rc) => return rc,
     };
-    match draw.state.lock().provide(&value) {
+    let mut state = match draw.lock(ctx, FN) {
+        Ok(s) => s,
+        Err(rc) => return rc,
+    };
+    match state.draw.provide(&value) {
         Ok(()) => HEGEL_OK,
         Err(message) => {
             set_last_error(ctx, &format!("{FN}: {message}"));
@@ -5844,8 +5898,9 @@ pub unsafe extern "C" fn hegel_grammar_draw_provide(
 ///   trailing NUL outside its reported length. Release with
 ///   `hegel_owned_string_free`.
 ///
-/// Returns `HEGEL_OK`, or `HEGEL_E_NOT_COMPLETE` when the string is not
-/// complete yet.
+/// Returns `HEGEL_OK`; `HEGEL_E_NOT_COMPLETE` when the string is not
+/// complete yet; or `HEGEL_E_CONCURRENT_USE` when `draw` is in use on
+/// another thread.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_grammar_draw_result(
     ctx: *mut HegelContext,
@@ -5862,7 +5917,11 @@ pub unsafe extern "C" fn hegel_grammar_draw_result(
         set_last_error(ctx, "hegel_grammar_draw_result: out parameter is null");
         return HEGEL_E_INVALID_ARG;
     }
-    match draw.state.lock().result() {
+    let state = match draw.lock(ctx, FN) {
+        Ok(s) => s,
+        Err(rc) => return rc,
+    };
+    match state.draw.result() {
         Some(text) => unsafe { write_string_result(out_result, text.to_string()) },
         None => {
             set_last_error(
