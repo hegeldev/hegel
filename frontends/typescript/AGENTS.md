@@ -150,8 +150,10 @@ so a Node import creeping into a shared module fails `check-lint`.
    replay of each failure included; the runner never replays. A test case
    the engine stamps (`hegel_test_case_should_capture`), or every one in a
    verbose run, prints its draws and notes into the engine's printer
-   document (`src/pretty.ts` renders values as one-line JavaScript that
-   `hegel_printer_reflow` lays out); the runner keeps each failure origin's
+   document (`src/pretty.ts` prints values as JavaScript, giving the engine
+   their structure with `hegel_printer_begin_group`/`breakable`/`if_break`,
+   calling a class's `[prettyPrint]` method where it has one, and reflowing
+   only text it can render flat); the runner keeps each failure origin's
    best capture and, on `FAILED`, prints it with the caveat and the
    `.reproduceFailure(...)` line, then rethrows the test's own error (an
    `AggregateError` of them for several distinct failures). An errored run

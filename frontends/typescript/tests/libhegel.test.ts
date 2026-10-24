@@ -138,6 +138,12 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     printerFree: noop,
     printerText: () => 0,
     printerReflow: () => 0,
+    printerBeginGroup: () => 0,
+    printerEndGroup: () => 0,
+    printerBreakable: () => 0,
+    printerIfBreak: () => 0,
+    printerComment: () => 0,
+    printerShiftIndent: () => 0,
     printerHardBreak: () => 0,
     printerBeginSpeculative: () => 0,
     printerCommitSpeculative: () => 0,
@@ -497,6 +503,12 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
     const printer = lib.testCasePrinter(null, null);
     lib.printerText(null, printer, "a");
     lib.printerReflow(null, printer, "b");
+    lib.printerBeginGroup(null, printer, 4, "[");
+    lib.printerBreakable(null, printer, " ");
+    lib.printerIfBreak(null, printer, ",");
+    lib.printerComment(null, printer, "  // c");
+    lib.printerShiftIndent(null, printer, -4);
+    lib.printerEndGroup(null, printer, "]");
     lib.printerHardBreak(null, printer);
     lib.printerBeginSpeculative(null, printer);
     lib.printerCommitSpeculative(null, printer);

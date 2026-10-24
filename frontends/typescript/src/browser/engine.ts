@@ -338,7 +338,14 @@ export class WasmEngine implements Engine {
   }
   private withText(
     ctx: ContextHandle,
-    op: "note" | "event" | "printer_text",
+    op:
+      | "note"
+      | "event"
+      | "printer_text"
+      | "printer_end_group"
+      | "printer_breakable"
+      | "printer_if_break"
+      | "printer_comment",
     target: object,
     text: string,
   ): void {
@@ -400,6 +407,28 @@ export class WasmEngine implements Engine {
   }
   printerText(ctx: ContextHandle, p: PrinterHandle, text: string): void {
     this.withText(ctx, "printer_text", p, text);
+  }
+  printerBeginGroup(ctx: ContextHandle, p: PrinterHandle, indent: number, open: string): void {
+    WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      this.check(c, "printer_begin_group", [c, this.ptr(p), u64(indent), a.text(open)], true);
+    });
+  }
+  printerEndGroup(ctx: ContextHandle, p: PrinterHandle, close: string): void {
+    this.withText(ctx, "printer_end_group", p, close);
+  }
+  printerBreakable(ctx: ContextHandle, p: PrinterHandle, sep: string): void {
+    this.withText(ctx, "printer_breakable", p, sep);
+  }
+  printerIfBreak(ctx: ContextHandle, p: PrinterHandle, text: string): void {
+    this.withText(ctx, "printer_if_break", p, text);
+  }
+  printerComment(ctx: ContextHandle, p: PrinterHandle, text: string): void {
+    this.withText(ctx, "printer_comment", p, text);
+  }
+  printerShiftIndent(ctx: ContextHandle, p: PrinterHandle, delta: number): void {
+    const c = this.ptr(ctx);
+    this.check(c, "printer_shift_indent", [c, this.ptr(p), BigInt(delta)], true);
   }
   printerReflow(ctx: ContextHandle, p: PrinterHandle, text: string): void {
     WasmArena.scoped(this.abi, (a) => {

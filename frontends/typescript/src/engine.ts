@@ -339,6 +339,18 @@ export interface Engine {
   freePrinter(p: PrinterHandle): void;
   printerText(ctx: ContextHandle, p: PrinterHandle, text: string): void;
   printerHardBreak(ctx: ContextHandle, p: PrinterHandle): void;
+  /** Emit `open` and indent later break points `indent` columns further. */
+  printerBeginGroup(ctx: ContextHandle, p: PrinterHandle, indent: number, open: string): void;
+  /** Undo the innermost group's indentation and emit `close`. */
+  printerEndGroup(ctx: ContextHandle, p: PrinterHandle, close: string): void;
+  /** A break point: `sep` when its group fits on a line, else a newline. */
+  printerBreakable(ctx: ContextHandle, p: PrinterHandle, sep: string): void;
+  /** Text emitted only when the innermost group breaks. */
+  printerIfBreak(ctx: ContextHandle, p: PrinterHandle, text: string): void;
+  /** A comment at the end of the current line, breaking every open group. */
+  printerComment(ctx: ContextHandle, p: PrinterHandle, text: string): void;
+  /** Shift the indentation of later break points by `delta` columns. */
+  printerShiftIndent(ctx: ContextHandle, p: PrinterHandle, delta: number): void;
   /**
    * Emit a one-line representation, letting the engine recover its bracket
    * structure so that it wraps like a value printed structurally.

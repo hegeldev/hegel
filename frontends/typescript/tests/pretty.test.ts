@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { repr, splitLines, TextPrinter } from "../src/pretty.js";
+import { prettyPrint, PrettyPrinter, repr, splitLines, TextPrinter } from "../src/pretty.js";
+import * as hegel from "@hegeldev/hegel";
 
 describe("repr", () => {
   it.each([
@@ -126,5 +127,80 @@ describe("splitLines", () => {
     ["a\n\nb\n", ["a", "", "b"]],
   ])("splits %j", (document, lines) => {
     expect(splitLines(document)).toEqual(lines);
+  });
+});
+
+describe("printing through a class's own prettyPrint method", () => {
+  class Pair {
+    constructor(
+      readonly a: unknown,
+      readonly b: unknown,
+    ) {}
+    [prettyPrint](p: PrettyPrinter): void {
+      p.group(5, "Pair(", ")", () => {
+        p.value(this.a);
+        p.text(",");
+        p.breakable();
+        p.value(this.b);
+        p.ifBreak(",");
+        p.shiftIndent(-5);
+        p.breakable("");
+        p.shiftIndent(5);
+      });
+      p.reflow(" /* ok */");
+      p.comment("  // pair");
+    }
+  }
+
+  it("prints flat on a text printer, nested values included", () => {
+    expect(repr(new Pair(1, new Pair("x", [2n])))).toBe(
+      'Pair(1, Pair("x", [2n]) /* ok */  // pair) /* ok */  // pair',
+    );
+  });
+
+  it("is the symbol exported from the package", () => {
+    expect(hegel.prettyPrint).toBe(prettyPrint);
+    expect(hegel.PrettyPrinter).toBe(PrettyPrinter);
+    expect(prettyPrint).toBe(Symbol.for("hegel.prettyPrint"));
+  });
+
+  it("prints a value that contains itself through the hook as circular", () => {
+    const pair = new Pair(1, null);
+    (pair as { b: unknown }).b = pair;
+    expect(repr(pair)).toBe("Pair(1, [Circular]) /* ok */  // pair");
+  });
+
+  it("prints hard breaks through the hook", () => {
+    class Lines {
+      [prettyPrint](p: PrettyPrinter): void {
+        p.text("a");
+        p.hardBreak();
+        p.text("b");
+      }
+    }
+    expect(repr(new Lines())).toBe("a\nb");
+  });
+
+  it.each([
+    ["text", (p: PrettyPrinter) => p.text("a\nb"), "text must not contain a newline"],
+    [
+      "a separator",
+      (p: PrettyPrinter) => p.breakable("\n"),
+      "a break point's separator must not contain a newline",
+    ],
+    ["if-break text", (p: PrettyPrinter) => p.ifBreak("\n"), "text must not contain a newline"],
+    ["a comment", (p: PrettyPrinter) => p.comment("\n"), "a comment must not contain a newline"],
+    [
+      "an opening",
+      (p: PrettyPrinter) => p.beginGroup(1, "\n"),
+      "a group's opening text must not contain a newline",
+    ],
+    [
+      "a closing",
+      (p: PrettyPrinter) => p.endGroup("\n"),
+      "a group's closing text must not contain a newline",
+    ],
+  ])("rejects a newline in %s", (_what, write, message) => {
+    expect(() => write(new PrettyPrinter(new TextPrinter()))).toThrow(message);
   });
 });

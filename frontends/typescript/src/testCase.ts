@@ -9,7 +9,7 @@
  */
 
 import { EngineError } from "./engine.js";
-import { repr, type Printer } from "./pretty.js";
+import { printValue, type Printer } from "./pretty.js";
 import type { LabelSpec } from "./labels.js";
 // Type-only import to avoid a runtime cycle: Generator depends on TestCase.
 import type { Generator } from "./generators/core.js";
@@ -273,7 +273,7 @@ export class TestCase {
         this.shared.explicit === null
           ? generator.doDraw(this)
           : (this.shared.explicit.take(display) as T);
-      printer.reflow(repr(value));
+      printValue(printer, value);
       printer.text(";");
       printer.hardBreak();
       printer.commitSpeculative();

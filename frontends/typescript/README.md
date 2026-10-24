@@ -111,3 +111,25 @@ test("stack", () =>
 ```
 
 Hegel picks the rules to run at each step, shrinks a failing sequence down to a minimal one, and reports it step by step (`Step 1: push {`, with the step's draws indented beneath it, then `}`). See the `stateful` module in the documentation for invariants, step counts, asynchronous rules and `Pool`, which lets rules act on values that earlier rules produced.
+
+## Printing your own classes
+
+A failing example prints each drawn value as JavaScript, laid out to fit the line: arrays, objects, `Map`s and `Set`s break one item per line when they are too long. Instances of your own classes print as their class name and properties; to print one differently, give the class a `hegel.prettyPrint` method, which writes through a `hegel.PrettyPrinter`:
+
+```typescript
+class Interval {
+  constructor(readonly lo: number, readonly hi: number) {}
+
+  [hegel.prettyPrint](p: hegel.PrettyPrinter): void {
+    p.group(4, "Interval(", ")", () => {
+      p.value(this.lo);
+      p.text(",");
+      p.breakable(" ");
+      p.value(this.hi);
+    });
+  }
+}
+```
+
+A group prints on one line when it fits, each `breakable` as its separator, and otherwise breaks at every `breakable`, indenting the next line by the group's indentation.
+

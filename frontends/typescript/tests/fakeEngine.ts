@@ -114,6 +114,14 @@ export function fakeEngine() {
     printerText: vi.fn<Engine["printerText"]>((_ctx, p, text) => printerOf(p).push(text)),
     printerHardBreak: vi.fn<Engine["printerHardBreak"]>((_ctx, p) => printerOf(p).push("\n")),
     printerReflow: vi.fn<Engine["printerReflow"]>((_ctx, p, text) => printerOf(p).push(text)),
+    printerBeginGroup: vi.fn<Engine["printerBeginGroup"]>((_ctx, p, _indent, open) =>
+      printerOf(p).push(open),
+    ),
+    printerEndGroup: vi.fn<Engine["printerEndGroup"]>((_ctx, p, close) => printerOf(p).push(close)),
+    printerBreakable: vi.fn<Engine["printerBreakable"]>((_ctx, p, sep) => printerOf(p).push(sep)),
+    printerIfBreak: vi.fn<Engine["printerIfBreak"]>(),
+    printerComment: vi.fn<Engine["printerComment"]>((_ctx, p, text) => printerOf(p).push(text)),
+    printerShiftIndent: vi.fn<Engine["printerShiftIndent"]>(),
     printerBeginSpeculative: vi.fn<Engine["printerBeginSpeculative"]>((_ctx, p) => {
       printerOf(p).regions.push("");
     }),

@@ -26,6 +26,7 @@ import * as stateful from "../src/stateful.js";
 import { Libhegel } from "../src/libhegel.js";
 import { testLibPath } from "./libPath.js";
 import { fakeRuntime } from "./fakeEngine.js";
+import { prettyPrint, type PrettyPrinter } from "../src/pretty.js";
 
 function active<T>(
   engine: Engine,
@@ -502,6 +503,63 @@ describe("WasmEngine real run lifecycle", () => {
       'const values = [""];',
       "// Repetition #1",
       "  const draw_2 = 3;",
+    ]);
+  });
+
+  it("lays out structured values the same as the native engine", () => {
+    class Interval {
+      constructor(
+        readonly lo: number,
+        readonly hi: number,
+      ) {}
+      [prettyPrint](p: PrettyPrinter): void {
+        p.group(9, "Interval(", ")", () => {
+          p.value(this.lo);
+          p.text(",");
+          p.breakable();
+          p.value(this.hi);
+          p.ifBreak(",");
+          p.shiftIndent(-9);
+          p.breakable("");
+          p.shiftIndent(9);
+        });
+        p.comment("  // half-open");
+      }
+    }
+    const body = (tc: import("../src/testCase.js").TestCase) => {
+      tc.draw(gs.just(new Interval(1, 2)), "interval");
+      tc.draw(gs.just(new Interval(10 ** 20, -(10 ** 20)).hi), "plain");
+      tc.draw(gs.just(Array.from({ length: 20 }, (_, i) => i * 1000)), "long");
+      tc.draw(
+        gs.just({ name: "x".repeat(60), tags: new Set(["a"]), at: new Map([[1, [2]]]) }),
+        "record",
+      );
+      throw new Error("failed");
+    };
+    const reports: string[][] = [];
+    for (const runtime of [
+      browserRuntime(wasmFixture().engine),
+      fakeRuntime(Libhegel.load(testLibPath())),
+    ]) {
+      const lines: string[] = [];
+      runtime.output = (line) => lines.push(line);
+      expect(() =>
+        createRunner(runtime).test(body, { database: Database.disabled, printBlob: false }),
+      ).toThrow("failed");
+      reports.push(lines);
+    }
+    expect(reports[0]).toEqual(reports[1]);
+    expect(reports[0]).toEqual([
+      "const interval = Interval(1, 2);  // half-open",
+      "const plain = -100000000000000000000;",
+      "const long = [",
+      ...Array.from({ length: 20 }, (_, i) => `    ${i * 1000},`),
+      "];",
+      "const record = {",
+      `    name: "${"x".repeat(60)}",`,
+      '    tags: new Set(["a"]),',
+      "    at: new Map([[1, [2]]]),",
+      "};",
     ]);
   });
 

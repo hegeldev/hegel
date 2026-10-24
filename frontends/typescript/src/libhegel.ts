@@ -210,6 +210,12 @@ export interface Bindings {
   printerText: (ctx: Ptr, p: Ptr, text: string) => number;
   printerReflow: (ctx: Ptr, p: Ptr, text: string) => number;
   printerHardBreak: (ctx: Ptr, p: Ptr) => number;
+  printerBeginGroup: (ctx: Ptr, p: Ptr, indent: bigint, open: string) => number;
+  printerEndGroup: (ctx: Ptr, p: Ptr, close: string) => number;
+  printerBreakable: (ctx: Ptr, p: Ptr, sep: string) => number;
+  printerIfBreak: (ctx: Ptr, p: Ptr, text: string) => number;
+  printerComment: (ctx: Ptr, p: Ptr, text: string) => number;
+  printerShiftIndent: (ctx: Ptr, p: Ptr, delta: bigint) => number;
   printerBeginSpeculative: (ctx: Ptr, p: Ptr) => number;
   printerCommitSpeculative: (ctx: Ptr, p: Ptr) => number;
   printerAbortSpeculative: (ctx: Ptr, p: Ptr) => number;
@@ -502,6 +508,19 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   const printerText = fs("hegel_printer_text", ["void*", "void*", stringType]);
   const printerReflow = fs("hegel_printer_reflow", ["void*", "void*", "void*", stringType]);
   const printerHardBreak = f("int hegel_printer_hard_break(void* ctx, void* printer)");
+  const printerBeginGroup = fs("hegel_printer_begin_group", [
+    "void*",
+    "void*",
+    "uint64_t",
+    stringType,
+  ]);
+  const printerEndGroup = fs("hegel_printer_end_group", ["void*", "void*", stringType]);
+  const printerBreakable = fs("hegel_printer_breakable", ["void*", "void*", stringType]);
+  const printerIfBreak = fs("hegel_printer_if_break", ["void*", "void*", stringType]);
+  const printerComment = fs("hegel_printer_comment", ["void*", "void*", stringType]);
+  const printerShiftIndent = f(
+    "int hegel_printer_shift_indent(void* ctx, void* printer, int64_t delta)",
+  );
   const printerBeginSpeculative = f(
     "int hegel_printer_begin_speculative(void* ctx, void* printer)",
   );
@@ -866,6 +885,13 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     printerText: (ctx, p, text) => printerText(ctx, p, nativeString(text)),
     printerReflow: (ctx, p, text) => printerReflow(ctx, p, null, nativeString(text)),
     printerHardBreak: (ctx, p) => printerHardBreak(ctx, p),
+    printerBeginGroup: (ctx, p, indent, open) =>
+      printerBeginGroup(ctx, p, indent, nativeString(open)),
+    printerEndGroup: (ctx, p, close) => printerEndGroup(ctx, p, nativeString(close)),
+    printerBreakable: (ctx, p, sep) => printerBreakable(ctx, p, nativeString(sep)),
+    printerIfBreak: (ctx, p, text) => printerIfBreak(ctx, p, nativeString(text)),
+    printerComment: (ctx, p, text) => printerComment(ctx, p, nativeString(text)),
+    printerShiftIndent: (ctx, p, delta) => printerShiftIndent(ctx, p, delta),
     printerBeginSpeculative: (ctx, p) => printerBeginSpeculative(ctx, p),
     printerCommitSpeculative: (ctx, p) => printerCommitSpeculative(ctx, p),
     printerAbortSpeculative: (ctx, p) => printerAbortSpeculative(ctx, p),
@@ -1351,6 +1377,38 @@ export class Libhegel implements Engine {
 
   printerHardBreak(ctx: Ptr, p: Ptr): void {
     this.check(ctx, this.fns.printerHardBreak(ctx, p), "hegel_printer_hard_break");
+  }
+
+  printerBeginGroup(ctx: Ptr, p: Ptr, indent: number, open: string): void {
+    this.check(
+      ctx,
+      this.fns.printerBeginGroup(ctx, p, BigInt(indent), open),
+      "hegel_printer_begin_group",
+    );
+  }
+
+  printerEndGroup(ctx: Ptr, p: Ptr, close: string): void {
+    this.check(ctx, this.fns.printerEndGroup(ctx, p, close), "hegel_printer_end_group");
+  }
+
+  printerBreakable(ctx: Ptr, p: Ptr, sep: string): void {
+    this.check(ctx, this.fns.printerBreakable(ctx, p, sep), "hegel_printer_breakable");
+  }
+
+  printerIfBreak(ctx: Ptr, p: Ptr, text: string): void {
+    this.check(ctx, this.fns.printerIfBreak(ctx, p, text), "hegel_printer_if_break");
+  }
+
+  printerComment(ctx: Ptr, p: Ptr, text: string): void {
+    this.check(ctx, this.fns.printerComment(ctx, p, text), "hegel_printer_comment");
+  }
+
+  printerShiftIndent(ctx: Ptr, p: Ptr, delta: number): void {
+    this.check(
+      ctx,
+      this.fns.printerShiftIndent(ctx, p, BigInt(delta)),
+      "hegel_printer_shift_indent",
+    );
   }
 
   printerReflow(ctx: Ptr, p: Ptr, text: string): void {
