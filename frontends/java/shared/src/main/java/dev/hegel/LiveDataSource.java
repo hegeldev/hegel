@@ -344,6 +344,14 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
+    public void poolRestore(long poolId, long variableId) {
+        if (aborted[0]) {
+            return;
+        }
+        translate(lib.poolRestore(tc, poolId, variableId), "pool_restore");
+    }
+
+    @Override
     public StateMachine newStateMachine(
             List<String> ruleNames,
             long[] ruleGroups,

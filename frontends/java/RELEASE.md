@@ -45,3 +45,5 @@ The `Reporter` and `Failure` APIs change to match:
 - `Failure.notes()` is replaced by `Failure.output()`, the counterexample's printed report as a list of lines. `Failure.draws()` still gives the drawn values.
 
 `dev.hegel.lowlevel.Libhegel` gains `testCaseBlock`, `note`, `testCasePrinter`, `printerNew`, `printerFree`, `printerText`, `printerBreakable`, `printerHardBreak`, `printerBeginGroup`, `printerEndGroup`, `printerReflow`, `printerBeginSpeculative`, `printerCommitSpeculative`, `printerAbortSpeculative`, `printerResolve` and `printerValue`, for the engine's printer. A third-party binding needs to implement them.
+
+A filtered consuming pool draw, `pool.consuming().filter(...)` on a `Pool` or `ConcurrentPool`, now consumes only the value it yields. Before, every value an attempt drew and the filter rejected was consumed too, and lost from the pool. Each attempt still consumes its value, so no attempt draws a value an earlier one rejected, and once the attempts are over the engine puts every rejected value back (`hegel_pool_restore`). Sets and maps now also free their engine-side collection after each draw, as lists already did.

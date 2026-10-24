@@ -106,6 +106,8 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle settingsRegisterProfile;
     private final MethodHandle setDefaultProfile;
     private final MethodHandle settingsGetVerbosity;
+    private final MethodHandle settingsGetPhases;
+    private final MethodHandle settingsGetReportMultipleFailures;
     private final MethodHandle settingsSetStopOnFirstFailure;
     private final MethodHandle settingsSetShowStatistics;
     private final MethodHandle settingsSetUnboundedChoices;
@@ -156,6 +158,7 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle printerValueResultFree;
     private final MethodHandle generateBoolean;
     private final MethodHandle generateInteger;
+    private final MethodHandle generateIntegerBig;
     private final MethodHandle generateFloat;
     private final MethodHandle generateBytes;
     private final MethodHandle generateBytesResultFree;
@@ -182,7 +185,14 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle newPool;
     private final MethodHandle poolAdd;
     private final MethodHandle poolGenerate;
+    private final MethodHandle poolRestore;
     private final MethodHandle poolFree;
+    private final MethodHandle newRecursion;
+    private final MethodHandle recursionBranch;
+    private final MethodHandle recursionLeaf;
+    private final MethodHandle recursionRetry;
+    private final MethodHandle recursionFinish;
+    private final MethodHandle recursionFree;
     private final MethodHandle newStateMachine;
     private final MethodHandle stateMachineNextGroup;
     private final MethodHandle stateMachineNextRule;
@@ -190,6 +200,8 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle stateMachineShouldCheckInvariant;
     private final MethodHandle stateMachineFree;
     private final MethodHandle target;
+    private final MethodHandle event;
+    private final MethodHandle eventValue;
     private final MethodHandle markComplete;
     private final MethodHandle runResultStatus;
     private final MethodHandle runResultError;
@@ -239,6 +251,16 @@ final class RealLibhegel implements Libhegel {
                 linker,
                 lookup,
                 "hegel_settings_get_verbosity",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.settingsGetPhases = h(
+                linker,
+                lookup,
+                "hegel_settings_get_phases",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.settingsGetReportMultipleFailures = h(
+                linker,
+                lookup,
+                "hegel_settings_get_report_multiple_failures",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
         this.settingsSetStopOnFirstFailure = h(
                 linker,
@@ -432,6 +454,13 @@ final class RealLibhegel implements Libhegel {
                 lookup,
                 "hegel_generate_integer",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, JAVA_LONG, ADDRESS));
+        this.generateIntegerBig = h(
+                linker,
+                lookup,
+                "hegel_generate_integer_big",
+                FunctionDescriptor.of(
+                        JAVA_INT, ADDRESS, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS, JAVA_LONG, ADDRESS, JAVA_LONG,
+                        ADDRESS));
         this.generateFloat = h(
                 linker,
                 lookup,
@@ -554,7 +583,30 @@ final class RealLibhegel implements Libhegel {
                 lookup,
                 "hegel_pool_generate",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, JAVA_BOOLEAN, ADDRESS));
+        this.poolRestore = h(
+                linker,
+                lookup,
+                "hegel_pool_restore",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, JAVA_LONG));
         this.poolFree = h(linker, lookup, "hegel_pool_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG));
+        this.newRecursion = h(
+                linker,
+                lookup,
+                "hegel_new_recursion",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, JAVA_LONG, ADDRESS));
+        this.recursionBranch = h(
+                linker,
+                lookup,
+                "hegel_recursion_branch",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, JAVA_LONG, ADDRESS));
+        this.recursionLeaf =
+                h(linker, lookup, "hegel_recursion_leaf", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG));
+        this.recursionRetry = h(
+                linker, lookup, "hegel_recursion_retry", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG));
+        this.recursionFinish = h(
+                linker, lookup, "hegel_recursion_finish", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG));
+        this.recursionFree =
+                h(linker, lookup, "hegel_recursion_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG));
         // State-machine handles cross as raw addresses (JAVA_LONG), like every other opaque handle.
         this.newStateMachine = h(
                 linker,
@@ -589,6 +641,12 @@ final class RealLibhegel implements Libhegel {
                 linker,
                 lookup,
                 "hegel_target",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_DOUBLE, STRING_LAYOUT));
+        this.event = h(linker, lookup, "hegel_event", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT));
+        this.eventValue = h(
+                linker,
+                lookup,
+                "hegel_event_value",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_DOUBLE, STRING_LAYOUT));
         this.markComplete = h(
                 linker,
@@ -793,6 +851,20 @@ final class RealLibhegel implements Libhegel {
         MemorySegment out = Arena.ofAuto().allocate(JAVA_INT);
         check("hegel_settings_get_verbosity", rc(settingsGetVerbosity, segment(s), out));
         return out.get(JAVA_INT, 0);
+    }
+
+    @Override
+    public int settingsGetPhases(long s) {
+        MemorySegment out = Arena.ofAuto().allocate(JAVA_INT);
+        check("hegel_settings_get_phases", rc(settingsGetPhases, segment(s), out));
+        return out.get(JAVA_INT, 0);
+    }
+
+    @Override
+    public boolean settingsGetReportMultipleFailures(long s) {
+        MemorySegment out = Arena.ofAuto().allocate(JAVA_BOOLEAN);
+        check("hegel_settings_get_report_multiple_failures", rc(settingsGetReportMultipleFailures, segment(s), out));
+        return out.get(JAVA_BOOLEAN, 0);
     }
 
     @Override
@@ -1159,6 +1231,38 @@ final class RealLibhegel implements Libhegel {
     }
 
     @Override
+    public int generateIntegerBig(long tc, byte[] min, byte[] max, byte[][] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            int cap = Math.max(min.length, max.length);
+            MemorySegment minSeg = bytes(arena, min);
+            MemorySegment maxSeg = bytes(arena, max);
+            MemorySegment value = arena.allocate(Math.max(cap, 1));
+            MemorySegment len = arena.allocate(JAVA_LONG);
+            int code = rc(
+                    generateIntegerBig,
+                    segment(tc),
+                    minSeg,
+                    (long) min.length,
+                    maxSeg,
+                    (long) max.length,
+                    value,
+                    (long) cap,
+                    len);
+            if (code == Abi.OK) {
+                out[0] = value.asSlice(0, len.get(JAVA_LONG, 0)).toArray(JAVA_BYTE);
+            }
+            return code;
+        }
+    }
+
+    /** A copy of {@code data} in {@code a}, at least one byte long so it is never NULL. */
+    private static MemorySegment bytes(Arena a, byte[] data) {
+        MemorySegment seg = a.allocate(Math.max(data.length, 1));
+        MemorySegment.copy(data, 0, seg, JAVA_BYTE, 0, data.length);
+        return seg;
+    }
+
+    @Override
     public int generateFloat(
             long tc,
             int width,
@@ -1484,8 +1588,51 @@ final class RealLibhegel implements Libhegel {
     }
 
     @Override
+    public int poolRestore(long tc, long poolId, long variableId) {
+        return rc(poolRestore, segment(tc), poolId, variableId);
+    }
+
+    @Override
     public void poolFree(long poolId) {
         check("hegel_pool_free", rc(poolFree, poolId));
+    }
+
+    @Override
+    public int newRecursion(long tc, long maxDepth, long maxLeaves, long[] out) {
+        MemorySegment seg = Arena.ofAuto().allocate(JAVA_LONG);
+        int code = rc(newRecursion, segment(tc), maxDepth, maxLeaves, seg);
+        out[0] = seg.get(JAVA_LONG, 0);
+        return code;
+    }
+
+    @Override
+    public int recursionBranch(long tc, long recursion, long depth, boolean[] outBranch) {
+        MemorySegment seg = Arena.ofAuto().allocate(JAVA_BOOLEAN);
+        int code = rc(recursionBranch, segment(tc), recursion, depth, seg);
+        if (code == Abi.OK) {
+            outBranch[0] = seg.get(JAVA_BOOLEAN, 0);
+        }
+        return code;
+    }
+
+    @Override
+    public int recursionLeaf(long tc, long recursion) {
+        return rc(recursionLeaf, segment(tc), recursion);
+    }
+
+    @Override
+    public int recursionRetry(long tc, long recursion) {
+        return rc(recursionRetry, segment(tc), recursion);
+    }
+
+    @Override
+    public int recursionFinish(long tc, long recursion) {
+        return rc(recursionFinish, segment(tc), recursion);
+    }
+
+    @Override
+    public void recursionFree(long recursion) {
+        check("hegel_recursion_free", rc(recursionFree, recursion));
     }
 
     @Override
@@ -1590,6 +1737,20 @@ final class RealLibhegel implements Libhegel {
     public int target(long tc, double value, String label) {
         try (Arena arena = Arena.ofConfined()) {
             return rc(target, segment(tc), value, str(arena, label));
+        }
+    }
+
+    @Override
+    public int event(long tc, String label) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(event, segment(tc), str(arena, label));
+        }
+    }
+
+    @Override
+    public int eventValue(long tc, double value, String label) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(eventValue, segment(tc), value, str(arena, label));
         }
     }
 

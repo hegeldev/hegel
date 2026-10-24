@@ -98,6 +98,12 @@ interface DataSource {
 
     long poolGenerate(long poolId, boolean consume);
 
+    /**
+     * Put back a variable a consuming {@link #poolGenerate} removed ({@code hegel_pool_restore}). A
+     * no-op once the case is aborted: nothing will draw from the pool again.
+     */
+    void poolRestore(long poolId, long variableId);
+
     // Stateful testing. The root source registers the machine, advances rounds and samples
     // invariants; at concurrency > 1 each worker pulls its rules through its own clone.
 

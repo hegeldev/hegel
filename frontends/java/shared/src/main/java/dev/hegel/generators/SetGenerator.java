@@ -47,14 +47,18 @@ public final class SetGenerator<T> implements Generator<Set<T>> {
         tc.startSpan(Label.SET);
         try {
             long id = tc.newCollection(minSize, maxSize);
-            Set<T> out = new LinkedHashSet<>();
-            while (tc.collectionMore(id)) {
-                T value = element.doDraw(tc);
-                if (!out.add(value)) {
-                    tc.collectionReject(id, "duplicate element");
+            try {
+                Set<T> out = new LinkedHashSet<>();
+                while (tc.collectionMore(id)) {
+                    T value = element.doDraw(tc);
+                    if (!out.add(value)) {
+                        tc.collectionReject(id, "duplicate element");
+                    }
                 }
+                return out;
+            } finally {
+                tc.collectionFree(id);
             }
-            return out;
         } finally {
             tc.stopSpan(false);
         }

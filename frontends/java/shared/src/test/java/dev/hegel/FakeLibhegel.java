@@ -261,6 +261,24 @@ final class FakeLibhegel implements Libhegel {
     final List<Long> freedCollections = new ArrayList<>();
 
     int targetRc = Abi.OK;
+    int eventRc = Abi.OK;
+    /** Every event and event value, as {@code label} or {@code label=value}. */
+    final List<String> events = new ArrayList<>();
+
+    int generateIntegerBigRc = Abi.OK;
+    byte[] integerBigValue; // null = echo the lower bound
+
+    // Recursion. Each recursion_* call returns the next code of its queue, or OK once it is empty;
+    // recursion_branch answers from `branchSequence` (false once it is exhausted).
+    int newRecursionRc = Abi.OK;
+    long recursionId = 9;
+    final Deque<Integer> recursionBranchRcs = new ArrayDeque<>();
+    final Deque<Boolean> branchSequence = new ArrayDeque<>();
+    final Deque<Integer> recursionLeafRcs = new ArrayDeque<>();
+    final Deque<Integer> recursionRetryRcs = new ArrayDeque<>();
+    final Deque<Integer> recursionFinishRcs = new ArrayDeque<>();
+    /** Recursion handles released through recursionFree, in order. */
+    final List<Long> freedRecursions = new ArrayList<>();
 
     int newPoolRc = Abi.OK;
     long poolId = 3;
@@ -268,6 +286,14 @@ final class FakeLibhegel implements Libhegel {
     private long nextVariableId;
     int poolGenerateRc = Abi.OK;
     Long poolGenerateValue; // null = the first added variable id (0)
+    /** Answers to consuming pool_generate calls, in order, before falling back to poolGenerateValue. */
+    final Deque<Long> poolGenerateSequence = new ArrayDeque<>();
+    /** Codes pool_generate returns before its OK answers, in order. */
+    final Deque<Integer> poolGenerateRcs = new ArrayDeque<>();
+
+    int poolRestoreRc = Abi.OK;
+    /** Variable ids put back through poolRestore, in order. */
+    final List<Long> restoredVariables = new ArrayList<>();
     /** Pool handles released through poolFree, in order. */
     final List<Long> freedPools = new ArrayList<>();
     /** Names of the threads that released their context, in order. */
@@ -316,6 +342,8 @@ final class FakeLibhegel implements Libhegel {
     int settingsNewRc = Abi.OK;
     long resolvedTestCases = 100;
     boolean resolvedPrintBlob = false;
+    int resolvedPhases = Abi.PHASE_ALL;
+    boolean resolvedReportMultipleFailures = false;
     int resolvedStrictness = Abi.NONDETERMINISM_QUIET;
     Boolean printBlob; // what the setter received; null = never set
     Integer strictness; // what the setter received; null = never set
@@ -356,6 +384,16 @@ final class FakeLibhegel implements Libhegel {
     @Override
     public int settingsGetVerbosity(long s) {
         return verbosity == null ? Abi.VERBOSITY_NORMAL : verbosity;
+    }
+
+    @Override
+    public int settingsGetPhases(long s) {
+        return phasesMask == -1 ? resolvedPhases : phasesMask;
+    }
+
+    @Override
+    public boolean settingsGetReportMultipleFailures(long s) {
+        return reportMultipleFailures == null ? resolvedReportMultipleFailures : reportMultipleFailures;
     }
 
     @Override
@@ -683,6 +721,14 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
+    public int generateIntegerBig(long tc, byte[] min, byte[] max, byte[][] out) {
+        if (generateIntegerBigRc == Abi.OK) {
+            out[0] = integerBigValue == null ? min.clone() : integerBigValue;
+        }
+        return generateIntegerBigRc;
+    }
+
+    @Override
     public int generateFloat(
             long tc,
             int width,
@@ -890,10 +936,62 @@ final class FakeLibhegel implements Libhegel {
 
     @Override
     public int poolGenerate(long tc, long poolId, boolean consume, long[] outVariableId) {
-        if (poolGenerateRc == Abi.OK) {
-            outVariableId[0] = poolGenerateValue == null ? 0 : poolGenerateValue;
+        Integer queued = poolGenerateRcs.poll();
+        int rc = queued != null ? queued : poolGenerateRc;
+        if (rc == Abi.OK) {
+            Long next = poolGenerateSequence.poll();
+            outVariableId[0] = next != null ? next : poolGenerateValue == null ? 0 : poolGenerateValue;
         }
-        return poolGenerateRc;
+        return rc;
+    }
+
+    @Override
+    public int poolRestore(long tc, long poolId, long variableId) {
+        if (poolRestoreRc == Abi.OK) {
+            restoredVariables.add(variableId);
+        }
+        return poolRestoreRc;
+    }
+
+    @Override
+    public int newRecursion(long tc, long maxDepth, long maxLeaves, long[] out) {
+        out[0] = newRecursionRc == Abi.OK ? recursionId : 0;
+        return newRecursionRc;
+    }
+
+    @Override
+    public int recursionBranch(long tc, long recursion, long depth, boolean[] outBranch) {
+        int rc = next(recursionBranchRcs);
+        if (rc == Abi.OK) {
+            Boolean branch = branchSequence.poll();
+            outBranch[0] = branch != null && branch;
+        }
+        return rc;
+    }
+
+    @Override
+    public int recursionLeaf(long tc, long recursion) {
+        return next(recursionLeafRcs);
+    }
+
+    @Override
+    public int recursionRetry(long tc, long recursion) {
+        return next(recursionRetryRcs);
+    }
+
+    @Override
+    public int recursionFinish(long tc, long recursion) {
+        return next(recursionFinishRcs);
+    }
+
+    private static int next(Deque<Integer> rcs) {
+        Integer rc = rcs.poll();
+        return rc == null ? Abi.OK : rc;
+    }
+
+    @Override
+    public void recursionFree(long recursion) {
+        freedRecursions.add(recursion);
     }
 
     @Override
@@ -986,6 +1084,22 @@ final class FakeLibhegel implements Libhegel {
     @Override
     public int target(long tc, double value, String label) {
         return targetRc;
+    }
+
+    @Override
+    public int event(long tc, String label) {
+        if (eventRc == Abi.OK) {
+            events.add(label);
+        }
+        return eventRc;
+    }
+
+    @Override
+    public int eventValue(long tc, double value, String label) {
+        if (eventRc == Abi.OK) {
+            events.add(label + "=" + value);
+        }
+        return eventRc;
     }
 
     @Override

@@ -49,16 +49,20 @@ public final class MapGenerator<K, V> implements Generator<Map<K, V>> {
         tc.startSpan(Label.MAP);
         try {
             long id = tc.newCollection(minSize, maxSize);
-            Map<K, V> out = new LinkedHashMap<>();
-            while (tc.collectionMore(id)) {
-                K key = keys.doDraw(tc);
-                if (out.containsKey(key)) {
-                    tc.collectionReject(id, "duplicate key");
-                } else {
-                    out.put(key, values.doDraw(tc));
+            try {
+                Map<K, V> out = new LinkedHashMap<>();
+                while (tc.collectionMore(id)) {
+                    K key = keys.doDraw(tc);
+                    if (out.containsKey(key)) {
+                        tc.collectionReject(id, "duplicate key");
+                    } else {
+                        out.put(key, values.doDraw(tc));
+                    }
                 }
+                return out;
+            } finally {
+                tc.collectionFree(id);
             }
-            return out;
         } finally {
             tc.stopSpan(false);
         }

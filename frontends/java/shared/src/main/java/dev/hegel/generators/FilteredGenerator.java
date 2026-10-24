@@ -8,14 +8,14 @@ import java.util.function.Predicate;
 
 /**
  * Result of {@link Generator#filter}. Always uses the composite draw path: it retries the source up
- * to {@link #FILTER_RETRIES} times, bracketing each attempt in a {@code filter} span, and rejects the
+ * to {@link #ATTEMPTS} times, bracketing each attempt in a {@code filter} span, and rejects the
  * whole case if none satisfy the predicate.
  *
  * @param <T> the value type
  */
 public final class FilteredGenerator<T> implements Generator<T> {
-    /** Conventional retry limit before a filter rejects the whole case. */
-    static final int FILTER_RETRIES = 3;
+    /** How many values a filtered draw tries before rejecting the test case. */
+    public static final int ATTEMPTS = 3;
 
     private final Generator<T> source;
     private final Predicate<? super T> predicate;
@@ -27,7 +27,7 @@ public final class FilteredGenerator<T> implements Generator<T> {
 
     @Override
     public T doDraw(TestCase tc) {
-        for (int attempt = 0; attempt < FILTER_RETRIES; attempt++) {
+        for (int attempt = 0; attempt < ATTEMPTS; attempt++) {
             tc.startSpan(Label.FILTER);
             boolean discard = true;
             try {

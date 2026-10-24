@@ -486,6 +486,10 @@ public final class TestCase {
         return source.poolGenerate(poolId, consume);
     }
 
+    void poolRestore(long poolId, long variableId) {
+        source.poolRestore(poolId, variableId);
+    }
+
     DataSource.StateMachine newStateMachine(
             List<String> ruleNames,
             long[] ruleGroups,

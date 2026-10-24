@@ -147,6 +147,12 @@ public interface Libhegel {
     /** {@code hegel_settings_get_verbosity}: the resolved verbosity (an {@code Abi.VERBOSITY_*} value). */
     int settingsGetVerbosity(long s);
 
+    /** {@code hegel_settings_get_phases}: the resolved phases, as a mask of {@code Abi.PHASE_*} bits. */
+    int settingsGetPhases(long s);
+
+    /** {@code hegel_settings_get_report_multiple_failures}: whether every distinct failure is reported. */
+    boolean settingsGetReportMultipleFailures(long s);
+
     void settingsBackend(long s, int backend);
 
     void settingsTestCases(long s, long n);
@@ -352,6 +358,13 @@ public interface Libhegel {
 
     int generateInteger(long tc, long min, long max, long[] out);
 
+    /**
+     * {@code hegel_generate_integer_big}: an integer in {@code [min, max]}, for bounds outside the
+     * {@code long} range. The bounds and the result are two's-complement <em>little-endian</em>
+     * byte arrays, each non-empty; on OK {@code out[0]} receives the value's minimal encoding.
+     */
+    int generateIntegerBig(long tc, byte[] min, byte[] max, byte[][] out);
+
     int generateFloat(
             long tc,
             int width,
@@ -438,6 +451,13 @@ public interface Libhegel {
     int poolGenerate(long tc, long poolId, boolean consume, long[] outVariableId);
 
     /**
+     * {@code hegel_pool_restore}: put back {@code variableId}, which a consuming {@link
+     * #poolGenerate} removed, so it can be drawn again. Returns {@link Abi#E_INVALID_ARG} when it
+     * is not a consumed variable of the pool.
+     */
+    int poolRestore(long tc, long poolId, long variableId);
+
+    /**
      * {@code hegel_pool_free}: release a pool handle from {@link #newPool}. Safe at any point
      * relative to freeing the test case or the run, provided no pool operation is in flight on
      * another thread; each handle must be freed exactly once. {@code 0} is a no-op.
@@ -480,7 +500,33 @@ public interface Libhegel {
     /** {@code hegel_state_machine_free}: the handle is independent of its test case and run. */
     void stateMachineFree(long stateMachineId);
 
+    // Recursion: see hegel_recursion_t for the protocol. Each returns the raw rc.
+
+    /** {@code hegel_new_recursion}: {@code out[0]} receives the handle, freed with {@link #recursionFree}. */
+    int newRecursion(long tc, long maxDepth, long maxLeaves, long[] out);
+
+    /** {@code hegel_recursion_branch}: whether the sub-value at {@code depth} is a branch. */
+    int recursionBranch(long tc, long recursion, long depth, boolean[] outBranch);
+
+    /** {@code hegel_recursion_leaf}: {@link Abi#E_RETRY} when the attempt outgrew its budget. */
+    int recursionLeaf(long tc, long recursion);
+
+    /** {@code hegel_recursion_retry}: {@link Abi#E_ASSUME} when the attempts are exhausted. */
+    int recursionRetry(long tc, long recursion);
+
+    /** {@code hegel_recursion_finish}: {@link Abi#E_RETRY} when the attempt was mispriced. */
+    int recursionFinish(long tc, long recursion);
+
+    /** {@code hegel_recursion_free}: safe at any point; each handle is freed exactly once. {@code 0} is a no-op. */
+    void recursionFree(long recursion);
+
     int target(long tc, double value, String label);
+
+    /** {@code hegel_event}: record {@code label} for the end-of-run statistics report. */
+    int event(long tc, String label);
+
+    /** {@code hegel_event_value}: record a finite numeric observation under {@code label}. */
+    int eventValue(long tc, double value, String label);
 
     int markComplete(long tc, int status, String origin);
 

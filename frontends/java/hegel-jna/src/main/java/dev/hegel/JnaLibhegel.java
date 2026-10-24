@@ -71,6 +71,10 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_settings_get_verbosity(Pointer ctx, Pointer s, IntByReference out);
 
+        int hegel_settings_get_phases(Pointer ctx, Pointer s, IntByReference out);
+
+        int hegel_settings_get_report_multiple_failures(Pointer ctx, Pointer s, ByteByReference out);
+
         int hegel_settings_set_stop_on_first_failure(Pointer ctx, Pointer s, byte yes);
 
         int hegel_settings_set_show_statistics(Pointer ctx, Pointer s, byte yes);
@@ -189,6 +193,17 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_generate_integer(Pointer ctx, Pointer tc, long min, long max, LongByReference out);
 
+        int hegel_generate_integer_big(
+                Pointer ctx,
+                Pointer tc,
+                Pointer min,
+                long minLen,
+                Pointer max,
+                long maxLen,
+                Pointer out,
+                long outCap,
+                LongByReference outLen);
+
         int hegel_generate_float(
                 Pointer ctx,
                 Pointer tc,
@@ -267,7 +282,21 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_pool_generate(Pointer ctx, Pointer tc, long poolId, byte consume, LongByReference out);
 
+        int hegel_pool_restore(Pointer ctx, Pointer tc, long poolId, long variableId);
+
         int hegel_pool_free(Pointer ctx, long poolId);
+
+        int hegel_new_recursion(Pointer ctx, Pointer tc, long maxDepth, long maxLeaves, LongByReference out);
+
+        int hegel_recursion_branch(Pointer ctx, Pointer tc, long recursion, long depth, ByteByReference out);
+
+        int hegel_recursion_leaf(Pointer ctx, Pointer tc, long recursion);
+
+        int hegel_recursion_retry(Pointer ctx, Pointer tc, long recursion);
+
+        int hegel_recursion_finish(Pointer ctx, Pointer tc, long recursion);
+
+        int hegel_recursion_free(Pointer ctx, long recursion);
 
         // State-machine handles cross as raw addresses (long), like every other opaque handle; the
         // name lists are contiguous hegel_string_t arrays (see strArray).
@@ -300,6 +329,10 @@ final class JnaLibhegel implements Libhegel {
         int hegel_state_machine_free(Pointer ctx, long stateMachineId);
 
         int hegel_target(Pointer ctx, Pointer tc, double value, HegelString.ByValue label);
+
+        int hegel_event(Pointer ctx, Pointer tc, HegelString.ByValue label);
+
+        int hegel_event_value(Pointer ctx, Pointer tc, double value, HegelString.ByValue label);
 
         int hegel_mark_complete(Pointer ctx, Pointer tc, int status, HegelString origin);
 
@@ -621,6 +654,22 @@ final class JnaLibhegel implements Libhegel {
     }
 
     @Override
+    public int settingsGetPhases(long s) {
+        IntByReference out = new IntByReference();
+        check("hegel_settings_get_phases", lib.hegel_settings_get_phases(ctx(), pointer(s), out));
+        return out.getValue();
+    }
+
+    @Override
+    public boolean settingsGetReportMultipleFailures(long s) {
+        ByteByReference out = new ByteByReference();
+        check(
+                "hegel_settings_get_report_multiple_failures",
+                lib.hegel_settings_get_report_multiple_failures(ctx(), pointer(s), out));
+        return out.getValue() != 0;
+    }
+
+    @Override
     public void settingsStopOnFirstFailure(long s, boolean yes) {
         check(
                 "hegel_settings_set_stop_on_first_failure",
@@ -893,6 +942,26 @@ final class JnaLibhegel implements Libhegel {
             out[0] = ref.getValue();
         }
         return code;
+    }
+
+    @Override
+    public int generateIntegerBig(long tc, byte[] min, byte[] max, byte[][] out) {
+        int cap = Math.max(min.length, max.length);
+        Memory value = new Memory(Math.max(cap, 1));
+        LongByReference len = new LongByReference();
+        int code = lib.hegel_generate_integer_big(
+                ctx(), pointer(tc), bytes(min), min.length, bytes(max), max.length, value, cap, len);
+        if (code == Abi.OK) {
+            out[0] = value.getByteArray(0, (int) len.getValue());
+        }
+        return code;
+    }
+
+    /** A native copy of {@code data}, at least one byte long so it is never NULL. */
+    private static Memory bytes(byte[] data) {
+        Memory m = new Memory(Math.max(data.length, 1));
+        m.write(0, data, 0, data.length);
+        return m;
     }
 
     @Override
@@ -1197,8 +1266,51 @@ final class JnaLibhegel implements Libhegel {
     }
 
     @Override
+    public int poolRestore(long tc, long poolId, long variableId) {
+        return lib.hegel_pool_restore(ctx(), pointer(tc), poolId, variableId);
+    }
+
+    @Override
     public void poolFree(long poolId) {
         check("hegel_pool_free", lib.hegel_pool_free(ctx(), poolId));
+    }
+
+    @Override
+    public int newRecursion(long tc, long maxDepth, long maxLeaves, long[] out) {
+        LongByReference ref = new LongByReference();
+        int code = lib.hegel_new_recursion(ctx(), pointer(tc), maxDepth, maxLeaves, ref);
+        out[0] = ref.getValue();
+        return code;
+    }
+
+    @Override
+    public int recursionBranch(long tc, long recursion, long depth, boolean[] outBranch) {
+        ByteByReference ref = new ByteByReference();
+        int code = lib.hegel_recursion_branch(ctx(), pointer(tc), recursion, depth, ref);
+        if (code == Abi.OK) {
+            outBranch[0] = ref.getValue() != 0;
+        }
+        return code;
+    }
+
+    @Override
+    public int recursionLeaf(long tc, long recursion) {
+        return lib.hegel_recursion_leaf(ctx(), pointer(tc), recursion);
+    }
+
+    @Override
+    public int recursionRetry(long tc, long recursion) {
+        return lib.hegel_recursion_retry(ctx(), pointer(tc), recursion);
+    }
+
+    @Override
+    public int recursionFinish(long tc, long recursion) {
+        return lib.hegel_recursion_finish(ctx(), pointer(tc), recursion);
+    }
+
+    @Override
+    public void recursionFree(long recursion) {
+        check("hegel_recursion_free", lib.hegel_recursion_free(ctx(), recursion));
     }
 
     @Override
@@ -1298,6 +1410,16 @@ final class JnaLibhegel implements Libhegel {
     @Override
     public int target(long tc, double value, String label) {
         return lib.hegel_target(ctx(), pointer(tc), value, str(label));
+    }
+
+    @Override
+    public int event(long tc, String label) {
+        return lib.hegel_event(ctx(), pointer(tc), str(label));
+    }
+
+    @Override
+    public int eventValue(long tc, double value, String label) {
+        return lib.hegel_event_value(ctx(), pointer(tc), value, str(label));
     }
 
     @Override

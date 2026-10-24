@@ -2,6 +2,8 @@ package dev.hegel;
 
 import static dev.hegel.Generators.integers;
 import static dev.hegel.Generators.lists;
+import static dev.hegel.Generators.maps;
+import static dev.hegel.Generators.sets;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -128,6 +130,18 @@ class HandleLeakTest {
     void listsFreeTheirCollections() {
         Tracker tracker = new Tracker(Engine.get());
         assertTrue(tracker.run(tc -> tc.draw(lists(lists(integers())))).passed());
+        assertTrue(tracker.collectionsCreated > 0);
+        tracker.assertNothingLeaked();
+    }
+
+    @Test
+    void setsAndMapsFreeTheirCollections() {
+        Tracker tracker = new Tracker(Engine.get());
+        assertTrue(tracker.run(tc -> {
+                    tc.draw(sets(integers().min(0).max(5)));
+                    tc.draw(maps(integers().min(0).max(5), integers()));
+                })
+                .passed());
         assertTrue(tracker.collectionsCreated > 0);
         tracker.assertNothingLeaked();
     }
