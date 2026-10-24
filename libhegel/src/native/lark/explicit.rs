@@ -99,13 +99,13 @@ impl ExplicitDraw {
                 }
                 Stage::Splicing(mut splice) => {
                     let rest = &splice.drawn[splice.at..];
-                    let found = self
-                        .spec
-                        .placeholders()
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, (_, marker))| rest.find(marker.as_str()).map(|at| (at, i)))
-                        .min();
+                    let markers = self.spec.placeholders();
+                    let found = rest.char_indices().find_map(|(at, _)| {
+                        markers
+                            .iter()
+                            .position(|(_, marker)| rest[at..].starts_with(marker.as_str()))
+                            .map(|i| (at, i))
+                    });
                     if let Some((at, i)) = found {
                         let before = &rest[..at];
                         splice.own += before.chars().count() as u64;
