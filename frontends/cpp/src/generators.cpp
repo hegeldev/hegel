@@ -26,14 +26,15 @@ namespace hegel::generators {
 
     namespace {
 
-        // Engine default when the caller sets no max_size, mirroring the
-        // native generators' sizing.
-        uint64_t default_max_size(size_t min_size,
-                                  const std::optional<size_t>& max_size) {
-            if (max_size) {
-                return *max_size;
+        // The max_size to give the engine: HEGEL_MAX_SIZE_DEFAULT for its
+        // default when the caller sets none. A maximum at or above that
+        // value is no bound at all, so it goes as UINT64_MAX.
+        uint64_t engine_max_size(const std::optional<size_t>& max_size) {
+            if (!max_size) {
+                return HEGEL_MAX_SIZE_DEFAULT;
             }
-            return std::max<uint64_t>(min_size, 100);
+            uint64_t value = *max_size;
+            return value >= HEGEL_MAX_SIZE_DEFAULT ? UINT64_MAX : value;
         }
 
         /// Returns true if any individual character filtering param is set.
@@ -87,8 +88,7 @@ namespace hegel::generators {
         hegel_string_generator_t* build_text_handle(const TextParams& params) {
             impl::TextGeneratorParams cparams;
             cparams.min_size = params.min_size;
-            cparams.max_size =
-                default_max_size(params.min_size, params.max_size);
+            cparams.max_size = engine_max_size(params.max_size);
 
             // alphabet is sugar for "no categories, exactly these
             // characters".
@@ -164,8 +164,7 @@ namespace hegel::generators {
           public:
             explicit BinaryGenerator(const BinaryParams& params)
                 : min_size_(params.min_size),
-                  max_size_(
-                      default_max_size(params.min_size, params.max_size)) {
+                  max_size_(engine_max_size(params.max_size)) {
                 if (params.max_size && params.min_size > *params.max_size) {
                     throw std::invalid_argument(
                         "Cannot have max_size < min_size");

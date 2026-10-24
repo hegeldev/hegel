@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <regex>
 #include <stdexcept>
 #include <string>
@@ -157,6 +158,37 @@ TEST(Formats, UuidVersionForced) {
 TEST(Formats, UuidInvalidVersionThrows) {
     EXPECT_THROW(gs::uuids({.version = 0}), std::invalid_argument);
     EXPECT_THROW(gs::uuids({.version = 6}), std::invalid_argument);
+}
+
+// With no max_size the engine applies its default maximum: min_size + 100
+// once min_size is above 100.
+TEST(Formats, DefaultMaxSizeComesFromEngine) {
+    hegel::test(
+        [](hegel::TestCase& tc) {
+            std::string s = tc.draw(gs::text({.min_size = 150}));
+            auto bytes = tc.draw(gs::binary({.min_size = 150}));
+            size_t chars = 0;
+            for (char c : s) {
+                chars += (static_cast<unsigned char>(c) & 0xC0) != 0x80;
+            }
+            EXPECT_GE(chars, 150u);
+            EXPECT_LE(chars, 250u);
+            EXPECT_LE(bytes.size(), 250u);
+            EXPECT_GE(bytes.size(), 150u);
+        },
+        hegel::Settings{.test_cases = 50,
+                        .database = hegel::Database::disabled()});
+}
+
+// A max_size too large for any allocation is no bound at all.
+TEST(Formats, HugeMaxSizeIsUnbounded) {
+    hegel::test(
+        [](hegel::TestCase& tc) {
+            (void)tc.draw(gs::text({.max_size = SIZE_MAX}));
+            (void)tc.draw(gs::binary({.max_size = SIZE_MAX - 1}));
+        },
+        hegel::Settings{.test_cases = 20,
+                        .database = hegel::Database::disabled()});
 }
 
 TEST(Validation, TextMaxSizeLessThanMinSize) {

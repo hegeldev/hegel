@@ -112,7 +112,9 @@ namespace hegel::internal {
                       bool exclude_min, bool exclude_max,
                       double smallest_nonzero_magnitude);
 
-    // How many values a filter() draws before it rejects the test case.
+    // How many values a filter() draws before it rejects the test case:
+    // the engine's HEGEL_FILTER_ATTEMPTS, which src/engine.cpp checks it
+    // against.
     inline constexpr int filter_attempts = 3;
 
     inline constexpr uint64_t no_max_size = ~uint64_t{0};

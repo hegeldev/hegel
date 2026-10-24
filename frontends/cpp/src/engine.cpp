@@ -766,6 +766,7 @@ namespace hegel::internal {
     namespace {
 
         static_assert(state_machine_done == HEGEL_STATE_MACHINE_DONE);
+        static_assert(filter_attempts == HEGEL_FILTER_ATTEMPTS);
 
         // The name each LabelName derives its engine label from, in
         // enumerator order.
