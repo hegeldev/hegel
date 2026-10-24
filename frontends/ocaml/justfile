@@ -134,7 +134,11 @@ check-opam:
     git diff --exit-code -- '*.opam'
     opam lint ./*.opam
 
-check-lint: check-format check-opam
+# The #define constants lib/ffi/ffi.ml.in copies must match libhegel/include/hegel.h.
+check-ffi-constants:
+    python3 scripts/check-ffi-constants.py
+
+check-lint: check-format check-opam check-ffi-constants
 
 check-docs:
     #!/usr/bin/env bash
