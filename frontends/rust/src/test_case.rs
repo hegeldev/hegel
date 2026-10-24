@@ -1078,8 +1078,8 @@ impl TestCase {
     }
 
     /// Draw a byte string with length in `[min_size, max_size]`.
-    pub(crate) fn generate_bytes(&self, min_size: usize, max_size: usize) -> Vec<u8> {
-        self.draw_or_raise(|ctc| ctc.generate_bytes(min_size as u64, max_size as u64))
+    pub(crate) fn generate_bytes(&self, min_size: u64, max_size: u64) -> Vec<u8> {
+        self.draw_or_raise(|ctc| ctc.generate_bytes(min_size, max_size))
     }
 
     /// Draw a string described by a prebuilt libhegel string generator.

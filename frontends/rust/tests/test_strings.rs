@@ -1640,3 +1640,26 @@ mod regex_shrinking {
         );
     }
 }
+
+#[test]
+fn test_text_default_max_size_is_the_engines() {
+    assert_all_examples(gs::text(), |s: &String| s.chars().count() <= 100);
+    assert_all_examples(gs::text().min_size(150), |s: &String| {
+        (150..=250).contains(&s.chars().count())
+    });
+}
+
+#[test]
+fn test_binary_default_max_size_is_the_engines() {
+    assert_all_examples(gs::binary(), |b: &Vec<u8>| b.len() <= 100);
+    assert_all_examples(gs::binary().min_size(150), |b: &Vec<u8>| {
+        (150..=250).contains(&b.len())
+    });
+}
+
+#[test]
+fn test_huge_max_size_is_unbounded() {
+    assert_all_examples(gs::text().max_size(usize::MAX), |_: &String| true);
+    assert_all_examples(gs::binary().max_size(usize::MAX), |_: &Vec<u8>| true);
+    assert_all_examples(gs::text().max_size(usize::MAX - 1), |_: &String| true);
+}

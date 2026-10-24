@@ -11,8 +11,9 @@ static FILTER_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.fil
 pub(crate) static FILTER_ATTEMPT_LABEL: LazyLock<u64> =
     LazyLock::new(|| label_from_name("hegel.filter.attempt"));
 
-/// How many values a filtered draw tries before rejecting the test case.
-pub(crate) const FILTER_ATTEMPTS: usize = 3;
+/// How many values a filtered draw tries before rejecting the test case:
+/// the engine's `HEGEL_FILTER_ATTEMPTS`.
+pub(crate) const FILTER_ATTEMPTS: u32 = crate::ffi::sys::HEGEL_FILTER_ATTEMPTS;
 
 /// The core trait for all generators.
 ///
@@ -36,7 +37,8 @@ pub trait Generator<T> {
     /// Produce a value that `predicate` accepts: the draw behind
     /// [`filter`](Self::filter), which calls this on its source generator.
     ///
-    /// The default makes up to three attempts, each a draw of
+    /// The default makes up to three attempts (the engine's
+    /// `HEGEL_FILTER_ATTEMPTS`), each a draw of
     /// this generator inside a span of its own, closed as discarded when the
     /// predicate rejects the value so the shrinker can remove it, and
     /// rejects the test case (as if by `assume(false)`) when every attempt

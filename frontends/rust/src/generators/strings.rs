@@ -12,9 +12,6 @@ use crate::test_case::{full_ranges, invalid_argument};
 /// surrogates, so these are forbidden in `categories()`.
 const SURROGATE_CATEGORIES: &[&str] = &["Cs", "C"];
 
-/// Default upper bound for string/byte sizes when the caller doesn't set one.
-const DEFAULT_MAX_SIZE: usize = 100;
-
 /// Codec names accepted by [`TextGenerator::codec`] and
 /// [`CharactersGenerator::codec`], mirroring the engine's supported set.
 const SUPPORTED_CODECS: &[&str] = &["ascii", "latin-1", "iso-8859-1", "utf-8"];
@@ -109,7 +106,9 @@ impl TextGenerator {
         self
     }
 
-    /// Set the maximum length in characters.
+    /// Set the maximum length in characters. Without one, the engine's
+    /// default applies: 100, or `min_size + 100` when `min_size` is above
+    /// 100.
     pub fn max_size(mut self, max_size: usize) -> Self {
         self.handle = OnceLock::new();
         self.max_size = Some(max_size);
@@ -223,16 +222,21 @@ impl TextGenerator {
                     invalid_argument!("Cannot have max_size < min_size");
                 }
             }
-            let max_size = self
-                .max_size
-                .unwrap_or(if self.min_size > DEFAULT_MAX_SIZE {
-                    self.min_size + DEFAULT_MAX_SIZE
-                } else {
-                    DEFAULT_MAX_SIZE
-                });
             self.char_fields
-                .build_text_handle(self.min_size as u64, max_size as u64)
+                .build_text_handle(self.min_size as u64, engine_max_size(self.max_size))
         })
+    }
+}
+
+/// The `max_size` to give the engine for a text or binary generator: the
+/// user's maximum, or `HEGEL_MAX_SIZE_DEFAULT` for the engine's default
+/// when there is none. A maximum at or above the reserved sentinel is
+/// beyond any allocation, so it goes as `u64::MAX`, no upper bound.
+fn engine_max_size(max_size: Option<usize>) -> u64 {
+    match max_size {
+        None => hegel_c::HEGEL_MAX_SIZE_DEFAULT,
+        Some(max) if max as u64 >= hegel_c::HEGEL_MAX_SIZE_DEFAULT => u64::MAX,
+        Some(max) => max as u64,
     }
 }
 
@@ -465,7 +469,8 @@ impl BinaryGenerator {
         self
     }
 
-    /// Set the maximum length in bytes.
+    /// Set the maximum length in bytes. Without one, the engine's default
+    /// applies: 100, or `min_size + 100` when `min_size` is above 100.
     pub fn max_size(mut self, max_size: usize) -> Self {
         self.max_size = Some(max_size);
         self
@@ -485,14 +490,7 @@ impl Generator<Vec<u8>> for BinaryGenerator {
                 invalid_argument!("Cannot have max_size < min_size");
             }
         }
-        let max_size = self
-            .max_size
-            .unwrap_or(if self.min_size > DEFAULT_MAX_SIZE {
-                self.min_size + DEFAULT_MAX_SIZE
-            } else {
-                DEFAULT_MAX_SIZE
-            });
-        tc.generate_bytes(self.min_size, max_size)
+        tc.generate_bytes(self.min_size as u64, engine_max_size(self.max_size))
     }
 }
 
