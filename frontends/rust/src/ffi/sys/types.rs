@@ -31,6 +31,7 @@ opaque_handles!(
     HegelFailure,
     HegelGrammar,
     HegelGrammarBuilder,
+    HegelGrammarDraw,
     HegelPool,
     HegelPrinter,
     HegelPrinterOptions,
