@@ -17,13 +17,10 @@ final class Sizes {
     }
 
     /**
-     * The effective maximum for a length-bounded draw: the explicit {@code maxSize} when one was
-     * set, otherwise {@code defaultMax} (shifted up when {@code minSize} exceeds it).
+     * The {@code max_size} to send for a text or bytes draw: the explicit {@code maxSize} when one
+     * was set, otherwise {@link Abi#MAX_SIZE_DEFAULT}, for the engine to apply its default.
      */
-    static long resolveMax(long minSize, long maxSize, long defaultMax) {
-        if (maxSize != Abi.UNBOUNDED) {
-            return maxSize;
-        }
-        return minSize > defaultMax ? minSize + defaultMax : defaultMax;
+    static long engineMax(long maxSize) {
+        return maxSize == Abi.UNBOUNDED ? Abi.MAX_SIZE_DEFAULT : maxSize;
     }
 }

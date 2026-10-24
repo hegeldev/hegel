@@ -14,17 +14,14 @@ import java.util.List;
  * strings round-trip cleanly through Java; request specific categories to override the default
  * exclusion.
  *
- * <p>Lengths default to {@code [0, 100]} characters (or {@code [minSize, minSize + 100]} for a
- * larger minimum); set an explicit {@link #maxSize(int)} for longer strings.
+ * <p>Without an explicit {@link #maxSize(int)}, the engine picks the maximum length: 100
+ * characters, or {@code minSize + 100} for a minimum above 100. Set one for longer strings.
  *
  * <p>Characters come either from a fixed {@link #alphabet(String) alphabet} or from the
  * restrictions the other methods set ({@link #codec(String) codec}, {@link #codepoints(int, int)
  * codepoints}, {@link #categories(String...) categories} and so on); the two cannot be combined.
  */
 public final class TextGenerator implements Generator<String> {
-    /** The default length cap when no explicit {@code maxSize} is set. */
-    static final long DEFAULT_MAX_SIZE = 100;
-
     /** The codecs {@link #codec(String)} accepts, as the engine names them. */
     private static final List<String> CODECS = List.of("ascii", "latin-1", "iso-8859-1", "utf-8");
 
@@ -309,7 +306,7 @@ public final class TextGenerator implements Generator<String> {
     @Override
     public String doDraw(TestCase tc) {
         return tc.generateString(
-                cache.get(tc, t -> buildHandle(t, minSize, Sizes.resolveMax(minSize, maxSize, DEFAULT_MAX_SIZE))));
+                cache.get(tc, t -> buildHandle(t, minSize, Sizes.engineMax(maxSize))));
     }
 
     /** A handle over this generator's characters alone, as a regex's alphabet. */

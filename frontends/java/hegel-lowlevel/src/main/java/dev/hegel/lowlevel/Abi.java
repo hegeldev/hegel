@@ -77,5 +77,17 @@ public final class Abi {
     // Sentinel written by hegel_state_machine_next_group / hegel_state_machine_next_rule (INT64_MIN).
     public static final long STATE_MACHINE_DONE = Long.MIN_VALUE;
     public static final long UNBOUNDED = -1L; // 0xFFFFFFFFFFFFFFFF as a Java long
+
+    /**
+     * {@code HEGEL_MAX_SIZE_DEFAULT} ({@code UINT64_MAX - 1} as a Java long): the {@code max_size}
+     * of a text or bytes draw whose user gave no maximum, for the engine to apply its default.
+     */
+    public static final long MAX_SIZE_DEFAULT = -2L;
+
+    /**
+     * {@code HEGEL_FILTER_ATTEMPTS}: how many values a filtered draw tries before rejecting the
+     * test case.
+     */
+    public static final int FILTER_ATTEMPTS = 3;
     public static final long NO_MAX_CODEPOINT = 0xFFFFFFFFL;
 }

@@ -4,6 +4,7 @@ import dev.hegel.AssumeRejected;
 import dev.hegel.Generator;
 import dev.hegel.Label;
 import dev.hegel.TestCase;
+import dev.hegel.lowlevel.Abi;
 import java.util.function.Predicate;
 
 /**
@@ -14,8 +15,11 @@ import java.util.function.Predicate;
  * @param <T> the value type
  */
 public final class FilteredGenerator<T> implements Generator<T> {
-    /** How many values a filtered draw tries before rejecting the test case. */
-    public static final int ATTEMPTS = 3;
+    /**
+     * How many values a filtered draw tries before rejecting the test case: the engine's {@code
+     * HEGEL_FILTER_ATTEMPTS}, shared by every Hegel frontend.
+     */
+    public static final int ATTEMPTS = Abi.FILTER_ATTEMPTS;
 
     private final Generator<T> source;
     private final Predicate<? super T> predicate;
