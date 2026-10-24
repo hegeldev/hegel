@@ -124,6 +124,15 @@
 #include <stdbool.h>
 
 /*
+ How many times a filtered generator draws a value and tests it before
+ rejecting the test case: draw inside a span, close the span discarded
+ when the predicate fails, and after this many failures in a row reject
+ the test case as a failed assumption does. Every frontend's `filter`
+ uses this number, so a filter rejects equally often in every language.
+ */
+#define HEGEL_FILTER_ATTEMPTS 3
+
+/*
  Value written to `*out_rule_index` by `hegel_state_machine_next_rule`
  when the calling worker's round budget is exhausted (stop running rules
  and wait for the next group / join point), and to `*out_group_id` by
@@ -131,6 +140,14 @@
  (run no further rounds).
  */
 #define HEGEL_STATE_MACHINE_DONE INT64_MIN
+
+/*
+ Pass as the `max_size` of `hegel_string_generator_text` or
+ `hegel_generate_bytes` when the user gave no maximum, for libhegel to
+ apply its default: 100, or `min_size + 100` when `min_size` is above
+ 100. Distinct from `UINT64_MAX`, which means no upper bound.
+ */
+#define HEGEL_MAX_SIZE_DEFAULT (UINT64_MAX - 1)
 
 /*
  Result of a libhegel call. See "Calling convention" in the header
@@ -1666,8 +1683,9 @@ hegel_result_t hegel_start_span(hegel_context_t *ctx, hegel_test_case_t *tc, uin
 /*
  Parameters:
  `discard`: Pass `true` to mark the span rejected (e.g. a `filter`
-   predicate didn't hold) so libhegel retries from before the span
-   opened.
+   predicate didn't hold, and the caller is about to draw again), so
+   the shrinker knows its draws did not contribute to the value and can
+   delete them.
 
  Returns `HEGEL_OK`.
 
@@ -2260,7 +2278,9 @@ hegel_result_t hegel_generate_float(hegel_context_t *ctx,
 
 /*
  Parameters:
- `min_size` / `max_size`: Inclusive length bounds.
+ `min_size` / `max_size`: Inclusive length bounds. Pass
+   `HEGEL_MAX_SIZE_DEFAULT` as `max_size` for the default maximum, or
+   `UINT64_MAX` for no upper bound.
  `out_result`: Receives a libhegel-allocated
    `{uint8_t *data; size_t len;}` the caller owns. `data` is never NULL
    after a successful draw. Release with
@@ -2288,7 +2308,9 @@ hegel_result_t hegel_generate_bytes_result_free(hegel_context_t *ctx,
 
 /*
  Parameters:
- `min_size` / `max_size`: Inclusive length bounds, in characters.
+ `min_size` / `max_size`: Inclusive length bounds, in characters. Pass
+   `HEGEL_MAX_SIZE_DEFAULT` as `max_size` for the default maximum, or
+   `UINT64_MAX` for no upper bound.
  `codec`: The alphabet's starting range: `"ascii"`, `"latin-1"` /
    `"iso-8859-1"`, or `"utf-8"` / NULL for Unicode.
  `min_codepoint` / `max_codepoint`: Intersected with the codec's range.

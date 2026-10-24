@@ -15,10 +15,11 @@ use common::{last_error, make_settings_no_db, next_case, ok, start};
 use hegel_c::hegel_result_t::*;
 use hegel_c::hegel_string_t;
 use hegel_c::{
-    HegelContext, HegelGrammar, HegelGrammarBuilder, HegelRun, HegelStringGenerator, HegelTestCase,
-    hegel_context_free, hegel_context_new, hegel_generate_boolean, hegel_generate_bytes,
-    hegel_generate_bytes_result_free, hegel_generate_bytes_result_t, hegel_generate_date,
-    hegel_generate_datetime, hegel_generate_float, hegel_generate_grammar, hegel_generate_integer,
+    HEGEL_MAX_SIZE_DEFAULT, HegelContext, HegelGrammar, HegelGrammarBuilder, HegelRun,
+    HegelStringGenerator, HegelTestCase, hegel_context_free, hegel_context_new,
+    hegel_generate_boolean, hegel_generate_bytes, hegel_generate_bytes_result_free,
+    hegel_generate_bytes_result_t, hegel_generate_date, hegel_generate_datetime,
+    hegel_generate_float, hegel_generate_grammar, hegel_generate_integer,
     hegel_generate_integer_big, hegel_generate_ipv4, hegel_generate_ipv6, hegel_generate_string,
     hegel_generate_time, hegel_generate_uuid, hegel_grammar_builder_file,
     hegel_grammar_builder_free, hegel_grammar_builder_new, hegel_grammar_builder_provide,
@@ -744,6 +745,55 @@ fn bytes_draws_transfer_ownership_and_validate_arguments() {
 
         complete_valid(ctx, tc);
         drain(ctx, run);
+        ok(hegel_run_free(ctx, run));
+        ok(hegel_settings_free(ctx, s));
+    }
+    unsafe { ok(hegel_context_free(ctx)) };
+}
+
+#[test]
+fn text_and_bytes_apply_the_default_max_size() {
+    let ctx = hegel_context_new();
+    unsafe {
+        let s = make_settings_no_db(ctx);
+        ok(hegel_settings_set_test_cases(ctx, s, 50));
+        let run = start(ctx, s);
+        let unbounded_min = text_generator(ctx, 0, HEGEL_MAX_SIZE_DEFAULT);
+        let large_min = text_generator(ctx, 150, HEGEL_MAX_SIZE_DEFAULT);
+        let mut result = hegel_generate_bytes_result_t {
+            data: ptr::null_mut(),
+            len: 0,
+        };
+        loop {
+            let tc = next_case(ctx, run);
+            if tc.is_null() {
+                break;
+            }
+            assert!(draw_string(ctx, tc, unbounded_min).chars().count() <= 100);
+            let n = draw_string(ctx, tc, large_min).chars().count();
+            assert!((150..=250).contains(&n));
+            ok(hegel_generate_bytes(
+                ctx,
+                tc,
+                0,
+                HEGEL_MAX_SIZE_DEFAULT,
+                &mut result,
+            ));
+            assert!(result.len <= 100);
+            ok(hegel_generate_bytes_result_free(ctx, &mut result));
+            ok(hegel_generate_bytes(
+                ctx,
+                tc,
+                1000,
+                HEGEL_MAX_SIZE_DEFAULT,
+                &mut result,
+            ));
+            assert!((1000..=1100).contains(&result.len));
+            ok(hegel_generate_bytes_result_free(ctx, &mut result));
+            complete_valid(ctx, tc);
+        }
+        ok(hegel_string_generator_free(ctx, unbounded_min));
+        ok(hegel_string_generator_free(ctx, large_min));
         ok(hegel_run_free(ctx, run));
         ok(hegel_settings_free(ctx, s));
     }

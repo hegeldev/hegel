@@ -3072,6 +3072,13 @@ unsafe fn typed_draw<T>(
     }
 }
 
+/// How many times a filtered generator draws a value and tests it before
+/// rejecting the test case: draw inside a span, close the span discarded
+/// when the predicate fails, and after this many failures in a row reject
+/// the test case as a failed assumption does. Every frontend's `filter`
+/// uses this number, so a filter rejects equally often in every language.
+pub const HEGEL_FILTER_ATTEMPTS: u32 = 3;
+
 /// A span groups a set of draws so the shrinker can treat them as a unit.
 /// Libraries should wrap each compound generator in a span.
 ///
@@ -3110,8 +3117,9 @@ pub unsafe extern "C" fn hegel_start_span(
 
 /// Parameters:
 /// `discard`: Pass `true` to mark the span rejected (e.g. a `filter`
-///   predicate didn't hold) so libhegel retries from before the span
-///   opened.
+///   predicate didn't hold, and the caller is about to draw again), so
+///   the shrinker knows its draws did not contribute to the value and can
+///   delete them.
 ///
 /// Returns `HEGEL_OK`.
 ///
@@ -4640,7 +4648,9 @@ pub struct hegel_generate_bytes_result_t {
 }
 
 /// Parameters:
-/// `min_size` / `max_size`: Inclusive length bounds.
+/// `min_size` / `max_size`: Inclusive length bounds. Pass
+///   `HEGEL_MAX_SIZE_DEFAULT` as `max_size` for the default maximum, or
+///   `UINT64_MAX` for no upper bound.
 /// `out_result`: Receives a libhegel-allocated
 ///   `{uint8_t *data; size_t len;}` the caller owns. `data` is never NULL
 ///   after a successful draw. Release with
@@ -4662,8 +4672,8 @@ pub unsafe extern "C" fn hegel_generate_bytes(
             "hegel_generate_bytes",
             out_result.is_null(),
             |tc| {
-                tc.stream
-                    .generate_bytes(size_arg(min_size), size_arg(max_size))
+                let (min_size, max_size) = sized_bounds(min_size, max_size);
+                tc.stream.generate_bytes(min_size, max_size)
             },
             |v| {
                 let boxed = v.into_boxed_slice();
@@ -4736,6 +4746,24 @@ fn size_arg(v: u64) -> usize {
     usize::try_from(v).unwrap_or(usize::MAX)
 }
 
+/// Pass as the `max_size` of `hegel_string_generator_text` or
+/// `hegel_generate_bytes` when the user gave no maximum, for libhegel to
+/// apply its default: 100, or `min_size + 100` when `min_size` is above
+/// 100. Distinct from `UINT64_MAX`, which means no upper bound.
+pub const HEGEL_MAX_SIZE_DEFAULT: u64 = u64::MAX - 1;
+
+/// The `[min_size, max_size]` bounds of a text or bytes draw, with
+/// [`HEGEL_MAX_SIZE_DEFAULT`] resolved to the default maximum.
+fn sized_bounds(min_size: u64, max_size: u64) -> (usize, usize) {
+    let min_size = size_arg(min_size);
+    let max_size = if max_size == HEGEL_MAX_SIZE_DEFAULT {
+        crate::native::draws::default_max_size(min_size)
+    } else {
+        size_arg(max_size)
+    };
+    (min_size, max_size)
+}
+
 unsafe fn optional_utf8_arg(
     ctx: *mut HegelContext,
     fn_name: &str,
@@ -4796,7 +4824,9 @@ unsafe fn write_string_generator(
 }
 
 /// Parameters:
-/// `min_size` / `max_size`: Inclusive length bounds, in characters.
+/// `min_size` / `max_size`: Inclusive length bounds, in characters. Pass
+///   `HEGEL_MAX_SIZE_DEFAULT` as `max_size` for the default maximum, or
+///   `UINT64_MAX` for no upper bound.
 /// `codec`: The alphabet's starting range: `"ascii"`, `"latin-1"` /
 ///   `"iso-8859-1"`, or `"utf-8"` / NULL for Unicode.
 /// `min_codepoint` / `max_codepoint`: Intersected with the codec's range.
@@ -4881,8 +4911,8 @@ pub unsafe extern "C" fn hegel_string_generator_text(
         exclude_characters: Some(exclude_characters),
         unicode_version: UnicodeVersion::host(),
     };
-    match crate::native::draws::StringSpec::text(&alphabet, size_arg(min_size), size_arg(max_size))
-    {
+    let (min_size, max_size) = sized_bounds(min_size, max_size);
+    match crate::native::draws::StringSpec::text(&alphabet, min_size, max_size) {
         Ok(spec) => unsafe { write_string_generator(out_generator, spec) },
         Err(e) => translate_construct_error(ctx, e),
     }
