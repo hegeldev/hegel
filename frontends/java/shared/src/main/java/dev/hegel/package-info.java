@@ -85,10 +85,11 @@
  * <h2>Generators</h2>
  *
  * <p>{@link dev.hegel.Generators} provides a rich set of generators. Primitives include
- * {@code integers}, {@code longs}, {@code floats} (32-bit) and {@code doubles} (64-bit),
- * {@code booleans}, {@code text}, and {@code binary}; collections include {@code lists},
- * {@code sets}, and {@code maps}; and there are {@code tuples}, {@code oneOf}, {@code optional},
- * {@code sampledFrom}, {@code just}, {@code durations} ({@code java.time.Duration}), and the temporal
+ * {@code integers}, {@code longs}, {@code bigIntegers}, {@code floats} (32-bit) and {@code doubles}
+ * (64-bit), {@code booleans}, {@code text} (with an {@code alphabet} or a {@code codec}), and
+ * {@code binary}; collections include {@code lists} (optionally {@code unique}), {@code sets},
+ * {@code maps}, fixed-length {@code arrays} and {@code permutations}; and there are {@code tuples},
+ * {@code oneOf}, {@code optional}, {@code nulls}, {@code sampledFrom}, {@code just}, {@code durations} ({@code java.time.Duration}), and the temporal
  * generators {@code dates}, {@code times}, and {@code datetimes} (which produce
  * {@code java.time.LocalDate}/{@code LocalTime}/{@code LocalDateTime}), plus format generators
  * ({@code emails}, {@code urls}, {@code ipAddresses}, {@code uuids}, {@code fromRegex}, …).
@@ -146,8 +147,19 @@
  *
  * <h2>Recursive generators</h2>
  *
- * <p>{@link dev.hegel.Generators#deferred() deferred} creates a forward reference so a generator can
- * refer to itself, enabling self-recursive (and mutually recursive) data such as trees:
+ * <p>{@link dev.hegel.Generators#recursive(dev.hegel.Generator, java.util.function.Function)
+ * recursive} builds recursive data such as trees from a generator of leaves and a function that
+ * builds a branch from a generator of sub-values. The engine decides where the value branches,
+ * within {@code maxDepth} and {@code maxLeaves}, and shrinks a tree toward its subtrees:
+ *
+ * <pre>{@code
+ * Generator<Object> trees = Generators.recursive(
+ *     integers().map(n -> (Object) n),
+ *     children -> lists(children).maxSize(3).map(xs -> (Object) xs));
+ * }</pre>
+ *
+ * <p>For mutually recursive types, {@link dev.hegel.Generators#deferred() deferred} creates a
+ * forward reference so a generator can refer to itself or to one defined later:
  *
  * <pre>{@code
  * record Tree(Integer leaf, Tree left, Tree right) {} // leaf != null XOR children != null
@@ -160,7 +172,8 @@
  * Tree t = tc.draw(tree);
  * }</pre>
  *
- * <p>The engine's size control keeps generated structures finite. Drawing before
+ * <p>With {@code deferred} the engine's size control keeps generated structures finite. Drawing
+ * before
  * {@link dev.hegel.generators.Deferred#set set} is called fails.
  *
  * <h2>Control functions</h2>
@@ -169,11 +182,21 @@
  *
  * <ul>
  *   <li>{@link dev.hegel.TestCase#assume(boolean) assume} discards the current input if a
- *       precondition does not hold.
+ *       precondition does not hold, and {@link dev.hegel.TestCase#reject() reject} discards it
+ *       unconditionally.
  *   <li>{@link dev.hegel.TestCase#note(String) note} records a message shown only on the final
  *       replay of a failing case.
  *   <li>{@link dev.hegel.TestCase#target(double, String) target} reports a score so the search can
  *       hill-climb toward interesting inputs.
+ *   <li>{@link dev.hegel.TestCase#event(String) event} and {@link
+ *       dev.hegel.TestCase#eventValue(String, double) eventValue} record what a run saw, for the
+ *       statistics report {@code showStatistics} prints.
+ *   <li>{@link dev.hegel.TestCase#drawSilent(dev.hegel.Generator) drawSilent} draws a value without
+ *       printing it in the counterexample.
+ *   <li>{@link dev.hegel.TestCase#repeat(Runnable) repeat} runs a block until the engine decides the
+ *       test case is long enough, for tests that are logically infinite loops.
+ *   <li>{@link dev.hegel.TestCase#fork(int) fork} gives another thread its own handle on the test
+ *       case to draw from.
  *   <li>{@link dev.hegel.TestCase#isFinal() isFinal} tells whether this run of the body is the
  *       final replay of a minimal counterexample, where expensive diagnostics are worth doing.
  * </ul>
@@ -215,7 +238,9 @@
  * {@link dev.hegel.Settings#database(dev.hegel.Database) database}, {@code suppressHealthCheck},
  * {@code verbosity}, {@code reportMultipleFailures}, {@code stopOnFirstFailure}, {@code
  * showStatistics}, {@code unboundedChoices} and {@link dev.hegel.Settings#phases(dev.hegel.Phase...)
- * phases}, and a test can start from a named settings profile ({@link
+ * phases}, {@link dev.hegel.Settings#examples(dev.hegel.Example...) examples} (explicit {@link
+ * dev.hegel.Example}s that run before any generated input; {@code @HegelTest(examples = ...)} names
+ * methods that supply them), and a test can start from a named settings profile ({@link
  * dev.hegel.Settings#fromProfile(String)}, or {@code @HegelTest(profile = "...")}). Whatever a test
  * leaves unset is resolved by the engine from its settings profile — a {@code hegel.toml} in the
  * working directory or an ancestor, a profile registered with {@link

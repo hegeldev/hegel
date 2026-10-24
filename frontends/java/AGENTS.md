@@ -81,8 +81,8 @@ Multi-module Maven build (`dev.hegel:hegel-parent`, not itself useful to
 consumers):
 
 - `hegel-lowlevel/` — a normal Maven module, package `dev.hegel.lowlevel`: the
-  public `Libhegel` interface (one method per `hegel_*` function; raw `long`
-  handles and return codes), `Abi` constants, `LibhegelException`, the
+  public `Libhegel` interface (one method per bound `hegel_*` function; raw
+  `long` handles and return codes), `Abi` constants, `LibhegelException`, the
   `LibhegelBackend` SPI and `LibraryLoader`. Tests are fake-only
   (`LibraryLoaderTest`, `LibhegelLoadTest` with a `StubBackend` service
   provider on the test classpath); surefire sets `HEGEL_LIBHEGEL_PATH` to a
@@ -113,7 +113,8 @@ unsupported); the Maven CLI is authoritative.
 Data crosses the FFI boundary through libhegel's **typed draw functions**
 (`hegel_generate_integer`, `hegel_generate_float`, `hegel_generate_string`
 through opaque `hegel_string_generator_t` handles, structured
-date/time/datetime/uuid/ip draws, …). Every fallible call takes a per-thread
+date/time/datetime/uuid/ip draws, `hegel_generate_integer_big` for
+`BigInteger`s past `long`, …). Every fallible call takes a per-thread
 `hegel_context_t*` first argument and returns a `hegel_result_t`; results come
 back through out-parameters, and every handle is caller-owned and explicitly
 freed.
@@ -158,12 +159,21 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   `Label.combine` is `hegel_label_combine`, both through `Engine.real()` so a
   test's fake binding never changes them). The standard generators use the
   same `hegel.<kind>` names as the other frontends (`hegel.lists`,
-  `hegel.one_of`, ...); Java-only spans are `dev.hegel.<kind>`. The engine's `hegel_set_unicode_version` has no Java surface yet.
+  `hegel.one_of`, ...); Java-only spans are `dev.hegel.<kind>`. The engine's
+  `hegel_set_unicode_version` has no Java surface (Java reports no Unicode
+  version), and the grammar functions are not bound yet.
 - **Per-case primitives** — `DataSource` is the abstraction generators draw
   against; `LiveDataSource` wraps the engine, translating return codes
   (`StopTest` → OVERRUN, `AssumeRejected` → INVALID, `INVALID_ARG` →
   `IllegalArgumentException` with the engine's diagnostic, other negatives →
-  `HegelException`) and short-circuiting once a case is aborted.
+  `HegelException`) and short-circuiting once a case is aborted. `TestCase`
+  also carries `event`/`eventValue`, `reject`, `drawSilent` (a draw that is
+  neither printed nor recorded), `fork(worker)` (a `hegel_test_case_clone` +
+  `hegel_test_case_set_worker` handle sharing the case's name counter and
+  blocks, freed with them) and `repeat(body)` (a `hegel.collection` of silent
+  draws; each repetition is a block noted `// Repetition #N`; an `assume`
+  failure skips the repetition, and any other failure draws a silent boolean
+  before propagating, so the shrinker can tell repetitions apart).
 - **Output** — all of a case's output goes through the engine's per-case
   document: `TestCase.note` is `hegel_note`, and a top-level `draw` prints
   `name = value;` through the handle's `hegel_test_case_printer` inside a
@@ -264,9 +274,35 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   `hegel_string_generator_t` handle once per configuration and cache it
   (`HandleCache`, rebuilt if a test swaps the `Engine` binding);
   `StringGeneratorHandle` frees the engine allocation via a `Cleaner` when
-  unreachable. `Generators` is the factory facade.
+  unreachable. `Generators.recursive` (`RecursiveGenerator`) drives
+  `hegel_new_recursion`: the engine decides each node's `recursionBranch`,
+  and a leaf over budget (`recursionLeaf` → `E_RETRY`) unwinds the attempt
+  with `OverBudget` and retries it. The engine closes a retried attempt's
+  open spans itself, so `LiveDataSource` suppresses `stopSpan` while
+  unwinding; `recursionFinish` → `E_RETRY` redraws a mispriced value, and
+  `recursionRetry` → `E_ASSUME` rejects the case. A filtered consuming pool
+  draw (`PoolDraws.drawFiltered`) consumes one value per attempt and gives
+  every rejected one back with `hegel_pool_restore`. `Generators` is the
+  factory facade.
+- **Explicit examples** — `Settings.examples(Example...)` (or
+  `@HegelTest(examples = {"method"})`, naming methods that return an
+  `Example` or an `Iterable` of them) runs the body once per example before
+  the engine's run, when the resolved phases (`settingsGetPhases`) include
+  `EXPLICIT` and no blob is being replayed. The engine is not involved: the
+  `TestCase` draws from `ExplicitDraws` (a draw takes the value named for it,
+  else the next positional one) over an `ExplicitDraws.noEngine()` data
+  source that ignores `target`/events and rejects everything else as a
+  usage error, and prints into a standalone `hegel_printer_new` document.
+  Misfitting examples (a missing value, an unused one, a failed assumption)
+  are `IllegalArgumentException`s. Without `reportMultipleFailures`
+  (`settingsGetReportMultipleFailures`) the first failing example ends the
+  run; with it, every example runs, failures are deduplicated by origin, the
+  engine runs too, and its failures with an explicit failure's origin are
+  dropped. An explicit failure makes an otherwise PASSED or ERROR run FAILED
+  (an ERROR's message and kind stay on the report).
 - **Public API** — `Hegel.test`/`Hegel.run`, `TestCase`
-  (`draw`/`assume`/`note`/`target`/`isFinal`/`span`), `Label` (span labels;
+  (`draw`/`drawSilent`/`assume`/`reject`/`note`/`target`/`event`/`eventValue`/`fork`/`repeat`/`isFinal`/`span`),
+  `Example`, `Label` (span labels;
   `Label.of(name)` mints labels through the engine), `Reporter`, `RunReport`,
   `Settings.infrastructurePackages` (extra class-name prefixes skipped by
   `Runner.originOf`), the `@HegelTest` annotation + `HegelTestExtension` (a
