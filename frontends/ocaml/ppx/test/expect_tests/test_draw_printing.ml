@@ -1,0 +1,534 @@
+(** On the replay that reports a failing test, an outermost
+    [draw] prints its value through the [note] channel (stderr, captured here by
+    ppx_expect). [draw_silent] never prints, and draws nested inside a span
+    (depth > 0) are suppressed so only the outermost value shows. The printer is
+    carried on primitive generators; combinators that hand the output type to
+    user code ([map], [sampled_from]) carry none, and [with_printer] attaches
+    one (and is what [draw] requires). *)
+
+open! Core
+open Hegel
+open Generators
+
+(* ---- draw / draw_silent through the engine ---- *)
+
+(* Seeded run at normal verbosity; swallow the failure the property raises so the
+   expect block only sees what we printed. *)
+let run_failing
+      ?(settings =
+        { (Settings.create ~test_cases:20 ~seed:0 ()) with verbosity = Settings.Normal })
+      body
+  =
+  try Hegel.run_hegel_test ~settings body with
+  | _ -> ()
+;;
+
+let%expect_test "draw_silent returns the value and prints nothing" =
+  Hegel.run_hegel_test
+    ~settings:{ (Settings.create ~test_cases:1 ()) with verbosity = Settings.Normal }
+    (fun tc ->
+       let v = Hegel.draw_silent tc (integers ~min_value:3 ~max_value:3 ()) in
+       printf "got=%d" v);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect {| got=3 |}]
+;;
+
+let%expect_test "explicit draw locations print on final replay" =
+  run_failing (fun tc ->
+    let gen = integers ~min_value:7 ~max_value:7 () in
+    let _ = Hegel.draw ~label:"x" ~loc:[%here] tc gen in
+    let _ = Hegel.draw ~loc:[%here] tc gen in
+    assert false);
+  print_string (Expect_scrub.scrub_report ~hide_draw_positions:false [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    x @ ppx/test/expect_tests/test_draw_printing.ml:<LINE> = 7
+    draw_1 @ ppx/test/expect_tests/test_draw_printing.ml:<LINE> = 7
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "labeled draw without explicit location prints on final replay" =
+  run_failing (fun tc ->
+    let gen = integers ~min_value:7 ~max_value:7 () in
+    let _ = Hegel.draw ~label:"x" tc gen in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    x = 7
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "unlabeled draw is auto-named draw_N on final replay" =
+  run_failing (fun tc ->
+    let _ = Hegel.draw tc (integers ~min_value:123456 ~max_value:123456 ()) in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    draw_1 = 123456
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+(* Preserve draw positions here; general value-printing snapshots hide them. *)
+let%expect_test "draw positions preserve explicit overrides" =
+  let explicit = { ([%here]) with pos_fname = "helper.ml"; pos_lnum = 123 } in
+  run_failing (fun tc ->
+    let gen = integers ~min_value:7 ~max_value:7 () in
+    let _ = Hegel.draw ~label:"explicit" ~loc:explicit tc gen in
+    failwith "stop");
+  print_string (Expect_scrub.scrub_blobs [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    explicit @ helper.ml:123 = 7
+
+    Exception: Failure("stop")
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "successive unlabeled draws number draw_1, draw_2" =
+  run_failing (fun tc ->
+    let _ = Hegel.draw tc (integers ~min_value:1 ~max_value:1 ()) in
+    let _ = Hegel.draw tc (integers ~min_value:2 ~max_value:2 ()) in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    draw_1 = 1
+    draw_2 = 2
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "with_printer supplies the printer draw renders with" =
+  run_failing (fun tc ->
+    let _ =
+      Hegel.draw
+        ~label:"h"
+        tc
+        (with_printer
+           (fun n -> Sexp.Atom (sprintf "0x%x" n))
+           (integers ~min_value:255 ~max_value:255 ()))
+    in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    h = 0xff
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "with_printer makes an unprintable sampled_from drawable" =
+  run_failing (fun tc ->
+    let _ = Hegel.draw ~label:"c" tc (with_printer Int.sexp_of_t (sampled_from [ 9 ])) in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    c = 9
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "draw nested in a span (depth > 0) is suppressed" =
+  run_failing (fun tc ->
+    let _ =
+      Private.group Private.Labels.list tc (fun () ->
+        Hegel.draw ~label:"n" tc (integers ~min_value:7 ~max_value:7 ()))
+    in
+    Hegel.note tc "ran";
+    assert false);
+  (* Only the outermost draw should print; the nested one is suppressed. *)
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    ran
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "a tuple draw prints as one sexp" =
+  run_failing (fun tc ->
+    let _ =
+      Hegel.draw
+        ~label:"pair"
+        tc
+        (tuples2
+           (integers ~min_value:7 ~max_value:7 ())
+           (integers ~min_value:8 ~max_value:8 ()))
+    in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    pair = (7 8)
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "a list draw prints as one sexp" =
+  run_failing (fun tc ->
+    let _ =
+      Hegel.draw
+        ~label:"xs"
+        tc
+        (lists (integers ~min_value:7 ~max_value:7 ()) ~min_size:2 ~max_size:2 ())
+    in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    xs = (7 7)
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "a stateful rule's drawn arguments appear in its trace" =
+  let rule =
+    Stateful.Rule.create
+      ~name:"push"
+      ~step:(fun tc _state ->
+        let _ = Hegel.draw ~label:"n" tc (integers ~min_value:7 ~max_value:7 ()) in
+        assert false)
+      ()
+  in
+  let module M = struct
+    type state = unit
+
+    let rules = [ rule ]
+    let invariants = []
+  end
+  in
+  run_failing (fun tc -> Stateful.run tc (module M) ~init:());
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    Step 1: push
+      n = 7
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+module%hegel_state_machine Pusher = struct
+  let push tc () =
+    let _n = Hegel.draw tc (integers ~min_value:7 ~max_value:7 ()) in
+    ()
+  [@@rule]
+  ;;
+end
+
+let%hegel_test stateful_print tc =
+  let vars = Stateful.Pool.create tc in
+  Stateful.Pool.add vars tc 42;
+  let val_gen = with_printer sexp_of_int (Stateful.Pool.values_reusable vars) in
+  let _x = Hegel.draw tc val_gen in
+  Pusher.run tc ~init:() ~step_count:3
+[@@settings
+  { (Settings.create ~test_cases:1 ~seed:0 ()) with
+    verbosity = Settings.Verbose
+  ; phases = [ Settings.Generate ]
+  }]
+;;
+
+let%expect_test "verbose stateful tests print drawn values on passing runs" =
+  stateful_print ();
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    Starting phase: Generate
+    Running test case
+    _x = 42
+    Step 1: push
+      _n = 7
+    Step 2: push
+      _n = 7
+    Step 3: push
+      _n = 7
+    Ending phase: Generate
+    |}]
+;;
+
+type only = Only [@@deriving sexp_of, hegel_generator]
+type wrap = { tag : only } [@@deriving sexp_of, hegel_generator]
+type bare = Bare [@@deriving hegel_generator]
+
+let%expect_test "a derived value prints as one sexp via with_printer" =
+  run_failing (fun tc ->
+    let _ = Hegel.draw tc (with_printer sexp_of_only hegel_generator_only) in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    draw_1 = Only
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "a nested derived record prints as one sexp via with_printer" =
+  run_failing (fun tc ->
+    let _ = Hegel.draw tc (with_printer sexp_of_wrap hegel_generator_wrap) in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    draw_1 = ((tag Only))
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test
+    "a bare [@@deriving hegel_generator] drawn with draw_silent prints nothing"
+  =
+  run_failing (fun tc ->
+    let _ = Hegel.draw_silent tc hegel_generator_bare in
+    assert false);
+  (* [draw_silent] suppresses the value even though the derived generator is printable. *)
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+(* ---- ppx_hegel_test label injection (end-to-end) ----
+
+   Inside a [let%hegel_test] body, a draw bound to a simple variable — [let x = draw tc ~loc:pos g] — is rewritten by the PPX to [draw_named ~label:"x" ~repeatable:false tc ~loc:pos g], preserving the explicit location alongside
+   the injected binding name on the failing replay. This file enables the
+   [ppx_hegel_test] rewriter, so the test below exercises a real expansion. *)
+
+let%hegel_test label_injection_from_binding (tc : test_case) =
+  let gen = integers ~min_value:7 ~max_value:7 () in
+  let x =
+    Hegel.draw
+      tc
+      ~loc:
+        { Lexing.pos_fname = "explicit_draw"; pos_lnum = 123; pos_bol = 0; pos_cnum = 0 }
+      gen
+  in
+  let y = Hegel.draw tc gen in
+  ignore (x : int);
+  ignore (y : int);
+  assert false
+[@@settings
+  { (Settings.create ~test_cases:20 ~seed:0 ()) with verbosity = Settings.Normal }]
+;;
+
+let%expect_test "ppx injects ~label from the binding name and preserves ~loc" =
+  (try label_injection_from_binding () with
+   | _ -> ());
+  print_string (Expect_scrub.scrub_report ~hide_draw_positions:false [%expect.output]);
+  [%expect
+    {|
+    --- Failure: label_injection_from_binding (ppx/test/expect_tests/test_draw_printing.ml:<LINE>) ---
+
+    x @ explicit_draw:123 = 7
+    y = 7
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+    |}]
+;;
+
+(* The receiver decides what is rewritten, not the module path: a draw on [tc]
+   qualified by any Hegel-exporting module (here [Generators]) is labeled, and
+   the rewrite keeps that prefix (targeting [Generators.draw_named]). *)
+
+let%hegel_test qualified_generators_draw (tc : test_case) =
+  let g = Generators.draw tc (integers ~min_value:9 ~max_value:9 ()) in
+  ignore (g : int);
+  assert false
+[@@settings
+  { (Settings.create ~test_cases:20 ~seed:0 ()) with verbosity = Settings.Normal }]
+;;
+
+let%expect_test "a Generators-qualified draw is labeled (prefix preserved)" =
+  (try qualified_generators_draw () with
+   | _ -> ());
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure: qualified_generators_draw (ppx/test/expect_tests/test_draw_printing.ml:<LINE>) ---
+
+    g = 9
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+    |}]
+;;
+
+(* A local function also named [draw] that is not Hegel's is left untouched,
+   because the rewrite keys off the receiver (the draw must be applied to the
+   test's own [tc]). Here [draw 5] is not applied to [tc], so it gets no label
+   and the user's own [draw] runs; only the genuine [Hegel.draw tc] is
+   labeled. *)
+
+let%hegel_test local_draw_not_on_tc_untouched (tc : test_case) =
+  let draw n = n + 100 in
+  let y = draw 5 in
+  ignore (y : int);
+  let z = Hegel.draw tc (integers ~min_value:1 ~max_value:1 ()) in
+  ignore (z : int);
+  assert false
+[@@settings
+  { (Settings.create ~test_cases:20 ~seed:0 ()) with verbosity = Settings.Normal }]
+;;
+
+let%expect_test "a local non-Hegel draw (not on tc) is not rewritten" =
+  (try local_draw_not_on_tc_untouched () with
+   | _ -> ());
+  (* No [y = …] line: [draw 5] was left alone; only [z], a real Hegel draw on
+     [tc], is labeled. *)
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure: local_draw_not_on_tc_untouched (ppx/test/expect_tests/test_draw_printing.ml:<LINE>) ---
+
+    z = 1
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+    |}]
+;;
+
+(* When a binding name is drawn more than once, the PPX flags it repeatable, so
+   every occurrence is numbered ([x_1], [x_2], …) — including the first — rather
+   than the lone-binding bare [x]. *)
+
+let%hegel_test repeated_binding_numbers (tc : test_case) =
+  let x = Hegel.draw tc (integers ~min_value:1 ~max_value:1 ()) in
+  ignore (x : int);
+  let x = Hegel.draw tc (integers ~min_value:2 ~max_value:2 ()) in
+  ignore (x : int);
+  let x = Hegel.draw tc (integers ~min_value:3 ~max_value:3 ()) in
+  ignore (x : int);
+  assert false
+[@@settings
+  { (Settings.create ~test_cases:20 ~seed:0 ()) with verbosity = Settings.Normal }]
+;;
+
+let%expect_test "a reused binding name numbers x_1, x_2, x_3" =
+  (try repeated_binding_numbers () with
+   | _ -> ());
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure: repeated_binding_numbers (ppx/test/expect_tests/test_draw_printing.ml:<LINE>) ---
+
+    x_1 = 1
+    x_2 = 2
+    x_3 = 3
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+    |}]
+;;
+
+(* A draw inside a loop (block depth > 0) is flagged repeatable even though the
+   name appears once syntactically, so its per-iteration values are numbered. *)
+
+let%hegel_test looped_binding_numbers (tc : test_case) =
+  for i = 1 to 2 do
+    let x = Hegel.draw tc (integers ~min_value:i ~max_value:i ()) in
+    ignore (x : int)
+  done;
+  assert false
+[@@settings
+  { (Settings.create ~test_cases:20 ~seed:0 ()) with verbosity = Settings.Normal }]
+;;
+
+let%expect_test "a draw inside a loop numbers x_1, x_2" =
+  (try looped_binding_numbers () with
+   | _ -> ());
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure: looped_binding_numbers (ppx/test/expect_tests/test_draw_printing.ml:<LINE>) ---
+
+    x_1 = 1
+    x_2 = 2
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+    |}]
+;;
+
+(* ---- verbose verbosity prints draws on a non-final case ----
+
+   At [Normal]/[Quiet] verbosity a passing test prints nothing, since printing
+   is gated on the failing final replay. A single case keeps the snapshot clean:
+   the engine emits its own [Running test case] lines between cases under
+   verbose, which a multi-case run would capture. *)
+
+let%expect_test "verbose prints draws on a passing run" =
+  Hegel.run_hegel_test
+    ~settings:
+      { (Settings.create ~test_cases:1 ~seed:0 ()) with verbosity = Settings.Verbose }
+    (fun tc ->
+       let _ = Hegel.draw tc (integers ~min_value:5 ~max_value:5 ()) in
+       ());
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    Starting phase: Generate
+    Running test case
+    draw_1 = 5
+    Ending phase: Generate
+    |}]
+;;

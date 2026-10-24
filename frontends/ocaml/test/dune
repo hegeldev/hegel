@@ -1,0 +1,54 @@
+(test
+ (name test_hegel)
+ (package hegel)
+ (modules
+  test_hegel
+  test_helpers
+  test_client
+  test_cli
+  test_clone
+  test_concurrency
+  test_generators_core
+  test_generators_primitives
+  test_generators_collections
+  test_generators_combinators
+  test_generators_functions
+  test_stateful
+  test_loader)
+ (libraries
+  hegel
+  hegel_ffi
+  alcotest
+  cmdliner
+  core
+  core_unix
+  ipaddr
+  threads.posix)
+ (preprocess
+  (pps ppx_js_style hegel.template -- -allow-unannotated-ignores))
+ (foreign_stubs
+  (language c)
+  (names unsetenv_stubs)))
+
+; Runs on its own so nothing else in the process has loaded libhegel first.
+
+(test
+ (name test_lazy_load)
+ (package hegel)
+ (modules test_lazy_load)
+ (libraries hegel hegel_ffi alcotest core core_unix)
+ (preprocess
+  (pps ppx_js_style -- -allow-unannotated-ignores)))
+
+; test_concurrency.ml.in is cppo-preprocessed: the Concurrency.domains tests
+; exist only where Concurrency.domains does (not under OxCaml).
+
+(rule
+ (target test_concurrency.ml)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:../lib/cppo-flags}
+   -o
+   %{target}
+   %{dep:test_concurrency.ml.in})))

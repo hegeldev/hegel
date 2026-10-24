@@ -1,0 +1,98 @@
+# Publish a release of the OCaml frontend to the central opam-repository.
+# Triggered manually (Actions -> "ocaml opam release" -> Run workflow) with
+# the `frontends/ocaml/<version>` tag of an existing release; the release
+# itself is cut by ci.yml, whose `release-ocaml` job attaches the bundled
+# source archive (the frontend plus the prebuilt libhegel binaries) to the
+# GitHub release on that tag. This workflow then opens a PR to
+# ocaml/opam-repository for that version via `opam publish`.
+#
+# Prerequisites (one-time setup):
+#   * A repository secret `OPAM_PUBLISH_TOKEN`: a GitHub personal access token
+#     (classic) with the `public_repo` and `workflow` scopes, owned by the
+#     account that should appear as the author of the opam-repository PR. opam
+#     publish forks ocaml/opam-repository under that account and opens the PR
+#     from the fork.
+name: ocaml opam release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag to publish (e.g. frontends/ocaml/0.26.4).
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: ocaml-opam-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  opam-publish:
+    name: publish to opam-repository
+    if: github.repository == 'hegeldev/hegel'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+
+      - name: Install opam
+        run: |
+          OPAM_VERSION="2.2.1"
+          curl -fsSL \
+            "https://github.com/ocaml/opam/releases/download/${OPAM_VERSION}/opam-${OPAM_VERSION}-x86_64-linux" \
+            -o /usr/local/bin/opam
+          chmod +x /usr/local/bin/opam
+          opam --version
+
+      - name: Cache opam
+        id: cache-opam
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.opam
+          key: opam-publish-${{ runner.os }}-5.2.1
+          restore-keys: |
+            opam-publish-${{ runner.os }}-
+
+      - name: Set up switch and opam-publish
+        run: |
+          # Idempotent: a restored cache may already have the switch.
+          if [ ! -d "$HOME/.opam" ]; then
+            opam init --bare --disable-sandboxing --yes
+          fi
+          if ! opam switch list --short 2>/dev/null | grep -q '^5.2.1$'; then
+            opam switch create 5.2.1 --yes
+          fi
+          eval $(opam env --switch=5.2.1)
+          opam install opam-publish --yes
+
+      - name: Publish to opam-repository
+        working-directory: frontends/ocaml
+        env:
+          # opam publish reads the token from this env var; it forks
+          # ocaml/opam-repository and opens the PR as the token owner.
+          OPAM_PUBLISH_GH_TOKEN: ${{ secrets.OPAM_PUBLISH_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          eval $(opam env --switch=5.2.1)
+          VERSION="${TAG#frontends/ocaml/}"
+          ASSET_URL="https://github.com/${REPOSITORY}/releases/download/${TAG}/hegel-${VERSION}-opam.tar.gz"
+          # Submits every opam package found in the checkout (hegel,
+          # ppx_hegel_compat, ppx_hegel_generator, ppx_hegel_test) in a single
+          # opam-repository PR. The positional URL is the bundled tarball
+          # (libhegel baked in) the release-ocaml job attached to the GitHub
+          # release; "." supplies the opam files. opam computes the archive
+          # checksum by downloading ASSET_URL.
+          opam publish \
+            --repo ocaml/opam-repository \
+            --version "$VERSION" \
+            --no-browser \
+            --no-confirmation \
+            "$ASSET_URL" .

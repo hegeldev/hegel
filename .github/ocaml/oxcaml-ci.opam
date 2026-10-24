@@ -1,0 +1,20 @@
+opam-version: "2.0"
+synopsis: "OxCaml-only dependencies of the OCaml frontend's CI (never published)"
+description: """
+Installed by the oxcaml job of ../workflows/frontend-ocaml.yml alongside the
+with-test dependencies of the real packages in frontends/ocaml, in the same
+solver call. These are not declared in hegel.opam because they exist only in
+the OxCaml opam repository.
+"""
+maintainer: "Hegel developers"
+authors: "Hegel developers"
+license: "MIT"
+homepage: "https://github.com/hegeldev/hegel"
+bug-reports: "https://github.com/hegeldev/hegel/issues"
+depends: [
+  "async"
+  "capsule0"
+  "concurrent"
+  "parallel"
+  "ppx_template"
+]

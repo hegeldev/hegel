@@ -1,0 +1,459 @@
+(** Stateful property-based testing for Hegel. See [stateful.mli].
+    Sequential and concurrent runners have some common code that is
+    duplicated, but we have to keep them separate to prevent sequential
+    stateful tests needing synchronized state for no reason to satisfy
+    the OxCaml mode checker *)
+
+#ifdef OXCAML
+#define CONCURRENCY_PARAM ~(concurrency : _ Concurrency.t @ local)
+#define LOCAL(x) (x @ local)
+#define LOCAL_CTX ~(ctx @ local)
+#define NONTAIL [@nontail] (* concurrency is captured as local so the stack frame can't be erased *)
+#define MODE(m) @ m
+#define KIND(k) : k
+#define PORTABLE @@ portable
+#else
+#define CONCURRENCY_PARAM ~(concurrency : _ Concurrency.t)
+#define LOCAL(x) x
+#define LOCAL_CTX ~ctx
+#define NONTAIL
+#define MODE(m)
+#define KIND(k)
+#define PORTABLE
+#endif
+
+module Pool_gen = Generators.Int_pool
+module Concurrent_pool_gen = Generators.Int_pool_concurrent [@mode portable]
+
+module Pool = struct
+  type 'a t = 'a Pool_gen.t
+
+  let create ?(clone = Fun.id) tc = Pool_gen.create tc ~clone
+  let add = Pool_gen.add
+  let size = Pool_gen.size
+  let values_reusable t = Pool_gen.pool_values t ~consume:false
+  let values_consumed t = Pool_gen.pool_values t ~consume:true
+end
+
+module Concurrent_pool = struct
+#ifdef OXCAML
+  type ('a : value mod portable contended) t : value mod portable contended =
+    'a Concurrent_pool_gen.t
+#else
+  type 'a t = 'a Concurrent_pool_gen.t
+#endif
+
+  let create ?(clone = Fun.id) tc = Concurrent_pool_gen.create tc ~clone
+  let add = Concurrent_pool_gen.add
+  let size = Concurrent_pool_gen.size
+  let values_reusable t = Concurrent_pool_gen.pool_values t ~consume:false
+  let values_consumed t = Concurrent_pool_gen.pool_values t ~consume:true
+end
+
+module Rule = struct
+  type 'state t =
+    { name : string
+    ; weight : float
+    ; step : Internal.test_case -> 'state -> unit
+    }
+
+  let create ~name ?(weight = 1.0) ~step () = { name; weight; step }
+  let name t = t.name
+  let weight t = t.weight
+end
+
+module Concurrent_rule = struct
+  type ('ctx, 'state) t KIND(value mod portable contended) =
+    { name : string
+    ; group : string
+    ; weight : float
+    ; step :
+        (Internal.test_case -> 'ctx MODE(local) -> 'state MODE(contended) -> unit) PORTABLE
+    }
+
+  let create ?(group = "<anonymous>") ?(weight = 1.0) ~name ~step () =
+    { name; group; weight; step }
+  ;;
+
+  let name t = t.name
+  let group t = t.group
+  let weight t = t.weight
+end
+
+module Invariant = struct
+  type 'state t =
+    { name : string
+    ; inv : Internal.test_case -> 'state -> unit
+    ; always_check : bool
+    }
+
+  let create ~name ~inv ?(always_check = false) () = { name; inv; always_check }
+  let name invariant = invariant.name
+end
+
+let run_rules tc ~state_machine ~worker_index LOCAL_CTX ~heading ~rule =
+  let rec loop LOCAL(ctx) rejected =
+    match Internal.state_machine_next_rule_for_worker tc ~state_machine ~worker_index with
+    | None -> rejected
+    | Some rule_index ->
+      let name, body = rule rule_index in
+      Internal.note tc (heading name);
+      (match
+         if Internal.should_print tc
+         then Internal.with_block tc ~indent:2 (fun tc -> body tc ctx)
+         else body tc ctx
+       with
+       | () -> loop ctx rejected
+       | exception Internal.Assume_rejected ->
+         Internal.state_machine_rule_rejected_for_worker tc ~state_machine ~worker_index;
+         Internal.note tc "Rule stopped early due to violated assumption.";
+         loop ctx true)
+  in
+  loop ctx false
+;;
+
+let unique_groups groups =
+  List.fold_left
+    (fun names group -> if List.mem group names then names else group :: names)
+    []
+    groups
+  |> List.rev
+;;
+
+let group_indices groups names =
+  List.map (fun group -> List.find_index (String.equal group) names |> Option.get) groups
+;;
+
+(* like List.iteri but takes a local closure *)
+let rec iteri_local LOCAL(f) i = function
+  | [] -> ()
+  | x :: rest ->
+    f i x;
+    iteri_local f (i + 1) rest
+;;
+
+let init_worker_tcs tc ~num_workers =
+  List.init num_workers (fun worker_index ->
+    let worker_tc = Internal.clone tc in
+    Internal.set_worker_index worker_tc worker_index;
+    worker_tc)
+;;
+
+let run_worker tc ~state_machine ~worker_index LOCAL_CTX ~rule =
+  (* returns if a rule was rejected or not, doesn't matter for concurrent *)
+  let (_ : bool) =
+    run_rules
+      tc
+      ~state_machine
+      ~worker_index
+      ~ctx
+      ~heading:(fun name -> Printf.sprintf "Rule: %s" name)
+      ~rule
+  in
+  ()
+;;
+
+let%template dispatch_round
+  (spawn_join_n :
+    (n:int
+     -> (f:('ctx MODE(local) -> int -> Concurrency.outcome) MODE(m)
+         -> Concurrency.outcome list MODE(c))
+        MODE(local))
+    MODE(local))
+  tc
+  ~num_workers
+  ~work
+  =
+  let cases = init_worker_tcs tc ~num_workers in
+  spawn_join_n ~n:num_workers ~f:(fun ctx worker_index ->
+    match work ctx ~worker_index (List.nth cases worker_index) with
+    | () -> None
+    | exception exn -> Some (exn, Printexc.get_raw_backtrace ()))
+[@@mode (m, c) = ((portable, contended), (nonportable, uncontended))]
+;;
+
+let reraise_worker_failure (outcomes : Concurrency.outcome list) =
+  let find predicate =
+    List.find_map
+      (function
+        | Some (exn, _) as failure when predicate exn -> failure
+        | _ -> None)
+      outcomes
+  in
+  let is_control_exception = function
+    | Internal.Usage_error _ | Internal.Internal_error _ -> true
+    | _ -> false
+  in
+  let is_overrun = function
+    | Internal.Stop_test -> true
+    | _ -> false
+  in
+  let is_invalid = function
+    | Internal.Assume_rejected | Internal.Flaky_strategy -> true
+    | _ -> false
+  in
+  let is_test_failure = Fun.const true in
+  (* invalidated or exhausted rules can cause in other workers.
+     error precedence from greatest to least: usage/internal errors, overrun,
+     invalidation, actual test failure. within each category, first worker raises. *)
+  let failure =
+    List.find_map find [ is_control_exception; is_overrun; is_invalid; is_test_failure ]
+  in
+  Option.iter
+    (fun (exn, backtrace) -> Printexc.raise_with_backtrace exn backtrace)
+    failure
+;;
+
+let run_machine
+      tc
+      ~rule_names
+      ~rule_groups
+      ~rule_weights
+      ~invariant_names
+      ~invariants_always_check
+      ~check_invariant:LOCAL(check_invariant)
+      ~step_count
+      ~min_concurrency
+      ~max_concurrency
+      ~sexp_of_state
+      ~init
+      run_steps
+  =
+  let state_machine, num_workers =
+    Internal.new_state_machine_with_concurrency
+      tc
+      ~rule_names
+      ~rule_groups
+      ~rule_weights
+      ~invariant_names
+      ~invariants_always_check
+      ~step_count
+      ~min_concurrency
+      ~max_concurrency
+  in
+  let print_state () =
+    Option.iter
+      (fun sexp_of -> Internal.print_line tc [ Text "state = "; Value (sexp_of init) ])
+      sexp_of_state
+  in
+  let check_invariants ~where ~sample =
+    iteri_local
+      (fun i name ->
+         if
+           (not sample)
+           || Internal.state_machine_should_check_invariant
+                tc
+                ~state_machine
+                ~invariant_index:i
+         then (
+           match
+             if Internal.should_print tc
+             then Internal.with_block tc ~indent:2 (fun tc -> check_invariant i tc)
+             else check_invariant i tc
+           with
+           | () -> ()
+           | exception e ->
+             Internal.note tc (Printf.sprintf "Invariant %s violated %s." name where);
+             raise e))
+      0
+      invariant_names NONTAIL
+  in
+  (* Can't use Fun.protect because its body must be a global closure *)
+  let free () = Internal.state_machine_free tc ~state_machine in
+  let run_test () =
+    if num_workers > 1
+    then Internal.note tc (Printf.sprintf "Concurrency level: %d" num_workers);
+    print_state ();
+    check_invariants ~where:"in the initial state" ~sample:false;
+    run_steps ~state_machine ~num_workers ~print_state ~check_invariants;
+    check_invariants ~where:"in the final state" ~sample:false
+  in
+  match run_test () with
+  | () -> free ()
+  | exception exn ->
+    free ();
+    raise exn
+;;
+
+let run_internal ~init ~rules ~invariants ?sexp_of_state ?(step_count = 50) tc =
+  let run_steps ~state_machine ~num_workers:_ ~print_state ~check_invariants:LOCAL(check_invariants) =
+    let rec loop LOCAL(check_invariants) steps_attempted =
+      Internal.start_span ~label:Generators.Private.Labels.stateful_rule tc;
+      match Internal.state_machine_next_group tc ~state_machine with
+      | None -> Internal.stop_span tc
+      | Some _group ->
+        let step = steps_attempted + 1 in
+        let rejected =
+          match
+            run_rules
+              tc
+              ~state_machine
+              ~worker_index:0
+              ~ctx:()
+              ~heading:(fun name -> Printf.sprintf "Step %d: %s" step name)
+              ~rule:(fun rule_index ->
+                let rule = List.nth rules rule_index in
+                rule.Rule.name, fun tc () -> rule.Rule.step tc init)
+          with
+          | rejected -> rejected
+          | exception e ->
+            Internal.stop_span tc;
+            raise e
+        in
+        Internal.stop_span ~discard:rejected tc;
+        print_state ();
+        check_invariants ~where:(Printf.sprintf "after step %d" step) ~sample:true;
+        loop check_invariants step
+    in
+    loop check_invariants 0
+  in
+  run_machine
+    tc
+    ~rule_names:(List.map Rule.name rules)
+    ~rule_groups:(List.map (fun _ -> 0) rules)
+    ~rule_weights:(List.map Rule.weight rules)
+    ~invariant_names:(List.map Invariant.name invariants)
+    ~invariants_always_check:(List.map (fun inv -> inv.Invariant.always_check) invariants)
+    ~check_invariant:(fun i tc -> (List.nth invariants i).Invariant.inv tc init)
+    ~step_count
+    ~min_concurrency:1
+    ~max_concurrency:1
+    ~sexp_of_state
+    ~init
+    run_steps
+;;
+
+module type State_machine = sig
+  type state
+
+  val rules : state Rule.t list
+  val invariants : state Invariant.t list
+end
+
+let run
+      (type s)
+      ?step_count
+      ?sexp_of_state
+      tc
+      (module M : State_machine with type state = s)
+      ~(init : s)
+  =
+  run_internal ~init ~rules:M.rules ~invariants:M.invariants ?sexp_of_state ?step_count tc
+;;
+
+module type Concurrent_state_machine = sig
+  type ctx
+  type state
+
+  val rules : (ctx, state) Concurrent_rule.t list
+  val invariants : state Invariant.t list
+end
+
+let run_concurrent_core
+      ~init
+      ~rule_names
+      ~rule_groups
+      ~rule_weights
+      ~invariant_names
+      ~invariants_always_check
+      ~check_invariant:LOCAL(check_invariant)
+      ~run_round:LOCAL(run_round)
+      ?(min_concurrency = 1)
+      ?(max_concurrency = min_concurrency)
+      ?sexp_of_state
+      ?(step_count = 50)
+      tc
+  =
+  let group_names = unique_groups rule_groups in
+  let run_steps ~state_machine ~num_workers ~print_state ~check_invariants:LOCAL(check_invariants) =
+    (* Local closures are passed down rather than captured. *)
+    let rec loop LOCAL(run_round) LOCAL(check_invariants) round =
+      match Internal.state_machine_next_group tc ~state_machine with
+      | None -> ()
+      | Some group ->
+        Internal.note
+          tc
+          (Printf.sprintf
+             "---------------- Round %d: group %S ----------------"
+             round
+             (List.nth group_names group));
+        reraise_worker_failure (run_round ~state_machine ~num_workers);
+        print_state ();
+        check_invariants ~where:(Printf.sprintf "after round %d" round) ~sample:true;
+        loop run_round check_invariants (round + 1)
+    in
+    loop run_round check_invariants 1
+  in
+  run_machine
+    tc
+    ~rule_names
+    ~rule_groups:(group_indices rule_groups group_names)
+    ~rule_weights
+    ~invariant_names
+    ~invariants_always_check
+    ~check_invariant
+    ~step_count
+    ~min_concurrency
+    ~max_concurrency
+    ~sexp_of_state
+    ~init
+    run_steps
+  NONTAIL
+;;
+
+let run_concurrent_internal
+      ~init
+      ~rules
+      ~invariants
+      CONCURRENCY_PARAM
+      ?min_concurrency
+      ?max_concurrency
+      ?sexp_of_state
+      ?step_count
+      tc
+  =
+  run_concurrent_core
+    ~init
+    ~rule_names:(List.map Concurrent_rule.name rules)
+    ~rule_groups:(List.map Concurrent_rule.group rules)
+    ~rule_weights:(List.map Concurrent_rule.weight rules)
+    ~invariant_names:(List.map Invariant.name invariants)
+    ~invariants_always_check:(List.map (fun inv -> inv.Invariant.always_check) invariants)
+    ~check_invariant:(fun i tc -> (List.nth invariants i).Invariant.inv tc init)
+    ~run_round:(fun ~state_machine ~num_workers ->
+      let work LOCAL(ctx) ~worker_index tc =
+        run_worker tc ~state_machine ~worker_index ~ctx ~rule:(fun rule_index ->
+          let rule = List.nth rules rule_index in
+          rule.Concurrent_rule.name, fun tc ctx -> rule.Concurrent_rule.step tc ctx init)
+      in
+      (dispatch_round [@mode portable]) concurrency.spawn_join_n tc ~num_workers ~work)
+    ?min_concurrency
+    ?max_concurrency
+    ?sexp_of_state
+    ?step_count
+    tc
+  NONTAIL
+;;
+
+let run_concurrent
+      (type c s)
+      ~concurrency
+      ?min_concurrency
+      ?max_concurrency
+      ?step_count
+      ?sexp_of_state
+      tc
+      (module M : Concurrent_state_machine with type ctx = c and type state = s)
+      ~(init : s)
+  =
+  run_concurrent_internal
+    ~init
+    ~rules:M.rules
+    ~invariants:M.invariants
+    ~concurrency
+    ?min_concurrency
+    ?max_concurrency
+    ?sexp_of_state
+    ?step_count
+    tc
+;;
