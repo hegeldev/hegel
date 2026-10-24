@@ -14,6 +14,11 @@
     - Variants: picks a constructor via [sampled_from] then generates args
     - Type aliases: delegates to the generator for the aliased type
     - Tuples inside any of the above
+    - Recursive types. A variant whose constructors refer to the type itself
+      is generated with [Hegel.Generators.recursive]: the constructors that do
+      not refer to it are the leaves, the others the branches. Any other
+      recursive (or mutually recursive) group is generated through
+      [Hegel.Generators.deferred] forward references.
 
     A derived generator prints what it draws as OCaml syntax: it pairs each
     drawn part with that part's display ([Ppx_internal.draw]) and assembles
@@ -275,13 +280,9 @@ let generator_of_data_variant
           (match_arms @ [ catch_all ])]])
 ;;
 
-let generator_of_variant
-      ~portable
-      ~loc
-      ~type_name
-      (constrs : constructor_declaration list)
-  : expression
-  =
+(** [generated_constructors ~loc constrs] is [constrs] without the ones marked
+    [[@hegel.do_not_generate]]. *)
+let generated_constructors ~loc (constrs : constructor_declaration list) =
   if List.is_empty constrs
   then Location.raise_errorf ~loc "ppx_hegel_generator: empty variant types not supported";
   let generated =
@@ -294,6 +295,20 @@ let generator_of_variant
     Location.raise_errorf
       ~loc
       "ppx_hegel_generator: all constructors are marked [@hegel.do_not_generate]";
+  generated
+;;
+
+(** [variant_of_constructors ~portable ~loc ~type_name ~all generated] is the
+    generator of the constructors [generated], a subset of the type's
+    constructors [all]. *)
+let variant_of_constructors
+      ~portable
+      ~loc
+      ~type_name
+      ~(all : constructor_declaration list)
+      (generated : constructor_declaration list)
+  : expression
+  =
   let is_nullary (cd : constructor_declaration) =
     match Ppx_compat.extract_constr_args cd.pcd_args with
     | Tuple [] -> true
@@ -318,7 +333,7 @@ let generator_of_variant
         ~rhs:(constructor_show ~loc cd.pcd_name.txt [])
     in
     let excluded_case =
-      if List.length generated = List.length constrs
+      if List.length generated = List.length all
       then []
       else
         [ Ast_builder.Default.case
@@ -336,6 +351,50 @@ let generator_of_variant
         ([%e with_mode ~portable [%expr Hegel.Generators.sampled_from]]
            [%e Ast_builder.Default.elist ~loc (List.map construct generated)])])
   else generator_of_data_variant ~portable ~loc ~type_name generated
+;;
+
+let generator_of_variant ~portable ~loc ~type_name constrs =
+  variant_of_constructors
+    ~portable
+    ~loc
+    ~type_name
+    ~all:constrs
+    (generated_constructors ~loc constrs)
+;;
+
+(** [mentions names ct] is [true] when the core type [ct] refers to one of the
+    types [names] declared in the same group, other than through a
+    [[@hegel.generator]] override. *)
+let rec mentions names (ct : core_type) =
+  match Attribute.get generator_override_attribute ct with
+  | Some _ -> false
+  | None ->
+    (match ct.ptyp_desc with
+     | Ptyp_constr ({ txt = Lident name; _ }, args) ->
+       List.mem name names || List.exists (mentions names) args
+     | Ptyp_constr (_, args) -> List.exists (mentions names) args
+     | _ ->
+       (match Ppx_compat.extract_tuple_types ct with
+        | Some components -> List.exists (mentions names) components
+        | None -> false))
+;;
+
+let constructor_mentions names (cd : constructor_declaration) =
+  match Ppx_compat.extract_constr_args cd.pcd_args with
+  | Tuple cts -> List.exists (mentions names) cts
+  | Record labels ->
+    List.exists (fun (ld : label_declaration) -> mentions names ld.pld_type) labels
+;;
+
+(** [declaration_mentions names td] is [true] when [td] refers to one of the
+    types [names]. *)
+let declaration_mentions names (td : type_declaration) =
+  match td.ptype_kind, td.ptype_manifest with
+  | Ptype_record labels, _ ->
+    List.exists (fun (ld : label_declaration) -> mentions names ld.pld_type) labels
+  | Ptype_variant constrs, _ -> List.exists (constructor_mentions names) constrs
+  | _, Some ct -> mentions names ct
+  | _, None -> false
 ;;
 
 (** [excluded_constructor_uses ~loc td] returns one [let _ = ...] item per
@@ -460,35 +519,92 @@ let generate_impl
   : structure
   =
   let loc = Expansion_context.Deriver.derived_item_loc ctxt in
+  let names = List.map (fun (td : type_declaration) -> td.ptype_name.txt) type_decls in
+  let generator_expr (td : type_declaration) =
+    let type_name = td.ptype_name.txt in
+    match td.ptype_kind, td.ptype_manifest with
+    | Ptype_record labels, _ ->
+      composite ~portable ~loc ~label:(type_label ~loc ~type_name "fixed_dict") (fun tc ->
+        drawn_record ~portable ~loc ~tc ~wrap:Fun.id ~wrap_show:Fun.id labels)
+    | Ptype_variant constrs, _ -> generator_of_variant ~portable ~loc ~type_name constrs
+    | Ptype_abstract, Some ct -> generator_expr_of_core_type ~portable ct
+    | Ptype_abstract, None ->
+      Location.raise_errorf
+        ~loc
+        "ppx_hegel_generator: abstract types without manifest not supported"
+    | _, _ ->
+      Location.raise_errorf
+        ~loc
+        "ppx_hegel_generator: unsupported type kind in [@@deriving hegel_generator]"
+  in
+  let pvar name = Ast_builder.Default.pvar ~loc name in
+  let evar name = Ast_builder.Default.evar ~loc name in
   let generator_items =
-    List.map
-      (fun (td : type_declaration) ->
-         let gen_name = generator_name td.ptype_name.txt in
-         let type_name = td.ptype_name.txt in
-         let generator_expr =
-           match td.ptype_kind, td.ptype_manifest with
-           | Ptype_record labels, _ ->
-             composite
-               ~portable
-               ~loc
-               ~label:(type_label ~loc ~type_name "fixed_dict")
-               (fun tc ->
-                  drawn_record ~portable ~loc ~tc ~wrap:Fun.id ~wrap_show:Fun.id labels)
-           | Ptype_variant constrs, _ ->
-             generator_of_variant ~portable ~loc ~type_name constrs
-           | Ptype_abstract, Some ct -> generator_expr_of_core_type ~portable ct
-           | Ptype_abstract, None ->
-             Location.raise_errorf
-               ~loc
-               "ppx_hegel_generator: abstract types without manifest not supported"
-           | _, _ ->
-             Location.raise_errorf
-               ~loc
-               "ppx_hegel_generator: unsupported type kind in [@@deriving \
-                hegel_generator]"
-         in
-         [%stri let [%p Ast_builder.Default.pvar ~loc gen_name] = [%e generator_expr]])
-      type_decls
+    match type_decls with
+    | _ when not (List.exists (declaration_mentions names) type_decls) ->
+      List.map
+        (fun (td : type_declaration) ->
+           [%stri
+             let [%p pvar (generator_name td.ptype_name.txt)] = [%e generator_expr td]])
+        type_decls
+    | [ ({ ptype_kind = Ptype_variant constrs; _ } as td) ]
+      when let generated = generated_constructors ~loc constrs in
+           List.exists (constructor_mentions names) generated
+           && not (List.for_all (constructor_mentions names) generated) ->
+      let type_name = td.ptype_name.txt in
+      let gen_name = generator_name type_name in
+      let generated = generated_constructors ~loc constrs in
+      let leaves, branches =
+        List.partition (fun cd -> not (constructor_mentions names cd)) generated
+      in
+      let variant = variant_of_constructors ~portable ~loc ~type_name ~all:constrs in
+      [ [%stri
+          let [%p pvar gen_name] =
+            [%e with_mode ~portable [%expr Hegel.Generators.recursive]]
+              [%e variant leaves]
+              (fun [%p pvar gen_name] -> [%e variant branches])
+          ;;]
+      ]
+    | _ ->
+      if portable
+      then
+        Location.raise_errorf
+          ~loc
+          "ppx_hegel_generator: ~portable supports a recursive type only when it is a \
+           variant with constructors that do not refer to it";
+      let define name = "_hegel_define_" ^ name in
+      let tuple_pattern pats =
+        match pats with
+        | [ pat ] -> pat
+        | pats -> Ast_builder.Default.ppat_tuple ~loc pats
+      in
+      let tuple_expr exprs =
+        match exprs with
+        | [ e ] -> e
+        | exprs -> Ast_builder.Default.pexp_tuple ~loc exprs
+      in
+      let gen_names = List.map generator_name names in
+      let definitions =
+        List.fold_right
+          (fun (td : type_declaration) acc ->
+             [%expr
+               [%e evar (define td.ptype_name.txt)] [%e generator_expr td];
+               [%e acc]])
+          type_decls
+          (tuple_expr (List.map evar gen_names))
+      in
+      let body =
+        List.fold_right
+          (fun name acc ->
+             [%expr
+               let [%p pvar (generator_name name)], [%p pvar (define name)] =
+                 Hegel.Generators.deferred ()
+               in
+               [%e acc]])
+          names
+          definitions
+      in
+      [ [%stri let [%p tuple_pattern (List.map pvar gen_names)] = [%e body]] ]
   in
   List.concat_map (excluded_constructor_uses ~loc) type_decls
   @ List.concat_map (field_reads ~loc) type_decls

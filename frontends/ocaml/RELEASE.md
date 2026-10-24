@@ -79,3 +79,5 @@ let trees =
     (map (fun n -> Leaf n) (integers ()))
     (fun subtrees -> map (fun children -> Node children) (lists subtrees ()))
 ```
+
+`[@@deriving hegel_generator]` now supports recursive and mutually recursive types. A variant whose constructors refer to the type itself, such as `type tree = Leaf of int | Node of tree * tree`, is generated with `recursive`, its non-recursive constructors as the leaves; other recursive types are generated through `deferred`.

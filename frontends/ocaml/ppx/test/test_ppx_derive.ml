@@ -473,7 +473,98 @@ module Portable_derived = struct
   [@@deriving hegel_generator ~portable]
 
   type alias = int * bool [@@deriving hegel_generator ~portable]
+
+  type nat =
+    | Z
+    | S of nat
+  [@@deriving hegel_generator ~portable]
 end
+
+module Plain_nat = struct
+  type nat =
+    | Z
+    | S of nat
+  [@@deriving hegel_generator]
+end
+
+(** A recursive variant: [Leaf] is the leaf, [Node] the branch. *)
+type tree =
+  | Leaf of int
+  | Node of tree * tree
+[@@deriving hegel_generator]
+
+(** A recursive variant whose generated constructors all refer to it. *)
+type rose = Rose of int * rose list [@@deriving hegel_generator]
+
+(** A recursive record. *)
+type chain =
+  { link : int
+  ; next : chain option
+  }
+[@@deriving hegel_generator]
+
+(** Mutually recursive types. *)
+type expr =
+  | Num of int
+  | Add of expr * expr
+  | Neg of negation
+
+and negation = { inner : expr } [@@deriving hegel_generator]
+
+(** A recursive variant with an excluded constructor. *)
+type guarded =
+  | Stop
+  | Step of guarded
+  | Broken_step of guarded [@hegel.do_not_generate]
+[@@deriving hegel_generator]
+
+let rec tree_size = function
+  | Leaf _ -> 1
+  | Node (l, r) -> tree_size l + tree_size r
+;;
+
+let rec rose_depth (Rose (_, children)) =
+  1 + List.fold children ~init:0 ~f:(fun acc c -> max acc (rose_depth c))
+;;
+
+let rec chain_length c = 1 + Option.value_map c.next ~default:0 ~f:chain_length
+
+let rec expr_size = function
+  | Num _ -> 1
+  | Add (a, b) -> expr_size a + expr_size b
+  | Neg { inner } -> 1 + expr_size inner
+;;
+
+let rec guarded_ok = function
+  | Stop -> true
+  | Step g -> guarded_ok g
+  | Broken_step _ -> false
+;;
+
+(** Test: recursive types derive generators that terminate and branch. *)
+let test_recursive_types_e2e () =
+  let saw_node = ref false
+  and saw_deep_rose = ref false
+  and saw_long_chain = ref false
+  and saw_neg = ref false in
+  Hegel.run_hegel_test
+    ~settings:(Hegel.Settings.create ~test_cases:100 ~seed:0 ())
+    (fun tc ->
+       if tree_size (Hegel.draw tc hegel_generator_tree) > 1 then saw_node := true;
+       if rose_depth (Hegel.draw tc hegel_generator_rose) > 1 then saw_deep_rose := true;
+       if chain_length (Hegel.draw tc hegel_generator_chain) > 1
+       then saw_long_chain := true;
+       (match Hegel.draw tc hegel_generator_expr with
+        | Neg _ -> saw_neg := true
+        | Num _ | Add _ -> ());
+       ignore (expr_size (Hegel.draw tc hegel_generator_negation).inner : int);
+       assert (guarded_ok (Hegel.draw tc hegel_generator_guarded));
+       ignore (Hegel.draw tc Plain_nat.hegel_generator_nat : Plain_nat.nat));
+  Alcotest.(check bool) "tree branches" true !saw_node;
+  Alcotest.(check bool) "rose nests" true !saw_deep_rose;
+  Alcotest.(check bool) "chain links" true !saw_long_chain;
+  Alcotest.(check bool) "mutual recursion reaches the other type" true !saw_neg
+;;
 
 (** Test: [~portable] draws the same values as the plain derivation. *)
 let test_portable_matches_plain_e2e () =
@@ -498,7 +589,8 @@ let test_portable_matches_plain_e2e () =
     "variant"
     Plain_derived.hegel_generator_variant
     Portable_derived.hegel_generator_variant;
-  same "alias" Plain_derived.hegel_generator_alias Portable_derived.hegel_generator_alias
+  same "alias" Plain_derived.hegel_generator_alias Portable_derived.hegel_generator_alias;
+  same "recursive" Plain_nat.hegel_generator_nat Portable_derived.hegel_generator_nat
 ;;
 
 (** [shown ?n gen] draws from [gen] in each of [n] test cases, returning each
@@ -553,7 +645,24 @@ let test_printer_e2e () =
     | Unmeasured -> constructor "Unmeasured" []);
   check_shown "alias of a tuple" Plain_derived.hegel_generator_alias (fun (n, b) ->
     tuple [ int n; bool b ]);
-  check_shown "alias" hegel_generator_label string
+  check_shown "alias" hegel_generator_label string;
+  let rec print_tree = function
+    | Leaf n -> constructor "Leaf" [ int n ]
+    | Node (l, r) -> constructor "Node" [ print_tree l; print_tree r ]
+  in
+  check_shown "recursive variant" hegel_generator_tree print_tree;
+  let rec print_nat = function
+    | Plain_nat.Z -> text "Z"
+    | S n -> constructor "S" [ print_nat n ]
+  in
+  check_shown
+    "recursive variant with nullary leaves"
+    Plain_nat.hegel_generator_nat
+    print_nat;
+  let rec print_chain c =
+    record [ "link", int c.link; "next", option print_chain c.next ]
+  in
+  check_shown "recursive record" hegel_generator_chain print_chain
 ;;
 
 (** Test: a field whose generator has no printer shows as [<abstr>] while
@@ -611,6 +720,7 @@ let () =
             `Quick
             test_do_not_generate_nullary_e2e
         ; Alcotest.test_case "do_not_generate (data)" `Quick test_do_not_generate_data_e2e
+        ; Alcotest.test_case "recursive types" `Quick test_recursive_types_e2e
         ; Alcotest.test_case "default printer" `Quick test_printer_e2e
         ; Alcotest.test_case "field without a printer" `Quick test_opaque_field_e2e
         ; Alcotest.test_case

@@ -216,6 +216,22 @@
 
     The [reading] generator draws its [temp] field through [Temperature.hegel_generator].
 
+    Recursive types derive too:
+
+    {[
+      type tree =
+        | Leaf of int
+        | Node of tree * tree
+      [@@deriving hegel_generator]
+    ]}
+
+    A variant whose constructors refer to the type is generated with
+    {!Generators.recursive}: the constructors that don't refer to it ([Leaf])
+    are the leaves, and the engine bounds the size of the tree. Other
+    recursive types, such as a record with a [t option] field, and mutually
+    recursive types ([type a = ... and b = ...]) are generated through
+    {!Generators.deferred}.
+
     [\[@hegel.generator expr\]] sets the generator for a type instead of deriving it:
 
     {[
