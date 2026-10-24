@@ -211,10 +211,110 @@ class ExplicitExampleTest {
         assertFalse(onlyNamed.getMessage().contains("positional"), onlyNamed.getMessage());
         assertThrows(
                 IllegalArgumentException.class,
-                () -> Hegel.run(tc -> tc.assume(false), SETTINGS.examples(Example.of()), Reporter.silent()));
-        assertThrows(
-                IllegalArgumentException.class,
                 () -> Hegel.run(tc -> tc.drawSilent(integers()), SETTINGS.examples(Example.of()), Reporter.silent()));
+    }
+
+    @Test
+    void anExampleFailingAnAssumptionIsSkipped() {
+        List<Object> seen = new ArrayList<>();
+        List<CaseOutcome> outcomes = new ArrayList<>();
+        Reporter recorder = new Reporter() {
+            @Override
+            public void caseFinished(CaseOutcome outcome, boolean finalReplay) {
+                outcomes.add(outcome);
+            }
+        };
+        RunReport report = Hegel.run(
+                tc -> {
+                    int x = tc.draw(integers(), "x");
+                    if (x == 1000) {
+                        seen.add(x);
+                        tc.assume(false);
+                    }
+                    if (x == 2000) {
+                        seen.add(x);
+                        tc.reject();
+                    }
+                },
+                SETTINGS.testCases(1)
+                        .verbosity(Verbosity.VERBOSE)
+                        .examples(Example.of(1000, "never drawn"), Example.of(2000)),
+                recorder);
+        assertTrue(report.passed());
+        assertEquals(List.of(1000, 2000), seen);
+        assertEquals(CaseOutcome.INVALID, outcomes.get(0));
+        assertEquals(CaseOutcome.INVALID, outcomes.get(1));
+    }
+
+    @Test
+    void aSilentDrawTakesTheNextPositionalValue() {
+        Recorder recorder = new Recorder();
+        RunReport report = Hegel.run(
+                tc -> {
+                    int x = tc.drawSilent(integers());
+                    int y = tc.draw(integers(), "y");
+                    assertTrue(x != 3 || y != 4, "both");
+                },
+                SETTINGS.testCases(1).examples(Example.of(3, 4)),
+                recorder);
+        assertFalse(report.passed());
+        assertEquals(List.of("y = 4;"), report.failures().get(0).output());
+    }
+
+    @Test
+    void aForkOfAnExampleDrawsFromTheSameValues() throws Exception {
+        List<Object> seen = new ArrayList<>();
+        Hegel.test(
+                tc -> {
+                    TestCase fork = tc.fork(1);
+                    int[] drawn = new int[1];
+                    Thread thread = new Thread(() -> drawn[0] = fork.draw(integers(), "x"));
+                    thread.start();
+                    try {
+                        thread.join();
+                    } catch (InterruptedException e) {
+                        throw new AssertionError(e);
+                    }
+                    if (seen.isEmpty()) {
+                        seen.add(drawn[0]);
+                        seen.add(tc.draw(integers()));
+                    }
+                },
+                SETTINGS.testCases(1).examples(Example.of(2).with("x", 1)));
+        assertEquals(List.of(1, 2), seen);
+    }
+
+    @Test
+    void anExampleRunsARepeatBodyOnce() {
+        List<Object> seen = new ArrayList<>();
+        Hegel.test(
+                tc -> tc.repeat(() -> {
+                    int x = tc.draw(integers(), "x");
+                    if (seen.size() < 1) {
+                        seen.add(x);
+                    }
+                }),
+                SETTINGS.testCases(1).examples(Example.of(7)));
+        assertEquals(List.of(7), seen);
+
+        Hegel.test(
+                tc -> tc.repeat(() -> tc.assume(tc.draw(integers()) != 8)),
+                SETTINGS.testCases(1).examples(Example.of(8)));
+
+        RunReport failing = Hegel.run(
+                tc -> tc.repeat(() -> assertTrue(tc.draw(integers(), "x") != 9, "nine")),
+                SETTINGS.testCases(1).examples(Example.of(9)),
+                Reporter.silent());
+        assertFalse(failing.passed());
+        assertEquals(List.of("// Repetition #1", "x = 9;"), failing.failures().get(0).output());
+
+        IllegalArgumentException unused = assertThrows(
+                IllegalArgumentException.class,
+                () -> Hegel.run(
+                        tc -> tc.repeat(() -> tc.draw(integers())),
+                        SETTINGS.examples(Example.of(1, 2)),
+                        Reporter.silent()));
+        assertTrue(unused.getMessage().contains("1 positional value(s)"), unused.getMessage());
     }
 
     @Test

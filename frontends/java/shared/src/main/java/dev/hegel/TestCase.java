@@ -262,7 +262,11 @@ public final class TestCase {
      * @param <T> the value type
      * @return the generated value
      */
+    @SuppressWarnings("unchecked")
     public <T> T drawSilent(Generator<T> generator) {
+        if (explicit != null) {
+            return (T) explicit.takeSilent();
+        }
         return drawNested(generator);
     }
 
@@ -387,6 +391,9 @@ public final class TestCase {
      * @return the forked handle
      */
     public TestCase fork(int worker) {
+        if (explicit != null) {
+            return new TestCase(source, shared, explicit);
+        }
         TestCase fork = forWorker(worker);
         shared.addBlock(fork);
         return fork;
@@ -404,6 +411,15 @@ public final class TestCase {
      * @param body one repetition, drawing through this test case
      */
     public void repeat(Runnable body) {
+        if (explicit != null) {
+            note("// Repetition #1");
+            try {
+                body.run();
+            } catch (AssumeRejected e) {
+                throw new LoopDone();
+            }
+            throw new LoopDone();
+        }
         long minSize = drawSilent(Generators.longs().min(0).max(1L << 40));
         long id = newCollection(minSize, Abi.UNBOUNDED);
         try {

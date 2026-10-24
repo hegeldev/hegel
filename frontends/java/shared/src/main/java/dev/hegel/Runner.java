@@ -150,12 +150,14 @@ final class Runner {
                 reporter.caseOutput("Running explicit " + example, false);
             }
             Throwable failure = null;
+            boolean rejected = false;
             try {
                 body.accept(testCase);
             } catch (InvalidExample e) {
                 throw e;
             } catch (AssumeRejected e) {
-                throw new InvalidExample("Explicit " + example + " failed an assumption (assume or reject)");
+                rejected = true;
+            } catch (LoopDone e) {
             } catch (Throwable e) {
                 failure = e;
             }
@@ -164,7 +166,14 @@ final class Runner {
                 for (String line : output) {
                     reporter.caseOutput(line, false);
                 }
-                reporter.caseFinished(failure == null ? CaseOutcome.VALID : CaseOutcome.INTERESTING, false);
+                reporter.caseFinished(
+                        rejected
+                                ? CaseOutcome.INVALID
+                                : failure == null ? CaseOutcome.VALID : CaseOutcome.INTERESTING,
+                        false);
+            }
+            if (rejected) {
+                return null;
             }
             if (failure == null) {
                 draws.checkConsumed();

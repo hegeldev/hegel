@@ -29,10 +29,15 @@ import java.util.Map;
  * <p>An example whose body fails is reported like any other failure, before the engine's own, and
  * with {@link Settings#reportMultipleFailures(boolean)} off it ends the run there. It is a usage
  * error, raised as an {@link IllegalArgumentException}, for an example to lack a value a draw asks
- * for, to have values no draw takes, or to fail an {@link TestCase#assume assumption}. An example
- * cannot use the parts of the test-case API that need the engine, such as {@link
- * TestCase#drawSilent}, {@link TestCase#fork} or {@link TestCase#repeat}; {@link TestCase#target}
- * and events are ignored.
+ * for, or to have values no draw takes. An example that fails an {@link TestCase#assume
+ * assumption} (or calls {@link TestCase#reject}) is skipped: it neither passes nor fails.
+ *
+ * <p>The rest of the test-case API works in an example as follows. A {@link TestCase#drawSilent
+ * silent draw} has no name, so it takes the next positional value. A {@link TestCase#fork fork}
+ * draws from the same example as the test case it was forked from. {@link TestCase#repeat} runs
+ * its body once, since an example's values can be drawn only once. {@link TestCase#target} and
+ * events are ignored. Spans, pools and {@link Stateful} machines need the engine and are a usage
+ * error.
  */
 public final class Example {
     private final List<Object> positional;

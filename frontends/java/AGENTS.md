@@ -303,11 +303,14 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   the engine's run, when the resolved phases (`settingsGetPhases`) include
   `EXPLICIT` and no blob is being replayed. The engine is not involved: the
   `TestCase` draws from `ExplicitDraws` (a draw takes the value named for it,
-  else the next positional one) over an `ExplicitDraws.noEngine()` data
-  source that ignores `target`/events and rejects everything else as a
-  usage error, and prints into a standalone `hegel_printer_new` document.
-  Misfitting examples (a missing value, an unused one, a failed assumption)
-  are `IllegalArgumentException`s. Without `reportMultipleFailures`
+  else the next positional one; a silent draw takes the next positional one)
+  over an `ExplicitDraws.noEngine()` data source that ignores `target`/events
+  and rejects the engine primitives (spans, pools, state machines) as a usage
+  error, and prints into a standalone `hegel_printer_new` document. `fork`
+  shares the example's values and `repeat` runs its body once, as Rust's
+  `ExplicitTestCase` does. An example that fails an assumption is skipped,
+  neither passing nor failing. Misfitting examples (a missing value, an
+  unused one) are `IllegalArgumentException`s. Without `reportMultipleFailures`
   (`settingsGetReportMultipleFailures`) the first failing example ends the
   run; with it, every example runs, failures are deduplicated by origin, the
   engine runs too, and its failures with an explicit failure's origin are

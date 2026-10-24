@@ -428,6 +428,8 @@ public final class Settings {
     /**
      * Run the property with these explicit {@link Example examples} before any values are
      * generated, in the {@link Phase#EXPLICIT explicit phase}. Replaces any previously set examples.
+     * {@link Example} describes how a test body's draws take an example's values, and what the rest
+     * of the test-case API does inside one.
      *
      * @param examples the examples
      * @return a new settings instance
