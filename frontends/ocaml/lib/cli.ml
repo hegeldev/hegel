@@ -50,8 +50,8 @@ let settings_flags =
   ; "print_blob", "BOOL", "Print the blob that reproduces a failure."
   ; ( "backend"
     , "BACKEND"
-    , "Source of randomness: $(b,default) (a seeded generator) or $(b,urandom) \
-       (fresh entropy for every choice)." )
+    , "Source of randomness: $(b,default) (a seeded generator) or $(b,urandom) (fresh \
+       entropy for every choice)." )
   ; ( "nondeterminism_strictness"
     , "LEVEL"
     , "What a nondeterministic test does: $(b,quiet), $(b,warn), or $(b,error)." )

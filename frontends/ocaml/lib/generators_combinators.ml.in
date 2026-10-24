@@ -337,3 +337,84 @@ let%template permutations ABSTRACT(a, value mod c) (values : a list MODE(m))
     }
 [@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
 ;;
+
+let rec first_duplicate = function
+  | [] -> None
+  | name :: rest -> if List.mem name rest then Some name else first_duplicate rest
+;;
+
+(** [from_lark grammar ?start ?explicit ?max_size ?max_depth ?import_path
+    ?codec ... ?alphabet ()] creates a generator for strings of a grammar
+    written in Lark's syntax. The engine compiles the grammar on the first
+    draw, draws each string, and asks for a value from the generator
+    [explicit] gives each explicit terminal wherever one occurs, splicing it
+    in. *)
+let%template from_lark
+      grammar
+      ?start
+      ?(explicit : (string * string generator) list MODE(m) = [])
+      ?(max_size : int option)
+      ?(max_depth : int option)
+      ?import_path
+      ?codec
+      ?min_codepoint
+      ?max_codepoint
+      ?categories
+      ?exclude_categories
+      ?include_characters
+      ?exclude_characters
+      ?alphabet
+      ()
+  : string generator MODE(m)
+  =
+  (match max_size with
+   | Some n when n < 1 -> raise (Internal.Usage_error "max_size must be at least 1")
+   | _ -> ());
+  (match max_depth with
+   | Some n when n < 1 -> raise (Internal.Usage_error "max_depth must be at least 1")
+   | _ -> ());
+  let names = List.map fst explicit in
+  (match first_duplicate names with
+   | Some name ->
+     raise
+       (Internal.Usage_error
+          (Printf.sprintf "explicit terminal '%s' is given more than one generator" name))
+   | None -> ());
+  let compiled =
+    Internal.grammar
+      { grammar_text = grammar
+      ; start
+      ; grammar_max_size = Option.value max_size ~default:0
+      ; max_depth = Option.value max_depth ~default:0
+      ; grammar_alphabet =
+          char_alphabet
+            ?codec
+            ?min_codepoint
+            ?max_codepoint
+            ?categories
+            ?exclude_categories
+            ?include_characters
+            ?exclude_characters
+            ?alphabet
+            ()
+      ; explicit_terminals = names
+      ; import_path
+      }
+  in
+  Leaf
+    { draw =
+        (fun data ->
+          Internal.generate_grammar data compiled ~provide:(fun terminal ->
+            fst (do_draw (snd (List.nth explicit terminal)) data)))
+    ; print = Printer.string
+    ; label =
+        Labels.combine
+          (Labels.from_name "hegel.from_lark"
+           :: Labels.from_name grammar
+           :: Labels.from_name (Option.value start ~default:"start")
+           :: List.concat_map
+                (fun (name, generator) -> [ Labels.from_name name; label_of generator ])
+                explicit)
+    }
+[@@mode m = (nonportable, portable)]
+;;

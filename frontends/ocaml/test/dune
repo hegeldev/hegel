@@ -16,6 +16,7 @@
   test_generators_combinators
   test_generators_functions
   test_generators_extra
+  test_lark
   test_printer
   test_stateful
   test_loader)

@@ -444,29 +444,143 @@ type alphabet =
   ; exclude_characters : string option
   }
 
+(** [with_alphabet ctx alphabet f] runs [f] on a single-character text
+    generator over [alphabet] ([None] when there is none), freed afterwards. *)
+let with_alphabet ctx alphabet f =
+  match alphabet with
+  | None -> f None
+  | Some (a : alphabet) ->
+    let handle =
+      Ffi.string_generator_text
+        ctx
+        ~min_size:1
+        ~max_size:(Some 1)
+        ~codec:a.codec
+        ~min_codepoint:a.min_codepoint
+        ~max_codepoint:a.max_codepoint
+        ~categories:a.categories
+        ~exclude_categories:a.exclude_categories
+        ~include_characters:a.include_characters
+        ~exclude_characters:a.exclude_characters
+    in
+    Fun.protect
+      ~finally:(fun () -> Ffi.string_generator_free ctx handle)
+      (fun () -> f (Some handle))
+;;
+
 (** [generate_regex tc ~pattern ~fullmatch ~alphabet] draws a string matching
     [pattern], every character of it from [alphabet] when one is given. *)
 let generate_regex tc ~pattern ~fullmatch ~alphabet =
   with_string_generator tc (fun ctx ->
-    match alphabet with
-    | None -> Ffi.string_generator_regex ctx ~pattern ~fullmatch ~alphabet:None
-    | Some (a : alphabet) ->
-      let alphabet =
-        Ffi.string_generator_text
-          ctx
-          ~min_size:1
-          ~max_size:(Some 1)
-          ~codec:a.codec
-          ~min_codepoint:a.min_codepoint
-          ~max_codepoint:a.max_codepoint
-          ~categories:a.categories
-          ~exclude_categories:a.exclude_categories
-          ~include_characters:a.include_characters
-          ~exclude_characters:a.exclude_characters
+    with_alphabet ctx alphabet (fun alphabet ->
+      Ffi.string_generator_regex ctx ~pattern ~fullmatch ~alphabet))
+;;
+
+type grammar_spec KIND(value mod portable contended) =
+  { grammar_text : string
+  ; start : string option
+  ; grammar_max_size : int
+  ; max_depth : int
+  ; grammar_alphabet : alphabet option
+  ; explicit_terminals : string list
+  ; import_path : string option
+  }
+
+(** A grammar compiled on its first draw and kept for the next ones. The
+    compiled handle is freed by a finaliser on the record, so every draw
+    keeps the record alive until the engine is done with the handle. *)
+type grammar KIND(value mod portable contended) =
+  { spec : grammar_spec
+  ; compiling : unit Locked.t
+  ; compiled : Ffi.grammar option Atomic.t
+  }
+
+let free_compiled compiled =
+  Option.iter
+    (fun handle ->
+      let ctx = Ffi.context_new () in
+      Ffi.grammar_free ctx handle;
+      Ffi.context_free ctx)
+    (Atomic.get compiled)
+;;
+
+let grammar spec =
+  let g = { spec; compiling = Locked.create (fun () -> ()); compiled = Atomic.make None } in
+#ifdef OXCAML
+  Gc.Safe.finalise (fun g -> free_compiled g.compiled) g;
+#else
+  Gc.finalise (fun g -> free_compiled g.compiled) g;
+#endif
+  g
+;;
+
+(** [read_grammar_file dir path] is the text of the file [path] under [dir],
+    or [None] when there is no such file. *)
+let read_grammar_file dir path =
+  let file = Filename.concat dir path in
+  if Sys.file_exists file
+  then (
+    try Some (In_channel.with_open_bin file In_channel.input_all) with
+    | Sys_error message ->
+      raise (Usage_error (Printf.sprintf "Could not read grammar %S: %s" file message)))
+  else None
+;;
+
+let compile_grammar ctx spec =
+  let builder = Ffi.grammar_builder_new ctx spec.grammar_text in
+  Fun.protect
+    ~finally:(fun () -> Ffi.grammar_builder_free ctx builder)
+    (fun () ->
+      let rec provide index =
+        Option.iter
+          (fun path ->
+            Ffi.grammar_builder_provide
+              ctx
+              builder
+              index
+              (Option.bind spec.import_path (fun dir -> read_grammar_file dir path));
+            provide (index + 1))
+          (Ffi.grammar_builder_file ctx builder index)
       in
-      Fun.protect
-        ~finally:(fun () -> Ffi.string_generator_free ctx alphabet)
-        (fun () -> Ffi.string_generator_regex ctx ~pattern ~fullmatch ~alphabet:(Some alphabet)))
+      provide 0;
+      with_alphabet ctx spec.grammar_alphabet (fun alphabet ->
+        Ffi.grammar_new
+          ctx
+          builder
+          ~start:spec.start
+          ~max_size:spec.grammar_max_size
+          ~max_depth:spec.max_depth
+          ~alphabet
+          ~explicit:spec.explicit_terminals))
+;;
+
+let compiled_grammar tc g =
+  Locked.protect g.compiling (fun () ->
+    match Atomic.get g.compiled with
+    | Some handle -> handle
+    | None ->
+      let handle = compile_grammar tc.context g.spec in
+      Atomic.set g.compiled (Some handle);
+      handle)
+;;
+
+let generate_grammar tc g ~provide =
+  with_stop_guard tc (fun () ->
+    let handle = compiled_grammar tc g in
+    let draw = Ffi.grammar_draw_new tc.context handle ~max_size:0 in
+    Fun.protect
+      ~finally:(fun () ->
+        Ffi.grammar_draw_free tc.context draw;
+        ignore (Sys.opaque_identity g : grammar))
+      (fun () ->
+        let rec next () =
+          match Ffi.grammar_draw_next tc.context tc.handle draw with
+          | Some terminal ->
+            Ffi.grammar_draw_provide tc.context draw (provide terminal);
+            next ()
+          | None -> Ffi.grammar_draw_result tc.context draw
+        in
+        next ()))
 ;;
 
 (** [generate_email tc] draws an RFC 5321/5322 email address. *)

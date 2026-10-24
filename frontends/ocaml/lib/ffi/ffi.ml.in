@@ -577,6 +577,71 @@ let c_owned_string_free =
   foreign "hegel_owned_string_free" (handle_t @-> ptr Str.t @-> returning int)
 ;;
 
+let c_grammar_builder_new =
+  foreign
+    "hegel_grammar_builder_new"
+    (handle_t @-> str @-> ptr handle_t @-> returning int)
+;;
+
+let c_grammar_builder_file =
+  foreign
+    "hegel_grammar_builder_file"
+    (handle_t @-> handle_t @-> size_t @-> ptr Str.t @-> returning int)
+;;
+
+let c_grammar_builder_provide =
+  foreign
+    "hegel_grammar_builder_provide"
+    (handle_t @-> handle_t @-> size_t @-> str_opt @-> returning int)
+;;
+
+let c_grammar_builder_free =
+  foreign "hegel_grammar_builder_free" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_grammar_new =
+  foreign
+    "hegel_grammar_new"
+    (handle_t
+     @-> handle_t (* builder *)
+     @-> str_opt (* start *)
+     @-> uint64_t (* max_size *)
+     @-> uint32_t (* max_depth *)
+     @-> handle_t (* alphabet, nullable *)
+     @-> ptr Str.t (* explicit_names *)
+     @-> size_t (* explicit_len *)
+     @-> ptr handle_t
+     @-> returning int)
+;;
+
+let c_grammar_free = foreign "hegel_grammar_free" (handle_t @-> handle_t @-> returning int)
+
+let c_grammar_draw_new =
+  foreign
+    "hegel_grammar_draw_new"
+    (handle_t @-> handle_t @-> uint64_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_grammar_draw_next =
+  foreign
+    "hegel_grammar_draw_next"
+    (handle_t @-> handle_t @-> handle_t @-> ptr size_t @-> returning int)
+;;
+
+let c_grammar_draw_provide =
+  foreign "hegel_grammar_draw_provide" (handle_t @-> handle_t @-> str @-> returning int)
+;;
+
+let c_grammar_draw_result =
+  foreign
+    "hegel_grammar_draw_result"
+    (handle_t @-> handle_t @-> ptr Str.t @-> returning int)
+;;
+
+let c_grammar_draw_free =
+  foreign "hegel_grammar_draw_free" (handle_t @-> handle_t @-> returning int)
+;;
+
 let c_generate_date =
   foreign
     "hegel_generate_date"
@@ -960,6 +1025,9 @@ type collection = handle
 type pool = handle
 type state_machine = handle
 type recursion = handle
+type grammar = handle
+type grammar_builder = handle
+type grammar_draw = handle
 
 let null_context = null_handle
 let null_test_case = null_handle
@@ -1016,6 +1084,7 @@ let e_not_complete = -7
 let e_internal = -8
 let e_concurrent_use = -9
 let e_retry = -10
+let e_not_found = -11
 
 (* Phase bitmask values [HEGEL_PHASE_*]. *)
 let phase_explicit = 1
@@ -1112,7 +1181,7 @@ let check_rc ctx rc =
       else if rc = e_internal
       then "internal error"
       else if rc = e_concurrent_use
-      then "concurrent use of a test-case or collection handle"
+      then "concurrent use of a test-case, collection or grammar draw handle"
       else Printf.sprintf "unknown error code %d" rc
     in
     let msg = c_last_error_message ctx in
@@ -1548,6 +1617,80 @@ let generate_string ctx tc sg =
   ignore (c_owned_string_free ctx (addr result) : int);
   s
 ;;
+
+let grammar_builder_new ctx text =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_grammar_builder_new ctx text out);
+  !@out
+;;
+
+let grammar_builder_file ctx builder index =
+  let out = allocate Str.t (make Str.t) in
+  let rc = c_grammar_builder_file ctx builder (Unsigned.Size_t.of_int index) out in
+  if rc = e_not_found
+  then None
+  else (
+    check_rc ctx rc;
+    Some (string_of_str !@out))
+;;
+
+let grammar_builder_provide ctx builder index text =
+  check_rc ctx (c_grammar_builder_provide ctx builder (Unsigned.Size_t.of_int index) text)
+;;
+
+let grammar_builder_free ctx builder = ignore (c_grammar_builder_free ctx builder : int)
+
+let grammar_new ctx builder ~start ~max_size ~max_depth ~alphabet ~explicit =
+  let names, root = to_string_array explicit in
+  let out = allocate handle_t null_handle in
+  let rc =
+    c_grammar_new
+      ctx
+      builder
+      start
+      (Unsigned.UInt64.of_int max_size)
+      (Unsigned.UInt32.of_int max_depth)
+      (Option.value alphabet ~default:null_handle)
+      names
+      (Unsigned.Size_t.of_int (List.length explicit))
+      out
+  in
+  Root.release root;
+  check_rc ctx rc;
+  !@out
+;;
+
+let grammar_free ctx grammar = ignore (c_grammar_free ctx grammar : int)
+
+let grammar_draw_new ctx grammar ~max_size =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_grammar_draw_new ctx grammar (Unsigned.UInt64.of_int max_size) out);
+  !@out
+;;
+
+let grammar_draw_next ctx tc draw =
+  let out = allocate size_t Unsigned.Size_t.zero in
+  let rc = c_grammar_draw_next ctx tc draw out in
+  if rc = e_not_found
+  then None
+  else (
+    check_rc ctx rc;
+    Some (Unsigned.Size_t.to_int !@out))
+;;
+
+let grammar_draw_provide ctx draw value =
+  check_rc ctx (c_grammar_draw_provide ctx draw value)
+;;
+
+let grammar_draw_result ctx draw =
+  let result = make Str.t in
+  check_rc ctx (c_grammar_draw_result ctx draw (addr result));
+  let s = string_of_str result in
+  ignore (c_owned_string_free ctx (addr result) : int);
+  s
+;;
+
+let grammar_draw_free ctx draw = ignore (c_grammar_draw_free ctx draw : int)
 
 type date =
   { year : int
@@ -2107,6 +2250,17 @@ let string_generator_url = Obj.magic_portable string_generator_url
 let string_generator_domain = Obj.magic_portable string_generator_domain
 let string_generator_free = Obj.magic_portable string_generator_free
 let generate_string = Obj.magic_portable generate_string
+let grammar_builder_new = Obj.magic_portable grammar_builder_new
+let grammar_builder_file = Obj.magic_portable grammar_builder_file
+let grammar_builder_provide = Obj.magic_portable grammar_builder_provide
+let grammar_builder_free = Obj.magic_portable grammar_builder_free
+let grammar_new = Obj.magic_portable grammar_new
+let grammar_free = Obj.magic_portable grammar_free
+let grammar_draw_new = Obj.magic_portable grammar_draw_new
+let grammar_draw_next = Obj.magic_portable grammar_draw_next
+let grammar_draw_provide = Obj.magic_portable grammar_draw_provide
+let grammar_draw_result = Obj.magic_portable grammar_draw_result
+let grammar_draw_free = Obj.magic_portable grammar_draw_free
 let generate_date = Obj.magic_portable generate_date
 let generate_time = Obj.magic_portable generate_time
 let generate_datetime = Obj.magic_portable generate_datetime

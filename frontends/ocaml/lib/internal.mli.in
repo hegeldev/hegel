@@ -183,6 +183,38 @@ val generate_regex
   -> alphabet:alphabet option
   -> string
 
+(** What a Lark grammar draws from: its text, the start rule ([None] for
+    [start]), the size and depth caps ([0] for the engine's defaults), the
+    alphabet of its terminals' characters, the explicit terminals whose values
+    the caller draws, and the directory [%import]ed grammars are read from. *)
+type grammar_spec
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+  =
+  { grammar_text : string
+  ; start : string option
+  ; grammar_max_size : int
+  ; max_depth : int
+  ; grammar_alphabet : alphabet option
+  ; explicit_terminals : string list
+  ; import_path : string option
+  }
+
+(** A grammar, compiled by the engine on its first draw. *)
+type grammar
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+
+(** [grammar spec] is a grammar to draw strings of [spec] from. *)
+val grammar : grammar_spec -> grammar
+
+(** [generate_grammar tc g ~provide] draws a string of [g], calling
+    [provide i] for the value of each occurrence of the [i]th explicit
+    terminal. A grammar or option the engine rejects raises {!Usage_error}. *)
+val generate_grammar : test_case -> grammar -> provide:(int -> string) -> string
+
 (** [generate_email tc] draws an RFC 5321/5322 email address. Raises
     {!Assume_rejected} when the draw rejects itself. *)
 val generate_email : test_case -> string

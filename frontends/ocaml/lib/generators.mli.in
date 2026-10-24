@@ -939,6 +939,76 @@ val from_regex
   -> unit
   -> string generator MODE(portable)
 
+(** [from_lark grammar ?start ?explicit ?max_size ?max_depth ?import_path
+     ?codec ?min_codepoint ?max_codepoint ?categories ?exclude_categories
+     ?include_characters ?exclude_characters ?alphabet ()] creates a generator
+    for strings of a grammar written in the syntax of the
+    {{:https://lark-parser.readthedocs.io/en/stable/grammar.html} Lark}
+    parsing library, starting from its [start] rule, or the rule named
+    [start] when given.
+
+    The whole grammar language is supported: rules, terminals with string and
+    regex patterns and priorities, [%import] (including Lark's bundled
+    [common], [python], [unicode] and [lark] grammars), [%ignore],
+    [%declare], [%override], [%extend] and templates. Generated strings are
+    ones Lark's Earley parser accepts for the grammar, with [%ignore]d
+    terminals such as whitespace and comments inserted wherever a lexer
+    would skip them. A draw that cannot produce such a string after several
+    attempts rejects the test case, as [assume false] does.
+
+    - [explicit]: pairs of a terminal's name and a generator its values are
+      drawn from instead of from the terminal's pattern. Every terminal the
+      grammar [%declare]s must be given one, and any other terminal may be.
+      The values must be UTF-8, and it is the generator's part to draw values
+      that read as the terminal where they land (a value under a
+      quoted-string terminal should contain no quote, say).
+    - [max_size]: the most characters a string may have, explicit values
+      included: 8192 by default, at most 1048576.
+    - [max_depth]: how deeply rules may nest: 200 by default, at most 500.
+    - [import_path]: the directory [%import]ed grammars are read from.
+      [%import a.b.X] reads [a/b.lark] from it, and Lark's bundled grammars
+      stand in when it has no such file.
+    - The character filtering options restrict every character the
+      terminals' patterns draw, as they do for {!text}.
+
+    A grammar Lark would reject, an undefined start rule, a [max_size] below
+    the grammar's smallest string, or an [explicit] generator for a terminal
+    the grammar does not use raises [Usage_error] when drawn.
+
+    {[
+      let grammar =
+        {|
+          ?start: sum
+          ?sum: product | sum "+" product
+          ?product: atom | product "*" atom
+          ?atom: NUMBER | "(" sum ")"
+          %import common.NUMBER
+        |}
+
+      let%hegel_test from_lark_example tc =
+        let expression = draw tc (from_lark grammar ()) in
+        assert (String.length expression >= 1)
+      ;;
+    ]} *)
+val%template from_lark
+  :  string
+  -> ?start:string
+  -> ?explicit:(string * string generator) list MODE(m)
+  -> ?max_size:int
+  -> ?max_depth:int
+  -> ?import_path:string
+  -> ?codec:string
+  -> ?min_codepoint:int
+  -> ?max_codepoint:int
+  -> ?categories:string list
+  -> ?exclude_categories:string list
+  -> ?include_characters:string
+  -> ?exclude_characters:string
+  -> ?alphabet:string
+  -> unit
+  -> string generator MODE(m)
+[@@mode m = (nonportable, portable)]
+
 (** [uuids ?version ()] creates a generator for UUIDs as lowercase hyphenated
     strings, such as ["0f8fad5b-d9cb-469f-a165-70867728950e"]. With [version]
     (1 to 5) the UUID has that RFC 4122 version and the RFC 4122 variant.

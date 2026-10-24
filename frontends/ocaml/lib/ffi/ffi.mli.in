@@ -95,6 +95,28 @@ type recursion
   : value mod portable contended
 #endif
 
+(** A compiled grammar ([hegel_grammar_t]): immutable, shareable across test
+    cases and threads, freed with {!grammar_free}. *)
+type grammar
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+
+(** A grammar and its imported files being gathered
+    ([hegel_grammar_builder_t]), freed with {!grammar_builder_free}. *)
+type grammar_builder
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+
+(** One draw of a grammar string whose explicit terminals take values the
+    caller supplies ([hegel_grammar_draw_t]), freed with
+    {!grammar_draw_free}. *)
+type grammar_draw
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+
 (** A proleptic Gregorian calendar date ([hegel_date_t]). *)
 type date =
   { year : int
@@ -519,6 +541,64 @@ val string_generator_free : context -> string_generator -> unit
     {!Stop_test} on budget exhaustion and {!Assume_rejected} when the draw
     rejects itself (e.g. an over-length email). *)
 val generate_string : context -> test_case -> string_generator -> string
+
+(** {3 Grammars} *)
+
+(** [grammar_builder_new ctx text] starts gathering the Lark grammar [text] and
+    the files it imports. Raises {!Usage_error} for a grammar that does not
+    parse. *)
+val grammar_builder_new : context -> string -> grammar_builder
+
+(** [grammar_builder_file ctx b i] is the path of the [i]th file the grammar
+    needs, or [None] past the end of the list, which grows as files are
+    provided. *)
+val grammar_builder_file : context -> grammar_builder -> int -> string option
+
+(** [grammar_builder_provide ctx b i text] supplies the [i]th file's text, or
+    [None] for a missing file. Raises {!Usage_error} for text that does not
+    parse or a missing file with no bundled grammar to stand in. *)
+val grammar_builder_provide : context -> grammar_builder -> int -> string option -> unit
+
+val grammar_builder_free : context -> grammar_builder -> unit
+
+(** [grammar_new ctx b ~start ~max_size ~max_depth ~alphabet ~explicit]
+    compiles the gathered grammar ([hegel_grammar_new]): [start] is the start
+    rule ([None] for [start]), [max_size] and [max_depth] of [0] take the
+    engine's defaults, [alphabet] is a text string generator every terminal's
+    characters come from, and [explicit] names the terminals whose values the
+    caller supplies. Raises {!Usage_error} with the engine's diagnostic. *)
+val grammar_new
+  :  context
+  -> grammar_builder
+  -> start:string option
+  -> max_size:int
+  -> max_depth:int
+  -> alphabet:string_generator option
+  -> explicit:string list
+  -> grammar
+
+val grammar_free : context -> grammar -> unit
+
+(** [grammar_draw_new ctx g ~max_size] starts a draw of a string of [g] of at
+    most [max_size] characters, explicit terminals' values included, or the
+    grammar's own cap for [0]. *)
+val grammar_draw_new : context -> grammar -> max_size:int -> grammar_draw
+
+(** [grammar_draw_next ctx tc d] is [Some i] when a value is due for the [i]th
+    explicit terminal, to be given with {!grammar_draw_provide}, and [None]
+    once the string is complete. Raises {!Assume_rejected} when the draw
+    rejects the test case and {!Stop_test} on budget exhaustion. *)
+val grammar_draw_next : context -> test_case -> grammar_draw -> int option
+
+(** [grammar_draw_provide ctx d value] supplies the value
+    {!grammar_draw_next} asked for. Raises {!Usage_error} for a value that is
+    not UTF-8. *)
+val grammar_draw_provide : context -> grammar_draw -> string -> unit
+
+(** [grammar_draw_result ctx d] is the completed string. *)
+val grammar_draw_result : context -> grammar_draw -> string
+
+val grammar_draw_free : context -> grammar_draw -> unit
 
 (** [generate_date ctx tc ~min_value ~max_value] draws a Gregorian date in the
     inclusive range. Raises {!Stop_test} on budget exhaustion. *)

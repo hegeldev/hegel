@@ -91,7 +91,7 @@ lib/                         # Library source
   ffi/                       # ctypes bindings to native libhegel (NOT instrumented)
     ffi.ml.in/.mli.in        # dlopen + 1:1 C-ABI wrappers; settings/run/test_case
                              #   handles; typed draws + string-generator handles;
-                             #   events; the pretty-printer document (printer_*,
+                             #   grammar builder/grammar/draw handles; events; the pretty-printer document (printer_*,
                              #   test_case_printer, note)
     loader.ml                # locate libhegel at runtime (env > site > the
                              #   checkout's in-tree target/ build (libhegel_c.<ext>))
@@ -124,7 +124,8 @@ lib/                         # Library source
   generators_primitives.ml.in # integers, booleans, floats, text, binary, just, formats
   generators_collections.ml.in # lists, assoc_lists, hash_tables (+ the table-agnostic
                              #   make_hash_tables), and the collection protocol
-  generators_combinators.ml.in # sampled_from, one_of, tuples2/3/4
+  generators_combinators.ml.in # sampled_from, one_of, tuples2..8, permutations,
+                             #   from_lark
   generators_functions.ml.in # functions/functions2/functions3: memoized
                              #   function generators (Claessen's show/shrink,
                              #   but no trie — the engine shrinks results)
@@ -269,7 +270,7 @@ thin 1:1 wrappers: settings handles, the run lifecycle (`run_start`,
 `next_test_case`, `run_result`, `run_free`), and per-test-case primitives — the
 typed draws (`generate_integer`, `generate_boolean`, `generate_float`,
 `generate_bytes`, `generate_string` + the `string_generator_*` handle
-constructors, `generate_date`/`time`/`datetime`, `generate_ipv4`/`ipv6`), spans,
+constructors, the grammar handles (`grammar_builder_*`, `grammar_new`, `grammar_draw_*`), `generate_date`/`time`/`datetime`, `generate_ipv4`/`ipv6`), spans,
 collections, pools, state machines (`new_state_machine` takes the per-machine
 `~step_count` since libhegel 0.38.0; there is no settings-level step count),
 `target`, `event`/`event_value`, derived handles (`test_case_clone`,
@@ -343,7 +344,7 @@ Generators are a discriminated union:
 - **Leaf** — holds a `draw : test_case -> 'a` closure that performs a single typed engine draw (via one of the `Internal.generate_*` primitives). Calling `map` on a Leaf composes the closure in place (no extra span), since the engine already wraps every primitive draw in its own span.
 - **Mapped** — wraps source + transform function (adds a `mapped` span).
 - **FlatMapped** — wraps source + a function returning a generator. Evaluated recursively inside a `flat_map` span.
-- **Filtered** — wraps source + predicate. Up to `max_filter_attempts` retries before `assume false`; see **Values** for a consuming pool source.
+- **Filtered** — wraps source + predicate. Up to `max_filter_attempts` (`Ffi.filter_attempts`, the header's `HEGEL_FILTER_ATTEMPTS`) attempts before `assume false`; see **Values** for a consuming pool source.
 - **CompositeList** — lists of any element core. Uses the collection protocol (with_collection / collection_more) to generate elements one at a time.
 - **Composite** — a `generate_fn` thunk run inside a labeled span; used by tuples, one_of, `lists ~unique`, and hash tables (all of which now always drive the collection protocol / draw sub-values directly — there is no schema fast path).
 - **Values** — the engine-pool core behind `Stateful.Pool` and `Concurrent_pool`: `{ pool; consume; select : test_case -> filter:(label * predicate) option -> 'a }`, where `select ~filter:None` draws an id from the engine pool and resolves it against the client table. On a consuming pool, `filter` calls `select ~filter:(Some _)`, which runs the attempts itself (`filter_consumed`, given the pool's `size`/`take`/`keep`; the concurrent pool runs the predicate between lock sections): every id an attempt takes stays consumed until the attempts end, then all but the accepted one go back through `hegel_pool_restore` (libhegel 0.45.13), on every exit including a raising predicate, so filtering consumes only the value the test receives. A filter over a filter folds both predicates into one round of attempts (`do_draw_filtered`), as hegel-rust does. `Generators.Int_pool_concurrent` does that under the pool's `Locked`, so the table never disagrees with the engine about which ids exist while workers share it; the sequential `Generators.Int_pool` needs no lock. Both are doc-hidden client sides over `Int_table`; `resolve_pool_draw` is the shared id-resolution step. `hash_tables` is refunctionalized at the API level: `make_hash_tables ~of_pairs ~print_of_pairs` is table-agnostic, `hash_tables` closes it over `Stdlib.Hashtbl`, `Hegel_jane.hash_tables` over `Core.Hashtbl.Poly`.
@@ -1086,10 +1087,11 @@ typed FFI call (`Hegel_ffi.Ffi` / `Internal.generate_*`):
 - `integers` → `generate_integer ~min_value ~max_value` (i64 bounds; OCaml native int fits)
 - `booleans` → `generate_boolean 0.5 None`
 - `floats` → `generate_float ~min_value ~max_value ~allow_nan ~allow_infinity ~exclude_min ~exclude_max ~smallest_nonzero_magnitude` (width 64; unbounded ends are ±infinity)
-- `binary` → `generate_bytes ~min_size ~max_size`
+- `binary` → `generate_bytes ~min_size ~max_size` (an omitted `max_size` passes `HEGEL_MAX_SIZE_DEFAULT`, `Ffi.max_size_default`, so the engine applies its default of 100 or `min_size + 100`; `text` does the same)
 - `text` / `characters` → build a text `string_generator` handle (codec / codepoint bounds / categories / include-exclude chars) then `generate_string`; surrogates auto-excluded
 - `chars` → `generate_text` fixed to `min_size:max_size:1`, codepoints 0-0xFF (Latin-1), decoded via `String.get_utf_8_uchar` (a codepoint above 127 encodes to 2 UTF-8 bytes, so this can't just index byte 0) into a native `char` via `make_characters ~of_char ~print`
 - `from_regex` / `emails` / `urls` / `domains` → the matching `string_generator_*` handle + `generate_string`
+- `from_lark` → `Internal.generate_grammar`: the grammar is compiled once per generator, on its first draw (`hegel_grammar_builder_*`, reading `%import`ed files from `?import_path`, then `hegel_grammar_new`), under the generator's `Locked` so concurrent first draws compile once, and kept in an `Atomic`; a `Gc.finalise` (`Gc.Safe.finalise` under OxCaml) on the `Internal.grammar` record frees it, so `generate_grammar` keeps the record alive (`Sys.opaque_identity` in its `finally`) until the engine is done with the handle. Each draw is a `hegel_grammar_draw_t`: `grammar_draw_next` names the explicit terminal whose value is due, the generator `?explicit` gives it is drawn (`do_draw`, no print line of its own) and handed over with `grammar_draw_provide`, and the engine splices it in, keeps the string under the size cap and rejects after `HEGEL_FILTER_ATTEMPTS` attempts that do not fit. The frontend's own checks are only those the ABI cannot make: `max_size`/`max_depth` below 1 (0 is the engine's "default") and a terminal given two generators
 - `dates` / `times` / `datetimes` → `generate_date`/`time`/`datetime` structs, bounded by the caller's `?min_date`/`?max_date`, `?min_time`/`?max_time`, `?min_datetime`/`?max_datetime` (validated by the engine: a bad bound is `HEGEL_E_INVALID_ARG`, which `check_rc` raises as `Usage_error` and the runner propagates unshrunk). The parts are the `date`/`time` records (`hegel_time_t` carries nanoseconds since libhegel 0.36.0) and feed the refunctionalized builders `make_dates`/`make_times`/`make_datetimes` (`~of_date`/`~of_time`/`~of_datetime` constructor + `~print` printer); the public `dates`/`times`/`datetimes` close them over ISO 8601 strings (`YYYY-MM-DD`, `HH:MM:SS.fffffffff` with the fraction always printed, joined by `T`). A typed date library plugs in its own `~of_date` (no string parsing round-trip)
 - `ip_addresses` → `generate_ipv4`/`generate_ipv6` raw bytes, rendered to strings by the `ipaddr` library (`Ipaddr.V4/V6.{of_octets_exn, to_string}`; RFC 5952 for v6)
 - `sampled_from` → `generate_integer 0 (n-1)` then index into the values array

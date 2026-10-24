@@ -189,7 +189,9 @@ let test_every_setting_has_a_flag () =
        ; "backend"
        ; "nondeterminism_strictness"
        ])
-    (List.sort ~compare:String.compare (List.map Cli.settings_flags ~f:(fun (key, _, _) -> key)))
+    (List.sort
+       ~compare:String.compare
+       (List.map Cli.settings_flags ~f:(fun (key, _, _) -> key)))
 ;;
 
 let test_bad_values () =
