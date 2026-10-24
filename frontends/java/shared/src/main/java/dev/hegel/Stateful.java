@@ -398,7 +398,7 @@ public final class Stateful {
 
         Worker[] workers = new Worker[concurrency];
         for (int w = 0; w < concurrency; w++) {
-            workers[w] = new Worker(w, machine, rules, machineId);
+            workers[w] = new Worker(w, machine, rules, machineId, tc);
         }
         List<TestCase> handles = new ArrayList<>();
         try {
@@ -551,12 +551,15 @@ public final class Stateful {
         private final Object machine;
         private final List<Method> rules;
         private final long machineId;
+        /** The root handle, through which the thread releases its engine context on exit. */
+        private final TestCase root;
 
-        Worker(int index, Object machine, List<Method> rules, long machineId) {
+        Worker(int index, Object machine, List<Method> rules, long machineId, TestCase root) {
             this.index = index;
             this.machine = machine;
             this.rules = rules;
             this.machineId = machineId;
+            this.root = root;
             this.thread = new Thread(this::loop, "hegel-worker-" + index);
             this.thread.setDaemon(true);
         }
@@ -577,6 +580,7 @@ public final class Stateful {
                 // Whatever ended the loop, leave an event behind so the driver never waits forever.
                 outbox.add(WorkerEvent.control(new HegelException(
                         "internal error: concurrent worker " + index + " exited without reporting its round")));
+                root.releaseThreadContext();
             }
         }
 

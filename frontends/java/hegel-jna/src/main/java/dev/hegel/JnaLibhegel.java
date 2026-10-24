@@ -30,8 +30,8 @@ import java.util.function.Consumer;
  * <p>Every fallible call takes a {@code hegel_context_t*} as its first argument, on which libhegel
  * records the diagnostic of a failed call. A context must not be shared between threads, so each
  * thread lazily creates its own; {@link #lastErrorMessage()} reads the current thread's context,
- * which is what the failing call just wrote. Contexts are never freed — one small allocation per
- * thread that touches the engine, for the life of the process.
+ * which is what the failing call just wrote. A thread's context lives until the thread releases
+ * it with {@link #releaseThreadContext()}.
  */
 final class JnaLibhegel implements Libhegel {
     // hegel_run_start registers the output callback with the engine until hegel_run_free, so a
@@ -49,11 +49,13 @@ final class JnaLibhegel implements Libhegel {
         } catch (UnsatisfiedLinkError e) {
             throw new HegelException("Failed to open libhegel at " + libraryPath + ": " + e.getMessage());
         }
-        this.context = ThreadLocal.withInitial(lib::hegel_context_new);
+        this.context = new ThreadLocal<>();
     }
 
     interface HegelNative extends Library {
         Pointer hegel_context_new();
+
+        int hegel_context_free(Pointer ctx);
 
         HegelString.ByValue hegel_context_last_error(Pointer ctx);
 
@@ -201,11 +203,15 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_collection_reject(Pointer ctx, Pointer tc, long id, HegelString why);
 
+        int hegel_collection_free(Pointer ctx, long id);
+
         int hegel_new_pool(Pointer ctx, Pointer tc, LongByReference out);
 
         int hegel_pool_add(Pointer ctx, Pointer tc, long poolId, LongByReference out);
 
         int hegel_pool_generate(Pointer ctx, Pointer tc, long poolId, byte consume, LongByReference out);
+
+        int hegel_pool_free(Pointer ctx, long poolId);
 
         // State-machine handles cross as raw addresses (long), like every other opaque handle; the
         // name lists are contiguous hegel_string_t arrays (see strArray).
@@ -351,7 +357,12 @@ final class JnaLibhegel implements Libhegel {
     }
 
     private Pointer ctx() {
-        return context.get();
+        Pointer c = context.get();
+        if (c == null) {
+            c = lib.hegel_context_new();
+            context.set(c);
+        }
+        return c;
     }
 
     private static Pointer pointer(long handle) {
@@ -940,6 +951,11 @@ final class JnaLibhegel implements Libhegel {
     }
 
     @Override
+    public void collectionFree(long id) {
+        check("hegel_collection_free", lib.hegel_collection_free(ctx(), id));
+    }
+
+    @Override
     public int newPool(long tc, long[] outId) {
         LongByReference ref = new LongByReference();
         int code = lib.hegel_new_pool(ctx(), pointer(tc), ref);
@@ -961,6 +977,11 @@ final class JnaLibhegel implements Libhegel {
         int code = lib.hegel_pool_generate(ctx(), pointer(tc), poolId, cbool(consume), ref);
         outVariableId[0] = ref.getValue();
         return code;
+    }
+
+    @Override
+    public void poolFree(long poolId) {
+        check("hegel_pool_free", lib.hegel_pool_free(ctx(), poolId));
     }
 
     @Override
@@ -1132,6 +1153,15 @@ final class JnaLibhegel implements Libhegel {
     public String lastErrorMessage() {
         // Returned by value; the bytes borrow the context's buffer and are copied out here.
         return readString(lib.hegel_context_last_error(ctx()));
+    }
+
+    @Override
+    public void releaseThreadContext() {
+        Pointer c = context.get();
+        if (c != null) {
+            context.remove();
+            lib.hegel_context_free(c);
+        }
     }
 
     @Override

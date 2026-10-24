@@ -5,6 +5,7 @@ import dev.hegel.lowlevel.Libhegel;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -19,11 +20,19 @@ import java.util.UUID;
 final class LiveDataSource implements DataSource {
     private final Libhegel lib;
     private final long tc;
+    /** The pools created anywhere in this test-case family, shared by the root and its clones. */
+    private final List<Long> pools;
+
     private boolean aborted;
 
     LiveDataSource(Libhegel lib, long tc) {
+        this(lib, tc, new ArrayList<>());
+    }
+
+    private LiveDataSource(Libhegel lib, long tc, List<Long> pools) {
         this.lib = lib;
         this.tc = tc;
+        this.pools = pools;
     }
 
     @Override
@@ -283,11 +292,35 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
+    public void collectionFree(long id) {
+        // Not gated on `aborted`: the handle is caller-owned and must be released exactly once.
+        lib.collectionFree(id);
+    }
+
+    @Override
     public long newPool() {
         checkLive();
         long[] id = new long[1];
         translate(lib.newPool(tc, id), "new_pool");
+        synchronized (pools) {
+            pools.add(id[0]);
+        }
         return id[0];
+    }
+
+    @Override
+    public void releasePools() {
+        synchronized (pools) {
+            for (long pool : pools) {
+                lib.poolFree(pool);
+            }
+            pools.clear();
+        }
+    }
+
+    @Override
+    public void releaseThreadContext() {
+        lib.releaseThreadContext();
     }
 
     @Override
@@ -371,7 +404,7 @@ final class LiveDataSource implements DataSource {
             lib.testCaseFree(clone[0]);
             throw e;
         }
-        return new LiveDataSource(lib, clone[0]);
+        return new LiveDataSource(lib, clone[0], pools);
     }
 
     @Override

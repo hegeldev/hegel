@@ -39,8 +39,8 @@ import java.util.function.Consumer;
  * <p>Every fallible call takes a {@code hegel_context_t*} as its first argument, on which libhegel
  * records the diagnostic of a failed call. A context must not be shared between threads, so each
  * thread lazily creates its own; {@link #lastErrorMessage()} reads the current thread's context,
- * which is what the failing call just wrote. Contexts are never freed — one small allocation per
- * thread that touches the engine, for the life of the process.
+ * which is what the failing call just wrote. A thread's context lives until the thread releases
+ * it with {@link #releaseThreadContext()}.
  */
 final class RealLibhegel implements Libhegel {
     private final Arena libArena;
@@ -99,6 +99,7 @@ final class RealLibhegel implements Libhegel {
     }
 
     private final MethodHandle contextNew;
+    private final MethodHandle contextFree;
     private final MethodHandle contextLastError;
     private final MethodHandle settingsNew;
     private final MethodHandle settingsFree;
@@ -152,9 +153,11 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle newCollection;
     private final MethodHandle collectionMore;
     private final MethodHandle collectionReject;
+    private final MethodHandle collectionFree;
     private final MethodHandle newPool;
     private final MethodHandle poolAdd;
     private final MethodHandle poolGenerate;
+    private final MethodHandle poolFree;
     private final MethodHandle newStateMachine;
     private final MethodHandle stateMachineNextGroup;
     private final MethodHandle stateMachineNextRule;
@@ -186,6 +189,7 @@ final class RealLibhegel implements Libhegel {
 
         // rc(ctx, args...) descriptors; the leading JAVA_INT is the hegel_result_t return.
         this.contextNew = h(linker, lookup, "hegel_context_new", FunctionDescriptor.of(ADDRESS));
+        this.contextFree = h(linker, lookup, "hegel_context_free", FunctionDescriptor.of(JAVA_INT, ADDRESS));
         // Returns a hegel_string_t by value, so the downcall takes a SegmentAllocator first.
         this.contextLastError =
                 h(linker, lookup, "hegel_context_last_error", FunctionDescriptor.of(STRING_LAYOUT, ADDRESS));
@@ -421,6 +425,8 @@ final class RealLibhegel implements Libhegel {
                 lookup,
                 "hegel_collection_reject",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS));
+        this.collectionFree =
+                h(linker, lookup, "hegel_collection_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG));
         this.newPool = h(linker, lookup, "hegel_new_pool", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
         this.poolAdd = h(
                 linker,
@@ -432,6 +438,7 @@ final class RealLibhegel implements Libhegel {
                 lookup,
                 "hegel_pool_generate",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, JAVA_BOOLEAN, ADDRESS));
+        this.poolFree = h(linker, lookup, "hegel_pool_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG));
         // State-machine handles cross as raw addresses (JAVA_LONG), like every other opaque handle.
         this.newStateMachine = h(
                 linker,
@@ -497,7 +504,7 @@ final class RealLibhegel implements Libhegel {
         this.failureCaveat =
                 h(linker, lookup, "hegel_failure_caveat", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
         this.version = h(linker, lookup, "hegel_version", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
-        this.context = ThreadLocal.withInitial(() -> (MemorySegment) invoke(contextNew));
+        this.context = new ThreadLocal<>();
     }
 
     private static MethodHandle h(Linker linker, SymbolLookup lookup, String symbol, FunctionDescriptor desc) {
@@ -523,7 +530,12 @@ final class RealLibhegel implements Libhegel {
     }
 
     private MemorySegment ctx() {
-        return context.get();
+        MemorySegment c = context.get();
+        if (c == null) {
+            c = (MemorySegment) invoke(contextNew);
+            context.set(c);
+        }
+        return c;
     }
 
     private static MemorySegment segment(long handle) {
@@ -1137,6 +1149,11 @@ final class RealLibhegel implements Libhegel {
     }
 
     @Override
+    public void collectionFree(long id) {
+        check("hegel_collection_free", rc(collectionFree, id));
+    }
+
+    @Override
     public int newPool(long tc, long[] outId) {
         MemorySegment seg = Arena.ofAuto().allocate(JAVA_LONG);
         int code = rc(newPool, segment(tc), seg);
@@ -1158,6 +1175,11 @@ final class RealLibhegel implements Libhegel {
         int code = rc(poolGenerate, segment(tc), poolId, consume, seg);
         outVariableId[0] = seg.get(JAVA_LONG, 0);
         return code;
+    }
+
+    @Override
+    public void poolFree(long poolId) {
+        check("hegel_pool_free", rc(poolFree, poolId));
     }
 
     @Override
@@ -1335,6 +1357,15 @@ final class RealLibhegel implements Libhegel {
         // The string borrows the context's buffer; it is copied out before the arena closes.
         try (Arena arena = Arena.ofConfined()) {
             return readString((MemorySegment) invoke(contextLastError, arena, ctx()));
+        }
+    }
+
+    @Override
+    public void releaseThreadContext() {
+        MemorySegment c = context.get();
+        if (c != null) {
+            context.remove();
+            invoke(contextFree, c);
         }
     }
 

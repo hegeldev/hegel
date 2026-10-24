@@ -85,6 +85,13 @@ interface DataSource {
 
     void collectionReject(long id, String why);
 
+    /** Release a collection handle from {@link #newCollection}. Safe once the case is aborted. */
+    void collectionFree(long id);
+
+    /**
+     * Create a pool. The pool is family-wide: it is released by {@link #releasePools()} on the
+     * root source once the test case is over, wherever in the family it was created.
+     */
     long newPool();
 
     long poolAdd(long poolId);
@@ -139,6 +146,18 @@ interface DataSource {
 
     /** Release the machine handle. Safe once the case is aborted. */
     void stateMachineFree(long stateMachineId);
+
+    /**
+     * Release every pool created through this source's test-case family. Called once, on the root
+     * source, when the test case is over. Safe once the case is aborted.
+     */
+    void releasePools();
+
+    /**
+     * Release the calling thread's engine error context. Called by a worker thread that is about
+     * to exit, so its context does not outlive it.
+     */
+    void releaseThreadContext();
 
     /** Whether the case has been concluded (overrun or invalid) and its primitives now short-circuit. */
     boolean isAborted();

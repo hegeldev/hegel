@@ -48,11 +48,15 @@ public final class ListGenerator<T> implements Generator<List<T>> {
         tc.startSpan(Label.LIST);
         try {
             long id = tc.newCollection(minSize, maxSize);
-            List<T> out = new ArrayList<>();
-            while (tc.collectionMore(id)) {
-                out.add(element.doDraw(tc));
+            try {
+                List<T> out = new ArrayList<>();
+                while (tc.collectionMore(id)) {
+                    out.add(element.doDraw(tc));
+                }
+                return out;
+            } finally {
+                tc.collectionFree(id);
             }
-            return out;
         } finally {
             tc.stopSpan(false);
         }

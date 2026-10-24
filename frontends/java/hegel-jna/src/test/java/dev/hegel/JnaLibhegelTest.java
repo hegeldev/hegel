@@ -201,6 +201,24 @@ class JnaLibhegelTest {
     }
 
     @Test
+    void collectionAndPoolFreesAcceptNull() {
+        JnaLibhegel lib = real();
+        lib.collectionFree(0);
+        lib.poolFree(0);
+    }
+
+    @Test
+    void releasedThreadContextIsRecreatedOnNextUse() {
+        JnaLibhegel lib = real();
+        lib.releaseThreadContext();
+        assertEquals(Abi.E_INVALID_HANDLE, lib.stopSpan(0, false));
+        assertFalse(lib.lastErrorMessage().isEmpty());
+        lib.releaseThreadContext();
+        assertEquals("", lib.lastErrorMessage());
+        lib.releaseThreadContext();
+    }
+
+    @Test
     void settingsGettersReadTheHandleBack() {
         JnaLibhegel lib = real();
         long s = newSettings(lib);

@@ -220,10 +220,10 @@ final class Runner {
             Settings settings,
             Reporter reporter,
             RunStatistics.Counter counts) {
+        LiveDataSource source = new LiveDataSource(lib, tc);
         try {
             boolean verbose = settings.verbosity.code >= Verbosity.VERBOSE.code;
-            TestCase testCase =
-                    new TestCase(new LiveDataSource(lib, tc), lib.testCaseShouldCapture(tc), verbose, reporter);
+            TestCase testCase = new TestCase(source, lib.testCaseShouldCapture(tc), verbose, reporter);
             reporter.caseStarted(false);
             CaseOutcome outcome;
             String origin = null;
@@ -252,9 +252,13 @@ final class Runner {
             reporter.caseFinished(outcome, false);
             return new CaseRun(testCase, interesting, origin);
         } finally {
-            // The handle is caller-owned. On the error paths above the case may be incomplete;
+            // The handles are caller-owned. On the error paths above the case may be incomplete;
             // the run still holds its own reference and completes it when freed.
-            lib.testCaseFree(tc);
+            try {
+                source.releasePools();
+            } finally {
+                lib.testCaseFree(tc);
+            }
         }
     }
 

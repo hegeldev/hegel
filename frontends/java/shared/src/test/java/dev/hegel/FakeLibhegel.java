@@ -133,6 +133,9 @@ final class FakeLibhegel implements Libhegel {
     boolean[] moreSequence = {false};
     private int moreIndex;
     int collectionRejectRc = Abi.OK;
+    /** Collection handles released through collectionFree, in order. */
+    final List<Long> freedCollections = new ArrayList<>();
+
     int targetRc = Abi.OK;
 
     int newPoolRc = Abi.OK;
@@ -141,6 +144,10 @@ final class FakeLibhegel implements Libhegel {
     private long nextVariableId;
     int poolGenerateRc = Abi.OK;
     Long poolGenerateValue; // null = the first added variable id (0)
+    /** Pool handles released through poolFree, in order. */
+    final List<Long> freedPools = new ArrayList<>();
+    /** Names of the threads that released their context, in order. */
+    final List<String> contextReleases = new ArrayList<>();
     // State machines. The fake plays the engine's round protocol. Sequentially, each round
     // (next_group) hands out exactly one rule from `ruleSequence` (next_rule), then the join
     // point; once the sequence is exhausted next_group reports DONE. Concurrently, set
@@ -561,6 +568,11 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
+    public void collectionFree(long id) {
+        freedCollections.add(id);
+    }
+
+    @Override
     public int newPool(long tc, long[] outId) {
         if (newPoolRc == Abi.OK) {
             outId[0] = poolId;
@@ -582,6 +594,11 @@ final class FakeLibhegel implements Libhegel {
             outVariableId[0] = poolGenerateValue == null ? 0 : poolGenerateValue;
         }
         return poolGenerateRc;
+    }
+
+    @Override
+    public void poolFree(long poolId) {
+        freedPools.add(poolId);
     }
 
     @Override
@@ -720,6 +737,11 @@ final class FakeLibhegel implements Libhegel {
     @Override
     public String lastErrorMessage() {
         return lastError;
+    }
+
+    @Override
+    public synchronized void releaseThreadContext() {
+        contextReleases.add(Thread.currentThread().getName());
     }
 
     @Override

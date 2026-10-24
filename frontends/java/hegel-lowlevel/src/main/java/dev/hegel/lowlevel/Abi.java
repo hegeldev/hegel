@@ -28,6 +28,15 @@ public final class Abi {
     public static final int RUN_STATUS_FAILED = 1;
     public static final int RUN_STATUS_ERROR = 2;
 
+    // hegel_run_error_kind_t: why a run ended in RUN_STATUS_ERROR.
+    public static final int RUN_ERROR_NONE = 0;
+    public static final int RUN_ERROR_HEALTH_CHECK = 1;
+    public static final int RUN_ERROR_FLAKY = 2;
+    public static final int RUN_ERROR_NONDETERMINISTIC = 3;
+    public static final int RUN_ERROR_UNSATISFIABLE = 4;
+    public static final int RUN_ERROR_USAGE = 5;
+    public static final int RUN_ERROR_INTERNAL = 6;
+
     // hegel_nondeterminism_strictness_t: how a run reacts on detecting a nondeterministic test.
     public static final int NONDETERMINISM_QUIET = 0;
     public static final int NONDETERMINISM_WARN = 1;

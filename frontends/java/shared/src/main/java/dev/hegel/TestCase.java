@@ -489,6 +489,11 @@ public final class TestCase {
         source.collectionReject(id, why);
     }
 
+    /** @hidden */
+    public void collectionFree(long id) {
+        source.collectionFree(id);
+    }
+
     // --- stateful-testing primitives, used by Stateful and Pool in this package ---
 
     long newPool() {
@@ -541,6 +546,11 @@ public final class TestCase {
 
     void stateMachineFree(long stateMachineId) {
         source.stateMachineFree(stateMachineId);
+    }
+
+    /** Release the calling thread's engine error context, before the thread exits. */
+    void releaseThreadContext() {
+        source.releaseThreadContext();
     }
 
     /** Whether the engine has concluded this case (overrun or invalid), so its body must unwind. */

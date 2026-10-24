@@ -25,7 +25,7 @@ import java.util.function.Consumer;
  * Handles are caller-owned: every handle a method returns must be released with its matching
  * {@code *Free} method. A binding keeps one {@code hegel_context_t} per thread internally, so the
  * C API's leading context argument does not appear here; its last error message is read with
- * {@link #lastErrorMessage()}.
+ * {@link #lastErrorMessage()}, and a thread releases it with {@link #releaseThreadContext()}.
  *
  * <p>Two calling conventions coexist here, mirroring how a frontend consumes the ABI:
  *
@@ -301,11 +301,25 @@ public interface Libhegel {
 
     int collectionReject(long tc, long id, String why);
 
+    /**
+     * {@code hegel_collection_free}: release a collection handle from {@link #newCollection}. The
+     * handle is independent of its test case and run, so this is safe at any point, including after
+     * the case was concluded; each handle must be freed exactly once. {@code 0} is a no-op.
+     */
+    void collectionFree(long id);
+
     int newPool(long tc, long[] outId);
 
     int poolAdd(long tc, long poolId, long[] outVariableId);
 
     int poolGenerate(long tc, long poolId, boolean consume, long[] outVariableId);
+
+    /**
+     * {@code hegel_pool_free}: release a pool handle from {@link #newPool}. Safe at any point
+     * relative to freeing the test case or the run, provided no pool operation is in flight on
+     * another thread; each handle must be freed exactly once. {@code 0} is a no-op.
+     */
+    void poolFree(long poolId);
 
     /**
      * {@code hegel_new_state_machine}: {@code ruleGroups} is parallel to {@code ruleNames} (any
@@ -373,6 +387,14 @@ public interface Libhegel {
 
     // Diagnostics.
     String lastErrorMessage();
+
+    /**
+     * {@code hegel_context_free} on the calling thread's error context, if it has one. A binding
+     * creates a context lazily for each thread that calls into the engine; a thread that is about
+     * to end calls this so its context does not outlive it. A later call on the same thread
+     * creates a fresh context.
+     */
+    void releaseThreadContext();
 
     String version();
 }

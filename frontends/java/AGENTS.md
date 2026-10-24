@@ -136,7 +136,9 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   process-wide lazy holder of the loaded shared object (with a test hook) — it
   caches only the immutable, thread-safe library, never per-test state. Both
   bindings keep one libhegel error context per thread (read back by
-  `lastErrorMessage()`), pass date/time/datetime structs by value, pass every
+  `lastErrorMessage()`, created on the thread's first call and freed by
+  `releaseThreadContext()`, which each concurrent stateful worker calls before
+  it exits), pass date/time/datetime structs by value, pass every
   string as the engine's `hegel_string_t` (`{const char *data; size_t len}`:
   by value for a required string, by nullable pointer where absent is
   meaningful, as a contiguous struct array for name lists; a Java `null`
@@ -228,7 +230,8 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
 - **Generators** — `Generator<T>` (public) with `map`/`filter`/`flatMap`. Leaf
   generators call the typed draw bridges on `TestCase` (`generateInteger`,
   `generateFloat`, `generateString`, …); composite generators (collections via
-  the engine's `new_collection`/`collection_more` protocol, `oneOf`, tuples,
+  the engine's `new_collection`/`collection_more` protocol, each collection
+  freed with `collectionFree` when its draw ends, `oneOf`, tuples,
   `map`/`filter`/`flatMap`) compose other generators' `doDraw` inside labeled
   spans, mirroring the Rust frontend. String-shaped generators
   (`text`/`characters`/regex/email/url/domain) build a validated
@@ -296,7 +299,9 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
     rule structure). The `Reporter` is only ever called from the driving
     thread: verbose output of worker lines is delivered at the join. Workers
     are stopped and joined in a `finally` before any leftover clone is freed.
-  The machine handle is freed in a `finally`. `Pool<T>` (sequential; bound to
+  The machine handle is freed in a `finally`. Pools are family-wide: every pool
+  created on a test case or its clones is freed by the runner when the case
+  ends (`DataSource.releasePools`). `Pool<T>` (sequential; bound to
   its creating handle, unsynchronised) and `ConcurrentPool<T>` (one monitor
   across the engine call and the map update; `add(tc, value)` draws through
   the calling rule's handle) track previously generated values over the
