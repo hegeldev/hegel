@@ -86,6 +86,12 @@ def test_text_alphabets():
     assert repr(gs.characters()) == "characters()"
 
 
+def test_text_over_a_generator_alphabet_has_the_text_default_maximum():
+    alphabet = gs.sampled_from("ab")
+    check_all(gs.text(alphabet), lambda s: len(s) <= 100)
+    check_all(gs.text(alphabet, min_size=150), lambda s: 150 <= len(s) <= 250, test_cases=5)
+
+
 def test_empty_alphabet_spells_only_the_empty_string():
     check_all(gs.text(""), lambda s: s == "")
     check_all(gs.text([]), lambda s: s == "")

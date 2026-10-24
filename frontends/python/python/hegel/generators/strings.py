@@ -216,6 +216,13 @@ class Text(Generator[str]):
         return f"text({prefix}{_sizes(self.min_size, self.max_size)})"
 
 
+def _collection_text_max_size(min_size: int) -> int:
+    """The engine's default maximum for text, which the engine applies to
+    its own text draws but not to the collection that a text over an
+    arbitrary generator alphabet draws its characters with."""
+    return min_size + 100 if min_size > 100 else 100
+
+
 class TextFromAlphabet(Generator[str]):
     """Text whose characters come from an arbitrary generator."""
 
@@ -225,7 +232,11 @@ class TextFromAlphabet(Generator[str]):
         self.alphabet = alphabet
         self.min_size = min_size
         self.max_size = max_size
-        self._lists = lists(alphabet, min_size=min_size, max_size=max_size)
+        self._lists = lists(
+            alphabet,
+            min_size=min_size,
+            max_size=_collection_text_max_size(min_size) if max_size is None else max_size,
+        )
         self.label = TEXT_LABEL
 
     def __repr__(self) -> str:
@@ -261,9 +272,7 @@ def text(
 
     Without ``max_size`` the engine applies its default maximum for text:
     100 characters, or ``min_size + 100`` when ``min_size`` is larger than
-    that. (With an arbitrary generator as ``alphabet``, the string is a
-    list of its characters, and like :func:`~hegel.generators.lists` has
-    no fixed maximum.) A negative size or ``max_size < min_size`` is an
+    that, whatever the alphabet. A negative size or ``max_size < min_size`` is an
     :class:`~hegel.InvalidArgument`.
 
     ``alphabet`` restricts the characters: a string or sequence of
