@@ -71,3 +71,5 @@ const json = gs.recursive<Json>(
 A filter on `Pool.valuesConsumed()` now consumes only the value it yields: values its attempts reject go back into the pool. Previously each rejected attempt removed its value from the pool as well.
 
 On Node, text and regex generators follow the Unicode version of Node's own tables (`process.versions.unicode`), so a character category means the same to the generators as to JavaScript's regular expressions.
+
+`gs.text()` and `gs.binary()` without a `maxSize` now take the engine's default maximum, as every Hegel frontend does: 100 characters or bytes, or `minSize + 100` when `minSize` is above 100. Previously they had no upper bound. Pass a `maxSize` for longer values. A filter now tries as many values as the engine says before rejecting the test case, the same number in every frontend.

@@ -103,8 +103,8 @@ describe("WasmEngine pinned raw ABI", () => {
   it("copies empty buffers, NUL, WTF-8 surrogates and astral text, preserving null vs empty lists", () => {
     const { engine } = wasmFixture();
     active(engine, (ctx, tc) => {
-      expect(engine.generateBytes(ctx, tc, 0, 0)).toEqual(new Uint8Array());
-      expect(engine.generateBytes(ctx, tc, 7, 7)).toHaveLength(7);
+      expect(engine.generateBytes(ctx, tc, 0, 0n)).toEqual(new Uint8Array());
+      expect(engine.generateBytes(ctx, tc, 7, 7n)).toHaveLength(7);
       for (const codepoint of [0, 0x1f642]) {
         const generator = engine.stringGeneratorText(ctx, {
           ...text,
@@ -165,7 +165,7 @@ describe("WasmEngine pinned raw ABI", () => {
       } finally {
         engine.freeStringGenerator(generator);
       }
-      const bytes = engine.generateBytes(ctx, tc, 20, 20);
+      const bytes = engine.generateBytes(ctx, tc, 20, 20n);
       const copy = bytes.slice();
       abi.memory.grow(2);
       expect(bytes).toEqual(copy);
@@ -697,7 +697,7 @@ describe("WasmEngine error and ownership boundaries", () => {
           new DataView(abi.memory.buffer).setUint32(result, data, true);
         return call(op, ...args);
       });
-      expect(() => engine.generateBytes(ctx, tc, 2, 2)).toThrow(/range/);
+      expect(() => engine.generateBytes(ctx, tc, 2, 2n)).toThrow(/range/);
       expect(spy).toHaveBeenCalledWith("generate_bytes_result_free", 0, result);
       expect(frees).toHaveBeenCalledWith(result, 8, 4);
     });

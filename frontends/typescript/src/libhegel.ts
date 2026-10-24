@@ -30,6 +30,7 @@
 
 import {
   EngineError,
+  UINT64_MAX,
   doneOrIndex,
   type Engine,
   type ContextHandle,
@@ -969,8 +970,6 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   };
 }
 
-const UINT64_MAX = 0xffffffffffffffffn;
-
 /** Copy an engine-owned `{data, len}` buffer into a JS-owned Buffer. */
 function copyNativeBuffer(result: NativeBuffer): Buffer {
   const len = Number(result.len);
@@ -1358,13 +1357,12 @@ export class Libhegel implements Engine {
     return out[0];
   }
 
-  /** Draw a byte string with length in `[minSize, maxSize]` (no bound if omitted). */
-  generateBytes(ctx: Ptr, tc: Ptr, minSize: number, maxSize?: number): Buffer {
+  /** Draw a byte string with length in `[minSize, maxSize]` (see {@link Engine.generateBytes}). */
+  generateBytes(ctx: Ptr, tc: Ptr, minSize: number, maxSize: bigint): Buffer {
     const out: NativeBuffer[] = [{ data: null, len: 0 }];
-    const maxArg = maxSize === undefined ? UINT64_MAX : BigInt(maxSize);
     this.check(
       ctx,
-      this.fns.generateBytes(ctx, tc, BigInt(minSize), maxArg, out),
+      this.fns.generateBytes(ctx, tc, BigInt(minSize), maxSize, out),
       "hegel_generate_bytes",
     );
     try {

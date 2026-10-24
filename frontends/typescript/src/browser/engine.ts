@@ -1,5 +1,6 @@
 import {
   EngineError,
+  UINT64_MAX,
   doneOrIndex,
   type Engine,
   type ContextHandle,
@@ -29,8 +30,6 @@ import { bigIntToTwosComplementLE, twosComplementLEToBigInt } from "../bytes.js"
 import { wtf8ToString } from "../wtf8.js";
 import { WasmAbi, u32, u64, type Operation, type Argument } from "./abi.js";
 import { WasmArena, WasmMemory } from "./arena.js";
-
-const UINT64_MAX = 0xffffffffffffffffn;
 
 /** The engine-allocated buffer results, each with the destructor that releases it. */
 const BUFFER_FREE = {
@@ -527,13 +526,13 @@ export class WasmEngine implements Engine {
     ctx: ContextHandle,
     tc: TestCaseHandle,
     minSize: number,
-    maxSize?: number,
+    maxSize: bigint,
   ): Uint8Array {
     const c = this.ptr(ctx);
     return this.buffer(
       c,
       "generate_bytes",
-      [c, this.ptr(tc), u64(minSize), maxSize === undefined ? UINT64_MAX : u64(maxSize)],
+      [c, this.ptr(tc), u64(minSize), u64(maxSize)],
       (bytes) => bytes,
     );
   }

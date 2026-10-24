@@ -35,7 +35,12 @@ export interface CharacterFilterOptions {
 }
 
 export interface TextOptions extends CharacterFilterOptions {
+  /** The fewest characters (default 0). */
   minSize?: number;
+  /**
+   * The most characters. By default the engine's maximum applies: 100, or
+   * `minSize + 100` when `minSize` is above 100.
+   */
   maxSize?: number;
 }
 
@@ -154,7 +159,12 @@ export function characters(options?: CharacterOptions): Generator<string> {
 }
 
 export interface BinaryOptions {
+  /** The fewest bytes (default 0). */
   minSize?: number;
+  /**
+   * The most bytes. By default the engine's maximum applies: 100, or
+   * `minSize + 100` when `minSize` is above 100.
+   */
   maxSize?: number;
 }
 

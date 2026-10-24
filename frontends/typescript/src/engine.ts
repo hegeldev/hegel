@@ -190,6 +190,34 @@ export interface StateMachineOptions {
  */
 export const STATE_MACHINE_DONE = -0x8000000000000000n;
 
+/** `UINT64_MAX`: as a size bound, no upper bound at all. */
+export const UINT64_MAX = 0xffffffffffffffffn;
+
+/**
+ * `HEGEL_MAX_SIZE_DEFAULT` (`UINT64_MAX - 1`): the `max_size` of a text or
+ * binary draw that asks the engine for its default maximum. The value is
+ * reserved, so an explicit maximum at or above it is passed as
+ * {@link UINT64_MAX} instead (see {@link maxSizeArgument}).
+ */
+export const MAX_SIZE_DEFAULT = 0xfffffffffffffffen;
+
+/**
+ * `HEGEL_FILTER_ATTEMPTS`: how many times a filtered draw tries a value before
+ * it rejects the test case.
+ */
+export const FILTER_ATTEMPTS = 3;
+
+/**
+ * The `max_size` to pass for a text or binary draw: {@link MAX_SIZE_DEFAULT}
+ * when the user gave no maximum, so the engine applies its default, and the
+ * user's maximum otherwise, clamped off the reserved sentinel.
+ */
+export function maxSizeArgument(maxSize: number | undefined): bigint {
+  if (maxSize === undefined) return MAX_SIZE_DEFAULT;
+  const value = BigInt(maxSize);
+  return value >= MAX_SIZE_DEFAULT ? UINT64_MAX : value;
+}
+
 /**
  * Decode an `int64_t` written by the state-machine calls: `null` for the
  * `HEGEL_STATE_MACHINE_DONE` sentinel, the (small, non-negative) index
@@ -304,11 +332,16 @@ export interface Engine {
   generateInteger(ctx: ContextHandle, tc: TestCaseHandle, min: bigint, max: bigint): bigint;
   generateIntegerBig(ctx: ContextHandle, tc: TestCaseHandle, min: bigint, max: bigint): bigint;
   generateFloat(ctx: ContextHandle, tc: TestCaseHandle, opts: NativeFloatOptions): number;
+  /**
+   * Draw a byte string with length in `[minSize, maxSize]`. `maxSize` is a raw
+   * `max_size`: {@link MAX_SIZE_DEFAULT} for the engine's default maximum,
+   * {@link UINT64_MAX} for none.
+   */
   generateBytes(
     ctx: ContextHandle,
     tc: TestCaseHandle,
     minSize: number,
-    maxSize?: number,
+    maxSize: bigint,
   ): Uint8Array;
   stringGeneratorText(ctx: ContextHandle, opts: TextGeneratorOptions): StringGeneratorHandle;
   stringGeneratorRegex(

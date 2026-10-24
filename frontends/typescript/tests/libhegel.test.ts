@@ -384,7 +384,7 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
     expect(lib.collectionMore(null, null, null)).toBe(true);
   });
 
-  it("generateBytes uses UINT64_MAX when maxSize is omitted and copies empty results", () => {
+  it("generateBytes passes maxSize through and copies empty results", () => {
     let seenMax: bigint | null = null;
     const lib = new Libhegel(
       fakeBindings({
@@ -395,9 +395,9 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
         },
       }),
     );
-    expect(lib.generateBytes(null, null, 0)).toEqual(Buffer.alloc(0));
+    expect(lib.generateBytes(null, null, 0, 0xffffffffffffffffn)).toEqual(Buffer.alloc(0));
     expect(seenMax).toBe(0xffffffffffffffffn);
-    expect(lib.generateBytes(null, null, 0, 5)).toEqual(Buffer.alloc(0));
+    expect(lib.generateBytes(null, null, 0, 5n)).toEqual(Buffer.alloc(0));
     expect(seenMax).toBe(5n);
   });
 
@@ -792,7 +792,7 @@ describe("Libhegel ABI 0.42.4 regressions", () => {
         ownedStringFree: stringFree,
       }),
     );
-    expect(() => lib.generateBytes(null, null, 0)).toThrow("Invalid native buffer result");
+    expect(() => lib.generateBytes(null, null, 0, 0n)).toThrow("Invalid native buffer result");
     expect(() => lib.generateString(null, null, null)).toThrow("Invalid native buffer result");
     expect(bytesFree).toHaveBeenCalledExactlyOnceWith({ data: null, len: -1 });
     expect(stringFree).toHaveBeenCalledExactlyOnceWith({ data: null, len: -1 });
@@ -888,7 +888,7 @@ it("Libhegel frees engine results when Koffi copying throws", () => {
     }),
   );
   try {
-    expect(() => lib.generateBytes(null, null, 0)).toThrow(copyError);
+    expect(() => lib.generateBytes(null, null, 0, 0n)).toThrow(copyError);
     expect(() => lib.generateString(null, null, null)).toThrow(copyError);
     expect(bytesFree).toHaveBeenCalledTimes(1);
     expect(stringFree).toHaveBeenCalledTimes(1);

@@ -5,6 +5,7 @@
  */
 
 import { TestCase, generateRaw } from "../testCase.js";
+import { FILTER_ATTEMPTS } from "../engine.js";
 import {
   FILTER_ATTEMPT,
   LabelNames,
@@ -72,8 +73,8 @@ export abstract class Generator<T> {
   }
 
   /**
-   * Only keep values that satisfy the predicate.
-   * Retries up to 3 times, then rejects the test case.
+   * Only keep values that satisfy the predicate. A draw tries the engine's
+   * number of values (3) and rejects the test case if none satisfies it.
    */
   filter(predicate: (value: T) => boolean): Generator<T> {
     return new FilteredGenerator(this, predicate);
@@ -152,7 +153,7 @@ class FilteredGenerator<T> extends Generator<T> {
   }
 
   doDraw(tc: TestCase): T {
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < FILTER_ATTEMPTS; i++) {
       tc.startSpan(FILTER_ATTEMPT);
       const value = this.source.doDraw(tc);
       if (this.predicate(value)) {

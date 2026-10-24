@@ -84,6 +84,7 @@
 import { TestCase, AssumeError, StopTestError, type DataSource } from "./testCase.js";
 import { FILTER_ATTEMPT, LabelNames, STATEFUL_RULE, labelSpec, type LabelSpec } from "./labels.js";
 import { Generator as HegelGenerator } from "./generators/core.js";
+import { FILTER_ATTEMPTS } from "./engine.js";
 
 /**
  * A rule of a {@link StateMachine}: one action applied to the state. It
@@ -259,7 +260,7 @@ export class Pool<T> {
     const dataSource = this.sourceFor(tc);
     const rejected: bigint[] = [];
     try {
-      for (let i = 0; i < 3 && rejected.length < this.values.size; i++) {
+      for (let i = 0; i < FILTER_ATTEMPTS && rejected.length < this.values.size; i++) {
         tc.startSpan(FILTER_ATTEMPT);
         tc.startSpan(VALUES_CONSUMED);
         const id = dataSource.poolGenerate(this.poolId, true);

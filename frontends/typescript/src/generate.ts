@@ -33,6 +33,7 @@ import {
   type NativeTime,
   type NativeDatetime,
   type UuidVersion,
+  maxSizeArgument,
 } from "./engine.js";
 
 import { fitsInt64 } from "./bytes.js";
@@ -262,10 +263,9 @@ function buildStringGenerator(
 ): StringGeneratorHandle {
   switch (schema["type"]) {
     case "string": {
-      const maxSize = schema["max_size"] as number | undefined;
       return lib.stringGeneratorText(ctx, {
         minSize: schema["min_size"] as number,
-        maxSize: maxSize === undefined ? 0xffffffffffffffffn : BigInt(maxSize),
+        maxSize: maxSizeArgument(schema["max_size"] as number | undefined),
         codec: (schema["codec"] as string | undefined) ?? null,
         minCodepoint: (schema["min_codepoint"] as number | undefined) ?? 0,
         maxCodepoint: (schema["max_codepoint"] as number | undefined) ?? UINT32_MAX,
@@ -443,7 +443,7 @@ export function generateValue(
         ctx,
         tc,
         schema["min_size"] as number,
-        schema["max_size"] as number | undefined,
+        maxSizeArgument(schema["max_size"] as number | undefined),
       );
     case "string":
     case "regex":
