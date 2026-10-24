@@ -106,9 +106,11 @@ endforeach()
 # Example / integration property tests.
 hegel_add_test(NAME property_tests SOURCE property_tests.cpp)
 
-# Run configuration: settings, phases, backend, database, health checks,
-# reproduce-failure blobs, and enum/environment helpers.
+# Run configuration: settings, profiles, phases, backend, database, health
+# checks, run errors, and reproduce-failure blobs.
 hegel_add_test(NAME test_settings SOURCE test_settings.cpp)
+# Run error kinds mapped to their exception types.
+hegel_add_test(NAME test_run_errors SOURCE test_run_errors.cpp INTERNAL)
 
 # Generators, split by family.
 hegel_add_test(NAME test_generators_numeric

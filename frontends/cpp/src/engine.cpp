@@ -1,6 +1,8 @@
 #include <engine.h>
 
+#include <hegel/errors.h>
 #include <hegel/internal.h>
+#include <hegel/settings.h>
 #include <hegel/test_case.h>
 
 #include <hegel.h>
@@ -194,6 +196,121 @@ namespace hegel::impl {
     }
 
     // GCOVR_EXCL_STOP
+
+    namespace {
+
+        // As check_rc, but a rejected argument throws std::invalid_argument
+        // with the engine's diagnostic.
+        void check_arg(hegel_context_t* ctx, hegel_result_t rc) {
+            if (rc == HEGEL_E_INVALID_ARG) {
+                throw std::invalid_argument(last_error(ctx));
+            }
+            check_rc(ctx, rc);
+        }
+
+    } // namespace
+
+    hegel_settings_t* settings_new_for_profile(hegel_context_t* ctx,
+                                               std::string_view name) {
+        hegel_settings_t* s = nullptr;
+        check_arg(ctx, hegel_settings_new_for_profile(ctx, borrow(name), &s));
+        return s;
+    }
+
+    void settings_register_profile(hegel_context_t* ctx, std::string_view name,
+                                   const hegel_settings_t* s) {
+        check_arg(ctx, hegel_settings_register_profile(ctx, borrow(name), s));
+    }
+
+    void set_default_profile(hegel_context_t* ctx, std::string_view name) {
+        check_arg(ctx, hegel_set_default_profile(ctx, borrow(name)));
+    }
+
+    std::string engine_version(hegel_context_t* ctx) {
+        hegel_string_t version{nullptr, 0};
+        check_rc(ctx, hegel_version(ctx, &version));
+        return std::string(version.data, version.len);
+    }
+
+    void settings_set_show_statistics(hegel_context_t* ctx, hegel_settings_t* s,
+                                      bool yes) {
+        check_rc(ctx, hegel_settings_set_show_statistics(ctx, s, yes));
+    }
+
+    void settings_set_unbounded_choices(hegel_context_t* ctx,
+                                        hegel_settings_t* s, bool yes) {
+        check_rc(ctx, hegel_settings_set_unbounded_choices(ctx, s, yes));
+    }
+
+    void settings_set_print_blob(hegel_context_t* ctx, hegel_settings_t* s,
+                                 bool yes) {
+        check_rc(ctx, hegel_settings_set_print_blob(ctx, s, yes));
+    }
+
+    void settings_set_default_database(hegel_context_t* ctx,
+                                       hegel_settings_t* s) {
+        check_rc(ctx, hegel_settings_set_database(ctx, s, nullptr));
+    }
+
+    hegel_verbosity_t settings_get_verbosity(hegel_context_t* ctx,
+                                             const hegel_settings_t* s) {
+        hegel_verbosity_t verbosity = HEGEL_VERBOSITY_NORMAL;
+        check_rc(ctx, hegel_settings_get_verbosity(ctx, s, &verbosity));
+        return verbosity;
+    }
+
+    bool settings_get_print_blob(hegel_context_t* ctx,
+                                 const hegel_settings_t* s) {
+        bool yes = true;
+        check_rc(ctx, hegel_settings_get_print_blob(ctx, s, &yes));
+        return yes;
+    }
+
+    hegel_run_t* run_start_blob(hegel_context_t* ctx, hegel_settings_t* s,
+                                std::string_view blob) {
+        hegel_run_t* run = nullptr;
+        check_arg(ctx, hegel_run_start_blob(ctx, s, borrow(blob), nullptr,
+                                            nullptr, &run));
+        return run;
+    }
+
+    std::optional<HealthCheck> health_check_from_flag(uint32_t flag) {
+        switch (flag) {
+        case HEGEL_HC_FILTER_TOO_MUCH:
+            return HealthCheck::FilterTooMuch;
+        case HEGEL_HC_TOO_SLOW:
+            return HealthCheck::TooSlow;
+        case HEGEL_HC_TEST_CASES_TOO_LARGE:
+            return HealthCheck::TestCasesTooLarge;
+        case HEGEL_HC_LARGE_INITIAL_TEST_CASE:
+            return HealthCheck::LargeInitialTestCase;
+        default:
+            return std::nullopt;
+        }
+    }
+
+    void raise_run_error(const std::string& message, RunErrorKind kind) {
+        switch (kind.kind) {
+        case HEGEL_RUN_ERROR_HEALTH_CHECK:
+            throw FailedHealthCheck(message,
+                                    health_check_from_flag(kind.health_check));
+        case HEGEL_RUN_ERROR_FLAKY:
+        case HEGEL_RUN_ERROR_NONDETERMINISTIC:
+            throw Flaky(message);
+        case HEGEL_RUN_ERROR_UNSATISFIABLE:
+            throw Unsatisfiable(message);
+        default:
+            throw RunError(message);
+        }
+    }
+
+    RunErrorKind run_result_error_kind(hegel_context_t* ctx,
+                                       const hegel_run_result_t* result) {
+        RunErrorKind kind{HEGEL_RUN_ERROR_NONE, 0};
+        check_rc(ctx, hegel_run_result_error_kind(ctx, result, &kind.kind,
+                                                  &kind.health_check));
+        return kind;
+    }
 
     void settings_set_stop_on_first_failure(hegel_context_t* ctx,
                                             hegel_settings_t* s, bool yes) {

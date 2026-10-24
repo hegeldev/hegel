@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <hegel.h>
+#include <hegel/settings.h>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -66,11 +67,36 @@ namespace hegel::impl {
                                     std::string_view function);
     /// A handle initialized from the engine's default settings profile.
     hegel_settings_t* settings_new(hegel_context_t* ctx);
+    /// A handle initialized from the named settings profile. An unknown
+    /// profile throws std::invalid_argument.
+    hegel_settings_t* settings_new_for_profile(hegel_context_t* ctx,
+                                               std::string_view name);
+    void settings_register_profile(hegel_context_t* ctx, std::string_view name,
+                                   const hegel_settings_t* s);
+    void set_default_profile(hegel_context_t* ctx, std::string_view name);
+    std::string engine_version(hegel_context_t* ctx);
+    void settings_set_show_statistics(hegel_context_t* ctx, hegel_settings_t* s,
+                                      bool yes);
+    void settings_set_unbounded_choices(hegel_context_t* ctx,
+                                        hegel_settings_t* s, bool yes);
+    void settings_set_print_blob(hegel_context_t* ctx, hegel_settings_t* s,
+                                 bool yes);
+    /// Selects the engine's default database location.
+    void settings_set_default_database(hegel_context_t* ctx,
+                                       hegel_settings_t* s);
+    hegel_verbosity_t settings_get_verbosity(hegel_context_t* ctx,
+                                             const hegel_settings_t* s);
+    bool settings_get_print_blob(hegel_context_t* ctx,
+                                 const hegel_settings_t* s);
 
     /// The span label for a generator kind: a stable hash of `name`.
     uint64_t label_from_name(hegel_context_t* ctx, std::string_view name);
 
     hegel_run_t* run_start(hegel_context_t* ctx, hegel_settings_t* s);
+    /// A run that replays `blob`. An invalid blob throws
+    /// std::invalid_argument.
+    hegel_run_t* run_start_blob(hegel_context_t* ctx, hegel_settings_t* s,
+                                std::string_view blob);
     hegel_test_case_t* test_case_from_blob(hegel_context_t* ctx,
                                            hegel_settings_t* s,
                                            std::string_view blob);
@@ -96,6 +122,19 @@ namespace hegel::impl {
                                          const hegel_run_result_t* result);
     std::optional<std::string>
     run_result_error(hegel_context_t* ctx, const hegel_run_result_t* result);
+    struct RunErrorKind {
+        hegel_run_error_kind_t kind;
+        /// The hegel_health_check_t of a failed health check, else 0.
+        uint32_t health_check;
+    };
+    RunErrorKind run_result_error_kind(hegel_context_t* ctx,
+                                       const hegel_run_result_t* result);
+    /// The HealthCheck for one hegel_health_check_t flag, or nullopt for
+    /// any other value.
+    std::optional<HealthCheck> health_check_from_flag(uint32_t flag);
+    /// Throws the RunError subclass for `kind`, with `message`.
+    [[noreturn]] void raise_run_error(const std::string& message,
+                                      RunErrorKind kind);
     size_t run_result_failure_count(hegel_context_t* ctx,
                                     const hegel_run_result_t* result);
     /// Caller-owned failure snapshot; release with hegel_failure_free.
