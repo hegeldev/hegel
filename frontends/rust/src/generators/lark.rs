@@ -1,6 +1,6 @@
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 
 use super::generators::draw_and_print_value;
 use super::strings::CharactersGenerator;
@@ -9,8 +9,8 @@ use crate::ffi;
 use crate::pretty::PrettyPrinter;
 use crate::test_case::invalid_argument;
 
-const LARK_LABEL: u64 = label_from_name("hegel.from_lark");
-const ATTEMPT_LABEL: u64 = label_from_name("hegel.from_lark.attempt");
+static LARK_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.from_lark"));
+static ATTEMPT_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.from_lark.attempt"));
 const DEFAULT_MAX_SIZE: usize = 8192;
 const ATTEMPTS: usize = 3;
 
@@ -104,7 +104,7 @@ impl LarkGenerator {
 
     fn relabel(&mut self) {
         let mut labels = vec![
-            LARK_LABEL,
+            *LARK_LABEL,
             label_from_name(&self.text),
             label_from_name(self.start.as_deref().unwrap_or("start")),
         ];
@@ -246,7 +246,7 @@ impl Generator<String> for LarkGenerator {
         let max_size = self.max_size.unwrap_or(DEFAULT_MAX_SIZE);
         let mut budget = max_size;
         for _ in 0..ATTEMPTS {
-            tc.start_span(ATTEMPT_LABEL);
+            tc.start_span(*ATTEMPT_LABEL);
             let (out, own, markers, size) = self.splice(tc, compiled, budget);
             if size <= max_size {
                 tc.stop_span(false);

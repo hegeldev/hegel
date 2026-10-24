@@ -205,9 +205,9 @@ pub fn expand_composite(f: ItemFn) -> TokenStream {
 
         impl #impl_generics ::hegel::generators::Generator<#return_type> for #struct_name #ty_generics #generator_where {
             fn label(&self) -> u64 {
-                const __HEGEL_COMPOSITE_LABEL: u64 =
-                    ::hegel::generators::label_from_name(#label_source);
-                __HEGEL_COMPOSITE_LABEL
+                static __HEGEL_COMPOSITE_LABEL: ::std::sync::LazyLock<u64> =
+                    ::std::sync::LazyLock::new(|| ::hegel::generators::label_from_name(#label_source));
+                *__HEGEL_COMPOSITE_LABEL
             }
 
             fn do_draw(&self, tc: &::hegel::TestCase) -> #return_type {

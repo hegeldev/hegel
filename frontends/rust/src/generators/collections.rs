@@ -5,13 +5,14 @@ use crate::test_case::invalid_argument;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::sync::LazyLock;
 
-const VEC_LABEL: u64 = label_from_name("hegel.vec");
-const HASH_SET_LABEL: u64 = label_from_name("hegel.hash_set");
-const HASH_MAP_LABEL: u64 = label_from_name("hegel.hash_map");
-const BTREE_SET_LABEL: u64 = label_from_name("hegel.btree_set");
-const BTREE_MAP_LABEL: u64 = label_from_name("hegel.btree_map");
-const ARRAY_LABEL: u64 = label_from_name("hegel.array");
+static VEC_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.vec"));
+static HASH_SET_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.hash_set"));
+static HASH_MAP_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.hash_map"));
+static BTREE_SET_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.btree_set"));
+static BTREE_MAP_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.btree_map"));
+static ARRAY_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.array"));
 
 /// Generator for `Vec<T>`. Created by [`vecs()`].
 pub struct VecGenerator<G, T> {
@@ -135,7 +136,7 @@ where
 /// ```
 pub fn vecs<T, G: Generator<T>>(elements: G) -> VecGenerator<G, T> {
     VecGenerator {
-        label: combine_labels(&[VEC_LABEL, elements.label()]),
+        label: combine_labels(&[*VEC_LABEL, elements.label()]),
         elements,
         min_size: 0,
         max_size: None,
@@ -243,7 +244,7 @@ where
 /// See [`HashSetGenerator`] for builder methods.
 pub fn hashsets<T, G: Generator<T>>(elements: G) -> HashSetGenerator<G, T> {
     HashSetGenerator {
-        label: combine_labels(&[HASH_SET_LABEL, elements.label()]),
+        label: combine_labels(&[*HASH_SET_LABEL, elements.label()]),
         elements,
         min_size: 0,
         max_size: None,
@@ -381,7 +382,7 @@ pub fn hashmaps<KT, VT, K: Generator<KT>, V: Generator<VT>>(
     values: V,
 ) -> HashMapGenerator<K, V, KT, VT> {
     HashMapGenerator {
-        label: combine_labels(&[HASH_MAP_LABEL, keys.label(), values.label()]),
+        label: combine_labels(&[*HASH_MAP_LABEL, keys.label(), values.label()]),
         keys,
         values,
         min_size: 0,
@@ -498,7 +499,7 @@ where
 /// ```
 pub fn btree_sets<T, G: Generator<T>>(elements: G) -> BTreeSetGenerator<G, T> {
     BTreeSetGenerator {
-        label: combine_labels(&[BTREE_SET_LABEL, elements.label()]),
+        label: combine_labels(&[*BTREE_SET_LABEL, elements.label()]),
         elements,
         min_size: 0,
         max_size: None,
@@ -631,7 +632,7 @@ pub fn btree_maps<KT, VT, K: Generator<KT>, V: Generator<VT>>(
     values: V,
 ) -> BTreeMapGenerator<K, V, KT, VT> {
     BTreeMapGenerator {
-        label: combine_labels(&[BTREE_MAP_LABEL, keys.label(), values.label()]),
+        label: combine_labels(&[*BTREE_MAP_LABEL, keys.label(), values.label()]),
         keys,
         values,
         min_size: 0,
@@ -651,7 +652,7 @@ impl<G: Generator<T>, T, const N: usize> ArrayGenerator<G, T, N> {
     #[doc(hidden)]
     pub fn new(element: G) -> Self {
         ArrayGenerator {
-            label: combine_labels(&[ARRAY_LABEL, element.label()]),
+            label: combine_labels(&[*ARRAY_LABEL, element.label()]),
             element,
             _phantom: PhantomData,
         }

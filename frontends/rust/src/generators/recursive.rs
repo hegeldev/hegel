@@ -6,11 +6,11 @@ use crate::pretty::PrettyPrinter;
 use crate::test_case::raise_for_rc;
 use std::marker::PhantomData;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 const DEFAULT_MAX_DEPTH: usize = 32;
 const DEFAULT_MAX_LEAVES: usize = 100;
-const RECURSIVE_LABEL: u64 = label_from_name("hegel.recursive");
+static RECURSIVE_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.recursive"));
 
 /// The leaf generator and branch function of a [`recursive()`] generator,
 /// type-erased so that [`SubtreeGenerator`] (which appears in the branch
@@ -345,7 +345,7 @@ where
     R: Generator<T> + 'static,
 {
     RecursiveGenerator {
-        label: combine_labels(&[RECURSIVE_LABEL, leaf.label()]),
+        label: combine_labels(&[*RECURSIVE_LABEL, leaf.label()]),
         leaf: Arc::new(leaf),
         branch: Arc::new(branch),
         max_depth: DEFAULT_MAX_DEPTH,

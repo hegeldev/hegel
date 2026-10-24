@@ -290,6 +290,30 @@ impl Drop for SettingsHandle {
     }
 }
 
+/// The engine's span label for a generator identified by `name`
+/// (`hegel_label_from_name`). Called without a context: the call cannot
+/// fail for a valid string and out pointer, so there is no diagnostic to
+/// read back.
+pub(crate) fn label_from_name(name: &str) -> u64 {
+    let mut label = 0u64;
+    // SAFETY: the name view and the out pointer outlive the call.
+    require_ok(unsafe {
+        hegel_c::hegel_label_from_name(ptr::null_mut(), view(name.as_bytes()), &mut label)
+    });
+    label
+}
+
+/// The engine's combination of `labels`, in order (`hegel_label_combine`).
+pub(crate) fn combine_labels(labels: &[u64]) -> u64 {
+    let mut label = 0u64;
+    // SAFETY: the slice pointer is valid for `labels.len()` reads, and the
+    // out pointer outlives the call.
+    require_ok(unsafe {
+        hegel_c::hegel_label_combine(ptr::null_mut(), labels.as_ptr(), labels.len(), &mut label)
+    });
+    label
+}
+
 /// Materialize a frontend [`Settings`] from an engine-resolved profile: the
 /// one `name` names, or the `default` alias for `None`. The engine owns
 /// profile resolution (shipped profiles, `hegel.toml`, default-profile
