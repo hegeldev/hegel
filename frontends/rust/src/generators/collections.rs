@@ -5,6 +5,7 @@ use crate::test_case::invalid_argument;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::panic::RefUnwindSafe;
 use std::sync::{Arc, LazyLock};
 
 static VEC_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.vec"));
@@ -24,10 +25,12 @@ pub struct VecGenerator<G, T> {
     pub(crate) _phantom: PhantomData<fn(T)>,
 }
 
+type SameKeyFn<T> = dyn Fn(&T, &T) -> bool + Send + Sync + RefUnwindSafe;
+
 /// How a [`VecGenerator`] decides that two elements are duplicates.
 pub(crate) enum Uniqueness<T> {
     Equal(fn(&T, &T) -> bool),
-    SameKey(Arc<dyn Fn(&T, &T) -> bool + Send + Sync>),
+    SameKey(Arc<SameKeyFn<T>>),
 }
 
 impl<T> Uniqueness<T> {
@@ -88,7 +91,7 @@ impl<G, T: 'static> VecGenerator<G, T> {
     /// ```
     pub fn unique_by<K: PartialEq>(
         mut self,
-        key: impl Fn(&T) -> K + Send + Sync + 'static,
+        key: impl Fn(&T) -> K + Send + Sync + RefUnwindSafe + 'static,
     ) -> Self {
         self.unique = Some(Uniqueness::SameKey(Arc::new(move |a: &T, b: &T| {
             key(a) == key(b)
