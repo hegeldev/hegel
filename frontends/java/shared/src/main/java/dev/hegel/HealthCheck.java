@@ -13,7 +13,7 @@ public enum HealthCheck {
     TOO_SLOW(Abi.HC_TOO_SLOW),
     /** Generated values are too large to retain for shrinking. */
     TEST_CASES_TOO_LARGE(Abi.HC_TEST_CASES_TOO_LARGE),
-    /** The first generated test case is already disproportionately large. */
+    /** The first generated test case is already disproportionately large (a warning). */
     LARGE_INITIAL_TEST_CASE(Abi.HC_LARGE_INITIAL_TEST_CASE);
 
     final int bit;
