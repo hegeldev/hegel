@@ -540,3 +540,40 @@ fn a_successful_call_clears_the_context_error() {
     });
     assert!(last_error_string().is_empty());
 }
+
+#[test]
+fn run_error_kind_classifies_each_kind() {
+    use hegel_c::hegel_run_error_kind_t as k;
+    assert_eq!(
+        run_error_kind(
+            k::HEGEL_RUN_ERROR_HEALTH_CHECK,
+            hegel_c::hegel_health_check_t::HEGEL_HC_TOO_SLOW as u32
+        ),
+        RunErrorKind::HealthCheck(HealthCheck::TooSlow)
+    );
+    assert_eq!(
+        run_error_kind(k::HEGEL_RUN_ERROR_FLAKY, 0),
+        RunErrorKind::Flaky
+    );
+    assert_eq!(
+        run_error_kind(k::HEGEL_RUN_ERROR_NONDETERMINISTIC, 0),
+        RunErrorKind::Flaky
+    );
+    assert_eq!(
+        run_error_kind(k::HEGEL_RUN_ERROR_UNSATISFIABLE, 0),
+        RunErrorKind::Unsatisfiable
+    );
+    assert_eq!(
+        run_error_kind(k::HEGEL_RUN_ERROR_NONE, 0),
+        RunErrorKind::Other
+    );
+}
+
+#[test]
+fn run_error_kind_reports_an_unknown_health_check_as_a_run_error() {
+    use hegel_c::hegel_run_error_kind_t as k;
+    assert_eq!(
+        run_error_kind(k::HEGEL_RUN_ERROR_HEALTH_CHECK, 1 << 31),
+        RunErrorKind::Other
+    );
+}

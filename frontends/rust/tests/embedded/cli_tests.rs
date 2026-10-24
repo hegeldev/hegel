@@ -407,6 +407,35 @@ fn test_profile_flag_repeated_error() {
 }
 
 #[test]
+fn test_extract_profile_takes_both_forms() {
+    let flags = |strs: &[&str]| s(strs).split_off(1);
+    let mut args = flags(&["--seed", "1", "--profile=ci", "--derandomize", "true"]);
+    assert_eq!(extract_profile(&mut args).unwrap(), Some("ci".to_string()));
+    assert_eq!(args, flags(&["--seed", "1", "--derandomize", "true"]));
+
+    let mut args = flags(&["--profile", "ci", "--seed", "1"]);
+    assert_eq!(extract_profile(&mut args).unwrap(), Some("ci".to_string()));
+    assert_eq!(args, flags(&["--seed", "1"]));
+
+    let mut args = flags(&["--seed", "1"]);
+    assert_eq!(extract_profile(&mut args).unwrap(), None);
+    assert_eq!(args, flags(&["--seed", "1"]));
+}
+
+#[test]
+fn test_profile_flag_repeated_in_mixed_forms_error() {
+    let err = try_apply_cli_args(
+        Settings::new,
+        s(&["--profile=ci", "--profile", "development"]),
+    )
+    .unwrap_err();
+    match err {
+        CliError::Parse(msg) => assert_eq!(msg, "--profile may be given at most once"),
+        other => panic!("expected parse error, got {other:?}"),
+    }
+}
+
+#[test]
 fn test_usage_documents_the_profile_flag() {
     match apply_cli_args(Settings::new, s(&["--help"])) {
         CliOutcome::Help(msg) => assert!(msg.contains("--profile <NAME>")),

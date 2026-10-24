@@ -130,24 +130,34 @@ fn is_unknown_setting(message: &str) -> bool {
     without_function_name(message).starts_with("unknown setting")
 }
 
-/// Extract `--profile <NAME>` from `args` before the flag loop runs, so
-/// the flag takes effect before the compiled-in settings are constructed
-/// whatever its position.
+/// Extract `--profile <NAME>` (or `--profile=NAME`) from `args` before the
+/// flag loop runs, so the flag takes effect before the compiled-in settings
+/// are constructed whatever its position.
 fn extract_profile(args: &mut Vec<String>) -> Result<Option<String>, CliError> {
-    let Some(pos) = args.iter().position(|a| a == "--profile") else {
-        return Ok(None);
-    };
-    args.remove(pos);
-    if pos >= args.len() {
-        return Err(CliError::Parse("--profile requires a value".to_string()));
+    let mut name = None;
+    let mut i = 0;
+    while i < args.len() {
+        let value = if args[i] == "--profile" {
+            args.remove(i);
+            if i >= args.len() {
+                return Err(CliError::Parse("--profile requires a value".to_string()));
+            }
+            args.remove(i)
+        } else if let Some(value) = args[i].strip_prefix("--profile=") {
+            let value = value.to_string();
+            args.remove(i);
+            value
+        } else {
+            i += 1;
+            continue;
+        };
+        if name.replace(value).is_some() {
+            return Err(CliError::Parse(
+                "--profile may be given at most once".to_string(),
+            ));
+        }
     }
-    let name = args.remove(pos);
-    if args.iter().any(|a| a == "--profile") {
-        return Err(CliError::Parse(
-            "--profile may be given at most once".to_string(),
-        ));
-    }
-    Ok(Some(name))
+    Ok(name)
 }
 
 /// Set `name` as the process's default profile and check it resolves,

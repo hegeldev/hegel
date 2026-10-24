@@ -2068,16 +2068,7 @@ impl RunResult {
         require_ok(with_context(|ctx| unsafe {
             hegel_c::hegel_run_result_error_kind(ctx, self.raw, &mut kind, &mut health_check)
         }));
-        match kind {
-            k::HEGEL_RUN_ERROR_HEALTH_CHECK => {
-                let checks = health_checks_from_bitmask(health_check);
-                hegel_internal_assert!(checks.len() == 1);
-                RunErrorKind::HealthCheck(checks[0])
-            }
-            k::HEGEL_RUN_ERROR_FLAKY | k::HEGEL_RUN_ERROR_NONDETERMINISTIC => RunErrorKind::Flaky,
-            k::HEGEL_RUN_ERROR_UNSATISFIABLE => RunErrorKind::Unsatisfiable,
-            _ => RunErrorKind::Other,
-        }
+        run_error_kind(kind, health_check)
     }
 
     pub(crate) fn failure_count(&self) -> usize {
@@ -2281,6 +2272,24 @@ fn phases_from_bitmask(mask: u32) -> Vec<Phase> {
     .filter(|(bit, _)| mask & (*bit as u32) != 0)
     .map(|(_, phase)| phase)
     .collect()
+}
+
+/// Classify a run error from `hegel_run_result_error_kind`'s outputs. A
+/// health-check error whose bit this crate does not know (it pins libhegel
+/// exactly, so this would be a bug) is reported as a plain run error
+/// rather than panicking.
+fn run_error_kind(kind: hegel_c::hegel_run_error_kind_t, health_check: u32) -> RunErrorKind {
+    use hegel_c::hegel_run_error_kind_t as k;
+    match kind {
+        k::HEGEL_RUN_ERROR_HEALTH_CHECK => health_checks_from_bitmask(health_check)
+            .first()
+            .map_or(RunErrorKind::Other, |check| {
+                RunErrorKind::HealthCheck(*check)
+            }),
+        k::HEGEL_RUN_ERROR_FLAKY | k::HEGEL_RUN_ERROR_NONDETERMINISTIC => RunErrorKind::Flaky,
+        k::HEGEL_RUN_ERROR_UNSATISFIABLE => RunErrorKind::Unsatisfiable,
+        _ => RunErrorKind::Other,
+    }
 }
 
 fn health_checks_from_bitmask(mask: u32) -> Vec<HealthCheck> {
