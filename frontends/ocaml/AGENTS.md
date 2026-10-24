@@ -28,8 +28,9 @@ just ocaml::check            # lint + docs + test — what CI runs, less the com
 - `just ocaml::check-test-no-coverage` is the suite without bisect_ppx, for
   switches without the dev-setup dependencies (CI's `compat` and `oxcaml`
   jobs); `HEGEL_SKIP_JANE_TESTS=1` skips the `hegel.jane` suites where the
-  `core`/`async` depopts are not installed, `HEGEL_SKIP_EXPECT_TESTS=1` the
-  ppx_expect suite, and `HEGEL_CONCURRENT_TESTS=1` opts into the OxCaml
+  `core`/`async` depopts are not installed, `HEGEL_SKIP_ZARITH_TESTS=1` the
+  `hegel.zarith` suite where the `zarith` depopt is not,
+  `HEGEL_SKIP_EXPECT_TESTS=1` the ppx_expect suite, and `HEGEL_CONCURRENT_TESTS=1` opts into the OxCaml
   concurrent suites.
 
 ## Tooling
@@ -192,6 +193,13 @@ lib/                         # Library source
                              #   job): dune only allows env variables in an
                              #   executable's enabled_if, and an (optional)
                              #   executable is still requested by the default alias
+  zarith/                    # Optional hegel.zarith sublibrary ((optional) in dune,
+    hegel_zarith.ml/.mli     #   zarith depopt): integers over Z.t, drawn through
+    test/                    #   hegel_generate_integer_big (two's-complement
+                             #   little-endian bytes). Instrumented +
+                             #   coverage-gated like lib/; its suite is skipped
+                             #   with HEGEL_SKIP_ZARITH_TESTS in
+                             #   check-test-no-coverage
 
 template/                    # hegel.template ppx: links ppx_template on
                              #   OxCaml; upstream, hegel_template.upstream.ml
@@ -228,7 +236,17 @@ test/                        # hegel's own test suite (one executable: test_hege
   test_concurrency.ml.in     # Concurrency tests (cppo: the domains tests exist
                              #   upstream only)
   test_client.ml             # Internal config + run lifecycle tests (real engine)
-  test_generators_*.ml       # Generator core / primitives / collections / combinators
+  test_cli.ml                # Hegel.main flags and single_test_case
+  test_clone.ml              # Hegel.clone
+  test_loader.ml             # Hegel_ffi.Loader resolution
+  test_lazy_load.ml          # Separate executable: the engine is loaded lazily
+  test_generators_*.ml       # Generator core / primitives / collections /
+                             #   combinators / functions, and _extra (uuids,
+                             #   arrays, sets, unique_by, tuples5..8, ...)
+  test_printer.ml            # Hegel.Printer rendering through the engine printer
+  test_lark.ml               # from_lark grammar generation
+  test_recursive.ml          # recursive and deferred
+  test_repeat.ml             # repeat
   test_stateful.ml           # Stateful testing tests
 
 docs/                        # Tutorial and guide documents
@@ -244,6 +262,9 @@ examples/                    # Example programs demonstrating the library
 
 scripts/
   check-coverage.py          # Parses bisect-ppx-report, enforces 100%
+  check-ffi-constants.py     # The #define values ffi.ml.in copies (tagged
+                             #   (* [HEGEL_NAME]. *)) must match hegel.h;
+                             #   part of check-lint
   libhegel-path.sh           # The in-tree libhegel build the justfile points
                              #   the tests at
 
@@ -292,7 +313,7 @@ mechanical marshalling out of the 100%-coverage gate (no `[@coverage off]`).
 the old Python-subprocess install flow were removed in the native-backend and
 typed-draw migrations.
 
-### Dependencies: core-free main library + optional hegel.jane
+### Dependencies: core-free main library + optional hegel.jane and hegel.zarith
 
 The `hegel` library depends on the stdlib plus `cmdliner` (`Hegel.main`), `sexplib0` (only for
 `Printer.of_sexp`, which prints a type that has a `sexp_of_t`), `unix` (isatty for
@@ -319,6 +340,12 @@ suite (`test_hegel_jane.ml` Alcotest). `just check-tests` (the coverage-enforcin
 always runs it; `just check-tests-no-coverage` (the `compat`/`oxcaml` CI jobs,
 which don't install `core`) skips it via `HEGEL_SKIP_JANE_TESTS=1`
 — see the justfile.
+
+`zarith` is likewise an opam depopt, gating the `(optional)` sublibrary
+`hegel.zarith` (`lib/zarith/`, module `Hegel_zarith`, big integers). It is
+instrumented and coverage-gated like `lib/jane/`, with its own
+`lib/zarith/test/` suite, skipped by `check-test-no-coverage` under
+`HEGEL_SKIP_ZARITH_TESTS=1`.
 
 ### Generator System (generators_core.ml + generators_{primitives,collections,combinators}.ml)
 
@@ -1107,7 +1134,7 @@ draw, and always freed (`Internal.with_string_generator`).
 - `scripts/check-coverage.py` parses `bisect-ppx-report summary` output
 - Unreachable engine-contract violations use `failwith "..."` (tested via unit tests on the transform)
 - `[@coverage off]` annotations are never used
-- Only the instrumented `hegel` library and the `hegel.jane` sublibrary are measured; the `hegel_ffi` bindings, examples, and PPX code are not
+- Only the instrumented `hegel` library and the `hegel.jane` and `hegel.zarith` sublibraries are measured; the `hegel_ffi` bindings, examples, and PPX code are not
 
 ## Lessons Learned
 

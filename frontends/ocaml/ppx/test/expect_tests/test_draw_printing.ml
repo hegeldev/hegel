@@ -3,8 +3,8 @@
     ppx_expect). [draw_silent] never prints, and draws nested inside a span
     (depth > 0) are suppressed so only the outermost value shows. The printer is
     carried on primitive generators; combinators that hand the output type to
-    user code ([map], [sampled_from]) carry none, and [with_printer] attaches
-    one (and is what [draw] requires). *)
+    user code ([map], [sampled_from]) print their values as [<abstr>], and
+    [with_printer] attaches a printer to any generator. *)
 
 open! Core
 open Hegel
