@@ -374,6 +374,7 @@ describe("WasmEngine pinned raw ABI", () => {
         tc.draw(gs.binary({ minSize: 1, maxSize: 10 }));
         tc.draw(gs.text({ maxSize: 10 }));
         tc.draw(gs.fromRegex("a[bc]+", { fullmatch: true }));
+        expect(tc.draw(gs.fromRegex("a[bc]+", { alphabet: "ab" }))).toMatch(/^ab+$/);
         tc.draw(gs.emails());
         tc.draw(gs.urls());
         tc.draw(gs.domains());
