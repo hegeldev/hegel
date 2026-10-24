@@ -212,8 +212,9 @@ let%template composite
 [@@mode m = (nonportable, portable)]
 ;;
 
-(** Maximum number of filter attempts before calling [assume false]. *)
-let max_filter_attempts = 3
+(** How many times a filter draws before rejecting the test case: the
+    engine's [HEGEL_FILTER_ATTEMPTS]. *)
+let max_filter_attempts = Hegel_ffi.Ffi.filter_attempts
 
 (** Raised out of an attempt at a recursive value that outgrew its leaf
     budget, up to the {!recursive} draw that owns [recursion]. The spans the

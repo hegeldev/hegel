@@ -213,6 +213,10 @@ val phase_generate : int
 val phase_target : int
 val phase_shrink : int
 
+(** [HEGEL_FILTER_ATTEMPTS]: how many times a filtered generator draws a
+    value before it rejects the test case. *)
+val filter_attempts : int
+
 (** {2 Health-check bitmask values}
 
     The [HEGEL_HC_*] constants. *)
@@ -455,12 +459,14 @@ val generate_float
   -> float
 
 (** [generate_bytes ctx tc ~min_size ~max_size] draws a byte string with length
-    in [[min_size, max_size]] ([max_size = None] means unbounded). Raises
+    in [[min_size, max_size]] ([max_size = None] takes the engine's default
+    maximum, [HEGEL_MAX_SIZE_DEFAULT]). Raises
     {!Stop_test} on budget exhaustion. *)
 val generate_bytes : context -> test_case -> min_size:int -> max_size:int option -> string
 
 (** [string_generator_text ctx ...] builds a text string generator over the
-    described alphabet. [max_size = None] means unbounded. Raises
+    described alphabet. [max_size = None] takes the engine's default maximum,
+    [HEGEL_MAX_SIZE_DEFAULT]. Raises
     {!Internal_error} on invalid parameters. The handle must be freed with
     {!string_generator_free}. *)
 val string_generator_text

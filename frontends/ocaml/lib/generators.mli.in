@@ -229,6 +229,10 @@ val floats
      ?exclude_categories ?include_characters ?exclude_characters ?alphabet ()]
     creates a generator for Unicode text strings.
 
+    A string has between [min_size] (default 0) and [max_size] characters.
+    Without [max_size], the engine picks the maximum: 100, or [min_size + 100]
+    when [min_size] is above 100.
+
     Character filtering options restrict which characters may appear:
     - [codec]: restrict to characters encodable in this codec (e.g. ["ascii"],
       ["utf-8"], ["latin-1"])
@@ -315,6 +319,9 @@ val%template make_characters
 val chars : unit -> char generator MODE(portable)
 
 (** [binary ?min_size ?max_size ()] creates a generator for binary byte strings.
+    A string has between [min_size] (default 0) and [max_size] bytes. Without
+    [max_size], the engine picks the maximum: 100, or [min_size + 100] when
+    [min_size] is above 100.
 
     {[
       let%hegel_test binary_example tc =

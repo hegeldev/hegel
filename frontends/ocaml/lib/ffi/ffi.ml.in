@@ -1018,6 +1018,12 @@ let phase_generate = 1 lsl 2
 let phase_target = 1 lsl 3
 let phase_shrink = 1 lsl 4
 
+(* [HEGEL_FILTER_ATTEMPTS]. *)
+let filter_attempts = 3
+
+(* [HEGEL_MAX_SIZE_DEFAULT]. *)
+let max_size_default = Unsigned.UInt64.(sub max_int one)
+
 (* Health-check bitmask values [HEGEL_HC_*]. *)
 let hc_filter_too_much = 1
 let hc_too_slow = 1 lsl 1
@@ -1422,7 +1428,7 @@ let generate_bytes ctx tc ~min_size ~max_size =
   let max_u =
     match max_size with
     | Some m -> Unsigned.UInt64.of_int m
-    | None -> Unsigned.UInt64.max_int
+    | None -> max_size_default
   in
   check_rc
     ctx
@@ -1465,7 +1471,7 @@ let string_generator_text
   let max_u =
     match max_size with
     | Some m -> Unsigned.UInt64.of_int m
-    | None -> Unsigned.UInt64.max_int
+    | None -> max_size_default
   in
   let cats_ptr, cats_root, cats_len = optional_string_array categories in
   let excats_ptr, excats_root, excats_len = optional_string_array exclude_categories in

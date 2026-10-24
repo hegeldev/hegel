@@ -103,3 +103,7 @@ New generators:
 - `permutations values` generates permutations of a list, shrinking toward its original order.
 - `tuples5` to `tuples8` generate tuples of 5 to 8 elements.
 - The new optional `hegel.zarith` library, built when zarith is installed, has `Hegel_zarith.integers` for zarith integers of any magnitude. A missing bound is taken to be 2^127 values beyond the other bound, or beyond zero when that is further.
+
+`text` and `binary` without `~max_size` now take libhegel's default maximum, 100 characters or bytes (or `min_size + 100` when `~min_size` is above 100), as every other Hegel frontend does. They used to have no maximum at all. Pass `~max_size` for longer strings.
+
+`filter` now takes its number of attempts before rejecting the test case (3) from libhegel, so it rejects as often as a filter in any other frontend.
