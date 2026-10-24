@@ -70,6 +70,10 @@ namespace hegel::generators {
             }
         }
 
+        uint64_t label() const override {
+            return hegel::internal::label(hegel::internal::LabelName::Integers);
+        }
+
       private:
         T min_;
         T max_;
@@ -124,6 +128,10 @@ namespace hegel::generators {
                 tc, width, min_, max_, allow_nan_, allow_infinity_,
                 exclude_min_, exclude_max_,
                 static_cast<double>(std::numeric_limits<T>::denorm_min())));
+        }
+
+        uint64_t label() const override {
+            return hegel::internal::label(hegel::internal::LabelName::Floats);
         }
 
       private:

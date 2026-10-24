@@ -410,6 +410,14 @@ namespace hegel::impl {
         return label;
     }
 
+    uint64_t label_combine(hegel_context_t* ctx,
+                           const std::vector<uint64_t>& labels) {
+        uint64_t label = 0;
+        check_rc(ctx, hegel_label_combine(ctx, labels.data(), labels.size(),
+                                          &label));
+        return label;
+    }
+
     namespace {
         struct DrawScope {
             hegel_context_t* ctx;
@@ -679,33 +687,47 @@ namespace hegel::internal {
 
         static_assert(state_machine_done == HEGEL_STATE_MACHINE_DONE);
 
-        // The name each SpanLabel derives its engine label from, in
-        // enumerator order. The `hegel-cpp.` prefix keeps the names clear
-        // of the engine's own `hegel.<kind>` labels.
-        constexpr std::array<const char*, span_label_count> span_label_names = {
-            "hegel-cpp.list",          "hegel-cpp.set",    "hegel-cpp.map",
-            "hegel-cpp.tuple",         "hegel-cpp.one_of", "hegel-cpp.optional",
-            "hegel-cpp.flat_map",      "hegel-cpp.filter", "hegel-cpp.mapped",
-            "hegel-cpp.stateful.rule",
+        // The name each LabelName derives its engine label from, in
+        // enumerator order.
+        constexpr std::array<const char*, label_name_count> label_names = {
+            "hegel.generator",
+            "hegel.composite",
+            "hegel.map",
+            "hegel.flat_map",
+            "hegel.filter",
+            "hegel.filter.attempt",
+            "hegel.just",
+            "hegel.sampled_from",
+            "hegel.one_of",
+            "hegel.optional",
+            "hegel.deferred",
+            "hegel.integers",
+            "hegel.floats",
+            "hegel.booleans",
+            "hegel.text",
+            "hegel.characters",
+            "hegel.from_regex",
+            "hegel.binary",
+            "hegel.emails",
+            "hegel.urls",
+            "hegel.domains",
+            "hegel.ip_addresses.v4",
+            "hegel.ip_addresses.v6",
+            "hegel.uuids",
+            "hegel.lists",
+            "hegel.sets",
+            "hegel.dicts",
+            "hegel.tuples",
+            "hegel.array",
+            "hegel.stateful.rule",
+            "hegel.pool.values_reusable",
+            "hegel.pool.values_consumed",
         };
-        static_assert(span_label_names[static_cast<size_t>(SpanLabel::List)] ==
-                      std::string_view("hegel-cpp.list"));
+        static_assert(label_names[static_cast<size_t>(LabelName::Generator)] ==
+                      std::string_view("hegel.generator"));
         static_assert(
-            span_label_names[static_cast<size_t>(SpanLabel::StatefulRule)] ==
-            std::string_view("hegel-cpp.stateful.rule"));
-
-        // The engine label of `label`, derived once per process.
-        uint64_t span_label_value(SpanLabel label) {
-            static const std::array<uint64_t, span_label_count> labels = [] {
-                std::array<uint64_t, span_label_count> values{};
-                hegel_context_t* ctx = impl::thread_context();
-                for (size_t i = 0; i < values.size(); ++i) {
-                    values[i] = impl::label_from_name(ctx, span_label_names[i]);
-                }
-                return values;
-            }();
-            return labels[static_cast<size_t>(label)];
-        }
+            label_names[static_cast<size_t>(LabelName::PoolValuesConsumed)] ==
+            std::string_view("hegel.pool.values_consumed"));
 
         // Two's-complement little-endian encoding of a uint64_t for the
         // engine's big-integer draw: 9 bytes so the top bit is never read
@@ -729,11 +751,26 @@ namespace hegel::internal {
 
     } // namespace
 
-    void start_span(const TestCase& tc, SpanLabel label) {
+    uint64_t label(LabelName name) {
+        static const std::array<uint64_t, label_name_count> labels = [] {
+            std::array<uint64_t, label_name_count> values{};
+            hegel_context_t* ctx = impl::thread_context();
+            for (size_t i = 0; i < values.size(); ++i) {
+                values[i] = impl::label_from_name(ctx, label_names[i]);
+            }
+            return values;
+        }();
+        return labels[static_cast<size_t>(name)];
+    }
+
+    uint64_t combine_labels(const std::vector<uint64_t>& labels) {
+        return impl::label_combine(impl::thread_context(), labels);
+    }
+
+    void start_span(const TestCase& tc, uint64_t label) {
         impl::DrawScope scope(tc);
-        scope.raise_for_rc(
-            hegel_start_span(scope.ctx, scope.tc, span_label_value(label)),
-            "hegel_start_span");
+        scope.raise_for_rc(hegel_start_span(scope.ctx, scope.tc, label),
+                           "hegel_start_span");
     }
 
     void stop_span(const TestCase& tc, bool discard) {

@@ -33,6 +33,11 @@ namespace hegel::generators {
             return elements_[static_cast<size_t>(index)];
         }
 
+        uint64_t label() const override {
+            return hegel::internal::label(
+                hegel::internal::LabelName::SampledFrom);
+        }
+
       private:
         std::vector<T> elements_;
     };
@@ -47,11 +52,19 @@ namespace hegel::generators {
                 throw std::invalid_argument(
                     "one_of requires a non-empty vector of generators");
             }
+            std::vector<uint64_t> branches;
+            branches.reserve(gens_.size());
+            for (const Generator<T>& gen : gens_) {
+                branches.push_back(gen.label());
+            }
+            namespace hi = hegel::internal;
+            label_ = hi::combine_labels({hi::label(hi::LabelName::OneOf),
+                                         hi::combine_labels(branches)});
         }
 
         T do_draw(const TestCase& tc) const override {
             namespace hi = hegel::internal;
-            hi::start_span(tc, hi::SpanLabel::OneOf);
+            hi::start_span(tc, label_);
             int64_t index =
                 hi::draw_integer(tc, 0, static_cast<int64_t>(gens_.size() - 1));
             T result = gens_[static_cast<size_t>(index)].do_draw(tc);
@@ -59,8 +72,11 @@ namespace hegel::generators {
             return result;
         }
 
+        uint64_t label() const override { return label_; }
+
       private:
         std::vector<Generator<T>> gens_;
+        uint64_t label_;
     };
     /// @endcond
 
@@ -176,12 +192,21 @@ namespace hegel::generators {
         using Result = std::variant<Ts...>;
 
         explicit VariantGenerator(Generator<Ts>... gens)
-            : gens_(std::move(gens)...) {}
+            : gens_(std::move(gens)...) {
+            namespace hi = hegel::internal;
+            std::vector<uint64_t> branches = std::apply(
+                [](const auto&... g) {
+                    return std::vector<uint64_t>{g.label()...};
+                },
+                gens_);
+            label_ = hi::combine_labels({hi::label(hi::LabelName::OneOf),
+                                         hi::combine_labels(branches)});
+        }
 
         Result do_draw(const TestCase& tc) const override {
             namespace hi = hegel::internal;
             constexpr size_t N = sizeof...(Ts);
-            hi::start_span(tc, hi::SpanLabel::OneOf);
+            hi::start_span(tc, label_);
             int64_t index =
                 hi::draw_integer(tc, 0, static_cast<int64_t>(N - 1));
             Result result = detail::draw_variant_impl<Result, decltype(gens_)>(
@@ -190,8 +215,11 @@ namespace hegel::generators {
             return result;
         }
 
+        uint64_t label() const override { return label_; }
+
       private:
         std::tuple<Generator<Ts>...> gens_;
+        uint64_t label_;
     };
 
     // Concrete IGenerator for optional(). A boolean draw inside an
@@ -199,11 +227,15 @@ namespace hegel::generators {
     template <typename T>
     class OptionalGenerator : public IGenerator<std::optional<T>> {
       public:
-        explicit OptionalGenerator(Generator<T> gen) : gen_(std::move(gen)) {}
+        explicit OptionalGenerator(Generator<T> gen)
+            : gen_(std::move(gen)),
+              label_(hegel::internal::combine_labels(
+                  {hegel::internal::label(hegel::internal::LabelName::Optional),
+                   gen_.label()})) {}
 
         std::optional<T> do_draw(const TestCase& tc) const override {
             namespace hi = hegel::internal;
-            hi::start_span(tc, hi::SpanLabel::Optional);
+            hi::start_span(tc, label_);
             std::optional<T> result;
             if (hi::draw_boolean(tc, 0.5)) {
                 result = gen_.do_draw(tc);
@@ -212,8 +244,11 @@ namespace hegel::generators {
             return result;
         }
 
+        uint64_t label() const override { return label_; }
+
       private:
         Generator<T> gen_;
+        uint64_t label_;
     };
     /// @endcond
 
@@ -275,6 +310,10 @@ namespace hegel::generators {
                     "deferred generator drawn before set() was called");
             }
             return (*slot_)->do_draw(tc);
+        }
+
+        uint64_t label() const override {
+            return hegel::internal::label(hegel::internal::LabelName::Deferred);
         }
 
       private:

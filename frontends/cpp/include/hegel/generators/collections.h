@@ -77,7 +77,10 @@ namespace hegel::generators {
     class VectorsGenerator : public IGenerator<std::vector<T>> {
       public:
         VectorsGenerator(Generator<T> elements, VectorsParams params = {})
-            : elements_(std::move(elements)), params_(params) {
+            : elements_(std::move(elements)), params_(params),
+              label_(hegel::internal::combine_labels(
+                  {hegel::internal::label(hegel::internal::LabelName::Lists),
+                   elements_.label()})) {
             if (params_.max_size && params_.min_size > *params_.max_size) {
                 throw std::invalid_argument("Cannot have max_size < min_size");
             }
@@ -90,7 +93,7 @@ namespace hegel::generators {
 
         std::vector<T> do_draw(const TestCase& tc) const override {
             namespace hi = hegel::internal;
-            hi::start_span(tc, hi::SpanLabel::List);
+            hi::start_span(tc, label_);
             hi::CollectionHandle collection(
                 tc, params_.min_size,
                 detail::collection_max_size(params_.max_size));
@@ -111,9 +114,12 @@ namespace hegel::generators {
             return result;
         }
 
+        uint64_t label() const override { return label_; }
+
       private:
         Generator<T> elements_;
         VectorsParams params_;
+        uint64_t label_;
     };
 
     // Concrete IGenerator for sets(). Duplicate elements are rejected back
@@ -121,7 +127,10 @@ namespace hegel::generators {
     template <typename T> class SetsGenerator : public IGenerator<std::set<T>> {
       public:
         SetsGenerator(Generator<T> elements, SetsParams params = {})
-            : elements_(std::move(elements)), params_(params) {
+            : elements_(std::move(elements)), params_(params),
+              label_(hegel::internal::combine_labels(
+                  {hegel::internal::label(hegel::internal::LabelName::Sets),
+                   elements_.label()})) {
             if (params_.max_size && params_.min_size > *params_.max_size) {
                 throw std::invalid_argument("Cannot have max_size < min_size");
             }
@@ -129,7 +138,7 @@ namespace hegel::generators {
 
         std::set<T> do_draw(const TestCase& tc) const override {
             namespace hi = hegel::internal;
-            hi::start_span(tc, hi::SpanLabel::Set);
+            hi::start_span(tc, label_);
             hi::CollectionHandle collection(
                 tc, params_.min_size,
                 detail::collection_max_size(params_.max_size));
@@ -143,9 +152,12 @@ namespace hegel::generators {
             return result;
         }
 
+        uint64_t label() const override { return label_; }
+
       private:
         Generator<T> elements_;
         SetsParams params_;
+        uint64_t label_;
     };
 
     // Concrete IGenerator for maps(). Draws the key first and only draws a
@@ -157,7 +169,10 @@ namespace hegel::generators {
         MapsGenerator(Generator<K> keys, Generator<V> values,
                       MapsParams params = {})
             : keys_(std::move(keys)), values_(std::move(values)),
-              params_(params) {
+              params_(params),
+              label_(hegel::internal::combine_labels(
+                  {hegel::internal::label(hegel::internal::LabelName::Dicts),
+                   keys_.label(), values_.label()})) {
             if (params_.max_size && params_.min_size > *params_.max_size) {
                 throw std::invalid_argument("Cannot have max_size < min_size");
             }
@@ -165,7 +180,7 @@ namespace hegel::generators {
 
         std::map<K, V> do_draw(const TestCase& tc) const override {
             namespace hi = hegel::internal;
-            hi::start_span(tc, hi::SpanLabel::Map);
+            hi::start_span(tc, label_);
             hi::CollectionHandle collection(
                 tc, params_.min_size,
                 detail::collection_max_size(params_.max_size));
@@ -182,10 +197,13 @@ namespace hegel::generators {
             return result;
         }
 
+        uint64_t label() const override { return label_; }
+
       private:
         Generator<K> keys_;
         Generator<V> values_;
         MapsParams params_;
+        uint64_t label_;
     };
     /// @endcond
 
@@ -280,19 +298,30 @@ namespace hegel::generators {
         using ResultTuple = std::tuple<Ts...>;
 
         explicit TuplesGenerator(Generator<Ts>... gens)
-            : gens_(std::move(gens)...) {}
+            : gens_(std::move(gens)...),
+              label_(make_label(std::index_sequence_for<Ts...>{})) {}
 
         ResultTuple do_draw(const TestCase& tc) const override {
             namespace hi = hegel::internal;
-            hi::start_span(tc, hi::SpanLabel::Tuple);
+            hi::start_span(tc, label_);
             ResultTuple result = detail::draw_tuple_impl<ResultTuple>(
                 gens_, std::index_sequence_for<Ts...>{}, tc);
             hi::stop_span(tc);
             return result;
         }
 
+        uint64_t label() const override { return label_; }
+
       private:
+        template <size_t... Is>
+        uint64_t make_label(std::index_sequence<Is...>) const {
+            namespace hi = hegel::internal;
+            return hi::combine_labels({hi::label(hi::LabelName::Tuples),
+                                       std::get<Is>(gens_).label()...});
+        }
+
         std::tuple<Generator<Ts>...> gens_;
+        uint64_t label_;
     };
     /// @endcond
 
@@ -324,11 +353,14 @@ namespace hegel::generators {
     class ArrayGenerator : public IGenerator<std::array<T, N>> {
       public:
         explicit ArrayGenerator(Generator<T> element)
-            : element_(std::move(element)) {}
+            : element_(std::move(element)),
+              label_(hegel::internal::combine_labels(
+                  {hegel::internal::label(hegel::internal::LabelName::Array),
+                   element_.label()})) {}
 
         std::array<T, N> do_draw(const TestCase& tc) const override {
             namespace hi = hegel::internal;
-            hi::start_span(tc, hi::SpanLabel::Tuple);
+            hi::start_span(tc, label_);
             std::array<T, N> result =
                 draw_all(tc, std::make_index_sequence<N>{});
             hi::stop_span(tc);
@@ -345,7 +377,12 @@ namespace hegel::generators {
                 (static_cast<void>(Is), element_.do_draw(tc))...};
         }
 
+      public:
+        uint64_t label() const override { return label_; }
+
+      private:
         Generator<T> element_;
+        uint64_t label_;
     };
     /// @endcond
 

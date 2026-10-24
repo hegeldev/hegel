@@ -23,6 +23,10 @@ namespace hegel::generators {
 
         T do_draw(const TestCase&) const override { return value_; }
 
+        uint64_t label() const override {
+            return hegel::internal::label(hegel::internal::LabelName::Just);
+        }
+
       private:
         T value_;
     };

@@ -21,3 +21,5 @@ Every blob given to `HEGEL_REPRODUCE_FAILURE` or to `hegel::test()` is now repla
 `hegel::test()` now derives its database key (`<file>::<name>`) also when the database is disabled, as `HEGEL_TEST` already did, because a derandomized run derives its seed from the key. Without it, every derandomized test under the `ci` profile saw the same inputs.
 
 The undocumented `hegel::verbosity_to_string()` and `hegel::health_check_to_string()` are removed.
+
+Generators now identify themselves to the engine with the same span labels as the other Hegel frontends: each label comes from a `hegel.<kind>` name (`hegel.lists`, `hegel.one_of`, `hegel.integers`, ...), and a generator built from others combines its own label with theirs through libhegel's `hegel_label_combine`. Before, every `vectors()` span had the same label whatever its elements were, so the shrinker treated a vector of integers and a vector of strings as interchangeable. Database entries saved by earlier versions may no longer replay.

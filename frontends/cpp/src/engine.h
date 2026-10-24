@@ -91,6 +91,8 @@ namespace hegel::impl {
 
     /// The span label for a generator kind: a stable hash of `name`.
     uint64_t label_from_name(hegel_context_t* ctx, std::string_view name);
+    uint64_t label_combine(hegel_context_t* ctx,
+                           const std::vector<uint64_t>& labels);
 
     hegel_run_t* run_start(hegel_context_t* ctx, hegel_settings_t* s);
     /// A run that replays `blob`. An invalid blob throws

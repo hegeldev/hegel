@@ -68,15 +68,20 @@ namespace hegel::generators {
         // handle (text, characters, regex, emails, urls, domains).
         class StringDrawGenerator : public IGenerator<std::string> {
           public:
-            explicit StringDrawGenerator(hegel_string_generator_t* generator)
-                : handle_(std::make_shared<StringGeneratorHandle>(generator)) {}
+            StringDrawGenerator(internal::LabelName name,
+                                hegel_string_generator_t* generator)
+                : handle_(std::make_shared<StringGeneratorHandle>(generator)),
+                  label_(internal::label(name)) {}
 
             std::string do_draw(const TestCase& tc) const override {
                 return impl::draw_string(tc, handle_->get());
             }
 
+            uint64_t label() const override { return label_; }
+
           private:
             std::shared_ptr<StringGeneratorHandle> handle_;
+            uint64_t label_;
         };
 
         hegel_string_generator_t* build_text_handle(const TextParams& params) {
@@ -113,7 +118,8 @@ namespace hegel::generators {
         class TextGenerator : public StringDrawGenerator {
           public:
             explicit TextGenerator(const TextParams& params)
-                : StringDrawGenerator(validate_and_build(params)) {}
+                : StringDrawGenerator(internal::LabelName::Text,
+                                      validate_and_build(params)) {}
 
           private:
             static hegel_string_generator_t*
@@ -134,7 +140,8 @@ namespace hegel::generators {
         class CharactersGenerator : public StringDrawGenerator {
           public:
             explicit CharactersGenerator(const CharactersParams& params)
-                : StringDrawGenerator(build(params)) {}
+                : StringDrawGenerator(internal::LabelName::Characters,
+                                      build(params)) {}
 
           private:
             static hegel_string_generator_t*
@@ -169,6 +176,10 @@ namespace hegel::generators {
                 return impl::draw_bytes(tc, min_size_, max_size_);
             }
 
+            uint64_t label() const override {
+                return internal::label(internal::LabelName::Binary);
+            }
+
           private:
             uint64_t min_size_;
             uint64_t max_size_;
@@ -178,6 +189,10 @@ namespace hegel::generators {
           public:
             bool do_draw(const TestCase& tc) const override {
                 return internal::draw_boolean(tc, 0.5);
+            }
+
+            uint64_t label() const override {
+                return internal::label(internal::LabelName::Booleans);
             }
         };
 
@@ -237,6 +252,12 @@ namespace hegel::generators {
                                      : impl::draw_ipv6(tc);
             }
 
+            uint64_t label() const override {
+                return internal::label(
+                    version_ == 4 ? internal::LabelName::IpAddressesV4
+                                  : internal::LabelName::IpAddressesV6);
+            }
+
           private:
             int version_;
         };
@@ -248,6 +269,10 @@ namespace hegel::generators {
 
             std::string do_draw(const TestCase& tc) const override {
                 return impl::draw_uuid(tc, version_);
+            }
+
+            uint64_t label() const override {
+                return internal::label(internal::LabelName::Uuids);
             }
 
           private:
@@ -275,12 +300,13 @@ namespace hegel::generators {
     Generator<std::string> from_regex(const std::string& pattern,
                                       bool fullmatch) {
         return Generator<std::string>(new StringDrawGenerator(
+            internal::LabelName::FromRegex,
             impl::string_generator_regex(pattern, fullmatch)));
     }
 
     Generator<std::string> emails() {
-        return Generator<std::string>(
-            new StringDrawGenerator(impl::string_generator_email()));
+        return Generator<std::string>(new StringDrawGenerator(
+            internal::LabelName::Emails, impl::string_generator_email()));
     }
 
     Generator<std::string> domains(DomainsParams params) {
@@ -288,12 +314,13 @@ namespace hegel::generators {
             throw std::invalid_argument("max_length must be between 4 and 255");
         }
         return Generator<std::string>(new StringDrawGenerator(
+            internal::LabelName::Domains,
             impl::string_generator_domain(params.max_length)));
     }
 
     Generator<std::string> urls() {
-        return Generator<std::string>(
-            new StringDrawGenerator(impl::string_generator_url()));
+        return Generator<std::string>(new StringDrawGenerator(
+            internal::LabelName::Urls, impl::string_generator_url()));
     }
 
     Generator<std::string> ip_addresses(IpAddressesParams params) {

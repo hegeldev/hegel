@@ -409,6 +409,12 @@ namespace hegel::stateful {
             return it->second;
         }
 
+        uint64_t label() const override {
+            return hegel::internal::label(
+                consume_ ? hegel::internal::LabelName::PoolValuesConsumed
+                         : hegel::internal::LabelName::PoolValuesReusable);
+        }
+
       private:
         Pool<T>& p_;
         bool consume_;
@@ -570,6 +576,12 @@ namespace hegel::stateful {
             } else {
                 return pool_.values_.at(variable);
             }
+        }
+
+        uint64_t label() const override {
+            return hegel::internal::label(
+                consume_ ? hegel::internal::LabelName::PoolValuesConsumed
+                         : hegel::internal::LabelName::PoolValuesReusable);
         }
 
       private:
@@ -1182,7 +1194,8 @@ namespace hegel::stateful {
                         "rule index. Please report this as a bug.");
                 }
                 // GCOVR_EXCL_STOP
-                internal::start_span(tc, internal::SpanLabel::StatefulRule);
+                internal::start_span(
+                    tc, internal::label(internal::LabelName::StatefulRule));
                 steps_run++;
                 const Rule<M>& rule = rules[static_cast<size_t>(next_rule_idx)];
                 tc.note("Step " + std::to_string(steps_run) + ": " +

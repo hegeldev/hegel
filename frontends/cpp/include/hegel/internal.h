@@ -31,30 +31,61 @@ namespace hegel::internal {
      * any other engine failure.
      */
 
-    // The kinds of compound draw the generators open spans around. The
-    // engine identifies a span only by its label: spans with the same label
-    // come from the same kind of generator, which makes them candidates for
-    // swapping and reordering when it shrinks. src/engine.cpp derives one
-    // stable label per kind from a name.
-    enum class SpanLabel {
-        List,
-        Set,
+    // The names the generators derive their span labels from. The engine
+    // identifies a span only by its label: spans with the same label come
+    // from the same generator, which makes them candidates for swapping and
+    // reordering when it shrinks. src/engine.cpp maps each name to a
+    // `hegel.<kind>` string, the same one every Hegel frontend uses for that
+    // generator, and derives its label with hegel_label_from_name.
+    enum class LabelName {
+        Generator,
+        Composite,
         Map,
-        Tuple,
-        OneOf,
-        Optional,
         FlatMap,
         Filter,
-        Mapped,
+        FilterAttempt,
+        Just,
+        SampledFrom,
+        OneOf,
+        Optional,
+        Deferred,
+        Integers,
+        Floats,
+        Booleans,
+        Text,
+        Characters,
+        FromRegex,
+        Binary,
+        Emails,
+        Urls,
+        Domains,
+        IpAddressesV4,
+        IpAddressesV6,
+        Uuids,
+        Lists,
+        Sets,
+        Dicts,
+        Tuples,
+        Array,
         StatefulRule,
+        PoolValuesReusable,
+        PoolValuesConsumed,
     };
-    inline constexpr std::size_t span_label_count =
-        static_cast<std::size_t>(SpanLabel::StatefulRule) + 1;
+    inline constexpr std::size_t label_name_count =
+        static_cast<std::size_t>(LabelName::PoolValuesConsumed) + 1;
+
+    // The label of a generator with no component generators, derived once
+    // per process.
+    uint64_t label(LabelName name);
+
+    // The label of a generator built from other generators: its own label
+    // first, then its components' labels (hegel_label_combine).
+    uint64_t combine_labels(const std::vector<uint64_t>& labels);
 
     // Open / close a labeled span around a group of draws so the shrinker
     // can treat them as a unit. stop_span(tc, true) marks the span rejected
     // (e.g. a filter predicate failed) so the engine retries from before it.
-    void start_span(const TestCase& tc, SpanLabel label);
+    void start_span(const TestCase& tc, uint64_t label);
     void stop_span(const TestCase& tc, bool discard = false);
 
     int64_t draw_integer(const TestCase& tc, int64_t min_value,
