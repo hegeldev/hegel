@@ -18,6 +18,7 @@ combine, and how the *profile* a run starts from is chosen.
 | `report_multiple_failures` | boolean | `False` | Report every distinct failure a run finds, as a {class}`~hegel.MultipleFailures`, rather than only the smallest. |
 | `stop_on_first_failure` | boolean | `True` | Stop generating once a failure is found. When `False`, the run uses its whole `test_cases` budget before reporting; every failure found is saved to the database, and with `report_multiple_failures` off only the smallest is shrunk and reported. |
 | `show_statistics` | boolean | `False` | Print the end-of-run statistics report for events recorded with {meth}`~hegel.TestCase.event` and {meth}`~hegel.TestCase.event_value`. |
+| `unbounded_choices` | boolean | `False` | Let a test case make any number of choices. Otherwise a test case making more than 2<sup>20</sup> choices is stopped and discarded. A long-running test case, such as a concurrent state machine driven for hours, needs the limit removed; the cost is the memory to record every choice. Suppressing the `test_cases_too_large` health check removes the limit too. |
 | `print_blob` | boolean | `True` | On failure, print a `@hegel.reproduce_failure("...")` line to replay it. |
 | `backend` | `default`, `urandom` | `default` | The source of randomness ({class}`~hegel.Backend`): a seeded random number generator, or fresh entropy for every choice, for running under Antithesis. |
 | `nondeterminism_strictness` | `quiet`, `warn`, `error` | `quiet` | How a run reacts when the test behaves nondeterministically ({class}`~hegel.NondeterminismStrictness`). See {doc}`../explanation/nondeterminism`. |
@@ -250,8 +251,9 @@ database = "default"
 backend = "default"
 ```
 
-Every setting in the table at the top of this page is accepted, plus
-`extends`. Two values exist to undo a parent's setting: `seed = "none"` clears
+Every setting in the table at the top of this page except
+`unbounded_choices` is accepted, plus `extends`; to lift the choice limit
+from `hegel.toml`, suppress the `test_cases_too_large` health check. Two values exist to undo a parent's setting: `seed = "none"` clears
 an inherited seed, and `database = "default"` restores the default database
 after a parent turned it off or set a path. In `hegel.toml`,
 `database = "disabled"` turns the database off, and
