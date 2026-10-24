@@ -238,8 +238,9 @@ val floats
     - [alphabet]: fixed set of allowed characters. Mutually exclusive with all
       individual character filtering parameters.
 
-    Surrogate codepoints (category Cs) are always excluded since OCaml strings
-    are conventionally UTF-8.
+    Surrogate codepoints (category Cs) are always excluded, so the drawn strings
+    are valid UTF-8. Constraints that leave no characters raise [Usage_error]
+    when drawn.
 
     {[
       let%hegel_test text_example tc =
@@ -267,7 +268,7 @@ val text
 
     Accepts the same character filtering options as {!text} except [min_size],
     [max_size], and [alphabet]. Surrogate codepoints (category Cs) are always
-    excluded since OCaml strings are conventionally UTF-8.
+    excluded, so the drawn strings are valid UTF-8.
 
     {[
       let%hegel_test characters_example tc =
@@ -934,43 +935,44 @@ module Private : sig
       and so as candidates for swapping, duplicating, and reordering during
       shrinking and mutation. *)
   module Labels : sig
-    (** [from_name name] is the label of a generator named [name] (64-bit
-        FNV-1a, as [hegel_label_from_name]). *)
-    val from_name : string -> int64
+    (** [from_name name] is the label of a generator named [name] (computed by
+        [hegel_label_from_name]). *)
+    val from_name : string -> Internal.Label.t
 
     (** [combine labels] is the label of a generator built from others: its
-        own label first, then its components' (as [hegel_label_combine]). *)
-    val combine : int64 list -> int64
+        own label first, then its components' (computed by
+        [hegel_label_combine]). *)
+    val combine : Internal.Label.t list -> Internal.Label.t
 
-    val list : int64
-    val set : int64
-    val assoc_list : int64
-    val hash_table : int64
-    val tuple : int64
-    val one_of : int64
-    val optional : int64
-    val fixed_dict : int64
-    val flat_map : int64
-    val filter : int64
-    val mapped : int64
-    val enum_variant : int64
-    val pool : int64
-    val function_ : int64
-    val function_result : int64
-    val stateful_rule : int64
+    val list : Internal.Label.t
+    val set : Internal.Label.t
+    val assoc_list : Internal.Label.t
+    val hash_table : Internal.Label.t
+    val tuple : Internal.Label.t
+    val one_of : Internal.Label.t
+    val optional : Internal.Label.t
+    val fixed_dict : Internal.Label.t
+    val flat_map : Internal.Label.t
+    val filter : Internal.Label.t
+    val mapped : Internal.Label.t
+    val enum_variant : Internal.Label.t
+    val pool : Internal.Label.t
+    val function_ : Internal.Label.t
+    val function_result : Internal.Label.t
+    val stateful_rule : Internal.Label.t
   end
 
   (** [label_of gen] is the span label of [gen]. *)
-  val label_of : 'a generator -> int64
+  val label_of : 'a generator -> Internal.Label.t
 
   (** [group label data f] runs [f ()] inside a span with the given [label]. The
       span is stopped with [discard:false] regardless of whether [f] raises. *)
-  val group : int64 -> Internal.test_case -> (unit -> 'a) -> 'a
+  val group : Internal.Label.t -> Internal.test_case -> (unit -> 'a) -> 'a
 
   (** [discardable_group label data f] runs [f ()] inside a span with [label].
       If [f] raises, the span is stopped with [discard:true]; otherwise
       [discard:false]. *)
-  val discardable_group : int64 -> Internal.test_case -> (unit -> 'a) -> 'a
+  val discardable_group : Internal.Label.t -> Internal.test_case -> (unit -> 'a) -> 'a
 
   (** A collection handle for generating variable-length sequences. *)
   type collection =
@@ -1002,10 +1004,10 @@ end
     direct use — no stability guarantees. *)
 module Ppx_internal : sig
   module Labels : sig
-    val from_name : string -> int64
-    val combine : int64 list -> int64
-    val fixed_dict : int64
-    val enum_variant : int64
+    val from_name : string -> Internal.Label.t
+    val combine : Internal.Label.t list -> Internal.Label.t
+    val fixed_dict : Internal.Label.t
+    val enum_variant : Internal.Label.t
   end
 
   (** A drawn value's display, produced only when the draw is printed. *)
@@ -1019,7 +1021,7 @@ module Ppx_internal : sig
       [generate_fn] returns the value's display with it. Used by the derive PPX
       to build derived generators that print structurally. *)
   val%template composite_with_label
-    :  label:int64
+    :  label:Internal.Label.t
     -> (Internal.test_case -> 'a * show) MODE(m)
     -> 'a generator MODE(m)
   [@@mode m = (nonportable, portable)]

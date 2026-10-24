@@ -38,6 +38,33 @@ exception Flaky_strategy
 
 open Settings
 
+module Label = struct
+  type desc =
+    | Name of string
+    | Combined of t list
+
+  and t =
+    { desc : desc
+    ; resolved : int64 option Atomic.t
+    }
+
+  let of_name name = { desc = Name name; resolved = Atomic.make None }
+  let combine labels = { desc = Combined labels; resolved = Atomic.make None }
+
+  let rec resolve context label =
+    match Atomic.get label.resolved with
+    | Some value -> value
+    | None ->
+      let value =
+        match label.desc with
+        | Name name -> Ffi.label_from_name context name
+        | Combined labels -> Ffi.label_combine context (List.map (resolve context) labels)
+      in
+      Atomic.set label.resolved (Some value);
+      value
+  ;;
+end
+
 (** A source location identifying a single test. See [Hegel.test_location]. *)
 type test_location =
   { function_name : string
@@ -488,11 +515,13 @@ let event_value tc ~label ~value =
   with_stop_guard tc (fun () -> Ffi.event_value tc.context tc.handle value label)
 ;;
 
-(** [start_span ?label tc] starts a generation span for better shrinking. *)
-let start_span ?(label = 0L) tc =
+(** [start_span ~label tc] starts a generation span for better shrinking. *)
+let start_span ~label tc =
   if Atomic.get tc.test_aborted
   then ()
-  else with_stop_guard tc (fun () -> Ffi.start_span tc.context tc.handle label)
+  else
+    with_stop_guard tc (fun () ->
+      Ffi.start_span tc.context tc.handle (Label.resolve tc.context label))
 ;;
 
 (** [stop_span ?discard tc] ends the current generation span. *)

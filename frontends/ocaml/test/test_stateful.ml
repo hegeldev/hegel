@@ -1036,7 +1036,9 @@ let concurrent_worker_control_exceptions_test () =
             | Hegel.Internal.Assume_rejected ->
               (* exceeding the libhegel nesting limit invalidates the tc *)
               for _ = 1 to 1001 do
-                Hegel.Internal.start_span tc
+                Hegel.Internal.start_span
+                  ~label:(Hegel.Internal.Label.of_name "test.span")
+                  tc
               done;
               ignore (Hegel.draw tc (Hegel.booleans ()) : bool)
             | _ -> raise error)

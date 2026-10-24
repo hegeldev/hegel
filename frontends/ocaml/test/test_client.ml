@@ -694,11 +694,11 @@ let test_run_health_check_failure () =
   Alcotest.(check bool) "filter health-check diagnostic surfaced" true raised
 ;;
 
-(** Exercise the optional-argument default paths of the primitives: [start_span]
-    without [~label], [pool_generate] without [~consume]. *)
+(** Exercise the optional-argument default paths of the primitives:
+    [stop_span] without [~discard], [pool_generate] without [~consume]. *)
 let test_run_primitive_defaults () =
   run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:3 ()) (fun tc ->
-    Internal.start_span tc;
+    Internal.start_span ~label:(Internal.Label.of_name "test.span") tc;
     let v = Hegel.draw tc int_gen in
     Internal.stop_span tc;
     let pool = Internal.new_pool tc in

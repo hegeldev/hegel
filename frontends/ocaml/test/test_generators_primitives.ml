@@ -157,18 +157,19 @@ let test_text_categories_and_exclude_categories () =
   | _ -> Alcotest.fail "expected Usage_error"
 ;;
 
-(** Test: text raises when categories include surrogate category Cs. *)
+(** Test: the surrogate category alone leaves no characters, which the engine
+    reports when the generator is drawn from. *)
 let test_text_categories_surrogate_cs () =
-  match text ~categories:[ "Cs" ] () with
-  | exception Hegel.Usage_error _ -> ()
-  | _ -> Alcotest.fail "expected Usage_error"
+  Test_helpers.expect_usage_error
+    (text ~categories:[ "Cs" ] ~min_size:1 ())
+    "No valid characters"
 ;;
 
-(** Test: text raises when categories include surrogate category C. *)
+(** Test: a category that contains the surrogates draws valid UTF-8. *)
 let test_text_categories_surrogate_c () =
-  match text ~categories:[ "C" ] () with
-  | exception Hegel.Usage_error _ -> ()
-  | _ -> Alcotest.fail "expected Usage_error"
+  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:10 ()) (fun tc ->
+    let v = Hegel.draw tc (text ~categories:[ "C" ] ~max_size:5 ()) in
+    assert (String.is_valid_utf_8 v))
 ;;
 
 (** The alphabet shortcut cannot be combined with any character filter. *)

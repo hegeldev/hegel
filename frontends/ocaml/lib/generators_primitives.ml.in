@@ -79,48 +79,11 @@ let floats
     ~print:Printer.float
 ;;
 
-(** Unicode general categories that include surrogate codepoints. OCaml strings
-    are conventionally UTF-8, and surrogates in UTF-8 are ill-formed. *)
-let surrogate_categories = [ "Cs"; "C" ]
-
-(** [effective_categories ?categories ?exclude_categories ()] applies the
-    character-category validation and surrogate auto-exclusion shared by {!text}
-    and {!characters}, returning the effective
-    [(categories, exclude_categories)] options to pass to the engine. *)
-let effective_categories ?categories ?exclude_categories () =
-  (match categories, exclude_categories with
-   | Some _, Some _ ->
-     raise
-       (Internal.Usage_error "categories and exclude_categories are mutually exclusive")
-   | _ -> ());
-  (* Surrogate auto-exclusion *)
-  (match categories with
-   | Some cats ->
-     List.iter
-       (fun cat ->
-          if List.mem cat surrogate_categories
-          then
-            raise
-              (Internal.Usage_error
-                 (Printf.sprintf
-                    "Category %S includes surrogate codepoints (Cs), which OCaml UTF-8 \
-                     strings cannot represent"
-                    cat)))
-       cats
-   | None -> ());
-  let effective_exclude_categories =
-    match categories with
-    | Some _ -> exclude_categories
-    | None ->
-      let excl = Option.value exclude_categories ~default:[] in
-      if List.mem "Cs" excl then Some excl else Some (excl @ [ "Cs" ])
-  in
-  categories, effective_exclude_categories
-;;
-
 (** [text_generator ~min_size ~max_size ...] is the shared {!Leaf} builder
-    behind {!text} and {!characters}: it resolves the effective character
-    categories and draws a text string over the described alphabet. *)
+    behind {!text} and {!characters}: it draws a text string over the described
+    alphabet, which the engine validates. The engine applies [exclude_categories]
+    only when [categories] is absent, so giving both is rejected here rather
+    than ignoring one. *)
 let text_generator
       ~min_size
       ~max_size
@@ -133,9 +96,9 @@ let text_generator
       ?(exclude_characters : string option)
       ()
  : _ MODE(portable) =
-  let categories, exclude_categories =
-    effective_categories ?categories ?exclude_categories ()
-  in
+  if Option.is_some categories && Option.is_some exclude_categories
+  then
+    raise (Internal.Usage_error "categories and exclude_categories are mutually exclusive");
   (leaf [@mode portable])
     ~name:"text"
     ~draw:(fun tc ->
@@ -158,8 +121,8 @@ let text_generator
 
     Character filtering options restrict which characters may appear. The
     [alphabet] parameter is mutually exclusive with all individual character
-    filtering parameters. Surrogate codepoints (category Cs) are always excluded
-    since OCaml strings are conventionally UTF-8. *)
+    filtering parameters. The engine always excludes surrogate codepoints, so
+    the drawn strings are valid UTF-8. *)
 let text
       ?(min_size = 0)
       ?max_size
@@ -218,9 +181,8 @@ let text
 (** [characters ?codec ?min_codepoint ?max_codepoint ?categories ?exclude_categories ?include_characters ?exclude_characters ()] creates a
     generator for single Unicode characters (as single-character UTF-8 strings).
 
-    Character filtering options restrict which characters may appear. Surrogate
-    codepoints (category Cs) are always excluded since OCaml strings are
-    conventionally UTF-8. *)
+    Character filtering options restrict which characters may appear. The engine
+    always excludes surrogate codepoints, so the drawn strings are valid UTF-8. *)
 let characters
       ?codec
       ?min_codepoint

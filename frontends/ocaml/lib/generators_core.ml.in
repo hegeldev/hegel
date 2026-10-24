@@ -14,45 +14,30 @@
 
 (** Span labels. A label identifies a generator to the engine, which treats
     two spans with the same label as coming from the same generator when it
-    shrinks and mutates test cases, and does nothing else with it. [from_name]
-    and [combine] are the hashes [hegel_label_from_name] and
-    [hegel_label_combine] compute (64-bit FNV-1a over the name's bytes, or over
-    the labels' little-endian bytes in order), done in OCaml so a generator
-    definition doesn't load libhegel to compute the label.
+    shrinks and mutates test cases, and does nothing else with it. A label is
+    an {!Internal.Label.t}: built here from names and combinations, and
+    computed by libhegel the first time a span uses it.
     A composite generator computes its label by combining the labels of its
     component generators. *)
 module Labels = struct
-  let fnv_prime = 0x100000001b3L
-  let fnv_offset_basis = 0xcbf29ce484222325L
-  let step h c = Int64.mul (Int64.logxor h (Int64.of_int (Char.code c))) fnv_prime
-  let from_name name = String.fold_left step fnv_offset_basis name
-
-  let combine labels =
-    let b = Bytes.create 8 in
-    List.fold_left
-      (fun h l ->
-         Bytes.set_int64_le b 0 l;
-         Bytes.fold_left step h b)
-      fnv_offset_basis
-      labels
-  ;;
-
-  let list = from_name "hegel_ocaml.list"
-  let set = from_name "hegel_ocaml.set"
-  let assoc_list = from_name "hegel_ocaml.assoc_list"
-  let hash_table = from_name "hegel_ocaml.hash_table"
-  let tuple = from_name "hegel_ocaml.tuple"
-  let one_of = from_name "hegel_ocaml.one_of"
-  let optional = from_name "hegel_ocaml.optional"
-  let fixed_dict = from_name "hegel_ocaml.fixed_dict"
-  let flat_map = from_name "hegel_ocaml.flat_map"
-  let filter = from_name "hegel_ocaml.filter"
-  let mapped = from_name "hegel_ocaml.map"
-  let enum_variant = from_name "hegel_ocaml.enum_variant"
-  let pool = from_name "hegel_ocaml.pool"
-  let function_ = from_name "hegel_ocaml.function"
-  let function_result = from_name "hegel_ocaml.function_result"
-  let stateful_rule = from_name "hegel_ocaml.stateful.rule"
+  let from_name = Internal.Label.of_name
+  let combine = Internal.Label.combine
+  let list = from_name "hegel.lists"
+  let set = from_name "hegel.sets"
+  let assoc_list = from_name "hegel.assoc_lists"
+  let hash_table = from_name "hegel.hash_tables"
+  let tuple = from_name "hegel.tuples"
+  let one_of = from_name "hegel.one_of"
+  let optional = from_name "hegel.optional"
+  let fixed_dict = from_name "hegel.fixed_dicts"
+  let flat_map = from_name "hegel.flat_map"
+  let filter = from_name "hegel.filter"
+  let mapped = from_name "hegel.map"
+  let enum_variant = from_name "hegel.enum_variant"
+  let pool = from_name "hegel.pool"
+  let function_ = from_name "hegel.functions"
+  let function_result = from_name "hegel.functions.result"
+  let stateful_rule = from_name "hegel.stateful.rule"
 end
 
 (** A drawn value's display: a thunk producing the value's {!Printer.doc},
@@ -95,48 +80,48 @@ type 'a generator CROSSING =
   | Leaf :
       { draw : (Internal.test_case -> 'a)
       ; print : ('a -> Printer.doc)
-      ; label : int64
+      ; label : Internal.Label.t
       }
       -> 'a generator
   | Mapped :
       { source : 'b generator
       ; f : ('b -> 'a)
-      ; label : int64
+      ; label : Internal.Label.t
       }
       -> 'a generator
   | FlatMapped :
       { source : 'b generator
       ; f : ('b -> 'a generator)
-      ; label : int64
+      ; label : Internal.Label.t
       }
       -> 'a generator
   | Filtered :
       { source : 'a generator
       ; predicate : ('a -> bool)
-      ; label : int64
+      ; label : Internal.Label.t
       }
       -> 'a generator
   | CompositeList :
       { elements : 'a generator
       ; min_size : int
       ; max_size : int option
-      ; label : int64
+      ; label : Internal.Label.t
       }
       -> 'a list generator
   | Composite :
-      { label : int64
+      { label : Internal.Label.t
       ; generate_fn : (Internal.test_case -> 'a * show)
       }
       -> 'a generator
   | Values :
       { pool : Internal.pool
       ; consume : bool
-      ; select : (Internal.test_case -> filter:(int64 * ('a -> bool)) option -> 'a)
+      ; select : (Internal.test_case -> filter:(Internal.Label.t * ('a -> bool)) option -> 'a)
       }
       -> 'a generator
   | Function :
       { build : (name:string option -> Internal.test_case -> 'a)
-      ; label : int64
+      ; label : Internal.Label.t
       }
       -> 'a generator
   | Printed :
@@ -146,7 +131,7 @@ type 'a generator CROSSING =
       -> 'a generator
 
 (** [label_of gen] is the span label of [gen]. *)
-let rec label_of : type a. a generator -> int64 = function
+let rec label_of : type a. a generator -> Internal.Label.t = function
   | Leaf { label; _ } -> label
   | Mapped { label; _ } -> label
   | FlatMapped { label; _ } -> label
@@ -159,7 +144,7 @@ let rec label_of : type a. a generator -> int64 = function
 ;;
 
 (** [leaf_label name] is the label of the primitive named [name]. *)
-let leaf_label name = Labels.from_name ("hegel_ocaml." ^ name)
+let leaf_label name = Labels.from_name ("hegel." ^ name)
 
 (** [leaf ~name ~draw ~print] builds a {!Leaf} generator. [draw] performs a
     single engine draw and returns the typed value; [print] displays it; [name]
@@ -196,7 +181,7 @@ let%template with_printer
     build composites that display their components (e.g. a derived record). *)
 let%template composite_with_label
   : type a.
-    label:int64 -> (Internal.test_case -> a * show) MODE(m) -> a generator MODE(m)
+    label:Internal.Label.t -> (Internal.test_case -> a * show) MODE(m) -> a generator MODE(m)
   =
   fun ~label generate_fn -> Composite { label; generate_fn }
 [@@mode m = (nonportable, portable)]

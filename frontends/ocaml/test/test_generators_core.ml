@@ -2,29 +2,32 @@ open Hegel
 open Generators
 open Generators.Private
 
-(* [Labels.from_name] / [Labels.combine] are the engine's own hashes. *)
+(* [Labels.from_name] / [Labels.combine] are computed by the engine. *)
 let test_labels_match_engine () =
   let ctx = Hegel_ffi.Ffi.context_new () in
   Fun.protect
     ~finally:(fun () -> Hegel_ffi.Ffi.context_free ctx)
     (fun () ->
+       let resolve = Internal.Label.resolve ctx in
        List.iter
          (fun name ->
             Alcotest.(check int64)
               name
               (Hegel_ffi.Ffi.label_from_name ctx name)
-              (Labels.from_name name))
-         [ ""; "hegel_ocaml.list"; "hegel.integer"; "h\xc3\xa9llo" ];
+              (resolve (Labels.from_name name)))
+         [ ""; "hegel.lists"; "hegel.integers"; "h\xc3\xa9llo" ];
        List.iter
          (fun labels ->
             Alcotest.(check int64)
               "combine"
-              (Hegel_ffi.Ffi.label_combine ctx labels)
-              (Labels.combine labels))
+              (Hegel_ffi.Ffi.label_combine ctx (List.map resolve labels))
+              (resolve (Labels.combine labels)))
          [ []
          ; [ Labels.list ]
-         ; [ Labels.list; Labels.from_name "x"; 0L; -1L; Int64.max_int ]
-         ])
+         ; [ Labels.list; Labels.from_name "x"; Labels.combine [ Labels.tuple ] ]
+         ];
+       let label = Labels.combine [ Labels.list; Labels.from_name "y" ] in
+       Alcotest.(check int64) "resolved once" (resolve label) (resolve label))
 ;;
 
 (* [with_tc f] runs [f] with a real per-test-case handle from the native
@@ -34,9 +37,16 @@ let with_tc f = Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_case
 
 (* A label reflects the generator's kind and its components'. *)
 let test_labels_structural () =
-  let same name a b = Alcotest.(check int64) name (label_of a) (label_of b) in
+  let ctx = Hegel_ffi.Ffi.context_new () in
+  let value label = Internal.Label.resolve ctx label in
+  let same name a b =
+    Alcotest.(check int64) name (value (label_of a)) (value (label_of b))
+  in
   let differ name a b =
-    Alcotest.(check bool) name false (Int64.equal (label_of a) (label_of b))
+    Alcotest.(check bool)
+      name
+      false
+      (Int64.equal (value (label_of a)) (value (label_of b)))
   in
   same "same shape" (lists (integers ()) ()) (lists (integers ()) ());
   differ "element kind" (lists (integers ()) ()) (lists (text ()) ());
@@ -63,13 +73,17 @@ let test_labels_structural () =
     "functions"
     (functions ~returns:(integers ()) ())
     (functions ~returns:(text ()) ());
-  Alcotest.(check int64) "just" (Labels.from_name "hegel_ocaml.just") (label_of (just 1));
+  Alcotest.(check int64)
+    "just"
+    (value (Labels.from_name "hegel.just"))
+    (value (label_of (just 1)));
   with_tc (fun tc ->
     let pool = Stateful.Pool.create tc in
     Alcotest.(check int64)
       "pool"
-      Labels.pool
-      (label_of (Stateful.Pool.values_reusable pool)))
+      (value Labels.pool)
+      (value (label_of (Stateful.Pool.values_reusable pool))));
+  Hegel_ffi.Ffi.context_free ctx
 ;;
 
 let test_collection_new () =

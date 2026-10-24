@@ -38,6 +38,28 @@ type test_location =
   ; begin_line : int (** 1-based line number of the test's [let] binding. *)
   }
 
+(** A span label: identifies a generator to the engine, which treats two spans
+    with the same label as coming from the same generator when it shrinks and
+    mutates test cases. A label is described here and computed by libhegel
+    ([hegel_label_from_name] / [hegel_label_combine]) the first time a span uses
+    it, so building a generator does not load libhegel. *)
+module Label : sig
+  type t
+#ifdef OXCAML
+    : value mod portable contended
+#endif
+
+  (** [of_name name] is the label of a generator identified by [name]. *)
+  val of_name : string -> t
+
+  (** [combine labels] is the label of a generator built from others: its own
+      label first, then its components'. *)
+  val combine : t list -> t
+
+  (** [resolve context label] is the engine's value for [label]. *)
+  val resolve : Hegel_ffi.Ffi.context -> t -> int64
+end
+
 (**/**)
 
 val is_high_verbosity : test_case -> bool
@@ -233,8 +255,8 @@ val event_value : test_case -> label:string -> value:float -> unit
 
 (**/**)
 
-(** [start_span ?label tc] starts a generation span for better shrinking. *)
-val start_span : ?label:int64 -> test_case -> unit
+(** [start_span ~label tc] starts a generation span for better shrinking. *)
+val start_span : label:Label.t -> test_case -> unit
 
 (** [stop_span ?discard tc] ends the current generation span. *)
 val stop_span : ?discard:bool -> test_case -> unit
