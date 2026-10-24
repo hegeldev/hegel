@@ -362,6 +362,12 @@
     Projects that use Jane Street's [Core] can also use the optional
     {!Hegel_jane} library to generate [Core] values. See {!Hegel_jane}.
 
+    {3 Arbitrary-precision integers}
+
+    The optional [hegel.zarith] library, built when
+    {{:https://github.com/ocaml/Zarith} zarith} is installed, generates
+    zarith's [Z.t] integers of any magnitude. See {!Hegel_zarith}.
+
     {3 Learning more}
     See {!Generators} for the generators and {!Stateful} for state-machine testing.
     *)

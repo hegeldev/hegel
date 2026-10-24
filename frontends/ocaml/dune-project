@@ -76,7 +76,9 @@
    (>= v0.17))
   async
   concurrent
-  ppx_template))
+  ppx_template
+  (zarith
+   (>= 1.13))))
 
 (package
  (name ppx_hegel_compat)

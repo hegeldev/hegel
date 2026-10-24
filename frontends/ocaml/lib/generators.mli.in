@@ -189,10 +189,15 @@ val booleans : ?p:float -> unit -> bool generator MODE(portable)
     ]} *)
 val integers : ?min_value:int -> ?max_value:int -> unit -> int generator MODE(portable)
 
-(** [floats ?min_value ?max_value ?exclude_min ?exclude_max ?allow_nan
+(** [floats ?width ?min_value ?max_value ?exclude_min ?exclude_max ?allow_nan
      ?allow_infinity ()] creates a generator for floating-point values.
 
+    With [~width:`W32], every drawn value is exactly representable as a 32-bit
+    float ([Int32.float_of_bits (Int32.bits_of_float f) = f] for finite [f]),
+    and the bounds must be too, or the draw raises [Usage_error].
+
     Defaults:
+    - [width]: [`W64]
     - [min_value] / [max_value]: unbounded. With [allow_infinity = false] the
       range is [[-max_float, max_float]].
     - [exclude_min]: [false]
@@ -210,7 +215,8 @@ val integers : ?min_value:int -> ?max_value:int -> unit -> int generator MODE(po
       ;;
     ]} *)
 val floats
-  :  ?min_value:float
+  :  ?width:[ `W32 | `W64 ]
+  -> ?min_value:float
   -> ?max_value:float
   -> ?exclude_min:bool
   -> ?exclude_max:bool
@@ -332,9 +338,11 @@ val%template just : ('a KIND(value mod c)) MODE(m) -> 'a generator MODE(m)
 
 (** {2 Collection generators} *)
 
-(** [lists elements ?min_size ?max_size ?unique ()] creates a generator for
-    lists of [elements]. When [unique] is [true], elements will be
-    distinct.
+(** [lists elements ?min_size ?max_size ?unique ?unique_by ()] creates a
+    generator for lists of [elements]. When [unique] is [true], elements will
+    be distinct. When [unique_by] is given, their [unique_by] keys will be
+    distinct. Both compare structurally, and giving both raises
+    [Usage_error].
 
     {[
       let%hegel_test lists_example tc =
@@ -343,15 +351,70 @@ val%template just : ('a KIND(value mod c)) MODE(m) -> 'a generator MODE(m)
         in
         assert (List.length xs <= 10)
       ;;
+
+      let%hegel_test unique_by_example tc =
+        let pairs =
+          draw
+            tc
+            (lists
+               (tuples2 (integers ~min_value:0 ~max_value:9 ()) (booleans ()))
+               ~unique_by:fst
+               ())
+        in
+        let keys = List.map fst pairs in
+        assert (List.length (List.sort_uniq compare keys) = List.length keys)
+      ;;
     ]} *)
 val%template lists
   :  'a generator MODE(m)
   -> ?min_size:int
   -> ?max_size:int
   -> ?unique:bool
+  -> ?unique_by:('a -> 'k) MODE(m)
   -> unit
   -> 'a list generator MODE(m)
 [@@mode m = (nonportable, portable)]
+
+(** [arrays elements ?min_size ?max_size ()] creates a generator for arrays
+    of [elements]. A drawn array shows as [\[|1; 2|\]].
+
+    {[
+      let%hegel_test arrays_example tc =
+        let a = draw tc (arrays (integers ()) ~min_size:1 ~max_size:4 ()) in
+        assert (Array.length a >= 1 && Array.length a <= 4)
+      ;;
+    ]} *)
+val%template arrays
+  :  'a generator MODE(m)
+  -> ?min_size:int
+  -> ?max_size:int
+  -> unit
+  -> 'a array generator MODE(m)
+[@@mode m = (nonportable, portable)]
+
+(** [sets (module S) elements ?min_size ?max_size ()] creates a generator for
+    sets of [elements] of the set module [S]. An element already in the set
+    (by [S.mem]) is redrawn, so a set of [n] elements needs [n] distinct
+    elements. A drawn set shows as [Set.of_list \[1; 2\]], its elements in
+    the order they were drawn.
+
+    {[
+      module Int_set = Set.Make (Int)
+
+      let%hegel_test sets_example tc =
+        let s =
+          draw tc (sets (module Int_set) (integers ~min_value:0 ~max_value:9 ()) ~min_size:3 ())
+        in
+        assert (Int_set.cardinal s >= 3)
+      ;;
+    ]} *)
+val sets
+  :  (module Set.S with type elt = 'a and type t = 't)
+  -> 'a generator
+  -> ?min_size:int
+  -> ?max_size:int
+  -> unit
+  -> 't generator
 
 (** [assoc_lists keys values ?min_size ?max_size ()] creates a
     generator for association lists over [keys] and [values]:
@@ -532,6 +595,67 @@ val%template tuples4
   -> 'd generator MODE(m)
   -> ('a * 'b * 'c * 'd) generator MODE(m)
 [@@mode m = (nonportable, portable)]
+
+(** [tuples5 g1 g2 g3 g4 g5] creates a generator for 5-element tuples. *)
+val%template tuples5
+  :  'a generator MODE(m)
+  -> 'b generator MODE(m)
+  -> 'c generator MODE(m)
+  -> 'd generator MODE(m)
+  -> 'e generator MODE(m)
+  -> ('a * 'b * 'c * 'd * 'e) generator MODE(m)
+[@@mode m = (nonportable, portable)]
+
+(** [tuples6 g1 g2 g3 g4 g5 g6] creates a generator for 6-element tuples. *)
+val%template tuples6
+  :  'a generator MODE(m)
+  -> 'b generator MODE(m)
+  -> 'c generator MODE(m)
+  -> 'd generator MODE(m)
+  -> 'e generator MODE(m)
+  -> 'f generator MODE(m)
+  -> ('a * 'b * 'c * 'd * 'e * 'f) generator MODE(m)
+[@@mode m = (nonportable, portable)]
+
+(** [tuples7 g1 g2 g3 g4 g5 g6 g7] creates a generator for 7-element tuples. *)
+val%template tuples7
+  :  'a generator MODE(m)
+  -> 'b generator MODE(m)
+  -> 'c generator MODE(m)
+  -> 'd generator MODE(m)
+  -> 'e generator MODE(m)
+  -> 'f generator MODE(m)
+  -> 'g generator MODE(m)
+  -> ('a * 'b * 'c * 'd * 'e * 'f * 'g) generator MODE(m)
+[@@mode m = (nonportable, portable)]
+
+(** [tuples8 g1 g2 g3 g4 g5 g6 g7 g8] creates a generator for 8-element tuples. *)
+val%template tuples8
+  :  'a generator MODE(m)
+  -> 'b generator MODE(m)
+  -> 'c generator MODE(m)
+  -> 'd generator MODE(m)
+  -> 'e generator MODE(m)
+  -> 'f generator MODE(m)
+  -> 'g generator MODE(m)
+  -> 'h generator MODE(m)
+  -> ('a * 'b * 'c * 'd * 'e * 'f * 'g * 'h) generator MODE(m)
+[@@mode m = (nonportable, portable)]
+
+(** [permutations values] creates a generator for permutations of [values],
+    shrinking toward [values] in its original order. The values are the
+    caller's, so a drawn permutation shows as [<abstr>] unless a printer is
+    attached with {!with_printer}.
+
+    {[
+      let%hegel_test permutations_example tc =
+        let xs = draw_silent tc (permutations [ 1; 2; 3; 4 ]) in
+        assert (List.sort compare xs = [ 1; 2; 3; 4 ])
+      ;;
+    ]} *)
+val%template permutations
+  : ('a KIND(value mod c)) list MODE(m) -> 'a list generator MODE(m)
+[@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
 
 (** {2 Function generators} *)
 
@@ -770,19 +894,56 @@ val datetimes
     ]} *)
 val ip_addresses : ?version:[ `V4 | `V6 ] -> unit -> Ipaddr.t generator MODE(portable)
 
-(** [from_regex pattern ?fullmatch ()] creates a generator for strings matching
-    a regular expression [pattern], written in the syntax of Python's [re]
-    module. When [fullmatch] is [true] (the default) the whole string must match
-    [pattern]; otherwise a match anywhere suffices. A pattern that does not
-    parse, or that no string matches, raises [Usage_error] when drawn.
+(** [from_regex pattern ?fullmatch ?codec ?min_codepoint ?max_codepoint
+     ?categories ?exclude_categories ?include_characters ?exclude_characters
+     ?alphabet ()] creates a generator for strings matching a regular
+    expression [pattern], written in the syntax of Python's [re] module. When
+    [fullmatch] is [true] (the default) the whole string must match [pattern];
+    otherwise a match anywhere suffices. A pattern that does not parse, or that
+    no string matches, raises [Usage_error] when drawn.
+
+    The character filtering options restrict every character of the drawn
+    string, including the characters [.], [\\w] and the like match and, when
+    [fullmatch] is [false], the text around the match. They mean what they mean
+    for {!text}.
 
     {[
       let%hegel_test from_regex_example tc =
         let s = draw tc (from_regex "[a-z]+" ()) in
         assert (String.length s >= 1)
       ;;
+
+      let%hegel_test from_regex_alphabet_example tc =
+        let s = draw tc (from_regex ~fullmatch:false ~alphabet:"abc" "b" ()) in
+        assert (String.for_all (fun c -> c = 'a' || c = 'b' || c = 'c') s)
+      ;;
     ]} *)
-val from_regex : string -> ?fullmatch:bool -> unit -> string generator MODE(portable)
+val from_regex
+  :  string
+  -> ?fullmatch:bool
+  -> ?codec:string
+  -> ?min_codepoint:int
+  -> ?max_codepoint:int
+  -> ?categories:string list
+  -> ?exclude_categories:string list
+  -> ?include_characters:string
+  -> ?exclude_characters:string
+  -> ?alphabet:string
+  -> unit
+  -> string generator MODE(portable)
+
+(** [uuids ?version ()] creates a generator for UUIDs as lowercase hyphenated
+    strings, such as ["0f8fad5b-d9cb-469f-a165-70867728950e"]. With [version]
+    (1 to 5) the UUID has that RFC 4122 version and the RFC 4122 variant.
+    The nil UUID is never generated.
+
+    {[
+      let%hegel_test uuids_example tc =
+        let u = draw tc (uuids ~version:4 ()) in
+        assert (u.[14] = '4')
+      ;;
+    ]} *)
+val uuids : ?version:int -> unit -> string generator MODE(portable)
 
 (** {2 Generator combinators} *)
 

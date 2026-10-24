@@ -29,9 +29,10 @@ jobs:
           cache-restore-keys: |
             opam-${{ runner.os }}-5.2.1-with-test-
           deps-flags: --with-test
-          # bisect_ppx for the coverage gate; core and async are the opam
-          # depopts the hegel.jane and hegel.jane.async suites need.
-          packages: bisect_ppx.2.8.3 core async
+          # bisect_ppx for the coverage gate; core, async and zarith are the
+          # opam depopts the hegel.jane, hegel.jane.async and hegel.zarith
+          # suites need.
+          packages: bisect_ppx.2.8.3 core async zarith
       - name: Build libhegel
         run: just ocaml::build-libhegel
       - name: Run the test suite with coverage
@@ -58,8 +59,8 @@ jobs:
           fi
 
   # The oldest and newest supported OCaml, without coverage (their switches
-  # lack the dev-setup dependencies) and without the hegel.jane suites (no
-  # core/async depopts).
+  # lack the dev-setup dependencies) and without the hegel.jane and
+  # hegel.zarith suites (no core/async/zarith depopts).
   compat:
     name: compat (ocaml ${{ matrix.ocaml }})
     runs-on: ubuntu-latest
@@ -88,6 +89,7 @@ jobs:
       - name: Run tests (no coverage)
         env:
           HEGEL_SKIP_JANE_TESTS: "1"
+          HEGEL_SKIP_ZARITH_TESTS: "1"
         run: just ocaml::check-test-no-coverage
       - name: Mirror opam-repo-ci (isolated release build + tests)
         working-directory: frontends/ocaml
@@ -123,10 +125,11 @@ jobs:
           cache-restore-keys: |
             opam-${{ runner.os }}-5.2.1-with-doc-
           deps-flags: --with-doc
-          # core/async are opam depopts (not pulled by --deps-only
-          # --with-doc); install them so hegel_jane and hegel_jane_async build
-          # and lib/hegel.mli's {!Hegel_jane...} cross-references resolve.
-          packages: core async
+          # core/async/zarith are opam depopts (not pulled by --deps-only
+          # --with-doc); install them so hegel_jane, hegel_jane_async and
+          # hegel_zarith build and lib/hegel.mli's {!Hegel_jane...}
+          # cross-references resolve.
+          packages: core async zarith
       - name: Build the documentation
         run: just ocaml::check-docs
 
@@ -235,8 +238,9 @@ jobs:
       - name: Run tests
         env:
           HEGEL_SKIP_EXPECT_TESTS: "1"
-          # hegel.jane's optional core dependency isn't installed by
-          # --deps-only --with-test.
+          # hegel.jane's optional core dependency and hegel.zarith's optional
+          # zarith dependency aren't installed by --deps-only --with-test.
           HEGEL_SKIP_JANE_TESTS: "1"
+          HEGEL_SKIP_ZARITH_TESTS: "1"
           HEGEL_CONCURRENT_TESTS: "1"
         run: just ocaml::check-test-no-coverage

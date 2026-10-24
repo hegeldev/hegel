@@ -91,3 +91,15 @@ let%hegel_test round_trips tc =
   assert (parse (print n s) = (n, s))
 [@@example { n = 0; s = "" }]
 ```
+
+New generators:
+
+- `uuids ?version ()` generates UUIDs as lowercase hyphenated strings, of the given RFC 4122 version when one is given.
+- ``floats ~width:`W32`` generates floats that are exactly representable as 32-bit floats.
+- `from_regex` takes the character filtering options of `text` (`?codec`, `?min_codepoint`, `?max_codepoint`, `?categories`, `?exclude_categories`, `?include_characters`, `?exclude_characters`, or `?alphabet`), which restrict every character of the drawn string.
+- `lists ~unique_by:key` generates lists whose elements have distinct keys.
+- `arrays` generates arrays, which print as `[|1; 2|]`.
+- `sets (module S) elements` generates sets of a `Set.S` module.
+- `permutations values` generates permutations of a list, shrinking toward its original order.
+- `tuples5` to `tuples8` generate tuples of 5 to 8 elements.
+- The new optional `hegel.zarith` library, built when zarith is installed, has `Hegel_zarith.integers` for zarith integers of any magnitude. A missing bound is taken to be 2^127 values beyond the other bound, or beyond zero when that is further.

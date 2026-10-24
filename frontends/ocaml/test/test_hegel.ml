@@ -25,6 +25,7 @@ let () =
     ; "clone", Test_clone.tests
     ; "repeat", Test_repeat.tests
     ; "recursive", Test_recursive.tests
+    ; "generators extra", Test_generators_extra.tests
     ; "concurrency", Test_concurrency.tests
     ; "generators_core", Test_generators_core.tests
     ; "generators_primitives", Test_generators_primitives.tests

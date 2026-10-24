@@ -126,51 +126,132 @@ let%template hash_tables
 [@@mode m = (nonportable, portable)]
 ;;
 
-(** [lists elements ?min_size ?max_size ?unique ()] creates a generator for
-    lists of [elements].
+(** [draw_unique ~key elements ~min_size ~max_size data] drives the collection
+    protocol to draw elements whose keys are pairwise distinct (compared
+    structurally), rejecting duplicates client-side. The engine's own rejection
+    limit sends StopTest when too many duplicates occur, which
+    [collection_reject] converts to [Internal.Stop_test]. *)
+let draw_unique ~key elements ~min_size ~max_size data =
+  with_collection ~min_size ?max_size data (fun coll ->
+    let rec collect acc keys shows =
+      if collection_more coll data
+      then (
+        let elem, show = do_draw elements data in
+        let k = key elem in
+        if List.mem k keys
+        then (
+          collection_reject coll data;
+          collect acc keys shows)
+        else collect (elem :: acc) (k :: keys) (show :: shows))
+      else List.rev acc, List.rev shows
+    in
+    collect [] [] [])
+;;
+
+(** [lists elements ?min_size ?max_size ?unique ?unique_by ()] creates a
+    generator for lists of [elements].
 
     Elements are generated one at a time via the collection protocol inside a
-    {!Labels.list} span. When [unique] is [true], duplicate elements are
-    rejected client-side so the generated list contains only distinct elements. *)
+    {!Labels.list} span. When [unique] is [true], or [unique_by] is given,
+    elements (or their [unique_by] keys) that duplicate an earlier one are
+    rejected client-side. *)
 let%template lists
       (elements : 'a generator MODE(m))
       ?(min_size = 0)
       ?(max_size : int option)
       ?(unique = false)
+      ?(unique_by : ('a -> 'k) option MODE(m))
       ()
   : 'a list generator MODE(m)
   =
   validate_size_bounds ~min_size ~max_size;
-  if not unique
-  then
+  let generate (type k) (key : ('a -> k) MODE(m)) =
+    Composite
+      { label = Labels.combine [ Labels.set; label_of elements ]
+      ; generate_fn =
+          (fun data ->
+            let values, shows = draw_unique ~key elements ~min_size ~max_size data in
+            values, show_list shows)
+      }
+  in
+  match unique, unique_by with
+  | true, Some _ -> raise (Internal.Usage_error "unique and unique_by are mutually exclusive")
+  | false, Some key -> generate key
+  | true, None -> generate Fun.id
+  | false, None ->
     CompositeList
       { elements
       ; min_size
       ; max_size
       ; label = Labels.combine [ Labels.list; label_of elements ]
       }
-  else
-    (* With uniqueness, drive the collection protocol and reject duplicates.
-       The engine's own rejection limit sends StopTest when too many
-       duplicates occur, which [collection_reject] converts to
-       [Internal.Stop_test]. *)
-    Composite
-      { label = Labels.combine [ Labels.set; label_of elements ]
-      ; generate_fn =
-          (fun data ->
-            with_collection ~min_size ?max_size data (fun coll ->
-              let rec collect acc shows =
-                if collection_more coll data
-                then (
-                  let elem, show = do_draw elements data in
-                  if List.mem elem acc
-                  then (
-                    collection_reject coll data;
-                    collect acc shows)
-                  else collect (elem :: acc) (show :: shows))
-                else List.rev acc, show_list (List.rev shows)
-              in
-              collect [] []))
-      }
 [@@mode m = (nonportable, portable)]
+;;
+
+(** [arrays elements ?min_size ?max_size ()] creates a generator for arrays of
+    [elements], drawn like {!lists}. A drawn array shows as [\[|1; 2|\]]. *)
+let%template arrays
+      (elements : 'a generator MODE(m))
+      ?(min_size = 0)
+      ?(max_size : int option)
+      ()
+  : 'a array generator MODE(m)
+  =
+  validate_size_bounds ~min_size ~max_size;
+  Composite
+    { label = Labels.combine [ Labels.array; label_of elements ]
+    ; generate_fn =
+        (fun data ->
+          with_collection ~min_size ?max_size data (fun coll ->
+            let rec collect acc shows =
+              if collection_more coll data
+              then (
+                let elem, show = do_draw elements data in
+                collect (elem :: acc) (show :: shows))
+              else
+                ( Array.of_list (List.rev acc)
+                , fun () ->
+                    Printer.array (fun show -> show ()) (Array.of_list (List.rev shows)) )
+            in
+            collect [] []))
+    }
+[@@mode m = (nonportable, portable)]
+;;
+
+(** [sets (module S) elements ?min_size ?max_size ()] creates a generator for
+    sets of [elements], built with [S.of_list]. Elements already in the set
+    (by [S.mem]) are rejected client-side. *)
+let sets
+      (type elt t)
+      (module S : Set.S with type elt = elt and type t = t)
+      (elements : elt generator)
+      ?(min_size = 0)
+      ?(max_size : int option)
+      ()
+  : t generator
+  =
+  validate_size_bounds ~min_size ~max_size;
+  Composite
+    { label = Labels.combine [ Labels.set; label_of elements ]
+    ; generate_fn =
+        (fun data ->
+          with_collection ~min_size ?max_size data (fun coll ->
+            let rec collect set shows =
+              if collection_more coll data
+              then (
+                let elem, show = do_draw elements data in
+                if S.mem elem set
+                then (
+                  collection_reject coll data;
+                  collect set shows)
+                else collect (S.add elem set) (show :: shows))
+              else
+                ( set
+                , fun () ->
+                    Printer.apply
+                      (Printer.text "Set.of_list")
+                      [ show_list (List.rev shows) () ] )
+            in
+            collect S.empty []))
+    }
 ;;

@@ -27,12 +27,12 @@ let booleans ?(p = 0.5) (): _ MODE(portable) =
     ~print:Printer.bool
 ;;
 
-(** The smallest positive (subnormal) 64-bit float. Passed as
-    [smallest_nonzero_magnitude] so the engine places no magnitude restriction
-    on drawn floats. *)
-let smallest_nonzero_magnitude = 5e-324
+(** [floats ?width ?min_value ?max_value ?exclude_min ?exclude_max ?allow_nan ?allow_infinity ()] creates a generator for floating-point values.
 
-(** [floats ?min_value ?max_value ?exclude_min ?exclude_max ?allow_nan ?allow_infinity ()] creates a generator for floating-point values.
+    With [~width:`W32] every drawn value is exactly representable as a 32-bit
+    float, and the bounds must be too. The smallest positive subnormal of the
+    width is passed as [smallest_nonzero_magnitude], so the engine places no
+    magnitude restriction on drawn floats.
 
     Unbounded ends are sent to the engine as [neg_infinity] / [infinity].
 
@@ -42,6 +42,7 @@ let smallest_nonzero_magnitude = 5e-324
     - [allow_nan]: [true] only when no bounds are set
     - [allow_infinity]: [true] when at most one bound is set *)
 let floats
+      ?(width = `W64)
       ?(min_value : float option)
       ?(max_value : float option)
       ?(exclude_min = false)
@@ -64,12 +65,17 @@ let floats
   in
   let min_value = Option.value min_value ~default:neg_infinity in
   let max_value = Option.value max_value ~default:infinity in
+  let width, smallest_nonzero_magnitude =
+    match width with
+    | `W64 -> 64, 5e-324
+    | `W32 -> 32, Float.ldexp 1.0 (-149)
+  in
   (leaf [@mode portable])
     ~name:"floats"
     ~draw:(fun tc ->
       Internal.generate_float
         tc
-        ~width:64
+        ~width
         ~min_value
         ~max_value
         ~allow_nan:eff_allow_nan
@@ -146,13 +152,16 @@ let text
      raise (Internal.Usage_error (Printf.sprintf "max_size=%d must be non-negative" ms))
    | _ -> ());
   let has_char_param =
-    Option.is_some codec
-    || Option.is_some min_codepoint
-    || Option.is_some max_codepoint
-    || Option.is_some categories
-    || Option.is_some exclude_categories
-    || Option.is_some include_characters
-    || Option.is_some exclude_characters
+    List.mem
+      true
+      [ Option.is_some codec
+      ; Option.is_some min_codepoint
+      ; Option.is_some max_codepoint
+      ; Option.is_some categories
+      ; Option.is_some exclude_categories
+      ; Option.is_some include_characters
+      ; Option.is_some exclude_characters
+      ]
   in
   (match alphabet with
    | Some _ when has_char_param ->
@@ -271,14 +280,98 @@ let%template just ABSTRACT(a, value mod c) (value : a MODE(m))
 [@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
 ;;
 
-(** [from_regex pattern ?fullmatch ()] creates a generator for strings matching
-    a regular expression [pattern], written in the syntax of Python's [re]
-    module. When [fullmatch] is [true] (the default) the whole string must match
-    [pattern]; otherwise a match anywhere suffices. *)
-let from_regex pattern ?(fullmatch = true) (): _ MODE(portable) =
+(** [from_regex pattern ?fullmatch ?codec ... ?alphabet ()] creates a
+    generator for strings matching a regular expression [pattern], written in
+    the syntax of Python's [re] module. When [fullmatch] is [true] (the
+    default) the whole string must match [pattern]; otherwise a match anywhere
+    suffices. The character filtering options restrict the characters of the
+    drawn string as they do for {!text}. *)
+let from_regex
+      pattern
+      ?(fullmatch = true)
+      ?codec
+      ?min_codepoint
+      ?max_codepoint
+      ?categories
+      ?exclude_categories
+      ?include_characters
+      ?exclude_characters
+      ?alphabet
+      ()
+  : _ MODE(portable)
+  =
+  if Option.is_some categories && Option.is_some exclude_categories
+  then
+    raise (Internal.Usage_error "categories and exclude_categories are mutually exclusive");
+  let has_char_param =
+    List.mem
+      true
+      [ Option.is_some codec
+      ; Option.is_some min_codepoint
+      ; Option.is_some max_codepoint
+      ; Option.is_some categories
+      ; Option.is_some exclude_categories
+      ; Option.is_some include_characters
+      ; Option.is_some exclude_characters
+      ]
+  in
+  let alphabet : Internal.alphabet option =
+    match alphabet with
+    | Some _ when has_char_param ->
+      raise
+        (Internal.Usage_error
+           "alphabet is mutually exclusive with individual character filtering parameters")
+    | Some chars ->
+      Some
+        { codec = None
+        ; min_codepoint = 0
+        ; max_codepoint = 0xFFFFFFFF
+        ; categories = Some []
+        ; exclude_categories = None
+        ; include_characters = Some chars
+        ; exclude_characters = None
+        }
+    | None when has_char_param ->
+      Some
+        { codec
+        ; min_codepoint = Option.value min_codepoint ~default:0
+        ; max_codepoint = Option.value max_codepoint ~default:0xFFFFFFFF
+        ; categories
+        ; exclude_categories
+        ; include_characters
+        ; exclude_characters
+        }
+    | None -> None
+  in
   (leaf [@mode portable])
     ~name:"from_regex"
-    ~draw:(fun tc -> Internal.generate_regex tc ~pattern ~fullmatch ~alphabet:None)
+    ~draw:(fun tc -> Internal.generate_regex tc ~pattern ~fullmatch ~alphabet)
+    ~print:Printer.string
+;;
+
+(** [format_uuid bytes] renders 16 big-endian bytes as a lowercase hyphenated
+    UUID. *)
+let format_uuid bytes =
+  let hex i j =
+    String.concat
+      ""
+      (List.init (j - i) (fun k -> Printf.sprintf "%02x" (Char.code bytes.[i + k])))
+  in
+  String.concat "-" [ hex 0 4; hex 4 6; hex 6 8; hex 8 10; hex 10 16 ]
+;;
+
+(** [uuids ?version ()] creates a generator for UUIDs, as lowercase hyphenated
+    strings. With [version] (1 to 5), the version and variant are set as in
+    RFC 4122. The nil UUID is never generated. *)
+let uuids ?version () : _ MODE(portable) =
+  (match version with
+   | Some v when v < 1 || v > 5 ->
+     raise
+       (Internal.Usage_error (Printf.sprintf "version=%d must be between 1 and 5" v))
+   | _ -> ());
+  (leaf [@mode portable])
+    ~name:"uuids"
+    ~draw:(fun tc -> format_uuid (Internal.generate_uuid tc ~version))
     ~print:Printer.string
 ;;
 
