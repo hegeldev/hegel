@@ -36,7 +36,7 @@ To reproduce this failure, replay it with the Hegel builder:
 **Replaying and explicit examples.** New builder methods on `Hegel`:
 
 - `.reproduceFailure(blob)` replays the failure a printed blob encodes instead of generating test cases. Call it once per blob to replay several. A run none of whose blobs fails any more throws the new `DidNotReproduceError`.
-- `.example(...values)` and `.namedExample({ name: value })` run the test with the given values before generating any: positional values go to the test's draws in order, named ones to the draw printed under that name. A failing example is reported as `Explicit example(...) failed:` and fails the test; one that calls `tc.assume(false)` is skipped; every value must be drawn. Its report indents a stateful step's draws as a generated failure's does. An explicit example has no engine behind it, so `tc.drawSilent`, `tc.repeat` and generators that need the engine (a state machine, say) throw in one, saying they are not supported in explicit examples.
+- `.example(...values)` and `.namedExample({ name: value })` run the test with the given values before generating any: positional values go to the test's draws in order, named ones to the draw printed under that name. A failing example is reported as `Explicit example(...) failed:` and fails the test; one that calls `tc.assume(false)` or `tc.reject()` throws an error saying that explicit test cases must not be rejected; every value must be drawn. Its report indents a stateful step's draws as a generated failure's does. An explicit example has no engine behind it, so `tc.drawSilent`, `tc.repeat` and generators that need the engine (a state machine, say) throw in one, saying they are not supported in explicit examples.
 
 **New `TestCase` methods.**
 
