@@ -674,8 +674,8 @@ export class Hegel {
    * any generated ones, each value served, in order, to one of the test's
    * draws in place of a generated value. An explicit example fails the test
    * like a generated failing example does (it is reported, but not shrunk);
-   * one that rejects itself with `tc.assume` is skipped. Every value must be
-   * drawn. Explicit examples run in the `Phase.Explicit` phase. With no
+   * one that rejects itself with `tc.assume` or `tc.reject` throws, as
+   * explicit test cases must not be rejected. Every value must be drawn. Explicit examples run in the `Phase.Explicit` phase. With no
    * engine behind it, an explicit example throws on `tc.drawSilent` and
    * `tc.repeat`.
    *
@@ -818,8 +818,13 @@ export class Hegel {
       for (const example of this._examples) {
         const ds = new ExplicitDataSource();
         const outcome = yield { ds, emit: true, explicit: example };
+        if (outcome.status === "invalid") {
+          throw new Error(
+            `Explicit test cases must not be rejected, but ${example.description} was rejected by tc.assume or tc.reject`,
+          );
+        }
         if (outcome.status !== "interesting") {
-          if (outcome.status === "valid") example.checkConsumed();
+          example.checkConsumed();
           continue;
         }
         if (!quiet) {

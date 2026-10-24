@@ -61,7 +61,7 @@ def test_explicit_target_and_events_are_ignored():
     tc.target(1.0)
     tc.event("e")
     tc.event_value("v", 2.0)
-    with pytest.raises(hegel.InvalidArgument):
+    with pytest.raises(hegel.InvalidArgument, match="Explicit test cases must not be rejected"):
         tc.reject()
 
 

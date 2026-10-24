@@ -220,35 +220,41 @@ class ExplicitExampleTest {
     }
 
     @Test
-    void anExampleFailingAnAssumptionIsSkipped() {
-        List<Object> seen = new ArrayList<>();
-        List<CaseOutcome> outcomes = new ArrayList<>();
-        Reporter recorder = new Reporter() {
-            @Override
-            public void caseFinished(CaseOutcome outcome, boolean finalReplay) {
-                outcomes.add(outcome);
-            }
-        };
-        RunReport report = Hegel.run(
-                tc -> {
-                    int x = tc.draw(integers(), "x");
-                    if (x == 1000) {
-                        seen.add(x);
-                        tc.assume(false);
-                    }
-                    if (x == 2000) {
-                        seen.add(x);
-                        tc.reject();
-                    }
-                },
-                SETTINGS.testCases(1)
-                        .verbosity(Verbosity.VERBOSE)
-                        .examples(Example.of(1000, "never drawn"), Example.of(2000)),
-                recorder);
-        assertTrue(report.passed());
-        assertEquals(List.of(1000, 2000), seen);
-        assertEquals(CaseOutcome.INVALID, outcomes.get(0));
-        assertEquals(CaseOutcome.INVALID, outcomes.get(1));
+    void anExampleRejectedBeforeAnyDrawIsAUsageError() {
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> Hegel.run(
+                        tc -> {
+                            tc.reject();
+                            tc.draw(integers(), "x");
+                        },
+                        SETTINGS.verbosity(Verbosity.VERBOSE).examples(Example.of(1)),
+                        Reporter.silent()));
+        assertEquals(
+                "Explicit test cases must not be rejected, but explicit Example(1) was rejected (assume or reject)",
+                error.getMessage());
+    }
+
+    @Test
+    void anExampleRejectedAfterADrawIsAUsageError() {
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> Hegel.run(
+                        tc -> tc.assume(tc.draw(integers(), "x") != 1000),
+                        SETTINGS.examples(Example.of(1000)),
+                        Reporter.silent()));
+        assertTrue(error.getMessage().startsWith("Explicit test cases must not be rejected"), error.getMessage());
+    }
+
+    @Test
+    void anExampleRejectedInsideRepeatIsAUsageError() {
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> Hegel.run(
+                        tc -> tc.repeat(() -> tc.assume(tc.draw(integers()) != 8)),
+                        SETTINGS.examples(Example.of(8)),
+                        Reporter.silent()));
+        assertTrue(error.getMessage().startsWith("Explicit test cases must not be rejected"), error.getMessage());
     }
 
     @Test
@@ -301,10 +307,6 @@ class ExplicitExampleTest {
                 }),
                 SETTINGS.testCases(1).examples(Example.of(7)));
         assertEquals(List.of(7), seen);
-
-        Hegel.test(
-                tc -> tc.repeat(() -> tc.assume(tc.draw(integers()) != 8)),
-                SETTINGS.testCases(1).examples(Example.of(8)));
 
         RunReport failing = Hegel.run(
                 tc -> tc.repeat(() -> assertTrue(tc.draw(integers(), "x") != 9, "nine")),

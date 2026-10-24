@@ -306,7 +306,6 @@ describe("explicit examples", () => {
     tc.event("explicit?");
     tc.eventValue("length", xs.length);
     tc.clone().setWorker(0);
-    if (name === "skip") tc.reject();
     if (xs.length > 2) throw new Error(`long ${name}`);
   };
 
@@ -316,7 +315,7 @@ describe("explicit examples", () => {
       new runner.Hegel(body)
         .settings(deterministic)
         .example([], "a")
-        .namedExample({ name: "skip", draw_1: [] })
+        .namedExample({ name: "c", draw_1: [] })
         .example([1, 2, 3], "b")
         .example([1, 2, 3, 4], "never run")
         .runSync(),
@@ -371,6 +370,35 @@ describe("explicit examples", () => {
       .settings({ ...deterministic, phases: [Phase.Generate] })
       .example(0.5)
       .runSync();
+  });
+
+  it("throws when an example is rejected before any draw", () => {
+    const { runner } = capturing();
+    expect(() =>
+      new runner.Hegel((tc) => {
+        tc.reject();
+        tc.draw(gs.integers());
+      })
+        .settings(deterministic)
+        .example(1)
+        .runSync(),
+    ).toThrow(
+      "Explicit test cases must not be rejected, but example(1) was rejected by tc.assume or tc.reject",
+    );
+  });
+
+  it("throws when an example is rejected after a draw", async () => {
+    const { runner } = capturing();
+    await expect(
+      new runner.Hegel(async (tc) => {
+        tc.assume(tc.draw(gs.integers(), "x") > 5);
+      })
+        .settings(deterministic)
+        .namedExample({ x: 1 })
+        .run(),
+    ).rejects.toThrow(
+      "Explicit test cases must not be rejected, but namedExample({ x: 1 }) was rejected by tc.assume or tc.reject",
+    );
   });
 
   it("rejects an example with values left over or missing", () => {

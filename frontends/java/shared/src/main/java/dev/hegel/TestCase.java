@@ -413,11 +413,7 @@ public final class TestCase {
     public void repeat(Runnable body) {
         if (explicit != null) {
             note("// Repetition #1");
-            try {
-                body.run();
-            } catch (AssumeRejected e) {
-                throw new LoopDone();
-            }
+            body.run();
             throw new LoopDone();
         }
         long minSize = drawSilent(Generators.longs().min(0).max(1L << 40));

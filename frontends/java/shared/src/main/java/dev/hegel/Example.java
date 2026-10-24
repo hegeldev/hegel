@@ -29,8 +29,8 @@ import java.util.Map;
  * <p>An example whose body fails is reported like any other failure, before the engine's own, and
  * with {@link Settings#reportMultipleFailures(boolean)} off it ends the run there. It is a usage
  * error, raised as an {@link IllegalArgumentException}, for an example to lack a value a draw asks
- * for, or to have values no draw takes. An example that fails an {@link TestCase#assume
- * assumption} (or calls {@link TestCase#reject}) is skipped: it neither passes nor fails.
+ * for, to have values no draw takes, or to fail an {@link TestCase#assume assumption} (or call
+ * {@link TestCase#reject}): explicit test cases must not be rejected.
  *
  * <p>The rest of the test-case API works in an example as follows. A {@link TestCase#drawSilent
  * silent draw} has no name, so it takes the next positional value. A {@link TestCase#fork fork}

@@ -22,7 +22,7 @@ This release brings the Rust frontend further into line with the other Hegel fro
 
 - `Settings::database_key` sets the key a test's failing examples are stored under, which `#[hegel::test]` otherwise derives from the test's module path and name. Setting it keeps a test's stored failures when it is renamed or moved, or shares them between tests.
 
-- A failed `tc.assume` or `tc.reject()` in an explicit test case (`#[hegel::explicit_test_case]`) now skips that case, as it skips a generated one, instead of failing the test. `ExplicitTestCase` gains `draw_named`, `event`, `event_value` (which do nothing, as statistics only count generated test cases) and `repeat` (which runs its body once, since an explicit value can only be drawn once).
+- A failed `tc.assume` or `tc.reject()` in an explicit test case (`#[hegel::explicit_test_case]`), including inside `tc.repeat`, fails the test with the message `Explicit test cases must not be rejected`, as in the other Hegel frontends, rather than `Explicit test case: assumption violated (tc.assume / tc.reject)`. An explicit test case is one the test asked for, so rejecting it is a mistake in the test rather than a case to skip. `ExplicitTestCase` gains `draw_named`, `event`, `event_value` (which do nothing, as statistics only count generated test cases) and `repeat` (which runs its body once, since an explicit value can only be drawn once).
 
 - An explicit test case now looks up a draw that can run more than once by its numbered name, `x_1`, `x_2`, ..., as the `#[hegel::explicit_test_case]` documentation already said, and as a failing test case prints it. Before, such a draw looked up the bare name `x`, so the documented example failed. An unnamed `tc.draw` is likewise `draw_1`, `draw_2`, ....
 
