@@ -20,20 +20,22 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace hegel::generators {
 
     namespace {
 
-        // Engine default when the caller sets no max_size, mirroring the
-        // native generators' sizing.
-        uint64_t default_max_size(size_t min_size,
-                                  const std::optional<size_t>& max_size) {
-            if (max_size) {
-                return *max_size;
+        // The max_size to give the engine: HEGEL_MAX_SIZE_DEFAULT for its
+        // default when the caller sets none. A maximum at or above that
+        // value is no bound at all, so it goes as UINT64_MAX.
+        uint64_t engine_max_size(const std::optional<size_t>& max_size) {
+            if (!max_size) {
+                return HEGEL_MAX_SIZE_DEFAULT;
             }
-            return std::max<uint64_t>(min_size, 100);
+            uint64_t value = *max_size;
+            return value >= HEGEL_MAX_SIZE_DEFAULT ? UINT64_MAX : value;
         }
 
         /// Returns true if any individual character filtering param is set.
@@ -68,22 +70,26 @@ namespace hegel::generators {
         // handle (text, characters, regex, emails, urls, domains).
         class StringDrawGenerator : public IGenerator<std::string> {
           public:
-            explicit StringDrawGenerator(hegel_string_generator_t* generator)
-                : handle_(std::make_shared<StringGeneratorHandle>(generator)) {}
+            StringDrawGenerator(internal::LabelName name,
+                                hegel_string_generator_t* generator)
+                : handle_(std::make_shared<StringGeneratorHandle>(generator)),
+                  label_(internal::label(name)) {}
 
             std::string do_draw(const TestCase& tc) const override {
                 return impl::draw_string(tc, handle_->get());
             }
 
+            uint64_t label() const override { return label_; }
+
           private:
             std::shared_ptr<StringGeneratorHandle> handle_;
+            uint64_t label_;
         };
 
         hegel_string_generator_t* build_text_handle(const TextParams& params) {
             impl::TextGeneratorParams cparams;
             cparams.min_size = params.min_size;
-            cparams.max_size =
-                default_max_size(params.min_size, params.max_size);
+            cparams.max_size = engine_max_size(params.max_size);
 
             // alphabet is sugar for "no categories, exactly these
             // characters".
@@ -110,10 +116,28 @@ namespace hegel::generators {
             return impl::string_generator_text(cparams);
         }
 
+        // A text handle with each character filter of `params` and every
+        // value `size` characters long.
+        hegel_string_generator_t*
+        build_characters_handle(const CharactersParams& params, size_t size) {
+            TextParams text_params{};
+            text_params.min_size = size;
+            text_params.max_size = size;
+            text_params.codec = params.codec;
+            text_params.min_codepoint = params.min_codepoint;
+            text_params.max_codepoint = params.max_codepoint;
+            text_params.categories = params.categories;
+            text_params.exclude_categories = params.exclude_categories;
+            text_params.include_characters = params.include_characters;
+            text_params.exclude_characters = params.exclude_characters;
+            return build_text_handle(text_params);
+        }
+
         class TextGenerator : public StringDrawGenerator {
           public:
             explicit TextGenerator(const TextParams& params)
-                : StringDrawGenerator(validate_and_build(params)) {}
+                : StringDrawGenerator(internal::LabelName::Text,
+                                      validate_and_build(params)) {}
 
           private:
             static hegel_string_generator_t*
@@ -134,22 +158,13 @@ namespace hegel::generators {
         class CharactersGenerator : public StringDrawGenerator {
           public:
             explicit CharactersGenerator(const CharactersParams& params)
-                : StringDrawGenerator(build(params)) {}
+                : StringDrawGenerator(internal::LabelName::Characters,
+                                      build(params)) {}
 
           private:
             static hegel_string_generator_t*
             build(const CharactersParams& params) {
-                TextParams text_params{};
-                text_params.min_size = 1;
-                text_params.max_size = 1;
-                text_params.codec = params.codec;
-                text_params.min_codepoint = params.min_codepoint;
-                text_params.max_codepoint = params.max_codepoint;
-                text_params.categories = params.categories;
-                text_params.exclude_categories = params.exclude_categories;
-                text_params.include_characters = params.include_characters;
-                text_params.exclude_characters = params.exclude_characters;
-                return build_text_handle(text_params);
+                return build_characters_handle(params, 1);
             }
         };
 
@@ -157,8 +172,7 @@ namespace hegel::generators {
           public:
             explicit BinaryGenerator(const BinaryParams& params)
                 : min_size_(params.min_size),
-                  max_size_(
-                      default_max_size(params.min_size, params.max_size)) {
+                  max_size_(engine_max_size(params.max_size)) {
                 if (params.max_size && params.min_size > *params.max_size) {
                     throw std::invalid_argument(
                         "Cannot have max_size < min_size");
@@ -167,6 +181,10 @@ namespace hegel::generators {
 
             std::vector<uint8_t> do_draw(const TestCase& tc) const override {
                 return impl::draw_bytes(tc, min_size_, max_size_);
+            }
+
+            uint64_t label() const override {
+                return internal::label(internal::LabelName::Binary);
             }
 
           private:
@@ -178,6 +196,10 @@ namespace hegel::generators {
           public:
             bool do_draw(const TestCase& tc) const override {
                 return internal::draw_boolean(tc, 0.5);
+            }
+
+            uint64_t label() const override {
+                return internal::label(internal::LabelName::Booleans);
             }
         };
 
@@ -237,6 +259,12 @@ namespace hegel::generators {
                                      : impl::draw_ipv6(tc);
             }
 
+            uint64_t label() const override {
+                return internal::label(
+                    version_ == 4 ? internal::LabelName::IpAddressesV4
+                                  : internal::LabelName::IpAddressesV6);
+            }
+
           private:
             int version_;
         };
@@ -250,8 +278,96 @@ namespace hegel::generators {
                 return impl::draw_uuid(tc, version_);
             }
 
+            uint64_t label() const override {
+                return internal::label(internal::LabelName::Uuids);
+            }
+
           private:
             std::optional<uint8_t> version_;
+        };
+
+        class GrammarHandle {
+          public:
+            explicit GrammarHandle(hegel_grammar_t* grammar)
+                : grammar_(grammar) {}
+            ~GrammarHandle() { impl::grammar_free(grammar_); }
+            GrammarHandle(const GrammarHandle&) = delete;
+            GrammarHandle& operator=(const GrammarHandle&) = delete;
+
+            const hegel_grammar_t* get() const { return grammar_; }
+
+          private:
+            hegel_grammar_t* grammar_;
+        };
+
+        class LarkGenerator : public IGenerator<std::string> {
+          public:
+            LarkGenerator(const std::string& grammar, const LarkParams& params)
+                : terminals_(params.explicit_terminals),
+                  grammar_(
+                      std::make_shared<GrammarHandle>(build(grammar, params))) {
+                hegel_context_t* ctx = impl::thread_context();
+                std::vector<uint64_t> labels = {
+                    internal::label(internal::LabelName::FromLark),
+                    impl::label_from_name(ctx, grammar),
+                    impl::label_from_name(ctx, params.start.value_or("start"))};
+                for (const auto& [name, generator] : terminals_) {
+                    labels.push_back(impl::label_from_name(ctx, name));
+                    labels.push_back(generator.label());
+                }
+                label_ = internal::combine_labels(labels);
+            }
+
+            std::string do_draw(const TestCase& tc) const override {
+                return impl::draw_grammar(
+                    tc, grammar_->get(), [&](size_t terminal) {
+                        return terminals_[terminal].second.do_draw(tc);
+                    });
+            }
+
+            uint64_t label() const override { return label_; }
+
+          private:
+            static hegel_grammar_t* build(const std::string& grammar,
+                                          const LarkParams& params) {
+                if (params.max_size == size_t{0}) {
+                    throw std::invalid_argument(
+                        "from_lark: max_size must be at least 1");
+                }
+                if (params.max_depth == uint32_t{0}) {
+                    throw std::invalid_argument(
+                        "from_lark: max_depth must be at least 1");
+                }
+                impl::GrammarParams grammar_params;
+                grammar_params.text = grammar;
+                grammar_params.start = params.start;
+                grammar_params.max_size = params.max_size.value_or(0);
+                grammar_params.max_depth = params.max_depth.value_or(0);
+                grammar_params.import_dir = params.import_path;
+                for (const auto& [name, generator] :
+                     params.explicit_terminals) {
+                    if (std::count(grammar_params.explicit_names.begin(),
+                                   grammar_params.explicit_names.end(),
+                                   name) != 0) {
+                        throw std::invalid_argument(
+                            "from_lark: explicit terminal '" + name +
+                            "' is given more than one generator");
+                    }
+                    grammar_params.explicit_names.push_back(name);
+                }
+                if (!params.alphabet) {
+                    return impl::grammar_new(grammar_params);
+                }
+                StringGeneratorHandle alphabet(
+                    build_characters_handle(*params.alphabet, 0));
+                grammar_params.alphabet = alphabet.get();
+                return impl::grammar_new(grammar_params);
+            }
+
+            std::vector<std::pair<std::string, Generator<std::string>>>
+                terminals_;
+            std::shared_ptr<GrammarHandle> grammar_;
+            uint64_t label_ = 0;
         };
 
     } // namespace
@@ -275,12 +391,18 @@ namespace hegel::generators {
     Generator<std::string> from_regex(const std::string& pattern,
                                       bool fullmatch) {
         return Generator<std::string>(new StringDrawGenerator(
+            internal::LabelName::FromRegex,
             impl::string_generator_regex(pattern, fullmatch)));
     }
 
+    Generator<std::string> from_lark(const std::string& grammar,
+                                     const LarkParams& params) {
+        return Generator<std::string>(new LarkGenerator(grammar, params));
+    }
+
     Generator<std::string> emails() {
-        return Generator<std::string>(
-            new StringDrawGenerator(impl::string_generator_email()));
+        return Generator<std::string>(new StringDrawGenerator(
+            internal::LabelName::Emails, impl::string_generator_email()));
     }
 
     Generator<std::string> domains(DomainsParams params) {
@@ -288,12 +410,13 @@ namespace hegel::generators {
             throw std::invalid_argument("max_length must be between 4 and 255");
         }
         return Generator<std::string>(new StringDrawGenerator(
+            internal::LabelName::Domains,
             impl::string_generator_domain(params.max_length)));
     }
 
     Generator<std::string> urls() {
-        return Generator<std::string>(
-            new StringDrawGenerator(impl::string_generator_url()));
+        return Generator<std::string>(new StringDrawGenerator(
+            internal::LabelName::Urls, impl::string_generator_url()));
     }
 
     Generator<std::string> ip_addresses(IpAddressesParams params) {

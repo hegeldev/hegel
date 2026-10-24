@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <functional>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -186,4 +187,59 @@ TEST(Loop, RejectInsideContinues) {
             .database = hegel::Database::disabled(),
             .suppress_health_check = {hegel::HealthCheck::FilterTooMuch}});
     EXPECT_TRUE(completed);
+}
+
+// ---------------------------------------------------------------------------
+// event() / event_value()
+// ---------------------------------------------------------------------------
+
+namespace {
+    std::string
+    run_capturing_stderr(const std::function<void(hegel::TestCase&)>& body,
+                         bool show_statistics) {
+        testing::internal::CaptureStderr();
+        hegel::test(body,
+                    hegel::Settings{.test_cases = 50,
+                                    .derandomize = true,
+                                    .show_statistics = show_statistics,
+                                    .database = hegel::Database::disabled()});
+        return testing::internal::GetCapturedStderr();
+    }
+} // namespace
+
+TEST(Events, StatisticsReportEventsAndValues) {
+    std::string output = run_capturing_stderr(
+        [](hegel::TestCase& tc) {
+            int n =
+                tc.draw(gs::integers<int>({.min_value = 0, .max_value = 9}));
+            if (n == 0) {
+                tc.event("zero");
+            }
+            tc.event_value("n", static_cast<double>(n));
+        },
+        true);
+    EXPECT_NE(output.find("Statistics (over "), std::string::npos) << output;
+    EXPECT_NE(output.find("* zero: "), std::string::npos) << output;
+    EXPECT_NE(output.find("* n: count "), std::string::npos) << output;
+}
+
+TEST(Events, NotReportedByDefault) {
+    std::string output = run_capturing_stderr(
+        [](hegel::TestCase& tc) {
+            (void)tc.draw(gs::booleans());
+            tc.event("always");
+        },
+        false);
+    EXPECT_EQ(output.find("Statistics"), std::string::npos) << output;
+}
+
+TEST(Events, NonFiniteValueThrows) {
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         tc.event_value(
+                             "bad", std::numeric_limits<double>::quiet_NaN());
+                     },
+                     hegel::Settings{.test_cases = 1,
+                                     .database = hegel::Database::disabled()}),
+                 std::invalid_argument);
 }

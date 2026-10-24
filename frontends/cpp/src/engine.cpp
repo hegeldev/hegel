@@ -1,6 +1,9 @@
 #include <engine.h>
 
+#include <hegel/errors.h>
 #include <hegel/internal.h>
+#include <hegel/printer.h>
+#include <hegel/settings.h>
 #include <hegel/test_case.h>
 
 #include <hegel.h>
@@ -10,11 +13,17 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <ios>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 #include <arpa/inet.h>
@@ -195,6 +204,181 @@ namespace hegel::impl {
 
     // GCOVR_EXCL_STOP
 
+    namespace {
+
+        // As check_rc, but ignores a write to a region whose document was
+        // already read: a straggler's output has nowhere left to go.
+        void tolerate_dead_region(hegel_context_t* ctx, hegel_result_t rc) {
+            if (rc == HEGEL_E_INVALID_HANDLE) {
+                return;
+            }
+            check_rc(ctx, rc);
+        }
+
+    } // namespace
+
+    hegel_test_case_t* test_case_block(hegel_context_t* ctx,
+                                       const hegel_test_case_t* tc,
+                                       uint64_t indent) {
+        hegel_test_case_t* block = nullptr;
+        check_rc(ctx, hegel_test_case_block(ctx, tc, indent, &block));
+        return block;
+    }
+
+    void test_case_set_worker(hegel_context_t* ctx, const hegel_test_case_t* tc,
+                              int64_t worker_index) {
+        check_rc(ctx, hegel_test_case_set_worker(ctx, tc, worker_index));
+    }
+
+    hegel_printer_t* test_case_printer(hegel_context_t* ctx,
+                                       hegel_test_case_t* tc) {
+        hegel_printer_t* printer = nullptr;
+        check_rc(ctx, hegel_test_case_printer(ctx, tc, nullptr, &printer));
+        return printer;
+    }
+
+    void note(hegel_context_t* ctx, hegel_test_case_t* tc,
+              std::string_view text) {
+        tolerate_dead_region(ctx, hegel_note(ctx, tc, borrow(text)));
+    }
+
+    void printer_free(hegel_context_t* ctx, hegel_printer_t* printer) {
+        hegel_printer_free(ctx, printer);
+    }
+
+    std::string read_document(hegel_context_t* ctx, hegel_printer_t* root) {
+        // Fails only when no deferred region is outstanding, which leaves
+        // nothing to splice in.
+        hegel_printer_resolve(ctx, root);
+        hegel_printer_value_result_t result{nullptr, 0};
+        check_rc(ctx, hegel_printer_value(ctx, root, &result));
+        std::string document(result.data, result.len);
+        hegel_printer_value_result_free(ctx, &result);
+        return document;
+    }
+
+    namespace {
+
+        // As check_rc, but a rejected argument throws std::invalid_argument
+        // with the engine's diagnostic.
+        void check_arg(hegel_context_t* ctx, hegel_result_t rc) {
+            if (rc == HEGEL_E_INVALID_ARG) {
+                throw std::invalid_argument(last_error(ctx));
+            }
+            check_rc(ctx, rc);
+        }
+
+    } // namespace
+
+    hegel_settings_t* settings_new_for_profile(hegel_context_t* ctx,
+                                               std::string_view name) {
+        hegel_settings_t* s = nullptr;
+        check_arg(ctx, hegel_settings_new_for_profile(ctx, borrow(name), &s));
+        return s;
+    }
+
+    void settings_register_profile(hegel_context_t* ctx, std::string_view name,
+                                   const hegel_settings_t* s) {
+        check_arg(ctx, hegel_settings_register_profile(ctx, borrow(name), s));
+    }
+
+    void set_default_profile(hegel_context_t* ctx, std::string_view name) {
+        check_arg(ctx, hegel_set_default_profile(ctx, borrow(name)));
+    }
+
+    std::string engine_version(hegel_context_t* ctx) {
+        hegel_string_t version{nullptr, 0};
+        check_rc(ctx, hegel_version(ctx, &version));
+        return std::string(version.data, version.len);
+    }
+
+    void settings_set_show_statistics(hegel_context_t* ctx, hegel_settings_t* s,
+                                      bool yes) {
+        check_rc(ctx, hegel_settings_set_show_statistics(ctx, s, yes));
+    }
+
+    void settings_set_unbounded_choices(hegel_context_t* ctx,
+                                        hegel_settings_t* s, bool yes) {
+        check_rc(ctx, hegel_settings_set_unbounded_choices(ctx, s, yes));
+    }
+
+    void settings_set_print_blob(hegel_context_t* ctx, hegel_settings_t* s,
+                                 bool yes) {
+        check_rc(ctx, hegel_settings_set_print_blob(ctx, s, yes));
+    }
+
+    void settings_set_default_database(hegel_context_t* ctx,
+                                       hegel_settings_t* s) {
+        check_rc(ctx, hegel_settings_set_database(ctx, s, nullptr));
+    }
+
+    hegel_verbosity_t settings_get_verbosity(hegel_context_t* ctx,
+                                             const hegel_settings_t* s) {
+        hegel_verbosity_t verbosity = HEGEL_VERBOSITY_NORMAL;
+        check_rc(ctx, hegel_settings_get_verbosity(ctx, s, &verbosity));
+        return verbosity;
+    }
+
+    bool settings_get_print_blob(hegel_context_t* ctx,
+                                 const hegel_settings_t* s) {
+        bool yes = true;
+        check_rc(ctx, hegel_settings_get_print_blob(ctx, s, &yes));
+        return yes;
+    }
+
+    uint32_t settings_get_phases(hegel_context_t* ctx,
+                                 const hegel_settings_t* s) {
+        uint32_t phases = 0;
+        check_rc(ctx, hegel_settings_get_phases(ctx, s, &phases));
+        return phases;
+    }
+
+    hegel_run_t* run_start_blob(hegel_context_t* ctx, hegel_settings_t* s,
+                                std::string_view blob) {
+        hegel_run_t* run = nullptr;
+        check_arg(ctx, hegel_run_start_blob(ctx, s, borrow(blob), nullptr,
+                                            nullptr, &run));
+        return run;
+    }
+
+    std::optional<HealthCheck> health_check_from_flag(uint32_t flag) {
+        switch (flag) {
+        case HEGEL_HC_FILTER_TOO_MUCH:
+            return HealthCheck::FilterTooMuch;
+        case HEGEL_HC_TOO_SLOW:
+            return HealthCheck::TooSlow;
+        case HEGEL_HC_TEST_CASES_TOO_LARGE:
+            return HealthCheck::TestCasesTooLarge;
+        case HEGEL_HC_LARGE_INITIAL_TEST_CASE:
+            return HealthCheck::LargeInitialTestCase;
+        default:
+            return std::nullopt;
+        }
+    }
+
+    void raise_run_error(const std::string& message, RunErrorKind kind) {
+        switch (kind.kind) {
+        case HEGEL_RUN_ERROR_HEALTH_CHECK:
+            throw FailedHealthCheck(message,
+                                    health_check_from_flag(kind.health_check));
+        case HEGEL_RUN_ERROR_FLAKY:
+        case HEGEL_RUN_ERROR_NONDETERMINISTIC:
+            throw Flaky(message);
+        case HEGEL_RUN_ERROR_UNSATISFIABLE:
+            throw Unsatisfiable(message);
+        default:
+            throw RunError(message);
+        }
+    }
+
+    RunErrorKind run_result_error_kind(hegel_context_t* ctx,
+                                       const hegel_run_result_t* result) {
+        RunErrorKind kind{HEGEL_RUN_ERROR_NONE, 0};
+        check_rc(ctx, hegel_run_result_error_kind(ctx, result, &kind.kind,
+                                                  &kind.health_check));
+        return kind;
+    }
+
     void settings_set_stop_on_first_failure(hegel_context_t* ctx,
                                             hegel_settings_t* s, bool yes) {
         check_rc(ctx, hegel_settings_set_stop_on_first_failure(ctx, s, yes));
@@ -293,12 +477,26 @@ namespace hegel::impl {
         return label;
     }
 
+    uint64_t label_combine(hegel_context_t* ctx,
+                           const std::vector<uint64_t>& labels) {
+        uint64_t label = 0;
+        check_rc(ctx, hegel_label_combine(ctx, labels.data(), labels.size(),
+                                          &label));
+        return label;
+    }
+
     namespace {
         struct DrawScope {
             hegel_context_t* ctx;
             hegel_test_case_t* tc;
 
             explicit DrawScope(const TestCase& obj) {
+                if (obj.data()->explicit_state) {
+                    throw std::invalid_argument(
+                        "This operation needs generated data, which an "
+                        "explicit test case does not have: it gives values "
+                        "only to TestCase::draw().");
+                }
                 ctx = thread_context();
                 tc = obj.data()->tc;
             }
@@ -385,16 +583,24 @@ namespace hegel::impl {
         if (params.codec != nullptr) {
             codec = borrow(params.codec);
         }
+        // A given list, even an empty one, needs a non-NULL pointer: NULL
+        // means no list.
+        static const hegel_string_t no_names{nullptr, 0};
+        auto list = [](const std::vector<std::string>* given,
+                       const std::vector<hegel_string_t>& strings) {
+            if (given == nullptr) {
+                return static_cast<const hegel_string_t*>(nullptr);
+            }
+            return strings.empty() ? &no_names : strings.data();
+        };
         return make_string_generator(
             "text", [&](hegel_context_t* ctx, hegel_string_generator_t** out) {
                 return hegel_string_generator_text(
                     ctx, params.min_size, params.max_size,
                     params.codec != nullptr ? &codec : nullptr,
                     params.min_codepoint, params.max_codepoint,
-                    params.categories ? categories.data() : nullptr,
-                    categories.size(),
-                    params.exclude_categories ? exclude_categories.data()
-                                              : nullptr,
+                    list(params.categories, categories), categories.size(),
+                    list(params.exclude_categories, exclude_categories),
                     exclude_categories.size(),
                     borrow_chars(params.include_characters),
                     borrow_chars(params.exclude_characters), out);
@@ -554,6 +760,121 @@ namespace hegel::impl {
             "hegel_target");
     }
 
+    void event(const TestCase& tc, std::string_view label) {
+        DrawScope scope(tc);
+        scope.raise_for_rc(hegel_event(scope.ctx, scope.tc, borrow(label)),
+                           "hegel_event");
+    }
+
+    void event_value(const TestCase& tc, std::string_view label, double value) {
+        DrawScope scope(tc);
+        scope.raise_for_rc(
+            hegel_event_value(scope.ctx, scope.tc, value, borrow(label)),
+            "hegel_event_value");
+    }
+
+    namespace {
+
+        struct GrammarBuilderGuard {
+            hegel_context_t* ctx;
+            hegel_grammar_builder_t* builder = nullptr;
+            ~GrammarBuilderGuard() { hegel_grammar_builder_free(ctx, builder); }
+        };
+
+        struct GrammarDrawGuard {
+            hegel_context_t* ctx;
+            hegel_grammar_draw_t* draw = nullptr;
+            ~GrammarDrawGuard() { hegel_grammar_draw_free(ctx, draw); }
+        };
+
+        // The text of the grammar file `path` under `dir`, or nullopt when
+        // there is no directory or no such file.
+        std::optional<std::string>
+        read_grammar_file(const std::optional<std::string>& dir,
+                          std::string_view path) {
+            if (!dir) {
+                return std::nullopt;
+            }
+            std::filesystem::path file =
+                std::filesystem::path(*dir) / std::filesystem::path(path);
+            std::error_code ec;
+            std::filesystem::file_type type =
+                std::filesystem::status(file, ec).type();
+            if (type == std::filesystem::file_type::not_found) {
+                return std::nullopt;
+            }
+            std::ifstream in(file, std::ios::binary);
+            if (type != std::filesystem::file_type::regular || !in) {
+                throw std::invalid_argument("Could not read grammar '" +
+                                            file.string() + "'");
+            }
+            return std::string(std::istreambuf_iterator<char>(in),
+                               std::istreambuf_iterator<char>());
+        }
+
+    } // namespace
+
+    hegel_grammar_t* grammar_new(const GrammarParams& params) {
+        hegel_context_t* ctx = thread_context();
+        GrammarBuilderGuard guard{ctx};
+        check_arg(ctx, hegel_grammar_builder_new(ctx, borrow(params.text),
+                                                 &guard.builder));
+        for (size_t index = 0;; ++index) {
+            hegel_string_t path{nullptr, 0};
+            if (hegel_grammar_builder_file(ctx, guard.builder, index, &path) ==
+                HEGEL_E_NOT_FOUND) {
+                break;
+            }
+            std::optional<std::string> text = read_grammar_file(
+                params.import_dir, std::string_view(path.data, path.len));
+            hegel_string_t contents =
+                text ? borrow(*text) : hegel_string_t{nullptr, 0};
+            check_arg(
+                ctx, hegel_grammar_builder_provide(ctx, guard.builder, index,
+                                                   text ? &contents : nullptr));
+        }
+        hegel_string_t start =
+            params.start ? borrow(*params.start) : hegel_string_t{nullptr, 0};
+        std::vector<hegel_string_t> names;
+        names.reserve(params.explicit_names.size());
+        for (const std::string& name : params.explicit_names) {
+            names.push_back(borrow(name));
+        }
+        hegel_grammar_t* grammar = nullptr;
+        check_arg(ctx, hegel_grammar_new(
+                           ctx, guard.builder, params.start ? &start : nullptr,
+                           params.max_size, params.max_depth, params.alphabet,
+                           names.data(), names.size(), &grammar));
+        return grammar;
+    }
+
+    void grammar_free(hegel_grammar_t* grammar) {
+        hegel_grammar_free(thread_context(), grammar);
+    }
+
+    std::string draw_grammar(const TestCase& tc, const hegel_grammar_t* grammar,
+                             const std::function<std::string(size_t)>& value) {
+        DrawScope scope(tc);
+        GrammarDrawGuard guard{scope.ctx};
+        check_rc(scope.ctx,
+                 hegel_grammar_draw_new(scope.ctx, grammar, 0, &guard.draw));
+        size_t terminal = 0;
+        hegel_result_t rc = HEGEL_OK;
+        while ((rc = hegel_grammar_draw_next(scope.ctx, scope.tc, guard.draw,
+                                             &terminal)) == HEGEL_OK) {
+            std::string drawn = value(terminal);
+            check_arg(scope.ctx, hegel_grammar_draw_provide(
+                                     scope.ctx, guard.draw, borrow(drawn)));
+        }
+        if (rc != HEGEL_E_NOT_FOUND) {
+            scope.raise_for_rc(rc, "hegel_grammar_draw_next");
+        }
+        StringResultGuard result{scope.ctx};
+        check_rc(scope.ctx, hegel_grammar_draw_result(scope.ctx, guard.draw,
+                                                      &result.result));
+        return std::string(result.result.data, result.result.len);
+    }
+
 } // namespace hegel::impl
 
 namespace hegel::internal {
@@ -561,34 +882,52 @@ namespace hegel::internal {
     namespace {
 
         static_assert(state_machine_done == HEGEL_STATE_MACHINE_DONE);
+        static_assert(filter_attempts == HEGEL_FILTER_ATTEMPTS);
 
-        // The name each SpanLabel derives its engine label from, in
-        // enumerator order. The `hegel-cpp.` prefix keeps the names clear
-        // of the engine's own `hegel.<kind>` labels.
-        constexpr std::array<const char*, span_label_count> span_label_names = {
-            "hegel-cpp.list",          "hegel-cpp.set",    "hegel-cpp.map",
-            "hegel-cpp.tuple",         "hegel-cpp.one_of", "hegel-cpp.optional",
-            "hegel-cpp.flat_map",      "hegel-cpp.filter", "hegel-cpp.mapped",
-            "hegel-cpp.stateful.rule",
+        // The name each LabelName derives its engine label from, in
+        // enumerator order.
+        constexpr std::array<const char*, label_name_count> label_names = {
+            "hegel.generator",
+            "hegel.composite",
+            "hegel.map",
+            "hegel.flat_map",
+            "hegel.filter",
+            "hegel.filter.attempt",
+            "hegel.just",
+            "hegel.sampled_from",
+            "hegel.one_of",
+            "hegel.optional",
+            "hegel.deferred",
+            "hegel.integers",
+            "hegel.floats",
+            "hegel.booleans",
+            "hegel.text",
+            "hegel.characters",
+            "hegel.from_regex",
+            "hegel.from_lark",
+            "hegel.binary",
+            "hegel.emails",
+            "hegel.urls",
+            "hegel.domains",
+            "hegel.ip_addresses.v4",
+            "hegel.ip_addresses.v6",
+            "hegel.uuids",
+            "hegel.lists",
+            "hegel.sets",
+            "hegel.dicts",
+            "hegel.tuples",
+            "hegel.array",
+            "hegel.permutation",
+            "hegel.recursive",
+            "hegel.stateful.rule",
+            "hegel.pool.values_reusable",
+            "hegel.pool.values_consumed",
         };
-        static_assert(span_label_names[static_cast<size_t>(SpanLabel::List)] ==
-                      std::string_view("hegel-cpp.list"));
+        static_assert(label_names[static_cast<size_t>(LabelName::Generator)] ==
+                      std::string_view("hegel.generator"));
         static_assert(
-            span_label_names[static_cast<size_t>(SpanLabel::StatefulRule)] ==
-            std::string_view("hegel-cpp.stateful.rule"));
-
-        // The engine label of `label`, derived once per process.
-        uint64_t span_label_value(SpanLabel label) {
-            static const std::array<uint64_t, span_label_count> labels = [] {
-                std::array<uint64_t, span_label_count> values{};
-                hegel_context_t* ctx = impl::thread_context();
-                for (size_t i = 0; i < values.size(); ++i) {
-                    values[i] = impl::label_from_name(ctx, span_label_names[i]);
-                }
-                return values;
-            }();
-            return labels[static_cast<size_t>(label)];
-        }
+            label_names[static_cast<size_t>(LabelName::PoolValuesConsumed)] ==
+            std::string_view("hegel.pool.values_consumed"));
 
         // Two's-complement little-endian encoding of a uint64_t for the
         // engine's big-integer draw: 9 bytes so the top bit is never read
@@ -612,11 +951,91 @@ namespace hegel::internal {
 
     } // namespace
 
-    void start_span(const TestCase& tc, SpanLabel label) {
+    uint64_t label(LabelName name) {
+        static const std::array<uint64_t, label_name_count> labels = [] {
+            std::array<uint64_t, label_name_count> values{};
+            hegel_context_t* ctx = impl::thread_context();
+            for (size_t i = 0; i < values.size(); ++i) {
+                values[i] = impl::label_from_name(ctx, label_names[i]);
+            }
+            return values;
+        }();
+        return labels[static_cast<size_t>(name)];
+    }
+
+    uint64_t combine_labels(const std::vector<uint64_t>& labels) {
+        return impl::label_combine(impl::thread_context(), labels);
+    }
+
+    void Printer::text(std::string_view text) {
+        hegel_context_t* ctx = impl::thread_context();
+        impl::tolerate_dead_region(
+            ctx, hegel_printer_text(ctx, handle_, impl::borrow(text)));
+    }
+
+    void Printer::breakable(std::string_view separator) {
+        hegel_context_t* ctx = impl::thread_context();
+        impl::tolerate_dead_region(
+            ctx,
+            hegel_printer_breakable(ctx, handle_, impl::borrow(separator)));
+    }
+
+    void Printer::begin_group(uint64_t indent, std::string_view open) {
+        hegel_context_t* ctx = impl::thread_context();
+        impl::tolerate_dead_region(
+            ctx, hegel_printer_begin_group(ctx, handle_, indent,
+                                           impl::borrow(open)));
+    }
+
+    void Printer::end_group(std::string_view close) {
+        hegel_context_t* ctx = impl::thread_context();
+        impl::tolerate_dead_region(
+            ctx, hegel_printer_end_group(ctx, handle_, impl::borrow(close)));
+    }
+
+    void Printer::shift_indent(int64_t delta) {
+        hegel_context_t* ctx = impl::thread_context();
+        impl::tolerate_dead_region(
+            ctx, hegel_printer_shift_indent(ctx, handle_, delta));
+    }
+
+    void Printer::hard_break() {
+        hegel_context_t* ctx = impl::thread_context();
+        impl::tolerate_dead_region(ctx, hegel_printer_hard_break(ctx, handle_));
+    }
+
+    void Printer::reflow(std::string_view text) {
+        hegel_context_t* ctx = impl::thread_context();
+        impl::tolerate_dead_region(
+            ctx,
+            hegel_printer_reflow(ctx, handle_, nullptr, impl::borrow(text)));
+    }
+
+    Document::Document(uint64_t width) {
+        hegel_context_t* ctx = impl::thread_context();
+        hegel_printer_options_t* options = nullptr;
+        impl::check_rc(ctx, hegel_printer_options_new(ctx, &options));
+        hegel_result_t rc =
+            hegel_printer_options_set_max_width(ctx, options, width);
+        if (rc == HEGEL_OK) {
+            rc = hegel_printer_new(ctx, options, &handle_);
+        }
+        hegel_printer_options_free(ctx, options);
+        impl::check_rc(ctx, rc);
+    }
+
+    Document::~Document() {
+        hegel_printer_free(impl::thread_context(), handle_);
+    }
+
+    std::string Document::finish() {
+        return impl::read_document(impl::thread_context(), handle_);
+    }
+
+    void start_span(const TestCase& tc, uint64_t label) {
         impl::DrawScope scope(tc);
-        scope.raise_for_rc(
-            hegel_start_span(scope.ctx, scope.tc, span_label_value(label)),
-            "hegel_start_span");
+        scope.raise_for_rc(hegel_start_span(scope.ctx, scope.tc, label),
+                           "hegel_start_span");
     }
 
     void stop_span(const TestCase& tc, bool discard) {
@@ -643,20 +1062,24 @@ namespace hegel::internal {
                 draw_integer(tc, static_cast<int64_t>(min_value),
                              static_cast<int64_t>(max_value)));
         }
-        impl::DrawScope scope(tc);
         uint8_t min_bytes[big_u64_len];
         uint8_t max_bytes[big_u64_len];
         uint8_t out_bytes[big_u64_len];
         encode_u64_le(min_value, min_bytes);
         encode_u64_le(max_value, max_bytes);
+        draw_integer_bytes(tc, min_bytes, max_bytes, big_u64_len, out_bytes);
+        return decode_u64_le(out_bytes);
+    }
+
+    void draw_integer_bytes(const TestCase& tc, const uint8_t* min_value,
+                            const uint8_t* max_value, size_t len,
+                            uint8_t* out) {
+        impl::DrawScope scope(tc);
         size_t out_len = 0;
-        scope.raise_for_rc(
-            hegel_generate_integer_big(scope.ctx, scope.tc, min_bytes,
-                                       big_u64_len, max_bytes, big_u64_len,
-                                       out_bytes, big_u64_len, &out_len),
-            "hegel_generate_integer_big");
-        uint64_t value = decode_u64_le(out_bytes);
-        return value;
+        scope.raise_for_rc(hegel_generate_integer_big(scope.ctx, scope.tc,
+                                                      min_value, len, max_value,
+                                                      len, out, len, &out_len),
+                           "hegel_generate_integer_big");
     }
 
     bool draw_boolean(const TestCase& tc, double p,
@@ -741,6 +1164,59 @@ namespace hegel::internal {
             hegel_pool_generate(scope.ctx, scope.tc, handle_, consume, &var_id),
             "hegel_pool_generate");
         return var_id;
+    }
+
+    void PoolHandle::restore(const TestCase& tc, int64_t variable) {
+        impl::DrawScope scope(tc);
+        scope.raise_for_rc(
+            hegel_pool_restore(scope.ctx, scope.tc, handle_, variable),
+            "hegel_pool_restore");
+    }
+
+    RecursionHandle::RecursionHandle(const TestCase& tc, uint64_t max_depth,
+                                     uint64_t max_leaves) {
+        impl::DrawScope scope(tc);
+        scope.raise_for_rc(hegel_new_recursion(scope.ctx, scope.tc, max_depth,
+                                               max_leaves, &handle_),
+                           "hegel_new_recursion");
+    }
+
+    RecursionHandle::~RecursionHandle() {
+        hegel_recursion_free(impl::thread_context(), handle_);
+    }
+
+    bool RecursionHandle::branch(const TestCase& tc, uint64_t depth) {
+        impl::DrawScope scope(tc);
+        bool branch = false;
+        scope.raise_for_rc(hegel_recursion_branch(scope.ctx, scope.tc, handle_,
+                                                  depth, &branch),
+                           "hegel_recursion_branch");
+        return branch;
+    }
+
+    void RecursionHandle::leaf(const TestCase& tc) {
+        impl::DrawScope scope(tc);
+        hegel_result_t rc = hegel_recursion_leaf(scope.ctx, scope.tc, handle_);
+        if (rc == HEGEL_E_RETRY) {
+            throw LeafBudgetExceeded();
+        }
+        scope.raise_for_rc(rc, "hegel_recursion_leaf");
+    }
+
+    void RecursionHandle::retry(const TestCase& tc) {
+        impl::DrawScope scope(tc);
+        scope.raise_for_rc(hegel_recursion_retry(scope.ctx, scope.tc, handle_),
+                           "hegel_recursion_retry");
+    }
+
+    void RecursionHandle::finish(const TestCase& tc) {
+        impl::DrawScope scope(tc);
+        hegel_result_t rc =
+            hegel_recursion_finish(scope.ctx, scope.tc, handle_);
+        if (rc == HEGEL_E_RETRY) {
+            throw AttemptMispriced();
+        }
+        scope.raise_for_rc(rc, "hegel_recursion_finish");
     }
 
     StateMachineHandle::StateMachineHandle(

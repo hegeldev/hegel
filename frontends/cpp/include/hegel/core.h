@@ -1,10 +1,15 @@
 #pragma once
 
+#include <any>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <type_traits>
+#include <typeinfo>
 
 #include "config.h"
 #include "internal.h"
@@ -34,6 +39,35 @@ namespace hegel::generators {
         // Every generator produces its value by driving the engine's typed
         // draw primitives (hegel::internal::draw_*) against the test case.
         virtual T do_draw(const TestCase& tc) const = 0;
+
+        // The span label that identifies this generator to the engine. A
+        // generator built from others combines its own label with theirs.
+        virtual uint64_t label() const {
+            return internal::label(internal::LabelName::Generator);
+        }
+
+        // Draws a value that satisfies `predicate`, as filter() does: up to
+        // internal::filter_attempts attempts, each in a span of its own that
+        // is discarded when the predicate rejects its value, then the test
+        // case is rejected. A generator whose draws change state outside
+        // the choice sequence (a consuming pool draw) overrides this to undo
+        // what its rejected attempts did.
+        virtual T
+        do_draw_filtered(const TestCase& tc,
+                         const std::function<bool(const T&)>& predicate) const {
+            uint64_t attempt =
+                internal::label(internal::LabelName::FilterAttempt);
+            for (int i = 0; i < internal::filter_attempts; ++i) {
+                internal::start_span(tc, attempt);
+                T value = do_draw(tc);
+                if (predicate(value)) {
+                    internal::stop_span(tc);
+                    return value;
+                }
+                internal::stop_span(tc, true);
+            }
+            tc.reject();
+        }
         /// @endcond
     };
 
@@ -74,6 +108,8 @@ namespace hegel::generators {
         Generator(std::shared_ptr<IGenerator<T>> p) : inner_(std::move(p)) {}
 
         T do_draw(const TestCase& tc) const { return inner_->do_draw(tc); }
+
+        uint64_t label() const { return inner_->label(); }
         /// @endcond
 
         /**
@@ -132,13 +168,18 @@ namespace hegel::generators {
             // Generator<ResultType>.
             using ResultType = typename std::invoke_result_t<F, T>::value_type;
             auto inner = inner_;
-            return compose([inner, f = std::forward<F>(f)](
-                               const TestCase& tc) -> ResultType {
-                internal::start_span(tc, internal::SpanLabel::FlatMap);
-                ResultType result = f(inner->do_draw(tc)).do_draw(tc);
-                internal::stop_span(tc);
-                return result;
-            });
+            uint64_t label = internal::combine_labels(
+                {internal::label(internal::LabelName::FlatMap),
+                 inner->label()});
+            return Generator<ResultType>(new CompositeGenerator<ResultType>(
+                [inner, label,
+                 f = std::forward<F>(f)](const TestCase& tc) -> ResultType {
+                    internal::start_span(tc, label);
+                    ResultType result = f(inner->do_draw(tc)).do_draw(tc);
+                    internal::stop_span(tc);
+                    return result;
+                },
+                label));
         }
 
         /**
@@ -147,13 +188,10 @@ namespace hegel::generators {
          * Creates a Generator that only produces values satisfying the
          * predicate. The new Generator has the same type as this Generator.
          *
-         * So for example, if you want sorted lists of length N, you should
-         * generate sorted lists of length N, not generate random lists and
-         * filter by a predicate of 'length == N && is_sorted'. (Although the
-         * latter is logically correct, it would be a performance nightmare, so
-         * Hegel doesn't let you do it that way.)
-         *
-         * For example, if you want sorted lists of length N, you should
+         * Each draw tries a few values. If none satisfies the predicate, the
+         * test case is rejected, as by TestCase::reject(). So a predicate that
+         * few values satisfy makes most test cases fail to generate. For
+         * example, if you want sorted lists of length N, you should
          * generate lists of length N and sort them, not generate random lists
          * and filter by a predicate of 'length == N && is_sorted'.
          *
@@ -168,22 +206,12 @@ namespace hegel::generators {
          */
         Generator<T> filter(std::function<bool(const T&)> pred) const {
             auto inner = inner_;
-            return compose([inner, pred](const TestCase& tc) -> T {
-                for (int i = 0; i < 3; ++i) {
-                    internal::start_span(tc, internal::SpanLabel::Filter);
-                    T value = inner->do_draw(tc);
-                    if (pred(value)) {
-                        internal::stop_span(tc);
-                        return value;
-                    }
-                    // Discard the rejected span so the engine retries from
-                    // before it opened.
-                    internal::stop_span(tc, true);
-                }
-                tc.assume(false);
-                // unreachable: assume(false) throws
-                throw internal::HegelReject();
-            });
+            uint64_t label = internal::combine_labels(
+                {internal::label(internal::LabelName::Filter), inner->label()});
+            auto draw = [inner, pred](const TestCase& tc) -> T {
+                return inner->do_draw_filtered(tc, pred);
+            };
+            return Generator<T>(new CompositeGenerator<T>(draw, label));
         }
 
       private:
@@ -197,12 +225,19 @@ namespace hegel::generators {
     template <typename T> class CompositeGenerator : public IGenerator<T> {
       public:
         explicit CompositeGenerator(std::function<T(const TestCase&)> fn)
-            : gen_fn_(std::move(fn)) {}
+            : gen_fn_(std::move(fn)),
+              label_(internal::label(internal::LabelName::Composite)) {}
+
+        CompositeGenerator(std::function<T(const TestCase&)> fn, uint64_t label)
+            : gen_fn_(std::move(fn)), label_(label) {}
 
         T do_draw(const TestCase& tc) const override { return gen_fn_(tc); }
 
+        uint64_t label() const override { return label_; }
+
       private:
         std::function<T(const TestCase&)> gen_fn_;
+        uint64_t label_;
     };
     /// @endcond
 
@@ -214,18 +249,24 @@ namespace hegel::generators {
       public:
         MappedGenerator(std::shared_ptr<IGenerator<T>> source,
                         std::function<U(T)> f)
-            : source_(std::move(source)), f_(std::move(f)) {}
+            : source_(std::move(source)), f_(std::move(f)),
+              label_(internal::combine_labels(
+                  {internal::label(internal::LabelName::Map),
+                   source_->label()})) {}
 
         U do_draw(const TestCase& tc) const override {
-            internal::start_span(tc, internal::SpanLabel::Mapped);
+            internal::start_span(tc, label_);
             U result = f_(source_->do_draw(tc));
             internal::stop_span(tc);
             return result;
         }
 
+        uint64_t label() const override { return label_; }
+
       private:
         std::shared_ptr<IGenerator<T>> source_;
         std::function<U(T)> f_;
+        uint64_t label_;
     };
     /// @endcond
 
@@ -235,6 +276,9 @@ namespace hegel::generators {
      *
      * The element type is deduced from @p fn's return type. To force a specific
      * type, give the lambda an explicit trailing return type.
+     *
+     * The draws @p fn makes form one span, so the engine shrinks them as a
+     * unit, as it does for map(), flat_map() and filter().
      *
      * @code{.cpp}
      * auto generate_person() {
@@ -252,11 +296,37 @@ namespace hegel::generators {
      */
     template <typename F> auto compose(F&& fn) {
         using T = std::invoke_result_t<F, const TestCase&>;
+        uint64_t label = internal::label(internal::LabelName::Composite);
         return Generator<T>(new CompositeGenerator<T>(
-            std::function<T(const TestCase&)>(std::forward<F>(fn))));
+            [label, fn = std::forward<F>(fn)](const TestCase& tc) mutable -> T {
+                internal::start_span(tc, label);
+                T result = fn(tc);
+                internal::stop_span(tc);
+                return result;
+            },
+            label));
     }
 
 } // namespace hegel::generators
+
+namespace hegel::internal {
+
+    // Prints `prefix`, `value` and `suffix` as one line of `tc`'s output,
+    // when `tc` records output.
+    template <typename T>
+    void print_line(const TestCase& tc, const std::string& prefix,
+                    const T& value, std::string_view suffix = "") {
+        if (!records_output(tc)) {
+            return;
+        }
+        Printer printer = test_case_printer(tc);
+        printer.text(prefix);
+        print_value(printer, value);
+        printer.text(suffix);
+        printer.hard_break();
+    }
+
+} // namespace hegel::internal
 
 namespace hegel {
 
@@ -268,10 +338,18 @@ namespace hegel {
     template <typename T>
     T TestCase::draw(std::string_view name, const generators::Generator<T>& gen,
                      bool repeatable) const {
-        internal::DrawLogScope scope(*this, name, repeatable);
+        if (internal::is_explicit(*this)) {
+            return std::any_cast<T>(internal::take_explicit_value(
+                *this, name, repeatable, typeid(T)));
+        }
+        internal::NestedDraw nested(*this);
         T value = gen.do_draw(*this);
-        if (scope.should_log()) {
-            scope.log(internal::repr(value));
+        if (nested.outermost() && internal::records_output(*this)) {
+            internal::print_line(
+                *this,
+                "auto " + internal::draw_display_name(*this, name, repeatable) +
+                    " = ",
+                value, ";");
         }
         return value;
     }

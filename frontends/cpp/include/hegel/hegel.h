@@ -21,7 +21,7 @@
  * FetchContent_Declare(
  *     hegel
  *     GIT_REPOSITORY https://github.com/hegeldev/hegel.git
- *     GIT_TAG frontends/cpp/0.13.1
+ *     GIT_TAG frontends/cpp/0.13.2
  *     SOURCE_SUBDIR frontends/cpp
  * )
  * FetchContent_MakeAvailable(hegel)
@@ -288,6 +288,25 @@
  * Settings when invoking the test (`self_equality({.test_cases = 5})`)
  * replaces them for that run.
  *
+ * @subsection explicit_cases Always test some values
+ *
+ * To run a test with values you choose, before Hegel generates any, add an
+ * explicit test case with @ref HEGEL_EXPLICIT_TEST_CASE. Its values go to
+ * the test's draws: positional values in draw order, and hegel::named()
+ * values to the draw of that name.
+ *
+ * @code{.cpp}
+ * HEGEL_EXPLICIT_TEST_CASE(self_equality, 0)
+ * HEGEL_EXPLICIT_TEST_CASE(self_equality,
+ *                          hegel::named("n", std::numeric_limits<int>::min()))
+ * HEGEL_TEST(self_equality)(hegel::TestCase& tc) {
+ *     auto n = tc.draw("n", gs::integers<int>());
+ *     // ...
+ * }
+ * @endcode
+ *
+ * With hegel::test(), pass the cases as a list of hegel::ExplicitTestCase.
+ *
  * @subsection use_gtest Hegel and test frameworks
  *
  * With a test framework, write the property inside one of its tests and call
@@ -317,11 +336,10 @@
  * (y + x), actual: 51 vs 0
  * @endcode
  *
- * Outside a test framework, use @ref HEGEL_TEST, since it derives the database
- * key and test location for you. hegel::test() can still be used, but you will
- * have to set Settings::database_key yourself if you want failures persisted to
- * the example database. You will also have to pass in TestLocation to see test
- * location information in the failure output.
+ * Outside a test framework, use @ref HEGEL_TEST, since it names the test in
+ * the failure report for you. hegel::test() can still be used: it derives the
+ * database key from the function that calls it, and you pass a TestLocation to
+ * name the test in the failure output.
  *
  * @subsection learning_more Learning more
  *
@@ -332,6 +350,8 @@
  */
 
 #include "core.h"
+#include "errors.h"
+#include "explicit.h"
 #include "settings.h"
 #include "test_case.h"
 
@@ -433,7 +453,8 @@ namespace hegel {
      * Settings::database_key defaults to `"<file>::<name>"`, where the file
      * is the one holding the call and the name is the enclosing GoogleTest
      * test (`Suite.Name`) or, outside a test framework, the enclosing
-     * function.
+     * function. The key is derived also when the database is disabled,
+     * because a derandomized run derives its seed from it.
      *
      * Inside a GoogleTest test the failure report's header names that test
      * and the line of the call. Outside one it reads `--- Failure ---`. Pass
@@ -463,19 +484,30 @@ namespace hegel {
      *                TestCase which it uses to draw values, make
      *                assumptions, and record notes.
      * @param settings Configuration settings (test count, debug mode, etc.)
-     * @param failure_blobs The base64 blobs encoding the engine choices that
-     led to failures. Multiple blobs can be passed in for bookkeeping, but only
-     the first one is run.
+     * @param failure_blobs Reproduce blobs from earlier failure reports. If
+     *                      any are given, the test replays each blob instead
+     *                      of generating test cases.
+     * @param explicit_cases Test cases to run with the values they give,
+     *                       before any generated test case, when the
+     *                       Explicit phase is enabled. See ExplicitTestCase.
      * @param caller_file Filled in by the compiler with the file of the call.
      * @param caller_function Filled in by the compiler with the function
      *                        holding the call.
      * @param caller_line Filled in by the compiler with the line of the call.
-     * @throws std::runtime_error if any test case fails
+     * @throws MultipleFailures if the run reports more than one failure.
+     *         For a single failure, the test's own exception propagates.
+     * @throws RunError (or a subclass) if the run stops without a verdict,
+     *         for example because a health check fails.
+     * @throws DidNotReproduce if no blob in @p failure_blobs makes the test
+     *         fail.
+     * @throws std::invalid_argument for invalid settings, an unknown
+     *         Settings::profile, or a blob that is not valid.
      * @see Settings for configuration settings
      */
     void test(const std::function<void(TestCase&)>& test_fn,
               const Settings& settings = {},
               const std::vector<std::string>& failure_blobs = {},
+              const std::vector<ExplicitTestCase>& explicit_cases = {},
               const char* caller_file = HEGEL_CALLER_FILE,
               const char* caller_function = HEGEL_CALLER_FUNCTION,
               int caller_line = HEGEL_CALLER_LINE);
@@ -495,14 +527,19 @@ namespace hegel {
      * @param test_fn The test function to run repeatedly.
      * @param location Where the test is defined.
      * @param settings Configuration settings (test count, debug mode, etc.)
-     * @param failure_blobs The base64 blobs encoding the engine choices that
-     led to failures. Multiple blobs can be passed in for bookkeeping, but only
-     the first one is run.
-     * @throws std::runtime_error if any test case fails
+     * @param failure_blobs Reproduce blobs from earlier failure reports. If
+     *                      any are given, the test replays each blob instead
+     *                      of generating test cases.
+     * @param explicit_cases Test cases to run with the values they give,
+     *                       before any generated test case, when the
+     *                       Explicit phase is enabled. See ExplicitTestCase.
+     * @throws MultipleFailures, RunError, DidNotReproduce,
+     *         std::invalid_argument as the overload above.
      */
     void test(const std::function<void(TestCase&)>& test_fn,
               const TestLocation& location, const Settings& settings = {},
-              const std::vector<std::string>& failure_blobs = {});
+              const std::vector<std::string>& failure_blobs = {},
+              const std::vector<ExplicitTestCase>& explicit_cases = {});
 
     /// @cond INTERNAL
     namespace internal {
@@ -525,11 +562,18 @@ namespace hegel {
         // look up the failure blobs associated with a test
         std::vector<std::string> reproduce_blobs_for(const char* name);
 
+        // add an explicit test case for a test
+        bool register_explicit_case(const char* name,
+                                    ExplicitTestCase test_case);
+        // look up the explicit test cases of a test, in registration order
+        std::vector<ExplicitTestCase> explicit_cases_for(const char* name);
+
         // What HEGEL_TEST expands to.
-        void test_from_macro(const std::function<void(TestCase&)>& test_fn,
-                             const TestLocation& location,
-                             const Settings& settings,
-                             const std::vector<std::string>& failure_blobs);
+        void
+        test_from_macro(const std::function<void(TestCase&)>& test_fn,
+                        const TestLocation& location, const Settings& settings,
+                        const std::vector<std::string>& failure_blobs,
+                        const std::vector<ExplicitTestCase>& explicit_cases);
     } // namespace internal
     /// @endcond
 } // namespace hegel
@@ -578,15 +622,13 @@ namespace hegel {
  */
 #define HEGEL_TEST(name, ...)                                                  \
     static void hegel_test_body_##name(::hegel::TestCase&);                    \
-    static void name(::hegel::Settings settings =                              \
+    static void name(const ::hegel::Settings& settings =                       \
                          ::hegel::Settings(__VA_ARGS__)) {                     \
-        if (!settings.database_key.has_value()) {                              \
-            settings.database_key = __FILE__ "::" #name;                       \
-        }                                                                      \
         ::hegel::internal::test_from_macro(                                    \
             hegel_test_body_##name,                                            \
             ::hegel::TestLocation{#name, __FILE__, __LINE__}, settings,        \
-            ::hegel::internal::reproduce_blobs_for(__FILE__ "::" #name));      \
+            ::hegel::internal::reproduce_blobs_for(__FILE__ "::" #name),       \
+            ::hegel::internal::explicit_cases_for(__FILE__ "::" #name));       \
     }                                                                          \
     static void hegel_test_body_##name
 
@@ -602,8 +644,9 @@ namespace hegel {
  * annotation to return to a normal run. Settings::print_blob controls whether
  * the report prints the line.
  *
- * At least one blob is required. Additional blobs are accepted for bookkeeping,
- * but only the first is replayed.
+ * At least one blob is required. Each blob is replayed. If more than one of
+ * them makes the test fail, the test throws hegel::MultipleFailures. If none
+ * does, it throws hegel::DidNotReproduce.
  *
  * @code{.cpp}
  * HEGEL_REPRODUCE_FAILURE(addition_commutes, "AAEAAAAACgEAAAAA")
@@ -618,6 +661,38 @@ namespace hegel {
     [[maybe_unused]] static const bool hegel_reproduce_registered_##name =     \
         ::hegel::internal::register_blob(__FILE__ "::" #name,                  \
                                          {blob, __VA_ARGS__});
+
+/// @cond INTERNAL
+#define HEGEL_CONCAT_IMPL(a, b) a##b
+#define HEGEL_CONCAT(a, b) HEGEL_CONCAT_IMPL(a, b)
+/// @endcond
+
+/**
+ * @brief Add an explicit test case to a @ref HEGEL_TEST.
+ *
+ * Place it above the matching HEGEL_TEST, keyed by the same name. The
+ * arguments are the values of a hegel::ExplicitTestCase: positional values,
+ * taken by the test's draws in order, and hegel::named() values, taken by
+ * the draw of that name. Each explicit test case runs once, in the order
+ * they appear, before any generated test case.
+ *
+ * @code{.cpp}
+ * HEGEL_EXPLICIT_TEST_CASE(sorted_is_idempotent, std::vector<int>{})
+ * HEGEL_EXPLICIT_TEST_CASE(sorted_is_idempotent,
+ *                          hegel::named("xs", std::vector<int>{1, 1}))
+ * HEGEL_TEST(sorted_is_idempotent)(hegel::TestCase& tc) {
+ *     auto xs = tc.draw("xs", gs::vectors(gs::integers<int>()));
+ *     // ...
+ * }
+ * @endcode
+ *
+ * @see hegel::ExplicitTestCase
+ */
+#define HEGEL_EXPLICIT_TEST_CASE(name, ...)                                    \
+    [[maybe_unused]] static const bool HEGEL_CONCAT(                           \
+        hegel_explicit_registered_##name##_, __LINE__) =                       \
+        ::hegel::internal::register_explicit_case(                             \
+            __FILE__ "::" #name, ::hegel::ExplicitTestCase(__VA_ARGS__));
 /** @} */
 
 // GoogleTest integration, picked up when <gtest/gtest.h> is already visible.

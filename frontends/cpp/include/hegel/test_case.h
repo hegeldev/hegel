@@ -55,9 +55,10 @@ namespace hegel {
          *
          * Each draw is printed as a C++ declaration, `auto <name> =
          * <value>;`, on the final replay of a failing test case and on
-         * every case at Verbosity::Verbose and above. Draws made through
-         * this overload print as `draw_1`, `draw_2`, ... in draw order.
-         * Use the named overload to print under a variable name.
+         * every case at Verbosity::Verbose and above. A value too wide for
+         * one line is broken across lines. Draws made through this overload
+         * print as `draw_1`, `draw_2`, ... in draw order. Use the named
+         * overload to print under a variable name.
          *
          * @tparam T The value type produced by @p gen
          * @param gen The generator to draw from
@@ -129,6 +130,44 @@ namespace hegel {
         void target(double score, std::string_view label = "") const;
 
         /**
+         * @brief Record an event for the end-of-run statistics report.
+         *
+         * With Settings::show_statistics on, the end of the run reports, for
+         * each label, the fraction of generated test cases that recorded it
+         * at least once. Without it, events report nothing.
+         *
+         * @param label The event to record.
+         *
+         * @code{.cpp}
+         * auto xs = tc.draw(gs::vectors(gs::integers<int>()));
+         * if (xs.empty()) {
+         *     tc.event("empty");
+         * }
+         * @endcode
+         */
+        void event(std::string_view label) const;
+
+        /**
+         * @brief Record a numeric observation for the end-of-run statistics
+         *        report.
+         *
+         * With Settings::show_statistics on, the end of the run reports, for
+         * each label, a summary of the observed values (count, min, median,
+         * mean, p90, max) over the generated test cases. Unlike target(), a
+         * label can be observed any number of times per test case, and the
+         * observations do not steer generation.
+         *
+         * @param label Names the observed quantity.
+         * @param value The observation. Must be finite.
+         *
+         * @code{.cpp}
+         * auto xs = tc.draw(gs::vectors(gs::integers<int>()));
+         * tc.event_value("size", static_cast<double>(xs.size()));
+         * @endcode
+         */
+        void event_value(std::string_view label, double value) const;
+
+        /**
          * @brief Run @p body in an engine-managed loop.
          *
          * The engine decides how many iterations to run, exploring and
@@ -153,6 +192,10 @@ namespace hegel {
          * @brief Record a message that will be printed on the final replay
          *        of a failing test case.
          *
+         * The message prints in order with the drawn values, and on every
+         * test case at Verbosity::Verbose and above. Each line of a
+         * multi-line message prints as its own line.
+         *
          * @param message The message to record.
          */
         void note(std::string_view message) const;
@@ -164,6 +207,10 @@ namespace hegel {
          * The returned @c TestCase draws from its own choice sequence but
          * shares this case's outcome and budget. A single test case must not be
          * drawn from concurrently, so give each thread its own clone.
+         *
+         * What the clone prints (its notes and drawn values) appears in the
+         * output at the point where the clone was made, however the threads
+         * are scheduled.
          *
          * @return A @c TestCase.
          *

@@ -106,26 +106,38 @@ endforeach()
 # Example / integration property tests.
 hegel_add_test(NAME property_tests SOURCE property_tests.cpp)
 
-# Run configuration: settings, phases, backend, database, health checks,
-# reproduce-failure blobs, and enum/environment helpers.
+# Run configuration: settings, profiles, phases, backend, database, health
+# checks, run errors, and reproduce-failure blobs.
 hegel_add_test(NAME test_settings SOURCE test_settings.cpp)
+# Run error kinds mapped to their exception types.
+hegel_add_test(NAME test_run_errors SOURCE test_run_errors.cpp INTERNAL)
 
 # Generators, split by family.
 hegel_add_test(NAME test_generators_numeric
-    SOURCE test_generators_numeric.cpp)
+    SOURCE test_generators_numeric.cpp
+    USE_UTILS)
 hegel_add_test(NAME test_generators_strings
     SOURCE test_generators_strings.cpp)
+hegel_add_test(NAME test_generators_grammar
+    SOURCE test_generators_grammar.cpp)
 hegel_add_test(NAME test_generators_collections
-    SOURCE test_generators_collections.cpp)
+    SOURCE test_generators_collections.cpp
+    USE_UTILS)
 hegel_add_test(NAME test_generators_combinators
-    SOURCE test_generators_combinators.cpp)
+    SOURCE test_generators_combinators.cpp
+    USE_UTILS)
 hegel_add_test(NAME test_generators_random
     SOURCE test_generators_random.cpp)
+# Span labels derived from generator names and their components.
+hegel_add_test(NAME test_labels SOURCE test_labels.cpp)
 hegel_add_test(NAME test_stateful
     SOURCE test_stateful.cpp
     USE_UTILS
     APPROVALS)
 
+
+# Explicit test cases: values given in advance, run before generation.
+hegel_add_test(NAME test_explicit SOURCE test_explicit.cpp)
 
 # Guiding generation: reject(), target(), repeat().
 hegel_add_test(NAME test_guiding SOURCE test_guiding.cpp)

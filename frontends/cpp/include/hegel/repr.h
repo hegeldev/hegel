@@ -4,15 +4,18 @@
  * @cond INTERNAL
  */
 
-// Renders drawn values as C++ expressions for draw-output lines. Types the
-// library cannot render as a compilable expression fall back to the text of
-// their stream operator, then to an "<unprintable Type>" placeholder.
+// Prints drawn values as C++ expressions through the engine's printer, for
+// draw-output lines. Types the library cannot render as a compilable
+// expression fall back to the text of their stream operator, which the
+// engine reflows, then to an "<unprintable Type>" placeholder.
 
 #include "config.h"
+#include "printer.h"
 
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <limits>
 #include <map>
@@ -34,7 +37,7 @@
 namespace hegel::internal {
 
     template <typename T> std::string cpp_type_name();
-    template <typename T> std::string repr(const T& value);
+    template <typename T> void print_value(Printer& printer, const T& value);
 
     // Best-effort type name sliced from the compiler's pretty function
     // string. Used for placeholder output and for types with no clean
@@ -276,170 +279,277 @@ namespace hegel::internal {
         }
     }
 
-    // Renders a value as one C++ expression, or as a pseudo-expression for
-    // types with no renderable form.
-    template <typename T> std::string repr(const T& value) {
-        if constexpr (std::is_same_v<T, bool>) {
-            return value ? "true" : "false";
-        } else if constexpr (std::is_same_v<T, char>) {
-            std::string out = "'";
-            repr_detail::append_escaped(out, static_cast<unsigned char>(value),
-                                        /*in_string=*/false);
-            out += "'";
-            return out;
-        } else if constexpr (std::is_same_v<T, signed char> ||
-                             std::is_same_v<T, unsigned char>) {
-            return "static_cast<" + cpp_type_name<T>() + ">(" +
-                   std::to_string(static_cast<int>(value)) + ")";
-        } else if constexpr (std::is_same_v<T, int>) {
-            return std::to_string(value);
-        } else if constexpr (std::is_same_v<T, unsigned int>) {
-            return std::to_string(value) + "u";
-        } else if constexpr (std::is_same_v<T, long>) {
-            return std::to_string(value) + "l";
-        } else if constexpr (std::is_same_v<T, unsigned long>) {
-            return std::to_string(value) + "ul";
-        } else if constexpr (std::is_same_v<T, long long>) {
-            return std::to_string(value) + "ll";
-        } else if constexpr (std::is_same_v<T, unsigned long long>) {
-            return std::to_string(value) + "ull";
-        } else if constexpr (std::is_integral_v<T>) {
-            // Integral types with no literal suffix of their own.
-            return "static_cast<" + cpp_type_name<T>() + ">(" +
-                   std::to_string(value) + ")";
-        } else if constexpr (std::is_enum_v<T>) {
-            using underlying = std::underlying_type_t<T>;
-            return "static_cast<" + cpp_type_name<T>() + ">(" +
-                   repr(static_cast<underlying>(value)) + ")";
-        } else if constexpr (std::is_floating_point_v<T>) {
-            if (std::isnan(value)) {
-                return "std::numeric_limits<" + cpp_type_name<T>() +
-                       ">::quiet_NaN()";
+    namespace repr_detail {
+
+        // Separates the items of a group with a comma and a break point.
+        class ItemSeparator {
+          public:
+            explicit ItemSeparator(Printer& printer) : printer_(printer) {}
+
+            // Call before each item.
+            void operator()() {
+                if (!first_) {
+                    printer_.text(",");
+                    printer_.breakable(" ");
+                }
+                first_ = false;
             }
-            if (std::isinf(value)) {
-                std::string inf = "std::numeric_limits<" + cpp_type_name<T>() +
-                                  ">::infinity()";
-                return value < 0 ? "-" + inf : inf;
+
+          private:
+            Printer& printer_;
+            bool first_ = true;
+        };
+
+        // Prints `open`, the items `body` prints, and `close`: on one line
+        // when they fit, else with one item per line, indented four columns,
+        // and `close` on a line of its own.
+        template <typename F>
+        void print_block(Printer& printer, const std::string& open,
+                         const std::string& close, F&& body) {
+            constexpr int64_t indent = 4;
+            printer.begin_group(static_cast<uint64_t>(indent), open);
+            printer.breakable("");
+            ItemSeparator separator(printer);
+            body(separator);
+            printer.shift_indent(-indent);
+            printer.breakable("");
+            printer.shift_indent(indent);
+            printer.end_group(close);
+        }
+
+        template <typename Items>
+        void print_sequence(Printer& printer, const std::string& open,
+                            const Items& items) {
+            print_block(printer, open, "}",
+                        [&printer, &items](ItemSeparator& separator) {
+                            for (const auto& item : items) {
+                                separator();
+                                print_value(printer, item);
+                            }
+                        });
+        }
+
+        template <typename Tuple>
+        void print_tuple(Printer& printer, const std::string& open,
+                         const Tuple& value) {
+            print_block(printer, open, "}",
+                        [&printer, &value](ItemSeparator& separator) {
+                            std::apply(
+                                [&](const auto&... elems) {
+                                    ((separator(), print_value(printer, elems)),
+                                     ...);
+                                },
+                                value);
+                        });
+        }
+
+        // Decimal digits of an integer of any width.
+        template <typename T> std::string integer_digits(T value) {
+            using U = std::make_unsigned_t<T>;
+            auto magnitude = static_cast<U>(value);
+            bool negative = false;
+            if constexpr (std::is_signed_v<T>) {
+                negative = value < 0;
+                if (negative) {
+                    magnitude = static_cast<U>(U{0} - magnitude);
+                }
             }
-            char buf[64];
-            constexpr int digits = std::numeric_limits<T>::max_digits10;
-            if constexpr (std::is_same_v<T, long double>) {
-                std::snprintf(buf, sizeof(buf), "%.*Lg", digits, value);
+            std::string reversed;
+            do {
+                reversed.push_back(static_cast<char>('0' + magnitude % 10));
+                magnitude /= 10;
+            } while (magnitude != 0);
+            if (negative) {
+                reversed.push_back('-');
+            }
+            return std::string(reversed.rbegin(), reversed.rend());
+        }
+
+        // The text of a value with no inner structure.
+        template <typename T> std::string scalar_text(const T& value) {
+            if constexpr (std::is_same_v<T, bool>) {
+                return value ? "true" : "false";
+            } else if constexpr (std::is_same_v<T, char>) {
+                std::string out = "'";
+                append_escaped(out, static_cast<unsigned char>(value),
+                               /*in_string=*/false);
+                out += "'";
+                return out;
+            } else if constexpr (std::is_same_v<T, signed char> ||
+                                 std::is_same_v<T, unsigned char>) {
+                return "static_cast<" + cpp_type_name<T>() + ">(" +
+                       std::to_string(static_cast<int>(value)) + ")";
+            } else if constexpr (std::is_same_v<T, int>) {
+                return std::to_string(value);
+            } else if constexpr (std::is_same_v<T, unsigned int>) {
+                return std::to_string(value) + "u";
+            } else if constexpr (std::is_same_v<T, long>) {
+                return std::to_string(value) + "l";
+            } else if constexpr (std::is_same_v<T, unsigned long>) {
+                return std::to_string(value) + "ul";
+            } else if constexpr (std::is_same_v<T, long long>) {
+                return std::to_string(value) + "ll";
+            } else if constexpr (std::is_same_v<T, unsigned long long>) {
+                return std::to_string(value) + "ull";
+            } else if constexpr (std::is_integral_v<T>) {
+                // Integral types with no literal suffix of their own.
+                return "static_cast<" + cpp_type_name<T>() + ">(" +
+                       integer_digits(value) + ")";
+            } else if constexpr (std::is_enum_v<T>) {
+                using underlying = std::underlying_type_t<T>;
+                return "static_cast<" + cpp_type_name<T>() + ">(" +
+                       scalar_text(static_cast<underlying>(value)) + ")";
+            } else if constexpr (std::is_floating_point_v<T>) {
+                if (std::isnan(value)) {
+                    return "std::numeric_limits<" + cpp_type_name<T>() +
+                           ">::quiet_NaN()";
+                }
+                if (std::isinf(value)) {
+                    std::string inf = "std::numeric_limits<" +
+                                      cpp_type_name<T>() + ">::infinity()";
+                    return value < 0 ? "-" + inf : inf;
+                }
+                char buf[64];
+                constexpr int digits = std::numeric_limits<T>::max_digits10;
+                if constexpr (std::is_same_v<T, long double>) {
+                    std::snprintf(buf, sizeof(buf), "%.*Lg", digits, value);
+                } else {
+                    std::snprintf(buf, sizeof(buf), "%.*g", digits,
+                                  static_cast<double>(value));
+                }
+                std::string out = buf;
+                // keep integral-valued float rendering as float since %g
+                // drops decimal when it isn't needed.
+                if (out.find('.') == std::string::npos &&
+                    out.find('e') == std::string::npos &&
+                    out.find('E') == std::string::npos) {
+                    out += ".0";
+                }
+                if constexpr (std::is_same_v<T, float>) {
+                    out += "f";
+                } else if constexpr (std::is_same_v<T, long double>) {
+                    out += "L";
+                }
+                return out;
+            } else if constexpr (std::is_same_v<T, std::string>) {
+                bool has_nul = value.find('\0') != std::string::npos;
+                std::string out = "std::string(\"";
+                for (char c : value) {
+                    append_escaped(out, static_cast<unsigned char>(c),
+                                   /*in_string=*/true);
+                }
+                out += "\"";
+                if (has_nul) {
+                    // The pointer constructor would stop at the first NUL.
+                    out += ", " + std::to_string(value.size());
+                }
+                out += ")";
+                return out;
             } else {
-                std::snprintf(buf, sizeof(buf), "%.*g", digits,
-                              static_cast<double>(value));
+                static_assert(std::is_same_v<T, std::monostate>);
+                return "std::monostate{}";
             }
-            std::string out = buf;
-            // keep integral-valued float rendering as float since %g drops
-            // decimal when it isn't needed.
-            if (out.find('.') == std::string::npos &&
-                out.find('e') == std::string::npos &&
-                out.find('E') == std::string::npos) {
-                out += ".0";
-            }
-            if constexpr (std::is_same_v<T, float>) {
-                out += "f";
-            } else if constexpr (std::is_same_v<T, long double>) {
-                out += "L";
-            }
-            return out;
-        } else if constexpr (std::is_same_v<T, std::string>) {
-            bool has_nul = value.find('\0') != std::string::npos;
-            std::string out = "std::string(\"";
-            for (char c : value) {
-                repr_detail::append_escaped(out, static_cast<unsigned char>(c),
-                                            /*in_string=*/true);
-            }
-            out += "\"";
-            if (has_nul) {
-                // The pointer constructor would stop at the first NUL.
-                out += ", " + std::to_string(value.size());
-            }
-            out += ")";
-            return out;
-        } else if constexpr (std::is_same_v<T, std::monostate>) {
-            return "std::monostate{}";
-        } else if constexpr (repr_detail::is_pair<T>::value) {
-            return cpp_type_name<T>() + "{" + repr(value.first) + ", " +
-                   repr(value.second) + "}";
-        } else if constexpr (repr_detail::is_tuple<T>::value) {
-            std::string out = cpp_type_name<T>() + "{";
-            std::apply(
-                [&out](const auto&... elems) {
-                    std::size_t i = 0;
-                    ((out +=
-                      repr(elems) + (++i < sizeof...(elems) ? ", " : "")),
-                     ...);
-                },
-                value);
-            out += "}";
-            return out;
+        }
+
+        template <typename T>
+        inline constexpr bool is_scalar_v =
+            std::is_arithmetic_v<T> || std::is_enum_v<T> ||
+            std::is_same_v<T, std::string> || std::is_same_v<T, std::monostate>;
+
+    } // namespace repr_detail
+
+    // Prints a value as one C++ expression, or as a pseudo-expression for
+    // types with no renderable form. A compound value gives the printer its
+    // structure, so the engine can lay it out across lines.
+    template <typename T> void print_value(Printer& printer, const T& value) {
+        using repr_detail::ItemSeparator;
+        if constexpr (repr_detail::is_scalar_v<T>) {
+            printer.text(repr_detail::scalar_text(value));
+        } else if constexpr (repr_detail::is_pair<T>::value ||
+                             repr_detail::is_tuple<T>::value) {
+            repr_detail::print_tuple(printer, cpp_type_name<T>() + "{", value);
         } else if constexpr (repr_detail::is_optional<T>::value) {
             std::string name = cpp_type_name<T>();
-            return value.has_value() ? name + "{" + repr(*value) + "}"
-                                     : name + "{}";
+            if (!value.has_value()) {
+                printer.text(name + "{}");
+                return;
+            }
+            repr_detail::print_block(printer, name + "{", "}",
+                                     [&printer, &value](ItemSeparator&) {
+                                         print_value(printer, *value);
+                                     });
         } else if constexpr (repr_detail::is_variant<T>::value) {
             // in_place_index keeps variants with repeated alternative types
             // unambiguous.
-            std::string out = cpp_type_name<T>() + "{std::in_place_index<" +
-                              std::to_string(value.index()) + ">, ";
-            std::visit([&out](const auto& v) { out += repr(v); }, value);
-            out += "}";
-            return out;
+            repr_detail::print_block(
+                printer, cpp_type_name<T>() + "{", "}",
+                [&printer, &value](ItemSeparator& separator) {
+                    separator();
+                    printer.text("std::in_place_index<" +
+                                 std::to_string(value.index()) + ">");
+                    separator();
+                    std::visit(
+                        [&printer](const auto& v) { print_value(printer, v); },
+                        value);
+                });
         } else if constexpr (repr_detail::is_vector<T>::value ||
                              repr_detail::is_set<T>::value ||
                              repr_detail::is_std_array<T>::value) {
-            std::string out = cpp_type_name<T>() + "{";
-            bool first = true;
-            for (const auto& element : value) {
-                if (!first) {
-                    out += ", ";
-                }
-                first = false;
-                out += repr(element);
-            }
-            out += "}";
-            return out;
+            repr_detail::print_sequence(printer, cpp_type_name<T>() + "{",
+                                        value);
         } else if constexpr (repr_detail::is_map<T>::value) {
-            std::string out = cpp_type_name<T>() + "{";
-            bool first = true;
-            for (const auto& entry : value) {
-                if (!first) {
-                    out += ", ";
-                }
-                first = false;
-                out +=
-                    "{" + repr(entry.first) + ", " + repr(entry.second) + "}";
-            }
-            out += "}";
-            return out;
+            repr_detail::print_block(
+                printer, cpp_type_name<T>() + "{", "}",
+                [&printer, &value](ItemSeparator& separator) {
+                    for (const auto& entry : value) {
+                        separator();
+                        repr_detail::print_block(
+                            printer, "{", "}",
+                            [&printer, &entry](ItemSeparator& inner) {
+                                inner();
+                                print_value(printer, entry.first);
+                                inner();
+                                print_value(printer, entry.second);
+                            });
+                    }
+                });
         }
 #if HEGEL_HAS_REFLECTION
         else if constexpr (repr_detail::is_reflectable<T>::value) {
-            std::string out = cpp_type_name<T>() + "{";
-            auto view = rfl::to_view(const_cast<T&>(value));
-            bool first = true;
-            view.apply([&out, &first](const auto& field) {
-                if (!first) {
-                    out += ", ";
-                }
-                first = false;
-                out += ".";
-                out += field.name();
-                out += " = ";
-                out += repr(*field.value());
-            });
-            out += "}";
-            return out;
+            repr_detail::print_block(
+                printer, cpp_type_name<T>() + "{", "}",
+                [&printer, &value](ItemSeparator& separator) {
+                    auto view = rfl::to_view(const_cast<T&>(value));
+                    view.apply([&printer, &separator](const auto& field) {
+                        separator();
+                        printer.text("." + std::string(field.name()) + " = ");
+                        print_value(printer, *field.value());
+                    });
+                });
         }
 #endif
         else if constexpr (repr_detail::has_ostream_operator<T>::value) {
             std::ostringstream os;
             os << value;
-            return os.str();
+            printer.reflow(os.str());
         } else {
-            return "<unprintable " + std::string(compiler_type_name<T>()) + ">";
+            printer.text("<unprintable " +
+                         std::string(compiler_type_name<T>()) + ">");
         }
+    }
+
+    // Renders a value as one C++ expression laid out within `width`
+    // columns.
+    template <typename T> std::string render(const T& value, uint64_t width) {
+        Document document(width);
+        Printer printer = document.printer();
+        print_value(printer, value);
+        return document.finish();
+    }
+
+    // Renders a value as one C++ expression on a single line.
+    template <typename T> std::string repr(const T& value) {
+        return render(value, unbounded_width);
     }
 
 } // namespace hegel::internal

@@ -10,7 +10,7 @@
 * [Documentation](https://hegel.dev/cpp)
 * [Website](https://hegel.dev)
 
-Hegel is a property-based testing library for C++. Hegel is based on [Hypothesis](https://github.com/hypothesisworks/hypothesis), using the [Hegel protocol](https://hegel.dev/).
+Hegel is a property-based testing library for C++. Hegel is based on [Hypothesis](https://github.com/hypothesisworks/hypothesis), using [libhegel](https://github.com/hegeldev/hegel/tree/main/libhegel), Hegel's native engine.
 
 ## Installation
 
@@ -23,7 +23,7 @@ include(FetchContent)
 FetchContent_Declare(
     hegel
     GIT_REPOSITORY https://github.com/hegeldev/hegel.git
-    GIT_TAG frontends/cpp/0.13.1
+    GIT_TAG frontends/cpp/0.13.2
     SOURCE_SUBDIR frontends/cpp
 )
 FetchContent_MakeAvailable(hegel)
@@ -94,7 +94,8 @@ to find the failure, and shows the minimal example.
 
 Each draw is replayed and printed as a C++ declaration. `tc.draw("vec1", gen)`
 names the draw with `vec1` as above. An unnamed `tc.draw(gen)` prints
-(`auto draw_1 = ...;`) instead.
+(`auto draw_1 = ...;`) instead. A value too wide for one line is broken
+across lines, one element per line.
 
 The last line replays this exact failure. Put it above the test to rerun the
 counterexample instead of generating new cases:

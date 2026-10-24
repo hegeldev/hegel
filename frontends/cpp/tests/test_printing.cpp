@@ -109,6 +109,17 @@ namespace {
     void throw_boom(hegel::TestCase&) { throw std::runtime_error("boom"); }
 } // namespace
 
+// A drawn value too wide for one line breaks at its structure, and every
+// line of it keeps the report's indentation.
+TEST(FailureReport, WideValueBreaksAcrossLines) {
+    std::string out = capture_failure_report([](hegel::TestCase& tc) {
+        (void)tc.draw(gs::vectors(gs::just(std::string("a wide value")),
+                                  {.min_size = 3, .max_size = 3}));
+        throw std::runtime_error("boom");
+    });
+    Approvals::verify(out, scrub_report());
+}
+
 // Fails on every case; the minimal counterexample is 0.
 TEST(FailureReport, SingleFailure) {
     std::string out = capture_failure_report([](hegel::TestCase& tc) {
@@ -162,7 +173,7 @@ TEST(FailureReport, LocationNamesTheTest) {
 TEST(FailureReport, MacroDefinedTestGetsAnnotationRerunHint) {
     std::string out = capture_report([] {
         hegel::internal::test_from_macro(throw_boom, kLocation,
-                                         report_settings(), {});
+                                         report_settings(), {}, {});
     });
     Approvals::verify(out, scrub_blob());
 }

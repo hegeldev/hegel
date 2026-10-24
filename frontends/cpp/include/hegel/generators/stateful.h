@@ -384,6 +384,52 @@ namespace hegel::stateful {
     };
 
     /// @cond INTERNAL
+    namespace detail {
+
+        // A filtered consuming draw from a pool whose values `values` holds
+        // by variable id. Each attempt consumes a variable the engine
+        // chooses, in a span that is discarded when `predicate` rejects its
+        // value. A rejected variable stays consumed until the attempts are
+        // over, so no later attempt draws it again, and is then put back.
+        // Only the accepted value leaves the pool.
+        template <typename T>
+        T
+        draw_filtered_consumed(const TestCase& tc,
+                               hegel::internal::PoolHandle& pool,
+                               std::map<int64_t, T>& values, uint64_t label,
+                               const std::function<bool(const T&)>& predicate) {
+            namespace hi = hegel::internal;
+            uint64_t attempt = hi::label(hi::LabelName::FilterAttempt);
+            std::vector<int64_t> rejected;
+            std::optional<T> accepted;
+            for (int i = 0; i < hi::filter_attempts && !accepted; ++i) {
+                hi::start_span(tc, attempt);
+                hi::start_span(tc, label);
+                int64_t variable = pool.draw_variable(tc, true);
+                hi::stop_span(tc);
+                T& value = values.at(variable);
+                if (predicate(value)) {
+                    hi::stop_span(tc);
+                    accepted = std::move(value);
+                    values.erase(variable);
+                } else {
+                    hi::stop_span(tc, true);
+                    rejected.push_back(variable);
+                }
+            }
+            for (int64_t variable : rejected) {
+                pool.restore(tc, variable);
+            }
+            if (!accepted) {
+                tc.reject();
+            }
+            return std::move(*accepted);
+        }
+
+    } // namespace detail
+    /// @endcond
+
+    /// @cond INTERNAL
     // Concrete IGenerator for variables.
     template <typename T> class VariablesGenerator : public IGenerator<T> {
       public:
@@ -409,6 +455,22 @@ namespace hegel::stateful {
             return it->second;
         }
 
+        uint64_t label() const override {
+            return hegel::internal::label(
+                consume_ ? hegel::internal::LabelName::PoolValuesConsumed
+                         : hegel::internal::LabelName::PoolValuesReusable);
+        }
+
+        T do_draw_filtered(
+            const TestCase& tc,
+            const std::function<bool(const T&)>& predicate) const override {
+            if (!consume_) {
+                return IGenerator<T>::do_draw_filtered(tc, predicate);
+            }
+            return detail::draw_filtered_consumed(tc, p_.pool_handle_, p_.pool_,
+                                                  label(), predicate);
+        }
+
       private:
         Pool<T>& p_;
         bool consume_;
@@ -420,6 +482,9 @@ namespace hegel::stateful {
 
     /**
      * @brief Returns a value from the pool and removes it.
+     *
+     * A filter() on the returned generator removes only the value it
+     * returns: it puts back every value its predicate rejected.
      *
      * @code{.cpp}
         HEGEL_TEST(pool_round_trip)(hegel::TestCase& tc) {
@@ -572,6 +637,23 @@ namespace hegel::stateful {
             }
         }
 
+        uint64_t label() const override {
+            return hegel::internal::label(
+                consume_ ? hegel::internal::LabelName::PoolValuesConsumed
+                         : hegel::internal::LabelName::PoolValuesReusable);
+        }
+
+        T do_draw_filtered(
+            const TestCase& tc,
+            const std::function<bool(const T&)>& predicate) const override {
+            if (!consume_) {
+                return IGenerator<T>::do_draw_filtered(tc, predicate);
+            }
+            std::lock_guard<std::mutex> lock(pool_.mutex_);
+            return detail::draw_filtered_consumed(
+                tc, pool_.pool_handle_, pool_.values_, label(), predicate);
+        }
+
       private:
         ConcurrentPool<T>& pool_;
         bool consume_;
@@ -581,7 +663,9 @@ namespace hegel::stateful {
     /**
      * @brief Returns a value from a concurrent pool and removes it.
      *
-     * The draw rejects the test case if the pool is empty.
+     * The draw rejects the test case if the pool is empty. A filter() on
+     * the returned generator removes only the value it returns: it puts
+     * back every value its predicate rejected.
      *
      * @tparam T The type of the values in the pool
      * @param pool The pool to draw from
@@ -796,7 +880,7 @@ namespace hegel::stateful {
     template <typename M>
     void print_state(TestCase& tc, const M& machine, const RunParams& params) {
         if (params.print_state) {
-            tc.note("state = " + internal::repr(machine.state));
+            internal::print_line(tc, "state = ", machine.state);
         }
     }
 
@@ -842,7 +926,9 @@ namespace hegel::stateful {
      * On a failing replay, the output shows the concurrency level, each round,
      * the active group, and the rules that each worker applies, but the
      * falsifying test case is not shrunk since the failure may be dependent on
-     * thread scheduling.
+     * thread scheduling. Under each round header, the lines of each worker
+     * appear together, each prefixed with `[worker N +T ms]`, the time since
+     * the test case started.
      *
      * @tparam M The state-machine type, deriving from
      * @ref ConcurrentStateMachine
@@ -913,6 +999,8 @@ namespace hegel::stateful {
             bool stop = false;
             std::size_t num_workers_completed = 0;
             std::vector<Event> events;
+            // The test case each worker draws from in the current round.
+            std::vector<std::optional<TestCase>> cases;
         };
 
         auto classify = [] {
@@ -956,8 +1044,8 @@ namespace hegel::stateful {
                         rules[static_cast<std::size_t>(rule_index)];
                     worker_tc.note("Rule: " + rule.name());
                     try {
-                        internal::NoteIndentScope indent(worker_tc);
-                        rule.function()(worker_tc, machine);
+                        TestCase rule_tc = internal::block(worker_tc, 2);
+                        rule.function()(rule_tc, machine);
                     } catch (const internal::HegelReject&) {
                         machine_handle.rule_rejected(
                             worker_tc, static_cast<int64_t>(worker));
@@ -974,44 +1062,40 @@ namespace hegel::stateful {
             static_cast<std::size_t>(machine_handle.concurrency());
         RoundState state;
         state.events.resize(worker_count);
-        std::vector<TestCase> worker_cases;
-        worker_cases.reserve(worker_count);
-        for (std::size_t worker = 0; worker < worker_count; ++worker) {
-            worker_cases.push_back(tc.clone());
-            internal::set_concurrent_worker(worker_cases.back(), worker);
-        }
+        state.cases.resize(worker_count);
         std::vector<std::thread> workers;
         workers.reserve(worker_count);
         for (std::size_t worker = 0; worker < worker_count; ++worker) {
-            workers.emplace_back(
-                [&, worker,
-                 worker_tc = std::move(worker_cases[worker])]() mutable {
-                    uint64_t observed_round_number = 0;
-                    while (true) {
-                        {
-                            std::unique_lock<std::mutex> lock(state.mutex);
-                            state.start.wait(lock, [&] {
-                                return state.stop ||
-                                       state.round_number !=
-                                           observed_round_number; // main thread
-                                                                  // started a
-                                                                  // new round
-                            });
-                            if (state.stop) {
-                                return;
-                            }
-                            observed_round_number = state.round_number;
+            workers.emplace_back([&, worker]() {
+                uint64_t observed_round_number = 0;
+                while (true) {
+                    std::optional<TestCase> worker_tc;
+                    {
+                        std::unique_lock<std::mutex> lock(state.mutex);
+                        state.start.wait(lock, [&] {
+                            return state.stop ||
+                                   state.round_number !=
+                                       observed_round_number; // main thread
+                                                              // started a
+                                                              // new round
+                        });
+                        if (state.stop) {
+                            return;
                         }
-
-                        {
-                            Event event = run_round(worker, worker_tc);
-                            std::lock_guard<std::mutex> lock(state.mutex);
-                            state.events[worker] = std::move(event);
-                            ++state.num_workers_completed;
-                        }
-                        state.done.notify_one();
+                        observed_round_number = state.round_number;
+                        worker_tc = std::move(state.cases[worker]);
+                        state.cases[worker].reset();
                     }
-                });
+
+                    {
+                        Event event = run_round(worker, *worker_tc);
+                        std::lock_guard<std::mutex> lock(state.mutex);
+                        state.events[worker] = std::move(event);
+                        ++state.num_workers_completed;
+                    }
+                    state.done.notify_one();
+                }
+            });
         }
 
         auto stop_workers = [&] {
@@ -1041,12 +1125,21 @@ namespace hegel::stateful {
                 }
                 {
                     std::lock_guard<std::mutex> lock(state.mutex);
-                    state.num_workers_completed = 0;
-                    ++state.round_number;
                     tc.note("---------------- Round " +
-                            std::to_string(state.round_number) + ": group \"" +
+                            std::to_string(state.round_number + 1) +
+                            ": group \"" +
                             group_names[static_cast<std::size_t>(group)] +
                             "\" ----------------");
+                    // Each worker prints into a clone made after the round's
+                    // header, so its lines appear under that header.
+                    for (std::size_t worker = 0; worker < worker_count;
+                         ++worker) {
+                        state.cases[worker] = tc.clone();
+                        internal::set_concurrent_worker(*state.cases[worker],
+                                                        worker);
+                    }
+                    state.num_workers_completed = 0;
+                    ++state.round_number;
                 }
                 state.start.notify_all();
                 {
@@ -1182,7 +1275,8 @@ namespace hegel::stateful {
                         "rule index. Please report this as a bug.");
                 }
                 // GCOVR_EXCL_STOP
-                internal::start_span(tc, internal::SpanLabel::StatefulRule);
+                internal::start_span(
+                    tc, internal::label(internal::LabelName::StatefulRule));
                 steps_run++;
                 const Rule<M>& rule = rules[static_cast<size_t>(next_rule_idx)];
                 tc.note("Step " + std::to_string(steps_run) + ": " +
@@ -1191,8 +1285,8 @@ namespace hegel::stateful {
                 try {
                     // nest the draws the step makes under its "Step N" header.
                     {
-                        internal::NoteIndentScope indent(tc);
-                        rule.step()(tc, machine);
+                        TestCase step_tc = internal::block(tc, 2);
+                        rule.step()(step_tc, machine);
                     }
                     print_state(tc, machine, params);
                     internal::stop_span(tc);

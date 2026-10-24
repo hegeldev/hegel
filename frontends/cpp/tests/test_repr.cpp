@@ -14,6 +14,7 @@
 #include <optional>
 #include <ostream>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -495,4 +496,71 @@ TEST(ReprProperty, VectorRoundTrip) {
         }
         ASSERT_EQ(parsed, v);
     });
+}
+
+// ---------------------------------------------------------------------------
+// Layout: the engine breaks a value that does not fit its width at the
+// structure the printer gives it.
+// ---------------------------------------------------------------------------
+
+using hegel::internal::render;
+
+TEST(ReprLayout, FitsOnOneLine) {
+    EXPECT_EQ(render(std::vector<int>{1, 2, 3}, 79),
+              "std::vector<int>{1, 2, 3}");
+}
+
+TEST(ReprLayout, SequenceBreaksOneItemPerLine) {
+    EXPECT_EQ(render(std::vector<int>{100000, 200000, 300000}, 24),
+              "std::vector<int>{\n"
+              "    100000,\n"
+              "    200000,\n"
+              "    300000\n"
+              "}");
+}
+
+TEST(ReprLayout, OuterGroupBreaksBeforeInner) {
+    std::map<int, std::string> m{{1, "a"}, {2, "b"}};
+    EXPECT_EQ(render(m, 30), "std::map<int, std::string>{\n"
+                             "    {1, std::string(\"a\")},\n"
+                             "    {2, std::string(\"b\")}\n"
+                             "}");
+}
+
+TEST(ReprLayout, EveryCompoundValueBreaks) {
+    EXPECT_EQ(render(std::make_pair(123456, 654321), 20),
+              "std::pair<int, int>{\n"
+              "    123456,\n"
+              "    654321\n"
+              "}");
+    EXPECT_EQ(render(std::optional<int>(123456), 20), "std::optional<int>{\n"
+                                                      "    123456\n"
+                                                      "}");
+    EXPECT_EQ(render(std::variant<int, bool>(123456), 20),
+              "std::variant<int, bool>{\n"
+              "    std::in_place_index<0>,\n"
+              "    123456\n"
+              "}");
+}
+
+TEST(ReprLayout, StreamOperatorTextIsReflowed) {
+    EXPECT_EQ(render(Wrapped(7), 79), "Wrapped(7)");
+}
+
+TEST(ReprLayout, WritesAfterTheDocumentIsReadAreIgnored) {
+    hegel::internal::Document document(79);
+    hegel::internal::Printer printer = document.printer();
+    printer.text("kept");
+    EXPECT_EQ(document.finish(), "kept");
+    printer.text("dropped");
+    EXPECT_EQ(document.finish(), "kept");
+}
+
+TEST(ReprLayout, TextWithANewlineIsAnError) {
+    hegel::internal::Document document(79);
+    EXPECT_THROW(document.printer().text("a\nb"), std::runtime_error);
+}
+
+TEST(ReprLayout, ZeroWidthIsAnError) {
+    EXPECT_THROW(hegel::internal::Document(0), std::runtime_error);
 }

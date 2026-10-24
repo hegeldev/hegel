@@ -149,8 +149,8 @@ TEST(FlakyReporting, FlakyReplay) {
             {.test_cases = 1,
              .nondeterminism_strictness = NondeterminismStrictness::Error,
              .suppress_health_check = {HealthCheck::LargeInitialTestCase}});
-        FAIL() << "Expected std::runtime_error";
-    } catch (const std::runtime_error& e) {
+        FAIL() << "Expected hegel::Flaky";
+    } catch (const hegel::Flaky& e) {
         EXPECT_NE(
             std::string(e.what()).find("Your test produced different outcomes"),
             std::string::npos)
@@ -170,8 +170,8 @@ TEST(FlakyReporting, FlakyGeneration) {
             {.test_cases = 10,
              .nondeterminism_strictness = NondeterminismStrictness::Error,
              .suppress_health_check = {HealthCheck::LargeInitialTestCase}});
-        FAIL() << "Expected std::runtime_error";
-    } catch (const std::runtime_error& e) {
+        FAIL() << "Expected hegel::Flaky";
+    } catch (const hegel::Flaky& e) {
         EXPECT_NE(std::string(e.what()).find(
                       "Your data generation is non-deterministic"),
                   std::string::npos)
@@ -189,6 +189,7 @@ TEST(FlakyReporting, QuietReportsUnconfirmedFailures) {
     int calls = 0;
     testing::internal::CaptureStderr();
     std::string message;
+    size_t failure_count = 0;
     try {
         hegel::test(
             [&](hegel::TestCase& tc) {
@@ -207,12 +208,14 @@ TEST(FlakyReporting, QuietReportsUnconfirmedFailures) {
              .stop_on_first_failure = false,
              .database = Database::disabled(),
              .suppress_health_check = hegel::all_health_checks()});
-    } catch (const std::runtime_error& e) {
+    } catch (const hegel::MultipleFailures& e) {
         message = e.what();
+        failure_count = e.failures().size();
     }
     std::string output = testing::internal::GetCapturedStderr();
     EXPECT_NE(message.find("2 distinct failures"), std::string::npos)
         << message;
+    EXPECT_EQ(failure_count, 2u);
     EXPECT_NE(output.find("note: unconfirmed failure"), std::string::npos)
         << output;
     EXPECT_NE(output.find("Exception: std::runtime_error: first case fails"),
@@ -444,8 +447,8 @@ TEST(Settings, DefaultBackendRuns) {
     EXPECT_EQ(count, 10);
 }
 
-// With Database::unset() the engine falls back to its own default `.hegel`
-// directory. Run inside a temporary working directory so the database
+// With Database::unset() the run keeps the profile's database, which is
+// `.hegel` outside CI. Run inside a temporary working directory so the database
 // artifacts don't leak into the build tree.
 TEST(Settings, UnsetDatabaseUsesEngineDefault) {
     namespace fs = std::filesystem;
@@ -485,9 +488,11 @@ TEST(FailureBlobs, BlobDoesNotReproduceFailure) {
             },
             {}, {"AAEAAAAACgEAAAAy"});
         FAIL();
-    } catch (const std::runtime_error& e) {
-        EXPECT_EQ(std::string(e.what()),
-                  "The failure blob did not reproduce an error");
+    } catch (const hegel::DidNotReproduce& e) {
+        EXPECT_NE(std::string(e.what()).find(
+                      "The failure blob did not reproduce a failure"),
+                  std::string::npos)
+            << e.what();
     }
 }
 
@@ -502,15 +507,14 @@ TEST(FailureBlobs, InvalidBlob) {
             },
             {}, {"A"});
         FAIL();
-    } catch (const std::runtime_error& e) {
-        EXPECT_EQ(std::string(e.what()),
-                  "invalid argument: hegel_test_case_from_blob: the supplied "
-                  "failure blob could not be decoded. It may be corrupt or "
-                  "from an incompatible Hegel version.");
+    } catch (const std::invalid_argument& e) {
+        EXPECT_NE(std::string(e.what()).find("could not be decoded"),
+                  std::string::npos)
+            << e.what();
     }
 }
 
-HEGEL_REPRODUCE_FAILURE(obvious_fail, "AAEAAAAACgEAAAAA", "invalid")
+HEGEL_REPRODUCE_FAILURE(obvious_fail, "AAEAAAAACgEAAAAy", "AAEAAAAACgEAAAAA")
 HEGEL_TEST(obvious_fail,
            {.phases = {hegel::Phase::Explicit}})(hegel::TestCase& tc) {
     int n = tc.draw(gs::integers<int>());
@@ -519,6 +523,8 @@ HEGEL_TEST(obvious_fail,
     }
 }
 
+// The first blob (n = 50) passes; the second (n = 0) fails. Every blob is
+// replayed, so the failure is found.
 TEST(FailureBlobs, BlobReproduceFailure) {
     try {
         obvious_fail();
@@ -528,77 +534,268 @@ TEST(FailureBlobs, BlobReproduceFailure) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Enum / environment string helpers
-// ---------------------------------------------------------------------------
-
-TEST(Settings, VerbosityToString) {
-    using hegel::Verbosity;
-    EXPECT_STREQ(hegel::verbosity_to_string(Verbosity::Quiet), "quiet");
-    EXPECT_STREQ(hegel::verbosity_to_string(Verbosity::Verbose), "verbose");
-    EXPECT_STREQ(hegel::verbosity_to_string(Verbosity::Debug), "debug");
-    EXPECT_STREQ(hegel::verbosity_to_string(Verbosity::Normal), "normal");
+TEST(FailureBlobs, EveryReproducedBlobIsReported) {
+    try {
+        hegel::test(
+            [&](hegel::TestCase& tc) {
+                int n = tc.draw(gs::integers<int>());
+                if (n < 50) {
+                    throw std::runtime_error("fail");
+                }
+            },
+            {.verbosity = hegel::Verbosity::Quiet},
+            {"AAEAAAAACgEAAAAA", "AAEAAAAACgEAAAAA"});
+        FAIL();
+    } catch (const hegel::MultipleFailures& e) {
+        EXPECT_EQ(e.failures().size(), 2u);
+    }
 }
 
-TEST(Settings, HealthCheckToString) {
-    using hegel::HealthCheck;
-    EXPECT_STREQ(hegel::health_check_to_string(HealthCheck::FilterTooMuch),
-                 "filter_too_much");
-    EXPECT_STREQ(hegel::health_check_to_string(HealthCheck::TooSlow),
-                 "too_slow");
-    EXPECT_STREQ(hegel::health_check_to_string(HealthCheck::TestCasesTooLarge),
-                 "test_cases_too_large");
-    EXPECT_STREQ(
-        hegel::health_check_to_string(HealthCheck::LargeInitialTestCase),
-        "large_initial_test_case");
-    // An out-of-range value falls through the switch to the empty string.
-    EXPECT_STREQ(hegel::health_check_to_string(static_cast<HealthCheck>(999)),
-                 "");
+// ---------------------------------------------------------------------------
+// Run errors
+// ---------------------------------------------------------------------------
+
+TEST(RunErrors, FilterTooMuchIsAFailedHealthCheck) {
+    try {
+        hegel::test(
+            [](hegel::TestCase& tc) {
+                int n = tc.draw(
+                    gs::integers<int>({.min_value = 0, .max_value = 100}));
+                tc.assume(n == 1000);
+            },
+            {.database = Database::disabled(), .suppress_health_check = {}});
+        FAIL() << "Expected hegel::FailedHealthCheck";
+    } catch (const hegel::FailedHealthCheck& e) {
+        EXPECT_EQ(e.health_check(), HealthCheck::FilterTooMuch);
+    }
 }
 
-// in_ci() scans known CI environment variables. Drive it with a controlled
-// environment so the result doesn't depend on where the suite runs.
-TEST(Settings, InCiDetection) {
-    static const char* kCiVars[] = {"CI",
-                                    "TF_BUILD",
-                                    "BUILDKITE",
-                                    "CIRCLECI",
-                                    "CIRRUS_CI",
-                                    "CODEBUILD_BUILD_ID",
-                                    "GITHUB_ACTIONS",
-                                    "GITLAB_CI",
-                                    "HEROKU_TEST_RUN_ID",
-                                    "TEAMCITY_VERSION"};
+TEST(RunErrors, NoValidTestCaseIsUnsatisfiable) {
+    EXPECT_THROW(
+        hegel::test([](hegel::TestCase& tc) { tc.reject(); },
+                    {.database = Database::disabled(),
+                     .suppress_health_check = hegel::all_health_checks()}),
+        hegel::Unsatisfiable);
+}
 
-    // Save and clear the ambient CI variables so the test is deterministic.
-    std::map<std::string, std::string> saved;
-    for (const char* name : kCiVars) {
-        if (const char* v = std::getenv(name)) {
-            saved.emplace(name, v);
+// ---------------------------------------------------------------------------
+// Settings profiles
+// ---------------------------------------------------------------------------
+
+namespace {
+    int count_cases(const Settings& settings) {
+        int count = 0;
+        hegel::test(
+            [&count](hegel::TestCase& tc) {
+                tc.draw(gs::integers<int>());
+                count++;
+            },
+            settings);
+        return count;
+    }
+} // namespace
+
+TEST(Profiles, UnsetFieldsKeepTheProfile) {
+    hegel::register_profile("cpp_unset_fields",
+                            {.test_cases = 20,
+                             .database = Database::disabled(),
+                             .phases = {hegel::Phase::Generate}});
+    EXPECT_EQ(count_cases({.profile = "cpp_unset_fields"}), 20);
+    EXPECT_EQ(count_cases({.test_cases = 7, .profile = "cpp_unset_fields"}), 7);
+}
+
+TEST(Profiles, ProfilePhasesAreKept) {
+    hegel::register_profile("cpp_no_phases",
+                            {.database = Database::disabled(), .phases = {}});
+    EXPECT_EQ(count_cases({.profile = "cpp_no_phases"}), 0);
+    EXPECT_EQ(count_cases({.phases = {hegel::Phase::Generate},
+                           .profile = "cpp_no_phases"}),
+              100);
+}
+
+TEST(Profiles, ProfileVerbosityAndPrintBlobAreKept) {
+    auto failing = [](hegel::TestCase& tc) {
+        int n = tc.draw(gs::integers<int>());
+        if (n > 10) {
+            throw std::runtime_error("too big");
         }
-        unsetenv(name);
+    };
+    hegel::register_profile("cpp_quiet", {.verbosity = hegel::Verbosity::Quiet,
+                                          .database = Database::disabled()});
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(failing, {.profile = "cpp_quiet"}),
+                 std::runtime_error);
+    EXPECT_EQ(testing::internal::GetCapturedStderr(), "");
+
+    hegel::register_profile(
+        "cpp_no_blob", {.print_blob = false, .database = Database::disabled()});
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(failing, {.profile = "cpp_no_blob"}),
+                 std::runtime_error);
+    std::string output = testing::internal::GetCapturedStderr();
+    EXPECT_NE(output.find("Exception: std::runtime_error"), std::string::npos)
+        << output;
+    EXPECT_EQ(output.find("rerun with:"), std::string::npos) << output;
+}
+
+TEST(Profiles, ProfileHealthChecksCanBeCleared) {
+    hegel::register_profile(
+        "cpp_suppress_all",
+        {.seed = 1,
+         .database = Database::disabled(),
+         .suppress_health_check = hegel::all_health_checks()});
+    auto filtering = [](hegel::TestCase& tc) {
+        int n = tc.draw(gs::integers<int>({.min_value = 0, .max_value = 100}));
+        tc.assume(n < 5);
+    };
+    EXPECT_NO_THROW(hegel::test(filtering, {.profile = "cpp_suppress_all"}));
+    EXPECT_THROW(hegel::test(filtering, {.suppress_health_check = {},
+                                         .profile = "cpp_suppress_all"}),
+                 hegel::FailedHealthCheck);
+}
+
+TEST(Profiles, DefaultProfileCanBeSet) {
+    hegel::register_profile("cpp_default_twelve",
+                            {.test_cases = 12,
+                             .database = Database::disabled(),
+                             .phases = {hegel::Phase::Generate}});
+    hegel::set_default_profile("cpp_default_twelve");
+    int count = count_cases({});
+    hegel::set_default_profile("");
+    EXPECT_EQ(count, 12);
+}
+
+TEST(Profiles, UnknownProfileIsRejected) {
+    EXPECT_THROW(count_cases({.profile = "cpp_no_such_profile"}),
+                 std::invalid_argument);
+}
+
+TEST(Profiles, InvalidNamesAreRejected) {
+    EXPECT_THROW(hegel::register_profile("default", {}), std::invalid_argument);
+    EXPECT_THROW(hegel::register_profile("not a name", {}),
+                 std::invalid_argument);
+    EXPECT_THROW(hegel::set_default_profile("default"), std::invalid_argument);
+}
+
+TEST(Settings, StepCountBelowOneIsRejected) {
+    EXPECT_THROW(count_cases({.stateful_step_count = 0}),
+                 std::invalid_argument);
+    EXPECT_THROW(
+        hegel::register_profile("cpp_bad_steps", {.stateful_step_count = 0}),
+        std::invalid_argument);
+}
+
+TEST(Settings, EngineVersionIsKnown) {
+    EXPECT_FALSE(hegel::engine_version().empty());
+}
+
+TEST(Settings, ShowStatisticsAndUnboundedChoicesRun) {
+    EXPECT_EQ(count_cases(
+                  {.test_cases = 10,
+                   .nondeterminism_strictness = NondeterminismStrictness::Quiet,
+                   .show_statistics = true,
+                   .unbounded_choices = true,
+                   .database = Database::disabled()}),
+              10);
+}
+
+// Database::default_location() uses `.hegel` in the working directory, also
+// where the profile disables the database.
+TEST(Settings, DefaultLocationDatabaseOverridesTheProfile) {
+    namespace fs = std::filesystem;
+
+    fs::path work = fs::temp_directory_path() /
+                    ("hegel_default_db_test_" + std::to_string(::getpid()));
+    fs::remove_all(work);
+    fs::create_directories(work);
+    fs::path prev = fs::current_path();
+    fs::current_path(work);
+
+    try {
+        hegel::test(
+            [](hegel::TestCase& tc) {
+                if (tc.draw(gs::integers<int>()) > 10) {
+                    throw std::runtime_error("too big");
+                }
+            },
+            {.verbosity = hegel::Verbosity::Quiet,
+             .database = Database::default_location(),
+             .profile = "ci"});
+    } catch (const std::runtime_error&) { // NOLINT(bugprone-empty-catch)
     }
+    bool exists = fs::exists(work / ".hegel");
 
-    // Nothing set: not in CI.
-    EXPECT_FALSE(hegel::internal::in_ci());
+    fs::current_path(prev);
+    fs::remove_all(work);
+    EXPECT_TRUE(exists);
+}
 
-    // A presence-only variable (expected == nullptr) satisfies the check.
-    setenv("CI", "anything", 1);
-    EXPECT_TRUE(hegel::internal::in_ci());
-    unsetenv("CI");
+// ---------------------------------------------------------------------------
+// Database keys
+// ---------------------------------------------------------------------------
 
-    // A variable with an expected value matches only when it is equal.
-    setenv("GITHUB_ACTIONS", "true", 1);
-    EXPECT_TRUE(hegel::internal::in_ci());
-    setenv("GITHUB_ACTIONS", "false", 1);
-    EXPECT_FALSE(hegel::internal::in_ci());
-    unsetenv("GITHUB_ACTIONS");
-
-    // Restore the original environment.
-    for (const char* name : kCiVars) {
-        unsetenv(name);
+namespace {
+    std::vector<int32_t> derandomized_draws(const hegel::TestLocation& where) {
+        std::vector<int32_t> seen;
+        hegel::test(
+            [&seen](hegel::TestCase& tc) {
+                seen.push_back(tc.draw(gs::integers<int32_t>()));
+            },
+            where,
+            {.test_cases = 10,
+             .derandomize = true,
+             .database = Database::disabled()});
+        return seen;
     }
-    for (const auto& [name, value] : saved) {
-        setenv(name.c_str(), value.c_str(), 1);
+} // namespace
+
+// A derandomized run seeds from its database key, so the key is derived also
+// where the database is disabled: each test sees its own inputs.
+TEST(Settings, DerivedKeySeedsDerandomizedRuns) {
+    hegel::TestLocation first{"first", "file.cpp", 1};
+    hegel::TestLocation second{"second", "file.cpp", 2};
+    EXPECT_EQ(derandomized_draws(first), derandomized_draws(first));
+    EXPECT_NE(derandomized_draws(first), derandomized_draws(second));
+}
+
+TEST(Settings, LocationWithoutANameRuns) {
+    EXPECT_EQ(derandomized_draws({"", "file.cpp", 1}).size(), 10u);
+}
+
+// HEGEL_TEST and hegel::test() derive the same key, `<file>::<name>`.
+TEST(Settings, MacroKeyMatchesTheDerivedKey) {
+    namespace fs = std::filesystem;
+
+    fs::path db_path = fs::temp_directory_path() /
+                       ("hegel_db_macro_key_" + std::to_string(::getpid()));
+    fs::remove_all(db_path);
+    fs::create_directories(db_path);
+
+    failed_value = std::nullopt;
+    try {
+        check_database({.verbosity = hegel::Verbosity::Quiet,
+                        .database = Database::from_path(db_path.string())});
+    } catch (const std::runtime_error&) { // NOLINT(bugprone-empty-catch)
     }
+    ASSERT_TRUE(failed_value.has_value());
+    int64_t shrunk = *failed_value;
+
+    failed_value = std::nullopt;
+    try {
+        hegel::test(
+            [](hegel::TestCase& tc) {
+                int64_t n = tc.draw(gs::integers<int64_t>());
+                if (n >= 1'000'000) {
+                    failed_value = n;
+                    throw std::runtime_error("n >= 1_000_000");
+                }
+            },
+            {"check_database", __FILE__, 1},
+            {.verbosity = hegel::Verbosity::Quiet,
+             .database = Database::from_path(db_path.string()),
+             .phases = {hegel::Phase::Reuse}});
+    } catch (const std::runtime_error&) { // NOLINT(bugprone-empty-catch)
+    }
+    fs::remove_all(db_path);
+    EXPECT_EQ(failed_value, shrunk);
 }

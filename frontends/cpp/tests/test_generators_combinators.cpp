@@ -4,6 +4,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -11,6 +14,8 @@
 #include <vector>
 
 #include <hegel/hegel.h>
+
+#include "common/utils.h"
 
 namespace gs = hegel::generators;
 
@@ -279,4 +284,117 @@ TEST(CompositeFallback, UnsatisfiableUniqueMapIsRejected) {
         std::string message = error.what();
         EXPECT_NE(message.find("Unsatisfiable"), std::string::npos) << message;
     }
+}
+
+// ---------------------------------------------------------------------------
+// recursive
+// ---------------------------------------------------------------------------
+
+namespace {
+    struct Node {
+        int value;
+        std::vector<Node> children;
+    };
+
+    size_t depth_of(const Node& node) {
+        size_t deepest = 0;
+        for (const Node& child : node.children) {
+            deepest = std::max(deepest, depth_of(child) + 1);
+        }
+        return deepest;
+    }
+
+    size_t leaves_of(const Node& node) {
+        if (node.children.empty()) {
+            return 1;
+        }
+        size_t total = 0;
+        for (const Node& child : node.children) {
+            total += leaves_of(child);
+        }
+        return total;
+    }
+
+    gs::Generator<Node> nodes(gs::RecursiveParams params = {},
+                              size_t min_children = 1) {
+        return gs::recursive(
+            gs::integers<int>({.min_value = 0, .max_value = 9}).map([](int v) {
+                return Node{v, {}};
+            }),
+            [min_children](gs::Generator<Node> subtrees) {
+                return gs::vectors(subtrees,
+                                   {.min_size = min_children, .max_size = 3})
+                    .map([](std::vector<Node> children) {
+                        return Node{-1, std::move(children)};
+                    });
+            },
+            params);
+    }
+
+    hegel::Settings recursive_settings(uint64_t test_cases = 200) {
+        return hegel::Settings{
+            .test_cases = test_cases,
+            .derandomize = true,
+            .database = hegel::Database::disabled(),
+            .suppress_health_check = {hegel::HealthCheck::FilterTooMuch}};
+    }
+} // namespace
+
+TEST(Recursive, RespectsDepthAndLeafLimits) {
+    hegel::test(
+        [](hegel::TestCase& tc) {
+            Node node = tc.draw(nodes({.max_depth = 3, .max_leaves = 10}));
+            EXPECT_LE(depth_of(node), 3u);
+            EXPECT_LE(leaves_of(node), 10u);
+        },
+        recursive_settings());
+}
+
+TEST(Recursive, GeneratesNestedValues) {
+    auto found = hegel::tests::common::find_any<Node>(
+        nodes(), [](const Node& node) { return depth_of(node) >= 2; });
+    EXPECT_GE(depth_of(found), 2u);
+}
+
+TEST(Recursive, ZeroDepthGeneratesOnlyLeaves) {
+    hegel::tests::common::assert_all_examples<Node>(
+        nodes({.max_depth = 0}),
+        [](const Node& node) { return node.children.empty(); });
+}
+
+TEST(Recursive, ShrinksToALeaf) {
+    Node found = hegel::tests::common::minimal<Node>(
+        nodes(), [](const Node&) { return true; });
+    EXPECT_TRUE(found.children.empty());
+    EXPECT_EQ(found.value, 0);
+}
+
+// Branches that need more leaves than the budget allows are discarded and
+// tried again. When the engine gives up, it rejects the test case.
+TEST(Recursive, OverBudgetAttemptsAreRetried) {
+    int drawn = 0;
+    hegel::test(
+        [&drawn](hegel::TestCase& tc) {
+            Node node = tc.draw(nodes({.max_leaves = 4}, 3));
+            EXPECT_LE(leaves_of(node), 4u);
+            drawn++;
+        },
+        recursive_settings());
+    EXPECT_GT(drawn, 0);
+}
+
+TEST(Recursive, SubtreesShareTheLabelOfTheWholeValue) {
+    namespace hi = hegel::internal;
+    auto leaf = gs::integers<int>();
+    uint64_t expected =
+        hi::combine_labels({hi::label(hi::LabelName::Recursive), leaf.label()});
+    uint64_t seen = 0;
+    auto gen = gs::recursive(leaf, [&seen](gs::Generator<int> subtrees) {
+        seen = subtrees.label();
+        return subtrees.map([](int x) { return x + 1; });
+    });
+    EXPECT_EQ(gen.label(), expected);
+    hegel::test([&gen](hegel::TestCase& tc) { (void)tc.draw(gen); },
+                recursive_settings(50));
+    EXPECT_EQ(seen, expected);
 }

@@ -2,6 +2,8 @@
 
 #include "hegel/core.h"
 
+#include <variant>
+
 namespace hegel::generators {
 
     /// @name Primitives
@@ -22,6 +24,10 @@ namespace hegel::generators {
         explicit JustGenerator(T value) : value_(std::move(value)) {}
 
         T do_draw(const TestCase&) const override { return value_; }
+
+        uint64_t label() const override {
+            return hegel::internal::label(hegel::internal::LabelName::Just);
+        }
 
       private:
         T value_;
@@ -53,6 +59,21 @@ namespace hegel::generators {
     inline Generator<std::string> just(const char* value) {
         return just(std::string(value));
     }
+
+    /**
+     * @brief Generate the unit value, `std::monostate{}`.
+     *
+     * Draws nothing. Useful where a generator is required but carries no
+     * information, for example as an alternative of variant().
+     *
+     * @code{.cpp}
+     * auto maybe = variant(none(), integers<int>());
+     * // Generator<std::variant<std::monostate, int>>
+     * @endcode
+     *
+     * @return Generator that always produces `std::monostate{}`
+     */
+    inline Generator<std::monostate> none() { return just(std::monostate{}); }
 
     /// @}
 

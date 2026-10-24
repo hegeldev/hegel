@@ -1,7 +1,10 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <type_traits>
 
 #include "hegel/config.h"
 #include "hegel/core.h"
@@ -41,6 +44,40 @@ namespace hegel::generators {
     };
 
     /// @cond INTERNAL
+    namespace detail {
+
+        // Draws an integer of a type wider than 64 bits through the engine's
+        // big-integer draw. The buffers have one byte more than T, so the
+        // sign of an unsigned bound is always clear.
+        template <typename T>
+        T draw_wide_integer(const TestCase& tc, T min_value, T max_value) {
+            using U = std::make_unsigned_t<T>;
+            constexpr std::size_t len = sizeof(T) + 1;
+            auto encode = [](T value) {
+                std::array<uint8_t, len> bytes{};
+                auto bits = static_cast<U>(value);
+                for (std::size_t i = 0; i < sizeof(T); ++i) {
+                    bytes[i] = static_cast<uint8_t>(bits >> (8 * i));
+                }
+                if constexpr (std::is_signed_v<T>) {
+                    bytes[sizeof(T)] = value < 0 ? 0xFF : 0;
+                }
+                return bytes;
+            };
+            std::array<uint8_t, len> min_bytes = encode(min_value);
+            std::array<uint8_t, len> max_bytes = encode(max_value);
+            std::array<uint8_t, len> out{};
+            hegel::internal::draw_integer_bytes(
+                tc, min_bytes.data(), max_bytes.data(), len, out.data());
+            U bits = 0;
+            for (std::size_t i = 0; i < sizeof(T); ++i) {
+                bits |= static_cast<U>(out[i]) << (8 * i);
+            }
+            return static_cast<T>(bits);
+        }
+
+    } // namespace detail
+
     // Concrete IGenerator<T> subclass produced by integers().
     template <typename T>
     HEGEL_REQUIRES(std::is_integral_v<T>)
@@ -59,7 +96,9 @@ namespace hegel::generators {
         }
 
         T do_draw(const TestCase& tc) const override {
-            if constexpr (std::is_signed_v<T>) {
+            if constexpr (sizeof(T) > sizeof(int64_t)) {
+                return detail::draw_wide_integer<T>(tc, min_, max_);
+            } else if constexpr (std::is_signed_v<T>) {
                 return static_cast<T>(hegel::internal::draw_integer(
                     tc, static_cast<int64_t>(min_),
                     static_cast<int64_t>(max_)));
@@ -68,6 +107,10 @@ namespace hegel::generators {
                     tc, static_cast<uint64_t>(min_),
                     static_cast<uint64_t>(max_)));
             }
+        }
+
+        uint64_t label() const override {
+            return hegel::internal::label(hegel::internal::LabelName::Integers);
         }
 
       private:
@@ -82,6 +125,11 @@ namespace hegel::generators {
     class FloatGenerator : public IGenerator<T> {
         static_assert(std::is_floating_point_v<T>,
                       "floats<T> requires a floating-point type T");
+
+        // The engine draws 32-bit and 64-bit floats. A float is drawn at 32
+        // bits, and every other type at 64.
+        using Drawn =
+            std::conditional_t<std::is_same_v<T, float>, float, double>;
 
       public:
         explicit FloatGenerator(const FloatsParams<T>& params = {}) {
@@ -105,25 +153,31 @@ namespace hegel::generators {
             }
 
             // An unset bound is the widest the draw allows: infinite when
-            // infinities may be drawn, else the type's finite extreme.
-            min_ = has_min ? static_cast<double>(*params.min_value)
-                   : allow_infinity_
-                       ? -std::numeric_limits<double>::infinity()
-                       : static_cast<double>(std::numeric_limits<T>::lowest());
+            // infinities may be drawn, else the finite extreme of the width
+            // drawn at.
+            min_ =
+                has_min ? static_cast<double>(*params.min_value)
+                : allow_infinity_
+                    ? -std::numeric_limits<double>::infinity()
+                    : static_cast<double>(std::numeric_limits<Drawn>::lowest());
             max_ = has_max ? static_cast<double>(*params.max_value)
                    : allow_infinity_
                        ? std::numeric_limits<double>::infinity()
-                       : static_cast<double>(std::numeric_limits<T>::max());
+                       : static_cast<double>(std::numeric_limits<Drawn>::max());
             exclude_min_ = params.exclude_min;
             exclude_max_ = params.exclude_max;
         }
 
         T do_draw(const TestCase& tc) const override {
-            constexpr uint32_t width = sizeof(T) * 8;
+            constexpr uint32_t width = std::is_same_v<T, float> ? 32 : 64;
             return static_cast<T>(hegel::internal::draw_float(
                 tc, width, min_, max_, allow_nan_, allow_infinity_,
                 exclude_min_, exclude_max_,
-                static_cast<double>(std::numeric_limits<T>::denorm_min())));
+                static_cast<double>(std::numeric_limits<Drawn>::denorm_min())));
+        }
+
+        uint64_t label() const override {
+            return hegel::internal::label(hegel::internal::LabelName::Floats);
         }
 
       private:
@@ -150,6 +204,9 @@ namespace hegel::generators {
      * auto positive = integers<int>({.min_value = 1});
      * @endcode
      *
+     * Integer types wider than 64 bits, such as `__int128` where the compiler
+     * provides it, are supported.
+     *
      * @tparam T Integer type (default: int64_t)
      * @param params Bounds constraints
      * @return Generator producing integers in the specified range
@@ -171,6 +228,9 @@ namespace hegel::generators {
      *     .exclude_min = true, .exclude_max = true
      * });
      * @endcode
+     *
+     * A `float` is drawn as a 32-bit value, so it shrinks and hits edge
+     * cases as a `float`. Every other type is drawn as a `double`.
      *
      * @tparam T Floating point type (default: double)
      * @param params Bounds and exclusion constraints
