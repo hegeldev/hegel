@@ -15,21 +15,21 @@ use common::{last_error, make_settings_no_db, next_case, ok, start};
 use hegel_c::hegel_result_t::*;
 use hegel_c::hegel_string_t;
 use hegel_c::{
-    HEGEL_MAX_SIZE_DEFAULT, HegelContext, HegelGrammar, HegelGrammarBuilder, HegelGrammarDraw,
-    HegelRun, HegelStringGenerator, HegelTestCase, hegel_context_free, hegel_context_new,
-    hegel_generate_boolean, hegel_generate_bytes, hegel_generate_bytes_result_free,
-    hegel_generate_bytes_result_t, hegel_generate_date, hegel_generate_datetime,
-    hegel_generate_float, hegel_generate_grammar, hegel_generate_integer,
-    hegel_generate_integer_big, hegel_generate_ipv4, hegel_generate_ipv6, hegel_generate_string,
-    hegel_generate_time, hegel_generate_uuid, hegel_grammar_builder_file,
+    HEGEL_MAX_SIZE_DEFAULT, HegelCollection, HegelContext, HegelGrammar, HegelGrammarBuilder,
+    HegelGrammarDraw, HegelRun, HegelStringGenerator, HegelTestCase, hegel_collection_free,
+    hegel_collection_more, hegel_context_free, hegel_context_new, hegel_generate_boolean,
+    hegel_generate_bytes, hegel_generate_bytes_result_free, hegel_generate_bytes_result_t,
+    hegel_generate_date, hegel_generate_datetime, hegel_generate_float, hegel_generate_grammar,
+    hegel_generate_integer, hegel_generate_integer_big, hegel_generate_ipv4, hegel_generate_ipv6,
+    hegel_generate_string, hegel_generate_time, hegel_generate_uuid, hegel_grammar_builder_file,
     hegel_grammar_builder_free, hegel_grammar_builder_new, hegel_grammar_builder_provide,
     hegel_grammar_draw_free, hegel_grammar_draw_new, hegel_grammar_draw_next,
     hegel_grammar_draw_provide, hegel_grammar_draw_result, hegel_grammar_free, hegel_grammar_new,
-    hegel_grammar_placeholder, hegel_mark_complete, hegel_owned_string_free, hegel_owned_string_t,
-    hegel_run_free, hegel_set_unicode_version, hegel_settings_free, hegel_settings_set_test_cases,
-    hegel_status_t, hegel_string_generator_domain, hegel_string_generator_email,
-    hegel_string_generator_free, hegel_string_generator_regex, hegel_string_generator_text,
-    hegel_string_generator_url,
+    hegel_grammar_placeholder, hegel_mark_complete, hegel_new_collection, hegel_owned_string_free,
+    hegel_owned_string_t, hegel_run_free, hegel_set_unicode_version, hegel_settings_free,
+    hegel_settings_set_test_cases, hegel_status_t, hegel_string_generator_domain,
+    hegel_string_generator_email, hegel_string_generator_free, hegel_string_generator_regex,
+    hegel_string_generator_text, hegel_string_generator_url,
 };
 use std::ptr;
 
@@ -800,6 +800,45 @@ fn text_and_bytes_apply_the_default_max_size() {
         ok(hegel_settings_free(ctx, s));
     }
     unsafe { ok(hegel_context_free(ctx)) };
+}
+
+#[test]
+fn a_collection_applies_the_default_max_size() {
+    let ctx = hegel_context_new();
+    unsafe {
+        let s = make_settings_no_db(ctx);
+        ok(hegel_settings_set_test_cases(ctx, s, 50));
+        let run = start(ctx, s);
+        loop {
+            let tc = next_case(ctx, run);
+            if tc.is_null() {
+                break;
+            }
+            assert!(collection_size(ctx, tc, 0) <= 100);
+            assert!((150..=250).contains(&collection_size(ctx, tc, 150)));
+            complete_valid(ctx, tc);
+        }
+        ok(hegel_run_free(ctx, run));
+        ok(hegel_settings_free(ctx, s));
+    }
+    unsafe { ok(hegel_context_free(ctx)) };
+}
+
+/// Draw a collection with the default maximum, returning its size.
+unsafe fn collection_size(ctx: *mut HegelContext, tc: *mut HegelTestCase, min_size: u64) -> u64 {
+    let mut collection: *mut HegelCollection = ptr::null_mut();
+    ok(unsafe { hegel_new_collection(ctx, tc, min_size, HEGEL_MAX_SIZE_DEFAULT, &mut collection) });
+    let mut size = 0;
+    let mut more = false;
+    loop {
+        ok(unsafe { hegel_collection_more(ctx, tc, collection, &mut more) });
+        if !more {
+            break;
+        }
+        size += 1;
+    }
+    ok(unsafe { hegel_collection_free(ctx, collection) });
+    size
 }
 
 /// Build a default full-Unicode text generator with the given size bounds.

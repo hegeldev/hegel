@@ -150,8 +150,9 @@
 #define HEGEL_STATE_MACHINE_DONE INT64_MIN
 
 /*
- Pass as the `max_size` of `hegel_string_generator_text` or
- `hegel_generate_bytes` when the user gave no maximum, for libhegel to
+ Pass as the `max_size` of `hegel_string_generator_text`,
+ `hegel_generate_bytes` or `hegel_new_collection` when the user gave no
+ maximum for text or bytes, for libhegel to
  apply its default: 100, or `min_size + 100` when `min_size` is above
  100. Distinct from `UINT64_MAX`, which means no upper bound.
 
@@ -562,7 +563,7 @@ typedef struct hegel_grammar_builder_t hegel_grammar_builder_t;
  size_t terminal;
  hegel_result_t rc;
  while ((rc = hegel_grammar_draw_next(ctx, tc, draw, &terminal)) == HEGEL_OK) {
-     /* draw a value for explicit_names[terminal] from tc */
+     // draw a value for explicit_names[terminal] from tc
      hegel_grammar_draw_provide(ctx, draw, value);
  }
  if (rc == HEGEL_E_NOT_FOUND)
@@ -972,9 +973,9 @@ hegel_string_t hegel_context_last_error(const hegel_context_t *ctx);
    is its path.
  - `HEGEL_STATISTICS`: anything but `0` turns `show_statistics` on.
  - `HEGEL_SEED`: an integer fixes the seed; `none` clears one.
- - `HEGEL_DERANDOMIZE`, `HEGEL_PRINT_BLOB` and
-   `HEGEL_STOP_ON_FIRST_FAILURE`: `true`, `1` or `yes`, or `false`, `0`
-   or `no`.
+ - `HEGEL_DERANDOMIZE`, `HEGEL_PRINT_BLOB`,
+   `HEGEL_STOP_ON_FIRST_FAILURE` and `HEGEL_UNBOUNDED_CHOICES`: `true`,
+   `1` or `yes`, or `false`, `0` or `no`.
  - `HEGEL_NONDETERMINISM_STRICTNESS`: `quiet`, `warn` or `error`, the
    `nondeterminism_strictness` value.
 
@@ -1844,7 +1845,9 @@ hegel_result_t hegel_label_combine(hegel_context_t *ctx,
 
  Parameters:
  `min_size` / `max_size`: Inclusive size bounds. Pass `UINT64_MAX` as
-   `max_size` for no upper bound.
+   `max_size` for no upper bound, or `HEGEL_MAX_SIZE_DEFAULT` for the
+   default maximum of text and bytes, for a collection that builds one
+   (such as text over an arbitrary alphabet).
  `out_collection`: Receives a caller-owned handle to pass to the calls
    below (through any handle of the same test-case family). Release it
    with `hegel_collection_free` exactly once.

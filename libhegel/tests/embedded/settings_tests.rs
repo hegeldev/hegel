@@ -227,6 +227,36 @@ fn env_override_print_blob_replaces_the_setting() {
 }
 
 #[test]
+fn env_override_unbounded_choices_replaces_the_setting() {
+    for value in ["true", "1", "yes"] {
+        assert!(
+            with_env(Settings::base(false), "HEGEL_UNBOUNDED_CHOICES", value).unbounded_choices,
+            "{value:?}"
+        );
+    }
+    assert!(
+        !with_env(
+            Settings::base(false).unbounded_choices(true),
+            "HEGEL_UNBOUNDED_CHOICES",
+            "no"
+        )
+        .unbounded_choices
+    );
+    assert!(
+        with_env(
+            Settings::base(false).unbounded_choices(true),
+            "HEGEL_UNBOUNDED_CHOICES",
+            ""
+        )
+        .unbounded_choices
+    );
+    assert_eq!(
+        env_error("HEGEL_UNBOUNDED_CHOICES", "always"),
+        "HEGEL_UNBOUNDED_CHOICES must be true or false, got \"always\""
+    );
+}
+
+#[test]
 fn env_override_stop_on_first_failure_replaces_the_setting() {
     for value in ["false", "0", "no"] {
         assert!(

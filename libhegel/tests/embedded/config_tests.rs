@@ -31,6 +31,7 @@ fn parses_every_key() {
         report_multiple_failures = true
         stop_on_first_failure = false
         show_statistics = true
+        unbounded_choices = true
         print_blob = false
         verbosity = "verbose"
         backend = "default"
@@ -57,7 +58,7 @@ fn parses_every_key() {
             print_blob: Some(false),
             backend: Some(Backend::Default),
             nondeterminism_strictness: Some(NondeterminismStrictness::Warn),
-            unbounded_choices: None,
+            unbounded_choices: Some(true),
         }
     );
 }
