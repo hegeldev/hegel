@@ -45,6 +45,7 @@ public final class Settings {
     final String name;
     final TestLocation testLocation; // null = locate the test where it is run from
     final List<String> infrastructurePackages;
+    final List<Example> examples;
 
     /**
      * Create settings that leave everything to the engine's default profile and the environment
@@ -75,6 +76,7 @@ public final class Settings {
         this.name = b.name;
         this.testLocation = b.testLocation;
         this.infrastructurePackages = b.infrastructurePackages;
+        this.examples = b.examples;
     }
 
     /** Return a copy of these settings with {@code mutator} applied to the changed fields. */
@@ -100,6 +102,7 @@ public final class Settings {
         b.name = name;
         b.testLocation = testLocation;
         b.infrastructurePackages = infrastructurePackages;
+        b.examples = examples;
         mutator.accept(b);
         return new Settings(b);
     }
@@ -126,6 +129,7 @@ public final class Settings {
         String name = null;
         TestLocation testLocation = null;
         List<String> infrastructurePackages = List.of();
+        List<Example> examples = List.of();
     }
 
     /**
@@ -419,6 +423,18 @@ public final class Settings {
     public Settings infrastructurePackages(String... prefixes) {
         List<String> copy = List.of(prefixes);
         return with(b -> b.infrastructurePackages = copy);
+    }
+
+    /**
+     * Run the property with these explicit {@link Example examples} before any values are
+     * generated, in the {@link Phase#EXPLICIT explicit phase}. Replaces any previously set examples.
+     *
+     * @param examples the examples
+     * @return a new settings instance
+     */
+    public Settings examples(Example... examples) {
+        List<Example> copy = List.of(examples);
+        return with(b -> b.examples = copy);
     }
 
     /**

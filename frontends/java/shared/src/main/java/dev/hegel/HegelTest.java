@@ -196,4 +196,22 @@ public @interface HegelTest {
      * @return the property name, or {@code ""} for the class and method name
      */
     String name() default "";
+
+    /**
+     * Methods of the test class supplying explicit {@link Example examples} to run before any
+     * values are generated (see {@link Settings#examples(Example...)}). Each named method takes no
+     * parameters and returns an {@link Example} or an {@link Iterable} of them; it may be static.
+     *
+     * <pre>{@code
+     * static List<Example> edgeCases() {
+     *     return List.of(Example.of(0), Example.of(Integer.MIN_VALUE));
+     * }
+     *
+     * @HegelTest(examples = "edgeCases")
+     * void absIsNonNegative(TestCase tc) { ... }
+     * }</pre>
+     *
+     * @return the names of the methods supplying examples
+     */
+    String[] examples() default {};
 }

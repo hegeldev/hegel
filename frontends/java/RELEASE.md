@@ -71,3 +71,14 @@ New generators, matching the other Hegel frontends:
 - `fromRegex(pattern).alphabet(characters)` restricts every character of a generated string, padding included, to those `characters` can generate, such as `characters().codec("ascii")`.
 
 `optional`, `optionalInts`, `optionalLongs` and `optionalDoubles` now draw under the engine's standard `hegel.optional` label, as the other frontends' optional generators do, rather than as a `oneOf`. Values still shrink toward empty, but stored failures involving optional values may no longer replay.
+
+Explicit examples are now supported, so `Phase.EXPLICIT` is no longer reserved. `Settings.examples(Example...)`, or `@HegelTest(examples = {"methodName", ...})` naming methods that return an `Example` or an `Iterable` of them, gives values a test runs with before any are generated:
+
+```java
+Hegel.test(tc -> {
+    List<Integer> xs = tc.draw(lists(integers()), "xs");
+    assertEquals(xs, reverse(reverse(xs)));
+}, new Settings().examples(Example.of(List.of()), Example.of().with("xs", List.of(1, 1))));
+```
+
+A draw takes the value `Example.with` gives for its name, or otherwise the example's next positional value. A failing example is reported before any generated failure; with `reportMultipleFailures` off it ends the run, and with it on it is reported alongside the engine's failures, merged by origin. An example that lacks a value for a draw, has values no draw takes, or fails an assumption is a usage error. When an explicit example fails and the engine's run then errors (a health check, say), the run is `FAILED` and `RunReport.error()` and `errorKind()` also describe the error.

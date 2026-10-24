@@ -68,7 +68,9 @@ public final class RunReport {
      * The engine's message for a run that produced no verdict (a failed health check, an engine
      * error).
      *
-     * @return the message, or empty unless {@link #status()} is {@link RunStatus#ERROR}
+     * @return the message, or empty unless {@link #status()} is {@link RunStatus#ERROR}, or the
+     *     run is {@link RunStatus#FAILED} because explicit {@link Example examples} failed and the
+     *     engine's own run then errored
      */
     public Optional<String> error() {
         return Optional.ofNullable(error);
@@ -77,8 +79,8 @@ public final class RunReport {
     /**
      * Why the run produced no verdict, as the engine classified it.
      *
-     * @return the kind, or empty unless {@link #status()} is {@link RunStatus#ERROR} (or the engine
-     *     reported a kind this version of Hegel does not know)
+     * @return the kind, or empty unless {@link #error()} is present (or the engine reported a kind
+     *     this version of Hegel does not know)
      */
     public Optional<RunErrorKind> errorKind() {
         return Optional.ofNullable(errorKind);

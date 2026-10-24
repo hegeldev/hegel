@@ -1,6 +1,7 @@
 package dev.hegel;
 
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
@@ -74,8 +75,9 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
             invocation.skip();
             Method method = invocationContext.getExecutable();
             HegelTest ann = method.getAnnotation(HegelTest.class);
-            Settings settings = settingsFrom(ann, method);
             Object target = invocationContext.getTarget().orElse(null);
+            Settings settings =
+                    settingsFrom(ann, method).examples(examplesFrom(ann, method.getDeclaringClass(), target));
             Hegel.test(tc -> ReflectionSupport.invokeMethod(method, target, tc), settings);
         }
     }
@@ -130,6 +132,31 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
             s = s.database(Database.path(ann.database()));
         }
         return s;
+    }
+
+    /**
+     * The examples the methods {@code ann} names supply, invoked on {@code target} (ignored by a
+     * static method).
+     */
+    static Example[] examplesFrom(HegelTest ann, Class<?> testClass, Object target) {
+        List<Example> examples = new ArrayList<>();
+        for (String name : ann.examples()) {
+            Method source = ReflectionSupport.findMethod(testClass, name)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "@HegelTest(examples): " + testClass.getName() + " has no method " + name + "()"));
+            Object supplied = ReflectionSupport.invokeMethod(source, target);
+            if (supplied instanceof Example example) {
+                examples.add(example);
+            } else if (supplied instanceof Iterable<?> iterable) {
+                for (Object item : iterable) {
+                    examples.add((Example) item);
+                }
+            } else {
+                throw new IllegalArgumentException("@HegelTest(examples): " + testClass.getName() + "." + name
+                        + "() must return an Example or an Iterable of them");
+            }
+        }
+        return examples.toArray(new Example[0]);
     }
 
     /**

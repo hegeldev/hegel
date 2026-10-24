@@ -5,8 +5,10 @@ import dev.hegel.lowlevel.Libhegel;
 import dev.hegel.lowlevel.LibhegelException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.LongFunction;
 
@@ -90,17 +92,87 @@ final class Runner {
                     NondeterminismStrictness.fromCode(lib.settingsGetNondeterminismStrictness(s)),
                     Verbosity.fromCode(lib.settingsGetVerbosity(s)));
             reporter.runStarted(effective);
+            RunStatistics.Counter counts = new RunStatistics.Counter();
+            List<Failure> explicitFailures = List.of();
+            if (!effective.examples.isEmpty()
+                    && effective.reproduceFailure == null
+                    && (lib.settingsGetPhases(s) & Abi.PHASE_EXPLICIT) != 0) {
+                boolean reportMultiple = lib.settingsGetReportMultipleFailures(s);
+                explicitFailures = runExamples(lib, effective, body, reporter, reportMultiple);
+                if (!explicitFailures.isEmpty() && !reportMultiple) {
+                    return reportFailures(reporter, counts, explicitFailures, null);
+                }
+            }
             long run = effective.reproduceFailure == null
                     ? lib.runStart(s, reporter::engineOutput)
                     : lib.runStartBlob(s, effective.reproduceFailure, reporter::engineOutput);
             try {
-                return drive(lib, run, effective, body, reporter, new RunStatistics.Counter());
+                return drive(lib, run, effective, body, reporter, counts, explicitFailures);
             } finally {
                 lib.runFree(run);
             }
         });
         reporter.runFinished(report);
         return report;
+    }
+
+    /**
+     * Run the explicit examples in order, returning their failures: the first only, unless {@code
+     * reportMultiple}, in which case one per origin.
+     */
+    private static List<Failure> runExamples(
+            Libhegel lib, Settings settings, Consumer<TestCase> body, Reporter reporter, boolean reportMultiple) {
+        List<Failure> failures = new ArrayList<>();
+        Set<String> origins = new HashSet<>();
+        for (Example example : settings.examples) {
+            Failure failure = runExample(lib, example, settings, body, reporter);
+            if (failure != null && origins.add(failure.origin())) {
+                failures.add(failure);
+                if (!reportMultiple) {
+                    break;
+                }
+            }
+        }
+        return failures;
+    }
+
+    /**
+     * Run the body once with {@code example}'s values, returning its failure, or {@code null} if it
+     * passed. A verbose run reports the case as it does a generated one.
+     */
+    private static Failure runExample(
+            Libhegel lib, Example example, Settings settings, Consumer<TestCase> body, Reporter reporter) {
+        boolean verbose = settings.verbosity.code >= Verbosity.VERBOSE.code;
+        try (ExplicitDraws draws = new ExplicitDraws(lib, example)) {
+            TestCase testCase = TestCase.explicit(draws);
+            if (verbose) {
+                reporter.caseStarted(false);
+                reporter.caseOutput("Running explicit " + example, false);
+            }
+            Throwable failure = null;
+            try {
+                body.accept(testCase);
+            } catch (InvalidExample e) {
+                throw e;
+            } catch (AssumeRejected e) {
+                throw new InvalidExample("Explicit " + example + " failed an assumption (assume or reject)");
+            } catch (Throwable e) {
+                failure = e;
+            }
+            List<String> output = draws.output();
+            if (verbose) {
+                for (String line : output) {
+                    reporter.caseOutput(line, false);
+                }
+                reporter.caseFinished(failure == null ? CaseOutcome.VALID : CaseOutcome.INTERESTING, false);
+            }
+            if (failure == null) {
+                draws.checkConsumed();
+                return null;
+            }
+            return new Failure(
+                    originOf(failure, settings.infrastructurePackages), null, null, failure, testCase.draws(), output);
+        }
     }
 
     /**
@@ -176,7 +248,8 @@ final class Runner {
             Settings settings,
             Consumer<TestCase> body,
             Reporter reporter,
-            RunStatistics.Counter counts) {
+            RunStatistics.Counter counts,
+            List<Failure> explicitFailures) {
         Map<String, CaseRun> captures = new HashMap<>();
         while (true) {
             long tc = lib.nextTestCase(run);
@@ -193,25 +266,32 @@ final class Runner {
         }
         long result = lib.runResult(run);
         try {
-            return finish(lib, result, settings, reporter, counts, captures);
+            return finish(lib, result, settings, reporter, counts, captures, explicitFailures);
         } finally {
             lib.runResultFree(result);
         }
     }
 
-    /** Translate a drained run's result into a report. */
+    /**
+     * Translate a drained run's result into a report. Failures of explicit examples come first,
+     * and make the run a failure whatever the engine's verdict.
+     */
     private static RunReport finish(
             Libhegel lib,
             long result,
             Settings settings,
             Reporter reporter,
             RunStatistics.Counter counts,
-            Map<String, CaseRun> captures) {
+            Map<String, CaseRun> captures,
+            List<Failure> explicitFailures) {
         boolean replayingBlob = settings.reproduceFailure != null;
         switch (lib.runResultStatus(result)) {
             case Abi.RUN_STATUS_PASSED:
                 if (replayingBlob) {
                     throw new HegelException(STALE_BLOB);
+                }
+                if (!explicitFailures.isEmpty()) {
+                    return reportFailures(reporter, counts, explicitFailures, null);
                 }
                 return new RunReport(RunStatus.PASSED, counts.snapshot(), List.of());
             case Abi.RUN_STATUS_ERROR:
@@ -224,23 +304,35 @@ final class Runner {
                 }
                 int[] healthCheck = new int[1];
                 RunErrorKind kind = RunErrorKind.fromCode(lib.runResultErrorKind(result, healthCheck));
-                return new RunReport(
+                RunReport errored = new RunReport(
                         RunStatus.ERROR,
                         counts.snapshot(),
                         error,
                         kind,
                         HealthCheck.fromBit(healthCheck[0]),
                         List.of());
+                if (!explicitFailures.isEmpty()) {
+                    return reportFailures(reporter, counts, explicitFailures, errored);
+                }
+                return errored;
             default:
-                return reportFailures(lib, result, reporter, counts, captures);
+                List<Failure> failures = new ArrayList<>(explicitFailures);
+                failures.addAll(engineFailures(lib, result, captures, explicitFailures));
+                return reportFailures(reporter, counts, failures, null);
         }
     }
 
-    /** Build every distinct failure from its origin's capture and hand it to the reporter. */
-    private static RunReport reportFailures(
-            Libhegel lib, long result, Reporter reporter, RunStatistics.Counter counts, Map<String, CaseRun> captures) {
+    /**
+     * Build every distinct failure the engine reports from its origin's capture, skipping those
+     * an explicit example already failed with.
+     */
+    private static List<Failure> engineFailures(
+            Libhegel lib, long result, Map<String, CaseRun> captures, List<Failure> explicitFailures) {
+        Set<String> reported = new HashSet<>();
+        for (Failure failure : explicitFailures) {
+            reported.add(failure.origin());
+        }
         long count = lib.runResultFailureCount(result);
-        reporter.failuresFound((int) count);
         List<Failure> failures = new ArrayList<>();
         for (int i = 0; i < count; i++) {
             String origin = lib.failureOrigin(result, i);
@@ -249,22 +341,45 @@ final class Runner {
                 throw new HegelException(
                         "internal error: failure " + i + " (" + origin + ") has no captured failing execution");
             }
-            reporter.caseStarted(true);
-            for (String line : capture.output) {
-                reporter.caseOutput(line, true);
+            if (reported.contains(origin)) {
+                continue;
             }
-            reporter.caseFinished(CaseOutcome.INTERESTING, true);
-            Failure failure = new Failure(
+            failures.add(new Failure(
                     origin,
                     lib.failureBlob(result, i),
                     lib.failureCaveat(result, i),
                     capture.interesting,
                     capture.draws,
-                    capture.output);
-            reporter.failure(failure);
-            failures.add(failure);
+                    capture.output));
         }
-        return new RunReport(RunStatus.FAILED, counts.snapshot(), failures);
+        return failures;
+    }
+
+    /**
+     * Hand every failure to the reporter and report the run FAILED, carrying {@code error}'s
+     * message and classification when the engine's run errored after explicit examples failed.
+     */
+    private static RunReport reportFailures(
+            Reporter reporter, RunStatistics.Counter counts, List<Failure> failures, RunReport error) {
+        reporter.failuresFound(failures.size());
+        for (Failure failure : failures) {
+            reporter.caseStarted(true);
+            for (String line : failure.output()) {
+                reporter.caseOutput(line, true);
+            }
+            reporter.caseFinished(CaseOutcome.INTERESTING, true);
+            reporter.failure(failure);
+        }
+        if (error == null) {
+            return new RunReport(RunStatus.FAILED, counts.snapshot(), failures);
+        }
+        return new RunReport(
+                RunStatus.FAILED,
+                counts.snapshot(),
+                error.error().orElse(null),
+                error.errorKind().orElse(null),
+                error.failedHealthCheck().orElse(null),
+                failures);
     }
 
     /**

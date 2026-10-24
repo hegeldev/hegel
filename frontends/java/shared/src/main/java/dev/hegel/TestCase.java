@@ -39,6 +39,8 @@ public final class TestCase {
     private DataSource source;
     /** What every handle of one test case shares: the capture decision, draw names and draws. */
     private final Shared shared;
+    /** The example an explicit test case draws from; {@code null} for a generated one. */
+    private final ExplicitDraws explicit;
     /** This handle's printer onto its own print region, fetched on its first printed draw. */
     private Printer printer;
 
@@ -107,8 +109,18 @@ public final class TestCase {
     }
 
     private TestCase(DataSource source, Shared shared) {
+        this(source, shared, null);
+    }
+
+    private TestCase(DataSource source, Shared shared, ExplicitDraws explicit) {
         this.source = source;
         this.shared = shared;
+        this.explicit = explicit;
+    }
+
+    /** A test case whose draws take the values of an explicit example instead of drawing them. */
+    static TestCase explicit(ExplicitDraws draws) {
+        return new TestCase(ExplicitDraws.noEngine(), new Shared(true, false), draws);
     }
 
     /**
@@ -211,6 +223,9 @@ public final class TestCase {
      * @return the generated value
      */
     public <T> T draw(Generator<T> generator, String label) {
+        if (explicit != null) {
+            return explicitDraw(label);
+        }
         if (drawDepth > 0 || !shared.emits) {
             return drawNested(generator);
         }
@@ -247,6 +262,14 @@ public final class TestCase {
      */
     public <T> T drawSilent(Generator<T> generator) {
         return drawNested(generator);
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> T explicitDraw(String label) {
+        String name = shared.nextName(label);
+        T value = (T) explicit.take(name);
+        shared.record(name, value);
+        return value;
     }
 
     private <T> T drawNested(Generator<T> generator) {
@@ -294,7 +317,9 @@ public final class TestCase {
      * @param message the message to record
      */
     public void note(String message) {
-        if (shared.emits) {
+        if (explicit != null) {
+            explicit.note(message);
+        } else if (shared.emits) {
             source.note(message);
         }
     }
