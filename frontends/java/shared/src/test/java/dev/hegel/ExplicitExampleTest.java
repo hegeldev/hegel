@@ -212,6 +212,11 @@ class ExplicitExampleTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> Hegel.run(tc -> tc.drawSilent(integers()), SETTINGS.examples(Example.of()), Reporter.silent()));
+        IllegalArgumentException span = assertThrows(
+                IllegalArgumentException.class,
+                () -> Hegel.run(
+                        tc -> tc.span(Label.LIST, () -> 1), SETTINGS.examples(Example.of()), Reporter.silent()));
+        assertTrue(span.getMessage().contains("startSpan is not supported"), span.getMessage());
     }
 
     @Test
