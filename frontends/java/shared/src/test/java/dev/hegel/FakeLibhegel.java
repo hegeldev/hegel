@@ -47,6 +47,8 @@ final class FakeLibhegel implements Libhegel {
     boolean nextTestCaseFails;
     int runStatus = Abi.RUN_STATUS_PASSED;
     String runError = "run error";
+    int runErrorKind = Abi.RUN_ERROR_NONE;
+    int runErrorHealthCheck;
     final List<String> failureBlobs = new ArrayList<>(); // one entry per distinct failure
     final List<String> failureCaveats = new ArrayList<>(); // parallel to failureBlobs; missing = null
     // The origin of each distinct failure. Like the engine, the fake echoes back the origins marked
@@ -804,6 +806,22 @@ final class FakeLibhegel implements Libhegel {
     @Override
     public String lastErrorMessage() {
         return lastError;
+    }
+
+    @Override
+    public int runResultErrorKind(long result, int[] outHealthCheck) {
+        outHealthCheck[0] = runErrorHealthCheck;
+        return runErrorKind;
+    }
+
+    @Override
+    public long labelFromName(String name) {
+        throw new UnsupportedOperationException("labels are computed by the real engine");
+    }
+
+    @Override
+    public long labelCombine(long[] labels) {
+        throw new UnsupportedOperationException("labels are computed by the real engine");
     }
 
     @Override

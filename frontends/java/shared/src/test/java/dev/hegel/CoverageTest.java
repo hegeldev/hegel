@@ -19,7 +19,7 @@ class CoverageTest {
     void fnv1aMatchesKnownVector() {
         // FNV-1a 64-bit of the empty string is the offset basis.
         assertEquals(0xcbf29ce484222325L, Label.of(""));
-        assertTrue(Label.COMPOSITE == Label.of("dev.hegel.composite"));
+        assertTrue(Label.COMPOSITE == Label.of("hegel.composite"));
     }
 
     // --- StringGeneratorHandle cleanup ---

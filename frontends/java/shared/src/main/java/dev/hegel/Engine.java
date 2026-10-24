@@ -12,32 +12,41 @@ import java.nio.file.Path;
  * each property test gets its own engine ({@code hegel_run_t}, created per run in {@link Runner}),
  * so nothing leaks between tests. The library is located and opened exactly once on first use.
  * Tests may install a fake binding via {@link #setForTesting} and restore the real one with {@link
- * #reset}.
+ * #reset}; {@link #real()} always answers with the real binding, for computations such as {@link
+ * Label}'s that must agree with the engine whatever binding a test installed.
  */
 final class Engine {
     private Engine() {}
 
-    private static Libhegel instance;
+    private static Libhegel loaded;
+    private static Libhegel override;
 
+    /** The binding runs go through: the one a test installed, or else the real one. */
     static synchronized Libhegel get() {
-        if (instance == null) {
+        return override != null ? override : real();
+    }
+
+    /** The real binding, loaded on first use. */
+    static synchronized Libhegel real() {
+        if (loaded == null) {
             // Each frontend jar bundles exactly one binding, registered as a LibhegelBackend
             // service provider; Libhegel.load finds it.
             Path path = LibraryLoader.fromEnvironment().resolve();
             Libhegel lib = Libhegel.load(path);
             LibraryLoader.warnOnVersionMismatch(lib.version(), LibraryLoader.targetEngineVersion(), System.err);
-            instance = lib;
+            loaded = lib;
         }
-        return instance;
+        return loaded;
     }
 
     /** Install a binding (real or fake) for the rest of the process or until {@link #reset}. */
     static synchronized void setForTesting(Libhegel binding) {
-        instance = binding;
+        override = binding;
     }
 
-    /** Forget the current binding so the next {@link #get()} re-resolves it. */
+    /** Forget the installed and the loaded binding, so the next {@link #get()} re-resolves it. */
     static synchronized void reset() {
-        instance = null;
+        override = null;
+        loaded = null;
     }
 }

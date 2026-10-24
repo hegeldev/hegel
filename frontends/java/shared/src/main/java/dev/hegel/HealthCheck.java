@@ -21,4 +21,14 @@ public enum HealthCheck {
     HealthCheck(int bit) {
         this.bit = bit;
     }
+
+    /** The check whose bit is {@code bit}, or {@code null} for one this version does not know. */
+    static HealthCheck fromBit(int bit) {
+        for (HealthCheck check : values()) {
+            if (check.bit == bit) {
+                return check;
+            }
+        }
+        return null;
+    }
 }

@@ -1,6 +1,6 @@
 RELEASE_TYPE: minor
 
-This release makes the engine's settings resolution the single source of truth for every setting, exposes the settings and profiles that had no Java API, and fixes three native memory leaks.
+This release makes the engine's settings resolution the single source of truth for every setting, exposes the settings and profiles that had no Java API, types the exceptions for runs the engine aborts, and fixes three native memory leaks.
 
 Settings the test does not give are no longer sent to the engine. Before, every run sent `verbosity` (normal) and `reportMultipleFailures` (off), overriding whatever a `hegel.toml` profile or the environment said; now they come from the engine's profile like everything else. To support this:
 
@@ -30,4 +30,9 @@ void property(TestCase tc) { ... }
 
 This release also fixes three native memory leaks. Every list a test drew left its engine-side collection allocated, every `Pool` and `ConcurrentPool` stayed allocated after its test case ended, and in a concurrent stateful run each worker thread left its engine error context behind when it exited. Long runs, and long concurrent state machines in particular, now hold steady memory.
 
-`dev.hegel.lowlevel.Libhegel` gains a method for each newly bound C function: `collectionFree`, `poolFree`, `releaseThreadContext`, `settingsNewForProfile`, `settingsRegisterProfile`, `setDefaultProfile`, `settingsGetVerbosity`, `settingsStopOnFirstFailure`, `settingsShowStatistics`, `settingsUnboundedChoices` and `settingsTestLocation`. A third-party binding needs to implement them.
+
+An errored run now raises an exception typed by the engine's classification of the error rather than by its message. `HegelRunException` (a `HegelException`) is the new base type for a run the engine aborted, with subtypes `HealthCheckFailure` (which now says which check failed through `healthCheck()`), `FlakyTestException` (nondeterminism under `NondeterminismStrictness.ERROR`) and `UnsatisfiableException` (no valid test case was ever generated). Code that caught `HegelException` still catches all of them. `RunReport` gains `errorKind()` and `failedHealthCheck()`, and `healthCheckFailed()` no longer depends on the message's wording.
+
+`Label.of` and `Label.combine` are now computed by the engine, and the labels of the standard generators (`Label.LIST`, `Label.ONE_OF`, `Label.OPTIONAL`, `Label.FILTER` and so on) now use the same names as the other Hegel frontends, so their values change. Labels are only identities, so this changes nothing but the values of those constants.
+
+`dev.hegel.lowlevel.Libhegel` gains a method for each newly bound C function: `collectionFree`, `poolFree`, `releaseThreadContext`, `settingsNewForProfile`, `settingsRegisterProfile`, `setDefaultProfile`, `settingsGetVerbosity`, `settingsStopOnFirstFailure`, `settingsShowStatistics`, `settingsUnboundedChoices`, `settingsTestLocation`, `runResultErrorKind`, `labelFromName` and `labelCombine`. A third-party binding needs to implement them.

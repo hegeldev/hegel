@@ -176,6 +176,9 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle markComplete;
     private final MethodHandle runResultStatus;
     private final MethodHandle runResultError;
+    private final MethodHandle runResultErrorKind;
+    private final MethodHandle labelFromName;
+    private final MethodHandle labelCombine;
     private final MethodHandle runResultFailureCount;
     private final MethodHandle runResultFailure;
     private final MethodHandle failureFree;
@@ -529,6 +532,21 @@ final class RealLibhegel implements Libhegel {
                 linker, lookup, "hegel_run_result_status", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
         this.runResultError =
                 h(linker, lookup, "hegel_run_result_error", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.runResultErrorKind = h(
+                linker,
+                lookup,
+                "hegel_run_result_error_kind",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+        this.labelFromName = h(
+                linker,
+                lookup,
+                "hegel_label_from_name",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, STRING_LAYOUT, ADDRESS));
+        this.labelCombine = h(
+                linker,
+                lookup,
+                "hegel_label_combine",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS));
         this.runResultFailureCount = h(
                 linker,
                 lookup,
@@ -1415,6 +1433,37 @@ final class RealLibhegel implements Libhegel {
         MemorySegment seg = Arena.ofAuto().allocate(ADDRESS);
         check("hegel_run_result_error", rc(runResultError, segment(result), seg));
         return readStringPtr(seg);
+    }
+
+    @Override
+    public int runResultErrorKind(long result, int[] outHealthCheck) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment kind = arena.allocate(JAVA_INT);
+            MemorySegment check = arena.allocate(JAVA_INT);
+            check("hegel_run_result_error_kind", rc(runResultErrorKind, segment(result), kind, check));
+            outHealthCheck[0] = check.get(JAVA_INT, 0);
+            return kind.get(JAVA_INT, 0);
+        }
+    }
+
+    @Override
+    public long labelFromName(String name) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(JAVA_LONG);
+            check("hegel_label_from_name", rc(labelFromName, str(arena, name), out));
+            return out.get(JAVA_LONG, 0);
+        }
+    }
+
+    @Override
+    public long labelCombine(long[] labels) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment array = arena.allocate(JAVA_LONG, Math.max(labels.length, 1));
+            MemorySegment.copy(labels, 0, array, JAVA_LONG, 0, labels.length);
+            MemorySegment out = arena.allocate(JAVA_LONG);
+            check("hegel_label_combine", rc(labelCombine, array, (long) labels.length, out));
+            return out.get(JAVA_LONG, 0);
+        }
     }
 
     @Override

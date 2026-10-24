@@ -154,10 +154,11 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   `bool` crosses as `byte` (JNA's default boolean mapping is a 32-bit int) and
   `size_t` as `long` (the bundled natives are all 64-bit). `Abi` (lowlevel)
   holds the C constants; `Label` (shared) holds the frontend's span labels —
-  opaque `u64`s derived from `dev.hegel.<kind>` names with the same FNV-1a hash
-  as the engine's `hegel_label_from_name` (`Label.of`) and
-  `hegel_label_combine` (`Label.combine`); the engine has no predefined label
-  enum. The engine's `hegel_set_unicode_version` has no Java surface yet.
+  opaque `u64`s the engine computes (`Label.of` is `hegel_label_from_name`,
+  `Label.combine` is `hegel_label_combine`, both through `Engine.real()` so a
+  test's fake binding never changes them). The standard generators use the
+  same `hegel.<kind>` names as the other frontends (`hegel.lists`,
+  `hegel.one_of`, ...); Java-only spans are `dev.hegel.<kind>`. The engine's `hegel_set_unicode_version` has no Java surface yet.
 - **Per-case primitives** — `DataSource` is the abstraction generators draw
   against; `LiveDataSource` wraps the engine, translating return codes
   (`StopTest` → OVERRUN, `AssumeRejected` → INVALID, `INVALID_ARG` →
@@ -190,8 +191,8 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   `HegelException` with the engine's "could not be decoded" message. There is
   no Java-side flaky detection: the engine handles nondeterminism per
   `nondeterminismStrictness` (`NondeterminismStrictness.QUIET`/`WARN`
-  confirm-by-replay and report with a caveat; `ERROR` aborts the run,
-  surfacing as the engine's own `Flaky test detected` message). The runner
+  confirm-by-replay and report with a caveat; `ERROR` aborts the run with a
+  `FlakyTestException`). The runner
   returns a `RunReport` (status, client-side `RunStatistics` counted per
   `mark_complete` — the C ABI has no counter accessor — engine error,
   failures) and never prints: everything goes through the run's `Reporter`
@@ -199,7 +200,10 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   output; `Reporter.silent()` for library use). `Hegel.run` returns the
   report; `Hegel.test` = `run` + `RunReport.throwIfFailed()`, which rethrows a
   single failure as-is (checked exceptions included), aggregates several into
-  an `AssertionError`, and maps ERROR to `HealthCheckFailure`/`HegelException`.
+  an `AssertionError`, and maps ERROR by `hegel_run_result_error_kind`
+  (`RunReport.errorKind()`) to a `HegelRunException`: `HealthCheckFailure`
+  (carrying the failed `HealthCheck`), `FlakyTestException`,
+  `UnsatisfiableException`, or the base type for usage and internal errors.
   `HegelException` (binding/engine errors) is always thrown, never reported.
   `Settings` is the immutable config; its closed-state setting types live
   alongside it — `Backend` (auto = leave it to the engine's profile, which
@@ -243,7 +247,7 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   unreachable. `Generators` is the factory facade.
 - **Public API** — `Hegel.test`/`Hegel.run`, `TestCase`
   (`draw`/`assume`/`note`/`target`/`isFinal`/`span`), `Label` (span labels;
-  `Label.of(name)` mints FNV-1a labels), `Reporter`, `RunReport`,
+  `Label.of(name)` mints labels through the engine), `Reporter`, `RunReport`,
   `Settings.infrastructurePackages` (extra class-name prefixes skipped by
   `Runner.originOf`), the `@HegelTest` annotation + `HegelTestExtension` (a
   JUnit 5 `TestTemplateInvocationContextProvider` that drives the engine loop

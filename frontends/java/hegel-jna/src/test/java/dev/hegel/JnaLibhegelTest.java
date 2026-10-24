@@ -223,6 +223,16 @@ class JnaLibhegelTest {
     }
 
     @Test
+    void labelsAndErrorKindsCrossTheBoundary() {
+        JnaLibhegel lib = real();
+        long list = lib.labelFromName("dev.hegel.list");
+        assertEquals(0x588C222984E69C23L, list);
+        assertEquals(-0x6BA08FBF26A1271AL, lib.labelCombine(new long[] {list, -0x57664BBC5FB7D3A5L}));
+        assertEquals(-0x340D631B7BDDDCDBL, lib.labelCombine(new long[0]));
+        assertThrows(HegelException.class, () -> lib.runResultErrorKind(0, new int[1]));
+    }
+
+    @Test
     void collectionAndPoolFreesAcceptNull() {
         JnaLibhegel lib = real();
         lib.collectionFree(0);

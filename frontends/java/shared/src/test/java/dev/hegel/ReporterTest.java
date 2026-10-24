@@ -19,7 +19,7 @@ class ReporterTest {
     @Test
     void silentReporterIgnoresEveryCallback() {
         Reporter silent = Reporter.silent();
-        RunReport report = new RunReport(RunStatus.PASSED, new RunStatistics.Counter().snapshot(), null, List.of());
+        RunReport report = new RunReport(RunStatus.PASSED, new RunStatistics.Counter().snapshot(), List.of());
         Failure failure = new Failure("origin", "blob", null, new AssertionError("x"), Map.of(), List.of());
         silent.runStarted(new Settings());
         silent.engineOutput("line");
@@ -79,24 +79,24 @@ class ReporterTest {
 
     @Test
     void labelsMatchTheEngineConstants() {
-        assertEquals(Label.of("dev.hegel.list"), Label.LIST);
+        assertEquals(Label.of("hegel.lists"), Label.LIST);
         assertEquals(Label.of("dev.hegel.list_element"), Label.LIST_ELEMENT);
-        assertEquals(Label.of("dev.hegel.set"), Label.SET);
+        assertEquals(Label.of("hegel.sets"), Label.SET);
         assertEquals(Label.of("dev.hegel.set_element"), Label.SET_ELEMENT);
-        assertEquals(Label.of("dev.hegel.map"), Label.MAP);
+        assertEquals(Label.of("hegel.dicts"), Label.MAP);
         assertEquals(Label.of("dev.hegel.map_entry"), Label.MAP_ENTRY);
-        assertEquals(Label.of("dev.hegel.tuple"), Label.TUPLE);
-        assertEquals(Label.of("dev.hegel.one_of"), Label.ONE_OF);
-        assertEquals(Label.of("dev.hegel.optional"), Label.OPTIONAL);
-        assertEquals(Label.of("dev.hegel.fixed_dict"), Label.FIXED_DICT);
-        assertEquals(Label.of("dev.hegel.flat_map"), Label.FLAT_MAP);
-        assertEquals(Label.of("dev.hegel.filter"), Label.FILTER);
-        assertEquals(Label.of("dev.hegel.mapped"), Label.MAPPED);
-        assertEquals(Label.of("dev.hegel.sampled_from"), Label.SAMPLED_FROM);
+        assertEquals(Label.of("hegel.tuple"), Label.TUPLE);
+        assertEquals(Label.of("hegel.one_of"), Label.ONE_OF);
+        assertEquals(Label.of("hegel.optional"), Label.OPTIONAL);
+        assertEquals(Label.of("hegel.fixed_dicts"), Label.FIXED_DICT);
+        assertEquals(Label.of("hegel.flat_map"), Label.FLAT_MAP);
+        assertEquals(Label.of("hegel.filter"), Label.FILTER);
+        assertEquals(Label.of("hegel.map"), Label.MAPPED);
+        assertEquals(Label.of("hegel.sampled_from"), Label.SAMPLED_FROM);
         assertEquals(Label.of("dev.hegel.enum_variant"), Label.ENUM_VARIANT);
-        assertEquals(Label.of("dev.hegel.stateful_rule"), Label.STATEFUL_RULE);
+        assertEquals(Label.of("hegel.stateful.rule"), Label.STATEFUL_RULE);
         // Minted labels are stable and match the hash the composite generator already uses.
-        assertEquals(Label.COMPOSITE, Label.of("dev.hegel.composite"));
+        assertEquals(Label.COMPOSITE, Label.of("hegel.composite"));
         assertEquals(Label.of("my.frontend.pair"), Label.of("my.frontend.pair"));
     }
 }

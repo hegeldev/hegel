@@ -3,6 +3,7 @@ package dev.hegel;
 import static dev.hegel.Generators.integers;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -246,24 +247,58 @@ class RunReportTest {
     void erroredRunCarriesTheEngineMessage() {
         FakeLibhegel fake = new FakeLibhegel();
         fake.runStatus = Abi.RUN_STATUS_ERROR;
-        fake.runError = "FailedHealthCheck: FilterTooMuch";
+        fake.runError = "Health check failed: filter_too_much";
+        fake.runErrorKind = Abi.RUN_ERROR_HEALTH_CHECK;
+        fake.runErrorHealthCheck = Abi.HC_FILTER_TOO_MUCH;
         RunReport health = report(fake, new Settings().database(Database.disabled()), tc -> tc.assume(false));
         assertEquals(RunStatus.ERROR, health.status());
         assertFalse(health.passed());
-        assertEquals(Optional.of("FailedHealthCheck: FilterTooMuch"), health.error());
+        assertEquals(Optional.of("Health check failed: filter_too_much"), health.error());
         assertTrue(health.healthCheckFailed());
+        assertEquals(Optional.of(RunErrorKind.HEALTH_CHECK), health.errorKind());
+        assertEquals(Optional.of(HealthCheck.FILTER_TOO_MUCH), health.failedHealthCheck());
         assertTrue(health.failures().isEmpty());
         assertEquals(1, health.statistics().invalid());
-        assertThrows(HealthCheckFailure.class, health::throwIfFailed);
+        HealthCheckFailure failure = assertThrows(HealthCheckFailure.class, health::throwIfFailed);
+        assertEquals(Optional.of(HealthCheck.FILTER_TOO_MUCH), failure.healthCheck());
 
         FakeLibhegel other = new FakeLibhegel();
         other.runStatus = Abi.RUN_STATUS_ERROR;
         other.runError = "engine exploded";
+        other.runErrorKind = Abi.RUN_ERROR_INTERNAL;
         RunReport engine = report(other, new Settings().database(Database.disabled()), tc -> {});
         assertFalse(engine.healthCheckFailed());
+        assertEquals(Optional.empty(), engine.failedHealthCheck());
+        HegelRunException e = assertThrows(HegelRunException.class, engine::throwIfFailed);
+        assertEquals(HegelRunException.class, e.getClass());
+        assertEquals("engine exploded", e.getMessage());
+    }
+
+    private static Throwable errorFor(int kind, int healthCheck) {
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.runStatus = Abi.RUN_STATUS_ERROR;
+        fake.runError = "aborted";
+        fake.runErrorKind = kind;
+        fake.runErrorHealthCheck = healthCheck;
+        RunReport report = report(fake, new Settings().database(Database.disabled()), tc -> {});
+        return assertThrows(HegelRunException.class, report::throwIfFailed);
+    }
+
+    @Test
+    void runErrorsAreTypedByTheEngineKind() {
+        assertEquals(FlakyTestException.class, errorFor(Abi.RUN_ERROR_FLAKY, 0).getClass());
         assertEquals(
-                "engine exploded",
-                assertThrows(HegelException.class, engine::throwIfFailed).getMessage());
+                FlakyTestException.class,
+                errorFor(Abi.RUN_ERROR_NONDETERMINISTIC, 0).getClass());
+        assertEquals(
+                UnsatisfiableException.class,
+                errorFor(Abi.RUN_ERROR_UNSATISFIABLE, 0).getClass());
+        assertEquals(HegelRunException.class, errorFor(Abi.RUN_ERROR_USAGE, 0).getClass());
+        // A kind or a health check this version does not know still raises a run error.
+        assertEquals(HegelRunException.class, errorFor(99, 0).getClass());
+        HealthCheckFailure unknownCheck =
+                assertInstanceOf(HealthCheckFailure.class, errorFor(Abi.RUN_ERROR_HEALTH_CHECK, 1 << 20));
+        assertEquals(Optional.empty(), unknownCheck.healthCheck());
     }
 
     @Test

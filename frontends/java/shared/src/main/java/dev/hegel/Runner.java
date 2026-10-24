@@ -203,7 +203,7 @@ final class Runner {
                 if (replayingBlob) {
                     throw new HegelException(STALE_BLOB);
                 }
-                return new RunReport(RunStatus.PASSED, counts.snapshot(), null, List.of());
+                return new RunReport(RunStatus.PASSED, counts.snapshot(), List.of());
             case Abi.RUN_STATUS_ERROR:
                 // The run produced no verdict on the property: a failed health check, a
                 // nondeterminism abort under ERROR strictness, an engine panic. (A blob the engine
@@ -212,7 +212,15 @@ final class Runner {
                 if (replayingBlob) {
                     throw new HegelException("reproduceFailure: the blob replay ended in an error: " + error);
                 }
-                return new RunReport(RunStatus.ERROR, counts.snapshot(), error, List.of());
+                int[] healthCheck = new int[1];
+                RunErrorKind kind = RunErrorKind.fromCode(lib.runResultErrorKind(result, healthCheck));
+                return new RunReport(
+                        RunStatus.ERROR,
+                        counts.snapshot(),
+                        error,
+                        kind,
+                        HealthCheck.fromBit(healthCheck[0]),
+                        List.of());
             default:
                 return reportFailures(lib, result, reporter, counts, captures);
         }
@@ -244,7 +252,7 @@ final class Runner {
             reporter.failure(failure);
             failures.add(failure);
         }
-        return new RunReport(RunStatus.FAILED, counts.snapshot(), null, failures);
+        return new RunReport(RunStatus.FAILED, counts.snapshot(), failures);
     }
 
     /**

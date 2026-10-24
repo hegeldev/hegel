@@ -273,6 +273,13 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_run_result_error(Pointer ctx, Pointer result, PointerByReference out);
 
+        int hegel_run_result_error_kind(
+                Pointer ctx, Pointer result, IntByReference outKind, IntByReference outHealthCheck);
+
+        int hegel_label_from_name(Pointer ctx, HegelString.ByValue name, LongByReference out);
+
+        int hegel_label_combine(Pointer ctx, long[] labels, long len, LongByReference out);
+
         int hegel_run_result_failure_count(Pointer ctx, Pointer result, LongByReference out);
 
         int hegel_run_result_failure(Pointer ctx, Pointer result, long index, PointerByReference out);
@@ -1178,6 +1185,29 @@ final class JnaLibhegel implements Libhegel {
         PointerByReference ref = new PointerByReference();
         check("hegel_run_result_error", lib.hegel_run_result_error(ctx(), pointer(result), ref));
         return readStringAt(ref.getValue());
+    }
+
+    @Override
+    public int runResultErrorKind(long result, int[] outHealthCheck) {
+        IntByReference kind = new IntByReference();
+        IntByReference check = new IntByReference();
+        check("hegel_run_result_error_kind", lib.hegel_run_result_error_kind(ctx(), pointer(result), kind, check));
+        outHealthCheck[0] = check.getValue();
+        return kind.getValue();
+    }
+
+    @Override
+    public long labelFromName(String name) {
+        LongByReference out = new LongByReference();
+        check("hegel_label_from_name", lib.hegel_label_from_name(ctx(), str(name), out));
+        return out.getValue();
+    }
+
+    @Override
+    public long labelCombine(long[] labels) {
+        LongByReference out = new LongByReference();
+        check("hegel_label_combine", lib.hegel_label_combine(ctx(), labels, labels.length, out));
+        return out.getValue();
     }
 
     @Override

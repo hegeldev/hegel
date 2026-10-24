@@ -264,6 +264,8 @@ class RunnerTest {
         FakeLibhegel fake = new FakeLibhegel();
         fake.runStatus = Abi.RUN_STATUS_ERROR;
         fake.runError = "FailedHealthCheck: FilterTooMuch — too many rejected";
+        fake.runErrorKind = Abi.RUN_ERROR_HEALTH_CHECK;
+        fake.runErrorHealthCheck = Abi.HC_FILTER_TOO_MUCH;
         HealthCheckFailure e = assertThrows(
                 HealthCheckFailure.class,
                 () -> run(fake, new Settings().database(Database.disabled()), tc -> tc.assume(false)));

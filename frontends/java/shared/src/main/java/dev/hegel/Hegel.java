@@ -87,8 +87,9 @@ public final class Hegel {
      * Run {@code body} as a property test under {@code settings}, reporting through {@code
      * reporter} and throwing on failure. Equivalent to {@link #run(Consumer, Settings, Reporter)}
      * followed by {@link RunReport#throwIfFailed()}: a failing property rethrows the body's own
-     * exception (or an {@link AssertionError} aggregating several distinct failures), a failed
-     * health check throws {@link HealthCheckFailure}, and an engine error throws {@link
+     * exception (or an {@link AssertionError} aggregating several distinct failures), a run the
+     * engine aborts throws a {@link HegelRunException} ({@link HealthCheckFailure}, {@link
+     * FlakyTestException}, {@link UnsatisfiableException}), and a binding error throws {@link
      * HegelException}.
      *
      * @param body the test body, run once per generated input

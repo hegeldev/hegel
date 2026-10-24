@@ -409,6 +409,14 @@ public interface Libhegel {
     /** The run-level error message, or {@code null} when the run completed normally. */
     String runResultError(long result);
 
+    /**
+     * {@code hegel_run_result_error_kind}: why the run errored, one of the {@code Abi.RUN_ERROR_*}
+     * values ({@link Abi#RUN_ERROR_NONE} unless its status is {@link Abi#RUN_STATUS_ERROR}). For
+     * {@link Abi#RUN_ERROR_HEALTH_CHECK}, {@code outHealthCheck[0]} receives the {@code Abi.HC_*}
+     * bit of the check that failed; for every other kind it receives {@code 0}.
+     */
+    int runResultErrorKind(long result, int[] outHealthCheck);
+
     long runResultFailureCount(long result);
 
     /**
@@ -426,6 +434,12 @@ public interface Libhegel {
      * {@code null} for a deterministic failure.
      */
     String failureCaveat(long result, long index);
+
+    /** {@code hegel_label_from_name}: the span label for a generator identified by {@code name}. */
+    long labelFromName(String name);
+
+    /** {@code hegel_label_combine}: the span label for a generator built from {@code labels}, in order. */
+    long labelCombine(long[] labels);
 
     // Diagnostics.
     String lastErrorMessage();
