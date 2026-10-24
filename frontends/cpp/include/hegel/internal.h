@@ -1,5 +1,6 @@
 #pragma once
 
+#include "printer.h"
 #include "test_case.h"
 
 #include <cstddef>
@@ -166,8 +167,6 @@ namespace hegel::internal {
         int64_t concurrency_ = 0;
     };
 
-    void set_concurrent_worker(TestCase& tc, std::size_t worker_index);
-
     struct CapturedException {
         std::exception_ptr exception;
         std::string origin;
@@ -177,34 +176,46 @@ namespace hegel::internal {
 
     CapturedException capture_current_exception();
 
-    class NoteIndentScope {
+    // Marks a draw in progress on `tc`. A draw made inside another one
+    // (a generator that draws from the test case itself) prints nothing:
+    // the outermost draw prints the whole value.
+    class NestedDraw {
       public:
-        explicit NoteIndentScope(const TestCase& tc);
-        ~NoteIndentScope();
-        NoteIndentScope(const NoteIndentScope&) = delete;
-        NoteIndentScope& operator=(const NoteIndentScope&) = delete;
+        explicit NestedDraw(const TestCase& tc);
+        ~NestedDraw();
+        NestedDraw(const NestedDraw&) = delete;
+        NestedDraw& operator=(const NestedDraw&) = delete;
 
-      private:
-        const TestCase& tc_;
-    };
-
-    class DrawLogScope {
-      public:
-        DrawLogScope(const TestCase& tc, std::string_view name,
-                     bool repeatable);
-        ~DrawLogScope();
-        DrawLogScope(const DrawLogScope&) = delete;
-        DrawLogScope& operator=(const DrawLogScope&) = delete;
-
-        bool should_log() const;
-
-        void log(const std::string& rendered) const;
+        bool outermost() const { return outermost_; }
 
       private:
         const TestCase& tc_;
         bool outermost_;
-        std::string display_;
     };
+
+    // Whether notes and drawn values of `tc` are recorded in the engine's
+    // document (see TestCase::note).
+    bool records_output(const TestCase& tc);
+
+    // `tc`'s printer onto its region of the test case's document.
+    Printer test_case_printer(const TestCase& tc);
+
+    // The variable name a draw prints under: `name`, or `name_<n>` for a
+    // repeatable name (and `draw_<n>` for an unnamed draw), skipping names
+    // already taken.
+    std::string draw_display_name(const TestCase& tc, std::string_view name,
+                                  bool repeatable);
+
+    // A handle onto `tc`'s own choice sequence whose output is a block
+    // nested `indent` columns further in, at the current position of `tc`'s
+    // output (hegel_test_case_block). Draw through either, never both at
+    // once.
+    TestCase block(const TestCase& tc, uint64_t indent);
+
+    // Attributes everything `tc` prints from now on to concurrent worker
+    // `worker_index` (hegel_test_case_set_worker).
+    void set_concurrent_worker(TestCase& tc, std::size_t worker_index);
+
     /* Exception thrown when a test case is rejected and should be
      * discarded (e.g. by `TestCase::assume(false)`, an exhausted
      * `filter()`, or an `UnsatisfiedAssumption` from the engine).

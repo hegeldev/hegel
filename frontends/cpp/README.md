@@ -94,7 +94,8 @@ to find the failure, and shows the minimal example.
 
 Each draw is replayed and printed as a C++ declaration. `tc.draw("vec1", gen)`
 names the draw with `vec1` as above. An unnamed `tc.draw(gen)` prints
-(`auto draw_1 = ...;`) instead.
+(`auto draw_1 = ...;`) instead. A value too wide for one line is broken
+across lines, one element per line.
 
 The last line replays this exact failure. Put it above the test to rerun the
 counterexample instead of generating new cases:

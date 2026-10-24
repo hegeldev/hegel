@@ -119,6 +119,21 @@ namespace hegel::impl {
                        const std::optional<std::string>& origin);
 
     /// Caller-owned result snapshot; release with hegel_run_result_free.
+    hegel_test_case_t* test_case_block(hegel_context_t* ctx,
+                                       const hegel_test_case_t* tc,
+                                       uint64_t indent);
+    void test_case_set_worker(hegel_context_t* ctx, const hegel_test_case_t* tc,
+                              int64_t worker_index);
+    hegel_printer_t* test_case_printer(hegel_context_t* ctx,
+                                       hegel_test_case_t* tc);
+    // Appends a note to `tc`'s region of its document. A note on a region
+    // whose document was already read is dropped.
+    void note(hegel_context_t* ctx, hegel_test_case_t* tc,
+              std::string_view text);
+    void printer_free(hegel_context_t* ctx, hegel_printer_t* printer);
+    // Lays out and returns the document `root` (a document's root handle)
+    // belongs to. Seals the document.
+    std::string read_document(hegel_context_t* ctx, hegel_printer_t* root);
     hegel_run_result_t* run_result(hegel_context_t* ctx, hegel_run_t* run);
     hegel_run_status_t run_result_status(hegel_context_t* ctx,
                                          const hegel_run_result_t* result);

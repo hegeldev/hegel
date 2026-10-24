@@ -5,6 +5,8 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <type_traits>
 
 #include "config.h"
@@ -290,6 +292,25 @@ namespace hegel::generators {
 
 } // namespace hegel::generators
 
+namespace hegel::internal {
+
+    // Prints `prefix`, `value` and `suffix` as one line of `tc`'s output,
+    // when `tc` records output.
+    template <typename T>
+    void print_line(const TestCase& tc, const std::string& prefix,
+                    const T& value, std::string_view suffix = "") {
+        if (!records_output(tc)) {
+            return;
+        }
+        Printer printer = test_case_printer(tc);
+        printer.text(prefix);
+        print_value(printer, value);
+        printer.text(suffix);
+        printer.hard_break();
+    }
+
+} // namespace hegel::internal
+
 namespace hegel {
 
     template <typename T>
@@ -300,10 +321,14 @@ namespace hegel {
     template <typename T>
     T TestCase::draw(std::string_view name, const generators::Generator<T>& gen,
                      bool repeatable) const {
-        internal::DrawLogScope scope(*this, name, repeatable);
+        internal::NestedDraw nested(*this);
         T value = gen.do_draw(*this);
-        if (scope.should_log()) {
-            scope.log(internal::repr(value));
+        if (nested.outermost() && internal::records_output(*this)) {
+            internal::print_line(
+                *this,
+                "auto " + internal::draw_display_name(*this, name, repeatable) +
+                    " = ",
+                value, ";");
         }
         return value;
     }

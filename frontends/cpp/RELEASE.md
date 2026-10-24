@@ -23,3 +23,9 @@ Every blob given to `HEGEL_REPRODUCE_FAILURE` or to `hegel::test()` is now repla
 The undocumented `hegel::verbosity_to_string()` and `hegel::health_check_to_string()` are removed.
 
 Generators now identify themselves to the engine with the same span labels as the other Hegel frontends: each label comes from a `hegel.<kind>` name (`hegel.lists`, `hegel.one_of`, `hegel.integers`, ...), and a generator built from others combines its own label with theirs through libhegel's `hegel_label_combine`. Before, every `vectors()` span had the same label whatever its elements were, so the shrinker treated a vector of integers and a vector of strings as interchangeable. Database entries saved by earlier versions may no longer replay.
+
+Notes and drawn values now print through libhegel's printer instead of Hegel for C++'s own output code, which changes how they look:
+
+- A drawn value too wide for one line is broken across lines, one element per line, instead of printing as one long line.
+- A clone's output appears where the clone was made (`tc.clone()` or `tc.spawn()`), not interleaved with the parent's in the order the lines were written.
+- In a failure report of `hegel::stateful::run_concurrent()`, the `[worker N +T ms]` prefix comes after the report's indentation instead of before it, and each worker's lines appear under the header of the round they ran in.

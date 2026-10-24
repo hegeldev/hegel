@@ -17,7 +17,6 @@
 
 #include <hegel.h>
 
-#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cstddef>
@@ -189,13 +188,12 @@ namespace hegel {
         // without (the case that first reveals nondeterminism is unstamped).
         struct CapturedFailure {
             BodyOutcome outcome;
-            std::vector<impl::test_case::WorkerOutputLine> lines;
+            std::vector<std::string> lines;
         };
         using Captures = std::map<std::string, CapturedFailure>;
 
-        void
-        store_capture(Captures& captures, const BodyOutcome& outcome,
-                      std::vector<impl::test_case::WorkerOutputLine> lines) {
+        void store_capture(Captures& captures, const BodyOutcome& outcome,
+                           std::vector<std::string> lines) {
             auto existing = captures.find(outcome.origin);
             if (existing != captures.end() && !existing->second.lines.empty() &&
                 lines.empty()) {
@@ -203,33 +201,6 @@ namespace hegel {
             }
             captures[outcome.origin] =
                 CapturedFailure{outcome, std::move(lines)};
-        }
-
-        std::vector<std::string> group_concurrent_output(
-            const std::vector<impl::test_case::WorkerOutputLine>& records) {
-            std::vector<std::string> lines;
-            std::vector<impl::test_case::WorkerOutputLine> round;
-            auto append_grouped_worker_lines = [&] {
-                std::stable_sort(round.begin(), round.end(),
-                                 [](const auto& left, const auto& right) {
-                                     return *left.worker < *right.worker;
-                                 });
-                for (const auto& line : round) {
-                    lines.push_back(line.text);
-                }
-                round.clear();
-            };
-            for (const auto& record : records) {
-                if (record.worker.has_value()) {
-                    round.push_back(record);
-                } else {
-                    append_grouped_worker_lines();
-                    lines.push_back(
-                        record.text); // text from main thread has null worker
-                }
-            }
-            append_grouped_worker_lines();
-            return lines;
         }
 
         // Demangle a typeid name, owning the malloc'd result. The fallback
@@ -356,13 +327,41 @@ namespace hegel {
             impl::mark_complete(ctx, tc, outcome.status, origin);
         }
 
-        // Replays one counterexample. `in_report` wraps the replay's output in
-        // a framed report's body: it opens with a blank line and is indented.
+        // Whether a test case records its notes and drawn values: when it
+        // is the final replay or the engine stamped it for capture, unless
+        // quiet, and every case when verbose.
+        bool records_output(Verbosity verbosity, bool shown) {
+            switch (verbosity) {
+            case Verbosity::Quiet:
+                return false;
+            case Verbosity::Normal:
+                return shown;
+            case Verbosity::Verbose:
+            case Verbosity::Debug:
+            default:
+                return true;
+            }
+        }
+
+        // Prints the output a test case recorded as the body of a failure
+        // section: a blank line, then each line indented.
+        void print_report_body(const std::vector<std::string>& lines) {
+            if (lines.empty()) {
+                return;
+            }
+            std::fprintf(stderr, "\n");
+            for (const std::string& line : lines) {
+                std::fprintf(stderr, "  %s\n", line.c_str());
+            }
+        }
+
+        // Replays one counterexample and prints what it recorded as the body
+        // of a failure section.
         BodyOutcome replay_failure(hegel_context_t* ctx, hegel_settings_t* s,
                                    const std::string& blob,
-                                   const RunConfig& config, bool in_report,
+                                   const RunConfig& config,
                                    const std::function<void(TestCase&)>& fn,
-                                   bool* printed_output = nullptr) {
+                                   bool* printed_output) {
             hegel_test_case_t* handle = impl::test_case_from_blob(ctx, s, blob);
             // GCOVR_EXCL_START
             if (handle == nullptr) {
@@ -371,16 +370,17 @@ namespace hegel {
                     "Unreachable: failure blob produced a null test case.");
             }
             // GCOVR_EXCL_STOP
-            // Positional init (fields: tc, is_final, verbosity) so this
-            // TU stays clean under a C++17 (HEGEL_REFLECTION=OFF) build.
-            TestCase tc_obj(std::unique_ptr<impl::test_case::TestCaseData>(
-                new impl::test_case::TestCaseData{
-                    handle, /*is_final=*/true, config.verbosity,
-                    /*note_indent=*/in_report ? 1 : 0, in_report}));
-            tc_obj.data()->stateful_step_count = config.stateful_step_count;
+            TestCase tc_obj(std::make_unique<impl::test_case::TestCaseData>(
+                handle, records_output(config.verbosity, /*shown=*/true),
+                config.stateful_step_count));
             BodyOutcome outcome = run_body(fn, tc_obj);
-            if (printed_output != nullptr) {
-                *printed_output = *tc_obj.data()->printed_output;
+            if (tc_obj.data()->emit) {
+                std::vector<std::string> lines =
+                    impl::test_case::rendered_output(*tc_obj.data());
+                *printed_output = !lines.empty();
+                if (outcome.status == HEGEL_STATUS_INTERESTING) {
+                    print_report_body(lines);
+                }
             }
             mark_complete(ctx, tc_obj.data()->tc, outcome);
             return outcome;
@@ -442,21 +442,6 @@ namespace hegel {
                     stderr,
                     "rerun with: hegel::test(test_fn, settings, {\"%s\"})\n",
                     blob->c_str());
-            }
-        }
-
-        // Prints the output a stamped test case buffered, as the body of a
-        // failure section. Lines from concurrent workers are grouped by
-        // worker within each round.
-        void print_captured_output(const CapturedFailure& captured) {
-            std::vector<std::string> lines =
-                group_concurrent_output(captured.lines);
-            if (lines.empty()) {
-                return;
-            }
-            std::fprintf(stderr, "\n");
-            for (const std::string& line : lines) {
-                std::fprintf(stderr, "%s\n", line.c_str());
             }
         }
 
@@ -674,7 +659,6 @@ namespace hegel {
             if (blob.has_value()) {
                 bool printed_output = false;
                 BodyOutcome outcome = replay_failure(ctx, s, *blob, config,
-                                                     /*in_report=*/!quiet,
                                                      test_fn, &printed_output);
                 if (outcome.status == HEGEL_STATUS_INTERESTING) {
                     if (!quiet) {
@@ -694,7 +678,7 @@ namespace hegel {
                 // GCOVR_EXCL_STOP
             }
             if (!quiet) {
-                print_captured_output(captured->second);
+                print_report_body(captured->second.lines);
                 print_failure_body(config, location, rerun_form,
                                    captured->second.outcome, blob, caveat,
                                    !captured->second.lines.empty());
@@ -710,6 +694,8 @@ namespace hegel {
             const std::function<void(TestCase&)>& test_fn, hegel_context_t* ctx,
             hegel_settings_t* s, hegel_run_t* run, const RunConfig& config,
             const std::optional<TestLocation>& location, RerunForm rerun_form) {
+            bool verbose = config.verbosity == Verbosity::Verbose ||
+                           config.verbosity == Verbosity::Debug;
             uint64_t cases_run = 0;
             uint64_t cases_discarded = 0;
             bool seen_interesting = false;
@@ -724,18 +710,23 @@ namespace hegel {
                 if (handle == nullptr) {
                     break;
                 }
-                auto data = std::unique_ptr<impl::test_case::TestCaseData>(
-                    new impl::test_case::TestCaseData{
-                        handle, /*is_final=*/false, config.verbosity});
                 bool stamped = impl::test_case_should_capture(ctx, handle);
-                data->buffer_output = stamped;
-                data->stateful_step_count = config.stateful_step_count;
-                TestCase tc_obj(std::move(data));
+                TestCase tc_obj(std::make_unique<impl::test_case::TestCaseData>(
+                    handle, records_output(config.verbosity, stamped),
+                    config.stateful_step_count));
                 BodyOutcome outcome = run_body(test_fn, tc_obj);
+                std::vector<std::string> lines;
+                if (tc_obj.data()->emit) {
+                    lines = impl::test_case::rendered_output(*tc_obj.data());
+                }
+                if (verbose) {
+                    for (const std::string& line : lines) {
+                        std::fprintf(stderr, "%s\n", line.c_str());
+                    }
+                }
                 if (outcome.status == HEGEL_STATUS_INTERESTING) {
-                    std::vector<impl::test_case::WorkerOutputLine> lines;
-                    if (stamped) {
-                        lines = *tc_obj.data()->output_lines;
+                    if (!stamped) {
+                        lines.clear();
                     }
                     store_capture(captures, outcome, std::move(lines));
                 }

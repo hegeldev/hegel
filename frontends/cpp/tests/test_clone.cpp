@@ -243,3 +243,16 @@ TEST(CloneOutput, VerboseTraceShowsParentAndCloneDraws) {
                         .database = hegel::Database::disabled()});
     Approvals::verify(testing::internal::GetCapturedStderr());
 }
+
+// A clone's notes and draws appear where the clone was made, whatever order
+// the parent and the clone print in.
+TEST(CloneOutput, CloneOutputAppearsWhereTheCloneWasMade) {
+    std::string out = capture_failure_report([](hegel::TestCase& tc) {
+        tc.note("before the clone");
+        hegel::TestCase worker = tc.clone();
+        tc.note("after the clone");
+        worker.note("from the clone");
+        throw std::runtime_error("boom");
+    });
+    Approvals::verify(out, scrub_report());
+}
