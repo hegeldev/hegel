@@ -81,3 +81,13 @@ let trees =
 ```
 
 `[@@deriving hegel_generator]` now supports recursive and mutually recursive types. A variant whose constructors refer to the type itself, such as `type tree = Leaf of int | Node of tree * tree`, is generated with `recursive`, its non-recursive constructors as the leaves; other recursive types are generated through `deferred`.
+
+`let%hegel_test` takes explicit examples: each `[@@example { n = 0; s = "" }]` attribute runs the test once, before generation, with every `let n = draw tc gen` binding taking the example's value for `n`. A failing example is reported with the values it gave. Examples run in the `Explicit` phase, which used to do nothing.
+
+```ocaml
+let%hegel_test round_trips tc =
+  let n = draw tc (integers ()) in
+  let s = draw tc (text ()) in
+  assert (parse (print n s) = (n, s))
+[@@example { n = 0; s = "" }]
+```

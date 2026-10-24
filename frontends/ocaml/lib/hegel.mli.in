@@ -290,6 +290,28 @@
       [@@settings { (Settings.create ~test_cases:500 ()) with verbosity = Settings.Verbose }]
     ]}
 
+    {3 Explicit examples}
+
+    Attach [\[@@example ...\]] to run a test on specific values before any
+    generated ones. The record gives a value for each named draw: in an
+    example, [let n = draw tc gen] binds [n] to the example's [n] instead of
+    drawing from [gen].
+
+    {[
+      let%hegel_test parses_what_it_prints tc =
+        let n = draw tc (integers ()) in
+        let s = draw tc (text ()) in
+        assert (parse (print n s) = (n, s))
+      [@@example { n = 0; s = "" }]
+      [@@example { n = -1; s = "a b" }]
+    ]}
+
+    Every draw an example reaches must be a named [draw] it gives a value for,
+    and every value it gives must be drawn; otherwise the test raises
+    {!Usage_error}. An example that fails is reported with the values it gave
+    and ends the run, unless [report_multiple_failures] is set. Examples run in
+    the [Explicit] phase, so leaving it out of [phases] skips them.
+
     {3 Debugging failing test cases}
 
     Use {!note} to attach debug information:
@@ -493,13 +515,15 @@ exception Did_not_reproduce of string
 
 (** [run_hegel_test_ppx] is {!run_hegel_test} with the PPX replay hint enabled,
     so a failing run suggests the [[@@failure_blobs [...]]] attribute rather than
-    the [~failure_blobs] argument. The [let%hegel_test] PPX targets it; not for
-    direct use. *)
+    the [~failure_blobs] argument, and with the test's [[@@example]]s, each the
+    names it gives values for and the test body with those values in place.
+    The [let%hegel_test] PPX targets it; not for direct use. *)
 val run_hegel_test_ppx
   :  ?settings:Settings.t
   -> ?test_location:test_location
   -> ?database_key:string
   -> ?failure_blobs:string list
+  -> ?examples:(string list * (test_case -> unit)) list
   -> (test_case -> unit)
   -> unit
 

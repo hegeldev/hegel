@@ -252,8 +252,7 @@ end
     field. In [hegel.toml]: [explicit], [reuse], [generate], [target], or [shrink]. *)
 type phase =
   | Explicit
-  (** Reserved for future use: hegel-ocaml has no explicit-examples facility
-      yet, so selecting this phase currently has no effect. *)
+  (** run the explicit examples given with [\[@@example ...\]] *)
   | Reuse (** replay previously failing examples from the {!type:database} *)
   | Generate (** generate new test cases *)
   | Target (** targeted search guided by [target] observations *)

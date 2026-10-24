@@ -100,6 +100,17 @@ val owned_clone_count : test_case -> int
 (** Tags subsequent output from [tc] with a concurrent worker index. *)
 val set_worker_index : test_case -> int -> unit
 
+(** [check_drawable tc ~label] raises {!Usage_error} when [tc] is an explicit
+    example's test case, where only the draws the example gives values for may
+    run (through {!explicit_draw}). [label] names the draw in the message. *)
+val check_drawable : test_case -> label:string -> unit
+
+(** [explicit_draw tc ~name ~source value] is [value]: the value an explicit
+    example gives, written [source], for the draw bound to [name]. It records
+    the draw for the example's failure report. Raises {!Usage_error} outside an
+    explicit example. *)
+val explicit_draw : test_case -> name:string -> source:string -> 'a -> 'a
+
 (** [extract_origin exn] extracts an InterestingOrigin string from an exception.
     Uses the backtrace if available; derived from the assertion's location so
     the shrinker can group probes for the same bug. *)
@@ -510,7 +521,13 @@ type rerun_hint =
       a list of base64 encoded strings (blobs), where each string encodes the
       choices made in a failing test run. Each blob is replayed in turn, and
       every failure they reproduce is reported. A blob is only guaranteed to
-      reproduce a failure within a specific version of Hegel *)
+      reproduce a failure within a specific version of Hegel
+    @param examples
+      explicit examples, run first when [settings.phases] includes [Explicit]:
+      each is the names of the draws it gives values for, and the test body
+      with those values substituted (see {!explicit_draw}). A failing example
+      is reported and ends the run, unless [settings.report_multiple_failures]
+      is set, when the run goes on and reports it with the others. *)
 val run_test
   :  settings:Settings.t
   -> ?test_location:test_location
@@ -518,6 +535,7 @@ val run_test
   -> ?on_failure:(unit -> unit)
   -> ?database_key:string
   -> ?failure_blobs:string list
+  -> ?examples:(string list * (test_case -> unit)) list
   -> (test_case -> unit)
   -> unit
 
@@ -538,5 +556,6 @@ val run_hegel_test
   -> ?rerun_hint:rerun_hint
   -> ?database_key:string
   -> ?failure_blobs:string list
+  -> ?examples:(string list * (test_case -> unit)) list
   -> (test_case -> unit)
   -> unit

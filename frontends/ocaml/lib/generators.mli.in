@@ -1079,6 +1079,18 @@ module Ppx_internal : sig
   (** [draw tc gen] draws from [gen], returning the value with its display. *)
   val draw : Internal.test_case -> 'a generator -> 'a * show
 
+  (** [explicit_draw tc ~name ~source value gen] is [value], the value an
+      [[@@example]] gives, written [source], for the binding [name] of a draw
+      from [gen]. The [let%hegel_test] PPX substitutes it for the draw in the
+      example's copy of the test body. *)
+  val explicit_draw
+    :  Internal.test_case
+    -> name:string
+    -> source:string
+    -> 'a
+    -> 'a generator
+    -> 'a
+
   (** [composite_with_label ~label generate_fn] is {!composite} but tags the
       span with [label] instead of the fixed struct/record label, and
       [generate_fn] returns the value's display with it. Used by the derive PPX

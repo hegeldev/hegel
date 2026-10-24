@@ -35,6 +35,7 @@ module Make (B : S) : sig
     -> ?test_location:Internal.test_location
     -> ?database_key:string
     -> ?failure_blobs:string list
+    -> ?examples:(string list * (Internal.test_case -> unit B.t)) list
     -> (Internal.test_case -> unit B.t)
     -> unit B.t
 

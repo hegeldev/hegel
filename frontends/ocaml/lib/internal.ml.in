@@ -112,6 +112,13 @@ type owned_state =
 
 type owned = owned_state Locked.t
 
+(** The state of an explicit example's test case: the names of the draws it
+    has given values for so far, and the lines it printed, newest first. *)
+type explicit =
+  { mutable drawn : string list
+  ; mutable lines : string list
+  }
+
 (** Per-test-case state passed explicitly to the test function. Holds the
     native test-case handle, the final-replay flag, whether verbose output is
     on, abort state, the current generation-span depth (used to print only the
@@ -126,6 +133,7 @@ type test_case KIND(value mod portable contended) =
   ; draw_depth : int Atomic.t
   ; draw_state : draw_state
   ; owned : owned
+  ; explicit : explicit Locked.t option
   }
 
 (* Accessors so other library modules can read the internal fields they need
@@ -169,6 +177,48 @@ let incr_draw_depth (tc : test_case) = Atomic.incr tc.draw_depth
 let decr_draw_depth (tc : test_case) = Atomic.decr tc.draw_depth
 let set_test_aborted (tc : test_case) v = Atomic.set tc.test_aborted v
 
+let explicit_unsupported =
+  "Explicit example: the test generated data. In an explicit example every draw must be \
+   a [let x = draw tc ...] binding the example gives a value for"
+;;
+
+(** [require_engine tc] raises {!Usage_error} when [tc] is an explicit
+    example's test case, which has no engine behind it. *)
+let require_engine (tc : test_case) =
+  if Option.is_some tc.explicit then raise (Ffi.Usage_error explicit_unsupported)
+;;
+
+(** [check_drawable tc ~label] raises {!Usage_error} when [tc] is an explicit
+    example's test case: a draw there must be given its value by the example. *)
+let check_drawable (tc : test_case) ~label =
+  if Option.is_some tc.explicit
+  then
+    raise
+      (Ffi.Usage_error
+         (Printf.sprintf
+            "Explicit example: no value for the draw %s. Give the example a value for \
+             it, as [@@example { %s = ... }] on a [let %s = draw tc ...] binding"
+            label
+            label
+            label))
+;;
+
+(** [explicit_draw tc ~name ~source value] is [value], the value an explicit
+    example gives for the draw bound to [name], written [source]. *)
+let explicit_draw (tc : test_case) ~name ~source value =
+  match tc.explicit with
+  | None ->
+    raise
+      (Ffi.Usage_error
+         "Explicit example values can only be drawn in an explicit example's test case")
+  | Some explicit ->
+    let line = Printf.sprintf "%s = %s" name source in
+    Locked.protect explicit (fun e ->
+      e.drawn <- name :: e.drawn;
+      e.lines <- line :: e.lines);
+    value
+;;
+
 (** [clone tc] forks a fresh {!test_case} onto an independent choice stream of the
     same underlying native test case (see {!Ffi.test_case_clone}), paired with its
     own native context so it can be drawn from on another thread concurrently with
@@ -182,6 +232,7 @@ let set_test_aborted (tc : test_case) v = Atomic.set tc.test_aborted v
     {!type:owned}) and freed once it completes, so a clone may be captured and
     used freely within the case. *)
 let clone (tc : test_case) =
+  require_engine tc;
   let context = Ffi.context_new () in
   let handle = Ffi.test_case_clone tc.context tc.handle in
   own_clone tc context handle;
@@ -193,12 +244,14 @@ let clone (tc : test_case) =
   ; draw_depth = Atomic.make (Atomic.get tc.draw_depth)
   ; draw_state = tc.draw_state
   ; owned = tc.owned
+  ; explicit = None
   }
 ;;
 
 (** [with_block tc ~indent f] runs [f] on a {!test_case} for an indented
     section of [tc]'s output. *)
 let with_block (tc : test_case) ~indent LOCAL(f) =
+  require_engine tc;
   let context = Ffi.context_new () in
   let handle = Ffi.test_case_block tc.context tc.handle ~indent in
   let b =
@@ -210,6 +263,7 @@ let with_block (tc : test_case) ~indent LOCAL(f) =
     ; draw_depth = Atomic.make 0
     ; draw_state = Locked.create (fun () -> Hashtbl.create 16)
     ; owned = tc.owned
+    ; explicit = None
     }
   in
   let free () =
@@ -226,6 +280,7 @@ let with_block (tc : test_case) ~indent LOCAL(f) =
 ;;
 
 let set_worker_index (tc : test_case) worker_index =
+  require_engine tc;
   Ffi.test_case_set_worker tc.context tc.handle ~worker_index
 ;;
 
@@ -279,6 +334,7 @@ exception Internal_error = Ffi.Internal_error
 (** [with_stop_guard tc f] marks the test case aborted on engine control
     exceptions and propagates them unchanged. *)
 let with_stop_guard tc f =
+  require_engine tc;
   try f () with
   | (Stop_test | Assume_rejected | Usage_error _) as exn ->
     Atomic.set tc.test_aborted true;
@@ -560,11 +616,16 @@ let should_print tc =
 (** [note tc message] appends [message] to the test case's
     print region of the engine's family document, subject to {!should_print};
     the document is printed once the case completes (see [capture_document]). *)
-let note tc message = if should_print tc then Ffi.note tc.context tc.handle message
+let note tc message =
+  match tc.explicit with
+  | Some explicit -> Locked.protect explicit (fun e -> e.lines <- message :: e.lines)
+  | None -> if should_print tc then Ffi.note tc.context tc.handle message
+;;
 
 (** [print_line tc doc] appends [doc] as one line to the test case's print
     region, subject to {!should_print}. *)
 let print_line tc doc =
+  require_engine tc;
   if should_print tc
   then (
     let ctx = tc.context in
@@ -599,17 +660,22 @@ let draw_display_name tc ~label ~repeatable =
 (** [target tc ~label ~value] records a targeting observation to guide the search
     engine toward higher values. *)
 let target tc ~label ~value =
-  with_stop_guard tc (fun () -> Ffi.target tc.context tc.handle value label)
+  if Option.is_none tc.explicit
+  then with_stop_guard tc (fun () -> Ffi.target tc.context tc.handle value label)
 ;;
 
 (** [event tc ~label] records [label] as observed on this test case for the
     end-of-run statistics report. *)
-let event tc ~label = with_stop_guard tc (fun () -> Ffi.event tc.context tc.handle label)
+let event tc ~label =
+  if Option.is_none tc.explicit
+  then with_stop_guard tc (fun () -> Ffi.event tc.context tc.handle label)
+;;
 
 (** [event_value tc ~label ~value] records the finite observation [value] under
     [label] for the end-of-run statistics report. *)
 let event_value tc ~label ~value =
-  with_stop_guard tc (fun () -> Ffi.event_value tc.context tc.handle value label)
+  if Option.is_none tc.explicit
+  then with_stop_guard tc (fun () -> Ffi.event_value tc.context tc.handle value label)
 ;;
 
 (** [start_span ~label tc] starts a generation span for better shrinking. *)
@@ -851,6 +917,84 @@ let run_error_exn ((kind : Ffi.run_error_kind), health_check) message =
   | Run_error_other -> Run_error message
 ;;
 
+(** [run_example ~settings ~test_location index (names, body)] runs the
+    explicit example [body], which gives values for the draws bound to
+    [names], on a test case with no engine behind it. A failure is reported
+    and returned. *)
+let run_example ~(settings : Settings.t) ~test_location index (names, body) =
+  let explicit = Locked.create (fun () -> { drawn = []; lines = [] }) in
+  let (tc : test_case) =
+    { handle = Ffi.null_test_case
+    ; context = Ffi.null_context
+    ; should_capture = true
+    ; verbosity = settings.verbosity
+    ; test_aborted = Atomic.make false
+    ; draw_depth = Atomic.make 0
+    ; draw_state = Locked.create (fun () -> Hashtbl.create 16)
+    ; owned = Locked.create (fun () -> { pools = []; clones = [] })
+    ; explicit = Some explicit
+    }
+  in
+  let outcome =
+    DLS.set in_test_context true;
+    Fun.protect
+      ~finally:(fun () -> DLS.set in_test_context false)
+      (fun () ->
+         match body tc with
+         | () -> None
+         | exception Assume_rejected ->
+           raise
+             (Usage_error
+                (Printf.sprintf
+                   "Explicit example %d: its assumptions do not hold (assume or reject \
+                    rejected it)"
+                   index))
+         | exception ((Usage_error _ | Internal_error _) as error) -> raise error
+         | exception exn ->
+           let backtrace = Printexc.get_raw_backtrace () in
+           Some { origin = extract_origin exn; exn; backtrace })
+  in
+  match outcome with
+  | None ->
+    (match
+       let drawn = Locked.protect explicit (fun e -> e.drawn) in
+       List.filter (fun name -> not (List.mem name drawn)) names
+     with
+     | [] -> None
+     | unused ->
+       raise
+         (Usage_error
+            (Printf.sprintf
+               "Explicit example %d gives values that were never drawn: %s"
+               index
+               (String.concat ", " unused))))
+  | Some failure ->
+    if settings.verbosity <> Quiet
+    then (
+      let title =
+        match test_location with
+        | None -> Printf.sprintf "Explicit example %d" index
+        | Some (loc : test_location) ->
+          Printf.sprintf
+            "Explicit example %d: %s (%s:%d)"
+            index
+            loc.function_name
+            loc.file
+            loc.begin_line
+      in
+      let prefix = Printf.sprintf "--- %s " title in
+      Printf.eprintf
+        "%s\n%!"
+        (stderr_color
+           ansi_red
+           (prefix ^ String.make (max 3 (frame_width - String.length prefix)) '-'));
+      (match List.rev (Locked.protect explicit (fun e -> e.lines)) with
+       | [] -> ()
+       | lines -> Printf.eprintf "\n%s\n%!" (String.concat "\n" lines));
+      Printf.eprintf "\nException: %s\n%!" (Stdlib.Printexc.to_string failure.exn));
+    Some failure
+;;
+
 let did_not_reproduce_message =
   "The failure blob did not reproduce an error. The failure is fixed, or a \
    nondeterministic failure did not occur again in the replays."
@@ -894,6 +1038,7 @@ let run_test
       ?(on_failure = ignore)
       ?database_key
       ?(failure_blobs = [])
+      ?(examples = [])
       test_fn
   =
   if DLS.get in_test_context
@@ -923,6 +1068,7 @@ let run_test
       ; draw_depth = Atomic.make 0
       ; draw_state = Locked.create (fun () -> Hashtbl.create 16)
       ; owned = Locked.create (fun () -> { pools = []; clones = [] })
+      ; explicit = None
       }
     in
     let run_body () =
@@ -1044,16 +1190,32 @@ let run_test
       Ffi.settings_free ctx ffi_settings;
       Ffi.context_free ctx)
     (fun () ->
+       let rec run_examples index = function
+         | [] -> []
+         | example :: rest ->
+           (match run_example ~settings ~test_location index example with
+            | None -> run_examples (index + 1) rest
+            | Some failure when settings.report_multiple_failures ->
+              failure :: run_examples (index + 1) rest
+            | Some failure -> [ failure ])
+       in
+       let explicit_failures =
+         if List.mem Explicit settings.phases then run_examples 1 examples else []
+       in
+       if (not (List.is_empty explicit_failures)) && not settings.report_multiple_failures
+       then raise_failures explicit_failures
+       else (
        match failure_blobs with
-       | [] -> raise_failures (drive (Ffi.run_start ctx ffi_settings))
+       | [] -> raise_failures (explicit_failures @ drive (Ffi.run_start ctx ffi_settings))
        | blobs ->
          (match
-            List.concat_map
-              (fun blob -> drive (Ffi.run_start_blob ctx ffi_settings blob))
-              blobs
+            explicit_failures
+            @ List.concat_map
+                (fun blob -> drive (Ffi.run_start_blob ctx ffi_settings blob))
+                blobs
           with
           | [] -> raise (Did_not_reproduce did_not_reproduce_message)
-          | failures -> raise_failures failures))
+          | failures -> raise_failures failures)))
 ;;
 
 (** [run_hegel_test ?settings ?test_location ?database_key ?failure_blobs test_fn]
@@ -1071,7 +1233,15 @@ let run_hegel_test
       ?rerun_hint
       ?database_key
       ?failure_blobs
+      ?examples
       test_fn
   =
-  run_test ~settings ?test_location ?rerun_hint ?database_key ?failure_blobs test_fn
+  run_test
+    ~settings
+    ?test_location
+    ?rerun_hint
+    ?database_key
+    ?failure_blobs
+    ?examples
+    test_fn
 ;;

@@ -48,6 +48,10 @@ module Ppx_internal = struct
 
   let draw tc gen = Generators_core.do_draw gen tc
 
+  let explicit_draw tc ~name ~source value (_ : _ Generators_core.generator) =
+    Internal.explicit_draw tc ~name ~source value
+  ;;
+
   let%template composite_with_label = (Generators_core.composite_with_label [@mode m])
   [@@mode m = (nonportable, portable)]
   ;;

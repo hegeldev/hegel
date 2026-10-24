@@ -68,13 +68,21 @@ let run_hegel_test ?settings ?test_location ?database_key ?failure_blobs test_fn
 
 (** [run_hegel_test_ppx] is {!run_hegel_test} with the PPX replay hint enabled;
     the [let%hegel_test] PPX targets it. Not for direct use. *)
-let run_hegel_test_ppx ?settings ?test_location ?database_key ?failure_blobs test_fn =
+let run_hegel_test_ppx
+      ?settings
+      ?test_location
+      ?database_key
+      ?failure_blobs
+      ?examples
+      test_fn
+  =
   Internal.run_hegel_test
     ?settings
     ?test_location
     ~rerun_hint:Attribute
     ?database_key
     ?failure_blobs
+    ?examples
     test_fn
 ;;
 

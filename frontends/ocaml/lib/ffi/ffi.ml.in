@@ -954,6 +954,9 @@ type collection = handle
 type pool = handle
 type state_machine = handle
 type recursion = handle
+
+let null_context = null_handle
+let null_test_case = null_handle
 type printer = handle
 type printer_options = handle
 

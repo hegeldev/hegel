@@ -26,6 +26,7 @@ val run_hegel_test_ppx
   -> ?test_location:Hegel.test_location
   -> ?database_key:string
   -> ?failure_blobs:string list
+  -> ?examples:(string list * (Hegel.test_case -> unit Async.Deferred.t)) list
   -> (Hegel.test_case -> unit Async.Deferred.t)
   -> unit Async.Deferred.t
 

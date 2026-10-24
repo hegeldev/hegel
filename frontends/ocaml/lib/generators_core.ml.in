@@ -611,6 +611,7 @@ let draw_named
   =
   let open Lexing in
   fun ~label ?loc ~repeatable tc gen ->
+    Internal.check_drawable tc ~label;
     let display_name () = Internal.draw_display_name tc ~label ~repeatable in
     let print_value name show =
       if Internal.draw_depth tc = 0
@@ -662,7 +663,9 @@ let draw ?label ?loc tc gen =
 (** [draw_silent tc gen] produces a typed value from [gen] without recording it
     for the final-replay output. *)
 let draw_silent : type a. Internal.test_case -> a generator -> a =
-  fun tc gen -> fst (do_draw gen tc)
+  fun tc gen ->
+  Internal.check_drawable tc ~label:"draw_silent";
+  fst (do_draw gen tc)
 ;;
 
 (** [draw_silent_named ~name tc gen] is {!draw_silent} threading the draw-site
@@ -670,6 +673,7 @@ let draw_silent : type a. Internal.test_case -> a generator -> a =
     direct use (prefer {!draw_silent}). *)
 let draw_silent_named : type a. name:string -> Internal.test_case -> a generator -> a =
   fun ~name tc gen ->
+  Internal.check_drawable tc ~label:name;
   match gen with
   | Function { build; _ } | Printed { source = Function { build; _ }; _ } ->
     build ~name:(Some name) tc

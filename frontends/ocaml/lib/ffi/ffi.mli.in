@@ -82,6 +82,12 @@ type state_machine
   : value mod portable contended
 #endif
 
+(** A null context and test case, for a test case with no engine behind it
+    (an explicit example's). Never pass them to libhegel. *)
+val null_context : context
+
+val null_test_case : test_case
+
 (** Opaque recursion handle ([HegelRecursion]), one per recursive value drawn.
     It can be used through any handle of the test case's family. *)
 type recursion

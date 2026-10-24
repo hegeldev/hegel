@@ -56,6 +56,41 @@ let test_repeat_propagates_usage_errors () =
   | exception Hegel.Usage_error _ -> ()
 ;;
 
+let test_repeat_propagates_internal_errors () =
+  match
+    Hegel.run_hegel_test ~settings:(settings ()) (fun tc ->
+      Hegel.repeat tc (fun _tc -> raise (Hegel.Internal.Internal_error "sentinel")))
+  with
+  | () -> Alcotest.fail "expected Internal_error"
+  | exception Hegel.Internal.Internal_error message ->
+    Alcotest.(check string) "the error" "sentinel" message
+;;
+
+let test_repeat_propagates_stop_test () =
+  match
+    Hegel.run_hegel_test ~settings:(settings ()) (fun tc ->
+      Hegel.repeat tc (fun _tc -> raise Hegel.Internal.Stop_test))
+  with
+  | () -> Alcotest.fail "expected every case to overrun"
+  | exception Hegel.Failed_health_check { check; _ } ->
+    Alcotest.(check bool)
+      "too large"
+      true
+      (Poly.equal check (Some Hegel.Settings.Test_cases_too_large))
+;;
+
+let test_example_propagates_internal_errors () =
+  match
+    Hegel.run_hegel_test_ppx
+      ~settings:(settings ())
+      ~examples:[ ([], fun _tc -> raise (Hegel.Internal.Internal_error "sentinel")) ]
+      (fun _tc -> ())
+  with
+  | () -> Alcotest.fail "expected Internal_error"
+  | exception Hegel.Internal.Internal_error message ->
+    Alcotest.(check string) "the error" "sentinel" message
+;;
+
 let test_set_worker_rejects_negative_index () =
   match
     Hegel.run_hegel_test ~settings:(settings ~test_cases:1 ()) (fun tc ->
@@ -87,6 +122,18 @@ let tests =
       "repeat propagates usage errors"
       `Quick
       test_repeat_propagates_usage_errors
+  ; Alcotest.test_case
+      "repeat propagates internal errors"
+      `Quick
+      test_repeat_propagates_internal_errors
+  ; Alcotest.test_case
+      "repeat propagates Stop_test"
+      `Quick
+      test_repeat_propagates_stop_test
+  ; Alcotest.test_case
+      "an example propagates internal errors"
+      `Quick
+      test_example_propagates_internal_errors
   ; Alcotest.test_case
       "set_worker rejects a negative index"
       `Quick

@@ -21,6 +21,10 @@
     [my_test] has the type [unit -> unit]. The [@@settings ...] and
     [@@failure_blobs ...] attributes are both optional.
 
+    Each [@@example { x = e; ... }] attribute becomes an explicit example,
+    passed as [~examples:[ ([ "x"; ... ], fun tc -> body') ]], where [body']
+    is [body] with each [let x = draw tc gen] replaced by a draw of [e].
+
     [let%hegel_main name tc = body [@@settings expr]] is rewritten into
     [let name () = Hegel.main ~settings:(fun () -> expr) ~test_location (fun tc -> body)],
     a binary entry point that runs one test case configured from the command line.
@@ -212,7 +216,15 @@ let set_attributes (attrs : attributes) (item : structure_item) : structure_item
 
     [attrs] are the attributes of the original binding that the expander did not
     consume. *)
-let build_items ~loc ~function_name ~settings_expr ~failure_blobs ~body_fn ~attrs ~async
+let build_items
+      ~loc
+      ~function_name
+      ~settings_expr
+      ~failure_blobs
+      ~examples
+      ~body_fn
+      ~attrs
+      ~async
   : structure_item list
   =
   let loc = { loc with loc_ghost = true } in
@@ -224,6 +236,11 @@ let build_items ~loc ~function_name ~settings_expr ~failure_blobs ~body_fn ~attr
     match settings_expr with
     | Some s -> [%expr [%e run] ~settings:[%e s] ~test_location:[%e location_record]]
     | None -> [%expr [%e run] ~test_location:[%e location_record]]
+  in
+  let base_call =
+    match examples with
+    | Some examples -> [%expr [%e base_call] ~examples:[%e examples]]
+    | None -> base_call
   in
   let call =
     match failure_blobs with
@@ -310,7 +327,9 @@ let drawn_binding_name ~tc_name ~fn_name (vb : value_binding) : string option =
     should be numbered. A name is repeatable if it is drawn more than once, or
     drawn anywhere at block depth > 0 (inside a function, [for], or [while]
     body, where it may run repeatedly). *)
-let collect_repeatable ~tc_name (body : expression) : (string, bool) Stdlib.Hashtbl.t =
+let collect_repeatable ?(fn_names = [ "draw" ]) ~tc_name (body : expression)
+  : (string, bool) Stdlib.Hashtbl.t
+  =
   let flags : (string, bool) Stdlib.Hashtbl.t = Stdlib.Hashtbl.create 8 in
   let depth = ref 0 in
   let record name =
@@ -329,7 +348,11 @@ let collect_repeatable ~tc_name (body : expression) : (string, bool) Stdlib.Hash
         | Some vbs ->
           List.iter
             (fun vb ->
-               match drawn_binding_name ~tc_name ~fn_name:"draw" vb with
+               match
+                 List.find_map
+                   (fun fn_name -> drawn_binding_name ~tc_name ~fn_name vb)
+                   fn_names
+               with
                | Some name -> record name
                | None -> ())
             vbs;
@@ -410,12 +433,169 @@ let inject_labels (fn : expression) : expression =
     (inject_labels ~tc_name flags)#expression fn
 ;;
 
+(** [is_example attr] is [true] for an [[@@example ...]] attribute. *)
+let is_example (attr : attribute) =
+  match attr.attr_name.txt with
+  | "example" | "hegel.example" -> true
+  | _ -> false
+;;
+
+(** [example_fields attr] is the [(binding name, value)] pairs of the record an
+    [[@@example { x = ...; ... }]] attribute carries. *)
+let example_fields (attr : attribute) : (string * expression) list =
+  Attribute.mark_as_handled_manually attr;
+  let fields =
+    match attr.attr_payload with
+    | PStr
+        [ { pstr_desc = Pstr_eval ({ pexp_desc = Pexp_record (fields, None); _ }, _); _ }
+        ] ->
+      List.map
+        (fun (({ txt; loc } : longident loc), value) ->
+           match txt with
+           | Lident name -> name, value
+           | _ ->
+             Location.raise_errorf
+               ~loc
+               "ppx_hegel_test: an [@@@@example] field names a [let] binding of the test")
+        fields
+    | _ ->
+      Location.raise_errorf
+        ~loc:attr.attr_loc
+        "ppx_hegel_test: [@@@@example] takes a record of values for the test's draws, as \
+         [@@@@example { x = 1; s = \"a\" }]"
+  in
+  fields
+;;
+
+(** [substitute_example ~tc_name fields fn] is the test lambda [fn] with each
+    [let x = draw tc gen] (or [draw_silent]) binding that [fields] gives a
+    value for drawing that value instead. *)
+let substitute_example ~tc_name (fields : (string * expression) list) (fn : expression)
+  : expression
+  =
+  let substitute (vb : value_binding) =
+    let drawn =
+      List.find_map
+        (fun fn_name -> drawn_binding_name ~tc_name ~fn_name vb)
+        [ "draw"; "draw_silent" ]
+    in
+    match drawn, vb.pvb_expr.pexp_desc with
+    | Some name, Pexp_apply (_, args) ->
+      (match
+         ( List.assoc_opt name fields
+         , List.filter_map
+             (fun (lbl, e) ->
+                match lbl with
+                | Nolabel -> Some e
+                | Labelled _ | Optional _ -> None)
+             args )
+       with
+       | Some value, [ tc; gen ] ->
+         let loc = { vb.pvb_expr.pexp_loc with loc_ghost = true } in
+         { vb with
+           pvb_expr =
+             [%expr
+               Hegel.Generators.Ppx_internal.explicit_draw
+                 [%e tc]
+                 ~name:[%e Ast_builder.Default.estring ~loc name]
+                 ~source:
+                   [%e
+                     Ast_builder.Default.estring
+                       ~loc
+                       (Pprintast.string_of_expression value)]
+                 [%e value]
+                 [%e gen]]
+         }
+       | _ -> vb)
+    | _ -> vb
+  in
+  let mapper =
+    object
+      inherit Ast_traverse.map as super
+
+      method! expression e =
+        let e = super#expression e in
+        Ppx_compat.map_let_value_bindings (List.map substitute) e
+    end
+  in
+  mapper#expression fn
+;;
+
+(** [ghostify e] is [e] with every location in it a ghost: an example's copy
+    of the test body repeats the body's own locations. *)
+let ghostify =
+  let mapper =
+    object
+      inherit Ast_traverse.map
+      method! location loc = { loc with loc_ghost = true }
+    end
+  in
+  mapper#expression
+;;
+
+(** [build_examples ~loc attrs fn] is the list of the explicit examples
+    the [[@@example]] attributes [attrs] give for the test lambda [fn]: each
+    the names it gives values for and [fn] with the values in place. *)
+let build_examples ~loc (attrs : attribute list) (fn : expression) : expression option =
+  match attrs with
+  | [] -> None
+  | _ :: _ ->
+    let tc_name =
+      match test_case_name fn with
+      | Some name -> name
+      | None ->
+        Location.raise_errorf
+          ~loc
+          "ppx_hegel_test: [@@@@example] needs the test's test case to be a simple \
+           parameter"
+    in
+    let drawn =
+      collect_repeatable
+        ~fn_names:[ "draw"; "draw_silent" ]
+        ~tc_name
+        (Ppx_compat.peel_fun_params fn)
+    in
+    let example attr =
+      let fields = example_fields attr in
+      List.iter
+        (fun (name, (value : expression)) ->
+           match Stdlib.Hashtbl.find_opt drawn name with
+           | None ->
+             Location.raise_errorf
+               ~loc:value.pexp_loc
+               "ppx_hegel_test: the test has no [let %s = draw tc ...] binding for this \
+                [@@@@example] value"
+               name
+           | Some true ->
+             Location.raise_errorf
+               ~loc:value.pexp_loc
+               "ppx_hegel_test: %s is drawn more than once, or in a loop or function, so \
+                an [@@@@example] cannot give its value"
+               name
+           | Some false -> ())
+        fields;
+      let loc = { attr.attr_loc with loc_ghost = true } in
+      let names =
+        Ast_builder.Default.elist
+          ~loc
+          (List.map (fun (name, _) -> Ast_builder.Default.estring ~loc name) fields)
+      in
+      [%expr
+        [%e names], [%e ghostify (inject_labels (substitute_example ~tc_name fields fn))]]
+    in
+    let loc = { loc with loc_ghost = true } in
+    Some (Ast_builder.Default.elist ~loc (List.map example attrs))
+;;
+
 (** Expander for a single [let%hegel_test ...] structure item. *)
 let expand_value_binding ~loc (vb : value_binding) : structure_item list =
   let function_name = extract_function_name ~what:"test" vb.pvb_pat in
   let vb, settings_expr = consume settings_attribute vb in
   let vb, failure_blobs = consume failure_blobs_attribute vb in
   let vb, async = consume async_test_attribute vb in
+  let example_attrs, attrs = List.partition is_example vb.pvb_attributes in
+  let vb = { vb with pvb_attributes = attrs } in
+  let examples = build_examples ~loc example_attrs vb.pvb_expr in
   let failure_blobs =
     Option.map
       (fun (attr_loc, blobs) ->
@@ -435,6 +615,7 @@ let expand_value_binding ~loc (vb : value_binding) : structure_item list =
     ~function_name
     ~settings_expr
     ~failure_blobs
+    ~examples
     ~body_fn
     ~attrs:vb.pvb_attributes
     ~async:(Option.is_some async)
@@ -454,6 +635,15 @@ let expand_main_binding ~loc (vb : value_binding) : structure_item list =
          "ppx_hegel_test: let%%hegel_main does not take [@@@@failure_blobs]. Pass \
           --failure-blob on the command line")
     failure_blobs;
+  List.iter
+    (fun (attr : attribute) ->
+       if is_example attr
+       then
+         Location.raise_errorf
+           ~loc:attr.attr_loc
+           "ppx_hegel_test: let%%hegel_main does not take [@@@@example]. Use \
+            let%%hegel_test for explicit examples")
+    vb.pvb_attributes;
   if Option.is_some async
   then
     Location.raise_errorf

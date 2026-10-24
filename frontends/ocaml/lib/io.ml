@@ -19,7 +19,14 @@ module Make (B : S) = struct
         (fun tc -> wait (fun () -> test_fn tc)))
   ;;
 
-  let run_hegel_test_ppx ?settings ?test_location ?database_key ?failure_blobs test_fn =
+  let run_hegel_test_ppx
+        ?settings
+        ?test_location
+        ?database_key
+        ?failure_blobs
+        ?(examples = [])
+        test_fn
+    =
     B.run_loop (fun wait ->
       Internal.run_hegel_test
         ?settings
@@ -27,6 +34,10 @@ module Make (B : S) = struct
         ~rerun_hint:Attribute
         ?database_key
         ?failure_blobs
+        ~examples:
+          (List.map
+             (fun (names, example) -> names, fun tc -> wait (fun () -> example tc))
+             examples)
         (fun tc -> wait (fun () -> test_fn tc)))
   ;;
 
