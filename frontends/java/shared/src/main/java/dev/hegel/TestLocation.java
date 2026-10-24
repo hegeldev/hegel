@@ -8,6 +8,9 @@ package dev.hegel;
  *
  * <p>{@link Hegel#test} and {@link Hegel#run} locate the test at the call site, and {@link
  * HegelTest} at the annotated method, unless {@link Settings#testLocation(TestLocation)} gives one.
+ * Java does not record the line a method is declared on, so {@link HegelTest} takes the method's
+ * file and line from its class file: the first line of the method's body that has code, or line
+ * {@code 0} when the class was compiled without line numbers or its class file cannot be read.
  *
  * @param file the source file, relative to its source root (for example {@code
  *     com/example/CartTest.java})

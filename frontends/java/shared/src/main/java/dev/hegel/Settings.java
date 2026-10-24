@@ -412,7 +412,7 @@ public final class Settings {
     /**
      * Say where this property lives, for the engine to report its verdict under inside Antithesis.
      * By default {@link Hegel#test} and {@link Hegel#run} use their call site, and {@link HegelTest}
-     * the annotated method.
+     * the first line of the annotated method's body (see {@link TestLocation}).
      *
      * @param location the test's location
      * @return a new settings instance

@@ -132,7 +132,7 @@ class CoverageTest {
         assertNull(noSeed.reproduceFailure);
         assertEquals("dev.hegel.CoverageTest$Holder.unseeded", noSeed.name);
         assertEquals(
-                new TestLocation("dev/hegel/CoverageTest.java", 0, "dev.hegel.CoverageTest$Holder", "unseeded"),
+                new TestLocation("dev/hegel/CoverageTest.java", 57, "dev.hegel.CoverageTest$Holder", "unseeded"),
                 noSeed.testLocation);
 
         // Fully-configured: derandomize forced on, a single explicit phase, a suppressed check,

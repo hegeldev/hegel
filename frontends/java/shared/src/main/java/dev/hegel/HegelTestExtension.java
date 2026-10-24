@@ -90,7 +90,7 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
                 .backend(ann.backend())
                 .nondeterminismStrictness(ann.nondeterminismStrictness())
                 .name(name)
-                .testLocation(TestLocation.of(className, null, 0, method.getName()));
+                .testLocation(MethodLocation.of(method));
         // The annotation cannot express "unset" for a primitive: 0 test cases (its default) leaves
         // the engine's profile / HEGEL_TEST_CASES value in place.
         if (ann.testCases() != 0) {

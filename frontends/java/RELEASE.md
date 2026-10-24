@@ -14,7 +14,7 @@ New settings, each also an `@HegelTest` attribute:
 - `stopOnFirstFailure(boolean)`: turned off, a run spends its whole test-case budget before reporting.
 - `showStatistics(boolean)`: print the engine's statistics block at the end of the run.
 - `unboundedChoices(boolean)`: lift the engine's per-test-case limit on choices, for very long test cases such as long-running concurrent state machines.
-- `testLocation(TestLocation)`: where the test lives, which the engine reports each run's verdict under inside Antithesis. `@HegelTest` locates a test at its method, and `Hegel.test` and `Hegel.run` at their caller, so this is only needed to override that.
+- `testLocation(TestLocation)`: where the test lives, which the engine reports each run's verdict under inside Antithesis. `@HegelTest` locates a test at its method, taking the source file and the first line of the method's body from its class file (line 0 if the class was compiled without line numbers), and `Hegel.test` and `Hegel.run` at their caller, so this is only needed to override that.
 
 `Settings.suppressHealthCheck(...)` now replaces any earlier suppressions instead of adding to them, and only sends a suppression set when it is called, so a `hegel.toml` profile or `HEGEL_*` variable that suppresses health checks applies unless the test says otherwise. Calling it with no checks runs every health check even where the profile suppresses some. `HealthCheck` gains `NONE`, which suppresses nothing, so `@HegelTest(suppressHealthCheck = HealthCheck.NONE)` can do the same; an empty array, the annotation's default, still leaves the profile's suppressions in place.
 
