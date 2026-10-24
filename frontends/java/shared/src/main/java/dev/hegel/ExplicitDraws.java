@@ -42,7 +42,8 @@ final class ExplicitDraws implements AutoCloseable {
     /** The value of the draw named {@code name}, printed as {@code name = value;}. */
     Object take(String name) {
         Object value;
-        if (example.named().containsKey(name) && used.add(name)) {
+        if (example.named().containsKey(name)) {
+            used.add(name);
             value = example.named().get(name);
         } else if (consumed < example.positional().size()) {
             value = example.positional().get(consumed++);

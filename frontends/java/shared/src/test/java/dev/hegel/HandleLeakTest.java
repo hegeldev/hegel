@@ -159,11 +159,18 @@ class HandleLeakTest {
     @Test
     void forksAndRepetitionBlocksAreFreed() {
         Tracker tracker = new Tracker(Engine.get());
-        assertTrue(tracker.run(new Settings().verbosity(Verbosity.VERBOSE).testCases(20), tc -> {
+        RunReport report =
+                tracker.run(new Settings().verbosity(Verbosity.VERBOSE).testCases(5), tc -> {
                     tc.fork(1).draw(integers());
-                    tc.repeat(() -> tc.draw(integers(), "x"));
-                })
-                .passed());
+                    int[] repetitions = {0};
+                    tc.repeat(() -> {
+                        tc.draw(integers(), "x");
+                        if (++repetitions[0] > 3) {
+                            throw new IllegalStateException();
+                        }
+                    });
+                });
+        assertFalse(report.passed());
         assertTrue(tracker.blocksCreated > 0);
         tracker.assertNothingLeaked();
     }
