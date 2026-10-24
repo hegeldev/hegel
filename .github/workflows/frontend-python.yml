@@ -22,6 +22,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python: ["3.11", "3.12", "3.13", "3.14"]
+        # The plan caps macOS at five concurrent jobs across the org, so
+        # macOS runs only the oldest and newest Python; Linux and Windows
+        # cover every version.
+        exclude:
+          - { os: macos-latest, python: "3.12" }
+          - { os: macos-latest, python: "3.13" }
     env:
       UV_PYTHON: ${{ matrix.python }}
     steps:
