@@ -118,7 +118,10 @@ A failing example prints each drawn value as JavaScript, laid out to fit the lin
 
 ```typescript
 class Interval {
-  constructor(readonly lo: number, readonly hi: number) {}
+  constructor(
+    readonly lo: number,
+    readonly hi: number,
+  ) {}
 
   [hegel.prettyPrint](p: hegel.PrettyPrinter): void {
     p.group(4, "Interval(", ")", () => {
@@ -132,4 +135,3 @@ class Interval {
 ```
 
 A group prints on one line when it fits, each `breakable` as its separator, and otherwise breaks at every `breakable`, indenting the next line by the group's indentation.
-
