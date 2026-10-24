@@ -154,6 +154,11 @@
  `hegel_generate_bytes` when the user gave no maximum, for libhegel to
  apply its default: 100, or `min_size + 100` when `min_size` is above
  100. Distinct from `UINT64_MAX`, which means no upper bound.
+
+ The value is reserved: it is never read as an explicit maximum. A
+ frontend passing a maximum the user gave must pass `UINT64_MAX` for
+ any maximum at or above this one, which no allocation could reach
+ anyway, so that the user's size is not taken for "no maximum given".
  */
 #define HEGEL_MAX_SIZE_DEFAULT (UINT64_MAX - 1)
 
@@ -1246,11 +1251,16 @@ hegel_result_t hegel_settings_set_print_blob(hegel_context_t *ctx, hegel_setting
    `derandomize`, `database`, `verbosity`, `phases`,
    `suppress_health_check`, `report_multiple_failures`,
    `stop_on_first_failure`, `show_statistics`, `print_blob`, `backend`,
-   `nondeterminism_strictness`, or `unbounded_choices` (which
-   `hegel.toml` has no key for).
+   `nondeterminism_strictness`; or, though `hegel.toml` has no key for
+   them, `unbounded_choices` or `database_key` (what
+   `hegel_settings_set_database_key` sets). The test location is the one
+   setting this does not reach: it has four parts, so set it with
+   `hegel_settings_set_test_location`.
  `value`: The value, in that key's `hegel.toml` vocabulary (`database`
-   takes a path, `disabled`, or `default` for the default location),
-   with these spellings for values that are not strings there:
+   takes a path, `disabled`, or `default` for the default location;
+   `database_key` takes the key itself, and only
+   `hegel_settings_set_database_key` clears it), with these spellings
+   for values that are not strings there:
    - an integer (`test_cases`, `seed`) in decimal; `seed` also takes
      `none`, which unsets it;
    - a boolean as `true`, `1`, `yes`, `false`, `0` or `no`, as the

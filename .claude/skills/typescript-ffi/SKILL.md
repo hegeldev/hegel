@@ -83,7 +83,8 @@ an oversight.
 `hegel.h` also publishes `#define` constants a frontend must use rather than
 hard-code: `HEGEL_MAX_SIZE_DEFAULT` (`UINT64_MAX - 1`, the `max_size` that
 asks libhegel for its default text and binary maximum; a `bigint` in
-TypeScript), `HEGEL_FILTER_ATTEMPTS` (how many times `filter` draws before
+TypeScript; reserved, so clamp a user's explicit maximum at or above it to
+`UINT64_MAX`), `HEGEL_FILTER_ATTEMPTS` (how many times `filter` draws before
 rejecting) and `HEGEL_STATE_MACHINE_DONE`. Neither koffi nor the Wasm module
 exports them: copy each into `src/engine.ts` next to the enums, and check the
 header diff for changed values like any other constant.

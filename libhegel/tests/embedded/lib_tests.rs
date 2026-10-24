@@ -518,3 +518,28 @@ fn concurrent_use_of_one_grammar_draw_is_rejected() {
         finish(ctx, s, run, tc);
     }
 }
+
+/// `hegel_settings_set_from_string` sets the database key, which the ABI has
+/// no getter for, under `database_key`.
+#[test]
+fn settings_set_from_string_sets_the_database_key() {
+    unsafe {
+        let ctx = hegel_context_new();
+        let mut s: *mut HegelSettings = ptr::null_mut();
+        ok(hegel_settings_new(ctx, &mut s));
+        assert_eq!((&*s).database_key, None);
+        ok(hegel_settings_set_from_string(
+            ctx,
+            s,
+            "database_key".into(),
+            "my_test".into(),
+        ));
+        assert_eq!((&*s).database_key.as_deref(), Some("my_test"));
+        assert_eq!(
+            hegel_settings_set_from_string(ctx, s, "test_location".into(), "x".into()),
+            HEGEL_E_INVALID_ARG
+        );
+        ok(hegel_settings_free(ctx, s));
+        ok(hegel_context_free(ctx));
+    }
+}

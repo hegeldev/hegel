@@ -453,10 +453,20 @@ fn parse_phases(items: &[&str]) -> Result<Vec<Phase>, String> {
 }
 
 /// The keys [`parse_setting`] accepts: every `hegel.toml` profile setting,
-/// plus `unbounded_choices`.
+/// plus `unbounded_choices` and `database_key`.
 const SETTING_KEYS: &str = "test_cases, seed, derandomize, database, verbosity, \
      phases, suppress_health_check, report_multiple_failures, stop_on_first_failure, \
-     show_statistics, print_blob, backend, nondeterminism_strictness, unbounded_choices";
+     show_statistics, print_blob, backend, nondeterminism_strictness, unbounded_choices, \
+     database_key";
+
+/// One setting parsed by [`parse_setting`].
+pub(crate) enum ParsedSetting {
+    /// A setting a `hegel.toml` profile can hold.
+    Profile(ProfileDelta),
+    /// The database key, which scopes the examples a run stores and
+    /// replays. It is per-test identity, so no profile holds it.
+    DatabaseKey(String),
+}
 
 /// Parse one setting given as text, as a command line passes it, into a
 /// delta that sets just that setting. `key` is the setting's `hegel.toml`
@@ -464,9 +474,10 @@ const SETTING_KEYS: &str = "test_cases, seed, derandomize, database, verbosity, 
 /// spellings for the values that are not strings there: an integer in
 /// decimal; a boolean as `true`, `1`, `yes`, `false`, `0` or `no`, as the
 /// `HEGEL_*` variables take it; and a list as its elements separated by
-/// commas, with the empty string for the empty list. `unbounded_choices`,
-/// which `hegel.toml` has no key for, takes a boolean.
-pub(crate) fn parse_setting(key: &str, value: &str) -> Result<ProfileDelta, String> {
+/// commas, with the empty string for the empty list. Of the keys
+/// `hegel.toml` has none for, `unbounded_choices` takes a boolean and
+/// `database_key` takes the key itself.
+pub(crate) fn parse_setting(key: &str, value: &str) -> Result<ParsedSetting, String> {
     let integer = |min: u64| match value.parse::<u64>() {
         Ok(n) if n >= min => Ok(n),
         _ => Err(format!(
@@ -514,13 +525,14 @@ pub(crate) fn parse_setting(key: &str, value: &str) -> Result<ProfileDelta, Stri
             delta.suppress_health_check = Some(parse_health_checks(&list())?);
         }
         "phases" => delta.phases = Some(parse_phases(&list())?),
+        "database_key" => return Ok(ParsedSetting::DatabaseKey(value.to_string())),
         other => {
             return Err(format!(
                 "unknown setting `{other}`. Known settings: {SETTING_KEYS}"
             ));
         }
     }
-    Ok(delta)
+    Ok(ParsedSetting::Profile(delta))
 }
 
 fn is_separator(byte: u8) -> bool {
