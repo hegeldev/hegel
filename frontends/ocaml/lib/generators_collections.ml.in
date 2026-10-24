@@ -66,7 +66,7 @@ let%template assoc_lists
   =
   validate_size_bounds ~min_size ~max_size;
   Composite
-    { label = Labels.combine [ Labels.assoc_list; label_of keys; label_of values ]
+    { label = Labels.combine [ Labels.dict; label_of keys; label_of values ]
     ; generate_fn =
         (fun data -> draw_association_pairs keys values ~min_size ~max_size data)
     }
@@ -89,7 +89,7 @@ let%template make_hash_tables
   =
   validate_size_bounds ~min_size ~max_size;
   Composite
-    { label = Labels.combine [ Labels.hash_table; label_of keys; label_of values ]
+    { label = Labels.combine [ Labels.dict; label_of keys; label_of values ]
     ; generate_fn =
         (fun data ->
           let pairs, show = draw_association_pairs keys values ~min_size ~max_size data in
@@ -167,7 +167,7 @@ let%template lists
   validate_size_bounds ~min_size ~max_size;
   let generate (type k) (key : ('a -> k) MODE(m)) =
     Composite
-      { label = Labels.combine [ Labels.set; label_of elements ]
+      { label = Labels.combine [ Labels.list; label_of elements ]
       ; generate_fn =
           (fun data ->
             let values, shows = draw_unique ~key elements ~min_size ~max_size data in

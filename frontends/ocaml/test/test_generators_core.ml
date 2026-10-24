@@ -50,7 +50,7 @@ let test_labels_structural () =
   in
   same "same shape" (lists (integers ()) ()) (lists (integers ()) ());
   differ "element kind" (lists (integers ()) ()) (lists (text ()) ());
-  differ "unique" (lists (integers ()) ()) (lists (integers ()) ~unique:true ());
+  same "unique" (lists (integers ()) ()) (lists (integers ()) ~unique:true ());
   differ "map on a leaf" (map succ (integers ())) (integers ());
   differ
     "map on a composite"
@@ -65,8 +65,8 @@ let test_labels_structural () =
   differ "tuple order" (tuples2 (integers ()) (text ())) (tuples2 (text ()) (integers ()));
   differ "one_of alternatives" (one_of [ integers () ]) (one_of [ text () ]);
   differ "optional" (optional (integers ())) (optional (text ()));
-  differ
-    "assoc_list vs hash_table"
+  same
+    "assoc_list and hash_table"
     (assoc_lists (integers ()) (text ()) ())
     (hash_tables (integers ()) (text ()) ());
   differ
@@ -81,6 +81,8 @@ let test_labels_structural () =
     (fun (name, label) ->
        Alcotest.(check int64) name (value (Labels.from_name name)) (value label))
     [ "hegel.lists", Labels.list
+    ; "hegel.sets", Labels.set
+    ; "hegel.dicts", Labels.dict
     ; "hegel.tuple", Labels.tuple
     ; "hegel.array", Labels.array
     ; "hegel.permutation", Labels.permutation

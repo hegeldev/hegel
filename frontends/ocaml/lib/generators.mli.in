@@ -1249,8 +1249,7 @@ module Private : sig
     val set : Internal.Label.t
     val array : Internal.Label.t
     val permutation : Internal.Label.t
-    val assoc_list : Internal.Label.t
-    val hash_table : Internal.Label.t
+    val dict : Internal.Label.t
     val tuple : Internal.Label.t
     val one_of : Internal.Label.t
     val optional : Internal.Label.t
