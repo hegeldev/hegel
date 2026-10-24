@@ -13,6 +13,7 @@ import com.sun.jna.ptr.LongByReference;
 import com.sun.jna.ptr.PointerByReference;
 import dev.hegel.lowlevel.Abi;
 import dev.hegel.lowlevel.Libhegel;
+import java.lang.ref.Cleaner;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.LocalDate;
@@ -21,6 +22,7 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
@@ -30,8 +32,9 @@ import java.util.function.Consumer;
  * <p>Every fallible call takes a {@code hegel_context_t*} as its first argument, on which libhegel
  * records the diagnostic of a failed call. A context must not be shared between threads, so each
  * thread lazily creates its own; {@link #lastErrorMessage()} reads the current thread's context,
- * which is what the failing call just wrote. A thread's context lives until the thread releases
- * it with {@link #releaseThreadContext()}.
+ * which is what the failing call just wrote. A thread's context is freed when the thread releases
+ * it with {@link #releaseThreadContext()} or, failing that, once the thread has ended and been
+ * garbage-collected, so a thread that draws and exits never leaks it.
  */
 final class JnaLibhegel implements Libhegel {
     // hegel_run_start registers the output callback with the engine until hegel_run_free, so a
@@ -39,7 +42,13 @@ final class JnaLibhegel implements Libhegel {
     private final Map<Long, LineCallback> runCallbacks = new ConcurrentHashMap<>();
 
     private final HegelNative lib;
-    private final ThreadLocal<Pointer> context;
+    private static final Cleaner CONTEXTS = Cleaner.create();
+
+    private final ThreadLocal<ThreadContext> context;
+    private final AtomicInteger liveContexts = new AtomicInteger();
+
+    /** A thread's error context, and the registration that frees it once the thread is gone. */
+    private record ThreadContext(Pointer ctx, Cleaner.Cleanable cleanable) {}
 
     JnaLibhegel(Path libraryPath) {
         try {
@@ -484,12 +493,24 @@ final class JnaLibhegel implements Libhegel {
     }
 
     private Pointer ctx() {
-        Pointer c = context.get();
+        ThreadContext c = context.get();
         if (c == null) {
-            c = lib.hegel_context_new();
+            Pointer ctx = lib.hegel_context_new();
+            liveContexts.incrementAndGet();
+            c = new ThreadContext(ctx, CONTEXTS.register(Thread.currentThread(), () -> freeContext(ctx)));
             context.set(c);
         }
-        return c;
+        return c.ctx();
+    }
+
+    private void freeContext(Pointer ctx) {
+        lib.hegel_context_free(ctx);
+        liveContexts.decrementAndGet();
+    }
+
+    /** How many threads' error contexts are currently allocated. */
+    int liveContexts() {
+        return liveContexts.get();
     }
 
     private static Pointer pointer(long handle) {
@@ -1643,10 +1664,10 @@ final class JnaLibhegel implements Libhegel {
 
     @Override
     public void releaseThreadContext() {
-        Pointer c = context.get();
+        ThreadContext c = context.get();
         if (c != null) {
             context.remove();
-            lib.hegel_context_free(c);
+            c.cleanable().clean();
         }
     }
 

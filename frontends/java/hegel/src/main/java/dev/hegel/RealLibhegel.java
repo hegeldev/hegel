@@ -17,6 +17,7 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.StructLayout;
 import java.lang.foreign.SymbolLookup;
 import java.lang.invoke.MethodHandle;
+import java.lang.ref.Cleaner;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.nio.charset.StandardCharsets;
@@ -27,6 +28,7 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
@@ -39,8 +41,9 @@ import java.util.function.Consumer;
  * <p>Every fallible call takes a {@code hegel_context_t*} as its first argument, on which libhegel
  * records the diagnostic of a failed call. A context must not be shared between threads, so each
  * thread lazily creates its own; {@link #lastErrorMessage()} reads the current thread's context,
- * which is what the failing call just wrote. A thread's context lives until the thread releases
- * it with {@link #releaseThreadContext()}.
+ * which is what the failing call just wrote. A thread's context is freed when the thread releases
+ * it with {@link #releaseThreadContext()} or, failing that, once the thread has ended and been
+ * garbage-collected, so a thread that draws and exits never leaks it.
  */
 final class RealLibhegel implements Libhegel {
     private final Arena libArena;
@@ -51,7 +54,13 @@ final class RealLibhegel implements Libhegel {
     // runFree. Runs are started and freed on the same thread (the Runner's), matching confinement.
     private final Map<Long, Arena> runArenas = new ConcurrentHashMap<>();
 
-    private final ThreadLocal<MemorySegment> context;
+    private static final Cleaner CONTEXTS = Cleaner.create();
+
+    private final ThreadLocal<ThreadContext> context;
+    private final AtomicInteger liveContexts = new AtomicInteger();
+
+    /** A thread's error context, and the registration that frees it once the thread is gone. */
+    private record ThreadContext(MemorySegment ctx, Cleaner.Cleanable cleanable) {}
 
     // struct hegel_date_t { int32_t year; uint8_t month; uint8_t day; }
     private static final StructLayout DATE_LAYOUT = MemoryLayout.structLayout(
@@ -777,12 +786,24 @@ final class RealLibhegel implements Libhegel {
     }
 
     private MemorySegment ctx() {
-        MemorySegment c = context.get();
+        ThreadContext c = context.get();
         if (c == null) {
-            c = (MemorySegment) invoke(contextNew);
+            MemorySegment ctx = (MemorySegment) invoke(contextNew);
+            liveContexts.incrementAndGet();
+            c = new ThreadContext(ctx, CONTEXTS.register(Thread.currentThread(), () -> freeContext(ctx)));
             context.set(c);
         }
-        return c;
+        return c.ctx();
+    }
+
+    private void freeContext(MemorySegment ctx) {
+        invoke(contextFree, ctx);
+        liveContexts.decrementAndGet();
+    }
+
+    /** How many threads' error contexts are currently allocated. */
+    int liveContexts() {
+        return liveContexts.get();
     }
 
     private static MemorySegment segment(long handle) {
@@ -2027,10 +2048,10 @@ final class RealLibhegel implements Libhegel {
 
     @Override
     public void releaseThreadContext() {
-        MemorySegment c = context.get();
+        ThreadContext c = context.get();
         if (c != null) {
             context.remove();
-            invoke(contextFree, c);
+            c.cleanable().clean();
         }
     }
 

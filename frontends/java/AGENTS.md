@@ -139,7 +139,8 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   bindings keep one libhegel error context per thread (read back by
   `lastErrorMessage()`, created on the thread's first call and freed by
   `releaseThreadContext()`, which each concurrent stateful worker calls before
-  it exits), pass date/time/datetime structs by value, pass every
+  it exits, or otherwise by a `Cleaner` once the thread has been collected, so
+  a user thread drawing through `TestCase.fork` never leaks one), pass date/time/datetime structs by value, pass every
   string as the engine's `hegel_string_t` (`{const char *data; size_t len}`:
   by value for a required string, by nullable pointer where absent is
   meaningful, as a contiguous struct array for name lists; a Java `null`

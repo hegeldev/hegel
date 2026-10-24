@@ -652,9 +652,11 @@ public interface Libhegel {
 
     /**
      * {@code hegel_context_free} on the calling thread's error context, if it has one. A binding
-     * creates a context lazily for each thread that calls into the engine; a thread that is about
-     * to end calls this so its context does not outlive it. A later call on the same thread
-     * creates a fresh context.
+     * creates a context lazily for each thread that calls into the engine, and must free it once
+     * the thread has ended even if the thread never calls this, since user threads draw through
+     * {@code TestCase} forks without knowing about contexts. A thread that is about to end may call
+     * this to free its context at once rather than when the thread is collected. A later call on
+     * the same thread creates a fresh context.
      */
     void releaseThreadContext();
 

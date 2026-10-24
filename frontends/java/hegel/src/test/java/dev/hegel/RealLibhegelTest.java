@@ -297,6 +297,31 @@ class RealLibhegelTest {
     }
 
     @Test
+    void anEndedThreadsContextIsFreedWithoutBeingReleased() throws InterruptedException {
+        RealLibhegel lib = real();
+        Thread thread = new Thread(() -> lib.version());
+        thread.start();
+        thread.join();
+        assertEquals(1, lib.liveContexts());
+        thread = null;
+        long deadline = System.nanoTime() + 60_000_000_000L;
+        while (lib.liveContexts() > 0 && System.nanoTime() < deadline) {
+            System.gc();
+            Thread.sleep(10);
+        }
+        assertEquals(0, lib.liveContexts());
+    }
+
+    @Test
+    void releasingAThreadsContextFreesIt() {
+        RealLibhegel lib = real();
+        lib.version();
+        assertEquals(1, lib.liveContexts());
+        lib.releaseThreadContext();
+        assertEquals(0, lib.liveContexts());
+    }
+
+    @Test
     void settingsGettersReadTheHandleBack() {
         RealLibhegel lib = real();
         long s = newSettings(lib);
