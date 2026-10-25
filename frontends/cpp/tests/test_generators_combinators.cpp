@@ -385,7 +385,7 @@ TEST(Recursive, OverBudgetAttemptsAreRetried) {
 
 TEST(Recursive, SubtreesShareTheLabelOfTheWholeValue) {
     namespace hi = hegel::internal;
-    auto leaf = gs::integers<int>();
+    auto leaf = gs::integers<int>({.min_value = 0, .max_value = 100});
     uint64_t expected =
         hi::combine_labels({hi::label(hi::LabelName::Recursive), leaf.label()});
     uint64_t seen = 0;
