@@ -40,7 +40,7 @@ check-sanitizer SANITIZERS:
     ASAN_OPTIONS=halt_on_error=1 \
     LSAN_OPTIONS="suppressions=$PWD/tests/lsan-suppressions.txt" \
     UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
-    TSAN_OPTIONS=halt_on_error=1 \
+    TSAN_OPTIONS="halt_on_error=1 suppressions=$PWD/tests/tsan-suppressions.txt" \
         ctest --test-dir "$dir/tests" --output-on-failure -j{{ jobs }}
 
 format:
