@@ -92,7 +92,7 @@ jobs:
           # checksum by downloading ASSET_URL.
           opam publish \
             --repo ocaml/opam-repository \
-            --version "$VERSION" \
+            -v "$VERSION" \
             --no-browser \
             --no-confirmation \
             "$ASSET_URL" .
