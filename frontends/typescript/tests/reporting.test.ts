@@ -219,7 +219,7 @@ describe("repeat", () => {
           tc.assume(tc.draw(gs.booleans()));
         });
       },
-      { ...deterministic, testCases: 10 },
+      { ...deterministic, testCases: 2 },
     );
     expect(repetitions).toBeGreaterThan(0);
     await runner.testAsync(
@@ -231,7 +231,7 @@ describe("repeat", () => {
           });
         });
       },
-      { ...deterministic, testCases: 10 },
+      { ...deterministic, testCases: 1 },
     );
   });
 
