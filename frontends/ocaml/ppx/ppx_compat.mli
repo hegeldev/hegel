@@ -40,6 +40,9 @@ val sexp_of_str_type_decl
     ppx_sexp_conv's [[%sexp_of: ct]] builds it. *)
 val sexp_of_core_type : core_type -> expression
 
+(** [function_of_cases ~loc cases] is [function] over [cases]. *)
+val function_of_cases : loc:location -> case list -> expression
+
 (** [unwrap_pattern_constraint pat] returns [Some inner] if [pat] is a
     type-constraint pattern ([(p : ty)]), [None] otherwise. On OxCaml,
     [Ppat_constraint] carries an extra modes argument. *)

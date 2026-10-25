@@ -367,7 +367,7 @@ let variant_of_constructors
         ~sexp_of:[%e sexp_of_type_name ~loc type_name]
         ~print:
           [%e
-            Ast_builder.Default.pexp_function
+            Ppx_compat.function_of_cases
               ~loc
               (List.map print_case generated @ excluded_case)]
         ([%e with_mode ~portable [%expr Hegel.Generators.sampled_from]]

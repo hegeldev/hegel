@@ -23,6 +23,7 @@ let map_constr_arg_types f = function
 
 let sexp_of_str_type_decl = Ppx_sexp_conv_expander.Sexp_of.str_type_decl
 let sexp_of_core_type = Ppx_sexp_conv_expander.Sexp_of.core_type
+let function_of_cases ~loc cases = Ast_builder.Default.pexp_function_cases ~loc cases
 
 let unwrap_pattern_constraint pat =
   match pat.ppat_desc with

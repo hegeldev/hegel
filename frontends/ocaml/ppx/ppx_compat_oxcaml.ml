@@ -34,6 +34,7 @@ let sexp_of_str_type_decl ~loc ~path decls =
 ;;
 
 let sexp_of_core_type ct = Ppx_sexp_conv_expander.Sexp_of.core_type ct ~stackify:false
+let function_of_cases ~loc cases = Ast_builder.Default.pexp_function ~loc cases
 
 let unwrap_pattern_constraint pat =
   match pat.ppat_desc with

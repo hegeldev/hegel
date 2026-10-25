@@ -47,6 +47,7 @@ jobs:
           set -o pipefail
           HEGEL_LIBHEGEL_PATH="$(scripts/libhegel-path.sh)"
           export HEGEL_LIBHEGEL_PATH
+          opam remove --confirm-level=unsafe-yes hegel ppx_hegel_compat ppx_hegel_generator ppx_hegel_test 2>/dev/null || true
           opam install ./*.opam --with-test --confirm-level=unsafe-yes 2>&1 \
             | tee "$RUNNER_TEMP/opam-install.log"
           # Release-profile builds (dune -p) print warnings but never fail on
@@ -99,6 +100,7 @@ jobs:
           set -o pipefail
           HEGEL_LIBHEGEL_PATH="$(scripts/libhegel-path.sh)"
           export HEGEL_LIBHEGEL_PATH
+          opam remove --confirm-level=unsafe-yes hegel ppx_hegel_compat ppx_hegel_generator ppx_hegel_test 2>/dev/null || true
           opam install ./*.opam --with-test --confirm-level=unsafe-yes 2>&1 \
             | tee "$RUNNER_TEMP/opam-install.log"
           if grep -E 'Warning [0-9]+ \[' "$RUNNER_TEMP/opam-install.log"; then
@@ -231,6 +233,7 @@ jobs:
           # solver drop packages the first call installed but this one does
           # not name: it removed alcotest ("conflicts with uutf") when it
           # picked uutf 1.0.3+ox for textutils, and the test build failed.
+          opam remove --confirm-level=unsafe-yes hegel ppx_hegel_compat ppx_hegel_generator ppx_hegel_test 2>/dev/null || true
           opam install ./*.opam ../../.github/ocaml/oxcaml-ci.opam \
             --deps-only --with-test --yes --solver=builtin-0install
       - name: Build libhegel
