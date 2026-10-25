@@ -783,7 +783,7 @@ pub use hegel_macros::test_helper;
 /// `--show-statistics`, `--print-blob`, `--backend`,
 /// `--nondeterminism-strictness` and `--unbounded-choices`, each taking
 /// its value as `--flag VALUE` or `--flag=VALUE` in the vocabulary
-/// `hegel.toml` uses (see [`docs::settings`](crate::docs::settings));
+/// `hegel.toml` uses (see [`docs::settings`]);
 /// the engine parses them. `--profile` and `-h` / `--help` complete the
 /// list. `--profile`
 /// sets the process's default settings profile before the attribute args
