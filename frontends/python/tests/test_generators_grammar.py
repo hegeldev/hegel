@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -209,6 +210,23 @@ def test_from_lark_labels_distinguish_grammars_start_rules_and_terminals():
     assert gs.from_lark('start: "a"').label != gs.from_lark('start: "b"').label
 
 
+def test_from_lark_labels_distinguish_every_option(tmp_path):
+    grammar = "start: WORD\nWORD: /[a-z]+/\n"
+    variants = [
+        gs.from_lark(grammar),
+        gs.from_lark(grammar, alphabet="abc"),
+        gs.from_lark(grammar, alphabet="abd"),
+        gs.from_lark(grammar, alphabet=gs.characters(codec="ascii")),
+        gs.from_lark(grammar, max_size=10),
+        gs.from_lark(grammar, max_size=11),
+        gs.from_lark(grammar, max_depth=10),
+        gs.from_lark(grammar, import_path=tmp_path),
+        gs.from_lark(grammar, import_path=tmp_path / "sub"),
+    ]
+    assert len({v.label for v in variants}) == len(variants)
+    assert gs.from_lark(grammar, max_size=10).label == gs.from_lark(grammar, max_size=10).label
+
+
 def test_from_lark_repr():
     assert repr(gs.from_lark('start: "a"')) == "from_lark('start: \"a\"')"
     assert (
@@ -220,6 +238,17 @@ def test_from_lark_repr():
         == "from_lark('a: \"a\"\\nb: NUM\\n%declare NUM\\n', start='b', "
         "explicit={'NUM': just('1')})"
     )
+    assert repr(
+        gs.from_lark(
+            'start: "a"', alphabet="ab", max_size=10, max_depth=5, import_path=Path("grammars")
+        )
+    ) == (
+        "from_lark('start: \"a\"', alphabet='ab', max_size=10, max_depth=5, import_path='grammars')"
+    )
+    assert (
+        repr(gs.from_lark('start: "a"', alphabet=gs.characters(codec="ascii")))
+        == "from_lark('start: \"a\"', alphabet=characters(max_codepoint=127))"
+    )
 
 
 def test_from_lark_prints_the_drawn_string():
@@ -229,3 +258,20 @@ def test_from_lark_prints_the_drawn_string():
 
     error = failing(body, database="")
     assert notes(error)[0].endswith(" = 'ab'")
+
+
+def test_from_lark_follows_this_pythons_unicode_version():
+    grammar = "start: WORD\nWORD: /\\w+/\n"
+    ol_onal = gs.characters(min_codepoint=0x1E5D0, max_codepoint=0x1E5FA)
+    mixed = "a" + "".join(chr(c) for c in range(0x1E5D0, 0x1E5FB))
+    if unicodedata.category("\U0001e5d0") == "Cn":
+        with pytest.raises(hegel.InvalidArgument, match="cannot be produced"):
+            gs.from_lark(grammar, alphabet=ol_onal)
+
+        def body(tc):
+            assert set(tc.draw(gs.from_lark(grammar, alphabet=mixed))) == {"a"}
+
+        run_test(body, test_cases=200)
+    else:
+        assert re.fullmatch(r"\w+", find_example(gs.from_lark(grammar, alphabet=ol_onal)))
+        find_example(gs.from_lark(grammar, alphabet=mixed), lambda s: "a" not in s)

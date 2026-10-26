@@ -34,7 +34,8 @@ These options change the settings of every Hegel test in the run:
   unknown key or value is a usage error that lists what is accepted.
 
 `--hegel-seed SEED`
-: Fix the seed.
+: Fix the seed: an integer from 0 to 2<sup>64</sup> - 1, or `none` for a
+  fresh random seed.
 
 `--hegel-verbosity {quiet,normal,verbose,debug}`
 : Set the verbosity.
@@ -44,16 +45,19 @@ These options change the settings of every Hegel test in the run:
   generates the same test cases.
 
 `--hegel-database PATH`
-: Keep the example database in `PATH`. `--hegel-database=` (empty) turns the
-  database off.
+: Keep the example database in `PATH`. `--hegel-database=` (empty) or
+  `--hegel-database=disabled` turns the database off, and
+  `--hegel-database=default` selects the default directory, as in
+  `hegel.toml`; write `./default` for a directory of that name.
 
 The options act on the default profile: Hegel builds a profile from the one
 named by `--hegel-profile` (or the default profile) with the other options
 applied, the `--hegel-setting` options first and then the others, and makes it
-the default for the run. So settings written in a test
-still take precedence over the options, and so do the `HEGEL_*` environment
-variables in {doc}`settings`, which apply on top of whichever profile is the
-default.
+the default for the run. So settings written in a test, or given to a
+{class}`~hegel.Settings` object, still take precedence over the options, and so
+do the `HEGEL_*` environment variables in {doc}`settings`, which apply on top of
+whichever profile is the default. Everything a `Settings` object leaves unset
+follows the options, even for one created at import time in a `conftest.py`.
 
 ## Detecting Hegel tests
 

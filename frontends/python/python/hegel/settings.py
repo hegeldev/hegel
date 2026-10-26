@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import enum
 import os
 from collections.abc import Iterable
@@ -200,18 +199,22 @@ def _check_profile_name(name: Any) -> None:
         raise InvalidArgument(f"name={name!r} must be a string naming a profile")
 
 
-@dataclass(frozen=True)
 class Settings:
     """Configuration for a run. Immutable.
 
-    ``Settings()`` starts from the default profile (resolved by the engine:
-    the ``default`` set with :meth:`set_default_profile`,
+    A ``Settings`` value holds only the fields given to it as keyword
+    arguments. Every other field comes from the default profile, resolved
+    by the engine each time the settings are used (a test runs, or a field
+    is read): the ``default`` set with :meth:`set_default_profile`,
     ``HEGEL_DEFAULT_PROFILE``, the ``default`` entry in ``hegel.toml``, or
     the environment: ``workload`` under Antithesis, ``ci`` on a CI server,
-    ``development`` otherwise), with any keyword arguments overriding
-    individual fields. ``Settings(parent, **overrides)`` starts from
-    ``parent`` instead. The ``HEGEL_*`` environment variables
-    (``HEGEL_TEST_CASES``, ``HEGEL_SEED``, ...) apply over the profile.
+    ``development`` otherwise. The ``HEGEL_*`` environment variables
+    (``HEGEL_TEST_CASES``, ``HEGEL_SEED``, ...) apply over the profile, and
+    the given fields over both. So a ``Settings`` made before the default
+    profile changes, at import time in a ``conftest.py`` say, follows the
+    change, pytest's ``--hegel-*`` options included.
+    ``Settings(parent, **overrides)`` keeps ``parent``'s fields and profile
+    and adds ``overrides``.
 
     Usually settings are given to :func:`hegel.test` as keywords
     (``@hegel.test(test_cases=500)``), which override the same fields.
@@ -287,8 +290,8 @@ class Settings:
         def test_something(tc): ...
     """
 
-    # Every field is filled in by __init__, from the default profile or the
-    # parent settings: these declarations give the fields and types only.
+    __slots__ = ("_overrides", "_profile")
+
     test_cases: int
     verbosity: Verbosity
     seed: int | None
@@ -304,33 +307,69 @@ class Settings:
     backend: Backend
     nondeterminism_strictness: NondeterminismStrictness
 
+    _profile: str | None
+    _overrides: dict[str, Any]
+
     def __init__(self, parent: Settings | None = None, **overrides: Any) -> None:
         if parent is not None and not isinstance(parent, Settings):
             raise InvalidArgument(f"parent={parent!r} must be a Settings object or None")
-        base = _from_native(_native.Settings.new()) if parent is None else parent
-        values = {name: getattr(base, name) for name in _FIELDS}
+        values = {} if parent is None else dict(parent._overrides)
         for name, value in overrides.items():
             if name not in _FIELDS:
                 raise TypeError(f"Settings() got an unexpected keyword argument {name!r}")
-            values[name] = value
-        _assign(self, values)
+            values[name] = _VALIDATORS[name](name, value)
+        object.__setattr__(self, "_profile", None if parent is None else parent._profile)
+        object.__setattr__(self, "_overrides", values)
+        self._build()
+
+    def __getattr__(self, name: str) -> Any:
+        if name not in _FIELDS:
+            raise AttributeError(f"'Settings' object has no attribute {name!r}")
+        return self._values()[name]
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise AttributeError(f"Settings are immutable: use replace() to change {name!r}")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError(f"Settings are immutable: cannot delete {name!r}")
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (_restore_settings, (self._profile, dict(self._overrides)))
+
+    def _key(self) -> tuple[Any, ...]:
+        return (self._profile, tuple(sorted(self._overrides.items())))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Settings):
+            return NotImplemented
+        return self._key() == other._key()
+
+    def __hash__(self) -> int:
+        return hash(self._key())
+
+    def __repr__(self) -> str:
+        fields = ", ".join(f"{name}={value!r}" for name, value in self._overrides.items())
+        if self._profile is None:
+            return f"Settings({fields})"
+        return f"Settings.from_profile({', '.join(filter(None, [repr(self._profile), fields]))})"
 
     @classmethod
     def from_profile(cls, name: str, **overrides: Any) -> Settings:
-        """Settings initialised from the named profile, with
-        ``overrides`` applied. The profile is one of the engine's
-        (``development``, ``ci``, ``workload``, or ``base`` for the plain
-        defaults), one defined in ``hegel.toml``, or one registered with
-        :meth:`register_profile`. Unlike ``Settings()``, this ignores
-        which profile is the default."""
+        """Settings resolved from the named profile rather than the
+        default one, with ``overrides`` applied. The profile is one of the
+        engine's (``development``, ``ci``, ``workload``, or ``base`` for
+        the plain defaults), one defined in ``hegel.toml``, or one
+        registered with :meth:`register_profile`; an unknown name is an
+        error. Unlike ``Settings()``, this ignores which profile is the
+        default."""
         _check_profile_name(name)
-        return cls(_from_native(_native.Settings.for_profile(name)), **overrides)
+        return cls(_restore_settings(name, {}), **overrides)
 
     @staticmethod
     def register_profile(name: str, settings: Settings | None = None, **overrides: Any) -> None:
         """Register (or replace) a named profile, for the whole process:
         ``settings`` (the default profile when omitted) with ``overrides``
-        applied. The profile can then be selected with
+        applied, resolved now. The profile can then be selected with
         :meth:`from_profile`, :meth:`set_default_profile`,
         ``HEGEL_DEFAULT_PROFILE`` or pytest's ``--hegel-profile``.
 
@@ -339,10 +378,9 @@ class Settings:
             hegel.Settings.register_profile("nightly", test_cases=10_000)
             hegel.Settings.set_default_profile("nightly")
 
-        Registering does not change :class:`Settings` objects that already
-        exist. A :func:`hegel.test` without ``settings=`` resolves its
-        settings each time it runs, so registering in a ``conftest.py``
-        reaches every test. The reserved names ``base`` and ``default``
+        A ``Settings`` value resolves its profile each time it is used, so
+        registering a profile, or making it the default, reaches existing
+        values that rely on it. The reserved names ``base`` and ``default``
         cannot be registered.
         """
         _check_profile_name(name)
@@ -359,51 +397,30 @@ class Settings:
         profile name is an error."""
         if name is not None:
             _check_profile_name(name)
-            _native.Settings.for_profile(name)  # raises for an unknown profile
+            _native.Settings.for_profile(name)
         _native.set_default_profile(name)
 
     def replace(self, **overrides: Any) -> Settings:
         """A copy of these settings with ``overrides`` applied."""
         return Settings(self, **overrides)
 
-    def _with_strings(self, values: Iterable[tuple[str, str]]) -> Settings:
-        """These settings with each ``(key, value)`` applied as the engine
-        reads a ``hegel.toml`` profile: the key is the setting's name and
-        the value is text in the engine's vocabulary for it (``"10"``,
-        ``"verbose"``, ``"too_slow,filter_too_much"``). A command line
-        passes its options through this, so the engine, not this package,
-        knows each setting's spellings."""
-        native = self._build()
-        for key, value in values:
-            native.set_from_string(key, value)
-            if key not in _FIELDS:
-                raise InvalidArgument(
-                    f"{key} is set for each test, not for a whole run, so it cannot be set here"
-                )
-        return _from_native(native)
+    def _values(self) -> dict[str, Any]:
+        """Every field, as the engine resolves these settings now."""
+        return _read_native(self._build())
 
     def _build(
         self,
         database_key: str | None = None,
         test_location: TestLocation | None = None,
     ) -> _native.Settings:
-        """A native settings handle: every field set explicitly on top of
-        the immutable ``base`` profile. The fields are every engine setting
-        (``tests/test_settings.py`` checks them against the getters and
-        setters in ``hegel.h``), read
-        back from the engine when these settings were resolved, so nothing
-        the engine resolved is reset to a default."""
-        native = _native.Settings.for_profile("base")
-        native.set_test_cases(self.test_cases)
-        native.set_verbosity(self.verbosity.value)
-        native.set_seed(self.seed)
-        native.set_derandomize(self.derandomize)
-        native.set_report_multiple_failures(self.report_multiple_failures)
-        native.set_stop_on_first_failure(self.stop_on_first_failure)
-        native.set_show_statistics(self.show_statistics)
-        native.set_unbounded_choices(self.unbounded_choices)
-        native.set_database(self.database)
-        native.set_print_blob(self.print_blob)
+        """A native settings handle: the profile as the engine resolves it
+        now, with only the fields given to these settings set over it."""
+        if self._profile is None:
+            native = _native.Settings.new()
+        else:
+            native = _native.Settings.for_profile(self._profile)
+        for name, value in self._overrides.items():
+            _SETTERS[name](native, value)
         if database_key is not None:
             native.set_database_key(database_key)
         if test_location is not None:
@@ -413,86 +430,120 @@ class Settings:
                 test_location.class_name,
                 test_location.function,
             )
-        native.set_phases(_flags(self.phases))
-        native.set_suppress_health_check(_flags(self.suppress_health_check))
-        native.set_backend(self.backend.value)
-        native.set_nondeterminism_strictness(self.nondeterminism_strictness.value)
         return native
 
 
-def _assign(settings: Settings, values: dict[str, Any]) -> None:
-    test_cases = _check_int("test_cases", values["test_cases"])
+def _set_from_string(native: _native.Settings, key: str, value: str) -> None:
+    """Set ``key`` on ``native`` as the engine reads a ``hegel.toml``
+    profile: the key is the setting's name and the value is text in the
+    engine's vocabulary for it (``"10"``, ``"verbose"``,
+    ``"too_slow,filter_too_much"``). A command line passes its options
+    through this, so the engine, not this package, knows each setting's
+    spellings."""
+    native.set_from_string(key, value)
+    if key not in _FIELDS:
+        raise InvalidArgument(
+            f"{key} is set for each test, not for a whole run, so it cannot be set here"
+        )
+
+
+def _check_test_cases(field: str, value: Any) -> int:
+    test_cases = _check_int(field, value)
     if test_cases < 0:
         raise InvalidArgument(f"test_cases={test_cases} must be non-negative")
     if test_cases >= 1 << 64:
         raise InvalidArgument(f"test_cases={test_cases} must be less than 2**64")
-    seed = values["seed"]
-    if seed is not None:
-        seed = _check_int("seed", seed) & ((1 << 64) - 1)
-    database = values["database"]
-    if database is False:
-        database = ""
-    elif isinstance(database, (str, os.PathLike)):
-        database = os.fspath(database)
-    elif database is not None:
+    return test_cases
+
+
+def _check_seed(field: str, value: Any) -> int | None:
+    if value is None:
+        return None
+    return _check_int(field, value) & ((1 << 64) - 1)
+
+
+def _check_database(field: str, value: Any) -> str | None:
+    if value is False:
+        return ""
+    if isinstance(value, (str, os.PathLike)):
+        return os.fspath(value)
+    if value is not None:
         raise InvalidArgument(
-            f"database={database!r} must be a directory path, None for the default, "
+            f"database={value!r} must be a directory path, None for the default, "
             'or "" to disable the database'
         )
-    checked = {
-        "test_cases": test_cases,
-        "verbosity": _coerce_member(Verbosity, "verbosity", values["verbosity"]),
-        "seed": seed,
-        "derandomize": _check_bool("derandomize", values["derandomize"]),
-        "database": database,
-        "suppress_health_check": _coerce_members(
-            HealthCheck, "suppress_health_check", values["suppress_health_check"]
-        ),
-        "phases": _coerce_members(Phase, "phases", values["phases"]),
-        "report_multiple_failures": _check_bool(
-            "report_multiple_failures", values["report_multiple_failures"]
-        ),
-        "stop_on_first_failure": _check_bool(
-            "stop_on_first_failure", values["stop_on_first_failure"]
-        ),
-        "show_statistics": _check_bool("show_statistics", values["show_statistics"]),
-        "unbounded_choices": _check_bool("unbounded_choices", values["unbounded_choices"]),
-        "print_blob": _check_bool("print_blob", values["print_blob"]),
-        "backend": _coerce_member(Backend, "backend", values["backend"]),
-        "nondeterminism_strictness": _coerce_member(
-            NondeterminismStrictness,
-            "nondeterminism_strictness",
-            values["nondeterminism_strictness"],
+    return None
+
+
+def _member(cls: type[E]) -> Any:
+    return lambda field, value: _coerce_member(cls, field, value)
+
+
+def _members(cls: type[E]) -> Any:
+    return lambda field, value: _coerce_members(cls, field, value)
+
+
+_VALIDATORS: dict[str, Any] = {
+    "test_cases": _check_test_cases,
+    "verbosity": _member(Verbosity),
+    "seed": _check_seed,
+    "derandomize": _check_bool,
+    "database": _check_database,
+    "suppress_health_check": _members(HealthCheck),
+    "phases": _members(Phase),
+    "report_multiple_failures": _check_bool,
+    "stop_on_first_failure": _check_bool,
+    "show_statistics": _check_bool,
+    "unbounded_choices": _check_bool,
+    "print_blob": _check_bool,
+    "backend": _member(Backend),
+    "nondeterminism_strictness": _member(NondeterminismStrictness),
+}
+
+_SETTERS: dict[str, Any] = {
+    "test_cases": lambda n, v: n.set_test_cases(v),
+    "verbosity": lambda n, v: n.set_verbosity(v.value),
+    "seed": lambda n, v: n.set_seed(v),
+    "derandomize": lambda n, v: n.set_derandomize(v),
+    "database": lambda n, v: n.set_database(v),
+    "suppress_health_check": lambda n, v: n.set_suppress_health_check(_flags(v)),
+    "phases": lambda n, v: n.set_phases(_flags(v)),
+    "report_multiple_failures": lambda n, v: n.set_report_multiple_failures(v),
+    "stop_on_first_failure": lambda n, v: n.set_stop_on_first_failure(v),
+    "show_statistics": lambda n, v: n.set_show_statistics(v),
+    "unbounded_choices": lambda n, v: n.set_unbounded_choices(v),
+    "print_blob": lambda n, v: n.set_print_blob(v),
+    "backend": lambda n, v: n.set_backend(v.value),
+    "nondeterminism_strictness": lambda n, v: n.set_nondeterminism_strictness(v.value),
+}
+
+
+def _read_native(native: _native.Settings) -> dict[str, Any]:
+    return {
+        "test_cases": native.get_test_cases(),
+        "verbosity": Verbosity(native.get_verbosity()),
+        "seed": native.get_seed(),
+        "derandomize": native.get_derandomize(),
+        "database": native.get_database(),
+        "suppress_health_check": _unflags(HealthCheck, native.get_suppress_health_check()),
+        "phases": _unflags(Phase, native.get_phases()),
+        "report_multiple_failures": native.get_report_multiple_failures(),
+        "stop_on_first_failure": native.get_stop_on_first_failure(),
+        "show_statistics": native.get_show_statistics(),
+        "unbounded_choices": native.get_unbounded_choices(),
+        "print_blob": native.get_print_blob(),
+        "backend": Backend(native.get_backend()),
+        "nondeterminism_strictness": NondeterminismStrictness(
+            native.get_nondeterminism_strictness()
         ),
     }
-    for name, value in checked.items():
-        object.__setattr__(settings, name, value)
 
 
-def _from_native(native: _native.Settings) -> Settings:
+_FIELDS = tuple(name for name in Settings.__annotations__ if not name.startswith("_"))
+
+
+def _restore_settings(profile: str | None, overrides: dict[str, Any]) -> Settings:
     settings = object.__new__(Settings)
-    _assign(
-        settings,
-        {
-            "test_cases": native.get_test_cases(),
-            "verbosity": Verbosity(native.get_verbosity()),
-            "seed": native.get_seed(),
-            "derandomize": native.get_derandomize(),
-            "database": native.get_database(),
-            "suppress_health_check": _unflags(HealthCheck, native.get_suppress_health_check()),
-            "phases": _unflags(Phase, native.get_phases()),
-            "report_multiple_failures": native.get_report_multiple_failures(),
-            "stop_on_first_failure": native.get_stop_on_first_failure(),
-            "show_statistics": native.get_show_statistics(),
-            "unbounded_choices": native.get_unbounded_choices(),
-            "print_blob": native.get_print_blob(),
-            "backend": Backend(native.get_backend()),
-            "nondeterminism_strictness": NondeterminismStrictness(
-                native.get_nondeterminism_strictness()
-            ),
-        },
-    )
+    object.__setattr__(settings, "_profile", profile)
+    object.__setattr__(settings, "_overrides", overrides)
     return settings
-
-
-_FIELDS = tuple(field.name for field in dataclasses.fields(Settings))

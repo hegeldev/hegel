@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import dataclasses
+import copy
+import pickle
 import re
 from pathlib import Path
 
@@ -9,6 +10,7 @@ import pytest
 import hegel
 from hegel import _native
 from hegel.settings import (
+    _FIELDS,
     Backend,
     HealthCheck,
     NondeterminismStrictness,
@@ -52,6 +54,7 @@ def test_coercions():
     assert settings.verbosity is Verbosity.verbose
     assert settings.backend is Backend.urandom
     assert Settings(database="/tmp/x").database == "/tmp/x"
+    assert Settings(database=None).database is None
 
 
 def test_replace_and_parent():
@@ -60,6 +63,25 @@ def test_replace_and_parent():
     assert child.test_cases == 3 and child.seed == 9
     assert Settings(base, seed=10).seed == 10
     assert base.seed is None
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        Settings(),
+        Settings(test_cases=3, phases=[Phase.generate], suppress_health_check=["too_slow"]),
+        Settings.from_profile("base", seed=4, verbosity=Verbosity.verbose),
+    ],
+)
+@pytest.mark.parametrize(
+    "duplicate", [copy.copy, copy.deepcopy, lambda s: pickle.loads(pickle.dumps(s))]
+)
+def test_settings_can_be_copied_and_pickled(settings, duplicate):
+    duplicated = duplicate(settings)
+    assert duplicated == settings
+    assert repr(duplicated) == repr(settings)
+    assert duplicated.test_cases == settings.test_cases
+    assert duplicated.replace(seed=1) == settings.replace(seed=1)
 
 
 def test_profiles():
@@ -169,7 +191,7 @@ def test_build_round_trips_every_field():
 def test_enum_helpers_and_fields():
     assert Phase.all() == frozenset(Phase)
     assert HealthCheck.all() == frozenset(HealthCheck)
-    assert {field.name for field in dataclasses.fields(Settings)} == {
+    assert set(_FIELDS) == {
         "test_cases",
         "verbosity",
         "seed",
@@ -225,7 +247,7 @@ def test_every_engine_setting_is_a_settings_field():
     header = HEGEL_H.read_text()
     getters = set(re.findall(r"hegel_settings_get_(\w+)\(", header))
     setters = set(re.findall(r"hegel_settings_set_(\w+)\(", header)) - PER_TEST_SETTERS
-    fields = {field.name for field in dataclasses.fields(Settings)}
+    fields = set(_FIELDS)
     assert fields
     assert getters == fields
     assert setters == fields
@@ -249,3 +271,55 @@ def test_engine_profile_settings_reach_the_run():
 def test_unbounded_choices_is_validated():
     with pytest.raises(hegel.InvalidArgument, match="unbounded_choices=1 must be True or False"):
         Settings(unbounded_choices=1)
+
+
+def test_settings_follow_a_default_profile_set_after_they_were_made():
+    settings = Settings(test_cases=3)
+    child = settings.replace(print_blob=True)
+    Settings.register_profile("later", seed=5, verbosity=Verbosity.verbose, test_cases=50)
+    try:
+        Settings.set_default_profile("later")
+        assert settings.seed == 5
+        assert settings.verbosity is Verbosity.verbose
+        assert settings.test_cases == 3
+        assert child.seed == 5 and child.print_blob
+        built = settings._build()
+        assert built.get_seed() == 5 and built.get_test_cases() == 3
+    finally:
+        Settings.set_default_profile("hegel-tests")
+    assert settings.seed is None
+
+
+def test_settings_from_a_profile_do_not_follow_the_default():
+    settings = Settings.from_profile("ci", test_cases=4)
+    Settings.register_profile("other", seed=5)
+    try:
+        Settings.set_default_profile("other")
+        assert settings.seed is None and settings.derandomize and settings.test_cases == 4
+    finally:
+        Settings.set_default_profile("hegel-tests")
+
+
+def test_settings_equality_hash_and_repr():
+    assert Settings(test_cases=3) == Settings(test_cases=3)
+    assert hash(Settings(test_cases=3)) == hash(Settings(test_cases=3))
+    assert Settings(test_cases=3) != Settings(test_cases=4)
+    assert Settings(test_cases=3) != Settings.from_profile("ci", test_cases=3)
+    assert Settings() != object()
+    assert repr(Settings(test_cases=3, seed=1)) == "Settings(test_cases=3, seed=1)"
+    assert repr(Settings()) == "Settings()"
+    assert repr(Settings.from_profile("ci")) == "Settings.from_profile('ci')"
+    assert (
+        repr(Settings.from_profile("ci", test_cases=3))
+        == "Settings.from_profile('ci', test_cases=3)"
+    )
+
+
+def test_settings_cannot_be_changed_or_deleted():
+    settings = Settings(test_cases=3)
+    with pytest.raises(AttributeError, match="immutable"):
+        settings.test_cases = 4  # type: ignore[misc]
+    with pytest.raises(AttributeError, match="immutable"):
+        del settings.test_cases
+    with pytest.raises(AttributeError, match="no attribute 'kittens'"):
+        settings.kittens  # noqa: B018

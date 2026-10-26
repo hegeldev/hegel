@@ -117,7 +117,7 @@ def test_reproduce_failure_replays_blob(output):
         seen.append(xs)
         assert len(xs) < 2
 
-    assert replay.hegel_reproduce_blob == blob
+    assert replay.hegel_reproduce_blobs == [blob]
     with pytest.raises(AssertionError) as info:
         replay()
     assert seen == [[0, 0]]
@@ -132,6 +132,68 @@ def test_reproduce_failure_replays_blob(output):
         fixed()
     with pytest.raises(hegel.InvalidArgument):
         hegel.reproduce_failure("")
+
+
+def _two_failure_blobs() -> tuple[str, str]:
+    @hegel.test(print_blob=True, report_multiple_failures=True, test_cases=200)
+    def test_it(tc):
+        n = tc.draw(gs.integers(0, 100))
+        if n > 10:
+            raise ValueError(n)
+        if n == 3:
+            raise KeyError(n)
+
+    with pytest.raises(hegel.MultipleFailures) as info:
+        test_it()
+    errors = sorted(info.value.exceptions, key=lambda e: type(e).__name__)
+    assert [type(e) for e in errors] == [KeyError, ValueError]
+    key_blob, value_blob = (notes(e)[1].split('"')[1] for e in errors)
+    return key_blob, value_blob
+
+
+def test_stacked_reproduce_failures_replay_every_blob(output):
+    key_blob, value_blob = _two_failure_blobs()
+    seen = []
+
+    @hegel.reproduce_failure(key_blob)
+    @hegel.test
+    @hegel.reproduce_failure(value_blob)
+    def replay(tc):
+        n = tc.draw(gs.integers(0, 100))
+        seen.append(n)
+        if n > 10:
+            raise ValueError(n)
+        if n == 3:
+            raise KeyError(n)
+
+    assert replay.hegel_reproduce_blobs == [key_blob, value_blob]
+    with pytest.raises(hegel.MultipleFailures) as info:
+        replay()
+    assert seen == [3, 11]
+    assert [type(e) for e in info.value.exceptions] == [KeyError, ValueError]
+    assert notes(info.value.exceptions[0]) == ["Falsifying example:\nn = 3"]
+    assert notes(info.value.exceptions[1]) == ["Falsifying example:\nn = 11"]
+
+
+def test_stacked_reproduce_failures_raise_what_still_fails(output):
+    key_blob, value_blob = _two_failure_blobs()
+
+    def only_value_error(tc):
+        if tc.draw(gs.integers(0, 100)) > 10:
+            raise ValueError
+
+    with pytest.raises(ValueError):
+        hegel.run(only_value_error, reproduce_blob=[key_blob, value_blob])
+
+    def fixed(tc):
+        tc.draw(gs.integers(0, 100))
+
+    with pytest.raises(hegel.DidNotReproduce, match="none of the 2 supplied failure blobs"):
+        hegel.run(fixed, reproduce_blob=(key_blob, value_blob))
+    with pytest.raises(hegel.DidNotReproduce, match="the supplied failure blob did not"):
+        hegel.run(fixed, reproduce_blob=value_blob)
+    with pytest.raises(hegel.InvalidArgument, match="reproduce_failure takes the blob"):
+        hegel.run(fixed, reproduce_blob=[value_blob, ""])
 
 
 def test_reproduce_failure_with_invalid_blob():
@@ -322,7 +384,23 @@ def test_health_check_failure():
 
     error = failing(body, hegel.FailedHealthCheck, test_cases=100)
     assert "FilterTooMuch" in str(error)
+    assert error.health_check is hegel.HealthCheck.filter_too_much
+    assert str(error).endswith(
+        "The failed health check is HealthCheck.filter_too_much; suppress it with "
+        "suppress_health_check=[HealthCheck.filter_too_much]."
+    )
     assert isinstance(error, hegel.RunError)
+
+
+def test_failed_health_check_names_each_check():
+    def nest(tc):
+        tc.start_span(1)
+        nest(tc)
+
+    error = failing(nest, hegel.FailedHealthCheck, test_cases=10)
+    assert error.health_check is hegel.HealthCheck.large_initial_test_case
+    assert "HealthCheck.large_initial_test_case" in str(error)
+    assert hegel.FailedHealthCheck("message").health_check is None
 
 
 def test_health_check_can_be_suppressed():

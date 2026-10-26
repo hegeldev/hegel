@@ -9,14 +9,14 @@ settings profile for the run:
     Set any setting, by its ``hegel.toml`` key, with the value spelled as
     in ``hegel.toml``. Repeatable.
 ``--hegel-seed SEED``
-    Fix the seed.
+    Fix the seed (0 to 2**64 - 1, or ``none``).
 ``--hegel-verbosity {quiet,normal,verbose,debug}``
     Set the verbosity.
 ``--hegel-derandomize``
     Derive each test's seed from the test itself.
 ``--hegel-database PATH``
     Keep the example database in ``PATH``; ``--hegel-database=`` (empty)
-    disables it.
+    or ``disabled`` disables it, and ``default`` is the default directory.
 """
 
 from __future__ import annotations
@@ -90,16 +90,18 @@ def pytest_configure(config: Any) -> None:
     values = _settings_from_options(config)
     if profile is None and not values:
         return
+    from hegel import _native
     from hegel.errors import InvalidArgument
-    from hegel.settings import Settings
+    from hegel.settings import Settings, _set_from_string
 
     settings = Settings() if profile is None else Settings.from_profile(profile)
+    native = settings._build()
     for option, key, value in values:
         try:
-            settings = settings._with_strings([(key, value)])
+            _set_from_string(native, key, value)
         except InvalidArgument as e:
             raise pytest.UsageError(f"{option}: {e}") from None
-    Settings.register_profile("pytest", settings)
+    _native.register_profile("pytest", native)
     Settings.set_default_profile("pytest")
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import sys
 import threading
 import uuid
 
@@ -12,7 +13,7 @@ from hegel import generators as gs
 from hegel._draw_names import DrawName
 from hegel.errors import AssumeFailed, InternalError, LoopDone
 from hegel.pretty import PrettyPrinter
-from hegel.test_case import Collection, TestCase
+from hegel.test_case import SHALLOW_SPANS, Collection, TestCase
 from tests.helpers import failing, notes, run_test
 
 
@@ -328,6 +329,32 @@ def test_spans_opened_from_returned_frames_still_measure_the_stack():
 
     with pytest.raises(hegel.errors.FailedHealthCheck):
         run_test(nest, test_cases=10)
+
+
+def test_spans_left_open_by_a_resumed_generator_still_measure_the_stack():
+    def nest(tc):
+        tc.start_span(1)
+        nest(tc)
+
+    def spans(tc):
+        for _ in range(SHALLOW_SPANS + 8):
+            tc.start_span(1)
+        yield
+        nest(tc)
+
+    def resume_deep(n, resumable):
+        if n == 0:
+            next(resumable)
+        else:
+            resume_deep(n - 1, resumable)
+
+    def body(tc):
+        resumable = spans(tc)
+        next(resumable)
+        resume_deep(sys.getrecursionlimit() - 400, resumable)
+
+    with pytest.raises(hegel.errors.FailedHealthCheck):
+        run_test(body, test_cases=10)
 
 
 def test_closing_deep_spans_then_nesting_still_measures_the_stack():

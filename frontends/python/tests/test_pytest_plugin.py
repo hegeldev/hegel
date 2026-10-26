@@ -132,3 +132,33 @@ def test_plugin_rejects_bad_settings(pytester: pytest.Pytester, option: str, mes
     result = pytester.runpytest(option)
     assert result.ret == pytest.ExitCode.USAGE_ERROR
     result.stderr.fnmatch_lines([message])
+
+
+def test_settings_made_in_a_conftest_follow_the_options(pytester: pytest.Pytester):
+    pytester.makeconftest(
+        """
+import hegel
+FAST = hegel.Settings(test_cases=3, database="")
+"""
+    )
+    pytester.makepyfile(
+        """
+import hegel
+from hegel import generators as gs
+from conftest import FAST
+
+SEEN = []
+
+@hegel.test(settings=FAST)
+def test_fast(tc):
+    SEEN.append(tc.draw(gs.integers()))
+
+def test_report():
+    print("SEED", FAST.seed, "VERBOSITY", FAST.verbosity.name, "CASES", FAST.test_cases)
+    print("SEEN", len(SEEN))
+"""
+    )
+    result = pytester.runpytest("-s", "--hegel-seed=42", "--hegel-setting", "verbosity=verbose")
+    result.assert_outcomes(passed=2)
+    result.stdout.fnmatch_lines(["*SEED 42 VERBOSITY verbose CASES 3*", "*SEEN 3*"])
+    result.stderr.fnmatch_lines(["Running test case", "draw_1 = *"])

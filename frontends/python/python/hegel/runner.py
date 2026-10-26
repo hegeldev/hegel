@@ -28,7 +28,7 @@ from hegel.errors import (
     Unsatisfiable,
 )
 from hegel.explicit import NO_HANDLE, ExplicitCase, ExplicitTestCase
-from hegel.settings import Phase, Settings, TestLocation, Verbosity
+from hegel.settings import HealthCheck, Phase, Settings, TestLocation, Verbosity
 from hegel.test_case import OutputSink, TestCase
 
 __all__ = [
@@ -326,7 +326,9 @@ def _drive(
     output = RunOutput.resolve()
     native_settings = settings._build(database_key, test_location)
     run = _native.Run.start(native_settings)
-    _drive_run(run, test_fn, settings, output, reproducer, None)
+    failures = _drive_run(run, test_fn, native_settings, output, reproducer)
+    if failures:
+        _raise_failures(failures, None)
 
 
 def _drive_blob_replay(
@@ -335,34 +337,39 @@ def _drive_blob_replay(
     database_key: str | None,
     test_location: TestLocation | None,
     reproducer: Reproducer,
-    blob: str,
-) -> None:
-    """Replay a reproduce blob: the engine replays it until a replay fails,
-    under a bounded budget, and a run with no failures means the blob did
-    not reproduce."""
+    blobs: list[str],
+) -> NoReturn:
+    """Replay every reproduce blob, each in a run of its own: the engine
+    replays a blob until a replay fails, under a bounded budget. Every
+    failure found is raised, together; when none of the blobs reproduced,
+    that is a :class:`~hegel.DidNotReproduce`."""
     __tracebackhide__ = True
     output = RunOutput.resolve()
-    native_settings = settings._build(database_key, test_location)
-    run = _native.Run.start_blob(native_settings, blob)
-    _drive_run(
-        run,
-        test_fn,
-        settings,
-        output,
-        reproducer,
-        "reproduce_failure: the supplied failure blob did not reproduce a failure. "
-        "The failure may have been fixed, or, for a nondeterministic blob, it may not "
-        "have recurred within the replay budget (a bug failing 10% of the time escapes "
-        "it about 5% of the time). Re-run to retry, or remove the decorator once the "
-        "failure is fixed.",
-    )
+    failures: list[BaseException] = []
+    for blob in blobs:
+        native_settings = settings._build(database_key, test_location)
+        run = _native.Run.start_blob(native_settings, blob)
+        failures += _drive_run(run, test_fn, native_settings, output, reproducer)
+    if not failures:
+        raise DidNotReproduce(
+            "reproduce_failure: the supplied failure blob did not reproduce a failure. "
+            "The failure may have been fixed, or, for a nondeterministic blob, it may not "
+            "have recurred within the replay budget (a bug failing 10% of the time escapes "
+            "it about 5% of the time). Re-run to retry, or remove the decorator once the "
+            "failure is fixed."
+            if len(blobs) == 1
+            else f"reproduce_failure: none of the {len(blobs)} supplied failure blobs "
+            "reproduced a failure. The failures may have been fixed, or, for "
+            "nondeterministic blobs, they may not have recurred within the replay budget. "
+            "Re-run to retry, or remove the decorators once the failures are fixed."
+        )
+    _raise_failures(failures, None)
 
 
 # The exception to raise for a run that ended in error, by the kind the
 # engine reports for it. Any other kind (a usage error, an internal engine
 # error) is a plain RunError carrying the engine's message.
 _RUN_ERROR_KINDS: dict[int, type[RunError]] = {
-    _native.RUN_ERROR_HEALTH_CHECK: FailedHealthCheck,
     _native.RUN_ERROR_FLAKY: Flaky,
     _native.RUN_ERROR_NONDETERMINISTIC: Flaky,
     _native.RUN_ERROR_UNSATISFIABLE: Unsatisfiable,
@@ -370,28 +377,34 @@ _RUN_ERROR_KINDS: dict[int, type[RunError]] = {
 
 
 def _run_error(result: _native.RunResult) -> RunError:
-    kind = result.error_kind()[0]
+    kind, check = result.error_kind()
     message = result.error() or "the run failed with an unknown error"
+    if kind == _native.RUN_ERROR_HEALTH_CHECK:
+        health_check = HealthCheck(check)
+        return FailedHealthCheck(
+            f"{message}\nThe failed health check is HealthCheck.{health_check.name}; "
+            f"suppress it with suppress_health_check=[HealthCheck.{health_check.name}].",
+            health_check,
+        )
     return _RUN_ERROR_KINDS.get(kind, RunError)(message)
 
 
 def _drive_run(
     run: _native.Run,
     test_fn: Callable[[TestCase], Any],
-    settings: Settings,
+    settings: _native.Settings,
     output: RunOutput,
     reproducer: Reproducer,
-    stale_message: str | None,
-) -> None:
+) -> list[BaseException]:
     """Pull every test case off ``run``, capturing report material per
     failure origin, then act on the verdict. The engine owns the whole
     exploration, the final replay of each reported failure included, so
     the report is assembled from the freshest stamped capture of each
-    origin, and attached to the exception re-raised as notes. A passing
-    run returns, unless ``stale_message`` is set (a blob replay), where a
-    pass means the blob did not reproduce."""
+    origin, and attached to the exception as notes. Returns the failures
+    to raise, none for a passing run; a run ending in error raises."""
     __tracebackhide__ = True
-    verbosity = settings.verbosity
+    verbosity = Verbosity(settings.get_verbosity())
+    print_blob = settings.get_print_blob()
     quiet = verbosity is Verbosity.quiet
     verbose = verbosity in (Verbosity.verbose, Verbosity.debug)
     captured: dict[str, _Captured] = {}
@@ -426,9 +439,7 @@ def _drive_run(
     flush()
     status = result.status()
     if status == _native.RUN_STATUS_PASSED:
-        if stale_message is not None:
-            raise DidNotReproduce(stale_message)
-        return
+        return []
     if status == _native.RUN_STATUS_ERROR:
         raise _run_error(result)
     count = result.failure_count()
@@ -438,11 +449,11 @@ def _drive_run(
         if origin not in captured:
             raise InternalError(f"failure {index} ({origin}) was never seen by the test")
         report = captured.pop(origin)
-        note = reproducer(blob) if settings.print_blob and blob is not None else None
+        note = reproducer(blob) if print_blob and blob is not None else None
         _annotate(report.exception, report.lines, None if quiet else caveat, note)
         _trim_traceback(report.exception)
         exceptions.append(report.exception)
-    _raise_failures(exceptions, None)
+    return exceptions
 
 
 def _run_explicit(
@@ -544,7 +555,7 @@ def run(
     database_key: str | None = None,
     test_location: TestLocation | None = None,
     explicit_cases: Iterator[ExplicitCase] | list[ExplicitCase] | tuple[ExplicitCase, ...] = (),
-    reproduce_blob: str | None = None,
+    reproduce_blob: str | Iterable[str] | None = None,
     reproducer: Reproducer = default_reproducer,
     **overrides: Any,
 ) -> None:
@@ -560,10 +571,12 @@ def run(
     ``database_key`` identifies the test in the example database (without
     one, failures are not saved or replayed) and ``test_location`` in the
     engine's reports. ``explicit_cases`` run first, with their given
-    values. ``reproduce_blob`` makes the run consist only of replaying one
-    previously reported failure: a replay that passes is a
-    :class:`~hegel.DidNotReproduce`. ``reproducer`` words the note saying
-    how to replay a failure, given its blob.
+    values. ``reproduce_blob`` (one blob, or a collection of them) makes the
+    run consist only of replaying previously reported failures, each blob
+    in turn: every failure they reproduce is raised, together, and when
+    none reproduces the run raises :class:`~hegel.DidNotReproduce`.
+    ``reproducer`` words the note saying how to replay a failure, given its
+    blob.
 
     ::
 
@@ -582,22 +595,22 @@ def run(
     resolved = (
         Settings(settings, **overrides) if (settings is not None or overrides) else Settings()
     )
+    blobs = _blobs(reproduce_blob)
     _running.depth = getattr(_running, "depth", 0) + 1
     try:
-        if reproduce_blob is not None:
-            _drive_blob_replay(
-                test_fn, resolved, database_key, test_location, reproducer, reproduce_blob
-            )
+        if blobs:
+            _drive_blob_replay(test_fn, resolved, database_key, test_location, reproducer, blobs)
         # Explicit failures, by origin: the first explicit case failing ends
         # the run, unless every distinct failure is to be reported.
         failures: dict[str, BaseException] = {}
-        if Phase.explicit in resolved.phases:
+        values = resolved._values()
+        if Phase.explicit in values["phases"]:
             output = RunOutput.resolve()
             for case in explicit_cases:
-                outcome = _run_explicit(test_fn, case, resolved.verbosity, output)
+                outcome = _run_explicit(test_fn, case, values["verbosity"], output)
                 if outcome.exception is None:
                     continue
-                if not resolved.report_multiple_failures:
+                if not values["report_multiple_failures"]:
                     raise outcome.exception
                 failures.setdefault(outcome.origin or "", outcome.exception)
         if failures:
@@ -607,6 +620,20 @@ def run(
         _drive(test_fn, resolved, database_key, test_location, reproducer)
     finally:
         _running.depth -= 1
+
+
+def _blobs(reproduce_blob: str | Iterable[str] | None) -> list[str]:
+    if reproduce_blob is None:
+        return []
+    blobs = [reproduce_blob] if isinstance(reproduce_blob, str) else list(reproduce_blob)
+    for blob in blobs:
+        _check_blob(blob)
+    return blobs
+
+
+def _check_blob(blob: Any) -> None:
+    if not isinstance(blob, str) or not blob:
+        raise InvalidArgument("reproduce_failure takes the blob string printed with a failure")
 
 
 def _inside_a_run() -> bool:
@@ -726,7 +753,7 @@ def test(
                 database_key=database_key,
                 test_location=location,
                 explicit_cases=list(wrapper.hegel_explicit_cases),  # type: ignore[attr-defined]
-                reproduce_blob=wrapper.hegel_reproduce_blob,  # type: ignore[attr-defined]
+                reproduce_blob=wrapper.hegel_reproduce_blobs,  # type: ignore[attr-defined]
                 reproducer=reproducer,
                 **overrides,
             )
@@ -734,7 +761,7 @@ def test(
         wrapper.__signature__ = outer_signature  # type: ignore[attr-defined]
         wrapper.hegel_inner_test = inner  # type: ignore[attr-defined]
         wrapper.hegel_explicit_cases = list(getattr(inner, "hegel_explicit_cases", []))  # type: ignore[attr-defined]
-        wrapper.hegel_reproduce_blob = getattr(inner, "hegel_reproduce_blob", None)  # type: ignore[attr-defined]
+        wrapper.hegel_reproduce_blobs = list(getattr(inner, "hegel_reproduce_blobs", []))  # type: ignore[attr-defined]
         wrapper.is_hegel_test = True  # type: ignore[attr-defined]
         return wrapper
 
@@ -782,22 +809,29 @@ def explicit_test_case(*args: Any, **kwargs: Any) -> Callable[[T], T]:
 
 
 def reproduce_failure(blob: str) -> Callable[[T], T]:
-    """Replay the failure that ``blob`` encodes before anything else.
+    """Replay the failure that ``blob`` encodes instead of generating test
+    cases.
 
     A failure report ends with a line such as
     ``@hegel.reproduce_failure("AXicY2Vg...")`` when ``print_blob`` is on;
-    adding that decorator below :func:`test` makes the next run consist
+    adding that decorator to a :func:`test` makes the next run consist
     only of replaying exactly that failing test case, which is useful when
-    the failure is hard to find again. If the blob no longer fails, the
-    run raises :class:`~hegel.DidNotReproduce`. Remove the decorator once
-    the bug is fixed. An empty or non-string blob is an
+    the failure is hard to find again. The decorators of several failures
+    (from a report of :class:`~hegel.MultipleFailures`, say) may be
+    stacked: each blob is replayed, top to bottom, and every failure they
+    reproduce is raised, together. If none of them fails any more, the run
+    raises :class:`~hegel.DidNotReproduce`. Remove the decorators once the
+    bugs are fixed. An empty or non-string blob is an
     :class:`~hegel.InvalidArgument`.
     """
-    if not isinstance(blob, str) or not blob:
-        raise InvalidArgument("reproduce_failure takes the blob string printed with a failure")
+    _check_blob(blob)
 
     def decorate(fn: T) -> T:
-        fn.hegel_reproduce_blob = blob  # type: ignore[attr-defined]
+        blobs = getattr(fn, "hegel_reproduce_blobs", None)
+        if blobs is None:
+            blobs = []
+            fn.hegel_reproduce_blobs = blobs  # type: ignore[attr-defined]
+        blobs.insert(0, blob)
         return fn
 
     return decorate
