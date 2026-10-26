@@ -79,15 +79,20 @@ let%template make
 [@@mode m = (nonportable, portable)]
 ;;
 
-let%template sexp_or : type a. (a -> Sexp.t) option MODE(m) -> (a -> Sexp.t) MODE(m)
-  = function
-  | Some sexp_of -> sexp_of
-  | None -> fun _ -> Sexp.Atom "<opaque>"
+let%template arg_printer
+  : type a.
+    (a -> Printer.doc) option MODE(m) -> (a -> Sexp.t) option MODE(m) -> (a -> Printer.doc) MODE(m)
+  =
+  fun print sexp_of ->
+  match print, sexp_of with
+  | Some print, _ -> print
+  | None, Some sexp_of -> fun a -> Printer.of_sexp sexp_of a
+  | None, None -> fun _ -> Printer.opaque
 [@@mode m = (nonportable, portable)]
 ;;
 
-(** [functions ?name ?sexp_of_arg ~returns ()] creates a generator for functions
-    ['a -> 'b] whose results are drawn from [returns].
+(** [functions ?name ?print_arg ?sexp_of_arg ~returns ()] creates a generator
+    for functions ['a -> 'b] whose results are drawn from [returns].
 
     The result carries no printer (its output type is a function), so draw it
     with {!Hegel.draw_silent}. Applying the drawn function to an argument draws
@@ -100,53 +105,55 @@ let%template sexp_or : type a. (a -> Sexp.t) option MODE(m) -> (a -> Sexp.t) MOD
     the draw-site binding name, else ["function"].
 
     The memo table keys on the argument itself, so distinct arguments always get
-    independent results. [sexp_of_arg] only renders the argument in the
-    printed application, as an s-expression; an omitted [sexp_of_arg] shows
-    [<opaque>]. The result prints as [returns] prints what it draws. *)
+    independent results. [print_arg], or else [sexp_of_arg], only renders the
+    argument in the printed application; with neither it shows [<abstr>]. The
+    result prints as [returns] prints what it draws. *)
 let%template functions
       ?name
+      ?(print_arg : ('a -> Printer.doc) option MODE(m))
       ?(sexp_of_arg : ('a -> Sexp.t) option MODE(m))
       ~(returns : ('b, _) generator MODE(m))
       ()
   : ('a -> 'b, unprintable) generator MODE(m)
   =
-  let sexp_of_arg = (sexp_or [@mode m]) sexp_of_arg in
-  (make [@mode m]) name (fun a -> [ Printer.of_sexp sexp_of_arg a ]) returns (fun f -> f)
+  let print_arg = (arg_printer [@mode m]) print_arg sexp_of_arg in
+  (make [@mode m]) name (fun a -> [ print_arg a ]) returns (fun f -> f)
 [@@mode m = (nonportable, portable)]
 ;;
 
-(** [functions2 ?name ?sexp_of_arg1 ?sexp_of_arg2 ~returns ()] creates a generator
-    for curried two-argument functions ['a -> 'b -> 'c].
+(** [functions2 ?name ?print_arg1 ?print_arg2 ?sexp_of_arg1 ?sexp_of_arg2
+    ~returns ()] creates a generator for curried two-argument functions
+    ['a -> 'b -> 'c].
 
     Sugar over {!functions} keyed on the argument pair: the two arguments form
-    one memo key, and an application prints uncurried, as
-    [name (arg1 arg2) = result]. *)
+    one memo key, and an application prints as [name arg1 arg2 = result]. *)
 let%template functions2
       ?name
+      ?(print_arg1 : ('a -> Printer.doc) option MODE(m))
+      ?(print_arg2 : ('b -> Printer.doc) option MODE(m))
       ?(sexp_of_arg1 : ('a -> Sexp.t) option MODE(m))
       ?(sexp_of_arg2 : ('b -> Sexp.t) option MODE(m))
       ~(returns : ('c, _) generator MODE(m))
       ()
   : ('a -> 'b -> 'c, unprintable) generator MODE(m)
   =
-  let s1 = (sexp_or [@mode m]) sexp_of_arg1
-  and s2 = (sexp_or [@mode m]) sexp_of_arg2 in
-  let sexp_of_args (a, b) = Sexp.List [ s1 a; s2 b ] in
-  (make [@mode m])
-    name
-    (fun args -> [ Printer.of_sexp sexp_of_args args ])
-    returns
-    (fun f a b -> f (a, b))
+  let p1 = (arg_printer [@mode m]) print_arg1 sexp_of_arg1
+  and p2 = (arg_printer [@mode m]) print_arg2 sexp_of_arg2 in
+  (make [@mode m]) name (fun (a, b) -> [ p1 a; p2 b ]) returns (fun f a b -> f (a, b))
 [@@mode m = (nonportable, portable)]
 ;;
 
-(** [functions3 ?name ?sexp_of_arg1 ?sexp_of_arg2 ?sexp_of_arg3 ~returns ()] creates
-    a generator for curried three-argument functions ['a -> 'b -> 'c -> 'd].
+(** [functions3 ?name ?print_arg1 ?print_arg2 ?print_arg3 ?sexp_of_arg1
+    ?sexp_of_arg2 ?sexp_of_arg3 ~returns ()] creates a generator for curried
+    three-argument functions ['a -> 'b -> 'c -> 'd].
 
     Like {!functions2}, keyed on the argument triple, and an application
-    prints as [name (arg1 arg2 arg3) = result]. *)
+    prints as [name arg1 arg2 arg3 = result]. *)
 let%template functions3
       ?name
+      ?(print_arg1 : ('a -> Printer.doc) option MODE(m))
+      ?(print_arg2 : ('b -> Printer.doc) option MODE(m))
+      ?(print_arg3 : ('c -> Printer.doc) option MODE(m))
       ?(sexp_of_arg1 : ('a -> Sexp.t) option MODE(m))
       ?(sexp_of_arg2 : ('b -> Sexp.t) option MODE(m))
       ?(sexp_of_arg3 : ('c -> Sexp.t) option MODE(m))
@@ -154,13 +161,12 @@ let%template functions3
       ()
   : ('a -> 'b -> 'c -> 'd, unprintable) generator MODE(m)
   =
-  let s1 = (sexp_or [@mode m]) sexp_of_arg1
-  and s2 = (sexp_or [@mode m]) sexp_of_arg2
-  and s3 = (sexp_or [@mode m]) sexp_of_arg3 in
-  let sexp_of_args (a, b, c) = Sexp.List [ s1 a; s2 b; s3 c ] in
+  let p1 = (arg_printer [@mode m]) print_arg1 sexp_of_arg1
+  and p2 = (arg_printer [@mode m]) print_arg2 sexp_of_arg2
+  and p3 = (arg_printer [@mode m]) print_arg3 sexp_of_arg3 in
   (make [@mode m])
     name
-    (fun args -> [ Printer.of_sexp sexp_of_args args ])
+    (fun (a, b, c) -> [ p1 a; p2 b; p3 c ])
     returns
     (fun f a b c -> f (a, b, c))
 [@@mode m = (nonportable, portable)]

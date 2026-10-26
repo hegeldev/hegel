@@ -186,8 +186,7 @@ let repeat_generated tc body =
     runs once, as an explicit value can be drawn only once. *)
 let repeat_explicit tc body =
   note tc "// Repetition #1";
-  (match body tc with
-   | () | (exception Assume_rejected) -> ());
+  body tc;
   raise Internal.Repeat_done
 ;;
 
@@ -200,5 +199,12 @@ let repeat tc body =
 (** [with_printer sexp_of gen] attaches [sexp_of] so [gen] can be drawn with
     {!draw}. See {!Generators.with_printer}. *)
 let%template with_printer = Generators.with_printer [@mode m]
+[@@mode m = (nonportable, portable)]
+;;
+
+(** [with_ocaml_printer print gen] attaches [print] so [gen] can be drawn with
+    {!draw}, its values printing as [print]'s documents. See
+    {!Generators.with_ocaml_printer}. *)
+let%template with_ocaml_printer = Generators.with_ocaml_printer [@mode m]
 [@@mode m = (nonportable, portable)]
 ;;

@@ -182,6 +182,7 @@
       | [CI], [GITHUB_ACTIONS], ...       | environment detection | The [ci] profile.                                                              |
       | [HEGEL_TEST_CASES]                | settings              | [test_cases]: a positive integer.                                              |
       | [HEGEL_DATABASE]                  | settings              | [database]: [disabled], or a path.                                             |
+      | [HEGEL_UNBOUNDED_CHOICES]         | settings              | [unbounded_choices]: the same values as [HEGEL_DERANDOMIZE].                   |
       | [HEGEL_STATISTICS]                | settings              | [show_statistics]: any value except [0] enables it.                            |
       | [HEGEL_SEED]                      | settings              | [seed]: an integer from 0 to 2{^64}-1, or [none].                              |
       | [HEGEL_DERANDOMIZE]               | settings              | [derandomize]: [true], [1], [yes], [false], [0], or [no].                      |
@@ -226,7 +227,14 @@ type verbosity =
 (** Where Hegel stores and replays failing examples. In [hegel.toml]:
     [default], [disabled], or a path. *)
 type database =
-  | Unset (** Defaults to [.hegel/examples] under the working directory *)
+  | Unset
+  (** Keep the database of the default settings profile, as {!default}
+      resolves it when the test runs: the directory [.hegel] by default,
+      none under the [ci] and [workload] profiles. *)
+  | Default_location
+  (** The database at [.hegel], whatever the profile says. In
+      [hegel.toml]: [default]. Settings read from libhegel ({!default},
+      {!from_profile}) report the default database this way. *)
   | Disabled (** No database. *)
   | Path of string (** A string representing the database path. *)
 
@@ -299,7 +307,7 @@ type t =
   ; phases : phase list
     (** The phases to run. All phases are run with the [base] profile. *)
   ; print_blob : bool
-    (** Print a [rerun with:] line whose base64 blob encodes the choices that
+    (** Print a reproduce line whose base64 blob encodes the choices that
         led to a failure. [true] in the [base] settings. *)
   ; report_multiple_failures : bool
     (** Report every distinct failure the run found. When [false] (the default),

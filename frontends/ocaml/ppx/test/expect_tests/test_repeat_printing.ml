@@ -22,15 +22,14 @@ let%expect_test "repeat prints each iteration under a repetition note" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
     // Repetition #1
       n = 4
     // Repetition #2
       n = 6
-
     Exception: File "ppx/test/expect_tests/test_repeat_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -43,11 +42,10 @@ let%expect_test "set_worker attributes a clone's output to the worker" =
   print_string (Expect_scrub.scrub_concurrent_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
     [worker 3 +time] n = 5
-
     Exception: File "ppx/test/expect_tests/test_repeat_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;

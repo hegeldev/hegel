@@ -95,15 +95,14 @@
     This test asserts that any integer is less than 50, which is obviously
     incorrect. Hegel finds a test case that makes the assertion fail, then shrinks
     it to the smallest counterexample ([n = 50]). The failure report prints the
-    drawn values, the exception, and a [rerun with:] line that replays the exact case:
+    drawn values, the exception, and how to replay the exact case:
 
     {v
-      --- Failure: every_int_is_small (my_tests.ml:3) ------------------
-
       n = 50
-
       Exception: File "my_tests.ml", line 5, characters 2-8: Assertion failed
-      rerun with: [@@failure_blobs [ "AAEAAAAACgEAAAAy" ]]
+
+      To reproduce this failure, add this attribute to the let%hegel_test:
+          [@@failure_blobs [ "AAEAAAAACgEAAAAy" ]]
     v}
 
     To fix this test, you can constrain the integers you generate with [min_value] and [max_value]:
@@ -319,8 +318,9 @@
 
     Every draw an example reaches must be a named [draw] it gives a value for,
     and every value it gives must be drawn; otherwise the test raises
-    {!Usage_error}. An example that {!assume} or {!reject} rejects is skipped:
-    it neither passes nor fails. In an example, {!repeat} runs its body once.
+    {!Usage_error}. An example must not be rejected: an example that {!assume}
+    or {!reject} rejects raises {!Usage_error} too, as it does not test what it
+    says. In an example, {!repeat} runs its body once.
     An example that fails is reported with the values it gave and ends the
     run, unless [report_multiple_failures] is set. Examples run in the
     [Explicit] phase, so leaving it out of [phases] skips them, and a run that
@@ -337,11 +337,12 @@
         assert (n < 50)
     ]}
 
-    A failing run prints a framed report: the shrunk counterexample's draws
-    and notes, the exception, and a copy-pasteable [rerun with:] line whose
-    base64 blob encodes the choice sequence that caused the failure (disable
-    it with [print_blob = false]). On a terminal the report headers print in
-    color. Set [HEGEL_COLOR] to [1] or [0] to force colors on or off.
+    A failing run prints a report: the shrunk counterexample's draws and
+    notes, the exception, and a copy-pasteable reproduce line whose base64
+    blob encodes the choice sequence that caused the failure (disable it with
+    [print_blob = false]). A run with several distinct failures starts with
+    [Property-based test failed with N distinct failures.] and reports each
+    in turn.
 
     {[
       let%hegel_test every_int_is_small tc =
@@ -350,12 +351,11 @@
     ]}
 
     {v
-      --- Failure: every_int_is_small (my_tests.ml:3) ------------------
-
       n = 50
-
       Exception: File "my_tests.ml", line 5, characters 2-8: Assertion failed
-      rerun with: [@@failure_blobs [ "AAEAAAAACgEAAAAy" ]]
+
+      To reproduce this failure, add this attribute to the let%hegel_test:
+          [@@failure_blobs [ "AAEAAAAACgEAAAAy" ]]
     v}
 
     The blob can then be used to replay the failing test case:
@@ -476,7 +476,7 @@ type test_location = Internal.test_location =
     @param database_key
     optional key scoping persisted/replayed failing examples and, under [derandomize],
     the per-test seed. Defaults to the test's [test_location] (as
-    [file:function_name]) so each [let%hegel_test] gets a stable, distinct
+    [file::function_name]) so each [let%hegel_test] gets a stable, distinct
     key; pass an explicit key to override. When both are absent, the run has
     no database key, so failures are neither stored nor replayed.
     @param failure_blobs
@@ -578,13 +578,16 @@ val run_hegel_test_ppx
     [--seed], [--verbosity], [--derandomize], [--database], [--database-key],
     [--phases], [--suppress-health-check], [--report-multiple-failures],
     [--stop-on-first-failure], [--show-statistics], [--print-blob],
-    [--backend] and [--nondeterminism-strictness]. Lists such as [--phases]
+    [--backend], [--nondeterminism-strictness], and any setting libhegel
+    adds later. [--test-cases] and [--unbounded-choices] are rejected, as the
+    binary fixes them. Lists such as [--phases]
     are comma-separated, and booleans are [true]/[false], [1]/[0] or
     [yes]/[no]. The engine reads each value, as it reads [hegel.toml], so a
     value it does not accept is reported as a usage error. [--profile]
     selects the settings profile the flags apply on top of,
     [--failure-blob] (which may be repeated) replays failures from their
-    blobs, and [--help] lists the flags. *)
+    blobs, and [--help] lists the flags. An unknown flag or a bad value
+    prints an error and the usage and exits with status 2. *)
 val main
   :  ?settings:(unit -> Settings.t)
   -> ?test_location:test_location
@@ -606,7 +609,7 @@ val main
     elements) are suppressed so only the outermost value shows. A value whose
     printer was attached with {!with_printer} prints as the s-expression that
     printer gives. To draw a generator with no printer, use {!draw_silent} or
-    attach a printer with {!with_printer}.
+    attach a printer with {!with_ocaml_printer} or {!with_printer}.
 
     [?loc] adds the source filename and line to the printed draw. In OxCaml, the
     compiler automatically supplies the caller's position when omitted. Providing
@@ -815,6 +818,23 @@ val%template with_printer
   -> ('a, printable) generator MODE(m)
 [@@mode m = (nonportable, portable)]
 
+(** [with_ocaml_printer print gen] attaches [print] as [gen]'s printer,
+    yielding a printable generator that {!draw} accepts. Its drawn values
+    print as the {!Printer.doc} documents [print] gives, so a [map] result can
+    print as OCaml syntax rather than as an s-expression.
+
+    {[
+      let%hegel_test with_ocaml_printer_example tc =
+        let pairs = map (fun x -> x, x * 2) (integers ~min_value:0 ~max_value:9 ()) in
+        let x, y = draw tc (with_ocaml_printer Printer.(pair int int) pairs) in
+        assert (y = 2 * x)
+    ]} *)
+val%template with_ocaml_printer
+  :  ('a -> Printer.doc) MODE(m)
+  -> ('a, 'p) generator MODE(m)
+  -> ('a, printable) generator MODE(m)
+[@@mode m = (nonportable, portable)]
+
 (** {3 Repeating a body} *)
 
 (** [repeat tc body] runs [body] again and again, as long as the engine wants
@@ -827,7 +847,8 @@ val%template with_printer
     [// Repetition #n] note. An iteration that rejects itself (with {!assume}
     or {!reject}) is skipped, and the loop continues; any other exception
     fails the test case. In an explicit example, [body] runs once, on the
-    example's own test case.
+    example's own test case, and rejecting it raises {!Usage_error}, as
+    rejecting any explicit example does.
 
     {[
       let%hegel_test counter_stays_non_negative tc =

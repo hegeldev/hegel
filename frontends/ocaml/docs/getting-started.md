@@ -162,7 +162,7 @@ like `lists` that expect a *printable* element generator, attach a printer with
 ## Debug your failing test cases
 
 When a test fails, Hegel replays the minimal failing example and prints a
-report: the test's name and source location, the values you
+report: the values you
 drew (as OCaml syntax, named after their `let` binding), the exception, and a
 copy-pasteable line that replays the exact case.
 
@@ -176,20 +176,20 @@ let%hegel_test reverse_is_identity tc =
 On failure this prints:
 
 ```
---- Failure: reverse_is_identity (test/my_tests.ml:1) ------------------
-
 xs = [0; 1]
-
 Exception: File "test/my_tests.ml", line 3, characters 2-8: Assertion failed
-rerun with: [@@failure_blobs [ "AXic..." ]]
+
+To reproduce this failure, add this attribute to the let%hegel_test:
+    [@@failure_blobs [ "AXic..." ]]
 ```
 
-The final line shows how to replay the exact case. Under `let%hegel_test` it is
+The final lines show how to replay the exact case. Under `let%hegel_test` it is
 a `[@@failure_blobs [ "..." ]]`
 attribute you paste onto the test, while a plain `run_hegel_test` caller gets a
-`~failure_blobs:[ "..." ]` argument to pass. On a terminal the header prints in 
-red. Set `HEGEL_COLOR=0` to disable color (or `1` to force it on). Set 
-`print_blob = false` in your `[@@settings ...]` to omit the line.
+`~failure_blobs:[ "..." ]` argument to pass and a `Hegel.main` binary a
+`--failure-blob` flag. Set `print_blob = false` in your `[@@settings ...]` to
+omit them. A run that finds several distinct failures starts its report with
+`Property-based test failed with N distinct failures.` and reports each one.
 
 A value that is shadowed or drawn inside a loop is numbered (`x_1`, `x_2`, …):
 
@@ -237,6 +237,16 @@ If you have [`ppx_sexp_conv`](https://github.com/janestreet/ppx_sexp_conv) in yo
 ```ocaml
 let parity =
   draw tc (with_printer [%sexp_of: int] (map (fun n -> n mod 2) (integers ())))
+```
+To print the value as OCaml syntax instead, attach a `Printer` with
+`with_ocaml_printer`:
+```ocaml
+let pair =
+  draw
+    tc
+    (with_ocaml_printer
+       Printer.(pair int string)
+       (map (fun n -> n, string_of_int n) (integers ())))
 ```
 
 You can also attach your own debug information with `note`:

@@ -2,12 +2,10 @@
  (name hegel)
  (public_name hegel)
  (libraries
-  cmdliner
   hegel_ffi
   ipaddr
   sexplib0
   threads.posix
-  unix
   ; Locked: mutex-guarded shared data. Under OxCaml (where capsule0 is
   ; installable) it is a capsule, so portable code can use it; elsewhere a
   ; Mutex around the value. Neither variant depends on core.
@@ -18,6 +16,7 @@
    (-> locked.mutex.ml)))
  (private_modules
   io
+  unicode_escapes
   locked
   hegel_version
   generators_core

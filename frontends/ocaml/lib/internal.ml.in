@@ -682,37 +682,6 @@ let recursion_finish tc recursion =
 
 let recursion_free tc recursion = Ffi.recursion_free tc.context recursion
 
-(* ------------------------------------------------------------------ *)
-(* ANSI colors                                                         *)
-(* ------------------------------------------------------------------ *)
-
-(** ANSI color code for {!stderr_color}. *)
-let ansi_red = "31"
-
-(** [color_enabled ~override ~isatty] decides whether ANSI colors are on: an
-    [override] of ["1"]/["0"] (the [HEGEL_COLOR] variable) forces it on/off;
-    otherwise follow [isatty]. *)
-let color_enabled ~override ~isatty =
-  match override with
-  | Some "1" -> true
-  | Some "0" -> false
-  | Some _ | None -> isatty
-;;
-
-(** [stderr_color_enabled ()] is {!color_enabled} for the failure report's
-    stream: it reads [HEGEL_COLOR] afresh (tests toggle it) and checks whether
-    stderr is a terminal. *)
-let stderr_color_enabled () =
-  color_enabled ~override:(Sys.getenv_opt "HEGEL_COLOR") ~isatty:(Unix.isatty Unix.stderr)
-;;
-
-(** [stderr_color code s] wraps [s] in the ANSI SGR [code] when colors are
-    enabled for stderr (see {!stderr_color_enabled}), else returns [s]
-    unchanged. *)
-let stderr_color code s =
-  if stderr_color_enabled () then Printf.sprintf "\027[%sm%s\027[0m" code s else s
-;;
-
 (** [assume tc condition] rejects the current test case if [condition] is
     [false]. The [tc] handle is accepted for API symmetry with the other
     per-test-case primitives; the rejection is client-side (raising
@@ -976,38 +945,39 @@ let capture_document (tc : test_case) =
          | exception Usage_error _ -> Ffi.printer_value tc.context printer))
 ;;
 
-(** Width the framed failure report's header rule is padded to. *)
-let frame_width = 80
-
-let print_failure_header test_location =
-  let title =
-    match test_location with
-    | None -> "Failure"
-    | Some (loc : test_location) ->
-      Printf.sprintf "Failure: %s (%s:%d)" loc.function_name loc.file loc.begin_line
-  in
-  let prefix = Printf.sprintf "--- %s " title in
-  let rule = prefix ^ String.make (max 3 (frame_width - String.length prefix)) '-' in
-  Printf.eprintf "%s\n%!" (stderr_color ansi_red rule)
-;;
-
 type rerun_hint =
   | Argument
   | Attribute
   | Command_line
 
+let reproduce_line ~rerun_hint blob =
+  match rerun_hint with
+  | Argument ->
+    Printf.sprintf
+      "To reproduce this failure, pass this argument to run_hegel_test:\n\
+      \    ~failure_blobs:[ \"%s\" ]"
+      blob
+  | Attribute ->
+    Printf.sprintf
+      "To reproduce this failure, add this attribute to the let%%hegel_test:\n\
+      \    [@@failure_blobs [ \"%s\" ]]"
+      blob
+  | Command_line ->
+    Printf.sprintf
+      "To reproduce this failure, run the binary again with:\n    --failure-blob %s"
+      blob
+;;
+
 let print_failure_body ~(settings : Settings.t) ~rerun_hint ~blob ~caveat ~exn ~output =
-  if not (String.equal output "") then Printf.eprintf "\n%s\n%!" output;
-  Printf.eprintf "Exception: %s\n%!" (Stdlib.Printexc.to_string exn);
-  Option.iter (fun caveat -> Printf.eprintf "note: %s\n%!" caveat) caveat;
+  if settings.verbosity <> Quiet
+  then (
+    Printf.eprintf "%s" output;
+    Printf.eprintf "Exception: %s\n%!" (Stdlib.Printexc.to_string exn);
+    Option.iter (fun caveat -> Printf.eprintf "note: %s\n%!" caveat) caveat);
   if settings.print_blob
   then
     Option.iter
-      (fun blob ->
-         match rerun_hint with
-         | Argument -> Printf.eprintf "rerun with: ~failure_blobs:[ \"%s\" ]\n%!" blob
-         | Attribute -> Printf.eprintf "rerun with: [@@failure_blobs [ \"%s\" ]]\n%!" blob
-         | Command_line -> Printf.eprintf "rerun with: --failure-blob %s\n%!" blob)
+      (fun blob -> Printf.eprintf "\n%s\n%!" (reproduce_line ~rerun_hint blob))
       blob
 ;;
 
@@ -1034,11 +1004,11 @@ let run_error_exn ((kind : Ffi.run_error_kind), health_check) message =
   | Run_error_other -> Run_error message
 ;;
 
-(** [run_example ~settings ~test_location index (names, body)] runs the
+(** [run_example ~settings index (names, body)] runs the
     explicit example [body], which gives values for the draws bound to
     [names], on a test case with no engine behind it. A failure is reported
     and returned. *)
-let run_example ~(settings : Settings.t) ~test_location index (names, body) =
+let run_example ~(settings : Settings.t) index (names, body) =
   let explicit = Locked.create (fun () -> { drawn = []; lines = [] }) in
   let (tc : test_case) =
     { handle = Ffi.null_test_case
@@ -1059,14 +1029,19 @@ let run_example ~(settings : Settings.t) ~test_location index (names, body) =
       (fun () ->
          match body tc with
          | () | (exception Repeat_done) -> `Passed
-         | exception Assume_rejected -> `Skipped
+         | exception Assume_rejected ->
+           raise
+             (Usage_error
+                (Printf.sprintf
+                   "Explicit test cases must not be rejected, but explicit example %d \
+                    was rejected"
+                   index))
          | exception ((Usage_error _ | Internal_error _) as error) -> raise error
          | exception exn ->
            let backtrace = Printexc.get_raw_backtrace () in
            `Failed { origin = extract_origin exn; exn; backtrace })
   in
   match outcome with
-  | `Skipped -> None
   | `Passed ->
     (match
        let drawn = Locked.protect explicit (fun e -> e.drawn) in
@@ -1083,27 +1058,10 @@ let run_example ~(settings : Settings.t) ~test_location index (names, body) =
   | `Failed failure ->
     if settings.verbosity <> Quiet
     then (
-      let title =
-        match test_location with
-        | None -> Printf.sprintf "Explicit example %d" index
-        | Some (loc : test_location) ->
-          Printf.sprintf
-            "Explicit example %d: %s (%s:%d)"
-            index
-            loc.function_name
-            loc.file
-            loc.begin_line
-      in
-      let prefix = Printf.sprintf "--- %s " title in
-      Printf.eprintf
-        "%s\n%!"
-        (stderr_color
-           ansi_red
-           (prefix ^ String.make (max 3 (frame_width - String.length prefix)) '-'));
-      (match List.rev (Locked.protect explicit (fun e -> e.lines)) with
-       | [] -> ()
-       | lines -> Printf.eprintf "\n%s\n%!" (String.concat "\n" lines));
-      Printf.eprintf "\nException: %s\n%!" (Stdlib.Printexc.to_string failure.exn));
+      List.iter
+        (fun line -> Printf.eprintf "%s\n" line)
+        (List.rev (Locked.protect explicit (fun e -> e.lines)));
+      Printf.eprintf "Exception: %s\n%!" (Stdlib.Printexc.to_string failure.exn));
     Some failure
 ;;
 
@@ -1116,9 +1074,9 @@ let did_not_reproduce_message =
     a property test using the given settings against the native engine.
 
     With an empty [failure_blobs] (the default) it executes the database replay,
-    generation, and shrinking phases. With a non-empty [failure_blobs] the
-    engine replays each blob in turn, until a replay of it fails, and every
-    failure the blobs reproduced is reported.
+    generation, and shrinking phases. With a non-empty [failure_blobs] it
+    replays every blob, one run per blob in order, and reports every failure
+    the blobs reproduce.
 
     @param test_location
       source location of the test. Passed to libhegel, which inside Antithesis
@@ -1126,7 +1084,7 @@ let did_not_reproduce_message =
       default database key. Provided automatically by the [let%hegel_test]
       PPX. When omitted, nothing is reported.
     @param rerun_hint
-      the form of the [rerun with:] hint: the [~failure_blobs] argument a plain
+      the form of the reproduce line: the [~failure_blobs] argument a plain
       caller would use (the default), the [[@@failure_blobs [...]]] attribute
       for the [let%hegel_test] PPX, or the [--failure-blob] flag for a
       [Hegel.main] binary.
@@ -1136,7 +1094,7 @@ let did_not_reproduce_message =
     @param database_key
       optional key scoping persisted/replayed failing examples and, under [derandomize],
       the per-test seed. Defaults to the test's [test_location] (as
-      [file:function_name]) so each [let%hegel_test] gets a stable, distinct
+      [file::function_name]) so each [let%hegel_test] gets a stable, distinct
       key; pass an explicit key to override. When both are absent, the run has
       no database key, so failures are neither stored nor replayed.
     @param failure_blobs
@@ -1165,7 +1123,7 @@ let run_test
     | Some _ as k -> k
     | None ->
       Option.map
-        (fun (loc : test_location) -> Printf.sprintf "%s:%s" loc.file loc.function_name)
+        (fun (loc : test_location) -> Printf.sprintf "%s::%s" loc.file loc.function_name)
         test_location
   in
   let ctx = Ffi.context_new () in
@@ -1246,18 +1204,18 @@ let run_test
       Fun.protect
         ~finally:(fun () -> List.iter (fun f -> Ffi.failure_free ctx f) failures)
         (fun () ->
-           print_failure_header test_location;
            match failures with
            | [ failure ] -> [ report_failure failure ]
            | failures ->
-             let count = List.length failures in
-             List.mapi
-               (fun i failure ->
-                  Printf.eprintf
-                    "\n%s%!"
-                    (stderr_color
-                       ansi_red
-                       (Printf.sprintf "Failure %d of %d:" (i + 1) count));
+             let loud = settings.verbosity <> Quiet in
+             if loud
+             then
+               Printf.eprintf
+                 "Property-based test failed with %d distinct failures.\n%!"
+                 (List.length failures);
+             List.map
+               (fun failure ->
+                  if loud then Printf.eprintf "\n%!";
                   report_failure failure)
                failures)
   in
@@ -1307,7 +1265,7 @@ let run_test
        let rec run_examples index = function
          | [] -> []
          | example :: rest ->
-           (match run_example ~settings ~test_location index example with
+           (match run_example ~settings index example with
             | None -> run_examples (index + 1) rest
             | Some failure when settings.report_multiple_failures ->
               failure :: run_examples (index + 1) rest

@@ -34,8 +34,6 @@ let%expect_test "state trace; invariant marks the failing step" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
     state = 0
       checking n = 0
     Step 1: inc
@@ -45,9 +43,10 @@ let%expect_test "state trace; invariant marks the failing step" =
     state = 2
       checking n = 2
     Invariant my_inv violated after step 2.
-
     Exception: File "ppx/test/expect_tests/test_stateful_trace.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -66,12 +65,11 @@ let%expect_test "invariant violated in the initial state" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
     Invariant silly_inv violated in the initial state.
-
     Exception: File "ppx/test/expect_tests/test_stateful_trace.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -101,16 +99,15 @@ let%expect_test "state trace across multiple rules" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
     state = ()
     Step 1: push
       n = 50
     state = (50)
     Step 2: pop
-
     Exception: File "ppx/test/expect_tests/test_stateful_trace.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -146,13 +143,12 @@ let%expect_test "a rule failure keeps its origin between replays" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
     Step 1: boom
       draw_1 = 0
-
     Exception: Failure("tail boom")
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     tail boom
     |}]
 ;;
@@ -189,14 +185,13 @@ let%expect_test "one concurrent worker remains deterministic" =
   print_string (Expect_scrub.scrub_concurrent_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
     ---------------- Round 1: group "<anonymous>" ----------------
     [worker 0 +time] Rule: boom
     [worker 0 +time]   draw_1 = 0
-
     Exception: Failure("concurrent boom")
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -227,15 +222,99 @@ let%expect_test "concurrent invariant failures retain their names" =
   print_string (Expect_scrub.scrub_concurrent_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
     state = 0
     ---------------- Round 1: group "writes" ----------------
     [worker 0 +time] Rule: increment
     state = 1
     Invariant stays_zero violated after round 1.
-
     Exception: Failure("invariant boom")
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+module%hegel_state_machine Printed_counter = struct
+  type state = int list ref
+
+  let print_state stack = Printer.list Printer.int !stack
+  let push _tc stack = stack := 1 :: !stack [@@rule]
+
+  let short _tc stack = assert (List.length !stack < 2)
+  [@@invariant { always_check = true }]
+  ;;
+end
+
+let%expect_test "print_state prints the state as OCaml syntax" =
+  run_failing (fun tc -> Printed_counter.run tc ~init:(ref []));
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    state = []
+    Step 1: push
+    state = [1]
+    Step 2: push
+    state = [1; 1]
+    Invariant short violated after step 2.
+    Exception: File "ppx/test/expect_tests/test_stateful_trace.ml", line LINE, characters C1-C2: Assertion failed
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "a print_state override wins over the module's printers" =
+  run_failing (fun tc ->
+    Counter.run tc ~print_state:(fun n -> Printer.text (sprintf "<%d>" !n)) ~init:(ref 0));
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    state = <0>
+      checking n = 0
+    Step 1: inc
+    state = <1>
+      checking n = 1
+    Step 2: inc
+    state = <2>
+      checking n = 2
+    Invariant my_inv violated after step 2.
+    Exception: File "ppx/test/expect_tests/test_stateful_trace.ml", line LINE, characters C1-C2: Assertion failed
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+module%hegel_concurrent_state_machine Printed_concurrent = struct
+  type state = int Atomic.t
+
+  let print_state state = Printer.option Printer.int (Some (Atomic.get state))
+  let increment _tc () state = Atomic.incr state [@@rule]
+
+  let stays_zero _tc state = if Atomic.get state <> 0 then failwith "invariant boom"
+  [@@invariant { always_check = true }]
+  ;;
+end
+
+let%expect_test "print_state prints a concurrent machine's state" =
+  (try
+     Hegel.run_hegel_test
+       ~settings:
+         { (Settings.create ~test_cases:1 ~seed:0 ()) with database = Settings.Disabled }
+       (fun tc -> Printed_concurrent.run tc ~init:(Atomic.make 0))
+   with
+   | Failure message when String.equal message "invariant boom" -> ());
+  print_string (Expect_scrub.scrub_concurrent_report [%expect.output]);
+  [%expect
+    {|
+    state = Some 0
+    ---------------- Round 1: group "<anonymous>" ----------------
+    [worker 0 +time] Rule: increment
+    state = Some 1
+    Invariant stays_zero violated after round 1.
+    Exception: Failure("invariant boom")
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;

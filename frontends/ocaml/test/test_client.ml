@@ -40,7 +40,10 @@ let test_default_settings_not_ci () =
     Alcotest.(check bool) "verbosity normal" true (Poly.equal s.verbosity Settings.Normal);
     Alcotest.(check (option Test_helpers.uint64)) "no seed" None s.seed;
     Alcotest.(check bool) "derandomize off" false s.derandomize;
-    Alcotest.(check bool) "database unset" true (Poly.equal s.database Settings.Unset);
+    Alcotest.(check bool)
+      "default database"
+      true
+      (Poly.equal s.database Settings.Default_location);
     Alcotest.(check bool)
       "no health checks suppressed"
       true
@@ -483,8 +486,63 @@ let test_event_bad_label () =
   | exception Hegel.Usage_error _ -> ()
 ;;
 
-(** Force [database = Settings.Unset] (independent of CI auto-detection) to cover the
-    [Unset] arm of settings translation. *)
+let test_database_unset_keeps_the_profile () =
+  Exn.protect
+    ~finally:(fun () -> Settings.set_default_profile None)
+    ~f:(fun () ->
+      Settings.register_profile
+        "database_unset_test"
+        { (Settings.default ()) with database = Settings.Path "profile_db" };
+      Settings.set_default_profile (Some "database_unset_test");
+      let base = Settings.from_profile "default" in
+      let round_trip database =
+        (Settings.set_from_strings { base with database } []).database
+      in
+      Alcotest.(check bool)
+        "unset keeps the profile's database"
+        true
+        (Poly.equal (round_trip Settings.Unset) (Settings.Path "profile_db"));
+      Alcotest.(check bool)
+        "default_location overrides it"
+        true
+        (Poly.equal (round_trip Settings.Default_location) Settings.Default_location))
+;;
+
+let test_default_database_key () =
+  Test_helpers.with_tempdir ~prefix:"hegel-db" ~f:(fun dir ->
+    let settings phases =
+      { (Settings.create ~test_cases:50 ~seed:0 ()) with
+        database = Settings.Path dir
+      ; phases
+      ; verbosity = Settings.Quiet
+      }
+    in
+    let location = { function_name = "keyed"; file = "keyed.ml"; begin_line = 1 } in
+    let fails () =
+      match
+        run_hegel_test
+          ~settings:(settings [ Settings.Generate; Shrink ])
+          ~test_location:location
+          (fun tc -> if Hegel.draw tc (Hegel.booleans ()) then failwith "keyed")
+      with
+      | () -> Alcotest.fail "expected a failure"
+      | exception Failure _ -> ()
+    in
+    fails ();
+    let replays key =
+      match
+        run_hegel_test
+          ~settings:(settings [ Settings.Reuse ])
+          ~database_key:key
+          (fun tc -> if Hegel.draw tc (Hegel.booleans ()) then failwith "keyed")
+      with
+      | () -> false
+      | exception Failure _ -> true
+    in
+    Alcotest.(check bool) "stored under file::name" true (replays "keyed.ml::keyed");
+    Alcotest.(check bool) "not under file:name" false (replays "keyed.ml:keyed"))
+;;
+
 let test_run_database_unset () =
   let settings =
     { (Hegel.Settings.create ~test_cases:3 ()) with database = Settings.Unset }
@@ -662,56 +720,6 @@ let test_run_multiple_failures () =
     Alcotest.failf "unexpected failures: %d" (List.length exns)
 ;;
 
-(** [color_enabled] decision table: a HEGEL_COLOR override of 1/0 wins, anything
-    else falls back to the tty state. *)
-let test_color_enabled () =
-  let check name expected ~override ~isatty =
-    Alcotest.(check bool) name expected (Internal.color_enabled ~override ~isatty)
-  in
-  check "1 forces on" true ~override:(Some "1") ~isatty:false;
-  check "0 forces off" false ~override:(Some "0") ~isatty:true;
-  check "unset: tty" true ~override:None ~isatty:true;
-  check "unset: not a tty" false ~override:None ~isatty:false;
-  check "junk: falls back to tty" true ~override:(Some "junk") ~isatty:true
-;;
-
-(** Run [f] with HEGEL_COLOR set to [value], restoring the variable after. *)
-let with_hegel_color value f =
-  let saved = Sys.getenv "HEGEL_COLOR" in
-  Unix.putenv ~key:"HEGEL_COLOR" ~data:value;
-  Exn.protect
-    ~finally:(fun () ->
-      match saved with
-      | Some v -> Unix.putenv ~key:"HEGEL_COLOR" ~data:v
-      | None -> Test_helpers.unsetenv "HEGEL_COLOR")
-    ~f
-;;
-
-(** [stderr_color_enabled] reads HEGEL_COLOR from the environment. *)
-let test_stderr_color_enabled () =
-  with_hegel_color "1" (fun () ->
-    Alcotest.(check bool)
-      "HEGEL_COLOR=1 forces on"
-      true
-      (Internal.stderr_color_enabled ()));
-  with_hegel_color "0" (fun () ->
-    Alcotest.(check bool)
-      "HEGEL_COLOR=0 forces off"
-      false
-      (Internal.stderr_color_enabled ()))
-;;
-
-(** [stderr_color] wraps in SGR codes only when colors are enabled. *)
-let test_stderr_color () =
-  with_hegel_color "1" (fun () ->
-    Alcotest.(check string)
-      "enabled wraps"
-      "\027[31mx\027[0m"
-      (Internal.stderr_color "31" "x"));
-  with_hegel_color "0" (fun () ->
-    Alcotest.(check string) "disabled is identity" "x" (Internal.stderr_color "31" "x"))
-;;
-
 (** A health-check failure is a run-level error (no counterexample), raised as
     [Failed_health_check] naming the check, with the engine's message. *)
 let test_run_health_check_failure () =
@@ -831,13 +839,10 @@ let tests =
       "extract_origin skips stdlib internal frames"
       `Quick
       test_extract_origin_skips_stdlib_internal_frames
-  ; Alcotest.test_case "color_enabled" `Quick test_color_enabled
   ; Alcotest.test_case
       "Stop_test does not fail the run"
       `Quick
       test_stop_test_does_not_fail_run
-  ; Alcotest.test_case "stderr_color_enabled" `Quick test_stderr_color_enabled
-  ; Alcotest.test_case "stderr_color" `Quick test_stderr_color
   ; Alcotest.test_case
       "test_location reports result"
       `Quick
@@ -865,6 +870,11 @@ let tests =
   ; Alcotest.test_case "event_value non-finite" `Quick test_event_value_non_finite
   ; Alcotest.test_case "event bad label" `Quick test_event_bad_label
   ; Alcotest.test_case "run database unset" `Quick test_run_database_unset
+  ; Alcotest.test_case "default database key" `Quick test_default_database_key
+  ; Alcotest.test_case
+      "database unset keeps the profile"
+      `Quick
+      test_database_unset_keeps_the_profile
   ; Alcotest.test_case "run with full settings" `Quick test_run_with_full_settings
   ; Alcotest.test_case "run all settings branches" `Quick test_run_all_settings_branches
   ; Alcotest.test_case "run flaky strategy" `Quick test_run_flaky_strategy

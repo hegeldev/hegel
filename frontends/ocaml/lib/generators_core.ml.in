@@ -269,6 +269,21 @@ let%template with_printer
 [@@mode m = (nonportable, portable)]
 ;;
 
+(** [with_ocaml_printer print gen] attaches [print] as [gen]'s printer,
+    yielding a printable generator that {!draw} accepts, whose drawn values
+    print as the documents [print] gives. *)
+let%template with_ocaml_printer
+  : type a p.
+    (a -> Printer.doc) MODE(m) -> (a, p) generator MODE(m) -> (a, printable) generator MODE(m)
+  =
+  fun print gen ->
+  Printable
+    { core = (with_display [@mode m]) print ((core_of [@mode m]) gen)
+    ; sexp_of = (fun v -> Sexp.Atom (Printer.to_string (print v)))
+    }
+[@@mode m = (nonportable, portable)]
+;;
+
 (** [with_printers ~sexp_of ~print gen] is [gen] made printable with [sexp_of]
     as its printer, its drawn values displayed by [print]. *)
 let%template with_printers
@@ -680,9 +695,8 @@ let rec do_draw : type a. a core -> Internal.test_case -> a * show =
     group label data (fun () ->
       match flatten_filter source predicate with
       | Values { consume = true; select; _ }, predicate ->
-        (* consuming pools *)
         select data ~filter:(Some (Labels.filter_attempt, predicate)), opaque_show
-      | source, predicate -> (* any other generator *)
+      | source, predicate ->
         let rec attempt i =
           if i > max_filter_attempts
           then raise Internal.Assume_rejected

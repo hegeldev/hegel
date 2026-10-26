@@ -319,23 +319,6 @@ val assume : test_case -> bool -> unit
     the failure report), and on every test case under [Verbose] or [Debug]. *)
 val note : test_case -> string -> unit
 
-(**/**)
-
-(** [color_enabled ~override ~isatty] decides whether ANSI colors are on: an
-    [override] of ["1"]/["0"] (the [HEGEL_COLOR] variable) forces it on/off;
-    otherwise follow [isatty]. *)
-val color_enabled : override:string option -> isatty:bool -> bool
-
-(** [stderr_color_enabled ()] is {!color_enabled} for the failure report's
-    stream, reading the environment and stderr's tty state afresh. *)
-val stderr_color_enabled : unit -> bool
-
-(** [stderr_color code s] wraps [s] in the ANSI SGR [code] when colors are
-    enabled for stderr, else returns [s] unchanged. *)
-val stderr_color : string -> string -> string
-
-(**/**)
-
 (** [require tc ?msg condition] fails the current test case when [condition] is
     [false] by raising [Failure msg]. Unlike [assert] the failure message is
     yours to choose, and unlike {!assume} the case counts as a genuine failure
@@ -528,7 +511,7 @@ exception Did_not_reproduce of string
     bit). *)
 val run_error_exn : Hegel_ffi.Ffi.run_error_kind * int -> string -> exn
 
-(** How a failing run's [rerun with:] prints *)
+(** Which way of replaying a failure its report's reproduce line shows *)
 type rerun_hint =
   | Argument
   | Attribute
@@ -545,11 +528,11 @@ type rerun_hint =
     @param database_key
       optional key scoping persisted/replayed failing examples and, under
       [derandomize], the per-test seed. Defaults to the test's [test_location]
-      (as [file:function_name]) so each [let%hegel_test] gets a stable, distinct
+      (as [file::function_name]) so each [let%hegel_test] gets a stable, distinct
       key; pass an explicit key to override. When both are absent, the engine
       uses its own default key.
     @param rerun_hint
-      the form of the [rerun with:] hint. Defaults to [Argument].
+      the form of the reproduce line. Defaults to [Argument].
     @param on_failure
       called after a failure is reported and before its exception is
       re-raised. [Hegel.main] exits from it.

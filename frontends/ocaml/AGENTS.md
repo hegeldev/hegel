@@ -96,10 +96,11 @@ lib/                         # Library source
                              #   test_case_printer, note)
     loader.ml                # locate libhegel at runtime (env > site > the
                              #   checkout's in-tree target/ build (libhegel_c.<ext>))
-  cli.ml / cli.mli           # Hegel.main: cmdliner flags (--profile applied
+  cli.ml / cli.mli           # Hegel.main: a hand-written flag parser, as in
+                             #   hegel-rust's cli.rs (--profile applied
                              #   first, through set_default_profile, before the
-                             #   caller's settings thunk runs; one flag per
-                             #   setting in settings_flags, each value parsed by
+                             #   caller's settings thunk runs; any other --x-y
+                             #   sets the hegel.toml key x_y, its value parsed by
                              #   the engine through Settings.set_from_strings /
                              #   hegel_settings_set_from_string), single_test_case
                              #   (test_cases = 1, Too_slow suppressed,
@@ -315,9 +316,8 @@ typed-draw migrations.
 
 ### Dependencies: core-free main library + optional hegel.jane and hegel.zarith
 
-The `hegel` library depends on the stdlib plus `cmdliner` (`Hegel.main`), `sexplib0` (printer type
-`'a -> Sexplib0.Sexp.t`, the same type as `Core.Sexp.t`; `Printer.of_sexp` lays one out), `unix` (isatty for
-color detection), `threads.posix`, ctypes/ipaddr/dune-site (`yojson` is a test-only dependency of
+The `hegel` library depends on the stdlib plus `sexplib0` (printer type
+`'a -> Sexplib0.Sexp.t`, the same type as `Core.Sexp.t`; `Printer.of_sexp` lays one out), `threads.posix`, ctypes/ipaddr/dune-site (`yojson` is a test-only dependency of
 the PPX test that parses the engine's `sdk.jsonl`). `core`
 and `core_unix` are NOT dependencies of the library: `core` is an opam
 depopt that gates the `(optional)` sublibrary
@@ -378,7 +378,7 @@ Cores are a discriminated union:
 - **Composite** — a `generate_fn` thunk run inside a labeled span; used by tuples, one_of, `lists ~unique`, and hash tables (all of which now always drive the collection protocol / draw sub-values directly — there is no schema fast path).
 - **Values** — the engine-pool core behind `Stateful.Pool` and `Concurrent_pool`: `{ pool; consume; select : test_case -> filter:(label * predicate) option -> 'a }`, where `select ~filter:None` draws an id from the engine pool and resolves it against the client table. On a consuming pool, `filter` calls `select ~filter:(Some _)`, which runs the attempts itself (`filter_consumed`, given the pool's `size`/`take`/`keep`; the concurrent pool runs the predicate between lock sections): every id an attempt takes stays consumed until the attempts end, then all but the accepted one go back through `hegel_pool_restore` (libhegel 0.45.13), on every exit including a raising predicate, so filtering consumes only the value the test receives. A filter over a filter folds both predicates into one round of attempts (`do_draw_filtered`), as hegel-rust does. `Generators.Int_pool_concurrent` does that under the pool's `Locked`, so the table never disagrees with the engine about which ids exist while workers share it; the sequential `Generators.Int_pool` needs no lock. Both are doc-hidden client sides over `Int_table`; `resolve_pool_draw` is the shared id-resolution step. `hash_tables` is refunctionalized at the API level: `make_hash_tables ~of_pairs ~sexp_of_t` is table-agnostic, `hash_tables` closes it over `Stdlib.Hashtbl`, `Hegel_jane.hash_tables` over `Core.Hashtbl.Poly`.
 - **Span labels** (libhegel 0.39.0) — a label identifies the generator that opened a span; the engine treats two spans with the same label as coming from the same generator when it shrinks and mutates, and does nothing else with it. There are no predefined label constants in the ABI. A label is an `Internal.Label.t`: a description (`Label.of_name name` or `Label.combine [labels…]`) with an atomic cache, computed by libhegel's `hegel_label_from_name`/`hegel_label_combine` (through the `Ffi.label_*` bindings, with the test case's context) the first time a span uses it, and reused afterwards. Building a generator never calls the engine, so it doesn't load libhegel (`test_lazy_load`). `Internal.start_span ~label` resolves it. Every core stores its `label`, fixed at construction: a `Leaf` from its primitive's name (`leaf ~name:"integers"` → `hegel.integers`), and everything built from other generators as `combine [own kind; components' labels…]` (`lists (integers ())` ≠ `lists (text ())`; `map` on a leaf stays a leaf but combines `Labels.mapped` in; `with_printer` leaves the label alone; `Values` is the constant `Labels.pool`). `Generators.Private.label_of` reads it back. The deriver emits `combine [fixed_dict|enum_variant; from_name "<type name>"]` so two derived types of the same shape stay distinct. Names are `hegel.<kind>`, the names the other frontends use for the same generator: `hegel.lists` (unique lists too), `hegel.sets`, `hegel.dicts` (assoc lists and hash tables), `hegel.fixed_dicts`, `hegel.one_of`, `hegel.optional` as in Python, TypeScript and Java, `hegel.tuple`, `hegel.array`, `hegel.permutation` as in Rust. A filter draws inside its own `combine [hegel.filter; source]` span, and each attempt inside a `hegel.filter.attempt` span (discarded when rejected), as Rust and Python do.
-- **Function** — a generated function (`functions`/`functions2`/`functions3`). `build ~name` returns a fresh per-test-case memoized function that draws each result from `returns` on first application (memoized on the argument via structural hash/equality — a polymorphic `Stdlib.Hashtbl` — so `sexp_of_arg` is display-only and an omitted one shows `<opaque>` without collapsing the key) and shows applied pairs as `name arg = result` (the argument as its s-expression, uncurried for `functions2`/`functions3` as `name (a b) = result`, and the result as `returns` displays it) in the print region of a printing case. Only *top-level* applications print — a pair applied at draw depth > 0 (inside a span) is suppressed, like a nested draw. A distinct core so `draw_silent_named` / `draw_named` can thread the draw-site binding name into the function (see the PPX note below); the name threads even when the function is drawn nested. Result draws are wrapped in a span labelled `combine [Labels.function_result; label of returns]`.
+- **Function** — a generated function (`functions`/`functions2`/`functions3`). `build ~name` returns a fresh per-test-case memoized function that draws each result from `returns` on first application (memoized on the argument via structural hash/equality — a polymorphic `Stdlib.Hashtbl` — so `print_arg`/`sexp_of_arg` are display-only and with neither the argument shows as `<abstr>`, `Printer.opaque`, without collapsing the key) and shows applied pairs as `name arg = result` (the argument as `print_arg` renders it, else as its s-expression; curried for `functions2`/`functions3` as `name a b = result`; and the result as `returns` displays it) in the print region of a printing case. Only *top-level* applications print — a pair applied at draw depth > 0 (inside a span) is suppressed, like a nested draw. A distinct core so `draw_silent_named` / `draw_named` can thread the draw-site binding name into the function (see the PPX note below); the name threads even when the function is drawn nested. Result draws are wrapped in a span labelled `combine [Labels.function_result; label of returns]`.
 
 ### Inline Test Integration (ppx/ppx_hegel_test.ml)
 
@@ -466,15 +466,18 @@ that runs exactly one test case per invocation (hegel-rust's
 failures print that form: `Internal.rerun_hint = Command_line`) and `[@async]`.
 `Cli.single_test_case` sets `test_cases = 1`, suppresses `Too_slow` and sets
 `unbounded_choices`, so a long-running test case is not cut off at the
-engine's choice limit. Every other setting has a flag (`Cli.settings_flags`,
-named after its `hegel.toml` key), and the CLI knows none of their
-vocabularies: `Settings.set_from_strings` writes the settings record to a
-handle, applies each flag through `hegel_settings_set_from_string`, and reads
-the handle back, so a bad value is the engine's `Usage_error`, reported as a
-cmdliner error. `--database-key` goes through the engine too, for validation,
-and then replaces `main`'s `?database_key`. There are no
-user-defined flags: an unknown argument is a cmdliner error (exit 124), as in
-Rust. `Hegel.main` exits, so `test_cli.ml` and `test_ppx_hegel_test.ml`
+engine's choice limit, so `--test-cases` and `--unbounded-choices` are
+rejected with an error saying why. `Cli.parse` mirrors hegel-rust's `cli.rs`:
+every other `--some-setting VALUE` (or `=VALUE`) sets the `hegel.toml` key
+`some_setting`, so the flags reach every engine setting without a list of
+them here, and the CLI knows none of their vocabularies:
+`Settings.set_from_strings` writes the settings record to a handle, applies
+the flag through `hegel_settings_set_from_string`, and reads the handle back,
+so a bad value is the engine's `Usage_error` and an unknown key the engine's
+"unknown setting", both reported as parse errors naming the flag.
+`--database-key` goes through the engine too, for validation, and then
+replaces `main`'s `?database_key`. There are no user-defined flags: an
+unknown argument prints the error and the usage and exits 2, as in Rust. `Hegel.main` exits, so `test_cli.ml` and `test_ppx_hegel_test.ml`
 re-execute their own binary with `HEGEL_TEST_MAIN_CHILD` set to test it.
 
 Because the PPX only produces a callable and never calls it, a
@@ -679,8 +682,7 @@ so a non-printing case never formats anything. After `mark_complete`,
 `run_case` reads the document back (`capture_document`:
 `printer_resolve` — required when clone regions exist, an argument error
 otherwise, hence the catch — then `printer_value`); the runner keeps it with
-the failure (see Test Runner) and prints it inside the client-drawn failure
-frame. Verbosity gating stays client-side (`should_print`): under Quiet, or at
+the failure (see Test Runner) and prints it in the failure report. Verbosity gating stays client-side (`should_print`): under Quiet, or at
 Normal a case the engine did not stamp (`should_capture`), nothing is appended
 and the read is skipped.
 Clones write into their own region, anchored where the clone was made, so
@@ -698,8 +700,8 @@ and on `Assume_rejected` reports the rejection to the engine. It only creates th
 block when `should_print tc` holds; a non-printing case runs the body on `tc` itself, since
 a block per step costs a native handle and a context, which
 measured as 50% more wall time and 20x the major collections on a
-200-case x 500-step machine. `print_failure_body` sets the captured output
-off with blank lines inside the frame. The client prepends no spaces anywhere. Mirroring
+200-case x 500-step machine. `print_failure_body` prints the captured output
+as it is, followed by the exception, as hegel-rust does. The client prepends no spaces anywhere. Mirroring
 hegel-rust's `TestCase::child`, a block starts at span depth 0 and opens a
 fresh `draw_state` (a rule's draw names are scoped to that one invocation: a
 `[@@rule]` body's `let n = draw ..` prints as `n` in every step, and a
@@ -725,14 +727,14 @@ doc-hidden `Hegel.run_hegel_test_ppx` — a thin wrapper that sets
 signal never appears on the public `run_hegel_test`. The `[@@failure_blobs ...]` record/replay workflow is
 supported: the PPX forwards the listed blobs as `~failure_blobs`, and
 `run_test` starts one `hegel_run_start_blob` run per blob, in order (pair it
-with `print_blob = false` to suppress the `rerun with:` line that failing
-runs print by default). The engine replays each blob until a replay fails;
-each run goes through the same loop and report as a normal run, with no
-`rerun with:` line. The failures of every run are then raised together as
+with `print_blob = false` to suppress the reproduce line that failing
+runs print by default). Every blob is replayed, and each run goes through
+the same loop and report as a normal run, with no reproduce line. The failures of every run are then raised together as
 for a normal run (one re-raises its exception, several raise
 `Multiple_failures`), and when no blob reproduced, the run raises
 `Did_not_reproduce`. `run_test ?rerun_hint` (`Argument` | `Attribute` | `Command_line`) picks the
-form of the `rerun with:` line; the PPX entry points pass `Attribute`,
+form of the reproduce line (`To reproduce this failure, ...`, worded after
+hegel-rust's); the PPX entry points pass `Attribute`,
 `Hegel.main` passes `Command_line`. `hegel_run_start_blob` rejects an undecodable blob with
 `HEGEL_E_INVALID_ARG`, so `check_rc` raises `Usage_error`. For persisting and replaying
 failing examples across runs, use `database` / `database_key`.
@@ -789,9 +791,13 @@ makes `hegel.toml`, `HEGEL_DEFAULT_PROFILE`, `HEGEL_CONFIG`, and the shipped
 `ci`/`workload` profiles apply to OCaml runs. `Settings.register_profile` and
 `Settings.set_default_profile` wrap the matching engine calls. Going the other
 way, `Settings.to_ffi` (what `Internal.build_ffi_settings` calls) sets *every*
-field on a fresh handle — including `database` with `NULL` for `Unset` and the
-health-check mask even when empty — so the record, not the profile the fresh
-handle was resolved from, is authoritative for the run. That includes
+field on a fresh handle — including the health-check mask even when empty —
+so the record, not the profile the fresh handle was resolved from, is
+authoritative for the run. The one exception is `database = Unset`, which
+leaves the fresh handle's database (the default profile's) in place, as C++'s
+`Database::unset()` and Java's `Database.unset()` do; `Default_location`
+sends `NULL` (the engine default, `.hegel`), and `of_ffi` reads `NULL` back as
+`Default_location`, so a record read from the engine says what it holds. That includes
 `backend` (`Default`/`Urandom`): `default ()` reports the profile's choice
 (`urandom` under `workload`) and `to_ffi` writes it back. `print_blob` is a
 plain field too: its base value is `true` since libhegel 0.42.0 (before that
@@ -837,7 +843,10 @@ report-time replay does not fail, the newest failing execution may be a silent
 shrink probe. After the loop, each `Ffi.run_result` failure is printed from
 its capture: the output, the exception, `note: <caveat>`
 (`hegel_failure_caveat`, only under nondeterministic handling), and
-`rerun with:` when the failure has a blob (an unconfirmed failure has none).
+the reproduce line when the failure has a blob (an unconfirmed failure has
+none), laid out as hegel-rust lays out its report: no frame, and several
+failures under one `Property-based test failed with N distinct failures.`
+line, a blank line before each.
 A single failure re-raises its captured exception with its backtrace; several
 raise `Multiple_failures` with their exceptions. A run that ends in
 `Run_error` raises the exception for the engine's

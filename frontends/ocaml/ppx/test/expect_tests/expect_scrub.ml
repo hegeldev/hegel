@@ -26,7 +26,7 @@ let scrub_numeric_after ~marker ~placeholder s =
 ;;
 
 let scrub_blobs s =
-  let marker = "rerun with:" in
+  let marker = "To reproduce this failure" in
   let ml = String.length marker in
   let sl = String.length s in
   let buf = Buffer.create sl in
