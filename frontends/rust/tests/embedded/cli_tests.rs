@@ -214,7 +214,9 @@ fn test_bool_aliases() {
 fn test_invalid_seed_error() {
     let err = try_apply_cli_args(Settings::new, s(&["--seed", "abc"])).unwrap_err();
     match err {
-        CliError::Parse(msg) => assert!(msg.starts_with("--seed: "), "{msg}"),
+        CliError::Parse(msg) => assert_eq!(
+            msg, "--seed expects an integer or \"none\", got \"abc\"",
+        ),
         _ => panic!("wrong error kind"),
     }
 }
@@ -457,4 +459,45 @@ fn test_usage_documents_the_profile_flag() {
         CliOutcome::Help(msg) => assert!(msg.contains("--profile <NAME>")),
         other => panic!("expected Help, got {other:?}"),
     }
+}
+
+
+fn parse_error(args: &[&str]) -> String {
+    match try_apply_cli_args(Settings::new, s(args)) {
+        Err(CliError::Parse(msg)) => msg,
+        other => panic!("expected a parse error, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_a_flag_is_not_taken_as_the_previous_flags_value() {
+    assert_eq!(
+        parse_error(&["--seed", "--verbosity", "quiet"]),
+        "--seed requires a value"
+    );
+}
+
+#[test]
+fn test_empty_database_key_is_rejected() {
+    assert_eq!(
+        parse_error(&["--database-key="]),
+        "--database-key expects a non-empty key"
+    );
+    assert_eq!(
+        parse_error(&["--database-key", ""]),
+        "--database-key expects a non-empty key"
+    );
+}
+
+#[test]
+fn test_value_errors_name_the_setting_by_its_flag() {
+    assert_eq!(
+        parse_error(&["--nondeterminism-strictness", "x"]),
+        "--nondeterminism-strictness expects one of quiet|warn|error, got \"x\""
+    );
+    assert_eq!(
+        parse_error(&["--suppress-health-check=nope"]),
+        "--suppress-health-check does not recognise \"nope\". Known names: all, \
+         filter_too_much, too_slow, test_cases_too_large, large_initial_test_case"
+    );
 }
