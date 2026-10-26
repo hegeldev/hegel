@@ -25,17 +25,31 @@ type CaptureStackTrace = (target: object, above?: Callable) => void;
 const V8_FRAME = /^\s*at (?:async )?(?:(.+?) \()?(.+?):(\d+):\d+\)?$/;
 const GECKO_FRAME = /^(.*?)@(.+?):(\d+):\d+$/;
 
+/** The path of a `file://` URL, percent-decoded; any other location as it is. */
+function filePath(location: string): string {
+  if (!location.startsWith("file://")) return location;
+  const path = location.slice("file://".length);
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
 /** Parse one line of `Error.stack`, in V8 or SpiderMonkey/JavaScriptCore form. */
 export function parseFrame(line: string): CallSite | null {
   const match = V8_FRAME.exec(line) ?? GECKO_FRAME.exec(line);
   if (match === null) return null;
   const [, name, file, lineNumber] = match;
-  return { file: file.replace(/^file:\/\//, ""), line: Number(lineNumber), name: name || null };
+  return { file: filePath(file), line: Number(lineNumber), name: name || null };
 }
 
 /**
- * The frame that called `above`, or `null` where the runtime cannot say
- * (no `Error.captureStackTrace`, or a stack it does not format as expected).
+ * The frame that called `above`, or `null` where the runtime cannot say: a
+ * stack it does not format as expected, or a runtime without
+ * `Error.captureStackTrace` (Firefox). Without a call site a test has no
+ * location, and its database key is its function's name alone (none for an
+ * anonymous function) unless {@link Hegel.databaseKey} gives one.
  */
 export function callSite(above: Callable): CallSite | null {
   const capture = (Error as { captureStackTrace?: CaptureStackTrace }).captureStackTrace;
@@ -63,32 +77,14 @@ export function runnerTestName(): string | null {
   return typeof name === "string" && name !== "" ? name : null;
 }
 
-const sharedNameLines = new Map<string, number[]>();
-
 /**
  * The test location of a test function defined at `site`: the function's own
  * name, else the name the test runner gives the running test, else the
- * enclosing function's, else its line, so that two anonymous tests in one
- * file stay distinct. A name borrowed from the runner or the enclosing
- * function can cover several `hegel.test` calls, so every call line after
- * the first that borrows the same name in the same file gets its position
- * among them appended (`"suite > case (2)"`).
+ * enclosing function's, else its line.
  */
 export function locationOf(site: CallSite, testFn: AnyFunction): TestLocation {
-  let name = testFn.name;
-  if (!name) {
-    const borrowed = runnerTestName() ?? site.name;
-    if (borrowed === null) {
-      name = `<anonymous at line ${site.line}>`;
-    } else {
-      const key = `${site.file}\0${borrowed}`;
-      const lines = sharedNameLines.get(key) ?? [];
-      sharedNameLines.set(key, lines);
-      if (!lines.includes(site.line)) lines.push(site.line);
-      const position = lines.indexOf(site.line) + 1;
-      name = position === 1 ? borrowed : `${borrowed} (${position})`;
-    }
-  }
+  const name =
+    testFn.name || (runnerTestName() ?? site.name ?? `<anonymous at line ${site.line}>`);
   const module = site.file.replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, "");
   return { file: site.file, beginLine: site.line, class: module, function: name };
 }
@@ -110,8 +106,15 @@ export function projectPath(file: string, root: string): string {
 
 /**
  * The database key of a test at `location`: its file, relative to the
- * project's `root`, plus its name.
+ * project's `root`, plus its name (`tests/a.test.ts::property`). An
+ * anonymous test function borrows its name, which several `hegel.test`
+ * calls can share, so its key also carries the line of its call
+ * (`tests/a.test.ts:12::suite > case`). A key depends only on where the test
+ * is defined, never on which other tests ran before it.
  */
-export function databaseKeyOf(location: TestLocation, root: string): string {
-  return `${projectPath(location.file, root)}::${location.function}`;
+export function databaseKeyOf(location: TestLocation, root: string, anonymous: boolean): string {
+  const path = projectPath(location.file, root);
+  return anonymous
+    ? `${path}:${location.beginLine}::${location.function}`
+    : `${path}::${location.function}`;
 }

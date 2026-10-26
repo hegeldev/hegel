@@ -663,11 +663,15 @@ export class Hegel {
   /**
    * Set the key the test's failures are stored under in the database, in
    * place of the one derived from its location: its file, relative to the
-   * working directory, plus its name. A test function's name is its own, or
-   * for an anonymous one the name Vitest or Jest gives the running test,
-   * else the enclosing function's, else its line. A borrowed name shared by
-   * calls on several lines gets the call's position among them appended
-   * from the second on (`"describe > test (2)"`).
+   * working directory, plus its name (`"tests/a.test.ts::property"`). A test
+   * function's name is its own, or for an anonymous one the name Vitest or
+   * Jest gives the running test, else the enclosing function's, else its
+   * line; an anonymous function's key also carries the line of its call
+   * (`"tests/a.test.ts:12::describe > test"`), so that calls sharing a name
+   * keep separate keys whatever order they run in. Where the runtime has no
+   * `Error.captureStackTrace` (Firefox) there is no call site to derive a
+   * location from: the key is the test function's name, and an anonymous
+   * test has none unless set here.
    */
   databaseKey(key: string): this {
     this._databaseKey = key;
@@ -775,7 +779,11 @@ export class Hegel {
         const key =
           this._databaseKey ??
           (location !== null
-            ? databaseKeyOf(location, this.runtime.projectRoot)
+            ? databaseKeyOf(
+                location,
+                this.runtime.projectRoot,
+                this._testLocation === null && !this.testFn.name,
+              )
             : this.testFn.name || null);
         if (key !== null) lib.setDatabaseKey(ctx, settings, key);
         yield* this.runAll(lib, ctx, settings, cache);

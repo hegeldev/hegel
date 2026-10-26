@@ -41,9 +41,16 @@ describe("stack frame parsing", () => {
       { file: "https://host/test.ts", line: 4, name: "property" },
     ],
     ["@https://host/test.ts:8:9", { file: "https://host/test.ts", line: 8, name: null }],
+    ["    at p (file:///a%20b/test%25.ts:4:5)", { file: "/a b/test%.ts", line: 4, name: "p" }],
+    ["    at file:///a%ZZ/test.ts:3:9", { file: "/a%ZZ/test.ts", line: 3, name: null }],
     ["Error: not a frame", null],
   ])("parses %s", (line, frame) => {
     expect(parseFrame(line)).toEqual(frame);
+  });
+
+  it("makes a percent-encoded file URL's path relative to a root with spaces", () => {
+    const frame = parseFrame("    at p (file:///my%20project/tests/a.test.ts:4:5)")!;
+    expect(projectPath(frame.file, "/my project")).toBe("tests/a.test.ts");
   });
 
   it("finds no call site without Error.captureStackTrace", () => {
@@ -124,8 +131,13 @@ describe("test identity", () => {
     const runner = createRunner(fakeRuntime(engine));
     await runner.testAsync(() => {});
     const name = "test identity > names an anonymous test after the runner's running test";
-    expect(engine.setTestLocation.mock.calls[0][2].function).toBe(name);
-    expect(engine.setDatabaseKey).toHaveBeenCalledWith(context, settings, `${THIS_FILE}::${name}`);
+    const location = engine.setTestLocation.mock.calls[0][2];
+    expect(location.function).toBe(name);
+    expect(engine.setDatabaseKey).toHaveBeenCalledWith(
+      context,
+      settings,
+      `${THIS_FILE}:${location.beginLine}::${name}`,
+    );
   });
 
   it("tells apart anonymous tests at different lines of one runner test", () => {
@@ -137,13 +149,28 @@ describe("test identity", () => {
     }
     const name =
       "test identity > tells apart anonymous tests at different lines of one runner test";
+    const lines = engine.setTestLocation.mock.calls.map((call) => call[2].beginLine);
+    expect(lines[1]).toBe(lines[0] + 1);
     const keys = engine.setDatabaseKey.mock.calls.map((call) => call[2]);
     expect(keys).toEqual([
-      `${THIS_FILE}::${name}`,
-      `${THIS_FILE}::${name} (2)`,
-      `${THIS_FILE}::${name}`,
-      `${THIS_FILE}::${name} (2)`,
+      `${THIS_FILE}:${lines[0]}::${name}`,
+      `${THIS_FILE}:${lines[1]}::${name}`,
+      `${THIS_FILE}:${lines[0]}::${name}`,
+      `${THIS_FILE}:${lines[1]}::${name}`,
     ]);
+  });
+
+  it("keys a test the same whichever tests ran before it", () => {
+    const keysOf = (skipFirst: boolean): string[] => {
+      const engine = fakeEngine();
+      const runner = createRunner(fakeRuntime(engine));
+      if (!skipFirst) runner.test(() => {});
+      runner.test(() => {});
+      return engine.setDatabaseKey.mock.calls.map((call) => call[2]);
+    };
+    const [first, second] = keysOf(false);
+    expect(first).not.toBe(second);
+    expect(keysOf(true)).toEqual([second]);
   });
 
   it("tells apart anonymous tests in one enclosing function", () => {
@@ -154,8 +181,11 @@ describe("test identity", () => {
       runner.test(() => {});
     }
     withMatcherState(undefined, helper);
-    const names = engine.setTestLocation.mock.calls.map((call) => call[2].function);
-    expect(names).toEqual(["helper", "helper (2)"]);
+    const locations = engine.setTestLocation.mock.calls.map((call) => call[2]);
+    expect(locations.map((location) => location.function)).toEqual(["helper", "helper"]);
+    expect(engine.setDatabaseKey.mock.calls.map((call) => call[2])).toEqual(
+      locations.map((location) => `${THIS_FILE}:${location.beginLine}::helper`),
+    );
   });
 
   it("names an anonymous test by its line outside a known test runner", () => {
