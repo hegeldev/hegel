@@ -18,16 +18,19 @@ Strings are always quoted, options print as `Some x`, derived records and varian
 
 Floats print as the shortest literal that reads back as the same float, without an exponent from `1e-5` up to `1e16` (`100.`, `1000000.`), and with one beyond (`1e+16`). Strings escape ASCII control characters as `%S` does (`"\b"`), and print the characters Rust's `Debug` escapes as `\u{...}`: control and format characters such as the bidirectional override U+202E, line and paragraph separators, combining marks, and unassigned code points. A negative atom of an s-expression, or a `Printer.of_to_string` text that is not a single token, is parenthesized as an argument (`Some (-5)`), and a single token is not (`Some 42`).
 
-An application of a generated function prints its arguments as before, through `~sexp_of_arg`, and its result as `returns` prints it: `f 3 = [1; 2]`, or `f 3 = <fun>` when the result is itself a function.
+An application of a generated function prints its arguments, followed by its result as `returns` prints it: `f 3 = [1; 2]`, or `f 3 = <fun>` when the result is itself a function. The new `?print_arg` (`?print_arg1`, ... for `functions2` and `functions3`) prints an argument as a `Printer.doc`; `~sexp_of_arg` still prints it as an s-expression, and an argument with neither prints as `<abstr>`, as every value without a printer does (it used to be `<opaque>`). The arguments of `functions2` and `functions3` print curried, `g 3 true = 10`, rather than as one list, `g (3 true) = 10`.
 
-A printer you give with `with_printer`, or with `~sexp_of_arg` or `~sexp_of_state`, prints the s-expressions it returns, as before:
+The new `with_ocaml_printer` attaches a printer that returns a `Printer.doc`, so a `map`, `flat_map`, `just`, `sampled_from`, `composite` or `permutations` generator can print what it draws as OCaml syntax. A printer you give with `with_printer` or `~sexp_of_state` prints the s-expressions it returns, as before, and a state machine run takes `?print_state` to print its state as a `Printer.doc` instead; a `module%hegel_state_machine` that binds `print_state` uses it.
 
 ```ocaml
+draw tc (with_ocaml_printer Printer.(list int) (map (fun n -> [ n ]) (integers ())))
+(* prints: draw_1 = [3] *)
+
 draw tc (with_printer [%sexp_of: int list] (map (fun n -> [ n ]) (integers ())))
 (* prints: draw_1 = (3) *)
 ```
 
-The printing API is unchanged: generators keep their `printable` / `unprintable` parameter, `Generators.printer` still returns a generator's s-expression printer, and `[@@deriving hegel_generator]` still defines `sexp_of_<t>`. A field of a derived type whose generator has no printer (an `[@hegel.generator]` override built with `map`, say) prints as that s-expression, inside the OCaml syntax of the rest of the value. The new `Hegel.Printer` module has the documents these values print as, and `Printer.to_string` to lay one out.
+Beyond these additions, the printing API is unchanged: generators keep their `printable` / `unprintable` parameter, `Generators.printer` still returns a generator's s-expression printer, and `[@@deriving hegel_generator]` still defines `sexp_of_<t>`. A field of a derived type whose generator has no printer (an `[@hegel.generator]` override built with `map`, say) prints as that s-expression, inside the OCaml syntax of the rest of the value. The new `Hegel.Printer` module has the documents these values print as, and `Printer.to_string` to lay one out.
 
 `text` and `characters` now leave character-set validation to the engine. `~categories` may name a category that contains the surrogates, such as `"C"`, and the engine drops the surrogates from it; constraints that leave no characters at all (`~categories:["Cs"]`) raise `Usage_error` when the generator is drawn from rather than when it is built.
 

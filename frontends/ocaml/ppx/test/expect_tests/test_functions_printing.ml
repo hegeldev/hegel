@@ -65,7 +65,7 @@ let%expect_test
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    f (-1 "a b") = [3; 3]
+    f (-1) "a b" = [3; 3]
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
 
     To reproduce this failure, add this attribute to the let%hegel_test:
@@ -190,13 +190,13 @@ let%hegel_test functions2_binding tc =
   { (Settings.create ~test_cases:100 ~seed:0 ()) with verbosity = Settings.Normal }]
 ;;
 
-let%expect_test "functions2 shows its table uncurried, named from its binding" =
+let%expect_test "functions2 shows its applications curried, named from its binding" =
   (try functions2_binding () with
    | _ -> ());
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    g (3 true) = 10
+    g 3 true = 10
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
 
     To reproduce this failure, add this attribute to the let%hegel_test:
@@ -220,13 +220,13 @@ let%hegel_test functions3_binding tc =
   { (Settings.create ~test_cases:100 ~seed:0 ()) with verbosity = Settings.Normal }]
 ;;
 
-let%expect_test "functions3 shows its table uncurried, named from its binding" =
+let%expect_test "functions3 shows its applications curried, named from its binding" =
   (try functions3_binding () with
    | _ -> ());
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    h (1 true 2) = 10
+    h 1 true 2 = 10
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
 
     To reproduce this failure, add this attribute to the let%hegel_test:
@@ -490,7 +490,7 @@ let%expect_test "partially printable applications" =
   [%expect
     {|
     f 1 = <fun>
-    function <opaque> = 1
+    function <abstr> = 1
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
 
     To reproduce this failure, add this attribute to the let%hegel_test:
@@ -511,8 +511,8 @@ let%expect_test "unprintable applications" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    f <opaque> = <fun>
-    function <opaque> = 1
+    f <abstr> = <fun>
+    function <abstr> = 1
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
 
     To reproduce this failure, add this attribute to the let%hegel_test:
@@ -538,9 +538,59 @@ let%expect_test "a result with no printer shows as <abstr>" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    h <opaque> = <abstr>
-    g <opaque> = <abstr>
-    f <opaque> = <abstr>
+    h <abstr> = <abstr>
+    g <abstr> = <abstr>
+    f <abstr> = <abstr>
+    Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
+    |}]
+;;
+
+let%hegel_test functions_print_arg tc =
+  let f =
+    draw_silent
+      tc
+      (functions
+         ~print_arg:(Printer.list Printer.int)
+         ~sexp_of_arg:(fun _ -> Sexplib0.Sexp.Atom "unused")
+         ~returns:(integers ~min_value:0 ~max_value:1000 ())
+         ())
+  in
+  let g =
+    draw_silent
+      tc
+      (functions2
+         ~print_arg1:Printer.int
+         ~print_arg2:Printer.string
+         ~returns:(integers ~min_value:0 ~max_value:1000 ())
+         ())
+  in
+  let h =
+    draw_silent
+      tc
+      (functions3
+         ~print_arg1:Printer.int
+         ~print_arg2:Printer.bool
+         ~print_arg3:(Printer.option Printer.int)
+         ~returns:(integers ~min_value:0 ~max_value:1000 ())
+         ())
+  in
+  assert (f [ 1; 2 ] + g (-1) "a" + h 1 true (Some 2) < 10)
+[@@settings
+  { (Settings.create ~test_cases:100 ~seed:0 ()) with verbosity = Settings.Normal }]
+;;
+
+let%expect_test "print_arg renders arguments as OCaml syntax" =
+  (try functions_print_arg () with
+   | _ -> ());
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    h 1 true (Some 2) = 0
+    g (-1) "a" = 0
+    f [1; 2] = 10
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
 
     To reproduce this failure, add this attribute to the let%hegel_test:

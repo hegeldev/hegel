@@ -13,8 +13,10 @@
     structural generators ({!Hegel.lists}, {!Hegel.tuples2},
     {!Hegel.optional}, {!Hegel.one_of}, {!Hegel.filter}, ...), and the
     generators [\[@@deriving hegel_generator\]] produces, which print as
-    they draw. A generator given a printer with {!Hegel.with_printer} prints
-    the s-expressions that printer returns instead ({!of_sexp}).
+    they draw. A generator given a printer with {!Hegel.with_ocaml_printer}
+    prints the documents that printer returns, so any generator's values can
+    print as OCaml syntax; one given a printer with {!Hegel.with_printer}
+    prints the s-expressions that printer returns instead ({!of_sexp}).
 
     This module holds the documents those values print as. A document is
     built from the value printers here ({!int}, {!string}, {!list}, …), the

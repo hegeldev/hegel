@@ -238,6 +238,16 @@ If you have [`ppx_sexp_conv`](https://github.com/janestreet/ppx_sexp_conv) in yo
 let parity =
   draw tc (with_printer [%sexp_of: int] (map (fun n -> n mod 2) (integers ())))
 ```
+To print the value as OCaml syntax instead, attach a `Printer` with
+`with_ocaml_printer`:
+```ocaml
+let pair =
+  draw
+    tc
+    (with_ocaml_printer
+       Printer.(pair int string)
+       (map (fun n -> n, string_of_int n) (integers ())))
+```
 
 You can also attach your own debug information with `note`:
 

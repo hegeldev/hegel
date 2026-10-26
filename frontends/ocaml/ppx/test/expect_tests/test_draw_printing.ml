@@ -709,3 +709,25 @@ let%expect_test "a negative fallback s-expression is parenthesized" =
         ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
+
+let%expect_test "with_ocaml_printer prints a mapped value as OCaml syntax" =
+  let pair =
+    with_ocaml_printer
+      Printer.(pair int string)
+      (map (fun n -> n, Int.to_string n) (integers ~min_value:3 ~max_value:3 ()))
+  in
+  print_endline (Sexplib0.Sexp.to_string (Generators.printer pair (4, "four")));
+  run_failing (fun tc ->
+    let _ = Hegel.draw tc pair in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    "(4, \"four\")"
+    draw_1 = (3, "3")
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;

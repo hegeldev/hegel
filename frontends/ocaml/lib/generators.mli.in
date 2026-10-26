@@ -62,8 +62,9 @@ type printable
 
     - Draw it with {!Hegel.draw_silent}, which produces the value but records
       nothing for the failing-replay output.
-    - Attach a printer with {!Hegel.with_printer} to obtain a {!printable}
-      generator that can be drawn from with {!Hegel.draw} *)
+    - Attach a printer with {!Hegel.with_ocaml_printer} (printing OCaml
+      syntax) or {!Hegel.with_printer} (printing s-expressions) to obtain a
+      {!printable} generator that can be drawn from with {!Hegel.draw} *)
 type unprintable
 
 (**/**)
@@ -169,6 +170,32 @@ val draw_silent_named : name:string -> Internal.test_case -> ('a, 'p) generator 
     ]} *)
 val%template with_printer
   :  ('a -> Sexplib0.Sexp.t) MODE(m)
+  -> ('a, 'p) generator MODE(m)
+  -> ('a, printable) generator MODE(m)
+[@@mode m = (nonportable, portable)]
+
+(** [with_ocaml_printer print gen] attaches [print] as [gen]'s printer,
+    yielding a printable generator that {!draw} accepts. Unlike
+    {!with_printer}, the drawn values print as the {!Printer.doc} documents
+    [print] gives, so a [map]/[flat_map]/[just]/[sampled_from]/[composite]/
+    [permutations] result can print as OCaml syntax, built from the printers
+    in {!Printer}. {!printer} of the result gives each value as a single
+    s-expression atom, its document laid out on one line.
+
+    {[
+      let%hegel_test with_ocaml_printer_example tc =
+        let pairs =
+          map (fun x -> x, x * 2) (integers ~min_value:0 ~max_value:9 ())
+        in
+        (* prints as: draw_1 = (3, 6) *)
+        let x, y =
+          draw tc (with_ocaml_printer Printer.(pair int int) pairs)
+        in
+        assert (y = 2 * x)
+      ;;
+    ]} *)
+val%template with_ocaml_printer
+  :  ('a -> Printer.doc) MODE(m)
   -> ('a, 'p) generator MODE(m)
   -> ('a, printable) generator MODE(m)
 [@@mode m = (nonportable, portable)]
@@ -725,8 +752,8 @@ val%template permutations
 
 (** {2 Function generators} *)
 
-(** [functions ?name ?sexp_of_arg ~returns ()] creates a generator for functions
-    ['a -> 'b] whose results are drawn from [returns].
+(** [functions ?name ?print_arg ?sexp_of_arg ~returns ()] creates a generator
+    for functions ['a -> 'b] whose results are drawn from [returns].
 
     The result carries no printer (its output type is a function), so draw it
     with {!Hegel.draw_silent}. Applying the drawn function to an argument draws
@@ -739,16 +766,16 @@ val%template permutations
     inside a [let%hegel_test], else ["function"].
 
     The memo table keys on the argument itself (structural hash/equality), so
-    distinct arguments always get independent results. [sexp_of_arg] only
-    renders the argument in the printed application, as an s-expression. An
-    omitted [sexp_of_arg] shows [<opaque>]. The result prints as [returns]
-    prints what it draws: as OCaml syntax, or [<fun>] for a function.
+    distinct arguments always get independent results. [print_arg] only
+    renders the argument in the printed application, as a {!Printer.doc};
+    [sexp_of_arg] renders it as an s-expression instead, and is used only
+    when [print_arg] is omitted. With neither, the argument shows as
+    [<abstr>]. The result prints as [returns] prints what it draws: as OCaml
+    syntax, or [<fun>] for a function.
 
     {[
       let%hegel_test map_length_preserved tc =
-        let f_gen =
-          functions ~sexp_of_arg:[%sexp_of: int] ~returns:(integers ()) ()
-        in
+        let f_gen = functions ~print_arg:Printer.int ~returns:(integers ()) () in
         let f = draw_silent tc f_gen in
         let xs = draw tc (lists (integers ()) ()) in
         assert (List.length (List.map f xs) = List.length xs)
@@ -756,20 +783,25 @@ val%template permutations
     ]} *)
 val%template functions
   :  ?name:string
+  -> ?print_arg:('a -> Printer.doc) MODE(m)
   -> ?sexp_of_arg:('a -> Sexplib0.Sexp.t) MODE(m)
   -> returns:('b, _) generator MODE(m)
   -> unit
   -> ('a -> 'b, unprintable) generator MODE(m)
 [@@mode m = (nonportable, portable)]
 
-(** [functions2 ?name ?sexp_of_arg1 ?sexp_of_arg2 ~returns ()] creates a
-    generator for curried two-argument functions ['a -> 'b -> 'c].
+(** [functions2 ?name ?print_arg1 ?print_arg2 ?sexp_of_arg1 ?sexp_of_arg2
+    ~returns ()] creates a generator for curried two-argument functions
+    ['a -> 'b -> 'c].
 
     Sugar over {!functions} keyed on the argument pair: the two arguments form
-    one memo key and are shown uncurried as [name (arg1 arg2) = result]. Draw it
-    with {!draw_silent}. *)
+    one memo key, and an application prints as [name arg1 arg2 = result],
+    each argument rendered as {!functions} renders one. Draw it with
+    {!draw_silent}. *)
 val%template functions2
   :  ?name:string
+  -> ?print_arg1:('a -> Printer.doc) MODE(m)
+  -> ?print_arg2:('b -> Printer.doc) MODE(m)
   -> ?sexp_of_arg1:('a -> Sexplib0.Sexp.t) MODE(m)
   -> ?sexp_of_arg2:('b -> Sexplib0.Sexp.t) MODE(m)
   -> returns:('c, _) generator MODE(m)
@@ -777,14 +809,17 @@ val%template functions2
   -> ('a -> 'b -> 'c, unprintable) generator MODE(m)
 [@@mode m = (nonportable, portable)]
 
-(** [functions3 ?name ?sexp_of_arg1 ?sexp_of_arg2 ?sexp_of_arg3 ~returns ()]
-    creates a generator for curried three-argument functions
-    ['a -> 'b -> 'c -> 'd].
+(** [functions3 ?name ?print_arg1 ?print_arg2 ?print_arg3 ?sexp_of_arg1
+    ?sexp_of_arg2 ?sexp_of_arg3 ~returns ()] creates a generator for curried
+    three-argument functions ['a -> 'b -> 'c -> 'd].
 
-    Like {!functions2}, keyed on the argument triple and shown uncurried as
-    [name (arg1 arg2 arg3) = result]. Draw it with {!draw_silent}. *)
+    Like {!functions2}, keyed on the argument triple, and an application
+    prints as [name arg1 arg2 arg3 = result]. Draw it with {!draw_silent}. *)
 val%template functions3
   :  ?name:string
+  -> ?print_arg1:('a -> Printer.doc) MODE(m)
+  -> ?print_arg2:('b -> Printer.doc) MODE(m)
+  -> ?print_arg3:('c -> Printer.doc) MODE(m)
   -> ?sexp_of_arg1:('a -> Sexplib0.Sexp.t) MODE(m)
   -> ?sexp_of_arg2:('b -> Sexplib0.Sexp.t) MODE(m)
   -> ?sexp_of_arg3:('c -> Sexplib0.Sexp.t) MODE(m)

@@ -606,7 +606,7 @@ val main
     elements) are suppressed so only the outermost value shows. A value whose
     printer was attached with {!with_printer} prints as the s-expression that
     printer gives. To draw a generator with no printer, use {!draw_silent} or
-    attach a printer with {!with_printer}.
+    attach a printer with {!with_ocaml_printer} or {!with_printer}.
 
     [?loc] adds the source filename and line to the printed draw. In OxCaml, the
     compiler automatically supplies the caller's position when omitted. Providing
@@ -811,6 +811,23 @@ val require : test_case -> ?msg:string -> bool -> unit
     ]} *)
 val%template with_printer
   :  ('a -> Sexplib0.Sexp.t) MODE(m)
+  -> ('a, 'p) generator MODE(m)
+  -> ('a, printable) generator MODE(m)
+[@@mode m = (nonportable, portable)]
+
+(** [with_ocaml_printer print gen] attaches [print] as [gen]'s printer,
+    yielding a printable generator that {!draw} accepts. Its drawn values
+    print as the {!Printer.doc} documents [print] gives, so a [map] result can
+    print as OCaml syntax rather than as an s-expression.
+
+    {[
+      let%hegel_test with_ocaml_printer_example tc =
+        let pairs = map (fun x -> x, x * 2) (integers ~min_value:0 ~max_value:9 ()) in
+        let x, y = draw tc (with_ocaml_printer Printer.(pair int int) pairs) in
+        assert (y = 2 * x)
+    ]} *)
+val%template with_ocaml_printer
+  :  ('a -> Printer.doc) MODE(m)
   -> ('a, 'p) generator MODE(m)
   -> ('a, printable) generator MODE(m)
 [@@mode m = (nonportable, portable)]

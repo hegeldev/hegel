@@ -269,6 +269,21 @@ let%template with_printer
 [@@mode m = (nonportable, portable)]
 ;;
 
+(** [with_ocaml_printer print gen] attaches [print] as [gen]'s printer,
+    yielding a printable generator that {!draw} accepts, whose drawn values
+    print as the documents [print] gives. *)
+let%template with_ocaml_printer
+  : type a p.
+    (a -> Printer.doc) MODE(m) -> (a, p) generator MODE(m) -> (a, printable) generator MODE(m)
+  =
+  fun print gen ->
+  Printable
+    { core = (with_display [@mode m]) print ((core_of [@mode m]) gen)
+    ; sexp_of = (fun v -> Sexp.Atom (Printer.to_string (print v)))
+    }
+[@@mode m = (nonportable, portable)]
+;;
+
 (** [with_printers ~sexp_of ~print gen] is [gen] made printable with [sexp_of]
     as its printer, its drawn values displayed by [print]. *)
 let%template with_printers

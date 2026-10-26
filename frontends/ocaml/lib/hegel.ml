@@ -201,3 +201,10 @@ let repeat tc body =
 let%template with_printer = Generators.with_printer [@mode m]
 [@@mode m = (nonportable, portable)]
 ;;
+
+(** [with_ocaml_printer print gen] attaches [print] so [gen] can be drawn with
+    {!draw}, its values printing as [print]'s documents. See
+    {!Generators.with_ocaml_printer}. *)
+let%template with_ocaml_printer = Generators.with_ocaml_printer [@mode m]
+[@@mode m = (nonportable, portable)]
+;;

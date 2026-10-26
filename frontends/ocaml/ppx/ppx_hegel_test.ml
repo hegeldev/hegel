@@ -59,6 +59,10 @@
     ;;
     ]}
 
+    A module that binds [print_state] (a [state -> Hegel.Printer.doc]) has
+    its state printed as the documents it gives instead, and its [run] takes
+    a [?print_state] override as well as [?sexp_of_state].
+
     A marker's options are written as a record, whose fields may be given in
     any order and any of which may be left out: [[@@rule { weight = 2.5 }]],
     [[@@invariant { always_check = true }]]. A rule's [weight] tells the engine
@@ -771,6 +775,21 @@ let has_sexp_of_state (items : structure_item list) : bool =
     items
 ;;
 
+let binds_value name (items : structure_item list) =
+  List.exists
+    (fun (item : structure_item) ->
+       match item.pstr_desc with
+       | Pstr_value (_, vbs) ->
+         List.exists
+           (fun (vb : value_binding) ->
+              match vb.pvb_pat.ppat_desc with
+              | Ppat_var { txt; _ } -> String.equal txt name
+              | _ -> false)
+           vbs
+       | _ -> false)
+    items
+;;
+
 let declares_type name (items : structure_item list) =
   List.exists
     (fun (item : structure_item) ->
@@ -863,6 +882,9 @@ let expand_state_machine ~concurrent ~loc (mb : module_binding) : structure_item
   let default_sexp_of_state =
     if has_sexp_of_state items then [%expr Some sexp_of_state] else [%expr None]
   in
+  let default_print_state =
+    if binds_value "print_state" items then [%expr Some print_state] else [%expr None]
+  in
   let declares_ctx = concurrent && declares_type "ctx" items in
   let run =
     if concurrent
@@ -877,6 +899,7 @@ let expand_state_machine ~concurrent ~loc (mb : module_binding) : structure_item
           fun ?min_concurrency
             ?max_concurrency
             ?step_count
+            ?print_state:print_override
             ?sexp_of_state:override
             tc
             ~init ->
@@ -886,6 +909,10 @@ let expand_state_machine ~concurrent ~loc (mb : module_binding) : structure_item
               ~invariants
               ?min_concurrency
               ?max_concurrency
+              ?print_state:
+                (match print_override with
+                 | Some _ as p -> p
+                 | None -> [%e default_print_state])
               ?sexp_of_state:
                 (match override with
                  | Some _ as s -> s
@@ -900,11 +927,15 @@ let expand_state_machine ~concurrent ~loc (mb : module_binding) : structure_item
       else [%stri let run ?(concurrency = Hegel.Concurrency.threads) = [%e body]])
     else
       [%stri
-        let run ?step_count ?sexp_of_state:override tc ~init =
+        let run ?step_count ?print_state:print_override ?sexp_of_state:override tc ~init =
           [%e stateful "run_internal"]
             ~init
             ~rules
             ~invariants
+            ?print_state:
+              (match print_override with
+               | Some _ as p -> p
+               | None -> [%e default_print_state])
             ?sexp_of_state:
               (match override with
                | Some _ as s -> s

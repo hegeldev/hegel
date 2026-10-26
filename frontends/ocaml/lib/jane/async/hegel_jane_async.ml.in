@@ -86,6 +86,7 @@ module Stateful = struct
         ~invariants
         ?min_concurrency
         ?max_concurrency
+        ?print_state
         ?sexp_of_state
         ?step_count
         tc
@@ -122,6 +123,7 @@ module Stateful = struct
           [@nontail])
         ?min_concurrency
         ?max_concurrency
+        ?print_state
         ?sexp_of_state
         ?step_count
         tc [@nontail])
@@ -132,6 +134,7 @@ module Stateful = struct
         ?min_concurrency
         ?max_concurrency
         ?step_count
+        ?print_state
         ?sexp_of_state
         tc
         (module Machine : Concurrent_state_machine with type state = s)
@@ -143,6 +146,7 @@ module Stateful = struct
       ~invariants:Machine.invariants
       ?min_concurrency
       ?max_concurrency
+      ?print_state
       ?sexp_of_state
       ?step_count
       tc
