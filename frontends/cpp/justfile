@@ -2,6 +2,10 @@ set ignore-comments := true
 
 jobs := num_cpus()
 
+# The nightly toolchain that builds the ThreadSanitizer libhegel. -Zbuild-std
+# changes between nightlies, so CI and local runs use this one.
+tsan_toolchain := "nightly-2026-10-01"
+
 # Homebrew's llvm kegs are deliberately off PATH; fall back to them when
 # clang-tidy is not installed anywhere else, preferring the version CI runs
 # (newer check sets flag code CI accepts).
@@ -12,10 +16,15 @@ clang_tidy := env("CLANG_TIDY", if path_exists("/opt/homebrew/opt/llvm@18/bin/cl
 build-libhegel:
     cargo build --release -p hegeltest-c --manifest-path ../../Cargo.toml
 
+# The toolchain build-libhegel-tsan uses.
+tsan-toolchain:
+    @echo {{ tsan_toolchain }}
+
 # Build libhegel instrumented for ThreadSanitizer and print its path. Needs
-# the nightly toolchain with rust-src (`rustup +nightly component add
-# rust-src`) and Linux: on macOS rustc links its own TSan runtime into the
-# library, which clashes with the one clang links into the tests.
+# the tsan_toolchain nightly with rust-src (`rustup toolchain install
+# {{ tsan_toolchain }} -c rust-src`) and Linux: on macOS rustc links its own
+# TSan runtime into the library, which clashes with the one clang links into
+# the tests.
 build-libhegel-tsan:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -23,10 +32,10 @@ build-libhegel-tsan:
         echo "build-libhegel-tsan: the ThreadSanitizer build of libhegel needs Linux" >&2
         exit 1
     fi
-    target="$(rustc +nightly -vV | sed -n 's/^host: //p')"
+    target="$(rustc +{{ tsan_toolchain }} -vV | sed -n 's/^host: //p')"
     target_dir="$(cd ../.. && pwd)/target/tsan"
     RUSTFLAGS=-Zsanitizer=thread CARGO_TARGET_DIR="$target_dir" \
-        cargo +nightly build -Zbuild-std --target "$target" --release \
+        cargo +{{ tsan_toolchain }} build -Zbuild-std --target "$target" --release \
         -p hegeltest-c --manifest-path ../../Cargo.toml >&2
     echo "$target_dir/$target/release/libhegel_c.so"
 
@@ -44,7 +53,18 @@ check-tests: build
 # separate, mutually exclusive builds. Verifies handle-ownership (no leak /
 # double-free / use-after-free) and thread-safety of clone()/spawn(), which the
 # coverage gate cannot check. LeakSanitizer runs on Linux (unsupported on macOS).
-check-sanitizers: (check-sanitizer "address,undefined") (check-sanitizer "thread")
+# The thread build runs on Linux only (see build-libhegel-tsan) and is skipped
+# elsewhere.
+check-sanitizers: (check-sanitizer "address,undefined") check-sanitizer-thread
+
+check-sanitizer-thread:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "$(uname -s)" != Linux ]]; then
+        echo "check-sanitizers: skipping the thread sanitizer build, which needs Linux" >&2
+        exit 0
+    fi
+    just check-sanitizer thread
 
 # The thread build links a libhegel instrumented for ThreadSanitizer (see
 # build-libhegel-tsan), so TSan sees the engine's own locking.
