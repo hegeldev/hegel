@@ -23,6 +23,38 @@ dune exec fuzz/ocaml_diff.exe -- [--sample] [--ox] [TEST_CASES]
   `program ?ox ?effect_syntax tc`, which returns a program's source.
 - `ocaml_diff.ml`: the driver. It finds the backends, compiles and runs each
   program, compares the results and filters out known bugs.
+- `run.sh` and `watch.sh`: scripts for long unattended runs (see below).
+
+## Long runs
+
+```
+OCAML_DIFF_SWITCHES=ocaml-trunkfix,ocaml-trunkfix-flambda fuzz/run.sh <dir> <hours> <workers>
+fuzz/watch.sh <dir>
+```
+
+`run.sh` builds the fuzzer and copies the binary to `<dir>/fuzz.exe`, so you
+can keep editing and rebuilding without disturbing the run. It then starts
+`<workers>` fuzzers, each asking for a million programs. A fuzzer stops at its
+first failure, and the worker then starts a fresh one. Worker `w`'s `i`-th
+fuzzer logs to `<dir>/w<w>-<i>.log`, so every log except the last one of each
+worker holds one failure, with its shrunk program. Programs that hit known
+bugs go to `<dir>/known/`. The run stops after `<hours>`, or once
+`<dir>/stop` exists. Environment variables such as `OCAML_DIFF_SWITCHES` pass
+through to the fuzzers.
+
+To update a running fuzzer, replace `<dir>/fuzz.exe`: each worker picks up the
+new binary when it next restarts. Replace it with `mv`, not `cp`, so that a
+binary that is still running is never overwritten.
+
+`watch.sh` waits until some log contains `Exception:` (a failure), then prints
+that log's name and exits. It also stops the run, by creating `<dir>/stop`,
+in two cases:
+- more than 40 logs appear, which means workers are failing straight away
+  (for example, because the repo has moved);
+- the disk containing `<dir>` has less than 10GB free.
+
+It exits on its own when the run ends. Running it with `run_in_background` in
+Claude Code gives a notification when something happens.
 
 ## The generated programs
 
