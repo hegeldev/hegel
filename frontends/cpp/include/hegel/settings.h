@@ -93,11 +93,11 @@ namespace hegel {
       public:
         /// The configuration of the database. See the methods below.
         enum class Kind {
-            Unset,    ///< Use the settings profile's database: `.hegel` by
-                      ///< default, disabled by the `ci` and `workload`
-                      ///< profiles.
-            Default,  ///< Use the database at `.hegel`, whatever the
-                      ///< profile says.
+            Unset,    ///< Use the settings profile's database:
+                      ///< `.hegel/examples` by default, disabled by the
+                      ///< `ci` and `workload` profiles.
+            Default,  ///< Use the database at `.hegel/examples`, whatever
+                      ///< the profile says.
             Disabled, ///< Disable the database.
             Path,     ///< Use the given directory as the database.
         };
@@ -106,8 +106,8 @@ namespace hegel {
         /// @return A database with Database::Kind::Unset.
         static Database unset() { return {Kind::Unset, {}}; }
 
-        /// Use the database at `.hegel`, also where the settings profile
-        /// disables the database.
+        /// Use the database at `.hegel/examples`, also where the settings
+        /// profile disables the database.
         /// @return A database with Database::Kind::Default.
         static Database default_location() { return {Kind::Default, {}}; }
 
@@ -244,8 +244,9 @@ namespace hegel {
         std::optional<bool> unbounded_choices;
 
         /// Configure the Hegel database. See Database. The default,
-        /// Database::unset(), keeps the database of the profile: `.hegel`,
-        /// or disabled under the `ci` and `workload` profiles.
+        /// Database::unset(), keeps the database of the profile:
+        /// `.hegel/examples`, or disabled under the `ci` and `workload`
+        /// profiles.
         Database database = Database::unset();
 
         /// Key scoping the examples stored in and replayed from the
