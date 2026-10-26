@@ -76,21 +76,27 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
             Method method = invocationContext.getExecutable();
             HegelTest ann = method.getAnnotation(HegelTest.class);
             Object target = invocationContext.getTarget().orElse(null);
-            Settings settings =
-                    settingsFrom(ann, method).examples(examplesFrom(ann, method.getDeclaringClass(), target));
+            Class<?> testClass = extensionContext.getRequiredTestClass();
+            Settings settings = settingsFrom(ann, method, testClass).examples(examplesFrom(ann, testClass, target));
             Hegel.test(tc -> ReflectionSupport.invokeMethod(method, target, tc), settings);
         }
     }
 
-    static Settings settingsFrom(HegelTest ann, Method method) {
-        String className = method.getDeclaringClass().getName();
+    /**
+     * The settings {@code ann} gives {@code method} run as a test of {@code testClass}, the class
+     * whose instance runs it, which for an inherited test is a subclass of the method's own. Each
+     * class running an inherited test keys its database entry by its own name.
+     */
+    static Settings settingsFrom(HegelTest ann, Method method, Class<?> testClass) {
+        String className = testClass.getName();
         String name = ann.name().isEmpty() ? className + "." + method.getName() : ann.name();
         Settings s = ann.profile().isEmpty() ? new Settings() : Settings.fromProfile(ann.profile());
         s = s.verbosity(ann.verbosity())
                 .backend(ann.backend())
                 .nondeterminismStrictness(ann.nondeterminismStrictness())
                 .name(name)
-                .testLocation(MethodLocation.of(method));
+                .testLocation(MethodLocation.of(method, testClass))
+                .annotated();
         // The annotation cannot express "unset" for a primitive: 0 test cases (its default) leaves
         // the engine's profile / HEGEL_TEST_CASES value in place.
         if (ann.testCases() != 0) {
@@ -117,7 +123,7 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
         if (ann.seed() != HegelTest.NO_SEED) {
             s = s.seed(ann.seed());
         }
-        if (!ann.reproduceFailure().isEmpty()) {
+        if (ann.reproduceFailure().length > 0) {
             s = s.reproduceFailure(ann.reproduceFailure());
         }
         if (ann.derandomize() != OptBoolean.DEFAULT) {

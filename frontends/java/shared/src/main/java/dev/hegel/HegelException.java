@@ -13,7 +13,7 @@ import dev.hegel.lowlevel.LibhegelException;
  * It extends the binding contract's {@link LibhegelException}, which a third-party binding may
  * throw directly; the runner treats both alike.
  */
-public sealed class HegelException extends LibhegelException permits HegelRunException {
+public sealed class HegelException extends LibhegelException permits HegelRunException, DidNotReproduceException {
     public HegelException(String message) {
         super(message);
     }

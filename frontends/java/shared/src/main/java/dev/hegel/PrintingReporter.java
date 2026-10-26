@@ -9,6 +9,7 @@ import java.io.PrintStream;
 final class PrintingReporter implements Reporter {
     private final PrintStream out;
     private boolean printBlob;
+    private boolean annotated;
     private boolean quiet;
     private boolean multiple;
 
@@ -19,6 +20,7 @@ final class PrintingReporter implements Reporter {
     @Override
     public void runStarted(Settings settings) {
         printBlob = Boolean.TRUE.equals(settings.printBlob);
+        annotated = settings.annotated;
         quiet = settings.verbosity == Verbosity.QUIET;
     }
 
@@ -58,8 +60,13 @@ final class PrintingReporter implements Reporter {
         if (printBlob) {
             failure.reproduceBlob().ifPresent(blob -> {
                 out.println();
-                out.println("To reproduce this failure, replay it with:");
-                out.println("    @HegelTest(reproduceFailure = \"" + blob + "\")");
+                if (annotated) {
+                    out.println("To reproduce this failure, add this to the test's @HegelTest annotation:");
+                    out.println("    reproduceFailure = \"" + blob + "\"");
+                } else {
+                    out.println("To reproduce this failure, call this on the test's Settings:");
+                    out.println("    .reproduceFailure(\"" + blob + "\")");
+                }
             });
         }
     }

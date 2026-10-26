@@ -81,9 +81,11 @@ public final class Generators {
     }
 
     /**
-     * Generates {@link BigInteger} values of any magnitude. Narrow the range with the fluent
-     * methods on {@link BigIntegerGenerator}; an unset bound reaches {@code 2^127} values beyond
-     * the other bound, or beyond zero.
+     * Generates {@link BigInteger} values, including ones far outside the range of {@code long}.
+     * Narrow the range with the fluent methods on {@link BigIntegerGenerator}; the bounds may be of
+     * any magnitude. With no bounds the values lie in {@code [-2^127, 2^127)}, and an unset bound
+     * reaches {@code 2^127} values beyond the other bound, or beyond zero when that is further,
+     * as in the other Hegel frontends.
      *
      * @return a big-integer generator
      */

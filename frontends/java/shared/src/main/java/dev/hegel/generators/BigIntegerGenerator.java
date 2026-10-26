@@ -6,11 +6,12 @@ import dev.hegel.TestCase;
 import java.math.BigInteger;
 
 /**
- * Generates {@link BigInteger} values within an inclusive {@code [min, max]} range, of any
- * magnitude.
+ * Generates {@link BigInteger} values within an inclusive {@code [min, max]} range, whose bounds may
+ * be of any magnitude.
  *
  * <p>Either bound may be left unset. A missing bound is taken to be {@code 2^127} values beyond the
- * other bound, or beyond zero when that is further. Values shrink toward zero, or toward the bound
+ * other bound, or beyond zero when that is further, so with neither set the values lie in {@code
+ * [-2^127, 2^127)}. Values shrink toward zero, or toward the bound
  * nearest zero when zero is out of range.
  */
 public final class BigIntegerGenerator implements Generator<BigInteger> {

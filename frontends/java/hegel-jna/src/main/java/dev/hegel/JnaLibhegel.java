@@ -891,8 +891,6 @@ final class JnaLibhegel implements Libhegel {
         return code;
     }
 
-    // --- output ---
-
     @Override
     public int note(long tc, String text) {
         return lib.hegel_note(ctx(), pointer(tc), str(text));
@@ -1259,8 +1257,6 @@ final class JnaLibhegel implements Libhegel {
     public void stringGeneratorFree(long generator) {
         check("hegel_string_generator_free", lib.hegel_string_generator_free(ctx(), pointer(generator)));
     }
-
-    // --- grammars ---
 
     @Override
     public int grammarBuilderNew(String text, long[] out) {

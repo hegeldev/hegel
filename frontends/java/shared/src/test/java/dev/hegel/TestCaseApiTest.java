@@ -81,9 +81,20 @@ class TestCaseApiTest {
 
     @Test
     void aNonFiniteEventValueIsAnError() {
-        RunReport report = Hegel.run(tc -> tc.eventValue("v", Double.NaN), SETTINGS, Reporter.silent());
-        assertInstanceOf(
-                IllegalArgumentException.class, report.failures().get(0).exception());
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> Hegel.run(tc -> tc.eventValue("v", Double.NaN), SETTINGS, Reporter.silent()));
+        assertTrue(e.getMessage().contains("requires a finite value"), e.getMessage());
+    }
+
+    @Test
+    void anIllegalArgumentFromTheTestItselfIsAFailure() {
+        FakeLibhegel fake = new FakeLibhegel();
+        IllegalArgumentException error = new IllegalArgumentException("the code under test rejected it");
+        assertSame(error, repeatOnceThrowing(fake, () -> {
+            throw error;
+        }));
+        assertTrue(fake.booleanDrawn);
     }
 
     @Test
@@ -139,13 +150,7 @@ class TestCaseApiTest {
         Failure failure = report.failures().get(0);
         assertInstanceOf(AssertionError.class, failure.exception());
         assertEquals(
-                List.of(
-                        "// Repetition #1",
-                        "  x = 0;",
-                        "// Repetition #2",
-                        "  x_2 = 0;",
-                        "// Repetition #3",
-                        "  x_3 = 0;"),
+                List.of("// Repetition #1", "  x = 0;", "// Repetition #2", "  x = 0;", "// Repetition #3", "  x = 0;"),
                 failure.output());
     }
 
@@ -173,8 +178,8 @@ class TestCaseApiTest {
 
     @Test
     void controlFlowEscapesARepetitionWithoutMarkingIt() {
-        List<RuntimeException> controls = List.of(
-                new StopTest(), new LoopDone(), new IllegalArgumentException("bad"), new HegelException("engine"));
+        List<RuntimeException> controls =
+                List.of(new StopTest(), new LoopDone(), new InvalidArgument("bad"), new HegelException("engine"));
         for (RuntimeException control : controls) {
             FakeLibhegel fake = new FakeLibhegel();
             assertSame(control, repeatOnceThrowing(fake, () -> {
@@ -222,7 +227,8 @@ class TestCaseApiTest {
                 }));
         assertEquals(2, runs.get());
         assertEquals(2, fake.blockParents.size());
-        tc.releaseBlocks();
+        assertEquals(2, fake.freedBlocks.size());
+        tc.releaseAll();
         assertEquals(2, fake.freedBlocks.size());
     }
 }

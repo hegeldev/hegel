@@ -31,8 +31,10 @@ class MethodLocationTest {
                         Fixture.firstLine(),
                         "dev.hegel.MethodLocationTest$Fixture",
                         "firstLine"),
-                MethodLocation.of(plain));
-        assertEquals(Fixture.firstLine(0), MethodLocation.of(overload).beginLine());
+                MethodLocation.of(plain, plain.getDeclaringClass()));
+        assertEquals(
+                Fixture.firstLine(0),
+                MethodLocation.of(overload, overload.getDeclaringClass()).beginLine());
     }
 
     @Test
@@ -44,14 +46,14 @@ class MethodLocationTest {
                         SecondaryFixture.firstLine(),
                         "dev.hegel.SecondaryFixture",
                         "firstLine"),
-                MethodLocation.of(method));
+                MethodLocation.of(method, method.getDeclaringClass()));
     }
 
     @Test
     void aClassWithoutAClassFileIsLocatedAtLineZero() throws Exception {
         Runnable lambda = () -> {};
         Method run = lambda.getClass().getMethod("run");
-        TestLocation location = MethodLocation.of(run);
+        TestLocation location = MethodLocation.of(run, run.getDeclaringClass());
         assertEquals("dev/hegel/MethodLocationTest.java", location.file());
         assertEquals(0, location.beginLine());
     }

@@ -35,6 +35,7 @@ public final class Pool<T> {
     public Pool(TestCase tc) {
         this.tc = tc;
         this.poolId = tc.newPool();
+        tc.pin();
     }
 
     /**

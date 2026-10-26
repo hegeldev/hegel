@@ -97,6 +97,65 @@ Hegel reports the minimal example showing that our sort is incorrectly dropping 
 
 The optional `"xs"` label passed to `draw` names the value in the falsifying-example output. See the [API documentation](https://javadoc.io/doc/dev.hegel/hegel) for a full tour of generators, combinators, control functions, and settings.
 
+## Generators
+
+`Generators` has a generator for each common Java type, plus combinators (`map`, `filter`,
+`flatMap`, `oneOf`, `lists(...).unique()`, `records(...)`, ...). A few that go beyond the basics:
+
+```java
+BigInteger n = tc.draw(bigIntegers().min(BigInteger.ONE.shiftLeft(200)));   // past the range of long
+List<String> order = tc.draw(permutations(List.of("a", "b", "c")));         // shrinks toward the original order
+String expr = tc.draw(fromLark("""
+        ?start: sum
+        ?sum: NUMBER | sum "+" NUMBER
+        %import common.NUMBER
+        """));                                                                 // strings matching a Lark grammar
+Object tree = tc.draw(recursive(
+        integers().map(x -> (Object) x),
+        children -> lists(children).map(xs -> (Object) xs)));                  // recursive data, such as trees
+```
+
+## Explicit examples
+
+Give values a test must always be run with, before any are generated. A draw takes the value named
+for it, or else the example's next positional value:
+
+```java
+static List<Example> edgeCases() {
+  return List.of(Example.of(List.of()), Example.of().with("xs", List.of(0, 0)));
+}
+
+@HegelTest(examples = "edgeCases")
+void sortingPreservesLength(TestCase tc) { ... }
+```
+
+or `new Settings().examples(...)` with `Hegel.test`. An example that does not fit the test, or that
+the test rejects with `assume` or `reject`, is a usage error: explicit test cases must not be rejected.
+
+## Settings and profiles
+
+Every setting has an `@HegelTest` attribute and a `Settings` method, and anything a test leaves
+unset comes from the engine's settings profile: a `hegel.toml` file, the `HEGEL_*` environment
+variables, or the shipped `development`, `ci` and `workload` profiles, picked automatically. Reach
+any engine setting by its `hegel.toml` key with `Settings.set`, and name, register and select
+profiles from Java:
+
+```java
+Hegel.test(body, new Settings().set("suppress_health_check", "too_slow"));
+
+Settings.registerProfile("nightly", Settings.fromProfile("ci").testCases(10_000));
+Settings.setDefaultProfile("nightly");
+
+@HegelTest(profile = "ci")
+void property(TestCase tc) { ... }
+```
+
+## Reproducing failures
+
+A failure report ends with a reproducer, such as `reproduceFailure = "..."` for an `@HegelTest`.
+Add it to the annotation (or call `Settings.reproduceFailure(...)` for `Hegel.test`) to replay
+exactly that failure instead of generating; give several blobs to replay several failures at once.
+
 ## Stateful testing
 
 Model-based tests drive a state machine whose `@Rule` methods are the actions and whose `@Invariant`

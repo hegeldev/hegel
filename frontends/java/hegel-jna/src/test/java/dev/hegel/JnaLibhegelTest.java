@@ -309,6 +309,36 @@ class JnaLibhegelTest {
     }
 
     @Test
+    void aForkDrivenFromAnotherThreadHasItsContextFreedOnceTheThreadEnds() throws InterruptedException {
+        JnaLibhegel lib = real();
+        lib.version();
+        Thread[] forkThread = new Thread[1];
+        Runner.run(
+                        lib,
+                        new Settings().database(Database.disabled()).testCases(1),
+                        tc -> {
+                            TestCase fork = tc.fork(1);
+                            forkThread[0] = new Thread(() -> fork.draw(Generators.integers()));
+                            forkThread[0].start();
+                            try {
+                                forkThread[0].join();
+                            } catch (InterruptedException e) {
+                                throw new AssertionError(e);
+                            }
+                        },
+                        Reporter.silent())
+                .throwIfFailed();
+        assertEquals(2, lib.liveContexts());
+        forkThread[0] = null;
+        long deadline = System.nanoTime() + 60_000_000_000L;
+        while (lib.liveContexts() > 1 && System.nanoTime() < deadline) {
+            System.gc();
+            Thread.sleep(10);
+        }
+        assertEquals(1, lib.liveContexts());
+    }
+
+    @Test
     void releasingAThreadsContextFreesIt() {
         JnaLibhegel lib = real();
         lib.version();

@@ -38,6 +38,8 @@ final class LiveDataSource implements DataSource {
      */
     private final boolean[] unwinding;
 
+    private boolean released;
+
     LiveDataSource(Libhegel lib, long tc) {
         this(lib, tc, new ArrayList<>(), new boolean[1], new boolean[1]);
     }
@@ -66,7 +68,7 @@ final class LiveDataSource implements DataSource {
                 aborted[0] = true;
                 throw new AssumeRejected();
             case Abi.E_INVALID_ARG:
-                throw new IllegalArgumentException(nullToEmpty(lib.lastErrorMessage()));
+                throw new InvalidArgument(nullToEmpty(lib.lastErrorMessage()));
             case Abi.E_CONCURRENT_USE:
                 throw new HegelException("hegel_" + op
                         + ": the test-case handle was used from two threads at once. In a concurrent"
@@ -83,8 +85,16 @@ final class LiveDataSource implements DataSource {
     }
 
     private void checkLive() {
+        checkNotReleased();
         if (aborted[0]) {
             throw new StopTest();
+        }
+    }
+
+    private void checkNotReleased() {
+        if (released) {
+            throw new InvalidArgument("This TestCase belonged to a stateful rule that has ended and can no longer be"
+                    + " used: draw through the TestCase the current rule was given.");
         }
     }
 
@@ -170,7 +180,11 @@ final class LiveDataSource implements DataSource {
     public String generateString(StringGeneratorHandle generator) {
         checkLive();
         String[] out = new String[1];
-        translate(lib.generateString(tc, generator.handle, out), "generate_string");
+        try {
+            translate(lib.generateString(tc, generator.handle, out), "generate_string");
+        } finally {
+            Reference.reachabilityFence(generator);
+        }
         return out[0];
     }
 
@@ -261,9 +275,13 @@ final class LiveDataSource implements DataSource {
     public StringGeneratorHandle regexGenerator(String pattern, boolean fullmatch, StringGeneratorHandle alphabet) {
         checkLive();
         long[] out = new long[1];
-        translate(
-                lib.stringGeneratorRegex(pattern, fullmatch, alphabet == null ? 0 : alphabet.handle, out),
-                "string_generator_regex");
+        try {
+            translate(
+                    lib.stringGeneratorRegex(pattern, fullmatch, alphabet == null ? 0 : alphabet.handle, out),
+                    "string_generator_regex");
+        } finally {
+            Reference.reachabilityFence(alphabet);
+        }
         return new StringGeneratorHandle(lib, out[0]);
     }
 
@@ -401,7 +419,6 @@ final class LiveDataSource implements DataSource {
 
     @Override
     public void collectionFree(long id) {
-        // Not gated on `aborted`: the handle is caller-owned and must be released exactly once.
         lib.collectionFree(id);
     }
 
@@ -503,7 +520,6 @@ final class LiveDataSource implements DataSource {
 
     @Override
     public void recursionFree(long recursion) {
-        // Not gated on `aborted`: the handle is caller-owned and must be released exactly once.
         lib.recursionFree(recursion);
     }
 
@@ -584,6 +600,7 @@ final class LiveDataSource implements DataSource {
 
     @Override
     public void note(String message) {
+        checkNotReleased();
         int rc = lib.note(tc, message);
         if (rc != Abi.E_INVALID_HANDLE) {
             translate(rc, "note");
@@ -592,6 +609,7 @@ final class LiveDataSource implements DataSource {
 
     @Override
     public Printer printer() {
+        checkNotReleased();
         long[] printer = new long[1];
         translate(lib.testCasePrinter(tc, printer), "test_case_printer");
         return new Printer(lib, printer[0]);
@@ -599,7 +617,7 @@ final class LiveDataSource implements DataSource {
 
     @Override
     public void release() {
-        // Not gated on `aborted`: the clone handle is caller-owned and must be released exactly once.
+        released = true;
         lib.testCaseFree(tc);
     }
 

@@ -4,8 +4,10 @@ import dev.hegel.Generator;
 import dev.hegel.Label;
 import dev.hegel.TestCase;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -54,7 +56,8 @@ public final class ListGenerator<T> implements Generator<List<T>> {
     }
 
     /**
-     * Make the elements distinct by {@link Object#equals}.
+     * Make the elements distinct by {@link Object#equals}, comparing arrays (nested ones included)
+     * by their contents.
      *
      * @return a copy generating lists of distinct elements
      */
@@ -63,7 +66,8 @@ public final class ListGenerator<T> implements Generator<List<T>> {
     }
 
     /**
-     * Make the elements distinct by a key: no two elements of a list have equal keys.
+     * Make the elements distinct by a key: no two elements of a list have equal keys. Keys are
+     * compared by {@link Object#equals}, and arrays (nested ones included) by their contents.
      *
      * @param key extracts the key elements are compared by
      * @return a copy generating lists of elements with distinct keys
@@ -89,7 +93,7 @@ public final class ListGenerator<T> implements Generator<List<T>> {
                 Set<Object> keys = new HashSet<>();
                 while (tc.collectionMore(id)) {
                     T value = element.doDraw(tc);
-                    if (uniqueKey != null && !keys.add(uniqueKey.apply(value))) {
+                    if (uniqueKey != null && !keys.add(new ContentKey(uniqueKey.apply(value)))) {
                         tc.collectionReject(id, "duplicate element");
                     } else {
                         out.add(value);
@@ -101,6 +105,18 @@ public final class ListGenerator<T> implements Generator<List<T>> {
             }
         } finally {
             tc.stopSpan(false);
+        }
+    }
+
+    private record ContentKey(Object key) {
+        @Override
+        public boolean equals(Object other) {
+            return Objects.deepEquals(key, ((ContentKey) other).key);
+        }
+
+        @Override
+        public int hashCode() {
+            return Arrays.deepHashCode(new Object[] {key});
         }
     }
 }

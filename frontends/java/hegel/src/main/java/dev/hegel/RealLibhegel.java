@@ -1196,8 +1196,6 @@ final class RealLibhegel implements Libhegel {
         return code;
     }
 
-    // --- output ---
-
     @Override
     public int note(long tc, String text) {
         try (Arena arena = Arena.ofConfined()) {
@@ -1612,8 +1610,6 @@ final class RealLibhegel implements Libhegel {
     public void stringGeneratorFree(long generator) {
         check("hegel_string_generator_free", rc(stringGeneratorFree, segment(generator)));
     }
-
-    // --- grammars ---
 
     @Override
     public int grammarBuilderNew(String text, long[] out) {

@@ -35,6 +35,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * when a setting must come from a runtime value (annotation attributes are compile-time constants —
  * e.g. a {@code @TempDir} database path) or when a property is run outside a JUnit method (a {@code
  * main}, a helper that inspects the result).
+ *
+ * <p>The test is located (see {@link TestLocation}) at its method's source file and the first line
+ * of the method's body that has code, since Java does not record the line a method is declared on,
+ * and under the name of the test class running it.
  */
 @Documented
 @Target(ElementType.METHOD)
@@ -186,18 +190,21 @@ public @interface HegelTest {
     NondeterminismStrictness nondeterminismStrictness() default NondeterminismStrictness.DEFAULT;
 
     /**
-     * Replay a stored failure blob (printed by {@link #printBlob}) instead of running the property:
-     * the test body is re-run against exactly the choices the blob encodes, bypassing generation
-     * and shrinking. Empty (the default) runs the property normally.
+     * Replay stored failure blobs (printed by {@link #printBlob}) instead of running the property:
+     * the test body is re-run against exactly the choices each blob encodes, bypassing generation
+     * and shrinking, and the test fails with every failure they reproduce (see {@link
+     * Settings#reproduceFailure(String...)}). A single blob can be given as {@code reproduceFailure
+     * = "..."}. Empty (the default) runs the property normally.
      *
-     * @return the base64 reproduce blob, or {@code ""} for none
+     * @return the base64 reproduce blobs
      */
-    String reproduceFailure() default "";
+    String[] reproduceFailure() default {};
 
     /**
      * Name for this property: the key its failures are stored under in the example database.
-     * Defaults to the test's fully-qualified class name and method name ({@code
-     * com.example.CartTest.totalsAddUp}).
+     * Defaults to the fully-qualified name of the test class running it and the method name
+     * ({@code com.example.CartTest.totalsAddUp}). A test method inherited by several test classes
+     * gets a key per class, so their stored failures stay apart.
      *
      * @return the property name, or {@code ""} for the class and method name
      */

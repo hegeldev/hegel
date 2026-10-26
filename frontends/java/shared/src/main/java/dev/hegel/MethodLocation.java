@@ -20,16 +20,19 @@ final class MethodLocation {
     private MethodLocation() {}
 
     /**
-     * The location of {@code method}: its source file and the first line of its body, or the
-     * conventional file name and line 0 when its class file cannot be read or has no line numbers.
+     * The location of {@code method} run as a test of {@code testClass} (its declaring class or a
+     * subclass inheriting it): the source file of the method and the first line of its body that
+     * has code, under {@code testClass}'s name, or the conventional file name and line 0 when the
+     * declaring class file cannot be read or has no line numbers.
      */
-    static TestLocation of(Method method) {
+    static TestLocation of(Method method, Class<?> testClass) {
         Class<?> declaring = method.getDeclaringClass();
         String descriptor = MethodType.methodType(method.getReturnType(), method.getParameterTypes())
                 .toMethodDescriptorString();
         InputStream classFile =
                 declaring.getResourceAsStream("/" + declaring.getName().replace('.', '/') + ".class");
-        return of(declaring.getName(), method.getName(), descriptor, classFile);
+        TestLocation location = of(declaring.getName(), method.getName(), descriptor, classFile);
+        return new TestLocation(location.file(), location.beginLine(), testClass.getName(), location.function());
     }
 
     /**

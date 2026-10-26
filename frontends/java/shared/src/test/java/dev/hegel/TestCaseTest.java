@@ -148,24 +148,50 @@ class TestCaseTest {
     }
 
     @Test
-    void blocksIndentTheirOutputAndShareNamesAndDraws() {
+    void blocksIndentTheirOutputAndNameTheirDrawsInAFreshScope() {
         FakeLibhegel fake = new FakeLibhegel();
         TestCase tc = newCase(fake, true);
         tc.draw(constant(1), "x");
         tc.note("Step 1: rule {");
         TestCase block = tc.block(2);
         block.draw(constant(2), "x");
+        block.draw(constant(3), "x");
         block.note("inner");
+        block.endBlock();
         tc.note("}");
-        assertEquals(List.of("x = 1;", "Step 1: rule {", "  x_2 = 2;", "  inner", "}"), tc.output());
-        assertEquals(Map.of("x", 1, "x_2", 2), tc.draws());
-        // Blocks outlive their section: they are freed, with their printers, once the case is over.
-        assertTrue(fake.freedBlocks.isEmpty());
-        tc.releaseBlocks();
+        tc.draw(constant(4), "x");
+        assertEquals(
+                List.of("x = 1;", "Step 1: rule {", "  x = 2;", "  x_2 = 3;", "  inner", "}", "x_2 = 4;"), tc.output());
+        assertEquals(Map.of("x", 1, "x_2", 2, "x_2_2", 3, "x_2_3", 4), tc.draws());
         assertEquals(List.of(FakeLibhegel.BLOCK_BASE), fake.freedBlocks);
-        tc.releaseBlocks();
+        tc.releaseAll();
         assertEquals(List.of(FakeLibhegel.BLOCK_BASE), fake.freedBlocks);
         assertEquals(fake.printerOwners.size(), fake.freedPrinters.size());
+    }
+
+    @Test
+    void aPinnedBlockLivesUntilTheCaseIsOver() {
+        FakeLibhegel fake = new FakeLibhegel();
+        TestCase tc = newCase(fake, true);
+        TestCase block = tc.block(2);
+        block.pin();
+        block.pin();
+        block.endBlock();
+        assertTrue(fake.freedBlocks.isEmpty());
+        tc.pin();
+        tc.releaseAll();
+        assertEquals(List.of(FakeLibhegel.BLOCK_BASE), fake.freedBlocks);
+    }
+
+    @Test
+    void anEndedBlockCannotBeUsed() {
+        FakeLibhegel fake = new FakeLibhegel();
+        TestCase tc = newCase(fake, true);
+        TestCase block = tc.block(2);
+        block.endBlock();
+        assertThrows(InvalidArgument.class, () -> block.draw(constant(1)));
+        assertThrows(InvalidArgument.class, () -> block.draw(Generators.integers()));
+        assertThrows(InvalidArgument.class, () -> block.note("late"));
     }
 
     @Test
@@ -176,7 +202,7 @@ class TestCaseTest {
         fake.generateIntegerRc = Abi.E_STOP_TEST;
         assertThrows(StopTest.class, () -> block.draw(Generators.integers()));
         assertTrue(tc.isAborted());
-        tc.releaseBlocks();
+        block.endBlock();
     }
 
     @Test
