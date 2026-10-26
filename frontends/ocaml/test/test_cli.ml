@@ -2,34 +2,11 @@ open! Core
 open Hegel
 module Unix = Core_unix
 
-(* cmdliner styles its errors with ANSI escapes on some terminals *)
-let strip_ansi s =
-  let b = Buffer.create (String.length s) in
-  let rec go i =
-    if i < String.length s
-    then
-      if Char.equal s.[i] '\027'
-      then Option.iter (String.index_from s i 'm') ~f:(fun j -> go (j + 1))
-      else (
-        Buffer.add_char b s.[i];
-        go (i + 1))
-  in
-  go 0;
-  Buffer.contents b
-;;
-
 let parse_with ~default_settings args =
-  let buf = Buffer.create 64 in
-  let err = Format.formatter_of_buffer buf in
-  let cmd =
-    Cmdliner.Cmd.v (Cmdliner.Cmd.info "prog") (Cli.settings_term ~default_settings)
-  in
-  match Cmdliner.Cmd.eval_value ~err ~argv:(Array.of_list ("prog" :: args)) cmd with
-  | Ok (`Ok resolved) -> Ok resolved
-  | Ok (`Help | `Version) -> Alcotest.fail "unexpected help"
-  | Error _ ->
-    Format.pp_print_flush err ();
-    Error (strip_ansi (Buffer.contents buf))
+  match Cli.parse ~default_settings args with
+  | Ok resolved -> Ok resolved
+  | Error (Cli.Help _) -> Alcotest.fail "unexpected help"
+  | Error (Cli.Parse_error message) -> Error message
 ;;
 
 let parse args = parse_with ~default_settings:(fun () -> Settings.create ~seed:3 ()) args
@@ -191,31 +168,44 @@ let test_flags_select_settings () =
     | Error message -> failwith message)
 ;;
 
-(* Every setting a run of one test case leaves the user has a flag: all of
-   them but [test_cases] and [unbounded_choices], which [single_test_case]
-   fixes. *)
-let test_every_setting_has_a_flag () =
-  Alcotest.(check (list string))
-    "flags"
-    (List.sort
-       ~compare:String.compare
-       [ "seed"
-       ; "derandomize"
-       ; "database"
-       ; "database_key"
-       ; "verbosity"
-       ; "phases"
-       ; "suppress_health_check"
-       ; "report_multiple_failures"
-       ; "stop_on_first_failure"
-       ; "show_statistics"
-       ; "print_blob"
-       ; "backend"
-       ; "nondeterminism_strictness"
-       ])
-    (List.sort
-       ~compare:String.compare
-       (List.map Cli.settings_flags ~f:(fun (key, _, _) -> key)))
+let test_unknown_flag () =
+  match parse [ "--no-such-setting=1" ] with
+  | Ok _ -> Alcotest.fail "expected an unknown flag"
+  | Error message ->
+    Alcotest.(check string) "message" "Unknown argument: --no-such-setting" message
+;;
+
+let test_fixed_settings_are_rejected () =
+  expect_error
+    [ "--test-cases"; "5" ]
+    "--test-cases cannot be set: a Hegel.main binary runs exactly one test case";
+  expect_error
+    [ "--unbounded-choices=false" ]
+    "--unbounded-choices cannot be set: a Hegel.main binary always allows unbounded \
+     choices"
+;;
+
+let test_flag_forms () =
+  expect_error [ "--seed" ] "--seed requires a value";
+  expect_error [ "--suppress-health-check" ] "--suppress-health-check requires a value";
+  expect_error [ "--failure-blob" ] "--failure-blob requires a value";
+  expect_error [ "--bogus" ] "Unknown argument: --bogus";
+  expect_error [ "--bogus=1" ] "Unknown argument: --bogus";
+  expect_error [ "--print_blob=true" ] "Unknown argument: --print_blob";
+  expect_error [ "seed" ] "Unknown argument: seed";
+  expect_error [ "--" ] "Unknown argument: --";
+  expect_error [ "-x" ] "Unknown argument: -x";
+  expect_error [ "--seed=x" ] "--seed: ";
+  (match Cli.parse ~default_settings:Settings.default [ "--seed=1"; "-h" ] with
+   | Error (Cli.Help text) ->
+     Alcotest.(check bool)
+       "help names the flags"
+       true
+       (String.is_substring text ~substring:"--failure-blob")
+   | Ok _ | Error (Cli.Parse_error _) -> Alcotest.fail "expected help");
+  match parse [ "--database-key"; "a"; "--database-key=b" ] with
+  | Ok (_, key, _) -> Alcotest.(check (option string)) "last key wins" (Some "b") key
+  | Error message -> Alcotest.fail message
 ;;
 
 let test_large_seed () =
@@ -233,8 +223,7 @@ let test_bad_values () =
   expect_error [ "--verbosity"; "loud" ] "verbosity";
   expect_error [ "--derandomize"; "maybe" ] "derandomize";
   expect_error [ "--phases"; "explore" ] "explore";
-  expect_error [ "--suppress-health-check"; "too_fast" ] "too_fast";
-  expect_error [ "--bogus" ] "unknown option"
+  expect_error [ "--suppress-health-check"; "too_fast" ] "too_fast"
 ;;
 
 let test_profile () =
@@ -249,6 +238,11 @@ let test_profile () =
       Settings.set_default_profile None;
       expect_error [ "--profile"; "no_such_profile" ] "no_such_profile";
       expect_error [ "--profile"; "bad name!" ] "bad name!";
+      expect_error [ "--profile" ] "--profile requires a value";
+      expect_error
+        [ "--profile=default"; "--profile"; "default" ]
+        "--profile may be given at most once";
+      expect_error [ "--profiles=x" ] "Unknown argument: --profiles";
       (* The rejected names are not left as the default profile. *)
       ignore (Settings.default () : Settings.t))
 ;;
@@ -324,13 +318,25 @@ let test_main_rejects_bad_flags () =
       run_child ~mode:"pass" ~log:(Filename.concat dir "log") [ "--bogus" ]
     in
     Alcotest.(check bool)
-      "exit status 124"
+      "exit status 2"
       true
-      (Poly.equal status (Error (`Exit_non_zero 124)));
+      (Poly.equal status (Error (`Exit_non_zero 2)));
     Alcotest.(check bool)
       "names the flag"
       true
       (String.is_substring output ~substring:"--bogus"))
+;;
+
+let test_main_help () =
+  Test_helpers.with_tempdir ~prefix:"hegel-main" ~f:(fun dir ->
+    let status, output =
+      run_child ~mode:"pass" ~log:(Filename.concat dir "log") [ "--help" ]
+    in
+    Alcotest.(check bool) "exit status 0" true (Poly.equal status (Ok ()));
+    Alcotest.(check bool)
+      "prints the usage"
+      true
+      (String.is_substring output ~substring:"Runs exactly one test case."))
 ;;
 
 let test_main_failure_replays_from_blob () =
@@ -376,13 +382,19 @@ let test_main_failure_replays_from_blob () =
 
 let tests =
   [ Alcotest.test_case "flags select settings" `Quick test_flags_select_settings
-  ; Alcotest.test_case "every setting has a flag" `Quick test_every_setting_has_a_flag
+  ; Alcotest.test_case "unknown flag" `Quick test_unknown_flag
+  ; Alcotest.test_case
+      "fixed settings are rejected"
+      `Quick
+      test_fixed_settings_are_rejected
+  ; Alcotest.test_case "flag forms" `Quick test_flag_forms
   ; Alcotest.test_case "large seed" `Quick test_large_seed
   ; Alcotest.test_case "bad values" `Quick test_bad_values
   ; Alcotest.test_case "--profile" `Quick test_profile
   ; Alcotest.test_case "single_test_case" `Quick test_single_test_case
   ; Alcotest.test_case "main passes" `Quick test_main_passes
   ; Alcotest.test_case "main rejects bad flags" `Quick test_main_rejects_bad_flags
+  ; Alcotest.test_case "main --help" `Quick test_main_help
   ; Alcotest.test_case
       "main failure replays from blob"
       `Quick

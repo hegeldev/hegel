@@ -96,10 +96,11 @@ lib/                         # Library source
                              #   test_case_printer, note)
     loader.ml                # locate libhegel at runtime (env > site > the
                              #   checkout's in-tree target/ build (libhegel_c.<ext>))
-  cli.ml / cli.mli           # Hegel.main: cmdliner flags (--profile applied
+  cli.ml / cli.mli           # Hegel.main: a hand-written flag parser, as in
+                             #   hegel-rust's cli.rs (--profile applied
                              #   first, through set_default_profile, before the
-                             #   caller's settings thunk runs; one flag per
-                             #   setting in settings_flags, each value parsed by
+                             #   caller's settings thunk runs; any other --x-y
+                             #   sets the hegel.toml key x_y, its value parsed by
                              #   the engine through Settings.set_from_strings /
                              #   hegel_settings_set_from_string), single_test_case
                              #   (test_cases = 1, Too_slow suppressed,
@@ -315,9 +316,8 @@ typed-draw migrations.
 
 ### Dependencies: core-free main library + optional hegel.jane and hegel.zarith
 
-The `hegel` library depends on the stdlib plus `cmdliner` (`Hegel.main`), `sexplib0` (printer type
-`'a -> Sexplib0.Sexp.t`, the same type as `Core.Sexp.t`; `Printer.of_sexp` lays one out), `unix` (isatty for
-color detection), `threads.posix`, ctypes/ipaddr/dune-site (`yojson` is a test-only dependency of
+The `hegel` library depends on the stdlib plus `sexplib0` (printer type
+`'a -> Sexplib0.Sexp.t`, the same type as `Core.Sexp.t`; `Printer.of_sexp` lays one out), `threads.posix`, ctypes/ipaddr/dune-site (`yojson` is a test-only dependency of
 the PPX test that parses the engine's `sdk.jsonl`). `core`
 and `core_unix` are NOT dependencies of the library: `core` is an opam
 depopt that gates the `(optional)` sublibrary
@@ -466,15 +466,18 @@ that runs exactly one test case per invocation (hegel-rust's
 failures print that form: `Internal.rerun_hint = Command_line`) and `[@async]`.
 `Cli.single_test_case` sets `test_cases = 1`, suppresses `Too_slow` and sets
 `unbounded_choices`, so a long-running test case is not cut off at the
-engine's choice limit. Every other setting has a flag (`Cli.settings_flags`,
-named after its `hegel.toml` key), and the CLI knows none of their
-vocabularies: `Settings.set_from_strings` writes the settings record to a
-handle, applies each flag through `hegel_settings_set_from_string`, and reads
-the handle back, so a bad value is the engine's `Usage_error`, reported as a
-cmdliner error. `--database-key` goes through the engine too, for validation,
-and then replaces `main`'s `?database_key`. There are no
-user-defined flags: an unknown argument is a cmdliner error (exit 124), as in
-Rust. `Hegel.main` exits, so `test_cli.ml` and `test_ppx_hegel_test.ml`
+engine's choice limit, so `--test-cases` and `--unbounded-choices` are
+rejected with an error saying why. `Cli.parse` mirrors hegel-rust's `cli.rs`:
+every other `--some-setting VALUE` (or `=VALUE`) sets the `hegel.toml` key
+`some_setting`, so the flags reach every engine setting without a list of
+them here, and the CLI knows none of their vocabularies:
+`Settings.set_from_strings` writes the settings record to a handle, applies
+the flag through `hegel_settings_set_from_string`, and reads the handle back,
+so a bad value is the engine's `Usage_error` and an unknown key the engine's
+"unknown setting", both reported as parse errors naming the flag.
+`--database-key` goes through the engine too, for validation, and then
+replaces `main`'s `?database_key`. There are no user-defined flags: an
+unknown argument prints the error and the usage and exits 2, as in Rust. `Hegel.main` exits, so `test_cli.ml` and `test_ppx_hegel_test.ml`
 re-execute their own binary with `HEGEL_TEST_MAIN_CHILD` set to test it.
 
 Because the PPX only produces a callable and never calls it, a

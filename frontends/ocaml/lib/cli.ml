@@ -1,4 +1,8 @@
-open Cmdliner
+type error =
+  | Help of string
+  | Parse_error of string
+
+exception Cli_error of error
 
 let single_test_case (settings : Settings.t) =
   { settings with
@@ -8,107 +12,174 @@ let single_test_case (settings : Settings.t) =
   }
 ;;
 
+let usage =
+  {|Usage: <program> [options]
+
+Hegel property-based testing binary. Runs exactly one test case.
+
+Options:
+  --profile <NAME>                       Set the default settings profile, like
+                                         the HEGEL_DEFAULT_PROFILE environment
+                                         variable; other flags apply on top
+  --failure-blob <BLOB>                  Replay a failure from the blob instead
+                                         of generating a test case; repeat it
+                                         to replay several blobs
+  --seed <N|none>                        Seed for randomization ('none' for unset)
+  --derandomize <BOOL>                   Use a deterministic derived seed
+  --database <PATH|disabled|default>     Database path for failing-example storage
+  --database-key <KEY>                   Key the failing examples are stored under
+  --verbosity <LEVEL>                    quiet | normal | verbose | debug
+  --phases <NAMES>                       Comma-separated phases to run: explicit,
+                                         reuse, generate, target, shrink
+  --suppress-health-check <NAMES>        Comma-separated health check names
+                                         (filter_too_much, too_slow,
+                                         test_cases_too_large,
+                                         large_initial_test_case), or 'all'
+  --report-multiple-failures <BOOL>      Report every distinct failure found
+  --stop-on-first-failure <BOOL>         End generation once a failure is found
+  --show-statistics <BOOL>               Print the run's statistics
+  --print-blob <BOOL>                    Print the failure's reproduce blob
+  --backend <default|urandom>            Randomness source
+  --nondeterminism-strictness <LEVEL>    quiet | warn | error
+  -h, --help                             Show this help and exit
+
+Every setting in hegel.toml has a flag, named after its key with '-' for
+'_', except test_cases and unbounded_choices: the binary runs exactly one
+test case, with no limit on its choices. Every flag also takes the form
+--flag=VALUE. A BOOL is true, false, 1, 0, yes or no. Values use the
+vocabulary of the matching hegel.toml key.
+|}
+;;
+
+let fixed_settings =
+  [ "test-cases", "a Hegel.main binary runs exactly one test case"
+  ; "unbounded-choices", "a Hegel.main binary always allows unbounded choices"
+  ]
+;;
+
+let without_function_name message =
+  let prefix = "hegel_settings_set_from_string: " in
+  if String.starts_with ~prefix message
+  then
+    String.sub
+      message
+      (String.length prefix)
+      (String.length message - String.length prefix)
+  else message
+;;
+
+let is_unknown_setting message =
+  String.starts_with ~prefix:"unknown setting" (without_function_name message)
+;;
+
+let split_flag arg =
+  match String.index_opt arg '=' with
+  | Some i ->
+    String.sub arg 2 (i - 2), Some (String.sub arg (i + 1) (String.length arg - i - 1))
+  | None -> String.sub arg 2 (String.length arg - 2), None
+;;
+
+let extract_profile args =
+  let rec go profile kept = function
+    | [] -> profile, List.rev kept
+    | arg :: rest when String.starts_with ~prefix:"--profile" arg ->
+      (match split_flag arg, rest with
+       | ("profile", Some value), rest | ("profile", None), value :: rest ->
+         if Option.is_some profile
+         then raise (Cli_error (Parse_error "--profile may be given at most once"));
+         go (Some value) kept rest
+       | ("profile", None), [] ->
+         raise (Cli_error (Parse_error "--profile requires a value"))
+       | _ -> go profile (arg :: kept) rest)
+    | arg :: rest -> go profile (arg :: kept) rest
+  in
+  go None [] args
+;;
+
 let set_default_profile name =
   match
     Settings.set_default_profile (Some name);
     Settings.default ()
   with
   | _ -> ()
-  | exception (Hegel_ffi.Ffi.Usage_error _ as error) ->
+  | exception Hegel_ffi.Ffi.Usage_error message ->
     Settings.set_default_profile None;
-    raise error
+    raise (Cli_error (Parse_error message))
 ;;
 
-let flag ?docv name kind doc =
-  Arg.(value & opt (some kind) None & info [ name ] ?docv ~doc)
+let apply_flag settings (key, value) =
+  match Settings.set_from_strings settings [ key, value ] with
+  | settings -> settings
+  | exception Hegel_ffi.Ffi.Usage_error message ->
+    let flag = "--" ^ String.map (fun c -> if c = '_' then '-' else c) key in
+    if is_unknown_setting message
+    then raise (Cli_error (Parse_error ("Unknown argument: " ^ flag)))
+    else raise (Cli_error (Parse_error (flag ^ ": " ^ without_function_name message)))
 ;;
 
-let settings_flags =
-  [ "seed", "N", "Seed for randomization, or $(b,none) for unset."
-  ; ( "verbosity"
-    , "LEVEL"
-    , "How much Hegel prints: $(b,quiet), $(b,normal), $(b,verbose), or $(b,debug)." )
-  ; "derandomize", "BOOL", "Use the same seed on every run."
-  ; ( "database"
-    , "PATH"
-    , "Where failing examples are stored: a path, $(b,disabled), or $(b,default)." )
-  ; "database_key", "KEY", "The key failing examples are stored under."
-  ; ( "phases"
-    , "NAMES"
-    , "Comma-separated list of the phases to run: $(b,explicit), $(b,reuse), \
-       $(b,generate), $(b,target), $(b,shrink)." )
-  ; ( "suppress_health_check"
-    , "NAMES"
-    , "Comma-separated list of health checks to disable: ($(b,filter_too_much), \
-       $(b,too_slow), $(b,test_cases_too_large), $(b,large_initial_test_case)), or \
-       $(b,all)." )
-  ; ( "report_multiple_failures"
-    , "BOOL"
-    , "Report every distinct failure rather than only the first." )
-  ; "stop_on_first_failure", "BOOL", "Stop generating at the first failure."
-  ; "show_statistics", "BOOL", "Print statistics about the run."
-  ; "print_blob", "BOOL", "Print the blob that reproduces a failure."
-  ; ( "backend"
-    , "BACKEND"
-    , "Source of randomness: $(b,default) (a seeded generator) or $(b,urandom) (fresh \
-       entropy for every choice)." )
-  ; ( "nondeterminism_strictness"
-    , "LEVEL"
-    , "What a nondeterministic test does: $(b,quiet), $(b,warn), or $(b,error)." )
-  ]
-;;
-
-let settings_term ~default_settings =
-  let resolve profile overrides failure_blobs =
-    match
-      Option.iter set_default_profile profile;
-      let settings = Settings.set_from_strings (default_settings ()) overrides in
-      let database_key =
-        List.fold_left
-          (fun found (key, value) -> if key = "database_key" then Some value else found)
-          None
-          overrides
+let parse_exn ~default_settings args =
+  let profile, args = extract_profile args in
+  Option.iter set_default_profile profile;
+  let settings = default_settings () in
+  let rec go overrides blobs = function
+    | [] -> List.rev overrides, List.rev blobs
+    | ("--help" | "-h") :: _ -> raise (Cli_error (Help usage))
+    | arg :: rest ->
+      if String.length arg <= 2 || not (String.starts_with ~prefix:"--" arg)
+      then raise (Cli_error (Parse_error ("Unknown argument: " ^ arg)));
+      let name, value = split_flag arg in
+      if String.contains name '_'
+      then raise (Cli_error (Parse_error ("Unknown argument: --" ^ name)));
+      Option.iter
+        (fun reason ->
+           raise
+             (Cli_error
+                (Parse_error (Printf.sprintf "--%s cannot be set: %s" name reason))))
+        (List.assoc_opt name fixed_settings);
+      let value, rest =
+        match value, rest with
+        | Some value, rest | None, value :: rest -> value, rest
+        | None, [] ->
+          if not (String.equal name "failure-blob")
+          then (
+            match
+              Settings.set_from_strings
+                settings
+                [ String.map (fun c -> if c = '-' then '_' else c) name, "" ]
+            with
+            | _ -> ()
+            | exception Hegel_ffi.Ffi.Usage_error message when is_unknown_setting message
+              -> raise (Cli_error (Parse_error ("Unknown argument: " ^ arg)))
+            | exception Hegel_ffi.Ffi.Usage_error _ -> ());
+          raise (Cli_error (Parse_error (Printf.sprintf "--%s requires a value" name)))
       in
-      settings, database_key
-    with
-    | settings, database_key -> Ok (settings, database_key, failure_blobs)
-    | exception Hegel_ffi.Ffi.Usage_error message -> Error (`Msg message)
+      if String.equal name "failure-blob"
+      then go overrides (value :: blobs) rest
+      else (
+        let key = String.map (fun c -> if c = '-' then '_' else c) name in
+        go ((key, value) :: overrides) blobs rest)
   in
-  let overrides =
-    List.fold_right
-      (fun (key, docv, doc) rest ->
-         let option = String.map (fun c -> if c = '_' then '-' else c) key in
-         Term.(
-           const (fun value rest ->
-             Option.fold ~none:rest ~some:(fun value -> (key, value) :: rest) value)
-           $ flag option Arg.string ~docv doc
-           $ rest))
-      settings_flags
-      (Term.const [])
-  in
-  Term.(
-    term_result
-      ~usage:true
-      (const resolve
-       $ flag
-           "profile"
-           Arg.string
-           ~docv:"NAME"
-           "Set the default settings profile. The other flags apply on top of it."
-       $ overrides
-       $ Arg.(
-           value
-           & opt_all string []
-           & info
-               [ "failure-blob" ]
-               ~docv:"BLOB"
-               ~doc:
-                 "Replay a failure from the blob instead of generating a test case. \
-                  Repeat it to replay several blobs.")))
+  let overrides, blobs = go [] [] args in
+  let settings = List.fold_left apply_flag settings overrides in
+  let database_key = List.assoc_opt "database_key" (List.rev overrides) in
+  settings, database_key, blobs
+;;
+
+let parse ~default_settings args =
+  match parse_exn ~default_settings args with
+  | parsed -> Ok parsed
+  | exception Cli_error error -> Error error
 ;;
 
 let main ?(settings = Settings.default) ?test_location ?database_key test_fn =
-  let run (settings, flag_database_key, failure_blobs) =
+  match parse ~default_settings:settings (List.tl (Array.to_list Sys.argv)) with
+  | Error (Help text) ->
+    print_string text;
+    exit 0
+  | Error (Parse_error message) ->
+    prerr_string (message ^ "\n\n" ^ usage);
+    exit 2
+  | Ok (settings, flag_database_key, failure_blobs) ->
     Internal.run_test
       ~settings:(single_test_case settings)
       ?test_location
@@ -116,9 +187,6 @@ let main ?(settings = Settings.default) ?test_location ?database_key test_fn =
       ~on_failure:(fun () -> exit 1)
       ?database_key:(Option.fold ~none:database_key ~some:Option.some flag_database_key)
       ~failure_blobs
-      test_fn
-  in
-  let info = Cmd.info (Filename.basename Sys.executable_name) in
-  let term = Term.(const run $ settings_term ~default_settings:settings) in
-  exit (Cmd.eval ~catch:false (Cmd.v info term))
+      test_fn;
+    exit 0
 ;;

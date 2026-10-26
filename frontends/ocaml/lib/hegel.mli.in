@@ -578,13 +578,16 @@ val run_hegel_test_ppx
     [--seed], [--verbosity], [--derandomize], [--database], [--database-key],
     [--phases], [--suppress-health-check], [--report-multiple-failures],
     [--stop-on-first-failure], [--show-statistics], [--print-blob],
-    [--backend] and [--nondeterminism-strictness]. Lists such as [--phases]
+    [--backend], [--nondeterminism-strictness], and any setting libhegel
+    adds later. [--test-cases] and [--unbounded-choices] are rejected, as the
+    binary fixes them. Lists such as [--phases]
     are comma-separated, and booleans are [true]/[false], [1]/[0] or
     [yes]/[no]. The engine reads each value, as it reads [hegel.toml], so a
     value it does not accept is reported as a usage error. [--profile]
     selects the settings profile the flags apply on top of,
     [--failure-blob] (which may be repeated) replays failures from their
-    blobs, and [--help] lists the flags. *)
+    blobs, and [--help] lists the flags. An unknown flag or a bad value
+    prints an error and the usage and exits with status 2. *)
 val main
   :  ?settings:(unit -> Settings.t)
   -> ?test_location:test_location
