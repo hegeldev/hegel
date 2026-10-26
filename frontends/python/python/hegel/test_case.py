@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import inspect
 import sys
 import threading
 from collections.abc import Callable
@@ -24,6 +25,12 @@ OutputSink = Callable[[str], None]
 
 RECURSION_HEADROOM = 200
 SHALLOW_SPANS = 32
+_RESUMABLE = (
+    inspect.CO_GENERATOR
+    | inspect.CO_COROUTINE
+    | inspect.CO_ASYNC_GENERATOR
+    | inspect.CO_ITERABLE_COROUTINE
+)
 
 MIN_DATE = (1, 1, 1)
 MAX_DATE = (9999, 12, 31)
@@ -561,18 +568,29 @@ class TestCase:
             raise
 
     def _check_stack_headroom(self, caller: Any) -> None:
+        """Measure the stack below ``caller`` incrementally: walk up to the
+        frame anchoring the innermost measured span and add its depth. Only
+        frames whose depth cannot change are anchors: a generator or
+        coroutine frame is resumed from wherever its next caller is, so
+        the anchor is the first other frame below ``caller``."""
         anchor, depth = self._span_frames[-1] if self._span_frames else (None, 0)
         frame = caller
         frames = 0
+        stable: tuple[Any, int] | None = None
         while frame is not None and frame is not anchor:
+            if stable is None and not frame.f_code.co_flags & _RESUMABLE:
+                stable = (frame, frames)
             frames += 1
             frame = frame.f_back
         if frame is None:
             depth = 0
-        depth += frames
-        if depth >= sys.getrecursionlimit() - RECURSION_HEADROOM:
+        total = depth + frames
+        if total >= sys.getrecursionlimit() - RECURSION_HEADROOM:
             raise StopTest("draws nested too deeply for Python's recursion limit")
-        self._span_frames.append((caller, depth))
+        if stable is None:
+            self._span_frames.append((frame, depth))
+        else:
+            self._span_frames.append((stable[0], total - stable[1]))
 
     def _drop_span_frames(self) -> None:
         del self._span_frames[max(0, self._span_depth - SHALLOW_SPANS) :]
