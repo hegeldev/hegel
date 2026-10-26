@@ -32,7 +32,9 @@ class MethodLocationTest {
                         "dev.hegel.MethodLocationTest$Fixture",
                         "firstLine"),
                 MethodLocation.of(plain, plain.getDeclaringClass()));
-        assertEquals(Fixture.firstLine(0), MethodLocation.of(overload, overload.getDeclaringClass()).beginLine());
+        assertEquals(
+                Fixture.firstLine(0),
+                MethodLocation.of(overload, overload.getDeclaringClass()).beginLine());
     }
 
     @Test

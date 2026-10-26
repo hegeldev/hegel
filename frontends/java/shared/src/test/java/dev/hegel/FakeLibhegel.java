@@ -135,6 +135,8 @@ final class FakeLibhegel implements Libhegel {
     int testCaseBlockRc = Abi.OK;
     int testCasePrinterRc = Abi.OK;
     int printerValueRc = Abi.OK;
+    int printerTextRc = Abi.OK;
+    int printerAbortRc = Abi.OK;
     int noteRc = Abi.OK;
 
     // Test-case clones (concurrent stateful workers).
@@ -646,6 +648,9 @@ final class FakeLibhegel implements Libhegel {
 
     @Override
     public int printerText(long printer, String text) {
+        if (printerTextRc != Abi.OK) {
+            return printerTextRc;
+        }
         printerRegion(printer).text(text);
         return Abi.OK;
     }
@@ -691,7 +696,7 @@ final class FakeLibhegel implements Libhegel {
     @Override
     public int printerAbortSpeculative(long printer) {
         printerRegion(printer).endSpeculative(false);
-        return Abi.OK;
+        return printerAbortRc;
     }
 
     /** The current case's document as the engine would hand it back. */

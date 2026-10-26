@@ -193,7 +193,7 @@ final class Runner {
             Throwable failure = null;
             try {
                 body.accept(testCase);
-            } catch (InvalidExample e) {
+            } catch (InvalidArgument e) {
                 throw e;
             } catch (AssumeRejected e) {
                 throw new InvalidExample("Explicit test cases must not be rejected, but explicit " + example
@@ -440,7 +440,7 @@ final class Runner {
             try {
                 return runBody(lib, tc, testCase, body, settings, reporter, counts);
             } finally {
-                testCase.releaseBlocks();
+                testCase.releaseAll();
             }
         } finally {
             try {
@@ -473,14 +473,14 @@ final class Runner {
             outcome = CaseOutcome.INVALID;
         } catch (StopTest e) {
             outcome = CaseOutcome.OVERRUN;
-        } catch (LibhegelException e) {
+        } catch (LibhegelException | InvalidArgument e) {
             throw e;
         } catch (Throwable e) {
             outcome = CaseOutcome.INTERESTING;
             origin = originOf(e, settings.infrastructurePackages);
             interesting = e;
         }
-        List<String> output = testCase.output();
+        List<String> output = output(testCase, interesting);
         if (settings.verbosity.code >= Verbosity.VERBOSE.code) {
             for (String line : output) {
                 reporter.caseOutput(line, false);
@@ -496,6 +496,22 @@ final class Runner {
         return testCase.isFinal()
                 ? new CaseRun(true, output, testCase.draws(), interesting, origin)
                 : new CaseRun(false, List.of(), Map.of(), interesting, origin);
+    }
+
+    /**
+     * The case's rendered output. An error reading it never replaces the body's own failure: it is
+     * attached to {@code interesting} as suppressed, and the case reported without output.
+     */
+    private static List<String> output(TestCase testCase, Throwable interesting) {
+        try {
+            return testCase.output();
+        } catch (RuntimeException e) {
+            if (interesting == null) {
+                throw e;
+            }
+            interesting.addSuppressed(e);
+            return List.of();
+        }
     }
 
     /**

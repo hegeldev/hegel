@@ -34,6 +34,13 @@ class HandleLeakTest {
         final Set<Long> liveTestCases = new HashSet<>();
         final Set<Long> livePrinters = new HashSet<>();
         final Set<Long> liveRecursions = new HashSet<>();
+        final Set<Long> liveGrammarBuilders = new HashSet<>();
+        final Set<Long> liveGrammars = new HashSet<>();
+        final Set<Long> liveGrammarDraws = new HashSet<>();
+        int grammarsCreated;
+        int grammarDrawsCreated;
+        int standalonePrintersCreated;
+        int maxLiveTestCases;
         int recursionsCreated;
         int blocksCreated;
         int printersCreated;
@@ -45,13 +52,19 @@ class HandleLeakTest {
         Tracker(Libhegel real) {
             lib = (Libhegel) Proxy.newProxyInstance(
                     Libhegel.class.getClassLoader(), new Class<?>[] {Libhegel.class}, (proxy, method, args) -> {
+                        boolean frees = method.getName().endsWith("Free");
+                        if (frees) {
+                            record(method.getName(), args, null);
+                        }
                         Object result;
                         try {
                             result = method.invoke(real, args);
                         } catch (InvocationTargetException e) {
                             throw e.getCause();
                         }
-                        record(method.getName(), args, result);
+                        if (!frees) {
+                            record(method.getName(), args, result);
+                        }
                         return result;
                     });
         }
@@ -98,6 +111,28 @@ class HandleLeakTest {
                     }
                 }
                 case "testCaseFree" -> assertTrue(liveTestCases.remove((Long) args[0]));
+                case "grammarBuilderNew" -> {
+                    if (ok) {
+                        liveGrammarBuilders.add(((long[]) args[1])[0]);
+                    }
+                }
+                case "grammarBuilderFree" -> assertTrue(liveGrammarBuilders.remove((Long) args[0]));
+                case "grammarNew" -> {
+                    if (ok) {
+                        grammarsCreated++;
+                        liveGrammars.add(((long[]) args[6])[0]);
+                    }
+                }
+                case "grammarFree" -> assertTrue(liveGrammars.remove((Long) args[0]));
+                case "grammarDrawNew" -> {
+                    grammarDrawsCreated++;
+                    liveGrammarDraws.add((Long) result);
+                }
+                case "grammarDrawFree" -> assertTrue(liveGrammarDraws.remove((Long) args[0]));
+                case "printerNew" -> {
+                    standalonePrintersCreated++;
+                    livePrinters.add((Long) result);
+                }
                 case "testCasePrinter" -> {
                     if (ok) {
                         printersCreated++;
@@ -107,6 +142,7 @@ class HandleLeakTest {
                 case "printerFree" -> assertTrue(livePrinters.remove((Long) args[0]));
                 default -> {}
             }
+            maxLiveTestCases = Math.max(maxLiveTestCases, liveTestCases.size());
         }
 
         RunReport run(Consumer<TestCase> body) {
@@ -123,6 +159,12 @@ class HandleLeakTest {
             assertEquals(Set.of(), liveTestCases);
             assertEquals(Set.of(), livePrinters);
             assertEquals(Set.of(), liveRecursions);
+            assertEquals(Set.of(), liveGrammarBuilders);
+            assertEquals(Set.of(), liveGrammarDraws);
+        }
+
+        synchronized int liveGrammarsCount() {
+            return liveGrammars.size();
         }
 
         List<Thread> workerThreads() {
@@ -248,5 +290,80 @@ class HandleLeakTest {
         assertTrue(report.passed());
         assertTrue(concurrent.blocksCreated > 0);
         concurrent.assertNothingLeaked();
+    }
+
+    @Test
+    void repetitionsHoldSteadyHandleCounts() {
+        Tracker tracker = new Tracker(Engine.get());
+        int[] repetitions = {0};
+        RunReport report = tracker.run(
+                new Settings().verbosity(Verbosity.VERBOSE).testCases(5),
+                tc -> tc.repeat(() -> {
+                    tc.draw(integers(), "x");
+                    repetitions[0]++;
+                }));
+        assertTrue(report.passed());
+        assertTrue(repetitions[0] > 50, "only " + repetitions[0] + " repetitions");
+        assertEquals(2, tracker.maxLiveTestCases);
+        tracker.assertNothingLeaked();
+    }
+
+    @Test
+    void ruleBlocksHoldSteadyHandleCounts() {
+        Tracker tracker = new Tracker(Engine.get());
+        assertTrue(tracker.run(
+                        new Settings().verbosity(Verbosity.VERBOSE).testCases(20),
+                        tc -> Stateful.run(
+                                new StatefulTest.StackMachine(),
+                                tc,
+                                Stateful.options().stepCount(200)))
+                .passed());
+        assertTrue(tracker.blocksCreated > 200);
+        assertEquals(2, tracker.maxLiveTestCases);
+        tracker.assertNothingLeaked();
+
+        Tracker concurrent = new Tracker(Engine.get());
+        assertTrue(concurrent
+                .run(
+                        new Settings().verbosity(Verbosity.VERBOSE).testCases(20),
+                        tc -> Stateful.run(
+                                new ConcurrentStatefulTest.PoolMachine(tc),
+                                tc,
+                                Stateful.options()
+                                        .stepCount(200)
+                                        .minConcurrency(2)
+                                        .maxConcurrency(3)))
+                .passed());
+        assertTrue(concurrent.blocksCreated > 200);
+        assertTrue(concurrent.maxLiveTestCases <= 7, "max live test cases: " + concurrent.maxLiveTestCases);
+        concurrent.assertNothingLeaked();
+    }
+
+    @Test
+    void grammarsFreeTheirBuildersAndDrawsAndAreFreedWhenUnreachable() throws InterruptedException {
+        Tracker tracker = new Tracker(Engine.get());
+        assertTrue(tracker.run(tc -> tc.draw(
+                        Generators.fromLark("start: A+ B\nA: \"a\"\n%declare B").explicit("B", Generators.just("b"))))
+                .passed());
+        assertTrue(tracker.grammarsCreated > 0);
+        assertTrue(tracker.grammarDrawsCreated > 0);
+        tracker.assertNothingLeaked();
+        long deadline = System.nanoTime() + 60_000_000_000L;
+        while (tracker.liveGrammarsCount() > 0 && System.nanoTime() < deadline) {
+            System.gc();
+            Thread.sleep(10);
+        }
+        assertEquals(0, tracker.liveGrammarsCount());
+    }
+
+    @Test
+    void explicitExamplesFreeTheirPrinters() {
+        Tracker tracker = new Tracker(Engine.get());
+        assertTrue(tracker.run(
+                        new Settings().testCases(1).examples(Example.of(1), Example.of(2)),
+                        tc -> tc.draw(integers(), "x"))
+                .passed());
+        assertEquals(2, tracker.standalonePrintersCreated);
+        tracker.assertNothingLeaked();
     }
 }

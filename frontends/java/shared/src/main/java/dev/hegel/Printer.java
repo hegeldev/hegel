@@ -75,7 +75,7 @@ final class Printer implements AutoCloseable {
         }
         String message = "hegel_printer_" + op + " failed (rc=" + rc + "): " + lib.lastErrorMessage();
         if (rc == Abi.E_INVALID_ARG) {
-            throw new IllegalArgumentException(message);
+            throw new InvalidArgument(message);
         }
         throw new HegelException(message);
     }

@@ -76,6 +76,64 @@ class StatefulTest {
         assertTrue(output.contains("Step 1: increment"), output);
     }
 
+    /** A machine whose rule draws an {@code x} each step and fails once it has stepped three times. */
+    static final class NamedDraws {
+        private int steps = 0;
+
+        @Rule
+        void step(TestCase tc) {
+            tc.draw(integers().min(0).max(0), "x");
+            assertTrue(++steps < 3);
+        }
+    }
+
+    @Test
+    void eachRuleNamesItsDrawsAfresh() {
+        RunReport report = Hegel.run(
+                tc -> Stateful.run(new NamedDraws(), tc),
+                new Settings().database(Database.disabled()),
+                Reporter.silent());
+        assertEquals(
+                List.of(
+                        "Step 1: step {",
+                        "  x = 0;",
+                        "}",
+                        "Step 2: step {",
+                        "  x = 0;",
+                        "}",
+                        "Step 3: step {",
+                        "  x = 0;"),
+                report.failures().get(0).output().subList(0, 8));
+        assertEquals(
+                List.of("x", "x_2", "x_3"),
+                List.copyOf(report.failures().get(0).draws().keySet()));
+    }
+
+    /** A machine that keeps its first rule's TestCase and draws through it in a later rule. */
+    static final class StaleHandle {
+        private TestCase first;
+
+        @Rule
+        void step(TestCase tc) {
+            if (first == null) {
+                first = tc;
+            } else {
+                first.draw(integers());
+            }
+        }
+    }
+
+    @Test
+    void aRulesTestCaseCannotBeUsedOnceTheRuleHasEnded() {
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> Hegel.run(
+                        tc -> Stateful.run(new StaleHandle(), tc),
+                        new Settings().database(Database.disabled()),
+                        Reporter.silent()));
+        assertTrue(e.getMessage().contains("stateful rule that has ended"), e.getMessage());
+    }
+
     /** A counter whose always-run invariant records every intermediate state it observes. */
     static final class ObservedCounter {
         private int n = 0;

@@ -113,7 +113,8 @@ class GeneratorParityTest {
     void uniqueListsCompareArraysByContent() {
         Hegel.test(
                 tc -> {
-                    List<byte[]> xs = tc.draw(lists(binary().maxSize(1)).unique().maxSize(5));
+                    List<byte[]> xs =
+                            tc.draw(lists(binary().maxSize(1)).unique().maxSize(5));
                     Set<List<Byte>> contents = new HashSet<>();
                     for (byte[] x : xs) {
                         List<Byte> content = new ArrayList<>();
@@ -122,10 +123,10 @@ class GeneratorParityTest {
                         }
                         assertTrue(contents.add(content));
                     }
-                    List<Integer[][]> nested = tc.draw(
-                            lists(arrays(arrays(integers().min(0).max(1), 1, Integer[]::new), 1, Integer[][]::new))
-                                    .uniqueBy(a -> a)
-                                    .maxSize(3));
+                    List<Integer[][]> nested = tc.draw(lists(
+                                    arrays(arrays(integers().min(0).max(1), 1, Integer[]::new), 1, Integer[][]::new))
+                            .uniqueBy(a -> a)
+                            .maxSize(3));
                     Set<Integer> firsts = new HashSet<>();
                     for (Integer[][] a : nested) {
                         assertTrue(firsts.add(a[0][0]));

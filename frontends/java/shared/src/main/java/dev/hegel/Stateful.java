@@ -362,6 +362,7 @@ public final class Stateful {
                     tc.stopSpan(false);
                     throw e;
                 } finally {
+                    ruleTc.endBlock();
                     tc.note("}");
                 }
             }
@@ -606,6 +607,7 @@ public final class Stateful {
                         wtc.stateMachineRuleRejected(machineId, this.index);
                         ruleTc.note("Rule stopped early due to violated assumption.");
                     } finally {
+                        ruleTc.endBlock();
                         wtc.note("}");
                     }
                 }
@@ -613,7 +615,7 @@ public final class Stateful {
                 return WorkerEvent.INVALID;
             } catch (StopTest e) {
                 return WorkerEvent.OVERRUN;
-            } catch (LibhegelException | IllegalArgumentException e) {
+            } catch (LibhegelException | InvalidArgument e) {
                 return WorkerEvent.control(e);
             } catch (Throwable e) {
                 return WorkerEvent.failed(e);

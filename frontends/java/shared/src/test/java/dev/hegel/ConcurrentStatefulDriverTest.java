@@ -124,9 +124,9 @@ class ConcurrentStatefulDriverTest {
         assertEquals(4, machine.sampledChecks);
         assertEquals(4, machine.alwaysChecks);
         assertEquals(List.of(0L, 1L, 0L, 1L), fake.invariantChecksAsked);
-        // Every rule body ran in a block, kept until the case is over and then freed with its printer.
+        // Every rule body ran in a block, freed with its printer when the rule ended.
         assertEquals(4, fake.blockParents.size());
-        assertTrue(fake.freedBlocks.isEmpty());
+        assertEquals(4, fake.freedBlocks.size());
         // Output: each round's worker lines follow its header, grouped by worker index, each rule's
         // body indented under its heading.
         assertEquals(
@@ -149,7 +149,7 @@ class ConcurrentStatefulDriverTest {
                 plainNames(tc));
         // Draw names are unique across workers and recorded plain.
         assertEquals(Set.of("x", "x_2"), tc.draws().keySet());
-        tc.releaseBlocks();
+        tc.releaseAll();
         assertEquals(4, fake.freedBlocks.size());
         assertEquals(fake.printerOwners.size(), fake.freedPrinters.size());
     }
@@ -196,7 +196,7 @@ class ConcurrentStatefulDriverTest {
     static final class Outcomes {
         @Rule
         void bad(TestCase t) {
-            throw new IllegalArgumentException("usage");
+            throw new InvalidArgument("usage");
         }
 
         @Rule

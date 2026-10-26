@@ -45,8 +45,33 @@ public final class TestCase {
     private final ExplicitDraws explicit;
     /** This handle's printer onto its own print region, fetched on its first printed draw. */
     private Printer printer;
+    /** The naming scope of this handle's draws; {@link #repeat} swaps in a fresh one per repetition. */
+    private Names names;
+    /** Whether this is a {@link #block} handle, freed by {@link #endBlock()} unless {@link #pin pinned}. */
+    private final boolean scoped;
+
+    private boolean pinned;
 
     private int drawDepth;
+
+    /**
+     * A scope draw names are numbered in: a label prints bare the first time and numbered from its
+     * second use ({@code x}, {@code x_2}, ...); an unlabelled draw is {@code draw_N}, counting
+     * unlabelled draws only. A test body and its forks share one; each {@link #block} and each
+     * repetition of {@link #repeat} opens a fresh one.
+     */
+    private static final class Names {
+        private final Map<String, Integer> uses = new HashMap<>();
+
+        synchronized String next(String label) {
+            String base = label != null ? label : "draw";
+            int count = uses.merge(base, 1, Integer::sum);
+            if (label == null) {
+                return base + "_" + count;
+            }
+            return count == 1 ? label : label + "_" + count;
+        }
+    }
 
     /** The state every handle of one test case shares, whichever thread it is driven from. */
     private static final class Shared {
@@ -54,11 +79,9 @@ public final class TestCase {
         final boolean captured;
         /** Whether draws and notes are printed to the case's document at all. */
         final boolean emits;
-        /** Uses per draw name, for numbering repeats ({@code x}, {@code x_2}, ...; {@code draw_N}). */
-        private final Map<String, Integer> nameUses = new HashMap<>();
 
         private final Map<String, Object> draws = new LinkedHashMap<>();
-        /** Every block and fork handle opened in the case, kept alive until the case is over. */
+        /** Every fork and pinned block handle opened in the case, kept alive until the case is over. */
         private final List<TestCase> blocks = new ArrayList<>();
 
         Shared(boolean captured, boolean verbose) {
@@ -67,23 +90,16 @@ public final class TestCase {
         }
 
         /**
-         * The name a top-level draw reports under: a label prints bare the first time and numbered
-         * from its second use ({@code x}, {@code x_2}, ...); an unlabelled draw is {@code draw_N},
-         * counting unlabelled draws only. Names are unique across the whole case, so concurrent
-         * workers name their draws through here too.
+         * Record a draw under its printed name, or, when another scope's draw already took that
+         * name, under the first of {@code name_2}, {@code name_3}, ... that is free.
          */
-        synchronized String nextName(String label) {
-            String base = label != null ? label : "draw";
-            int uses = nameUses.merge(base, 1, Integer::sum);
-            if (label == null) {
-                return base + "_" + uses;
-            }
-            return uses == 1 ? label : label + "_" + uses;
-        }
-
         synchronized void record(String name, Object value) {
             if (captured) {
-                draws.put(name, value);
+                String key = name;
+                for (int n = 2; draws.containsKey(key); n++) {
+                    key = name + "_" + n;
+                }
+                draws.put(key, value);
             }
         }
 
@@ -107,22 +123,20 @@ public final class TestCase {
     }
 
     TestCase(DataSource source, boolean captured, boolean verbose) {
-        this(source, new Shared(captured, verbose));
+        this(source, new Shared(captured, verbose), null, new Names(), false);
     }
 
-    private TestCase(DataSource source, Shared shared) {
-        this(source, shared, null);
-    }
-
-    private TestCase(DataSource source, Shared shared, ExplicitDraws explicit) {
+    private TestCase(DataSource source, Shared shared, ExplicitDraws explicit, Names names, boolean scoped) {
         this.source = source;
         this.shared = shared;
         this.explicit = explicit;
+        this.names = names;
+        this.scoped = scoped;
     }
 
     /** A test case whose draws take the values of an explicit example instead of drawing them. */
     static TestCase explicit(ExplicitDraws draws) {
-        return new TestCase(ExplicitDraws.noEngine(), new Shared(true, false), draws);
+        return new TestCase(ExplicitDraws.noEngine(), new Shared(true, false), draws, new Names(), false);
     }
 
     /**
@@ -132,20 +146,39 @@ public final class TestCase {
      * anchors where the handle was made. Release it with {@link #release()} once the round is over.
      */
     TestCase forWorker(int worker) {
-        return new TestCase(source.cloneForWorker(worker), shared);
+        return new TestCase(source.cloneForWorker(worker), shared, null, names, false);
     }
 
     /**
      * A handle for an indented section of this one's output, such as a stateful rule's body under
      * its heading: it draws from this handle's own choice stream (so the two must not be driven
-     * concurrently) and everything it prints lands in a block {@code indent} columns further in.
-     * The handle stays valid until the case is over — a {@link Pool} made inside a rule keeps
-     * drawing through it — and is freed by {@link #releaseBlocks()}.
+     * concurrently), everything it prints lands in a block {@code indent} columns further in, and
+     * its draws are named in a fresh scope. Free it with {@link #endBlock()} when the section ends.
      */
     TestCase block(long indent) {
-        TestCase block = new TestCase(source.block(indent), shared);
-        shared.addBlock(block);
-        return block;
+        return new TestCase(source.block(indent), shared, null, new Names(), true);
+    }
+
+    /**
+     * Free a handle from {@link #block} once its section has ended, unless something made in the
+     * section keeps drawing through it ({@link #pin()}), in which case it lives until the case is over.
+     */
+    void endBlock() {
+        if (!pinned) {
+            release();
+        }
+    }
+
+    /**
+     * Keep this handle alive until the case is over, for an object made through it that draws
+     * through it later, such as a {@link Pool}. Only a {@link #block} handle needs it; on any
+     * other this does nothing.
+     */
+    void pin() {
+        if (scoped && !pinned) {
+            pinned = true;
+            shared.addBlock(this);
+        }
     }
 
     /** Free a handle from {@link #forWorker}, and its printer. */
@@ -157,10 +190,17 @@ public final class TestCase {
         }
     }
 
-    /** Free every block and fork handle opened in the case, and their printers. Called once the case is over. */
-    void releaseBlocks() {
-        for (TestCase block : shared.takeBlocks()) {
-            block.release();
+    /**
+     * Free this root handle's printer and every fork and pinned block handle opened in the case,
+     * with their printers. Called once the case is over, however its body ended.
+     */
+    void releaseAll() {
+        try {
+            closePrinter();
+        } finally {
+            for (TestCase block : shared.takeBlocks()) {
+                block.release();
+            }
         }
     }
 
@@ -225,6 +265,9 @@ public final class TestCase {
      * @return the generated value
      */
     public <T> T draw(Generator<T> generator, String label) {
+        if (label != null && label.indexOf('\n') >= 0) {
+            throw new InvalidArgument("draw label " + Printer.quote(label, '"') + " must not contain a newline");
+        }
         if (explicit != null) {
             return explicitDraw(label);
         }
@@ -233,22 +276,34 @@ public final class TestCase {
         }
         Printer p = printer();
         p.beginSpeculative();
-        boolean committed = false;
+        T value;
         try {
-            T value = drawNested(generator);
-            String name = shared.nextName(label);
-            shared.record(name, value);
+            value = drawNested(generator);
+        } catch (Throwable e) {
+            abortQuietly(p, e);
+            throw e;
+        }
+        String name = names.next(label);
+        shared.record(name, value);
+        try {
             p.text(name + " = ");
             p.value(value);
             p.text(";");
             p.hardBreak();
             p.commitSpeculative();
-            committed = true;
-            return value;
-        } finally {
-            if (!committed) {
-                p.abortSpeculative();
-            }
+        } catch (RuntimeException e) {
+            abortQuietly(p, e);
+            throw e;
+        }
+        return value;
+    }
+
+    /** Abandon {@code p}'s speculative region, attaching any error doing so to {@code cause}. */
+    private static void abortQuietly(Printer p, Throwable cause) {
+        try {
+            p.abortSpeculative();
+        } catch (RuntimeException e) {
+            cause.addSuppressed(e);
         }
     }
 
@@ -270,7 +325,7 @@ public final class TestCase {
 
     @SuppressWarnings("unchecked")
     private <T> T explicitDraw(String label) {
-        String name = shared.nextName(label);
+        String name = names.next(label);
         T value = (T) explicit.take(name);
         shared.record(name, value);
         return value;
@@ -390,7 +445,7 @@ public final class TestCase {
      */
     public TestCase fork(int worker) {
         if (explicit != null) {
-            return new TestCase(source, shared, explicit);
+            return new TestCase(source, shared, explicit, names, false);
         }
         TestCase fork = forWorker(worker);
         shared.addBlock(fork);
@@ -431,7 +486,11 @@ public final class TestCase {
 
     private void repeatOnce(Runnable body) {
         Throwable failure;
-        DataSource outer = enterBlock(2);
+        DataSource outer = source;
+        Names outerNames = names;
+        DataSource block = outer.block(2);
+        swapSource(block);
+        names = new Names();
         try {
             body.run();
             return;
@@ -439,6 +498,8 @@ public final class TestCase {
             failure = e;
         } finally {
             swapSource(outer);
+            names = outerNames;
+            block.release();
         }
         if (failure instanceof AssumeRejected && !isAborted()) {
             return;
@@ -453,7 +514,7 @@ public final class TestCase {
         return e instanceof StopTest
                 || e instanceof AssumeRejected
                 || e instanceof LoopDone
-                || e instanceof IllegalArgumentException
+                || e instanceof InvalidArgument
                 || e instanceof LibhegelException;
     }
 
@@ -466,19 +527,10 @@ public final class TestCase {
         throw (T) t;
     }
 
-    /** Switch this instance onto a block {@code indent} columns in, returning the handle it replaces. */
-    private DataSource enterBlock(long indent) {
-        DataSource block = source.block(indent);
-        shared.addBlock(new TestCase(block, shared));
-        return swapSource(block);
-    }
-
-    /** Make {@code next} this instance's handle, returning the one it replaces. */
-    private DataSource swapSource(DataSource next) {
+    /** Make {@code next} this instance's handle, closing the printer onto the one it replaces. */
+    private void swapSource(DataSource next) {
         closePrinter();
-        DataSource previous = source;
         source = next;
-        return previous;
     }
 
     // --- engine primitives used by generators in dev.hegel.generators (public for cross-package

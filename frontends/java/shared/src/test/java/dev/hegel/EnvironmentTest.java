@@ -87,7 +87,9 @@ class EnvironmentTest {
 
     @Test
     void aMissingEngineFailsTheRunRatherThanLabelsOrGenerators() throws Exception {
-        String output = fixture("no-engine", Map.of("HEGEL_LIBHEGEL_PATH", tmp.resolve("missing").toString()));
+        String output = fixture(
+                "no-engine",
+                Map.of("HEGEL_LIBHEGEL_PATH", tmp.resolve("missing").toString()));
         assertTrue(output.contains("labels=" + Long.toHexString(Label.LIST) + " generator=true"), output);
         assertTrue(output.contains("run=dev.hegel.lowlevel.LibhegelException: HEGEL_LIBHEGEL_PATH is set to"), output);
     }
