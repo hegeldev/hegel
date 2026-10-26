@@ -18,7 +18,7 @@
 #include "common/approvals.h"
 
 using ApprovalTests::Approvals;
-using hegel::tests::common::scrub_report;
+using hegel::tests::common::scrub_blob;
 
 namespace gs = hegel::generators;
 
@@ -222,7 +222,7 @@ TEST(CloneOutput, FailureReplayIncludesCloneDraw) {
                                      std::to_string(x));
         }
     });
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }
 
 // Verbose trace of a run that draws on the parent and then on a clone (both on
@@ -254,5 +254,5 @@ TEST(CloneOutput, CloneOutputAppearsWhereTheCloneWasMade) {
         worker.note("from the clone");
         throw std::runtime_error("boom");
     });
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }

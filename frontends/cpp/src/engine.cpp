@@ -403,17 +403,6 @@ namespace hegel::impl {
         check_rc(ctx, hegel_settings_set_database_key(ctx, s, &database_key));
     }
 
-    hegel_test_case_t* test_case_from_blob(hegel_context_t* ctx,
-                                           hegel_settings_t* s,
-                                           std::string_view blob) {
-        hegel_test_case_t* tc = nullptr;
-        // A NULL output callback (and user data) keeps engine output on
-        // stderr.
-        check_rc(ctx, hegel_test_case_from_blob(ctx, s, borrow(blob), nullptr,
-                                                nullptr, &tc));
-        return tc;
-    }
-
     bool test_case_should_capture(hegel_context_t* ctx,
                                   const hegel_test_case_t* tc) {
         bool should_capture = false;
@@ -492,7 +481,7 @@ namespace hegel::impl {
 
             explicit DrawScope(const TestCase& obj) {
                 if (obj.data()->explicit_state) {
-                    throw std::invalid_argument(
+                    throw internal::UsageError(
                         "This operation needs generated data, which an "
                         "explicit test case does not have: it gives values "
                         "only to TestCase::draw().");

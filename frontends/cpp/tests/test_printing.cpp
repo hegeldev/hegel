@@ -23,7 +23,7 @@ using ApprovalTests::Approvals;
 using hegel::tests::common::assert_matches_regex;
 using hegel::tests::common::run_subject;
 using hegel::tests::common::scrub_blob;
-using hegel::tests::common::scrub_report;
+
 using hegel::tests::common::SubprocessResult;
 
 #ifndef HEGEL_SUBJECT_BIN
@@ -60,7 +60,7 @@ TEST(Output, ThrowSitesGroupTheSameWayInEveryProcess) {
     for (int run = 0; run < 3; run++) {
         SubprocessResult r = run_scenario("throw_sites");
         EXPECT_NE(r.exit_code, 0);
-        assert_matches_regex(r.stderr_data, R"(Failure 1 of 2)");
+        assert_matches_regex(r.stderr_data, R"(2 distinct failures)");
         assert_matches_regex(r.stderr_data, R"(even bug with x=10)");
         assert_matches_regex(r.stderr_data, R"(odd bug with x=11)");
     }
@@ -109,15 +109,14 @@ namespace {
     void throw_boom(hegel::TestCase&) { throw std::runtime_error("boom"); }
 } // namespace
 
-// A drawn value too wide for one line breaks at its structure, and every
-// line of it keeps the report's indentation.
+// A drawn value too wide for one line breaks at its structure.
 TEST(FailureReport, WideValueBreaksAcrossLines) {
     std::string out = capture_failure_report([](hegel::TestCase& tc) {
         (void)tc.draw(gs::vectors(gs::just(std::string("a wide value")),
                                   {.min_size = 3, .max_size = 3}));
         throw std::runtime_error("boom");
     });
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }
 
 // Fails on every case; the minimal counterexample is 0.
@@ -126,7 +125,7 @@ TEST(FailureReport, SingleFailure) {
         int32_t x = tc.draw(gs::integers<int32_t>());
         throw std::runtime_error("intentional failure: " + std::to_string(x));
     });
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }
 
 // Fails for x >= 10; the replayed counterexample shrinks to exactly 10.
@@ -137,7 +136,7 @@ TEST(FailureReport, OriginStableAcrossDrawnValues) {
             throw std::runtime_error("failure with x=" + std::to_string(x));
         }
     });
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }
 
 // A non-std exception still produces the replay output before re-raising.
@@ -148,19 +147,19 @@ TEST(FailureReport, NonStdException) {
             throw 42;
         }
     });
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }
 
-// A body that throws before it draws anything has nothing to show between the
-// count and the exception, so the report keeps no empty body block.
+// A body that throws before it draws anything prints only how to reproduce
+// the failure.
 TEST(FailureReport, NoDrawsPrintsBodylessReport) {
     std::string out = capture_failure_report(throw_boom);
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }
 
-// A test location names the test and its source line in the header. The
-// location overload takes no blobs, so naming a test costs one argument.
-TEST(FailureReport, LocationNamesTheTest) {
+// The location overload of hegel::test() takes the location before the
+// settings, and the rerun hint passes it.
+TEST(FailureReport, LocationOverloadGetsItsOwnRerunHint) {
     std::string out = capture_report(
         [] { hegel::test(throw_boom, kLocation, report_settings()); });
     Approvals::verify(out, scrub_blob());
@@ -178,26 +177,13 @@ TEST(FailureReport, MacroDefinedTestGetsAnnotationRerunHint) {
     Approvals::verify(out, scrub_blob());
 }
 
-// The discards depend on the drawn data alone: a case the engine replays
-// with the same choices must reach the same verdict, or it reports the test
-// as flaky.
-TEST(FailureReport, DiscardedCasesAreCounted) {
-    std::string out = capture_failure_report([](hegel::TestCase& tc) {
-        int32_t x = tc.draw(gs::integers<int32_t>());
-        tc.assume(x % 2 != 0);
-        throw std::runtime_error("boom");
-    });
-    Approvals::verify(out, scrub_report());
-}
-
-// A note that spans several lines keeps every line inside the body's
-// indent.
-TEST(FailureReport, MultiLineNoteIsIndented) {
+// A note that spans several lines prints each line as its own line.
+TEST(FailureReport, MultiLineNotePrintsEachLine) {
     std::string out = capture_failure_report([](hegel::TestCase& tc) {
         tc.note("first line\nsecond line");
         throw std::runtime_error("boom");
     });
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }
 
 namespace {
@@ -231,12 +217,12 @@ namespace {
 #ifdef HEGEL_TESTS_NO_THROW_SITE
 // Without throw-site capture, throws of one type collapse into one failure.
 TEST(FailureReport, ThrowSitesDisabled) {
-    Approvals::verify(capture_two_throw_sites_report(), scrub_report());
+    Approvals::verify(capture_two_throw_sites_report(), scrub_blob());
 }
 #else
 // With throw-site capture, the two sites are distinct origins
 TEST(FailureReport, ThrowSitesEnabled) {
-    Approvals::verify(capture_two_throw_sites_report(), scrub_report());
+    Approvals::verify(capture_two_throw_sites_report(), scrub_blob());
 }
 #endif
 
@@ -251,7 +237,7 @@ TEST(FailureReport, OneThrowSiteIsOneBug) {
             }
         },
         hegel::Settings{.report_multiple_failures = true});
-    EXPECT_TRUE(out.find("Failure 1 of") == std::string::npos) << out;
+    EXPECT_TRUE(out.find("distinct failures") == std::string::npos) << out;
 }
 
 // An exception that names its own origin splits one `throw` into two bugs,
@@ -266,7 +252,7 @@ TEST(FailureReport, FailureOriginSplitsOneThrowSite) {
             }
         },
         hegel::Settings{.report_multiple_failures = true});
-    EXPECT_TRUE(out.find("Failure 1 of 2") != std::string::npos) << out;
+    EXPECT_TRUE(out.find("2 distinct failures") != std::string::npos) << out;
     EXPECT_TRUE(out.find("bug with x=10") != std::string::npos) << out;
     EXPECT_TRUE(out.find("bug with x=11") != std::string::npos) << out;
 }
@@ -285,7 +271,7 @@ TEST(FailureReport, FailureOriginJoinsTwoThrowSites) {
             }
         },
         hegel::Settings{.report_multiple_failures = true});
-    EXPECT_TRUE(out.find("Failure 1 of") == std::string::npos) << out;
+    EXPECT_TRUE(out.find("distinct failures") == std::string::npos) << out;
 }
 
 namespace {
@@ -305,7 +291,7 @@ namespace {
 TEST(FailureReport, MultipleFailuresReported) {
     std::string out = capture_failure_report(
         two_bugs, hegel::Settings{.report_multiple_failures = true});
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }
 
 // With report_multiple_failures off, the run stops at the first failing
@@ -313,7 +299,38 @@ TEST(FailureReport, MultipleFailuresReported) {
 TEST(FailureReport, MultipleFailuresOffReportsOne) {
     std::string out = capture_failure_report(
         two_bugs, hegel::Settings{.report_multiple_failures = false});
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
+}
+
+// Under Verbosity::Quiet the report holds only how to reproduce the failure.
+TEST(FailureReport, QuietPrintsOnlyTheRerunHint) {
+    std::string out = capture_failure_report(
+        [](hegel::TestCase& tc) {
+            tc.note("hidden");
+            (void)tc.draw(gs::integers<int32_t>());
+            throw std::runtime_error("boom");
+        },
+        hegel::Settings{.verbosity = hegel::Verbosity::Quiet});
+    Approvals::verify(out, scrub_blob());
+}
+
+// A failure that is not a std::exception is named as such among several.
+TEST(FailureReport, MultipleFailuresNameANonStdException) {
+    std::string out = capture_failure_report(
+        [](hegel::TestCase& tc) {
+            int32_t x = tc.draw(gs::integers<int32_t>());
+            if (x >= 10 && x % 2 == 0) {
+                throw std::runtime_error("even bug");
+            }
+            if (x >= 10) {
+                throw 7;
+            }
+        },
+        hegel::Settings{.verbosity = hegel::Verbosity::Quiet,
+                        .report_multiple_failures = true});
+    EXPECT_NE(out.find("(an exception that is not a std::exception)"),
+              std::string::npos)
+        << out;
 }
 
 // print_blob = false drops the rerun hint. The rest of the report stays.
@@ -321,7 +338,7 @@ TEST(FailureReport, PrintBlobOffDropsRerunHint) {
     std::string out = capture_failure_report(
         [](hegel::TestCase&) { throw std::runtime_error("silly error"); },
         hegel::Settings{.print_blob = false});
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }
 
 // ---------------------------------------------------------------------------

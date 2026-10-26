@@ -80,17 +80,14 @@ failures found in one run are replayed first in the next. (You can also call
 This test will fail! Hegel will produce a minimal failing test case for us:
 
 ```
---- Failure: sort_agrees_with_std_sort (sort_test.cpp:9) ----------------
-Falsified after 8 test cases (0 discarded):
+auto vec1 = std::vector<int>{0, 0};
 
-  auto vec1 = std::vector<int>{0, 0};
-
-Exception: std::runtime_error: sort mismatch
-rerun with: HEGEL_REPRODUCE_FAILURE(sort_agrees_with_std_sort, "AXicY2VgYGBkZOBiZEBhMAAAAd8AIQ==")
+To reproduce this failure, add this line above HEGEL_TEST(sort_agrees_with_std_sort):
+    HEGEL_REPRODUCE_FAILURE(sort_agrees_with_std_sort, "AXicY2VgYGBkZOBiZEBhMAAAAd8AIQ==")
 ```
 
-The report names the test and its source line, says how many cases it took
-to find the failure, and shows the minimal example.
+The report shows the minimal example and how to replay it, and the test's own
+exception (`sort mismatch`) propagates out of the test.
 
 Each draw is replayed and printed as a C++ declaration. `tc.draw("vec1", gen)`
 names the draw with `vec1` as above. An unnamed `tc.draw(gen)` prints

@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <exception>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <typeinfo>
@@ -294,6 +295,16 @@ namespace hegel::internal {
         const char* what() const noexcept override {
             return "test case rejected";
         }
+    };
+
+    /* Exception thrown for a misuse of a test case that no run can recover
+     * from, such as an explicit test case that is rejected or that has no
+     * value for a draw. The runner does not record it as a failure of the
+     * test: it propagates out of hegel::test().
+     */
+    class UsageError : public std::invalid_argument {
+      public:
+        using std::invalid_argument::invalid_argument;
     };
 
     /* Exception thrown when the backend tells us to abandon the current

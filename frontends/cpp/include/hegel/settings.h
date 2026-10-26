@@ -228,8 +228,9 @@ namespace hegel {
         /// NondeterminismStrictness::Quiet.
         std::optional<NondeterminismStrictness> nondeterminism_strictness;
 
-        /// If true, a failure report ends with a `rerun with:` line holding
-        /// the base64 blob that replays the failure. The base value is true.
+        /// If true, the report of each failure ends with the line that
+        /// replays it from its base64 reproduce blob, at every verbosity.
+        /// The base value is true.
         std::optional<bool> print_blob;
 
         /// If true, the run prints statistics at its end: for each label

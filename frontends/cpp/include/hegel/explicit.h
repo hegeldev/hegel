@@ -51,15 +51,17 @@ namespace hegel {
      * produces, so write `int64_t{5}` for a draw of `integers<int64_t>()`.
      * A string literal is a `std::string`.
      *
-     * Every value must be drawn. In an explicit test case, a rejection
-     * (TestCase::assume() or TestCase::reject()), or anything that needs
-     * generated data other than a draw (TestCase::clone(),
-     * TestCase::repeat(), stateful testing), throws
-     * `std::invalid_argument`. TestCase::target() and TestCase::event()
-     * do nothing.
+     * Every value must be drawn. TestCase::target() and TestCase::event()
+     * do nothing. Anything else is a usage error, which makes hegel::test()
+     * throw `std::invalid_argument` without reporting a failure: a value
+     * that no draw takes, a draw with no value or a value of another type, a
+     * rejection (TestCase::assume() or TestCase::reject(), whose message
+     * begins "Explicit test cases must not be rejected"), and anything that
+     * needs generated data other than a draw (TestCase::clone(),
+     * TestCase::repeat(), stateful testing).
      *
-     * If an explicit test case fails, Hegel prints a failure report and
-     * the test's exception propagates. No test case is generated.
+     * If an explicit test case fails, Hegel prints what it drew and noted,
+     * and the test's exception propagates. No test case is generated.
      *
      * @code{.cpp}
      * HEGEL_EXPLICIT_TEST_CASE(division, 7, 0)

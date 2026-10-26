@@ -218,14 +218,11 @@ TEST(FlakyReporting, QuietReportsUnconfirmedFailures) {
     EXPECT_EQ(failure_count, 2u);
     EXPECT_NE(output.find("note: unconfirmed failure"), std::string::npos)
         << output;
-    EXPECT_NE(output.find("Exception: std::runtime_error: first case fails"),
-              std::string::npos)
-        << output;
-    EXPECT_NE(output.find("Exception: std::logic_error: thirtieth case fails"),
-              std::string::npos)
-        << output;
+    EXPECT_NE(message.find("first case fails"), std::string::npos) << message;
+    EXPECT_NE(message.find("thirtieth case fails"), std::string::npos)
+        << message;
     EXPECT_NE(output.find("saw "), std::string::npos) << output;
-    EXPECT_EQ(output.find("rerun with:"), std::string::npos) << output;
+    EXPECT_EQ(output.find("To reproduce"), std::string::npos) << output;
 }
 
 TEST(FlakyReporting, WarnStrictnessKeepsRunning) {
@@ -625,7 +622,9 @@ TEST(Profiles, ProfileVerbosityAndPrintBlobAreKept) {
     testing::internal::CaptureStderr();
     EXPECT_THROW(hegel::test(failing, {.profile = "cpp_quiet"}),
                  std::runtime_error);
-    EXPECT_EQ(testing::internal::GetCapturedStderr(), "");
+    std::string quiet = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(quiet.find("auto draw_1"), std::string::npos) << quiet;
+    EXPECT_EQ(quiet.rfind("\nTo reproduce this failure", 0), 0u) << quiet;
 
     hegel::register_profile(
         "cpp_no_blob", {.print_blob = false, .database = Database::disabled()});
@@ -633,9 +632,8 @@ TEST(Profiles, ProfileVerbosityAndPrintBlobAreKept) {
     EXPECT_THROW(hegel::test(failing, {.profile = "cpp_no_blob"}),
                  std::runtime_error);
     std::string output = testing::internal::GetCapturedStderr();
-    EXPECT_NE(output.find("Exception: std::runtime_error"), std::string::npos)
-        << output;
-    EXPECT_EQ(output.find("rerun with:"), std::string::npos) << output;
+    EXPECT_NE(output.find("auto draw_1 = 11;"), std::string::npos) << output;
+    EXPECT_EQ(output.find("To reproduce"), std::string::npos) << output;
 }
 
 TEST(Profiles, ProfileHealthChecksCanBeCleared) {

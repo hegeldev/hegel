@@ -106,9 +106,6 @@ namespace hegel::impl {
     /// std::invalid_argument.
     hegel_run_t* run_start_blob(hegel_context_t* ctx, hegel_settings_t* s,
                                 std::string_view blob);
-    hegel_test_case_t* test_case_from_blob(hegel_context_t* ctx,
-                                           hegel_settings_t* s,
-                                           std::string_view blob);
     /// NULL once the engine has no more cases to hand out. The returned
     /// handle is caller-owned; release it with hegel_test_case_free.
     hegel_test_case_t* next_test_case(hegel_context_t* ctx, hegel_run_t* run);

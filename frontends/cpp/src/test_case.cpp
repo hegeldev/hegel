@@ -63,7 +63,7 @@ namespace hegel {
 
     TestCase TestCase::clone() const {
         if (data_->explicit_state) {
-            throw std::invalid_argument(
+            throw internal::UsageError(
                 "clone() is not supported in an explicit test case");
         }
         hegel_test_case_t* handle =
@@ -169,18 +169,18 @@ namespace hegel {
                 }
             }
             if (!chosen) {
-                throw std::invalid_argument(
+                throw UsageError(
                     "The explicit test case has no value for the draw " +
                     display + ". Give one with hegel::named(\"" + display +
                     "\", value), or add a positional value.");
             }
             const ExplicitTestCase::Value& value = values[*chosen];
             if (value.value.type() != type) {
-                throw std::invalid_argument(
-                    "The explicit test case value for the draw " + display +
-                    " has type " + impl::demangle(value.value.type().name()) +
-                    ", but the draw produces " + impl::demangle(type.name()) +
-                    ".");
+                throw UsageError("The explicit test case value for the draw " +
+                                 display + " has type " +
+                                 impl::demangle(value.value.type().name()) +
+                                 ", but the draw produces " +
+                                 impl::demangle(type.name()) + ".");
             }
             state.used[*chosen] = true;
             state.lines.push_back("auto " + display + " = " +

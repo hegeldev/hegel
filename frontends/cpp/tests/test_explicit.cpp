@@ -34,15 +34,25 @@ namespace {
         return testing::internal::GetCapturedStderr();
     }
 
+    // Runs `body` with `cases` at the default verbosity, expecting a usage
+    // error, and returns its message. A usage error is not a failure of the
+    // test, so the run prints nothing.
     std::string
     failure_message(const std::function<void(hegel::TestCase&)>& body,
                     const std::vector<hegel::ExplicitTestCase>& cases) {
+        std::string message;
+        testing::internal::CaptureStderr();
         try {
-            hegel::test(body, quiet_settings(), {}, cases);
+            hegel::test(
+                body,
+                hegel::Settings{.test_cases = 10,
+                                .database = hegel::Database::disabled()},
+                {}, cases);
         } catch (const std::invalid_argument& error) {
-            return error.what();
+            message = error.what();
         }
-        return "";
+        EXPECT_EQ(testing::internal::GetCapturedStderr(), "");
+        return message;
     }
 } // namespace
 
@@ -128,19 +138,8 @@ TEST(Explicit, FailureReportShowsTheCase) {
                      hegel::Settings{.database = hegel::Database::disabled()},
                      {}, {hegel::ExplicitTestCase(hegel::named("n", 5))}),
                  std::runtime_error);
-    std::string output = testing::internal::GetCapturedStderr();
-    EXPECT_NE(output.find("--- Failure: explicit_report (file.cpp:3) ---"),
-              std::string::npos)
-        << output;
-    EXPECT_NE(output.find("Falsified by explicit test case (n = 5):"),
-              std::string::npos)
-        << output;
-    EXPECT_NE(output.find("  auto n = 5;\n  checking n\n"), std::string::npos)
-        << output;
-    EXPECT_NE(output.find("Exception: std::runtime_error: boom"),
-              std::string::npos)
-        << output;
-    EXPECT_EQ(output.find("rerun with"), std::string::npos) << output;
+    EXPECT_EQ(testing::internal::GetCapturedStderr(),
+              "auto n = 5;\nchecking n\n");
 }
 
 TEST(Explicit, FailureWithoutDrawsHasNoBody) {
@@ -150,11 +149,20 @@ TEST(Explicit, FailureWithoutDrawsHasNoBody) {
                     hegel::Settings{.database = hegel::Database::disabled()},
                     {}, {hegel::ExplicitTestCase()}),
         std::logic_error);
-    std::string output = testing::internal::GetCapturedStderr();
-    EXPECT_NE(output.find("Falsified by explicit test case ():\n"
-                          "Exception: std::logic_error\n"),
-              std::string::npos)
-        << output;
+    EXPECT_EQ(testing::internal::GetCapturedStderr(), "");
+}
+
+TEST(Explicit, AnInvalidArgumentFromTheTestIsAFailure) {
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         (void)tc.draw("n", gs::integers<int>());
+                         throw std::invalid_argument("from the test");
+                     },
+                     hegel::Settings{.database = hegel::Database::disabled()},
+                     {}, {hegel::ExplicitTestCase(4)}),
+                 std::invalid_argument);
+    EXPECT_EQ(testing::internal::GetCapturedStderr(), "auto n = 4;\n");
 }
 
 TEST(Explicit, QuietFailurePrintsNothing) {
@@ -226,8 +234,9 @@ TEST(Explicit, RejectionIsAnError) {
     std::string message =
         failure_message([](hegel::TestCase& tc) { tc.assume(false); },
                         {hegel::ExplicitTestCase()});
-    EXPECT_NE(message.find("was rejected"), std::string::npos) << message;
-    EXPECT_NE(message.find("Explicit test cases must not be rejected"),
+    EXPECT_EQ(message.rfind("Explicit test cases must not be rejected", 0), 0u)
+        << message;
+    EXPECT_NE(message.find("the explicit test case () was rejected"),
               std::string::npos)
         << message;
 }
@@ -239,8 +248,7 @@ TEST(Explicit, RejectionAfterADrawIsAnError) {
             tc.assume(n > 5);
         },
         {hegel::ExplicitTestCase(1)});
-    EXPECT_NE(message.find("Explicit test cases must not be rejected"),
-              std::string::npos)
+    EXPECT_EQ(message.rfind("Explicit test cases must not be rejected", 0), 0u)
         << message;
 }
 

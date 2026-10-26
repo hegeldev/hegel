@@ -100,15 +100,14 @@ namespace hegel {
      *
      * hegel::test() throws this when Settings::report_multiple_failures is
      * true and the run found more than one failure. Each failure's own
-     * exception is in failures().
+     * exception is in failures(). The message says how many failures there
+     * are, then gives the message of each on a line of its own.
      */
     class MultipleFailures : public std::runtime_error {
       public:
         /// @param failures The exception of each failure.
         explicit MultipleFailures(std::vector<std::exception_ptr> failures)
-            : std::runtime_error("Hegel test failed with " +
-                                 std::to_string(failures.size()) +
-                                 " distinct failures"),
+            : std::runtime_error(describe(failures)),
               failures_(std::move(failures)) {}
 
         /// The exception of each failure, in the order of the report.
@@ -118,6 +117,24 @@ namespace hegel {
         }
 
       private:
+        static std::string
+        describe(const std::vector<std::exception_ptr>& failures) {
+            std::string out = "Property-based test failed with " +
+                              std::to_string(failures.size()) +
+                              " distinct failures.";
+            for (const std::exception_ptr& failure : failures) {
+                out += "\n";
+                try {
+                    std::rethrow_exception(failure);
+                } catch (const std::exception& error) {
+                    out += error.what();
+                } catch (...) {
+                    out += "(an exception that is not a std::exception)";
+                }
+            }
+            return out;
+        }
+
         std::vector<std::exception_ptr> failures_;
     };
 
