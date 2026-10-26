@@ -90,16 +90,18 @@ def pytest_configure(config: Any) -> None:
     values = _settings_from_options(config)
     if profile is None and not values:
         return
+    from hegel import _native
     from hegel.errors import InvalidArgument
-    from hegel.settings import Settings
+    from hegel.settings import Settings, _set_from_string
 
     settings = Settings() if profile is None else Settings.from_profile(profile)
+    native = settings._build()
     for option, key, value in values:
         try:
-            settings = settings._with_strings([(key, value)])
+            _set_from_string(native, key, value)
         except InvalidArgument as e:
             raise pytest.UsageError(f"{option}: {e}") from None
-    Settings.register_profile("pytest", settings)
+    _native.register_profile("pytest", native)
     Settings.set_default_profile("pytest")
 
 

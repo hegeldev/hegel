@@ -326,7 +326,7 @@ def _drive(
     output = RunOutput.resolve()
     native_settings = settings._build(database_key, test_location)
     run = _native.Run.start(native_settings)
-    _drive_run(run, test_fn, settings, output, reproducer, None)
+    _drive_run(run, test_fn, native_settings, output, reproducer, None)
 
 
 def _drive_blob_replay(
@@ -347,7 +347,7 @@ def _drive_blob_replay(
     _drive_run(
         run,
         test_fn,
-        settings,
+        native_settings,
         output,
         reproducer,
         "reproduce_failure: the supplied failure blob did not reproduce a failure. "
@@ -378,7 +378,7 @@ def _run_error(result: _native.RunResult) -> RunError:
 def _drive_run(
     run: _native.Run,
     test_fn: Callable[[TestCase], Any],
-    settings: Settings,
+    settings: _native.Settings,
     output: RunOutput,
     reproducer: Reproducer,
     stale_message: str | None,
@@ -391,7 +391,8 @@ def _drive_run(
     run returns, unless ``stale_message`` is set (a blob replay), where a
     pass means the blob did not reproduce."""
     __tracebackhide__ = True
-    verbosity = settings.verbosity
+    verbosity = Verbosity(settings.get_verbosity())
+    print_blob = settings.get_print_blob()
     quiet = verbosity is Verbosity.quiet
     verbose = verbosity in (Verbosity.verbose, Verbosity.debug)
     captured: dict[str, _Captured] = {}
@@ -438,7 +439,7 @@ def _drive_run(
         if origin not in captured:
             raise InternalError(f"failure {index} ({origin}) was never seen by the test")
         report = captured.pop(origin)
-        note = reproducer(blob) if settings.print_blob and blob is not None else None
+        note = reproducer(blob) if print_blob and blob is not None else None
         _annotate(report.exception, report.lines, None if quiet else caveat, note)
         _trim_traceback(report.exception)
         exceptions.append(report.exception)
@@ -591,13 +592,14 @@ def run(
         # Explicit failures, by origin: the first explicit case failing ends
         # the run, unless every distinct failure is to be reported.
         failures: dict[str, BaseException] = {}
-        if Phase.explicit in resolved.phases:
+        values = resolved._values()
+        if Phase.explicit in values["phases"]:
             output = RunOutput.resolve()
             for case in explicit_cases:
-                outcome = _run_explicit(test_fn, case, resolved.verbosity, output)
+                outcome = _run_explicit(test_fn, case, values["verbosity"], output)
                 if outcome.exception is None:
                     continue
-                if not resolved.report_multiple_failures:
+                if not values["report_multiple_failures"]:
                     raise outcome.exception
                 failures.setdefault(outcome.origin or "", outcome.exception)
         if failures:
