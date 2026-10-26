@@ -528,7 +528,7 @@ type rerun_hint =
     @param database_key
       optional key scoping persisted/replayed failing examples and, under
       [derandomize], the per-test seed. Defaults to the test's [test_location]
-      (as [file:function_name]) so each [let%hegel_test] gets a stable, distinct
+      (as [file::function_name]) so each [let%hegel_test] gets a stable, distinct
       key; pass an explicit key to override. When both are absent, the engine
       uses its own default key.
     @param rerun_hint

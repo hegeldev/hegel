@@ -508,6 +508,41 @@ let test_database_unset_keeps_the_profile () =
         (Poly.equal (round_trip Settings.Default_location) Settings.Default_location))
 ;;
 
+let test_default_database_key () =
+  Test_helpers.with_tempdir ~prefix:"hegel-db" ~f:(fun dir ->
+    let settings phases =
+      { (Settings.create ~test_cases:50 ~seed:0 ()) with
+        database = Settings.Path dir
+      ; phases
+      ; verbosity = Settings.Quiet
+      }
+    in
+    let location = { function_name = "keyed"; file = "keyed.ml"; begin_line = 1 } in
+    let fails () =
+      match
+        run_hegel_test
+          ~settings:(settings [ Settings.Generate; Shrink ])
+          ~test_location:location
+          (fun tc -> if Hegel.draw tc (Hegel.booleans ()) then failwith "keyed")
+      with
+      | () -> Alcotest.fail "expected a failure"
+      | exception Failure _ -> ()
+    in
+    fails ();
+    let replays key =
+      match
+        run_hegel_test
+          ~settings:(settings [ Settings.Reuse ])
+          ~database_key:key
+          (fun tc -> if Hegel.draw tc (Hegel.booleans ()) then failwith "keyed")
+      with
+      | () -> false
+      | exception Failure _ -> true
+    in
+    Alcotest.(check bool) "stored under file::name" true (replays "keyed.ml::keyed");
+    Alcotest.(check bool) "not under file:name" false (replays "keyed.ml:keyed"))
+;;
+
 let test_run_database_unset () =
   let settings =
     { (Hegel.Settings.create ~test_cases:3 ()) with database = Settings.Unset }
@@ -835,6 +870,7 @@ let tests =
   ; Alcotest.test_case "event_value non-finite" `Quick test_event_value_non_finite
   ; Alcotest.test_case "event bad label" `Quick test_event_bad_label
   ; Alcotest.test_case "run database unset" `Quick test_run_database_unset
+  ; Alcotest.test_case "default database key" `Quick test_default_database_key
   ; Alcotest.test_case
       "database unset keeps the profile"
       `Quick

@@ -81,6 +81,8 @@ match run_hegel_test test with
 
 `Settings.database` has a new `Default_location` case, the database at `.hegel` whatever the profile says (`database = "default"` in `hegel.toml`), and `Unset` now keeps the default profile's database rather than forcing `.hegel`: under the `ci` and `workload` profiles, which disable the database, a test whose settings say `Unset` now has none, as with `Database::unset()` in C++ and `Database.unset()` in Java. Settings read from libhegel (`Settings.default ()`, `Settings.from_profile`) report the default database as `Default_location` rather than `Unset`, and `--database default` on a `Hegel.main` binary selects it.
 
+The default database key of a test with a source location is now `file::function_name`, as in the C++ and TypeScript frontends, instead of `file:function_name`. Failing examples saved under the old key are not replayed; they are found again by generation.
+
 `Settings.t` has a new `unbounded_choices` field, also set by `HEGEL_UNBOUNDED_CHOICES` and the `unbounded_choices` key of `hegel.toml`. Setting it lets a test case make any number of choices, rather than stopping it as an overrun once it has made 2^20. `Hegel.main` now sets it instead of suppressing the `Test_cases_too_large` health check.
 
 New test-case operations:

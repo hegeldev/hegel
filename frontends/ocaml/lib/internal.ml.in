@@ -1092,7 +1092,7 @@ let did_not_reproduce_message =
     @param database_key
       optional key scoping persisted/replayed failing examples and, under [derandomize],
       the per-test seed. Defaults to the test's [test_location] (as
-      [file:function_name]) so each [let%hegel_test] gets a stable, distinct
+      [file::function_name]) so each [let%hegel_test] gets a stable, distinct
       key; pass an explicit key to override. When both are absent, the run has
       no database key, so failures are neither stored nor replayed.
     @param failure_blobs
@@ -1121,7 +1121,7 @@ let run_test
     | Some _ as k -> k
     | None ->
       Option.map
-        (fun (loc : test_location) -> Printf.sprintf "%s:%s" loc.file loc.function_name)
+        (fun (loc : test_location) -> Printf.sprintf "%s::%s" loc.file loc.function_name)
         test_location
   in
   let ctx = Ffi.context_new () in
