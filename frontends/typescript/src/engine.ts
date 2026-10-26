@@ -35,6 +35,9 @@ export type StateMachineHandle = { readonly [stateMachineBrand]: never };
 declare const printerBrand: unique symbol;
 export type PrinterHandle = { readonly [printerBrand]: never };
 
+declare const printerOptionsBrand: unique symbol;
+export type PrinterOptionsHandle = { readonly [printerOptionsBrand]: never };
+
 declare const grammarBuilderBrand: unique symbol;
 export type GrammarBuilderHandle = { readonly [grammarBuilderBrand]: never };
 
@@ -351,6 +354,12 @@ export interface Engine {
   labelCombine(ctx: ContextHandle, labels: readonly bigint[]): bigint;
   /** A printer onto `tc`'s region of its family's document, at the default width. */
   testCasePrinter(ctx: ContextHandle, tc: TestCaseHandle): PrinterHandle;
+  /** Printer options, every one at its default (a width of 79). */
+  newPrinterOptions(ctx: ContextHandle): PrinterOptionsHandle;
+  setPrinterMaxWidth(ctx: ContextHandle, options: PrinterOptionsHandle, width: bigint): void;
+  freePrinterOptions(options: PrinterOptionsHandle): void;
+  /** A standalone document laid out per `options` (`null` for the defaults). */
+  newPrinter(ctx: ContextHandle, options: PrinterOptionsHandle | null): PrinterHandle;
   freePrinter(p: PrinterHandle): void;
   printerText(ctx: ContextHandle, p: PrinterHandle, text: string): void;
   printerHardBreak(ctx: ContextHandle, p: PrinterHandle): void;

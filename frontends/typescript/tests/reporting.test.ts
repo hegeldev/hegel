@@ -4,7 +4,7 @@ import { createRunner, Phase, Verbosity, type Settings } from "../src/runnerCore
 import { nodeRuntime } from "../src/nodeRuntime.js";
 import { DidNotReproduceError } from "../src/errors.js";
 import { EngineError } from "../src/engine.js";
-import type { TestCase } from "../src/testCase.js";
+import { ExplicitExampleError, type TestCase } from "../src/testCase.js";
 import { browserRuntime } from "../src/browser/runtime.js";
 import { wasmFixture } from "./wasmFixture.js";
 
@@ -423,8 +423,8 @@ describe("explicit examples", () => {
     );
   });
 
-  it("rejects an example with values left over or missing", () => {
-    const { runner } = capturing();
+  it("rejects an example with values left over or missing without reporting it", () => {
+    const { lines, runner } = capturing();
     expect(() =>
       new runner.Hegel(body)
         .settings(deterministic)
@@ -436,28 +436,88 @@ describe("explicit examples", () => {
     expect(() =>
       new runner.Hegel(body).settings(deterministic).example([], "", 1, 2).runSync(),
     ).toThrow("was not fully used: 2 positional value(s) not drawn");
-    expect(() => new runner.Hegel(body).settings(deterministic).example([]).runSync()).toThrow(
-      'Explicit example example([]) has no value for draw "name"',
+    expect(() =>
+      new runner.Hegel(body)
+        .settings({ ...deterministic, reportMultipleFailures: true })
+        .example([])
+        .runSync(),
+    ).toThrow(
+      new ExplicitExampleError(
+        'Explicit example example([]) has no value for draw "name": pass it by name, or add a positional value',
+      ),
     );
+    expect(lines).toEqual([]);
   });
 
-  it("does not support draws the example cannot supply", async () => {
-    const { runner } = capturing();
-    const quiet = { ...deterministic, verbosity: Verbosity.Quiet };
+  it("refuses a silent draw as a usage error, not a failing example", () => {
+    const { lines, runner } = capturing();
     expect(() =>
-      new runner.Hegel((tc) => tc.drawSilent(gs.integers())).settings(quiet).example(1).runSync(),
-    ).toThrow("drawSilent is not supported in explicit examples");
-    await expect(
+      new runner.Hegel((tc) => tc.drawSilent(gs.integers()))
+        .settings({ ...deterministic, reportMultipleFailures: true })
+        .example(1)
+        .runSync(),
+    ).toThrow(new ExplicitExampleError("drawSilent is not supported in explicit examples"));
+    expect(lines).toEqual([]);
+  });
+
+  it("runs a repeat's body once in an explicit example", async () => {
+    const { lines, runner } = capturing();
+    const explicitOnly = { ...deterministic, phases: [Phase.Explicit] };
+    const seen: number[] = [];
+    const body = (tc: TestCase) => () => {
+      const n = tc.draw(gs.integers(), "n");
+      seen.push(n);
+      if (n === 5) throw new Error("five");
+    };
+    new runner.Hegel((tc) => tc.repeat(body(tc))).settings(explicitOnly).example(1).runSync();
+    await new runner.Hegel(async (tc) => {
+      await tc.repeatAsync(body(tc));
+    })
+      .settings(explicitOnly)
+      .example(2)
+      .run();
+    expect(seen).toEqual([1, 2]);
+    const error = await rejectionOf(() =>
       new runner.Hegel(async (tc) => {
-        await tc.repeatAsync(() => {});
+        await tc.repeatAsync(body(tc));
       })
-        .settings(quiet)
-        .example()
+        .settings(explicitOnly)
+        .example(5)
         .run(),
-    ).rejects.toThrow("TestCase.repeat is not supported in explicit examples");
+    );
+    expect((error as Error).message).toBe("five");
+    expect(lines).toEqual(["Explicit example(5) failed:", "// Repetition #1", "  const n = 5;"]);
     expect(() =>
-      new runner.Hegel((tc) => tc.repeat(() => {})).settings(quiet).example().runSync(),
-    ).toThrow("TestCase.repeat is not supported in explicit examples");
+      new runner.Hegel((tc) =>
+        tc.repeat(() => {
+          tc.reject();
+        }),
+      )
+        .settings(explicitOnly)
+        .example()
+        .runSync(),
+    ).toThrow(/^Explicit test cases must not be rejected, but example\(\) was rejected/);
+  });
+
+  it("lays out an explicit example's report as the engine lays out a generated one's", () => {
+    const { lines, runner } = capturing();
+    const values = Array.from({ length: 30 }, (_, i) => i * 1000);
+    const error = thrownBy(() =>
+      new runner.Hegel((tc) => {
+        tc.draw(gs.arrays(gs.integers()), "xs");
+        throw new Error("explicit");
+      })
+        .settings(deterministic)
+        .example(values)
+        .runSync(),
+    );
+    expect((error as Error).message).toBe("explicit");
+    expect(lines).toEqual([
+      `Explicit example([${values.join(", ")}]) failed:`,
+      "const xs = [",
+      ...values.map((value) => `    ${value},`),
+      "];",
+    ]);
   });
 
   it("indents a block's draws and notes in an explicit example's report", () => {

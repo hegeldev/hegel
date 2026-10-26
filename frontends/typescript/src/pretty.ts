@@ -13,9 +13,11 @@
  * @packageDocumentation
  */
 
+import type { ContextHandle, Engine, PrinterHandle } from "./engine.js";
+
 /**
  * A region of a printed document: the engine's printer for a test case, or a
- * {@link TextPrinter} where there is no engine (an explicit example).
+ * view of an {@link EngineDocument} (an explicit example's).
  */
 export interface Printer {
   /** Literal text, with no newlines. */
@@ -45,107 +47,142 @@ export interface Printer {
   abortSpeculative(): void;
 }
 
-class TextDocument {
-  readonly regions: string[][] = [[]];
-  held: string[] = [];
-
-  get current(): string[] {
-    return this.regions[this.regions.length - 1];
-  }
-
-  release(): void {
-    if (this.regions.length === 1) {
-      this.current.push(...this.held);
-      this.held = [];
-    }
-  }
+interface LineState {
+  atLineStart: boolean;
+  owesBreak: boolean;
+  indent: number;
 }
 
 /**
- * A {@link Printer} that lays nothing out: each group stays on one line, a
- * break point is its separator, and text only a broken group shows is left
- * out. Notes
- * made while a speculative region is open are held until it closes, as the
- * engine's printer does. {@link indented} gives a view of the same document
- * whose lines are indented further, as the engine's `hegel_test_case_block`
- * does.
+ * A standalone engine document (`hegel_printer_new`), written through
+ * {@link Printer} views that each indent their lines by a fixed amount, as
+ * the engine's `hegel_test_case_block` does for a test case's document: what
+ * an explicit example prints into, so that it is laid out exactly like a
+ * generated test case's report. A line's hard break is written only once the
+ * next line's content arrives, so that it carries that line's indentation.
+ * Notes made while a speculative region is open are held until it closes, as
+ * the engine's `hegel_note` does.
  */
-export class TextPrinter implements Printer {
-  private atLineStart = true;
+export class EngineDocument {
+  private readonly handle: PrinterHandle;
+  private state: LineState = { atLineStart: true, owesBreak: false, indent: 0 };
+  private readonly saved: LineState[] = [];
+  private held: [number, string][] = [];
 
+  /** `maxWidth` is the width lines are laid out to, `null` for the engine's default. */
   constructor(
-    private readonly document: TextDocument = new TextDocument(),
-    private readonly indent: string = "",
-  ) {}
-
-  /** A view of this document whose lines are indented `by` columns further. */
-  indented(by: number): TextPrinter {
-    return new TextPrinter(this.document, this.indent + " ".repeat(by));
-  }
-
-  text(text: string): void {
-    if (this.atLineStart) {
-      this.document.current.push(this.indent);
-      this.atLineStart = false;
+    private readonly lib: Engine,
+    private readonly ctx: ContextHandle,
+    maxWidth: bigint | null = null,
+  ) {
+    if (maxWidth === null) {
+      this.handle = lib.newPrinter(ctx, null);
+      return;
     }
-    this.document.current.push(text);
+    const options = lib.newPrinterOptions(ctx);
+    try {
+      lib.setPrinterMaxWidth(ctx, options, maxWidth);
+      this.handle = lib.newPrinter(ctx, options);
+    } finally {
+      lib.freePrinterOptions(options);
+    }
   }
 
-  hardBreak(): void {
-    this.document.current.push("\n");
-    this.atLineStart = true;
+  /** A {@link Printer} whose lines are indented `indent` columns. */
+  view(indent = 0): Printer {
+    const { lib, ctx, handle } = this;
+    const write = (operation: () => void): void => {
+      this.startLine(indent);
+      operation();
+    };
+    return {
+      text: (text) => write(() => lib.printerText(ctx, handle, text)),
+      hardBreak: () => {
+        this.startLine(indent);
+        this.state.atLineStart = true;
+        this.state.owesBreak = true;
+      },
+      reflow: (text) => write(() => lib.printerReflow(ctx, handle, text)),
+      beginGroup: (by, open) => write(() => lib.printerBeginGroup(ctx, handle, by, open)),
+      endGroup: (close) => write(() => lib.printerEndGroup(ctx, handle, close)),
+      breakable: (sep) => write(() => lib.printerBreakable(ctx, handle, sep)),
+      ifBreak: (text) => write(() => lib.printerIfBreak(ctx, handle, text)),
+      comment: (text) => write(() => lib.printerComment(ctx, handle, text)),
+      shiftIndent: (delta) => {
+        lib.printerShiftIndent(ctx, handle, delta);
+        this.state.indent += delta;
+      },
+      beginSpeculative: () => {
+        lib.printerBeginSpeculative(ctx, handle);
+        this.saved.push({ ...this.state });
+      },
+      commitSpeculative: () => {
+        lib.printerCommitSpeculative(ctx, handle);
+        this.saved.pop();
+        this.release();
+      },
+      abortSpeculative: () => {
+        lib.printerAbortSpeculative(ctx, handle);
+        this.state = this.saved.pop()!;
+        this.release();
+      },
+    };
   }
 
-  reflow(text: string): void {
-    this.text(text);
+  /** Append a note at `indent`: each line of `message` becomes its own output line. */
+  note(indent: number, message: string): void {
+    const lines = message.split("\n").map((line): [number, string] => [indent, line]);
+    this.held.push(...lines);
+    if (this.saved.length === 0) this.release();
   }
 
-  beginGroup(_indent: number, open: string): void {
-    this.text(open);
-  }
-
-  endGroup(close: string): void {
-    this.text(close);
-  }
-
-  breakable(sep: string): void {
-    this.text(sep);
-  }
-
-  ifBreak(): void {}
-
-  comment(text: string): void {
-    this.text(text);
-  }
-
-  shiftIndent(): void {}
-
-  beginSpeculative(): void {
-    this.document.regions.push([]);
-  }
-
-  commitSpeculative(): void {
-    const region = this.document.regions.pop()!;
-    this.document.current.push(...region);
-    this.document.release();
-  }
-
-  abortSpeculative(): void {
-    this.document.regions.pop();
-    this.atLineStart = true;
-    this.document.release();
-  }
-
-  /** Append a note: each line of `message` becomes its own output line. */
-  note(message: string): void {
-    const lines = message.split("\n").map((line) => `${this.indent}${line}\n`);
-    if (this.document.regions.length > 1) this.document.held.push(...lines);
-    else this.document.current.push(...lines);
-  }
-
-  /** Everything printed to the document, one line per element. */
+  /** Everything printed to the document, one line per element. Seals it. */
   lines(): string[] {
-    return splitLines(this.document.regions[0].join(""));
+    return splitLines(this.lib.printerValue(this.ctx, this.handle));
+  }
+
+  dispose(): void {
+    this.lib.freePrinter(this.handle);
+  }
+
+  private release(): void {
+    if (this.saved.length > 0) return;
+    const held = this.held;
+    this.held = [];
+    for (const [indent, line] of held) {
+      const view = this.view(indent);
+      view.text(line);
+      view.hardBreak();
+    }
+  }
+
+  private startLine(indent: number): void {
+    const state = this.state;
+    if (!state.atLineStart) return;
+    this.lib.printerShiftIndent(this.ctx, this.handle, indent - state.indent);
+    state.indent = indent;
+    if (state.owesBreak) this.lib.printerHardBreak(this.ctx, this.handle);
+    else this.lib.printerText(this.ctx, this.handle, " ".repeat(indent));
+    state.atLineStart = false;
+    state.owesBreak = false;
+  }
+}
+
+/** The widest a line can be: a document laid out to it never breaks a group. */
+const UNBOUNDED = 0xffffffffffffffffn;
+
+/** What `print` writes, on one line, through the engine's printer. */
+export function printedLine(
+  lib: Engine,
+  ctx: ContextHandle,
+  print: (printer: Printer) => void,
+): string {
+  const document = new EngineDocument(lib, ctx, UNBOUNDED);
+  try {
+    print(document.view());
+    return document.lines().join("\n");
+  } finally {
+    document.dispose();
   }
 }
 
@@ -289,13 +326,6 @@ export class PrettyPrinter {
  */
 export function printValue(printer: Printer, value: unknown): void {
   printValueIn(printer, value, new Set());
-}
-
-/** `value` printed on one line; see {@link printValue}. */
-export function repr(value: unknown): string {
-  const printer = new TextPrinter();
-  printValue(printer, value);
-  return printer.lines().join("\n");
 }
 
 function printValueIn(printer: Printer, value: unknown, enclosing: Set<object>): void {

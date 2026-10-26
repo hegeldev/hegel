@@ -83,8 +83,7 @@ export function runnerTestName(): string | null {
  * enclosing function's, else its line.
  */
 export function locationOf(site: CallSite, testFn: AnyFunction): TestLocation {
-  const name =
-    testFn.name || (runnerTestName() ?? site.name ?? `<anonymous at line ${site.line}>`);
+  const name = testFn.name || (runnerTestName() ?? site.name ?? `<anonymous at line ${site.line}>`);
   const module = site.file.replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, "");
   return { file: site.file, beginLine: site.line, class: module, function: name };
 }

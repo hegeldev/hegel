@@ -15,6 +15,7 @@ import {
   type RecursionHandle,
   type StateMachineHandle,
   type PrinterHandle,
+  type PrinterOptionsHandle,
   type GrammarBuilderHandle,
   type GrammarHandle,
   type GrammarDrawHandle,
@@ -448,6 +449,21 @@ export class WasmEngine implements Engine {
   testCasePrinter(ctx: ContextHandle, tc: TestCaseHandle): PrinterHandle {
     const c = this.ptr(ctx);
     return this.handle(c, "test_case_printer", [c, this.ptr(tc), 0]);
+  }
+  newPrinterOptions(ctx: ContextHandle): PrinterOptionsHandle {
+    const c = this.ptr(ctx);
+    return this.handle(c, "printer_options_new", [c]);
+  }
+  setPrinterMaxWidth(ctx: ContextHandle, options: PrinterOptionsHandle, width: bigint): void {
+    const c = this.ptr(ctx);
+    this.check(c, "printer_options_set_max_width", [c, this.ptr(options), u64(width)]);
+  }
+  freePrinterOptions(options: PrinterOptionsHandle): void {
+    this.free("printer_options_free", options);
+  }
+  newPrinter(ctx: ContextHandle, options: PrinterOptionsHandle | null): PrinterHandle {
+    const c = this.ptr(ctx);
+    return this.handle(c, "printer_new", [c, options === null ? 0 : this.ptr(options)]);
   }
   freePrinter(p: PrinterHandle): void {
     this.free("printer_free", p);

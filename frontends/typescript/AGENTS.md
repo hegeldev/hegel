@@ -150,7 +150,11 @@ so a Node import creeping into a shared module fails `check-lint`.
    call site: no location, and the key falls back to the function's name
    (none for an anonymous one).
 6. **Shared runner** (`src/runnerCore.ts`) — the sync and async run loops:
-   explicit examples (`src/explicit.ts`), then `run_start` (or
+   explicit examples (`src/explicit.ts`: each runs once, with no engine test
+   case, its draws and notes laid out by a standalone engine printer from
+   `hegel_printer_new`, and its description printed on one line with an
+   unbounded `hegel_printer_options_t` width; a usage error in one, an
+   `ExplicitExampleError`, fails the run as itself), then `run_start` (or
    `run_start_blob` for each `reproduceFailure` blob) → `next_test_case` →
    `mark_complete` → `run_result`. The engine owns the whole run, the final
    replay of each failure included; the runner never replays. A test case

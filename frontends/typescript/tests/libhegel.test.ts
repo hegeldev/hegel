@@ -145,6 +145,16 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
       out[0] = {} as Ptr;
       return 0;
     },
+    printerOptionsNew: (_ctx, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    printerOptionsSetMaxWidth: () => 0,
+    printerOptionsFree: noop,
+    printerNew: (_ctx, _options, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
     printerFree: noop,
     printerText: () => 0,
     printerReflow: () => 0,

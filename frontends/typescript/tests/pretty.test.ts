@@ -1,6 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { prettyPrint, PrettyPrinter, repr, splitLines, TextPrinter } from "../src/pretty.js";
+import {
+  EngineDocument,
+  prettyPrint,
+  PrettyPrinter,
+  printValue,
+  printedLine,
+  splitLines,
+} from "../src/pretty.js";
+import { getLibhegel } from "../src/session.js";
 import * as hegel from "@hegeldev/hegel";
+import type { Engine } from "../src/engine.js";
+import { wasmFixture } from "./wasmFixture.js";
+
+const lib = getLibhegel();
+const ctx = lib.newContext();
+
+function repr(value: unknown): string {
+  return printedLine(lib, ctx, (printer) => printValue(printer, value));
+}
+
+function document(body: (document: EngineDocument) => void): string[] {
+  const doc = new EngineDocument(lib, ctx);
+  try {
+    body(doc);
+    return doc.lines();
+  } finally {
+    doc.dispose();
+  }
+}
 
 describe("repr", () => {
   it.each([
@@ -71,51 +98,84 @@ describe("repr", () => {
   });
 });
 
-describe("TextPrinter", () => {
+describe("EngineDocument", () => {
   it("keeps committed regions and drops aborted ones", () => {
-    const printer = new TextPrinter();
-    printer.text("const a = ");
-    printer.reflow("1");
-    printer.hardBreak();
-    printer.beginSpeculative();
-    printer.text("dropped");
-    printer.abortSpeculative();
-    printer.beginSpeculative();
-    printer.text("kept");
-    printer.hardBreak();
-    printer.commitSpeculative();
-    expect(printer.lines()).toEqual(["const a = 1", "kept"]);
+    const lines = document((doc) => {
+      const printer = doc.view();
+      printer.text("const a = ");
+      printer.reflow("1");
+      printer.hardBreak();
+      printer.beginSpeculative();
+      printer.text("dropped");
+      printer.abortSpeculative();
+      printer.beginSpeculative();
+      printer.text("kept");
+      printer.hardBreak();
+      printer.commitSpeculative();
+    });
+    expect(lines).toEqual(["const a = 1", "kept"]);
   });
 
   it("holds notes made inside a speculative region until it closes", () => {
-    const printer = new TextPrinter();
-    printer.beginSpeculative();
-    printer.beginSpeculative();
-    printer.text("x");
-    printer.note("inner\nnote");
-    printer.hardBreak();
-    printer.commitSpeculative();
-    printer.text("y");
-    printer.hardBreak();
-    printer.commitSpeculative();
-    printer.note("after");
-    expect(printer.lines()).toEqual(["x", "y", "inner", "note", "after"]);
+    const lines = document((doc) => {
+      const printer = doc.view();
+      printer.beginSpeculative();
+      printer.beginSpeculative();
+      printer.text("x");
+      doc.note(0, "inner\nnote");
+      printer.hardBreak();
+      printer.commitSpeculative();
+      printer.text("y");
+      printer.hardBreak();
+      printer.commitSpeculative();
+      doc.note(0, "after");
+    });
+    expect(lines).toEqual(["x", "y", "inner", "note", "after"]);
   });
 
   it("indents an indented view's lines, starting afresh after an aborted region", () => {
-    const printer = new TextPrinter();
-    const inner = printer.indented(2);
-    const innermost = inner.indented(2);
-    inner.beginSpeculative();
-    inner.text("dropped ");
-    inner.abortSpeculative();
-    inner.text("a = ");
-    inner.reflow("1");
-    inner.hardBreak();
-    innermost.note("deep");
-    printer.text("top");
-    printer.hardBreak();
-    expect(printer.lines()).toEqual(["  a = 1", "    deep", "top"]);
+    const lines = document((doc) => {
+      const printer = doc.view();
+      const inner = doc.view(2);
+      inner.beginSpeculative();
+      inner.text("dropped ");
+      inner.abortSpeculative();
+      inner.text("a = ");
+      inner.reflow("1");
+      inner.hardBreak();
+      doc.note(4, "deep");
+      printer.text("top");
+      printer.hardBreak();
+      printer.hardBreak();
+      printer.text("after a blank line");
+    });
+    expect(lines).toEqual(["  a = 1", "    deep", "top", "", "after a blank line"]);
+  });
+
+  it("lays a group out within the width, and never breaks one on a single line", () => {
+    const long = Array.from({ length: 30 }, (_, i) => `item${i}`);
+    const lines = document((doc) => {
+      const printer = doc.view(2);
+      printer.text("const xs = ");
+      printValue(printer, long);
+      printer.text(";");
+    });
+    expect(lines).toEqual(["  const xs = [", ...long.map((item) => `      "${item}",`), "  ];"]);
+    expect(repr(long)).toBe(`[${long.map((item) => `"${item}"`).join(", ")}]`);
+  });
+});
+
+describe.each([
+  ["native", () => getLibhegel() as Engine],
+  ["wasm", () => wasmFixture().engine as Engine],
+])("printedLine on the %s engine", (_name, engine) => {
+  it("prints a value on one line however long it is", () => {
+    const wide = engine();
+    const wideCtx = wide.newContext();
+    const long = Array.from({ length: 40 }, (_, i) => i);
+    expect(printedLine(wide, wideCtx, (printer) => printValue(printer, long))).toBe(
+      `[${long.join(", ")}]`,
+    );
   });
 });
 
@@ -152,9 +212,9 @@ describe("printing through a class's own prettyPrint method", () => {
     }
   }
 
-  it("prints flat on a text printer, nested values included", () => {
+  it("prints through the engine's layout, nested values included", () => {
     expect(repr(new Pair(1, new Pair("x", [2n])))).toBe(
-      'Pair(1, Pair("x", [2n]) /* ok */  // pair) /* ok */  // pair',
+      ["Pair(1,", '     Pair("x", [2n]) /* ok */,  // pair', ") /* ok */  // pair"].join("\n"),
     );
   });
 
@@ -201,6 +261,11 @@ describe("printing through a class's own prettyPrint method", () => {
       "a group's closing text must not contain a newline",
     ],
   ])("rejects a newline in %s", (_what, write, message) => {
-    expect(() => write(new PrettyPrinter(new TextPrinter()))).toThrow(message);
+    const doc = new EngineDocument(lib, ctx);
+    try {
+      expect(() => write(new PrettyPrinter(doc.view()))).toThrow(message);
+    } finally {
+      doc.dispose();
+    }
   });
 });

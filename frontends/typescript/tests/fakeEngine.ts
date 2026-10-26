@@ -14,6 +14,7 @@ import {
   type RecursionHandle,
   type StateMachineHandle,
   type PrinterHandle,
+  type PrinterOptionsHandle,
   type GrammarBuilderHandle,
   type GrammarHandle,
   type GrammarDrawHandle,
@@ -35,6 +36,7 @@ export const derivedCase = {} as TestCaseHandle;
 export const grammarBuilder = {} as GrammarBuilderHandle;
 export const grammar = {} as GrammarHandle;
 export const grammarDraw = {} as GrammarDrawHandle;
+export const printerOptions = {} as PrinterOptionsHandle;
 
 export class FakePrinter {
   regions: string[] = [""];
@@ -119,6 +121,10 @@ export function fakeEngine() {
       if (!printers.has(tc)) printers.set(tc, new FakePrinter());
       return printers.get(tc)!.handle;
     }),
+    newPrinterOptions: vi.fn<Engine["newPrinterOptions"]>(() => printerOptions),
+    setPrinterMaxWidth: vi.fn<Engine["setPrinterMaxWidth"]>(),
+    freePrinterOptions: vi.fn<Engine["freePrinterOptions"]>(),
+    newPrinter: vi.fn<Engine["newPrinter"]>(() => new FakePrinter().handle),
     freePrinter: vi.fn<Engine["freePrinter"]>(),
     printerText: vi.fn<Engine["printerText"]>((_ctx, p, text) => printerOf(p).push(text)),
     printerHardBreak: vi.fn<Engine["printerHardBreak"]>((_ctx, p) => printerOf(p).push("\n")),

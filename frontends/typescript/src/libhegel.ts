@@ -45,6 +45,7 @@ import {
   type RecursionHandle,
   type StateMachineHandle,
   type PrinterHandle,
+  type PrinterOptionsHandle,
   type GrammarBuilderHandle,
   type GrammarHandle,
   type GrammarDrawHandle,
@@ -222,6 +223,10 @@ export interface Bindings {
   labelCombine: (ctx: Ptr, labels: readonly bigint[], out: (number | bigint)[]) => number;
 
   testCasePrinter: (ctx: Ptr, tc: Ptr, out: Ptr[]) => number;
+  printerOptionsNew: (ctx: Ptr, out: Ptr[]) => number;
+  printerOptionsSetMaxWidth: (ctx: Ptr, options: Ptr, width: bigint) => number;
+  printerOptionsFree: (options: Ptr) => void;
+  printerNew: (ctx: Ptr, options: Ptr | null, out: Ptr[]) => number;
   printerFree: (p: Ptr) => void;
   printerText: (ctx: Ptr, p: Ptr, text: string) => number;
   printerReflow: (ctx: Ptr, p: Ptr, text: string) => number;
@@ -550,6 +555,12 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   const testCasePrinter = f(
     "int hegel_test_case_printer(void* ctx, void* tc, void* options, _Out_ void** out)",
   );
+  const printerOptionsNew = f("int hegel_printer_options_new(void* ctx, _Out_ void** out)");
+  const printerOptionsSetMaxWidth = f(
+    "int hegel_printer_options_set_max_width(void* ctx, void* options, uint64_t max_width)",
+  );
+  const printerOptionsFree = f("int hegel_printer_options_free(void* ctx, void* options)");
+  const printerNew = f("int hegel_printer_new(void* ctx, void* options, _Out_ void** out)");
   const printerFree = f("int hegel_printer_free(void* ctx, void* printer)");
   const printerText = fs("hegel_printer_text", ["void*", "void*", stringType]);
   const printerReflow = fs("hegel_printer_reflow", ["void*", "void*", "void*", stringType]);
@@ -981,6 +992,12 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     labelFromName: (ctx, name, out) => labelFromName(ctx, nativeString(name), out),
     labelCombine: (ctx, labels, out) => labelCombine(ctx, [...labels], labels.length, out),
     testCasePrinter: (ctx, tc, out) => testCasePrinter(ctx, tc, null, out),
+    printerOptionsNew: (ctx, out) => printerOptionsNew(ctx, out),
+    printerOptionsSetMaxWidth: (ctx, options, width) =>
+      printerOptionsSetMaxWidth(ctx, options, width),
+    printerOptionsFree: (options) =>
+      checked(printerOptionsFree(null, options), "printerOptionsFree"),
+    printerNew: (ctx, options, out) => printerNew(ctx, options, out),
     printerFree: (p) => checked(printerFree(null, p), "printerFree"),
     printerText: (ctx, p, text) => printerText(ctx, p, nativeString(text)),
     printerReflow: (ctx, p, text) => printerReflow(ctx, p, null, nativeString(text)),
@@ -1558,6 +1575,36 @@ export class Libhegel implements Engine {
       "hegel_test_case_printer",
     );
     return this.requireHandle<PrinterHandle>(out[0], "hegel_test_case_printer");
+  }
+
+  /** Printer options, every one at its default: released with {@link freePrinterOptions}. */
+  newPrinterOptions(ctx: Ptr): PrinterOptionsHandle {
+    const out: Ptr[] = [null];
+    this.check(ctx, this.fns.printerOptionsNew(this.ptr(ctx), out), "hegel_printer_options_new");
+    return this.requireHandle<PrinterOptionsHandle>(out[0], "hegel_printer_options_new");
+  }
+
+  setPrinterMaxWidth(ctx: Ptr, options: Ptr, width: bigint): void {
+    this.check(
+      ctx,
+      this.fns.printerOptionsSetMaxWidth(this.ptr(ctx), this.ptr(options), width),
+      "hegel_printer_options_set_max_width",
+    );
+  }
+
+  freePrinterOptions(options: Ptr): void {
+    this.release(options, (pointer) => this.fns.printerOptionsFree(pointer));
+  }
+
+  /** A standalone document: released with {@link freePrinter}. */
+  newPrinter(ctx: Ptr, options: PrinterOptionsHandle | null): PrinterHandle {
+    const out: Ptr[] = [null];
+    this.check(
+      ctx,
+      this.fns.printerNew(this.ptr(ctx), options === null ? null : this.ptr(options), out),
+      "hegel_printer_new",
+    );
+    return this.requireHandle<PrinterHandle>(out[0], "hegel_printer_new");
   }
 
   freePrinter(p: Ptr): void {
