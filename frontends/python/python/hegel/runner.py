@@ -276,7 +276,7 @@ def _annotate(
     if lines:
         notes.append("Falsifying example:\n" + "\n".join(lines))
     if caveat is not None:
-        notes.append(caveat)
+        notes.append(f"note: {caveat}")
     if reproducer is not None:
         notes.append(reproducer)
     for note in notes:

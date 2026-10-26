@@ -405,7 +405,8 @@ class TestCase:
         :meth:`assume`) is skipped and the next one runs. A failure in any
         repetition fails the test case, and shrinking reduces the number of
         repetitions along with the values each drew. Each repetition is
-        reported under a ``// Repetition #N`` heading.
+        reported under a ``// Repetition #N`` heading. In an explicit test
+        case, ``body`` runs once.
 
         ``repeat`` never returns normally: it raises an internal
         control-flow signal that ends the test body, so code after it does
@@ -425,6 +426,10 @@ class TestCase:
         """
         from hegel.generators import booleans, integers
 
+        if self._global.explicit is not None:
+            self.note("// Repetition #1")
+            body()
+            raise LoopDone()
         min_size = self.draw_silent(integers(min_value=0, max_value=1 << 40))
         collection = Collection(self, min_size, None)
         iteration = 0

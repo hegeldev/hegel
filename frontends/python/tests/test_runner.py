@@ -300,7 +300,7 @@ def test_explicit_test_case_errors():
     def rejects_in_repeat(tc):
         tc.repeat(lambda: tc.assume(tc.draw(gs.integers(), name="x") > 5))
 
-    with pytest.raises(hegel.InvalidArgument, match="draw_silent is not supported"):
+    with pytest.raises(hegel.InvalidArgument, match="Explicit test cases must not be rejected"):
         rejects_in_repeat()
 
     @hegel.explicit_test_case(1)
@@ -318,6 +318,27 @@ def test_explicit_test_case_errors():
         raise hegel.errors.LoopDone()
 
     done()
+
+
+def test_explicit_case_runs_repeat_body_once():
+    runs = []
+
+    @hegel.explicit_test_case(3)
+    @hegel.test(phases=[Phase.explicit])
+    def passes(tc):
+        tc.repeat(lambda: runs.append(tc.draw(gs.integers(), name="x")))
+
+    passes()
+    assert runs == [3]
+
+    @hegel.explicit_test_case(3)
+    @hegel.test(phases=[Phase.explicit])
+    def fails(tc):
+        tc.repeat(lambda: tc.draw(gs.integers(), name="x") < 0 or pytest.fail("boom"))
+
+    with pytest.raises(pytest.fail.Exception) as info:
+        fails()
+    assert info.value.__notes__[0] == "Falsifying example:\n// Repetition #1\nx_1 = 3"
 
 
 def test_explicit_cases_skipped_without_explicit_phase():
@@ -351,7 +372,7 @@ def test_unconfirmed_failure_is_reported_with_a_caveat(output):
         assert calls[0] != 1
 
     error = failing(body)
-    assert any(note.startswith("unconfirmed failure") for note in notes(error))
+    assert any(note.startswith("note: unconfirmed failure") for note in notes(error))
     assert not any("reproduce_failure" in note for note in notes(error))
 
 
