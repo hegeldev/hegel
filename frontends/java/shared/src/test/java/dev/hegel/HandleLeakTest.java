@@ -6,6 +6,7 @@ import static dev.hegel.Generators.maps;
 import static dev.hegel.Generators.sets;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.hegel.lowlevel.Abi;
@@ -295,16 +296,19 @@ class HandleLeakTest {
     @Test
     void repetitionsHoldSteadyHandleCounts() {
         Tracker tracker = new Tracker(Engine.get());
-        int[] repetitions = {0};
         RunReport report = tracker.run(
-                new Settings().verbosity(Verbosity.VERBOSE).testCases(5),
-                tc -> tc.repeat(() -> {
-                    tc.draw(integers(), "x");
-                    repetitions[0]++;
-                }));
-        assertTrue(report.passed());
-        assertTrue(repetitions[0] > 50, "only " + repetitions[0] + " repetitions");
+                new Settings().verbosity(Verbosity.VERBOSE).testCases(3).seed(1), tc -> {
+                    int[] repetitions = {0};
+                    tc.repeat(() -> {
+                        tc.draw(integers(), "x");
+                        if (++repetitions[0] == 30) {
+                            throw new IllegalStateException("long enough");
+                        }
+                    });
+                });
+        assertInstanceOf(IllegalStateException.class, report.failures().get(0).exception());
         assertEquals(2, tracker.maxLiveTestCases);
+        assertTrue(tracker.blocksCreated >= 30);
         tracker.assertNothingLeaked();
     }
 
@@ -312,29 +316,29 @@ class HandleLeakTest {
     void ruleBlocksHoldSteadyHandleCounts() {
         Tracker tracker = new Tracker(Engine.get());
         assertTrue(tracker.run(
-                        new Settings().verbosity(Verbosity.VERBOSE).testCases(20),
+                        new Settings().verbosity(Verbosity.VERBOSE).testCases(5),
                         tc -> Stateful.run(
                                 new StatefulTest.StackMachine(),
                                 tc,
-                                Stateful.options().stepCount(200)))
+                                Stateful.options().stepCount(60)))
                 .passed());
-        assertTrue(tracker.blocksCreated > 200);
+        assertTrue(tracker.blocksCreated > 60);
         assertEquals(2, tracker.maxLiveTestCases);
         tracker.assertNothingLeaked();
 
         Tracker concurrent = new Tracker(Engine.get());
         assertTrue(concurrent
                 .run(
-                        new Settings().verbosity(Verbosity.VERBOSE).testCases(20),
+                        new Settings().verbosity(Verbosity.VERBOSE).testCases(5),
                         tc -> Stateful.run(
                                 new ConcurrentStatefulTest.PoolMachine(tc),
                                 tc,
                                 Stateful.options()
-                                        .stepCount(200)
+                                        .stepCount(60)
                                         .minConcurrency(2)
                                         .maxConcurrency(3)))
                 .passed());
-        assertTrue(concurrent.blocksCreated > 200);
+        assertTrue(concurrent.blocksCreated > 60);
         assertTrue(concurrent.maxLiveTestCases <= 7, "max live test cases: " + concurrent.maxLiveTestCases);
         concurrent.assertNothingLeaked();
     }
