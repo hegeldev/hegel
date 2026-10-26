@@ -383,7 +383,7 @@ describe("explicit examples", () => {
         .example(1)
         .runSync(),
     ).toThrow(
-      "Explicit test cases must not be rejected, but example(1) was rejected by tc.assume or tc.reject",
+      /^Explicit test cases must not be rejected, but example\(1\) was rejected by tc\.assume or tc\.reject$/,
     );
   });
 
@@ -397,7 +397,7 @@ describe("explicit examples", () => {
         .namedExample({ x: 1 })
         .run(),
     ).rejects.toThrow(
-      "Explicit test cases must not be rejected, but namedExample({ x: 1 }) was rejected by tc.assume or tc.reject",
+      /^Explicit test cases must not be rejected, but namedExample\(\{ x: 1 \}\) was rejected by tc\.assume or tc\.reject$/,
     );
   });
 

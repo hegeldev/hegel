@@ -918,7 +918,7 @@ export class Hegel {
           }
           if (count > 1 && !quiet) this.output("");
           for (const line of report.lines) this.output(line);
-          if (caveat !== null && !quiet) this.output(caveat);
+          if (caveat !== null && !quiet) this.output(`note: ${caveat}`);
           if (blob !== null && printBlob) {
             this.output("");
             this.output("To reproduce this failure, replay it with the Hegel builder:");

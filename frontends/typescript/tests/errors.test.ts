@@ -133,7 +133,7 @@ describe("failures", () => {
         throw failure;
       }),
     ).toThrow(failure);
-    expect(runtime.output).toHaveBeenCalledWith("confirmed 3 times out of 4");
+    expect(runtime.output).toHaveBeenCalledWith("note: confirmed 3 times out of 4");
   });
 
   it("leaves a caveat out of a quiet report", () => {
@@ -166,6 +166,6 @@ describe("failures", () => {
         throw failure;
       }),
     ).toThrow(failure);
-    expect(vi.mocked(runtime.output).mock.calls).toEqual([["caveat"]]);
+    expect(vi.mocked(runtime.output).mock.calls).toEqual([["note: caveat"]]);
   });
 });
