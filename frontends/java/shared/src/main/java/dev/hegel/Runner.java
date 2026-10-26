@@ -562,6 +562,9 @@ final class Runner {
         }
 
         switch (st.database.kind) {
+            case DEFAULT_LOCATION:
+                lib.settingsDatabase(s, null);
+                break;
             case DISABLED:
                 lib.settingsDatabase(s, "");
                 break;

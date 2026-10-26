@@ -112,10 +112,12 @@ public @interface HegelTest {
     HealthCheck[] suppressHealthCheck() default {};
 
     /**
-     * The example-database root, as a single tri-state value:
+     * The example-database root, as a single value:
      *
      * <ul>
-     *   <li>{@code ""} (default) — leave the engine default in place.
+     *   <li>{@code ""} (default) — keep the database of the settings profile.
+     *   <li>{@link Database#DEFAULT_LOCATION} — use the default location, {@code .hegel/examples},
+     *       even under a profile that disables the database.
      *   <li>{@link Database#DISABLED} — disable the database entirely (no persistence, no replay).
      *   <li>any other string — use that directory as the database root.
      * </ul>

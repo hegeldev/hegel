@@ -190,7 +190,7 @@ public interface Libhegel {
     void settingsTestLocation(long s, String file, int beginLine, String className, String function);
 
     /**
-     * {@code path == null} leaves the engine default; {@code ""} disables; otherwise sets the dir.
+     * {@code path == null} selects the default location; {@code ""} disables; otherwise sets the dir.
      */
     void settingsDatabase(long s, String path);
 

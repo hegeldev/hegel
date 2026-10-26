@@ -137,7 +137,7 @@ public final class RunReport {
             throw unchecked(failures.get(0).exception());
         }
         StringBuilder sb = new StringBuilder();
-        sb.append("Hegel found ").append(failures.size()).append(" distinct failing examples:");
+        sb.append("Property-based test failed with ").append(failures.size()).append(" distinct failures.");
         for (Failure failure : failures) {
             sb.append("\n\n").append(describe(failure.exception()));
         }

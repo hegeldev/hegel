@@ -20,6 +20,8 @@ New settings, each also an `@HegelTest` attribute:
 
 `Settings.set(key, value)` sets any engine setting from its string form, as `hegel.toml` and the `HEGEL_*` environment variables spell it, such as `set("test_cases", "500")` or `set("suppress_health_check", "too_slow")`. The engine parses the value, so this reaches every setting it has, which suits settings read from a command line or a configuration file. String settings apply after the typed ones, in the order given. `dev.hegel.lowlevel.Libhegel` gains `settingsSetFromString` for it, which a third-party binding needs to implement.
 
+`Database.defaultLocation()` (`@HegelTest(database = Database.DEFAULT_LOCATION)`) asks for the default database location, `.hegel/examples`, even under a profile that disables the database, such as `ci` or `workload`. `Database.unset()` still keeps the profile's database.
+
 Settings profiles are now reachable from Java:
 
 ```java
@@ -52,6 +54,8 @@ An errored run now raises an exception typed by the engine's classification of t
 `dev.hegel.lowlevel.Libhegel` gains a method for each newly bound C function: `collectionFree`, `poolFree`, `releaseThreadContext`, `settingsNewForProfile`, `settingsRegisterProfile`, `setDefaultProfile`, `settingsGetVerbosity`, `settingsStopOnFirstFailure`, `settingsShowStatistics`, `settingsUnboundedChoices`, `settingsTestLocation`, `runResultErrorKind`, `labelFromName` and `labelCombine`. A third-party binding needs to implement them.
 
 All output a test case prints now goes through the engine, as in the other Hegel frontends. `TestCase.note` hands the note to the engine, and a top-level draw prints into the engine's document for the case, which lays out a long list, map, array or record over several lines, one element per line, instead of on one long line. Strings and characters print as escaped Java literals, so a drawn string containing a newline stays on its line, and so do the strings inside a drawn value: records, including `Tuple2` to `Tuple8` and the values of `Generators.records`, print component by component as `Tuple2[value1="a b", value2=""]`, and `Optional`, `OptionalInt`, `OptionalLong` and `OptionalDouble` as `Optional["a b"]` or `Optional.empty`. Before, these printed through their `toString()`, so a string inside them lost its quotes and a newline in it broke the line. In a stateful test each rule's draws and notes are indented under its `Step N: rule {` line and closed by `}`, and each rule, like each repetition of `repeat`, names its draws afresh, so a rule that draws `x` prints `x = ...;` every time it runs rather than `x_2`, `x_3` and so on; and in a concurrent one the engine stamps each worker's lines with `[worker N +X.XXXms]`, timed from the start of the test case rather than of the machine.
+
+With several distinct failures, the `AssertionError` that aggregates them now begins `Property-based test failed with N distinct failures.`, the wording of the header printed above them and of the other Hegel frontends, rather than `Hegel found N distinct failing examples:`. Under `Verbosity.QUIET` that header, and the blank line between failures, are no longer printed.
 
 The `Reporter` and `Failure` APIs change to match:
 

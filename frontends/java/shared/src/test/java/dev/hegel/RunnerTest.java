@@ -111,7 +111,7 @@ class RunnerTest {
     @Test
     void failedRunReplaysTheBlobAndRethrowsTheOriginalException() {
         // The default (report_multiple_failures off) surfaces the body's own exception instance —
-        // no "Hegel found ..." wrapper — so the stack trace and type are the user's. Covers both an
+        // no "Property-based test failed with ..." wrapper — so the stack trace and type are the user's. Covers both an
         // Error (e.g. an assertion failure) and a RuntimeException.
         AssertionError err = new AssertionError("boom-error");
         assertSame(
@@ -214,11 +214,39 @@ class RunnerTest {
                                 },
                                 Reporter.printing(capture(buf)))
                         .throwIfFailed());
-        assertTrue(e.getMessage().contains("2 distinct failing examples"), e.getMessage());
+        assertTrue(e.getMessage().startsWith("Property-based test failed with 2 distinct failures."), e.getMessage());
         assertTrue(e.getMessage().contains("bug one"), e.getMessage());
         assertTrue(e.getMessage().contains("bug two"), e.getMessage());
         assertEquals(2, e.getSuppressed().length);
         assertTrue(buf.toString(StandardCharsets.UTF_8).contains("2 distinct failures"), buf.toString());
+    }
+
+    @Test
+    void quietMultipleFailuresPrintNoHeaderOrSeparators() {
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.caseCount = 2;
+        fake.runStatus = Abi.RUN_STATUS_FAILED;
+        fake.failureBlobs.add("blob-1");
+        fake.failureBlobs.add("blob-2");
+        AtomicInteger replay = new AtomicInteger();
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        assertThrows(
+                AssertionError.class,
+                () -> Runner.run(
+                                fake,
+                                new Settings()
+                                        .database(Database.disabled())
+                                        .reportMultipleFailures(true)
+                                        .verbosity(Verbosity.QUIET),
+                                tc -> {
+                                    if (replay.incrementAndGet() % 2 == 1) {
+                                        throw new AssertionError("bug one");
+                                    }
+                                    throw new IllegalStateException("bug two");
+                                },
+                                Reporter.printing(capture(buf)))
+                        .throwIfFailed());
+        assertEquals("", buf.toString(StandardCharsets.UTF_8));
     }
 
     @Test
@@ -490,6 +518,10 @@ class RunnerTest {
         run(disabled, new Settings().database(Database.disabled()).name("d"), tc -> {});
         assertEquals("", disabled.databasePath);
         assertEquals("d", disabled.databaseKey);
+
+        FakeLibhegel defaultLocation = new FakeLibhegel();
+        run(defaultLocation, new Settings().database(Database.defaultLocation()), tc -> {});
+        assertNull(defaultLocation.databasePath);
 
         // Unset settings are not sent at all: the engine's profile (which disables the database
         // and derandomizes in CI) and the HEGEL_* variables stand. A name still derives a key.

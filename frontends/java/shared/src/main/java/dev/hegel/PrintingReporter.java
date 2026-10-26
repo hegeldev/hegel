@@ -32,7 +32,7 @@ final class PrintingReporter implements Reporter {
     @Override
     public void caseStarted(boolean finalReplay) {
         // With several failures, a blank line separates one counterexample's report from the next.
-        if (finalReplay && multiple) {
+        if (finalReplay && multiple && !quiet) {
             out.println();
         }
     }
@@ -47,7 +47,7 @@ final class PrintingReporter implements Reporter {
     @Override
     public void failuresFound(int count) {
         multiple = count > 1;
-        if (multiple) {
+        if (multiple && !quiet) {
             out.println("Property-based test failed with " + count + " distinct failures.");
         }
     }

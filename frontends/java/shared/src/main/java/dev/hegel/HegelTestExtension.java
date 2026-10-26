@@ -132,9 +132,9 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
         if (!isDefaultPhases(ann.phases())) {
             s = s.phases(ann.phases());
         }
-        // database() is a single tri-state String (members can't be value objects): "" leaves the
-        // engine default, DISABLED turns it off, anything else is a directory path.
-        if (ann.database().equals(Database.DISABLED)) {
+        if (ann.database().equals(Database.DEFAULT_LOCATION)) {
+            s = s.database(Database.defaultLocation());
+        } else if (ann.database().equals(Database.DISABLED)) {
             s = s.database(Database.disabled());
         } else if (!ann.database().isEmpty()) {
             s = s.database(Database.path(ann.database()));
