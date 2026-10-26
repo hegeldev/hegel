@@ -29,20 +29,16 @@ open Generators_core
    caller passed [~name], else the draw-site [name] (the binding, via the PPX),
    else ["function"]. *)
 let%template make
-  : type a b c p.
+  : type a b c.
     string option
     -> (a -> Sexp.t) MODE(m)
-    -> (b, p) generator MODE(m)
+    -> b generator MODE(m)
     -> ((a -> b) -> c) MODE(m)
-    -> (c, unprintable) generator MODE(m)
+    -> c generator MODE(m)
   =
   fun explicit_name sexp_of_arg returns adapt ->
-  let show_ret =
-    match returns with
-    | Printable { sexp_of; _ } -> sexp_of
-    | _ -> fun _ -> Sexp.Atom "<opaque>"
-  in
-  let ret = (core_of [@mode m]) returns in
+  let show_ret = returns.sexp_of in
+  let ret = returns.core in
   let result_label = Labels.combine [ Labels.function_result; label_of_core ret ] in
   let build ~name tc =
     let display =
@@ -75,10 +71,9 @@ let%template make
     in
     adapt base
   in
-  Unprintable
-    { core =
-        Function { build; label = Labels.combine [ Labels.function_; label_of_core ret ] }
-    }
+  { core = Function { build; label = Labels.combine [ Labels.function_; label_of_core ret ] }
+  ; sexp_of = opaque
+  }
 [@@mode m = (nonportable, portable)]
 ;;
 
@@ -103,13 +98,13 @@ let%template sexp_or : type a. (a -> Sexp.t) option MODE(m) -> (a -> Sexp.t) MOD
 
     The memo table keys on the argument itself, so distinct arguments always get
     independent results. [sexp_of_arg] only renders the argument in the shown
-    pair; an omitted [sexp_of_arg] or an unprintable [returns] shows [<opaque>]. *)
+    pair; an omitted [sexp_of_arg] or a [returns] with no printer shows [<opaque>]. *)
 let%template functions
       ?name
       ?(sexp_of_arg : ('a -> Sexp.t) option MODE(m))
-      ~(returns : ('b, _) generator MODE(m))
+      ~(returns : 'b generator MODE(m))
       ()
-  : ('a -> 'b, unprintable) generator MODE(m)
+  : ('a -> 'b) generator MODE(m)
   =
   (make [@mode m]) name ((sexp_or [@mode m]) sexp_of_arg) returns (fun f -> f)
 [@@mode m = (nonportable, portable)]
@@ -125,9 +120,9 @@ let%template functions2
       ?name
       ?(sexp_of_arg1 : ('a -> Sexp.t) option MODE(m))
       ?(sexp_of_arg2 : ('b -> Sexp.t) option MODE(m))
-      ~(returns : ('c, _) generator MODE(m))
+      ~(returns : 'c generator MODE(m))
       ()
-  : ('a -> 'b -> 'c, unprintable) generator MODE(m)
+  : ('a -> 'b -> 'c) generator MODE(m)
   =
   let s1 = (sexp_or [@mode m]) sexp_of_arg1
   and s2 = (sexp_or [@mode m]) sexp_of_arg2 in
@@ -147,9 +142,9 @@ let%template functions3
       ?(sexp_of_arg1 : ('a -> Sexp.t) option MODE(m))
       ?(sexp_of_arg2 : ('b -> Sexp.t) option MODE(m))
       ?(sexp_of_arg3 : ('c -> Sexp.t) option MODE(m))
-      ~(returns : ('d, _) generator MODE(m))
+      ~(returns : 'd generator MODE(m))
       ()
-  : ('a -> 'b -> 'c -> 'd, unprintable) generator MODE(m)
+  : ('a -> 'b -> 'c -> 'd) generator MODE(m)
   =
   let s1 = (sexp_or [@mode m]) sexp_of_arg1
   and s2 = (sexp_or [@mode m]) sexp_of_arg2

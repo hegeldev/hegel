@@ -9,9 +9,7 @@ let test_one_of_empty () =
 ;;
 
 (** Test: one_of with a single generator is accepted. *)
-let test_one_of_single_accepted () =
-  ignore (one_of [ booleans () ] : (bool, printable) generator)
-;;
+let test_one_of_single_accepted () = ignore (one_of [ booleans () ] : bool generator)
 
 (** Test: sampled_from raises when given an empty list. *)
 let test_sampled_from_empty () =

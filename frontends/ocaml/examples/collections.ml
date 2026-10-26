@@ -58,8 +58,8 @@ let%hegel_test test_flat_map_combinator tc =
 (** Property: [sampled_from] always returns one of the specified values. *)
 let%hegel_test test_sampled_from tc =
   let options = [ 10; 20; 30; 40 ] in
-  (* [sampled_from] is unprintable; [with_printer] makes it drawable with the
-     printing [draw]. *)
+  (* [sampled_from] prints as [<opaque>]; [with_printer] makes [draw] print the
+     value. *)
   let v =
     draw
       tc

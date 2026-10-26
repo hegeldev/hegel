@@ -30,9 +30,7 @@ module type Io = Io.S
 
 module Make = Io.Make
 
-type ('a, 'p) generator = ('a, 'p) Generators.generator
-type printable = Generators.printable
-type unprintable = Generators.unprintable
+type 'a generator = 'a Generators.generator
 
 include Generators.Public
 
@@ -104,7 +102,7 @@ let event = Internal.event
     [label] for the end-of-run statistics report. *)
 let event_value = Internal.event_value
 
-(** [draw ?label tc gen] produces a typed value from the printable generator
+(** [draw ?label tc gen] produces a typed value from the generator
     [gen]. On the final replay of a failing test, an outermost draw prints its
     value. See {!Generators.draw}. *)
 let draw = Generators.draw

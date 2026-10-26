@@ -4,7 +4,7 @@
     (depth > 0) are suppressed so only the outermost value shows. The printer is
     carried on primitive generators; combinators that hand the output type to
     user code ([map], [sampled_from]) carry none, and [with_printer] attaches
-    one (and is what [draw] requires). *)
+    one; [draw] prints a value with no printer as [<opaque>]. *)
 
 open! Core
 open Hegel
@@ -145,7 +145,7 @@ let%expect_test "with_printer supplies the printer draw renders with" =
     |}]
 ;;
 
-let%expect_test "with_printer makes an unprintable sampled_from drawable" =
+let%expect_test "with_printer makes a sampled_from print in full" =
   run_failing (fun tc ->
     let _ = Hegel.draw ~label:"c" tc (with_printer Int.sexp_of_t (sampled_from [ 9 ])) in
     assert false);
@@ -337,7 +337,7 @@ let%expect_test
   run_failing (fun tc ->
     let _ = Hegel.draw_silent tc hegel_generator_bare in
     assert false);
-  (* [draw_silent] suppresses the value even though the derived generator is printable. *)
+  (* [draw_silent] suppresses the value even though the derived generator has a printer. *)
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
@@ -530,5 +530,33 @@ let%expect_test "verbose prints draws on a passing run" =
     Running test case
     draw_1 = 5
     Ending phase: Generate
+    |}]
+;;
+
+let%expect_test "a part with no printer prints as <opaque>" =
+  run_failing (fun tc ->
+    let doubled = map (fun n -> n * 2) (integers ~min_value:3 ~max_value:3 ()) in
+    let _ = Hegel.draw ~label:"x" tc doubled in
+    let _ =
+      Hegel.draw
+        ~label:"pair"
+        tc
+        (tuples2 doubled (integers ~min_value:5 ~max_value:5 ()))
+    in
+    let _ = Hegel.draw ~label:"either" tc (one_of [ doubled; doubled ]) in
+    let _ = Hegel.draw ~label:"mixed" tc (lists (one_of [ doubled; integers () ]) ()) in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    x = <opaque>
+    pair = (<opaque> 5)
+    either = <opaque>
+    mixed = ()
+
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;

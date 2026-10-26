@@ -136,112 +136,87 @@ let label_of_core : type a. a core -> int64 = function
   | Function { label; _ } -> label
 ;;
 
-(** Phantom witness that a generator carries a printer and so may be drawn with
-    {!draw}. Defined as a private polymorphic variant (not left abstract) so the
-    two witnesses are provably distinct: since OCaml 5.5 the exhaustiveness
-    checker no longer assumes two module-local abstract types differ
-    (ocaml/ocaml#13712), which would make matches on [(_, printable) generator]
-    partial. *)
-type printable = private [ `Printable ]
+(** [opaque v] renders any value as [<opaque>]: the printer of a generator whose
+    output type Hegel cannot print. *)
+let opaque _ = Sexp.Atom "<opaque>"
 
-(** Phantom witness that a generator carries no printer; such a generator can
-    only be drawn with {!draw_silent} (or upgraded with {!with_printer}). See
-    {!printable} for why this is not a bare abstract type. *)
-type unprintable = private [ `Unprintable ]
-
-(** A generator: a {!core} (how to generate) plus a phantom ['p] recording
-    whether a printer is present. [Printable] structurally carries the printer,
-    so {!draw} can always render its value; [Unprintable] carries none.
+(** A generator: a {!core} (how to generate) plus the printer {!draw} renders
+    its value with on the final replay. Generators whose output type is the
+    caller's ({!map}, {!just}, {!composite}, …) carry {!opaque} until
+    {!with_printer} attaches a real one.
 
     Generators produce typed OCaml values and can be combined using {!map},
-    {!flat_map}, and {!filter}. The phantom is what makes {!draw} require a
-    printer at compile time while {!draw_silent} accepts any generator. *)
-type ('a, 'p) generator CROSSING =
-  | Printable :
-      { core : 'a core
-      ; sexp_of : ('a -> Sexp.t)
-      }
-      -> ('a, printable) generator
-  | Unprintable : { core : 'a core } -> ('a, unprintable) generator
-
-(** [core_of gen] is the generation structure of [gen], discarding printability. *)
-let%template core_of : type a p. (a, p) generator MODE(m) -> a core MODE(m) = function
-  | Printable { core; _ } -> core
-  | Unprintable { core } -> core
-[@@mode m = (nonportable, portable)]
-;;
+    {!flat_map}, and {!filter}. *)
+type 'a generator CROSSING =
+  { core : 'a core
+  ; sexp_of : ('a -> Sexp.t)
+  }
 
 (** [leaf_label name] is the label of the primitive named [name]. *)
 let leaf_label name = Labels.from_name ("hegel_ocaml." ^ name)
 
-(** [leaf ~name ~draw ~sexp_of] builds a printable {!Leaf} generator. [draw]
-    performs a single engine draw and returns the typed value; [sexp_of] renders
-    it on the final replay; [name] identifies the primitive for its label. *)
+(** [leaf ~name ~draw ~sexp_of] builds a {!Leaf} generator. [draw] performs a
+    single engine draw and returns the typed value; [sexp_of] renders it on the
+    final replay; [name] identifies the primitive for its label. *)
 let%template leaf
   : type a.
     name:string
     -> draw:(Internal.test_case -> a) MODE(m)
     -> sexp_of:(a -> Sexp.t) MODE(m)
-    -> (a, printable) generator MODE(m)
+    -> a generator MODE(m)
   =
-  fun ~name ~draw ~sexp_of ->
-  Printable { core = Leaf { draw; label = leaf_label name }; sexp_of }
+  fun ~name ~draw ~sexp_of -> { core = Leaf { draw; label = leaf_label name }; sexp_of }
 [@@mode m = (nonportable, portable)]
 ;;
 
-(** [leaf_silent ~name ~draw] builds an unprintable {!Leaf} generator, for
-    leaves whose output type has no known printer (e.g. {!just}). *)
+(** [leaf_silent ~name ~draw] builds a {!Leaf} generator printing as {!opaque},
+    for leaves whose output type has no known printer (e.g. {!just}). *)
 let%template leaf_silent
-  : type a. name:string -> draw:(Internal.test_case -> a) MODE(m) -> (a, unprintable) generator MODE(m)
+  : type a. name:string -> draw:(Internal.test_case -> a) MODE(m) -> a generator MODE(m)
   =
-  fun ~name ~draw -> Unprintable { core = Leaf { draw; label = leaf_label name } }
+  fun ~name ~draw -> { core = Leaf { draw; label = leaf_label name }; sexp_of = opaque }
 [@@mode m = (nonportable, portable)]
 ;;
 
 (** [label_of gen] is the span label of [gen]'s core. *)
-let label_of : type a p. (a, p) generator -> int64 =
-  fun gen -> label_of_core (core_of gen)
-;;
+let label_of : type a. a generator -> int64 = fun gen -> label_of_core gen.core
 
-(** [with_printer sexp_of gen] attaches (or replaces) [gen]'s printer, yielding
-    a printable generator that {!draw} accepts. This is the explicit way to make
-    a [map]/[flat_map]/[sampled_from]/[just] result printable. *)
+(** [with_printer sexp_of gen] attaches (or replaces) [gen]'s printer. This is
+    how a [map]/[flat_map]/[sampled_from]/[just] result prints in full. *)
 let%template with_printer
-  : type a p.
-    (a -> Sexp.t) MODE(m) -> (a, p) generator MODE(m) -> (a, printable) generator MODE(m)
+  : type a. (a -> Sexp.t) MODE(m) -> a generator MODE(m) -> a generator MODE(m)
   =
-  fun sexp_of gen -> Printable { core = (core_of [@mode m]) gen; sexp_of }
+  fun sexp_of gen -> { core = gen.core; sexp_of }
 [@@mode m = (nonportable, portable)]
 ;;
 
-(** [printer gen] is the printer carried by the printable generator [gen]. *)
-let%template printer : type a. (a, printable) generator MODE(m) -> (a -> Sexp.t) MODE(m) =
-  function
-  | Printable { sexp_of; _ } -> sexp_of
-  | _ -> .
+(** [printer gen] is the printer carried by [gen] ({!opaque} if none was
+    attached). *)
+let%template printer : type a. a generator MODE(m) -> (a -> Sexp.t) MODE(m) =
+  fun gen -> gen.sexp_of
 [@@mode m = (nonportable, portable)]
 ;;
 
-(** [composite_with_label ~label generate_fn] builds an unprintable generator
-    whose [generate_fn] draws run inside a span tagged [label]. Internal: it
+(** [composite_with_label ~label generate_fn] builds a generator (printing as
+    [<opaque>]) whose [generate_fn] draws run inside a span tagged [label]. Internal: it
     lets the library and the derive PPX tag composites with the right structural
     label (e.g. {!Labels.enum_variant}); user code uses {!composite}, which
     always tags the struct/record label. *)
 let%template composite_with_label
   : type a.
-    label:int64 -> (Internal.test_case -> a) MODE(m) -> (a, unprintable) generator MODE(m)
+    label:int64 -> (Internal.test_case -> a) MODE(m) -> a generator MODE(m)
   =
-  fun ~label generate_fn -> Unprintable { core = Composite { label; generate_fn } }
+  fun ~label generate_fn -> { core = Composite { label; generate_fn }; sexp_of = opaque }
 [@@mode m = (nonportable, portable)]
 ;;
 
-(** [composite generate_fn] builds an unprintable generator from an imperative
+(** [composite generate_fn] builds a generator (printing as [<opaque>]) from an imperative
     [generate_fn] that draws sub-values from the test case and returns a value.
     The draws run inside a {!Labels.fixed_dict} span (the struct/record
     grouping), so they are suppressed on the final replay and only an outer
     [draw] of the whole value prints. *)
 let%template composite
-  : type a. (Internal.test_case -> a) MODE(m) -> (a, unprintable) generator MODE(m)
+  : type a. (Internal.test_case -> a) MODE(m) -> a generator MODE(m)
   =
   fun generate_fn ->
   (composite_with_label [@mode m]) ~label:Labels.fixed_dict generate_fn
@@ -455,25 +430,25 @@ module Int_pool = struct
         pool
         ~consume
     in
-    Unprintable
-      { core =
-          Values
-            { pool
-            ; consume
-            ; select =
-                (fun tc ~filter ->
-                  match filter with
-                  | None -> snd (pick tc ~remove:(Tbl.remove values))
-                  | Some filter ->
-                    filter_consumed
-                      ~size:(fun () -> Tbl.length values)
-                      ~pick:(pick ~remove:ignore)
-                      ~remove:(Tbl.remove values)
-                      ~pool
-                      tc
-                      filter)
-            }
-      }
+    { core =
+        Values
+          { pool
+          ; consume
+          ; select =
+              (fun tc ~filter ->
+                match filter with
+                | None -> snd (pick tc ~remove:(Tbl.remove values))
+                | Some filter ->
+                  filter_consumed
+                    ~size:(fun () -> Tbl.length values)
+                    ~pick:(pick ~remove:ignore)
+                    ~remove:(Tbl.remove values)
+                    ~pool
+                    tc
+                    filter)
+          }
+    ; sexp_of = opaque
+    }
   ;;
 end
 
@@ -523,28 +498,28 @@ module%template Int_pool_concurrent = struct
         pool
         ~consume
     in
-    Unprintable
-      { core =
-          Values
-            { pool
-            ; consume
-            ; select =
-                (fun tc ~filter ->
-                  match filter with
-                  | None ->
-                    L.protect values (fun values ->
-                      snd (pick tc values ~remove:(Tbl.remove values)))
-                  | Some filter ->
-                    filter_consumed
-                      ~size:(fun () -> L.protect values Tbl.length)
-                      ~pick:(fun tc ->
-                        L.protect values (fun values -> pick tc values ~remove:ignore))
-                      ~remove:(fun id -> L.protect values (fun values -> Tbl.remove values id))
-                      ~pool
-                      tc
-                      filter)
-            }
-      }
+    { core =
+        Values
+          { pool
+          ; consume
+          ; select =
+              (fun tc ~filter ->
+                match filter with
+                | None ->
+                  L.protect values (fun values ->
+                    snd (pick tc values ~remove:(Tbl.remove values)))
+                | Some filter ->
+                  filter_consumed
+                    ~size:(fun () -> L.protect values Tbl.length)
+                    ~pick:(fun tc ->
+                      L.protect values (fun values -> pick tc values ~remove:ignore))
+                    ~remove:(fun id -> L.protect values (fun values -> Tbl.remove values id))
+                    ~pool
+                    tc
+                    filter)
+          }
+    ; sexp_of = opaque
+    }
   ;;
 end
 [@@mode (m, c) = ((portable, contended), (nonportable, uncontended))]
@@ -623,7 +598,7 @@ let draw_named
     -> ?loc:Lexing.position
     -> repeatable:bool
     -> Internal.test_case
-    -> (a, printable) generator
+    -> a generator
     -> a
   =
   let open Lexing in
@@ -635,25 +610,25 @@ let draw_named
           Printf.sprintf " @ %s:%s" loc.pos_fname (string_of_int loc.pos_lnum))
         loc
     in
-    match gen with
-    | Printable { core = Function { build; _ }; sexp_of } ->
+    let sexp_of = gen.sexp_of in
+    match gen.core with
+    | Function { build; _ } ->
       let name = Internal.draw_display_name tc ~label ~repeatable in
       let value = build ~name:(Some name) tc in
       if Internal.draw_depth tc = 0
       then
         Internal.print_line tc [ Text (name ^ location ^ " = "); Value (sexp_of value) ];
       value
-    | Printable { core; sexp_of } ->
+    | core ->
       let value = do_draw core tc in
       if Internal.draw_depth tc = 0
       then (
         let name = Internal.draw_display_name tc ~label ~repeatable in
         Internal.print_line tc [ Text (name ^ location ^ " = "); Value (sexp_of value) ]);
       value
-    | _ -> .
 ;;
 
-(** [draw ?label ?loc tc gen] produces a typed value from the printable
+(** [draw ?label ?loc tc gen] produces a typed value from the
     generator [gen] using test case [tc].
 
     On the final replay of a failing test (or on every case under verbose
@@ -662,8 +637,8 @@ let draw_named
     unlabeled draw is numbered ([draw_1], [draw_2], …) while a [label] is
     printed bare. When [loc] is provided, the draw is printed as [draw @ loc].
     Draws nested inside a span (e.g. composite elements) are suppressed so only
-    the outermost value shows. To draw a generator that carries no printer, use
-    {!draw_silent}, or attach a printer with {!with_printer}. *)
+    the outermost value shows. A generator with no printer prints as [<opaque>];
+    attach one with {!with_printer}, or use {!draw_silent} to print nothing. *)
 let draw ?label ?loc tc gen =
   draw_named
     ~label:(Option.value label ~default:"draw")
@@ -677,102 +652,90 @@ let draw ?label ?loc tc gen =
     recording it for the final-replay output. Use it for draws whose value is
     not a useful part of the printed counterexample, or for generators that
     carry no printer. *)
-let draw_silent : type a p. Internal.test_case -> (a, p) generator -> a =
-  fun tc gen -> do_draw (core_of gen) tc
+let draw_silent : type a. Internal.test_case -> a generator -> a =
+  fun tc gen -> do_draw gen.core tc
 ;;
 
 (** [draw_silent_named ~name tc gen] is {!draw_silent} threading the draw-site
     [name] into a function generator ({!Generators.functions}). Not intended for
     direct use (prefer {!draw_silent}). *)
 let draw_silent_named
-  : type a p. name:string -> Internal.test_case -> (a, p) generator -> a
+  : type a. name:string -> Internal.test_case -> a generator -> a
   =
   fun ~name tc gen ->
-  match core_of gen with
+  match gen.core with
   | Function { build; _ } -> build ~name:(Some name) tc
   | core -> do_draw core tc
 ;;
 
-(** [map f gen] transforms values from [gen] using [f]. The result carries no
-    printer (the output type is the user's), so it is {!unprintable}; use
-    {!with_printer} to make it drawable with {!draw}.
+(** [map f gen] transforms values from [gen] using [f]. The result prints as
+    [<opaque>] (the output type is the user's); use {!with_printer} to print it
+    in full.
 
     When [gen]'s core is a [Leaf], the draw closure is composed in place (no
     extra span); otherwise a [Mapped] core is created. *)
 let%template map
-  : type a b p. (a -> b) MODE(m) -> (a, p) generator MODE(m) -> (b, unprintable) generator MODE(m)
+  : type a b. (a -> b) MODE(m) -> a generator MODE(m) -> b generator MODE(m)
   =
   fun f gen ->
-  match (core_of [@mode m]) gen with
+  match gen.core with
   | Leaf { draw; label } ->
-    Unprintable
-      { core =
-          Leaf
-            { draw = (fun tc -> f (draw tc))
-            ; label = Labels.combine [ Labels.mapped; label ]
-            }
-      }
+    { core =
+        Leaf
+          { draw = (fun tc -> f (draw tc))
+          ; label = Labels.combine [ Labels.mapped; label ]
+          }
+    ; sexp_of = opaque
+    }
   | other ->
-    Unprintable
-      { core =
-          Mapped
-            { source = other
-            ; f
-            ; label = Labels.combine [ Labels.mapped; label_of_core other ]
-            }
-      }
+    { core =
+        Mapped
+          { source = other
+          ; f
+          ; label = Labels.combine [ Labels.mapped; label_of_core other ]
+          }
+    ; sexp_of = opaque
+    }
 [@@mode m = (nonportable, portable)]
 ;;
 
 (** [flat_map f gen] creates a dependent generator. [f] receives the generated
     value and returns a generator whose value is the final result. The result
-    carries no printer; use {!with_printer} to draw it with {!draw}. *)
+    prints as [<opaque>]; use {!with_printer} to print it in full. *)
 let%template flat_map
-  : type a b p q.
-    (a -> (b, q) generator) MODE(m)
-    -> (a, p) generator MODE(m)
-    -> (b, unprintable) generator MODE(m)
+  : type a b.
+    (a -> b generator) MODE(m)
+    -> a generator MODE(m)
+    -> b generator MODE(m)
   =
   fun f gen ->
-  let source = (core_of [@mode m]) gen in
-  Unprintable
-    { core =
-        FlatMapped
-          { source
-          ; f = (fun x -> core_of (f x))
-          ; label = Labels.combine [ Labels.flat_map; label_of_core source ]
-          }
-    }
+  let source = gen.core in
+  { core =
+      FlatMapped
+        { source
+        ; f = (fun x -> (f x).core)
+        ; label = Labels.combine [ Labels.flat_map; label_of_core source ]
+        }
+  ; sexp_of = opaque
+  }
 [@@mode m = (nonportable, portable)]
 ;;
 
 (** [filter predicate gen] filters values from [gen] using [predicate], keeping
-    [gen]'s printability. Tries up to {!max_filter_attempts} times; calls
+    [gen]'s printer. Tries up to {!max_filter_attempts} times; calls
     [assume false] if all attempts fail. *)
 let%template filter
-  : type a p. (a -> bool) MODE(m) -> (a, p) generator MODE(m) -> (a, p) generator MODE(m)
+  : type a. (a -> bool) MODE(m) -> a generator MODE(m) -> a generator MODE(m)
   =
   fun predicate gen ->
-  match gen with
-  | Printable { core; sexp_of } ->
-    Printable
-      { core =
-          Filtered
-            { source = core
-            ; predicate
-            ; label = Labels.combine [ Labels.filter; label_of_core core ]
-            }
-      ; sexp_of
-      }
-  | Unprintable { core } ->
-    Unprintable
-      { core =
-          Filtered
-            { source = core
-            ; predicate
-            ; label = Labels.combine [ Labels.filter; label_of_core core ]
-            }
-      }
+  { core =
+      Filtered
+        { source = gen.core
+        ; predicate
+        ; label = Labels.combine [ Labels.filter; label_of_core gen.core ]
+        }
+  ; sexp_of = gen.sexp_of
+  }
 [@@mode m = (nonportable, portable)]
 ;;
 

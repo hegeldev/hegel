@@ -271,7 +271,7 @@ let draw_char tc =
     characters over any representation ['a], covering the full native [char]
     range (codepoints 0-255, i.e. Latin-1). *)
 let%template make_characters
-  : type a. of_char:(char -> a) MODE(m) -> sexp_of:(a -> Sexp.t) MODE(m) -> unit -> (a, printable) generator MODE(m)
+  : type a. of_char:(char -> a) MODE(m) -> sexp_of:(a -> Sexp.t) MODE(m) -> unit -> a generator MODE(m)
   =
   fun ~of_char ~sexp_of () ->
   (leaf [@mode m]) ~name:"characters" ~draw:(fun tc -> of_char (draw_char tc)) ~sexp_of
@@ -302,7 +302,7 @@ let binary ?(min_size = 0) ?(max_size : int option) (): _ MODE(portable) =
 
     The output type is chosen by the caller, so no printer is carried. *)
 let%template just ABSTRACT(a, value mod c) (value : a MODE(m))
-  : (a, unprintable) generator MODE(m)
+  : a generator MODE(m)
   =
   (leaf_silent [@mode m]) ~name:"just" ~draw:(fun _ -> value)
 [@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
@@ -386,7 +386,7 @@ let%template make_dates
       ?(min_date = first_date)
       ?(max_date = last_date)
       ()
-  : ('a, printable) generator MODE(m)
+  : 'a generator MODE(m)
   =
   (leaf [@mode m])
     ~name:"dates"
@@ -406,7 +406,7 @@ let%template make_times
       ?(min_time = first_time)
       ?(max_time = last_time)
       ()
-  : ('a, printable) generator MODE(m)
+  : 'a generator MODE(m)
   =
   (leaf [@mode m])
     ~name:"times"
@@ -427,7 +427,7 @@ let%template make_datetimes
       ?(min_datetime = first_date, first_time)
       ?(max_datetime = last_date, last_time)
       ()
-  : ('a, printable) generator MODE(m)
+  : 'a generator MODE(m)
   =
   (leaf [@mode m])
     ~name:"datetimes"

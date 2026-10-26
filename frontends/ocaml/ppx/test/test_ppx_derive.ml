@@ -13,7 +13,7 @@
     - [char] fields (resolved from [Hegel.Derive], like every primitive)
     - [@hegel.generator] overrides on any type occurrence
     - [@hegel.do_not_generate] on variant constructors
-    - always-printable derived generators: the deriver also derives
+    - derived generators that print in full: the deriver also derives
       [sexp_of_<t>] (via ppx_sexp_conv's expander) and bakes it in with
       [with_printer]; [[@sexp.opaque]] is the escape hatch for un-sexpable
       fields
@@ -112,11 +112,9 @@ end = struct
   type named = Named of string [@@deriving hegel_generator]
 end
 
-let (_ : (Signature_deriving.t, Hegel.printable) Hegel.generator) =
-  Signature_deriving.hegel_generator
-;;
+let (_ : Signature_deriving.t Hegel.generator) = Signature_deriving.hegel_generator
 
-let (_ : (Signature_deriving.named, Hegel.printable) Hegel.generator) =
+let (_ : Signature_deriving.named Hegel.generator) =
   Signature_deriving.hegel_generator_named
 ;;
 
@@ -512,7 +510,7 @@ let test_portable_matches_plain_e2e () =
   same "alias" Plain_derived.hegel_generator_alias Portable_derived.hegel_generator_alias
 ;;
 
-(** Test: bare deriving yields a printable generator *)
+(** Test: bare deriving yields a generator that prints in full *)
 let%hegel_test test_printer_e2e tc =
   let p = Hegel.draw tc hegel_generator_printed_point in
   ignore ((p.px, p.py) : int * int);

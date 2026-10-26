@@ -28,12 +28,7 @@ let expect_usage_error gen =
   | () -> Alcotest.fail "expected Usage_error"
 ;;
 
-let bounds_tests
-      name
-      ~gen
-      ~(bounded : ?lo:'a -> ?hi:'a -> unit -> ('a, printable) generator)
-      ~compare
-  =
+let bounds_tests name ~gen ~(bounded : ?lo:'a -> ?hi:'a -> unit -> 'a generator) ~compare =
   let leq a b = compare a b <= 0 in
   [ Alcotest.test_case (name ^ " explicit bounds") `Quick (fun () ->
       run_hegel_test ~settings:(Settings.create ~test_cases:100 ~seed:0 ()) (fun tc ->

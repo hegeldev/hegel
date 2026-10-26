@@ -23,9 +23,7 @@ let test_generators_do_not_load_libhegel () =
      the library fails loudly. *)
   Unix.putenv ~key:"HEGEL_LIBHEGEL_PATH" ~data:missing_library;
   (* Building generators is pure OCaml. *)
-  let (_ : (int list, Hegel.printable) Hegel.generator) =
-    Hegel.lists (Hegel.integers ()) ()
-  in
+  let (_ : int list Hegel.generator) = Hegel.lists (Hegel.integers ()) () in
   (* The engine is only reached on the first context. *)
   expect_load_failure ~path:missing_library ();
   Unix.putenv ~key:"HEGEL_LIBHEGEL_PATH" ~data:other_missing_library;

@@ -393,7 +393,7 @@ let excluded_constructor_uses ~loc (td : type_declaration) : structure =
 ;;
 
 (** The main deriver. Emits the [sexp_of_<t>] definitions first (via
-    ppx_sexp_conv's expander), then one printable generator per type:
+    ppx_sexp_conv's expander), then one generator per type:
     [with_printer sexp_of_<t>] around the derived generator. *)
 let generate_impl
       ~ctxt
@@ -473,10 +473,7 @@ let generate_intf
        let type_constr =
          Ast_builder.Default.(ptyp_constr ~loc (Located.lident ~loc td.ptype_name.txt) [])
        in
-       let gen_type =
-         [%type:
-           ([%t type_constr], Hegel.Generators.printable) Hegel.Generators.generator]
-       in
+       let gen_type = [%type: [%t type_constr] Hegel.Generators.generator] in
        let vd =
          Ast_builder.Default.value_description
            ~loc

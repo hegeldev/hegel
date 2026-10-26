@@ -315,7 +315,7 @@ module Pool : sig
       {[
       let existing = draw_silent tc (Stateful.Pool.values_reusable pool)
       ]} *)
-  val values_reusable : 'a t -> ('a, Generators.unprintable) Generators.generator
+  val values_reusable : 'a t -> 'a Generators.generator
 
   (** Draws and removes a value. A draw from an empty pool rejects the current
       rule, or the test case when drawn outside a rule. Filtering this
@@ -324,7 +324,7 @@ module Pool : sig
       {[
       let taken = draw_silent tc (Stateful.Pool.values_consumed pool)
       ]} *)
-  val values_consumed : 'a t -> ('a, Generators.unprintable) Generators.generator
+  val values_consumed : 'a t -> 'a Generators.generator
 end
 
 module Concurrent_pool : sig PORTABLE
@@ -346,12 +346,12 @@ module Concurrent_pool : sig PORTABLE
 
   (** Draws a value without removing it. A draw from an empty pool rejects the
       current rule, or the test case when drawn outside a rule. *)
-  val values_reusable : 'a t -> ('a, Generators.unprintable) Generators.generator
+  val values_reusable : 'a t -> 'a Generators.generator
 
   (** Draws and removes a value. A draw from an empty pool rejects the current
       rule, or the test case when drawn outside a rule. Filtering this
       generator removes only the value it returns. *)
-  val values_consumed : 'a t -> ('a, Generators.unprintable) Generators.generator
+  val values_consumed : 'a t -> 'a Generators.generator
 end
 
 module Rule : sig PORTABLE

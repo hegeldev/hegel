@@ -55,20 +55,20 @@
 
 (**/**)
 
-val hegel_generator_int : (int, Generators.printable) Generators.generator
-val hegel_generator_bool : (bool, Generators.printable) Generators.generator
-val hegel_generator_float : (float, Generators.printable) Generators.generator
-val hegel_generator_string : (string, Generators.printable) Generators.generator
-val hegel_generator_char : (char, Generators.printable) Generators.generator
+val hegel_generator_int : int Generators.generator
+val hegel_generator_bool : bool Generators.generator
+val hegel_generator_float : float Generators.generator
+val hegel_generator_string : string Generators.generator
+val hegel_generator_char : char Generators.generator
 
 val%template hegel_generator_list
-  :  ('a, Generators.printable) Generators.generator MODE(m)
-  -> ('a list, Generators.printable) Generators.generator MODE(m)
+  :  'a Generators.generator MODE(m)
+  -> 'a list Generators.generator MODE(m)
 [@@mode m = (nonportable, portable)]
 
 val%template hegel_generator_option
-  :  ('a, Generators.printable) Generators.generator MODE(m)
-  -> ('a option, Generators.printable) Generators.generator MODE(m)
+  :  'a Generators.generator MODE(m)
+  -> 'a option Generators.generator MODE(m)
 [@@mode m = (nonportable, portable)]
 
 val sexp_of_int : int -> Sexplib0.Sexp.t

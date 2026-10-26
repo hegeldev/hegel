@@ -48,22 +48,22 @@ type test_case : value mod portable contended
 {!Hegel.Generators.generator}
 
 {[
-type ('a, 'p) generator : value mod contended
+type 'a generator : value mod contended
 ]}
 
 {1 Combinators}
 {[
 val%template map
   :  ('a -> 'b) @ m
-  -> ('a, 'p) generator @ m
-  -> ('b, unprintable) generator @ m
+  -> 'a generator @ m
+  -> 'b generator @ m
 [@@mode m = (nonportable, portable)]
 
-val%template just : ('a : value mod c). 'a @ m -> ('a, unprintable) generator @ m
+val%template just : ('a : value mod c). 'a @ m -> 'a generator @ m
 [@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
 
 val%template sampled_from
-  : ('a : value mod c). 'a list @ m -> ('a, unprintable) generator @ m
+  : ('a : value mod c). 'a list @ m -> 'a generator @ m
 [@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
 ]}
 

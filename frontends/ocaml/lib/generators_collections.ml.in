@@ -24,8 +24,8 @@ let validate_size_bounds ~min_size ~max_size =
    order. Duplicate keys are rejected client-side, compared structurally. *)
 let draw_association_pairs
   : type a b.
-    (a, printable) generator
-    -> (b, printable) generator
+    a generator
+    -> b generator
     -> min_size:int
     -> max_size:int option
     -> Internal.test_case
@@ -36,13 +36,13 @@ let draw_association_pairs
     let rec collect acc =
       if collection_more coll data
       then (
-        let k = do_draw (core_of keys) data in
+        let k = do_draw keys.core data in
         if List.exists (fun (k', _) -> k' = k) acc
         then (
           collection_reject coll data;
           collect acc)
         else (
-          let v = do_draw (core_of values) data in
+          let v = do_draw values.core data in
           collect ((k, v) :: acc)))
       else List.rev acc
     in
@@ -50,22 +50,22 @@ let draw_association_pairs
 ;;
 
 (** [assoc_lists keys values ?min_size ?max_size ()] creates a generator for
-    association lists over printable [keys] and [values]: [(key, value)] pairs,
+    association lists over [keys] and [values]: [(key, value)] pairs,
     in generation order, whose keys are unique.
 
     Key-value pairs are generated one at a time via the collection protocol,
     with duplicate keys rejected client-side. *)
 let%template assoc_lists
-      (keys : ('a, printable) generator MODE(m))
-      (values : ('b, printable) generator MODE(m))
+      (keys : 'a generator MODE(m))
+      (values : 'b generator MODE(m))
       ?(min_size = 0)
       ?(max_size : int option)
       ()
-  : (('a * 'b) list, printable) generator MODE(m)
+  : ('a * 'b) list generator MODE(m)
   =
   validate_size_bounds ~min_size ~max_size;
-  let pk = (printer [@mode m]) keys
-  and pv = (printer [@mode m]) values in
+  let pk = keys.sexp_of
+  and pv = values.sexp_of in
   let sexp_of kvs = Sexp.List (List.map (fun (k, v) -> Sexp.List [ pk k; pv v ]) kvs) in
   let core =
     Composite
@@ -74,7 +74,7 @@ let%template assoc_lists
           (fun data -> draw_association_pairs keys values ~min_size ~max_size data)
       }
   in
-  Printable { core; sexp_of }
+  { core; sexp_of }
 [@@mode m = (nonportable, portable)]
 ;;
 
@@ -83,16 +83,16 @@ let%template assoc_lists
 let%template make_hash_tables
       ~(of_pairs : (('a * 'b) list -> 't) MODE(m))
       ~(sexp_of_t : (('a -> Sexp.t) -> ('b -> Sexp.t) -> 't -> Sexp.t) MODE(m))
-      (keys : ('a, printable) generator MODE(m))
-      (values : ('b, printable) generator MODE(m))
+      (keys : 'a generator MODE(m))
+      (values : 'b generator MODE(m))
       ?(min_size = 0)
       ?(max_size : int option)
       ()
-  : ('t, printable) generator MODE(m)
+  : 't generator MODE(m)
   =
   validate_size_bounds ~min_size ~max_size;
-  let pk = (printer [@mode m]) keys
-  and pv = (printer [@mode m]) values in
+  let pk = keys.sexp_of
+  and pv = values.sexp_of in
   let core =
     Composite
       { label = Labels.combine [ Labels.hash_table; label_of keys; label_of values ]
@@ -101,19 +101,19 @@ let%template make_hash_tables
             of_pairs (draw_association_pairs keys values ~min_size ~max_size data))
       }
   in
-  Printable { core; sexp_of = (fun table -> sexp_of_t pk pv table) }
+  { core; sexp_of = (fun table -> sexp_of_t pk pv table) }
 [@@mode m = (nonportable, portable)]
 ;;
 
 (** [hash_tables keys values ?min_size ?max_size ()] creates a generator for
-    polymorphic [Stdlib.Hashtbl.t] tables over printable [keys] and [values]. *)
+    polymorphic [Stdlib.Hashtbl.t] tables over [keys] and [values]. *)
 let%template hash_tables
-      (keys : ('a, printable) generator MODE(m))
-      (values : ('b, printable) generator MODE(m))
+      (keys : 'a generator MODE(m))
+      (values : 'b generator MODE(m))
       ?min_size
       ?max_size
       ()
-  : (('a, 'b) Stdlib.Hashtbl.t, printable) generator MODE(m)
+  : ('a, 'b) Stdlib.Hashtbl.t generator MODE(m)
   =
   (make_hash_tables [@mode m])
     ~of_pairs:(fun pairs ->
@@ -132,22 +132,22 @@ let%template hash_tables
 ;;
 
 (** [lists elements ?min_size ?max_size ?unique ()] creates a generator for
-    lists of printable [elements].
+    lists of [elements].
 
     Elements are generated one at a time via the collection protocol inside a
     {!Labels.list} span. When [unique] is [true], duplicate elements are
     rejected client-side so the generated list contains only distinct elements. *)
 let%template lists
-      (elements : ('a, printable) generator MODE(m))
+      (elements : 'a generator MODE(m))
       ?(min_size = 0)
       ?(max_size : int option)
       ?(unique = false)
       ()
-  : ('a list, printable) generator MODE(m)
+  : 'a list generator MODE(m)
   =
   validate_size_bounds ~min_size ~max_size;
-  let elt = (printer [@mode m]) elements in
-  let element_core = (core_of [@mode m]) elements in
+  let elt = elements.sexp_of in
+  let element_core = elements.core in
   let sexp_of xs = Sexp.List (List.map elt xs) in
   let core =
     if not unique
@@ -182,6 +182,6 @@ let%template lists
                 collect []))
         }
   in
-  Printable { core; sexp_of }
+  { core; sexp_of }
 [@@mode m = (nonportable, portable)]
 ;;

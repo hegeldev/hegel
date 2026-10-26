@@ -216,8 +216,8 @@ let test_printer_filter_delegates () =
   check_printer "filter" (filter (fun _ -> true) (integers ())) 5 "5"
 ;;
 
-(* [with_printer] upgrades an unprintable generator (here [map] over an integer)
-   to printable using the supplied printer. *)
+(* [with_printer] replaces the [<opaque>] printer of a [map] over an integer with
+   the supplied one. *)
 let test_with_printer () =
   check_printer
     "with_printer"
@@ -226,9 +226,8 @@ let test_with_printer () =
     "21"
 ;;
 
-(* [filter] over an unprintable generator stays unprintable; it can still be
-   drawn via [draw_silent]. *)
-let test_filter_on_unprintable () =
+(* [filter] over a generator with no printer still draws via [draw_silent]. *)
+let test_filter_on_opaque () =
   Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:5 ()) (fun tc ->
     let gen = filter (fun _ -> true) (sampled_from [ 1; 2; 3 ]) in
     let v = Hegel.draw_silent tc gen in
@@ -350,7 +349,7 @@ let tests =
   ; Alcotest.test_case "printer chars" `Quick test_printer_chars
   ; Alcotest.test_case "printer filter delegates" `Quick test_printer_filter_delegates
   ; Alcotest.test_case "with_printer" `Quick test_with_printer
-  ; Alcotest.test_case "filter on unprintable" `Quick test_filter_on_unprintable
+  ; Alcotest.test_case "filter on opaque" `Quick test_filter_on_opaque
   ; Alcotest.test_case "printer list primitive" `Quick test_printer_list_primitive
   ; Alcotest.test_case "printer tuple2" `Quick test_printer_tuple2
   ; Alcotest.test_case "printer tuple3" `Quick test_printer_tuple3

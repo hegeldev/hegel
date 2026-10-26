@@ -146,7 +146,7 @@ If you instead want a first-class `generator` value wrap the function with `comp
 
 ```ocaml
 let person_generator = composite generate_person
-(* person_generator : (person, unprintable) generator *)
+(* person_generator : person generator *)
 
 let%hegel_test people_are_generatable tc =
   let p = draw_silent tc person_generator in
@@ -154,10 +154,10 @@ let%hegel_test people_are_generatable tc =
 ;;
 ```
 
-`composite` carries no printer (the value type is yours), so draw it with
-`draw_silent`. To print it on a failing replay or to feed it into combinators
-like `lists` that expect a *printable* element generator, attach a printer with
-`with_printer` (see [Debugging failures](#debug-your-failing-test-cases)).
+`composite` carries no printer (the value type is yours), so `draw` prints its
+values as `<opaque>`, and so do combinators like `lists` built over it. To print
+them in full, attach a printer with `with_printer` (see
+[Debugging failures](#debug-your-failing-test-cases)).
 
 ## Debug your failing test cases
 
@@ -212,12 +212,13 @@ The same `let x` runs on each iteration, so Hegel disambiguates the draws as
 `draw ~label:"y" tc (integers ())`.
 
 Some combinators hand the result type to your own code and so carry no printer:
-`map`, `flat_map`, `sampled_from`, and `just`. Either draw it with `draw_silent` (which prints nothing):
+`map`, `flat_map`, `sampled_from`, and `just`. `draw` prints their values as
+`<opaque>`, or you can draw them with `draw_silent` (which prints nothing):
 
 ```ocaml
 let parity = draw_silent tc (map (fun n -> n mod 2) (integers ()))
 ```
-or attach a printer with `with_printer`. A printer is a function of type
+To print the value in full, attach a printer with `with_printer`. A printer is a function of type
 `'a -> Sexplib0.Sexp.t`.
 ```ocaml
 let parity =
