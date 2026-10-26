@@ -98,7 +98,10 @@ export interface Settings {
    * settings.
    */
   profile?: string;
-  /** The number of valid test cases to run. 100 in the base settings. */
+  /**
+   * The number of valid test cases to run, a non-negative safe integer. 100
+   * in the base settings.
+   */
   testCases?: number;
   /**
    * A fixed seed, an integer in `[0, 2^64)`, so that a run is reproducible;
@@ -198,16 +201,20 @@ function mask<K extends string>(table: Record<K, number>, values: K[], setting: 
   return values.reduce((bits, value) => bits | lookup(table, value, setting), 0);
 }
 
-function nativeSeed(seed: number | bigint | null): bigint | null {
-  if (seed === null) return null;
-  if (typeof seed === "number" && !Number.isSafeInteger(seed)) {
-    throw new RangeError(`Invalid seed ${seed}: expected an integer in [0, 2^64)`);
+function u64Setting(setting: string, value: number | bigint): bigint {
+  const valid =
+    typeof value === "bigint"
+      ? value >= 0n && value <= 0xffffffffffffffffn
+      : Number.isSafeInteger(value) && value >= 0;
+  if (!valid) {
+    throw new RangeError(`Invalid ${setting} ${String(value)}: expected an integer in [0, 2^64)`);
   }
-  const value = BigInt(seed);
-  if (value < 0n || value > 0xffffffffffffffffn) {
-    throw new RangeError(`Invalid seed ${seed}: expected an integer in [0, 2^64)`);
-  }
-  return value;
+  return BigInt(value);
+}
+
+function testCaseCount(n: number): number {
+  if (typeof n === "number" && Number.isSafeInteger(n) && n >= 0) return n;
+  throw new RangeError(`Invalid testCases ${String(n)}: expected a non-negative safe integer`);
 }
 
 /** Create a settings handle from the engine's resolved profile. */
@@ -225,8 +232,9 @@ export function applySettings(
   handle: SettingsHandle,
   s: Settings,
 ): void {
-  if (s.testCases !== undefined) lib.setTestCases(handle, s.testCases);
-  if (s.seed !== undefined) lib.setSeed(handle, nativeSeed(s.seed));
+  if (s.testCases !== undefined) lib.setTestCases(handle, testCaseCount(s.testCases));
+  if (s.seed !== undefined)
+    lib.setSeed(handle, s.seed === null ? null : u64Setting("seed", s.seed));
   if (s.verbosity !== undefined)
     lib.setVerbosity(handle, lookup(VERBOSITY_TO_NATIVE, s.verbosity, "verbosity"));
   if (s.derandomize !== undefined) lib.setDerandomize(handle, s.derandomize);

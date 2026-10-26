@@ -12,6 +12,7 @@ import {
   AssumeError,
   LoopDone,
   ExplicitValues,
+  ExplicitExampleError,
   type DataSource,
   type StateMachineSpec,
 } from "./testCase.js";
@@ -37,7 +38,7 @@ import type { RuntimeServices } from "./runtime.js";
 import { applySettings, resolveSettings, type Settings, type TestLocation } from "./settings.js";
 import { runError, DidNotReproduceError } from "./errors.js";
 import { resolveLabel, type LabelSpec } from "./labels.js";
-import { repr, splitLines, type Printer } from "./pretty.js";
+import { EngineDocument, printValue, printedLine, splitLines, type Printer } from "./pretty.js";
 import { ExplicitDataSource } from "./explicit.js";
 import { callSite, databaseKeyOf, locationOf, type CallSite } from "./callSite.js";
 
@@ -205,19 +206,24 @@ export class EngineDataSource implements DataSource {
 
   drawGrammar(spec: GrammarSpec, terminal: (index: number) => string): string {
     const { lib, ctx, tc } = this;
-    const grammar = this.call(() => this.family.cache.grammar(ctx, spec));
-    const draw = this.call(() => lib.grammarDrawNew(ctx, grammar, 0));
-    return withCleanup(
-      () => {
-        for (;;) {
-          const index = this.call(() => lib.grammarDrawNext(ctx, tc, draw));
-          if (index === null) return this.call(() => lib.grammarDrawResult(ctx, draw));
-          const value = terminal(index);
-          this.call(() => lib.grammarDrawProvide(ctx, draw, value));
-        }
-      },
-      () => this.call(() => lib.freeGrammarDraw(draw)),
-    );
+    const cache = this.family.cache;
+    const grammar = this.call(() => cache.borrowGrammar(ctx, spec));
+    try {
+      const draw = this.call(() => lib.grammarDrawNew(ctx, grammar, 0));
+      return withCleanup(
+        () => {
+          for (;;) {
+            const index = this.call(() => lib.grammarDrawNext(ctx, tc, draw));
+            if (index === null) return this.call(() => lib.grammarDrawResult(ctx, draw));
+            const value = terminal(index);
+            this.call(() => lib.grammarDrawProvide(ctx, draw, value));
+          }
+        },
+        () => this.call(() => lib.freeGrammarDraw(draw)),
+      );
+    } finally {
+      cache.releaseGrammar(spec);
+    }
   }
 
   newStateMachine(spec: StateMachineSpec): number {
@@ -544,6 +550,28 @@ function readFailure(
   }
 }
 
+/** The values of an explicit example, as given to {@link Hegel.example} or {@link Hegel.namedExample}. */
+type ExplicitExample =
+  | { kind: "positional"; values: readonly unknown[] }
+  | { kind: "named"; values: Readonly<Record<string, unknown>> };
+
+/** How an explicit example is described in its report and errors: `example(1, "a")`. */
+function describeExample(lib: Engine, ctx: ContextHandle, example: ExplicitExample): string {
+  return printedLine(lib, ctx, (printer) => {
+    if (example.kind === "named") {
+      printer.text("namedExample(");
+      printValue(printer, example.values);
+    } else {
+      printer.text("example(");
+      example.values.forEach((value, index) => {
+        if (index > 0) printer.text(", ");
+        printValue(printer, value);
+      });
+    }
+    printer.text(")");
+  });
+}
+
 /** One test case the run loop hands its driver to execute. */
 interface Step {
   ds: DataSource;
@@ -617,7 +645,7 @@ export class Hegel {
   private _settings: Settings = {};
   private _testLocation: TestLocation | null = null;
   private _databaseKey: string | null = null;
-  private readonly _examples: ExplicitValues[] = [];
+  private readonly _examples: ExplicitExample[] = [];
   private readonly _blobs: string[] = [];
 
   constructor(testFn: (tc: TestCase) => void | Promise<void>);
@@ -658,11 +686,20 @@ export class Hegel {
   /**
    * Set the key the test's failures are stored under in the database, in
    * place of the one derived from its location: its file, relative to the
-   * working directory, plus its name. A test function's name is its own, or
-   * for an anonymous one the name Vitest or Jest gives the running test,
-   * else the enclosing function's, else its line. A borrowed name shared by
-   * calls on several lines gets the call's position among them appended
-   * from the second on (`"describe > test (2)"`).
+   * working directory, plus its name (`"tests/a.test.ts::property"`). A test
+   * function's name is its own, or for an anonymous one the name Vitest or
+   * Jest gives the running test, else the enclosing function's, else its
+   * line. When several `hegel.test` calls in one runner test or enclosing
+   * function borrow its name, they are numbered in the order their lines
+   * first run in the process, the first keeping the plain key and each later
+   * one carrying its number (`"tests/a.test.ts::describe > test (2)"`). Such
+   * a key does not depend on which other runner tests ran, but skipping an
+   * earlier call in the same runner test, adding one above it, or moving its
+   * line in a process that keeps Hegel loaded renumbers it; name the test
+   * function or set a key here to keep its saved failures. Where the runtime
+   * has no `Error.captureStackTrace` (Firefox) there is no call site to
+   * derive a location from: the key is the test function's name, and an
+   * anonymous test has none unless set here.
    */
   databaseKey(key: string): this {
     this._databaseKey = key;
@@ -672,12 +709,15 @@ export class Hegel {
   /**
    * Add an explicit example: a test case run with the given values before
    * any generated ones, each value served, in order, to one of the test's
-   * draws in place of a generated value. An explicit example fails the test
-   * like a generated failing example does (it is reported, but not shrunk);
-   * one that rejects itself with `tc.assume` or `tc.reject` throws, as
-   * explicit test cases must not be rejected. Every value must be drawn. Explicit examples run in the `Phase.Explicit` phase. With no
-   * engine behind it, an explicit example throws on `tc.drawSilent` and
-   * `tc.repeat`.
+   * draws in place of a generated value. Explicit examples run in the
+   * `Phase.Explicit` phase. One that fails fails the test like a generated
+   * failing example does: it is reported, but not shrunk.
+   *
+   * Misusing an explicit example throws instead of being reported as a
+   * failing one: rejecting it with `tc.assume` or `tc.reject` (explicit test
+   * cases must not be rejected), leaving a value undrawn, making a draw it
+   * has no value for, or calling `tc.drawSilent` in it. `tc.repeat` runs its
+   * body once in an explicit example.
    *
    * @example
    * ```ts
@@ -692,7 +732,7 @@ export class Hegel {
    * ```
    */
   example(...values: unknown[]): this {
-    this._examples.push(new ExplicitValues(`example(${values.map(repr).join(", ")})`, values, {}));
+    this._examples.push({ kind: "positional", values });
     return this;
   }
 
@@ -713,7 +753,7 @@ export class Hegel {
    * ```
    */
   namedExample(values: Readonly<Record<string, unknown>>): this {
-    this._examples.push(new ExplicitValues(`namedExample(${repr(values)})`, [], values));
+    this._examples.push({ kind: "named", values });
     return this;
   }
 
@@ -770,7 +810,11 @@ export class Hegel {
         const key =
           this._databaseKey ??
           (location !== null
-            ? databaseKeyOf(location, this.runtime.projectRoot)
+            ? databaseKeyOf(
+                location,
+                this.runtime.projectRoot,
+                this._testLocation === null && !this.testFn.name,
+              )
             : this.testFn.name || null);
         if (key !== null) lib.setDatabaseKey(ctx, settings, key);
         yield* this.runAll(lib, ctx, settings, cache);
@@ -815,24 +859,38 @@ export class Hegel {
     const failures: unknown[] = [];
     if ((lib.getPhases(settings) & NativePhase.EXPLICIT) !== 0) {
       const multiple = lib.getReportMultipleFailures(settings);
-      for (const example of this._examples) {
-        const ds = new ExplicitDataSource();
-        const outcome = yield { ds, emit: true, explicit: example };
-        if (outcome.status === "invalid") {
-          throw new Error(
-            `Explicit test cases must not be rejected, but ${example.description} was rejected by tc.assume or tc.reject`,
-          );
+      for (const given of this._examples) {
+        const example = new ExplicitValues(
+          describeExample(lib, ctx, given),
+          given.kind === "positional" ? given.values : [],
+          given.kind === "named" ? given.values : {},
+        );
+        const document = new EngineDocument(lib, ctx);
+        const errors: unknown[] = [];
+        try {
+          const ds = new ExplicitDataSource(document);
+          const outcome = yield { ds, emit: true, explicit: example };
+          if (outcome.status === "invalid") {
+            throw new ExplicitExampleError(
+              `Explicit test cases must not be rejected, but ${example.description} was rejected by tc.assume or tc.reject`,
+            );
+          }
+          if (outcome.status !== "interesting") {
+            example.checkConsumed();
+            continue;
+          }
+          if (outcome.error instanceof ExplicitExampleError) throw outcome.error;
+          if (!quiet) {
+            this.output(`Explicit ${example.description} failed:`);
+            for (const line of document.lines()) this.output(line);
+          }
+          if (!multiple) throw outcome.error;
+          failures.push(outcome.error);
+        } catch (error) {
+          errors.push(error);
+        } finally {
+          finishCleanup(errors, () => document.dispose());
         }
-        if (outcome.status !== "interesting") {
-          example.checkConsumed();
-          continue;
-        }
-        if (!quiet) {
-          this.output(`Explicit ${example.description} failed:`);
-          for (const line of ds.lines()) this.output(line);
-        }
-        if (!multiple) throw outcome.error;
-        failures.push(outcome.error);
       }
     }
 
@@ -918,7 +976,7 @@ export class Hegel {
           }
           if (count > 1 && !quiet) this.output("");
           for (const line of report.lines) this.output(line);
-          if (caveat !== null && !quiet) this.output(caveat);
+          if (caveat !== null && !quiet) this.output(`note: ${caveat}`);
           if (blob !== null && printBlob) {
             this.output("");
             this.output("To reproduce this failure, replay it with the Hegel builder:");

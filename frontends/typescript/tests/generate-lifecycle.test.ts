@@ -1,6 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { generateValue, StringGeneratorCache } from "../src/generate.js";
-import { EngineError } from "../src/engine.js";
+import { describe, it, expect, vi } from "vitest";
+import { generateValue, StringGeneratorCache, type GrammarSpec } from "../src/generate.js";
+import { EngineError, type Engine } from "../src/engine.js";
+import { getLibhegel } from "../src/session.js";
+import { wasmFixture } from "./wasmFixture.js";
 import { AssumeError, StopTestError } from "../src/testCase.js";
 import { fakeEngine, context, testCase } from "./fakeEngine.js";
 
@@ -189,7 +191,9 @@ it("StringGeneratorCache compiles a grammar once and frees it on dispose, even a
     explicitNames: [],
     importPath: null,
   };
-  expect(cache.grammar(context, spec)).toBe(cache.grammar(context, spec));
+  expect(cache.borrowGrammar(context, spec)).toBe(cache.borrowGrammar(context, spec));
+  cache.releaseGrammar(spec);
+  cache.releaseGrammar(spec);
   expect(engine.newGrammar).toHaveBeenCalledTimes(1);
   expect(engine.freeGrammarBuilder).toHaveBeenCalledTimes(1);
   cache.get(engine, context, { type: "email" });
@@ -200,4 +204,43 @@ it("StringGeneratorCache compiles a grammar once and frees it on dispose, even a
   expect(engine.freeStringGenerator).toHaveBeenCalledTimes(1);
   cache.dispose();
   expect(engine.freeGrammar).toHaveBeenCalledTimes(1);
+});
+
+describe.each([
+  ["native", () => getLibhegel() as Engine],
+  ["wasm", () => wasmFixture().engine as Engine],
+])("StringGeneratorCache grammars on the %s engine", (_name, engine) => {
+  const spec = (n: number): GrammarSpec => ({
+    text: `start: "${n}"`,
+    start: null,
+    maxSize: 0,
+    maxDepth: 0,
+    alphabet: null,
+    explicitNames: [],
+    importPath: null,
+  });
+
+  it("bounds live grammars, never evicting a borrowed one", () => {
+    const lib = engine();
+    const freeGrammar = vi.spyOn(lib, "freeGrammar");
+    const ctx = lib.newContext();
+    const cache = new StringGeneratorCache(lib);
+    const outer = spec(0);
+    const borrowed = cache.borrowGrammar(ctx, outer);
+    const specs = Array.from({ length: 256 }, (_, i) => spec(i + 1));
+    for (const inner of specs) {
+      cache.borrowGrammar(ctx, inner);
+      cache.releaseGrammar(inner);
+    }
+    expect(freeGrammar.mock.calls).toEqual([[expect.anything()]]);
+    expect(freeGrammar.mock.calls[0][0]).not.toBe(borrowed);
+    expect(cache.borrowGrammar(ctx, outer)).toBe(borrowed);
+    cache.releaseGrammar(outer);
+    cache.releaseGrammar(outer);
+    cache.borrowGrammar(ctx, specs[0]);
+    expect(freeGrammar.mock.calls[1][0]).toBe(borrowed);
+    cache.dispose();
+    expect(freeGrammar).toHaveBeenCalledTimes(258);
+    lib.freeContext(ctx);
+  });
 });

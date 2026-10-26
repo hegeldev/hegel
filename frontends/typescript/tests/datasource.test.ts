@@ -15,7 +15,11 @@ import {
 } from "../src/testCase.js";
 import { runTestCase } from "../src/runner.js";
 import { labelSpec } from "../src/labels.js";
-import { TextPrinter } from "../src/pretty.js";
+import { EngineDocument, type Printer } from "../src/pretty.js";
+import { getLibhegel } from "../src/session.js";
+
+const lib = getLibhegel();
+const ctx = lib.newContext();
 
 // ---------------------------------------------------------------------------
 // FakeDataSource
@@ -23,7 +27,7 @@ import { TextPrinter } from "../src/pretty.js";
 
 class FakeDataSource implements DataSource {
   readonly family = {};
-  readonly output = new TextPrinter();
+  readonly output = new EngineDocument(lib, ctx);
   private generates: unknown[];
   private generateIndex = 0;
   private _throwOnStartSpan: boolean;
@@ -154,7 +158,7 @@ class FakeDataSource implements DataSource {
   }
 
   note(message: string): void {
-    this.output.note(message);
+    this.output.note(0, message);
   }
 
   target(): void {}
@@ -173,8 +177,8 @@ class FakeDataSource implements DataSource {
 
   setWorker(): void {}
 
-  printer(): TextPrinter {
-    return this.output;
+  printer(): Printer {
+    return this.output.view();
   }
 
   get markCompleteCalls() {

@@ -245,24 +245,55 @@ function noGrammarFiles(): never {
   throw new EngineError("Reading grammar files (importPath) is not supported on this host");
 }
 
-/** Run-owned cache. Handles never cross engines and are freed before the context.
- * The cap also bounds runs whose user code creates a fresh schema for every draw.
- * Grammars are not evicted: a draw in progress borrows its grammar, and a
- * grammar compiled during it (for an explicit terminal) must not free it.
+/** How many string generators, and how many grammars, a cache keeps alive. */
+const CACHE_LIMIT = 256;
+
+/**
+ * Run-owned cache. Handles never cross engines and are freed before the
+ * context. Each kind holds at most {@link CACHE_LIMIT} handles, evicting the
+ * oldest first, which bounds runs whose user code creates a fresh schema or
+ * `fromLark` generator for every draw. A grammar is never evicted while a
+ * draw borrows it: a grammar compiled during that draw (for an explicit
+ * terminal) evicts the oldest idle one instead.
  */
 export class StringGeneratorCache {
   private readonly generators = new Map<Record<string, unknown>, StringGeneratorHandle>();
   private readonly grammars = new Map<GrammarSpec, GrammarHandle>();
+  private readonly borrowed = new Map<GrammarSpec, number>();
   constructor(
     private readonly engine: Engine,
     private readonly readGrammarFile: GrammarFileReader = noGrammarFiles,
   ) {}
 
-  /** The compiled grammar for `spec`, gathering its imported files on first use. */
-  grammar(ctx: ContextHandle, spec: GrammarSpec): GrammarHandle {
+  /**
+   * The compiled grammar for `spec`, gathering its imported files on first
+   * use. It is not evicted until a matching {@link releaseGrammar}.
+   */
+  borrowGrammar(ctx: ContextHandle, spec: GrammarSpec): GrammarHandle {
+    const grammar = this.grammar(ctx, spec);
+    this.borrowed.set(spec, (this.borrowed.get(spec) ?? 0) + 1);
+    return grammar;
+  }
+
+  /** End a {@link borrowGrammar}. */
+  releaseGrammar(spec: GrammarSpec): void {
+    const count = this.borrowed.get(spec)! - 1;
+    if (count === 0) this.borrowed.delete(spec);
+    else this.borrowed.set(spec, count);
+  }
+
+  private grammar(ctx: ContextHandle, spec: GrammarSpec): GrammarHandle {
     const cached = this.grammars.get(spec);
     if (cached !== undefined) return cached;
     const lib = this.engine;
+    if (this.grammars.size >= CACHE_LIMIT) {
+      for (const [oldest, handle] of this.grammars) {
+        if (this.borrowed.has(oldest)) continue;
+        this.grammars.delete(oldest);
+        lib.freeGrammar(handle);
+        break;
+      }
+    }
     const builder = lib.grammarBuilderNew(ctx, spec.text);
     const grammar = withCleanup(
       () => {
@@ -299,7 +330,7 @@ export class StringGeneratorCache {
     if (lib !== this.engine) throw new Error("String generator cache belongs to another engine");
     const cached = this.generators.get(schema);
     if (cached !== undefined) return cached;
-    if (this.generators.size >= 256) {
+    if (this.generators.size >= CACHE_LIMIT) {
       const oldest = this.generators.entries().next().value!;
       this.generators.delete(oldest[0]);
       lib.freeStringGenerator(oldest[1]);

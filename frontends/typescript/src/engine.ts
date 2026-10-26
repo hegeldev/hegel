@@ -35,6 +35,9 @@ export type StateMachineHandle = { readonly [stateMachineBrand]: never };
 declare const printerBrand: unique symbol;
 export type PrinterHandle = { readonly [printerBrand]: never };
 
+declare const printerOptionsBrand: unique symbol;
+export type PrinterOptionsHandle = { readonly [printerOptionsBrand]: never };
+
 declare const grammarBuilderBrand: unique symbol;
 export type GrammarBuilderHandle = { readonly [grammarBuilderBrand]: never };
 
@@ -307,6 +310,21 @@ export interface Engine {
   getPhases(s: SettingsHandle): number;
   getPrintBlob(s: SettingsHandle): boolean;
   getReportMultipleFailures(s: SettingsHandle): boolean;
+  getTestCases(s: SettingsHandle): number;
+  /** The fixed seed, or `null` when the engine picks one per run. */
+  getSeed(s: SettingsHandle): bigint | null;
+  getDerandomize(s: SettingsHandle): boolean;
+  /** `null` for the default database, `""` for none, else its directory. */
+  getDatabase(s: SettingsHandle): string | null;
+  /** The suppressed `hegel_health_check_t` bit set. */
+  getSuppressHealthCheck(s: SettingsHandle): number;
+  getStopOnFirstFailure(s: SettingsHandle): boolean;
+  getShowStatistics(s: SettingsHandle): boolean;
+  getUnboundedChoices(s: SettingsHandle): boolean;
+  /** The resolved `hegel_backend_t`. */
+  getBackend(s: SettingsHandle): number;
+  /** The resolved `hegel_nondeterminism_strictness_t`. */
+  getNondeterminismStrictness(s: SettingsHandle): number;
   runStart(ctx: ContextHandle, settings: SettingsHandle): RunHandle;
   /**
    * Start a run that replays a reproduce blob instead of exploring. Throws on
@@ -336,6 +354,12 @@ export interface Engine {
   labelCombine(ctx: ContextHandle, labels: readonly bigint[]): bigint;
   /** A printer onto `tc`'s region of its family's document, at the default width. */
   testCasePrinter(ctx: ContextHandle, tc: TestCaseHandle): PrinterHandle;
+  /** Printer options, every one at its default (a width of 79). */
+  newPrinterOptions(ctx: ContextHandle): PrinterOptionsHandle;
+  setPrinterMaxWidth(ctx: ContextHandle, options: PrinterOptionsHandle, width: bigint): void;
+  freePrinterOptions(options: PrinterOptionsHandle): void;
+  /** A standalone document laid out per `options` (`null` for the defaults). */
+  newPrinter(ctx: ContextHandle, options: PrinterOptionsHandle | null): PrinterHandle;
   freePrinter(p: PrinterHandle): void;
   printerText(ctx: ContextHandle, p: PrinterHandle, text: string): void;
   printerHardBreak(ctx: ContextHandle, p: PrinterHandle): void;

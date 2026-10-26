@@ -119,8 +119,9 @@ so a Node import creeping into a shared module fails `check-lint`.
    handles, bounded and freed with the runner. The same run-owned cache
    compiles each `fromLark` generator's grammar once (the builder loop, with
    imported files read through `RuntimeServices.readGrammarFile`) and frees
-   the `hegel_grammar_t` handles when the run ends; grammars are never evicted,
-   because a draw in progress borrows its grammar. A grammar draw
+   the `hegel_grammar_t` handles when the run ends. Each kind is capped at 256
+   live handles, evicting (and freeing) the oldest first; a grammar a draw in
+   progress borrows is never evicted. A grammar draw
    (`EngineDataSource.drawGrammar`) is one `hegel_grammar_draw_t` loop per
    value, the frontend drawing each explicit terminal's value between
    `hegel_grammar_draw_next` and `hegel_grammar_draw_provide`. Text and binary
@@ -142,9 +143,22 @@ so a Node import creeping into a shared module fails `check-lint`.
    runtime's `projectRoot` (Node's working directory; a browser keys on the
    URL's path) plus the test's name, which for an anonymous test function is
    Vitest's or Jest's name for the running test, so it does not depend on
-   where the project is checked out.
+   where the project is checked out. Several anonymous test functions in one
+   runner test or enclosing function can borrow one name: they are numbered
+   in the order their call lines first run in the process (a module-level
+   map in `callSite.ts`), the first keeping the plain key and each later one
+   carrying its number (`tests/a.test.ts::suite > case (2)`). A key never
+   depends on other runner tests, but within one it does depend on order:
+   skipping or adding an earlier call, or moving a call's line in a process
+   that keeps the module loaded, renumbers it. A runtime without
+   `Error.captureStackTrace` (Firefox) has no call site: no location, and
+   the key falls back to the function's name (none for an anonymous one).
 6. **Shared runner** (`src/runnerCore.ts`) — the sync and async run loops:
-   explicit examples (`src/explicit.ts`), then `run_start` (or
+   explicit examples (`src/explicit.ts`: each runs once, with no engine test
+   case, its draws and notes laid out by a standalone engine printer from
+   `hegel_printer_new`, and its description printed on one line with an
+   unbounded `hegel_printer_options_t` width; a usage error in one, an
+   `ExplicitExampleError`, fails the run as itself), then `run_start` (or
    `run_start_blob` for each `reproduceFailure` blob) → `next_test_case` →
    `mark_complete` → `run_result`. The engine owns the whole run, the final
    replay of each failure included; the runner never replays. A test case
@@ -173,8 +187,12 @@ so a Node import creeping into a shared module fails `check-lint`.
    (imperative) and `record` (declarative) in `compose.ts` are the composition
    entry points.
 
-Neither adapter frees anything implicitly — every handle the ABI writes back
-is caller-owned: the runner frees `Context`/`Settings`/`Run` handles, each test
+Both adapters hand out handles as fresh opaque objects mapped to the engine's
+pointers, never the pointers themselves, and forget the mapping when the
+handle is freed: a freed or foreign handle (a clone kept past its test case,
+say) throws `EngineError("Foreign, freed or invalid engine handle")` instead of
+reaching the engine as a dangling pointer. Neither adapter frees anything
+implicitly — every handle the ABI writes back is caller-owned: the runner frees `Context`/`Settings`/`Run` handles, each test
 case from `next_test_case`, the run result and each failure explicitly in
 `finally` blocks, in ownership order, and `EngineDataSource.dispose` frees
 each test case's collections, pools, recursions, state machines, printers and

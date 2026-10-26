@@ -117,14 +117,17 @@ released with its matching free, in `finally` blocks so error paths release
 too: the runner frees `Context`, `Settings` and `Run`, each test case, the run
 result and each failure; `EngineDataSource` frees the collections, pools,
 recursions, state machines, printers and cloned or block test cases of its
-test case;
+test case; an explicit example's `EngineDocument` (`src/pretty.ts`) frees the
+standalone printer from `hegel_printer_new` and the
+`hegel_printer_options_t` it was made with;
 engine-owned buffers (`hegel_generate_bytes`, `hegel_generate_string`,
 `hegel_printer_value`, `hegel_grammar_draw_result`) are copied out
 immediately and then freed. A grammar builder is freed as soon as its grammar
 is compiled, and a grammar draw when the draw ends. The exceptions:
 `hegel_string_generator_t` handles are cached per schema object and
 `hegel_grammar_t` handles per `fromLark` generator (`StringGeneratorCache`),
-and freed with the runner.
+each kind capped at 256 live handles (the oldest evicted and freed first, never
+a grammar a draw in progress borrows), and the rest freed with the runner.
 
 ## Making a change
 

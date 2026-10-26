@@ -42,6 +42,20 @@ export class LoopDone extends Error {
   }
 }
 
+/**
+ * A misused explicit example: one that is rejected, leaves a value undrawn,
+ * has no value for a draw, or does what an explicit example cannot. It fails
+ * the run as it is, rather than being reported as a failing example.
+ *
+ * @internal
+ */
+export class ExplicitExampleError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ExplicitExampleError";
+  }
+}
+
 /** The registration for a state machine, see {@link DataSource.newStateMachine}. */
 export interface StateMachineSpec {
   ruleNames: readonly string[];
@@ -174,7 +188,7 @@ export class ExplicitValues {
     if (this.consumed < this.positional.length) {
       return this.positional[this.consumed++];
     }
-    throw new Error(
+    throw new ExplicitExampleError(
       `Explicit example ${this.description} has no value for draw ${JSON.stringify(name)}: pass it by name, or add a positional value`,
     );
   }
@@ -189,7 +203,7 @@ export class ExplicitValues {
     }
     if (leftover > 0) problems.push(`${leftover} positional value(s) not drawn`);
     if (problems.length > 0) {
-      throw new Error(
+      throw new ExplicitExampleError(
         `Explicit example ${this.description} was not fully used: ${problems.join("; ")}`,
       );
     }
@@ -289,10 +303,12 @@ export class TestCase {
   /**
    * Draw a value from a generator without printing it in the report of a
    * failing example. Use it for values that would only clutter the report.
+   * It cannot be used in an explicit example, whose values are matched to
+   * draws by the names they are printed under.
    */
   drawSilent<T>(generator: Generator<T>): T {
     if (this.shared.explicit !== null) {
-      throw new Error("drawSilent is not supported in explicit examples");
+      throw new ExplicitExampleError("drawSilent is not supported in explicit examples");
     }
     this.printingDepth++;
     try {
@@ -379,9 +395,6 @@ export class TestCase {
   }
 
   private beginRepeat(): Collection {
-    if (this.shared.explicit !== null) {
-      throw new Error("TestCase.repeat is not supported in explicit examples");
-    }
     const minSize = this._dataSource.generate({
       type: "integer",
       min_value: 0,
@@ -419,10 +432,19 @@ export class TestCase {
    * heading, its draws and notes indented beneath it.
    *
    * `repeat` never returns: code after it does not run. For an asynchronous
-   * body, use {@link repeatAsync}. It cannot be used in an explicit example,
-   * which has no engine to choose the number of repetitions.
+   * body, use {@link repeatAsync}. In an explicit example, which has no
+   * engine to choose the number of repetitions, `body` runs once.
    */
   repeat(body: () => void): never {
+    if (this.shared.explicit !== null) {
+      const outer = this.beginIteration(1);
+      try {
+        body();
+      } finally {
+        this.switchTo(outer);
+      }
+      throw new LoopDone();
+    }
     const collection = this.beginRepeat();
     let iteration = 0;
     while (collection.more()) {
@@ -440,6 +462,15 @@ export class TestCase {
 
   /** {@link repeat} with an asynchronous body, each repetition awaited before the next. */
   async repeatAsync(body: () => void | Promise<void>): Promise<never> {
+    if (this.shared.explicit !== null) {
+      const outer = this.beginIteration(1);
+      try {
+        await body();
+      } finally {
+        this.switchTo(outer);
+      }
+      throw new LoopDone();
+    }
     const collection = this.beginRepeat();
     let iteration = 0;
     while (collection.more()) {
@@ -461,7 +492,8 @@ export class TestCase {
    * one draws does not depend on how the tasks interleave. A clone's draws
    * and notes are printed where the clone was made; use {@link setWorker} to
    * label them with the task they came from. Clones share the test case's
-   * outcome, so a clone must not be used once the test body has returned.
+   * outcome, so a clone must not be used once the test body has returned:
+   * drawing from it then throws.
    */
   clone(): TestCase {
     return this.derive(this._dataSource.clone(), this.drawState);

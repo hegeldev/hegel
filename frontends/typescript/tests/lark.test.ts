@@ -70,6 +70,16 @@ describe("gs.fromLark()", () => {
       { testCases: 50 },
     ));
 
+  test("draws from more fresh grammars than the cache keeps alive", () =>
+    hegel.test(
+      (tc) => {
+        for (let i = 0; i < 300; i++) {
+          expect(tc.draw(gs.fromLark(`start: "${i}"`))).toBe(String(i));
+        }
+      },
+      { testCases: 1, database: hegel.Database.disabled },
+    ));
+
   test("shrinks toward the grammar's simplest strings", () => {
     expect(minimal(gs.fromLark(ARITHMETIC), (s) => s.includes("+"))).toBe("0+0");
   });

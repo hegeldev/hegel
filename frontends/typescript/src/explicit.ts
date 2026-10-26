@@ -5,22 +5,23 @@
  * @packageDocumentation
  */
 
-import { TextPrinter } from "./pretty.js";
-import type { DataSource } from "./testCase.js";
+import type { EngineDocument, Printer } from "./pretty.js";
+import { ExplicitExampleError, type DataSource } from "./testCase.js";
 
 function unsupported(operation: string): never {
-  throw new Error(`${operation} is not supported in explicit examples`);
+  throw new ExplicitExampleError(`${operation} is not supported in explicit examples`);
 }
 
 /**
  * The {@link DataSource} of an explicit example: draws are served from the
  * example's values by `TestCase.draw` itself, so anything that would draw
- * from the engine is an error. Its notes and printed draws are kept as plain
- * lines for the report.
+ * from the engine is a usage error. Its notes and printed draws go into an
+ * engine document, laid out as a generated test case's are.
  */
 export class ExplicitDataSource implements DataSource {
   constructor(
-    private readonly output: TextPrinter = new TextPrinter(),
+    private readonly document: EngineDocument,
+    private readonly indent = 0,
     readonly family: object = {},
   ) {}
 
@@ -92,7 +93,7 @@ export class ExplicitDataSource implements DataSource {
     return unsupported("A grammar");
   }
   note(message: string): void {
-    this.output.note(message);
+    this.document.note(this.indent, message);
   }
   target(): void {}
   event(): void {}
@@ -101,14 +102,10 @@ export class ExplicitDataSource implements DataSource {
     return this;
   }
   block(indent: number): DataSource {
-    return new ExplicitDataSource(this.output.indented(indent), this.family);
+    return new ExplicitDataSource(this.document, this.indent + indent, this.family);
   }
   setWorker(): void {}
-  printer(): TextPrinter {
-    return this.output;
-  }
-  /** The example's printed draws and notes. */
-  lines(): string[] {
-    return this.output.lines();
+  printer(): Printer {
+    return this.document.view(this.indent);
   }
 }
