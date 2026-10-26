@@ -79,7 +79,11 @@ import koffi, { type TypeObject, type LibraryHandle } from "koffi";
 import { StopTestError, AssumeError } from "./testCase.js";
 import { wtf8ToString } from "./wtf8.js";
 
-/** Opaque libhegel handle (koffi pointer). `null` signals a failed call. */
+/**
+ * A koffi pointer, or a handle {@link Libhegel} wraps one in: `Libhegel`
+ * hands out a fresh object per handle and unwraps it on every call, so a
+ * freed or foreign handle throws instead of reaching the engine.
+ */
 export type Ptr = unknown;
 
 /** Relevant `hegel_result_t` codes. */
@@ -88,6 +92,8 @@ const RESULT_STOP_TEST = -1;
 const RESULT_ASSUME = -2;
 const RESULT_RETRY = -10;
 const RESULT_NOT_FOUND = -11;
+
+const INVALID_HANDLE = "Foreign, freed or invalid engine handle";
 
 /** An error returned by a fallible libhegel call. */
 export class LibhegelError extends EngineError {
@@ -1194,6 +1200,7 @@ function copyNativeBuffer(result: NativeBuffer): Buffer {
  */
 export class Libhegel implements Engine {
   private readonly fns: Bindings;
+  private readonly pointers = new WeakMap<object, Ptr>();
 
   constructor(fns: Bindings) {
     this.fns = fns;
@@ -1204,14 +1211,32 @@ export class Libhegel implements Engine {
     return new Libhegel(bindLibrary(koffi.load(path)));
   }
 
+  /**
+   * Wrap a pointer the engine handed out in a fresh handle object, so that a
+   * handle used after it is freed is caught here rather than reaching the
+   * engine as a dangling pointer.
+   */
   private requireHandle<H>(value: Ptr, op: string): H {
     if (value === null || value === undefined)
       throw new EngineError(`${op} returned a null handle`);
-    return value as H;
+    const handle = Object.freeze({});
+    this.pointers.set(handle, value);
+    return handle as H;
+  }
+
+  private ptr(handle: Ptr): Ptr {
+    const pointer = this.pointers.get(handle as object);
+    if (pointer === undefined) throw new EngineError(INVALID_HANDLE);
+    return pointer;
+  }
+
+  private release(handle: Ptr, free: (pointer: Ptr) => void): void {
+    free(this.ptr(handle));
+    this.pointers.delete(handle as object);
   }
 
   freeStringGenerator(generator: StringGeneratorHandle): void {
-    this.fns.stringGeneratorFree(generator);
+    this.release(generator, (pointer) => this.fns.stringGeneratorFree(pointer));
   }
 
   version(): string {
@@ -1223,15 +1248,15 @@ export class Libhegel implements Engine {
   }
 
   setUnicodeVersion(ctx: Ptr, version: string): void {
-    this.fns.setUnicodeVersion(ctx, version);
+    this.fns.setUnicodeVersion(this.ptr(ctx), version);
   }
 
   freeContext(ctx: Ptr): void {
-    this.fns.contextFree(ctx);
+    this.release(ctx, (pointer) => this.fns.contextFree(pointer));
   }
 
   lastError(ctx: Ptr): string {
-    return this.fns.contextLastError(ctx);
+    return this.fns.contextLastError(this.ptr(ctx));
   }
 
   /**
@@ -1241,20 +1266,20 @@ export class Libhegel implements Engine {
    */
   newSettings(ctx: Ptr): SettingsHandle {
     const out: Ptr[] = [null];
-    this.check(ctx, this.fns.settingsNew(ctx, out), "hegel_settings_new");
+    this.check(ctx, this.fns.settingsNew(this.ptr(ctx), out), "hegel_settings_new");
     return this.requireHandle<SettingsHandle>(out[0], "hegel_settings_new");
   }
 
   freeSettings(s: Ptr): void {
-    this.fns.settingsFree(s);
+    this.release(s, (pointer) => this.fns.settingsFree(pointer));
   }
 
   setTestCases(s: Ptr, n: number): void {
-    this.fns.settingsTestCases(s, n);
+    this.fns.settingsTestCases(this.ptr(s), n);
   }
 
   setVerbosity(s: Ptr, v: number): void {
-    this.fns.settingsVerbosity(s, v);
+    this.fns.settingsVerbosity(this.ptr(s), v);
   }
 
   /**
@@ -1265,136 +1290,136 @@ export class Libhegel implements Engine {
     const out: Ptr[] = [null];
     this.check(
       ctx,
-      this.fns.settingsNewForProfile(ctx, name, out),
+      this.fns.settingsNewForProfile(this.ptr(ctx), name, out),
       "hegel_settings_new_for_profile",
     );
     return this.requireHandle<SettingsHandle>(out[0], "hegel_settings_new_for_profile");
   }
 
   setSeed(s: Ptr, seed: bigint | null): void {
-    this.fns.settingsSeed(s, seed ?? 0n, seed !== null);
+    this.fns.settingsSeed(this.ptr(s), seed ?? 0n, seed !== null);
   }
 
   setDerandomize(s: Ptr, on: boolean): void {
-    this.fns.settingsDerandomize(s, on);
+    this.fns.settingsDerandomize(this.ptr(s), on);
   }
 
   setDatabase(ctx: Ptr, s: Ptr, db: string | null): void {
-    this.fns.settingsDatabase(ctx, s, db);
+    this.fns.settingsDatabase(this.ptr(ctx), this.ptr(s), db);
   }
 
   setDatabaseKey(ctx: Ptr, s: Ptr, key: string): void {
-    this.fns.settingsDatabaseKey(ctx, s, key);
+    this.fns.settingsDatabaseKey(this.ptr(ctx), this.ptr(s), key);
   }
 
   setSuppressHealthCheck(s: Ptr, checks: number): void {
-    this.fns.settingsSuppressHealthCheck(s, checks);
+    this.fns.settingsSuppressHealthCheck(this.ptr(s), checks);
   }
 
   setReportMultipleFailures(s: Ptr, yes: boolean): void {
-    this.fns.settingsReportMultipleFailures(s, yes);
+    this.fns.settingsReportMultipleFailures(this.ptr(s), yes);
   }
 
   setStopOnFirstFailure(s: Ptr, yes: boolean): void {
-    this.fns.settingsStopOnFirstFailure(s, yes);
+    this.fns.settingsStopOnFirstFailure(this.ptr(s), yes);
   }
 
   setShowStatistics(s: Ptr, yes: boolean): void {
-    this.fns.settingsShowStatistics(s, yes);
+    this.fns.settingsShowStatistics(this.ptr(s), yes);
   }
 
   setUnboundedChoices(s: Ptr, yes: boolean): void {
-    this.fns.settingsUnboundedChoices(s, yes);
+    this.fns.settingsUnboundedChoices(this.ptr(s), yes);
   }
 
   setPrintBlob(s: Ptr, yes: boolean): void {
-    this.fns.settingsPrintBlob(s, yes);
+    this.fns.settingsPrintBlob(this.ptr(s), yes);
   }
 
   setPhases(s: Ptr, phases: number): void {
-    this.fns.settingsPhases(s, phases);
+    this.fns.settingsPhases(this.ptr(s), phases);
   }
 
   setBackend(s: Ptr, backend: number): void {
-    this.fns.settingsBackend(s, backend);
+    this.fns.settingsBackend(this.ptr(s), backend);
   }
 
   setNondeterminismStrictness(s: Ptr, strictness: number): void {
-    this.fns.settingsNondeterminismStrictness(s, strictness);
+    this.fns.settingsNondeterminismStrictness(this.ptr(s), strictness);
   }
 
   setTestLocation(ctx: Ptr, s: Ptr, location: NativeTestLocation): void {
-    this.fns.settingsTestLocation(ctx, s, location);
+    this.fns.settingsTestLocation(this.ptr(ctx), this.ptr(s), location);
   }
 
   registerProfile(ctx: Ptr, name: string, s: Ptr): void {
-    this.fns.settingsRegisterProfile(ctx, name, s);
+    this.fns.settingsRegisterProfile(this.ptr(ctx), name, this.ptr(s));
   }
 
   setDefaultProfile(ctx: Ptr, name: string): void {
-    this.fns.setDefaultProfile(ctx, name);
+    this.fns.setDefaultProfile(this.ptr(ctx), name);
   }
 
   getVerbosity(s: Ptr): number {
-    return this.fns.settingsGetVerbosity(s);
+    return this.fns.settingsGetVerbosity(this.ptr(s));
   }
 
   getPhases(s: Ptr): number {
-    return this.fns.settingsGetPhases(s);
+    return this.fns.settingsGetPhases(this.ptr(s));
   }
 
   getPrintBlob(s: Ptr): boolean {
-    return this.fns.settingsGetPrintBlob(s);
+    return this.fns.settingsGetPrintBlob(this.ptr(s));
   }
 
   getReportMultipleFailures(s: Ptr): boolean {
-    return this.fns.settingsGetReportMultipleFailures(s);
+    return this.fns.settingsGetReportMultipleFailures(this.ptr(s));
   }
 
   getTestCases(s: Ptr): number {
-    return this.fns.settingsGetTestCases(s);
+    return this.fns.settingsGetTestCases(this.ptr(s));
   }
 
   getSeed(s: Ptr): bigint | null {
-    return this.fns.settingsGetSeed(s);
+    return this.fns.settingsGetSeed(this.ptr(s));
   }
 
   getDerandomize(s: Ptr): boolean {
-    return this.fns.settingsGetDerandomize(s);
+    return this.fns.settingsGetDerandomize(this.ptr(s));
   }
 
   getDatabase(s: Ptr): string | null {
-    return this.fns.settingsGetDatabase(s);
+    return this.fns.settingsGetDatabase(this.ptr(s));
   }
 
   getSuppressHealthCheck(s: Ptr): number {
-    return this.fns.settingsGetSuppressHealthCheck(s);
+    return this.fns.settingsGetSuppressHealthCheck(this.ptr(s));
   }
 
   getStopOnFirstFailure(s: Ptr): boolean {
-    return this.fns.settingsGetStopOnFirstFailure(s);
+    return this.fns.settingsGetStopOnFirstFailure(this.ptr(s));
   }
 
   getShowStatistics(s: Ptr): boolean {
-    return this.fns.settingsGetShowStatistics(s);
+    return this.fns.settingsGetShowStatistics(this.ptr(s));
   }
 
   getUnboundedChoices(s: Ptr): boolean {
-    return this.fns.settingsGetUnboundedChoices(s);
+    return this.fns.settingsGetUnboundedChoices(this.ptr(s));
   }
 
   getBackend(s: Ptr): number {
-    return this.fns.settingsGetBackend(s);
+    return this.fns.settingsGetBackend(this.ptr(s));
   }
 
   getNondeterminismStrictness(s: Ptr): number {
-    return this.fns.settingsGetNondeterminismStrictness(s);
+    return this.fns.settingsGetNondeterminismStrictness(this.ptr(s));
   }
 
   /** Start a run. Throws {@link LibhegelError} on failure. */
   runStart(ctx: Ptr, settings: Ptr): RunHandle {
     const out: Ptr[] = [null];
-    this.check(ctx, this.fns.runStart(ctx, settings, out), "hegel_run_start");
+    this.check(ctx, this.fns.runStart(this.ptr(ctx), this.ptr(settings), out), "hegel_run_start");
     return this.requireHandle<RunHandle>(out[0], "runStart");
   }
 
@@ -1404,7 +1429,11 @@ export class Libhegel implements Engine {
    */
   runStartBlob(ctx: Ptr, settings: Ptr, blob: string): RunHandle {
     const out: Ptr[] = [null];
-    this.check(ctx, this.fns.runStartBlob(ctx, settings, blob, out), "hegel_run_start_blob");
+    this.check(
+      ctx,
+      this.fns.runStartBlob(this.ptr(ctx), this.ptr(settings), blob, out),
+      "hegel_run_start_blob",
+    );
     return this.requireHandle<RunHandle>(out[0], "runStartBlob");
   }
 
@@ -1416,8 +1445,14 @@ export class Libhegel implements Engine {
    */
   nextTestCase(ctx: Ptr, run: Ptr): TestCaseHandle | null {
     const out: Ptr[] = [null];
-    this.check(ctx, this.fns.nextTestCase(ctx, run, out), "hegel_next_test_case");
-    return (out[0] ?? null) as TestCaseHandle | null;
+    this.check(
+      ctx,
+      this.fns.nextTestCase(this.ptr(ctx), this.ptr(run), out),
+      "hegel_next_test_case",
+    );
+    return out[0] === null
+      ? null
+      : this.requireHandle<TestCaseHandle>(out[0], "hegel_next_test_case");
   }
 
   /**
@@ -1426,148 +1461,208 @@ export class Libhegel implements Engine {
    */
   runResult(ctx: Ptr, run: Ptr): RunResultHandle {
     const out: Ptr[] = [null];
-    this.check(ctx, this.fns.runResult(ctx, run, out), "hegel_run_result");
+    this.check(ctx, this.fns.runResult(this.ptr(ctx), this.ptr(run), out), "hegel_run_result");
     return this.requireHandle<RunResultHandle>(out[0], "runResult");
   }
 
   freeRunResult(r: Ptr): void {
-    this.fns.runResultFree(r);
+    this.release(r, (pointer) => this.fns.runResultFree(pointer));
   }
 
   freeRun(run: Ptr): void {
-    this.fns.runFree(run);
+    this.release(run, (pointer) => this.fns.runFree(pointer));
   }
 
   freeTestCase(tc: Ptr): void {
-    this.fns.testCaseFree(tc);
+    this.release(tc, (pointer) => this.fns.testCaseFree(pointer));
   }
 
   shouldCapture(ctx: Ptr, tc: Ptr): boolean {
     const out: boolean[] = [false];
-    this.check(ctx, this.fns.testCaseShouldCapture(ctx, tc, out), "hegel_test_case_should_capture");
+    this.check(
+      ctx,
+      this.fns.testCaseShouldCapture(this.ptr(ctx), this.ptr(tc), out),
+      "hegel_test_case_should_capture",
+    );
     return out[0];
   }
 
   /** A clone of `tc`: owned by the caller, released with {@link freeTestCase}. */
   cloneTestCase(ctx: Ptr, tc: Ptr): TestCaseHandle {
     const out: Ptr[] = [null];
-    this.check(ctx, this.fns.testCaseClone(ctx, tc, out), "hegel_test_case_clone");
+    this.check(
+      ctx,
+      this.fns.testCaseClone(this.ptr(ctx), this.ptr(tc), out),
+      "hegel_test_case_clone",
+    );
     return this.requireHandle<TestCaseHandle>(out[0], "hegel_test_case_clone");
   }
 
   /** A block handle on `tc`: owned by the caller, released with {@link freeTestCase}. */
   blockTestCase(ctx: Ptr, tc: Ptr, indent: number): TestCaseHandle {
     const out: Ptr[] = [null];
-    this.check(ctx, this.fns.testCaseBlock(ctx, tc, indent, out), "hegel_test_case_block");
+    this.check(
+      ctx,
+      this.fns.testCaseBlock(this.ptr(ctx), this.ptr(tc), indent, out),
+      "hegel_test_case_block",
+    );
     return this.requireHandle<TestCaseHandle>(out[0], "hegel_test_case_block");
   }
 
   setWorker(ctx: Ptr, tc: Ptr, index: number): void {
-    this.check(ctx, this.fns.testCaseSetWorker(ctx, tc, index), "hegel_test_case_set_worker");
+    this.check(
+      ctx,
+      this.fns.testCaseSetWorker(this.ptr(ctx), this.ptr(tc), index),
+      "hegel_test_case_set_worker",
+    );
   }
 
   note(ctx: Ptr, tc: Ptr, text: string): void {
-    this.check(ctx, this.fns.note(ctx, tc, text), "hegel_note");
+    this.check(ctx, this.fns.note(this.ptr(ctx), this.ptr(tc), text), "hegel_note");
   }
 
   target(ctx: Ptr, tc: Ptr, value: number, label: string): void {
-    this.check(ctx, this.fns.target(ctx, tc, value, label), "hegel_target");
+    this.check(ctx, this.fns.target(this.ptr(ctx), this.ptr(tc), value, label), "hegel_target");
   }
 
   event(ctx: Ptr, tc: Ptr, label: string): void {
-    this.check(ctx, this.fns.event(ctx, tc, label), "hegel_event");
+    this.check(ctx, this.fns.event(this.ptr(ctx), this.ptr(tc), label), "hegel_event");
   }
 
   eventValue(ctx: Ptr, tc: Ptr, value: number, label: string): void {
-    this.check(ctx, this.fns.eventValue(ctx, tc, value, label), "hegel_event_value");
+    this.check(
+      ctx,
+      this.fns.eventValue(this.ptr(ctx), this.ptr(tc), value, label),
+      "hegel_event_value",
+    );
   }
 
   labelFromName(ctx: Ptr, name: string): bigint {
     const out: (number | bigint)[] = [0];
-    this.check(ctx, this.fns.labelFromName(ctx, name, out), "hegel_label_from_name");
+    this.check(ctx, this.fns.labelFromName(this.ptr(ctx), name, out), "hegel_label_from_name");
     return BigInt.asUintN(64, BigInt(out[0]));
   }
 
   labelCombine(ctx: Ptr, labels: readonly bigint[]): bigint {
     const out: (number | bigint)[] = [0];
-    this.check(ctx, this.fns.labelCombine(ctx, labels, out), "hegel_label_combine");
+    this.check(ctx, this.fns.labelCombine(this.ptr(ctx), labels, out), "hegel_label_combine");
     return BigInt.asUintN(64, BigInt(out[0]));
   }
 
   /** A printer onto `tc`'s print region: released with {@link freePrinter}. */
   testCasePrinter(ctx: Ptr, tc: Ptr): PrinterHandle {
     const out: Ptr[] = [null];
-    this.check(ctx, this.fns.testCasePrinter(ctx, tc, out), "hegel_test_case_printer");
+    this.check(
+      ctx,
+      this.fns.testCasePrinter(this.ptr(ctx), this.ptr(tc), out),
+      "hegel_test_case_printer",
+    );
     return this.requireHandle<PrinterHandle>(out[0], "hegel_test_case_printer");
   }
 
   freePrinter(p: Ptr): void {
-    this.fns.printerFree(p);
+    this.release(p, (pointer) => this.fns.printerFree(pointer));
   }
 
   printerText(ctx: Ptr, p: Ptr, text: string): void {
-    this.check(ctx, this.fns.printerText(ctx, p, text), "hegel_printer_text");
+    this.check(ctx, this.fns.printerText(this.ptr(ctx), this.ptr(p), text), "hegel_printer_text");
   }
 
   printerHardBreak(ctx: Ptr, p: Ptr): void {
-    this.check(ctx, this.fns.printerHardBreak(ctx, p), "hegel_printer_hard_break");
+    this.check(
+      ctx,
+      this.fns.printerHardBreak(this.ptr(ctx), this.ptr(p)),
+      "hegel_printer_hard_break",
+    );
   }
 
   printerBeginGroup(ctx: Ptr, p: Ptr, indent: number, open: string): void {
     this.check(
       ctx,
-      this.fns.printerBeginGroup(ctx, p, BigInt(indent), open),
+      this.fns.printerBeginGroup(this.ptr(ctx), this.ptr(p), BigInt(indent), open),
       "hegel_printer_begin_group",
     );
   }
 
   printerEndGroup(ctx: Ptr, p: Ptr, close: string): void {
-    this.check(ctx, this.fns.printerEndGroup(ctx, p, close), "hegel_printer_end_group");
+    this.check(
+      ctx,
+      this.fns.printerEndGroup(this.ptr(ctx), this.ptr(p), close),
+      "hegel_printer_end_group",
+    );
   }
 
   printerBreakable(ctx: Ptr, p: Ptr, sep: string): void {
-    this.check(ctx, this.fns.printerBreakable(ctx, p, sep), "hegel_printer_breakable");
+    this.check(
+      ctx,
+      this.fns.printerBreakable(this.ptr(ctx), this.ptr(p), sep),
+      "hegel_printer_breakable",
+    );
   }
 
   printerIfBreak(ctx: Ptr, p: Ptr, text: string): void {
-    this.check(ctx, this.fns.printerIfBreak(ctx, p, text), "hegel_printer_if_break");
+    this.check(
+      ctx,
+      this.fns.printerIfBreak(this.ptr(ctx), this.ptr(p), text),
+      "hegel_printer_if_break",
+    );
   }
 
   printerComment(ctx: Ptr, p: Ptr, text: string): void {
-    this.check(ctx, this.fns.printerComment(ctx, p, text), "hegel_printer_comment");
+    this.check(
+      ctx,
+      this.fns.printerComment(this.ptr(ctx), this.ptr(p), text),
+      "hegel_printer_comment",
+    );
   }
 
   printerShiftIndent(ctx: Ptr, p: Ptr, delta: number): void {
     this.check(
       ctx,
-      this.fns.printerShiftIndent(ctx, p, BigInt(delta)),
+      this.fns.printerShiftIndent(this.ptr(ctx), this.ptr(p), BigInt(delta)),
       "hegel_printer_shift_indent",
     );
   }
 
   printerReflow(ctx: Ptr, p: Ptr, text: string): void {
-    this.check(ctx, this.fns.printerReflow(ctx, p, text), "hegel_printer_reflow");
+    this.check(
+      ctx,
+      this.fns.printerReflow(this.ptr(ctx), this.ptr(p), text),
+      "hegel_printer_reflow",
+    );
   }
 
   printerBeginSpeculative(ctx: Ptr, p: Ptr): void {
-    this.check(ctx, this.fns.printerBeginSpeculative(ctx, p), "hegel_printer_begin_speculative");
+    this.check(
+      ctx,
+      this.fns.printerBeginSpeculative(this.ptr(ctx), this.ptr(p)),
+      "hegel_printer_begin_speculative",
+    );
   }
 
   printerCommitSpeculative(ctx: Ptr, p: Ptr): void {
-    this.check(ctx, this.fns.printerCommitSpeculative(ctx, p), "hegel_printer_commit_speculative");
+    this.check(
+      ctx,
+      this.fns.printerCommitSpeculative(this.ptr(ctx), this.ptr(p)),
+      "hegel_printer_commit_speculative",
+    );
   }
 
   printerAbortSpeculative(ctx: Ptr, p: Ptr): void {
-    this.check(ctx, this.fns.printerAbortSpeculative(ctx, p), "hegel_printer_abort_speculative");
+    this.check(
+      ctx,
+      this.fns.printerAbortSpeculative(this.ptr(ctx), this.ptr(p)),
+      "hegel_printer_abort_speculative",
+    );
   }
 
   printerResolve(ctx: Ptr, p: Ptr): void {
-    this.check(ctx, this.fns.printerResolve(ctx, p), "hegel_printer_resolve");
+    this.check(ctx, this.fns.printerResolve(this.ptr(ctx), this.ptr(p)), "hegel_printer_resolve");
   }
 
   printerValue(ctx: Ptr, p: Ptr): string {
     const out: NativeBuffer[] = [{ data: null, len: 0 }];
-    this.check(ctx, this.fns.printerValue(ctx, p, out), "hegel_printer_value");
+    this.check(ctx, this.fns.printerValue(this.ptr(ctx), this.ptr(p), out), "hegel_printer_value");
     try {
       return wtf8ToString(copyNativeBuffer(out[0]));
     } finally {
@@ -1599,7 +1694,11 @@ export class Libhegel implements Engine {
   /** Draw a boolean that is `true` with probability `p`. */
   generateBoolean(ctx: Ptr, tc: Ptr, p: number): boolean {
     const out: boolean[] = [false];
-    this.check(ctx, this.fns.generateBoolean(ctx, tc, p, out), "hegel_generate_boolean");
+    this.check(
+      ctx,
+      this.fns.generateBoolean(this.ptr(ctx), this.ptr(tc), p, out),
+      "hegel_generate_boolean",
+    );
     return out[0];
   }
 
@@ -1609,7 +1708,11 @@ export class Libhegel implements Engine {
    */
   generateInteger(ctx: Ptr, tc: Ptr, min: bigint, max: bigint): bigint {
     const out: (number | bigint)[] = [0];
-    this.check(ctx, this.fns.generateInteger(ctx, tc, min, max, out), "hegel_generate_integer");
+    this.check(
+      ctx,
+      this.fns.generateInteger(this.ptr(ctx), this.ptr(tc), min, max, out),
+      "hegel_generate_integer",
+    );
     return BigInt(out[0]);
   }
 
@@ -1623,7 +1726,14 @@ export class Libhegel implements Engine {
     const outLen: (number | bigint)[] = [0];
     this.check(
       ctx,
-      this.fns.generateIntegerBig(ctx, tc, minBytes, maxBytes, outValue, outLen),
+      this.fns.generateIntegerBig(
+        this.ptr(ctx),
+        this.ptr(tc),
+        minBytes,
+        maxBytes,
+        outValue,
+        outLen,
+      ),
       "hegel_generate_integer_big",
     );
     return twosComplementLEToBigInt(outValue);
@@ -1632,7 +1742,11 @@ export class Libhegel implements Engine {
   /** Draw a float per the given `hegel_generate_float` options. */
   generateFloat(ctx: Ptr, tc: Ptr, opts: NativeFloatOptions): number {
     const out: number[] = [0];
-    this.check(ctx, this.fns.generateFloat(ctx, tc, opts, out), "hegel_generate_float");
+    this.check(
+      ctx,
+      this.fns.generateFloat(this.ptr(ctx), this.ptr(tc), opts, out),
+      "hegel_generate_float",
+    );
     return out[0];
   }
 
@@ -1641,7 +1755,7 @@ export class Libhegel implements Engine {
     const out: NativeBuffer[] = [{ data: null, len: 0 }];
     this.check(
       ctx,
-      this.fns.generateBytes(ctx, tc, BigInt(minSize), maxSize, out),
+      this.fns.generateBytes(this.ptr(ctx), this.ptr(tc), BigInt(minSize), maxSize, out),
       "hegel_generate_bytes",
     );
     try {
@@ -1654,7 +1768,11 @@ export class Libhegel implements Engine {
   /** Build a text string generator. Throws {@link LibhegelError} on invalid options. */
   stringGeneratorText(ctx: Ptr, opts: TextGeneratorOptions): StringGeneratorHandle {
     const out: Ptr[] = [null];
-    this.check(ctx, this.fns.stringGeneratorText(ctx, opts, out), "hegel_string_generator_text");
+    this.check(
+      ctx,
+      this.fns.stringGeneratorText(this.ptr(ctx), opts, out),
+      "hegel_string_generator_text",
+    );
     return this.requireHandle<StringGeneratorHandle>(out[0], "stringGeneratorText");
   }
 
@@ -1668,7 +1786,13 @@ export class Libhegel implements Engine {
     const out: Ptr[] = [null];
     this.check(
       ctx,
-      this.fns.stringGeneratorRegex(ctx, pattern, fullmatch, alphabet, out),
+      this.fns.stringGeneratorRegex(
+        this.ptr(ctx),
+        pattern,
+        fullmatch,
+        alphabet === null ? null : this.ptr(alphabet),
+        out,
+      ),
       "hegel_string_generator_regex",
     );
     return this.requireHandle<StringGeneratorHandle>(out[0], "stringGeneratorRegex");
@@ -1677,14 +1801,18 @@ export class Libhegel implements Engine {
   /** Build an email-address string generator. */
   stringGeneratorEmail(ctx: Ptr): StringGeneratorHandle {
     const out: Ptr[] = [null];
-    this.check(ctx, this.fns.stringGeneratorEmail(ctx, out), "hegel_string_generator_email");
+    this.check(
+      ctx,
+      this.fns.stringGeneratorEmail(this.ptr(ctx), out),
+      "hegel_string_generator_email",
+    );
     return this.requireHandle<StringGeneratorHandle>(out[0], "stringGeneratorEmail");
   }
 
   /** Build a URL string generator. */
   stringGeneratorUrl(ctx: Ptr): StringGeneratorHandle {
     const out: Ptr[] = [null];
-    this.check(ctx, this.fns.stringGeneratorUrl(ctx, out), "hegel_string_generator_url");
+    this.check(ctx, this.fns.stringGeneratorUrl(this.ptr(ctx), out), "hegel_string_generator_url");
     return this.requireHandle<StringGeneratorHandle>(out[0], "stringGeneratorUrl");
   }
 
@@ -1693,7 +1821,7 @@ export class Libhegel implements Engine {
     const out: Ptr[] = [null];
     this.check(
       ctx,
-      this.fns.stringGeneratorDomain(ctx, maxLength, out),
+      this.fns.stringGeneratorDomain(this.ptr(ctx), maxLength, out),
       "hegel_string_generator_domain",
     );
     return this.requireHandle<StringGeneratorHandle>(out[0], "stringGeneratorDomain");
@@ -1702,7 +1830,11 @@ export class Libhegel implements Engine {
   /** Draw a string from a `hegel_string_generator_t`. */
   generateString(ctx: Ptr, tc: Ptr, generator: Ptr): string {
     const out: NativeBuffer[] = [{ data: null, len: 0 }];
-    this.check(ctx, this.fns.generateString(ctx, tc, generator, out), "hegel_generate_string");
+    this.check(
+      ctx,
+      this.fns.generateString(this.ptr(ctx), this.ptr(tc), this.ptr(generator), out),
+      "hegel_generate_string",
+    );
     try {
       return wtf8ToString(copyNativeBuffer(out[0]));
     } finally {
@@ -1713,14 +1845,18 @@ export class Libhegel implements Engine {
   /** Start gathering a grammar. Throws {@link LibhegelError} for text that does not parse. */
   grammarBuilderNew(ctx: Ptr, text: string): GrammarBuilderHandle {
     const out: Ptr[] = [null];
-    this.check(ctx, this.fns.grammarBuilderNew(ctx, text, out), "hegel_grammar_builder_new");
+    this.check(
+      ctx,
+      this.fns.grammarBuilderNew(this.ptr(ctx), text, out),
+      "hegel_grammar_builder_new",
+    );
     return this.requireHandle<GrammarBuilderHandle>(out[0], "grammarBuilderNew");
   }
 
   /** The `index`th file the grammar needs, or `null` past the end of the list. */
   grammarBuilderFile(ctx: Ptr, builder: Ptr, index: number): string | null {
     const out: NativeBuffer[] = [{ data: null, len: 0 }];
-    const code = this.fns.grammarBuilderFile(ctx, builder, index, out);
+    const code = this.fns.grammarBuilderFile(this.ptr(ctx), this.ptr(builder), index, out);
     if (code === RESULT_NOT_FOUND) return null;
     this.check(ctx, code, "hegel_grammar_builder_file");
     return wtf8ToString(copyNativeBuffer(out[0]));
@@ -1729,31 +1865,44 @@ export class Libhegel implements Engine {
   grammarBuilderProvide(ctx: Ptr, builder: Ptr, index: number, text: string | null): void {
     this.check(
       ctx,
-      this.fns.grammarBuilderProvide(ctx, builder, index, text),
+      this.fns.grammarBuilderProvide(this.ptr(ctx), this.ptr(builder), index, text),
       "hegel_grammar_builder_provide",
     );
   }
 
   freeGrammarBuilder(builder: Ptr): void {
-    this.fns.grammarBuilderFree(builder);
+    this.release(builder, (pointer) => this.fns.grammarBuilderFree(pointer));
   }
 
   /** Compile a gathered grammar. Throws {@link LibhegelError} with the engine's diagnostic. */
   newGrammar(ctx: Ptr, builder: Ptr, opts: GrammarOptions): GrammarHandle {
     const out: Ptr[] = [null];
-    this.check(ctx, this.fns.grammarNew(ctx, builder, opts, out), "hegel_grammar_new");
+    this.check(
+      ctx,
+      this.fns.grammarNew(
+        this.ptr(ctx),
+        this.ptr(builder),
+        {
+          ...opts,
+          alphabet:
+            opts.alphabet === null ? null : (this.ptr(opts.alphabet) as StringGeneratorHandle),
+        },
+        out,
+      ),
+      "hegel_grammar_new",
+    );
     return this.requireHandle<GrammarHandle>(out[0], "newGrammar");
   }
 
   freeGrammar(grammar: Ptr): void {
-    this.fns.grammarFree(grammar);
+    this.release(grammar, (pointer) => this.fns.grammarFree(pointer));
   }
 
   grammarDrawNew(ctx: Ptr, grammar: Ptr, maxSize: number): GrammarDrawHandle {
     const out: Ptr[] = [null];
     this.check(
       ctx,
-      this.fns.grammarDrawNew(ctx, grammar, BigInt(maxSize), out),
+      this.fns.grammarDrawNew(this.ptr(ctx), this.ptr(grammar), BigInt(maxSize), out),
       "hegel_grammar_draw_new",
     );
     return this.requireHandle<GrammarDrawHandle>(out[0], "grammarDrawNew");
@@ -1762,19 +1911,27 @@ export class Libhegel implements Engine {
   /** The explicit terminal whose value is due, or `null` once the string is complete. */
   grammarDrawNext(ctx: Ptr, tc: Ptr, draw: Ptr): number | null {
     const out: (number | bigint)[] = [0];
-    const code = this.fns.grammarDrawNext(ctx, tc, draw, out);
+    const code = this.fns.grammarDrawNext(this.ptr(ctx), this.ptr(tc), this.ptr(draw), out);
     if (code === RESULT_NOT_FOUND) return null;
     this.check(ctx, code, "hegel_grammar_draw_next");
     return Number(out[0]);
   }
 
   grammarDrawProvide(ctx: Ptr, draw: Ptr, value: string): void {
-    this.check(ctx, this.fns.grammarDrawProvide(ctx, draw, value), "hegel_grammar_draw_provide");
+    this.check(
+      ctx,
+      this.fns.grammarDrawProvide(this.ptr(ctx), this.ptr(draw), value),
+      "hegel_grammar_draw_provide",
+    );
   }
 
   grammarDrawResult(ctx: Ptr, draw: Ptr): string {
     const out: NativeBuffer[] = [{ data: null, len: 0 }];
-    this.check(ctx, this.fns.grammarDrawResult(ctx, draw, out), "hegel_grammar_draw_result");
+    this.check(
+      ctx,
+      this.fns.grammarDrawResult(this.ptr(ctx), this.ptr(draw), out),
+      "hegel_grammar_draw_result",
+    );
     try {
       return wtf8ToString(copyNativeBuffer(out[0]));
     } finally {
@@ -1783,20 +1940,28 @@ export class Libhegel implements Engine {
   }
 
   freeGrammarDraw(draw: Ptr): void {
-    this.fns.grammarDrawFree(draw);
+    this.release(draw, (pointer) => this.fns.grammarDrawFree(pointer));
   }
 
   /** Draw a date in `[min, max]`. */
   generateDate(ctx: Ptr, tc: Ptr, min: NativeDate, max: NativeDate): NativeDate {
     const out: NativeDate[] = [{ year: 0, month: 0, day: 0 }];
-    this.check(ctx, this.fns.generateDate(ctx, tc, min, max, out), "hegel_generate_date");
+    this.check(
+      ctx,
+      this.fns.generateDate(this.ptr(ctx), this.ptr(tc), min, max, out),
+      "hegel_generate_date",
+    );
     return out[0];
   }
 
   /** Draw a time of day in `[min, max]`. */
   generateTime(ctx: Ptr, tc: Ptr, min: NativeTime, max: NativeTime): NativeTime {
     const out: NativeTime[] = [{ hour: 0, minute: 0, second: 0, nanosecond: 0 }];
-    this.check(ctx, this.fns.generateTime(ctx, tc, min, max, out), "hegel_generate_time");
+    this.check(
+      ctx,
+      this.fns.generateTime(this.ptr(ctx), this.ptr(tc), min, max, out),
+      "hegel_generate_time",
+    );
     return out[0];
   }
 
@@ -1808,7 +1973,11 @@ export class Libhegel implements Engine {
         time: { hour: 0, minute: 0, second: 0, nanosecond: 0 },
       },
     ];
-    this.check(ctx, this.fns.generateDatetime(ctx, tc, min, max, out), "hegel_generate_datetime");
+    this.check(
+      ctx,
+      this.fns.generateDatetime(this.ptr(ctx), this.ptr(tc), min, max, out),
+      "hegel_generate_datetime",
+    );
     return out[0];
   }
 
@@ -1817,7 +1986,7 @@ export class Libhegel implements Engine {
     const out = Buffer.alloc(16);
     this.check(
       ctx,
-      this.fns.generateUuid(ctx, tc, version ?? 0, version !== undefined, out),
+      this.fns.generateUuid(this.ptr(ctx), this.ptr(tc), version ?? 0, version !== undefined, out),
       "hegel_generate_uuid",
     );
     return out;
@@ -1826,23 +1995,23 @@ export class Libhegel implements Engine {
   /** Draw an IPv4 address as its 4 network-order bytes. */
   generateIpv4(ctx: Ptr, tc: Ptr): Buffer {
     const out = Buffer.alloc(4);
-    this.check(ctx, this.fns.generateIpv4(ctx, tc, out), "hegel_generate_ipv4");
+    this.check(ctx, this.fns.generateIpv4(this.ptr(ctx), this.ptr(tc), out), "hegel_generate_ipv4");
     return out;
   }
 
   /** Draw an IPv6 address as its 16 network-order bytes. */
   generateIpv6(ctx: Ptr, tc: Ptr): Buffer {
     const out = Buffer.alloc(16);
-    this.check(ctx, this.fns.generateIpv6(ctx, tc, out), "hegel_generate_ipv6");
+    this.check(ctx, this.fns.generateIpv6(this.ptr(ctx), this.ptr(tc), out), "hegel_generate_ipv6");
     return out;
   }
 
   startSpan(ctx: Ptr, tc: Ptr, label: bigint): void {
-    this.check(ctx, this.fns.startSpan(ctx, tc, label), "hegel_start_span");
+    this.check(ctx, this.fns.startSpan(this.ptr(ctx), this.ptr(tc), label), "hegel_start_span");
   }
 
   stopSpan(ctx: Ptr, tc: Ptr, discard: boolean): void {
-    this.check(ctx, this.fns.stopSpan(ctx, tc, discard), "hegel_stop_span");
+    this.check(ctx, this.fns.stopSpan(this.ptr(ctx), this.ptr(tc), discard), "hegel_stop_span");
   }
 
   /**
@@ -1852,26 +2021,42 @@ export class Libhegel implements Engine {
   newCollection(ctx: Ptr, tc: Ptr, min: number, max?: number): CollectionHandle {
     const out: Ptr[] = [null];
     const maxArg = max === undefined ? UINT64_MAX : BigInt(max);
-    this.check(ctx, this.fns.newCollection(ctx, tc, min, maxArg, out), "hegel_new_collection");
+    this.check(
+      ctx,
+      this.fns.newCollection(this.ptr(ctx), this.ptr(tc), min, maxArg, out),
+      "hegel_new_collection",
+    );
     return this.requireHandle<CollectionHandle>(out[0], "newCollection");
   }
 
   collectionMore(ctx: Ptr, tc: Ptr, collection: Ptr): boolean {
     const out: boolean[] = [false];
-    this.check(ctx, this.fns.collectionMore(ctx, tc, collection, out), "hegel_collection_more");
+    this.check(
+      ctx,
+      this.fns.collectionMore(this.ptr(ctx), this.ptr(tc), this.ptr(collection), out),
+      "hegel_collection_more",
+    );
     return out[0];
   }
 
   collectionReject(ctx: Ptr, tc: Ptr, collection: Ptr, why: string | null): void {
-    this.check(ctx, this.fns.collectionReject(ctx, tc, collection, why), "hegel_collection_reject");
+    this.check(
+      ctx,
+      this.fns.collectionReject(this.ptr(ctx), this.ptr(tc), this.ptr(collection), why),
+      "hegel_collection_reject",
+    );
   }
 
   freeCollection(collection: Ptr): void {
-    this.fns.collectionFree(collection);
+    this.release(collection, (pointer) => this.fns.collectionFree(pointer));
   }
 
   markComplete(ctx: Ptr, tc: Ptr, status: number, origin: string | null): void {
-    this.check(ctx, this.fns.markComplete(ctx, tc, status, origin), "hegel_mark_complete");
+    this.check(
+      ctx,
+      this.fns.markComplete(this.ptr(ctx), this.ptr(tc), status, origin),
+      "hegel_mark_complete",
+    );
   }
 
   /**
@@ -1880,14 +2065,18 @@ export class Libhegel implements Engine {
    */
   newPool(ctx: Ptr, tc: Ptr): PoolHandle {
     const out: Ptr[] = [null];
-    this.check(ctx, this.fns.newPool(ctx, tc, out), "hegel_new_pool");
+    this.check(ctx, this.fns.newPool(this.ptr(ctx), this.ptr(tc), out), "hegel_new_pool");
     return this.requireHandle<PoolHandle>(out[0], "newPool");
   }
 
   /** Register a new variable in `pool`, returning its engine-assigned id. */
   poolAdd(ctx: Ptr, tc: Ptr, pool: Ptr): bigint {
     const out: (number | bigint)[] = [0];
-    this.check(ctx, this.fns.poolAdd(ctx, tc, pool, out), "hegel_pool_add");
+    this.check(
+      ctx,
+      this.fns.poolAdd(this.ptr(ctx), this.ptr(tc), this.ptr(pool), out),
+      "hegel_pool_add",
+    );
     return BigInt(out[0]);
   }
 
@@ -1897,17 +2086,25 @@ export class Libhegel implements Engine {
    */
   poolGenerate(ctx: Ptr, tc: Ptr, pool: Ptr, consume: boolean): bigint {
     const out: (number | bigint)[] = [0];
-    this.check(ctx, this.fns.poolGenerate(ctx, tc, pool, consume, out), "hegel_pool_generate");
+    this.check(
+      ctx,
+      this.fns.poolGenerate(this.ptr(ctx), this.ptr(tc), this.ptr(pool), consume, out),
+      "hegel_pool_generate",
+    );
     return BigInt(out[0]);
   }
 
   /** Put back a variable a consuming {@link poolGenerate} removed from `pool`. */
   poolRestore(ctx: Ptr, tc: Ptr, pool: Ptr, variableId: bigint): void {
-    this.check(ctx, this.fns.poolRestore(ctx, tc, pool, variableId), "hegel_pool_restore");
+    this.check(
+      ctx,
+      this.fns.poolRestore(this.ptr(ctx), this.ptr(tc), this.ptr(pool), variableId),
+      "hegel_pool_restore",
+    );
   }
 
   freePool(pool: Ptr): void {
-    this.fns.poolFree(pool);
+    this.release(pool, (pointer) => this.fns.poolFree(pointer));
   }
 
   /**
@@ -1918,7 +2115,7 @@ export class Libhegel implements Engine {
     const out: Ptr[] = [null];
     this.check(
       ctx,
-      this.fns.newRecursion(ctx, tc, BigInt(maxDepth), BigInt(maxLeaves), out),
+      this.fns.newRecursion(this.ptr(ctx), this.ptr(tc), BigInt(maxDepth), BigInt(maxLeaves), out),
       "hegel_new_recursion",
     );
     return this.requireHandle<RecursionHandle>(out[0], "newRecursion");
@@ -1928,7 +2125,13 @@ export class Libhegel implements Engine {
     const out: boolean[] = [false];
     this.check(
       ctx,
-      this.fns.recursionBranch(ctx, tc, recursion, BigInt(depth), out),
+      this.fns.recursionBranch(
+        this.ptr(ctx),
+        this.ptr(tc),
+        this.ptr(recursion),
+        BigInt(depth),
+        out,
+      ),
       "hegel_recursion_branch",
     );
     return out[0];
@@ -1936,24 +2139,32 @@ export class Libhegel implements Engine {
 
   /** `false` when the attempt outgrew its leaf budget (`HEGEL_E_RETRY`). */
   recursionLeaf(ctx: Ptr, tc: Ptr, recursion: Ptr): boolean {
-    return this.retryable(ctx, this.fns.recursionLeaf(ctx, tc, recursion), "hegel_recursion_leaf");
+    return this.retryable(
+      ctx,
+      this.fns.recursionLeaf(this.ptr(ctx), this.ptr(tc), this.ptr(recursion)),
+      "hegel_recursion_leaf",
+    );
   }
 
   recursionRetry(ctx: Ptr, tc: Ptr, recursion: Ptr): void {
-    this.check(ctx, this.fns.recursionRetry(ctx, tc, recursion), "hegel_recursion_retry");
+    this.check(
+      ctx,
+      this.fns.recursionRetry(this.ptr(ctx), this.ptr(tc), this.ptr(recursion)),
+      "hegel_recursion_retry",
+    );
   }
 
   /** `false` when the engine discarded the attempt as mispriced (`HEGEL_E_RETRY`). */
   recursionFinish(ctx: Ptr, tc: Ptr, recursion: Ptr): boolean {
     return this.retryable(
       ctx,
-      this.fns.recursionFinish(ctx, tc, recursion),
+      this.fns.recursionFinish(this.ptr(ctx), this.ptr(tc), this.ptr(recursion)),
       "hegel_recursion_finish",
     );
   }
 
   freeRecursion(recursion: Ptr): void {
-    this.fns.recursionFree(recursion);
+    this.release(recursion, (pointer) => this.fns.recursionFree(pointer));
   }
 
   private retryable(ctx: Ptr, code: number, op: string): boolean {
@@ -1972,7 +2183,7 @@ export class Libhegel implements Engine {
     const outConcurrency: (number | bigint)[] = [0];
     this.check(
       ctx,
-      this.fns.newStateMachine(ctx, tc, opts, outMachine, outConcurrency),
+      this.fns.newStateMachine(this.ptr(ctx), this.ptr(tc), opts, outMachine, outConcurrency),
       "hegel_new_state_machine",
     );
     return this.requireHandle<StateMachineHandle>(outMachine[0], "newStateMachine");
@@ -1988,7 +2199,7 @@ export class Libhegel implements Engine {
     const out: (number | bigint)[] = [0];
     this.check(
       ctx,
-      this.fns.stateMachineNextGroup(ctx, tc, machine, out),
+      this.fns.stateMachineNextGroup(this.ptr(ctx), this.ptr(tc), this.ptr(machine), out),
       "hegel_state_machine_next_group",
     );
     return doneOrIndex(out[0]);
@@ -2002,7 +2213,13 @@ export class Libhegel implements Engine {
     const out: (number | bigint)[] = [0];
     this.check(
       ctx,
-      this.fns.stateMachineNextRule(ctx, tc, machine, workerIndex, out),
+      this.fns.stateMachineNextRule(
+        this.ptr(ctx),
+        this.ptr(tc),
+        this.ptr(machine),
+        workerIndex,
+        out,
+      ),
       "hegel_state_machine_next_rule",
     );
     return doneOrIndex(out[0]);
@@ -2012,7 +2229,12 @@ export class Libhegel implements Engine {
   stateMachineRuleRejected(ctx: Ptr, tc: Ptr, machine: Ptr, workerIndex: number): void {
     this.check(
       ctx,
-      this.fns.stateMachineRuleRejected(ctx, tc, machine, workerIndex),
+      this.fns.stateMachineRuleRejected(
+        this.ptr(ctx),
+        this.ptr(tc),
+        this.ptr(machine),
+        workerIndex,
+      ),
       "hegel_state_machine_rule_rejected",
     );
   }
@@ -2027,30 +2249,36 @@ export class Libhegel implements Engine {
     const out: boolean[] = [false];
     this.check(
       ctx,
-      this.fns.stateMachineShouldCheckInvariant(ctx, tc, machine, invariantIndex, out),
+      this.fns.stateMachineShouldCheckInvariant(
+        this.ptr(ctx),
+        this.ptr(tc),
+        this.ptr(machine),
+        invariantIndex,
+        out,
+      ),
       "hegel_state_machine_should_check_invariant",
     );
     return out[0];
   }
 
   freeStateMachine(machine: Ptr): void {
-    this.fns.stateMachineFree(machine);
+    this.release(machine, (pointer) => this.fns.stateMachineFree(pointer));
   }
 
   runStatus(r: Ptr): number {
-    return this.fns.runResultStatus(r);
+    return this.fns.runResultStatus(this.ptr(r));
   }
 
   runError(r: Ptr): string | null {
-    return this.fns.runResultError(r);
+    return this.fns.runResultError(this.ptr(r));
   }
 
   runErrorKind(r: Ptr): NativeRunErrorKind {
-    return this.fns.runResultErrorKind(r);
+    return this.fns.runResultErrorKind(this.ptr(r));
   }
 
   failureCount(r: Ptr): number {
-    return this.fns.runResultFailureCount(r);
+    return this.fns.runResultFailureCount(this.ptr(r));
   }
 
   /**
@@ -2059,17 +2287,17 @@ export class Libhegel implements Engine {
    */
   failure(r: Ptr, index: number): FailureHandle {
     return this.requireHandle<FailureHandle>(
-      this.fns.runResultFailure(r, index),
+      this.fns.runResultFailure(this.ptr(r), index),
       "hegel_run_result_failure",
     );
   }
 
   freeFailure(f: Ptr): void {
-    this.fns.failureFree(f);
+    this.release(f, (pointer) => this.fns.failureFree(pointer));
   }
 
   failureOrigin(fp: Ptr): string {
-    return this.fns.failureOrigin(fp);
+    return this.fns.failureOrigin(this.ptr(fp));
   }
 
   /**
@@ -2077,10 +2305,10 @@ export class Libhegel implements Engine {
    * Replay it with {@link runStartBlob}.
    */
   reproductionBlob(fp: Ptr): string | null {
-    return this.fns.failureReproductionBlob(fp);
+    return this.fns.failureReproductionBlob(this.ptr(fp));
   }
 
   failureCaveat(fp: Ptr): string | null {
-    return this.fns.failureCaveat(fp);
+    return this.fns.failureCaveat(this.ptr(fp));
   }
 }

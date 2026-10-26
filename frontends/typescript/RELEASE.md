@@ -46,7 +46,7 @@ To reproduce this failure, replay it with the Hegel builder:
 - `tc.target(score, label?)` guides generation toward test cases that maximise `score`.
 - `tc.event(label)` and `tc.eventValue(label, value)` record what happened in a test case; the `showStatistics` setting reports them at the end of the run.
 - `tc.repeat(body)` (and `tc.repeatAsync(body)`) runs `body` an engine-chosen number of times and then ends the test case, each repetition reported under `// Repetition #N`.
-- `tc.clone()` returns a handle drawing from an independent choice stream of the same test case, for concurrent tasks, and `tc.setWorker(index)` attributes its output to a worker (`[worker 1 +0.116ms] …`).
+- `tc.clone()` returns a handle drawing from an independent choice stream of the same test case, for concurrent tasks (using one after the test body has returned throws, on Node as in browsers), and `tc.setWorker(index)` attributes its output to a worker (`[worker 1 +0.116ms] …`).
 
 Shrinking labels are now derived by the engine from each generator's kind and its components, replacing a fixed table of sixteen numbers that gave every generator of a kind the same label.
 

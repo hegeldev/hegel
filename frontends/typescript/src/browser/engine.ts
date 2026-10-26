@@ -53,7 +53,7 @@ export class WasmEngine implements Engine {
 
   private ptr(handle: object): number {
     const ptr = this.handles.get(handle);
-    if (ptr === undefined) throw new EngineError("Foreign, freed or invalid Wasm handle");
+    if (ptr === undefined) throw new EngineError("Foreign, freed or invalid engine handle");
     this.memory.bytes(ptr, 1);
     return ptr;
   }

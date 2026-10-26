@@ -461,7 +461,8 @@ export class TestCase {
    * one draws does not depend on how the tasks interleave. A clone's draws
    * and notes are printed where the clone was made; use {@link setWorker} to
    * label them with the task they came from. Clones share the test case's
-   * outcome, so a clone must not be used once the test body has returned.
+   * outcome, so a clone must not be used once the test body has returned:
+   * drawing from it then throws.
    */
   clone(): TestCase {
     return this.derive(this._dataSource.clone(), this.drawState);

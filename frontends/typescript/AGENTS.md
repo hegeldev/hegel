@@ -174,8 +174,12 @@ so a Node import creeping into a shared module fails `check-lint`.
    (imperative) and `record` (declarative) in `compose.ts` are the composition
    entry points.
 
-Neither adapter frees anything implicitly — every handle the ABI writes back
-is caller-owned: the runner frees `Context`/`Settings`/`Run` handles, each test
+Both adapters hand out handles as fresh opaque objects mapped to the engine's
+pointers, never the pointers themselves, and forget the mapping when the
+handle is freed: a freed or foreign handle (a clone kept past its test case,
+say) throws `EngineError("Foreign, freed or invalid engine handle")` instead of
+reaching the engine as a dangling pointer. Neither adapter frees anything
+implicitly — every handle the ABI writes back is caller-owned: the runner frees `Context`/`Settings`/`Run` handles, each test
 case from `next_test_case`, the run result and each failure explicitly in
 `finally` blocks, in ownership order, and `EngineDataSource.dispose` frees
 each test case's collections, pools, recursions, state machines, printers and

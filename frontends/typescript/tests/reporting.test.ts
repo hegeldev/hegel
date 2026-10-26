@@ -5,6 +5,8 @@ import { nodeRuntime } from "../src/nodeRuntime.js";
 import { DidNotReproduceError } from "../src/errors.js";
 import { EngineError } from "../src/engine.js";
 import type { TestCase } from "../src/testCase.js";
+import { browserRuntime } from "../src/browser/runtime.js";
+import { wasmFixture } from "./wasmFixture.js";
 
 const deterministic: Settings = { database: { kind: "disabled" }, derandomize: true };
 
@@ -289,6 +291,26 @@ describe("clones and workers", () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatch(/^\[worker 1 \+\d+\.\d{3}ms\] const w = 4;$/);
     expect(lines[1]).toBe("main");
+  });
+
+  it.each([
+    ["native", () => capturing().runner],
+    ["wasm", () => createRunner(browserRuntime(wasmFixture().engine))],
+  ])("refuses a clone used after its test case on the %s engine", (_name, runner) => {
+    const clones: TestCase[] = [];
+    runner().test(
+      (tc) => {
+        clones.push(tc.clone());
+        tc.draw(gs.integers());
+      },
+      { ...deterministic, testCases: 3 },
+    );
+    for (const clone of clones) {
+      expect(() => clone.draw(gs.integers())).toThrow(
+        new EngineError("Foreign, freed or invalid engine handle"),
+      );
+      expect(() => clone.setWorker(1)).toThrow(EngineError);
+    }
   });
 
   it.each([-1, 1.5, Number.MAX_SAFE_INTEGER + 1])("rejects worker index %s", (index) => {
