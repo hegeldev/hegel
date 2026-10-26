@@ -138,9 +138,6 @@ TEST(Floats, LongDoubleDrawsAsDouble) {
         });
 }
 
-// Narrowing a bound to a narrower type moves it inward: up for a lower
-// bound, down for an upper bound. float stands in for double, and double
-// for a wider long double.
 TEST(Floats, NarrowingABoundMovesItInward) {
     using gs::detail::narrow_down;
     using gs::detail::narrow_up;
@@ -158,16 +155,31 @@ TEST(Floats, NarrowingABoundMovesItInward) {
               -std::numeric_limits<float>::infinity());
 }
 
-// Every long double drawn is within the bounds and respects an excluded
-// bound, wherever the bounds fall between doubles.
-TEST(Floats, LongDoubleRespectsItsBounds) {
-    long double min_value = 0.1L;
-    long double max_value = 0.3L;
+TEST(Floats, LongDoubleBoundsBetweenDoublesAreRespected) {
+    double above_one = std::nextafter(1.0, 2.0);
+    double third = std::nextafter(std::nextafter(above_one, 2.0), 2.0);
+    long double tiny = std::ldexp(1.0L, -54);
+    long double min_value = 1.0L + tiny;
+    long double max_value = static_cast<long double>(third) - tiny;
     hegel::tests::common::assert_all_examples<long double>(
-        gs::floats<long double>({.min_value = min_value,
-                                 .max_value = max_value,
-                                 .exclude_min = true,
-                                 .exclude_max = true}),
-        [&](const long double& x) { return x > min_value && x < max_value; },
-        500);
+        gs::floats<long double>(
+            {.min_value = min_value, .max_value = max_value}),
+        [&](const long double& x) { return x >= min_value && x <= max_value; });
+}
+
+TEST(Floats, LongDoubleExcludesOnlyBoundsThatAreDoubles) {
+    double above_one = std::nextafter(1.0, 2.0);
+    double second = std::nextafter(above_one, 2.0);
+    long double tiny = std::ldexp(1.0L, -54);
+    long double max_value = static_cast<long double>(second) - tiny;
+    for (long double min_value : {1.0L, 1.0L + tiny}) {
+        hegel::tests::common::assert_all_examples<long double>(
+            gs::floats<long double>({.min_value = min_value,
+                                     .max_value = max_value,
+                                     .exclude_min = true,
+                                     .exclude_max = true}),
+            [&](const long double& x) {
+                return x == static_cast<long double>(above_one);
+            });
+    }
 }

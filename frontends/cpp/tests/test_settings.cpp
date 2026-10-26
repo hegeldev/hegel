@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <hegel.h>
 #include <hegel/hegel.h>
 #include <hegel/internal.h>
 #include <map>
@@ -529,6 +530,63 @@ TEST(FailureBlobs, BlobReproduceFailure) {
     } catch (const std::runtime_error& e) {
         EXPECT_EQ(std::string(e.what()), "fail");
     }
+}
+
+int engine_cases_of_a_failing_run() {
+    hegel_context_t* ctx = hegel_context_new();
+    hegel_settings_t* s = nullptr;
+    hegel_settings_new(ctx, &s);
+    hegel_settings_set_derandomize(ctx, s, true);
+    hegel_string_t no_database{"", 0};
+    hegel_settings_set_database(ctx, s, &no_database);
+    hegel_settings_set_verbosity(ctx, s, HEGEL_VERBOSITY_QUIET);
+    hegel_run_t* run = nullptr;
+    hegel_run_start(ctx, s, nullptr, nullptr, &run);
+    hegel_string_t origin{"failure", 7};
+    int cases = 0;
+    while (true) {
+        hegel_test_case_t* tc = nullptr;
+        hegel_next_test_case(ctx, run, &tc);
+        if (tc == nullptr) {
+            break;
+        }
+        cases++;
+        hegel_mark_complete(ctx, tc, HEGEL_STATUS_INTERESTING, &origin);
+        hegel_test_case_free(ctx, tc);
+    }
+    hegel_run_free(ctx, run);
+    hegel_settings_free(ctx, s);
+    hegel_context_free(ctx);
+    return cases;
+}
+
+TEST(FailureReport, TheBodyRunsOnlyForTheEnginesTestCases) {
+    int runs = 0;
+    EXPECT_THROW(hegel::test(
+                     [&](hegel::TestCase&) {
+                         runs++;
+                         throw std::runtime_error("fail");
+                     },
+                     {.verbosity = hegel::Verbosity::Quiet,
+                      .derandomize = true,
+                      .database = Database::disabled()}),
+                 std::runtime_error);
+    EXPECT_EQ(runs, engine_cases_of_a_failing_run());
+}
+
+TEST(FailureBlobs, AReproducedFailureRunsTheBodyOnce) {
+    int runs = 0;
+    EXPECT_THROW(hegel::test(
+                     [&](hegel::TestCase& tc) {
+                         runs++;
+                         int n = tc.draw(gs::integers<int>());
+                         if (n < 50) {
+                             throw std::runtime_error("fail");
+                         }
+                     },
+                     {}, {"AAEAAAAACgEAAAAA"}),
+                 std::runtime_error);
+    EXPECT_EQ(runs, 1);
 }
 
 TEST(FailureBlobs, EveryReproducedBlobIsReported) {
