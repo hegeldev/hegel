@@ -43,4 +43,6 @@ The pytest plugin gains `--hegel-setting KEY=VALUE`, which sets any setting by i
 
 Stacked `@hegel.reproduce_failure` decorators now replay every blob, where only the topmost was replayed before. Every failure the blobs reproduce is raised, together as a `MultipleFailures` when there is more than one, and `DidNotReproduce` is raised only when none of them fails, so the decorators printed for each failure of a `report_multiple_failures` run can all be pasted onto the test at once. `hegel.run()`'s `reproduce_blob` likewise takes a collection of blobs as well as one, and the decorator now records its blobs in a list, `hegel_reproduce_blobs`, in place of the `hegel_reproduce_blob` attribute.
 
+`FailedHealthCheck` now says which health check failed: its new `health_check` attribute is the `HealthCheck` member, and its message ends by naming it as Python spells it, with the `suppress_health_check` value that suppresses it.
+
 A `tc.assume(False)` or `tc.reject()` in an explicit test case (`@hegel.explicit_test_case`) still raises `InvalidArgument`, now with the message `Explicit test cases must not be rejected`, shared with the other Hegel libraries.

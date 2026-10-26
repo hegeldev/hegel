@@ -384,7 +384,23 @@ def test_health_check_failure():
 
     error = failing(body, hegel.FailedHealthCheck, test_cases=100)
     assert "FilterTooMuch" in str(error)
+    assert error.health_check is hegel.HealthCheck.filter_too_much
+    assert str(error).endswith(
+        "The failed health check is HealthCheck.filter_too_much; suppress it with "
+        "suppress_health_check=[HealthCheck.filter_too_much]."
+    )
     assert isinstance(error, hegel.RunError)
+
+
+def test_failed_health_check_names_each_check():
+    def nest(tc):
+        tc.start_span(1)
+        nest(tc)
+
+    error = failing(nest, hegel.FailedHealthCheck, test_cases=10)
+    assert error.health_check is hegel.HealthCheck.large_initial_test_case
+    assert "HealthCheck.large_initial_test_case" in str(error)
+    assert hegel.FailedHealthCheck("message").health_check is None
 
 
 def test_health_check_can_be_suppressed():

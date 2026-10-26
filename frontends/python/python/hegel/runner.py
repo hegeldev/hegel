@@ -28,7 +28,7 @@ from hegel.errors import (
     Unsatisfiable,
 )
 from hegel.explicit import NO_HANDLE, ExplicitCase, ExplicitTestCase
-from hegel.settings import Phase, Settings, TestLocation, Verbosity
+from hegel.settings import HealthCheck, Phase, Settings, TestLocation, Verbosity
 from hegel.test_case import OutputSink, TestCase
 
 __all__ = [
@@ -370,7 +370,6 @@ def _drive_blob_replay(
 # engine reports for it. Any other kind (a usage error, an internal engine
 # error) is a plain RunError carrying the engine's message.
 _RUN_ERROR_KINDS: dict[int, type[RunError]] = {
-    _native.RUN_ERROR_HEALTH_CHECK: FailedHealthCheck,
     _native.RUN_ERROR_FLAKY: Flaky,
     _native.RUN_ERROR_NONDETERMINISTIC: Flaky,
     _native.RUN_ERROR_UNSATISFIABLE: Unsatisfiable,
@@ -378,8 +377,15 @@ _RUN_ERROR_KINDS: dict[int, type[RunError]] = {
 
 
 def _run_error(result: _native.RunResult) -> RunError:
-    kind = result.error_kind()[0]
+    kind, check = result.error_kind()
     message = result.error() or "the run failed with an unknown error"
+    if kind == _native.RUN_ERROR_HEALTH_CHECK:
+        health_check = HealthCheck(check)
+        return FailedHealthCheck(
+            f"{message}\nThe failed health check is HealthCheck.{health_check.name}; "
+            f"suppress it with suppress_health_check=[HealthCheck.{health_check.name}].",
+            health_check,
+        )
     return _RUN_ERROR_KINDS.get(kind, RunError)(message)
 
 
