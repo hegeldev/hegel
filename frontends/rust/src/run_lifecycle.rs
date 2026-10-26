@@ -564,13 +564,7 @@ pub(crate) fn drive<F>(
         Err(message) => panic!("RunError: {message}"), // nocov
     };
 
-    let failures = drive_run(
-        run,
-        &mut test_fn,
-        settings,
-        &output,
-        reproduce_attribute,
-    );
+    let failures = drive_run(run, &mut test_fn, settings, &output, reproduce_attribute);
     if !failures.is_empty() {
         raise_failures(failures, settings, &output);
     }

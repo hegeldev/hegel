@@ -214,9 +214,9 @@ fn test_bool_aliases() {
 fn test_invalid_seed_error() {
     let err = try_apply_cli_args(Settings::new, s(&["--seed", "abc"])).unwrap_err();
     match err {
-        CliError::Parse(msg) => assert_eq!(
-            msg, "--seed expects an integer or \"none\", got \"abc\"",
-        ),
+        CliError::Parse(msg) => {
+            assert_eq!(msg, "--seed expects an integer or \"none\", got \"abc\"",)
+        }
         _ => panic!("wrong error kind"),
     }
 }
@@ -460,7 +460,6 @@ fn test_usage_documents_the_profile_flag() {
         other => panic!("expected Help, got {other:?}"),
     }
 }
-
 
 fn parse_error(args: &[&str]) -> String {
     match try_apply_cli_args(Settings::new, s(args)) {

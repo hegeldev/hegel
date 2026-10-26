@@ -124,7 +124,9 @@ where
             CliError::Parse(format!("Unknown argument: {flag}"))
         } else {
             let message = without_function_name(&message);
-            let reason = message.strip_prefix(&format!("`{key}` ")).unwrap_or(message);
+            let reason = message
+                .strip_prefix(&format!("`{key}` "))
+                .unwrap_or(message);
             CliError::Parse(format!("{flag} {reason}"))
         }
     })

@@ -287,7 +287,10 @@ fn set_worker_attributes_each_clones_output_to_its_worker() {
     assert!(result.is_err());
     let text = lines.join("\n");
     for i in 0..2 {
-        assert_matches_regex(&text, &format!(r"\[worker {i} \+\d+\.\d{{3}}ms\] let n{i}_1 = "));
+        assert_matches_regex(
+            &text,
+            &format!(r"\[worker {i} \+\d+\.\d{{3}}ms\] let n{i}_1 = "),
+        );
         assert_matches_regex(
             &text,
             &format!(r"\[worker {i} \+\d+\.\d{{3}}ms\] note from worker {i}"),
