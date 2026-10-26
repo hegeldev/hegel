@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -257,3 +258,20 @@ def test_from_lark_prints_the_drawn_string():
 
     error = failing(body, database="")
     assert notes(error)[0].endswith(" = 'ab'")
+
+
+def test_from_lark_follows_this_pythons_unicode_version():
+    grammar = "start: WORD\nWORD: /\\w+/\n"
+    ol_onal = gs.characters(min_codepoint=0x1E5D0, max_codepoint=0x1E5FA)
+    mixed = "a" + "".join(chr(c) for c in range(0x1E5D0, 0x1E5FB))
+    if unicodedata.category("\U0001e5d0") == "Cn":
+        with pytest.raises(hegel.InvalidArgument, match="cannot be produced"):
+            gs.from_lark(grammar, alphabet=ol_onal)
+
+        def body(tc):
+            assert set(tc.draw(gs.from_lark(grammar, alphabet=mixed))) == {"a"}
+
+        run_test(body, test_cases=200)
+    else:
+        assert re.fullmatch(r"\w+", find_example(gs.from_lark(grammar, alphabet=ol_onal)))
+        find_example(gs.from_lark(grammar, alphabet=mixed), lambda s: "a" not in s)
