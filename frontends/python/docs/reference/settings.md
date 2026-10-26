@@ -52,6 +52,7 @@ below it set and leaves the rest alone:
    | `HEGEL_DERANDOMIZE` | Sets `derandomize`: `true`, `1` or `yes`, or `false`, `0` or `no`. |
    | `HEGEL_PRINT_BLOB` | Sets `print_blob`, with the same vocabulary. |
    | `HEGEL_STOP_ON_FIRST_FAILURE` | Sets `stop_on_first_failure`, with the same vocabulary. |
+   | `HEGEL_UNBOUNDED_CHOICES` | Sets `unbounded_choices`, with the same vocabulary. |
    | `HEGEL_NONDETERMINISM_STRICTNESS` | Sets `nondeterminism_strictness`: `quiet`, `warn` or `error`. |
 
    An empty variable is ignored; any other malformed value is an error,
@@ -253,9 +254,8 @@ database = "default"
 backend = "default"
 ```
 
-Every setting in the table at the top of this page except
-`unbounded_choices` is accepted, plus `extends`; to lift the choice limit
-from `hegel.toml`, suppress the `test_cases_too_large` health check. Two values exist to undo a parent's setting: `seed = "none"` clears
+Every setting in the table at the top of this page is accepted, plus
+`extends`. Two values exist to undo a parent's setting: `seed = "none"` clears
 an inherited seed, and `database = "default"` restores the default database
 after a parent turned it off or set a path. In `hegel.toml`,
 `database = "disabled"` turns the database off, and
@@ -300,6 +300,7 @@ resolves its settings each time it is used.
 | `HEGEL_DERANDOMIZE` | Sets `derandomize` over the resolved profile. |
 | `HEGEL_PRINT_BLOB` | Sets `print_blob` over the resolved profile. |
 | `HEGEL_STOP_ON_FIRST_FAILURE` | Sets `stop_on_first_failure` over the resolved profile. |
+| `HEGEL_UNBOUNDED_CHOICES` | Sets `unbounded_choices` over the resolved profile. |
 | `HEGEL_NONDETERMINISM_STRICTNESS` | Sets `nondeterminism_strictness` over the resolved profile. |
 | `ANTITHESIS_OUTPUT_DIR` | Selects the `workload` profile, and each test's verdict is reported to Antithesis. Must name an existing directory. |
 | `CI`, `GITHUB_ACTIONS`, ... | Selects the `ci` profile. |
