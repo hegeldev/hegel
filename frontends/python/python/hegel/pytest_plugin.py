@@ -9,14 +9,14 @@ settings profile for the run:
     Set any setting, by its ``hegel.toml`` key, with the value spelled as
     in ``hegel.toml``. Repeatable.
 ``--hegel-seed SEED``
-    Fix the seed.
+    Fix the seed (0 to 2**64 - 1, or ``none``).
 ``--hegel-verbosity {quiet,normal,verbose,debug}``
     Set the verbosity.
 ``--hegel-derandomize``
     Derive each test's seed from the test itself.
 ``--hegel-database PATH``
     Keep the example database in ``PATH``; ``--hegel-database=`` (empty)
-    disables it.
+    or ``disabled`` disables it, and ``default`` is the default directory.
 """
 
 from __future__ import annotations
