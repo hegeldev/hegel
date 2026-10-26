@@ -47,7 +47,9 @@ val int64 : int64 t
 val nativeint : nativeint t
 
 (** [float f] is the shortest float literal that reads back as [f], or [nan],
-    [infinity] or [neg_infinity]. *)
+    [infinity] or [neg_infinity]. A float of magnitude from [1e-5] up to
+    [1e16] prints without an exponent ([100.], [0.25], [1000000.]), others
+    with one ([1e+16], [5e-324]). *)
 val float : float t
 
 (** [bool b] is [true] or [false]. *)
@@ -59,9 +61,15 @@ val unit : unit t
 (** [char c] is [c] as a character literal, as [%C] prints it. *)
 val char : char t
 
-(** [string s] is [s] as a string literal. Quotes, backslashes and control
-    characters are escaped, and so is every byte that is not part of valid
-    UTF-8; well-formed UTF-8 is kept as it is, so text stays readable. *)
+(** [string s] is [s] as a string literal. Quotes, backslashes and ASCII
+    control characters are escaped as [%S] escapes them ([\n], [\b],
+    [\001]), and so is every byte that is not part of valid UTF-8.
+    Well-formed UTF-8 is kept as it is, so text stays readable, except for
+    the characters Rust's [Debug] escapes, which print as [\u{...}]: other
+    control and format characters (such as the bidirectional override
+    U+202E), line and paragraph separators, spaces other than U+0020,
+    combining marks and other grapheme extenders, and unassigned and
+    private-use code points. *)
 val string : string t
 
 (** [bytes s] is the binary string [s] as a string literal, with every
@@ -88,12 +96,15 @@ val triple : 'a t -> 'b t -> 'c t -> ('a * 'b * 'c) t
 
 (** [of_to_string to_string] prints a value as [to_string] shows it. The
     engine recovers the bracket structure of the text (see {!reflow}), so a
-    long representation still wraps. *)
+    long representation still wraps. A single token, such as [42] or [0x2a],
+    is atomic ([Some 42]); anything else, a negative number among them, is
+    parenthesized as an argument ([Some (-5)], [Some (a b)]). *)
 val of_to_string : ('a -> string) -> 'a t
 
 (** [of_sexp sexp_of] prints a value as the s-expression [sexp_of] gives,
     wrapping lists at their spaces. Use it for types that only have a
-    [sexp_of_t]. *)
+    [sexp_of_t]. An atom that starts with [-] is parenthesized as an argument,
+    as in [Some (-5)]. *)
 val of_sexp : ('a -> Sexplib0.Sexp.t) -> 'a t
 
 (** {2 Building documents} *)

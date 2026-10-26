@@ -687,3 +687,25 @@ let%expect_test "a recursive value prints as its leaves and branches print" =
         ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
+
+type negative =
+  | Negative of
+      (int
+      [@hegel.generator
+        Hegel.map (fun n -> -n) (Hegel.integers ~min_value:5 ~max_value:5 ())])
+[@@deriving hegel_generator]
+
+let%expect_test "a negative fallback s-expression is parenthesized" =
+  run_failing (fun tc ->
+    let _ = Hegel.draw tc hegel_generator_negative in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    draw_1 = Negative (-5)
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;

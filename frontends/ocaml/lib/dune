@@ -18,6 +18,7 @@
    (-> locked.mutex.ml)))
  (private_modules
   io
+  unicode_escapes
   locked
   hegel_version
   generators_core

@@ -28,6 +28,13 @@ let test_floats () =
   check "negative" "-2.5" (Printer.float (-2.5));
   check "negative zero" "-0." (Printer.float (-0.0));
   check "exponent" "1e+300" (Printer.float 1e300);
+  check "round hundred" "100." (Printer.float 100.);
+  check "a million" "1000000." (Printer.float 1e6);
+  check "large integral" "1234567890123456." (Printer.float 1234567890123456.);
+  check "first exponent form" "1e+16" (Printer.float 1e16);
+  check "small fraction" "0.00001" (Printer.float 1e-5);
+  check "smaller fraction" "1e-06" (Printer.float 1e-6);
+  check "negative round" "-250." (Printer.float (-250.));
   check "smallest subnormal" "5e-324" (Printer.float 5e-324);
   check "needs all digits" "0.30000000000000004" (Printer.float (0.1 +. 0.2));
   check "nan" "nan" (Printer.float Float.nan);
@@ -59,7 +66,18 @@ let test_strings () =
   check "control bytes" "\"\\001\\127\"" (Printer.string "\001\127");
   check "UTF-8 kept" "\"h\xc3\xa9llo\"" (Printer.string "h\xc3\xa9llo");
   check "invalid UTF-8 escaped" "\"\\255a\"" (Printer.string "\xffa");
-  check "bytes escape non-ASCII" "\"h\\195\\169\"" (Printer.bytes "h\xc3\xa9")
+  check "bytes escape non-ASCII" "\"h\\195\\169\"" (Printer.bytes "h\xc3\xa9");
+  check "backspace" "\"\\b\"" (Printer.string "\b");
+  check "right-to-left override" "\"a\\u{202e}b\"" (Printer.string "a\u{202e}b");
+  check "leading combining mark" "\"\\u{301}a\"" (Printer.string "\u{301}a");
+  check "line separator" "\"\\u{2028}\"" (Printer.string "\u{2028}");
+  check "paragraph separator" "\"\\u{2029}\"" (Printer.string "\u{2029}");
+  check "zero width joiner" "\"\\u{200d}\"" (Printer.string "\u{200d}");
+  check "C1 control" "\"\\u{85}\"" (Printer.string "\u{85}");
+  check "no-break space" "\"\\u{a0}\"" (Printer.string "\u{a0}");
+  check "highest escaped code point" "\"\\u{10ffff}\"" (Printer.string "\u{10ffff}");
+  check "emoji kept" "\"\u{1f600}\"" (Printer.string "\u{1f600}");
+  check "CJK kept" "\"\u{4e2d}\"" (Printer.string "\u{4e2d}")
 ;;
 
 let test_structures () =
@@ -143,9 +161,37 @@ let test_layout () =
     "Foo(111,\n    222)"
     (Printer.reflow "Foo(111, 222)");
   check
-    "of_to_string"
-    "Some (0x2a)"
-    (Printer.option (Printer.of_to_string (Printf.sprintf "0x%x")) (Some 42))
+    "of_to_string token"
+    "Some 0x2a"
+    (Printer.option (Printer.of_to_string (Printf.sprintf "0x%x")) (Some 42));
+  check
+    "of_to_string negative token"
+    "Some (-5)"
+    (Printer.option (Printer.of_to_string string_of_int) (Some (-5)));
+  check
+    "of_to_string with spaces"
+    "Some (a b)"
+    (Printer.option (Printer.of_to_string Fun.id) (Some "a b"));
+  check
+    "of_to_string with a comma"
+    "Some (a,b)"
+    (Printer.option (Printer.of_to_string Fun.id) (Some "a,b"));
+  check
+    "of_to_string empty"
+    "Some ()"
+    (Printer.option (Printer.of_to_string Fun.id) (Some ""));
+  check
+    "of_sexp negative atom"
+    "Some (-5)"
+    (Printer.option (Printer.of_sexp Sexplib0.Sexp_conv.sexp_of_int) (Some (-5)));
+  check
+    "of_sexp positive atom"
+    "Some 5"
+    (Printer.option (Printer.of_sexp Sexplib0.Sexp_conv.sexp_of_int) (Some 5));
+  check
+    "of_sexp lone minus"
+    "Some -"
+    (Printer.option (Printer.of_sexp (fun () -> Sexplib0.Sexp.Atom "-")) (Some ()))
 ;;
 
 let tests =

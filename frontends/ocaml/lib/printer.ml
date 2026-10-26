@@ -89,15 +89,22 @@ let float_literal f =
   match Float.classify_float f with
   | FP_nan -> "nan"
   | FP_infinite -> if f > 0. then "infinity" else "neg_infinity"
-  | FP_normal | FP_subnormal | FP_zero ->
-    let rec shortest precision =
-      let s = Printf.sprintf "%.*g" precision f in
-      if precision >= 17 || Float.equal (float_of_string s) f
-      then s
-      else shortest (precision + 1)
+  | FP_zero -> if Float.sign_bit f then "-0." else "0."
+  | FP_normal | FP_subnormal ->
+    let rec digits precision =
+      let s = Printf.sprintf "%.*e" (precision - 1) f in
+      if Float.equal (float_of_string s) f then precision, s else digits (precision + 1)
     in
-    let s = shortest 1 in
-    if String.exists (fun c -> c = '.' || c = 'e') s then s else s ^ "."
+    let precision, scientific = digits 1 in
+    let e = String.index scientific 'e' in
+    let exponent =
+      int_of_string (String.sub scientific (e + 1) (String.length scientific - e - 1))
+    in
+    if exponent >= -5 && exponent < 16
+    then (
+      let s = Printf.sprintf "%.*f" (max 0 (precision - 1 - exponent)) f in
+      if String.contains s '.' then s else s ^ ".")
+    else scientific
 ;;
 
 let float f =
@@ -105,9 +112,25 @@ let float f =
   if Float.sign_bit f && Float.is_finite f then compound s else text s
 ;;
 
-let utf_8_length s i =
-  let d = String.get_utf_8_uchar s i in
-  if Uchar.utf_decode_is_valid d then Uchar.utf_decode_length d else 0
+let escaped_code_point cp =
+  let ranges = Unicode_escapes.ranges in
+  let at i =
+    (String.get_uint8 ranges i lsl 16)
+    lor (String.get_uint8 ranges (i + 1) lsl 8)
+    lor String.get_uint8 ranges (i + 2)
+  in
+  let rec search lo hi =
+    if lo >= hi
+    then false
+    else (
+      let mid = (lo + hi) / 2 in
+      if cp < at (mid * 6)
+      then search lo mid
+      else if cp > at ((mid * 6) + 3)
+      then search (mid + 1) hi
+      else true)
+  in
+  search 0 (String.length ranges / 6)
 ;;
 
 let escape ~utf_8 s =
@@ -133,6 +156,9 @@ let escape ~utf_8 s =
       | '\r' ->
         Buffer.add_string b "\\r";
         go (i + 1)
+      | '\b' ->
+        Buffer.add_string b "\\b";
+        go (i + 1)
       | c when Char.code c < 0x20 || Char.code c = 0x7f ->
         Buffer.add_string b (Printf.sprintf "\\%03d" (Char.code c));
         go (i + 1)
@@ -140,10 +166,14 @@ let escape ~utf_8 s =
         Buffer.add_char b c;
         go (i + 1)
       | c ->
-        let len = if utf_8 then utf_8_length s i else 0 in
-        if len > 1
+        let d = String.get_utf_8_uchar s i in
+        if utf_8 && Uchar.utf_decode_is_valid d
         then (
-          Buffer.add_string b (String.sub s i len);
+          let len = Uchar.utf_decode_length d in
+          let cp = Uchar.to_int (Uchar.utf_decode_uchar d) in
+          if escaped_code_point cp
+          then Buffer.add_string b (Printf.sprintf "\\u{%x}" cp)
+          else Buffer.add_string b (String.sub s i len);
           go (i + len))
         else (
           Buffer.add_string b (Printf.sprintf "\\%03d" (Char.code c));
@@ -172,11 +202,28 @@ let result print_ok print_error = function
 
 let pair p1 p2 (a, b) = tuple [ p1 a; p2 b ]
 let triple p1 p2 p3 (a, b, c) = tuple [ p1 a; p2 b; p3 c ]
-let of_to_string to_string x = reflow (to_string x)
+let negative s = String.length s > 1 && Char.equal s.[0] '-'
+
+let single_token s =
+  (not (String.equal s ""))
+  && (not (negative s))
+  && String.for_all
+       (function
+         | ' ' | '\t' | '\n' | '\r' | ',' | ';' -> false
+         | _ -> true)
+       s
+;;
+
+let of_to_string to_string x =
+  let s = to_string x in
+  { node = Reflow s; atomic = single_token s }
+;;
 
 let rec sexp (s : Sexplib0.Sexp.t) =
   match s with
-  | Atom _ -> text (Sexplib0.Sexp.to_string s)
+  | Atom _ ->
+    let atom = Sexplib0.Sexp.to_string s in
+    if negative atom then compound atom else text atom
   | List children ->
     group
       "("

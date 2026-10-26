@@ -16,6 +16,8 @@ p = { x = 1; y = 2 }
 
 Strings are always quoted, options print as `Some x`, derived records and variants print as `{ x = 1 }` and `Node (Leaf 1, Leaf 2)`, and a value too long for one line wraps one element per line. Structural generators (`lists`, `tuples2`, `optional`, `one_of`, `filter`, derived generators, ...) print what they drew, each part as its own generator prints it.
 
+Floats print as the shortest literal that reads back as the same float, without an exponent from `1e-5` up to `1e16` (`100.`, `1000000.`), and with one beyond (`1e+16`). Strings escape ASCII control characters as `%S` does (`"\b"`), and print the characters Rust's `Debug` escapes as `\u{...}`: control and format characters such as the bidirectional override U+202E, line and paragraph separators, combining marks, and unassigned code points. A negative atom of an s-expression, or a `Printer.of_to_string` text that is not a single token, is parenthesized as an argument (`Some (-5)`), and a single token is not (`Some 42`).
+
 An application of a generated function prints its arguments as before, through `~sexp_of_arg`, and its result as `returns` prints it: `f 3 = [1; 2]`, or `f 3 = <fun>` when the result is itself a function.
 
 A printer you give with `with_printer`, or with `~sexp_of_arg` or `~sexp_of_state`, prints the s-expressions it returns, as before:
