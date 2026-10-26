@@ -6,6 +6,7 @@
 #include <hegel/generators/random.h>
 #include <hegel/generators/strings.h>
 #include <hegel/internal.h>
+#include <hegel/printer.h>
 
 #include <engine.h>
 #include <hegel.h>
@@ -486,9 +487,8 @@ namespace hegel::generators {
     }
 
     void HegelRandom::print_to(internal::Printer& printer) const {
-        if (record_->seed) {
-            printer.text(
-                "HegelRandom{.seed = " + std::to_string(*record_->seed) + "}");
+        if (std::optional<uint64_t> seed = record_->seed) {
+            printer.text("HegelRandom{.seed = " + std::to_string(*seed) + "}");
             return;
         }
         printer.begin_group(1, "HegelRandom{.consumed = {");
