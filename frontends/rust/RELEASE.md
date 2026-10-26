@@ -32,6 +32,8 @@ This release brings the Rust frontend further into line with the other Hegel fro
 
 - The string generators (`gs::characters()`, `gs::text()`, `gs::from_regex(..)` and `gs::from_lark(..)`) now follow the Unicode version of the Rust standard library Hegel was compiled with, `char::UNICODE_VERSION`, which Hegel passes to the engine (`hegel_set_unicode_version`) before generating anything. A character's category, and the character classes of a pattern, now agree with `char::is_alphabetic` and friends: on a toolchain with Unicode tables older than the engine's, characters the toolchain does not know yet are in no category, rather than in the category a newer version gives them.
 
+- `TestCase::set_worker(index)` attributes a test case's output to a worker, as the other Hegel frontends' `set_worker` / `setWorker` do: every line it prints from then on, drawn values and notes alike, is prefixed with `[worker N +X.XXXms]` (`hegel_test_case_set_worker`), and clones made from it afterwards inherit the attribution. Call it on the clone handed to each thread, so a failure report shows which thread printed each line and how their lines interleaved.
+
 - `HealthCheck::all()` now returns a `Vec<HealthCheck>` rather than a `[HealthCheck; 4]`, so that adding a health check does not change its type. It is no longer a `const fn`.
 
 - The `exclude_min` and `exclude_max` methods of `gs::floats()`, deprecated since 0.42.0 and panicking whenever called, are removed. Use `min_value_exclusive` and `max_value_exclusive`.

@@ -202,6 +202,9 @@ pub(crate) struct TestCaseLocalData {
 /// }
 /// ```
 ///
+/// Give each clone a worker index with [`set_worker`](TestCase::set_worker)
+/// so that a failure report marks which thread printed each line.
+///
 /// ## What is guaranteed
 ///
 /// Each clone owns its own stream, so a clone may be moved to and driven
@@ -673,6 +676,47 @@ impl TestCase {
             return;
         }
         tolerate(self.with_ctc(|ctc| ctc.note(message)));
+    }
+
+    /// Attribute this test case's output to worker `index`.
+    ///
+    /// Every line it prints from now on, drawn values and notes alike, is
+    /// prefixed with `[worker N +X.XXXms]`, the time since the test case
+    /// started, so a failure report from several threads shows which
+    /// thread printed each line and how their lines interleaved. Clones
+    /// made from it afterwards inherit the attribution, and may be given
+    /// their own. Call it on the [`clone`](Clone::clone) you hand to each
+    /// thread (see [Threading](#threading)).
+    ///
+    /// # Panics
+    ///
+    /// Panics with an invalid-argument error if `index` exceeds
+    /// `i64::MAX`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use hegel::generators as gs;
+    ///
+    /// #[hegel::test]
+    /// fn my_test(tc: hegel::TestCase) {
+    ///     let handles: Vec<_> = (0..2)
+    ///         .map(|i| {
+    ///             let worker = tc.clone();
+    ///             worker.set_worker(i);
+    ///             std::thread::spawn(move || worker.draw(gs::integers::<i32>()))
+    ///         })
+    ///         .collect();
+    ///     for handle in handles {
+    ///         handle.join().unwrap();
+    ///     }
+    /// }
+    /// ```
+    pub fn set_worker(&self, index: usize) {
+        let Ok(index) = i64::try_from(index) else {
+            invalid_argument!("set_worker: index {index} is larger than i64::MAX")
+        };
+        self.with_ctc(|ctc| ctc.set_worker(index));
     }
 
     /// Record a targeting observation to help the engine find extreme inputs.

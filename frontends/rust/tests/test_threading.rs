@@ -255,3 +255,70 @@ mod independent_streams {
         assert_eq!(main_val, 0);
     }
 }
+
+#[test]
+fn set_worker_attributes_each_clones_output_to_its_worker() {
+    use common::utils::{assert_matches_regex, capture_hegel_output};
+    use hegel::{Hegel, Settings};
+    let (lines, result) = capture_hegel_output(|| {
+        Hegel::new(|tc: TestCase| {
+            let handles: Vec<_> = (0..2)
+                .map(|i| {
+                    let worker = tc.clone();
+                    worker.set_worker(i);
+                    std::thread::spawn(move || {
+                        let n: i32 = worker.draw_named(&format!("n{i}"), gs::integers());
+                        worker.note(&format!("note from worker {i}"));
+                        n
+                    })
+                })
+                .collect();
+            let results: Vec<_> = handles.into_iter().map(|h| h.join()).collect();
+            for result in results {
+                if let Err(payload) = result {
+                    std::panic::resume_unwind(payload);
+                }
+            }
+            panic!("boom");
+        })
+        .settings(Settings::new().database(None))
+        .run();
+    });
+    assert!(result.is_err());
+    let text = lines.join("\n");
+    for i in 0..2 {
+        assert_matches_regex(&text, &format!(r"\[worker {i} \+\d+\.\d{{3}}ms\] let n{i}_1 = "));
+        assert_matches_regex(
+            &text,
+            &format!(r"\[worker {i} \+\d+\.\d{{3}}ms\] note from worker {i}"),
+        );
+    }
+}
+
+#[test]
+fn set_worker_attribution_is_inherited_by_clones() {
+    use common::utils::{assert_matches_regex, capture_hegel_output};
+    use hegel::{Hegel, Settings};
+    let (lines, result) = capture_hegel_output(|| {
+        Hegel::new(|tc: TestCase| {
+            tc.set_worker(3);
+            let inherited = tc.clone();
+            inherited.note("from the clone");
+            panic!("boom");
+        })
+        .settings(Settings::new().database(None))
+        .run();
+    });
+    assert!(result.is_err());
+    assert_matches_regex(
+        &lines.join("\n"),
+        r"\[worker 3 \+\d+\.\d{3}ms\] from the clone",
+    );
+}
+
+#[cfg(target_pointer_width = "64")]
+#[hegel::test]
+#[should_panic(expected = "larger than i64::MAX")]
+fn set_worker_rejects_an_index_beyond_i64(tc: TestCase) {
+    tc.set_worker(usize::MAX);
+}
