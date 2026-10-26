@@ -185,7 +185,8 @@ To reproduce this failure, add this attribute to the let%hegel_test:
 
 The final lines show how to replay the exact case. Under `let%hegel_test` it is
 a `[@@failure_blobs [ "..." ]]`
-attribute you paste onto the test, while a plain `run_hegel_test` caller gets a
+attribute you paste onto the test (one per failure; stacked attributes replay
+every blob), while a plain `run_hegel_test` caller gets a
 `~failure_blobs:[ "..." ]` argument to pass and a `Hegel.main` binary a
 `--failure-blob` flag. Set `print_blob = false` in your `[@@settings ...]` to
 omit them. A run that finds several distinct failures starts its report with

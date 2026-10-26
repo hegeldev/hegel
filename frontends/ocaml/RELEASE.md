@@ -67,7 +67,7 @@ match run_hegel_test test with
 | exception Failed_health_check { check; message } -> ...
 ```
 
-`~failure_blobs` now replays every blob in the list, in turn, and reports every failure they reproduce; it used to replay only the first. `Hegel.main` binaries accept `--failure-blob` more than once.
+`~failure_blobs` now replays every blob in the list, in turn, and reports every failure they reproduce; it used to replay only the first. `let%hegel_test` accepts several stacked `[@@failure_blobs ...]` attributes, which it used to reject as duplicates, and replays the blobs of all of them, so the attribute printed for each failure of a run can be pasted onto the test as it is. `Hegel.main` binaries accept `--failure-blob` more than once.
 
 `Settings.t`'s `seed` field is now an `Unsigned.UInt64.t option` instead of an `int option`, so it holds any seed libhegel accepts, up to 2^64 - 1. A seed of 2^62 or more from `--seed`, `HEGEL_SEED` or `hegel.toml` used to wrap around (2^63 + 5 became 5). `Settings.create ~seed` still takes an `int`, and raises `Usage_error` for a negative one. Code that builds or reads the field needs to convert:
 

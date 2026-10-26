@@ -329,3 +329,19 @@ To reproduce this failure, pass this argument to run_hegel_test:
         ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
+
+let stacked_runs = ref 0
+
+let%hegel_test stacked_blobs tc =
+  incr stacked_runs;
+  ignore (Hegel.draw tc (Hegel.booleans ()) : bool)
+[@@failure_blobs [ "AAEAAAABAQ==" ]] [@@failure_blobs [ "AAEAAAABAQ==" ]]
+;;
+
+let%expect_test "stacked [@@failure_blobs] attributes replay every blob" =
+  (match stacked_blobs () with
+   | () -> failwith "expected stale blob failure"
+   | exception Hegel.Did_not_reproduce _ -> ());
+  print_int !stacked_runs;
+  [%expect {| 8 |}]
+;;

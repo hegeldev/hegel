@@ -19,7 +19,9 @@
     ]}
 
     [my_test] has the type [unit -> unit]. The [@@settings ...] and
-    [@@failure_blobs ...] attributes are both optional.
+    [@@failure_blobs ...] attributes are both optional. Several
+    [@@failure_blobs ...] attributes may be stacked: their blobs are
+    concatenated, in order.
 
     Each [@@example { x = e; ... }] attribute becomes an explicit example,
     passed as [~examples:[ ([ "x"; ... ], fun tc -> body') ]], where [body']
@@ -172,6 +174,15 @@ let consume attr node =
   match Attribute.consume attr node with
   | Some (node, payload) -> node, Some payload
   | None -> node, None
+;;
+
+let consume_all attr (vb : value_binding) =
+  let full = Attribute.name attr in
+  let short = List.nth (String.split_on_char '.' full) 1 in
+  let matches (a : attribute) = List.mem a.attr_name.txt [ full; short ] in
+  let mine, rest = List.partition matches vb.pvb_attributes in
+  let payload a = Option.get (Attribute.get attr { vb with pvb_attributes = [ a ] }) in
+  { vb with pvb_attributes = rest }, List.map payload mine
 ;;
 
 (** [extract_function_name ~what pat] returns the name bound by [pat] if [pat]
@@ -595,13 +606,13 @@ let build_examples ~loc (attrs : attribute list) (fn : expression) : expression 
 let expand_value_binding ~loc (vb : value_binding) : structure_item list =
   let function_name = extract_function_name ~what:"test" vb.pvb_pat in
   let vb, settings_expr = consume settings_attribute vb in
-  let vb, failure_blobs = consume failure_blobs_attribute vb in
+  let vb, failure_blobs = consume_all failure_blobs_attribute vb in
   let vb, async = consume async_test_attribute vb in
   let example_attrs, attrs = List.partition is_example vb.pvb_attributes in
   let vb = { vb with pvb_attributes = attrs } in
   let examples = build_examples ~loc example_attrs vb.pvb_expr in
   let failure_blobs =
-    Option.map
+    List.concat_map
       (fun (attr_loc, blobs) ->
          if List.is_empty blobs
          then
@@ -611,6 +622,7 @@ let expand_value_binding ~loc (vb : value_binding) : structure_item list =
          blobs)
       failure_blobs
   in
+  let failure_blobs = if List.is_empty failure_blobs then None else Some failure_blobs in
   (* The body of [let%hegel_test name <args> = expr] is parsed as [let name = <args -> expr>]. We pass that lambda as the [test_fn] to
      [Hegel.run_hegel_test]. *)
   let body_fn = inject_labels vb.pvb_expr in
@@ -630,9 +642,9 @@ let expand_value_binding ~loc (vb : value_binding) : structure_item list =
 let expand_main_binding ~loc (vb : value_binding) : structure_item list =
   let function_name = extract_function_name ~what:"main" vb.pvb_pat in
   let vb, settings_expr = consume settings_attribute vb in
-  let vb, failure_blobs = consume failure_blobs_attribute vb in
+  let vb, failure_blobs = consume_all failure_blobs_attribute vb in
   let vb, async = consume async_test_attribute vb in
-  Option.iter
+  List.iter
     (fun (attr_loc, _) ->
        Location.raise_errorf
          ~loc:attr_loc
