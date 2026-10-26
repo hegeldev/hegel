@@ -88,6 +88,17 @@ describe("settings resolution against the real engine", () => {
     for (const seed of [-1, 1.5, 2n ** 64n, -1n, Number.MAX_SAFE_INTEGER + 2]) {
       expect(() => hegel.test(() => {}, { seed })).toThrow(RangeError);
     }
+    const browser = createRunner(browserRuntime(wasmFixture().engine));
+    for (const testCases of [-1, 1.5, NaN, Infinity, 2 ** 64, 5n as unknown as number]) {
+      for (const runner of [hegel, browser]) {
+        expect(() => runner.test(() => {}, { testCases })).toThrow(
+          /^Invalid testCases .*: expected a non-negative safe integer$/,
+        );
+      }
+    }
+    expect(() => browser.test(() => {}, { seed: -1 })).toThrow(
+      /^Invalid seed -1: expected an integer in \[0, 2\^64\)$/,
+    );
     expect(() => hegel.test(() => {}, { verbosity: "loud" as unknown as hegel.Verbosity })).toThrow(
       /Invalid verbosity: loud/,
     );
