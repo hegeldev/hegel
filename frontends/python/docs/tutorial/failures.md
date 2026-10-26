@@ -110,6 +110,12 @@ made for one version of the test, so it stops reproducing anything once the
 test or the generators change, and Hegel then raises
 {class}`~hegel.DidNotReproduce`.
 
+A report of several failures (with `report_multiple_failures` on) prints a
+decorator for each. Stack them all on the test to replay every one: each blob
+is replayed in turn, and every failure that still happens is raised, together
+as a {class}`~hegel.MultipleFailures` when there is more than one.
+{class}`~hegel.DidNotReproduce` is raised only when none of them fails.
+
 ## Explicit test cases
 
 {func}`@hegel.explicit_test_case <hegel.explicit_test_case>` adds an input that
