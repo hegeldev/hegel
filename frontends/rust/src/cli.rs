@@ -153,7 +153,7 @@ fn extract_profile(args: &mut Vec<String>) -> Result<Option<String>, CliError> {
     while i < args.len() {
         let value = if args[i] == "--profile" {
             args.remove(i);
-            if i >= args.len() {
+            if args.get(i).is_none_or(|value| value.starts_with("--")) {
                 return Err(CliError::Parse("--profile requires a value".to_string()));
             }
             args.remove(i)

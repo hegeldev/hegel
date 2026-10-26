@@ -412,6 +412,16 @@ fn test_profile_flag_missing_value_error() {
 }
 
 #[test]
+fn test_profile_flag_followed_by_flag_error() {
+    let err =
+        try_apply_cli_args(Settings::new, s(&["--profile", "--verbosity", "quiet"])).unwrap_err();
+    match err {
+        CliError::Parse(msg) => assert_eq!(msg, "--profile requires a value"),
+        other => panic!("expected parse error, got {other:?}"),
+    }
+}
+
+#[test]
 fn test_profile_flag_repeated_error() {
     let err = try_apply_cli_args(
         Settings::new,
