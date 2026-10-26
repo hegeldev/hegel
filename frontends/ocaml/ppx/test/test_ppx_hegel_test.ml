@@ -463,13 +463,13 @@ let%hegel_test rejecting_example tc =
 [@@settings { (Hegel.Settings.create ()) with phases = [ Hegel.Settings.Explicit ] }]
 ;;
 
-let%hegel_test explicit_reject_and_repeat tc =
+let%hegel_test explicit_reject_in_repeat tc =
   let n = Hegel.draw tc (Hegel.integers ()) in
   Hegel.repeat tc (fun tc ->
-    if n = 0 then Hegel.reject tc;
-    Int.incr generated_calls)
-[@@example { n = 0 }]
+    Int.incr generated_calls;
+    if n = 0 then Hegel.reject tc)
 [@@example { n = 1 }]
+[@@example { n = 0 }]
 [@@settings { (Hegel.Settings.create ()) with phases = [ Hegel.Settings.Explicit ] }]
 ;;
 
@@ -480,11 +480,23 @@ let%hegel_test failing_repeat_example tc =
 [@@settings { (Hegel.Settings.create ()) with phases = [ Hegel.Settings.Explicit ] }]
 ;;
 
+let check_rejected_example ~index test =
+  match test () with
+  | () -> Alcotest.fail "expected the rejected example to raise"
+  | exception Hegel.Usage_error msg ->
+    Alcotest.(check string)
+      "message"
+      (Printf.sprintf
+         "Explicit test cases must not be rejected, but explicit example %d was rejected"
+         index)
+      msg
+;;
+
 let test_explicit_rejection_and_repeat () =
-  rejecting_example ();
+  check_rejected_example ~index:1 rejecting_example;
   generated_calls := 0;
-  explicit_reject_and_repeat ();
-  Alcotest.(check int) "only the n = 1 iteration finished" 1 !generated_calls;
+  check_rejected_example ~index:2 explicit_reject_in_repeat;
+  Alcotest.(check int) "both examples ran their iteration" 2 !generated_calls;
   match failing_repeat_example () with
   | () -> Alcotest.fail "expected the example to fail"
   | exception Assert_failure _ -> ()

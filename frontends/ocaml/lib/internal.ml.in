@@ -1059,14 +1059,19 @@ let run_example ~(settings : Settings.t) ~test_location index (names, body) =
       (fun () ->
          match body tc with
          | () | (exception Repeat_done) -> `Passed
-         | exception Assume_rejected -> `Skipped
+         | exception Assume_rejected ->
+           raise
+             (Usage_error
+                (Printf.sprintf
+                   "Explicit test cases must not be rejected, but explicit example %d \
+                    was rejected"
+                   index))
          | exception ((Usage_error _ | Internal_error _) as error) -> raise error
          | exception exn ->
            let backtrace = Printexc.get_raw_backtrace () in
            `Failed { origin = extract_origin exn; exn; backtrace })
   in
   match outcome with
-  | `Skipped -> None
   | `Passed ->
     (match
        let drawn = Locked.protect explicit (fun e -> e.drawn) in

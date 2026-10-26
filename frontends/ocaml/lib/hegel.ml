@@ -186,8 +186,7 @@ let repeat_generated tc body =
     runs once, as an explicit value can be drawn only once. *)
 let repeat_explicit tc body =
   note tc "// Repetition #1";
-  (match body tc with
-   | () | (exception Assume_rejected) -> ());
+  body tc;
   raise Internal.Repeat_done
 ;;
 
