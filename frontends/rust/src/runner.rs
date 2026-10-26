@@ -608,7 +608,7 @@ pub struct Hegel<F> {
     database_key: Option<String>,
     test_location: Option<TestLocation>,
     settings: Settings,
-    reproduce_failure: Option<String>,
+    reproduce_failures: Vec<String>,
     reproduce_attribute: Option<&'static str>,
     single_test_case: bool,
 }
@@ -624,7 +624,7 @@ where
             database_key: None,
             settings: Settings::new(),
             test_location: None,
-            reproduce_failure: None,
+            reproduce_failures: Vec::new(),
             reproduce_attribute: None,
             single_test_case: false,
         }
@@ -685,14 +685,14 @@ where
     /// graph until a replay fails, under a replay budget — bypassing
     /// generation and shrinking, so you can reproduce a CI failure locally.
     ///
-    /// First-wins: if a blob is already set, further calls are ignored.
-    /// Stacked `#[hegel::reproduce_failure]` attributes lower to repeated
-    /// calls here, so only the first attribute replays; the rest are
-    /// bookkeeping to be deleted one by one as the failures are fixed.
+    /// Calling this more than once replays every blob given, in order, and
+    /// reports every failure they reproduce, as a run reports several
+    /// distinct failures. Stacked `#[hegel::reproduce_failure]` attributes
+    /// lower to repeated calls here. A blob that no longer reproduces its
+    /// failure is not an error while another blob does; if none does, the
+    /// run panics saying so.
     pub fn reproduce_failure(mut self, blob: impl Into<String>) -> Self {
-        if self.reproduce_failure.is_none() {
-            self.reproduce_failure = Some(blob.into());
-        }
+        self.reproduce_failures.push(blob.into());
         self
     }
 
@@ -718,21 +718,26 @@ where
     /// - `Unsatisfiable`: no valid test case could be generated, because
     ///   every input was rejected by [`TestCase::assume`](crate::TestCase::assume)
     ///   or a filter.
-    /// - `RunError`: any other error, such as misuse of Hegel or a bug in
-    ///   Hegel itself.
+    /// - `RunError`: any other error the engine reports for the run.
     ///
     /// The rest of the message is the engine's explanation.
+    ///
+    /// A usage error that a test case hits while it runs, such as a
+    /// generator built with invalid bounds, stops the run at once and
+    /// panics with its own message alone, for example
+    /// `Cannot have max_value < min_value`. A bug that Hegel detects in
+    /// itself panics with a message starting `Internal error in hegel`.
     pub fn run(self) {
         let mut settings = self.settings;
         if self.single_test_case {
             settings = settings.for_single_test_case();
         }
-        if let Some(blob) = self.reproduce_failure {
+        if !self.reproduce_failures.is_empty() {
             crate::run_lifecycle::drive_blob_replay(
                 self.test_fn,
                 &settings,
                 self.database_key.as_deref(),
-                &blob,
+                &self.reproduce_failures,
                 self.test_location.as_ref(),
                 self.reproduce_attribute,
             );

@@ -322,13 +322,59 @@ fn test_explicit_unknown_name_panics() {
 }
 
 #[test]
-fn test_explicit_double_consume_panics() {
+fn test_explicit_non_repeatable_reuse_panics() {
     expect_panic(
         || {
             let etc = hegel::ExplicitTestCase::new().with_value("x", "true", true);
             etc.run(|tc: &hegel::ExplicitTestCase| {
                 let _: bool = tc.__draw_named(generators::booleans(), "x", false);
                 let _: bool = tc.__draw_named(generators::booleans(), "x", false);
+            });
+        },
+        "__draw_named.*used more than once but repeatable is false",
+    );
+}
+
+#[test]
+fn test_explicit_mixed_repeatable_panics() {
+    expect_panic(
+        || {
+            let etc = hegel::ExplicitTestCase::new()
+                .with_value("x", "true", true)
+                .with_value("x_1", "true", true);
+            etc.run(|tc: &hegel::ExplicitTestCase| {
+                let _: bool = tc.__draw_named(generators::booleans(), "x", false);
+                let _: bool = tc.__draw_named(generators::booleans(), "x", true);
+            });
+        },
+        "__draw_named.*inconsistent.*repeatable",
+    );
+}
+
+#[test]
+fn test_explicit_mixed_repeatable_reverse_panics() {
+    expect_panic(
+        || {
+            let etc = hegel::ExplicitTestCase::new()
+                .with_value("x", "true", true)
+                .with_value("x_1", "true", true);
+            etc.run(|tc: &hegel::ExplicitTestCase| {
+                let _: bool = tc.__draw_named(generators::booleans(), "x", true);
+                let _: bool = tc.__draw_named(generators::booleans(), "x", false);
+            });
+        },
+        "__draw_named.*inconsistent.*repeatable",
+    );
+}
+
+#[test]
+fn test_explicit_double_consume_panics() {
+    expect_panic(
+        || {
+            let etc = hegel::ExplicitTestCase::new().with_value("x_1", "true", true);
+            etc.run(|tc: &hegel::ExplicitTestCase| {
+                let _: bool = tc.__draw_named(generators::booleans(), "x_1", false);
+                let _: bool = tc.__draw_named(generators::booleans(), "x", true);
             });
         },
         "already consumed",

@@ -86,7 +86,8 @@ where
             Some((name, value)) => (name, Some(value.to_string())),
             None => {
                 i += 1;
-                (flag, args.get(i).cloned())
+                let value = args.get(i).filter(|value| !value.starts_with("--"));
+                (flag, value.cloned())
             }
         };
         if name.contains('_') {
@@ -108,15 +109,25 @@ where
                 _ => CliError::Parse(format!("{arg} requires a value")),
             });
         };
+        if key == "database_key" && value.is_empty() {
+            return Err(CliError::Parse(
+                "--database-key expects a non-empty key".to_string(),
+            ));
+        }
         overrides.push((key, value));
         i += 1;
     }
     crate::ffi::settings_with_strings(&settings, &overrides).map_err(|(index, message)| {
-        let flag = format!("--{}", overrides[index].0.replace('_', "-"));
+        let key = &overrides[index].0;
+        let flag = format!("--{}", key.replace('_', "-"));
         if is_unknown_setting(&message) {
             CliError::Parse(format!("Unknown argument: {flag}"))
         } else {
-            CliError::Parse(format!("{flag}: {}", without_function_name(&message)))
+            let message = without_function_name(&message);
+            let reason = message
+                .strip_prefix(&format!("`{key}` "))
+                .unwrap_or(message);
+            CliError::Parse(format!("{flag} {reason}"))
         }
     })
 }
@@ -142,7 +153,7 @@ fn extract_profile(args: &mut Vec<String>) -> Result<Option<String>, CliError> {
     while i < args.len() {
         let value = if args[i] == "--profile" {
             args.remove(i);
-            if i >= args.len() {
+            if args.get(i).is_none_or(|value| value.starts_with("--")) {
                 return Err(CliError::Parse("--profile requires a value".to_string()));
             }
             args.remove(i)

@@ -4,7 +4,7 @@ use syn::{FnArg, ItemFn};
 
 use crate::common::{
     SettingsAttrArgs, build_explicit_blocks, extract_explicit_test_cases, extract_ident_from_pat,
-    extract_reproduce_failure, rewrite_draws_in_block,
+    extract_reproduce_failure, reproduce_failure_calls, rewrite_draws_in_block,
 };
 
 pub fn expand_main(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -76,8 +76,7 @@ pub fn expand_main(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let reproduce_call = match extract_reproduce_failure(&mut func.attrs) {
-        Ok(Some(blob)) => quote! { .reproduce_failure((#blob).to_string()) },
-        Ok(None) => quote! {},
+        Ok(blobs) => reproduce_failure_calls(&blobs),
         Err(err) => return err,
     };
 

@@ -102,11 +102,11 @@ fn repro_replay_fixture(tc: TestCase) {
     assert!(x < 5, "x was {x}");
 }
 
-/// Stage 3 fixture: a stacked stale blob below the good one must not break
-/// the replay.
+/// Stage 3 fixture: every stacked attribute replays, so the same blob
+/// stacked twice reproduces two failures.
 #[hegel::test]
 #[hegel::reproduce_failure(std::env::var("HEGEL_TEST_REPRO_BLOB").unwrap())]
-#[hegel::reproduce_failure("!!! stale bookkeeping blob !!!")]
+#[hegel::reproduce_failure(std::env::var("HEGEL_TEST_REPRO_BLOB").unwrap())]
 #[ignore = "fixture: run via exec::self_test"]
 fn repro_replay_stacked_fixture(tc: TestCase) {
     let x: i32 = tc.draw(gs::integers());
@@ -200,10 +200,16 @@ fn test_reproduce_failure_replays_real_counterexample() {
         .expect_failure("x was")
         .run();
 
-    self_test("repro_replay_stacked_fixture")
+    let out = self_test("repro_replay_stacked_fixture")
         .env("HEGEL_TEST_REPRO_BLOB", &blob)
-        .expect_failure("x was")
+        .expect_failure("Property-based test failed with 2 distinct failures.")
         .run();
+    let combined = format!("{}\n{}", out.stdout, out.stderr);
+    assert_eq!(
+        combined.matches("x was").count(),
+        2,
+        "expected both replayed failures in the report:\n{combined}"
+    );
 
     let out = self_test("repro_replay_changed_shape_fixture")
         .env("HEGEL_TEST_REPRO_BLOB", &blob)

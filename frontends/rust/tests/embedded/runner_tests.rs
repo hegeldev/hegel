@@ -365,12 +365,20 @@ mod reproduce {
         assert!(n < 1000, "boom: n = {n}");
     }
 
-    /// Drive the failing property through a real run (via the C ABI) and
-    /// return the reproduce blob the engine attached to the shrunk
-    /// counterexample.
+    /// Fails for any drawn i32 <= -1000, which `failing_property` passes.
+    fn negative_failing_property(tc: TestCase) {
+        let n: i32 = tc.draw(gs::integers::<i32>());
+        assert!(n > -1000, "negative boom: n = {n}");
+    }
+
     fn discover_reproduce_blob() -> String {
+        discover_reproduce_blob_of(failing_property)
+    }
+
+    /// Drive `property` through a real run (via the C ABI) and return the
+    /// reproduce blob the engine attached to the shrunk counterexample.
+    fn discover_reproduce_blob_of(mut test_fn: fn(TestCase)) -> String {
         crate::run_lifecycle::init_panic_hook();
-        let mut test_fn = failing_property;
         let settings = Settings::new()
             .test_cases(200)
             .seed(Some(7))
@@ -425,7 +433,50 @@ mod reproduce {
     }
 
     #[test]
-    fn hegel_reproduce_failure_first_blob_wins() {
+    fn hegel_reproduce_failure_replays_every_blob() {
+        let blob = discover_reproduce_blob();
+        let msg = run_panic_message(
+            Hegel::new(failing_property)
+                .settings(Settings::new().database(None).verbosity(Verbosity::Quiet))
+                .reproduce_failure(blob.clone())
+                .reproduce_failure(blob),
+        );
+        assert_eq!(msg, "Property-based test failed with 2 distinct failures.");
+    }
+
+    #[test]
+    fn hegel_reproduce_failure_reports_each_blobs_failure() {
+        let positive = discover_reproduce_blob();
+        let negative = discover_reproduce_blob_of(negative_failing_property);
+        let property = |tc: TestCase| {
+            let n: i32 = tc.draw(gs::integers::<i32>());
+            assert!(n < 1000, "boom: n = {n}");
+            assert!(n > -1000, "negative boom: n = {n}");
+        };
+        let msg = run_panic_message(
+            Hegel::new(property)
+                .settings(Settings::new().database(None).verbosity(Verbosity::Quiet))
+                .reproduce_failure(positive)
+                .reproduce_failure(negative),
+        );
+        assert_eq!(msg, "Property-based test failed with 2 distinct failures.");
+    }
+
+    #[test]
+    fn hegel_reproduce_failure_skips_a_blob_that_no_longer_reproduces() {
+        let stale = discover_reproduce_blob_of(negative_failing_property);
+        let blob = discover_reproduce_blob();
+        let msg = run_panic_message(
+            Hegel::new(failing_property)
+                .settings(Settings::new().database(None).verbosity(Verbosity::Quiet))
+                .reproduce_failure(stale)
+                .reproduce_failure(blob),
+        );
+        assert!(msg.contains("boom: n ="), "unexpected panic message: {msg}");
+    }
+
+    #[test]
+    fn hegel_reproduce_failure_undecodable_stacked_blob_panics() {
         let blob = discover_reproduce_blob();
         let msg = run_panic_message(
             Hegel::new(failing_property)
@@ -433,7 +484,7 @@ mod reproduce {
                 .reproduce_failure(blob)
                 .reproduce_failure("!!! not a blob !!!"),
         );
-        assert!(msg.contains("boom: n ="), "unexpected panic message: {msg}");
+        assert!(msg.contains("could not be decoded"), "got: {msg}");
     }
 
     #[test]

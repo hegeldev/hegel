@@ -1449,7 +1449,7 @@ fn run_concurrent_machine<M: ConcurrentStateMachine + Sync>(
 
             for (worker, tx) in round_txs.iter().enumerate() {
                 let worker_tc = tc.clone();
-                worker_tc.with_ctc(|ctc| ctc.set_worker(worker as i64));
+                worker_tc.set_worker(worker);
                 let _ = tx.send(worker_tc);
             }
             let events: Vec<WorkerEvent> = event_rxs
