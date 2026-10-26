@@ -276,11 +276,13 @@ let%template arrays
 [@@mode m = (nonportable, portable)]
 ;;
 
-(** [sets (module S) elements ?min_size ?max_size ()] creates a generator for
-    sets of printable [elements], built with [S.of_list]. Elements already in
-    the set (by [S.mem]) are rejected client-side. *)
+(** [sets ?module_name (module S) elements ?min_size ?max_size ()] creates a
+    generator for sets of printable [elements], built with [S.add]. Elements
+    already in the set (by [S.mem]) are rejected client-side. A drawn set
+    shows as [<module_name>.of_list \[…\]]. *)
 let sets
       (type elt t)
+      ?(module_name = "Set")
       (module S : Set.S with type elt = elt and type t = t)
       (elements : (elt, printable) generator)
       ?(min_size = 0)
@@ -312,7 +314,7 @@ let sets
                       ( set
                       , fun () ->
                           Printer.apply
-                            (Printer.text "Set.of_list")
+                            (Printer.text (module_name ^ ".of_list"))
                             [ show_list (List.rev shows) () ] )
                   in
                   collect S.empty []))

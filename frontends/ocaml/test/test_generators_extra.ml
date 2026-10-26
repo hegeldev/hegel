@@ -223,6 +223,17 @@ let test_sets () =
           ~min_size:1
           ~max_size:1
           ()));
+  Alcotest.(check string)
+    "shown with the module's name"
+    "Int_set.of_list [5]"
+    (shown
+       (sets
+          ~module_name:"Int_set"
+          (module Int_set)
+          (integers ~min_value:5 ~max_value:5 ())
+          ~min_size:1
+          ~max_size:1
+          ()));
   expect_usage_error (fun () ->
     ignore (sets (module Int_set) (integers ()) ~max_size:(-1) ()))
 ;;

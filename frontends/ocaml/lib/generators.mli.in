@@ -477,24 +477,35 @@ val%template arrays
   -> ('a array, printable) generator MODE(m)
 [@@mode m = (nonportable, portable)]
 
-(** [sets (module S) elements ?min_size ?max_size ()] creates a generator for
-    sets of printable [elements] of the set module [S]. An element already in the set
-    (by [S.mem]) is redrawn, so a set of [n] elements needs [n] distinct
-    elements. A drawn set shows as [Set.of_list \[1; 2\]], its elements in
-    the order they were drawn.
+(** [sets ?module_name (module S) elements ?min_size ?max_size ()] creates a
+    generator for sets of printable [elements] of the set module [S]. An
+    element already in the set (by [S.mem]) is redrawn, so a set of [n]
+    elements needs [n] distinct elements. A drawn set shows as
+    [Int_set.of_list \[1; 2\]], its elements in the order they were drawn,
+    where [Int_set] is [module_name]. A first-class module does not carry its
+    name, so pass the name [S] has where the value is printed; without it, the
+    set shows as [Set.of_list \[1; 2\]].
 
     {[
       module Int_set = Set.Make (Int)
 
       let%hegel_test sets_example tc =
         let s =
-          draw tc (sets (module Int_set) (integers ~min_value:0 ~max_value:9 ()) ~min_size:3 ())
+          draw
+            tc
+            (sets
+               ~module_name:"Int_set"
+               (module Int_set)
+               (integers ~min_value:0 ~max_value:9 ())
+               ~min_size:3
+               ())
         in
         assert (Int_set.cardinal s >= 3)
       ;;
     ]} *)
 val sets
-  :  (module Set.S with type elt = 'a and type t = 't)
+  :  ?module_name:string
+  -> (module Set.S with type elt = 'a and type t = 't)
   -> ('a, printable) generator
   -> ?min_size:int
   -> ?max_size:int

@@ -124,7 +124,7 @@ New generators:
 - `from_regex` takes the character filtering options of `text` (`?codec`, `?min_codepoint`, `?max_codepoint`, `?categories`, `?exclude_categories`, `?include_characters`, `?exclude_characters`, or `?alphabet`), which restrict every character of the drawn string.
 - `lists ~unique_by:key` generates lists whose elements have distinct keys.
 - `arrays` generates arrays, which print as `[|1; 2|]`.
-- `sets (module S) elements` generates sets of a `Set.S` module.
+- `sets (module S) elements` generates sets of a `Set.S` module. A drawn set prints as `Set.of_list [1; 2]`, or as `Int_set.of_list [1; 2]` given `~module_name:"Int_set"`, as a first-class module does not carry its name.
 - `permutations values` generates permutations of a list, shrinking toward its original order.
 - `tuples5` to `tuples8` generate tuples of 5 to 8 elements.
 - The new optional `hegel.zarith` library, built when zarith is installed, has `Hegel_zarith.integers` for zarith integers of any magnitude. A missing bound is taken to be 2^127 values beyond the other bound, or beyond zero when that is further.
