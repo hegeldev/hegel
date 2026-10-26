@@ -21,6 +21,7 @@ type verbosity =
 
 type database =
   | Unset
+  | Default_location
   | Disabled
   | Path of string
 
@@ -142,7 +143,7 @@ let of_ffi ctx s =
   ; derandomize = Ffi.settings_get_derandomize ctx s
   ; database =
       (match Ffi.settings_get_database ctx s with
-       | None -> Unset
+       | None -> Default_location
        | Some "" -> Disabled
        | Some dir -> Path dir)
   ; suppress_health_check =
@@ -178,13 +179,11 @@ let to_ffi ctx t ~database_key =
     (ffi_nondeterminism_strictness t.nondeterminism_strictness);
   Ffi.settings_print_blob ctx s t.print_blob;
   Ffi.settings_unbounded_choices ctx s t.unbounded_choices;
-  Ffi.settings_database
-    ctx
-    s
-    (match t.database with
-     | Unset -> None
-     | Disabled -> Some ""
-     | Path p -> Some p);
+  (match t.database with
+   | Unset -> ()
+   | Default_location -> Ffi.settings_database ctx s None
+   | Disabled -> Ffi.settings_database ctx s (Some "")
+   | Path p -> Ffi.settings_database ctx s (Some p));
   Option.iter (fun k -> Ffi.settings_database_key ctx s (Some k)) database_key;
   Ffi.settings_phases ctx s (bitmask phase_bit t.phases);
   Ffi.settings_suppress_health_check

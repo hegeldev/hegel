@@ -40,7 +40,10 @@ let test_default_settings_not_ci () =
     Alcotest.(check bool) "verbosity normal" true (Poly.equal s.verbosity Settings.Normal);
     Alcotest.(check (option Test_helpers.uint64)) "no seed" None s.seed;
     Alcotest.(check bool) "derandomize off" false s.derandomize;
-    Alcotest.(check bool) "database unset" true (Poly.equal s.database Settings.Unset);
+    Alcotest.(check bool)
+      "default database"
+      true
+      (Poly.equal s.database Settings.Default_location);
     Alcotest.(check bool)
       "no health checks suppressed"
       true
@@ -483,8 +486,28 @@ let test_event_bad_label () =
   | exception Hegel.Usage_error _ -> ()
 ;;
 
-(** Force [database = Settings.Unset] (independent of CI auto-detection) to cover the
-    [Unset] arm of settings translation. *)
+let test_database_unset_keeps_the_profile () =
+  Exn.protect
+    ~finally:(fun () -> Settings.set_default_profile None)
+    ~f:(fun () ->
+      Settings.register_profile
+        "database_unset_test"
+        { (Settings.default ()) with database = Settings.Path "profile_db" };
+      Settings.set_default_profile (Some "database_unset_test");
+      let base = Settings.from_profile "default" in
+      let round_trip database =
+        (Settings.set_from_strings { base with database } []).database
+      in
+      Alcotest.(check bool)
+        "unset keeps the profile's database"
+        true
+        (Poly.equal (round_trip Settings.Unset) (Settings.Path "profile_db"));
+      Alcotest.(check bool)
+        "default_location overrides it"
+        true
+        (Poly.equal (round_trip Settings.Default_location) Settings.Default_location))
+;;
+
 let test_run_database_unset () =
   let settings =
     { (Hegel.Settings.create ~test_cases:3 ()) with database = Settings.Unset }
@@ -812,6 +835,10 @@ let tests =
   ; Alcotest.test_case "event_value non-finite" `Quick test_event_value_non_finite
   ; Alcotest.test_case "event bad label" `Quick test_event_bad_label
   ; Alcotest.test_case "run database unset" `Quick test_run_database_unset
+  ; Alcotest.test_case
+      "database unset keeps the profile"
+      `Quick
+      test_database_unset_keeps_the_profile
   ; Alcotest.test_case "run with full settings" `Quick test_run_with_full_settings
   ; Alcotest.test_case "run all settings branches" `Quick test_run_all_settings_branches
   ; Alcotest.test_case "run flaky strategy" `Quick test_run_flaky_strategy

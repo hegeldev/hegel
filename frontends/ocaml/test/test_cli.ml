@@ -88,7 +88,7 @@ let flags : (test_case -> string * (parsed -> parsed)) list =
       let name, database =
         match draw_silent tc (integers ~min_value:0 ~max_value:2 ()) with
         | 0 -> "disabled", Settings.Disabled
-        | 1 -> "default", Unset
+        | 1 -> "default", Default_location
         | _ ->
           let path =
             draw_silent

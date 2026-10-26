@@ -791,9 +791,13 @@ makes `hegel.toml`, `HEGEL_DEFAULT_PROFILE`, `HEGEL_CONFIG`, and the shipped
 `ci`/`workload` profiles apply to OCaml runs. `Settings.register_profile` and
 `Settings.set_default_profile` wrap the matching engine calls. Going the other
 way, `Settings.to_ffi` (what `Internal.build_ffi_settings` calls) sets *every*
-field on a fresh handle — including `database` with `NULL` for `Unset` and the
-health-check mask even when empty — so the record, not the profile the fresh
-handle was resolved from, is authoritative for the run. That includes
+field on a fresh handle — including the health-check mask even when empty —
+so the record, not the profile the fresh handle was resolved from, is
+authoritative for the run. The one exception is `database = Unset`, which
+leaves the fresh handle's database (the default profile's) in place, as C++'s
+`Database::unset()` and Java's `Database.unset()` do; `Default_location`
+sends `NULL` (the engine default, `.hegel`), and `of_ffi` reads `NULL` back as
+`Default_location`, so a record read from the engine says what it holds. That includes
 `backend` (`Default`/`Urandom`): `default ()` reports the profile's choice
 (`urandom` under `workload`) and `to_ffi` writes it back. `print_blob` is a
 plain field too: its base value is `true` since libhegel 0.42.0 (before that
