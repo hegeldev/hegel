@@ -113,6 +113,11 @@ namespace hegel {
     }
 
     void TestCase::repeat(const std::function<void()>& body) const {
+        if (data_->explicit_state) {
+            note("// Repetition #1");
+            body();
+            return;
+        }
         // Seed the loop's minimum length, then let the engine decide each
         // iteration: the count is drawn like any collection, so it shrinks.
         int64_t min_size = internal::draw_integer(*this, 0, int64_t{1} << 20);

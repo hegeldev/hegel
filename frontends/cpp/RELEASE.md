@@ -52,7 +52,7 @@ HEGEL_TEST(division)(hegel::TestCase& tc) {
 }
 ```
 
-A failing explicit test case prints what it drew and noted, and its exception propagates. A misuse of an explicit test case is a usage error, which makes `hegel::test()` throw `std::invalid_argument` without reporting a failure: a rejection (its message begins `Explicit test cases must not be rejected`), a draw with no value or a value of another type, a value that no draw takes, and anything that needs generated data other than a draw, such as `TestCase::clone()`, `TestCase::repeat()` or stateful testing.
+A failing explicit test case prints what it drew and noted, and its exception propagates. A misuse of an explicit test case is a usage error, which makes `hegel::test()` throw `std::invalid_argument` without reporting a failure: a rejection (its message begins `Explicit test cases must not be rejected`), a draw with no value or a value of another type, a value that no draw takes, and anything that needs generated data other than a draw, such as `TestCase::clone()` or stateful testing. `TestCase::repeat()` runs its body once, so a rejection inside it is reported like any other.
 
 ### Output
 

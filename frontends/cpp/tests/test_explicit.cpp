@@ -259,9 +259,38 @@ TEST(Explicit, RejectionInsideRepeatIsAnError) {
             });
         },
         {hegel::ExplicitTestCase()});
-    EXPECT_FALSE(ran);
-    EXPECT_NE(message.find("needs generated data"), std::string::npos)
+    EXPECT_TRUE(ran);
+    EXPECT_EQ(message.rfind("Explicit test cases must not be rejected", 0), 0u)
         << message;
+}
+
+TEST(Explicit, RepeatRunsItsBodyOnce) {
+    std::vector<int> seen;
+    hegel::test(
+        [&seen](hegel::TestCase& tc) {
+            tc.repeat([&] { seen.push_back(tc.draw(gs::integers<int>())); });
+        },
+        hegel::Settings{.verbosity = hegel::Verbosity::Quiet,
+                        .database = hegel::Database::disabled(),
+                        .phases = {hegel::Phase::Explicit}},
+        {}, {hegel::ExplicitTestCase(4)});
+    EXPECT_EQ(seen, std::vector<int>{4});
+}
+
+TEST(Explicit, FailureInsideRepeatShowsTheRepetition) {
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         tc.repeat([&] {
+                             (void)tc.draw("n", gs::integers<int>());
+                             throw std::runtime_error("boom");
+                         });
+                     },
+                     hegel::Settings{.database = hegel::Database::disabled()},
+                     {}, {hegel::ExplicitTestCase(4)}),
+                 std::runtime_error);
+    EXPECT_EQ(testing::internal::GetCapturedStderr(),
+              "// Repetition #1\nauto n = 4;\n");
 }
 
 TEST(Explicit, CloneIsAnError) {
@@ -273,9 +302,9 @@ TEST(Explicit, CloneIsAnError) {
 }
 
 TEST(Explicit, OperationsNeedingGeneratedDataAreAnError) {
-    std::string message =
-        failure_message([](hegel::TestCase& tc) { tc.repeat([] {}); },
-                        {hegel::ExplicitTestCase()});
+    std::string message = failure_message(
+        [](hegel::TestCase& tc) { hegel::stateful::Pool<int> pool(tc); },
+        {hegel::ExplicitTestCase()});
     EXPECT_NE(message.find("needs generated data"), std::string::npos)
         << message;
 }
