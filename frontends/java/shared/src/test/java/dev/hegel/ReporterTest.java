@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test;
 /** The built-in reporters and the {@link Label} constants. */
 class ReporterTest {
     /** The captured output with platform line endings normalised, so exact comparisons hold on Windows. */
-    private static String text(ByteArrayOutputStream buf) {
+    private static String normalizedOutput(ByteArrayOutputStream buf) {
         return buf.toString(StandardCharsets.UTF_8).replace("\r\n", "\n");
     }
 
@@ -42,7 +42,7 @@ class ReporterTest {
         printing.caseOutput("a note", true);
         printing.caseFinished(CaseOutcome.INTERESTING, true);
         printing.failure(new Failure("o", "b64", null, new AssertionError("x"), Map.of(), List.of())); // printBlob off
-        assertEquals("engine line\nxs = [1, 2];\na note\n", text(buf));
+        assertEquals("engine line\nxs = [1, 2];\na note\n", normalizedOutput(buf));
     }
 
     @Test
@@ -55,7 +55,7 @@ class ReporterTest {
         assertEquals(
                 "note: nondeterministic failure, confirmed\n\nTo reproduce this failure, call this on the test's"
                         + " Settings:\n    .reproduceFailure(\"b64\")\n",
-                text(buf));
+                normalizedOutput(buf));
     }
 
     @Test
@@ -73,7 +73,7 @@ class ReporterTest {
         verbose.runStarted(new Settings().verbosity(Verbosity.VERBOSE));
         verbose.caseOutput("x = 1;", false);
         verbose.caseOutput("shown", false);
-        assertEquals("x = 1;\nshown\n", text(verboseBuf));
+        assertEquals("x = 1;\nshown\n", normalizedOutput(verboseBuf));
     }
 
     @Test
