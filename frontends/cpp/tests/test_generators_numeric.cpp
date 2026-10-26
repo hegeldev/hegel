@@ -137,3 +137,37 @@ TEST(Floats, LongDoubleDrawsAsDouble) {
                    std::fabs(x) <= std::numeric_limits<double>::max();
         });
 }
+
+// Narrowing a bound to a narrower type moves it inward: up for a lower
+// bound, down for an upper bound. float stands in for double, and double
+// for a wider long double.
+TEST(Floats, NarrowingABoundMovesItInward) {
+    using gs::detail::narrow_down;
+    using gs::detail::narrow_up;
+    float up = narrow_up<float>(0.1);
+    float down = narrow_down<float>(0.1);
+    EXPECT_GT(static_cast<double>(up), 0.1);
+    EXPECT_LT(static_cast<double>(down), 0.1);
+    EXPECT_EQ(std::nextafter(down, 1.0f), up);
+    EXPECT_EQ(narrow_up<float>(0.5), 0.5f);
+    EXPECT_EQ(narrow_down<float>(0.5), 0.5f);
+    EXPECT_EQ(narrow_up<float>(1e300), std::numeric_limits<float>::infinity());
+    EXPECT_EQ(narrow_down<float>(1e300), std::numeric_limits<float>::max());
+    EXPECT_EQ(narrow_up<float>(-1e300), std::numeric_limits<float>::lowest());
+    EXPECT_EQ(narrow_down<float>(-1e300),
+              -std::numeric_limits<float>::infinity());
+}
+
+// Every long double drawn is within the bounds and respects an excluded
+// bound, wherever the bounds fall between doubles.
+TEST(Floats, LongDoubleRespectsItsBounds) {
+    long double min_value = 0.1L;
+    long double max_value = 0.3L;
+    hegel::tests::common::assert_all_examples<long double>(
+        gs::floats<long double>({.min_value = min_value,
+                                 .max_value = max_value,
+                                 .exclude_min = true,
+                                 .exclude_max = true}),
+        [&](const long double& x) { return x > min_value && x < max_value; },
+        500);
+}

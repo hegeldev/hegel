@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -74,6 +75,29 @@ namespace hegel::generators {
                 bits |= static_cast<U>(out[i]) << (8 * i);
             }
             return static_cast<T>(bits);
+        }
+
+        // The least value of type To that is not below `value`. A value above
+        // the finite range of To narrows to infinity.
+        template <typename To, typename From> To narrow_up(From value) {
+            if (value > static_cast<From>(std::numeric_limits<To>::max())) {
+                return std::numeric_limits<To>::infinity();
+            }
+            if (value < static_cast<From>(std::numeric_limits<To>::lowest())) {
+                return std::numeric_limits<To>::lowest();
+            }
+            auto narrowed = static_cast<To>(value);
+            if (static_cast<From>(narrowed) < value) {
+                narrowed = std::nextafter(narrowed,
+                                          std::numeric_limits<To>::infinity());
+            }
+            return narrowed;
+        }
+
+        // The greatest value of type To that is not above `value`. A value
+        // below the finite range of To narrows to minus infinity.
+        template <typename To, typename From> To narrow_down(From value) {
+            return -narrow_up<To>(-value);
         }
 
     } // namespace detail
@@ -154,18 +178,23 @@ namespace hegel::generators {
 
             // An unset bound is the widest the draw allows: infinite when
             // infinities may be drawn, else the finite extreme of the width
-            // drawn at.
+            // drawn at. A bound of a type wider than double narrows inward, to
+            // the nearest double inside the range, so every value drawn is in
+            // the range. A narrowed bound is no longer a value of the range,
+            // so it is never excluded.
             min_ =
-                has_min ? static_cast<double>(*params.min_value)
+                has_min ? detail::narrow_up<double>(*params.min_value)
                 : allow_infinity_
                     ? -std::numeric_limits<double>::infinity()
                     : static_cast<double>(std::numeric_limits<Drawn>::lowest());
-            max_ = has_max ? static_cast<double>(*params.max_value)
+            max_ = has_max ? detail::narrow_down<double>(*params.max_value)
                    : allow_infinity_
                        ? std::numeric_limits<double>::infinity()
                        : static_cast<double>(std::numeric_limits<Drawn>::max());
-            exclude_min_ = params.exclude_min;
-            exclude_max_ = params.exclude_max;
+            exclude_min_ =
+                params.exclude_min && static_cast<T>(min_) == *params.min_value;
+            exclude_max_ =
+                params.exclude_max && static_cast<T>(max_) == *params.max_value;
         }
 
         T do_draw(const TestCase& tc) const override {
@@ -230,7 +259,11 @@ namespace hegel::generators {
      * @endcode
      *
      * A `float` is drawn as a 32-bit value, so it shrinks and hits edge
-     * cases as a `float`. Every other type is drawn as a `double`.
+     * cases as a `float`. Every other type is drawn as a `double`. Where
+     * `long double` is wider than `double`, a bound that is not a `double`
+     * is moved inward to the nearest `double`, so every value is still
+     * within the bounds. Bounds with no `double` between them are an
+     * error.
      *
      * @tparam T Floating point type (default: double)
      * @param params Bounds and exclusion constraints
