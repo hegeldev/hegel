@@ -47,9 +47,54 @@ namespace hegel::internal {
         // Text from a formatter that knows nothing of the printer: the engine
         // recovers its bracket structure, so it can break like the rest.
         void reflow(std::string_view text);
+        // Text that renders only when the innermost group breaks. Must not
+        // contain a newline.
+        void if_break(std::string_view text);
+        // Ends the current line with `// text` and breaks every group open
+        // here. Must not contain a newline.
+        void comment(std::string_view text);
+
+        // The handle this printer writes through.
+        hegel_printer_t* handle() const { return handle_; }
 
       private:
         hegel_printer_t* handle_;
+    };
+
+    // An owned handle onto a hole opened at the current position of a
+    // printer (hegel_printer_deferred). What it prints, at any later time,
+    // appears at the hole when the document is read. Writes after that, or
+    // into a hole whose printer was already read, are ignored.
+    class DeferredPrinter {
+      public:
+        explicit DeferredPrinter(const Printer& at);
+        ~DeferredPrinter();
+        DeferredPrinter(const DeferredPrinter&) = delete;
+        DeferredPrinter& operator=(const DeferredPrinter&) = delete;
+
+        Printer printer() const { return Printer(handle_); }
+
+      private:
+        hegel_printer_t* handle_ = nullptr;
+    };
+
+    // A speculative region on a printer (hegel_printer_begin_speculative):
+    // what the printer prints from now on is kept only if commit() is
+    // called. Otherwise the destructor discards it, also when an exception
+    // unwinds.
+    class Speculation {
+      public:
+        explicit Speculation(const Printer& printer);
+        ~Speculation();
+        Speculation(const Speculation&) = delete;
+        Speculation& operator=(const Speculation&) = delete;
+
+        // Keeps what the region printed.
+        void commit();
+
+      private:
+        hegel_printer_t* handle_;
+        bool resolved_ = false;
     };
 
     // A standalone engine document, for rendering a value outside a test

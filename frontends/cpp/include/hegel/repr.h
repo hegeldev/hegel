@@ -122,6 +122,15 @@ namespace hegel::internal {
             static constexpr std::size_t size = N;
         };
 
+        // A type that prints itself through the printer, with a member
+        // `void print_to(Printer&) const`.
+        template <typename T, typename = void>
+        struct prints_itself : std::false_type {};
+        template <typename T>
+        struct prints_itself<
+            T, std::void_t<decltype(std::declval<const T&>().print_to(
+                   std::declval<Printer&>()))>> : std::true_type {};
+
         template <typename T, typename = void>
         struct has_ostream_operator : std::false_type {};
         template <typename T>
@@ -465,6 +474,8 @@ namespace hegel::internal {
         using repr_detail::ItemSeparator;
         if constexpr (repr_detail::is_scalar_v<T>) {
             printer.text(repr_detail::scalar_text(value));
+        } else if constexpr (repr_detail::prints_itself<T>::value) {
+            value.print_to(printer);
         } else if constexpr (repr_detail::is_pair<T>::value ||
                              repr_detail::is_tuple<T>::value) {
             repr_detail::print_tuple(printer, cpp_type_name<T>() + "{", value);

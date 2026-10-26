@@ -462,15 +462,39 @@ namespace hegel::generators {
         : tc_(&tc), engine_(std::nullopt) {}
 
     HegelRandom::HegelRandom(uint64_t seed)
-        : tc_(nullptr), engine_(std::mt19937(seed)) {}
+        : tc_(nullptr), engine_(std::mt19937(seed)) {
+        record_->seed = seed;
+    }
 
     HegelRandom::result_type HegelRandom::operator()() {
         if (engine_) {
             return (*engine_)();
         }
-        return static_cast<result_type>(
+        auto value = static_cast<result_type>(
             internal::draw_integer(*tc_, std::numeric_limits<uint32_t>::min(),
                                    std::numeric_limits<uint32_t>::max()));
+        if (record_->consumed) {
+            internal::Printer slot = record_->consumed->printer();
+            if (record_->count > 0) {
+                slot.text(",");
+                slot.breakable(" ");
+            }
+            slot.text(std::to_string(value));
+            record_->count++;
+        }
+        return value;
+    }
+
+    void HegelRandom::print_to(internal::Printer& printer) const {
+        if (record_->seed) {
+            printer.text(
+                "HegelRandom{.seed = " + std::to_string(*record_->seed) + "}");
+            return;
+        }
+        printer.begin_group(1, "HegelRandom{.consumed = {");
+        record_->consumed =
+            std::make_unique<internal::DeferredPrinter>(printer);
+        printer.end_group("}}");
     }
 
     Generator<HegelRandom> randoms(RandomsParams params) {

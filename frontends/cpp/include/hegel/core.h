@@ -312,7 +312,8 @@ namespace hegel::generators {
 namespace hegel::internal {
 
     // Prints `prefix`, `value` and `suffix` as one line of `tc`'s output,
-    // when `tc` records output.
+    // when `tc` records output. The line is printed in a speculative region,
+    // so a value whose printing throws leaves no part of the line.
     template <typename T>
     void print_line(const TestCase& tc, const std::string& prefix,
                     const T& value, std::string_view suffix = "") {
@@ -320,10 +321,12 @@ namespace hegel::internal {
             return;
         }
         Printer printer = test_case_printer(tc);
+        Speculation speculation(printer);
         printer.text(prefix);
         print_value(printer, value);
         printer.text(suffix);
         printer.hard_break();
+        speculation.commit();
     }
 
 } // namespace hegel::internal

@@ -1000,6 +1000,49 @@ namespace hegel::internal {
             hegel_printer_reflow(ctx, handle_, nullptr, impl::borrow(text)));
     }
 
+    void Printer::if_break(std::string_view text) {
+        hegel_context_t* ctx = impl::thread_context();
+        impl::tolerate_dead_region(
+            ctx, hegel_printer_if_break(ctx, handle_, impl::borrow(text)));
+    }
+
+    void Printer::comment(std::string_view text) {
+        hegel_context_t* ctx = impl::thread_context();
+        std::string rendered = "  // " + std::string(text);
+        impl::tolerate_dead_region(
+            ctx, hegel_printer_comment(ctx, handle_, impl::borrow(rendered)));
+    }
+
+    DeferredPrinter::DeferredPrinter(const Printer& at) {
+        hegel_context_t* ctx = impl::thread_context();
+        impl::tolerate_dead_region(
+            ctx, hegel_printer_deferred(ctx, at.handle(), &handle_));
+    }
+
+    DeferredPrinter::~DeferredPrinter() {
+        hegel_printer_free(impl::thread_context(), handle_);
+    }
+
+    Speculation::Speculation(const Printer& printer)
+        : handle_(printer.handle()) {
+        hegel_context_t* ctx = impl::thread_context();
+        impl::tolerate_dead_region(
+            ctx, hegel_printer_begin_speculative(ctx, handle_));
+    }
+
+    Speculation::~Speculation() {
+        if (!resolved_) {
+            hegel_printer_abort_speculative(impl::thread_context(), handle_);
+        }
+    }
+
+    void Speculation::commit() {
+        resolved_ = true;
+        hegel_context_t* ctx = impl::thread_context();
+        impl::tolerate_dead_region(
+            ctx, hegel_printer_commit_speculative(ctx, handle_));
+    }
+
     Document::Document(uint64_t width) {
         hegel_context_t* ctx = impl::thread_context();
         hegel_printer_options_t* options = nullptr;
