@@ -61,42 +61,53 @@ let discover ~ox =
       let config var = read_process [| ocamlopt; "-config-var"; var |] in
       let flambda2 = config "flambda2" = Some "true" in
       let flambda = config "flambda" = Some "true" || flambda2 in
+      (* the compiler's own consistency checks, so a broken invariant fails
+         the compile instead of hiding in the output *)
+      let nat flags =
+        (ocamlopt :: "-dcmm-invariants" :: (if flambda then [ "-dflambda-invariants" ] else []))
+        @ flags
+      in
+      (* the reference: bytecode on the debug runtime *)
+      let byte = { name = p "%s/ocamlc" switch; argv = [ ocamlc; "-runtime-variant"; "d" ] } in
       if ox
       then
         if not flambda2
         then []
         else
-          { name = p "%s/ocamlc" switch; argv = [ ocamlc ] }
+          byte
           :: List.map
                (fun level ->
                   { name = p "%s/ocamlopt%s" switch level
-                  ; argv = ocamlopt :: (if level = "" then [] else [ level ])
+                  ; argv = nat (if level = "" then [] else [ level ])
                   })
                [ "-Oclassic"; ""; "-O3" ]
+          @ [ { name = p "%s/ocamlopt-toggles" switch; argv = nat [] } ]
       else if flambda2
       then []
       else
-        [ { name = p "%s/ocamlc" switch; argv = [ ocamlc ] }
-        ; { name = p "%s/ocamlopt" switch; argv = [ ocamlopt ] }
-        ; { name = p "%s/ocamlopt-linscan" switch; argv = [ ocamlopt; "-linscan" ] }
+        [ byte
+        ; { name = p "%s/ocamlopt" switch; argv = nat [] }
+        ; { name = p "%s/ocamlopt-linscan" switch; argv = nat [ "-linscan" ] }
         ]
         @
         if flambda
         then
-          [ { name = p "%s/ocamlopt-O3" switch; argv = [ ocamlopt; "-O3" ] }
-          ; { name = p "%s/ocamlopt-Oclassic" switch; argv = [ ocamlopt; "-Oclassic" ] }
-          ; { name = p "%s/ocamlopt-O3-linscan" switch; argv = [ ocamlopt; "-O3"; "-linscan" ] }
+          [ { name = p "%s/ocamlopt-O3" switch; argv = nat [ "-O3" ] }
+          ; { name = p "%s/ocamlopt-Oclassic" switch; argv = nat [ "-Oclassic" ] }
+          ; { name = p "%s/ocamlopt-O3-linscan" switch; argv = nat [ "-O3"; "-linscan" ] }
           ; { name = p "%s/ocamlopt-O3-aggressive" switch
             ; argv =
-                [ ocamlopt; "-O3"; "-unbox-closures"; "-inline"; "1000"; "-rounds"; "4"
-                ; "-inline-max-depth"; "3"; "-remove-unused-arguments"; "-unsafe"
-                ]
+                nat
+                  [ "-O3"; "-unbox-closures"; "-inline"; "1000"; "-rounds"; "4"
+                  ; "-inline-max-depth"; "3"; "-remove-unused-arguments"; "-unsafe"
+                  ; "-runtime-variant"; "d"
+                  ]
             }
           ]
         else
           (* programs never rely on bounds checks, so -unsafe keeps their meaning *)
           [ { name = p "%s/ocamlopt-unsafe-inline" switch
-            ; argv = [ ocamlopt; "-unsafe"; "-inline"; "1000" ]
+            ; argv = nat [ "-unsafe"; "-inline"; "1000"; "-runtime-variant"; "d" ]
             }
           ]))
 ;;
@@ -195,6 +206,29 @@ type result =
   | Compile_error of string
   | Ran of exit * string * string
 
+let find s sub =
+  let n = String.length sub in
+  let rec go i =
+    if i + n > String.length s then None else if String.sub s i n = sub then Some i else go (i + 1)
+  in
+  go 0
+;;
+
+let contains s sub = find s sub <> None
+
+(* A program with the generator's boundary line becomes two modules, the
+   second opening the first, so code is inlined across modules. *)
+let modules source =
+  let boundary = Ocaml_diff_gen.module_boundary in
+  match find source boundary with
+  | None -> [ "prog.ml", source ]
+  | Some i ->
+    let j = i + String.length boundary in
+    [ "m1.ml", String.sub source 0 i
+    ; "prog.ml", "open M1\n" ^ String.sub source j (String.length source - j)
+    ]
+;;
+
 let run_all ?(source_for = Fun.const Fun.id) backends source =
   let root = Filename.temp_dir "ocaml_diff" "" in
   Fun.protect
@@ -206,20 +240,23 @@ let run_all ?(source_for = Fun.const Fun.id) backends source =
            (fun i b ->
               let dir = Filename.concat root (string_of_int i) in
               Sys.mkdir dir 0o755;
-              Out_channel.with_open_bin (Filename.concat dir "prog.ml") (fun oc ->
-                output_string oc (source_for b source));
-              dir)
+              let files = modules (source_for b source) in
+              List.iter
+                (fun (f, text) ->
+                   Out_channel.with_open_bin (Filename.concat dir f) (fun oc ->
+                     output_string oc text))
+                files;
+              dir, List.map (fun (f, _) -> Filename.concat dir f) files)
            backends
        in
+       let dirs, files = List.split dirs in
        let exe dir = Filename.concat dir "prog.exe" in
        let compiles =
          List.map2
-           (fun b dir ->
-              spawn
-                ~dir
-                (b.argv @ [ "-w"; "-a"; Filename.concat dir "prog.ml"; "-o"; exe dir ]))
+           (fun b (dir, files) ->
+              spawn ~dir (b.argv @ [ "-w"; "-a"; "-I"; dir ] @ files @ [ "-o"; exe dir ]))
            backends
-           dirs
+           (List.combine dirs files)
        in
        let compiled = wait_all ~timeout:120. (List.map fst compiles) in
        let runs =
@@ -283,14 +320,8 @@ let cases = ref 0
 let timeouts = ref 0
 let known = ref 0
 
-let contains s sub =
-  let n = String.length sub in
-  let rec go i = i + n <= String.length s && (String.sub s i n = sub || go (i + 1)) in
-  go 0
-;;
-
-(* Reported bugs, recognised by which backends disagree with the most common
-   result, so they don't stop a run looking for new ones. *)
+(* Reported bugs, recognised by which backends disagree with the reference
+   (the first backend), so they don't stop a run looking for new ones. *)
 let atomic_shim =
   {|module Atomic = struct
   include Atomic
@@ -305,16 +336,10 @@ end
 
 let known_bug backends results source =
   let obs = List.map observable results in
-  let count o = List.length (List.filter (( = ) o) obs) in
-  let majority =
-    List.fold_left
-      (fun best o -> if count o > count best then o else best)
-      (List.hd obs)
-      obs
-  in
+  let reference = List.hd obs in
   let odd =
     List.filter_map
-      (fun (b, o) -> if o = majority then None else Some b.name)
+      (fun (b, o) -> if o = reference then None else Some b.name)
       (List.combine backends obs)
   in
   (* ocaml/ocaml#15154: ocamlopt without flambda cannot size an allocation
@@ -323,7 +348,7 @@ let known_bug backends results source =
     odd <> []
     && List.for_all
          (fun r ->
-            observable r = majority
+            observable r = reference
             ||
             match r with
             | Compile_error msg -> contains msg "Selection.size_expr"
@@ -342,7 +367,7 @@ let known_bug backends results source =
            (not (List.mem b.name odd))
            ||
            match r with
-           | Ran (Signaled s, _, _) -> s = Sys.sigbus || s = Sys.sigsegv
+           | Ran (Signaled s, _, _) -> s = Sys.sigbus || s = Sys.sigsegv || s = Sys.sigabrt
            | _ -> false)
         (List.combine backends results)
    && List.for_all
@@ -370,7 +395,7 @@ let known_bug backends results source =
   &&
   let odd_backends = List.filter (fun b -> List.mem b.name odd) backends in
   List.for_all
-    (fun r -> observable r = majority)
+    (fun r -> observable r = reference)
     (run_all odd_backends (atomic_shim ^ source))
 ;;
 
@@ -400,14 +425,54 @@ let fail backends results msg =
     prerr_endline text;
     let ref_obs = observable (List.hd results) in
     let odd =
-      List.filteri (fun i _ -> i > 0 && observable (List.nth results i) <> ref_obs) backends
+      List.find_opt (fun i -> observable (List.nth results i) <> ref_obs)
+        (List.init (List.length results - 1) succ)
     in
-    focus := Some (List.hd backends :: List.filteri (fun i _ -> i = 0) odd));
+    focus := Some (0 :: Option.to_list odd));
   failwith text
 ;;
 
+(* Switches that must not change a program's meaning, most of them off by
+   default; the toggles backend gets a few of them per program. *)
+let ox_toggles =
+  [ "-cfg-merge-blocks"; "-reorder-blocks-random 7"; "-vectorize"; "-g"
+  ; "-g -gdwarf-may-alter-codegen"; "-dcfg-invariants"; "-debug-long-frames-threshold 0"
+  ; "-function-layout source"; "-no-cfg-prologue-shrink-wrap"
+  ; "-cfg-prologue-shrink-wrap-threshold 1"; "-no-cfg-value-propagation"
+  ; "-no-cfg-peephole-optimize"; "-no-cfg-eliminate-dead-trap-handlers"
+  ; "-cfg-stack-checks-threshold 0"; "-caml-apply-inline-fast-path"
+  ; "-flambda2-advanced-meet"; "-no-flambda2-join-points"
+  ; "-no-flambda2-unbox-along-intra-function-control-flow"
+  ; "-flambda2-expert-max-unboxing-depth 0"; "-flambda2-expert-cmm-safe-subst"
+  ; "-flambda2-expert-phantom-lets"; "-flambda2-backend-cse-at-toplevel"
+  ; "-flambda2-inline-max-depth 0"
+  ; "-flambda2-inline-threshold 1000 -flambda2-inline-max-depth 6"
+  ; "-flambda2-cse-depth 0"; "-flambda2-join-depth 0"; "-regalloc irc"; "-regalloc ls"
+  ; "-regalloc gi"; "-regalloc-linscan-threshold 0"; "-runtime-variant d"
+  ]
+;;
+
+let with_toggles tc backends =
+  let level =
+    List.nth [ "-O3"; ""; "-O2"; "-Oclassic" ] (draw_silent tc (integers ~min_value:0 ~max_value:3 ()))
+  in
+  let picked = List.filter (fun _ -> draw_silent tc (booleans ~p:0.08 ())) ox_toggles in
+  let flags = List.concat_map (String.split_on_char ' ') (level :: picked) |> List.filter (( <> ) "") in
+  List.map
+    (fun b ->
+       if String.ends_with ~suffix:"-toggles" b.name
+       then { name = p "%s %s" b.name (String.concat " " flags); argv = b.argv @ flags }
+       else b)
+    backends
+;;
+
 let check ~ox ~effect_syntax backends tc =
-  let backends = Option.value !focus ~default:backends in
+  let backends =
+    match !focus with
+    | None -> backends
+    | Some keep -> List.filteri (fun i _ -> List.mem i keep) backends
+  in
+  let backends = if ox then with_toggles tc backends else backends in
   incr cases;
   let source = Ocaml_diff_gen.program ~ox ~effect_syntax tc in
   note tc source;
@@ -471,7 +536,8 @@ let check ~ox ~effect_syntax backends tc =
       (function
         | Ran (Signaled _, _, _) -> true
         | Ran (Exited 2, _, err) ->
-          not (String.starts_with ~prefix:"Fatal error: exception Stdlib.Exit" err)
+          (* contains: the debug runtime prints a banner first *)
+          not (contains err "Fatal error: exception Stdlib.Exit")
         | _ -> false)
       results
   then fail backends results "backend crashed\n";

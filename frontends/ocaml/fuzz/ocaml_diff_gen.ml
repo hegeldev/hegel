@@ -49,8 +49,8 @@ let poly_parent = ref []
    use are not crowded out, and a shrunk failure names the ones it needs. *)
 let all_features =
   [ "atomics"; "deep"; "effect_syntax"; "effects"; "exits"; "exns"; "gadt"; "gc"; "lazy"
-  ; "locals"; "loops"; "manyargs"; "opaque"; "partial"; "poly"; "records"; "shallow"
-  ; "strings"
+  ; "locals"; "loops"; "manyargs"; "modules"; "opaque"; "partial"; "poly"; "records"
+  ; "recvals"; "shallow"; "strings"; "tmc"
   ]
 
 let features = ref all_features
@@ -179,6 +179,7 @@ let sgn c = if c < 0 then -1 else if c > 0 then 1 else 0
 let i64div a b = if b = 0L then a else Int64.div a b
 let i64rem a b = if b = 0L then a else Int64.rem a b
 let ssub s i n = let l = String.length s in let i = (i land max_int) mod (l + 1) in String.sub s i ((n land max_int) mod (l - i + 1))
+let rec take n l = if n <= 0 then [] else match l with [] -> [] | x :: r -> x :: take (n - 1) r
 type _ gx =
   | GInt : int -> int gx
   | GBool : bool -> bool gx
@@ -221,6 +222,7 @@ type ctx =
   ; mutable next : int
   ; mutable decls : decl array
   ; mutable effects : (string * ty * ty) list (* constructor, argument, result *)
+  ; used : (string, unit) Hashtbl.t (* variables the program refers to so far *)
   }
 
 let label = Generators.Ppx_internal.Labels.from_name "ocaml_diff.expr"
@@ -596,12 +598,18 @@ let immediate = function
 (* A type that [extract] finds in a variable in scope, usually, so that
    eliminators consume values the program computed rather than literals. *)
 let from_env ctx env extract fallback =
-  match List.filter_map (fun (_, t) -> extract t) (env.vars @ env.locals) with
-  | [] -> fallback ()
-  | found ->
-    if draw_silent ctx.tc (booleans ~p:0.7 ())
-    then List.nth found (int_in ctx 0 (List.length found - 1))
-    else fallback ()
+  let all = env.vars @ env.locals in
+  let unused = List.filter (fun (x, _) -> not (Hashtbl.mem ctx.used x)) all in
+  (* Unused variables first, so that parameters get used (Frank et al.,
+     "Generating Well-Typed Terms That Are Not Useless", POPL 2024). *)
+  let pick vars = List.filter_map (fun (_, t) -> extract t) vars in
+  match pick unused, pick all with
+  | [], [] -> fallback ()
+  | found, _ :: _ when found <> [] && draw_silent ctx.tc (booleans ~p:0.7 ()) ->
+    List.nth found (int_in ctx 0 (List.length found - 1))
+  | _, found when found <> [] && draw_silent ctx.tc (booleans ~p:0.7 ()) ->
+    List.nth found (int_in ctx 0 (List.length found - 1))
+  | _ -> fallback ()
 ;;
 
 let env_ty ctx env extract = from_env ctx env extract (fun () -> any_ty ctx)
@@ -620,10 +628,17 @@ let fo_env_ty ctx env =
 let rec expr ctx env ty depth =
   span ctx (fun () ->
     let vars = List.filter (fun (_, t) -> t = ty) env.vars in
+    let unused = List.filter (fun (x, _) -> not (Hashtbl.mem ctx.used x)) vars in
+    let use (x, _) =
+      Hashtbl.replace ctx.used x ();
+      x
+    in
     let leaf () =
       let i = int_in ctx 0 (List.length vars) in
-      if i < List.length vars
-      then fst (List.nth vars i)
+      if unused <> [] && draw_silent ctx.tc (booleans ~p:0.7 ())
+      then use (List.nth unused (int_in ctx 0 (List.length unused - 1)))
+      else if i < List.length vars
+      then use (List.nth vars i)
       else (
         let l = literal ctx ty in
         (* Sys.opaque_identity keeps the compiler from folding the value away. *)
@@ -634,7 +649,10 @@ let rec expr ctx env ty depth =
     let performs = List.filter (fun (_, _, r) -> r = ty) env.effs in
     if env.in_try && draw_silent ctx.tc (booleans ~p:0.15 ())
     then if ty = Float_u then "(unbox_float (raise Exit))" else "(raise Exit)"
-    else if depth <= 0 || (vars <> [] && draw_silent ctx.tc (booleans ~p:0.25 ()))
+    else if
+      depth <= 0
+      || (unused <> [] && draw_silent ctx.tc (booleans ~p:0.5 ()))
+      || (vars <> [] && draw_silent ctx.tc (booleans ~p:0.25 ()))
     then leaf ()
     else if performs <> [] && draw_silent ctx.tc (booleans ~p:0.2 ())
     then (
@@ -653,6 +671,11 @@ let rec expr ctx env ty depth =
         (expr ctx (bind env x r) ty (depth - 1)))
     else (
       let e env t = expr ctx env t (depth - 1) in
+      let other =
+        List.filter
+          (fun (x, t) -> t <> ty && first_order t && not (Hashtbl.mem ctx.used x))
+          env.vars
+      in
       (* Favour the operations on [ty] over the structural forms, so values
          are computed with rather than only passed around. *)
       let p_specific =
@@ -660,6 +683,11 @@ let rec expr ctx env ty depth =
         | Int | Bool | Float | Char | Int64 | Str | List _ -> 0.7
         | Option _ | Pair _ | Arrow _ | Named _ | Float_u -> 0.4
       in
+      match other with
+      | (x, t) :: _ when draw_silent ctx.tc (booleans ~p:0.3 ()) ->
+        (* the newest unused variable of another type, so it is not left dead *)
+        p "(if %s = %s then %s else %s)" (use (x, t)) (literal ctx t) (e env ty) (e env ty)
+      | _ ->
       if !ox_mode && immediate ty && on "locals" && draw_silent ctx.tc (booleans ~p:0.15 ())
       then local_binding ctx env ty e
       else if draw_silent ctx.tc (booleans ~p:p_specific ())
@@ -924,6 +952,8 @@ and generic ctx env ty e =
      then [ (fun () -> effect_match ctx env ty e) ]
      else [])
   @ boost (if value && on "lazy" then [ (fun () -> lazy_value ctx env ty e) ] else [])
+  @ boost (if value && on "recvals" then rec_value ctx env ty e else [])
+  @ (if on "strings" then [ (fun () -> str_match ctx env ty e) ] else [])
   @ boost (if fo && on "gadt"
      then
        [ (fun () -> p "(geval %s)" (gadt ctx env ty e 3))
@@ -1004,10 +1034,9 @@ and generic ctx env ty e =
           a)
     ]
 
-(* A deep handler for some of the program's effects around a body of type [b].
-   An arm resumes the body, resumes it and then works on its result, drops the
-   continuation, or (inside a try) raises Exit at the perform. *)
-and handler ctx env ty e =
+(* The effects a handler handles, the type [b] of its body, whether it
+   catches Exit, and the body's environment. *)
+and handler_setup ctx env =
   let handled = List.filter (fun _ -> draw_silent ctx.tc (booleans ())) ctx.effects in
   let handled = if handled = [] then [ List.hd ctx.effects ] else handled in
   let b =
@@ -1018,38 +1047,44 @@ and handler ctx env ty e =
       (fun () -> fo_env_ty ctx env)
   in
   let catch = draw_silent ctx.tc (booleans ~p:0.3 ()) in
-  let body_env =
-    { env with effs = handled @ env.effs; in_try = env.in_try || catch }
-  in
+  handled, b, catch, { env with effs = handled @ env.effs; in_try = env.in_try || catch }
+
+(* A handler arm for an effect with argument [a] and result [r]: it resumes the
+   body, resumes it and then works on its result, drops the continuation, or
+   (inside a try, if [discontinue]) raises Exit at the perform. *)
+and arm ctx env ty e ~resume ~discontinue (_, a, r) =
+  let v = fresh ctx "v" in
+  let k = fresh ctx "k" in
+  let henv = bind env v a in
+  let res = fresh ctx "r" in
+  let resumed () = resume k (e henv r) r in
+  ( v
+  , k
+  , choose
+      ctx
+      ([ resumed
+       ; (fun () ->
+           p "(let %s : %s = %s in %s)" res (show_ty ty) (resumed ()) (e (bind henv res ty) ty))
+       ; (fun () -> p "(ignore %s; %s)" k (e henv ty))
+       ]
+       @
+       if discontinue && env.in_try
+       then [ (fun () -> p "Effect.Deep.discontinue %s Exit" k) ]
+       else []) )
+
+and deep_resume k v r = p "Effect.Deep.continue %s (%s : %s)" k v (show_ty r)
+
+(* A deep handler for some of the program's effects around a body of type [b]. *)
+and handler ctx env ty e =
+  let handled, b, catch, body_env = handler_setup ctx env in
   let x = fresh ctx "x" in
   let exnc =
     if catch
     then p "(function Exit -> %s | ex -> raise ex)" (e env ty)
     else "raise"
   in
-  let arm (c, a, r) =
-    let v = fresh ctx "v" in
-    let k = fresh ctx "k" in
-    let henv = bind env v a in
-    let res = fresh ctx "r" in
-    let body =
-      choose
-        ctx
-        ([ (fun () -> p "Effect.Deep.continue %s (%s : %s)" k (e henv r) (show_ty r))
-         ; (fun () ->
-             p
-               "(let %s : %s = Effect.Deep.continue %s (%s : %s) in %s)"
-               res
-               (show_ty ty)
-               k
-               (e henv r)
-               (show_ty r)
-               (e (bind henv res ty) ty))
-         ; (fun () -> p "(ignore %s; %s)" k (e henv ty))
-         ]
-         @
-         if env.in_try then [ (fun () -> p "Effect.Deep.discontinue %s Exit" k) ] else [])
-    in
+  let arm ((c, _, _) as eff) =
+    let v, k, body = arm ctx env ty e ~resume:deep_resume ~discontinue:true eff in
     p
       "| %s %s -> Some (fun (%s : (a, %s) Effect.Deep.continuation) -> %s)"
       c
@@ -1507,7 +1542,8 @@ and specific ctx env ty e =
           i
           (e (bind (closure env) i Int) t))
     ]
-    @ if first_order t then [ (fun () -> p "(List.sort compare %s)" (e env ty)) ] else []
+    @ (if first_order t then [ (fun () -> p "(List.sort compare %s)" (e env ty)) ] else [])
+    @ boost (if on "tmc" then [ (fun () -> tmc ctx env t e) ] else [])
   | Option t ->
     [ (fun () -> p "(Some %s)" (e env t))
     ; (fun () ->
@@ -1777,6 +1813,171 @@ and lazy_value ctx env ty e =
     ; (fun () -> p "(Lazy.force (Lazy.from_fun (fun () -> %s)))" (e { (escape env) with in_try = env.in_try } ty))
     ]
 
+(* Recursive value definitions: a cyclic list, and lazies, tuples and
+   functions that refer to each other. *)
+and rec_value ctx env ty e =
+  let f = fresh ctx "f" in
+  let n = fresh ctx "n" in
+  let body env = e (bind (closure env) n Int) ty in
+  [ (fun () ->
+      let l = fresh ctx "lz" in
+      (* as in [lazy_value], no effect happens inside the lazy *)
+      p
+        "(let rec %s : %s Lazy.t = lazy %s and %s : int -> %s = fun %s -> if %s <= 0 \
+         then Lazy.force %s else %s (%s - 1) in %s (%s land 7))"
+        l
+        (show_ty ty)
+        (e { (escape env) with in_try = env.in_try } ty)
+        f
+        (show_ty ty)
+        n
+        n
+        l
+        f
+        n
+        f
+        (e env Int))
+  ; (fun () ->
+      let v = fresh ctx "v" in
+      let pr = fresh ctx "pr" in
+      p
+        "(let %s : %s = %s in let rec %s = (%s, %s) and %s : int -> %s = fun %s -> if %s \
+         <= 0 then snd %s else (fst %s) (%s - 1) in (fst %s) (%s land 7))"
+        v
+        (show_ty ty)
+        (e env ty)
+        pr
+        f
+        v
+        f
+        (show_ty ty)
+        n
+        n
+        pr
+        pr
+        n
+        pr
+        (e env Int))
+  ; (fun () ->
+      let g = fresh ctx "g" in
+      p
+        "(let rec %s (%s : int) : %s = if %s <= 0 then %s else %s (%s - 1) and %s (%s : \
+         int) : %s = if %s <= 0 then %s else %s (%s - 1) in %s (%s land 15))"
+        f
+        n
+        (show_ty ty)
+        n
+        (body env)
+        g
+        n
+        g
+        n
+        (show_ty ty)
+        n
+        (body env)
+        f
+        n
+        f
+        (e env Int))
+  ]
+  @
+  match ty with
+  | List t ->
+    [ (fun () ->
+        let a = fresh ctx "a" in
+        let b = fresh ctx "b" in
+        let c = fresh ctx "c" in
+        p
+          "(let %s : %s = %s in let %s : %s = %s in let rec %s = %s :: %s :: %s in take \
+           (%s land 15) %s)"
+          a
+          (show_ty t)
+          (e env t)
+          b
+          (show_ty t)
+          (e env t)
+          c
+          a
+          b
+          c
+          (e env Int)
+          c)
+    ]
+  | _ -> []
+
+(* A match on literals that share prefixes around the 8-byte word, for the
+   compiler's string-match code. *)
+and str_match ctx env ty e =
+  let letter () = Char.chr (int_in ctx (Char.code 'a') (Char.code 'c')) in
+  let base = String.init (int_in ctx 5 10) (fun _ -> letter ()) in
+  let n = String.length base in
+  let variant () =
+    choose
+      ctx
+      [ (fun () -> base)
+      ; (fun () -> String.sub base 0 (int_in ctx 0 n))
+      ; (fun () -> base ^ String.init (int_in ctx 1 3) (fun _ -> letter ()))
+      ; (fun () -> String.sub base 0 (n - 1) ^ "z")
+      ]
+  in
+  let lits = List.sort_uniq compare (List.init (int_in ctx 1 5) (fun _ -> variant ())) in
+  let s =
+    choose
+      ctx
+      [ (fun () -> e env Str)
+      ; (fun () -> p "%S" (variant ()))
+      ; (fun () -> p "(%S ^ %s)" (String.sub base 0 (int_in ctx 0 n)) (e env Str))
+      ]
+  in
+  p
+    "(match %s with %s | _ -> %s)"
+    s
+    (String.concat " " (List.map (fun l -> p "| %S -> %s" l (e env ty)) lits))
+    (e env ty)
+
+(* A [@tail_mod_cons] list builder, its recursive call under a constructor. *)
+and tmc ctx env t e =
+  let go = fresh ctx "go" in
+  let n = fresh ctx "n" in
+  let x = fresh ctx "x" in
+  let env' = bind (closure env) n Int in
+  let call = p "%s (%s - 1)" go n in
+  let cons () = p "(let %s : %s = %s in %s :: %s)" x (show_ty t) (e env' t) x call in
+  let step =
+    choose
+      ctx
+      [ cons
+      ; (fun () -> p "(if %s then %s else %s)" (e env' Bool) (cons ()) call)
+      ; (fun () ->
+          let h = fresh ctx "h" in
+          p "(match %s with [] -> %s | %s :: _ -> %s :: %s)" (e env' (List t)) call h h call)
+      ; (fun () ->
+          let y = fresh ctx "y" in
+          p
+            "(let %s : %s = %s in let %s : %s = %s in %s :: %s :: %s)"
+            x
+            (show_ty t)
+            (e env' t)
+            y
+            (show_ty t)
+            (e env' t)
+            x
+            y
+            call)
+      ]
+  in
+  p
+    "(let[@tail_mod_cons] rec %s (%s : int) : %s = if %s <= 0 then %s else %s in %s (%s \
+     land 15))"
+    go
+    n
+    (show_ty (List t))
+    n
+    (e env' (List t))
+    step
+    go
+    (e env Int)
+
 (* A term of the prelude's GADT that evaluates to a value of [ty]. *)
 and gadt ctx env ty e depth =
   let sub t = gadt ctx env t e (depth - 1) in
@@ -1805,44 +2006,16 @@ and gadt ctx env ty e depth =
 
 (* A shallow handler: [go] resumes the fiber under the same handler each time. *)
 and shallow ctx env ty e =
-  let handled = List.filter (fun _ -> draw_silent ctx.tc (booleans ())) ctx.effects in
-  let handled = if handled = [] then [ List.hd ctx.effects ] else handled in
-  let b =
-    from_env
-      ctx
-      { env with vars = List.map (fun (c, _, r) -> c, r) handled }
-      some_ty
-      (fun () -> fo_env_ty ctx env)
-  in
-  let catch = draw_silent ctx.tc (booleans ~p:0.3 ()) in
-  let body_env = { env with effs = handled @ env.effs; in_try = env.in_try || catch } in
+  let handled, b, catch, body_env = handler_setup ctx env in
   let go = fresh ctx "go" in
   let tv = fresh ctx "c" in
   let x = fresh ctx "x" in
   let exnc =
     if catch then p "(function Exit -> %s | ex -> raise ex)" (e env ty) else "raise"
   in
-  let arm (c, a, r) =
-    let v = fresh ctx "v" in
-    let k = fresh ctx "k" in
-    let henv = bind env v a in
-    let res = fresh ctx "r" in
-    let body =
-      choose
-        ctx
-        [ (fun () -> p "%s %s %s" go k (e henv r))
-        ; (fun () ->
-            p
-              "(let %s : %s = %s %s %s in %s)"
-              res
-              (show_ty ty)
-              go
-              k
-              (e henv r)
-              (e (bind henv res ty) ty))
-        ; (fun () -> p "(ignore %s; %s)" k (e henv ty))
-        ]
-    in
+  let arm ((c, _, _) as eff) =
+    let resume k v _ = p "%s %s %s" go k v in
+    let v, k, body = arm ctx env ty e ~resume ~discontinue:false eff in
     p
       "| %s %s -> Some (fun (%s : (a, %s) Effect.Shallow.continuation) -> %s)"
       c
@@ -1872,41 +2045,10 @@ and shallow ctx env ty e =
 
 (* OCaml 5.3's [match ... with effect E v, k -> ...]. *)
 and effect_match ctx env ty e =
-  let handled = List.filter (fun _ -> draw_silent ctx.tc (booleans ())) ctx.effects in
-  let handled = if handled = [] then [ List.hd ctx.effects ] else handled in
-  let b =
-    from_env
-      ctx
-      { env with vars = List.map (fun (c, _, r) -> c, r) handled }
-      some_ty
-      (fun () -> fo_env_ty ctx env)
-  in
-  let catch = draw_silent ctx.tc (booleans ~p:0.3 ()) in
-  let body_env = { env with effs = handled @ env.effs; in_try = env.in_try || catch } in
+  let handled, b, catch, body_env = handler_setup ctx env in
   let x = fresh ctx "x" in
-  let arm (c, a, r) =
-    let v = fresh ctx "v" in
-    let k = fresh ctx "k" in
-    let henv = bind env v a in
-    let res = fresh ctx "r" in
-    let body =
-      choose
-        ctx
-        ([ (fun () -> p "Effect.Deep.continue %s (%s : %s)" k (e henv r) (show_ty r))
-         ; (fun () ->
-             p
-               "(let %s : %s = Effect.Deep.continue %s (%s : %s) in %s)"
-               res
-               (show_ty ty)
-               k
-               (e henv r)
-               (show_ty r)
-               (e (bind henv res ty) ty))
-         ; (fun () -> p "(ignore %s; %s)" k (e henv ty))
-         ]
-         @
-         if env.in_try then [ (fun () -> p "Effect.Deep.discontinue %s Exit" k) ] else [])
-    in
+  let arm ((c, _, _) as eff) =
+    let v, k, body = arm ctx env ty e ~resume:deep_resume ~discontinue:true eff in
     p "| effect %s %s, %s -> %s" c v k body
   in
   p
@@ -1946,8 +2088,10 @@ and nonzero ctx =
     ]
 ;;
 
+let module_boundary = "(* module boundary *)\n"
+
 let program ?(ox = false) ?(effect_syntax = false) tc =
-  let ctx = { tc; next = 0; decls = [||]; effects = [] } in
+  let ctx = { tc; next = 0; decls = [||]; effects = []; used = Hashtbl.create 64 } in
   ox_mode := ox;
   poly_parent := [];
   features := List.filter (fun _ -> draw_silent tc (booleans ())) all_features;
@@ -2014,7 +2158,9 @@ let program ?(ox = false) ?(effect_syntax = false) tc =
            (printer ty)
            g)
   in
-  for _ = 1 to count do
+  let boundary = if on "modules" then int_in ctx 1 count else 0 in
+  for i = 1 to count do
+    if i = boundary then Buffer.add_string buf module_boundary;
     if draw_silent ctx.tc (booleans ~p:0.4 ()) then statement ();
     let ty =
       match !poly_parent with
