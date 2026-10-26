@@ -386,9 +386,6 @@ namespace hegel::stateful {
     /// @cond INTERNAL
     namespace detail {
 
-        // The variables a filtered draw took out of a pool and must put
-        // back. The destructor puts back what is left, so the variables
-        // return to the pool also when the draw ends with an exception.
         class TakenVariables {
           public:
             TakenVariables(const TestCase& tc,
@@ -404,10 +401,8 @@ namespace hegel::stateful {
 
             void add(int64_t variable) { variables_.push_back(variable); }
 
-            // Keeps the variable added last out of the pool.
             void keep_last() { variables_.pop_back(); }
 
-            // Puts back every variable, raising a failure.
             void restore() {
                 while (!variables_.empty()) {
                     pool_.restore(tc_, variables_.back());
@@ -425,9 +420,8 @@ namespace hegel::stateful {
         // by variable id. Each attempt consumes a variable the engine
         // chooses, in a span that is discarded when `predicate` rejects its
         // value. A rejected variable stays consumed until the attempts are
-        // over, so no later attempt draws it again, and is then put back,
-        // also when the predicate throws. Only the accepted value leaves the
-        // pool.
+        // over, so no later attempt draws it again, and is then put back.
+        // Only the accepted value leaves the pool.
         template <typename T>
         T
         draw_filtered_consumed(const TestCase& tc,

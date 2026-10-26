@@ -150,8 +150,6 @@ namespace hegel::internal {
         int64_t draw_variable(const TestCase& tc, bool consume);
         // Puts back a variable that a consuming draw_variable removed.
         void restore(const TestCase& tc, int64_t variable);
-        // Puts back a variable like restore(), but ignores a failure, so it
-        // can run while an exception unwinds.
         void restore_unchecked(const TestCase& tc, int64_t variable) noexcept;
 
       private:
@@ -296,11 +294,6 @@ namespace hegel::internal {
         }
     };
 
-    /* Exception thrown for a misuse of a test case that no run can recover
-     * from, such as an explicit test case that is rejected or that has no
-     * value for a draw. The runner does not record it as a failure of the
-     * test: it propagates out of hegel::test().
-     */
     class UsageError : public std::invalid_argument {
       public:
         using std::invalid_argument::invalid_argument;

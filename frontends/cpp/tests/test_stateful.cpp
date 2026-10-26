@@ -121,9 +121,6 @@ TEST(Pools, FilteredConsumeWithNoAcceptableValueRejects) {
                         .database = hegel::Database::disabled()});
 }
 
-// A predicate that throws, here by rejecting the test case inside a
-// repeat() that catches the rejection, still puts back every variable the
-// draw took: the one it rejected before and the one it threw on.
 TEST(Pools, FilteredConsumeRestoresValuesWhenThePredicateThrows) {
     int checked = 0;
     hegel::test(

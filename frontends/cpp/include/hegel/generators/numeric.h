@@ -77,8 +77,6 @@ namespace hegel::generators {
             return static_cast<T>(bits);
         }
 
-        // The least value of type To that is not below `value`. A value above
-        // the finite range of To narrows to infinity.
         template <typename To, typename From> To narrow_up(From value) {
             if (value > static_cast<From>(std::numeric_limits<To>::max())) {
                 return std::numeric_limits<To>::infinity();
@@ -94,8 +92,6 @@ namespace hegel::generators {
             return narrowed;
         }
 
-        // The greatest value of type To that is not above `value`. A value
-        // below the finite range of To narrows to minus infinity.
         template <typename To, typename From> To narrow_down(From value) {
             return -narrow_up<To>(-value);
         }
@@ -178,10 +174,7 @@ namespace hegel::generators {
 
             // An unset bound is the widest the draw allows: infinite when
             // infinities may be drawn, else the finite extreme of the width
-            // drawn at. A bound of a type wider than double narrows inward, to
-            // the nearest double inside the range, so every value drawn is in
-            // the range. A narrowed bound is no longer a value of the range,
-            // so it is never excluded.
+            // drawn at.
             min_ =
                 has_min ? detail::narrow_up<double>(*params.min_value)
                 : allow_infinity_

@@ -20,8 +20,6 @@ namespace hegel::tests::common {
                 std::regex(R"("[A-Za-z0-9+/=]{8,}")"), R"("[blob]")"));
     }
 
-    /// @brief Hides a report's reproduction blob and the timings of
-    /// concurrent workers.
     inline ApprovalTests::Options scrub_concurrent_report() {
         return ApprovalTests::Options([](const std::string& text) {
             std::string blobless = std::regex_replace(

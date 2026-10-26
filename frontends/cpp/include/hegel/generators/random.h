@@ -76,14 +76,10 @@ namespace hegel::generators {
         /// @brief Generate a random uint32_t value
         result_type operator()();
 
-        // Prints the engine as drawn: in artificial mode, the values it
-        // hands out, recorded as the test uses them into a hole the print
-        // opens; in true-random mode, its seed.
         void print_to(internal::Printer& printer) const;
         /// @endcond
 
       private:
-        // What a drawn engine prints, shared by its copies.
         struct Record {
             std::optional<uint64_t> seed;
             std::unique_ptr<internal::DeferredPrinter> consumed;

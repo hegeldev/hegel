@@ -302,8 +302,6 @@ class ApplyVersionBumpTest(unittest.TestCase):
         )
 
     def test_rewrites_the_cpp_fetchcontent_tags(self) -> None:
-        # The README's CMake snippet and the Doxygen copy of it in hegel.h
-        # both name the release tag.
         release.apply_version_bump(self.root, {CPP: "0.14.0"})
         self.assertEqual(
             self.read("frontends/cpp/README.md"),

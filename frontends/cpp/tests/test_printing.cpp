@@ -109,7 +109,6 @@ namespace {
     void throw_boom(hegel::TestCase&) { throw std::runtime_error("boom"); }
 } // namespace
 
-// A drawn value too wide for one line breaks at its structure.
 TEST(FailureReport, WideValueBreaksAcrossLines) {
     std::string out = capture_failure_report([](hegel::TestCase& tc) {
         (void)tc.draw(gs::vectors(gs::just(std::string("a wide value")),
@@ -150,15 +149,11 @@ TEST(FailureReport, NonStdException) {
     Approvals::verify(out, scrub_blob());
 }
 
-// A body that throws before it draws anything prints only how to reproduce
-// the failure.
 TEST(FailureReport, NoDrawsPrintsBodylessReport) {
     std::string out = capture_failure_report(throw_boom);
     Approvals::verify(out, scrub_blob());
 }
 
-// The location overload of hegel::test() takes the location before the
-// settings, and the rerun hint passes it.
 TEST(FailureReport, LocationOverloadGetsItsOwnRerunHint) {
     std::string out = capture_report(
         [] { hegel::test(throw_boom, kLocation, report_settings()); });
@@ -177,7 +172,6 @@ TEST(FailureReport, MacroDefinedTestGetsAnnotationRerunHint) {
     Approvals::verify(out, scrub_blob());
 }
 
-// A note that spans several lines prints each line as its own line.
 TEST(FailureReport, MultiLineNotePrintsEachLine) {
     std::string out = capture_failure_report([](hegel::TestCase& tc) {
         tc.note("first line\nsecond line");
@@ -302,7 +296,6 @@ TEST(FailureReport, MultipleFailuresOffReportsOne) {
     Approvals::verify(out, scrub_blob());
 }
 
-// Under Verbosity::Quiet the report holds only how to reproduce the failure.
 TEST(FailureReport, QuietPrintsOnlyTheRerunHint) {
     std::string out = capture_failure_report(
         [](hegel::TestCase& tc) {
@@ -314,7 +307,6 @@ TEST(FailureReport, QuietPrintsOnlyTheRerunHint) {
     Approvals::verify(out, scrub_blob());
 }
 
-// A failure that is not a std::exception is named as such among several.
 TEST(FailureReport, MultipleFailuresNameANonStdException) {
     std::string out = capture_failure_report(
         [](hegel::TestCase& tc) {

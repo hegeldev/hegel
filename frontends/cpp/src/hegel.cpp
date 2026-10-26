@@ -354,8 +354,6 @@ namespace hegel {
             }
         }
 
-        // The lines that tell the user how to replay a failure from its
-        // reproduce blob.
         void print_reproducer(RerunForm rerun_form,
                               const std::optional<TestLocation>& location,
                               const std::string& blob) {
@@ -643,19 +641,12 @@ namespace hegel {
                 failure_guard.failure =
                     impl::run_result_failure(ctx, result, i);
                 const hegel_failure_t* failure = failure_guard.failure;
-                auto captured =
-                    captures.find(impl::failure_origin(ctx, failure));
-                if (captured == captures.end()) {
-                    // GCOVR_EXCL_START
-                    throw std::runtime_error(
-                        "internal error: the engine reported a failure that "
-                        "the run did not capture");
-                    // GCOVR_EXCL_STOP
-                }
+                const CapturedFailure& captured =
+                    captures.at(impl::failure_origin(ctx, failure));
                 if (multiple && !quiet) {
                     std::fprintf(stderr, "\n");
                 }
-                print_lines(captured->second.lines);
+                print_lines(captured.lines);
                 std::optional<std::string> caveat =
                     impl::failure_caveat(ctx, failure);
                 if (caveat.has_value() && !quiet) {
@@ -666,7 +657,7 @@ namespace hegel {
                 if (config.print_blob && blob.has_value()) {
                     print_reproducer(rerun_form, location, *blob);
                 }
-                outcomes.push_back(captured->second.outcome);
+                outcomes.push_back(captured.outcome);
             }
             return outcomes;
         }

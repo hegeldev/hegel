@@ -34,9 +34,6 @@ namespace {
         return testing::internal::GetCapturedStderr();
     }
 
-    // Runs `body` with `cases` at the default verbosity, expecting a usage
-    // error, and returns its message. A usage error is not a failure of the
-    // test, so the run prints nothing.
     std::string
     failure_message(const std::function<void(hegel::TestCase&)>& body,
                     const std::vector<hegel::ExplicitTestCase>& cases) {

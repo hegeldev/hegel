@@ -257,8 +257,6 @@ TEST(CloneOutput, CloneOutputAppearsWhereTheCloneWasMade) {
     Approvals::verify(out, scrub_blob());
 }
 
-// A clone's draws continue the parent's draw names, so no two draws of one
-// test case print under the same name.
 TEST(CloneOutput, CloneDrawsContinueTheParentsNames) {
     std::string out = capture_failure_report([](hegel::TestCase& tc) {
         (void)tc.draw(gs::just(1));
@@ -273,7 +271,6 @@ TEST(CloneOutput, CloneDrawsContinueTheParentsNames) {
         << out;
 }
 
-// set_worker() attributes what a clone prints to a worker.
 TEST(CloneOutput, SetWorkerPrefixesTheClonesLines) {
     std::string out = capture_failure_report([](hegel::TestCase& tc) {
         tc.note("from the parent");

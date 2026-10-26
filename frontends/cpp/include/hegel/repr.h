@@ -122,8 +122,6 @@ namespace hegel::internal {
             static constexpr std::size_t size = N;
         };
 
-        // A type that prints itself through the printer, with a member
-        // `void print_to(Printer&) const`.
         template <typename T, typename = void>
         struct prints_itself : std::false_type {};
         template <typename T>

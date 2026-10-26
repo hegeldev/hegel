@@ -638,7 +638,6 @@ class Unprintable {
     int v_;
 };
 
-// A draw whose value cannot be printed leaves no part of its line.
 TEST(ReprLayout, AValueThatFailsToPrintLeavesNoPartialLine) {
     testing::internal::CaptureStderr();
     EXPECT_THROW(hegel::test(
@@ -655,7 +654,6 @@ TEST(ReprLayout, AValueThatFailsToPrintLeavesNoPartialLine) {
     EXPECT_FALSE(contains(output, "auto draw_1")) << output;
 }
 
-// A drawn random engine prints the values it handed out.
 TEST(ReprLayout, ARandomEnginePrintsWhatItHandedOut) {
     testing::internal::CaptureStderr();
     hegel::test(

@@ -109,9 +109,7 @@ TYPESCRIPT = Component(
 )
 # The C++ frontend has no package index: a consumer fetches the monorepo at
 # the `frontends/cpp/<version>` tag with CMake's FetchContent, so the tag is
-# the release. Its version is the `project()` version in its CMakeLists.txt,
-# and the FetchContent snippets of its README and Doxygen main page name the
-# tag.
+# the release. Its version is the `project()` version in its CMakeLists.txt.
 CPP = Component(
     path="frontends/cpp",
     manifests=("frontends/cpp/CMakeLists.txt",),
