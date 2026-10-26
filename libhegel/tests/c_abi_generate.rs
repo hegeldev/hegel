@@ -2368,7 +2368,11 @@ fn grammar_draws_validate_handles_and_the_protocol() {
             hegel_grammar_draw_next(ctx, tc, draw, &mut terminal),
             HEGEL_E_INVALID_ARG
         );
-        assert!(last_error(ctx).contains("'X' is due"));
+        assert_eq!(
+            last_error(ctx),
+            "hegel_grammar_draw_next: a value for explicit terminal 'X' is due: provide it \
+             before asking for the next terminal"
+        );
         let bad = [0xffu8];
         assert_eq!(
             hegel_grammar_draw_provide(ctx, draw, test_string(&bad)),
@@ -2414,6 +2418,15 @@ fn grammar_draws_belong_to_the_test_case_they_were_first_advanced_with() {
         );
         assert!(last_error(ctx).contains("belongs to another test-case handle"));
         ok(hegel_c::hegel_test_case_free(ctx, clone));
+
+        let mut block: *mut HegelTestCase = ptr::null_mut();
+        ok(hegel_c::hegel_test_case_block(ctx, tc, 2, &mut block));
+        assert_eq!(
+            hegel_grammar_draw_next(ctx, block, draw, &mut terminal),
+            HEGEL_E_INVALID_ARG
+        );
+        assert!(last_error(ctx).contains("'X' is due"));
+        ok(hegel_c::hegel_test_case_free(ctx, block));
 
         ok(hegel_grammar_draw_provide(ctx, draw, "v".into()));
         assert_eq!(

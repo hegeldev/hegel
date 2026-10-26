@@ -6,17 +6,33 @@ use alloc::string::ToString;
 use alloc::vec;
 
 fn spec(text: &str, explicit: &[&str]) -> Arc<GrammarSpec> {
+    capped_spec(text, explicit, GrammarOptions::default().max_size)
+}
+
+fn capped_spec(text: &str, explicit: &[&str], max_size: u64) -> Arc<GrammarSpec> {
     Arc::new(
         from_lark(
             text,
             &NoImports,
             GrammarOptions {
                 explicit: explicit.iter().map(|n| n.to_string()).collect(),
+                max_size,
                 ..GrammarOptions::default()
             },
         )
         .unwrap(),
     )
+}
+
+fn complete(draw: &mut ExplicitDraw, ntc: &mut NativeTestCase, value: &str) -> Option<String> {
+    loop {
+        match draw.next(ntc) {
+            Ok(Some(_)) => draw.provide(value).unwrap(),
+            Ok(None) => return Some(draw.result().unwrap().to_string()),
+            Err(EngineError::InvalidTestCase) => return None,
+            Err(e) => panic!("unexpected error {e:?}"),
+        }
+    }
 }
 
 fn ntc(seed: u64) -> NativeTestCase {
@@ -115,4 +131,45 @@ fn a_draw_that_overflows_is_drawn_again_with_a_smaller_budget() {
     }
     assert!(completed > 0);
     assert!(redrawn > 0);
+}
+
+#[test]
+fn a_cap_below_the_smallest_string_is_read_as_it_without_explicit_terminals() {
+    let mut draw = ExplicitDraw::new(spec(r#"start: "abc""#, &[]), 1);
+    assert_eq!(draw.max_size, 3);
+    assert_eq!(complete(&mut draw, &mut ntc(5), "").unwrap(), "abc");
+}
+
+#[test]
+fn a_cap_below_the_smallest_string_is_read_as_it_with_explicit_terminals() {
+    let mut draw = ExplicitDraw::new(spec("start: \"ab\" A\n%declare A", &["A"]), 1);
+    assert_eq!(draw.max_size, 2);
+    assert_eq!(complete(&mut draw, &mut ntc(6), "").unwrap(), "ab");
+}
+
+#[test]
+fn a_cap_above_the_grammars_is_read_as_it_without_explicit_terminals() {
+    let grammar = capped_spec(r#"start: "a"+"#, &[], 5);
+    for seed in 0..50 {
+        let mut draw = ExplicitDraw::new(Arc::clone(&grammar), 100);
+        assert_eq!(draw.max_size, 5);
+        if let Some(text) = complete(&mut draw, &mut ntc(seed), "") {
+            assert!(text.chars().count() <= 5);
+        }
+    }
+}
+
+#[test]
+fn a_cap_above_the_grammars_is_read_as_it_with_explicit_terminals() {
+    let grammar = capped_spec("start: (\"a\" A)+\n%declare A", &["A"], 5);
+    let mut completed = 0;
+    for seed in 0..50 {
+        let mut draw = ExplicitDraw::new(Arc::clone(&grammar), 100);
+        assert_eq!(draw.max_size, 5);
+        if let Some(text) = complete(&mut draw, &mut ntc(seed), "bb") {
+            assert!(text.chars().count() <= 5);
+            completed += 1;
+        }
+    }
+    assert!(completed > 0);
 }

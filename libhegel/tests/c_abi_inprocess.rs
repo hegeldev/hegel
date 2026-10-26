@@ -3909,6 +3909,9 @@ fn settings_set_from_string_reaches_every_setting() {
         );
         assert!(view.unbounded_choices);
 
+        ok(set_from_string(ctx, s, "test_cases", "+9"));
+        assert_eq!(read_settings(ctx, s).test_cases, 9);
+
         ok(set_from_string(ctx, s, "seed", "none"));
         ok(set_from_string(ctx, s, "database", "disabled"));
         ok(set_from_string(ctx, s, "phases", ""));
@@ -3943,6 +3946,9 @@ fn settings_set_from_string_rejects_bad_keys_and_values() {
             ("extends", "ci", "unknown setting `extends`"),
             ("test_cases", "0", "`test_cases` expects an integer"),
             ("test_cases", "many", "`test_cases` expects an integer"),
+            ("test_cases", "1_000", "`test_cases` expects an integer"),
+            ("test_cases", "0x10", "`test_cases` expects an integer"),
+            ("test_cases", " 7", "`test_cases` expects an integer"),
             ("seed", "-1", "`seed` expects an integer or \"none\""),
             ("derandomize", "maybe", "`derandomize` expects one of"),
             ("verbosity", "loud", "`verbosity` expects one of"),
