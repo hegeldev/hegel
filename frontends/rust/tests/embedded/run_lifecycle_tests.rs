@@ -316,6 +316,17 @@ fn drive_run_error_panics_with_the_engines_message() {
 }
 
 #[test]
+fn drive_usage_error_panics_with_its_own_message() {
+    let msg = drive_panic_message(
+        |tc| {
+            let _: i32 = tc.draw(gs::integers().min_value(1).max_value(0));
+        },
+        &test_settings(),
+    );
+    assert_eq!(msg, "Cannot have max_value < min_value");
+}
+
+#[test]
 fn drive_passing_run_does_not_panic() {
     drive(
         |tc| {

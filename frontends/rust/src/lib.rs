@@ -699,7 +699,9 @@ pub use hegel_macros::concurrent_state_machine;
 /// A failing test panics with the failure's own panic. A run that errors
 /// instead, such as one failing a health check, panics with a message
 /// starting `FailedHealthCheck: <check>`, `Flaky`, `Unsatisfiable` or
-/// `RunError`, which `#[should_panic(expected = "...")]` can match:
+/// `RunError`, which `#[should_panic(expected = "...")]` can match. A
+/// usage error inside the test, such as a generator with invalid bounds,
+/// panics with its own message alone (see [`Hegel::run`]):
 ///
 /// ```no_run
 /// #[hegel::test]

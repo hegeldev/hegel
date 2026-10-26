@@ -718,10 +718,15 @@ where
     /// - `Unsatisfiable`: no valid test case could be generated, because
     ///   every input was rejected by [`TestCase::assume`](crate::TestCase::assume)
     ///   or a filter.
-    /// - `RunError`: any other error, such as misuse of Hegel or a bug in
-    ///   Hegel itself.
+    /// - `RunError`: any other error the engine reports for the run.
     ///
     /// The rest of the message is the engine's explanation.
+    ///
+    /// A usage error that a test case hits while it runs, such as a
+    /// generator built with invalid bounds, stops the run at once and
+    /// panics with its own message alone, for example
+    /// `Cannot have max_value < min_value`. A bug that Hegel detects in
+    /// itself panics with a message starting `Internal error in hegel`.
     pub fn run(self) {
         let mut settings = self.settings;
         if self.single_test_case {
