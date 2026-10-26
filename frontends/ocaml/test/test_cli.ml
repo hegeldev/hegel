@@ -2,6 +2,22 @@ open! Core
 open Hegel
 module Unix = Core_unix
 
+(* cmdliner styles its errors with ANSI escapes on some terminals *)
+let strip_ansi s =
+  let b = Buffer.create (String.length s) in
+  let rec go i =
+    if i < String.length s
+    then
+      if Char.equal s.[i] '\027'
+      then Option.iter (String.index_from s i 'm') ~f:(fun j -> go (j + 1))
+      else (
+        Buffer.add_char b s.[i];
+        go (i + 1))
+  in
+  go 0;
+  Buffer.contents b
+;;
+
 let parse_with ~default_settings args =
   let buf = Buffer.create 64 in
   let err = Format.formatter_of_buffer buf in
@@ -13,7 +29,7 @@ let parse_with ~default_settings args =
   | Ok (`Help | `Version) -> Alcotest.fail "unexpected help"
   | Error _ ->
     Format.pp_print_flush err ();
-    Error (Buffer.contents buf)
+    Error (strip_ansi (Buffer.contents buf))
 ;;
 
 let parse args = parse_with ~default_settings:(fun () -> Settings.create ~seed:3 ()) args
