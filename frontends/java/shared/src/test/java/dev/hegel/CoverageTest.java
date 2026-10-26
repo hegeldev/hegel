@@ -184,7 +184,6 @@ class CoverageTest {
                 suppressNone.getAnnotation(HegelTest.class), suppressNone, Holder.class);
         assertEquals(Integer.valueOf(0), n.suppressMask);
 
-        // An inherited test is keyed and named by the class running it, located in its own file.
         Settings inherited =
                 HegelTestExtension.settingsFrom(unseeded.getAnnotation(HegelTest.class), unseeded, SubHolder.class);
         assertEquals("dev.hegel.CoverageTest$SubHolder.unseeded", inherited.name);

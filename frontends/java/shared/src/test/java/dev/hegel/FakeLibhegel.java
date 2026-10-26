@@ -169,9 +169,7 @@ final class FakeLibhegel implements Libhegel {
     int fromBlobRc = Abi.OK;
     final List<String> replayedBlobs = new ArrayList<>();
     String startedBlob; // what runStartBlob received; null = the run explored
-    final List<String> startedBlobs = new ArrayList<>(); // every blob runStartBlob received, in order
-    // When non-empty, each run started takes its status from the head of this queue and serves
-    // caseCount fresh cases.
+    final List<String> startedBlobs = new ArrayList<>();
     final java.util.ArrayDeque<Integer> runStatusQueue = new java.util.ArrayDeque<>();
     Consumer<String> output; // the callback runStart / runStartBlob registered
     // The engine's capture stamp per served case: the i-th case is stamped when captureSequence
