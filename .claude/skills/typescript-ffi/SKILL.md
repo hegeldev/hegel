@@ -143,8 +143,8 @@ and freed with the runner.
      objects), and `koffi.out(koffi.pointer(t))` for struct out-parameters. A
      `_Out_ void**` that yields a `const hegel_string_t *` is decoded with
      `koffi.decode(ptr, stringType)`. A struct returned by value
-     (`hegel_context_last_error`) is declared with `lib.func(name, stringType,
-[...])`.
+     (`hegel_context_last_error`) is declared with
+     `lib.func(name, stringType, [...])`.
    - New symbol → bind it **only if the frontend needs it**: the coverage gate
      forbids dead bindings.
    - Changed enum or constant values → the exported `const` objects in
