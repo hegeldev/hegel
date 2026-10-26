@@ -43,7 +43,7 @@ Each frontend section below says which X items it still owes. Rust and Python al
 - **X1. Settings resolution.** Follow Principle 2. Expose every engine setting:
   - `test_cases`, `seed` (full u64), `derandomize`, `database` (default / disabled / path), `verbosity`, `phases`, `suppress_health_check`
   - `print_blob`, `report_multiple_failures`, `stop_on_first_failure`, `nondeterminism_strictness`, `backend`, `show_statistics`, `unbounded_choices`
-  - `test_location`, and the database key (derived consistently, and only when a database is in use, as `hegel::test()`/Rust do)
+  - `test_location`, and the database key (derived consistently, as `hegel::test()`/Rust do). Send the key whenever the frontend has one, whether or not a database is in use: the engine also derives the derandomized seed from it.
   - programmatic profiles: `register_profile`, `new_for_profile`/from-profile, `set_default_profile`
 
   Remove frontend CI detection.
@@ -55,8 +55,9 @@ Each frontend section below says which X items it still owes. Rust and Python al
   - Use `hegel_test_case_block` for indented sections and `hegel_test_case_set_worker` for worker attribution.
   - No native buffering, `[worker N]` prefixes or draw-numbering tables where the engine provides them.
   - Print the reproduce blob according to the engine's `print_blob` setting.
-- **X4. Labels from the engine.** Use `hegel_label_from_name` / `hegel_label_combine`, not hand-written FNV-1a or hard-coded integers. Labels only need to be consistent within a single test case, so frontends may name their standard generators' labels differently.
-- **X5. Replay through the engine.** Replay a failure blob with `hegel_run_start_blob`, using every blob given, not only the first.
+  - Failure reports follow Rust's wording and layout (`frontends/rust/src/run_lifecycle.rs`): the "Property-based test failed with" header, "To reproduce this failure" lines and `note: ` caveats. C++ and OCaml are aligned to it, with no `--- Failure: name ---` frames, "rerun with:" lines or extra per-failure headers.
+- **X4. Labels from the engine.** Use `hegel_label_from_name` / `hegel_label_combine`, not hand-written FNV-1a or hard-coded integers. Labels only need to be consistent within a single test case, so frontends may name their standard generators' labels differently. Python computes its labels through the extension and memoizes them, so import-time cost stays low.
+- **X5. Replay through the engine.** Every frontend replays every reproduce blob it is given (stacked attributes or decorators, arrays, repeated flags) through `hegel_run_start_blob`, and reports every failure, not only the first.
 - **X6. Test-case API parity.**
   - `draw` (named and silent), `assume`/`reject`, `note`, `target` (with labels), `event`/`event_value` (with `show_statistics`), and `repeat`.
   - A public way for a user's test to draw from several threads: clone plus a worker index, as Rust's `TestCase: Clone` allows.
@@ -182,5 +183,4 @@ Each frontend section below says which X items it still owes. Rust and Python al
 - Decimals, fractions and complex numbers, which are missing everywhere except Python's `from_type`.
 - Python `database=None` meaning "engine default" where Rust's `None` disables. Changing it is breaking.
 - TypeScript naming that differs from the other frontends (`arrays`, `maps`, `record`, `bigIntegers`). Changing it is breaking.
-- Whether the engine should own failure-report wording: the "N distinct failures" header and stateful step and round headers.
 - A deadline or per-test-case timeout. The engine has none.
