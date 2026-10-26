@@ -36,6 +36,10 @@ does, with a note per file of what was dropped.
 - Concurrent stateful testing: `max_concurrency > 1` runs rules from several
   threads in engine-scheduled rounds, with per-worker output attribution.
 - `tc.repeat(body)`: engine-sized repetition of a block of a test.
+- Drawing from several threads in one test case: `tc.clone()` gives each
+  thread a `TestCase` of its own, drawing from an independent choice stream
+  that still shrinks and replays, and `set_worker(i)` attributes its output
+  to a numbered worker. See {doc}`../how-to/threads`.
 - Nondeterministic-run handling: when a test's behaviour changes under
   replay (a concurrent machine, say), the engine confirms each failure by
   repeated replay and reports it with a caveat describing how reliably it
