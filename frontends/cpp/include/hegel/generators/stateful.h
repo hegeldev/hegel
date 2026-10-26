@@ -386,12 +386,48 @@ namespace hegel::stateful {
     /// @cond INTERNAL
     namespace detail {
 
+        // The variables a filtered draw took out of a pool and must put
+        // back. The destructor puts back what is left, so the variables
+        // return to the pool also when the draw ends with an exception.
+        class TakenVariables {
+          public:
+            TakenVariables(const TestCase& tc,
+                           hegel::internal::PoolHandle& pool)
+                : tc_(tc), pool_(pool) {}
+            TakenVariables(const TakenVariables&) = delete;
+            TakenVariables& operator=(const TakenVariables&) = delete;
+            ~TakenVariables() {
+                for (int64_t variable : variables_) {
+                    pool_.restore_unchecked(tc_, variable);
+                }
+            }
+
+            void add(int64_t variable) { variables_.push_back(variable); }
+
+            // Keeps the variable added last out of the pool.
+            void keep_last() { variables_.pop_back(); }
+
+            // Puts back every variable, raising a failure.
+            void restore() {
+                while (!variables_.empty()) {
+                    pool_.restore(tc_, variables_.back());
+                    variables_.pop_back();
+                }
+            }
+
+          private:
+            const TestCase& tc_;
+            hegel::internal::PoolHandle& pool_;
+            std::vector<int64_t> variables_;
+        };
+
         // A filtered consuming draw from a pool whose values `values` holds
         // by variable id. Each attempt consumes a variable the engine
         // chooses, in a span that is discarded when `predicate` rejects its
         // value. A rejected variable stays consumed until the attempts are
-        // over, so no later attempt draws it again, and is then put back.
-        // Only the accepted value leaves the pool.
+        // over, so no later attempt draws it again, and is then put back,
+        // also when the predicate throws. Only the accepted value leaves the
+        // pool.
         template <typename T>
         T
         draw_filtered_consumed(const TestCase& tc,
@@ -400,26 +436,25 @@ namespace hegel::stateful {
                                const std::function<bool(const T&)>& predicate) {
             namespace hi = hegel::internal;
             uint64_t attempt = hi::label(hi::LabelName::FilterAttempt);
-            std::vector<int64_t> rejected;
+            TakenVariables taken(tc, pool);
             std::optional<T> accepted;
             for (int i = 0; i < hi::filter_attempts && !accepted; ++i) {
                 hi::start_span(tc, attempt);
                 hi::start_span(tc, label);
                 int64_t variable = pool.draw_variable(tc, true);
+                taken.add(variable);
                 hi::stop_span(tc);
                 T& value = values.at(variable);
                 if (predicate(value)) {
                     hi::stop_span(tc);
+                    taken.keep_last();
                     accepted = std::move(value);
                     values.erase(variable);
                 } else {
                     hi::stop_span(tc, true);
-                    rejected.push_back(variable);
                 }
             }
-            for (int64_t variable : rejected) {
-                pool.restore(tc, variable);
-            }
+            taken.restore();
             if (!accepted) {
                 tc.reject();
             }

@@ -121,6 +121,46 @@ TEST(Pools, FilteredConsumeWithNoAcceptableValueRejects) {
                         .database = hegel::Database::disabled()});
 }
 
+// A predicate that throws, here by rejecting the test case inside a
+// repeat() that catches the rejection, still puts back every variable the
+// draw took: the one it rejected before and the one it threw on.
+TEST(Pools, FilteredConsumeRestoresValuesWhenThePredicateThrows) {
+    int checked = 0;
+    hegel::test(
+        [&](hegel::TestCase& tc) {
+            hegel::stateful::Pool<int> pool(tc);
+            pool.add(1);
+            pool.add(2);
+            pool.add(3);
+            bool threw = false;
+            tc.repeat([&] {
+                if (threw) {
+                    return;
+                }
+                int calls = 0;
+                (void)tc.draw(hegel::stateful::values_consumed(pool).filter(
+                    [&](const int&) {
+                        if (++calls == 2) {
+                            threw = true;
+                            tc.reject();
+                        }
+                        return false;
+                    }));
+            });
+            if (!threw) {
+                return;
+            }
+            int a = tc.draw(hegel::stateful::values_consumed(pool));
+            int b = tc.draw(hegel::stateful::values_consumed(pool));
+            int c = tc.draw(hegel::stateful::values_consumed(pool));
+            EXPECT_EQ(a + b + c, 6);
+            checked++;
+        },
+        hegel::Settings{.test_cases = 100,
+                        .database = hegel::Database::disabled()});
+    EXPECT_GT(checked, 0);
+}
+
 TEST(Pools, FilteredReuseKeepsEveryValue) {
     hegel::test(
         [](hegel::TestCase& tc) {

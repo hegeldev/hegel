@@ -1162,6 +1162,12 @@ namespace hegel::internal {
             "hegel_pool_restore");
     }
 
+    void PoolHandle::restore_unchecked(const TestCase& tc,
+                                       int64_t variable) noexcept {
+        hegel_pool_restore(impl::thread_context(), tc.data()->tc, handle_,
+                           variable);
+    }
+
     RecursionHandle::RecursionHandle(const TestCase& tc, uint64_t max_depth,
                                      uint64_t max_leaves) {
         impl::DrawScope scope(tc);

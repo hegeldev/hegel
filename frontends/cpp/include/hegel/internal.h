@@ -150,6 +150,9 @@ namespace hegel::internal {
         int64_t draw_variable(const TestCase& tc, bool consume);
         // Puts back a variable that a consuming draw_variable removed.
         void restore(const TestCase& tc, int64_t variable);
+        // Puts back a variable like restore(), but ignores a failure, so it
+        // can run while an exception unwinds.
+        void restore_unchecked(const TestCase& tc, int64_t variable) noexcept;
 
       private:
         hegel_pool_t* handle_ = nullptr;
