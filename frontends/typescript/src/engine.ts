@@ -307,6 +307,21 @@ export interface Engine {
   getPhases(s: SettingsHandle): number;
   getPrintBlob(s: SettingsHandle): boolean;
   getReportMultipleFailures(s: SettingsHandle): boolean;
+  getTestCases(s: SettingsHandle): number;
+  /** The fixed seed, or `null` when the engine picks one per run. */
+  getSeed(s: SettingsHandle): bigint | null;
+  getDerandomize(s: SettingsHandle): boolean;
+  /** `null` for the default database, `""` for none, else its directory. */
+  getDatabase(s: SettingsHandle): string | null;
+  /** The suppressed `hegel_health_check_t` bit set. */
+  getSuppressHealthCheck(s: SettingsHandle): number;
+  getStopOnFirstFailure(s: SettingsHandle): boolean;
+  getShowStatistics(s: SettingsHandle): boolean;
+  getUnboundedChoices(s: SettingsHandle): boolean;
+  /** The resolved `hegel_backend_t`. */
+  getBackend(s: SettingsHandle): number;
+  /** The resolved `hegel_nondeterminism_strictness_t`. */
+  getNondeterminismStrictness(s: SettingsHandle): number;
   runStart(ctx: ContextHandle, settings: SettingsHandle): RunHandle;
   /**
    * Start a run that replays a reproduce blob instead of exploring. Throws on

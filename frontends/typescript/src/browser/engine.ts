@@ -267,7 +267,15 @@ export class WasmEngine implements Engine {
       | "settings_get_verbosity"
       | "settings_get_phases"
       | "settings_get_print_blob"
-      | "settings_get_report_multiple_failures",
+      | "settings_get_report_multiple_failures"
+      | "settings_get_test_cases"
+      | "settings_get_derandomize"
+      | "settings_get_suppress_health_check"
+      | "settings_get_stop_on_first_failure"
+      | "settings_get_show_statistics"
+      | "settings_get_unbounded_choices"
+      | "settings_get_backend"
+      | "settings_get_nondeterminism_strictness",
     s: SettingsHandle,
     size: number,
     read: (arena: WasmArena, ptr: number) => T,
@@ -286,6 +294,45 @@ export class WasmEngine implements Engine {
   getReportMultipleFailures(s: SettingsHandle): boolean {
     return this.settingsValue("settings_get_report_multiple_failures", s, 1, (a, p) =>
       a.boolean(p),
+    );
+  }
+  getTestCases(s: SettingsHandle): number {
+    return this.settingsValue("settings_get_test_cases", s, 8, (a, p) =>
+      Number(a.view(p, 8).getBigUint64(0, true)),
+    );
+  }
+  getSeed(s: SettingsHandle): bigint | null {
+    return WasmArena.scoped(this.abi, (a) => {
+      const seed = a.alloc(8, 8);
+      const hasSeed = a.alloc(1, 1);
+      this.check(0, "settings_get_seed", [0, this.ptr(s), seed, hasSeed]);
+      return a.boolean(hasSeed) ? a.view(seed, 8).getBigUint64(0, true) : null;
+    });
+  }
+  getDerandomize(s: SettingsHandle): boolean {
+    return this.settingsValue("settings_get_derandomize", s, 1, (a, p) => a.boolean(p));
+  }
+  getDatabase(s: SettingsHandle): string | null {
+    return this.optionalString("settings_get_database", [0, this.ptr(s)]);
+  }
+  getSuppressHealthCheck(s: SettingsHandle): number {
+    return this.settingsValue("settings_get_suppress_health_check", s, 4, (a, p) => a.pointer(p));
+  }
+  getStopOnFirstFailure(s: SettingsHandle): boolean {
+    return this.settingsValue("settings_get_stop_on_first_failure", s, 1, (a, p) => a.boolean(p));
+  }
+  getShowStatistics(s: SettingsHandle): boolean {
+    return this.settingsValue("settings_get_show_statistics", s, 1, (a, p) => a.boolean(p));
+  }
+  getUnboundedChoices(s: SettingsHandle): boolean {
+    return this.settingsValue("settings_get_unbounded_choices", s, 1, (a, p) => a.boolean(p));
+  }
+  getBackend(s: SettingsHandle): number {
+    return this.settingsValue("settings_get_backend", s, 4, (a, p) => a.pointer(p));
+  }
+  getNondeterminismStrictness(s: SettingsHandle): number {
+    return this.settingsValue("settings_get_nondeterminism_strictness", s, 4, (a, p) =>
+      a.pointer(p),
     );
   }
   runStart(ctx: ContextHandle, settings: SettingsHandle): RunHandle {

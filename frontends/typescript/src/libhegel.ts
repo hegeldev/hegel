@@ -185,6 +185,16 @@ export interface Bindings {
   settingsGetPhases: (s: Ptr) => number;
   settingsGetPrintBlob: (s: Ptr) => boolean;
   settingsGetReportMultipleFailures: (s: Ptr) => boolean;
+  settingsGetTestCases: (s: Ptr) => number;
+  settingsGetSeed: (s: Ptr) => bigint | null;
+  settingsGetDerandomize: (s: Ptr) => boolean;
+  settingsGetDatabase: (s: Ptr) => string | null;
+  settingsGetSuppressHealthCheck: (s: Ptr) => number;
+  settingsGetStopOnFirstFailure: (s: Ptr) => boolean;
+  settingsGetShowStatistics: (s: Ptr) => boolean;
+  settingsGetUnboundedChoices: (s: Ptr) => boolean;
+  settingsGetBackend: (s: Ptr) => number;
+  settingsGetNondeterminismStrictness: (s: Ptr) => number;
 
   runStart: (ctx: Ptr, settings: Ptr, out: Ptr[]) => number;
   runStartBlob: (ctx: Ptr, settings: Ptr, blob: string, out: Ptr[]) => number;
@@ -459,6 +469,36 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   );
   const settingsGetReportMultipleFailures = f(
     "int hegel_settings_get_report_multiple_failures(void* ctx, void* s, _Out_ bool* out)",
+  );
+  const settingsGetTestCases = f(
+    "int hegel_settings_get_test_cases(void* ctx, void* s, _Out_ uint64_t* out)",
+  );
+  const settingsGetSeed = f(
+    "int hegel_settings_get_seed(void* ctx, void* s, _Out_ uint64_t* out_seed, _Out_ bool* out_has_seed)",
+  );
+  const settingsGetDerandomize = f(
+    "int hegel_settings_get_derandomize(void* ctx, void* s, _Out_ bool* out)",
+  );
+  const settingsGetDatabase = f(
+    "int hegel_settings_get_database(void* ctx, void* s, _Out_ void** out_database)",
+  );
+  const settingsGetSuppressHealthCheck = f(
+    "int hegel_settings_get_suppress_health_check(void* ctx, void* s, _Out_ uint32_t* out)",
+  );
+  const settingsGetStopOnFirstFailure = f(
+    "int hegel_settings_get_stop_on_first_failure(void* ctx, void* s, _Out_ bool* out)",
+  );
+  const settingsGetShowStatistics = f(
+    "int hegel_settings_get_show_statistics(void* ctx, void* s, _Out_ bool* out)",
+  );
+  const settingsGetUnboundedChoices = f(
+    "int hegel_settings_get_unbounded_choices(void* ctx, void* s, _Out_ bool* out)",
+  );
+  const settingsGetBackend = f(
+    "int hegel_settings_get_backend(void* ctx, void* s, _Out_ uint32_t* out)",
+  );
+  const settingsGetNondeterminismStrictness = f(
+    "int hegel_settings_get_nondeterminism_strictness(void* ctx, void* s, _Out_ uint32_t* out)",
   );
 
   const runStart = f(
@@ -863,6 +903,60 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
       checked(settingsGetReportMultipleFailures(null, s, out), "settingsGetReportMultipleFailures");
       return out[0];
     },
+    settingsGetTestCases: (s) => {
+      const out: (number | bigint)[] = [0];
+      checked(settingsGetTestCases(null, s, out), "settingsGetTestCases");
+      return Number(out[0]);
+    },
+    settingsGetSeed: (s) => {
+      const seed: (number | bigint)[] = [0];
+      const hasSeed: boolean[] = [false];
+      checked(settingsGetSeed(null, s, seed, hasSeed), "settingsGetSeed");
+      return hasSeed[0] ? BigInt(seed[0]) : null;
+    },
+    settingsGetDerandomize: (s) => {
+      const out: boolean[] = [false];
+      checked(settingsGetDerandomize(null, s, out), "settingsGetDerandomize");
+      return out[0];
+    },
+    settingsGetDatabase: (s) => {
+      const out: Ptr[] = [null];
+      checked(settingsGetDatabase(null, s, out), "settingsGetDatabase");
+      return readOptionalString(out[0]);
+    },
+    settingsGetSuppressHealthCheck: (s) => {
+      const out: number[] = [0];
+      checked(settingsGetSuppressHealthCheck(null, s, out), "settingsGetSuppressHealthCheck");
+      return out[0];
+    },
+    settingsGetStopOnFirstFailure: (s) => {
+      const out: boolean[] = [false];
+      checked(settingsGetStopOnFirstFailure(null, s, out), "settingsGetStopOnFirstFailure");
+      return out[0];
+    },
+    settingsGetShowStatistics: (s) => {
+      const out: boolean[] = [false];
+      checked(settingsGetShowStatistics(null, s, out), "settingsGetShowStatistics");
+      return out[0];
+    },
+    settingsGetUnboundedChoices: (s) => {
+      const out: boolean[] = [false];
+      checked(settingsGetUnboundedChoices(null, s, out), "settingsGetUnboundedChoices");
+      return out[0];
+    },
+    settingsGetBackend: (s) => {
+      const out: number[] = [0];
+      checked(settingsGetBackend(null, s, out), "settingsGetBackend");
+      return out[0];
+    },
+    settingsGetNondeterminismStrictness: (s) => {
+      const out: number[] = [0];
+      checked(
+        settingsGetNondeterminismStrictness(null, s, out),
+        "settingsGetNondeterminismStrictness",
+      );
+      return out[0];
+    },
     runStart: (ctx, s, out) => runStart(ctx, s, null, null, out),
     runStartBlob: (ctx, s, blob, out) => runStartBlob(ctx, s, nativeString(blob), null, null, out),
     nextTestCase: (ctx, run, out) => nextTestCase(ctx, run, out),
@@ -1255,6 +1349,46 @@ export class Libhegel implements Engine {
 
   getReportMultipleFailures(s: Ptr): boolean {
     return this.fns.settingsGetReportMultipleFailures(s);
+  }
+
+  getTestCases(s: Ptr): number {
+    return this.fns.settingsGetTestCases(s);
+  }
+
+  getSeed(s: Ptr): bigint | null {
+    return this.fns.settingsGetSeed(s);
+  }
+
+  getDerandomize(s: Ptr): boolean {
+    return this.fns.settingsGetDerandomize(s);
+  }
+
+  getDatabase(s: Ptr): string | null {
+    return this.fns.settingsGetDatabase(s);
+  }
+
+  getSuppressHealthCheck(s: Ptr): number {
+    return this.fns.settingsGetSuppressHealthCheck(s);
+  }
+
+  getStopOnFirstFailure(s: Ptr): boolean {
+    return this.fns.settingsGetStopOnFirstFailure(s);
+  }
+
+  getShowStatistics(s: Ptr): boolean {
+    return this.fns.settingsGetShowStatistics(s);
+  }
+
+  getUnboundedChoices(s: Ptr): boolean {
+    return this.fns.settingsGetUnboundedChoices(s);
+  }
+
+  getBackend(s: Ptr): number {
+    return this.fns.settingsGetBackend(s);
+  }
+
+  getNondeterminismStrictness(s: Ptr): number {
+    return this.fns.settingsGetNondeterminismStrictness(s);
   }
 
   /** Start a run. Throws {@link LibhegelError} on failure. */

@@ -2,8 +2,17 @@ import { describe, it, expect, vi } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
 import { createRunner } from "../src/runnerCore.js";
-import { NativeBackend, NativeNondeterminismStrictness, NativePhase } from "../src/engine.js";
-import { fakeEngine, fakeRuntime, context, settings } from "./fakeEngine.js";
+import {
+  NativeBackend,
+  NativeHealthCheck,
+  NativeNondeterminismStrictness,
+  NativePhase,
+  NativeVerbosity,
+  type Engine,
+  type SettingsHandle,
+} from "../src/engine.js";
+import { applySettings, resolveSettings } from "../src/settings.js";
+import { getLibhegel } from "../src/session.js";
 import { browserRuntime } from "../src/browser/runtime.js";
 import { wasmFixture } from "./wasmFixture.js";
 
@@ -108,63 +117,124 @@ describe("settings resolution against the real engine", () => {
   });
 });
 
-describe("settings applied through the Engine interface", () => {
+function readBack(lib: Engine, handle: SettingsHandle) {
+  return {
+    testCases: lib.getTestCases(handle),
+    seed: lib.getSeed(handle),
+    verbosity: lib.getVerbosity(handle),
+    derandomize: lib.getDerandomize(handle),
+    database: lib.getDatabase(handle),
+    suppressHealthCheck: lib.getSuppressHealthCheck(handle),
+    reportMultipleFailures: lib.getReportMultipleFailures(handle),
+    stopOnFirstFailure: lib.getStopOnFirstFailure(handle),
+    phases: lib.getPhases(handle),
+    printBlob: lib.getPrintBlob(handle),
+    showStatistics: lib.getShowStatistics(handle),
+    unboundedChoices: lib.getUnboundedChoices(handle),
+    nondeterminismStrictness: lib.getNondeterminismStrictness(handle),
+    backend: lib.getBackend(handle),
+  };
+}
+
+function applied(lib: Engine, given: hegel.Settings): ReturnType<typeof readBack> {
+  const ctx = lib.newContext();
+  try {
+    const handle = resolveSettings(lib, ctx, given);
+    try {
+      applySettings(lib, ctx, handle, given);
+      return readBack(lib, handle);
+    } finally {
+      lib.freeSettings(handle);
+    }
+  } finally {
+    lib.freeContext(ctx);
+  }
+}
+
+function resolved(lib: Engine, profile?: string): ReturnType<typeof readBack> {
+  const ctx = lib.newContext();
+  try {
+    const handle =
+      profile === undefined ? lib.newSettings(ctx) : lib.newSettingsForProfile(ctx, profile);
+    try {
+      return readBack(lib, handle);
+    } finally {
+      lib.freeSettings(handle);
+    }
+  } finally {
+    lib.freeContext(ctx);
+  }
+}
+
+const engines: [string, () => Engine, string | null][] = [
+  ["native", () => getLibhegel(), null],
+  ["wasm", () => wasmFixture().engine, ""],
+];
+
+describe.each(engines)("settings applied to the %s engine", (_name, engine, defaultDatabase) => {
   it("sets only the fields given", () => {
-    const engine = fakeEngine();
-    createRunner(fakeRuntime(engine)).test(() => {});
-    for (const setter of [
-      engine.setTestCases,
-      engine.setVerbosity,
-      engine.setSeed,
-      engine.setDerandomize,
-      engine.setDatabase,
-      engine.setSuppressHealthCheck,
-      engine.setReportMultipleFailures,
-      engine.setStopOnFirstFailure,
-      engine.setPhases,
-      engine.setPrintBlob,
-      engine.setShowStatistics,
-      engine.setUnboundedChoices,
-      engine.setNondeterminismStrictness,
-      engine.setBackend,
-    ])
-      expect(setter).not.toHaveBeenCalled();
-    expect(engine.newSettings).toHaveBeenCalledTimes(1);
-    expect(engine.newSettingsForProfile).not.toHaveBeenCalled();
+    const lib = engine();
+    expect(applied(lib, {})).toEqual(resolved(lib));
+    expect(applied(lib, { profile: "ci" })).toEqual(resolved(lib, "ci"));
+    expect(applied(lib, { profile: "base", testCases: 7 })).toEqual({
+      ...resolved(lib, "base"),
+      testCases: 7,
+    });
   });
 
   it("maps every value to the engine's", () => {
-    const engine = fakeEngine();
-    createRunner(fakeRuntime(engine)).test(() => {}, {
-      profile: "ci",
-      seed: 5,
-      database: hegel.Database.fromPath("/tmp/db"),
-      suppressHealthCheck: [hegel.HealthCheck.TooSlow, hegel.HealthCheck.LargeInitialTestCase],
-      phases: [hegel.Phase.Target, hegel.Phase.Shrink],
-      nondeterminismStrictness: hegel.NondeterminismStrictness.Error,
-      backend: hegel.Backend.Urandom,
+    const lib = engine();
+    expect(
+      applied(lib, {
+        profile: "base",
+        testCases: 3,
+        seed: 2n ** 64n - 1n,
+        verbosity: hegel.Verbosity.Debug,
+        derandomize: true,
+        database: hegel.Database.disabled,
+        suppressHealthCheck: [hegel.HealthCheck.TooSlow, hegel.HealthCheck.LargeInitialTestCase],
+        reportMultipleFailures: true,
+        stopOnFirstFailure: false,
+        phases: [hegel.Phase.Target, hegel.Phase.Shrink],
+        printBlob: false,
+        showStatistics: true,
+        unboundedChoices: true,
+        nondeterminismStrictness: hegel.NondeterminismStrictness.Error,
+        backend: hegel.Backend.Urandom,
+      }),
+    ).toEqual({
+      testCases: 3,
+      seed: 2n ** 64n - 1n,
+      verbosity: NativeVerbosity.DEBUG,
+      derandomize: true,
+      database: "",
+      suppressHealthCheck: NativeHealthCheck.TOO_SLOW | NativeHealthCheck.LARGE_INITIAL_TEST_CASE,
+      reportMultipleFailures: true,
+      stopOnFirstFailure: false,
+      phases: NativePhase.TARGET | NativePhase.SHRINK,
+      printBlob: false,
+      showStatistics: true,
+      unboundedChoices: true,
+      nondeterminismStrictness: NativeNondeterminismStrictness.ERROR,
+      backend: NativeBackend.URANDOM,
     });
-    expect(engine.newSettingsForProfile).toHaveBeenCalledWith(context, "ci");
-    expect(engine.setSeed).toHaveBeenCalledWith(settings, 5n);
-    expect(engine.setDatabase).toHaveBeenCalledWith(context, settings, "/tmp/db");
-    expect(engine.setSuppressHealthCheck).toHaveBeenCalledWith(settings, 2 | 8);
-    expect(engine.setPhases).toHaveBeenCalledWith(
-      settings,
-      NativePhase.TARGET | NativePhase.SHRINK,
-    );
-    expect(engine.setNondeterminismStrictness).toHaveBeenCalledWith(
-      settings,
-      NativeNondeterminismStrictness.ERROR,
-    );
-    expect(engine.setBackend).toHaveBeenCalledWith(settings, NativeBackend.URANDOM);
+    expect(applied(lib, { profile: "base", seed: 5, database: hegel.Database.default })).toEqual({
+      ...resolved(lib, "base"),
+      seed: 5n,
+      database: defaultDatabase,
+    });
+    expect(applied(lib, { profile: "base", seed: 5 }).seed).toBe(5n);
+    expect(applied(lib, { seed: null }).seed).toBeNull();
   });
+});
 
-  it("maps the default database to the engine's NULL", () => {
-    const engine = fakeEngine();
-    createRunner(fakeRuntime(engine)).test(() => {}, { database: hegel.Database.default });
-    expect(engine.setDatabase).toHaveBeenCalledWith(context, settings, null);
-  });
+it("maps a database path to the native engine's", () => {
+  expect(applied(getLibhegel(), { database: hegel.Database.fromPath("/tmp/db") }).database).toBe(
+    "/tmp/db",
+  );
+});
 
+describe("settings applied through a runner", () => {
   it("always disables the database where the host cannot keep one", () => {
     const { engine } = wasmFixture();
     const setDatabase = vi.spyOn(engine, "setDatabase");
@@ -178,18 +248,22 @@ describe("settings applied through the Engine interface", () => {
   });
 
   it("releases the context when registering a profile fails", () => {
-    const engine = fakeEngine();
-    engine.registerProfile.mockImplementation(() => {
-      throw new Error("register");
-    });
-    expect(() => createRunner(fakeRuntime(engine)).registerProfile("p")).toThrow("register");
-    expect(engine.freeSettings).toHaveBeenCalledTimes(1);
-    expect(engine.freeContext).toHaveBeenCalledTimes(1);
+    const { engine } = wasmFixture();
+    const freeSettings = vi.spyOn(engine, "freeSettings");
+    const freeContext = vi.spyOn(engine, "freeContext");
+    expect(() => createRunner(browserRuntime(engine)).registerProfile("base")).toThrow(/base/);
+    expect(freeSettings).toHaveBeenCalledTimes(1);
+    expect(freeContext).toHaveBeenCalledTimes(1);
   });
 
   it("clears the default profile with an empty name", () => {
-    const engine = fakeEngine();
-    createRunner(fakeRuntime(engine)).setDefaultProfile(null);
-    expect(engine.setDefaultProfile).toHaveBeenCalledWith(context, "");
+    const { engine } = wasmFixture();
+    const setDefaultProfile = vi.spyOn(engine, "setDefaultProfile");
+    const runner = createRunner(browserRuntime(engine));
+    runner.registerProfile("ts-wasm-tiny", { testCases: 1 });
+    runner.setDefaultProfile("ts-wasm-tiny");
+    runner.setDefaultProfile(null);
+    expect(setDefaultProfile.mock.calls.map((call) => call[1])).toEqual(["ts-wasm-tiny", ""]);
+    expect(resolved(engine).testCases).toBe(resolved(engine, "base").testCases);
   });
 });

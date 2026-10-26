@@ -96,6 +96,16 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     settingsGetPhases: () => 0,
     settingsGetPrintBlob: () => false,
     settingsGetReportMultipleFailures: () => false,
+    settingsGetTestCases: () => 0,
+    settingsGetSeed: () => null,
+    settingsGetDerandomize: () => false,
+    settingsGetDatabase: () => null,
+    settingsGetSuppressHealthCheck: () => 0,
+    settingsGetStopOnFirstFailure: () => false,
+    settingsGetShowStatistics: () => false,
+    settingsGetUnboundedChoices: () => false,
+    settingsGetBackend: () => 0,
+    settingsGetNondeterminismStrictness: () => 0,
     runStart: (_ctx, _settings, out) => {
       out[0] = {} as Ptr;
       return 0;

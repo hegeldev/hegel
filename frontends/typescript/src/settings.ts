@@ -233,7 +233,8 @@ export function applySettings(
   s: Settings,
 ): void {
   if (s.testCases !== undefined) lib.setTestCases(handle, testCaseCount(s.testCases));
-  if (s.seed !== undefined) lib.setSeed(handle, s.seed === null ? null : u64Setting("seed", s.seed));
+  if (s.seed !== undefined)
+    lib.setSeed(handle, s.seed === null ? null : u64Setting("seed", s.seed));
   if (s.verbosity !== undefined)
     lib.setVerbosity(handle, lookup(VERBOSITY_TO_NATIVE, s.verbosity, "verbosity"));
   if (s.derandomize !== undefined) lib.setDerandomize(handle, s.derandomize);
