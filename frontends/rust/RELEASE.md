@@ -28,6 +28,8 @@ This release brings the Rust frontend further into line with the other Hegel fro
 
 - The reproducer line a failure prints now names the attribute the test was defined with: `#[hegel::test]`, `#[hegel::main]` or `#[hegel::standalone_function]`, and `#[hegel::reproduce_failure]` now works below `#[hegel::main]` and `#[hegel::standalone_function]` as well as `#[hegel::test]`. A run built with the `Hegel` builder directly is told to call `.reproduce_failure("…")` on the builder.
 
+- Stacked `#[hegel::reproduce_failure]` attributes, and repeated calls to `Hegel::reproduce_failure`, now replay every blob, one after another, through the engine's `hegel_run_start_blob`, and report every failure they reproduce, as a run reports several distinct failures. Before, only the first blob replayed and the rest were ignored. A blob that no longer reproduces is not an error while another one does, but every blob must decode: a stacked placeholder that is not a blob now fails the test.
+
 - `HealthCheck::all()` now returns a `Vec<HealthCheck>` rather than a `[HealthCheck; 4]`, so that adding a health check does not change its type. It is no longer a `const fn`.
 
 - The `exclude_min` and `exclude_max` methods of `gs::floats()`, deprecated since 0.42.0 and panicking whenever called, are removed. Use `min_value_exclusive` and `max_value_exclusive`.

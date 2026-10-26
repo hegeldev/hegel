@@ -4,7 +4,7 @@ use syn::{Attribute, FnArg, ItemFn};
 
 use crate::common::{
     SettingsAttrArgs, build_explicit_blocks, extract_explicit_test_cases, extract_ident_from_pat,
-    extract_reproduce_failure, rewrite_draws_in_block,
+    extract_reproduce_failure, reproduce_failure_calls, rewrite_draws_in_block,
 };
 
 fn is_test_attribute(attr: &Attribute) -> bool {
@@ -98,7 +98,7 @@ pub fn expand_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         Err(err) => return err,
     };
 
-    let reproduce_blob = match extract_reproduce_failure(&mut func.attrs) {
+    let reproduce_blobs = match extract_reproduce_failure(&mut func.attrs) {
         Ok(blob) => blob,
         Err(err) => return err,
     };
@@ -113,10 +113,7 @@ pub fn expand_test(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let test_name = func.sig.ident.to_string();
     let settings_expr = test_args.to_settings_expr();
-    let reproduce_call = match &reproduce_blob {
-        Some(blob) => quote! { .reproduce_failure((#blob).to_string()) },
-        None => quote! {},
-    };
+    let reproduce_call = reproduce_failure_calls(&reproduce_blobs);
     let explicit_blocks = build_explicit_blocks(&explicit_cases, param_pat, &body);
 
     let new_body: TokenStream = quote! {

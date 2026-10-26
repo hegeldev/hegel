@@ -564,21 +564,31 @@ pub(crate) fn drive<F>(
         Err(message) => panic!("RunError: {message}"), // nocov
     };
 
-    drive_run(
+    let failures = drive_run(
         run,
         &mut test_fn,
         settings,
         &output,
-        None,
         reproduce_attribute,
     );
+    if !failures.is_empty() {
+        raise_failures(failures, settings, &output);
+    }
 }
 
-/// The shared pump-and-report loop behind [`drive`] and
-/// [`drive_blob_replay`]: pull every test case off `run`, capture report
-/// material per origin, then act on the run's verdict. A passing run
-/// returns — unless `stale_message` is set (a blob replay), where a pass
-/// means the blob did not reproduce and panics with that message.
+/// One failure a run reported: its captured material plus the engine's
+/// caveat and the reproducer line to print after it.
+struct ReportedFailure {
+    report: CapturedReport,
+    caveat: Option<String>,
+    reproducer: Option<String>,
+}
+
+/// The shared pump loop behind [`drive`] and [`drive_blob_replay`]: pull
+/// every test case off `run`, capture report material per origin, then
+/// read the run's verdict. A passing run returns no failures, a failed one
+/// returns every failure it reported, in the engine's order, and an
+/// errored one panics with its [`run_error_message`].
 ///
 /// `#[inline(always)]`: without it the test body's call stops being
 /// inlined and panic backtraces lose the user closure's source location
@@ -589,9 +599,8 @@ fn drive_run<F: FnMut(TestCase)>(
     test_fn: &mut F,
     settings: &Settings,
     output: &RunOutput,
-    stale_message: Option<&str>,
     reproduce_attribute: Option<&str>,
-) {
+) -> Vec<ReportedFailure> {
     let verbosity = settings.verbosity;
     let quiet = verbosity == Verbosity::Quiet;
     let verbose = matches!(verbosity, Verbosity::Verbose | Verbosity::Debug);
@@ -632,67 +641,75 @@ fn drive_run<F: FnMut(TestCase)>(
     let result = run.result();
     use crate::ffi::sys::hegel_run_status_t as RunStatus;
     match result.status() {
-        RunStatus::HEGEL_RUN_STATUS_PASSED => {
-            if let Some(message) = stale_message {
-                panic!("{message}");
-            }
-        }
+        RunStatus::HEGEL_RUN_STATUS_PASSED => Vec::new(),
         RunStatus::HEGEL_RUN_STATUS_ERROR => {
             let message = result
                 .error()
                 .unwrap_or_else(|| "the run failed with an unknown error".to_string());
             panic!("{}", run_error_message(result.error_kind(), message));
         }
-        RunStatus::HEGEL_RUN_STATUS_FAILED => {
-            let count = result.failure_count();
-            let multiple = count > 1;
-            if multiple && !quiet {
-                output.line(&format!(
-                    "Property-based test failed with {count} distinct failures."
-                ));
-            }
-            let mut last_payload: Option<Box<dyn std::any::Any + Send>> = None;
-            for index in 0..count {
-                if multiple && !quiet {
-                    output.line("");
-                }
+        RunStatus::HEGEL_RUN_STATUS_FAILED => (0..result.failure_count())
+            .map(|index| {
                 let failure = result.failure(index);
                 let report = captured
                     .remove(&failure.origin)
                     .unwrap_or_else(|| hegel_internal_error!("failure {index} has no capture"));
-                for line in &report.lines {
-                    output.line(line);
+                ReportedFailure {
+                    report,
+                    reproducer: reproducer_line(
+                        settings,
+                        failure.reproduce_blob.as_deref(),
+                        reproduce_attribute,
+                    ),
+                    caveat: failure.caveat,
                 }
-                if let Some(diagnostic) = report.diagnostic {
-                    output.block(&diagnostic);
-                }
-                if !quiet {
-                    if let Some(caveat) = &failure.caveat {
-                        output.line(&format!("note: {caveat}"));
-                    }
-                }
-                if let Some(line) = reproducer_line(
-                    settings,
-                    failure.reproduce_blob.as_deref(),
-                    reproduce_attribute,
-                ) {
-                    output.block(&format!("{line}\n"));
-                }
-                last_payload = Some(report.payload);
-            }
+            })
+            .collect(),
+    }
+}
 
-            if multiple {
-                std::panic::resume_unwind(Box::new(format!(
-                    "Property-based test failed with {count} distinct failures."
-                )));
-            } else {
-                std::panic::resume_unwind(
-                    last_payload
-                        .unwrap_or_else(|| hegel_internal_error!("a failed run has no failures")),
-                );
+/// Print every failure in `failures` as one grouped block each, under a
+/// count header when there are several, and end by re-raising the failing
+/// test's own panic, or, for several failures, a panic carrying the count.
+fn raise_failures(failures: Vec<ReportedFailure>, settings: &Settings, output: &RunOutput) -> ! {
+    let quiet = settings.verbosity == Verbosity::Quiet;
+    let count = failures.len();
+    let multiple = count > 1;
+    if multiple && !quiet {
+        output.line(&format!(
+            "Property-based test failed with {count} distinct failures."
+        ));
+    }
+    let mut last_payload: Option<Box<dyn std::any::Any + Send>> = None;
+    for failure in failures {
+        if multiple && !quiet {
+            output.line("");
+        }
+        for line in &failure.report.lines {
+            output.line(line);
+        }
+        if let Some(diagnostic) = failure.report.diagnostic {
+            output.block(&diagnostic);
+        }
+        if !quiet {
+            if let Some(caveat) = &failure.caveat {
+                output.line(&format!("note: {caveat}"));
             }
         }
+        if let Some(line) = failure.reproducer {
+            output.block(&format!("{line}\n"));
+        }
+        last_payload = Some(failure.report.payload);
     }
+
+    if multiple {
+        std::panic::resume_unwind(Box::new(format!(
+            "Property-based test failed with {count} distinct failures."
+        )));
+    }
+    std::panic::resume_unwind(
+        last_payload.unwrap_or_else(|| hegel_internal_error!("a failed run has no failures")),
+    );
 }
 
 /// The panic message for a run that errored rather than passing or
@@ -715,22 +732,25 @@ fn run_error_message(kind: RunErrorKind, message: String) -> String {
     }
 }
 
-/// Replay a base64 failure blob through the C ABI (`hegel_run_start_blob`),
-/// bypassing generation and shrinking.
+/// Replay every base64 failure blob in `blobs` through the C ABI
+/// (`hegel_run_start_blob`), one replay after another, bypassing
+/// generation and shrinking.
 ///
-/// The engine owns the replay: a deterministic blob replays its choices up
+/// The engine owns each replay: a deterministic blob replays its choices up
 /// to four times, stopping at the first failure; a nondeterministic blob
-/// replays its stored timelines until one fails, like database reuse. Decoding
-/// failures (corrupt or incompatible blobs) panic with the engine's
-/// diagnostic. A blob that decodes but does not reproduce panics naming
-/// both hypotheses: the failure is fixed, or a nondeterministic one did not
-/// recur within the replay budget. A reproduced failure re-raises the
-/// test's own panic; a replayed example has no fresh blob to print.
+/// replays its stored timelines until one fails, like database reuse.
+/// Decoding failures (corrupt or incompatible blobs) panic with the
+/// engine's diagnostic. Every failure the replays reproduce is reported,
+/// as a run reports the distinct failures it finds: one re-raises the
+/// test's own panic, several panic with their count. A replayed example
+/// has no fresh blob to print. When no blob reproduces a failure, this
+/// panics naming both hypotheses: the failures are fixed, or a
+/// nondeterministic one did not recur within the replay budget.
 pub(crate) fn drive_blob_replay<F>(
     test_fn: F,
     settings: &Settings,
     database_key: Option<&str>,
-    blob: &str,
+    blobs: &[String],
     test_location: Option<&TestLocation>,
     reproduce_attribute: Option<&str>,
 ) where
@@ -740,21 +760,27 @@ pub(crate) fn drive_blob_replay<F>(
     let mut test_fn = test_fn;
     let output = RunOutput::resolve();
     let c_settings = SettingsHandle::build(settings, database_key, test_location);
-    let run = RunHandle::start_blob(&c_settings, blob, output.sink());
-    drive_run(
-        run,
-        &mut test_fn,
-        settings,
-        &output,
-        Some(
+    let mut failures = Vec::new();
+    for blob in blobs {
+        let run = RunHandle::start_blob(&c_settings, blob, output.sink());
+        failures.extend(drive_run(
+            run,
+            &mut test_fn,
+            settings,
+            &output,
+            reproduce_attribute,
+        ));
+    }
+    if failures.is_empty() {
+        panic!(
             "reproduce_failure: the supplied failure blob did not reproduce a \
              failure. The failure may have been fixed — or, for a nondeterministic \
              blob, it may not have recurred within the replay budget (a bug failing \
              10% of the time escapes it about 5% of the time). Re-run to retry, or \
-             delete the attribute once the failure is fixed.",
-        ),
-        reproduce_attribute,
-    );
+             delete the attribute once the failure is fixed."
+        );
+    }
+    raise_failures(failures, settings, &output);
 }
 
 #[cfg(test)]

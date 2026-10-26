@@ -412,7 +412,7 @@ fn is_reproduce_failure_attr(attr: &syn::Attribute) -> bool {
 }
 
 /// Extract the `#[hegel::reproduce_failure(blob)]` attributes, removing them
-/// in-place, and return the **first** blob expression.
+/// in-place, and return every blob expression, in source order.
 ///
 /// The argument is any expression that evaluates to something convertible to a
 /// `String` via `.to_string()` — a string literal, a `const`/`static` `&str`,
@@ -420,24 +420,20 @@ fn is_reproduce_failure_attr(attr: &syn::Attribute) -> bool {
 /// `#[hegel::test]`-family attributes, which take expressions rather than only
 /// literals).
 ///
-/// Stacking is allowed, but only the first attribute replays — the rest are
-/// bookkeeping for additional failures, to be deleted one by one as they are
-/// fixed. Returns `Ok(None)` when the attribute is absent, or
-/// `Err` with a compile error when an argument isn't a single expression.
+/// Stacking is allowed, and every attribute replays. Returns an empty `Vec`
+/// when the attribute is absent, or `Err` with a compile error when an
+/// argument isn't a single expression.
 pub fn extract_reproduce_failure(
     attrs: &mut Vec<syn::Attribute>,
-) -> Result<Option<Expr>, TokenStream> {
-    let mut blob: Option<Expr> = None;
+) -> Result<Vec<Expr>, TokenStream> {
+    let mut blobs: Vec<Expr> = Vec::new();
     let mut error = None;
     attrs.retain(|attr| {
         if !is_reproduce_failure_attr(attr) {
             return true;
         }
-        if blob.is_some() {
-            return false;
-        }
         match attr.parse_args::<Expr>() {
-            Ok(expr) => blob = Some(expr),
+            Ok(expr) => blobs.push(expr),
             Err(_) => {
                 error = Some(
                     syn::Error::new_spanned(
@@ -455,7 +451,13 @@ pub fn extract_reproduce_failure(
     if let Some(err) = error {
         return Err(err);
     }
-    Ok(blob)
+    Ok(blobs)
+}
+
+/// The builder calls that replay `blobs`: one `.reproduce_failure(..)` per
+/// blob, in order.
+pub fn reproduce_failure_calls(blobs: &[Expr]) -> TokenStream {
+    quote! { #( .reproduce_failure((#blobs).to_string()) )* }
 }
 
 /// Generate a sequence of explicit test case blocks. Each block constructs an

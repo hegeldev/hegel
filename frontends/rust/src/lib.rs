@@ -563,14 +563,16 @@ pub use hegel_macros::explicit_test_case;
 /// fn my_test(tc: hegel::TestCase) { /* ... */ }
 /// ```
 ///
-/// The attribute may be stacked to keep track of several failures, but only
-/// the **first** one replays — the rest are bookkeeping. Delete them one by
-/// one as the failures are fixed:
+/// The attribute may be stacked to replay several failures. Every blob
+/// replays, one after another, and every failure they reproduce is
+/// reported, as a run reports several distinct failures. A blob that no
+/// longer reproduces its failure is not an error while another one does,
+/// so delete each attribute once its failure is fixed:
 ///
 /// ```no_run
 /// #[hegel::test]
-/// #[hegel::reproduce_failure("AAEC…")] // replayed
-/// #[hegel::reproduce_failure("AAED…")] // kept for later
+/// #[hegel::reproduce_failure("AAEC…")]
+/// #[hegel::reproduce_failure("AAED…")]
 /// fn my_test(tc: hegel::TestCase) { /* ... */ }
 /// ```
 ///
@@ -578,8 +580,8 @@ pub use hegel_macros::explicit_test_case;
 /// for a nondeterministic failure, its stored failing timelines — so it is
 /// only guaranteed to reproduce a failure within a specific version of
 /// Hegel. A blob that can't be decoded (corrupt or from an incompatible
-/// version), or that does not reproduce a failure, panics with an
-/// explanatory message.
+/// version) panics with an explanatory message, as does a run in which no
+/// blob reproduces a failure.
 pub use hegel_macros::reproduce_failure;
 
 #[doc(hidden)]
