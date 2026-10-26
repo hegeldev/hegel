@@ -205,19 +205,24 @@ export class EngineDataSource implements DataSource {
 
   drawGrammar(spec: GrammarSpec, terminal: (index: number) => string): string {
     const { lib, ctx, tc } = this;
-    const grammar = this.call(() => this.family.cache.grammar(ctx, spec));
-    const draw = this.call(() => lib.grammarDrawNew(ctx, grammar, 0));
-    return withCleanup(
-      () => {
-        for (;;) {
-          const index = this.call(() => lib.grammarDrawNext(ctx, tc, draw));
-          if (index === null) return this.call(() => lib.grammarDrawResult(ctx, draw));
-          const value = terminal(index);
-          this.call(() => lib.grammarDrawProvide(ctx, draw, value));
-        }
-      },
-      () => this.call(() => lib.freeGrammarDraw(draw)),
-    );
+    const cache = this.family.cache;
+    const grammar = this.call(() => cache.borrowGrammar(ctx, spec));
+    try {
+      const draw = this.call(() => lib.grammarDrawNew(ctx, grammar, 0));
+      return withCleanup(
+        () => {
+          for (;;) {
+            const index = this.call(() => lib.grammarDrawNext(ctx, tc, draw));
+            if (index === null) return this.call(() => lib.grammarDrawResult(ctx, draw));
+            const value = terminal(index);
+            this.call(() => lib.grammarDrawProvide(ctx, draw, value));
+          }
+        },
+        () => this.call(() => lib.freeGrammarDraw(draw)),
+      );
+    } finally {
+      cache.releaseGrammar(spec);
+    }
   }
 
   newStateMachine(spec: StateMachineSpec): number {

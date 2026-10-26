@@ -119,8 +119,9 @@ so a Node import creeping into a shared module fails `check-lint`.
    handles, bounded and freed with the runner. The same run-owned cache
    compiles each `fromLark` generator's grammar once (the builder loop, with
    imported files read through `RuntimeServices.readGrammarFile`) and frees
-   the `hegel_grammar_t` handles when the run ends; grammars are never evicted,
-   because a draw in progress borrows its grammar. A grammar draw
+   the `hegel_grammar_t` handles when the run ends. Each kind is capped at 256
+   live handles, evicting (and freeing) the oldest first; a grammar a draw in
+   progress borrows is never evicted. A grammar draw
    (`EngineDataSource.drawGrammar`) is one `hegel_grammar_draw_t` loop per
    value, the frontend drawing each explicit terminal's value between
    `hegel_grammar_draw_next` and `hegel_grammar_draw_provide`. Text and binary

@@ -124,7 +124,8 @@ immediately and then freed. A grammar builder is freed as soon as its grammar
 is compiled, and a grammar draw when the draw ends. The exceptions:
 `hegel_string_generator_t` handles are cached per schema object and
 `hegel_grammar_t` handles per `fromLark` generator (`StringGeneratorCache`),
-and freed with the runner.
+each kind capped at 256 live handles (the oldest evicted and freed first, never
+a grammar a draw in progress borrows), and the rest freed with the runner.
 
 ## Making a change
 
