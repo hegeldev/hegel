@@ -527,7 +527,10 @@ function finishCleanup(errors: unknown[], ...operations: (() => void)[]): void {
  */
 function throwFailures(errors: unknown[]): never {
   if (errors.length === 1) throw errors[0];
-  throw new AggregateError(errors, `Hegel found ${errors.length} distinct failures`);
+  throw new AggregateError(
+    errors,
+    `Property-based test failed with ${errors.length} distinct failures.`,
+  );
 }
 
 /** Read what the run reports about one failure, then free it. */
@@ -881,7 +884,6 @@ export class Hegel {
           }
           if (outcome.error instanceof ExplicitExampleError) throw outcome.error;
           if (!quiet) {
-            this.output(`Explicit ${example.description} failed:`);
             for (const line of document.lines()) this.output(line);
           }
           if (!multiple) throw outcome.error;

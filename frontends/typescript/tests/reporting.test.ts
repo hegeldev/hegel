@@ -343,12 +343,7 @@ describe("explicit examples", () => {
         .runSync(),
     );
     expect((error as Error).message).toBe("long b");
-    expect(lines).toEqual([
-      'Explicit example([1, 2, 3], "b") failed:',
-      "const draw_1 = [1, 2, 3];",
-      'const name = "b";',
-      "checking b",
-    ]);
+    expect(lines).toEqual(["const draw_1 = [1, 2, 3];", 'const name = "b";', "checking b"]);
   });
 
   it("reports an explicit failure along with the generated ones", () => {
@@ -364,7 +359,7 @@ describe("explicit examples", () => {
       "long b",
       "long ",
     ]);
-    expect(lines.slice(4)).toEqual(["const draw_1 = [0, 0, 0];", 'const name = "";', "checking "]);
+    expect(lines.slice(3)).toEqual(["const draw_1 = [0, 0, 0];", 'const name = "";', "checking "]);
   });
 
   it("reports an explicit failure along with a run error", () => {
@@ -486,7 +481,7 @@ describe("explicit examples", () => {
         .run(),
     );
     expect((error as Error).message).toBe("five");
-    expect(lines).toEqual(["Explicit example(5) failed:", "// Repetition #1", "  const n = 5;"]);
+    expect(lines).toEqual(["// Repetition #1", "  const n = 5;"]);
     expect(() =>
       new runner.Hegel((tc) =>
         tc.repeat(() => {
@@ -512,12 +507,7 @@ describe("explicit examples", () => {
         .runSync(),
     );
     expect((error as Error).message).toBe("explicit");
-    expect(lines).toEqual([
-      `Explicit example([${values.join(", ")}]) failed:`,
-      "const xs = [",
-      ...values.map((value) => `    ${value},`),
-      "];",
-    ]);
+    expect(lines).toEqual(["const xs = [", ...values.map((value) => `    ${value},`), "];"]);
   });
 
   it("indents a block's draws and notes in an explicit example's report", () => {
@@ -537,7 +527,6 @@ describe("explicit examples", () => {
     );
     expect((error as Error).message).toBe("explicit");
     expect(lines).toEqual([
-      "Explicit example(1, 2) failed:",
       "Step 1",
       "  const n = 1;",
       "  saw 1",

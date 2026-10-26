@@ -622,7 +622,9 @@ describe("WasmEngine real run lifecycle", () => {
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(AggregateError);
-    expect((thrown as AggregateError).message).toBe("Hegel found 2 distinct failures");
+    expect((thrown as AggregateError).message).toBe(
+      "Property-based test failed with 2 distinct failures.",
+    );
     expect((thrown as AggregateError).errors.map((e: Error) => e.message).sort()).toEqual([
       "high",
       "low",
