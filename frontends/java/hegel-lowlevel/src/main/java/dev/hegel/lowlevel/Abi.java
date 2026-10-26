@@ -29,7 +29,6 @@ public final class Abi {
     public static final int RUN_STATUS_FAILED = 1;
     public static final int RUN_STATUS_ERROR = 2;
 
-    // hegel_run_error_kind_t: why a run ended in RUN_STATUS_ERROR.
     public static final int RUN_ERROR_NONE = 0;
     public static final int RUN_ERROR_HEALTH_CHECK = 1;
     public static final int RUN_ERROR_FLAKY = 2;

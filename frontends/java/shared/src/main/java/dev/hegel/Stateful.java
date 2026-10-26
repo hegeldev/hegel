@@ -426,9 +426,6 @@ public final class Stateful {
                 for (int w = 0; w < concurrency; w++) {
                     events[w] = workers[w].await();
                 }
-                // Every worker has reported, so no handle is in use any more: release the clones
-                // before judging the round. Their output stays in the case's document, anchored
-                // where each clone was made.
                 for (TestCase handle : handles) {
                     handle.release();
                 }

@@ -401,7 +401,6 @@ final class LiveDataSource implements DataSource {
 
     @Override
     public void collectionFree(long id) {
-        // Not gated on `aborted`: the handle is caller-owned and must be released exactly once.
         lib.collectionFree(id);
     }
 
@@ -503,7 +502,6 @@ final class LiveDataSource implements DataSource {
 
     @Override
     public void recursionFree(long recursion) {
-        // Not gated on `aborted`: the handle is caller-owned and must be released exactly once.
         lib.recursionFree(recursion);
     }
 

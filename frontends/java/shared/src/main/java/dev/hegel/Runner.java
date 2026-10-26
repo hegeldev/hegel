@@ -421,8 +421,6 @@ final class Runner {
                 testCase.releaseBlocks();
             }
         } finally {
-            // The handles are caller-owned. On the error paths above the case may be incomplete;
-            // the run still holds its own reference and completes it when freed.
             try {
                 source.releasePools();
             } finally {
@@ -454,7 +452,6 @@ final class Runner {
         } catch (StopTest e) {
             outcome = CaseOutcome.OVERRUN;
         } catch (LibhegelException e) {
-            // A binding/engine error, not a property failure: abort the whole run.
             throw e;
         } catch (Throwable e) {
             outcome = CaseOutcome.INTERESTING;

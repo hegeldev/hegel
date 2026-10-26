@@ -290,9 +290,6 @@ public interface Libhegel {
      */
     int testCaseBlock(long tc, long indent, long[] out);
 
-    // Output. The engine owns a per-test-case document that every handle of the family prints
-    // into; it lays the document out and attributes worker lines, and the frontend reads it back.
-
     /**
      * {@code hegel_note}: append {@code text} to {@code tc}'s print region, each {@code \n}-separated
      * line its own output line. Returns the raw rc ({@link Abi#E_INVALID_HANDLE} once the
@@ -434,9 +431,6 @@ public interface Libhegel {
     int stringGeneratorDomain(long maxLength, long[] out);
 
     void stringGeneratorFree(long generator);
-
-    // Grammars: see hegel_grammar_builder_t, hegel_grammar_t and hegel_grammar_draw_t. The
-    // constructors and the per-draw calls return the raw rc; the frees throw on a non-OK code.
 
     /**
      * {@code hegel_grammar_builder_new}: start gathering a grammar in Lark's syntax and the files
@@ -587,8 +581,6 @@ public interface Libhegel {
 
     /** {@code hegel_state_machine_free}: the handle is independent of its test case and run. */
     void stateMachineFree(long stateMachineId);
-
-    // Recursion: see hegel_recursion_t for the protocol. Each returns the raw rc.
 
     /** {@code hegel_new_recursion}: {@code out[0]} receives the handle, freed with {@link #recursionFree}. */
     int newRecursion(long tc, long maxDepth, long maxLeaves, long[] out);

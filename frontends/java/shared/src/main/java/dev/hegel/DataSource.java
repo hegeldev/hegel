@@ -135,8 +135,6 @@ interface DataSource {
      */
     void poolRestore(long poolId, long variableId);
 
-    // Recursion (hegel_recursion_t). A recursive value is drawn in attempts; see RecursiveGenerator.
-
     long newRecursion(long maxDepth, long maxLeaves);
 
     /** Whether the sub-value at {@code depth} is a branch (else a leaf). */

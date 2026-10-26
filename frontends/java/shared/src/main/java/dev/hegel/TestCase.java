@@ -231,8 +231,6 @@ public final class TestCase {
         if (drawDepth > 0 || !shared.emits) {
             return drawNested(generator);
         }
-        // Notes made while the value is generated are held back by the engine until the draw's
-        // line is committed (or abandoned), so they follow the value instead of splitting it.
         Printer p = printer();
         p.beginSpeculative();
         boolean committed = false;
@@ -446,7 +444,6 @@ public final class TestCase {
             return;
         }
         if (!isControl(failure)) {
-            // Mark the failing repetition in the choice sequence, as the other frontends do.
             drawSilent(Generators.booleans());
         }
         throw rethrow(failure);

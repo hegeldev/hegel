@@ -36,7 +36,6 @@ public final class Settings {
     final Integer phasesMask; // null = leave the engine default (all phases)
     final Verbosity verbosity;
     final Backend backend;
-    // Each null Boolean leaves the engine's profile / environment value in place.
     final Boolean reportMultipleFailures;
     final Boolean stopOnFirstFailure;
     final Boolean showStatistics;
