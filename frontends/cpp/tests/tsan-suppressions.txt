@@ -1,8 +1,0 @@
-# ThreadSanitizer suppressions for the test suite.
-#
-# libhegel is Rust built without TSan instrumentation, and serialises its
-# shared state (the test case's printer, among others) with its own futex
-# lock, which TSan cannot see. Allocations it makes under that lock from two
-# worker threads are reported as races; the C++ code is still checked.
-called_from_lib:libhegel_c.so
-race:libhegel_c.so

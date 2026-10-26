@@ -137,6 +137,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang-18
       - uses: ./.github/actions/setup-rust
+      - name: Install nightly Rust for the ThreadSanitizer build of libhegel
+        run: rustup toolchain install nightly --profile minimal -c rust-src
       - name: Run sanitizers (address+undefined, thread)
         env:
           CC: clang-18

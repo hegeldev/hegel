@@ -32,7 +32,7 @@ is found automatically), `doxygen` 1.10+ with graphviz for the docs, and
 Apple's).
 
 Other recipes worth knowing before touching build/CI files:
-- `just cpp::check-sanitizers` — separate `address,undefined` and `thread` builds under `build/san-*`; LSan suppressions at `tests/lsan-suppressions.txt`.
+- `just cpp::check-sanitizers` — separate `address,undefined` and `thread` builds under `build/san-*`; LSan suppressions at `tests/lsan-suppressions.txt`. The `thread` build links a TSan-instrumented libhegel (`just cpp::build-libhegel-tsan`: Linux only, needs nightly with `rust-src`).
 - `just cpp::check-tidy` — clang-tidy over `src/`, warnings-as-errors.
 - `just cpp::check-consumer MODE` (`subdirectory` / `fetchcontent` / `install` / `tests_on`) and `just cpp::check-consumer-all` — build the library the way a downstream project would, not part of `just cpp::check`. The `fetchcontent` mode clones the monorepo at `HEAD` (`SOURCE_SUBDIR frontends/cpp`), so it only sees committed changes, and links the engine this checkout already built.
 - `just cpp::check-cxx17` — builds and installs with `HEGEL_REFLECTION=OFF`, then builds/runs a standalone C++17 consumer.
