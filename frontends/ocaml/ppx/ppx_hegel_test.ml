@@ -677,37 +677,65 @@ let expand_state_machine ~concurrent ~loc (mb : module_binding) : structure_item
   let run =
     if concurrent
     then (
-      let run_concurrent =
-        if async
-        then stateful "run_concurrent_internal"
-        else [%expr [%e stateful "run_concurrent_internal"] ~concurrency]
-      in
-      let body =
-        [%expr
-          fun ?min_concurrency
-            ?max_concurrency
-            ?step_count
-            ?sexp_of_state:override
-            tc
-            ~init ->
-            [%e run_concurrent]
-              ~init
-              ~rules
-              ~invariants
-              ?min_concurrency
-              ?max_concurrency
-              ?sexp_of_state:
-                (match override with
-                 | Some _ as s -> s
-                 | None -> [%e default_sexp_of_state])
-              ?step_count
-              tc]
+      let call =
+        pexp_apply
+          ~loc
+          (stateful "run_concurrent_internal")
+          ((if async then [] else [ Labelled "concurrency", [%expr concurrency] ])
+           @ [ Labelled "init", [%expr init]
+             ; Labelled "rules", [%expr rules]
+             ; Labelled "invariants", [%expr invariants]
+             ; Optional "min_concurrency", [%expr min_concurrency]
+             ; Optional "max_concurrency", [%expr max_concurrency]
+             ; ( Optional "sexp_of_state"
+               , [%expr
+                   match override with
+                   | Some _ as s -> s
+                   | None -> [%e default_sexp_of_state]] )
+             ; Optional "step_count", [%expr step_count]
+             ; Nolabel, [%expr tc]
+             ])
       in
       if async
-      then [%stri let run = [%e body]]
+      then
+        [%stri
+          let run
+                ?min_concurrency
+                ?max_concurrency
+                ?step_count
+                ?sexp_of_state:override
+                tc
+                ~init
+            =
+            [%e call]
+          ;;]
       else if declares_ctx
-      then [%stri let run ~concurrency = [%e body]]
-      else [%stri let run ?(concurrency = Hegel.Concurrency.threads) = [%e body]])
+      then
+        [%stri
+          let run
+                ~concurrency
+                ?min_concurrency
+                ?max_concurrency
+                ?step_count
+                ?sexp_of_state:override
+                tc
+                ~init
+            =
+            [%e call]
+          ;;]
+      else
+        [%stri
+          let run
+                ?(concurrency = Hegel.Concurrency.threads)
+                ?min_concurrency
+                ?max_concurrency
+                ?step_count
+                ?sexp_of_state:override
+                tc
+                ~init
+            =
+            [%e call]
+          ;;])
     else
       [%stri
         let run ?step_count ?sexp_of_state:override tc ~init =
