@@ -170,7 +170,11 @@ final class LiveDataSource implements DataSource {
     public String generateString(StringGeneratorHandle generator) {
         checkLive();
         String[] out = new String[1];
-        translate(lib.generateString(tc, generator.handle, out), "generate_string");
+        try {
+            translate(lib.generateString(tc, generator.handle, out), "generate_string");
+        } finally {
+            Reference.reachabilityFence(generator);
+        }
         return out[0];
     }
 
@@ -261,9 +265,13 @@ final class LiveDataSource implements DataSource {
     public StringGeneratorHandle regexGenerator(String pattern, boolean fullmatch, StringGeneratorHandle alphabet) {
         checkLive();
         long[] out = new long[1];
-        translate(
-                lib.stringGeneratorRegex(pattern, fullmatch, alphabet == null ? 0 : alphabet.handle, out),
-                "string_generator_regex");
+        try {
+            translate(
+                    lib.stringGeneratorRegex(pattern, fullmatch, alphabet == null ? 0 : alphabet.handle, out),
+                    "string_generator_regex");
+        } finally {
+            Reference.reachabilityFence(alphabet);
+        }
         return new StringGeneratorHandle(lib, out[0]);
     }
 

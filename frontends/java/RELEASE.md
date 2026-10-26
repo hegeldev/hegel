@@ -67,7 +67,7 @@ A filtered consuming pool draw, `pool.consuming().filter(...)` on a `Pool` or `C
 
 New generators, matching the other Hegel frontends:
 
-- `Generators.bigIntegers()` generates `BigInteger` values of any magnitude, narrowed with `min` and `max`. An unset bound reaches `2^127` values beyond the other bound, or beyond zero. `Generators.forType(BigInteger.class)` derives it.
+- `Generators.bigIntegers()` generates `BigInteger` values, narrowed with `min` and `max`, which may be of any magnitude. An unset bound reaches `2^127` values beyond the other bound, or beyond zero when that is further, so `bigIntegers()` alone draws from `[-2^127, 2^127)`, as in the other Hegel frontends. `Generators.forType(BigInteger.class)` derives it.
 - `lists(...).unique()` and `lists(...).uniqueBy(key)` generate lists whose elements, or their keys, are distinct.
 - `Generators.permutations(elements)` generates reorderings of a fixed list, shrinking toward the original order.
 - `Generators.arrays(element, length, newArray)` generates arrays of a fixed length, such as `arrays(integers(), 3, Integer[]::new)`.
