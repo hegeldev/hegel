@@ -689,9 +689,10 @@ export class Hegel {
    * working directory, plus its name (`"tests/a.test.ts::property"`). A test
    * function's name is its own, or for an anonymous one the name Vitest or
    * Jest gives the running test, else the enclosing function's, else its
-   * line; an anonymous function's key also carries the line of its call
-   * (`"tests/a.test.ts:12::describe > test"`), so that calls sharing a name
-   * keep separate keys whatever order they run in. Where the runtime has no
+   * line. When several `hegel.test` calls in one runner test borrow its
+   * name, the first keeps the plain key and each later one carries its place
+   * among them (`"tests/a.test.ts::describe > test (2)"`), so a key depends
+   * neither on line numbers nor on which other tests ran. Where the runtime has no
    * `Error.captureStackTrace` (Firefox) there is no call site to derive a
    * location from: the key is the test function's name, and an anonymous
    * test has none unless set here.

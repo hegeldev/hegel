@@ -103,17 +103,28 @@ export function projectPath(file: string, root: string): string {
     : path;
 }
 
+const borrowedNameCallLines = new Map<string, number[]>();
+
 /**
  * The database key of a test at `location`: its file, relative to the
  * project's `root`, plus its name (`tests/a.test.ts::property`). An
  * anonymous test function borrows its name, which several `hegel.test`
- * calls can share, so its key also carries the line of its call
- * (`tests/a.test.ts:12::suite > case`). A key depends only on where the test
- * is defined, never on which other tests ran before it.
+ * calls in one runner test or enclosing function can share: the first of
+ * those calls to run keeps the plain key, and each later one carries its
+ * place among them (`tests/a.test.ts::suite > case (2)`). Calls in other
+ * tests never share the name, so a key does not depend on which tests ran
+ * before it, and it does not depend on line numbers, so edits elsewhere in
+ * the file leave it alone.
  */
 export function databaseKeyOf(location: TestLocation, root: string, anonymous: boolean): string {
-  const path = projectPath(location.file, root);
-  return anonymous
-    ? `${path}:${location.beginLine}::${location.function}`
-    : `${path}::${location.function}`;
+  const key = `${projectPath(location.file, root)}::${location.function}`;
+  if (!anonymous) return key;
+  let lines = borrowedNameCallLines.get(key);
+  if (lines === undefined) {
+    lines = [];
+    borrowedNameCallLines.set(key, lines);
+  }
+  let index = lines.indexOf(location.beginLine);
+  if (index === -1) index = lines.push(location.beginLine) - 1;
+  return index === 0 ? key : `${key} (${index + 1})`;
 }
