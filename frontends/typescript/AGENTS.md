@@ -143,13 +143,16 @@ so a Node import creeping into a shared module fails `check-lint`.
    runtime's `projectRoot` (Node's working directory; a browser keys on the
    URL's path) plus the test's name, which for an anonymous test function is
    Vitest's or Jest's name for the running test, so it does not depend on
-   where the project is checked out. Several anonymous test functions can
-   borrow one name: the first call keeps the plain key and each later call
-   at another line carries its place among them
-   (`tests/a.test.ts::suite > case (2)`), so a key depends neither on line
-   numbers nor on which other tests ran before it. A runtime without `Error.captureStackTrace` (Firefox) has no
-   call site: no location, and the key falls back to the function's name
-   (none for an anonymous one).
+   where the project is checked out. Several anonymous test functions in one
+   runner test or enclosing function can borrow one name: they are numbered
+   in the order their call lines first run in the process (a module-level
+   map in `callSite.ts`), the first keeping the plain key and each later one
+   carrying its number (`tests/a.test.ts::suite > case (2)`). A key never
+   depends on other runner tests, but within one it does depend on order:
+   skipping or adding an earlier call, or moving a call's line in a process
+   that keeps the module loaded, renumbers it. A runtime without
+   `Error.captureStackTrace` (Firefox) has no call site: no location, and
+   the key falls back to the function's name (none for an anonymous one).
 6. **Shared runner** (`src/runnerCore.ts`) — the sync and async run loops:
    explicit examples (`src/explicit.ts`: each runs once, with no engine test
    case, its draws and notes laid out by a standalone engine printer from

@@ -109,12 +109,18 @@ const borrowedNameCallLines = new Map<string, number[]>();
  * The database key of a test at `location`: its file, relative to the
  * project's `root`, plus its name (`tests/a.test.ts::property`). An
  * anonymous test function borrows its name, which several `hegel.test`
- * calls in one runner test or enclosing function can share: the first of
- * those calls to run keeps the plain key, and each later one carries its
- * place among them (`tests/a.test.ts::suite > case (2)`). Calls in other
- * tests never share the name, so a key does not depend on which tests ran
- * before it, and it does not depend on line numbers, so edits elsewhere in
- * the file leave it alone.
+ * calls in one runner test or enclosing function can share. Those calls are
+ * numbered in the order their lines first run in this process: the first
+ * keeps the plain key and each later one carries its number
+ * (`tests/a.test.ts::suite > case (2)`), while a call that runs again from
+ * the same line keeps its key. A name borrowed from a runner test is never
+ * shared with another runner test, so a key does not depend on which other
+ * tests ran. Within one runner test or enclosing function it does depend on
+ * order: skipping an earlier call, or adding one above, renumbers the calls
+ * after it, and where the module stays loaded across reruns (Vitest's
+ * `isolate: false`, Bun or Deno running many files in one process) a call
+ * whose line moved is numbered after its old line. A named test function or
+ * an explicit key avoids all of this.
  */
 export function databaseKeyOf(location: TestLocation, root: string, anonymous: boolean): string {
   const key = `${projectPath(location.file, root)}::${location.function}`;

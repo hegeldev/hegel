@@ -1,7 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import { createRunner } from "../src/runnerCore.js";
-import { callSite, parseFrame, projectPath, runnerTestName } from "../src/callSite.js";
+import {
+  callSite,
+  databaseKeyOf,
+  parseFrame,
+  projectPath,
+  runnerTestName,
+} from "../src/callSite.js";
 import { fakeEngine, fakeRuntime, context, settings } from "./fakeEngine.js";
 
 const THIS_FILE = new URL(import.meta.url).pathname;
@@ -150,6 +156,36 @@ describe("test identity", () => {
       `${THIS_FILE}::${name}`,
       `${THIS_FILE}::${name} (2)`,
     ]);
+  });
+
+  it("renumbers a call when an earlier call in the same runner test is skipped", () => {
+    const keysWith = (testName: string, earlier: boolean): string[] => {
+      const engine = fakeEngine();
+      const runner = createRunner(fakeRuntime(engine));
+      withMatcherState({ state: { currentTestName: testName } }, () => {
+        if (earlier) runner.test(() => {});
+        runner.test(() => {});
+      });
+      return engine.setDatabaseKey.mock.calls.map((call) => call[2]);
+    };
+    expect(keysWith("conditional > on", true)).toEqual([
+      `${THIS_FILE}::conditional > on`,
+      `${THIS_FILE}::conditional > on (2)`,
+    ]);
+    expect(keysWith("conditional > off", false)).toEqual([`${THIS_FILE}::conditional > off`]);
+  });
+
+  it("numbers a moved call after its old line for as long as the process lasts", () => {
+    const location = (beginLine: number) => ({
+      file: "/proj/moved.test.ts",
+      beginLine,
+      class: "moved.test",
+      function: "suite > moved",
+    });
+    expect(databaseKeyOf(location(10), "/proj", true)).toBe("moved.test.ts::suite > moved");
+    expect(databaseKeyOf(location(10), "/proj", true)).toBe("moved.test.ts::suite > moved");
+    expect(databaseKeyOf(location(12), "/proj", true)).toBe("moved.test.ts::suite > moved (2)");
+    expect(databaseKeyOf(location(12), "/proj", false)).toBe("moved.test.ts::suite > moved");
   });
 
   it("keys a test the same whichever tests ran before it", () => {
