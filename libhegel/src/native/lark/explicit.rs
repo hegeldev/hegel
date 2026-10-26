@@ -57,11 +57,13 @@ pub struct ExplicitDraw {
 impl ExplicitDraw {
     /// A draw of a string of `spec` of at most `max_size` characters,
     /// values included, or the grammar's own cap when `max_size` is 0.
+    /// One below the grammar's smallest string, or above its cap, is read
+    /// as that, as in [`generate_grammar`].
     pub fn new(spec: Arc<GrammarSpec>, max_size: u64) -> Self {
         let max_size = if max_size == 0 {
             spec.max_size()
         } else {
-            max_size
+            max_size.max(spec.min_size()).min(spec.max_size())
         };
         ExplicitDraw {
             spec,

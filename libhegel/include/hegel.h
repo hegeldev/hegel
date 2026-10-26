@@ -581,17 +581,20 @@ typedef struct hegel_grammar_builder_t hegel_grammar_builder_t;
  is the caller's part to draw values that read as the terminal where
  they land.
 
- A draw belongs to the test-case handle it is first advanced with:
- `hegel_grammar_draw_next` returns `HEGEL_E_INVALID_ARG` when given any
- other handle, including one for a later test case, so start a new draw
- for each test case. Draw each value it asks for from that same test
- case too.
+ A draw belongs to the choice stream of the test-case handle it is
+ first advanced with: `hegel_grammar_draw_next` accepts that handle and
+ any handle sharing its stream (such as a block handle from
+ `hegel_test_case_block`), and returns `HEGEL_E_INVALID_ARG` for a
+ handle on another stream, such as a clone from `hegel_test_case_clone`
+ or a handle for a later test case, so start a new draw for each test
+ case. Draw each value it asks for from that same test case too.
 
  A draw handle may be used by at most one thread at a time. Concurrent
  calls on it return `HEGEL_E_CONCURRENT_USE`.
 
- The handle borrows the grammar, which must outlive it. Free it with
- `hegel_grammar_draw_free` exactly once.
+ The handle keeps what it needs of the grammar alive, so the grammar
+ may be freed first. Free the handle with `hegel_grammar_draw_free`
+ exactly once.
  */
 typedef struct hegel_grammar_draw_t hegel_grammar_draw_t;
 
@@ -1243,7 +1246,8 @@ hegel_result_t hegel_settings_set_print_blob(hegel_context_t *ctx, hegel_setting
 /*
  Set one setting from text, as a command line gives it: what the
  settings' other setters do, under the names and with the values a
- `hegel.toml` profile uses, parsed by the same parser. A frontend's
+ `hegel.toml` profile uses. A value is text rather than TOML, so it is
+ read with the spellings below, not by the `hegel.toml` parser. A frontend's
  command-line interface passes each flag through, so every setting is
  settable from it without the frontend knowing the vocabulary.
 
@@ -1262,12 +1266,14 @@ hegel_result_t hegel_settings_set_print_blob(hegel_context_t *ctx, hegel_setting
    `database_key` takes the key itself, and only
    `hegel_settings_set_database_key` clears it), with these spellings
    for values that are not strings there:
-   - an integer (`test_cases`, `seed`) in decimal; `seed` also takes
-     `none`, which unsets it;
+   - an integer (`test_cases`, `seed`) as decimal digits, optionally
+     after a `+`, with no `_` separators, `0x` prefix or surrounding
+     whitespace; `seed` also takes `none`, which unsets it;
    - a boolean as `true`, `1`, `yes`, `false`, `0` or `no`, as the
      `HEGEL_*` environment variables take it;
    - a list (`phases`, `suppress_health_check`) as its names separated
-     by commas, with the empty string for none; `suppress_health_check`
+     by commas, whitespace around each name ignored, with the empty
+     string for none; `suppress_health_check`
      also takes `all`.
 
  Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown key or a
@@ -2740,14 +2746,17 @@ hegel_result_t hegel_generate_grammar(hegel_context_t *ctx,
  drawn until `hegel_grammar_draw_next`.
 
  Parameters:
- `grammar`: A grammar built by `hegel_grammar_new`. It must outlive the
-   draw handle.
+ `grammar`: A grammar built by `hegel_grammar_new`. The draw does not
+   need it to stay alive.
  `max_size`: The most characters the string may have, the values the
-   caller supplies included, or 0 for the grammar's own cap.
+   caller supplies included, or 0 for the grammar's own cap. As in
+   `hegel_generate_grammar`, one below the grammar's smallest string,
+   or above its cap, is read as that.
  `out_draw`: Receives a caller-owned handle. Release it with
    `hegel_grammar_draw_free`.
 
- Returns `HEGEL_OK`.
+ Returns `HEGEL_OK`; `HEGEL_E_INVALID_HANDLE` when `grammar` is NULL;
+ or `HEGEL_E_INVALID_ARG` when `out_draw` is NULL.
  */
 hegel_result_t hegel_grammar_draw_new(hegel_context_t *ctx,
                                       const hegel_grammar_t *grammar,
@@ -2772,7 +2781,8 @@ hegel_result_t hegel_grammar_draw_new(hegel_context_t *ctx,
  grammar draw itself rejected the test case (see
  `hegel_generate_grammar`), and the test case has been concluded
  invalid; `HEGEL_E_STOP_TEST`; `HEGEL_E_INVALID_ARG` when a value is
- still due or `tc` is not the handle the draw was first advanced with;
+ still due or `tc` is not on the stream of the handle the draw was
+ first advanced with;
  or `HEGEL_E_CONCURRENT_USE` when `tc` or `draw` is in use on another
  thread.
  */
