@@ -34,8 +34,6 @@ let%expect_test "state trace; invariant marks the failing step" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
     state = 0
       checking n = 0
     Step 1: inc
@@ -45,9 +43,10 @@ let%expect_test "state trace; invariant marks the failing step" =
     state = 2
       checking n = 2
     Invariant my_inv violated after step 2.
-
     Exception: File "ppx/test/expect_tests/test_stateful_trace.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -66,12 +65,11 @@ let%expect_test "invariant violated in the initial state" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
     Invariant silly_inv violated in the initial state.
-
     Exception: File "ppx/test/expect_tests/test_stateful_trace.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -101,16 +99,15 @@ let%expect_test "state trace across multiple rules" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
     state = ()
     Step 1: push
       n = 50
     state = (50)
     Step 2: pop
-
     Exception: File "ppx/test/expect_tests/test_stateful_trace.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -146,13 +143,12 @@ let%expect_test "a rule failure keeps its origin between replays" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
     Step 1: boom
       draw_1 = 0
-
     Exception: Failure("tail boom")
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     tail boom
     |}]
 ;;
@@ -189,14 +185,13 @@ let%expect_test "one concurrent worker remains deterministic" =
   print_string (Expect_scrub.scrub_concurrent_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
     ---------------- Round 1: group "<anonymous>" ----------------
     [worker 0 +time] Rule: boom
     [worker 0 +time]   draw_1 = 0
-
     Exception: Failure("concurrent boom")
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -227,15 +222,14 @@ let%expect_test "concurrent invariant failures retain their names" =
   print_string (Expect_scrub.scrub_concurrent_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
     state = 0
     ---------------- Round 1: group "writes" ----------------
     [worker 0 +time] Rule: increment
     state = 1
     Invariant stays_zero violated after round 1.
-
     Exception: Failure("invariant boom")
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;

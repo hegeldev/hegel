@@ -95,15 +95,14 @@
     This test asserts that any integer is less than 50, which is obviously
     incorrect. Hegel finds a test case that makes the assertion fail, then shrinks
     it to the smallest counterexample ([n = 50]). The failure report prints the
-    drawn values, the exception, and a [rerun with:] line that replays the exact case:
+    drawn values, the exception, and how to replay the exact case:
 
     {v
-      --- Failure: every_int_is_small (my_tests.ml:3) ------------------
-
       n = 50
-
       Exception: File "my_tests.ml", line 5, characters 2-8: Assertion failed
-      rerun with: [@@failure_blobs [ "AAEAAAAACgEAAAAy" ]]
+
+      To reproduce this failure, add this attribute to the let%hegel_test:
+          [@@failure_blobs [ "AAEAAAAACgEAAAAy" ]]
     v}
 
     To fix this test, you can constrain the integers you generate with [min_value] and [max_value]:
@@ -338,11 +337,12 @@
         assert (n < 50)
     ]}
 
-    A failing run prints a framed report: the shrunk counterexample's draws
-    and notes, the exception, and a copy-pasteable [rerun with:] line whose
-    base64 blob encodes the choice sequence that caused the failure (disable
-    it with [print_blob = false]). On a terminal the report headers print in
-    color. Set [HEGEL_COLOR] to [1] or [0] to force colors on or off.
+    A failing run prints a report: the shrunk counterexample's draws and
+    notes, the exception, and a copy-pasteable reproduce line whose base64
+    blob encodes the choice sequence that caused the failure (disable it with
+    [print_blob = false]). A run with several distinct failures starts with
+    [Property-based test failed with N distinct failures.] and reports each
+    in turn.
 
     {[
       let%hegel_test every_int_is_small tc =
@@ -351,12 +351,11 @@
     ]}
 
     {v
-      --- Failure: every_int_is_small (my_tests.ml:3) ------------------
-
       n = 50
-
       Exception: File "my_tests.ml", line 5, characters 2-8: Assertion failed
-      rerun with: [@@failure_blobs [ "AAEAAAAACgEAAAAy" ]]
+
+      To reproduce this failure, add this attribute to the let%hegel_test:
+          [@@failure_blobs [ "AAEAAAAACgEAAAAy" ]]
     v}
 
     The blob can then be used to replay the failing test case:

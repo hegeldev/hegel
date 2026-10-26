@@ -29,6 +29,18 @@ The printing API is unchanged: generators keep their `printable` / `unprintable`
 
 `text` and `characters` now leave character-set validation to the engine. `~categories` may name a category that contains the surrogates, such as `"C"`, and the engine drops the surrogates from it; constraints that leave no characters at all (`~categories:["Cs"]`) raise `Usage_error` when the generator is drawn from rather than when it is built.
 
+The failure report is laid out as in hegel-rust: the drawn values and notes, the exception, `note: <caveat>` when the engine attaches one, and how to replay the failure, with no `--- Failure ---` frame and no color:
+
+```
+n = 50
+Exception: File "my_tests.ml", line 5, characters 2-8: Assertion failed
+
+To reproduce this failure, add this attribute to the let%hegel_test:
+    [@@failure_blobs [ "AAEAAAAACgEAAAAy" ]]
+```
+
+A plain `run_hegel_test` caller is told the `~failure_blobs` argument to pass instead, and a `Hegel.main` binary the `--failure-blob` flag. A run with several distinct failures starts with `Property-based test failed with N distinct failures.` and reports each after a blank line. `HEGEL_COLOR` no longer has any effect.
+
 A run that ends without a verdict on the property now raises an exception saying why, chosen by the engine's classification of the error, instead of `Failure` with the engine's message:
 
 - `Failed_health_check { check; message }` when a health check failed, naming the check.

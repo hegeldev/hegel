@@ -196,8 +196,6 @@
     the worker index and the time since the test case began.
 
     {v
-    --- Failure: concurrent_store (...) -------------------------
-
     Concurrency level: 4
     ---------------- Round 1: group "operations" ----------------
     [worker 2 +0.238ms] Rule: register
@@ -222,7 +220,6 @@
     ...
     [worker 3 +0.479ms] Rule: increment
     Invariant no_lost_updates violated after round 3.
-
     Exception: Failure("increments were lost: store sums to 11 after 12 increments")
     v} *)
 

@@ -299,7 +299,7 @@ type t =
   ; phases : phase list
     (** The phases to run. All phases are run with the [base] profile. *)
   ; print_blob : bool
-    (** Print a [rerun with:] line whose base64 blob encodes the choices that
+    (** Print a reproduce line whose base64 blob encodes the choices that
         led to a failure. [true] in the [base] settings. *)
   ; report_multiple_failures : bool
     (** Report every distinct failure the run found. When [false] (the default),

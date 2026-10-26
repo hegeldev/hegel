@@ -14,12 +14,9 @@ let%expect_test "a failing explicit example prints the values it gave" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Explicit example 2: failing_example (ppx/test/expect_tests/test_example_report.ml:<LINE>) ---
-
     n = 7
     s = "seven"
     checking
-
     Exception: Failure("seven")
     |}]
 ;;

@@ -679,8 +679,7 @@ so a non-printing case never formats anything. After `mark_complete`,
 `run_case` reads the document back (`capture_document`:
 `printer_resolve` — required when clone regions exist, an argument error
 otherwise, hence the catch — then `printer_value`); the runner keeps it with
-the failure (see Test Runner) and prints it inside the client-drawn failure
-frame. Verbosity gating stays client-side (`should_print`): under Quiet, or at
+the failure (see Test Runner) and prints it in the failure report. Verbosity gating stays client-side (`should_print`): under Quiet, or at
 Normal a case the engine did not stamp (`should_capture`), nothing is appended
 and the read is skipped.
 Clones write into their own region, anchored where the clone was made, so
@@ -698,8 +697,8 @@ and on `Assume_rejected` reports the rejection to the engine. It only creates th
 block when `should_print tc` holds; a non-printing case runs the body on `tc` itself, since
 a block per step costs a native handle and a context, which
 measured as 50% more wall time and 20x the major collections on a
-200-case x 500-step machine. `print_failure_body` sets the captured output
-off with blank lines inside the frame. The client prepends no spaces anywhere. Mirroring
+200-case x 500-step machine. `print_failure_body` prints the captured output
+as it is, followed by the exception, as hegel-rust does. The client prepends no spaces anywhere. Mirroring
 hegel-rust's `TestCase::child`, a block starts at span depth 0 and opens a
 fresh `draw_state` (a rule's draw names are scoped to that one invocation: a
 `[@@rule]` body's `let n = draw ..` prints as `n` in every step, and a
@@ -725,14 +724,14 @@ doc-hidden `Hegel.run_hegel_test_ppx` — a thin wrapper that sets
 signal never appears on the public `run_hegel_test`. The `[@@failure_blobs ...]` record/replay workflow is
 supported: the PPX forwards the listed blobs as `~failure_blobs`, and
 `run_test` starts one `hegel_run_start_blob` run per blob, in order (pair it
-with `print_blob = false` to suppress the `rerun with:` line that failing
-runs print by default). The engine replays each blob until a replay fails;
-each run goes through the same loop and report as a normal run, with no
-`rerun with:` line. The failures of every run are then raised together as
+with `print_blob = false` to suppress the reproduce line that failing
+runs print by default). Every blob is replayed, and each run goes through
+the same loop and report as a normal run, with no reproduce line. The failures of every run are then raised together as
 for a normal run (one re-raises its exception, several raise
 `Multiple_failures`), and when no blob reproduced, the run raises
 `Did_not_reproduce`. `run_test ?rerun_hint` (`Argument` | `Attribute` | `Command_line`) picks the
-form of the `rerun with:` line; the PPX entry points pass `Attribute`,
+form of the reproduce line (`To reproduce this failure, ...`, worded after
+hegel-rust's); the PPX entry points pass `Attribute`,
 `Hegel.main` passes `Command_line`. `hegel_run_start_blob` rejects an undecodable blob with
 `HEGEL_E_INVALID_ARG`, so `check_rc` raises `Usage_error`. For persisting and replaying
 failing examples across runs, use `database` / `database_key`.
@@ -837,7 +836,10 @@ report-time replay does not fail, the newest failing execution may be a silent
 shrink probe. After the loop, each `Ffi.run_result` failure is printed from
 its capture: the output, the exception, `note: <caveat>`
 (`hegel_failure_caveat`, only under nondeterministic handling), and
-`rerun with:` when the failure has a blob (an unconfirmed failure has none).
+the reproduce line when the failure has a blob (an unconfirmed failure has
+none), laid out as hegel-rust lays out its report: no frame, and several
+failures under one `Property-based test failed with N distinct failures.`
+line, a blank line before each.
 A single failure re-raises its captured exception with its backtrace; several
 raise `Multiple_failures` with their exceptions. A run that ends in
 `Run_error` raises the exception for the engine's

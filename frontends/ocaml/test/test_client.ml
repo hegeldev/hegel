@@ -662,56 +662,6 @@ let test_run_multiple_failures () =
     Alcotest.failf "unexpected failures: %d" (List.length exns)
 ;;
 
-(** [color_enabled] decision table: a HEGEL_COLOR override of 1/0 wins, anything
-    else falls back to the tty state. *)
-let test_color_enabled () =
-  let check name expected ~override ~isatty =
-    Alcotest.(check bool) name expected (Internal.color_enabled ~override ~isatty)
-  in
-  check "1 forces on" true ~override:(Some "1") ~isatty:false;
-  check "0 forces off" false ~override:(Some "0") ~isatty:true;
-  check "unset: tty" true ~override:None ~isatty:true;
-  check "unset: not a tty" false ~override:None ~isatty:false;
-  check "junk: falls back to tty" true ~override:(Some "junk") ~isatty:true
-;;
-
-(** Run [f] with HEGEL_COLOR set to [value], restoring the variable after. *)
-let with_hegel_color value f =
-  let saved = Sys.getenv "HEGEL_COLOR" in
-  Unix.putenv ~key:"HEGEL_COLOR" ~data:value;
-  Exn.protect
-    ~finally:(fun () ->
-      match saved with
-      | Some v -> Unix.putenv ~key:"HEGEL_COLOR" ~data:v
-      | None -> Test_helpers.unsetenv "HEGEL_COLOR")
-    ~f
-;;
-
-(** [stderr_color_enabled] reads HEGEL_COLOR from the environment. *)
-let test_stderr_color_enabled () =
-  with_hegel_color "1" (fun () ->
-    Alcotest.(check bool)
-      "HEGEL_COLOR=1 forces on"
-      true
-      (Internal.stderr_color_enabled ()));
-  with_hegel_color "0" (fun () ->
-    Alcotest.(check bool)
-      "HEGEL_COLOR=0 forces off"
-      false
-      (Internal.stderr_color_enabled ()))
-;;
-
-(** [stderr_color] wraps in SGR codes only when colors are enabled. *)
-let test_stderr_color () =
-  with_hegel_color "1" (fun () ->
-    Alcotest.(check string)
-      "enabled wraps"
-      "\027[31mx\027[0m"
-      (Internal.stderr_color "31" "x"));
-  with_hegel_color "0" (fun () ->
-    Alcotest.(check string) "disabled is identity" "x" (Internal.stderr_color "31" "x"))
-;;
-
 (** A health-check failure is a run-level error (no counterexample), raised as
     [Failed_health_check] naming the check, with the engine's message. *)
 let test_run_health_check_failure () =
@@ -831,13 +781,10 @@ let tests =
       "extract_origin skips stdlib internal frames"
       `Quick
       test_extract_origin_skips_stdlib_internal_frames
-  ; Alcotest.test_case "color_enabled" `Quick test_color_enabled
   ; Alcotest.test_case
       "Stop_test does not fail the run"
       `Quick
       test_stop_test_does_not_fail_run
-  ; Alcotest.test_case "stderr_color_enabled" `Quick test_stderr_color_enabled
-  ; Alcotest.test_case "stderr_color" `Quick test_stderr_color
   ; Alcotest.test_case
       "test_location reports result"
       `Quick

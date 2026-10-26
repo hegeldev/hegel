@@ -33,12 +33,11 @@ let%expect_test "a function is named from its binding" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: binding_name (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
-
     f 42 = 10
-
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;
 
@@ -66,12 +65,11 @@ let%expect_test
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: drawn_function_prints_applications (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
-
     f (-1 "a b") = [3; 3]
-
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;
 
@@ -95,12 +93,11 @@ let%expect_test "a function drawn inline is also named from its binding" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: binding_name_inline (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
-
     f 42 = 10
-
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;
 
@@ -125,12 +122,11 @@ let%expect_test "an explicit ~name wins over the draw-site binding name" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: explicit_name_beats_binding (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
-
     chosen 42 = 10
-
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;
 
@@ -148,12 +144,11 @@ let%expect_test "without a binding the function falls back to its default name" 
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
     function 42 = 10
-
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -172,12 +167,11 @@ let%expect_test "an explicit ~name is used when there is no binding name" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
     myfun 42 = 10
-
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -202,12 +196,11 @@ let%expect_test "functions2 shows its table uncurried, named from its binding" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: functions2_binding (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
-
     g (3 true) = 10
-
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;
 
@@ -233,12 +226,11 @@ let%expect_test "functions3 shows its table uncurried, named from its binding" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: functions3_binding (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
-
     h (1 true 2) = 10
-
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;
 
@@ -258,9 +250,10 @@ let%expect_test "a scalar drawn with draw_silent prints nothing even when named"
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: draw_silent_scalar_stays_silent (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;
 
@@ -292,12 +285,11 @@ let%expect_test "function call only prints the first time in normal verbosity" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
     function 10 = 586
-
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -333,14 +325,13 @@ let%expect_test "function call prints every time in verbose/debug verbosity" =
     function 10 = 586
     function 10 = 586
     function 10 = 586
-    --- Failure --------------------------------------------------------------------
-
     function 10 = 586
     function 10 = 586
     function 10 = 586
-
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}];
   (try func_call_loop Settings.Debug with
    | _ -> ());
@@ -370,14 +361,13 @@ let%expect_test "function call prints every time in verbose/debug verbosity" =
     function 10 = 586
     function 10 = 586
     Test done. interesting_test_cases=1
-    --- Failure --------------------------------------------------------------------
-
     function 10 = 586
     function 10 = 586
     function 10 = 586
-
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -403,13 +393,12 @@ let%expect_test "a printable function generator prints with its sexp_of" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: printable_function_draw (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
-
     f = <fun>
     f 42 = 10
-
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;
 
@@ -441,12 +430,11 @@ let%expect_test "a function drawn nested keeps its label but suppresses its valu
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: printable_function_drawn_nested (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
-
     f 42 = 10
-
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;
 
@@ -474,9 +462,10 @@ let%expect_test "a function applied inside a span prints nothing" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: application_inside_span_is_suppressed (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;
 
@@ -500,13 +489,12 @@ let%expect_test "partially printable applications" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: partially_printable_args_and_ret (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
-
     f 1 = <fun>
     function <opaque> = 1
-
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;
 
@@ -523,13 +511,12 @@ let%expect_test "unprintable applications" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: unprintable_args_and_ret (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
-
     f <opaque> = <fun>
     function <opaque> = 1
-
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;
 
@@ -551,13 +538,12 @@ let%expect_test "a result with no printer shows as <abstr>" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: results_with_no_printer (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
-
     h <opaque> = <abstr>
     g <opaque> = <abstr>
     f <opaque> = <abstr>
-
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;

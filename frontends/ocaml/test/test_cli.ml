@@ -345,7 +345,7 @@ let test_main_failure_replays_from_blob () =
       "the exception is not raised again"
       false
       (String.is_substring output ~substring:"Fatal error");
-    let prefix = "rerun with: --failure-blob " in
+    let prefix = "    --failure-blob " in
     let blob =
       match List.find_map (String.split_lines output) ~f:(String.chop_prefix ~prefix) with
       | Some blob -> blob
