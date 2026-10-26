@@ -209,6 +209,23 @@ def test_from_lark_labels_distinguish_grammars_start_rules_and_terminals():
     assert gs.from_lark('start: "a"').label != gs.from_lark('start: "b"').label
 
 
+def test_from_lark_labels_distinguish_every_option(tmp_path):
+    grammar = "start: WORD\nWORD: /[a-z]+/\n"
+    variants = [
+        gs.from_lark(grammar),
+        gs.from_lark(grammar, alphabet="abc"),
+        gs.from_lark(grammar, alphabet="abd"),
+        gs.from_lark(grammar, alphabet=gs.characters(codec="ascii")),
+        gs.from_lark(grammar, max_size=10),
+        gs.from_lark(grammar, max_size=11),
+        gs.from_lark(grammar, max_depth=10),
+        gs.from_lark(grammar, import_path=tmp_path),
+        gs.from_lark(grammar, import_path=tmp_path / "sub"),
+    ]
+    assert len({v.label for v in variants}) == len(variants)
+    assert gs.from_lark(grammar, max_size=10).label == gs.from_lark(grammar, max_size=10).label
+
+
 def test_from_lark_repr():
     assert repr(gs.from_lark('start: "a"')) == "from_lark('start: \"a\"')"
     assert (
@@ -219,6 +236,17 @@ def test_from_lark_repr():
         )
         == "from_lark('a: \"a\"\\nb: NUM\\n%declare NUM\\n', start='b', "
         "explicit={'NUM': just('1')})"
+    )
+    assert repr(
+        gs.from_lark(
+            'start: "a"', alphabet="ab", max_size=10, max_depth=5, import_path=Path("grammars")
+        )
+    ) == (
+        "from_lark('start: \"a\"', alphabet='ab', max_size=10, max_depth=5, import_path='grammars')"
+    )
+    assert (
+        repr(gs.from_lark('start: "a"', alphabet=gs.characters(codec="ascii")))
+        == "from_lark('start: \"a\"', alphabet=characters(max_codepoint=127))"
     )
 
 

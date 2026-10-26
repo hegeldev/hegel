@@ -78,6 +78,16 @@ class Lark(Generator[str]):
         self.text = text
         self.start = start
         self._explicit = list(explicit.items())
+        self._options = [
+            (name, value)
+            for name, value in [
+                ("alphabet", alphabet),
+                ("max_size", max_size),
+                ("max_depth", max_depth),
+                ("import_path", None if import_path is None else str(import_path)),
+            ]
+            if value is not None
+        ]
         self._grammar = _compile(
             text,
             start,
@@ -90,6 +100,8 @@ class Lark(Generator[str]):
         labels = [LARK_LABEL, label_from_name(text), label_from_name(start or "start")]
         for name, generator in self._explicit:
             labels += [label_from_name(name), generator.label]
+        for name, value in self._options:
+            labels.append(label_from_name(f"{name}={value!r}"))
         self.label = combine_labels(labels)
 
     def do_draw(self, tc: TestCase) -> str:
@@ -111,6 +123,7 @@ class Lark(Generator[str]):
             args.append(f"start={self.start!r}")
         if self._explicit:
             args.append(f"explicit={dict(self._explicit)!r}")
+        args += [f"{name}={value!r}" for name, value in self._options]
         return f"from_lark({', '.join(args)})"
 
 
