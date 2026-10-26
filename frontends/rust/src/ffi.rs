@@ -39,9 +39,17 @@ struct Context {
 impl Context {
     fn new() -> Self {
         // SAFETY: hegel_context_new never returns null.
-        Context {
+        let context = Context {
             raw: unsafe { hegel_c::hegel_context_new() },
-        }
+        };
+        UNICODE_VERSION_SET.call_once(|| {
+            let version = unicode_version();
+            // SAFETY: `context.raw` is live and `version` outlives the call.
+            require_ok(unsafe {
+                hegel_c::hegel_set_unicode_version(context.raw, view(version.as_bytes()))
+            });
+        });
+        context
     }
 
     fn as_ptr(&self) -> *mut hegel_c::HegelContext {
@@ -67,6 +75,18 @@ impl Drop for Context {
         // SAFETY: `raw` came from hegel_context_new and is freed exactly once.
         require_ok(unsafe { hegel_c::hegel_context_free(self.raw) });
     }
+}
+
+/// Set once per process, by the first [`Context`] created, so the engine's
+/// string generators follow the Unicode tables of the Rust standard library
+/// this crate was compiled with (`hegel_set_unicode_version`).
+static UNICODE_VERSION_SET: std::sync::Once = std::sync::Once::new();
+
+/// The Unicode version of this crate's `char` methods, as the engine takes
+/// it: `"major.minor.patch"`.
+pub(crate) fn unicode_version() -> String {
+    let (major, minor, patch) = char::UNICODE_VERSION;
+    format!("{major}.{minor}.{patch}")
 }
 
 thread_local! {

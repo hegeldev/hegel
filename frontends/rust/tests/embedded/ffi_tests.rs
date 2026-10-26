@@ -12,6 +12,18 @@ use crate::generators as gs;
 use crate::runner::{Backend, NondeterminismStrictness, Settings};
 
 #[test]
+fn ffi_unicode_version_is_the_standard_librarys() {
+    let (major, minor, patch) = char::UNICODE_VERSION;
+    assert_eq!(unicode_version(), format!("{major}.{minor}.{patch}"));
+}
+
+#[test]
+fn ffi_sets_the_engines_unicode_version_on_first_use() {
+    with_context(|_| ());
+    assert!(UNICODE_VERSION_SET.is_completed());
+}
+
+#[test]
 fn ffi_settings_builds_with_each_explicit_backend() {
     for backend in [Backend::Default, Backend::Urandom] {
         let _sh = SettingsHandle::build(&test_settings(1).backend(backend), None, None);

@@ -30,6 +30,8 @@ This release brings the Rust frontend further into line with the other Hegel fro
 
 - Stacked `#[hegel::reproduce_failure]` attributes, and repeated calls to `Hegel::reproduce_failure`, now replay every blob, one after another, through the engine's `hegel_run_start_blob`, and report every failure they reproduce, as a run reports several distinct failures. Before, only the first blob replayed and the rest were ignored. A blob that no longer reproduces is not an error while another one does, but every blob must decode: a stacked placeholder that is not a blob now fails the test.
 
+- The string generators (`gs::characters()`, `gs::text()`, `gs::from_regex(..)` and `gs::from_lark(..)`) now follow the Unicode version of the Rust standard library Hegel was compiled with, `char::UNICODE_VERSION`, which Hegel passes to the engine (`hegel_set_unicode_version`) before generating anything. A character's category, and the character classes of a pattern, now agree with `char::is_alphabetic` and friends: on a toolchain with Unicode tables older than the engine's, characters the toolchain does not know yet are in no category, rather than in the category a newer version gives them.
+
 - `HealthCheck::all()` now returns a `Vec<HealthCheck>` rather than a `[HealthCheck; 4]`, so that adding a health check does not change its type. It is no longer a `const fn`.
 
 - The `exclude_min` and `exclude_max` methods of `gs::floats()`, deprecated since 0.42.0 and panicking whenever called, are removed. Use `min_value_exclusive` and `max_value_exclusive`.

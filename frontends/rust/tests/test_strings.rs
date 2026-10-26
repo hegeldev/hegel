@@ -1,6 +1,6 @@
 mod common;
 
-use common::utils::{assert_all_examples, assert_no_examples, find_any, known_to_std};
+use common::utils::{assert_all_examples, assert_no_examples, find_any};
 use hegel::generators as gs;
 
 #[test]
@@ -24,9 +24,25 @@ fn test_characters_codepoint_range(tc: hegel::TestCase) {
 }
 
 #[test]
+fn test_characters_follow_the_standard_librarys_unicode_version() {
+    let sidetic = gs::characters()
+        .categories(&["L"])
+        .min_codepoint(0x10940)
+        .max_codepoint(0x10959);
+    if '\u{10940}'.is_alphabetic() {
+        assert_all_examples(sidetic, |c: &char| c.is_alphabetic());
+    } else {
+        common::utils::expect_panic(
+            || common::utils::check_can_generate_examples(sidetic),
+            "No valid characters",
+        );
+    }
+}
+
+#[test]
 fn test_characters_lu() {
     assert_all_examples(gs::characters().categories(&["Lu"]), |c: &char| {
-        c.is_uppercase() || !known_to_std(*c)
+        c.is_uppercase()
     });
 }
 
@@ -98,7 +114,7 @@ fn test_text_codepoint_range(tc: hegel::TestCase) {
 #[test]
 fn test_text_categories() {
     assert_all_examples(gs::text().categories(&["Lu"]).max_size(20), |s: &String| {
-        s.chars().all(|c| c.is_uppercase() || !known_to_std(c))
+        s.chars().all(|c| c.is_uppercase())
     });
 }
 
