@@ -167,6 +167,10 @@ final class FakeLibhegel implements Libhegel {
     int fromBlobRc = Abi.OK;
     final List<String> replayedBlobs = new ArrayList<>();
     String startedBlob; // what runStartBlob received; null = the run explored
+    final List<String> startedBlobs = new ArrayList<>(); // every blob runStartBlob received, in order
+    // When non-empty, each run started takes its status from the head of this queue and serves
+    // caseCount fresh cases.
+    final java.util.ArrayDeque<Integer> runStatusQueue = new java.util.ArrayDeque<>();
     Consumer<String> output; // the callback runStart / runStartBlob registered
     // The engine's capture stamp per served case: the i-th case is stamped when captureSequence
     // has an i-th entry and it is true; past the end of the sequence every case is stamped, so
@@ -511,8 +515,19 @@ final class FakeLibhegel implements Libhegel {
             throw new HegelException("hegel_run_start failed: " + lastError);
         }
         this.output = output;
+        nextRun();
         return RUN;
     }
+
+    private void nextRun() {
+        if (!runStatusQueue.isEmpty()) {
+            runStatus = runStatusQueue.poll();
+            casesServed = 0;
+            runMarksFrom = markedOrigins.size();
+        }
+    }
+
+    private int runMarksFrom;
 
     @Override
     public long runStartBlob(long settings, String blob, Consumer<String> output) {
@@ -520,7 +535,9 @@ final class FakeLibhegel implements Libhegel {
             throw new HegelException("hegel_run_start_blob failed: " + lastError);
         }
         startedBlob = blob;
+        startedBlobs.add(blob);
         this.output = output;
+        nextRun();
         return RUN;
     }
 
@@ -1219,7 +1236,7 @@ final class FakeLibhegel implements Libhegel {
             return failureOrigins.get((int) index);
         }
         List<String> distinct = new ArrayList<>();
-        for (String origin : markedOrigins) {
+        for (String origin : markedOrigins.subList(runMarksFrom, markedOrigins.size())) {
             if (origin != null && !distinct.contains(origin)) {
                 distinct.add(origin);
             }

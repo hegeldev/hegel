@@ -192,7 +192,7 @@ public final class TestCase {
 
     /**
      * Whether the engine stamped this execution as one a failure report can be built from — the
-     * final replay of a minimal counterexample (or of a {@link Settings#reproduceFailure(String)}
+     * final replay of a minimal counterexample (or of a {@link Settings#reproduceFailure(String...)}
      * blob), the replays that confirm a discovered failure — as opposed to one of the many cases it
      * runs while generating and shrinking. Draws and notes are recorded only on a stamped
      * execution (or on every execution of a verbose run), and reported only if it fails and the

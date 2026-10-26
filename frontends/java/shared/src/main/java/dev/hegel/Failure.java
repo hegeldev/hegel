@@ -53,12 +53,12 @@ public final class Failure {
 
     /**
      * The base64 blob that replays this counterexample, via {@link
-     * Settings#reproduceFailure(String)}. Only guaranteed to reproduce under the Hegel version that
+     * Settings#reproduceFailure(String...)}. Only guaranteed to reproduce under the Hegel version that
      * produced it.
      *
      * @return the reproduce blob, or empty when the engine produced none: for an unconfirmed
      *     {@linkplain #nondeterministic() nondeterministic} failure, and for a failure reproduced
-     *     from a {@link Settings#reproduceFailure(String)} blob (the caller already holds it)
+     *     from a {@link Settings#reproduceFailure(String...)} blob (the caller already holds it)
      */
     public Optional<String> reproduceBlob() {
         return Optional.ofNullable(reproduceBlob);

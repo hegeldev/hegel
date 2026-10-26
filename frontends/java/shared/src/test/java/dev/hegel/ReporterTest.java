@@ -53,8 +53,8 @@ class ReporterTest {
         printing.failure(new Failure(
                 "o", "b64", "nondeterministic failure, confirmed", new AssertionError("x"), Map.of(), List.of()));
         assertEquals(
-                "note: nondeterministic failure, confirmed\n\nTo reproduce this failure, replay it with:\n"
-                        + "    @HegelTest(reproduceFailure = \"b64\")\n",
+                "note: nondeterministic failure, confirmed\n\nTo reproduce this failure, call this on the test's"
+                        + " Settings:\n    .reproduceFailure(\"b64\")\n",
                 text(buf));
     }
 

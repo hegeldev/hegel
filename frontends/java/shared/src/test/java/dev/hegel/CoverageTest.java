@@ -49,7 +49,7 @@ class CoverageTest {
     }
 
     // --- HegelTestExtension static helpers ---
-    static final class Holder {
+    static class Holder {
         @HegelTest(seed = 5)
         void seeded(TestCase tc) {}
 
@@ -106,14 +106,14 @@ class CoverageTest {
         assertTrue(HegelTestExtension.isTestCaseParam(TestCase.class));
         assertFalse(HegelTestExtension.isTestCaseParam(String.class));
 
-        Settings withSeed = HegelTestExtension.settingsFrom(seeded.getAnnotation(HegelTest.class), seeded);
+        Settings withSeed = HegelTestExtension.settingsFrom(seeded.getAnnotation(HegelTest.class), seeded, Holder.class);
         assertEquals(5L, withSeed.seed);
         assertTrue(withSeed.hasSeed);
 
         // Defaults: no seed, no derandomize override, engine-default phases, default database, no
         // blob replay, the class-qualified method name as the property name, and the method as
         // the test location.
-        Settings noSeed = HegelTestExtension.settingsFrom(unseeded.getAnnotation(HegelTest.class), unseeded);
+        Settings noSeed = HegelTestExtension.settingsFrom(unseeded.getAnnotation(HegelTest.class), unseeded, Holder.class);
         assertFalse(noSeed.hasSeed);
         assertNull(noSeed.derandomize);
         assertNull(noSeed.phasesMask);
@@ -129,7 +129,8 @@ class CoverageTest {
         assertNull(noSeed.profile);
         assertNull(noSeed.printBlob);
         assertNull(noSeed.testCases);
-        assertNull(noSeed.reproduceFailure);
+        assertEquals(List.of(), noSeed.reproduceFailure);
+        assertTrue(noSeed.annotated);
         assertEquals("dev.hegel.CoverageTest$Holder.unseeded", noSeed.name);
         assertEquals(
                 new TestLocation("dev/hegel/CoverageTest.java", 57, "dev.hegel.CoverageTest$Holder", "unseeded"),
@@ -138,7 +139,7 @@ class CoverageTest {
         // Fully-configured: derandomize forced on, a single explicit phase, a suppressed check,
         // explicit backend, multi-failure and blob options, and a name override.
         Method configured = Holder.class.getDeclaredMethod("configured", TestCase.class);
-        Settings c = HegelTestExtension.settingsFrom(configured.getAnnotation(HegelTest.class), configured);
+        Settings c = HegelTestExtension.settingsFrom(configured.getAnnotation(HegelTest.class), configured, Holder.class);
         assertEquals(Boolean.TRUE, c.derandomize);
         assertEquals(Integer.valueOf(Phase.GENERATE.bit), c.phasesMask);
         assertEquals(Integer.valueOf(HealthCheck.TOO_SLOW.bit), c.suppressMask);
@@ -151,13 +152,13 @@ class CoverageTest {
         assertEquals(Verbosity.VERBOSE, c.verbosity);
         assertEquals("ci", c.profile);
         assertEquals(Boolean.TRUE, c.printBlob);
-        assertEquals("blob-xyz", c.reproduceFailure);
+        assertEquals(List.of("blob-xyz"), c.reproduceFailure);
         assertEquals("custom", c.name);
 
         // derandomize forced off, an explicitly empty phase set (runs nothing — distinct from the
         // all-phases default), and the database disabled.
         Method emptyPhases = Holder.class.getDeclaredMethod("derandomFalseEmptyPhases", TestCase.class);
-        Settings e = HegelTestExtension.settingsFrom(emptyPhases.getAnnotation(HegelTest.class), emptyPhases);
+        Settings e = HegelTestExtension.settingsFrom(emptyPhases.getAnnotation(HegelTest.class), emptyPhases, Holder.class);
         assertEquals(Boolean.FALSE, e.derandomize);
         assertEquals(Boolean.FALSE, e.printBlob);
         assertEquals(Boolean.FALSE, e.reportMultipleFailures);
@@ -169,15 +170,24 @@ class CoverageTest {
 
         // A custom (compile-time) database path.
         Method customDb = Holder.class.getDeclaredMethod("customDb", TestCase.class);
-        Settings d = HegelTestExtension.settingsFrom(customDb.getAnnotation(HegelTest.class), customDb);
+        Settings d = HegelTestExtension.settingsFrom(customDb.getAnnotation(HegelTest.class), customDb, Holder.class);
         assertEquals(Database.Kind.PATH, d.database.kind);
         assertEquals("/tmp/hdb", d.database.path);
 
         // HealthCheck.NONE suppresses nothing, overriding a profile's suppressions.
         Method suppressNone = Holder.class.getDeclaredMethod("suppressNone", TestCase.class);
-        Settings n = HegelTestExtension.settingsFrom(suppressNone.getAnnotation(HegelTest.class), suppressNone);
+        Settings n = HegelTestExtension.settingsFrom(suppressNone.getAnnotation(HegelTest.class), suppressNone, Holder.class);
         assertEquals(Integer.valueOf(0), n.suppressMask);
+
+        // An inherited test is keyed and named by the class running it, located in its own file.
+        Settings inherited = HegelTestExtension.settingsFrom(unseeded.getAnnotation(HegelTest.class), unseeded, SubHolder.class);
+        assertEquals("dev.hegel.CoverageTest$SubHolder.unseeded", inherited.name);
+        assertEquals(
+                new TestLocation("dev/hegel/CoverageTest.java", 57, "dev.hegel.CoverageTest$SubHolder", "unseeded"),
+                inherited.testLocation);
     }
+
+    static class SubHolder extends Holder {}
 
     // --- generators: stale-handle rebuild and IPv6 formatting ---
     @Test

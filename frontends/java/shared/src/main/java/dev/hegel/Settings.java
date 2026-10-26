@@ -42,7 +42,8 @@ public final class Settings {
     final Boolean unboundedChoices;
     final Boolean printBlob;
     final NondeterminismStrictness nondeterminismStrictness;
-    final String reproduceFailure; // null = run normally instead of replaying a blob
+    final List<String> reproduceFailure;
+    final boolean annotated;
     final String name;
     final TestLocation testLocation; // null = locate the test where it is run from
     final List<String> infrastructurePackages;
@@ -75,6 +76,7 @@ public final class Settings {
         this.printBlob = b.printBlob;
         this.nondeterminismStrictness = b.nondeterminismStrictness;
         this.reproduceFailure = b.reproduceFailure;
+        this.annotated = b.annotated;
         this.name = b.name;
         this.testLocation = b.testLocation;
         this.infrastructurePackages = b.infrastructurePackages;
@@ -102,6 +104,7 @@ public final class Settings {
         b.printBlob = printBlob;
         b.nondeterminismStrictness = nondeterminismStrictness;
         b.reproduceFailure = reproduceFailure;
+        b.annotated = annotated;
         b.name = name;
         b.testLocation = testLocation;
         b.infrastructurePackages = infrastructurePackages;
@@ -129,7 +132,8 @@ public final class Settings {
         Boolean unboundedChoices = null;
         Boolean printBlob = null;
         NondeterminismStrictness nondeterminismStrictness = NondeterminismStrictness.DEFAULT;
-        String reproduceFailure = null;
+        List<String> reproduceFailure = List.of();
+        boolean annotated = false;
         String name = null;
         TestLocation testLocation = null;
         List<String> infrastructurePackages = List.of();
@@ -159,7 +163,7 @@ public final class Settings {
      * engine resolves them now (its profile and the environment, then what {@code settings} sets);
      * registering a shipped profile's name replaces that profile, and a {@code hegel.toml} section
      * for {@code name} still merges over the snapshot. The settings that identify one test ({@link
-     * #name(String)}, {@link #testLocation(TestLocation)}, {@link #reproduceFailure(String)}) are
+     * #name(String)}, {@link #testLocation(TestLocation)}, {@link #reproduceFailure(String...)}) are
      * not part of a profile.
      *
      * <p>Registration is not retroactive: register profiles before the tests that use them run,
@@ -380,19 +384,26 @@ public final class Settings {
     }
 
     /**
-     * Replay a single stored failure instead of running the property: the blob (from {@link
+     * Replay stored failures instead of running the property: each blob (from {@link
      * #printBlob(boolean)} output) is decoded and the test body re-run against the choices it
-     * encodes, bypassing generation and shrinking. The engine replays until a replay fails, under a
-     * bounded budget: a deterministic blob a few times, a nondeterministic one's recorded runs until
-     * one of them fails again. The run fails with the reproduced failure, or reports a stale blob if
-     * none of the replays fails. A blob is only guaranteed to reproduce under the Hegel version that
-     * produced it.
+     * encodes, bypassing generation and shrinking. The engine replays each blob until a replay
+     * fails, under a bounded budget: a deterministic blob a few times, a nondeterministic one's
+     * recorded runs until one of them fails again. The run fails with every failure the blobs
+     * reproduce, or throws a {@link DidNotReproduceException} if none of them does. A blob is only
+     * guaranteed to reproduce under the Hegel version that produced it. Replaces any blobs given
+     * earlier; with none, the property runs normally.
      *
-     * @param blob the base64 reproduce blob
+     * @param blobs the base64 reproduce blobs
      * @return a new settings instance
      */
-    public Settings reproduceFailure(String blob) {
-        return with(b -> b.reproduceFailure = blob);
+    public Settings reproduceFailure(String... blobs) {
+        List<String> copy = List.of(blobs);
+        return with(b -> b.reproduceFailure = copy);
+    }
+
+    /** These settings, as a {@link HegelTest} method's: its failures say how to replay them there. */
+    Settings annotated() {
+        return with(b -> b.annotated = true);
     }
 
     /**

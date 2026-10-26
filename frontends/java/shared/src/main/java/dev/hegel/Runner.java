@@ -45,8 +45,8 @@ final class Runner {
         "dev.hegel.", "org.junit.", "org.opentest4j.", "jdk.", "java.", "sun.", "com.sun."
     };
 
-    /** Message for a {@link Settings#reproduceFailure} blob none of whose replays failed. */
-    static final String STALE_BLOB = "reproduceFailure: the supplied failure blob did not reproduce a failure."
+    /** Message for {@link Settings#reproduceFailure} blobs none of whose replays failed. */
+    static final String STALE_BLOB = "reproduceFailure: no supplied failure blob reproduced a failure."
             + " The failure may have been fixed — or, for a nondeterministic blob, it may not have"
             + " recurred within the replay budget. Re-run to retry, or remove the blob once the failure"
             + " is fixed.";
@@ -93,28 +93,69 @@ final class Runner {
                     Verbosity.fromCode(lib.settingsGetVerbosity(s)));
             reporter.runStarted(effective);
             RunStatistics.Counter counts = new RunStatistics.Counter();
+            if (!effective.reproduceFailure.isEmpty()) {
+                return replay(lib, s, effective, body, reporter, counts);
+            }
             List<Failure> explicitFailures = List.of();
-            if (!effective.examples.isEmpty()
-                    && effective.reproduceFailure == null
-                    && (lib.settingsGetPhases(s) & Abi.PHASE_EXPLICIT) != 0) {
+            if (!effective.examples.isEmpty() && (lib.settingsGetPhases(s) & Abi.PHASE_EXPLICIT) != 0) {
                 boolean reportMultiple = lib.settingsGetReportMultipleFailures(s);
                 explicitFailures = runExamples(lib, effective, body, reporter, reportMultiple);
                 if (!explicitFailures.isEmpty() && !reportMultiple) {
                     return reportFailures(reporter, counts, explicitFailures, null);
                 }
             }
-            long run = effective.reproduceFailure == null
-                    ? lib.runStart(s, reporter::engineOutput)
-                    : lib.runStartBlob(s, effective.reproduceFailure, reporter::engineOutput);
-            try {
-                return drive(lib, run, effective, body, reporter, counts, explicitFailures);
-            } finally {
-                lib.runFree(run);
+            Verdict verdict = drive(
+                    lib, lib.runStart(s, reporter::engineOutput), effective, body, reporter, counts, explicitFailures);
+            List<Failure> failures = new ArrayList<>(explicitFailures);
+            failures.addAll(verdict.failures());
+            if (failures.isEmpty()) {
+                return verdict.error() != null
+                        ? verdict.error()
+                        : new RunReport(RunStatus.PASSED, counts.snapshot(), List.of());
             }
+            return reportFailures(reporter, counts, failures, verdict.error());
         });
         reporter.runFinished(report);
         return report;
     }
+
+    /**
+     * Replay every one of {@code settings}' reproduce blobs through {@code hegel_run_start_blob},
+     * reporting every distinct failure they reproduce. A replay that errors ends the replays, its
+     * error reported as a run's is. Throws {@link DidNotReproduceException} when no blob fails.
+     */
+    private static RunReport replay(
+            Libhegel lib,
+            long s,
+            Settings settings,
+            Consumer<TestCase> body,
+            Reporter reporter,
+            RunStatistics.Counter counts) {
+        List<Failure> failures = new ArrayList<>();
+        RunReport error = null;
+        for (String blob : settings.reproduceFailure) {
+            Verdict verdict = drive(
+                    lib, lib.runStartBlob(s, blob, reporter::engineOutput), settings, body, reporter, counts, failures);
+            failures.addAll(verdict.failures());
+            error = verdict.error();
+            if (error != null) {
+                break;
+            }
+        }
+        if (failures.isEmpty()) {
+            if (error != null) {
+                return error;
+            }
+            throw new DidNotReproduceException(STALE_BLOB);
+        }
+        return reportFailures(reporter, counts, failures, error);
+    }
+
+    /**
+     * What one engine run concluded: the failures it found that are not among those already
+     * reported, and, when it ended in an error instead of a verdict, that error as a report.
+     */
+    private record Verdict(List<Failure> failures, RunReport error) {}
 
     /**
      * Run the explicit examples in order, returning their failures: the first only, unless {@code
@@ -255,97 +296,78 @@ final class Runner {
     }
 
     /**
-     * Pump the run to completion, keeping every interesting case's capture per origin, and
-     * translate its verdict.
+     * Pump {@code run} to completion, keeping every interesting case's capture per origin, translate
+     * its verdict and free it. Failures with the origin of one of {@code reported} are dropped.
      */
-    private static RunReport drive(
+    private static Verdict drive(
             Libhegel lib,
             long run,
             Settings settings,
             Consumer<TestCase> body,
             Reporter reporter,
             RunStatistics.Counter counts,
-            List<Failure> explicitFailures) {
-        Map<String, CaseRun> captures = new HashMap<>();
-        while (true) {
-            long tc = lib.nextTestCase(run);
-            if (isNull(tc)) {
-                break;
-            }
-            CaseRun caseRun = driveOneCase(lib, tc, body, settings, reporter, counts);
-            if (caseRun.interesting != null) {
-                CaseRun stored = captures.get(caseRun.origin);
-                if (stored == null || caseRun.rank() >= stored.rank()) {
-                    captures.put(caseRun.origin, caseRun);
+            List<Failure> reported) {
+        try {
+            Map<String, CaseRun> captures = new HashMap<>();
+            while (true) {
+                long tc = lib.nextTestCase(run);
+                if (isNull(tc)) {
+                    break;
+                }
+                CaseRun caseRun = driveOneCase(lib, tc, body, settings, reporter, counts);
+                if (caseRun.interesting != null) {
+                    CaseRun stored = captures.get(caseRun.origin);
+                    if (stored == null || caseRun.rank() >= stored.rank()) {
+                        captures.put(caseRun.origin, caseRun);
+                    }
                 }
             }
-        }
-        long result = lib.runResult(run);
-        try {
-            return finish(lib, result, settings, reporter, counts, captures, explicitFailures);
+            long result = lib.runResult(run);
+            try {
+                return verdict(lib, result, counts, captures, reported);
+            } finally {
+                lib.runResultFree(result);
+            }
         } finally {
-            lib.runResultFree(result);
+            lib.runFree(run);
         }
     }
 
-    /**
-     * Translate a drained run's result into a report. Failures of explicit examples come first,
-     * and make the run a failure whatever the engine's verdict.
-     */
-    private static RunReport finish(
+    /** Translate a drained run's result. */
+    private static Verdict verdict(
             Libhegel lib,
             long result,
-            Settings settings,
-            Reporter reporter,
             RunStatistics.Counter counts,
             Map<String, CaseRun> captures,
-            List<Failure> explicitFailures) {
-        boolean replayingBlob = settings.reproduceFailure != null;
+            List<Failure> reported) {
         switch (lib.runResultStatus(result)) {
             case Abi.RUN_STATUS_PASSED:
-                if (replayingBlob) {
-                    throw new HegelException(STALE_BLOB);
-                }
-                if (!explicitFailures.isEmpty()) {
-                    return reportFailures(reporter, counts, explicitFailures, null);
-                }
-                return new RunReport(RunStatus.PASSED, counts.snapshot(), List.of());
+                return new Verdict(List.of(), null);
             case Abi.RUN_STATUS_ERROR:
-                // The run produced no verdict on the property: a failed health check, a
-                // nondeterminism abort under ERROR strictness, an engine panic. (A blob the engine
-                // cannot decode never gets this far: hegel_run_start_blob rejects it.)
-                String error = nullToEmpty(lib.runResultError(result));
-                if (replayingBlob) {
-                    throw new HegelException("reproduceFailure: the blob replay ended in an error: " + error);
-                }
                 int[] healthCheck = new int[1];
                 RunErrorKind kind = RunErrorKind.fromCode(lib.runResultErrorKind(result, healthCheck));
-                RunReport errored = new RunReport(
-                        RunStatus.ERROR,
-                        counts.snapshot(),
-                        error,
-                        kind,
-                        HealthCheck.fromBit(healthCheck[0]),
-                        List.of());
-                if (!explicitFailures.isEmpty()) {
-                    return reportFailures(reporter, counts, explicitFailures, errored);
-                }
-                return errored;
+                return new Verdict(
+                        List.of(),
+                        new RunReport(
+                                RunStatus.ERROR,
+                                counts.snapshot(),
+                                nullToEmpty(lib.runResultError(result)),
+                                kind,
+                                HealthCheck.fromBit(healthCheck[0]),
+                                List.of()));
             default:
-                List<Failure> failures = new ArrayList<>(explicitFailures);
-                failures.addAll(engineFailures(lib, result, captures, explicitFailures));
-                return reportFailures(reporter, counts, failures, null);
+                return new Verdict(engineFailures(lib, result, captures, reported), null);
         }
     }
 
     /**
      * Build every distinct failure the engine reports from its origin's capture, skipping those
-     * an explicit example already failed with.
+     * with the origin of a failure already reported.
      */
     private static List<Failure> engineFailures(
-            Libhegel lib, long result, Map<String, CaseRun> captures, List<Failure> explicitFailures) {
+            Libhegel lib, long result, Map<String, CaseRun> captures, List<Failure> alreadyReported) {
         Set<String> reported = new HashSet<>();
-        for (Failure failure : explicitFailures) {
+        for (Failure failure : alreadyReported) {
             reported.add(failure.origin());
         }
         long count = lib.runResultFailureCount(result);
@@ -373,7 +395,7 @@ final class Runner {
 
     /**
      * Hand every failure to the reporter and report the run FAILED, carrying {@code error}'s
-     * message and classification when the engine's run errored after explicit examples failed.
+     * message and classification when an engine run errored after other failures were found.
      */
     private static RunReport reportFailures(
             Reporter reporter, RunStatistics.Counter counts, List<Failure> failures, RunReport error) {
