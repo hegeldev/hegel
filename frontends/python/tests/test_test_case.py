@@ -95,7 +95,7 @@ def test_note_assume_reject(output):
             tc.reject()
         assert x < 2
 
-    error = failing(body)
+    error = failing(body, suppress_health_check=[hegel.HealthCheck.filter_too_much])
     assert all(x % 2 == 0 for x in seen)
     assert notes(error)[0] == "Falsifying example:\nx = 2\nx is 2"
 
