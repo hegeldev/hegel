@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 
-use crate::control::{LoopDone, raise_control};
+use crate::control::{LoopDone, hegel_internal_error, raise_control};
 use crate::generators::Generator;
 
 struct ExplicitValue {
@@ -32,6 +32,7 @@ struct ExplicitValue {
 pub struct ExplicitTestCase {
     values: RefCell<HashMap<String, ExplicitValue>>,
     draw_counts: RefCell<HashMap<String, usize>>,
+    named_draw_repeatable: RefCell<HashMap<String, bool>>,
     notes: RefCell<Vec<String>>,
 }
 
@@ -41,6 +42,7 @@ impl ExplicitTestCase {
         ExplicitTestCase {
             values: RefCell::new(HashMap::new()),
             draw_counts: RefCell::new(HashMap::new()),
+            named_draw_repeatable: RefCell::new(HashMap::new()),
             notes: RefCell::new(Vec::new()),
         }
     }
@@ -75,10 +77,33 @@ impl ExplicitTestCase {
         name: &str,
         repeatable: bool,
     ) -> T {
-        let name = &if repeatable {
+        let prev = *self
+            .named_draw_repeatable
+            .borrow_mut()
+            .entry(name.to_string())
+            .or_insert(repeatable);
+        if prev != repeatable {
+            hegel_internal_error!(
+                "__draw_named: name {:?} used with inconsistent repeatable flag \
+                 (was {}, now {})",
+                name,
+                prev,
+                repeatable
+            );
+        }
+        let count = {
             let mut counts = self.draw_counts.borrow_mut();
             let count = counts.entry(name.to_string()).or_insert(0);
             *count += 1;
+            *count
+        };
+        if !repeatable && count > 1 {
+            hegel_internal_error!(
+                "__draw_named: name {:?} used more than once but repeatable is false",
+                name
+            );
+        }
+        let name = &if repeatable {
             format!("{name}_{count}")
         } else {
             name.to_string()
