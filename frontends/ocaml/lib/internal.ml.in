@@ -1072,9 +1072,9 @@ let did_not_reproduce_message =
     a property test using the given settings against the native engine.
 
     With an empty [failure_blobs] (the default) it executes the database replay,
-    generation, and shrinking phases. With a non-empty [failure_blobs] the
-    engine replays each blob in turn, until a replay of it fails, and every
-    failure the blobs reproduced is reported.
+    generation, and shrinking phases. With a non-empty [failure_blobs] it
+    replays every blob, one run per blob in order, and reports every failure
+    the blobs reproduce.
 
     @param test_location
       source location of the test. Passed to libhegel, which inside Antithesis
