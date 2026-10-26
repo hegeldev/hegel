@@ -76,7 +76,7 @@ check-sanitizer SANITIZERS:
     if [[ '{{ SANITIZERS }}' == *thread* ]]; then
         engine=(-DHEGEL_LIBHEGEL_LIBRARY="$(just build-libhegel-tsan)")
     fi
-    cmake -B "$dir" -DHEGEL_SANITIZE='{{ SANITIZERS }}' "${engine[@]}" ${CMAKE_FLAGS:-}
+    cmake -B "$dir" -DHEGEL_SANITIZE='{{ SANITIZERS }}' ${engine[@]+"${engine[@]}"} ${CMAKE_FLAGS:-}
     cmake --build "$dir" -j{{ jobs }}
     # LeakSanitizer is on by default under ASan on Linux and unsupported on
     # macOS, so detect_leaks is left at its platform default rather than forced.
