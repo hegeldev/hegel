@@ -44,7 +44,7 @@ To reproduce this failure, add this attribute to the let%hegel_test:
     [@@failure_blobs [ "AAEAAAAACgEAAAAy" ]]
 ```
 
-A plain `run_hegel_test` caller is told the `~failure_blobs` argument to pass instead, and a `Hegel.main` binary the `--failure-blob` flag. A run with several distinct failures starts with `Property-based test failed with N distinct failures.` and reports each after a blank line. `HEGEL_COLOR` no longer has any effect.
+A plain `run_hegel_test` caller is told the `~failure_blobs` argument to pass instead, and a `Hegel.main` binary the `--failure-blob` flag. A run with several distinct failures starts with `Property-based test failed with N distinct failures.` and reports each after a blank line. Under `Quiet` verbosity only the replay lines print. `HEGEL_COLOR` no longer has any effect.
 
 A run that ends without a verdict on the property now raises an exception saying why, chosen by the engine's classification of the error, instead of `Failure` with the engine's message:
 

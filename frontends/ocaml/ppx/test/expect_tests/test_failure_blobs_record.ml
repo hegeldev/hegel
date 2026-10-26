@@ -290,17 +290,42 @@ let%expect_test "the multi-failure report omits blobs when print_blob is off" =
     |}]
 ;;
 
+let%expect_test "a quiet multi-failure report prints only the reproduce lines" =
+  let settings =
+    { (Hegel.Settings.create ~test_cases:300 ~seed:9 ()) with
+      report_multiple_failures = true
+    ; verbosity = Hegel.Settings.Quiet
+    }
+  in
+  (match Hegel.run_hegel_test ~settings multi_prop with
+   | () -> assert false
+   | exception Hegel.Multiple_failures exns ->
+     Printf.printf "%d failures raised" (List.length exns));
+  Printf.printf "%s" (Expect_scrub.scrub_report (normalize [%expect.output]));
+  [%expect
+    {|
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
+    2 failures raised
+    |}]
+;;
+
 let%expect_test "blob scrubbing preserves quoted failure diagnostics" =
   print_string
     (Expect_scrub.scrub_blobs
-       {|--- Failure: test (test_failure_blobs_record.ml:1) ---
-Exception: Failure("failure_blobs should not hide this message")
-rerun with: ~failure_blobs:[ "encoded choices" ]
+       {|Exception: Failure("failure_blobs should not hide this message")
+
+To reproduce this failure, pass this argument to run_hegel_test:
+    ~failure_blobs:[ "encoded choices" ]
 |});
   [%expect
     {|
-    --- Failure: test (test_failure_blobs_record.ml:1) ---
     Exception: Failure("failure_blobs should not hide this message")
-    rerun with: ~failure_blobs:[ "encoded choices" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;

@@ -969,9 +969,11 @@ let reproduce_line ~rerun_hint blob =
 ;;
 
 let print_failure_body ~(settings : Settings.t) ~rerun_hint ~blob ~caveat ~exn ~output =
-  Printf.eprintf "%s" output;
-  Printf.eprintf "Exception: %s\n%!" (Stdlib.Printexc.to_string exn);
-  Option.iter (fun caveat -> Printf.eprintf "note: %s\n%!" caveat) caveat;
+  if settings.verbosity <> Quiet
+  then (
+    Printf.eprintf "%s" output;
+    Printf.eprintf "Exception: %s\n%!" (Stdlib.Printexc.to_string exn);
+    Option.iter (fun caveat -> Printf.eprintf "note: %s\n%!" caveat) caveat);
   if settings.print_blob
   then
     Option.iter
@@ -1205,12 +1207,15 @@ let run_test
            match failures with
            | [ failure ] -> [ report_failure failure ]
            | failures ->
-             Printf.eprintf
-               "Property-based test failed with %d distinct failures.\n%!"
-               (List.length failures);
+             let loud = settings.verbosity <> Quiet in
+             if loud
+             then
+               Printf.eprintf
+                 "Property-based test failed with %d distinct failures.\n%!"
+                 (List.length failures);
              List.map
                (fun failure ->
-                  Printf.eprintf "\n%!";
+                  if loud then Printf.eprintf "\n%!";
                   report_failure failure)
                failures)
   in
